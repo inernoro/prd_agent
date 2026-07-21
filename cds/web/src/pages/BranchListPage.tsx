@@ -4787,8 +4787,15 @@ function releaseStepsForRun(
   const scriptTwo = scripts[1] || './exec_dep.sh';
   const scriptOnePhase = releaseScriptPhase(scriptOne);
   const scriptTwoPhase = releaseScriptPhase(scriptTwo);
-  const scriptOneSeen = phases.has(scriptOnePhase);
-  const scriptTwoSeen = phases.has(scriptTwoPhase);
+  // generated-compose / generated-static 目标与自定义发布命令不发 script:* phase,
+  // 后端把整段执行统一记在通用 `deploy` phase 下(runDeployCommand 的 emitLog
+  // 兜底;发布中心同款判定是 phaseSet.has('deploy'))。只认 script:* 会让这些
+  // 发布的执行步骤永远 pending、失败也不标红(Codex P2)。deploy 视作两个执行
+  // 步骤的统称:进行中一起亮,失败一起标。
+  const deploySeen = phases.has('deploy');
+  const scriptOneSeen = phases.has(scriptOnePhase) || deploySeen;
+  const scriptTwoSeen = phases.has(scriptTwoPhase) || deploySeen;
+  const deployFailed = failurePhase === 'deploy' && failed;
 
   return [
     {
@@ -4805,13 +4812,13 @@ function releaseStepsForRun(
       id: 'script-one',
       label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
       detail: scriptOne,
-      state: failurePhase === scriptOnePhase && failed ? 'failed' : scriptTwoSeen || healthSeen || success ? 'done' : scriptOneSeen ? 'running' : 'pending',
+      state: (failurePhase === scriptOnePhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : !deploySeen && scriptTwoSeen ? 'done' : scriptOneSeen ? 'running' : 'pending',
     },
     {
       id: 'script-two',
       label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
       detail: scriptTwo,
-      state: failurePhase === scriptTwoPhase && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
+      state: (failurePhase === scriptTwoPhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
     },
     {
       id: 'health',

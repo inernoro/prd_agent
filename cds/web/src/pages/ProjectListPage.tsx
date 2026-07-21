@@ -551,12 +551,21 @@ export function ProjectListPage(): JSX.Element {
     // 间隔，天然 in-flight 去重），页面隐藏时暂停、回到前台立即刷一轮。
     // refresh(false) 内部已调 loadPendingImports，不再单独调。
     let cancelled = false;
+    let inFlight = false;
     let timer: number | undefined;
     const tick = async () => {
-      if (cancelled) return;
-      if (!document.hidden) {
-        // refresh 内部已捕获错误（setState error），这里兜底防未预期 reject 中断循环。
-        await refresh(false).catch(() => undefined);
+      // in-flight 守卫(Codex P2):tick 还在 await refresh 时,visibilitychange
+      // 可能再次调 tick——旧 timer id 已消费,clearTimeout 拦不住,两条链会各自
+      // 续排下一轮,形成永久双循环。有在途 tick 时直接返回,由它续命。
+      if (cancelled || inFlight) return;
+      inFlight = true;
+      try {
+        if (!document.hidden) {
+          // refresh 内部已捕获错误（setState error），这里兜底防未预期 reject 中断循环。
+          await refresh(false).catch(() => undefined);
+        }
+      } finally {
+        inFlight = false;
       }
       if (cancelled) return;
       timer = window.setTimeout(() => { void tick(); }, 10000);
