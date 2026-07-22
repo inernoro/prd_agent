@@ -398,6 +398,95 @@ def _split_markdown_table_row(row):
     return cells
 
 
+def _section_table_rows(markdown, heading):
+    """Return data rows from the first Markdown table under an H2 section."""
+    section = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        markdown or "",
+        re.M | re.S,
+    )
+    if not section:
+        return []
+
+    table = []
+    for line in section.group(1).splitlines():
+        stripped = line.strip()
+        if stripped.startswith("|"):
+            table.append(stripped)
+        elif table:
+            break
+    if len(table) < 2:
+        return []
+
+    parsed = [_split_markdown_table_row(row) for row in table]
+    has_separator = bool(re.match(
+        r"^\s*\|?\s*:?-{3,}:?\s*(\|\s*:?-{3,}:?\s*)+\|?\s*$",
+        table[1],
+    ))
+    rows = parsed[2:] if has_separator else parsed[1:]
+    return [row for row in rows if any(cell.strip() for cell in row)]
+
+
+def _coverage_gap_count(markdown):
+    """Count distinct coverage gaps from the report's structured source of truth.
+
+    Daily reports commonly repeat the same G1..Gn items in both "覆盖缺口" and
+    "总缺口账本". The ledger is authoritative; counting matching words across
+    the whole document makes the header depend on prose wording and can disagree
+    with both tables.
+    """
+    for heading in ("总缺口账本", "覆盖缺口"):
+        rows = _section_table_rows(markdown, heading)
+        if rows:
+            keys = set()
+            for row in rows:
+                first = re.sub(r"[`*_]", "", row[0]).strip().upper() if row else ""
+                keys.add(first or "\x1f".join(cell.strip() for cell in row))
+            return len(keys)
+
+    explicit = re.search(r"覆盖缺口\s*[：:]\s*(\d+)\s*个?", markdown or "", re.I)
+    if explicit:
+        return int(explicit.group(1))
+
+    gap_ids = {
+        re.sub(r"[-_\s]", "", match.group(1)).upper()
+        for match in re.finditer(r"^\|\s*(G[-_\s]?\d+)\s*\|", markdown or "", re.M | re.I)
+    }
+    if gap_ids:
+        return len(gap_ids)
+
+    legacy_lines = {
+        re.sub(r"\s+", " ", line).strip()
+        for line in (markdown or "").splitlines()
+        if re.search(r"未覆盖|not-run|未深测|弱相关|无关", line, re.I)
+        and not re.match(r"^#{1,6}\s", line.strip())
+    }
+    return len(legacy_lines)
+
+
+def _extract_report_time(markdown):
+    """Read the visible report timestamp already injected into the report body."""
+    text = markdown or ""
+    section = re.search(
+        r"^##\s*(?:验收时间|报告时间|生成时间)\s*$\n+\s*([^\n|#][^\n]*)",
+        text,
+        re.M,
+    )
+    if section:
+        return re.sub(r"[`*_]", "", section.group(1)).strip()
+
+    table = re.search(
+        r"^\|\s*(?:验收时间|报告时间|生成时间)\s*\|\s*([^|\n]+)",
+        text,
+        re.M,
+    )
+    if table:
+        return re.sub(r"[`*_]", "", table.group(1)).strip()
+
+    meta = re.search(r"^date:\s*([^\n]+)", text, re.M)
+    return meta.group(1).strip() if meta else ""
+
+
 def _render_table(rows):
     if len(rows) < 2:
         return ""
@@ -681,7 +770,11 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
     }.get(verdict, (verdict, "unknown"))
     row_fail_count = sum(1 for it in problem_items if it.get("severity") == "P0")
     row_risk_count = sum(1 for it in problem_items if it.get("severity") in {"P1", "P2"})
-    row_gap_count = len(re.findall(r"未覆盖|not-run|未深测|弱相关|无关", markdown_content, re.I))
+    row_gap_count = _coverage_gap_count(markdown_content)
+    report_time = _extract_report_time(markdown_content)
+    report_time_html = (
+        f'<time>报告时间 · {html.escape(report_time)}</time>' if report_time else ""
+    )
     table_count = len(re.findall(r"^\|.+\|$", markdown_content, re.M))
     figures = []
     gallery_cards = []
@@ -801,6 +894,8 @@ main{{min-width:0;width:100%;max-width:none;padding:0 34px 72px}}
 .masthead .t b{{font-family:var(--serif);font-size:20px;font-weight:700;display:block;letter-spacing:.02em}}
 .masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
 .masthead .r{{margin-left:auto;text-align:right;font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.12em;line-height:1.8}}
+.masthead .r span,.masthead .r time{{display:block}}
+.masthead .r time{{font-style:normal;color:var(--ink-2);font-weight:600}}
 .title-row{{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;margin:20px 0 4px}}
 .title{{margin:0;font-family:var(--serif);font-size:clamp(21px,3vw,29px);line-height:1.45;font-weight:650;flex:1;min-width:min(100%,300px);text-wrap:balance}}
 .badge{{flex-shrink:0;align-self:flex-start;display:inline-block;padding:9px 16px;border:2.5px solid currentColor;border-radius:4px;background:var(--paper-2);color:var(--ink-3);font-family:var(--serif);font-weight:700;font-size:15px;letter-spacing:.18em;transform:rotate(-4deg);box-shadow:2px 2px 0 rgba(33,29,24,.18);position:relative;margin-top:4px}}
@@ -918,7 +1013,7 @@ main{{padding:0 16px 60px}}
     <div class="masthead">
       <div class="stamp">MAP</div>
       <div class="t"><b>{flavor_cn}</b><span>{flavor_en}</span></div>
-      <div class="r">MAP 验收标准 v2 · 真人路径取证<br>{byline}</div>
+      <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span>{report_time_html}</div>
     </div>
     <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span></div>
     <div class="metric-grid">{summary_html}</div>

@@ -169,6 +169,39 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
 
+    daily_report = """
+# 每日验收报告
+
+## 验收时间
+
+2026-07-22 07:15:30 CST+0800
+
+## 覆盖缺口
+
+| 缺口编号 | 未覆盖内容 | 原因 |
+|---|---|---|
+| G1 | 设置页在线终态 | 目标版未上线 |
+| G2 | 发布向导完整流程 | 不执行生产发布 |
+| G3 | 付费生成 | 不产生外部成本 |
+| G4 | 完整转录终态 | 外部服务未调用 |
+
+## 总缺口账本
+
+| 编号 | 缺口 | 后续条件 |
+|---|---|---|
+| G1 | 设置页在线终态 | 目标版上线后复测 |
+| G2 | 发布向导完整流程 | 在非生产目标复测 |
+| G3 | 付费生成 | 提供测试额度 |
+| G4 | 完整转录终态 | 提供可用外部服务 |
+"""
+    daily_html = archive.build_interactive_html(
+        "日报", "conditional", daily_report, annotated_manifest, flavor="daily"
+    )
+    if '<span>缺口</span><strong>4</strong>' not in daily_html:
+        raise AssertionError("header gap metric must use the four unique ledger rows")
+    if "报告时间 · 2026-07-22 07:15:30 CST+0800" not in daily_html:
+        raise AssertionError("report time must be visible in the top-right masthead")
+
     print("acceptance archive report gates passed")
 
 
