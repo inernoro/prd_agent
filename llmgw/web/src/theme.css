@@ -2,6 +2,8 @@
    暗色为默认；[data-theme="light"] 为浅色。所有颜色走 var()。 */
 
 :root {
+  --font-sans: Inter, 'SF Pro Text', 'SF Pro Display', -apple-system, BlinkMacSystemFont, 'Segoe UI',
+    'Noto Sans SC', 'PingFang SC', 'Microsoft YaHei', sans-serif;
   --bg-page: #08090b;
   --bg-surface: #0d0f12;
   --bg-elevated: #111419;
@@ -638,8 +640,7 @@ body,
   height: 100%;
   background: var(--bg-page);
   color: var(--text-primary);
-  font-family: 'Inter', 'DM Sans', system-ui, -apple-system, 'Segoe UI', Roboto, 'Helvetica Neue', Arial,
-    'PingFang SC', 'Microsoft YaHei', sans-serif;
+  font-family: var(--font-sans);
   font-size: 14px;
   line-height: 1.625;
   -webkit-font-smoothing: antialiased;
@@ -2715,6 +2716,11 @@ a:focus-visible {
   gap: 12px;
 }
 
+.lg-generation-page-body > div {
+  width: min(1180px, 100%);
+  margin-inline: auto;
+}
+
 .lg-generation-load-error {
   max-width: 460px;
   margin: 64px auto 0;
@@ -2883,13 +2889,13 @@ a:focus-visible {
 .lg-logs-heading p {
   margin: 3px 0 0;
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 14px;
   line-height: 1.4;
 }
 
 .lg-logs-heading > span {
   color: var(--text-muted);
-  font-size: 12px;
+  font-size: 13px;
   white-space: nowrap;
 }
 
@@ -2902,12 +2908,12 @@ a:focus-visible {
 
 .lg-log-toolbar > select,
 .lg-log-search {
-  height: 30px;
+  height: 36px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .lg-log-toolbar > select {
@@ -2931,25 +2937,25 @@ a:focus-visible {
 .lg-log-search input {
   min-width: 0;
   flex: 1;
-  height: 28px;
+  height: 34px;
   padding: 0 7px;
   border: 0;
   outline: 0;
   background: transparent;
   color: var(--text-primary);
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
-  font-size: 12px;
+  font-size: 13px;
 }
 
 .lg-log-search button,
 .lg-log-clear {
-  height: 28px;
+  height: 34px;
   padding: 0 9px;
   border: 0;
   border-left: 1px solid var(--border-subtle);
   background: transparent;
   color: var(--text-secondary);
-  font-size: 12px;
+  font-size: 13px;
   cursor: pointer;
 }
 
@@ -2969,8 +2975,107 @@ a:focus-visible {
 }
 
 .lg-log-table {
+  font-family: var(--font-sans);
+  font-size: 14px;
+  line-height: 1.4;
+}
+
+.lg-log-insights {
+  min-height: 106px;
+  display: grid;
+  grid-template-columns: minmax(320px, 1.15fr) minmax(520px, 2fr);
+  gap: 8px;
+  flex-shrink: 0;
+}
+
+.lg-log-insight-chart,
+.lg-log-insight-metrics {
+  min-width: 0;
+  border: 1px solid var(--border-subtle);
+  border-radius: var(--radius);
+  background: var(--bg-surface);
+}
+
+.lg-log-insight-chart {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: center;
+  padding: 0 10px 0 14px;
+}
+
+.lg-log-insight-chart > div:first-child strong,
+.lg-log-insight-chart > div:first-child span {
+  display: block;
+}
+
+.lg-log-insight-chart > div:first-child strong {
+  color: var(--text-primary);
+  font-size: 14px;
+  font-weight: 600;
+}
+
+.lg-log-insight-chart > div:first-child span {
+  margin-top: 3px;
+  color: var(--text-muted);
   font-size: 12px;
-  line-height: 1.35;
+}
+
+.lg-log-insight-metrics {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+}
+
+.lg-log-insight-metrics > div {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  justify-content: center;
+  padding: 14px 16px;
+  border-left: 1px solid var(--border-subtle);
+}
+
+.lg-log-insight-metrics > div:first-child {
+  border-left: 0;
+}
+
+.lg-log-insight-metrics span,
+.lg-log-insight-metrics small {
+  color: var(--text-muted);
+  font-size: 12px;
+}
+
+.lg-log-insight-metrics strong {
+  margin-top: 5px;
+  overflow: hidden;
+  color: var(--text-primary);
+  font-size: 18px;
+  font-weight: 650;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-log-insight-metrics small {
+  margin-top: 2px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.lg-log-app-label,
+.lg-log-app-link {
+  display: block;
+  min-width: 0;
+  color: var(--text-primary);
+  font-family: var(--font-sans);
+  font-size: 14px;
+  font-weight: 500;
+  text-decoration: none;
+}
+
+.lg-log-app-link:hover {
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 3px;
 }
 
 .lg-safe-test-panel {
@@ -3969,6 +4074,27 @@ a:focus-visible {
 
   .lg-log-filters > summary {
     min-height: 36px;
+  }
+
+  .lg-log-insights {
+    grid-template-columns: minmax(0, 1fr);
+  }
+
+  .lg-log-insight-chart {
+    display: none;
+  }
+
+  .lg-log-insight-metrics {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+
+  .lg-log-insight-metrics > div:nth-child(3) {
+    border-left: 0;
+    border-top: 1px solid var(--border-subtle);
+  }
+
+  .lg-log-insight-metrics > div:nth-child(4) {
+    border-top: 1px solid var(--border-subtle);
   }
 
   .lg-generation-view-tabs button,

@@ -3,7 +3,7 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { Copy, X } from 'lucide-react';
+import { ArrowLeft, Copy, X } from 'lucide-react';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
@@ -21,9 +21,9 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{title}</div>
-      <div className="tabular" style={{ marginTop: 3, fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 10, marginTop: 2, color: 'var(--text-muted)' }}>{note}</div> : null}
+      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{title}</div>
+      <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
+      {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -41,10 +41,10 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
         borderBottom: '1px solid var(--border-subtle)',
       }}
     >
-      <span style={{ fontSize: 12, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
+      <span style={{ fontSize: 14, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
       <span
         style={{
-          fontSize: 12,
+          fontSize: 14,
           textAlign: 'right',
           wordBreak: 'break-all',
           color: 'var(--text-secondary)',
@@ -76,7 +76,7 @@ function CodeBlock({ body, empty = '暂无数据' }: { body?: string | null; emp
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        fontSize: 12,
+        fontSize: 13,
         lineHeight: 1.55,
         color: body ? 'var(--text-secondary)' : 'var(--text-muted)',
         background: 'var(--bg-base)',
@@ -274,7 +274,16 @@ function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg
   return chips;
 }
 
-export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onClose: () => void }) {
+export function GenerationDetailsDrawer({
+  logId,
+  onClose,
+  presentation = 'drawer',
+}: {
+  logId: string;
+  onClose: () => void;
+  presentation?: 'drawer' | 'page';
+}) {
+  const isPage = presentation === 'page';
   const [detail, setDetail] = useState<LlmLogDetail | null>(null);
   const [loading, setLoading] = useState(true);
   const [loadError, setLoadError] = useState<string | null>(null);
@@ -308,12 +317,13 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
   }, [logId]);
 
   useEffect(() => {
+    if (isPage) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [onClose]);
+  }, [isPage, onClose]);
 
   const tps = detail ? computeTokPerSec(detail.outputTokens, detail.durationMs) : null;
   const streaming = detail?.isStreaming == null ? DASH : detail.isStreaming ? '是' : '否';
@@ -337,12 +347,22 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
 
   const node = (
     <div
-      style={{ position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.58)', backdropFilter: 'blur(2px)' }}
-      onClick={onClose}
+      className={isPage ? 'lg-generation-page' : undefined}
+      style={isPage
+        ? { position: 'relative', height: '100%', minHeight: 0, background: 'var(--bg-page)' }
+        : { position: 'fixed', inset: 0, zIndex: 100, background: 'rgba(0,0,0,0.58)', backdropFilter: 'blur(2px)' }}
+      onClick={isPage ? undefined : onClose}
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        style={{
+        style={isPage ? {
+          position: 'relative',
+          height: '100%',
+          width: '100%',
+          display: 'flex',
+          flexDirection: 'column',
+          background: 'var(--bg-page)',
+        } : {
           position: 'absolute',
           top: 0,
           right: 0,
@@ -366,19 +386,19 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
           }}
         >
           <div>
-            <div style={{ fontSize: 16, fontWeight: 600, color: 'var(--text-primary)' }}>生成详情</div>
+            <div style={{ fontSize: isPage ? 20 : 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</div>
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 12 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
-              <span style={{ padding: '1px 7px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 12 }}>{detail.platformName || detail.provider || DASH}</span>
-              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 11 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
-            </div> : <div style={{ marginTop: 3, fontSize: 11, color: 'var(--text-muted)' }}>{logId}</div>}
+              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
+              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
+            </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
-          <button aria-label="关闭详情" onClick={onClose} style={{ width: 36, height: 36, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: 'none', borderRadius: 'var(--radius-sm)', opacity: 0.7, color: 'var(--text-secondary)' }}>
-            <X size={18} />
+          <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 36, minWidth: 36, height: 36, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
+            {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
           </button>
         </div>
 
-        <div style={{ flex: 1, padding: '12px 14px 18px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+        <div className={isPage ? 'lg-generation-page-body' : undefined} style={{ flex: 1, padding: isPage ? '18px 20px 28px' : '12px 14px 18px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {loading ? (
             <SectionLoader text="正在加载详情…" />
           ) : loadError || !detail ? (
@@ -594,5 +614,5 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
     </div>
   );
 
-  return createPortal(node, document.body);
+  return isPage ? node : createPortal(node, document.body);
 }

@@ -1,14 +1,13 @@
-// OpenRouter 风格日志主体：紧凑工具栏 + 3 个真实数据视图 + 高密度表格 + 详情抽屉。
-// 聚合趋势留在概览与用量页；本页只负责快速定位单次请求。
+// OpenRouter 风格日志主体：同一字号体系、可比较的完整列、3 个真实数据视图和独立详情页。
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Link, useLocation } from 'react-router-dom';
+import { Link, useLocation, useNavigate } from 'react-router-dom';
 import { RefreshCw, ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
-import { getLogs, getLogsMeta, getLogsSessions } from '@/lib/api';
-import type { LlmLogListItem, SessionItem } from '@/lib/types';
+import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
+import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
-import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
+import { MiniBarChart } from './MiniBarChart';
 import {
   DASH,
   LOGS_SUBTABS,
@@ -60,6 +59,7 @@ function appLabel(item: Pick<LlmLogListItem, 'appCallerCode' | 'appCallerCodeDis
 
 export function LogsView() {
   const location = useLocation();
+  const navigate = useNavigate();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
@@ -120,8 +120,9 @@ export function LogsView() {
   const [sessTotal, setSessTotal] = useState(0);
   const [sessPage, setSessPage] = useState(1);
   const [sessLoading, setSessLoading] = useState(false);
+  const [summary, setSummary] = useState<LogsSummaryData | null>(null);
+  const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
-  const [selectedId, setSelectedId] = useState<string | null>(null);
   const [showExampleGuide, setShowExampleGuide] = useState(false);
 
   useEffect(() => {
@@ -199,6 +200,7 @@ export function LogsView() {
   // 请求序号守卫：切筛选/翻页/tab 时丢弃过期响应，避免乱序覆盖（竞态）。
   const listSeq = useRef(0);
   const sessSeq = useRef(0);
+  const insightSeq = useRef(0);
   const openedRequestIdRef = useRef('');
 
   const loadList = useCallback(
@@ -237,6 +239,17 @@ export function LogsView() {
     [baseParams],
   );
 
+  const loadInsights = useCallback(async () => {
+    const seq = ++insightSeq.current;
+    const [summaryResult, seriesResult] = await Promise.all([
+      getLogsSummary(baseParams),
+      getLogsTimeseries(baseParams),
+    ]);
+    if (seq !== insightSeq.current) return;
+    setSummary(summaryResult.success && summaryResult.data ? summaryResult.data : null);
+    setSeries(seriesResult.success && seriesResult.data ? seriesResult.data.items ?? [] : []);
+  }, [baseParams]);
+
   useEffect(() => {
     setPage(1);
     setSessPage(1);
@@ -247,6 +260,9 @@ export function LogsView() {
   useEffect(() => {
     if (subtab === 'sessions') loadSessions(sessPage);
   }, [subtab, sessPage, loadSessions]);
+  useEffect(() => {
+    void loadInsights();
+  }, [loadInsights]);
 
   useEffect(() => {
     const requestId = filterRequestId.trim();
@@ -258,10 +274,13 @@ export function LogsView() {
     const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
     if (!matched) return;
     openedRequestIdRef.current = requestId;
-    setSelectedId(matched.id);
-  }, [filterRequestId, loading, rows]);
+    navigate(`/logs/${encodeURIComponent(matched.id)}`, {
+      state: { from: `${location.pathname}${location.search}` },
+    });
+  }, [filterRequestId, loading, location.pathname, location.search, navigate, rows]);
 
   const refresh = () => {
+    void loadInsights();
     if (subtab === 'sessions') loadSessions(sessPage);
     else loadList(page);
   };
@@ -272,7 +291,7 @@ export function LogsView() {
       case 'date': {
         const lc = deriveLifecycle(it);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
             <span
               title={`生命周期：${lc.label}`}
               className={lc.pulse ? 'lg-pulse' : undefined}
@@ -286,7 +305,7 @@ export function LogsView() {
         return (
           <span
             className="lg-truncate"
-            style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
             title={it.requestId || it.id}
           >
             {it.requestId || it.id || DASH}
@@ -297,7 +316,7 @@ export function LogsView() {
         const tp = getTransportMeta(it.transport);
         return (
           <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
-            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
               {it.logicalModelPublicId || it.model || DASH}
             </span>
             {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
@@ -307,51 +326,60 @@ export function LogsView() {
       }
       case 'provider':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-secondary)' }} title={it.platformName || it.provider}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={it.platformName || it.provider}>
             {it.platformName || it.provider || DASH}
           </span>
         );
-      case 'app':
+      case 'app': {
+        const code = it.appCallerCode?.trim();
+        const title = `应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
+        if (!code) return <span className="lg-truncate lg-log-app-label" title={title}>{appLabel(it)}</span>;
         return (
-          <span className="lg-truncate" style={{ display: 'block', minWidth: 0, fontSize: 12, color: 'var(--text-primary)', fontFamily: 'ui-monospace, monospace' }} title={`应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`}>
+          <Link
+            className="lg-truncate lg-log-app-link"
+            to={`/app-callers?search=${encodeURIComponent(code)}&focus=${encodeURIComponent(code)}`}
+            title={`${title}；点击进入 App 页面`}
+            onClick={(event) => event.stopPropagation()}
+          >
             {appLabel(it)}
-          </span>
+          </Link>
         );
+      }
       case 'input':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}{it.inputTokens == null ? '' : ' tok'}</span>;
       case 'output':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}{it.outputTokens == null ? '' : ' tok'}</span>;
       case 'tokens':
         return (
-          <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
       case 'cost':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'usage':
-        return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{it.requestType || DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
         const t = computeTokPerSec(it.outputTokens, it.durationMs);
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{t == null ? DASH : `${t}`}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{t == null ? DASH : `${t} tok/s`}</span>;
       }
       case 'finish':
-        return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{it.finishReason || DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.finishReason || DASH}</span>;
       case 'user':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-secondary)' }} title={userLabel(it)}>
+          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={userLabel(it)}>
             {userLabel(it)}
           </span>
         );
       case 'stream':
         return (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>
             {it.isStreaming == null ? DASH : it.isStreaming ? '流式' : '非流'}
           </span>
         );
@@ -363,18 +391,18 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+          <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
             {it.logicalModelPublicId || it.model || DASH}
           </span>
         );
       case 'provider':
-        return <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{it.platformName || it.provider || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.platformName || it.provider || DASH}</span>;
       case 'genId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
+          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
             {it.requestId || DASH}
           </span>
         );
@@ -383,15 +411,15 @@ export function LogsView() {
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
-        return <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>;
       case 'fallback':
         return it.isFallback ? (
           <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>否</span>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>否</span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       default:
         return null;
     }
@@ -401,27 +429,32 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return (
-          <span style={{ fontSize: 12, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
             {fmtDate(it.start)}
             {it.end && it.end !== it.start ? ` ~ ${fmtShortTime(it.end)}` : ''}
           </span>
         );
       case 'sessionId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
+          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
             {it.sessionId || DASH}
           </span>
         );
       case 'app':
-        return (
-          <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }}>
-            {it.appCallerCode || DASH}
-          </span>
-        );
+        return it.appCallerCode ? (
+          <Link
+            className="lg-truncate lg-log-app-link"
+            to={`/app-callers?search=${encodeURIComponent(it.appCallerCode)}&focus=${encodeURIComponent(it.appCallerCode)}`}
+            title="进入 App 页面"
+            onClick={(event) => event.stopPropagation()}
+          >
+            {it.appCallerCode}
+          </Link>
+        ) : <span className="lg-log-app-label">{DASH}</span>;
       case 'primaryModel':
-        return <span className="lg-truncate" style={{ fontSize: 12, fontWeight: 500, color: 'var(--text-primary)' }}>{it.primaryModel || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }}>{it.primaryModel || DASH}</span>;
       case 'primaryProvider':
-        return <span className="lg-truncate" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
+        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
       case 'supporting':
         return it.supportingModels.length ? (
           <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -433,10 +466,10 @@ export function LogsView() {
             ) : null}
           </span>
         ) : (
-          <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>
         );
       case 'requests':
-        return <span className="tabular" style={{ fontSize: 12, color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
       default:
         return null;
     }
@@ -459,16 +492,17 @@ export function LogsView() {
     empty: ReactNode;
   }) {
     const gridCols = columns.map((c) => c.width).join(' ');
+    const tableMinWidth = columns === GENERATIONS_COLUMNS ? 1580 : Math.max(1080, columns.length * 140);
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     return (
       <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overscrollBehavior: 'contain' }}>
-        <div className="lg-log-table" style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: Math.max(980, columns.length * 92) }}>
+        <div className="lg-log-table" style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth }}>
           <div
             style={{
               display: 'grid',
-              gap: 8,
-              minHeight: 34,
-              padding: '8px 12px',
+              gap: 12,
+              minHeight: 44,
+              padding: '11px 14px',
               flexShrink: 0,
               gridTemplateColumns: gridCols,
               borderBottom: '1px solid var(--border-subtle)',
@@ -479,7 +513,7 @@ export function LogsView() {
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 11, fontWeight: 600, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ fontSize: 13, fontWeight: 550, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
               >
                 {c.label}
                 {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
@@ -493,12 +527,20 @@ export function LogsView() {
                   <div
                     key={rowKey(t, idx)}
                     onClick={onRow ? () => onRow(t) : undefined}
+                    onKeyDown={onRow ? (event) => {
+                      if (event.key === 'Enter' || event.key === ' ') {
+                        event.preventDefault();
+                        onRow(t);
+                      }
+                    } : undefined}
+                    role={onRow ? 'link' : undefined}
+                    tabIndex={onRow ? 0 : undefined}
                     className={onRow ? 'lg-row-clickable' : undefined}
                     style={{
                       display: 'grid',
-                      gap: 8,
-                      minHeight: 38,
-                      padding: '7px 12px',
+                      gap: 12,
+                      minHeight: 48,
+                      padding: '10px 14px',
                       alignItems: 'center',
                       cursor: onRow ? 'pointer' : 'default',
                       gridTemplateColumns: gridCols,
@@ -527,8 +569,8 @@ export function LogsView() {
           display: 'flex',
           alignItems: 'center',
           justifyContent: 'space-between',
-          padding: '5px 10px',
-          fontSize: 12,
+          padding: '7px 12px',
+          fontSize: 13,
           color: 'var(--text-muted)',
           borderTop: '1px solid var(--border-subtle)',
         }}
@@ -610,6 +652,9 @@ export function LogsView() {
     filterClientCode,
     filterEnvironment,
   ].filter(Boolean).length;
+  const successRate = summary?.total
+    ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
+    : DASH;
 
   return (
     <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
@@ -718,7 +763,7 @@ export function LogsView() {
         <div
           style={{
             flexShrink: 0,
-            fontSize: 12,
+            fontSize: 13,
             color: 'var(--err)',
             padding: '8px 12px',
             borderRadius: 'var(--radius-sm)',
@@ -728,6 +773,21 @@ export function LogsView() {
         >
           {metaError || listError}
         </div>
+      ) : null}
+
+      {subtab === 'generations' ? (
+        <section className="lg-log-insights" aria-label="请求汇总趋势">
+          <div className="lg-log-insight-chart">
+            <div><strong>请求趋势</strong><span>{TIME_RANGE_PRESETS.find((preset) => preset.key === presetKey)?.label}</span></div>
+            <MiniBarChart data={series} height={88} />
+          </div>
+          <div className="lg-log-insight-metrics">
+            <div><span>请求</span><strong className="tabular">{fmtCompact(summary?.total)}</strong></div>
+            <div><span>成功率</span><strong className="tabular">{successRate}</strong></div>
+            <div><span>Token</span><strong className="tabular">{fmtCompact(summary?.totalTokens)}</strong></div>
+            <div><span>估算费用</span><strong className="tabular">{fmtCost(summary?.estimatedCostUsd, 'USD')}</strong><small>{summary?.unknownCostRequests ? `${summary.unknownCostRequests} 条费用未知` : '已记录费用范围'}</small></div>
+          </div>
+        </section>
       ) : null}
 
       <Card style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
@@ -740,7 +800,7 @@ export function LogsView() {
                 columns={GENERATIONS_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
-                onRow={(it) => setSelectedId(it.id)}
+                onRow={(it) => navigate(`/logs/${encodeURIComponent(it.id)}`, { state: { from: `${location.pathname}${location.search}` } })}
                 render={renderGenerationCell}
                 empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
@@ -757,7 +817,7 @@ export function LogsView() {
                 columns={UPSTREAM_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
-                onRow={(it) => setSelectedId(it.id)}
+                onRow={(it) => navigate(`/logs/${encodeURIComponent(it.id)}`, { state: { from: `${location.pathname}${location.search}` } })}
                 render={renderUpstreamCell}
                 empty={emptyCell('该时间范围内还没有上游调用记录', true)}
               />
@@ -785,7 +845,6 @@ export function LogsView() {
 
       {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
 
-      {selectedId ? <GenerationDetailsDrawer logId={selectedId} onClose={() => setSelectedId(null)} /> : null}
     </div>
   );
 }

@@ -24,13 +24,13 @@
 
 ![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
 
-2. 粘贴完整 requestId 后，唯一匹配会自动打开详情。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
+2. 粘贴完整 requestId 后，唯一匹配会进入带独立路径的“请求详情”页。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
 
-**图 070 Logs 用一条紧凑工具栏定位请求，不把趋势报表挡在日志表格前面**
+**图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题**
 
-![图 070 Logs 用一条紧凑工具栏定位请求，不把趋势报表挡在日志表格前面](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
 
-3. 再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。先在“概览”核对时间、状态、协议、App `G-tutorial.gateway-book::chat`、模型、Provider、token、速度和总耗时；密钥这里只显示前缀或遮盖信息。
+3. 返回列表，再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。列表应连续显示时间、请求 ID、模型、Provider、App、输入、输出、费用、用途、速度、结束原因、客户端用户和状态，不应靠一列吞掉中间空白。点击 App `G-tutorial.gateway-book::chat` 会进入该 appCaller 的独立配置与治理页面；点击日志行则进入请求详情。详情“概览”核对时间、状态、协议、模型、Provider、token、速度和总耗时；密钥这里只显示前缀或遮盖信息。
 
 **图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试**
 
@@ -60,7 +60,7 @@
 
 ![图 108 审计页签把估算、实际、价格快照、汇率和身份时间分开说明](https://cds.miduo.org/api/reports/assets/38435bbbfdecaed01838c587b2b1aecf52a33bf2a6c4b7c94706d75997c0b013.jpg)
 
-8. 关闭详情。如果记录本身带 session，再切页面上方的“会话”页签，或展开“更多筛选”使用“会话 ID”；这个“会话”是请求记录页面的同级视图，不是详情抽屉的第五个页签。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
+8. 点击“返回请求记录”。如果记录本身带 session，再切页面上方的“会话”页签，或展开“更多筛选”使用“会话 ID”；这个“会话”是请求记录页面的同级视图，不是请求详情的第五个页签。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
 
 **图 073 请求、上游调用和会话三个页面级页签均来自真实数据源**
 
@@ -74,7 +74,7 @@
 
 ## 看到什么算成功
 
-两条 requestId 提交后各自定位一条当前租户记录并自动打开详情：dry-run 明确显示未调用模型，非 dry-run 记录能用概览、请求与响应、路由、审计四页签说明 key、appCaller、模型池、Provider、策略和费用证据。请求、上游调用、会话三个列表视图不含占位数据；没有 session 时不虚构会话，敏感明文也没有泄露。
+两条 requestId 提交后各自定位一条当前租户记录并进入独立详情路径；列表行和 App 分别跳向请求详情与 appCaller 页面。dry-run 明确显示未调用模型，非 dry-run 记录能用概览、请求与响应、路由、审计四页签说明 key、appCaller、模型池、Provider、策略和费用证据。请求、上游调用、会话三个列表视图不含占位数据；没有 session 时不虚构会话，敏感明文也没有泄露。
 
 ## 失败怎么办
 
