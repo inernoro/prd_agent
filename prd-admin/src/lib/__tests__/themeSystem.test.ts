@@ -289,6 +289,8 @@ describe('主题系统契约', () => {
     expect(launcher).not.toMatch(/className="[^"]*home-launcher-(?:quick-link|recent)(?=\s)[^"]*\brounded-full\b/);
     expect(styles).toContain("grid-template-areas: 'intro command learning'");
     expect(styles).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
+    expect(styles).toContain('.home-launcher-quick-nav--4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }');
+    expect(styles).toContain('.home-launcher-quick-nav--5 .home-launcher-quick-link:nth-child(4)');
     expect(styles).toContain('scroll-snap-type: x proximity');
   });
 
