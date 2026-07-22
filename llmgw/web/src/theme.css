@@ -3275,15 +3275,10 @@ a:focus-visible {
 }
 
 .lg-log-table-settings-popover {
-  position: absolute;
-  z-index: 40;
-  top: auto;
-  right: 0;
-  bottom: 37px;
+  position: fixed;
+  z-index: 120;
   display: flex;
-  max-height: min(360px, calc(100dvh - 32px));
   flex-direction: column;
-  width: 286px;
   overflow: hidden;
   border: 1px solid var(--border-strong);
   border-radius: 10px;
@@ -3341,8 +3336,8 @@ a:focus-visible {
 }
 
 .lg-log-column-list {
+  flex: 1;
   min-height: 0;
-  max-height: 270px;
   overflow-y: auto;
   padding: 6px;
 }
