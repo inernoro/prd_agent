@@ -2,14 +2,6 @@
 @tailwind components;
 @tailwind utilities;
 
-/* AI 操作卡周界光迹的旋转角。注册为 <angle> 才能被 keyframe 连续插值
-   (未注册的自定义属性动画是离散跳变);必须放在 @layer 之外的顶层。 */
-@property --cds-ai-angle {
-  syntax: '<angle>';
-  initial-value: 0deg;
-  inherits: false;
-}
-
 /*
  * CDS design tokens — single source of truth.
  *
@@ -581,78 +573,22 @@
     animation: cds-site-notice-pulse 1.55s ease-in-out infinite;
   }
 
-  /* AI 正在操作的分支卡:一缕细光沿卡片边框巡回——"AI 在描这张卡"。
-     1.5px、低亮度、3.4s 一圈,存在感来自移动本身,不靠亮度轰炸;
-     静态 ring(tsx 里的 ring-sky)保持常亮兜底,光迹只做"活"的那一层。 */
+  /* AI 正在操作的分支卡:标题扫光是唯一主动态。卡片只保留静态边框和
+     左侧低频呼吸光轨,避免边框巡光、图标呼吸、状态点扩散同时争夺注意力。 */
   .cds-ai-active-card {
     position: relative;
-  }
-
-  .cds-ai-active-card::after {
-    content: '';
-    position: absolute;
-    inset: -1px;
-    z-index: 2;
-    border-radius: inherit;
-    padding: 1.5px;
-    background: conic-gradient(
-      from var(--cds-ai-angle, 0deg),
-      transparent 0deg 288deg,
-      rgb(56 189 248 / 0.1) 306deg,
-      rgb(125 211 252 / 0.85) 336deg,
-      rgb(186 230 253 / 0.95) 348deg,
-      transparent 360deg
-    );
-    -webkit-mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    -webkit-mask-composite: xor;
-    mask:
-      linear-gradient(#fff 0 0) content-box,
-      linear-gradient(#fff 0 0);
-    mask-composite: exclude;
-    pointer-events: none;
-    animation: cds-ai-trace 3.4s linear infinite;
-  }
-
-  [data-theme='light'] .cds-ai-active-card::after {
-    background: conic-gradient(
-      from var(--cds-ai-angle, 0deg),
-      transparent 0deg 288deg,
-      rgb(2 132 199 / 0.08) 306deg,
-      rgb(2 132 199 / 0.7) 336deg,
-      rgb(14 165 233 / 0.85) 348deg,
-      transparent 360deg
-    );
-  }
-
-  .cds-ai-active-card .cds-ai-kinetic-icon {
-    transform-origin: center;
-    filter: drop-shadow(0 0 6px rgb(56 189 248 / 0.6));
-    animation: cds-ai-kinetic-icon 2.2s ease-in-out infinite;
-  }
-
-  .cds-ai-active-card .cds-ai-kinetic-dot {
+    border-color: rgb(56 189 248 / 0.42) !important;
     box-shadow:
-      0 0 0 0 rgb(56 189 248 / 0.42),
-      0 0 14px rgb(45 212 191 / 0.62);
-    animation: cds-ai-kinetic-dot 1.2s ease-in-out infinite;
+      0 0 0 1px rgb(56 189 248 / 0.1),
+      0 16px 34px -28px rgb(56 189 248 / 0.62);
   }
 
-  .cds-ai-active-card .cds-ai-delay-0 {
-    animation-delay: 0s;
-  }
-
-  .cds-ai-active-card .cds-ai-delay-1 {
-    animation-delay: 0.12s;
-  }
-
-  .cds-ai-active-card .cds-ai-delay-2 {
-    animation-delay: 0.24s;
-  }
-
-  .cds-ai-active-card .cds-ai-delay-3 {
-    animation-delay: 0.36s;
+  .cds-ai-active-rail {
+    box-shadow:
+      0 0 12px rgb(56 189 248 / 0.42),
+      0 0 24px rgb(56 189 248 / 0.2);
+    transform-origin: left center;
+    animation: cds-ai-rail-breathe 2.8s ease-in-out infinite;
   }
 
   .cds-actor-name-glow {
@@ -660,12 +596,6 @@
     text-shadow:
       0 0 8px var(--cds-actor-name-glow),
       0 0 18px var(--cds-actor-name-glow-soft);
-  }
-
-  .cds-actor-name-glow--ai {
-    color: rgb(94 234 212 / 0.92);
-    --cds-actor-name-glow: rgb(45 212 191 / 0.62);
-    --cds-actor-name-glow-soft: rgb(20 184 166 / 0.34);
   }
 
   .cds-actor-name-glow--build {
@@ -714,6 +644,13 @@
       0 0 10px rgb(2 132 199 / 0.12);
   }
 
+  [data-theme='light'] .cds-ai-active-card {
+    border-color: rgb(2 132 199 / 0.46) !important;
+    box-shadow:
+      0 0 0 1px rgb(2 132 199 / 0.08),
+      0 16px 34px -28px rgb(2 132 199 / 0.42);
+  }
+
   @keyframes cds-ai-beacon-body {
     0%, 100% {
       transform: translateZ(0) scale(1);
@@ -751,38 +688,14 @@
     }
   }
 
-  /* 收敛版:去掉左右摇头(±6deg 太闹),只留呼吸级的托举 + 亮度起伏。 */
-  @keyframes cds-ai-kinetic-icon {
+  @keyframes cds-ai-rail-breathe {
     0%, 100% {
-      transform: translateY(0) scale(1);
-      opacity: 0.82;
+      opacity: 0.46;
+      transform: scaleY(0.84);
     }
     50% {
-      transform: translateY(-0.5px) scale(1.06);
-      opacity: 1;
-    }
-  }
-
-  @keyframes cds-ai-trace {
-    to {
-      --cds-ai-angle: 360deg;
-    }
-  }
-
-  @keyframes cds-ai-kinetic-dot {
-    0%, 100% {
-      transform: scale(0.86);
-      opacity: 0.72;
-      box-shadow:
-        0 0 0 0 rgb(56 189 248 / 0.32),
-        0 0 12px rgb(45 212 191 / 0.42);
-    }
-    50% {
-      transform: scale(1.34);
-      opacity: 1;
-      box-shadow:
-        0 0 0 6px rgb(56 189 248 / 0),
-        0 0 18px rgb(45 212 191 / 0.86);
+      opacity: 0.92;
+      transform: scaleY(1);
     }
   }
 
@@ -817,15 +730,10 @@
     .cds-ai-preview-beacon::before,
     .cds-ai-preview-beacon::after,
     .cds-ai-preview-beacon svg,
-    .cds-ai-active-card .cds-ai-kinetic-icon,
-    .cds-ai-active-card .cds-ai-kinetic-dot,
+    .cds-ai-active-rail,
     .cds-actor-name-glow,
     .cds-site-notice-trigger--active {
       animation: none;
-    }
-
-    .cds-ai-active-card::after {
-      content: none;
     }
   }
 

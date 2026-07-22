@@ -43,6 +43,7 @@ import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitor
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
+import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
 import {
   Dialog,
@@ -5089,17 +5090,14 @@ const BranchCard = memo(function BranchCard({
   const [commitHistoryState, setCommitHistoryState] = useState<
     { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
   >({ status: 'idle', commits: [] });
-  const actorNameGlowVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running' || isAiActive);
+  const actorNameGlowVisible = Boolean(footerBuilder) && (isInterim || action?.status === 'running');
   const actorNameGlowTone = isError || action?.status === 'error'
     ? 'danger'
-    : isAiActive
-      ? 'ai'
-      : branch.status === 'stopping' || action?.kind === 'stop'
-        ? 'warning'
-        : 'build';
+    : branch.status === 'stopping' || action?.kind === 'stop'
+      ? 'warning'
+      : 'build';
   const actorNameGlowClass = actorNameGlowVisible
     ? {
-      ai: 'cds-actor-name-glow cds-actor-name-glow--ai',
       build: 'cds-actor-name-glow cds-actor-name-glow--build',
       warning: 'cds-actor-name-glow cds-actor-name-glow--warning',
       danger: 'cds-actor-name-glow cds-actor-name-glow--danger',
@@ -5258,7 +5256,7 @@ const BranchCard = memo(function BranchCard({
           : 'cds-branch-card border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]'
       } transition-[border-color,box-shadow,transform,opacity] duration-150 hover:-translate-y-0.5 hover:border-[hsl(var(--hairline-strong))] hover:shadow-md hover:opacity-100 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-primary/60 ${
         dimWholeCard ? 'opacity-60' : ''
-      } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card ring-1 ring-sky-400/45 shadow-[0_0_0_1px_rgba(56,189,248,0.22),0_12px_30px_-20px_rgba(56,189,248,0.75)]' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
+      } ${roleCardClass} ${isInterim ? 'cds-branch-card-busy' : ''} ${isAiActive ? 'cds-ai-active-card' : ''} ${highlighted ? 'cds-card-selected' : ''} ${highlightPulse ? 'cds-card-selected-flash' : ''}`}
       role="button"
       tabIndex={0}
       onClick={onDetail}
@@ -5275,7 +5273,7 @@ const BranchCard = memo(function BranchCard({
       ) : null}
       {isAiActive ? (
         <div
-          className="pointer-events-none absolute inset-y-0 left-0 w-1 bg-sky-400 shadow-[0_0_18px_rgba(56,189,248,0.65)]"
+          className="cds-ai-active-rail pointer-events-none absolute inset-y-0 left-0 w-1 bg-sky-400"
           aria-hidden
         />
       ) : null}
@@ -5288,17 +5286,17 @@ const BranchCard = memo(function BranchCard({
           <span className="mt-1.5 shrink-0" title={runtimeIconTitle}>
             {runtime?.prebuilt ? (
               <Zap
-                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
                 aria-label={runtime.label}
               />
             ) : runtime ? (
               <Rocket
-                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
                 aria-label={runtime.label}
               />
             ) : (
               <Github
-                className={`h-4 w-4 ${runtimeIconClass} ${isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-0' : isInterim ? 'animate-pulse' : ''}`}
+                className={`h-4 w-4 ${runtimeIconClass} ${isInterim ? 'animate-pulse' : ''}`}
                 aria-label="源码版"
               />
             )}
@@ -5309,7 +5307,17 @@ const BranchCard = memo(function BranchCard({
                 className="min-w-0 flex-1 truncate text-[17px] font-semibold leading-7 tracking-tight"
                 title={branch.branch}
               >
-                {branch.branch}
+                {isAiActive ? (
+                  <ShinyText
+                    text={branch.branch}
+                    speed={2.4}
+                    delay={1.4}
+                    spread={112}
+                    color="hsl(var(--foreground) / 0.74)"
+                    shineColor="hsl(var(--foreground))"
+                    className="block max-w-full truncate"
+                  />
+                ) : branch.branch}
               </h3>
               {branch.isFavorite ? <Star className="h-3 w-3 shrink-0 fill-current text-amber-500" /> : null}
               {branch.isColorMarked ? <Lightbulb className="h-3 w-3 shrink-0 text-primary" /> : null}
@@ -5334,7 +5342,7 @@ const BranchCard = memo(function BranchCard({
                     setAiPanelOpen((current) => !current);
                   }}
                 >
-                  <Bot className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-1 h-2.5 w-2.5' : 'h-2.5 w-2.5'} aria-hidden />
+                  <Bot className="h-2.5 w-2.5" aria-hidden />
                   AI
                 </button>
               ) : null}
@@ -5561,11 +5569,11 @@ const BranchCard = memo(function BranchCard({
             title={isInterim ? `${statusLabel(branch.status)}已持续时间` : undefined}
             data-since={isInterim ? busySince || '' : undefined}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isAiActive ? 'cds-ai-kinetic-dot ' : ''}${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
+            <span className={`h-1.5 w-1.5 rounded-full ${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
             {isError ? issueLabel : statusLabel(branch.status)}
             {isInterim ? (
               <>
-                <Clock3 className={isAiActive ? 'cds-ai-kinetic-icon cds-ai-delay-3 h-3 w-3' : 'h-3 w-3'} aria-hidden />
+                <Clock3 className="h-3 w-3" aria-hidden />
                 <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
               </>
             ) : null}
@@ -5581,7 +5589,7 @@ const BranchCard = memo(function BranchCard({
             className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
             title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
           >
-            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-sky-400" aria-hidden />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" aria-hidden />
             排队中 · 前面还有 {branch.buildQueue.ahead} 个
             <span className="text-muted-foreground/70">（{branch.buildQueue.active}/{branch.buildQueue.max} 构建中）</span>
           </span>
@@ -5652,7 +5660,7 @@ const BranchCard = memo(function BranchCard({
             className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
             title={`极速版（CI 预构建）：等待 GitHub Actions 把 commit ${(branch.ciTargetSha || '').slice(0, 7)} 编译成镜像,完成后自动拉取部署`}
           >
-            <span className="cds-ai-kinetic-dot h-1.5 w-1.5 rounded-full bg-primary/60" aria-hidden />
+            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-primary/60" aria-hidden />
             等待 CI 镜像
             {branch.ciWorkflowRunUrl ? (
               <a
