@@ -1054,8 +1054,8 @@ export default function ChangelogPage() {
   // 数据源标签 + 拉取时间显示（github / local / none）
   const sourceLabel = (() => {
     const source = currentWeek?.source ?? releases?.source ?? 'none';
-    if (source === 'github') return { text: 'GitHub', color: '#86efac' };
-    if (source === 'local') return { text: '本地仓库', color: '#93c5fd' };
+    if (source === 'github') return { text: 'GitHub', color: 'var(--semantic-success-text)' };
+    if (source === 'local') return { text: '本地仓库', color: 'var(--semantic-info-text)' };
     return null;
   })();
   const fetchedAt = currentWeek?.fetchedAt || releases?.fetchedAt || '';
@@ -1448,7 +1448,7 @@ export default function ChangelogPage() {
                   style={{
                     background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
                     border: `1px solid ${active ? 'rgba(99, 102, 241, 0.32)' : 'rgba(255, 255, 255, 0.08)'}`,
-                    color: active ? '#c7d2fe' : 'var(--text-muted)',
+                    color: active ? 'var(--selection-text)' : 'var(--text-muted)',
                     cursor: 'pointer',
                   }}
                 >
@@ -1458,7 +1458,7 @@ export default function ChangelogPage() {
                     className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold"
                     style={{
                       background: active ? 'rgba(199, 210, 254, 0.14)' : 'rgba(255, 255, 255, 0.05)',
-                      color: active ? '#e0e7ff' : 'var(--text-muted)',
+                      color: active ? 'var(--selection-text)' : 'var(--text-muted)',
                       border: `1px solid ${active ? 'rgba(199, 210, 254, 0.22)' : 'rgba(255, 255, 255, 0.08)'}`,
                       fontVariantNumeric: 'tabular-nums',
                     }}
@@ -1549,7 +1549,7 @@ export default function ChangelogPage() {
                   ? 'rgba(99, 102, 241, 0.10)'
                   : 'rgba(255, 255, 255, 0.04)',
                 border: `1px solid ${activeSummaryStatus === 'loading' ? 'rgba(99, 102, 241, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
-                color: activeSummaryStatus === 'loading' ? '#c7d2fe' : 'var(--text-secondary)',
+                color: activeSummaryStatus === 'loading' ? 'var(--selection-text)' : 'var(--text-secondary)',
                 boxShadow: activeSummaryStatus === 'loading' ? '0 0 0 1px rgba(99, 102, 241, 0.08)' : 'none',
               }}
               title="总结当前页签的更新内容"
@@ -1577,7 +1577,7 @@ export default function ChangelogPage() {
                   style={{
                     background: 'rgba(255, 255, 255, 0.06)',
                     border: '1px solid rgba(255, 255, 255, 0.08)',
-                    color: '#c7d2fe',
+                    color: 'var(--selection-text)',
                   }}
                 >
                   <Wand2 size={12} />
@@ -2536,7 +2536,7 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
           background: 'rgba(99, 102, 241, 0.12)',
-          color: '#c7d2fe',
+          color: 'var(--selection-text)',
           border: '1px solid rgba(99, 102, 241, 0.24)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         }}
@@ -2577,7 +2577,7 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
             className="h-4 w-4 rounded-full inline-flex items-center justify-center text-[9px] font-semibold"
             style={{
               background: 'rgba(99, 102, 241, 0.18)',
-              color: '#c7d2fe',
+              color: 'var(--selection-text)',
             }}
           >
             {avatarLetter}
@@ -2667,7 +2667,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
           background: 'rgba(99, 102, 241, 0.12)',
-          color: '#c7d2fe',
+          color: 'var(--selection-text)',
           border: '1px solid rgba(99, 102, 241, 0.24)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         }}
@@ -2697,7 +2697,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
             className="h-4 w-4 rounded-full inline-flex items-center justify-center text-[9px] font-semibold"
             style={{
               background: 'rgba(99, 102, 241, 0.18)',
-              color: '#c7d2fe',
+              color: 'var(--selection-text)',
             }}
           >
             {avatarLetter}

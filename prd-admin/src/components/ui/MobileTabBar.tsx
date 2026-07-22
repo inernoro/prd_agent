@@ -2,8 +2,6 @@ import { useState, useCallback, useEffect, type CSSProperties } from 'react';
 import { createPortal } from 'react-dom';
 import { useLocation, useNavigate } from 'react-router-dom';
 import { cn } from '@/lib/cn';
-import { useDataTheme } from '@/hooks/useDataTheme';
-import { AS_COLOR, AS_COLOR_LIGHT } from '@/lib/appStoreTokens';
 import {
   Home,
   Compass,
@@ -99,74 +97,38 @@ export function MobileTabBar({ className }: MobileTabBarProps) {
   const location = useLocation();
   const navigate = useNavigate();
   const [menuOpen, setMenuOpen] = useState(false);
-  // 双主题（2026-07-12「底部没有白」修复）:跟随 <html data-theme>,浅色时整条 Tab 栏
-  // 与快速创建抽屉走白底墨字,不再永远压一条黑边在浅色页面底部。
-  const light = useDataTheme() === 'light';
-  const T = light
-    ? {
-        barBg: 'linear-gradient(0deg, rgba(255,255,255,0.98) 0%, rgba(250,250,251,0.94) 100%)',
-        barBorder: '1px solid rgba(20,21,26,0.08)',
-        barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(20,21,26,0.05) 50%, transparent 100%)',
-        // iOS tab bar 激活项整体染 systemBlue,idle 走中性灰
-        iconActive: AS_COLOR_LIGHT.blue,
-        iconIdle: 'rgba(24,25,28,0.38)',
-        labelActive: AS_COLOR_LIGHT.blue,
-        labelIdle: 'rgba(24,25,28,0.36)',
-        centerBg: 'rgba(20,21,26,0.06)',
-        centerBgOpen: 'rgba(20,21,26,0.12)',
-        centerBorder: '1px solid rgba(20,21,26,0.10)',
-        centerShadow: 'none',
-        centerIcon: '#18191c',
-        sheetBg: 'linear-gradient(180deg, rgba(255,255,255,0.99) 0%, rgba(247,247,248,0.99) 100%)',
-        sheetBorder: '1px solid rgba(20,21,26,0.08)',
-        sheetShadow: '0 -18px 48px rgba(20,21,26,0.16)',
-        sheetGrip: 'rgba(20,21,26,0.16)',
-        sheetTitle: '#18191c',
-        sheetSub: 'rgba(24,25,28,0.45)',
-        sheetLabel: 'rgba(24,25,28,0.45)',
-        sheetItemBg: 'rgba(20,21,26,0.03)',
-        sheetItemBorder: '1px solid rgba(20,21,26,0.07)',
-        sheetItemDivider: '1px solid rgba(20,21,26,0.06)',
-        sheetItemTitle: '#18191c',
-        sheetItemDesc: 'rgba(24,25,28,0.45)',
-        sheetChevron: 'rgba(24,25,28,0.3)',
-        closeBg: 'rgba(20,21,26,0.05)',
-        closeBorder: '1px solid rgba(20,21,26,0.09)',
-        closeIcon: 'rgba(24,25,28,0.6)',
-        activePress: 'active:bg-black/[0.04]',
-      }
-    : {
-        barBg: 'linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%)',
-        barBorder: '1px solid rgba(255, 255, 255, 0.06)',
-        barHighlight: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%)',
-        // iOS tab bar 激活项整体染 systemBlue,idle 走中性灰
-        iconActive: AS_COLOR.blue,
-        iconIdle: 'rgba(255, 255, 255, 0.35)',
-        labelActive: AS_COLOR.blue,
-        labelIdle: 'rgba(255, 255, 255, 0.30)',
-        centerBg: 'rgba(255, 255, 255, 0.12)',
-        centerBgOpen: 'rgba(255, 255, 255, 0.18)',
-        centerBorder: '1px solid rgba(255, 255, 255, 0.15)',
-        centerShadow: '0 0 12px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.15)',
-        centerIcon: 'rgba(255, 255, 255, 0.90)',
-        sheetBg: 'linear-gradient(180deg, rgba(33,34,43,0.99) 0%, rgba(20,21,28,0.99) 100%)',
-        sheetBorder: '1px solid rgba(255,255,255,0.08)',
-        sheetShadow: '0 -18px 48px rgba(0,0,0,0.45)',
-        sheetGrip: 'rgba(255,255,255,0.18)',
-        sheetTitle: 'rgba(255,255,255,0.94)',
-        sheetSub: 'rgba(255,255,255,0.45)',
-        sheetLabel: 'rgba(255,255,255,0.40)',
-        sheetItemBg: 'rgba(255,255,255,0.05)',
-        sheetItemBorder: '1px solid rgba(255,255,255,0.07)',
-        sheetItemDivider: '1px solid rgba(255,255,255,0.06)',
-        sheetItemTitle: 'rgba(255,255,255,0.92)',
-        sheetItemDesc: 'rgba(255,255,255,0.45)',
-        sheetChevron: 'rgba(255,255,255,0.30)',
-        closeBg: 'rgba(255,255,255,0.08)',
-        closeBorder: '1px solid rgba(255,255,255,0.10)',
-        closeIcon: 'rgba(255,255,255,0.75)',
-        activePress: 'active:bg-white/[0.06]',
-      };
+  // 视觉值统一由 tokens.css 的主题契约提供；此处不再维护两套明暗分支。
+  const T = {
+    barBg: 'var(--mobile-tab-bg)',
+    barBorder: 'var(--mobile-tab-border)',
+    barHighlight: 'var(--mobile-tab-highlight)',
+    iconActive: 'var(--mobile-tab-active)',
+    iconIdle: 'var(--mobile-tab-idle)',
+    labelActive: 'var(--mobile-tab-active)',
+    labelIdle: 'var(--mobile-tab-idle)',
+    centerBg: 'var(--mobile-tab-center-bg)',
+    centerBgOpen: 'var(--mobile-tab-center-bg-open)',
+    centerBorder: 'var(--mobile-tab-center-border)',
+    centerShadow: 'var(--mobile-tab-center-shadow)',
+    centerIcon: 'var(--mobile-tab-center-icon)',
+    sheetBg: 'var(--mobile-sheet-bg)',
+    sheetBorder: 'var(--mobile-sheet-border)',
+    sheetShadow: 'var(--mobile-sheet-shadow)',
+    sheetGrip: 'var(--mobile-sheet-grip)',
+    sheetTitle: 'var(--mobile-sheet-title)',
+    sheetSub: 'var(--mobile-sheet-copy)',
+    sheetLabel: 'var(--mobile-sheet-copy)',
+    sheetItemBg: 'var(--mobile-sheet-item-bg)',
+    sheetItemBorder: 'var(--mobile-sheet-item-border)',
+    sheetItemDivider: 'var(--mobile-sheet-item-divider)',
+    sheetItemTitle: 'var(--text-primary)',
+    sheetItemDesc: 'var(--mobile-sheet-copy)',
+    sheetChevron: 'var(--mobile-sheet-chevron)',
+    closeBg: 'var(--mobile-sheet-close-bg)',
+    closeBorder: 'var(--mobile-sheet-close-border)',
+    closeIcon: 'var(--mobile-sheet-close-icon)',
+    activePress: 'mobile-press-soft',
+  } as const;
 
   const handleActionSelect = useCallback((path: string) => {
     setMenuOpen(false);

@@ -601,8 +601,8 @@ function isAcceptanceEntry(entry: DocBrowserEntry): boolean {
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
   if (entry.isFolder) {
     return isOpen
-      ? <FolderOpen size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />
-      : <FolderClosed size={14} style={{ color: 'rgba(234,179,8,0.6)' }} />;
+      ? <FolderOpen size={14} style={{ color: 'var(--semantic-warning-text)' }} />
+      : <FolderClosed size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
   }
   if (isAcceptanceEntry(entry)) {
     return (
@@ -611,14 +611,14 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
       </ClipboardCheck>
     );
   }
-  if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
+  if (isPrimary) return <Star size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
   if (isPinned) return <Pin size={14} style={{ color: 'var(--selection-text)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
   // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
   // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
   if (entry.sourceType === 'subscription') {
     const color = entry.syncStatus === 'error' ? 'rgba(248,113,113,0.95)'
-      : entry.isPaused ? 'rgba(234,179,8,0.95)'
+      : entry.isPaused ? 'var(--semantic-warning-text)'
       : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.95)'
       : 'var(--text-muted)';
     const title = entry.syncStatus === 'error' ? '订阅同步出错'
@@ -1432,8 +1432,7 @@ function TreeNode({
                 ...(!reserveSelectSpace
                   ? {
                       left: `${10 + depth * 14}px`,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
+                      top: 8,
                       zIndex: 2,
                       boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
                     }
@@ -1529,7 +1528,7 @@ function TreeNode({
           <span
             onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
             className="flex-shrink-0 cursor-pointer"
-            style={{ color: 'rgba(234,179,8,0.85)' }}
+            style={{ color: 'var(--semantic-warning-text)' }}
             title="已分享 · 点击查看或复制链接"
           >
             <Share2 size={11} />
@@ -1593,7 +1592,7 @@ function TreeNode({
 
         {/* README 保留为文字徽章；置顶状态已由行首 Pin 图标表达，避免重复。 */}
         {!isFolder && isPrimary && (
-          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
+          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'var(--semantic-warning-text)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
         )}
@@ -3098,7 +3097,7 @@ export function DocBrowser({
                         style={{
                           height: 20,
                           lineHeight: '20px',
-                          color: active ? '#fff' : c.text,
+                          color: active ? 'white' : c.text,
                           background: active ? c.dot : c.bg,
                           border: `1px solid ${active ? c.dot : c.border}`,
                           letterSpacing: '0.01em',
@@ -3122,11 +3121,11 @@ export function DocBrowser({
                 placeholder="文件夹名称..."
                 autoFocus
                 className="flex-1 h-7 px-2.5 rounded-[8px] text-[11px] outline-none"
-                style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               />
               <button onClick={handleCreateFolder}
                 className="h-7 px-2.5 rounded-[8px] text-[10px] font-semibold cursor-pointer"
-                style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.9)', border: '1px solid rgba(234,179,8,0.15)' }}>
+                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                 创建
               </button>
             </div>
@@ -3397,7 +3396,7 @@ export function DocBrowser({
               })()}
               {selectedEntryId === primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'rgba(234,179,8,0.08)', color: 'rgba(234,179,8,0.8)', border: '1px solid rgba(234,179,8,0.12)' }}>
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                   README
                 </span>
               )}
@@ -3413,16 +3412,15 @@ export function DocBrowser({
                 const tagLimit = isMobile ? 1 : 4;
                 return (
                   <>
-                    {sel.tags!.slice(0, tagLimit).map(tag => (
-                      <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{
-                          background: 'rgba(168,85,247,0.08)',
-                          color: 'rgba(216,180,254,0.92)',
-                          border: '1px solid rgba(168,85,247,0.16)',
-                        }}>
-                        #{tag}
-                      </span>
-                    ))}
+                    {sel.tags!.slice(0, tagLimit).map(tag => {
+                      const c = getTagColor(tag, tagColorMap);
+                      return (
+                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                          style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+                          #{tag}
+                        </span>
+                      );
+                    })}
                     {sel.tags!.length > tagLimit && (
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         +{sel.tags!.length - tagLimit}
@@ -3712,7 +3710,7 @@ export function DocBrowser({
                 return (
                   <div
                     className="shrink-0 flex items-start gap-2 mx-6 mt-3 px-3 py-2 rounded-[8px] text-[11.5px] leading-relaxed"
-                    style={{ background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)', color: 'rgba(234,179,8,0.95)' }}>
+                    style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)', color: 'var(--semantic-warning-text)' }}>
                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                     <span>
                       此文档{src}，<b>手动修改（含插入配图）可能在下次同步时被远端内容覆盖</b>。

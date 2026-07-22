@@ -245,9 +245,9 @@ export function WeeklyReportsTab() {
             <span
               className="text-[11px] px-2 py-0.5 rounded-md shrink-0"
               style={{
-                background: 'rgba(168,85,247,0.14)',
-                color: '#d8b4fe',
-                border: '1px solid rgba(168,85,247,0.28)',
+                background: 'var(--report-accent-soft)',
+                color: 'var(--report-accent-text)',
+                border: '1px solid var(--report-accent-border)',
                 fontVariantNumeric: 'tabular-nums',
               }}
             >
@@ -282,9 +282,9 @@ export function WeeklyReportSourceChips() {
         onClick={onCreateOpen}
         className="inline-flex items-center gap-1 px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all"
         style={{
-          background: 'rgba(168,85,247,0.10)',
-          border: '1px dashed rgba(168,85,247,0.42)',
-          color: '#d8b4fe',
+          background: 'var(--report-accent-soft)',
+          border: '1px dashed var(--report-accent-border)',
+          color: 'var(--report-accent-text)',
           cursor: 'pointer',
         }}
         title="添加周报来源"
@@ -303,8 +303,8 @@ export function WeeklyReportSourceChips() {
             key={src.id}
             className="group relative flex items-center rounded-lg transition-all"
             style={{
-              background: active ? 'rgba(168,85,247,0.16)' : 'rgba(255,255,255,0.04)',
-              border: `1px solid ${active ? 'rgba(168,85,247,0.42)' : 'rgba(255,255,255,0.10)'}`,
+              background: active ? 'var(--report-accent-soft)' : 'var(--bg-input)',
+              border: `1px solid ${active ? 'var(--report-accent-border)' : 'var(--border-faint)'}`,
             }}
           >
             <button
@@ -312,7 +312,7 @@ export function WeeklyReportSourceChips() {
               onClick={() => onSelect(src.id)}
               className="pl-2.5 pr-2 py-1 text-[12px] font-medium inline-flex items-center gap-1.5 transition-colors"
               style={{
-                color: active ? '#e9d5ff' : 'var(--text-secondary)',
+                color: active ? 'var(--report-accent-text)' : 'var(--text-secondary)',
                 cursor: 'pointer',
               }}
               title={src.description || src.name}
@@ -324,7 +324,7 @@ export function WeeklyReportSourceChips() {
               <button
                 type="button"
                 onClick={(e) => { e.stopPropagation(); onEditOpen(src); }}
-                className="p-1 rounded hover:bg-white/10"
+                className="p-1 rounded hover-bg-soft"
                 title="编辑"
                 style={{ color: 'var(--text-muted)' }}
               >
@@ -348,9 +348,9 @@ export function WeeklyReportSourceChips() {
         onClick={onCreateOpen}
         className="inline-flex items-center gap-1 px-2 py-1 rounded-lg text-[12px] font-medium transition-all"
         style={{
-          background: 'rgba(168,85,247,0.08)',
-          border: '1px dashed rgba(168,85,247,0.4)',
-          color: '#d8b4fe',
+          background: 'var(--report-accent-soft)',
+          border: '1px dashed var(--report-accent-border)',
+          color: 'var(--report-accent-text)',
           cursor: 'pointer',
         }}
         title="添加周报来源"
@@ -386,14 +386,14 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
       <div
         className="w-16 h-16 rounded-2xl flex items-center justify-center mb-5"
         style={{
-          background: 'rgba(168,85,247,0.10)',
-          border: '1px solid rgba(168,85,247,0.25)',
-          color: '#d8b4fe',
+          background: 'var(--report-accent-soft)',
+          border: '1px solid var(--report-accent-border)',
+          color: 'var(--report-accent-text)',
         }}
       >
         <Database size={28} />
       </div>
-      <h3 className="text-lg font-semibold text-white mb-2">还没有周报来源</h3>
+      <h3 className="text-lg font-semibold text-token-primary mb-2">还没有周报来源</h3>
       <p className="text-[13px] max-w-md text-center mb-6" style={{ color: 'var(--text-muted)' }}>
         周报来源 = 一个知识库 + 一个文件名关键词。<br />
         配置后所有人都能看到。支持随时添加 / 编辑 / 删除。
@@ -403,9 +403,9 @@ function EmptyState({ onCreate }: { onCreate: () => void }) {
         onClick={onCreate}
         className="h-10 px-5 rounded-xl text-[13px] font-semibold flex items-center gap-2"
         style={{
-          background: 'linear-gradient(135deg, #a855f7 0%, #7e22ce 100%)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          boxShadow: '0 6px 20px rgba(168,85,247,0.25)',
+          background: 'var(--button-primary-bg)',
+          border: '1px solid var(--border-focus)',
+          boxShadow: 'var(--shadow-card-sm)',
         }}
       >
         <Plus size={14} /> 创建第一个周报来源
@@ -487,8 +487,8 @@ function SourceEditorDialog({
               placeholder="例如 MAP 周报 / 运营周报"
               className="w-full h-10 px-3 rounded-lg outline-none text-[13px]"
               style={{
-                background: 'rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}
             />
@@ -500,8 +500,8 @@ function SourceEditorDialog({
               disabled={storesLoading}
               className="w-full h-10 px-3 rounded-lg outline-none text-[13px]"
               style={{
-                background: 'rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}
             >
@@ -519,8 +519,8 @@ function SourceEditorDialog({
               placeholder='例如 week / 周报 / report.2026-W'
               className="w-full h-10 px-3 rounded-lg outline-none text-[13px] font-mono"
               style={{
-                background: 'rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}
             />
@@ -537,8 +537,8 @@ function SourceEditorDialog({
               placeholder="一句话介绍这个周报来源的用途"
               className="w-full px-3 py-2 rounded-lg outline-none text-[13px] resize-none"
               style={{
-                background: 'rgba(0,0,0,0.25)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--bg-input)',
+                border: '1px solid var(--border-default)',
                 color: 'var(--text-primary)',
               }}
             />
@@ -557,9 +557,9 @@ function SourceEditorDialog({
               disabled={saving}
               className="flex-1 h-10 rounded-lg text-[13px] font-semibold flex items-center justify-center gap-2"
               style={{
-                background: 'linear-gradient(135deg, #a855f7 0%, #7e22ce 100%)',
-                border: '1px solid rgba(255,255,255,0.1)',
-                boxShadow: '0 4px 12px rgba(168,85,247,0.3)',
+                background: 'var(--button-primary-bg)',
+                border: '1px solid var(--border-focus)',
+                boxShadow: 'var(--shadow-card-sm)',
               }}
             >
               {saving ? <MapSpinner size={14} /> : null}

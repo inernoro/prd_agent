@@ -21,6 +21,7 @@ const AGENT_SWITCHER_PATH = path.resolve(TEST_DIR, '../../components/agent-switc
 const BUTTON_PATH = path.resolve(TEST_DIR, '../../components/design/Button.tsx');
 const DOCUMENT_STORE_PATH = path.resolve(TEST_DIR, '../../pages/document-store/DocumentStorePage.tsx');
 const SURFACE_PATH = path.resolve(TEST_DIR, '../../styles/surface.css');
+const GLASS_STYLES_PATH = path.resolve(TEST_DIR, '../glassStyles.ts');
 const TEAM_ACTIVITY_DIR = path.resolve(TEST_DIR, '../../pages/team-activity');
 const SETTINGS_PAGE_PATH = path.resolve(TEST_DIR, '../../pages/SettingsPage.tsx');
 const PEER_NODES_PATH = path.resolve(TEST_DIR, '../../pages/settings/PeerNodesSettings.tsx');
@@ -35,6 +36,12 @@ const REPORT_AGENT_DIR = path.resolve(TEST_DIR, '../../pages/report-agent');
 const CHANGELOG_DYNAMIC_PATH = path.resolve(TEST_DIR, '../../pages/changelog/changelog-dynamic.css');
 const DOC_BROWSER_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/DocBrowser.tsx');
 const BACKLINKS_PANEL_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/BacklinksPanel.tsx');
+const SHARE_DOCK_PATH = path.resolve(TEST_DIR, '../../components/share-dock/ShareDock.tsx');
+const CREATOR_FILTER_PATH = path.resolve(TEST_DIR, '../../components/showcase/CreatorFilterRow.tsx');
+const TAG_PALETTE_PATH = path.resolve(TEST_DIR, '../tagPalette.ts');
+const MOBILE_TAB_BAR_PATH = path.resolve(TEST_DIR, '../../components/ui/MobileTabBar.tsx');
+const MOBILE_FAB_PATH = path.resolve(TEST_DIR, '../../components/mobile/MobileFab.tsx');
+const APP_STORE_TOKENS_PATH = path.resolve(TEST_DIR, '../appStoreTokens.ts');
 
 function readSourceTree(directory: string): string {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -224,6 +231,51 @@ describe('主题系统契约', () => {
     expect(backlinksPanel).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
   });
 
+  it('阅读面、标签、共享悬浮窗与创作者筛选只消费主题 token', () => {
+    const surface = fs.readFileSync(SURFACE_PATH, 'utf8');
+    const glassStyles = fs.readFileSync(GLASS_STYLES_PATH, 'utf8');
+    const tagPalette = fs.readFileSync(TAG_PALETTE_PATH, 'utf8');
+    const shareDock = fs.readFileSync(SHARE_DOCK_PATH, 'utf8');
+    const creatorFilter = fs.readFileSync(CREATOR_FILTER_PATH, 'utf8');
+    const readingStart = surface.indexOf('.surface-reading {');
+    const readingBlock = surface.slice(readingStart, surface.indexOf('.text-crisp {', readingStart));
+
+    expect(readingBlock).toContain('background: var(--reading-bg)');
+    expect(readingBlock).toContain('box-shadow: var(--reading-shadow)');
+    expect(readingBlock).not.toMatch(/rgba\(|#[0-9a-f]{3,8}/i);
+    expect(surface).toContain('box-shadow: var(--shadow-raised)');
+    expect(surface).toContain('box-shadow: var(--shadow-nav)');
+    expect(surface).toContain('box-shadow: var(--shadow-surface)');
+    expect(surface).toContain('background: var(--nav-surface-bg)');
+    expect(glassStyles).toContain("boxShadow: 'var(--shadow-glass-panel)'");
+    expect(glassStyles).toContain("boxShadow: 'var(--shadow-glass-bottom-sheet)'");
+    expect(glassStyles).not.toMatch(/boxShadow:\s*['"]0\s+\d+px\s+\d+px/);
+    expect(tagPalette).toContain("text: 'var(--semantic-info-text)'");
+    expect(tagPalette).toContain("dot: 'var(--tag-blue-solid)'");
+    expect(tagPalette).not.toMatch(/text:\s*'rgba\(/);
+    expect(shareDock).toContain('share-dock__panel');
+    expect(shareDock).not.toMatch(/text-white|bg-black|bg-\[#/);
+    expect(creatorFilter).toContain("'var(--text-secondary)'");
+    expect(creatorFilter).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
+  });
+
+  it('移动端导航不再在组件内复制明暗色，弱文字也必须使用可读 token', () => {
+    const mobileTabBar = fs.readFileSync(MOBILE_TAB_BAR_PATH, 'utf8');
+    const mobileFab = fs.readFileSync(MOBILE_FAB_PATH, 'utf8');
+    const appStoreTokens = fs.readFileSync(APP_STORE_TOKENS_PATH, 'utf8');
+    const base = fs.readFileSync(path.resolve(TEST_DIR, '../../styles/base.css'), 'utf8');
+
+    expect(mobileTabBar).not.toContain('useDataTheme');
+    expect(mobileTabBar).not.toContain('AS_COLOR');
+    expect(mobileTabBar).not.toMatch(/#007aff|rgba\(24,\s*25,\s*28|rgba\(255,\s*255,\s*255,\s*0\.(?:3|35)\)/i);
+    expect(mobileTabBar).toContain("labelIdle: 'var(--mobile-tab-idle)'");
+    expect(mobileFab).toContain("'var(--mobile-fab-from)'");
+    expect(mobileFab).not.toMatch(/#0A84FF|#007aff/i);
+    expect(appStoreTokens).not.toMatch(/blue:\s*'#(?:0A84FF|007aff)'/i);
+    expect(appStoreTokens).not.toMatch(/labelTertiary:\s*'rgba\([^)]*,\s*0\.30\)'/);
+    expect(base).toContain('.text-token-muted-faint { color: var(--text-muted); }');
+  });
+
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
     const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
     const lightBlock = tokens.slice(
@@ -384,6 +436,9 @@ describe('主题系统契约', () => {
       .toContain('keyboard-overlay-open');
     expect(THEME_ACCEPTANCE_TARGETS.find((target) => target.id === 'emergence')?.states)
       .toContain('hover-primary-card');
+    ['web-pages', 'showcase', 'library', 'open-platform'].forEach((id) => {
+      expect(THEME_ACCEPTANCE_TARGETS.some((target) => target.id === id)).toBe(true);
+    });
   });
 
   it('测试与正式镜像共用同一构建入口，并完整复制浅色插画产物', () => {

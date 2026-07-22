@@ -1715,9 +1715,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
               className="galaxy-entry-button relative isolate flex h-7 cursor-pointer items-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-[11px] font-semibold"
               style={{
-                color: 'rgba(196,181,253,0.98)',
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
-                border: '1px solid rgba(196,181,253,0.45)',
+                color: 'var(--semantic-purple-text)',
+                background: 'var(--semantic-purple-soft)',
+                border: '1px solid var(--semantic-purple-border)',
                 animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
               }}
             >
