@@ -3,7 +3,8 @@
 
 import { useEffect, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, Copy, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Copy, X } from 'lucide-react';
+import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
@@ -397,9 +398,12 @@ export function GenerationDetailsDrawer({
               <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
-          <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 36, minWidth: 36, height: 36, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
-            {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
-          </button>
+          <div className="lg-generation-header-actions">
+            {!isPage ? <Link to={`/logs/${encodeURIComponent(logId)}`} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
+            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 36, minWidth: 36, height: 36, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
+              {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
+            </button>
+          </div>
         </div>
 
         <div className={isPage ? 'lg-generation-page-body' : undefined} style={{ flex: 1, padding: isPage ? '18px 20px 28px' : '12px 14px 18px', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
