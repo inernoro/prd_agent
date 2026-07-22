@@ -143,16 +143,16 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
   return (
     <div className="h-full min-h-0 flex flex-col gap-4">
       {loading && items.length === 0 && (
-        <GlassCard className="flex items-center justify-center py-12 text-white/50 text-sm">
+        <GlassCard className="flex items-center justify-center py-12 text-token-muted text-sm">
           正在加载授权列表…
         </GlassCard>
       )}
 
       {!loading && items.length === 0 && (
         <GlassCard className="py-16 text-center">
-          <Lock size={32} className="mx-auto text-white/40 mb-3" />
-          <div className="text-white/70 text-base font-medium mb-2">还没有外部系统授权</div>
-          <div className="text-white/40 text-xs mb-5">
+          <Lock size={32} className="mx-auto text-token-muted mb-3" />
+          <div className="text-token-primary text-base font-medium mb-2">还没有外部系统授权</div>
+          <div className="text-token-muted text-xs mb-5">
             授权 TAPD / 语雀 / GitHub 后，工作流可以直接引用，无需每次粘贴凭证
           </div>
           <Button variant="primary" onClick={() => setAddOpen(true)}>

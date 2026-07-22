@@ -83,9 +83,9 @@ export function BatchSizePicker({ sizesByResolution, disabled, onApply }: BatchS
                   type="button"
                   className="flex-1 h-7 rounded-[8px] text-[12px] font-semibold transition-colors"
                   style={{
-                    background: isSelected ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-                    border: isSelected ? '1px solid rgba(99, 102, 241, 0.6)' : '1px solid rgba(255,255,255,0.14)',
-                    color: isSelected ? 'rgba(129, 140, 248, 1)' : 'rgba(255,255,255,0.88)',
+                    background: isSelected ? 'var(--selection-bg)' : 'var(--nested-block-bg)',
+                    border: isSelected ? '1px solid var(--selection-border)' : '1px solid var(--nested-block-border)',
+                    color: isSelected ? 'var(--selection-text)' : 'var(--text-secondary)',
                   }}
                   onClick={() => setSelectedTier(tier)}
                 >
@@ -118,9 +118,9 @@ export function BatchSizePicker({ sizesByResolution, disabled, onApply }: BatchS
                     type="button"
                     className="flex flex-col items-center justify-center gap-1 py-2 rounded-[8px] transition-colors"
                     style={{
-                      background: 'rgba(255,255,255,0.08)',
-                      border: '1px solid rgba(255,255,255,0.14)',
-                      color: 'rgba(255,255,255,0.88)',
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--nested-block-border)',
+                      color: 'var(--text-secondary)',
                     }}
                     onClick={() => {
                       onApply(opt.size);

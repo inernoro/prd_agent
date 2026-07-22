@@ -14,11 +14,34 @@
   /* sticky/表头等需要更稳定的底色 */
   --panel-solid: rgba(30, 30, 36, 0.92);
 
+  /* 高密度阅读面：周报、知识库、编辑器共用。组件不得再写死暗色渐变。 */
+  --reading-bg: linear-gradient(180deg, rgba(24, 24, 30, 0.96) 0%, rgba(18, 18, 24, 0.98) 100%);
+  --reading-header-bg: linear-gradient(180deg, rgba(255, 255, 255, 0.035) 0%, rgba(255, 255, 255, 0.015) 100%);
+  --reading-border: rgba(255, 255, 255, 0.10);
+  --reading-header-border: rgba(255, 255, 255, 0.06);
+  --reading-shadow: inset 0 1px 0 rgba(255, 255, 255, 0.05), 0 12px 28px rgba(0, 0, 0, 0.18);
+  --shadow-surface: inset 0 1px 1px rgba(255, 255, 255, 0.15), inset 0 -1px 1px rgba(0, 0, 0, 0.15), 0 16px 32px -8px rgba(10, 10, 14, 0.50);
+  --shadow-raised: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 20px 44px -16px rgba(10, 10, 14, 0.55);
+  --shadow-nav: inset 0 1px 0 rgba(255, 255, 255, 0.10), 0 12px 32px -12px rgba(10, 10, 14, 0.30);
+  --shadow-glass-panel: 0 24px 60px -12px rgba(10, 10, 14, 0.55);
+  --shadow-glass-bar: 0 12px 32px -8px rgba(10, 10, 14, 0.30);
+  --shadow-glass-bar-gold: 0 12px 32px -8px rgba(10, 10, 14, 0.40);
+  --shadow-glass-sidebar: 0 16px 48px -12px rgba(10, 10, 14, 0.50);
+  --shadow-glass-tooltip: 0 8px 32px -8px rgba(10, 10, 14, 0.60);
+  --shadow-glass-toolbar: 0 12px 32px -8px rgba(10, 10, 14, 0.45);
+  --shadow-glass-tab: 0 8px 20px rgba(0, 0, 0, 0.28), inset 0 1px 4px rgba(0, 0, 0, 0.20);
+  --shadow-glass-toast: 0 8px 32px rgba(0, 0, 0, 0.28);
+  --shadow-glass-floating: 0 4px 16px rgba(0, 0, 0, 0.40);
+  --shadow-glass-drawer: 0 20px 60px rgba(0, 0, 0, 0.60), inset 0 0 0 1px rgba(255, 255, 255, 0.04);
+  --shadow-glass-dropdown: 0 12px 40px rgba(0, 0, 0, 0.50), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --shadow-glass-bottom-sheet: 0 -12px 48px rgba(0, 0, 0, 0.50), inset 0 0 0 1px rgba(255, 255, 255, 0.06);
+  --nav-surface-bg: linear-gradient(180deg, rgba(48, 48, 56, 0.94) 0%, rgba(36, 36, 44, 0.90) 100%);
+
   --border-faint: rgba(255, 255, 255, 0.08);
   --border-subtle: rgba(255, 255, 255, 0.12);
   --border-default: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.24);
-  /* 避免使用 color-mix()，直接用 rgba 计算值 (indigo #6366f1 at 55% opacity) */
+  /* 焦点色由主题覆盖；暗色沿用靛蓝，浅色使用暖赤陶。 */
   --border-focus: rgba(99, 102, 241, 0.55);
 
   /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
@@ -51,7 +74,7 @@
 
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.80);
-  --text-muted: rgba(247, 247, 251, 0.60);
+  --text-muted: rgba(247, 247, 251, 0.68);
 
   /* 跨主题状态文字：组件只表达语义，不再各自维护明暗两套前景色。 */
   --semantic-success-text: #86efac;
@@ -89,6 +112,7 @@
   /* 周报品牌层：明暗状态由全局主题持有，周报仅声明编辑风格点缀。
      暗色沿用平台靛蓝；浅色块覆盖为暖陶橙。历史变量保留为迁移别名。 */
   --report-accent: var(--accent-primary);
+  --report-accent-text: var(--semantic-indigo-text);
   --report-accent-hover: var(--accent-gold-2);
   --report-accent-soft: rgba(var(--accent-primary-rgb), 0.14);
   --report-accent-border: rgba(var(--accent-primary-rgb), 0.32);
@@ -114,6 +138,35 @@
   --status-idle: var(--report-status-idle);
   --status-idle-soft: var(--report-status-idle-soft);
   --status-idle-border: var(--report-status-idle-border);
+
+  /* 移动端导航/快捷抽屉：组件只消费这一组契约，禁止在 JSX 里复制两套明暗色。 */
+  --mobile-tab-bg: linear-gradient(0deg, rgba(10, 10, 14, 0.97) 0%, rgba(16, 16, 22, 0.92) 100%);
+  --mobile-tab-border: 1px solid rgba(255, 255, 255, 0.08);
+  --mobile-tab-highlight: linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.10) 30%, rgba(255,255,255,0.15) 50%, rgba(255,255,255,0.10) 70%, transparent 100%);
+  --mobile-tab-active: var(--selection-text);
+  --mobile-tab-idle: var(--text-muted);
+  --mobile-tab-center-bg: var(--bg-card);
+  --mobile-tab-center-bg-open: var(--bg-card-hover);
+  --mobile-tab-center-border: 1px solid var(--border-subtle);
+  --mobile-tab-center-shadow: 0 0 12px 1px rgba(255, 255, 255, 0.06), inset 0 1px 0 rgba(255, 255, 255, 0.15);
+  --mobile-tab-center-icon: var(--text-primary);
+  --mobile-sheet-bg: linear-gradient(180deg, rgba(33,34,43,0.99) 0%, rgba(20,21,28,0.99) 100%);
+  --mobile-sheet-border: 1px solid var(--border-faint);
+  --mobile-sheet-shadow: 0 -18px 48px rgba(0,0,0,0.45);
+  --mobile-sheet-grip: var(--border-strong);
+  --mobile-sheet-title: var(--text-primary);
+  --mobile-sheet-copy: var(--text-muted);
+  --mobile-sheet-item-bg: var(--bg-card);
+  --mobile-sheet-item-border: 1px solid var(--border-faint);
+  --mobile-sheet-item-divider: 1px solid var(--border-faint);
+  --mobile-sheet-chevron: var(--text-muted);
+  --mobile-sheet-close-bg: var(--bg-card);
+  --mobile-sheet-close-border: 1px solid var(--border-subtle);
+  --mobile-sheet-close-icon: var(--text-secondary);
+  --mobile-fab-from: #5E5CE6;
+  --mobile-fab-to: #A5B4FC;
+  --mobile-fab-text: #0F172A;
+  --mobile-fab-shadow: rgba(94, 92, 230, 0.42);
   --hairline: rgba(255, 255, 255, 0.08);
   --hairline-strong: rgba(255, 255, 255, 0.14);
 
@@ -185,6 +238,18 @@
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard.webp');
+  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent.webp');
+  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi.webp');
+  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent.webp');
+  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares.webp');
+  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center.webp');
+  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester.webp');
+  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent.webp');
+  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser.webp');
+  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer.webp');
+  --agent-card-artwork-translator: url('../assets/agent-card-art/translator.webp');
+  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer.webp');
+  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst.webp');
   --media-card-base: #141418;
   --media-card-panel: rgba(20, 20, 24, 0.92);
   --media-card-panel-strong: rgba(20, 20, 24, 0.97);
@@ -225,6 +290,18 @@
   --selection-icon-bg: rgba(129, 140, 248, 0.22);
   --selection-border: rgba(129, 140, 248, 0.38);
   --selection-text: #c7d2fe;
+  --selection-checkbox-bg: rgba(20, 20, 24, 0.92);
+  --selection-checkbox-ring: rgba(20, 20, 24, 0.72);
+
+  /* Finder 风格标签。solid 保证白字小字号也达到可读对比度。 */
+  --tag-red-solid: #b91c1c;
+  --tag-orange-solid: #c2410c;
+  --tag-yellow-solid: #a16207;
+  --tag-green-solid: #15803d;
+  --tag-teal-solid: #0f766e;
+  --tag-blue-solid: #1d4ed8;
+  --tag-purple-solid: #7e22ce;
+  --tag-gray-solid: #475569;
 
   /* 共享按钮只消费语义 token，不在 React 中维护 LIGHT/DARK 两套样式。 */
   --button-primary-bg: #4f46e5;
@@ -258,6 +335,10 @@
   --shadow-card-hover: 0 6px 20px rgba(0, 0, 0, 0.45);
   --shadow-card-sm: 0 2px 6px rgba(0, 0, 0, 0.20);
   --shadow-card-active: 0 1px 2px rgba(0, 0, 0, 0.15), 0 0 0 1px rgba(255, 255, 255, 0.08);
+  --shadow-floating-badge: 0 2px 8px rgba(0, 0, 0, 0.38);
+  --shadow-floating-badge-hot: 0 2px 8px rgba(244, 63, 94, 0.40);
+  --shadow-hot-rank-1: 0 0 14px color-mix(in srgb, currentColor 22%, transparent);
+  --shadow-hot-rank-2: 0 0 10px color-mix(in srgb, currentColor 14%, transparent);
 
   /* 模态弹窗蒙层:暗色 / 浅色统一变量,modal portal 直接消费即可主题感知 */
   --modal-overlay: rgba(0, 0, 0, 0.5);
@@ -358,11 +439,33 @@
 
   --panel: linear-gradient(180deg, #F8F5EF 0%, #F1ECE4 100%);
   --panel-solid: #F8F5EF;
+  --reading-bg: linear-gradient(180deg, #FCFAF7 0%, #F8F5EF 100%);
+  --reading-header-bg: linear-gradient(180deg, rgba(252, 250, 247, 0.88) 0%, rgba(248, 245, 239, 0.82) 100%);
+  --reading-border: rgba(89, 65, 50, 0.13);
+  --reading-header-border: rgba(89, 65, 50, 0.10);
+  --reading-shadow: inset 0 1px 0 rgba(252, 250, 247, 0.92), 0 8px 22px -14px rgba(89, 65, 50, 0.24);
+  --shadow-surface: inset 0 1px 0 rgba(252, 250, 247, 0.90), inset 0 -1px 0 rgba(89, 65, 50, 0.06), 0 8px 22px -16px rgba(89, 65, 50, 0.22);
+  --shadow-raised: inset 0 1px 0 rgba(252, 250, 247, 0.88), 0 10px 24px -16px rgba(89, 65, 50, 0.22);
+  --shadow-nav: inset 0 1px 0 rgba(252, 250, 247, 0.86), 0 8px 22px -16px rgba(89, 65, 50, 0.20);
+  --shadow-glass-panel: 0 12px 30px -20px rgba(89, 65, 50, 0.28);
+  --shadow-glass-bar: 0 8px 22px -18px rgba(89, 65, 50, 0.20);
+  --shadow-glass-bar-gold: 0 8px 22px -18px rgba(166, 75, 53, 0.20);
+  --shadow-glass-sidebar: 0 10px 28px -22px rgba(89, 65, 50, 0.24);
+  --shadow-glass-tooltip: 0 8px 20px -12px rgba(89, 65, 50, 0.24);
+  --shadow-glass-toolbar: 0 8px 22px -16px rgba(89, 65, 50, 0.22);
+  --shadow-glass-tab: 0 2px 8px rgba(89, 65, 50, 0.08), inset 0 1px 2px rgba(89, 65, 50, 0.06);
+  --shadow-glass-toast: 0 8px 24px -14px rgba(89, 65, 50, 0.24);
+  --shadow-glass-floating: 0 4px 14px -8px rgba(89, 65, 50, 0.22);
+  --shadow-glass-drawer: 0 16px 36px -24px rgba(89, 65, 50, 0.28), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
+  --shadow-glass-dropdown: 0 10px 28px -18px rgba(89, 65, 50, 0.24), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
+  --shadow-glass-bottom-sheet: 0 -10px 28px -18px rgba(89, 65, 50, 0.22), inset 0 0 0 1px rgba(89, 65, 50, 0.06);
+  --nav-surface-bg: linear-gradient(180deg, rgba(252,250,247,0.98) 0%, rgba(248,245,239,0.96) 100%);
 
   --border-faint: rgba(26, 26, 31, 0.08);
   --border-subtle: rgba(26, 26, 31, 0.12);
   --border-default: rgba(26, 26, 31, 0.18);
   --border-hover: rgba(26, 26, 31, 0.28);
+  --border-focus: rgba(166, 75, 53, 0.48);
 
   /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
   --glass-bg-start: rgba(248, 245, 239, 0.98);
@@ -392,7 +495,7 @@
   --semantic-success-text: #166534;
   --semantic-warning-text: #854d0e;
   --semantic-danger-text: #b91c1c;
-  --semantic-info-text: #1d4ed8;
+  --semantic-info-text: #1e40af;
   --semantic-neutral-text: #475569;
   --semantic-purple-text: #6b21a8;
   --semantic-pink-text: #9d174d;
@@ -421,12 +524,18 @@
   --semantic-indigo-border: rgba(67, 56, 202, 0.24);
   --workflow-accent-text-lightness: 36%;
 
-  --accent-primary: #4f46e5;
-  --accent-primary-rgb: 99, 102, 241;
-  --selection-bg: rgba(99, 102, 241, 0.10);
-  --selection-icon-bg: rgba(99, 102, 241, 0.14);
-  --selection-border: rgba(99, 102, 241, 0.34);
-  --selection-text: #4338ca;
+  /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
+  --accent-primary: #A64B35;
+  --accent-primary-rgb: 166, 75, 53;
+  --accent-gold: #A64B35;
+  --accent-gold-2: #C36F52;
+  --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
+  --selection-bg: rgba(166, 75, 53, 0.10);
+  --selection-icon-bg: rgba(166, 75, 53, 0.14);
+  --selection-border: rgba(166, 75, 53, 0.34);
+  --selection-text: #8F3F2B;
+  --selection-checkbox-bg: var(--bg-card);
+  --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
   --button-primary-bg: #CC785C;
   --button-primary-bg-hover: #B8684C;
@@ -440,7 +549,7 @@
   --button-danger-border: rgba(220, 38, 38, 0.30);
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
-  --section-label-text: #4338ca;
+  --section-label-text: #8F3F2B;
 
   --viz-sticky-bg: rgba(248, 245, 239, 0.92);
   --viz-grid: rgba(15, 23, 42, 0.12);
@@ -472,6 +581,18 @@
   --agent-card-artwork-video-agent: url('../assets/agent-card-art/video-agent-light.webp');
   --agent-card-artwork-visual-agent: url('../assets/agent-card-art/visual-agent-light.webp');
   --agent-card-artwork-visual-storyboard: url('../assets/agent-card-art/visual-storyboard-light.webp');
+  --agent-card-artwork-tapd-bug-agent: url('../assets/agent-card-art/tapd-bug-agent-light.webp');
+  --agent-card-artwork-marketplace-openapi: url('../assets/agent-card-art/marketplace-openapi-light.webp');
+  --agent-card-artwork-shortcuts-agent: url('../assets/agent-card-art/shortcuts-agent-light.webp');
+  --agent-card-artwork-my-shares: url('../assets/agent-card-art/my-shares-light.webp');
+  --agent-card-artwork-learning-center: url('../assets/agent-card-art/learning-center-light.webp');
+  --agent-card-artwork-share-link-tester: url('../assets/agent-card-art/share-link-tester-light.webp');
+  --agent-card-artwork-transcript-agent: url('../assets/agent-card-art/transcript-agent-light.webp');
+  --agent-card-artwork-short-video-parser: url('../assets/agent-card-art/short-video-parser-light.webp');
+  --agent-card-artwork-code-reviewer: url('../assets/agent-card-art/code-reviewer-light.webp');
+  --agent-card-artwork-translator: url('../assets/agent-card-art/translator-light.webp');
+  --agent-card-artwork-summarizer: url('../assets/agent-card-art/summarizer-light.webp');
+  --agent-card-artwork-data-analyst: url('../assets/agent-card-art/data-analyst-light.webp');
   --media-card-base: #E6E0D7;
   --media-card-panel: rgba(241, 236, 228, 0.94);
   --media-card-panel-strong: rgba(245, 241, 234, 0.98);
@@ -481,12 +602,12 @@
   --media-card-tag-border: rgba(15, 23, 42, 0.11);
   --media-card-tag-text: rgba(15, 23, 42, 0.76);
   --media-card-border: rgba(15, 23, 42, 0.13);
-  --media-card-border-hover: rgba(99, 102, 241, 0.52);
+  --media-card-border-hover: rgba(166, 75, 53, 0.46);
   --media-card-edge: rgba(15, 23, 42, 0.10);
   --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
-  --media-card-task: #6d28d9;
+  --media-card-task: #8F3F2B;
   --media-card-task-muted: rgba(15, 23, 42, 0.58);
   --text-on-media: #172033;
   --text-on-media-muted: rgba(15, 23, 42, 0.68);
@@ -495,8 +616,8 @@
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
-  --launcher-theme-icon: #6d28d9;
-  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.13);
+  --launcher-theme-icon: #A64B35;
+  --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
   --home-ambient-background:
     radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
     radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),
@@ -529,12 +650,17 @@
   --shadow-card-hover: 0 4px 12px rgba(89, 65, 50, 0.08), 0 2px 4px rgba(89, 65, 50, 0.05);
   --shadow-card-sm: 0 1px 2px rgba(89, 65, 50, 0.05);          /* 微 elevation,卡片/segment thumb */
   --shadow-card-active: 0 1px 2px rgba(89, 65, 50, 0.06), 0 0 0 1px rgba(89, 65, 50, 0.10);  /* segmented control 选中态 */
+  --shadow-floating-badge: 0 1px 3px rgba(89, 65, 50, 0.12), 0 0 0 1px rgba(248, 245, 239, 0.82);
+  --shadow-floating-badge-hot: 0 2px 5px rgba(190, 24, 93, 0.18), 0 0 0 1px rgba(248, 245, 239, 0.70);
+  --shadow-hot-rank-1: 0 0 0 1px color-mix(in srgb, currentColor 18%, transparent);
+  --shadow-hot-rank-2: 0 0 0 1px color-mix(in srgb, currentColor 12%, transparent);
 
   /* 第三波新增:统一 modal overlay,8 处弹窗一改全改 */
   --modal-overlay: rgba(15, 23, 42, 0.18);
 
   /* 周报浅色品牌覆盖：保留暖纸张与陶橙辨识度，状态仍服从全局语义层。 */
   --report-accent: #CC785C;
+  --report-accent-text: #8F3F2B;
   --report-accent-hover: #B8684C;
   --report-accent-soft: rgba(204, 120, 92, 0.10);
   --report-accent-border: rgba(204, 120, 92, 0.28);
@@ -547,6 +673,34 @@
   --report-status-idle: rgba(71, 85, 105, 0.75);
   --report-status-idle-soft: rgba(71, 85, 105, 0.06);
   --report-status-idle-border: rgba(71, 85, 105, 0.18);
+
+  --mobile-tab-bg: linear-gradient(0deg, rgba(252,250,247,0.98) 0%, rgba(248,245,239,0.96) 100%);
+  --mobile-tab-border: 1px solid var(--border-subtle);
+  --mobile-tab-highlight: linear-gradient(90deg, transparent 0%, rgba(89,65,50,0.07) 50%, transparent 100%);
+  --mobile-tab-active: var(--selection-text);
+  --mobile-tab-idle: var(--text-muted);
+  --mobile-tab-center-bg: var(--bg-card-hover);
+  --mobile-tab-center-bg-open: var(--selection-bg);
+  --mobile-tab-center-border: 1px solid var(--border-subtle);
+  --mobile-tab-center-shadow: var(--shadow-card-sm);
+  --mobile-tab-center-icon: var(--text-primary);
+  --mobile-sheet-bg: linear-gradient(180deg, rgba(252,250,247,0.99) 0%, rgba(248,245,239,0.99) 100%);
+  --mobile-sheet-border: 1px solid var(--border-subtle);
+  --mobile-sheet-shadow: 0 -18px 48px rgba(89,65,50,0.16);
+  --mobile-sheet-grip: var(--border-strong);
+  --mobile-sheet-title: var(--text-primary);
+  --mobile-sheet-copy: var(--text-muted);
+  --mobile-sheet-item-bg: var(--bg-card);
+  --mobile-sheet-item-border: 1px solid var(--border-faint);
+  --mobile-sheet-item-divider: 1px solid var(--border-faint);
+  --mobile-sheet-chevron: var(--text-muted);
+  --mobile-sheet-close-bg: var(--bg-card-hover);
+  --mobile-sheet-close-border: 1px solid var(--border-subtle);
+  --mobile-sheet-close-icon: var(--text-secondary);
+  --mobile-fab-from: #B8684C;
+  --mobile-fab-to: #A64B35;
+  --mobile-fab-text: #FCFAF7;
+  --mobile-fab-shadow: rgba(166, 75, 53, 0.30);
 
   /* Hairline — 真正看得见的细线,用于卡片边框替代 --border-faint 4% 透明线。 */
   --hairline:             rgba(15, 23, 42, 0.08);
@@ -585,7 +739,9 @@
   --border-hover: rgba(255, 255, 255, 0.24);
   --text-primary: #f7f7fb;
   --text-secondary: rgba(247, 247, 251, 0.80);
-  --text-muted: rgba(247, 247, 251, 0.60);
+  --text-muted: rgba(247, 247, 251, 0.68);
+  --text-on-media: #f7f7fb;
+  --text-on-media-muted: rgba(247, 247, 251, 0.72);
   --workflow-accent-text-lightness: 65%;
 }
 

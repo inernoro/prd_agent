@@ -12,7 +12,9 @@
     "test": "vitest run",
     "style:debt": "node scripts/style-debt-report.mjs",
     "style:debt:owned": "node scripts/style-debt-report.mjs --exclude pages/report-agent",
-    "style:debt:json": "node scripts/style-debt-report.mjs --json"
+    "style:debt:json": "node scripts/style-debt-report.mjs --json",
+    "theme:audit": "node ../.agents/skills/gen-home-image/scripts/audit-artwork.mjs",
+    "theme:check": "pnpm run theme:audit && vitest run src/components/agent-shell/AgentCardArtwork.test.ts src/lib/__tests__/themeSystem.test.ts"
   },
   "dependencies": {
     "@dagrejs/dagre": "^2.0.4",

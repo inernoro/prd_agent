@@ -99,7 +99,8 @@ function ShowcaseCard({
       {/* Card — full-bleed image/gradient, natural aspect ratio for waterfall */}
       <div
         ref={boxRef}
-        className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        className="surface-tone-dark relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        data-surface-tone="dark"
         style={{
           aspectRatio: getAspectRatio(item),
           // 始终用彩色渐变占位（即使有封面），封面图懒加载后在渐变之上淡入，
@@ -200,14 +201,14 @@ function ShowcaseCard({
 
           {/* Bottom row: date + stats */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            <span className="text-[10px] drop-shadow" style={{ color: 'var(--text-on-media-muted)' }}>
               {new Date(item.createdAt).toLocaleDateString()}
             </span>
             <div className="flex-1" />
             {item.viewCount > 0 && (
               <span
                 className="flex items-center gap-0.5 text-[10px] drop-shadow"
-                style={{ color: 'rgba(255,255,255,0.5)' }}
+                style={{ color: 'var(--text-on-media-muted)' }}
               >
                 <Eye size={10} />
                 {item.viewCount >= 10000 ? `${(item.viewCount / 10000).toFixed(1)}万` : item.viewCount}
@@ -215,7 +216,7 @@ function ShowcaseCard({
             )}
             <div
               className="flex items-center gap-0.5"
-              style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.45)' }}
+              style={{ color: liked ? '#F43F5E' : 'var(--text-on-media-muted)' }}
               onClick={(e) => e.stopPropagation()}
             >
               <HeartLikeButton
@@ -393,14 +394,14 @@ export function ShowcaseGallery() {
               className="px-3.5 py-1.5 rounded-full text-xs font-medium transition-all duration-200"
               style={{
                 background:
-                  activeTab === tab.key ? 'rgba(99,102,241,0.15)' : 'transparent',
+                  activeTab === tab.key ? 'var(--selection-bg)' : 'transparent',
                 color:
                   activeTab === tab.key
-                    ? 'var(--accent-primary, #818CF8)'
-                    : 'var(--text-muted, rgba(255,255,255,0.4))',
+                    ? 'var(--selection-text)'
+                    : 'var(--text-muted)',
                 border:
                   activeTab === tab.key
-                    ? '1px solid rgba(99,102,241,0.25)'
+                    ? '1px solid var(--selection-border)'
                     : '1px solid transparent',
               }}
             >

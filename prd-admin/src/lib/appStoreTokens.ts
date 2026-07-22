@@ -18,9 +18,9 @@ export const AS_COLOR = {
   /** 一级文字（标题） */
   label: '#FFFFFF',
   /** 二级文字（副标题、日期） */
-  labelSecondary: 'rgba(235, 235, 245, 0.60)',
+  labelSecondary: 'rgba(235, 235, 245, 0.76)',
   /** 三级文字（placeholder、极弱提示） */
-  labelTertiary: 'rgba(235, 235, 245, 0.30)',
+  labelTertiary: 'rgba(235, 235, 245, 0.62)',
 
   /** iOS 分隔线（列表 hairline） */
   separator: 'rgba(84, 84, 88, 0.34)',
@@ -38,7 +38,7 @@ export const AS_COLOR = {
   pillBg: 'rgba(120, 120, 128, 0.24)',
 
   /** iOS System Colors（暗色）—— 用于强调色、上眉色等 */
-  blue: '#0A84FF',
+  blue: '#A5B4FC',
   green: '#30D158',
   orange: '#FF9F0A',
   yellow: '#FFD60A',
@@ -54,8 +54,8 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
   bg: '#f2f2f7',
 
   label: '#1c1c1e',
-  labelSecondary: 'rgba(60, 60, 67, 0.60)',
-  labelTertiary: 'rgba(60, 60, 67, 0.30)',
+  labelSecondary: 'rgba(28, 28, 30, 0.78)',
+  labelTertiary: 'rgba(28, 28, 30, 0.68)',
 
   separator: 'rgba(60, 60, 67, 0.29)',
   hairline: 'rgba(0, 0, 0, 0.08)',
@@ -67,7 +67,7 @@ export const AS_COLOR_LIGHT: Record<keyof typeof AS_COLOR, string> = {
 
   pillBg: 'rgba(120, 120, 128, 0.16)',
 
-  blue: '#007aff',
+  blue: '#8F3F2B',
   green: '#34c759',
   orange: '#ff9500',
   yellow: '#ffcc00',

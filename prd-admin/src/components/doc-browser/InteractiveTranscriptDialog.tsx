@@ -285,8 +285,8 @@ export function InteractiveTranscriptDialog({
                       key={`${index}-${module.title}`}
                       className="w-full rounded-[14px] p-4 text-left transition-all duration-200 motion-reduce:transition-none"
                       style={{
-                        background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-nested)',
-                        border: active ? '1px solid rgba(96,165,250,0.30)' : '1px solid var(--border-faint)',
+                        background: active ? 'var(--selection-bg)' : 'var(--bg-nested)',
+                        border: active ? '1px solid var(--selection-border)' : '1px solid var(--border-faint)',
                         opacity: active ? 1 : 0.55,
                         transform: active ? 'scale(1.01)' : 'scale(1)',
                       }}
