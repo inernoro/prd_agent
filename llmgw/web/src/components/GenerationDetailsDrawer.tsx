@@ -386,7 +386,11 @@ export function GenerationDetailsDrawer({
           }}
         >
           <div>
-            <div style={{ fontSize: isPage ? 20 : 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</div>
+            {isPage ? (
+              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h1>
+            ) : (
+              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h2>
+            )}
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
               <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
               <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}>{detail.platformName || detail.provider || DASH}</span>

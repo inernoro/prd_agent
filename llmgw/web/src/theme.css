@@ -2717,8 +2717,8 @@ a:focus-visible {
 }
 
 .lg-generation-page-body > div {
-  width: min(1180px, 100%);
-  margin-inline: auto;
+  width: 100%;
+  margin-inline: 0;
 }
 
 .lg-generation-load-error {
