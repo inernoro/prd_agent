@@ -207,6 +207,147 @@ def test_ambiguous_project_matches_die_instead_of_picking_first(monkeypatch):
     assert payload["projectHints"] == ["workspace", "prd-agent"]
 
 
+def test_preview_urls_use_api_values_and_preserve_multiple_entries():
+    """preview-url 只消费 API 地址，主入口优先且去重。"""
+    branch = {
+        "previewSlug": "must-not-be-used-to-build-a-host",
+        "previewUrl": "https://primary.example/",
+        "previewUrls": [
+            "https://secondary.example",
+            "https://primary.example",
+            "javascript:alert(1)",
+            None,
+        ],
+    }
+
+    assert cdscli._preview_urls_from_branch(branch) == [
+        "https://primary.example/",
+        "https://secondary.example/",
+    ]
+
+
+def test_preview_url_command_returns_all_api_entries(monkeypatch):
+    """CDS 返回两个入口时，JSON 同时保留主入口与全量列表。"""
+    monkeypatch.setenv("CDS_PROJECT_ID", "proj-a")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setattr(
+        cdscli.subprocess,
+        "check_output",
+        lambda args, **kwargs: (
+            "feat/actual-preview\n"
+            if args[-1] == "--show-current"
+            else "/tmp/prd-agent\n"
+        ),
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=10: {
+            "branches": [{
+                "id": "proj-a-feat-actual-preview",
+                "projectId": "proj-a",
+                "branch": "feat/actual-preview",
+                "previewSlug": "ignored-for-url",
+                "previewUrl": "https://primary.example",
+                "previewUrls": [
+                    "https://primary.example",
+                    "https://secondary.example",
+                ],
+            }],
+        },
+    )
+
+    code, out = call_main(["preview-url"])
+    assert code == 0, out
+    payload = parse_ok(out)
+    assert payload["data"]["source"] == "cds-api"
+    assert payload["data"]["url"] == "https://primary.example/"
+    assert payload["data"]["urls"] == [
+        "https://primary.example/",
+        "https://secondary.example/",
+    ]
+
+
+def test_preview_url_command_refuses_local_fallback(monkeypatch):
+    """API 失败时不得由 previewSlug / repo 名猜一个 URL。"""
+    monkeypatch.setenv("CDS_PROJECT_ID", "proj-a")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setattr(
+        cdscli.subprocess,
+        "check_output",
+        lambda args, **kwargs: (
+            "feat/actual-preview\n"
+            if args[-1] == "--show-current"
+            else "/tmp/prd-agent\n"
+        ),
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=10: {
+            "__error__": True,
+            "status": 503,
+            "body": {"message": "unavailable"},
+        },
+    )
+
+    code, out = call_main(["preview-url"])
+    assert code == 3
+    payload = json.loads(out.strip().split("\n")[-1])
+    assert payload["ok"] is False
+    assert "拒绝本地推算" in payload["error"]
+    assert "miduo.org" not in out
+
+
+class _FakeHttpResponse:
+    status = 200
+
+    def read(self):
+        return b'{"ok":true}'
+
+    def __enter__(self):
+        return self
+
+    def __exit__(self, *args):
+        return False
+
+
+def test_smoke_uses_api_primary_preview_url(monkeypatch):
+    """smoke 只探测 CDS 返回的主入口，不用 slug 或 host 重建。"""
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=30: {
+            "branches": [{
+                "id": "proj-a-feat-actual-preview",
+                "previewSlug": "must-not-be-used",
+                "previewUrl": "https://primary.example",
+                "previewUrls": [
+                    "https://primary.example",
+                    "https://secondary.example",
+                ],
+            }],
+        },
+    )
+    requested: list[str] = []
+
+    def fake_urlopen(req, timeout=10):
+        requested.append(req.full_url)
+        return _FakeHttpResponse()
+
+    monkeypatch.setattr(cdscli.urllib.request, "urlopen", fake_urlopen)
+    code, out = call_main(["smoke", "proj-a-feat-actual-preview"])
+
+    assert code == 0, out
+    payload = parse_ok(out)
+    assert payload["data"]["preview"] == "https://primary.example"
+    assert requested
+    assert all(url.startswith("https://primary.example/") for url in requested)
+    assert all("must-not-be-used" not in url for url in requested)
+    assert all("secondary.example" not in url for url in requested)
+
+
 # ── project clone (SSE) ──────────────────────────────────────────────
 
 

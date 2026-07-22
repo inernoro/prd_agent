@@ -1,7 +1,7 @@
 {
   "_comment": "验收技能配置（项目无关——别的仓库改本文件即可复用）。职责分离：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。密码/密钥一律走 env 变量名引用，禁止写明文。",
   "project": "prd-agent",
-  "previewUrlCmd": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url",
+  "previewUrlCmd": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1",
   "previewUrlOverride": "",
 
   "auth": {

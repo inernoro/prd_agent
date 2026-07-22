@@ -70,7 +70,7 @@ description: 自动生成冒烟测试 curl 命令。扫描目标模块的 Contro
 > 唯一入口：`python3 .claude/skills/cds/cli/cdscli.py --human preview-url`（零参数，从 git + /api/branches 自动检测）
 
 ```bash
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | sed 's:/$::')
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1 | sed 's:/$::')
 IMPERSONATE="${MAP_AI_USER}"
 
 # 直接调用（AI_ACCESS_KEY 通用认证）
@@ -417,7 +417,7 @@ Step 2: 分层冒烟测试（优先直连预览域名，失败时才用 containe
 # CDS 远程冒烟测试 — MAP 直连模式（推荐）
 # 预览域名永远走 cdscli，禁止手拼（v1/v2 公式在多项目 CDS 下不可用）。
 # SSOT: cds/src/services/preview-slug.ts:computePreviewSlug
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | sed 's:/$::')
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1 | sed 's:/$::')
 IMPERSONATE="${MAP_AI_USER:?请设置环境变量 MAP_AI_USER}"
 
 AUTH=(-H "X-AI-Access-Key: $AI_ACCESS_KEY" -H "X-AI-Impersonate: $IMPERSONATE" -H "Content-Type: application/json")
