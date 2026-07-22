@@ -623,6 +623,86 @@ describe('ProxyHandler — /_cds/api/* passthrough', () => {
     expect(branchHit).toBe(true);
     expect(masterHit).toBe(false); // 关键:master 不该被命中
   });
+
+  it('/_cds/waiting-status 转给 master worker proxy(保留 Host + 原路径),不走 REST passthrough(2026-07-22 热重启卡 35% 真因)', async () => {
+    // 病根:waiting-status 走通用 /_cds/ passthrough 会被 strip 成 /waiting-status
+    // 打到 master REST(9900),Express 无此路由 → SPA 兜底 200 HTML → 等待页
+    // res.json() 抛错被静默吞掉,进度永远停在首屏值、分支就绪也不 reload。
+    let restHit = false;
+    const masterRest = await startUpstream((_req, res) => {
+      restHit = true;
+      // 模拟真实 master REST 的 SPA 兜底:200 + HTML
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('<!DOCTYPE html><html>SPA</html>');
+    });
+    upstreams.push(masterRest);
+    let workerPath = '';
+    let workerHost = '';
+    const masterWorker = await startUpstream((req, res) => {
+      workerPath = String(req.url ?? '');
+      workerHost = String(req.headers['host'] ?? '');
+      res.writeHead(200, { 'content-type': 'application/json; charset=utf-8' });
+      res.end(JSON.stringify({ ok: true, ready: false, loading: true, status: 'restarting' }));
+    });
+    upstreams.push(masterWorker);
+    let branchHit = false;
+    const branchUpstream = await startUpstream((_req, res) => {
+      branchHit = true;
+      res.writeHead(404);
+      res.end('branch container must not see waiting-status');
+    });
+    upstreams.push(branchUpstream);
+    const branchRoute: RouteRecord = {
+      _id: '1', host: 'demo.miduo.org', upstreamPort: branchUpstream.port, weight: 100,
+      branchId: 'demo-main', branchName: 'main',
+    };
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: masterRest.port,
+      unknownHostFallbackHost: '127.0.0.1',
+      unknownHostFallbackPort: masterWorker.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, branchRoute);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/_cds/waiting-status?profile=api' });
+    expect(r.status).toBe(200);
+    expect(String(r.headers['content-type'] || '')).toContain('application/json');
+    expect(r.body).toContain('"restarting"');
+    // 原路径不 strip(worker proxy 原生处理 /_cds/waiting-status),Host 保留供分支解析
+    expect(workerPath).toBe('/_cds/waiting-status?profile=api');
+    expect(workerHost).toBe('demo.miduo.org');
+    expect(restHit).toBe(false); // REST passthrough 不该被命中(SPA 200 HTML 即病根)
+    expect(branchHit).toBe(false); // 分支容器更不该被命中
+  });
+
+  it('/_cds/waiting-status 未配 fallback 时退回通用 passthrough(不因缺配置而 500)', async () => {
+    let seenPath = '';
+    const masterRest = await startUpstream((req, res) => {
+      seenPath = String(req.url ?? '');
+      res.writeHead(200, { 'content-type': 'text/html' });
+      res.end('SPA');
+    });
+    upstreams.push(masterRest);
+    const proxy = new ProxyHandler({
+      upstreamTimeoutMs: 500,
+      masterPassthroughPort: masterRest.port,
+    });
+    const server = http.createServer((req, res) => {
+      void proxy.handle(req, res, null);
+    });
+    await new Promise<void>((r) => server.listen(0, '127.0.0.1', r));
+    const fwdPort = (server.address() as AddressInfo).port;
+    forwarders.push({ port: fwdPort, server, proxy, close: () => new Promise<void>((r) => { server.closeAllConnections?.(); server.close(() => r()); setTimeout(() => r(), 1000).unref(); }) });
+
+    const r = await clientReq(fwdPort, { path: '/_cds/waiting-status' });
+    expect(r.status).toBe(200);
+    expect(seenPath).toBe('/waiting-status'); // 老行为兜底:strip 后走 REST
+  });
 });
 
 describe('ProxyHandler — SSE / WebSocket / 长连接', () => {
