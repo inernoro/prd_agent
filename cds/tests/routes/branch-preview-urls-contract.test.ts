@@ -8,10 +8,12 @@ const source = fs.readFileSync(
 );
 
 describe('分支预览地址 API 契约', () => {
-  it('同时下发主入口和 CDS 实际配置的全部入口', () => {
+  it('同时下发主入口和可路由 profile 的命名入口', () => {
     expect(source).toContain('const previewHosts = Array.from(new Set(');
     expect(source).toContain('config.rootDomains?.length ? config.rootDomains');
-    expect(source).toContain('b.previewUrls = b.previewSlug');
+    expect(source).toContain('const mainUrls = b.previewSlug');
+    expect(source).toContain('computeBranchGatewayUrls(b, host)');
+    expect(source).toContain('new Set([...mainUrls, ...namedServiceUrls])');
     expect(source).toContain('b.previewUrl = b.previewUrls[0]');
   });
 });

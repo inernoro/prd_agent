@@ -1596,7 +1596,8 @@ def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
     """只接受 CDS API 已发布的预览地址，不根据 slug / host 推算。
 
     新版 API 用 previewUrls 表达多入口，previewUrl 保留为主入口兼容
-    字段。输出顺序完全遵循 CDS，只做去重和结尾斜杠归一。
+    字段。输出顺序完全遵循 CDS，只做去重；纯根域补 `/`，带路径的
+    命名入口必须原样保留，避免把 `/gw/healthz` 篡改成另一个地址。
     """
     raw_urls = branch.get("previewUrls")
     candidates: list[Any] = list(raw_urls) if isinstance(raw_urls, list) else []
@@ -1613,7 +1614,7 @@ def _preview_urls_from_branch(branch: dict[str, Any]) -> list[str]:
         parsed = urllib.parse.urlparse(value)
         if parsed.scheme not in {"http", "https"} or not parsed.netloc:
             continue
-        normalized = value.rstrip("/") + "/"
+        normalized = value.rstrip("/") + "/" if parsed.path in {"", "/"} else value
         if normalized in seen:
             continue
         seen.add(normalized)
