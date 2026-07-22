@@ -98,7 +98,7 @@ select:focus-visible {
   color: var(--text-primary);
   border: 1px solid rgba(255, 255, 255, 0.18);
   box-shadow: 0 1px 0 rgba(255, 255, 255, 0.04) inset;
-  caret-color: rgba(34, 211, 238, 0.85);
+  caret-color: var(--accent-primary);
   transition: border-color 140ms ease, box-shadow 140ms ease, background 140ms ease;
 }
 
@@ -112,9 +112,9 @@ select:focus-visible {
 }
 
 .prd-field:focus {
-  border-color: rgba(99, 102, 241, 0.4);
+  border-color: var(--border-focus);
   box-shadow:
-    0 0 0 3px rgba(99, 102, 241, 0.12),
+    0 0 0 3px var(--selection-bg),
     0 1px 0 rgba(255, 255, 255, 0.03) inset;
 }
 

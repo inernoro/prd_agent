@@ -612,7 +612,7 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
     );
   }
   if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
-  if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
+  if (isPinned) return <Pin size={14} style={{ color: 'var(--selection-text)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
   // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
   // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
@@ -701,7 +701,7 @@ function TranscribeHeroCard({
           <button
             onClick={() => onStart()}
             className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{ background: 'rgba(59,130,246,0.9)', color: '#fff' }}>
+            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
             转成文字
           </button>
         )}
@@ -3305,10 +3305,10 @@ export function DocBrowser({
               className="absolute top-0 left-0 h-full transition-all duration-150"
               style={{
                 width: resizing ? '2px' : '1px',
-                background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+                background: resizing ? 'rgba(var(--accent-primary-rgb), 0.6)' : 'transparent',
               }}
             />
-            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[var(--border-focus)] transition-colors duration-150" />
           </div>
         )}
       </div>
@@ -3329,10 +3329,10 @@ export function DocBrowser({
           title="拖拽调整列表宽度"
         >
           <div
-            className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 rounded-full transition-all duration-150 group-hover/resize:bg-[rgba(59,130,246,0.35)]"
+            className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 rounded-full transition-all duration-150 group-hover/resize:bg-[var(--border-focus)]"
             style={{
               width: resizing ? 3 : 2,
-              background: resizing ? 'rgba(59,130,246,0.6)' : 'var(--border-faint)',
+              background: resizing ? 'rgba(var(--accent-primary-rgb), 0.6)' : 'var(--border-faint)',
             }}
           />
         </div>
@@ -3403,7 +3403,7 @@ export function DocBrowser({
               )}
               {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'rgba(59,130,246,0.08)', color: 'rgba(59,130,246,0.8)', border: '1px solid rgba(59,130,246,0.12)' }}>
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
                   置顶
                 </span>
               )}
@@ -3487,9 +3487,9 @@ export function DocBrowser({
                         onClick={() => onOpenSubscription(sel.id)}
                         className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
                         style={{
-                          background: 'rgba(59,130,246,0.08)',
-                          border: '1px solid rgba(59,130,246,0.18)',
-                          color: 'rgba(96,165,250,0.95)',
+                          background: 'var(--selection-bg)',
+                          border: '1px solid var(--selection-border)',
+                          color: 'var(--selection-text)',
                         }}
                         title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
                       >
@@ -3544,9 +3544,9 @@ export function DocBrowser({
                         onClick={() => onReprocess!(sel.id)}
                         className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
                         style={{
-                          background: 'rgba(59,130,246,0.08)',
-                          border: '1px solid rgba(59,130,246,0.18)',
-                          color: 'rgba(96,165,250,0.95)',
+                          background: 'var(--selection-bg)',
+                          border: '1px solid var(--selection-border)',
+                          color: 'var(--selection-text)',
                         }}
                         title="用智能体加工文档"
                       >
@@ -3606,9 +3606,9 @@ export function DocBrowser({
                   onClick={toggleRightPanel}
                   className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                   style={{
-                    background: rightPanelCollapsed ? 'rgba(255,255,255,0.04)' : 'rgba(59,130,246,0.1)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'rgba(96,165,250,0.95)',
+                    background: rightPanelCollapsed ? 'var(--nested-block-bg)' : 'var(--selection-bg)',
+                    border: `1px solid ${rightPanelCollapsed ? 'var(--nested-block-border)' : 'var(--selection-border)'}`,
+                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'var(--selection-text)',
                   }}
                   title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
                   <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
@@ -3681,7 +3681,7 @@ export function DocBrowser({
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
                         className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}
+                        style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }}
                         title="编辑文档">
                         <Pencil size={13} />
                       </button>

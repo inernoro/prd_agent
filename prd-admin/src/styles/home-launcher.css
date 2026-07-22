@@ -47,8 +47,8 @@
 
 .home-launcher-search:focus {
   background: var(--bg-input);
-  border-color: rgba(99, 102, 241, 0.58);
-  box-shadow: 0 0 0 3px rgba(99, 102, 241, 0.12);
+  border-color: var(--border-focus);
+  box-shadow: 0 0 0 3px var(--selection-bg);
 }
 
 .home-launcher-quick-link {
@@ -86,7 +86,7 @@
 }
 
 .home-launcher-recent-more:hover {
-  border-color: rgba(99, 102, 241, 0.54);
+  border-color: var(--border-focus);
   color: var(--text-primary);
 }
 

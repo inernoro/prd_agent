@@ -34,6 +34,7 @@ const REPORT_COLORS_PATH = path.resolve(TEST_DIR, '../../pages/report-agent/hook
 const REPORT_AGENT_DIR = path.resolve(TEST_DIR, '../../pages/report-agent');
 const CHANGELOG_DYNAMIC_PATH = path.resolve(TEST_DIR, '../../pages/changelog/changelog-dynamic.css');
 const DOC_BROWSER_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/DocBrowser.tsx');
+const BACKLINKS_PANEL_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/BacklinksPanel.tsx');
 
 function readSourceTree(directory: string): string {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -185,13 +186,31 @@ describe('主题系统契约', () => {
       expect(contrastOnLayer(block, 'text-primary')).toBeGreaterThanOrEqual(4.5);
       expect(contrastOnLayer(block, 'text-secondary')).toBeGreaterThanOrEqual(4.5);
       expect(contrastOnLayer(block, 'text-muted')).toBeGreaterThanOrEqual(4.5);
+      expect(contrastOnLayer(block, 'accent-primary')).toBeGreaterThanOrEqual(4.5);
       expect(contrastOnLayer(block, 'selection-text', 'selection-bg')).toBeGreaterThanOrEqual(4.5);
     }
+  });
+
+  it('浅色主题将品牌交互与信息语义分离，普通操作不回退为信息蓝', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const lightBlock = tokens.slice(
+      tokens.indexOf('[data-theme="light"]'),
+      tokens.indexOf('/* 固定暗色可视化表面'),
+    );
+    const documentStore = fs.readFileSync(DOCUMENT_STORE_PATH, 'utf8');
+    const docBrowser = fs.readFileSync(DOC_BROWSER_PATH, 'utf8');
+
+    expect(tokenValue(lightBlock, 'accent-primary')).toBe('#A64B35');
+    expect(tokenValue(lightBlock, 'accent-primary')).not.toBe(tokenValue(lightBlock, 'semantic-info-text'));
+    expect(tokenValue(lightBlock, 'selection-text')).toBe('#8F3F2B');
+    expect(documentStore).not.toContain('focus-visible:ring-blue-400/60');
+    expect(docBrowser).not.toContain('group-hover/resize:bg-[rgba(59,130,246');
   });
 
   it('更新中心和文档目录只消费共享阴影与选择态契约', () => {
     const changelog = fs.readFileSync(CHANGELOG_DYNAMIC_PATH, 'utf8');
     const docBrowser = fs.readFileSync(DOC_BROWSER_PATH, 'utf8');
+    const backlinksPanel = fs.readFileSync(BACKLINKS_PANEL_PATH, 'utf8');
 
     expect(changelog).toContain('var(--shadow-floating-badge)');
     expect(changelog).toContain('var(--shadow-floating-badge-hot)');
@@ -200,6 +219,9 @@ describe('主题系统契约', () => {
     expect(docBrowser).toContain("'var(--selection-text)'");
     expect(docBrowser).toContain("'var(--selection-checkbox-bg)'");
     expect(docBrowser).not.toContain("'rgba(18,18,24,0.96)'");
+    expect(backlinksPanel).toContain("color: 'var(--text-muted)'");
+    expect(backlinksPanel).toContain("background: 'var(--semantic-info-bg)'");
+    expect(backlinksPanel).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
   });
 
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {

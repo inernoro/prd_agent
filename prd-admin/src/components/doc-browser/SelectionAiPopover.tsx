@@ -342,9 +342,9 @@ export function SelectionAiPopover({
             onClick={() => setShowDiff((v) => !v)}
             className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
             style={{
-              background: showDiff ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.05)',
-              border: `1px solid ${showDiff ? 'rgba(59,130,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
-              color: showDiff ? 'rgba(147,197,253,0.95)' : 'var(--text-secondary)',
+              background: showDiff ? 'var(--selection-bg)' : 'var(--bg-nested)',
+              border: `1px solid ${showDiff ? 'var(--selection-border)' : 'var(--border-faint)'}`,
+              color: showDiff ? 'var(--selection-text)' : 'var(--text-secondary)',
             }}
             title="对比原文与 AI 结果"
           >

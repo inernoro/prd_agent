@@ -200,7 +200,7 @@
   border-top: 1px solid var(--nested-block-border);
 }
 
-/* 选择项契约：鼠标悬浮先走中性表面，当前项/键盘游标才使用品牌靛蓝。 */
+/* 选择项契约：鼠标悬浮先走中性表面，当前项/键盘游标才使用主题品牌色。 */
 .surface-option {
   color: var(--text-primary);
   transition: background-color 120ms ease, border-color 120ms ease;
@@ -2037,15 +2037,15 @@
 
 /* 亮色主题下调整：tag active 用深色文字保持对比度 */
 [data-theme="light"] .toolbox-card-tag-active {
-  background: rgba(99, 102, 241, 0.12) !important;
-  border-color: rgba(99, 102, 241, 0.40) !important;
-  color: #4f46e5 !important;
+  background: var(--selection-bg) !important;
+  border-color: var(--selection-border) !important;
+  color: var(--selection-text) !important;
 }
 
 [data-theme="light"] .toolbox-active-tag-chip {
-  background: rgba(99, 102, 241, 0.10);
-  border-color: rgba(99, 102, 241, 0.35);
-  color: #4f46e5;
+  background: var(--selection-bg);
+  border-color: var(--selection-border);
+  color: var(--selection-text);
 }
 
 [data-theme="light"] .toolbox-recent-chip {

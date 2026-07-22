@@ -107,12 +107,12 @@ export function SharedConversation() {
                 className="w-8 h-8 rounded-full flex-shrink-0 flex items-center justify-center"
                 style={{
                   background: isUser
-                    ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.2), rgba(99, 102, 241, 0.1))'
+                    ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.20), rgba(var(--accent-primary-rgb), 0.10))'
                     : 'linear-gradient(135deg, rgba(16, 185, 129, 0.2), rgba(16, 185, 129, 0.1))',
                 }}
               >
                 {isUser
-                  ? <User size={16} style={{ color: 'rgba(99, 102, 241, 0.8)' }} />
+                  ? <User size={16} style={{ color: 'var(--accent-primary)' }} />
                   : <Bot size={16} style={{ color: 'rgba(16, 185, 129, 0.8)' }} />
                 }
               </div>
@@ -124,7 +124,7 @@ export function SharedConversation() {
                 }`}
                 style={{
                   background: isUser
-                    ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.08) 100%)'
+                    ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.15) 0%, rgba(var(--accent-primary-rgb), 0.08) 100%)'
                     : 'rgba(255, 255, 255, 0.03)',
                   color: 'var(--text-primary, #fff)',
                   border: isUser ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))',

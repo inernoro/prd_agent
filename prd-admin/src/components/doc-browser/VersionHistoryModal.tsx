@@ -166,9 +166,9 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                     onClick={() => setSelectedId(v.id)}
                     className="text-left px-4 py-3 cursor-pointer flex flex-col gap-1"
                     style={{
-                      background: active ? 'rgba(59,130,246,0.1)' : 'transparent',
-                      borderLeft: active ? '2px solid rgba(59,130,246,0.7)' : '2px solid transparent',
-                      borderBottom: '1px solid rgba(255,255,255,0.04)',
+                      background: active ? 'var(--selection-bg)' : 'transparent',
+                      borderLeft: active ? '2px solid var(--selection-text)' : '2px solid transparent',
+                      borderBottom: '1px solid var(--border-faint)',
                     }}>
                     <div className="flex items-center gap-2">
                       <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>版本 #{v.versionNumber}</span>
@@ -212,7 +212,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                 // 恢复是幂等的（内容相同则 SnapshotAsync 去重、不产生噪音版本），始终允许最安全。
                 disabled={!detail || restoring || detailLoading}
                 className="h-8 px-3 rounded-lg text-[12px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-                style={{ background: 'rgba(59,130,246,0.12)', border: '1px solid rgba(59,130,246,0.25)', color: 'rgba(147,197,253,0.95)' }}
+                style={{ background: 'var(--button-primary-bg)', border: '1px solid var(--button-primary-border)', color: 'var(--button-primary-fg)' }}
                 title="把该版本内容写回当前文档（当前内容会自动保留为新版本）">
                 {restoring ? <MapSpinner size={12} /> : <RotateCcw size={12} />}
                 恢复此版本

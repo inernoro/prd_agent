@@ -18,7 +18,7 @@
   --border-subtle: rgba(255, 255, 255, 0.12);
   --border-default: rgba(255, 255, 255, 0.18);
   --border-hover: rgba(255, 255, 255, 0.24);
-  /* 避免使用 color-mix()，直接用 rgba 计算值 (indigo #6366f1 at 55% opacity) */
+  /* 焦点色由主题覆盖；暗色沿用靛蓝，浅色使用暖赤陶。 */
   --border-focus: rgba(99, 102, 241, 0.55);
 
   /* 历史命名兼容:周报 Agent 等组件大量使用 var(--bg-primary/secondary/tertiary)
@@ -381,6 +381,7 @@
   --border-subtle: rgba(26, 26, 31, 0.12);
   --border-default: rgba(26, 26, 31, 0.18);
   --border-hover: rgba(26, 26, 31, 0.28);
+  --border-focus: rgba(166, 75, 53, 0.48);
 
   /* 玻璃效果仍使用暖纸色，避免主题切换后重新出现纯白板块。 */
   --glass-bg-start: rgba(248, 245, 239, 0.98);
@@ -439,12 +440,16 @@
   --semantic-indigo-border: rgba(67, 56, 202, 0.24);
   --workflow-accent-text-lightness: 36%;
 
-  --accent-primary: #4f46e5;
-  --accent-primary-rgb: 99, 102, 241;
-  --selection-bg: rgba(99, 102, 241, 0.10);
-  --selection-icon-bg: rgba(99, 102, 241, 0.14);
-  --selection-border: rgba(99, 102, 241, 0.34);
-  --selection-text: #4338ca;
+  /* 浅色品牌交互统一为暖赤陶；蓝色只保留给 semantic-info。 */
+  --accent-primary: #A64B35;
+  --accent-primary-rgb: 166, 75, 53;
+  --accent-gold: #A64B35;
+  --accent-gold-2: #C36F52;
+  --gold-gradient: linear-gradient(135deg, #E2B19F 0%, #A64B35 52%, #C9795E 100%);
+  --selection-bg: rgba(166, 75, 53, 0.10);
+  --selection-icon-bg: rgba(166, 75, 53, 0.14);
+  --selection-border: rgba(166, 75, 53, 0.34);
+  --selection-text: #8F3F2B;
   --selection-checkbox-bg: var(--bg-card);
   --selection-checkbox-ring: rgba(248, 245, 239, 0.82);
 
@@ -460,7 +465,7 @@
   --button-danger-border: rgba(220, 38, 38, 0.30);
   --button-danger-fg: #b91c1c;
   --button-ghost-bg-hover: rgba(15, 23, 42, 0.05);
-  --section-label-text: #4338ca;
+  --section-label-text: #8F3F2B;
 
   --viz-sticky-bg: rgba(248, 245, 239, 0.92);
   --viz-grid: rgba(15, 23, 42, 0.12);
@@ -513,12 +518,12 @@
   --media-card-tag-border: rgba(15, 23, 42, 0.11);
   --media-card-tag-text: rgba(15, 23, 42, 0.76);
   --media-card-border: rgba(15, 23, 42, 0.13);
-  --media-card-border-hover: rgba(99, 102, 241, 0.52);
+  --media-card-border-hover: rgba(166, 75, 53, 0.46);
   --media-card-edge: rgba(15, 23, 42, 0.10);
   --media-card-overlay: linear-gradient(90deg, rgba(224, 216, 205, 0.34) 0%, rgba(224, 216, 205, 0.06) 38%, transparent 74%), linear-gradient(180deg, transparent 0%, transparent 64%, rgba(218, 209, 197, 0.20) 82%, rgba(231, 224, 214, 0.38) 100%);
   --media-card-overlay-compact: linear-gradient(90deg, rgba(224, 216, 205, 0.38) 0%, rgba(224, 216, 205, 0.05) 40%, transparent 76%), linear-gradient(180deg, transparent 0%, transparent 60%, rgba(218, 209, 197, 0.22) 80%, rgba(231, 224, 214, 0.42) 100%);
   --media-card-inset: inset 0 0 0 1px var(--media-card-edge), inset 0 -36px 58px rgba(116, 101, 82, 0.12);
-  --media-card-task: #6d28d9;
+  --media-card-task: #8F3F2B;
   --media-card-task-muted: rgba(15, 23, 42, 0.58);
   --text-on-media: #172033;
   --text-on-media-muted: rgba(15, 23, 42, 0.68);
@@ -527,8 +532,8 @@
   --launcher-tile-border: rgba(15, 23, 42, 0.11);
   --launcher-control-bg: rgba(241, 236, 228, 0.86);
   --launcher-control-border: rgba(15, 23, 42, 0.12);
-  --launcher-theme-icon: #6d28d9;
-  --launcher-theme-icon-bg: rgba(139, 92, 246, 0.13);
+  --launcher-theme-icon: #A64B35;
+  --launcher-theme-icon-bg: rgba(166, 75, 53, 0.12);
   --home-ambient-background:
     radial-gradient(54% 92% at 7% -8%, rgba(139, 92, 246, 0.22) 0%, transparent 70%),
     radial-gradient(48% 82% at 92% 0%, rgba(14, 165, 233, 0.16) 0%, transparent 72%),

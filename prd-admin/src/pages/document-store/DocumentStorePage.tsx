@@ -3660,7 +3660,7 @@ export function DocumentStorePage() {
                   <button
                     key={s.key}
                     type="button"
-                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-[var(--bg-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
                     onClick={() => {
                       if (s.key === 'emergence') {
                         navigate('/emergence');
@@ -3673,8 +3673,8 @@ export function DocumentStorePage() {
                     }}
                   >
                     <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
-                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                      <Icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                      style={{ background: 'var(--selection-icon-bg)', border: '1px solid var(--selection-border)' }}>
+                      <Icon size={14} style={{ color: 'var(--selection-text)' }} />
                     </div>
                     <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
                     <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>

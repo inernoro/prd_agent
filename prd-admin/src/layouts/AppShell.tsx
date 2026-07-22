@@ -1164,7 +1164,7 @@ export default function AppShell() {
                 type="button"
                 disabled={gatewayOpening}
                 onClick={() => void openLlmGateway()}
-                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70 disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 <Server size={18} />
@@ -1569,7 +1569,7 @@ export default function AppShell() {
 
                 {user?.role === 'ADMIN' && (
                   <DropdownMenu.Item
-                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover:bg-white/6 focus-visible:ring-2 focus-visible:ring-indigo-400/70 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover:bg-white/6 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
                     style={{ color: 'var(--text-secondary)' }}
                     disabled={gatewayOpening}
                     onSelect={(event) => {
@@ -1601,7 +1601,7 @@ export default function AppShell() {
                     className="ml-auto inline-flex items-center rounded-full px-2.5 py-0.5 text-[10px] font-medium transition-colors"
                     style={
                       glassOn
-                        ? { background: 'rgba(99, 102, 241, 0.22)', color: 'var(--accent-gold)' }
+                        ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
                         : { background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)' }
                     }
                   >
@@ -1623,7 +1623,7 @@ export default function AppShell() {
                   {notificationCount > 0 && (
                     <span
                       className="ml-auto rounded-full px-2 py-0.5 text-[10px]"
-                      style={{ background: 'rgba(99, 102, 241, 0.18)', color: 'var(--accent-gold)' }}
+                      style={{ background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }}
                     >
                       {notificationCount}
                     </span>
