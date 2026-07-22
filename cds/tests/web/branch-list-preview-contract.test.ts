@@ -17,6 +17,12 @@ describe('BranchListPage preview contract', () => {
     expect(source).not.toContain('openPreview(branch, true)');
   });
 
+  it('keeps preview visually primary and quick start visually secondary', () => {
+    expect(source).toContain("className={isAiOperated ? '' : 'w-32'}");
+    expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
+    expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
+  });
+
   it('exposes an optional config-source (派生) selector wired into the create-branch POST body', () => {
     // 波3 补 UI:新建分支支持「配置来源分支」——UI 入口 + 透传 sourceBranchId。
     // 选择器控件常驻建议下拉,默认「项目模板(不派生)」。

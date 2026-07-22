@@ -6132,7 +6132,10 @@ const BranchCard = memo(function BranchCard({
             <PreviewActionSplitButton
               disabled={busy}
               loading={busy}
+              fill={!isAiOperated}
+              className={isAiOperated ? '' : 'w-32'}
               icon={isAiOperated ? <Bot className="h-4 w-4" /> : undefined}
+              previewLabel={isAiOperated ? undefined : '预览'}
               previewTitle={isAiOperated ? `${aiTitle} · 打开 AI 操作面板` : '预览'}
               previewAriaLabel={isAiOperated ? `${aiState.label}，打开 AI 操作面板` : '预览'}
               previewConfirmTitle={previewCapacityWarning && !isAiOperated ? '容量不足，仍然预览部署？' : undefined}
@@ -6149,6 +6152,8 @@ const BranchCard = memo(function BranchCard({
           ) : quickStartAvailable ? (
             <Button
               size="sm"
+              variant="outline"
+              className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"
               disabled={busy}
               title="启动已停止的容器，不拉取代码、不重建镜像"
               aria-label={`一键启动 ${branch.branch}`}
