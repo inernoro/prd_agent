@@ -42,6 +42,8 @@ const TAG_PALETTE_PATH = path.resolve(TEST_DIR, '../tagPalette.ts');
 const MOBILE_TAB_BAR_PATH = path.resolve(TEST_DIR, '../../components/ui/MobileTabBar.tsx');
 const MOBILE_FAB_PATH = path.resolve(TEST_DIR, '../../components/mobile/MobileFab.tsx');
 const APP_STORE_TOKENS_PATH = path.resolve(TEST_DIR, '../appStoreTokens.ts');
+const AGENT_LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
+const HOME_LAUNCHER_STYLES_PATH = path.resolve(TEST_DIR, '../../styles/home-launcher.css');
 
 function readSourceTree(directory: string): string {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -274,6 +276,20 @@ describe('主题系统契约', () => {
     expect(appStoreTokens).not.toMatch(/blue:\s*'#(?:0A84FF|007aff)'/i);
     expect(appStoreTokens).not.toMatch(/labelTertiary:\s*'rgba\([^)]*,\s*0\.30\)'/);
     expect(base).toContain('.text-token-muted-faint { color: var(--text-muted); }');
+  });
+
+  it('首页门头使用平衡栅格与真实工作现场，不再复制胶囊式导航', () => {
+    const launcher = fs.readFileSync(AGENT_LAUNCHER_PATH, 'utf8');
+    const styles = fs.readFileSync(HOME_LAUNCHER_STYLES_PATH, 'utf8');
+
+    expect(launcher).toContain('home-launcher-masthead-grid');
+    expect(launcher).toContain('aria-label="首页快捷入口"');
+    expect(launcher).toContain('item.progress == null');
+    expect(launcher).toContain('回到最近的工作现场');
+    expect(launcher).not.toMatch(/className="[^"]*home-launcher-(?:quick-link|recent)(?=\s)[^"]*\brounded-full\b/);
+    expect(styles).toContain("grid-template-areas: 'intro command learning'");
+    expect(styles).toContain('grid-template-columns: repeat(5, minmax(0, 1fr))');
+    expect(styles).toContain('scroll-snap-type: x proximity');
   });
 
   it('浅色主题语义文字保持可读，并为固定暗色可视化提供单一表面契约', () => {
