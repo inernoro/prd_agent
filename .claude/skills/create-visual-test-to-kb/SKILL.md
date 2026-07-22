@@ -300,7 +300,7 @@ cp $SKILL/scripts/example-driver.mjs /tmp/my-driver.mjs
 #   编辑 /tmp/my-driver.mjs:登录 → gotoByClick(目标菜单) → 操作 → shot(...)
 
 # 2. 取证(产出 /tmp/acc_shots/*.png + manifest.json)
-node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-url)"
+node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-url | head -1)"
 
 # 3. 读图核对(用 Read 工具逐张看),据 templates/report-template.md 写 /tmp/report_body.md
 #    正文里用 {{EVIDENCE}} 占位,脚本自动替换为内联截图

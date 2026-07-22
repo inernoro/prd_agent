@@ -19,7 +19,7 @@ CLI 封装：`cdscli smoke <branchId>` 一次性跑完三层。
 **唯一可执行入口**：
 
 ```bash
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | sed 's:/$::')
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1 | sed 's:/$::')
 ```
 
 零参数，从 git + `/api/branches` 自动检测；与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂。

@@ -4636,10 +4636,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    // 每个分支带上预览地址(SSOT slug + previewHost),前端在 running 时显示"应用已上线 · 打开预览"。
-    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    for (const b of branchesWithSubject as Array<{ previewSlug?: string; previewUrl?: string }>) {
-      b.previewUrl = previewHost && b.previewSlug ? `https://${b.previewSlug}.${previewHost}` : '';
+    // 每个分支直接下发 CDS 在公开 previewDomain 上实际发布的全部逻辑入口：
+    // 既包含分支主入口，也包含可路由 profile 通过 cds.subdomain 发布的命名入口。
+    // rootDomains 可能包含隐藏、备用或内部路由域名，不能枚举到 Agent 面向的
+    // previewUrl(s) 中。仅在旧配置缺少 previewDomain 时兼容取首个 rootDomain。
+    // CLI / Agent 只能消费 previewUrl(s)，不得再根据其他字段猜域名。
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '')
+      .trim();
+    for (const b of branchesWithSubject as Array<BranchEntry & {
+      previewSlug?: string;
+      previewUrl?: string;
+      previewUrls?: string[];
+    }>) {
+      const mainUrls = b.previewSlug && previewHost
+        ? [`https://${b.previewSlug}.${previewHost}`]
+        : [];
+      const namedServiceUrls = previewHost
+        ? computeBranchGatewayUrls(b, previewHost).map((entry) => entry.url)
+        : [];
+      b.previewUrls = Array.from(new Set([...mainUrls, ...namedServiceUrls]));
+      b.previewUrl = b.previewUrls[0] || '';
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
     const infraByProject = new Map<string, InfraService[]>();
@@ -4655,7 +4673,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     // 并发解析每个分支的资源（原本 48 个 await 串行 ~一个一个排队，是单请求耗时大头）。
     await Promise.all(
-      (branchesWithSubject as Array<BranchEntry & { previewUrl?: string; resources?: unknown[] }>).map(
+      (branchesWithSubject as Array<BranchEntry & {
+        previewUrl?: string;
+        previewUrls?: string[];
+        resources?: unknown[];
+      }>).map(
         async (b) => {
           const branchProjectId = b.projectId || 'default';
           b.resources = buildUnifiedBranchResources({
@@ -14599,10 +14621,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
   // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
   // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
-  const computeBranchGatewayUrls = (
+  function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> => {
+  ): Array<{ subdomain: string; name: string; url: string }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
     const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
@@ -14646,7 +14668,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
     return gatewayUrls;
-  };
+  }
 
   const findPreviewHostCollisions = (
     candidateDomains: string[],
@@ -18916,6 +18938,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   skills/cds/                — 统一技能（主入口 + CLI + reference）
   //   skills/cds-deploy-pipeline/ — 部署流水线技能
   //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //   skills/preview-url/        — 真实预览地址技能（必装）
   // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
@@ -18943,7 +18966,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan'];
+        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan', 'preview-url'];
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {
@@ -18965,12 +18988,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
-覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
+包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）、preview-url（真实预览地址）。
+覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的三个目录复制到当前项目的 Agent Skills 目录：
+解压后，将 \`skills/\` 下的四个目录复制到当前项目的 Agent Skills 目录；缺少 \`preview-url\` 即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|
@@ -19003,7 +19026,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
 | \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
 | \`cdscli smoke <branchId>\` | 分层冒烟（L1 根路径 / L2 API / L3 认证 API）|
+| \`cdscli --human preview-url\` | 从 CDS API 读取当前分支的全部真实预览入口，禁止本地推算 |
 | \`cdscli --help\` | 完整命令树 |
+
+完成 connect 后必须立即调用 \`preview-url\` 技能验证。CDS 有多个入口时应全部列出；API 无记录时应失败，不得根据分支名或 host 自行拼接。
 
 ## 详细文档
 
@@ -19016,6 +19042,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | \`skills/cds/reference/smoke.md\` | 分层冒烟策略 |
 | \`skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
 | \`skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+| \`skills/preview-url/SKILL.md\` | 获取当前分支实际发布的一个或多个预览地址 |
 
 ## 升级
 

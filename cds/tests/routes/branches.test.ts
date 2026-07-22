@@ -141,6 +141,7 @@ function seedLegacyDefaultProject(stateService: StateService): void {
 describe('Branch Routes', () => {
   let tmpDir: string;
   let server: http.Server;
+  let config: CdsConfig;
   let mock: MockShellExecutor;
   let stateService: StateService;
   let containerService: ContainerService;
@@ -177,7 +178,7 @@ describe('Branch Routes', () => {
     // 路径由 container-branch-network-isolation.test.ts 专门覆盖。
     process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
-    const config = makeConfig(tmpDir);
+    config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
 
     // Default mocks
@@ -1228,6 +1229,81 @@ describe('Branch Routes', () => {
       const res = await request(server, 'GET', '/api/branches');
       expect((res.body as any).branches).toHaveLength(1);
       expect((res.body as any).branches[0].id).toBe('main');
+    });
+
+    it('returns the main app and every routable named service as actual preview entries', async () => {
+      const now = new Date().toISOString();
+      config.rootDomains = ['hidden-backup.example.test', 'example.test'];
+      config.previewDomain = 'example.test';
+      stateService.addBuildProfile({
+        id: 'admin',
+        projectId: 'default',
+        name: 'Main app',
+        dockerImage: 'admin:latest',
+        workDir: '.',
+        command: 'serve',
+        containerPort: 80,
+      });
+      stateService.addBuildProfile({
+        id: 'llmgw-web',
+        projectId: 'default',
+        name: 'Model gateway',
+        dockerImage: 'llmgw-web:latest',
+        workDir: '.',
+        command: 'serve',
+        containerPort: 8100,
+        subdomain: 'llmgw-web',
+      });
+      stateService.addBuildProfile({
+        id: 'stopped-docs',
+        projectId: 'default',
+        name: 'Stopped docs',
+        dockerImage: 'docs:latest',
+        workDir: '.',
+        command: 'serve',
+        containerPort: 8080,
+        subdomain: 'docs',
+      });
+      stateService.addBranch({
+        id: 'dual-entry',
+        projectId: 'default',
+        branch: 'feature/dual-entry',
+        worktreePath: path.join(tmpDir, 'worktrees', 'dual-entry'),
+        status: 'running',
+        services: {
+          admin: {
+            profileId: 'admin',
+            containerName: 'cds-dual-entry-admin',
+            hostPort: 18080,
+            status: 'running',
+          },
+          'llmgw-web': {
+            profileId: 'llmgw-web',
+            containerName: 'cds-dual-entry-llmgw-web',
+            hostPort: 18100,
+            status: 'running',
+          },
+          'stopped-docs': {
+            profileId: 'stopped-docs',
+            containerName: 'cds-dual-entry-docs',
+            hostPort: 18081,
+            status: 'stopped',
+          },
+        },
+        createdAt: now,
+      });
+
+      const res = await request(server, 'GET', '/api/branches?project=default');
+      const branch = (res.body as any).branches.find((item: any) => item.id === 'dual-entry');
+
+      expect(res.status).toBe(200);
+      expect(branch.previewUrl).toBe('https://dual-entry-feature-default.example.test');
+      expect(branch.previewUrls).toEqual([
+        'https://dual-entry-feature-default.example.test',
+        'https://dual-entry-feature-default-llmgw-web.example.test/',
+      ]);
+      expect(branch.previewUrls.join('\n')).not.toContain('stopped-docs');
+      expect(branch.previewUrls.join('\n')).not.toContain('hidden-backup.example.test');
     });
 
     it('returns cached branch state by default without probing Docker', async () => {
