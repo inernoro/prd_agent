@@ -259,7 +259,7 @@ URL 来源见规则 #11：必须调用 `preview-url` 读取 CDS API 实际入口
 #### 真实地址 SSOT
 
 - Agent 只能使用 CDS `GET /api/branches` 返回的 `previewUrl` / `previewUrls`。
-- 一个 CDS 可能有两个或更多实际入口；命令返回多行时必须全部列出。
+- 一个 CDS 可能有两个或更多实际入口，例如本系统的主应用与模型网关控制台；入口数由实际发布的逻辑服务决定，不等于 `rootDomains` 数量。命令返回多行时必须全部列出。
 - `previewSlug`、分支名、项目名、仓库目录、`CDS_HOST` 和历史 v1/v2/v3 公式都不是 Agent 生成公网 URL 的授权。
 - 缺凭据、API 故障、分支未部署或地址字段缺失时，应如实报错并继续修复接入/部署；禁止本地 slugify、拼域名或猜一个地址。
 - `cds/src/services/preview-slug.ts:computePreviewSlug` 仍是 CDS 后端内部 slug 计算 SSOT，但不是 Agent 的 URL 生成器。

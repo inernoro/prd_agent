@@ -23,7 +23,7 @@ python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 
 ## 为什么强制走 cdscli
 
-CDS 的预览路由、根域、多入口和项目别名都是运行时状态。`computePreviewSlug` 只负责后端内部 slug，不能证明某个公网 URL 已发布。对 Agent 而言，预览地址的唯一事实来源是 CDS API 返回的 `previewUrl` / `previewUrls`。
+CDS 的预览路由、根域、多入口和项目别名都是运行时状态。入口按实际发布的逻辑表面计算，不按根域数量计算：同一项目可同时有主应用、模型网关控制台以及其他声明了 `cds.subdomain` 的独立服务入口。`computePreviewSlug` 只负责后端内部 slug，不能证明某个公网 URL 已发布。对 Agent 而言，预览地址的唯一事实来源是 CDS API 返回的 `previewUrl` / `previewUrls`。
 
 `cdscli preview-url` 的内部决策：
 
@@ -48,7 +48,7 @@ CDS 的预览路由、根域、多入口和项目别名都是运行时状态。`
 
 ## 多入口输出
 
-CDS API 若返回两个真实入口，human 模式会保持 CDS 顺序逐行打印。给用户交付时两条都要列出，并为每个入口追加同一个真实功能页深链。不得只选一条后把另一条当作不存在。
+CDS API 若返回两个真实入口，human 模式会保持 CDS 顺序逐行打印。比如本系统至少可能同时返回主应用与 `llmgw-web` 模型网关控制台；这两条是不同逻辑入口，不是两个 `rootDomains` 的同义词。给用户交付时所有入口都要列出，并按各入口的真实路由追加对应深链。不得只选一条，也不得给模型网关错误追加主应用页面路径。
 
 ## 输出格式（回复里这样贴）
 

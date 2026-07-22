@@ -215,7 +215,7 @@ python3 <当前项目技能根>/cds/cli/cdscli.py --human preview-url
 
 当前项目技能根必须按宿主实际安装位置解析，不得假定一定是 `.claude/skills`。`cdscli` 只信任 `/api/branches` 返回的 `previewUrl` / `previewUrls`，不使用分支名、项目名、`previewSlug` 或 `CDS_HOST` 推算 URL。
 
-一个 CDS 实例可能发布多个真实入口。命令返回多行时必须全部列出，不得自行挑选或补写。API 不可用、分支未部署或缺少地址字段时应明确失败，不得退化为本地公式。
+一个 CDS 实例可能发布多个真实入口，包括主应用、模型网关控制台和其他声明了 `cds.subdomain` 的独立服务。入口数由实际发布的逻辑服务决定，不等于 `rootDomains` 数量。命令返回多行时必须全部列出，不得自行挑选或补写。API 不可用、分支未部署或缺少地址字段时应明确失败，不得退化为本地公式。
 
 `cds/src/services/preview-slug.ts:computePreviewSlug` 仍是 CDS 后端内部 slug 计算 SSOT，但它不是 Agent 生成公网 URL 的授权。
 

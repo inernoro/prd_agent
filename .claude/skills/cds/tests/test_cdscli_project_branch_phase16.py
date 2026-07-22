@@ -215,6 +215,7 @@ def test_preview_urls_use_api_values_and_preserve_multiple_entries():
         "previewUrls": [
             "https://secondary.example",
             "https://primary.example",
+            "https://gateway.example/gw/healthz",
             "javascript:alert(1)",
             None,
         ],
@@ -223,6 +224,7 @@ def test_preview_urls_use_api_values_and_preserve_multiple_entries():
     assert cdscli._preview_urls_from_branch(branch) == [
         "https://primary.example/",
         "https://secondary.example/",
+        "https://gateway.example/gw/healthz",
     ]
 
 
@@ -263,6 +265,13 @@ def test_preview_url_command_returns_all_api_entries(monkeypatch):
     assert payload["data"]["source"] == "cds-api"
     assert payload["data"]["url"] == "https://primary.example/"
     assert payload["data"]["urls"] == [
+        "https://primary.example/",
+        "https://secondary.example/",
+    ]
+
+    human_code, human_out = call_main(["--human", "preview-url"])
+    assert human_code == 0, human_out
+    assert human_out.strip().splitlines() == [
         "https://primary.example/",
         "https://secondary.example/",
     ]

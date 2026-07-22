@@ -4636,23 +4636,30 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    // 每个分支直接下发 CDS 实际发布的全部预览入口。rootDomains 可同时
-    // 存在两个或更多入口；CLI / Agent 只能消费 previewUrl(s)，不得再根据
-    // previewSlug 与 CDS_HOST 猜域名。previewUrl 保留为主入口兼容字段。
+    // 每个分支直接下发 CDS 实际发布的全部预览入口：既包含分支主入口，
+    // 也包含可路由 profile 通过 cds.subdomain 发布的命名入口（例如
+    // prd-agent 的 llmgw-web 模型网关控制台）。rootDomains 只表示同一入口
+    // 可用的根域集合，不能替代逻辑入口枚举。CLI / Agent 只能消费
+    // previewUrl(s)，不得再根据 previewSlug、profileId 与 CDS_HOST 猜域名。
+    // previewUrl 保留为主入口兼容字段。
     const previewHosts = Array.from(new Set(
       (config.rootDomains?.length ? config.rootDomains : (config.previewDomain ? [config.previewDomain] : []))
         .map((host) => host.replace(/^https?:\/\//, '').replace(/\/+$/, '').trim())
         .filter(Boolean),
     ));
     const previewHost = previewHosts[0] || '';
-    for (const b of branchesWithSubject as Array<{
+    for (const b of branchesWithSubject as Array<BranchEntry & {
       previewSlug?: string;
       previewUrl?: string;
       previewUrls?: string[];
     }>) {
-      b.previewUrls = b.previewSlug
+      const mainUrls = b.previewSlug
         ? previewHosts.map((host) => `https://${b.previewSlug}.${host}`)
         : [];
+      const namedServiceUrls = previewHosts.flatMap((host) =>
+        computeBranchGatewayUrls(b, host).map((entry) => entry.url),
+      );
+      b.previewUrls = Array.from(new Set([...mainUrls, ...namedServiceUrls]));
       b.previewUrl = b.previewUrls[0] || '';
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
@@ -14617,10 +14624,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
   // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
   // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
-  const computeBranchGatewayUrls = (
+  function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> => {
+  ): Array<{ subdomain: string; name: string; url: string }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
     const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
@@ -14664,7 +14671,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
     return gatewayUrls;
-  };
+  }
 
   const findPreviewHostCollisions = (
     candidateDomains: string[],
