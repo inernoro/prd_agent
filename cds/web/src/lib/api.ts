@@ -234,6 +234,15 @@ export interface ReportFolder {
   createdAt: string;
 }
 
+export interface KnowledgeBaseConnection {
+  id: string;
+  name: string;
+  partnerKind: 'map' | 'cli' | 'other';
+  status: 'pending-pairing' | 'active' | 'revoked';
+  partnerName?: string;
+  partnerBaseUrl?: string;
+}
+
 /**
  * List report metadata, newest first. `projectId` filters by project;
  * `folderId` filters by folder ('none' = 仅未归类的报告).
@@ -391,6 +400,16 @@ export async function fetchReportRaw(id: string): Promise<string> {
 /** Absolute URL for the raw report endpoint (used as iframe src for HTML). */
 export function reportRawUrl(id: string): string {
   return apiUrl(`/api/reports/${encodeURIComponent(id)}/raw`);
+}
+
+/** Authenticated ZIP download containing report body, metadata and referenced assets. */
+export function reportDownloadUrl(id: string): string {
+  return apiUrl(`/api/reports/${encodeURIComponent(id)}/download`);
+}
+
+export async function listKnowledgeBaseConnections(): Promise<KnowledgeBaseConnection[]> {
+  const res = await apiRequest<{ connections: KnowledgeBaseConnection[] }>('/api/cds-system/connections');
+  return res.connections;
 }
 
 // ── Local users + activity (auth-local, 2026-06-20) ──

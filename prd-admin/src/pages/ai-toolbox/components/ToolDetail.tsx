@@ -1407,14 +1407,14 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
         className="w-8 h-8 rounded-lg flex items-center justify-center flex-shrink-0"
         style={{
           background: isUser
-            ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.2) 0%, rgba(99, 102, 241, 0.1) 100%)'
+            ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.20) 0%, rgba(var(--accent-primary-rgb), 0.10) 100%)'
             : `linear-gradient(135deg, hsla(${accentHue}, 70%, 60%, 0.15) 0%, hsla(${accentHue}, 70%, 40%, 0.08) 100%)`,
           border: isUser
-            ? '1px solid rgba(99, 102, 241, 0.3)'
+            ? '1px solid var(--selection-border)'
             : `1px solid hsla(${accentHue}, 60%, 60%, 0.2)`,
         }}
       >
-        {isUser ? <User size={16} style={{ color: 'rgb(129, 140, 248)' }} /> : <Bot size={16} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />}
+        {isUser ? <User size={16} style={{ color: 'var(--accent-primary)' }} /> : <Bot size={16} style={{ color: `hsla(${accentHue}, 70%, 70%, 1)` }} />}
       </div>
       <div className={`flex flex-col gap-1 max-w-[75%] ${isUser ? 'items-end' : 'items-start'}`}>
         {message.attachments && message.attachments.length > 0 && (
@@ -1457,7 +1457,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
             background: isError
               ? 'rgba(239, 68, 68, 0.1)'
               : isUser
-                ? 'linear-gradient(135deg, rgba(99, 102, 241, 0.15) 0%, rgba(99, 102, 241, 0.08) 100%)'
+                ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.15) 0%, rgba(var(--accent-primary-rgb), 0.08) 100%)'
                 : 'rgba(255, 255, 255, 0.03)',
             color: isError ? 'rgb(248, 113, 113)' : 'var(--text-primary)',
             border: isError ? '1px solid rgba(239, 68, 68, 0.2)' : undefined,
@@ -1471,7 +1471,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
                 value={editText}
                 onChange={(e) => setEditText(e.target.value)}
                 className="w-full bg-transparent border rounded-lg p-2 text-sm outline-none resize-none"
-                style={{ borderColor: 'rgba(99, 102, 241, 0.3)', color: 'var(--text-primary)', minHeight: '60px' }}
+                style={{ borderColor: 'var(--selection-border)', color: 'var(--text-primary)', minHeight: '60px' }}
                 autoFocus
                 onKeyDown={(e) => {
                   if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); handleConfirmEdit(); }
@@ -1480,7 +1480,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
               />
               <div className="flex items-center gap-2 justify-end">
                 <button onClick={handleCancelEdit} className="text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--text-muted)' }}>取消</button>
-                <button onClick={handleConfirmEdit} className="text-xs px-2 py-1 rounded transition-colors" style={{ background: 'rgba(99, 102, 241, 0.2)', color: 'rgb(129, 140, 248)' }}>发送</button>
+                <button onClick={handleConfirmEdit} className="text-xs px-2 py-1 rounded transition-colors" style={{ background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }}>发送</button>
               </div>
             </div>
           ) : message.content ? (

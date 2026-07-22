@@ -124,6 +124,7 @@ import {
   getUserPreferences,
   getAgentRun,
   getOrCreateQuickCaptureStore,
+  importCdsAcceptanceReport,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -159,6 +160,7 @@ import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDra
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
+import { parseCdsReportImportDeepLink, withoutCdsReportImportDeepLink } from './cdsReportImportDeepLink';
 
 // 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
 // 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
@@ -1713,9 +1715,9 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               title="知识星球 — 3D 文档星系，悬停看简介、点击进入文档"
               className="galaxy-entry-button relative isolate flex h-7 cursor-pointer items-center gap-1.5 overflow-hidden rounded-[8px] px-3 text-[11px] font-semibold"
               style={{
-                color: 'rgba(196,181,253,0.98)',
-                background: 'linear-gradient(135deg, rgba(168,85,247,0.20), rgba(99,102,241,0.16))',
-                border: '1px solid rgba(196,181,253,0.45)',
+                color: 'var(--semantic-purple-text)',
+                background: 'var(--semantic-purple-soft)',
+                border: '1px solid var(--semantic-purple-border)',
                 animation: 'galaxyEntryPulse 2.4s ease-in-out infinite',
               }}
             >
@@ -2578,6 +2580,7 @@ export function DocumentStorePage() {
     () => hasQuickRecordRequest(location.search),
   );
   const quickCaptureRequestInFlightRef = useRef(false);
+  const cdsImportRequestRef = useRef<string | null>(null);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -2876,6 +2879,48 @@ export function DocumentStorePage() {
     }
     setLoading(false);
   }, []);
+
+  // CDS 验收中心的一键保存深链。写入动作始终在 MAP 当前登录态内执行：
+  // CDS 只传报告范围和来源地址，后端再用已授权的「系统互联」记录匹配来源，拒绝任意 URL。
+  useEffect(() => {
+    const deepLink = parseCdsReportImportDeepLink(location.search);
+    if (!deepLink) return;
+    const { reportId, projectId, sourceBaseUrl } = deepLink;
+    const requestKey = `${sourceBaseUrl}|${projectId ?? ''}|${reportId}`;
+    if (cdsImportRequestRef.current === requestKey) return;
+    cdsImportRequestRef.current = requestKey;
+
+    const cleanSearch = () => withoutCdsReportImportDeepLink(location.search);
+    if (!sourceBaseUrl) {
+      toast.error('保存失败', '缺少 CDS 来源地址，请从验收中心重新发起');
+      navigate({ pathname: location.pathname, search: cleanSearch(), hash: location.hash }, { replace: true });
+      return;
+    }
+
+    toast.info('正在保存验收报告', 'MAP 正在从已授权的 CDS 连接拉取报告与截图');
+    void importCdsAcceptanceReport({ reportId, projectId, sourceBaseUrl }).then((res) => {
+      if (!res.success) {
+        toast.error('保存到知识库失败', res.error?.message ?? '请检查系统互联中的 CDS 连接');
+        navigate({ pathname: location.pathname, search: cleanSearch(), hash: location.hash }, { replace: true });
+        return;
+      }
+      const result = res.data;
+      if (result.failed > 0) {
+        toast.error('报告同步未完成', result.messages[0] ?? `${result.failed} 份报告导入失败`);
+        navigate({ pathname: location.pathname, search: cleanSearch(), hash: location.hash }, { replace: true });
+        return;
+      }
+      toast.success('已保存到我的知识库', `${result.storeName}：新增 ${result.imported}，更新 ${result.updated}，已存在 ${result.skipped}`);
+      setTab('mine');
+      setSelectedStoreId(result.storeId);
+      void loadStores('mine', null);
+      navigate({
+        pathname: location.pathname,
+        search: withDocumentStoreEntry(cleanSearch(), result.storeId, null),
+        hash: location.hash,
+      }, { replace: true });
+    });
+  }, [loadStores, location.hash, location.pathname, location.search, navigate]);
 
   // 顶部 tab 与 teamScope 双向绑定：mine → 个人作用域，team → 共享作用域
   // 注意：mine 分支不写 useTeamStore，以保留上次选中的 teamId 记忆，方便往返切换
@@ -3615,7 +3660,7 @@ export function DocumentStorePage() {
                   <button
                     key={s.key}
                     type="button"
-                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-white/[0.04] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+                    className="surface-inset rounded-[12px] p-4 flex flex-col items-center text-center transition-colors hover:bg-[var(--bg-card-hover)] focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
                     onClick={() => {
                       if (s.key === 'emergence') {
                         navigate('/emergence');
@@ -3628,8 +3673,8 @@ export function DocumentStorePage() {
                     }}
                   >
                     <div className="w-8 h-8 rounded-full flex items-center justify-center mb-2.5"
-                      style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.12)' }}>
-                      <Icon size={14} style={{ color: 'rgba(59,130,246,0.85)' }} />
+                      style={{ background: 'var(--selection-icon-bg)', border: '1px solid var(--selection-border)' }}>
+                      <Icon size={14} style={{ color: 'var(--selection-text)' }} />
                     </div>
                     <p className="text-[12px] font-semibold mb-1" style={{ color: 'var(--text-primary)' }}>{s.title}</p>
                     <p className="text-[11px] leading-[1.5]" style={{ color: 'var(--text-muted)' }}>{s.desc}</p>

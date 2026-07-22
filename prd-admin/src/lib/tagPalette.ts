@@ -18,14 +18,14 @@ export interface TagColorSpec {
 }
 
 export const TAG_PALETTE: Record<TagColorKey, TagColorSpec> = {
-  red:    { key: 'red',    label: '红', dot: '#ef4444', text: 'rgba(252,165,165,0.95)', bg: 'rgba(239,68,68,0.12)',  border: 'rgba(239,68,68,0.22)'  },
-  orange: { key: 'orange', label: '橙', dot: '#f97316', text: 'rgba(253,186,116,0.95)', bg: 'rgba(249,115,22,0.12)', border: 'rgba(249,115,22,0.22)' },
-  yellow: { key: 'yellow', label: '黄', dot: '#eab308', text: 'rgba(253,224,71,0.95)',  bg: 'rgba(234,179,8,0.12)',  border: 'rgba(234,179,8,0.22)'  },
-  green:  { key: 'green',  label: '绿', dot: '#22c55e', text: 'rgba(134,239,172,0.95)', bg: 'rgba(34,197,94,0.12)',  border: 'rgba(34,197,94,0.22)'  },
-  teal:   { key: 'teal',   label: '青', dot: '#14b8a6', text: 'rgba(94,234,212,0.95)',  bg: 'rgba(20,184,166,0.12)', border: 'rgba(20,184,166,0.22)' },
-  blue:   { key: 'blue',   label: '蓝', dot: '#3b82f6', text: 'rgba(147,197,253,0.95)', bg: 'rgba(59,130,246,0.12)', border: 'rgba(59,130,246,0.22)' },
-  purple: { key: 'purple', label: '紫', dot: '#a855f7', text: 'rgba(216,180,254,0.95)', bg: 'rgba(168,85,247,0.12)', border: 'rgba(168,85,247,0.22)' },
-  gray:   { key: 'gray',   label: '灰', dot: '#94a3b8', text: 'rgba(203,213,225,0.9)',  bg: 'rgba(148,163,184,0.12)', border: 'rgba(148,163,184,0.22)' },
+  red:    { key: 'red',    label: '红', dot: 'var(--tag-red-solid)',    text: 'var(--semantic-danger-text)',  bg: 'var(--semantic-danger-soft)',  border: 'var(--semantic-danger-border)' },
+  orange: { key: 'orange', label: '橙', dot: 'var(--tag-orange-solid)', text: 'var(--semantic-orange-text)',  bg: 'var(--semantic-orange-soft)',  border: 'var(--semantic-orange-border)' },
+  yellow: { key: 'yellow', label: '黄', dot: 'var(--tag-yellow-solid)', text: 'var(--semantic-warning-text)', bg: 'var(--semantic-warning-soft)', border: 'var(--semantic-warning-border)' },
+  green:  { key: 'green',  label: '绿', dot: 'var(--tag-green-solid)',  text: 'var(--semantic-success-text)', bg: 'var(--semantic-success-soft)', border: 'var(--semantic-success-border)' },
+  teal:   { key: 'teal',   label: '青', dot: 'var(--tag-teal-solid)',   text: 'var(--semantic-cyan-text)',    bg: 'var(--semantic-cyan-soft)',    border: 'var(--semantic-cyan-border)' },
+  blue:   { key: 'blue',   label: '蓝', dot: 'var(--tag-blue-solid)',   text: 'var(--semantic-info-text)',    bg: 'var(--semantic-info-soft)',    border: 'var(--semantic-info-border)' },
+  purple: { key: 'purple', label: '紫', dot: 'var(--tag-purple-solid)', text: 'var(--semantic-purple-text)',  bg: 'var(--semantic-purple-soft)',  border: 'var(--semantic-purple-border)' },
+  gray:   { key: 'gray',   label: '灰', dot: 'var(--tag-gray-solid)',   text: 'var(--semantic-neutral-text)', bg: 'var(--semantic-neutral-soft)', border: 'var(--semantic-neutral-border)' },
 };
 
 const PALETTE_ORDER: TagColorKey[] = ['blue', 'purple', 'green', 'orange', 'red', 'teal', 'yellow', 'gray'];

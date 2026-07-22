@@ -9,6 +9,7 @@ import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
+import { LogDetailPage } from '@/pages/LogDetailPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
@@ -94,6 +95,7 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
             <Route path="/app-callers/:id/prompt-policy" element={<RequirePageAccess page="promptPolicy"><PromptPolicyPage /></RequirePageAccess>} />
             <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />

@@ -21,8 +21,7 @@ export const glassPanel: React.CSSProperties = {
   background:
     'var(--glass-bg-start, rgba(255, 255, 255, 0.10))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.18))',
-  boxShadow:
-    '0 24px 60px -12px rgba(10, 10, 14, 0.55)',
+  boxShadow: 'var(--shadow-glass-panel)',
   backdropFilter: 'blur(40px) saturate(180%)',
   WebkitBackdropFilter: 'blur(40px) saturate(180%)',
 };
@@ -36,8 +35,7 @@ export const glassBar: React.CSSProperties = {
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
   backdropFilter: 'blur(40px) saturate(200%)',
   WebkitBackdropFilter: 'blur(40px) saturate(200%)',
-  boxShadow:
-    '0 12px 32px -8px rgba(10, 10, 14, 0.3)',
+  boxShadow: 'var(--shadow-glass-bar)',
 };
 
 /**
@@ -47,8 +45,7 @@ export const glassBarGold: React.CSSProperties = {
   ...glassBar,
   background:
     'var(--glass-bg-start, rgba(255, 255, 255, 0.08))',
-  boxShadow:
-    '0 12px 32px -8px rgba(10, 10, 14, 0.4)',
+  boxShadow: 'var(--shadow-glass-bar-gold)',
 };
 
 /**
@@ -60,8 +57,7 @@ export const glassSidebar: React.CSSProperties = {
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
   backdropFilter: 'blur(40px) saturate(200%)',
   WebkitBackdropFilter: 'blur(40px) saturate(200%)',
-  boxShadow:
-    '0 16px 48px -12px rgba(10, 10, 14, 0.5)',
+  boxShadow: 'var(--shadow-glass-sidebar)',
 };
 
 /**
@@ -70,8 +66,7 @@ export const glassSidebar: React.CSSProperties = {
 export const glassTooltip: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(20, 20, 24, 0.95))',
   border: '1px solid rgba(255,255,255,0.12)',
-  boxShadow:
-    '0 8px 32px -8px rgba(10, 10, 14, 0.6)',
+  boxShadow: 'var(--shadow-glass-tooltip)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
 };
@@ -82,8 +77,7 @@ export const glassTooltip: React.CSSProperties = {
 export const glassToolbar: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(32, 32, 38, 0.95))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-  boxShadow:
-    '0 12px 32px -8px rgba(10, 10, 14, 0.45)',
+  boxShadow: 'var(--shadow-glass-toolbar)',
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',
 };
@@ -123,8 +117,7 @@ export const glassOverlay: React.CSSProperties = {
 export const glassTabContainer: React.CSSProperties = {
   background: 'rgba(0, 0, 0, 0.32)',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-  boxShadow:
-    '0 8px 20px rgba(0, 0, 0, 0.28), 0 1px 4px rgba(0, 0, 0, 0.20) inset',
+  boxShadow: 'var(--shadow-glass-tab)',
   backdropFilter: 'blur(8px)',
   WebkitBackdropFilter: 'blur(8px)',
 };
@@ -137,7 +130,7 @@ export const glassToast = (bg: string, borderColor: string): React.CSSProperties
   border: `1px solid ${borderColor}`,
   backdropFilter: 'blur(16px)',
   WebkitBackdropFilter: 'blur(16px)',
-  boxShadow: '0 8px 32px rgba(0, 0, 0, 0.28)',
+  boxShadow: 'var(--shadow-glass-toast)',
 });
 
 /**
@@ -154,7 +147,7 @@ export const glassBadge: React.CSSProperties = {
 export const glassFloatingButton: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(18, 18, 22, 0.8))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-  boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
+  boxShadow: 'var(--shadow-glass-floating)',
   backdropFilter: 'blur(12px)',
   WebkitBackdropFilter: 'blur(12px)',
 };
@@ -176,7 +169,7 @@ export const glassDrawer: React.CSSProperties = {
   background:
     'var(--glass-bg-start, rgba(20, 20, 25, 0.98))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
-  boxShadow: '0 20px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.04) inset',
+  boxShadow: 'var(--shadow-glass-drawer)',
   backdropFilter: 'blur(40px)',
   WebkitBackdropFilter: 'blur(40px)',
 };
@@ -187,7 +180,7 @@ export const glassDrawer: React.CSSProperties = {
 export const glassDropdown: React.CSSProperties = {
   background: 'var(--glass-bg-end, rgba(30, 30, 35, 0.95))',
   border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.1))',
-  boxShadow: '0 12px 40px rgba(0,0,0,0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+  boxShadow: 'var(--shadow-glass-dropdown)',
   backdropFilter: 'blur(20px)',
   WebkitBackdropFilter: 'blur(20px)',
 };
@@ -201,7 +194,7 @@ export const glassBottomSheet: React.CSSProperties = {
   background:
     'var(--glass-bg-start, rgba(24, 24, 28, 0.98))',
   borderTop: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-  boxShadow: '0 -12px 48px rgba(0,0,0,0.5), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+  boxShadow: 'var(--shadow-glass-bottom-sheet)',
   backdropFilter: 'blur(40px) saturate(180%)',
   WebkitBackdropFilter: 'blur(40px) saturate(180%)',
 };

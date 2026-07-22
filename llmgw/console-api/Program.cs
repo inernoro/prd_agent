@@ -8661,42 +8661,9 @@ static async Task<string?> ValidateExternalExchangeTargetAsync(string targetUrl,
         return "目标地址当前无法完成安全 DNS 校验，请检查域名后重试";
     }
 
-    if (addresses.Length == 0 || addresses.Any(IsBlockedExchangeTargetAddress))
+    if (addresses.Length == 0 || addresses.Any(address => !GatewayConfigurationProvisioning.IsSafeExternalExchangeAddress(address)))
         return "外部租户 Exchange 不能连接 localhost、内网、链路本地或云元数据地址";
     return null;
-}
-
-static bool IsBlockedExchangeTargetAddress(IPAddress address)
-{
-    if (address.IsIPv4MappedToIPv6) address = address.MapToIPv4();
-    if (IPAddress.IsLoopback(address)) return true;
-    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
-    {
-        var bytes = address.GetAddressBytes();
-        if (bytes.Length != 4) return true;
-        var b0 = bytes[0];
-        var b1 = bytes[1];
-        return b0 == 0
-               || b0 == 10
-               || b0 == 127
-               || (b0 == 100 && b1 is >= 64 and <= 127)
-               || (b0 == 169 && b1 == 254)
-               || (b0 == 172 && b1 is >= 16 and <= 31)
-               || (b0 == 192 && b1 == 168)
-               || b0 >= 224;
-    }
-    if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
-    {
-        var bytes = address.GetAddressBytes();
-        return address.Equals(IPAddress.IPv6Any)
-               || address.Equals(IPAddress.IPv6Loopback)
-               || address.Equals(IPAddress.IPv6None)
-               || address.IsIPv6LinkLocal
-               || address.IsIPv6SiteLocal
-               || bytes[0] == 0xff
-               || (bytes[0] & 0xfe) == 0xfc;
-    }
-    return true;
 }
 
 static async Task WriteOperationAuditAsync(
