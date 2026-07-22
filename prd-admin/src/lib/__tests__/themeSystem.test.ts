@@ -234,6 +234,9 @@ describe('主题系统契约', () => {
     expect(typeBadgeRegistry).toContain("color: 'var(--semantic-indigo-text)'");
     expect(typeBadgeRegistry).not.toMatch(/#[0-9a-f]{3,8}|rgba\(/i);
     expect(changelogPage).not.toMatch(/color:\s*'(?:#86efac|#fdba74|#fca5a5|#fcd34d|#cbd5e1|#f0abfc|#bfdbfe|#7dd3fc|#dbeafe|#a5b4fc)'/i);
+    expect(changelogPage).not.toMatch(/rgba\(255\s*,\s*255\s*,\s*255/);
+    expect(changelogPage).not.toContain("background: 'rgba(30, 30, 40, 0.98)'");
+    expect(changelogPage).toContain('className="surface-popover');
     expect(docBrowser).toContain("'var(--selection-bg)'");
     expect(docBrowser).toContain("'var(--selection-text)'");
     expect(docBrowser).toContain("'var(--selection-checkbox-bg)'");

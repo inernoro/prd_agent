@@ -1498,8 +1498,8 @@ export default function ChangelogPage() {
               className={`clg-sweep h-7 px-2.5 rounded-lg inline-flex items-center gap-1.5 text-[12px] font-medium${totalFlash ? ' clg-sweep-on' : ''}`}
               style={{
                 color: 'var(--text-secondary)',
-                background: 'rgba(255, 255, 255, 0.04)',
-                border: '1px solid rgba(255, 255, 255, 0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--nested-block-border)',
                 fontVariantNumeric: 'tabular-nums',
               }}
               title={`${activeSummaryLabel}总数量`}
@@ -1574,8 +1574,8 @@ export default function ChangelogPage() {
                 <div
                   className="inline-flex items-center gap-2 px-2.5 py-1 rounded-full text-[11px] font-semibold mb-2"
                   style={{
-                    background: 'rgba(255, 255, 255, 0.06)',
-                    border: '1px solid rgba(255, 255, 255, 0.08)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--nested-block-border)',
                     color: 'var(--selection-text)',
                   }}
                 >
@@ -1641,8 +1641,8 @@ export default function ChangelogPage() {
                       key={stat}
                       className="px-2.5 py-1 rounded-full text-[11px] font-medium"
                       style={{
-                        background: 'rgba(255, 255, 255, 0.05)',
-                        border: '1px solid rgba(255, 255, 255, 0.08)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--nested-block-border)',
                         color: 'var(--text-secondary)',
                       }}
                     >
@@ -1656,8 +1656,8 @@ export default function ChangelogPage() {
                       key={`${activeSummary.title}-${index}`}
                       className="rounded-xl px-3 py-2 text-[13px] leading-relaxed"
                       style={{
-                        background: 'rgba(255, 255, 255, 0.03)',
-                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--nested-block-border)',
                         color: 'var(--text-secondary)',
                       }}
                     >
@@ -1688,8 +1688,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -1708,8 +1708,8 @@ export default function ChangelogPage() {
                         <div
                           className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                           style={{
-                            background: 'rgba(255, 255, 255, 0.04)',
-                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            background: 'var(--nested-block-bg)',
+                            border: '1px solid var(--nested-block-border)',
                             color: 'var(--text-secondary)',
                             fontSize: '13px',
                             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -1780,8 +1780,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -1793,8 +1793,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -1809,16 +1809,16 @@ export default function ChangelogPage() {
                       key={group.date}
                       className="rounded-xl px-4 py-3"
                       style={{
-                        background: 'rgba(255, 255, 255, 0.025)',
-                        border: '1px solid rgba(255, 255, 255, 0.06)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--nested-block-border)',
                       }}
                     >
                       <div className="flex items-center gap-2 mb-3 flex-wrap">
                         <div
                           className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                           style={{
-                            background: 'rgba(255, 255, 255, 0.04)',
-                            border: '1px solid rgba(255, 255, 255, 0.08)',
+                            background: 'var(--bg-card)',
+                            border: '1px solid var(--border-secondary)',
                             color: 'var(--text-secondary)',
                             fontSize: '13px',
                             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -1878,8 +1878,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -1894,16 +1894,16 @@ export default function ChangelogPage() {
                     key={group.weekStart}
                     className="rounded-xl px-4 py-3"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.025)',
-                      border: '1px solid rgba(255, 255, 255, 0.06)',
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--nested-block-border)',
                     }}
                   >
                     <div className="flex items-center gap-2 mb-3 flex-wrap">
                       <div
                         className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                         style={{
-                          background: 'rgba(255, 255, 255, 0.04)',
-                          border: '1px solid rgba(255, 255, 255, 0.08)',
+                          background: 'var(--bg-card)',
+                          border: '1px solid var(--border-secondary)',
                           color: 'var(--text-secondary)',
                           fontSize: '13px',
                           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -1966,8 +1966,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-6 text-center text-[12px]"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -1979,16 +1979,16 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-3"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.025)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--nested-block-border)',
                 }}
               >
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <div
                     className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                     style={{
-                      background: 'rgba(255, 255, 255, 0.04)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
+                      background: 'var(--bg-card)',
+                      border: '1px solid var(--border-secondary)',
                       color: 'var(--text-secondary)',
                       fontSize: '13px',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
@@ -2039,8 +2039,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-8 text-center"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.02)',
-                  border: '1px dashed rgba(255, 255, 255, 0.08)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px dashed var(--nested-block-border)',
                   color: 'var(--text-muted)',
                 }}
               >
@@ -2056,8 +2056,8 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-3"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.025)',
-                  border: '1px solid rgba(255, 255, 255, 0.06)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--nested-block-border)',
                 }}
               >
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
@@ -2241,8 +2241,8 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         className="shrink-0 inline-flex items-center gap-1 h-[24px] px-2 rounded-md text-[12px]"
         style={{
           color: 'var(--text-secondary)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--nested-block-border)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
           fontWeight: 500,
         }}
@@ -2354,14 +2354,9 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
       </button>
       {open && (
         <div
-          className="absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3 shadow-2xl"
-          style={{
-            background: 'rgba(30, 30, 40, 0.98)',
-            border: '1px solid rgba(255, 255, 255, 0.14)',
-            boxShadow: '0 18px 60px rgba(0, 0, 0, 0.36)',
-          }}
+          className="surface-popover absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3"
         >
-          <div className="flex items-center justify-between gap-3 pb-2 border-b border-white/10">
+          <div className="surface-panel-header flex items-center justify-between gap-3 pb-2">
             <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
               {hasMine ? <UserCheck size={13} /> : <Bug size={13} />}
               {hasMine ? '我的关联缺陷' : '关联缺陷'}
@@ -2369,7 +2364,8 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="h-6 w-6 inline-flex items-center justify-center rounded-md hover:bg-white/10"
+              className="clg-neutral-button h-6 w-6 inline-flex items-center justify-center rounded-md"
+              style={{ color: 'var(--text-secondary)' }}
               title="关闭"
             >
               <X size={13} />
