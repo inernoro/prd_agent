@@ -1856,6 +1856,10 @@ export function BranchListPage(): JSX.Element {
 
   useEffect(() => {
     if (!projectId || !noticeProject) return;
+    // 项目元信息走了 fallback(project 404/暂不可读)时不发站内信:此时 projectId
+    // 可能指向已删除的项目,发出去的通知会携带死链接,用户点开即 404
+    // (2026-07-21 用户实例:通知里的项目 id 已被删除重建)。
+    if (state.status === 'ok' && state.projectWarning) return;
     if (pendingEnvKeys.length === 0) return;
     const keys = [...pendingEnvKeys].sort();
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
@@ -1876,6 +1880,8 @@ export function BranchListPage(): JSX.Element {
 
   useEffect(() => {
     if (state.status !== 'ok' || !projectId || !state.hasSchemafulInfra) return;
+    // 同上:项目元信息 fallback 时不发,避免为已不可解析的项目新造死链通知。
+    if (state.projectWarning) return;
     window.dispatchEvent(new CustomEvent('cds:notice:upsert', {
       detail: {
         id: `branch:${projectId}:schema-init`,
@@ -4236,6 +4242,11 @@ function ReleaseBranchDialog({
   const [run, setRun] = useState<ReleaseRunSummary | null>(null);
   const [logs, setLogs] = useState<ReleaseLogEntry[]>([]);
   const [starting, setStarting] = useState(false);
+  // 发布弹窗改成分阶段向导（选站点 → 发布前检查 → 发布），避免旧版一条长滚动把
+  // 实时发布状态挤到最底部（被遮挡）。stage 由 wizardStep + run 派生：一旦 run 存在
+  // 就固定进入「发布」阶段，前序配置/预检收起成一行摘要，状态区直接占满弹窗。
+  const [wizardStep, setWizardStep] = useState<'config' | 'preflight'>('config');
+  const [scriptOpen, setScriptOpen] = useState(false);
   // 发布过程是分钟级长任务（fast.sh + exec_dep.sh + 健康检查）。每秒滴答一次，
   // 让运行中的步骤显示"已用时 mm:ss"，用户随时知道在动而非卡死（2 秒原则）。
   const [nowTick, setNowTick] = useState(() => Date.now());
@@ -4250,6 +4261,8 @@ function ReleaseBranchDialog({
     setPreflight(null);
     setRun(null);
     setLogs([]);
+    setWizardStep('config');
+    setScriptOpen(false);
     setLoadingTargets(true);
     const ctrl = new AbortController();
     apiRequest<{ targets: ReleaseTargetSummary[] }>(
@@ -4307,6 +4320,9 @@ function ReleaseBranchDialog({
 
   const runPreflight = async (): Promise<void> => {
     if (!branch || !targetId) return;
+    // 进入「发布前检查」阶段：把配置收起、只显示检查进度与结果，避免选项和结果同屏堆叠。
+    setWizardStep('preflight');
+    setScriptOpen(false);
     setPreflightState('running');
     setPreflight(null);
     try {
@@ -4340,6 +4356,13 @@ function ReleaseBranchDialog({
     }
   };
 
+  // stage 由向导步骤 + run 派生：一旦发布开始（run 存在），永远进入「发布」阶段，
+  // 前序配置 / 预检收起成一行摘要，实时状态直接占满弹窗（不再被长滚动挤到最底部）。
+  const stage: 'config' | 'preflight' | 'releasing' = run ? 'releasing' : wizardStep;
+  const releaseTerminal = run ? isReleaseTerminal(run.status) : false;
+  const passCount = preflight ? preflight.checks.filter((check) => check.status === 'pass').length : 0;
+  const totalChecks = preflight ? preflight.checks.length : 0;
+
   return (
     <Dialog open={!!branch} onOpenChange={(open) => { if (!open) onClose(); }}>
       <DialogContent className="max-w-none" style={{ width: 'min(768px, calc(100vw - 32px))' }}>
@@ -4364,109 +4387,142 @@ function ReleaseBranchDialog({
               </div>
             </div>
 
-            <div className="flex flex-wrap items-end gap-3">
-              <label className="grid min-w-[260px] flex-1 gap-1 text-sm">
-                <span className="text-muted-foreground">发布站点</span>
-                <select
-                  value={targetId}
-                  onChange={(event) => {
-                    setTargetId(event.target.value);
-                    setPreflight(null);
-                  }}
-                  disabled={loadingTargets || targets.length === 0}
-                  className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
-                >
-                  {targets.length === 0 ? <option value="">没有可用站点发布目标</option> : null}
-                  {targets.map((target) => (
-                    <option key={target.id} value={target.id}>
-                      {target.name} · {target.ssh?.host || '-'} · {target.ssh?.appPath || '-'}
-                    </option>
-                  ))}
-                </select>
-              </label>
-              <Button variant="outline" onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running'}>
-                {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <Gauge />}
-                发布前检查
-              </Button>
-              <Button onClick={() => void startRelease()} disabled={!targetId || !preflight?.ok || starting || !!run}>
-                {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
-                开始发布
-              </Button>
-              <Button asChild variant="outline">
-                <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
-              </Button>
-            </div>
+            <ReleaseWizardRail stage={stage} status={run?.status} />
 
-            {preflightState === 'running' ? (
-              <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                正在连接发布服务器并执行发布前检查…首次建立 SSH 连接可能需要若干秒，请稍候。
-              </div>
-            ) : null}
-
-            {starting && !run ? (
-              <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
-                <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
-                正在提交发布任务，准备连接服务器…
-              </div>
-            ) : null}
-
-            {targets.length === 0 && !loadingTargets ? (
-              <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
-                当前项目没有站点发布目标。先到发布中心添加站点发布。
-              </div>
-            ) : null}
-
-            {selectedTarget ? (
-              <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-3">
-                <div className="mb-3 flex items-center gap-2 text-sm font-medium">
-                  <Server className="h-4 w-4 text-primary" />
-                  发布确认
-                </div>
-                <div className="grid gap-3 text-sm md:grid-cols-2">
-                  <ReleaseConfirmItem label="发布目标" value={selectedTarget.name} />
-                  <ReleaseConfirmItem label="服务器" value={selectedServer} mono />
-                  <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
-                  <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
-                  <div className="md:col-span-2">
-                    <div className="text-xs text-muted-foreground">执行计划</div>
-                    <div className="mt-1 flex flex-wrap items-center gap-2">
-                      {selectedScripts.map((script, index) => (
-                        <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
-                          {script}
-                        </span>
-                      ))}
-                    </div>
-                  </div>
-                </div>
-              </div>
-            ) : null}
-
-            {preflight ? (
-              <div className="grid gap-2">
-                {preflight.checks.map((check) => (
-                  <div
-                    key={check.id}
-                    className={`flex items-start justify-between gap-3 rounded-md border px-3 py-2 text-sm ${
-                      check.status === 'pass'
-                        ? 'border-emerald-500/30 bg-emerald-500/10'
-                        : check.status === 'warn'
-                          ? 'border-amber-500/30 bg-amber-500/10'
-                          : 'border-red-500/30 bg-red-500/10'
-                    }`}
+            {stage === 'config' ? (
+              <div className="space-y-4">
+                <label className="grid gap-1 text-sm">
+                  <span className="text-muted-foreground">发布站点</span>
+                  <select
+                    value={targetId}
+                    onChange={(event) => {
+                      setTargetId(event.target.value);
+                      setPreflight(null);
+                    }}
+                    disabled={loadingTargets || targets.length === 0}
+                    className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 text-sm outline-none focus:border-primary/60"
                   >
-                    <div>
-                      <div className="font-medium">{releaseCheckLabel(check)}</div>
-                      <div className="mt-0.5 text-xs text-muted-foreground">{check.message}</div>
-                    </div>
-                    <span className="font-mono text-xs">{releaseCheckStatusLabel(check.status)}</span>
+                    {targets.length === 0 ? <option value="">没有可用站点发布目标</option> : null}
+                    {targets.map((target) => (
+                      <option key={target.id} value={target.id}>
+                        {target.name} · {target.ssh?.host || '-'} · {target.ssh?.appPath || '-'}
+                      </option>
+                    ))}
+                  </select>
+                </label>
+
+                {targets.length === 0 && !loadingTargets ? (
+                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-sm text-amber-600 dark:text-amber-300">
+                    当前项目没有站点发布目标。先到发布中心添加站点发布。
                   </div>
-                ))}
+                ) : null}
+
+                {selectedTarget ? (
+                  <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface))] p-3">
+                    <div className="mb-3 flex items-center gap-2 text-sm font-medium">
+                      <Server className="h-4 w-4 text-primary" />
+                      发布确认
+                    </div>
+                    <div className="grid gap-3 text-sm md:grid-cols-2">
+                      <ReleaseConfirmItem label="发布目标" value={selectedTarget.name} />
+                      <ReleaseConfirmItem label="服务器" value={selectedServer} mono />
+                      <ReleaseConfirmItem label="目录" value={selectedTarget.ssh?.appPath || '-'} mono />
+                      <ReleaseConfirmItem label="上线地址" value={selectedTarget.ssh?.healthcheckUrl || '-'} mono />
+                      <div className="md:col-span-2">
+                        <div className="text-xs text-muted-foreground">执行计划</div>
+                        <div className="mt-1 flex flex-wrap items-center gap-2">
+                          {selectedScripts.map((script, index) => (
+                            <span key={`${script}-${index}`} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 py-1 font-mono text-xs">
+                              {script}
+                            </span>
+                          ))}
+                        </div>
+                      </div>
+                    </div>
+                  </div>
+                ) : null}
               </div>
             ) : null}
 
-            {run ? (
+            {stage === 'preflight' ? (
               <div className="space-y-3">
+                <ReleaseStageSummary
+                  target={selectedTarget}
+                  server={selectedServer}
+                  pass={passCount}
+                  total={totalChecks}
+                  editable
+                  onEdit={() => setWizardStep('config')}
+                />
+
+                {preflightState === 'running' ? (
+                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    正在连接发布服务器并执行发布前检查…首次建立 SSH 连接可能需要若干秒，请稍候。
+                  </div>
+                ) : null}
+
+                {starting && !run ? (
+                  <div className="flex items-center gap-2 rounded-md border border-primary/30 bg-primary/10 px-3 py-2 text-sm text-primary">
+                    <Loader2 className="h-4 w-4 shrink-0 animate-spin" />
+                    正在提交发布任务，准备连接服务器…
+                  </div>
+                ) : null}
+
+                {preflight ? (
+                  <div className="grid gap-2">
+                    {preflight.checks.map((check) => {
+                      const longMessage = check.id === 'deploy-command' && check.message.length > 80;
+                      return (
+                        <div
+                          key={check.id}
+                          className={`rounded-md border text-sm ${
+                            check.status === 'pass'
+                              ? 'border-emerald-500/30 bg-emerald-500/10'
+                              : check.status === 'warn'
+                                ? 'border-amber-500/30 bg-amber-500/10'
+                                : 'border-red-500/30 bg-red-500/10'
+                          }`}
+                        >
+                          <div className="flex items-start justify-between gap-3 px-3 py-2">
+                            <div className="min-w-0">
+                              <div className="font-medium">{releaseCheckLabel(check)}</div>
+                              {longMessage ? (
+                                <button
+                                  type="button"
+                                  onClick={() => setScriptOpen((value) => !value)}
+                                  className="mt-0.5 inline-flex items-center gap-1 text-xs text-primary hover:underline"
+                                >
+                                  {scriptOpen ? '收起脚本' : '查看脚本'}
+                                  <ChevronDown className={`h-3 w-3 transition-transform ${scriptOpen ? 'rotate-180' : ''}`} />
+                                </button>
+                              ) : (
+                                <div className="mt-0.5 break-words text-xs text-muted-foreground">{check.message}</div>
+                              )}
+                            </div>
+                            <span className="shrink-0 font-mono text-xs">{releaseCheckStatusLabel(check.status)}</span>
+                          </div>
+                          {longMessage && scriptOpen ? (
+                            <div className="mx-3 mb-2 max-h-40 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+                              <pre className="p-2.5 font-mono text-[11px] leading-5 text-muted-foreground" style={{ whiteSpace: 'pre', minWidth: 'max-content' }}>{check.message}</pre>
+                            </div>
+                          ) : null}
+                        </div>
+                      );
+                    })}
+                  </div>
+                ) : null}
+              </div>
+            ) : null}
+
+            {stage === 'releasing' && run ? (
+              <div className="space-y-3">
+                <ReleaseStageSummary
+                  target={selectedTarget}
+                  server={selectedServer}
+                  pass={passCount}
+                  total={totalChecks}
+                />
                 <div className="flex items-center justify-between gap-3 text-sm">
                   <span className="font-mono">{run.releaseId}</span>
                   <span className="flex items-center gap-2">
@@ -4490,10 +4546,155 @@ function ReleaseBranchDialog({
                 </pre>
               </div>
             ) : null}
+
+            <div className="sticky bottom-0 -mx-6 -mb-6 flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] bg-card px-6 py-3">
+              {stage === 'config' ? (
+                <>
+                  <Button asChild variant="outline">
+                    <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
+                  </Button>
+                  <div className="flex-1" />
+                  <span className="hidden text-xs text-muted-foreground sm:inline">下一步：连接服务器并检查</span>
+                  <Button onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running'}>
+                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <Gauge />}
+                    发布前检查
+                  </Button>
+                </>
+              ) : null}
+              {stage === 'preflight' ? (
+                <>
+                  <Button variant="outline" onClick={() => setWizardStep('config')} disabled={preflightState === 'running' || starting}>
+                    上一步
+                  </Button>
+                  <Button variant="ghost" onClick={() => void runPreflight()} disabled={!targetId || preflightState === 'running' || starting}>
+                    {preflightState === 'running' ? <Loader2 className="animate-spin" /> : <RotateCw />}
+                    重新检查
+                  </Button>
+                  <div className="flex-1" />
+                  {preflight ? (
+                    <span className="hidden text-xs text-muted-foreground sm:inline">
+                      {preflight.ok ? `${passCount}/${totalChecks} 通过，可发布` : '存在阻塞项，先修复再发布'}
+                    </span>
+                  ) : null}
+                  <Button onClick={() => void startRelease()} disabled={!targetId || !preflight?.ok || starting || !!run}>
+                    {starting ? <Loader2 className="animate-spin" /> : <Rocket />}
+                    开始发布
+                  </Button>
+                </>
+              ) : null}
+              {stage === 'releasing' && run ? (
+                releaseTerminal ? (
+                  <>
+                    <Button asChild variant="outline">
+                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
+                    </Button>
+                    <div className="flex-1" />
+                    {run.status === 'success' && selectedTarget?.ssh?.healthcheckUrl ? (
+                      <Button asChild>
+                        <a href={selectedTarget.ssh.healthcheckUrl} target="_blank" rel="noreferrer">
+                          <ExternalLink />
+                          打开上线地址
+                        </a>
+                      </Button>
+                    ) : (
+                      <Button variant="outline" onClick={onClose}>关闭</Button>
+                    )}
+                  </>
+                ) : (
+                  <>
+                    <Button asChild variant="ghost">
+                      <Link to={releaseCenterHref(branch.projectId)}>发布中心</Link>
+                    </Button>
+                    <div className="flex-1" />
+                    <span className="text-xs text-muted-foreground">发布中，可关闭弹窗，任务在服务器继续运行</span>
+                  </>
+                )
+              ) : null}
+            </div>
           </div>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/** 发布向导阶段条：选择站点 → 发布前检查 → 发布，走到哪高亮哪。 */
+function ReleaseWizardRail({ stage, status }: { stage: 'config' | 'preflight' | 'releasing'; status?: string }): JSX.Element {
+  const nodes: Array<{ key: 'config' | 'preflight' | 'releasing'; label: string }> = [
+    { key: 'config', label: '选择站点' },
+    { key: 'preflight', label: '发布前检查' },
+    { key: 'releasing', label: '发布' },
+  ];
+  const currentIdx = nodes.findIndex((node) => node.key === stage);
+  const terminalSuccess = status === 'success' || status === 'rollback_success';
+  const terminalFailed = status === 'failed' || status === 'rollback_failed';
+  return (
+    <div className="flex items-center">
+      {nodes.map((node, idx) => {
+        let state: 'done' | 'active' | 'failed' | 'pending';
+        if (idx < currentIdx) state = 'done';
+        else if (idx === currentIdx) {
+          state = node.key === 'releasing'
+            ? (terminalSuccess ? 'done' : terminalFailed ? 'failed' : 'active')
+            : 'active';
+        } else state = 'pending';
+        const dotClass = state === 'done'
+          ? 'border-emerald-500/70 bg-emerald-500/15 text-emerald-500'
+          : state === 'failed'
+            ? 'border-red-500/70 bg-red-500/15 text-red-500'
+            : state === 'active'
+              ? 'border-primary bg-primary/12 text-primary'
+              : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+        return (
+          <div key={node.key} className="flex flex-1 items-center last:flex-none">
+            <div className="flex items-center gap-2">
+              <span className={`grid h-6 w-6 shrink-0 place-items-center rounded-full border text-xs font-semibold ${dotClass}`}>
+                {state === 'done' ? <CheckCircle2 className="h-3.5 w-3.5" /> : state === 'failed' ? <XCircle className="h-3.5 w-3.5" /> : idx + 1}
+              </span>
+              <span className={`text-xs font-medium ${state === 'pending' ? 'text-muted-foreground' : 'text-foreground'}`}>{node.label}</span>
+            </div>
+            {idx < nodes.length - 1 ? (
+              <span className={`mx-2 h-px flex-1 ${idx < currentIdx ? 'bg-emerald-500/60' : 'bg-[hsl(var(--hairline-strong))]'}`} />
+            ) : null}
+          </div>
+        );
+      })}
+    </div>
+  );
+}
+
+/** 收起态摘要条：发布开始后把「发布到哪 / 预检结果」压成一行，为实时状态腾出主视觉。 */
+function ReleaseStageSummary({
+  target,
+  server,
+  pass,
+  total,
+  editable,
+  onEdit,
+}: {
+  target?: ReleaseTargetSummary;
+  server: string;
+  pass: number;
+  total: number;
+  editable?: boolean;
+  onEdit?: () => void;
+}): JSX.Element {
+  return (
+    <div className="flex flex-wrap items-center gap-x-2 gap-y-1 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/60 px-3 py-2 text-xs">
+      {total > 0 ? (
+        <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 font-medium text-emerald-600 dark:text-emerald-400">
+          <CheckCircle2 className="h-3 w-3" />
+          预检 {pass}/{total}
+        </span>
+      ) : null}
+      <span className="text-muted-foreground">
+        发布到 <span className="font-medium text-foreground">{target?.name || '-'}</span>
+      </span>
+      <span className="truncate font-mono text-muted-foreground">{server}</span>
+      {editable ? (
+        <button type="button" onClick={onEdit} className="ml-auto shrink-0 text-primary hover:underline">修改</button>
+      ) : null}
+    </div>
   );
 }
 
@@ -4602,8 +4803,15 @@ function releaseStepsForRun(
   const scriptTwo = scripts[1] || './exec_dep.sh';
   const scriptOnePhase = releaseScriptPhase(scriptOne);
   const scriptTwoPhase = releaseScriptPhase(scriptTwo);
-  const scriptOneSeen = phases.has(scriptOnePhase);
-  const scriptTwoSeen = phases.has(scriptTwoPhase);
+  // generated-compose / generated-static 目标与自定义发布命令不发 script:* phase,
+  // 后端把整段执行统一记在通用 `deploy` phase 下(runDeployCommand 的 emitLog
+  // 兜底;发布中心同款判定是 phaseSet.has('deploy'))。只认 script:* 会让这些
+  // 发布的执行步骤永远 pending、失败也不标红(Codex P2)。deploy 视作两个执行
+  // 步骤的统称:进行中一起亮,失败一起标。
+  const deploySeen = phases.has('deploy');
+  const scriptOneSeen = phases.has(scriptOnePhase) || deploySeen;
+  const scriptTwoSeen = phases.has(scriptTwoPhase) || deploySeen;
+  const deployFailed = failurePhase === 'deploy' && failed;
 
   return [
     {
@@ -4620,13 +4828,13 @@ function releaseStepsForRun(
       id: 'script-one',
       label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
       detail: scriptOne,
-      state: failurePhase === scriptOnePhase && failed ? 'failed' : scriptTwoSeen || healthSeen || success ? 'done' : scriptOneSeen ? 'running' : 'pending',
+      state: (failurePhase === scriptOnePhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : !deploySeen && scriptTwoSeen ? 'done' : scriptOneSeen ? 'running' : 'pending',
     },
     {
       id: 'script-two',
       label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
       detail: scriptTwo,
-      state: failurePhase === scriptTwoPhase && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
+      state: (failurePhase === scriptTwoPhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
     },
     {
       id: 'health',

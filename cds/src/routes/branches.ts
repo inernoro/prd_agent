@@ -1329,9 +1329,18 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
     { re: /NoClassDefFoundError|ClassNotFoundException/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Java 类未找到' },
     { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
     { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
+    // Flyway 迁移失败是 Spring 应用最常见的启动死因之一(2026-07-21 用户实例:
+    // imp-api-mdimp 因 failed migration 起不来,却被摘要成「就绪探测超时」甩锅 CDS)。
+    // 必须排在通用 Spring 模式**之前**:这类日志几乎总是同时含 Application run
+    // failed / UnsatisfiedDependencyException,按序匹配时更具体的根因要先赢(Codex P2)。
+    { re: /FlywayMigrateException|failed migration to version|FlywayValidateException/i, side: 'code', category: 'crashed', label: '应用启动失败 · Flyway 数据库迁移失败' },
     { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, side: 'code', category: 'crashed', label: '应用启动失败 · Spring 初始化错误' },
     { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
     { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
+    { re: /OOMKilled|Out of memory|cannot allocate memory/i, side: 'config', category: 'oom', label: '内存超限 · 进程被 OOM 终止' },
+    // 与 /failure-diagnosis 的模式表(本文件 EXIT_CODE 段)对齐:137/139/134 或
+    // signal 9/11/6 = 进程被强制终止/崩溃,属应用侧,不许落「探测超时」兜底。
+    { re: /exit(?:\s*code|ed with code)?\s*[:=]?\s*(?:137|139|134)\b|signal[:= ]\s*(?:9|11|6)\b/i, side: 'code', category: 'crashed', label: '进程被强制终止 · 退出码 137/139/134' },
     { re: /address already in use|EADDRINUSE|port is already allocated/i, side: 'config', category: 'port-conflict', label: '端口被占用' },
   ];
   for (const p of PATTERNS) {
@@ -1346,7 +1355,9 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
 
 /**
  * 就绪探测超时时,优先去容器日志里找真实根因。找到就把根因点名到 errorMessage,
- * 找不到才降级到通用文案。最多拉 80 行,拉取失败静默降级。
+ * 找不到才降级到通用文案。拉 400 行:Spring/Flyway 启动栈动辄上百行,80 行尾窗
+ * 会把 UnsatisfiedDependencyException 等根因信号挤出去,导致明明是代码侧崩溃
+ * 却落「探测超时」兜底文案(2026-07-21 用户实例)。拉取失败静默降级。
  */
 async function buildReadinessTimeoutMessage(
   containerService: ContainerService,
@@ -1354,7 +1365,7 @@ async function buildReadinessTimeoutMessage(
 ): Promise<string> {
   const fallback = '就绪探测超时：容器已启动但端口未在超时时间内响应';
   try {
-    const logs = await containerService.getLogs(containerName, 80);
+    const logs = await containerService.getLogs(containerName, 400);
     const cause = detectContainerFatalCause(logs);
     if (cause) {
       const sideLabel = cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧';
@@ -3140,6 +3151,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -3929,6 +3944,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -4317,6 +4336,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -13784,6 +13807,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -20666,6 +20693,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });

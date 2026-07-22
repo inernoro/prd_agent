@@ -26,6 +26,14 @@
  * 把 state 拆成 (projects, branches, rest) 三块，分别 bulkWrite 到对应
  * collection，删除 cache 里不再存在的文档。
  *
+ * 增量快照 + 序列化缓存（2026-07-21）
+ * ----------------------------------
+ * save() 可带 StateSaveHint 声明脏范围：同一 tick 内全部带 hint 时只克隆被
+ * 点名的 kind/实体（部分快照），否则退化为全量快照。diff 侧不再保留整份
+ * persistedCache state，改为按实体 id 缓存「上次落库时的 stableJson 字符串」，
+ * 每次只 stringify 当前侧与缓存比较——全量 state 的两次 structuredClone 与
+ * previous 侧 stringify 全部消失。详见类内 dirty/persistedJson 字段注释。
+ *
  * 顺序保证
  * --------
  * 写入用单 flushChain 串行化，保证后写覆盖前写（与单文档版语义一致）。
@@ -54,7 +62,7 @@ import type {
   ServiceDeployment,
   ServiceDeploymentLogEntry,
 } from '../../types.js';
-import type { StateBackingStore } from './backing-store.js';
+import type { StateBackingStore, StateDirtyKind, StateSaveHint } from './backing-store.js';
 import { pruneWebhookDeliveries } from '../../services/webhook-delivery-retention.js';
 
 /** Mongo 集合最小接口 — 与 mongo-backing-store 风格一致，便于单测。 */
@@ -339,13 +347,112 @@ function selfUpdateRecordId(record: SelfUpdateRecord, index: number): string {
   return parts.join('__');
 }
 
+/** save() hint 可以按实体 id 收窄的 kind（其余 kind 只支持 kind 级脏标记）。 */
+const ENTITY_SCOPED_KINDS: ReadonlySet<StateDirtyKind> = new Set([
+  'projects',
+  'branches',
+  'deploymentRuns',
+  'deploymentVersions',
+]);
+
+/**
+ * 部分快照里单个 kind 的切片。ids 是该 kind 此刻的**完整** id 集 —— 删除检测
+ * 只需要 id 集不需要实体内容，所以哪怕 hint 只点名一个实体，同 kind 内的
+ * prune/删除也能被正确落库。entities 只含本 tick 被点名克隆的实体。
+ */
+interface EntitySlice<T> {
+  ids: Set<string>;
+  entities: Map<string, T>;
+}
+
+/** 一次待落盘的写入。full 非空 = 全量快照路径，忽略所有切片字段。 */
+interface PendingWrite {
+  generation: number;
+  full: CdsState | null;
+  projects?: EntitySlice<Project>;
+  branches?: EntitySlice<BranchEntry>;
+  deploymentRuns?: EntitySlice<DeploymentRun>;
+  deploymentVersions?: EntitySlice<DeploymentVersion>;
+  selfUpdateHistory?: SelfUpdateRecord[];
+  webhookDeliveries?: GithubWebhookDelivery[];
+  activityLogs?: Record<string, ProjectActivityLog[]>;
+  globalRest?: GlobalRest;
+}
+
+/** 把 record 型 state 切片按脏 id 集克隆成 EntitySlice（dirtyIds=null 表示整 kind 克隆）。 */
+function sliceEntities<T>(source: Record<string, T>, dirtyIds: Set<string> | null): EntitySlice<T> {
+  const ids = new Set(Object.keys(source));
+  const entities = new Map<string, T>();
+  if (dirtyIds === null) {
+    for (const [id, value] of Object.entries(source)) entities.set(id, structuredClone(value));
+  } else {
+    for (const id of dirtyIds) {
+      const value = source[id];
+      if (value !== undefined) entities.set(id, structuredClone(value));
+    }
+  }
+  return { ids, entities };
+}
+
+/**
+ * 合并两个部分快照（仅当写入在途、上一个 partial 还没被消费时发生）。
+ * 实体切片：id 集取新值（删除检测要看最新全集），实体克隆做并集、新值覆盖旧值
+ * —— 旧克隆里已被删除的实体会在 persist 时被「id 集为准」的守卫跳过。
+ * 列表/global 切片整体以新值替换（它们本身就是整 kind 克隆）。
+ */
+function mergePendingPartials(target: PendingWrite, next: PendingWrite): PendingWrite {
+  const mergeSlice = <T>(a: EntitySlice<T> | undefined, b: EntitySlice<T> | undefined): EntitySlice<T> | undefined => {
+    if (!b) return a;
+    if (!a) return b;
+    return { ids: b.ids, entities: new Map([...a.entities, ...b.entities]) };
+  };
+  return {
+    generation: next.generation,
+    full: null,
+    projects: mergeSlice(target.projects, next.projects),
+    branches: mergeSlice(target.branches, next.branches),
+    deploymentRuns: mergeSlice(target.deploymentRuns, next.deploymentRuns),
+    deploymentVersions: mergeSlice(target.deploymentVersions, next.deploymentVersions),
+    selfUpdateHistory: next.selfUpdateHistory ?? target.selfUpdateHistory,
+    webhookDeliveries: next.webhookDeliveries ?? target.webhookDeliveries,
+    activityLogs: next.activityLogs ?? target.activityLogs,
+    globalRest: next.globalRest ?? target.globalRest,
+  };
+}
+
+/** self-update 历史 → (docId, 已裁剪/清洗记录) 候选对，与落库口径一致。 */
+function selfUpdateCandidates(list: SelfUpdateRecord[] | undefined): Array<[string, SelfUpdateRecord]> {
+  return (list || [])
+    .slice(-MAX_SELF_UPDATE_HISTORY)
+    .map(sanitizeSelfUpdateRecord)
+    .map((record, index): [string, SelfUpdateRecord] => [selfUpdateRecordId(record, index), record]);
+}
+
+/** webhook 投递 → (docId, 投递) 候选对（先过保留策略，与落库口径一致）。 */
+function webhookDeliveryCandidates(list: GithubWebhookDelivery[] | undefined): Array<[string, GithubWebhookDelivery]> {
+  return pruneWebhookDeliveries(list || []).map(
+    (delivery): [string, GithubWebhookDelivery] => [webhookDeliveryDocId(delivery), delivery],
+  );
+}
+
+/** 项目活动流 → (docId, {projectId, log}) 候选对（每项目 ring buffer 裁剪后）。 */
+function activityLogCandidates(
+  logs: Record<string, ProjectActivityLog[]> | undefined,
+): Array<[string, { projectId: string; log: ProjectActivityLog }]> {
+  const out: Array<[string, { projectId: string; log: ProjectActivityLog }]> = [];
+  for (const [projectId, list] of Object.entries(logs || {})) {
+    for (const log of (list || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT)) {
+      out.push([activityLogDocId(projectId, log), { projectId, log }]);
+    }
+  }
+  return out;
+}
+
 export class MongoSplitStateBackingStore implements StateBackingStore {
   readonly kind = 'mongo-split' as const;
   private cache: CdsState | null = null;
-  private persistedCache: CdsState | null = null;
   private initialized = false;
-  private pendingSnapshot: CdsState | null = null;
-  private pendingGeneration = 0;
+  private pendingWrite: PendingWrite | null = null;
   private writeInFlight = false;
   private writeGeneration = 0;
   private persistedGeneration = 0;
@@ -361,9 +468,41 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
   // save 风暴堵死的根因——网页 524、就绪探测超时、容器被误判部署失败而清理，
   // 都源于此。改为只记最新 live 引用 + 每个事件循环 tick 最多做一次快照克隆 +
   // 落盘。flush() 会强制立即快照，保证 delete/stop 等终止操作的持久化语义不变。
+  //
+  // 增量快照（2026-07-21 性能重构）：在写入合并之上再加两层，消除 O(state)
+  // 全量成本（state 随部署历史增长到几十 MB 后，每 tick 一次全量 clone + 双侧
+  // stringify 依然会轮番冻结事件循环）：
+  //   1. 脏范围追踪 —— save() 可带 StateSaveHint；同一 tick 内所有 save 都带
+  //      hint 时，takeSnapshot 只克隆被点名的 kind/实体（部分快照），不再
+  //      structuredClone 整个 state。任何一次无 hint 的 save 让该 tick 退化为
+  //      全量快照，保正确性。
+  //   2. 序列化缓存 —— 按实体 id 缓存「上次落库时的 stableJson 字符串」，diff
+  //      只 stringify 当前侧再与缓存字符串比较；persistedCache 整份 state 的
+  //      第二次 structuredClone（旧 drainWrites 尾部）随之删除。
   private dirtyState: CdsState | null = null;
+  // 最近一次 save/forceFullSave 传入的 live state 引用(与 dirtyState 不同,
+  // takeSnapshot 后不清空)。写失败恢复路径用它就地重建全量快照,见 drainWrites catch。
+  private liveStateRef: CdsState | null = null;
   private dirtyGeneration = 0;
+  private dirtyAll = false;
+  private dirtyKinds = new Set<StateDirtyKind>();
+  private dirtyIds = new Map<StateDirtyKind, Set<string> | null>();
   private snapshotScheduled = false;
+  // 一次（可能部分成功的）写入失败后，被丢弃的 pending 内容无法靠后续 hint
+  // 快照找回 —— 置位后下一次 takeSnapshot 强制全量，重新与序列化缓存对账。
+  private needFullResync = false;
+  // 序列化缓存本体：每实体一条「上次成功落库时的 stableJson」。bulkWrite 成功
+  // 后才更新，失败时缓存仍反映 DB 真实内容，重试会重新 diff（崩溃一致性不变）。
+  private persistedJson = {
+    projects: new Map<string, string>(),
+    branches: new Map<string, string>(),
+    deploymentRuns: new Map<string, string>(),
+    deploymentVersions: new Map<string, string>(),
+    selfUpdateHistory: new Map<string, string>(),
+    webhookDeliveries: new Map<string, string>(),
+    activityLogs: new Map<string, string>(),
+  };
+  private persistedGlobalJson: string | null = null;
   // init() 从 global doc 的 legacy 内嵌字段（selfUpdateHistory / 两类日志）回退读过
   // 数据时置位：下一次 persistSnapshot 必须强制重写 global doc 一次，把 legacy
   // 字段从 DB 里剥掉——否则 diff 看不到差异（两侧投影都已 delete 这些字段），
@@ -471,7 +610,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         this.forceGlobalRewrite = true;
       }
 
-      this.cache = {
+      const rebuilt = {
         ...restOfState,
         selfUpdateHistory: (splitSelfUpdateHistory.length > 0 ? splitSelfUpdateHistory : legacySelfUpdateHistory)
           .slice(-MAX_SELF_UPDATE_HISTORY)
@@ -489,33 +628,84 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
         deploymentRuns: Object.fromEntries(deploymentRunDocs.map((record) => [record.doc.id, sanitizeDeploymentRun(record.doc)])),
         deploymentVersions: Object.fromEntries(deploymentVersionDocs.map((record) => [record.doc.id, record.doc])),
       } as CdsState;
+      this.cache = rebuilt;
 
-      this.persistedCache = structuredClone(this.cache);
-      // persistedCache 必须表示「split collection 里现在真的有什么」。legacy 回退
-      // 读进内存的数据尚未写入 split collection——把对应字段重置为 split 的真实
-      // 内容（空），首次 persistSnapshot 的 diff 才会把 legacy 数据 upsert 搬家，
-      // 而不是「diff 无变化 + global 被剥离」造成迁移丢数据。
-      if (splitSelfUpdateHistory.length === 0) this.persistedCache.selfUpdateHistory = [];
-      if (splitDeliveries.length === 0) this.persistedCache.githubWebhookDeliveries = [];
-      if (activityDocs.length === 0) this.persistedCache.activityLogs = {};
+      // 序列化缓存必须表示「split collection 里现在真的有什么」。legacy 回退
+      // 读进内存的数据尚未写入 split collection——对应 kind 的缓存保持为空，
+      // 首次持久化的 diff 才会把 legacy 数据 upsert 搬家，而不是「diff 无变化 +
+      // global 被剥离」造成迁移丢数据。
+      this.rebuildSerializedCaches(rebuilt, {
+        includeSelfUpdate: splitSelfUpdateHistory.length > 0,
+        includeDeliveries: splitDeliveries.length > 0,
+        includeActivity: activityDocs.length > 0,
+      });
       this.initialized = true;
       return;
     }
-    this.persistedCache = this.cache ? structuredClone(this.cache) : null;
-
+    // fresh mongo：缓存保持空，首次持久化即全量 upsert。
     this.initialized = true;
+  }
+
+  /**
+   * 用给定 state 重建序列化缓存（init / forceFullSave 之后调用）。
+   * 各 kind 的字符串口径与持久化路径完全一致（同一 sanitize/裁剪 + stableJson），
+   * 保证后续 diff 的字符串比较不产生假差异。
+   */
+  private rebuildSerializedCaches(
+    state: CdsState,
+    opts: { includeSelfUpdate: boolean; includeDeliveries: boolean; includeActivity: boolean },
+  ): void {
+    this.persistedJson.projects = new Map(
+      (state.projects || []).map((project): [string, string] => [project.id, stableJson(project)]),
+    );
+    this.persistedJson.branches = new Map(
+      Object.values(state.branches || {}).map((branch): [string, string] => [branch.id, stableJson(branch)]),
+    );
+    this.persistedJson.deploymentRuns = new Map(
+      Object.entries(state.deploymentRuns || {}).map(
+        ([id, run]): [string, string] => [id, stableJson(sanitizeDeploymentRun(run))],
+      ),
+    );
+    this.persistedJson.deploymentVersions = new Map(
+      Object.entries(state.deploymentVersions || {}).map(
+        ([id, version]): [string, string] => [id, stableJson(version)],
+      ),
+    );
+    this.persistedJson.selfUpdateHistory = opts.includeSelfUpdate
+      ? new Map(selfUpdateCandidates(state.selfUpdateHistory).map(
+          ([id, record]): [string, string] => [id, stableJson(record)],
+        ))
+      : new Map();
+    this.persistedJson.webhookDeliveries = opts.includeDeliveries
+      ? new Map(webhookDeliveryCandidates(state.githubWebhookDeliveries).map(
+          ([id, delivery]): [string, string] => [id, stableJson(delivery)],
+        ))
+      : new Map();
+    this.persistedJson.activityLogs = opts.includeActivity
+      ? new Map(activityLogCandidates(state.activityLogs).map(
+          ([id, entry]): [string, string] => [id, stableJson(entry.log)],
+        ))
+      : new Map();
+    this.persistedGlobalJson = stableJson(globalRestOf(state));
   }
 
   load(): CdsState | null {
     return this.cache;
   }
 
-  save(state: CdsState): void {
+  save(state: CdsState, hints?: StateSaveHint[]): void {
     // load() 立即看到最新（引用，不克隆——克隆推迟到本 tick 末的 takeSnapshot）。
     this.cache = state;
     // 记最新 live 引用 + 逻辑代次；本 tick 内多次 save 只在末尾克隆一次。
     this.dirtyState = state;
+    this.liveStateRef = state;
     this.dirtyGeneration = ++this.writeGeneration;
+    if (!hints || hints.length === 0) {
+      // 无 hint = 调用方没有（或无法）声明改动范围 → 本 tick 退化为全量快照。
+      this.dirtyAll = true;
+    } else if (!this.dirtyAll) {
+      for (const hint of hints) this.noteHint(hint);
+    }
     if (!this.snapshotScheduled) {
       this.snapshotScheduled = true;
       // setImmediate：把一连串同步 save（部署日志 append 风暴 / 调和器遍历分支）
@@ -524,9 +714,24 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     }
   }
 
+  /** 累积一条脏范围声明（实体级 kind 支持按 id 收窄，重复声明自动并集）。 */
+  private noteHint(hint: StateSaveHint): void {
+    this.dirtyKinds.add(hint.kind);
+    if (!ENTITY_SCOPED_KINDS.has(hint.kind)) return;
+    const existing = this.dirtyIds.get(hint.kind);
+    if (existing === null) return; // 已整 kind 脏
+    if (!hint.id) {
+      this.dirtyIds.set(hint.kind, null);
+      return;
+    }
+    if (existing) existing.add(hint.id);
+    else this.dirtyIds.set(hint.kind, new Set([hint.id]));
+  }
+
   /**
-   * 把当前 dirty 的 live state 克隆成不可变快照并入写队列（每 tick 至多一次）。
-   * 异步写盘期间 live state 仍会被业务代码 mutate，故写入必须基于此刻的不可变快照。
+   * 把当前 dirty 的 live state 固化成不可变待写内容并入写队列（每 tick 至多一次）。
+   * 异步写盘期间 live state 仍会被业务代码 mutate，故写入必须基于此刻的克隆：
+   * 全量路径克隆整个 state；hint 路径只克隆被点名的 kind/实体（部分快照）。
    */
   private takeSnapshot(): void {
     this.snapshotScheduled = false;
@@ -534,246 +739,268 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (!live) return;
     const generation = this.dirtyGeneration;
     this.dirtyState = null;
-    const snapshot = structuredClone(live);
-    this.cache = snapshot;
-    this.pendingSnapshot = snapshot;
-    this.pendingGeneration = generation;
+    // 队列里若还挂着一个全量快照（写入被慢 IO 拖住时可能发生），部分快照无法
+    // 与它合并出正确语义 —— 直接升级为新的全量快照整体替换（live ⊇ 一切 pending）。
+    const useFull = this.dirtyAll || this.needFullResync || this.pendingWrite?.full != null;
+    const kinds = this.dirtyKinds;
+    const idMap = this.dirtyIds;
+    this.dirtyAll = false;
+    this.dirtyKinds = new Set();
+    this.dirtyIds = new Map();
+    if (useFull) {
+      this.needFullResync = false;
+      const snapshot = structuredClone(live);
+      this.cache = snapshot;
+      this.pendingWrite = { generation, full: snapshot };
+    } else {
+      const partial = this.buildPartial(live, kinds, idMap, generation);
+      this.pendingWrite = this.pendingWrite
+        ? mergePendingPartials(this.pendingWrite, partial)
+        : partial;
+    }
     this.drainWrites();
   }
 
-  private async persistSnapshot(snapshot: CdsState, previous: CdsState | null): Promise<void> {
-    const now = new Date().toISOString();
-
-    // ── 2) Projects collection（bulkWrite + 单次 deleteMany 收尾）──
-    const newProjectIds = new Set((snapshot.projects || []).map((p) => p.id));
-    const previousProjectIds = new Set((previous?.projects || []).map((p) => p.id));
-    const previousProjects = new Map((previous?.projects || []).map((p) => [p.id, p]));
-
-    const projectOps: unknown[] = [];
-    for (const project of snapshot.projects || []) {
-      const previousProject = previousProjects.get(project.id);
-      if (!previousProject || stableJson(project) !== stableJson(previousProject)) {
-        projectOps.push({
-          replaceOne: {
-            filter: { _id: project.id },
-            replacement: { _id: project.id, doc: project, updatedAt: now },
-            upsert: true,
-          },
-        });
+  /** 按脏范围构建部分快照：只克隆被点名的 kind/实体，id 集用于删除检测。 */
+  private buildPartial(
+    live: CdsState,
+    kinds: Set<StateDirtyKind>,
+    idMap: Map<StateDirtyKind, Set<string> | null>,
+    generation: number,
+  ): PendingWrite {
+    const pending: PendingWrite = { generation, full: null };
+    // init 从 legacy 内嵌字段回退读过数据时必须尽快重写 global doc 剥离 legacy
+    // 字段——哪怕后续 save 全是非 global 的 hint。
+    if (this.forceGlobalRewrite) kinds.add('global');
+    for (const kind of kinds) {
+      const dirtyIds = idMap.get(kind) ?? null;
+      switch (kind) {
+        case 'projects':
+          pending.projects = sliceEntities(
+            Object.fromEntries((live.projects || []).map((project) => [project.id, project])),
+            dirtyIds,
+          );
+          break;
+        case 'branches':
+          pending.branches = sliceEntities(live.branches || {}, dirtyIds);
+          break;
+        case 'deploymentRuns':
+          pending.deploymentRuns = sliceEntities(live.deploymentRuns || {}, dirtyIds);
+          break;
+        case 'deploymentVersions':
+          pending.deploymentVersions = sliceEntities(live.deploymentVersions || {}, dirtyIds);
+          break;
+        case 'selfUpdateHistory':
+          pending.selfUpdateHistory = structuredClone(live.selfUpdateHistory || []);
+          break;
+        case 'webhookDeliveries':
+          pending.webhookDeliveries = structuredClone(live.githubWebhookDeliveries || []);
+          break;
+        case 'activityLogs':
+          pending.activityLogs = structuredClone(live.activityLogs || {});
+          break;
+        case 'global':
+          // globalRestOf 的投影是浅拷贝（与 live 共享深层对象），克隆后才能安全
+          // 地在异步写盘期间使用。
+          pending.globalRest = structuredClone(globalRestOf(live));
+          break;
       }
     }
-    for (const id of previousProjectIds) {
-      if (newProjectIds.has(id)) continue;
-      projectOps.push({ deleteOne: { filter: { _id: id } } });
-    }
-    if (projectOps.length > 0) {
-      await this.handle.projectsCollection().bulkWrite(projectOps);
-    }
+    return pending;
+  }
 
-    // ── 3) Branches collection（同样 bulkWrite）──
-    const newBranchIds = new Set(Object.keys(snapshot.branches || {}));
-    const previousBranchIds = new Set(Object.keys(previous?.branches || {}));
+  /**
+   * 通用「候选实体 vs 序列化缓存」同步：只 stringify 当前侧，与缓存的上次落库
+   * 字符串比较；删除检测 = 缓存 key 集 − 当前 id 集。bulkWrite 成功后才更新缓存。
+   */
+  private async syncCollection<T>(input: {
+    collection: { bulkWrite(operations: Array<unknown>): Promise<unknown> };
+    cache: Map<string, string>;
+    currentIds: ReadonlySet<string>;
+    candidates: Iterable<[string, T]>;
+    serialize: (id: string, entity: T) => { json: string; replacement: Record<string, unknown> };
+  }): Promise<void> {
+    const ops: unknown[] = [];
+    const upserts: Array<[string, string]> = [];
+    const removals: string[] = [];
+    for (const [id, entity] of input.candidates) {
+      // 合并期间可能残留「已被删除实体」的旧克隆——以最新 id 集为准跳过。
+      if (!input.currentIds.has(id)) continue;
+      const { json, replacement } = input.serialize(id, entity);
+      if (input.cache.get(id) === json) continue;
+      ops.push({ replaceOne: { filter: { _id: id }, replacement, upsert: true } });
+      upserts.push([id, json]);
+    }
+    for (const id of input.cache.keys()) {
+      if (input.currentIds.has(id)) continue;
+      ops.push({ deleteOne: { filter: { _id: id } } });
+      removals.push(id);
+    }
+    if (ops.length === 0) return;
+    await input.collection.bulkWrite(ops);
+    for (const [id, json] of upserts) input.cache.set(id, json);
+    for (const id of removals) input.cache.delete(id);
+  }
 
-    const branchOps: unknown[] = [];
-    for (const branch of Object.values(snapshot.branches || {})) {
-      const previousBranch = previous?.branches?.[branch.id];
-      if (!previousBranch || stableJson(branch) !== stableJson(previousBranch)) {
-        branchOps.push({
-          replaceOne: {
-            filter: { _id: branch.id },
-            replacement: {
-              _id: branch.id,
-              projectId: branch.projectId,
-              doc: branch,
-              updatedAt: now,
-            },
-            upsert: true,
-          },
-        });
-      }
-    }
-    for (const id of previousBranchIds) {
-      if (newBranchIds.has(id)) continue;
-      branchOps.push({ deleteOne: { filter: { _id: id } } });
-    }
-    if (branchOps.length > 0) {
-      await this.handle.branchesCollection().bulkWrite(branchOps);
-    }
-
-    // ── 4) Deployment runs collection（元数据 + 有界事件独立于 global）──
-    const currentRuns = snapshot.deploymentRuns || {};
-    const previousRuns = previous?.deploymentRuns || {};
-    const runOps: unknown[] = [];
-    for (const run of Object.values(currentRuns)) {
-      const sanitized = sanitizeDeploymentRun(run);
-      const previousRun = previousRuns[run.id];
-      if (!previousRun || stableJson(sanitized) !== stableJson(sanitizeDeploymentRun(previousRun))) {
-        runOps.push({
-          replaceOne: {
-            filter: { _id: run.id },
-            replacement: {
-              _id: run.id,
-              projectId: run.projectId,
-              branchId: run.branchId,
-              doc: sanitized,
-              updatedAt: now,
-            },
-            upsert: true,
-          },
-        });
-      }
-    }
-    for (const id of Object.keys(previousRuns)) {
-      if (!currentRuns[id]) runOps.push({ deleteOne: { filter: { _id: id } } });
-    }
-    if (runOps.length > 0) {
-      await this.handle.deploymentRunsCollection().bulkWrite(runOps);
-    }
-
-    // ── 5) Deployment versions collection（不可变交付物元数据独立于 global）──
-    const currentVersions = snapshot.deploymentVersions || {};
-    const previousVersions = previous?.deploymentVersions || {};
-    const versionOps: unknown[] = [];
-    for (const version of Object.values(currentVersions)) {
-      const previousVersion = previousVersions[version.id];
-      if (!previousVersion || stableJson(version) !== stableJson(previousVersion)) {
-        versionOps.push({
-          replaceOne: {
-            filter: { _id: version.id },
-            replacement: {
-              _id: version.id,
-              projectId: version.projectId,
-              doc: version,
-              updatedAt: now,
-            },
-            upsert: true,
-          },
-        });
-      }
-    }
-    for (const id of Object.keys(previousVersions)) {
-      if (!currentVersions[id]) versionOps.push({ deleteOne: { filter: { _id: id } } });
-    }
-    if (versionOps.length > 0) {
-      await this.handle.deploymentVersionsCollection().bulkWrite(versionOps);
-    }
-
-    // ── 6) Self-update history collection（日志类字段独立落库）──
-    const selfUpdateHistory = (snapshot.selfUpdateHistory || [])
-      .slice(-MAX_SELF_UPDATE_HISTORY)
-      .map(sanitizeSelfUpdateRecord);
-    const previousSelfUpdateHistory = (previous?.selfUpdateHistory || [])
-      .slice(-MAX_SELF_UPDATE_HISTORY)
-      .map(sanitizeSelfUpdateRecord);
-    const newHistoryIds = new Set(selfUpdateHistory.map((record, index) => selfUpdateRecordId(record, index)));
-    const previousHistoryIds = new Set(previousSelfUpdateHistory.map((record, index) => selfUpdateRecordId(record, index)));
-    const previousHistoryById = new Map(previousSelfUpdateHistory.map((record, index) => [selfUpdateRecordId(record, index), record]));
-    const historyOps: unknown[] = [];
-    selfUpdateHistory.forEach((record, index) => {
-      const id = selfUpdateRecordId(record, index);
-      const previousRecord = previousHistoryById.get(id);
-      if (!previousRecord || stableJson(record) !== stableJson(previousRecord)) {
-        historyOps.push({
-          replaceOne: {
-            filter: { _id: id },
-            replacement: { _id: id, ts: record.ts || '', doc: record, updatedAt: now },
-            upsert: true,
-          },
-        });
-      }
+  private async persistProjects(currentIds: ReadonlySet<string>, candidates: Iterable<[string, Project]>, now: string): Promise<void> {
+    await this.syncCollection({
+      collection: this.handle.projectsCollection(),
+      cache: this.persistedJson.projects,
+      currentIds,
+      candidates,
+      serialize: (id, project) => ({
+        json: stableJson(project),
+        replacement: { _id: id, doc: project, updatedAt: now },
+      }),
     });
-    for (const id of previousHistoryIds) {
-      if (newHistoryIds.has(id)) continue;
-      historyOps.push({ deleteOne: { filter: { _id: id } } });
-    }
-    if (historyOps.length > 0) {
-      await this.handle.selfUpdateHistoryCollection().bulkWrite(historyOps);
-    }
-
-    // ── 5) Webhook deliveries collection（日志类，diff-based，_id = delivery.id）──
-    const deliveryOps = this.diffWebhookDeliveryOps(snapshot, previous, now);
-    if (deliveryOps.length > 0) {
-      await this.handle.webhookDeliveriesCollection().bulkWrite(deliveryOps);
-    }
-
-    // ── 6) Activity logs collection（日志类，diff-based，复合 _id）──
-    const activityOps = this.diffActivityLogOps(snapshot, previous, now);
-    if (activityOps.length > 0) {
-      await this.handle.activityLogsCollection().bulkWrite(activityOps);
-    }
-
-    // ── 1) Global rest（单文档，replaceOne）——刻意放最后：legacy 迁移首启时先把
-    // 日志类数据 upsert 进 split collection，再从 global doc 剥离，中途崩溃也不丢。──
-    const restOfState = globalRestOf(snapshot);
-    const previousRest = previous ? globalRestOf(previous) : null;
-    if (this.forceGlobalRewrite || !previousRest || stableJson(restOfState) !== stableJson(previousRest)) {
-      await this.handle.globalCollection().replaceOne(
-        { _id: GLOBAL_DOC_ID },
-        { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
-        { upsert: true },
-      );
-      this.forceGlobalRewrite = false;
-    }
   }
 
-  /** snapshot vs previous 的 webhook 投递差异 → bulkWrite ops（内存 ring 淘汰经此产生 deleteOne，天然上限）。 */
-  private diffWebhookDeliveryOps(snapshot: CdsState, previous: CdsState | null, now: string): unknown[] {
-    const nextDeliveries = pruneWebhookDeliveries(snapshot.githubWebhookDeliveries || []);
-    const previousDeliveries = previous ? pruneWebhookDeliveries(previous.githubWebhookDeliveries || []) : [];
-    const nextIds = new Set(nextDeliveries.map((d) => webhookDeliveryDocId(d)));
-    const previousById = new Map(previousDeliveries.map((d) => [webhookDeliveryDocId(d), d]));
-    const ops: unknown[] = [];
-    for (const delivery of nextDeliveries) {
-      const id = webhookDeliveryDocId(delivery);
-      const previousDelivery = previousById.get(id);
-      if (!previousDelivery || stableJson(delivery) !== stableJson(previousDelivery)) {
-        ops.push({
-          replaceOne: {
-            filter: { _id: id },
-            replacement: { _id: id, receivedAt: delivery.receivedAt || '', doc: delivery, updatedAt: now },
-            upsert: true,
-          },
-        });
-      }
-    }
-    for (const id of previousById.keys()) {
-      if (nextIds.has(id)) continue;
-      ops.push({ deleteOne: { filter: { _id: id } } });
-    }
-    return ops;
+  private async persistBranches(currentIds: ReadonlySet<string>, candidates: Iterable<[string, BranchEntry]>, now: string): Promise<void> {
+    await this.syncCollection({
+      collection: this.handle.branchesCollection(),
+      cache: this.persistedJson.branches,
+      currentIds,
+      candidates,
+      serialize: (id, branch) => ({
+        json: stableJson(branch),
+        replacement: { _id: id, projectId: branch.projectId, doc: branch, updatedAt: now },
+      }),
+    });
   }
 
-  /** snapshot vs previous 的项目活动流差异 → bulkWrite ops（每项目 ring buffer 淘汰产生 deleteOne）。 */
-  private diffActivityLogOps(snapshot: CdsState, previous: CdsState | null, now: string): unknown[] {
-    const flatten = (state: CdsState | null): Map<string, { projectId: string; log: ProjectActivityLog }> => {
-      const map = new Map<string, { projectId: string; log: ProjectActivityLog }>();
-      for (const [projectId, logs] of Object.entries(state?.activityLogs || {})) {
-        for (const log of (logs || []).slice(-MAX_ACTIVITY_LOGS_PER_PROJECT)) {
-          map.set(activityLogDocId(projectId, log), { projectId, log });
-        }
-      }
-      return map;
-    };
-    const nextById = flatten(snapshot);
-    const previousById = flatten(previous);
-    const ops: unknown[] = [];
-    for (const [id, { projectId, log }] of nextById) {
-      const previousEntry = previousById.get(id);
-      if (!previousEntry || stableJson(log) !== stableJson(previousEntry.log)) {
-        ops.push({
-          replaceOne: {
-            filter: { _id: id },
-            replacement: { _id: id, projectId, at: log.at || '', doc: log, updatedAt: now },
-            upsert: true,
+  private async persistDeploymentRuns(currentIds: ReadonlySet<string>, candidates: Iterable<[string, DeploymentRun]>, now: string): Promise<void> {
+    await this.syncCollection({
+      collection: this.handle.deploymentRunsCollection(),
+      cache: this.persistedJson.deploymentRuns,
+      currentIds,
+      candidates,
+      serialize: (id, run) => {
+        const sanitized = sanitizeDeploymentRun(run);
+        return {
+          json: stableJson(sanitized),
+          replacement: {
+            _id: id,
+            projectId: sanitized.projectId,
+            branchId: sanitized.branchId,
+            doc: sanitized,
+            updatedAt: now,
           },
-        });
-      }
-    }
-    for (const id of previousById.keys()) {
-      if (nextById.has(id)) continue;
-      ops.push({ deleteOne: { filter: { _id: id } } });
-    }
-    return ops;
+        };
+      },
+    });
+  }
+
+  private async persistDeploymentVersions(currentIds: ReadonlySet<string>, candidates: Iterable<[string, DeploymentVersion]>, now: string): Promise<void> {
+    await this.syncCollection({
+      collection: this.handle.deploymentVersionsCollection(),
+      cache: this.persistedJson.deploymentVersions,
+      currentIds,
+      candidates,
+      serialize: (id, version) => ({
+        json: stableJson(version),
+        replacement: { _id: id, projectId: version.projectId, doc: version, updatedAt: now },
+      }),
+    });
+  }
+
+  private async persistSelfUpdateHistory(list: SelfUpdateRecord[] | undefined, now: string): Promise<void> {
+    const candidates = selfUpdateCandidates(list);
+    await this.syncCollection({
+      collection: this.handle.selfUpdateHistoryCollection(),
+      cache: this.persistedJson.selfUpdateHistory,
+      currentIds: new Set(candidates.map(([id]) => id)),
+      candidates,
+      serialize: (id, record) => ({
+        json: stableJson(record),
+        replacement: { _id: id, ts: record.ts || '', doc: record, updatedAt: now },
+      }),
+    });
+  }
+
+  private async persistWebhookDeliveries(list: GithubWebhookDelivery[] | undefined, now: string): Promise<void> {
+    const candidates = webhookDeliveryCandidates(list);
+    await this.syncCollection({
+      collection: this.handle.webhookDeliveriesCollection(),
+      cache: this.persistedJson.webhookDeliveries,
+      currentIds: new Set(candidates.map(([id]) => id)),
+      candidates,
+      serialize: (id, delivery) => ({
+        json: stableJson(delivery),
+        replacement: { _id: id, receivedAt: delivery.receivedAt || '', doc: delivery, updatedAt: now },
+      }),
+    });
+  }
+
+  private async persistActivityLogs(logs: Record<string, ProjectActivityLog[]> | undefined, now: string): Promise<void> {
+    const candidates = activityLogCandidates(logs);
+    await this.syncCollection({
+      collection: this.handle.activityLogsCollection(),
+      cache: this.persistedJson.activityLogs,
+      currentIds: new Set(candidates.map(([id]) => id)),
+      candidates,
+      serialize: (id, entry) => ({
+        json: stableJson(entry.log),
+        replacement: { _id: id, projectId: entry.projectId, at: entry.log.at || '', doc: entry.log, updatedAt: now },
+      }),
+    });
+  }
+
+  /** global rest 单文档：字符串级 diff（缓存上次落库的 stableJson），命中即零写。 */
+  private async persistGlobalRest(restOfState: GlobalRest, now: string): Promise<void> {
+    const json = stableJson(restOfState);
+    if (!this.forceGlobalRewrite && this.persistedGlobalJson === json) return;
+    await this.handle.globalCollection().replaceOne(
+      { _id: GLOBAL_DOC_ID },
+      { _id: GLOBAL_DOC_ID, state: restOfState, updatedAt: now },
+      { upsert: true },
+    );
+    this.persistedGlobalJson = json;
+    this.forceGlobalRewrite = false;
+  }
+
+  /** 全量快照落库：所有 kind 走同一套「当前侧 stringify vs 序列化缓存」diff。 */
+  private async persistFull(snapshot: CdsState): Promise<void> {
+    const now = new Date().toISOString();
+    const projects = snapshot.projects || [];
+    await this.persistProjects(
+      new Set(projects.map((project) => project.id)),
+      projects.map((project): [string, Project] => [project.id, project]),
+      now,
+    );
+    await this.persistBranches(
+      new Set(Object.keys(snapshot.branches || {})),
+      Object.entries(snapshot.branches || {}),
+      now,
+    );
+    await this.persistDeploymentRuns(
+      new Set(Object.keys(snapshot.deploymentRuns || {})),
+      Object.entries(snapshot.deploymentRuns || {}),
+      now,
+    );
+    await this.persistDeploymentVersions(
+      new Set(Object.keys(snapshot.deploymentVersions || {})),
+      Object.entries(snapshot.deploymentVersions || {}),
+      now,
+    );
+    await this.persistSelfUpdateHistory(snapshot.selfUpdateHistory, now);
+    await this.persistWebhookDeliveries(snapshot.githubWebhookDeliveries, now);
+    await this.persistActivityLogs(snapshot.activityLogs, now);
+    // global 刻意放最后：legacy 迁移首启时先把日志类数据 upsert 进 split
+    // collection，再从 global doc 剥离，中途崩溃也不丢。
+    await this.persistGlobalRest(globalRestOf(snapshot), now);
+  }
+
+  /** 部分快照落库：只处理本次被标脏的 kind，顺序与全量路径一致（global 最后）。 */
+  private async persistPartial(pending: PendingWrite): Promise<void> {
+    const now = new Date().toISOString();
+    if (pending.projects) await this.persistProjects(pending.projects.ids, pending.projects.entities, now);
+    if (pending.branches) await this.persistBranches(pending.branches.ids, pending.branches.entities, now);
+    if (pending.deploymentRuns) await this.persistDeploymentRuns(pending.deploymentRuns.ids, pending.deploymentRuns.entities, now);
+    if (pending.deploymentVersions) await this.persistDeploymentVersions(pending.deploymentVersions.ids, pending.deploymentVersions.entities, now);
+    if (pending.selfUpdateHistory) await this.persistSelfUpdateHistory(pending.selfUpdateHistory, now);
+    if (pending.webhookDeliveries) await this.persistWebhookDeliveries(pending.webhookDeliveries, now);
+    if (pending.activityLogs) await this.persistActivityLogs(pending.activityLogs, now);
+    if (pending.globalRest) await this.persistGlobalRest(pending.globalRest, now);
   }
 
   private drainWrites(): void {
@@ -782,12 +1009,12 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     void (async () => {
       let generation = 0;
       try {
-        while (this.pendingSnapshot) {
-          const snapshot = this.pendingSnapshot;
-          generation = this.pendingGeneration;
-          this.pendingSnapshot = null;
-          await this.persistSnapshot(snapshot, this.persistedCache);
-          this.persistedCache = structuredClone(snapshot);
+        while (this.pendingWrite) {
+          const pending = this.pendingWrite;
+          generation = pending.generation;
+          this.pendingWrite = null;
+          if (pending.full) await this.persistFull(pending.full);
+          else await this.persistPartial(pending);
           this.persistedGeneration = generation;
           this.lastWriteError = null;
           this.resolveFlushWaiters();
@@ -795,10 +1022,29 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       } catch (err) {
         this.failedGeneration = Math.max(this.failedGeneration, generation);
         this.lastWriteError = err;
+        // 失败的 pending 已被消费丢弃，其中的变更无法靠后续 hint 快照找回；
+        // 序列化缓存只在写成功后更新、仍反映 DB 真实内容，下一次 takeSnapshot
+        // 强制全量即可把丢失的变更重新 diff 回来。
+        this.needFullResync = true;
+        // Codex P1(PR #1213)：写失败期间若已有下一笔 partial 排队，finally 会
+        // 立即把它以 partial 落库 → persistedGeneration 越过失败代次，flush()
+        // 谎报成功而失败变更仍缺失，要等下一次无关 save 才被全量对账补回。
+        // 修复：把排队中的 partial 就地升级为全量快照 —— live state 包含全部
+        // 业务变更，序列化缓存仍反映 DB 真相，全量 diff 会把被丢弃的变更一并
+        // 找回（排队中的本就是 full 则它自身即对账，两种情况都消费 needFullResync）。
+        const queued = this.pendingWrite;
+        if (queued && !queued.full && this.liveStateRef) {
+          const snapshot = structuredClone(this.liveStateRef);
+          this.cache = snapshot;
+          this.pendingWrite = { generation: queued.generation, full: snapshot };
+          this.needFullResync = false;
+        } else if (queued?.full) {
+          this.needFullResync = false;
+        }
         this.rejectFlushWaiters(err);
       } finally {
         this.writeInFlight = false;
-        if (this.pendingSnapshot) this.drainWrites();
+        if (this.pendingWrite) this.drainWrites();
       }
     })();
   }
@@ -820,7 +1066,12 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
 
   async forceFullSave(state: CdsState): Promise<void> {
     // 全量写覆盖任何挂起的增量快照，避免 takeSnapshot 再做一次冗余落盘。
+    this.liveStateRef = state;
     this.dirtyState = null;
+    this.dirtyAll = false;
+    this.dirtyKinds = new Set();
+    this.dirtyIds = new Map();
+    this.pendingWrite = null;
     this.cache = structuredClone(state);
 
     const snapshot = this.cache;
@@ -970,7 +1221,13 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     if (activityOps.length > 0) await this.handle.activityLogsCollection().bulkWrite(activityOps);
 
     this.forceGlobalRewrite = false; // 全量写已重写 global doc，legacy 剥离完成。
-    this.persistedCache = structuredClone(snapshot);
+    // 全量写之后序列化缓存与 DB 强一致，按快照重建（口径同持久化路径）。
+    this.rebuildSerializedCaches(snapshot, {
+      includeSelfUpdate: true,
+      includeDeliveries: true,
+      includeActivity: true,
+    });
+    this.needFullResync = false;
     this.persistedGeneration = this.writeGeneration;
   }
 

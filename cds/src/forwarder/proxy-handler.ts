@@ -405,6 +405,14 @@ export class ProxyHandler {
           const contentType = String(upstreamRes.headers['content-type'] || '');
           // 改写后续要透传给客户端的 headers
           const respHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
+          // 剥掉 hop-by-hop 响应头(RFC 7230 §6.1 / RFC 7540 §8.1.2.2):这些头只对
+          // 「上游 → forwarder」这一跳有意义,不许透传给客户端连接。尤其 Connection
+          // 在 HTTP/2 里是非法头——master SSE 曾带 Connection: close,经此处透传到
+          // HTTP/2 终结层后浏览器直接 ERR_HTTP2_PROTOCOL_ERROR 断流(2026-07-21)。
+          // 客户端侧的连接管理(keep-alive/分块编码)由本进程的 res 自己决定。
+          for (const h of ['connection', 'keep-alive', 'transfer-encoding', 'upgrade', 'proxy-connection', 'te', 'trailer']) {
+            delete respHeaders[h];
+          }
           // Upstream 4xx/5xx may not carry the forwarder request id. Keep the
           // edge-visible trace id stable so an empty/short error response is
           // still attributable to the forwarder request path.

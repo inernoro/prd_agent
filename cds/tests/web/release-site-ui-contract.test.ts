@@ -133,6 +133,19 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('ReleaseRunStepList');
   });
 
+  it('splits the branch release dialog into wizard stages so live status is never buried', () => {
+    // 分阶段派生:一旦 run 存在就进入「发布」阶段,前序配置/预检收起,状态区不再被长滚动挤到底部。
+    expect(branchListSource).toContain("stage: 'config' | 'preflight' | 'releasing'");
+    expect(branchListSource).toContain('ReleaseWizardRail');
+    expect(branchListSource).toContain('ReleaseStageSummary');
+    expect(branchListSource).toContain('选择站点');
+    // 长脚本收进「查看脚本」折叠 + 自身横向滚动框,不再平铺撑破弹窗。
+    expect(branchListSource).toContain('查看脚本');
+    expect(branchListSource).toContain("check.id === 'deploy-command'");
+    // 主操作固定在底部 sticky footer,发布中/发布后始终可见。
+    expect(branchListSource).toContain('sticky bottom-0');
+  });
+
   it('keeps raw SSH target terminology out of visible branch release copy', () => {
     const text = stringLiterals(branchListSource).join('\n');
     expect(text).not.toContain('SSH target');
