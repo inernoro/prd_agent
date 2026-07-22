@@ -16,6 +16,24 @@ describe('CDS Agent 接入口令', () => {
     expect(prompt).not.toContain('~/.claude');
   });
 
+  it('强制安装 preview-url 并从 CDS API 验证真实多入口', () => {
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'existing', projectId: 'proj-a' },
+    });
+
+    expect(prompt).toContain('cds-project-scan、preview-url');
+    expect(prompt).toContain('缺 preview-url 视为接入未完成');
+    expect(prompt).toContain('必须调用 preview-url 技能');
+    expect(prompt).toContain('previewUrl / previewUrls');
+    expect(prompt).toContain('主应用、模型网关等独立命名服务都属于实际入口');
+    expect(prompt).toContain('CDS 返回几条就全部列出');
+    expect(prompt).toContain('所有入口只使用公开 previewDomain');
+    expect(prompt).toContain('rootDomains 可能包含隐藏、备用或内部域名，禁止向用户暴露');
+    expect(prompt).toContain('禁止把 rootDomains 数量当成入口数量');
+    expect(prompt).toContain('禁止根据分支名、项目名、profileId、CDS host 或旧公式自行拼接');
+  });
+
   it('首次接入口令申请一次性新项目权限', () => {
     const prompt = buildCdsAgentPrompt({
       cdsOrigin: 'https://cds.example',

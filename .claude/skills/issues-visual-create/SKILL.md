@@ -38,9 +38,9 @@ description: 手动触发创建一个视觉验收子 issue。输入"要测什么
 
 ## 2. 自动从环境推导
 
-- **预览地址**：按 CLAUDE.md 规则 #11 v3 公式自动拼接 `{tail}-{prefix}-{project-slug}.miduo.org`，三段都必须过 slugify（小写 + 非 `[a-z0-9-]` 替换为 `-` + 合并连续 `-` + 去头尾 `-`）
-- **分支**：`git branch --show-current`，对 `/` 切分前缀/尾部后各自 slugify
-- **项目 slug**：`basename $(git rev-parse --show-toplevel)` 后**必须 slugify**（本仓库 `prd_agent` → `prd-agent`，下划线必须变连字符）。直接复用 CLAUDE.md §11 给出的 bash slugify 函数，不要自己造
+- **预览地址**：调用 `preview-url` 技能，只使用 CDS API 返回的 `previewUrl` / `previewUrls`；多入口全部写入 issue
+- **分支**：`git branch --show-current`，保留原始分支名
+- **项目身份**：由项目级 CDS 凭据中的 `CDS_PROJECT_ID` 与 API 响应确定，不从目录名推算
 - **commit**：默认取 `git rev-parse --short HEAD`
 
 ## 3. 执行步骤
@@ -65,7 +65,7 @@ description: 手动触发创建一个视觉验收子 issue。输入"要测什么
 
 ## 5. 硬约束（生成 body 前自检）
 
-- **必须**：预览地址用 v3 公式（`{tail}-{prefix}-{project-slug}`），不用 v1/v2
+- **必须**：预览地址来自 `preview-url` 的 CDS API 实际输出，禁止使用任何历史公式或本地 slugify
 - **必须**：§4 硬约束 10 条**完整列出**（不允许"按需精简"——见 #605 元 issue 决议）
 - **必须**：§7 失败回报表格的列名与协议对齐：`# / 检查点 / 视口 / 主题 / 截图 / 问题描述 / 严重级`
 - **必须**：业务用例 §5 至少 3 条，每条含角色 + 任务 + 预期

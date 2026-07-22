@@ -9,7 +9,7 @@
 3. 复制接入口令给当前 Agent。
 4. Agent 安装技能并发起授权申请。
 5. 用户在 CDS 右下角点击批准。
-6. Agent 自动验证连接，继续扫描、部署和冒烟测试。
+6. Agent 自动验证连接，调用 `preview-url` 核对 CDS API 的真实预览入口，再继续扫描、部署和冒烟测试。
 
 ## 技能安装位置
 
@@ -22,6 +22,8 @@
 | Claude Code | `.claude/skills` |
 
 默认禁止安装到用户主目录。旧技能备份放在当前项目 `.cds/skill-backups`，禁止把 `.bak` 目录留在技能扫描目录。
+
+完整技能包必须包含 `cds`、`cds-deploy-pipeline`、`cds-project-scan`、`preview-url` 四个技能。缺少 `preview-url` 视为接入未完成。
 
 ## 安全接入
 
@@ -70,12 +72,15 @@ python3 <skills-root>/cds/cli/cdscli.py deploy
 
 ```bash
 python3 <skills-root>/cds/cli/cdscli.py auth check
+python3 <skills-root>/cds/cli/cdscli.py --human preview-url
 git status --short
 ```
 
 通过标准：
 
 - `auth check` 成功。
+- `preview-url` 只输出 CDS API 返回的 `previewUrl` / `previewUrls`；多入口时全部列出。
+- 当前分支尚未创建或部署时，`preview-url` 明确失败，不根据分支名或 CDS host 推算。
 - `git status` 不出现 `.cds/credentials.json`。
 - 用户终端启动文件没有变化。
 - 对另一个 CDS 项目执行写操作时返回 `project_mismatch` 或权限拒绝。
