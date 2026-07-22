@@ -22,7 +22,7 @@
 
 **图 069 从左侧导航点击“请求记录”，不用猜页面地址**
 
-![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
+![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/33d053d5fd2df3ad9c30472774463e9bdc148d24ea765e0bf5776e179f2b93f0.png)
 
 2. 粘贴完整 requestId 后，唯一匹配会进入带独立路径的“请求详情”页。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
 
