@@ -26,7 +26,7 @@ public class CdsReportImportController : ControllerBase
 
     /// <summary>
     /// 触发一次导入。可重复调用（按 contentHash + updatedSince 增量）。
-    /// 鉴权来源优先级：显式 cdsBaseUrl+cdsAccessKey &gt; connectionId &gt; 最近活跃的 CDS 连接。
+    /// 鉴权来源优先级：显式 cdsBaseUrl+cdsAccessKey &gt; connectionId &gt; 与 sourceBaseUrl 匹配的连接 &gt; 最近活跃的 CDS 连接。
     /// </summary>
     [HttpPost("import-cds-reports")]
     public async Task<IActionResult> ImportCdsReports([FromBody] CdsReportImportOptions? request, CancellationToken ct)

@@ -504,45 +504,47 @@ export function reconcileStuckDeployStates(
       && branch.ciTargetSha !== branch.githubCommitSha
       && options.diffRuntimePaths
     ) {
-      const hasRuntimeDiff = options.diffRuntimePaths(branch);
+      const targetShort = branch.ciTargetSha.slice(0, 7);
+      const headShort = branch.githubCommitSha.slice(0, 7);
+      const reason = `极速版镜像落后 HEAD：sha-${targetShort} 已部署，但 HEAD ${headShort} 含未部署的代码改动（CI 认领可能漏处理）`;
+      // 幂等前置：reason 由 target..head 两个 sha 完全决定。告警已落过就直接跳过，
+      // 不再进 diffRuntimePaths —— 该回调在 master 是 execSync(git diff)，同步阻塞
+      // 整个事件循环；旧写法把幂等判断放在 diff 之后，停止推进的分歧分支每 5 分钟
+      // 都白跑一次 diff，多条叠加即一个 tick 冻结服务数十秒（2026-07-21 性能事故）。
+      const alreadyAlarmed = branch.ciImageError === reason;
+      const hasRuntimeDiff = !alreadyAlarmed && options.diffRuntimePaths(branch);
       if (hasRuntimeDiff) {
-        const targetShort = branch.ciTargetSha.slice(0, 7);
-        const headShort = branch.githubCommitSha.slice(0, 7);
-        const reason = `极速版镜像落后 HEAD：sha-${targetShort} 已部署，但 HEAD ${headShort} 含未部署的代码改动（CI 认领可能漏处理）`;
-        // 幂等：同一 target..head 组合不重复落同样的 ciImageError。
-        if (branch.ciImageError !== reason) {
-          branch.ciImageError = reason;
-          mutated = true;
-          results.push({
-            branchId: branch.id,
-            projectId: branch.projectId,
-            kind: 'express-head-divergence',
-            via: 'alarm',
-            reason,
-          });
-          options.appendLog?.(branch.id, {
-            type: 'build',
-            startedAt: branch.lastPushAt || now.toISOString(),
-            finishedAt: now.toISOString(),
-            status: 'error',
-            events: [{
-              step: 'express-head-divergence',
-              status: 'warning',
-              title: '极速版镜像落后 HEAD',
-              log: reason,
-              detail: {
-                ciTargetSha: branch.ciTargetSha,
-                githubCommitSha: branch.githubCommitSha,
-                source,
-              },
-              timestamp: now.toISOString(),
-            }],
-          });
-          recordEvent(options.serverEventLogStore, branch, source, 'branch.express-image.head-divergence', reason, {
-            ciTargetSha: branch.ciTargetSha,
-            githubCommitSha: branch.githubCommitSha,
-          });
-        }
+        branch.ciImageError = reason;
+        mutated = true;
+        results.push({
+          branchId: branch.id,
+          projectId: branch.projectId,
+          kind: 'express-head-divergence',
+          via: 'alarm',
+          reason,
+        });
+        options.appendLog?.(branch.id, {
+          type: 'build',
+          startedAt: branch.lastPushAt || now.toISOString(),
+          finishedAt: now.toISOString(),
+          status: 'error',
+          events: [{
+            step: 'express-head-divergence',
+            status: 'warning',
+            title: '极速版镜像落后 HEAD',
+            log: reason,
+            detail: {
+              ciTargetSha: branch.ciTargetSha,
+              githubCommitSha: branch.githubCommitSha,
+              source,
+            },
+            timestamp: now.toISOString(),
+          }],
+        });
+        recordEvent(options.serverEventLogStore, branch, source, 'branch.express-image.head-divergence', reason, {
+          ciTargetSha: branch.ciTargetSha,
+          githubCommitSha: branch.githubCommitSha,
+        });
       }
     }
 

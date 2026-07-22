@@ -1,6 +1,7 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -51,7 +52,8 @@ export function UserMultiSearchSelect({
   const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
-  const [fetched, setFetched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
 
   const allUsers = externalUsers ?? internalUsers;
 
@@ -62,15 +64,37 @@ export function UserMultiSearchSelect({
   );
 
   useEffect(() => {
-    if (externalUsers || fetched) return;
+    if (externalUsers) return;
     if (!open) return;
-    setFetched(true);
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
-        setInternalUsers(res.data.items.filter((u) => u.status === 'Active'));
-      }
-    });
-  }, [externalUsers, fetched, open]);
+    let cancelled = false;
+    const keyword = filter.trim();
+    setSearching(true);
+    setSearchFailed(false);
+    const timer = window.setTimeout(() => {
+      void searchDirectoryUsers(keyword, 50).then((res) => {
+        if (cancelled) return;
+        if (!res.success) {
+          setSearchFailed(true);
+          setSearching(false);
+          return;
+        }
+        setInternalUsers(res.data.items.map((user) => ({
+          userId: user.userId,
+          username: user.username,
+          displayName: user.displayName,
+          avatarFileName: user.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+        setSearching(false);
+      });
+    }, keyword ? 200 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [externalUsers, open, filter]);
 
   const selectedUsers = useMemo(
     () => value.map((id) => allUsers.find((u) => u.userId === id)).filter(Boolean) as AdminUser[],
@@ -187,7 +211,16 @@ export function UserMultiSearchSelect({
         }}
       >
         <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
-          {filtered.length === 0 ? (
+          {searching ? (
+            <div className="px-3 py-6 flex items-center justify-center gap-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <MapSpinner size={14} />
+              正在加载可用用户
+            </div>
+          ) : searchFailed ? (
+            <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              用户列表加载失败，请重新打开后重试
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
               {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
             </div>
@@ -225,13 +258,15 @@ export function UserMultiSearchSelect({
                       <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                         {u.displayName}
                       </span>
-                      <span
-                        className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                        style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
-                      >
-                        <RoleIcon size={9} />
-                        {rm.label}
-                      </span>
+                      {u.role && (
+                        <span
+                          className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                          style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
+                        >
+                          <RoleIcon size={9} />
+                          {rm.label}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                       @{u.username}

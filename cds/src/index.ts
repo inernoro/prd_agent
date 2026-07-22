@@ -260,6 +260,13 @@ function startStaleDeployDispatchReconciler(
   // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
   const isMaster = config.mode !== 'executor';
   let running = false;
+  // diffRuntimePaths 结果记忆化：ciTargetSha..githubCommitSha 是不可变提交对，
+  // 同一对的 git diff 结果永不变化。旧写法每个 5 分钟 tick 对每条分歧分支重跑
+  // execSync(git diff)（同步阻塞整个事件循环），多条 stale 分支叠加即一次冻结
+  // 数十秒的悬崖（2026-07-21 性能事故：/api/projects 排队 40s+）。命中缓存零成本；
+  // 只缓存成功计算的结果，git 失败（保守返回 false）不缓存以便下轮重试。
+  const runtimeDiffCache = new Map<string, boolean>();
+  const RUNTIME_DIFF_CACHE_MAX = 512;
   const run = () => {
     if (running) return;
     running = true;
@@ -318,16 +325,31 @@ function startStaleDeployDispatchReconciler(
         filterZombieProfiles: isMaster,
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
+          const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
+          const cacheKey = `${b.worktreePath}:${range}`;
+          const cached = runtimeDiffCache.get(cacheKey);
+          if (cached !== undefined) return cached;
           try {
-            const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
-            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null || true`, {
+            // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
+            // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
+            // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
+            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
               encoding: 'utf-8',
             }).trim();
-            if (!out) return false;
-            const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
-            return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+            const result = out
+              ? (() => {
+                  const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
+                  return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+                })()
+              : false;
+            if (runtimeDiffCache.size >= RUNTIME_DIFF_CACHE_MAX) {
+              const oldest = runtimeDiffCache.keys().next().value;
+              if (oldest !== undefined) runtimeDiffCache.delete(oldest);
+            }
+            runtimeDiffCache.set(cacheKey, result);
+            return result;
           } catch {
-            // 取不到 diff 证据 → 保守不告警（无根不喊）。
+            // 取不到 diff 证据 → 保守不告警（无根不喊）。不缓存，等下轮重试。
             return false;
           }
         },
