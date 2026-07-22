@@ -166,12 +166,37 @@ export class ProxyHandler {
     let outgoingPath = originalUrl;
     let extraHeaders: Record<string, string> | null = null;
 
+    // /_cds/waiting-status — 预览等待页的轮询端点,由 master worker proxy 的
+    // serveWaitingStatus 按 Host 解析分支后返回 JSON。**绝不能**走下面的 /_cds/
+    // 通用 passthrough:那条路会 strip 前缀后把 /waiting-status 打到 master REST
+    // 端口(9900),Express 没有该路由 → SPA 兜底返回 200 的 React HTML → 等待页
+    // res.json() 抛错被 .catch 静默吞掉 → 进度条永远停在首屏值(热重启即 35%)、
+    // 分支就绪后也永不 reload(2026-07-22 用户第三次反馈「热重启卡 35% 不动、
+    // 不跳转」的真因;此前两轮修复都在 master 侧,生产数据面 forwarder 根本没把
+    // 轮询送到会回答的人手里)。转给 unknown-host fallback 同款目标(master worker
+    // proxy,默认 5500),preserveHost 让 serveWaitingStatus 能按预览 Host 解析分支。
+    if (
+      originalUrl.startsWith('/_cds/waiting-status')
+      && this.opts.unknownHostFallbackHost
+      && this.opts.unknownHostFallbackPort
+    ) {
+      route = {
+        _id: 'master-waiting-status',
+        host: 'master', // 占位,不参与任何 vhost 比对
+        upstreamHost: this.opts.unknownHostFallbackHost,
+        upstreamPort: this.opts.unknownHostFallbackPort,
+        weight: 100,
+        preserveHost: true, // serveWaitingStatus 靠原 Host 解析分支
+        // 不设 branchId/branchName → 不注入 widget(JSON 响应无需注入)
+      };
+      // outgoingPath 保持 /_cds/waiting-status 原样 —— worker proxy 原生处理该路径
+    }
     // /_cds/api/* passthrough(对齐 master proxy.ts:360-373)
     // widget script 通过这个前缀回调 master REST API 获取 branch / bridge / build
     // 数据。**必须**转给 master 端口(默认 9900)而不是分支容器,否则:
     //   widget fetch /_cds/api/branches/stream → forwarder 转给分支容器 → 404
     // 这是 2026-05-08 用户反馈"widget badge 回来了但请求 404"的真因。
-    if (originalUrl.startsWith('/_cds/')) {
+    else if (originalUrl.startsWith('/_cds/')) {
       const sourceRoute = route;
       outgoingPath = originalUrl.slice(5); // strip "/_cds" → /api/branches/stream
       extraHeaders = {

@@ -989,9 +989,14 @@ export class ProxyService {
       // 1) 有 restart 历史样本 → elapsed/median 真实进度（与「已等待/预计还需」同源）；
       // 2) 无样本 → 从本轮重启起点起的时间曲线，保证进度条始终在动。
       if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
-        const timePercent = timing.overdue
+        // 连续映射 elapsed/median → [35, 96],而不是 max(35, frac*100) 的下限钳制:
+        // 钳制版在 frac < 0.35 期间恒等于 35,叠加前端「单调不回退」守卫后,重启
+        // 前 1/3 时间进度条完全静止(2026-07-22 用户反馈「进来就是 35% 纹丝不动」)。
+        // 35 + frac*61 从第一秒起就在动,且与等待页脚本 tickPct 的同名公式对齐。
+        const frac = timing.elapsedMs / timing.estimateMedianMs;
+        const timePercent = timing.overdue || frac >= 1
           ? 96
-          : Math.max(35, Math.min(96, (timing.elapsedMs / timing.estimateMedianMs) * 100));
+          : Math.min(96, 35 + frac * 61);
         return {
           percent: Math.round(timePercent),
           confidence: 'high',
@@ -1969,6 +1974,7 @@ ${shouldAutoRefresh ? `;(function(){
       if(elapsed<0)elapsed=0;
       var frac=elapsed/timingState.medianMs;
       if(timingState.overdue||frac>=1)target=Math.max(pct.display,96);
+      else if(timingState.mode==='restart')target=Math.min(96,35+frac*61); // 与服务端热重启公式对齐:35 起步、首秒即动
       else target=Math.max(1,Math.min(96,frac*100));
     }else{
       target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间

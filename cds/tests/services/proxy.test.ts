@@ -355,7 +355,8 @@ describe('ProxyService', () => {
       }, 'feature/hot-restart-hist');
       const branch = stateService.getBranch('hot-restart-hist')!;
       branch.lastDeployStartedAt = new Date(Date.now() - 15_000).toISOString();
-      // 近 3 次热重启中位 30s → 已过 15s ≈ 50%，但下限 clamp 35 → 落在 [50,96]
+      // 近 3 次热重启中位 30s → 已过 15s,frac=0.5 → 连续映射 35+0.5*61 ≈ 66
+      // (2026-07-22 起弃用 max(35, frac*100) 钳制:frac<0.35 时进度恒 35 完全静止)
       stateService.recordDeployDuration('default', 'restart', 30_000);
       stateService.recordDeployDuration('default', 'restart', 30_000);
       stateService.recordDeployDuration('default', 'restart', 30_000);
@@ -375,8 +376,8 @@ describe('ProxyService', () => {
       expect(payload.timing!.estimateSamples).toBe(3);
       expect(payload.modeLabel).toBe('热重启');
       expect(payload.progress.label).toBe('热重启进度');
-      expect(payload.progress.percent).toBeGreaterThanOrEqual(45);
-      expect(payload.progress.percent).toBeLessThanOrEqual(60);
+      expect(payload.progress.percent).toBeGreaterThanOrEqual(60);
+      expect(payload.progress.percent).toBeLessThanOrEqual(72);
       expect(payload.progress.reason).toContain('热重启历史耗时');
     });
 
