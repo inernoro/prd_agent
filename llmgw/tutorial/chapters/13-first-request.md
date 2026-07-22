@@ -28,13 +28,21 @@
 
 **图 070 Logs 首屏同时给出真实趋势、汇总指标、requestId 搜索和完整请求表格**
 
-![图 070 Logs 首屏同时给出真实趋势、汇总指标、requestId 搜索和完整请求表格](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 070 Logs 首屏同时给出真实趋势、汇总指标、requestId 搜索和完整请求表格](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
 3. 关闭抽屉后横向核对时间、请求 ID、模型、Provider、App、输入、输出、费用、用途、速度、结束原因、客户端用户和状态。列表正文使用与控制台一致的无衬线字体和可读字号，模型、Provider、App 有对应图标，不应在中间出现大片无信息空白。表头最右侧“表格设置”可显隐列、调整顺序和切换密度。点击 App 会先打开右侧治理摘要，确认身份、路由和预算后才按需进入完整治理页；关闭 App 抽屉后再打开同一条请求，在“概览”页签核对实际模型、Provider、token、费用、速度、总耗时和每次上游响应。
 
+**图 109 表格设置在当前视口内调整列、顺序与密度，不会被日志卡片裁剪**
+
+![图 109 表格设置在当前视口内调整列、顺序与密度，不会被日志卡片裁剪](https://cds.miduo.org/api/reports/assets/eb876acd167499d34fd87de15c1e3e5c5993ec318746b461d9ce79a5226fd71d.png)
+
+**图 110 点击 App 后先在右侧核对调用身份、路由和治理摘要**
+
+![图 110 点击 App 后先在右侧核对调用身份、路由和治理摘要](https://cds.miduo.org/api/reports/assets/ae3c97bd97f8d801a10f4d588ff2336a226c8604677007808783ee8c5b43f6fe.png)
+
 **图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏**
 
-![图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏](https://cds.miduo.org/api/reports/assets/461587f1666bbdd38fab1b2c96bbefbd1aa81576478f15d41497dc978070f199.jpg)
+![图 105 详情概览把模型、Provider、核心指标和每次上游响应放在同一屏](https://cds.miduo.org/api/reports/assets/1498b2a4358d79ea1f455e0bc01711a41fec61aa44475f8911332b16cd782182.png)
 
 4. 切到“请求与响应”，核对请求身份中的 App、Key 前缀、Request ID、Generation ID、入口协议和流式状态，再按需查看请求、响应或原始数据。App 应显示为 `G-` 加 appCallerCode；这里只显示 key 前缀，不显示完整 key。
 

@@ -28,13 +28,21 @@
 
 **图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题**
 
-![图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
 3. 关闭抽屉，再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。列表应连续显示时间、请求 ID、模型、Provider、App、输入、输出、费用、用途、速度、结束原因、客户端用户和状态；模型、Provider 和 App 前应有可辨识图标，列宽不应靠一列吞掉中间空白。点击表头最右侧的“表格设置”，可以显隐列、上下调整顺序，并在紧凑、均衡、舒适三档密度间切换；这些选择只保存在当前浏览器，不改服务端日志。点击 App `G-tutorial.gateway-book::chat` 会在右侧打开 App 摘要抽屉，核对调用身份、路由与预算后，再按需点击“打开完整治理页”；点击日志行则打开请求详情抽屉。详情“概览”核对时间、状态、协议、模型、Provider、token、速度和总耗时；密钥这里只显示前缀或遮盖信息。
 
+**图 109 表格设置可显隐列、调整顺序和切换密度，并始终保持在当前视口内**
+
+![图 109 表格设置可显隐列、调整顺序和切换密度，并始终保持在当前视口内](https://cds.miduo.org/api/reports/assets/eb876acd167499d34fd87de15c1e3e5c5993ec318746b461d9ce79a5226fd71d.png)
+
+**图 110 点击 App 后在右侧读取调用身份、注册路由和治理摘要**
+
+![图 110 点击 App 后在右侧读取调用身份、注册路由和治理摘要](https://cds.miduo.org/api/reports/assets/ae3c97bd97f8d801a10f4d588ff2336a226c8604677007808783ee8c5b43f6fe.png)
+
 **图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试**
 
-![图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试](https://cds.miduo.org/api/reports/assets/461587f1666bbdd38fab1b2c96bbefbd1aa81576478f15d41497dc978070f199.jpg)
+![图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试](https://cds.miduo.org/api/reports/assets/1498b2a4358d79ea1f455e0bc01711a41fec61aa44475f8911332b16cd782182.png)
 
 4. 切到“请求与响应”，核对 Request ID、Generation ID、Key 前缀、流式状态和请求内容。需要交给同事排查时只复制 requestId；不要复制整页原始数据，也不要把可能包含业务内容的请求正文贴到公开群。
 
@@ -64,7 +72,7 @@
 
 **图 073 请求、上游调用和会话三个页面级页签均来自真实数据源**
 
-![图 073 请求、上游调用和会话三个页面级页签均来自真实数据源](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 073 请求、上游调用和会话三个页面级页签均来自真实数据源](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
 9. 需要再次定位时，从“请求与响应”复制 requestId，而不是复制整页可能含业务内容的详情。
 
