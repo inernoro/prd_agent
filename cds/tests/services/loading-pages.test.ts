@@ -16,7 +16,7 @@ describe('loading-pages SSOT', () => {
     expect(legacyExport()).toBe(buildForwarderWaitingPageHtml());
   });
 
-  it('forwarder 等待页：迁移只搬不改（关键结构锚点不漂移）', () => {
+  it('forwarder 等待页：关键结构锚点不漂移（2026-07-22 起含宝石核心叙事）', () => {
     const html = buildForwarderWaitingPageHtml();
     // 结构锚点（非全文快照，避免脆断；改这些等于改产品行为，须显式过评审）
     expect(html).toContain('<title>分支环境正在构建</title>');
@@ -24,6 +24,8 @@ describe('loading-pages SSOT', () => {
     expect(html).toContain('持续检测服务恢复');
     expect(html).toContain("cache:'no-store'");
     expect(html).toContain('scheduleProbe(2000)');
+    // 宝石六芒(组装-碎裂叙事)是系统核心叙事,所有等待页前景必须携带
+    expect(html).toContain('cds-gem-story');
     expect(html).toMatchSnapshot();
   });
 
@@ -82,6 +84,9 @@ describe('loading-pages SSOT', () => {
     expect(html).toContain('--bg-page:#0d1117');
     // 历史伪双主题：light media query 里是暗色值的完整复制，只会误导维护者
     expect(html).not.toContain('prefers-color-scheme:light');
+    // CDS 自升级页 = 「CDS 重启中」核心场景,宝石(iris)替代旧圆圈 spinner
+    expect(html).toContain('cds-gem-story');
+    expect(html).not.toContain('class="spinner"');
     expect(html).toMatchSnapshot();
   });
 });

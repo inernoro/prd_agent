@@ -346,6 +346,10 @@ describe('ProxyService', () => {
       const match = htmlWritten.body.match(/data-role="progress-percent">([0-9.]+)%/);
       expect(match).not.toBeNull();
       expect(Number(match![1])).toBeGreaterThan(50);
+      // 等待页前景必须携带宝石六芒(组装-碎裂叙事,系统核心叙事,2026-07-22 定稿):
+      // 重启态矿色 = 银河 galaxy(状态设定 v2:starting/restarting → deploy)
+      expect(htmlWritten.body).toContain('cds-gem-story');
+      expect(htmlWritten.body).toContain('#22d3ee');
     });
 
     it('hot restart with restart history uses elapsed/median as the real progress source', () => {
