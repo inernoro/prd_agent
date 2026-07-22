@@ -196,7 +196,7 @@ cut -f1 /tmp/today_real.tsv | sort | uniq -c | sort -rn
 # 凭据在环境变量：MAP_AI_USER + MAP_ACCEPT_PASS（仅有 MAP_AI_PASSWORD 时取它兜底）
 export PWPATH=$(npm root -g)/playwright
 export MAP_ACCEPT_PASS="${MAP_ACCEPT_PASS:-$MAP_AI_PASSWORD}"
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | tail -1)
+PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1)
 # driver 内 import harness helpers，对 2-4 个重要功能 login → gotoByClick → shot(带验证点 caption) → writeManifest(OUT)
 node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest.json
 ```

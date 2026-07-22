@@ -145,7 +145,7 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 ```
 
-它会自动从 `/api/branches` 拿后端真实 `previewSlug`（v3 SSOT，与 `cds/src/services/preview-slug.ts:computePreviewSlug` 同源）。没 CDS 凭据时自动回退本地推算，永不漂。
+它只会从 `/api/branches` 读取 CDS 实际返回的 `previewUrl` / `previewUrls`。多入口时逐行输出全部地址；没有 CDS 项目凭据、API 失败或分支未发布时明确失败，禁止本地推算。
 
 > **预览地址**: <cdscli 输出原文>
 >
