@@ -97,26 +97,27 @@ export interface ColumnDef {
   width: string;
   align?: 'left' | 'right' | 'center';
   tip?: string;
+  required?: boolean;
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '112px' },
-  { key: 'generation', label: '请求 ID', width: 'minmax(128px, 0.9fr)' },
-  { key: 'model', label: '模型', width: 'minmax(160px, 1.15fr)' },
-  { key: 'provider', label: 'Provider', width: 'minmax(125px, 0.9fr)' },
-  { key: 'app', label: 'App', width: 'minmax(190px, 1.35fr)', tip: '点击进入该 appCaller 的独立配置与治理页面' },
-  { key: 'input', label: '输入', width: '76px', align: 'right' },
-  { key: 'output', label: '输出', width: '76px', align: 'right' },
-  { key: 'cost', label: '费用', width: '92px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
-  { key: 'usage', label: '用途', width: '90px' },
-  { key: 'speed', label: '速度', width: '95px', align: 'right', tip: '输出 Token / 秒' },
-  { key: 'finish', label: '结束原因', width: '95px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
-  { key: 'user', label: '客户端用户', width: 'minmax(120px, 0.85fr)' },
-  { key: 'status', label: '状态', width: '68px', align: 'center' },
+  { key: 'date', label: '时间', width: '124px', required: true },
+  { key: 'generation', label: '请求 ID', width: 'minmax(145px, 0.95fr)' },
+  { key: 'model', label: '模型', width: 'minmax(170px, 1.1fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(145px, 0.95fr)' },
+  { key: 'app', label: 'App', width: 'minmax(220px, 1.45fr)', tip: '点击在右侧查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: '86px', align: 'right' },
+  { key: 'output', label: '输出', width: '86px', align: 'right' },
+  { key: 'cost', label: '费用', width: '106px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
+  { key: 'usage', label: '用途', width: '92px' },
+  { key: 'speed', label: '速度', width: '108px', align: 'right', tip: '输出 Token / 秒' },
+  { key: 'finish', label: '结束原因', width: '104px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
+  { key: 'user', label: '客户端用户', width: 'minmax(124px, 0.8fr)' },
+  { key: 'status', label: '状态', width: '72px', align: 'center', required: true },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '1.4fr' },
+  { key: 'date', label: '时间', width: '1.4fr', required: true },
   { key: 'model', label: '模型', width: '1.6fr' },
   { key: 'provider', label: '最终 Provider', width: '1.3fr' },
   { key: 'genId', label: '请求 ID', width: '1.8fr' },
@@ -127,7 +128,7 @@ export const UPSTREAM_COLUMNS: ColumnDef[] = [
 ];
 
 export const SESSIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '1.6fr' },
+  { key: 'date', label: '时间', width: '1.6fr', required: true },
   { key: 'sessionId', label: '会话 ID', width: '1.8fr' },
   { key: 'app', label: '应用', width: '1.4fr' },
   { key: 'primaryModel', label: '主要模型', width: '1.5fr' },
@@ -135,6 +136,55 @@ export const SESSIONS_COLUMNS: ColumnDef[] = [
   { key: 'supporting', label: '辅助模型', width: '1.6fr' },
   { key: 'requests', label: '请求数', width: '0.8fr', align: 'right' },
 ];
+
+export type LogTableDensity = 'compact' | 'balanced' | 'comfortable';
+
+export type LogTablePreferences = {
+  visibleKeys: string[];
+  order: string[];
+  density: LogTableDensity;
+};
+
+export const LOG_TABLE_DENSITIES: Array<{
+  key: LogTableDensity;
+  label: string;
+  description: string;
+  rowHeight: number;
+}> = [
+  { key: 'compact', label: '紧凑', description: '同屏查看更多请求', rowHeight: 40 },
+  { key: 'balanced', label: '均衡', description: '信息密度与可读性平衡', rowHeight: 46 },
+  { key: 'comfortable', label: '舒适', description: '增加行间距，便于阅读', rowHeight: 54 },
+];
+
+export function defaultLogTablePreferences(columns: ColumnDef[]): LogTablePreferences {
+  const keys = columns.map((column) => column.key);
+  return { visibleKeys: keys, order: keys, density: 'balanced' };
+}
+
+export function normalizeLogTablePreferences(
+  columns: ColumnDef[],
+  value?: Partial<LogTablePreferences> | null,
+): LogTablePreferences {
+  const keys = columns.map((column) => column.key);
+  const keySet = new Set(keys);
+  const requiredKeys = columns.filter((column) => column.required).map((column) => column.key);
+  const ordered = (value?.order ?? []).filter((key) => keySet.has(key));
+  const order = [...ordered, ...keys.filter((key) => !ordered.includes(key))];
+  const requestedVisible = (value?.visibleKeys ?? keys).filter((key) => keySet.has(key));
+  const visibleKeys = Array.from(new Set([...requestedVisible, ...requiredKeys]));
+  const density = LOG_TABLE_DENSITIES.some((item) => item.key === value?.density)
+    ? value!.density as LogTableDensity
+    : 'balanced';
+  return { visibleKeys, order, density };
+}
+
+export function resolveLogTableColumns(columns: ColumnDef[], preferences: LogTablePreferences): ColumnDef[] {
+  const byKey = new Map(columns.map((column) => [column.key, column]));
+  return preferences.order
+    .filter((key) => preferences.visibleKeys.includes(key))
+    .map((key) => byKey.get(key))
+    .filter((column): column is ColumnDef => Boolean(column));
+}
 
 export function userLabel(it: LlmLogListItem): string {
   return (it.displayName || it.username || it.userId || DASH) as string;

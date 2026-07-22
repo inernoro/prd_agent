@@ -2,12 +2,16 @@
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
-import { Link, useLocation, useNavigate } from 'react-router-dom';
+import { Link, useLocation } from 'react-router-dom';
 import { RefreshCw, ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
 import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { MiniBarChart } from './MiniBarChart';
+import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
+import { AppCallerDetailsDrawer } from './AppCallerDetailsDrawer';
+import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
+import { LogTableSettings } from './LogTableSettings';
 import {
   DASH,
   LOGS_SUBTABS,
@@ -18,6 +22,11 @@ import {
   UPSTREAM_COLUMNS,
   SESSIONS_COLUMNS,
   type ColumnDef,
+  type LogTablePreferences,
+  defaultLogTablePreferences,
+  normalizeLogTablePreferences,
+  resolveLogTableColumns,
+  LOG_TABLE_DENSITIES,
   fmtShortTime,
   fmtDate,
   fmtMs,
@@ -31,6 +40,26 @@ import {
 } from '@/lib/logsHelpers';
 
 const PAGE_SIZE = 30;
+const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v2';
+
+function initialTablePreferences(): Record<LogsSubTab, LogTablePreferences> {
+  const defaults = {
+    generations: defaultLogTablePreferences(GENERATIONS_COLUMNS),
+    upstream: defaultLogTablePreferences(UPSTREAM_COLUMNS),
+    sessions: defaultLogTablePreferences(SESSIONS_COLUMNS),
+  };
+  if (typeof window === 'undefined') return defaults;
+  try {
+    const saved = JSON.parse(window.localStorage.getItem(TABLE_PREFERENCES_KEY) || '{}') as Partial<Record<LogsSubTab, LogTablePreferences>>;
+    return {
+      generations: normalizeLogTablePreferences(GENERATIONS_COLUMNS, saved.generations),
+      upstream: normalizeLogTablePreferences(UPSTREAM_COLUMNS, saved.upstream),
+      sessions: normalizeLogTablePreferences(SESSIONS_COLUMNS, saved.sessions),
+    };
+  } catch {
+    return defaults;
+  }
+}
 
 // 网关传输通道（GatewayTransport）chip：这次调用走进程内 / 跨进程 HTTP / 影子 / 管理探测 / 直连。
 // 是翻 http 前后排障「这条走了哪条路」的关键标记。历史日志为 null → 不显示 chip。
@@ -59,7 +88,6 @@ function appLabel(item: Pick<LlmLogListItem, 'appCallerCode' | 'appCallerCodeDis
 
 export function LogsView() {
   const location = useLocation();
-  const navigate = useNavigate();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
@@ -123,7 +151,16 @@ export function LogsView() {
   const [summary, setSummary] = useState<LogsSummaryData | null>(null);
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
+  const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
+  const [selectedAppLog, setSelectedAppLog] = useState<LlmLogListItem | null>(null);
+  const [tablePreferences, setTablePreferences] = useState(initialTablePreferences);
+  const [settingsOpen, setSettingsOpen] = useState<LogsSubTab | null>(null);
+  const [settingsTab, setSettingsTab] = useState<'columns' | 'density'>('columns');
   const [showExampleGuide, setShowExampleGuide] = useState(false);
+
+  useEffect(() => {
+    window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
+  }, [tablePreferences]);
 
   useEffect(() => {
     const query = new URLSearchParams(location.search);
@@ -274,10 +311,8 @@ export function LogsView() {
     const matched = rows.find((item) => item.requestId === requestId || item.id === requestId);
     if (!matched) return;
     openedRequestIdRef.current = requestId;
-    navigate(`/logs/${encodeURIComponent(matched.id)}`, {
-      state: { from: `${location.pathname}${location.search}` },
-    });
-  }, [filterRequestId, loading, location.pathname, location.search, navigate, rows]);
+    setSelectedLogId(matched.id);
+  }, [filterRequestId, loading, rows]);
 
   const refresh = () => {
     void loadInsights();
@@ -314,35 +349,38 @@ export function LogsView() {
       case 'model': {
         const proto = getProtocolMeta(it.protocol);
         const tp = getTransportMeta(it.transport);
+        const modelName = it.logicalModelPublicId || it.model || DASH;
         return (
-          <span style={{ display: 'flex', alignItems: 'center', gap: 4, minWidth: 0, maxWidth: '100%', overflow: 'hidden' }}>
-            <span className="lg-truncate" style={{ minWidth: 0, flex: 1, fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
-              {it.logicalModelPublicId || it.model || DASH}
-            </span>
-            {proto ? <Chip label={proto.label} color={proto.color} bg={proto.bg} /> : null}
-            {tp ? <Chip label={tp.label} color={tp.color} bg={tp.bg} title={`网关传输通道：${tp.label}`} /> : null}
+          <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
+            <ModelEntityIcon model={modelName} />
+            <span className="lg-truncate lg-log-model-name">{modelName}</span>
           </span>
         );
       }
-      case 'provider':
+      case 'provider': {
+        const providerName = it.platformName || it.provider || DASH;
         return (
-          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={it.platformName || it.provider}>
-            {it.platformName || it.provider || DASH}
+          <span className="lg-log-entity" title={providerName}>
+            <ProviderEntityIcon provider={providerName} />
+            <span className="lg-truncate">{providerName}</span>
           </span>
         );
+      }
       case 'app': {
-        const code = it.appCallerCode?.trim();
         const title = `应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
-        if (!code) return <span className="lg-truncate lg-log-app-label" title={title}>{appLabel(it)}</span>;
         return (
-          <Link
-            className="lg-truncate lg-log-app-link"
-            to={`/app-callers?search=${encodeURIComponent(code)}&focus=${encodeURIComponent(code)}`}
-            title={`${title}；点击进入 App 页面`}
-            onClick={(event) => event.stopPropagation()}
+          <button
+            type="button"
+            className="lg-log-app-button"
+            title={`${title}；点击在右侧查看摘要`}
+            onClick={(event) => {
+              event.stopPropagation();
+              setSelectedAppLog(it);
+            }}
           >
-            {appLabel(it)}
-          </Link>
+            <AppEntityIcon />
+            <span className="lg-truncate">{appLabel(it)}</span>
+          </button>
         );
       }
       case 'input':
@@ -394,12 +432,15 @@ export function LogsView() {
         return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
-          <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }} title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
-            {it.logicalModelPublicId || it.model || DASH}
+          <span className="lg-log-entity" title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+            <ModelEntityIcon model={it.logicalModelPublicId || it.model} />
+            <span className="lg-truncate lg-log-model-name">{it.logicalModelPublicId || it.model || DASH}</span>
           </span>
         );
-      case 'provider':
-        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.platformName || it.provider || DASH}</span>;
+      case 'provider': {
+        const providerName = it.platformName || it.provider || DASH;
+        return <span className="lg-log-entity"><ProviderEntityIcon provider={providerName} /><span className="lg-truncate">{providerName}</span></span>;
+      }
       case 'genId':
         return (
           <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
@@ -477,6 +518,7 @@ export function LogsView() {
 
   // ── 表格渲染器 ──
   function Table<T>({
+    tableKey,
     columns,
     items,
     rowKey,
@@ -484,6 +526,7 @@ export function LogsView() {
     render,
     empty,
   }: {
+    tableKey: LogsSubTab;
     columns: ColumnDef[];
     items: T[];
     rowKey: (t: T, idx: number) => string;
@@ -491,34 +534,46 @@ export function LogsView() {
     render: (col: ColumnDef, t: T) => ReactNode;
     empty: ReactNode;
   }) {
-    const gridCols = columns.map((c) => c.width).join(' ');
-    const tableMinWidth = columns === GENERATIONS_COLUMNS ? 1580 : Math.max(1080, columns.length * 140);
+    const preferences = normalizeLogTablePreferences(columns, tablePreferences[tableKey]);
+    const visibleColumns = resolveLogTableColumns(columns, preferences);
+    const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
+    const tableMinWidth = tableKey === 'generations'
+      ? Math.max(1040, visibleColumns.length * 105 + 235)
+      : Math.max(920, visibleColumns.length * 132 + 42);
+    const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
+    const updatePreferences = (value: LogTablePreferences) => setTablePreferences((current) => ({ ...current, [tableKey]: value }));
     return (
       <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overscrollBehavior: 'contain' }}>
-        <div className="lg-log-table" style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth }}>
+        <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth }}>
           <div
+            className="lg-log-table-head"
             style={{
               display: 'grid',
-              gap: 12,
-              minHeight: 44,
-              padding: '11px 14px',
+              minHeight: 42,
               flexShrink: 0,
               gridTemplateColumns: gridCols,
-              borderBottom: '1px solid var(--border-subtle)',
-              background: 'var(--bg-surface)',
             }}
           >
-            {columns.map((c) => (
+            {visibleColumns.map((c) => (
               <div
                 key={c.key}
                 title={c.tip}
-                style={{ fontSize: 13, fontWeight: 550, letterSpacing: 0, textAlign: alignOf(c.align), color: 'var(--text-muted)' }}
+                style={{ textAlign: alignOf(c.align) }}
               >
                 {c.label}
-                {c.tip ? <span style={{ opacity: 0.6 }}> (i)</span> : null}
+                {c.tip ? <span className="lg-log-column-info" aria-hidden="true">i</span> : null}
               </div>
             ))}
+            <LogTableSettings
+              columns={columns}
+              preferences={preferences}
+              onChange={updatePreferences}
+              open={settingsOpen === tableKey}
+              onOpenChange={(open) => setSettingsOpen(open ? tableKey : null)}
+              tab={settingsTab}
+              onTabChange={setSettingsTab}
+            />
           </div>
           <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {items.length === 0
@@ -533,25 +588,23 @@ export function LogsView() {
                         onRow(t);
                       }
                     } : undefined}
-                    role={onRow ? 'link' : undefined}
+                    role={onRow ? 'button' : undefined}
                     tabIndex={onRow ? 0 : undefined}
-                    className={onRow ? 'lg-row-clickable' : undefined}
+                    className={onRow ? 'lg-row-clickable lg-log-table-row' : 'lg-log-table-row'}
                     style={{
                       display: 'grid',
-                      gap: 12,
-                      minHeight: 48,
-                      padding: '10px 14px',
+                      minHeight: rowHeight,
                       alignItems: 'center',
                       cursor: onRow ? 'pointer' : 'default',
                       gridTemplateColumns: gridCols,
-                      borderBottom: '1px solid var(--border-subtle)',
                     }}
                   >
-                    {columns.map((c) => (
+                    {visibleColumns.map((c) => (
                       <div key={c.key} style={{ minWidth: 0, textAlign: alignOf(c.align) }}>
                         {render(c, t)}
                       </div>
                     ))}
+                    <span aria-hidden="true" />
                   </div>
                 ))}
           </div>
@@ -797,10 +850,11 @@ export function LogsView() {
               <SectionLoader text="正在加载…" />
             ) : (
               <Table
+                tableKey="generations"
                 columns={GENERATIONS_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
-                onRow={(it) => navigate(`/logs/${encodeURIComponent(it.id)}`, { state: { from: `${location.pathname}${location.search}` } })}
+                onRow={(it) => setSelectedLogId(it.id)}
                 render={renderGenerationCell}
                 empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
@@ -814,10 +868,11 @@ export function LogsView() {
               <SectionLoader text="正在加载…" />
             ) : (
               <Table
+                tableKey="upstream"
                 columns={UPSTREAM_COLUMNS}
                 items={rows}
                 rowKey={(it) => it.id}
-                onRow={(it) => navigate(`/logs/${encodeURIComponent(it.id)}`, { state: { from: `${location.pathname}${location.search}` } })}
+                onRow={(it) => setSelectedLogId(it.id)}
                 render={renderUpstreamCell}
                 empty={emptyCell('该时间范围内还没有上游调用记录', true)}
               />
@@ -831,6 +886,7 @@ export function LogsView() {
               <SectionLoader text="正在聚合会话…" />
             ) : (
               <Table
+                tableKey="sessions"
                 columns={SESSIONS_COLUMNS}
                 items={sessions}
                 rowKey={(it, idx) => it.sessionId || String(idx)}
@@ -844,6 +900,9 @@ export function LogsView() {
       </Card>
 
       {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
+
+      {selectedLogId ? <GenerationDetailsDrawer logId={selectedLogId} onClose={() => setSelectedLogId(null)} /> : null}
+      {selectedAppLog ? <AppCallerDetailsDrawer log={selectedAppLog} onClose={() => setSelectedAppLog(null)} /> : null}
 
     </div>
   );
