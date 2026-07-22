@@ -1942,6 +1942,7 @@ export type {
 export {
   createDocumentStoreReal as createDocumentStore,
   getOrCreateQuickCaptureStore,
+  importCdsAcceptanceReport,
   listDocumentStoresReal as listDocumentStores,
   getDocumentStoreReal as getDocumentStore,
   updateDocumentStoreReal as updateDocumentStore,
