@@ -100,16 +100,19 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '88px' },
-  { key: 'generation', label: '请求 ID', width: '112px' },
-  { key: 'model', label: '模型', width: 'minmax(180px, 1fr)' },
-  { key: 'provider', label: 'Provider', width: '100px' },
-  { key: 'app', label: '应用', width: '116px' },
-  { key: 'tokens', label: 'Token', width: '52px', align: 'right' },
-  { key: 'cost', label: '费用', width: '60px', align: 'right', tip: '来自平台模型池价格快照与本次 token / 按次费用的估算成本；缺价格显示 —' },
-  { key: 'latency', label: '耗时', width: '54px', align: 'right' },
-  { key: 'status', label: '状态', width: '44px', align: 'center' },
-  { key: 'finish', label: '结束原因', width: '58px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
+  { key: 'date', label: '时间', width: '112px' },
+  { key: 'generation', label: '请求 ID', width: 'minmax(128px, 0.9fr)' },
+  { key: 'model', label: '模型', width: 'minmax(160px, 1.15fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(125px, 0.9fr)' },
+  { key: 'app', label: 'App', width: 'minmax(190px, 1.35fr)', tip: '点击进入该 appCaller 的独立配置与治理页面' },
+  { key: 'input', label: '输入', width: '76px', align: 'right' },
+  { key: 'output', label: '输出', width: '76px', align: 'right' },
+  { key: 'cost', label: '费用', width: '92px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
+  { key: 'usage', label: '用途', width: '90px' },
+  { key: 'speed', label: '速度', width: '95px', align: 'right', tip: '输出 Token / 秒' },
+  { key: 'finish', label: '结束原因', width: '95px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
+  { key: 'user', label: '客户端用户', width: 'minmax(120px, 0.85fr)' },
+  { key: 'status', label: '状态', width: '68px', align: 'center' },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
