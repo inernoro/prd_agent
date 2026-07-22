@@ -355,6 +355,9 @@ export function GenerationDetailsDrawer({
       onClick={isPage ? undefined : onClose}
     >
       <div
+        role={isPage ? undefined : 'dialog'}
+        aria-modal={isPage ? undefined : true}
+        aria-label={isPage ? undefined : '请求详情'}
         onClick={(e) => e.stopPropagation()}
         style={isPage ? {
           position: 'relative',
