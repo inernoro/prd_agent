@@ -25,6 +25,8 @@
  *   serveDeployErrorHtml          - pending migration from services/proxy.ts
  */
 
+import { GEM_STORY_CSS, buildGemStorySvg } from './gem.js';
+
 /** 单主题（暗色）token 块 — 每个页面 <style> 顶部原样引入。见文件头「主题说明」。 */
 const DUAL_THEME_TOKENS = `
 :root{
@@ -128,8 +130,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .card{position:relative;z-index:1;max-width:760px;width:100%;overflow:hidden;padding:34px 36px;background:rgba(22,27,34,.92);border:1px solid rgba(139,148,158,.28);border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.45),0 0 0 1px rgba(88,166,255,.04)}
 .card::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,#22c55e,#58a6ff,#a78bfa)}
 .header{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px}
-.spinner{width:32px;height:32px;border:3px solid rgba(139,148,158,.28);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0;margin-top:2px}
-@keyframes spin{to{transform:rotate(360deg)}}
+.cds-gem-story{flex-shrink:0;margin-top:2px}
 h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;line-height:1.2}
 .subtitle{font-size:15px;color:var(--text-muted);margin:6px 0 24px;padding-left:48px;line-height:1.7}
 .status-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:22px}
@@ -141,6 +142,7 @@ h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;
 .refresh-bar{margin-top:22px;height:3px;border-radius:99px;background:rgba(139,148,158,.18);overflow:hidden}
 .refresh-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#58a6ff);border-radius:99px;animation:refill 3s linear forwards}
 @keyframes refill{to{width:100%}}
+${GEM_STORY_CSS}
 @media(max-width:640px){.card{padding:28px 22px}.status-row{grid-template-columns:1fr}.subtitle{padding-left:0}h1{font-size:24px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}.refresh-bar-fill{width:100%}}
 </style>
@@ -149,7 +151,7 @@ h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;
 <div class="shape-grid-vignette" aria-hidden="true"></div>
 <div class="card">
   <div class="header">
-    <div class="spinner"></div>
+    ${buildGemStorySvg('iris', 36)}
     <h1>CDS 自升级中</h1>
   </div>
   <div class="subtitle">控制面正在重启，分支预览几秒后自动恢复</div>
@@ -198,11 +200,14 @@ h1{margin:0 0 22px;font-size:clamp(44px,6vw,86px);line-height:.96;letter-spacing
 @keyframes grid{to{transform:rotate(-2deg) translate3d(-34px,-34px,0)}}
 @keyframes pulse{0%,100%{transform:scale(.78);opacity:.62}50%{transform:scale(1.22);opacity:1}}
 @keyframes shine{0%{background-position:120% 0}100%{background-position:-120% 0}}
+.gem-row{margin-bottom:22px}
+${GEM_STORY_CSS}
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important}}
 </style></head>
 <body>
 <div class="grid" aria-hidden="true"></div><div class="shade" aria-hidden="true"></div>
 <main class="shell"><section class="content">
+  <div class="gem-row" aria-hidden="true">${buildGemStorySvg('iris', 64)}</div>
   <div class="eyebrow">CDS Waiting Room</div>
   <h1>分支环境正在构建</h1>
   <p class="desc">CDS 正在同步分支、启动容器并等待服务健康检查通过。服务稳定后会自动进入真实页面。</p>
