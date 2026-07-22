@@ -23,6 +23,12 @@ describe('BranchListPage preview contract', () => {
     expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
   });
 
+  it('keeps commit history separate from the current commit summary', () => {
+    expect(source).toContain('bottom-[calc(100%+8px)]');
+    expect(source).toContain('grid-cols-[64px_minmax(0,1fr)] gap-3');
+    expect(source).toContain('block truncate font-mono text-muted-foreground');
+  });
+
   it('exposes an optional config-source (派生) selector wired into the create-branch POST body', () => {
     // 波3 补 UI:新建分支支持「配置来源分支」——UI 入口 + 透传 sourceBranchId。
     // 选择器控件常驻建议下拉,默认「项目模板(不派生)」。

@@ -5206,7 +5206,7 @@ const BranchCard = memo(function BranchCard({
   };
   const commitHistoryPanel = commitMenuOpen ? (
     <div
-      className="absolute bottom-8 left-0 z-[140] w-[min(360px,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
+      className="absolute bottom-[calc(100%+8px)] left-0 z-[140] w-[min(360px,calc(100vw-48px))] rounded-md border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] p-2 shadow-2xl"
       role="menu"
       aria-label={`${branch.branch} 最近提交`}
       onClick={(event) => event.stopPropagation()}
@@ -5231,11 +5231,11 @@ const BranchCard = memo(function BranchCard({
           {commitHistoryState.commits.map((commit, index) => (
             <div
               key={`${commit.hash}-${index}`}
-              className="grid grid-cols-[54px_minmax(0,1fr)] gap-2 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
+              className="grid grid-cols-[64px_minmax(0,1fr)] gap-3 rounded-md px-2 py-1.5 text-xs hover:bg-muted/35"
               role="menuitem"
               title={`${commit.hash} ${commit.subject}`}
             >
-              <span className="font-mono text-muted-foreground">{commit.hash}</span>
+              <span className="block truncate font-mono text-muted-foreground">{commit.hash}</span>
               <span className="min-w-0">
                 <span className="block truncate text-foreground">{commit.subject || '未命名提交'}</span>
                 <span className="mt-0.5 block truncate text-[11px] text-muted-foreground">
