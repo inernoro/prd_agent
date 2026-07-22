@@ -34,6 +34,7 @@ const STYLE_DEBT_REPORT_PATH = path.resolve(TEST_DIR, '../../../scripts/style-de
 const REPORT_COLORS_PATH = path.resolve(TEST_DIR, '../../pages/report-agent/hooks/lightModeColors.ts');
 const REPORT_AGENT_DIR = path.resolve(TEST_DIR, '../../pages/report-agent');
 const CHANGELOG_DYNAMIC_PATH = path.resolve(TEST_DIR, '../../pages/changelog/changelog-dynamic.css');
+const CHANGELOG_PAGE_PATH = path.resolve(TEST_DIR, '../../pages/changelog/ChangelogPage.tsx');
 const DOC_BROWSER_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/DocBrowser.tsx');
 const BACKLINKS_PANEL_PATH = path.resolve(TEST_DIR, '../../components/doc-browser/BacklinksPanel.tsx');
 const SHARE_DOCK_PATH = path.resolve(TEST_DIR, '../../components/share-dock/ShareDock.tsx');
@@ -218,12 +219,21 @@ describe('主题系统契约', () => {
 
   it('更新中心和文档目录只消费共享阴影与选择态契约', () => {
     const changelog = fs.readFileSync(CHANGELOG_DYNAMIC_PATH, 'utf8');
+    const changelogPage = fs.readFileSync(CHANGELOG_PAGE_PATH, 'utf8');
     const docBrowser = fs.readFileSync(DOC_BROWSER_PATH, 'utf8');
     const backlinksPanel = fs.readFileSync(BACKLINKS_PANEL_PATH, 'utf8');
+    const registryStart = changelogPage.indexOf('const TYPE_BADGE_REGISTRY');
+    const registryEnd = changelogPage.indexOf('const CHANGELOG_TYPE_ORDER', registryStart);
+    const typeBadgeRegistry = changelogPage.slice(registryStart, registryEnd);
 
     expect(changelog).toContain('var(--shadow-floating-badge)');
     expect(changelog).toContain('var(--shadow-floating-badge-hot)');
+    expect(changelog).toContain('color: var(--bg-base)');
     expect(changelog).not.toMatch(/box-shadow:\s*0\s+\d+px\s+\d+px\s+rgba/);
+    expect(typeBadgeRegistry).toContain("color: 'var(--semantic-orange-text)'");
+    expect(typeBadgeRegistry).toContain("color: 'var(--semantic-indigo-text)'");
+    expect(typeBadgeRegistry).not.toMatch(/#[0-9a-f]{3,8}|rgba\(/i);
+    expect(changelogPage).not.toMatch(/color:\s*'(?:#86efac|#fdba74|#fca5a5|#fcd34d|#cbd5e1|#f0abfc|#bfdbfe|#7dd3fc|#dbeafe|#a5b4fc)'/i);
     expect(docBrowser).toContain("'var(--selection-bg)'");
     expect(docBrowser).toContain("'var(--selection-text)'");
     expect(docBrowser).toContain("'var(--selection-checkbox-bg)'");

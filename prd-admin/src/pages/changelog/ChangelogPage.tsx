@@ -53,23 +53,23 @@ interface TypeBadgeMeta {
 
 /** 更新类型枚举：changelogs/*.md 第一列只允许这些 key，UI 只展示中文 label。 */
 const TYPE_BADGE_REGISTRY: Record<string, TypeBadgeMeta> = {
-  feat: { label: '新功能', color: '#86efac', bg: 'rgba(34, 197, 94, 0.10)', border: 'rgba(34, 197, 94, 0.32)', icon: Sparkles },
-  fix: { label: '修复', color: '#fdba74', bg: 'rgba(251, 146, 60, 0.10)', border: 'rgba(251, 146, 60, 0.32)', icon: Wrench },
-  perf: { label: '优化', color: '#c4b5fd', bg: 'rgba(139, 92, 246, 0.10)', border: 'rgba(139, 92, 246, 0.32)', icon: Gauge },
-  refactor: { label: '重构', color: '#93c5fd', bg: 'rgba(59, 130, 246, 0.10)', border: 'rgba(59, 130, 246, 0.32)', icon: Shuffle },
-  docs: { label: '文档', color: '#67e8f9', bg: 'rgba(6, 182, 212, 0.10)', border: 'rgba(6, 182, 212, 0.32)', icon: FileText },
-  chore: { label: '杂项', color: '#d4d4d8', bg: 'rgba(161, 161, 170, 0.10)', border: 'rgba(161, 161, 170, 0.32)', icon: Package },
-  test: { label: '测试', color: '#34d399', bg: 'rgba(52, 211, 153, 0.10)', border: 'rgba(52, 211, 153, 0.32)', icon: FlaskConical },
-  ci: { label: '构建', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
-  build: { label: '构建', color: '#cbd5e1', bg: 'rgba(203, 213, 225, 0.10)', border: 'rgba(203, 213, 225, 0.32)', icon: Cog },
-  release: { label: '发布', color: '#fde68a', bg: 'rgba(245, 158, 11, 0.10)', border: 'rgba(245, 158, 11, 0.30)', icon: Calendar },
-  security: { label: '安全', color: '#fda4af', bg: 'rgba(244, 63, 94, 0.10)', border: 'rgba(244, 63, 94, 0.30)', icon: Shield },
-  ops: { label: '运维', color: '#fcd34d', bg: 'rgba(234, 179, 8, 0.10)', border: 'rgba(234, 179, 8, 0.30)', icon: Cog },
-  style: { label: '样式', color: '#f0abfc', bg: 'rgba(217, 70, 239, 0.10)', border: 'rgba(217, 70, 239, 0.30)', icon: Package },
-  polish: { label: '润色', color: '#f472b6', bg: 'rgba(244, 114, 182, 0.10)', border: 'rgba(244, 114, 182, 0.32)', icon: Zap },
-  rule: { label: '规范', color: '#e879f9', bg: 'rgba(232, 121, 249, 0.10)', border: 'rgba(232, 121, 249, 0.32)', icon: Shield },
-  merge: { label: '合并', color: '#a5b4fc', bg: 'rgba(99, 102, 241, 0.10)', border: 'rgba(99, 102, 241, 0.28)', icon: GitCommit },
-  revert: { label: '回滚', color: '#fca5a5', bg: 'rgba(248, 113, 113, 0.10)', border: 'rgba(248, 113, 113, 0.30)', icon: Shuffle },
+  feat: { label: '新功能', color: 'var(--semantic-success-text)', bg: 'var(--semantic-success-soft)', border: 'var(--semantic-success-border)', icon: Sparkles },
+  fix: { label: '修复', color: 'var(--semantic-orange-text)', bg: 'var(--semantic-orange-soft)', border: 'var(--semantic-orange-border)', icon: Wrench },
+  perf: { label: '优化', color: 'var(--semantic-purple-text)', bg: 'var(--semantic-purple-soft)', border: 'var(--semantic-purple-border)', icon: Gauge },
+  refactor: { label: '重构', color: 'var(--semantic-info-text)', bg: 'var(--semantic-info-soft)', border: 'var(--semantic-info-border)', icon: Shuffle },
+  docs: { label: '文档', color: 'var(--semantic-cyan-text)', bg: 'var(--semantic-cyan-soft)', border: 'var(--semantic-cyan-border)', icon: FileText },
+  chore: { label: '杂项', color: 'var(--semantic-neutral-text)', bg: 'var(--semantic-neutral-soft)', border: 'var(--semantic-neutral-border)', icon: Package },
+  test: { label: '测试', color: 'var(--semantic-success-text)', bg: 'var(--semantic-success-soft)', border: 'var(--semantic-success-border)', icon: FlaskConical },
+  ci: { label: '构建', color: 'var(--semantic-neutral-text)', bg: 'var(--semantic-neutral-soft)', border: 'var(--semantic-neutral-border)', icon: Cog },
+  build: { label: '构建', color: 'var(--semantic-neutral-text)', bg: 'var(--semantic-neutral-soft)', border: 'var(--semantic-neutral-border)', icon: Cog },
+  release: { label: '发布', color: 'var(--semantic-warning-text)', bg: 'var(--semantic-warning-soft)', border: 'var(--semantic-warning-border)', icon: Calendar },
+  security: { label: '安全', color: 'var(--semantic-danger-text)', bg: 'var(--semantic-danger-soft)', border: 'var(--semantic-danger-border)', icon: Shield },
+  ops: { label: '运维', color: 'var(--semantic-warning-text)', bg: 'var(--semantic-warning-soft)', border: 'var(--semantic-warning-border)', icon: Cog },
+  style: { label: '样式', color: 'var(--semantic-purple-text)', bg: 'var(--semantic-purple-soft)', border: 'var(--semantic-purple-border)', icon: Package },
+  polish: { label: '润色', color: 'var(--semantic-pink-text)', bg: 'var(--semantic-pink-soft)', border: 'var(--semantic-pink-border)', icon: Zap },
+  rule: { label: '规范', color: 'var(--semantic-purple-text)', bg: 'var(--semantic-purple-soft)', border: 'var(--semantic-purple-border)', icon: Shield },
+  merge: { label: '合并', color: 'var(--semantic-indigo-text)', bg: 'var(--semantic-indigo-soft)', border: 'var(--semantic-indigo-border)', icon: GitCommit },
+  revert: { label: '回滚', color: 'var(--semantic-danger-text)', bg: 'var(--semantic-danger-soft)', border: 'var(--semantic-danger-border)', icon: Shuffle },
 };
 
 const CHANGELOG_TYPE_ORDER = [
@@ -94,9 +94,9 @@ const CHANGELOG_TYPE_ORDER = [
 
 const FALLBACK_BADGE: TypeBadgeMeta = {
   label: '其他',
-  color: '#d4d4d8',
-  bg: 'rgba(161, 161, 170, 0.10)',
-  border: 'rgba(161, 161, 170, 0.32)',
+  color: 'var(--semantic-neutral-text)',
+  bg: 'var(--semantic-neutral-soft)',
+  border: 'var(--semantic-neutral-border)',
   icon: Tag as LucideIcon,
 };
 
@@ -1143,7 +1143,6 @@ export default function ChangelogPage() {
           color: meta.color,
           lineHeight: '1',
           boxShadow: active ? `0 0 0 2px ${meta.border}` : undefined,
-          filter: active ? 'brightness(1.15)' : undefined,
         }}
       >
         <Icon size={13} />
@@ -1259,9 +1258,9 @@ export default function ChangelogPage() {
                 {!isMobile && <span
                   className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                   style={{
-                    background: 'rgba(255, 255, 255, 0.05)',
+                    background: 'var(--nested-block-bg)',
                     color: 'var(--text-muted)',
-                    border: '1px solid rgba(255, 255, 255, 0.10)',
+                    border: '1px solid var(--nested-block-border)',
                   }}
                   title="数据终身缓存在服务器，打开即读存量、绝不空白；服务器每隔固定周期自动刷新，有更新自动推送到本页，无需手动刷新。"
                 >
@@ -1273,9 +1272,9 @@ export default function ChangelogPage() {
                   <span
                     className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
                     style={{
-                      background: justUpdatedAt != null ? 'rgba(34, 197, 94, 0.16)' : 'rgba(34, 197, 94, 0.10)',
-                      color: '#86efac',
-                      border: '1px solid rgba(34, 197, 94, 0.30)',
+                      background: 'var(--semantic-success-soft)',
+                      color: 'var(--semantic-success-text)',
+                      border: '1px solid var(--semantic-success-border)',
                     }}
                     title="已与服务器建立实时连接，有更新会自动推送到本页"
                   >
@@ -1294,9 +1293,9 @@ export default function ChangelogPage() {
             disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes}
             className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
             style={{
-              border: '1px solid rgba(255, 255, 255, 0.12)',
+              border: '1px solid var(--nested-block-border)',
               color: 'var(--text-secondary)',
-              background: 'rgba(255, 255, 255, 0.04)',
+              background: 'var(--nested-block-bg)',
             }}
             title="刷新（绕过服务端缓存并重新拉取）"
           >
@@ -1321,10 +1320,10 @@ export default function ChangelogPage() {
               <button
                 type="button"
                 onClick={() => setTypeFilter(null)}
-                className="h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all hover:bg-white/10 hover:text-white cursor-pointer"
+                className="clg-neutral-button h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all cursor-pointer"
                 style={{
-                  background: 'rgba(255, 255, 255, 0.06)',
-                  border: '1px solid rgba(255, 255, 255, 0.12)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--nested-block-border)',
                   color: 'var(--text-secondary)',
                 }}
               >
@@ -1351,9 +1350,9 @@ export default function ChangelogPage() {
         <div
           className="rounded-xl px-4 py-3 text-[12px]"
           style={{
-            background: 'rgba(251, 146, 60, 0.08)',
-            border: '1px solid rgba(251, 146, 60, 0.32)',
-            color: '#fdba74',
+            background: 'var(--semantic-orange-soft)',
+            border: '1px solid var(--semantic-orange-border)',
+            color: 'var(--semantic-orange-text)',
           }}
         >
           注意：本地仓库与 GitHub 都没拉到数据。可能是网络受限、GitHub API 限流，或仓库未配置正确的 owner/repo/branch（详见后端 <code>Changelog:GitHub*</code> 配置项）。
@@ -1365,9 +1364,9 @@ export default function ChangelogPage() {
         <div
           className="rounded-xl px-4 py-3 text-[12px]"
           style={{
-            background: 'rgba(248, 113, 113, 0.08)',
-            border: '1px solid rgba(248, 113, 113, 0.32)',
-            color: '#fca5a5',
+            background: 'var(--semantic-danger-soft)',
+            border: '1px solid var(--semantic-danger-border)',
+            color: 'var(--semantic-danger-text)',
           }}
         >
           注意：{error}
@@ -1446,8 +1445,8 @@ export default function ChangelogPage() {
                   title={tabTitle}
                   className={`${isMobile ? 'h-8 shrink-0 px-2.5 rounded-full text-[12px]' : 'h-8 px-3 rounded-lg text-[12px]'} inline-flex items-center gap-1.5 font-medium transition-all`}
                   style={{
-                    background: active ? 'rgba(99, 102, 241, 0.14)' : 'rgba(255, 255, 255, 0.04)',
-                    border: `1px solid ${active ? 'rgba(99, 102, 241, 0.32)' : 'rgba(255, 255, 255, 0.08)'}`,
+                    background: active ? 'var(--selection-bg)' : 'var(--nested-block-bg)',
+                    border: `1px solid ${active ? 'var(--selection-border)' : 'var(--nested-block-border)'}`,
                     color: active ? 'var(--selection-text)' : 'var(--text-muted)',
                     cursor: 'pointer',
                   }}
@@ -1457,9 +1456,9 @@ export default function ChangelogPage() {
                   {!isMobile && <span
                     className="ml-0.5 inline-flex h-5 min-w-5 items-center justify-center rounded-md px-1.5 text-[11px] font-semibold"
                     style={{
-                      background: active ? 'rgba(199, 210, 254, 0.14)' : 'rgba(255, 255, 255, 0.05)',
+                      background: active ? 'var(--selection-bg)' : 'var(--nested-block-bg)',
                       color: active ? 'var(--selection-text)' : 'var(--text-muted)',
-                      border: `1px solid ${active ? 'rgba(199, 210, 254, 0.22)' : 'rgba(255, 255, 255, 0.08)'}`,
+                      border: `1px solid ${active ? 'var(--selection-border)' : 'var(--nested-block-border)'}`,
                       fontVariantNumeric: 'tabular-nums',
                     }}
                   >
@@ -1546,11 +1545,11 @@ export default function ChangelogPage() {
               className={`${isMobile ? 'h-8 w-8 rounded-full justify-center' : 'h-8 px-3 rounded-lg text-[12px] gap-1.5'} inline-flex shrink-0 items-center font-medium transition-all disabled:cursor-not-allowed${activeSummaryStatus === 'loading' || isMobile ? '' : ' clg-ai-shimmer'}`}
               style={{
                 background: activeSummaryStatus === 'loading'
-                  ? 'rgba(99, 102, 241, 0.10)'
-                  : 'rgba(255, 255, 255, 0.04)',
-                border: `1px solid ${activeSummaryStatus === 'loading' ? 'rgba(99, 102, 241, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  ? 'var(--selection-bg)'
+                  : 'var(--nested-block-bg)',
+                border: `1px solid ${activeSummaryStatus === 'loading' ? 'var(--selection-border)' : 'var(--nested-block-border)'}`,
                 color: activeSummaryStatus === 'loading' ? 'var(--selection-text)' : 'var(--text-secondary)',
-                boxShadow: activeSummaryStatus === 'loading' ? '0 0 0 1px rgba(99, 102, 241, 0.08)' : 'none',
+                boxShadow: activeSummaryStatus === 'loading' ? '0 0 0 1px var(--selection-border)' : 'none',
               }}
               title="总结当前页签的更新内容"
             >
@@ -1565,9 +1564,9 @@ export default function ChangelogPage() {
           <div
             className={isMobile ? 'mb-3 rounded-xl px-3 py-3' : 'mb-4 rounded-2xl px-4 py-4'}
             style={{
-              background: 'linear-gradient(135deg, rgba(99, 102, 241, 0.10), rgba(14, 165, 233, 0.06))',
-              border: '1px solid rgba(99, 102, 241, 0.18)',
-              boxShadow: '0 18px 48px rgba(15, 23, 42, 0.22)',
+              background: 'color-mix(in srgb, var(--selection-bg) 72%, var(--bg-card))',
+              border: '1px solid var(--selection-border)',
+              boxShadow: 'var(--shadow-surface)',
             }}
           >
             <div className="flex items-start justify-between gap-4 flex-wrap">
@@ -1625,9 +1624,9 @@ export default function ChangelogPage() {
               <div
                 className="mt-3 rounded-xl px-3 py-2 text-[12px]"
                 style={{
-                  background: 'rgba(248, 113, 113, 0.08)',
-                  border: '1px solid rgba(248, 113, 113, 0.22)',
-                  color: '#fca5a5',
+                  background: 'var(--semantic-danger-soft)',
+                  border: '1px solid var(--semantic-danger-border)',
+                  color: 'var(--semantic-danger-text)',
                 }}
               >
                 注意：{activeSummaryError}
@@ -1669,9 +1668,9 @@ export default function ChangelogPage() {
                 <div
                   className="rounded-xl px-3 py-2 text-[12px] leading-relaxed"
                   style={{
-                    background: 'rgba(99, 102, 241, 0.08)',
-                    border: '1px solid rgba(99, 102, 241, 0.14)',
-                    color: '#dbeafe',
+                    background: 'var(--semantic-indigo-soft)',
+                    border: '1px solid var(--semantic-indigo-border)',
+                    color: 'var(--semantic-indigo-text)',
                   }}
                 >
                   {activeSummary.insight}
@@ -1728,9 +1727,9 @@ export default function ChangelogPage() {
                             key={version}
                             className="inline-flex items-center gap-1 rounded-md px-2 py-0.5 text-[11px] font-semibold font-mono"
                             style={{
-                              background: 'rgba(99, 102, 241, 0.12)',
-                              border: '1px solid rgba(99, 102, 241, 0.32)',
-                              color: '#a5b4fc',
+                              background: 'var(--semantic-indigo-soft)',
+                              border: '1px solid var(--semantic-indigo-border)',
+                              color: 'var(--semantic-indigo-text)',
                             }}
                           >
                             <Tag size={11} />
@@ -1753,8 +1752,8 @@ export default function ChangelogPage() {
                         <div
                           className="rounded-xl px-4 py-3 text-[12px]"
                           style={{
-                            background: 'rgba(99, 102, 241, 0.06)',
-                            border: '1px dashed rgba(99, 102, 241, 0.18)',
+                            background: 'var(--semantic-indigo-soft)',
+                            border: '1px dashed var(--semantic-indigo-border)',
                             color: 'var(--text-muted)',
                           }}
                         >
@@ -1866,9 +1865,9 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-3 text-[12px]"
                 style={{
-                  background: 'rgba(248, 113, 113, 0.08)',
-                  border: '1px solid rgba(248, 113, 113, 0.32)',
-                  color: '#fca5a5',
+                  background: 'var(--semantic-danger-soft)',
+                  border: '1px solid var(--semantic-danger-border)',
+                  color: 'var(--semantic-danger-text)',
                 }}
               >
                 注意：{gitHubLogsError}
@@ -1954,9 +1953,9 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-3 text-[12px]"
                 style={{
-                  background: 'rgba(248, 113, 113, 0.08)',
-                  border: '1px solid rgba(248, 113, 113, 0.32)',
-                  color: '#fca5a5',
+                  background: 'var(--semantic-danger-soft)',
+                  border: '1px solid var(--semantic-danger-border)',
+                  color: 'var(--semantic-danger-text)',
                 }}
               >
                 注意：{gitHubPendingReviewError}
@@ -2027,9 +2026,9 @@ export default function ChangelogPage() {
               <div
                 className="rounded-xl px-4 py-3 text-[12px]"
                 style={{
-                  background: 'rgba(248, 113, 113, 0.08)',
-                  border: '1px solid rgba(248, 113, 113, 0.32)',
-                  color: '#fca5a5',
+                  background: 'var(--semantic-danger-soft)',
+                  border: '1px solid var(--semantic-danger-border)',
+                  color: 'var(--semantic-danger-text)',
                 }}
               >
                 注意：{gitHubHotfixesError}
@@ -2065,9 +2064,9 @@ export default function ChangelogPage() {
                   <div
                     className="inline-flex items-center gap-2 px-2.5 py-1 rounded-md"
                     style={{
-                      background: 'rgba(251, 146, 60, 0.10)',
-                      border: '1px solid rgba(251, 146, 60, 0.28)',
-                      color: '#fdba74',
+                      background: 'var(--semantic-orange-soft)',
+                      border: '1px solid var(--semantic-orange-border)',
+                      color: 'var(--semantic-orange-text)',
                       fontSize: '13px',
                       fontWeight: 600,
                     }}
@@ -2161,10 +2160,10 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
-        className="rounded-2xl px-3.5 py-3 transition-colors"
+        className="surface-row rounded-2xl px-3.5 py-3"
         style={{
-          background: 'rgba(255, 255, 255, 0.026)',
-          border: '1px solid rgba(255, 255, 255, 0.055)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--nested-block-border)',
         }}
       >
         <div
@@ -2178,7 +2177,7 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
           {isFresh && (
             <span
               className="shrink-0 font-semibold tracking-wider"
-              style={{ color: '#86efac' }}
+              style={{ color: 'var(--semantic-success-text)' }}
               title="自上次查看更新中心以来有新提交"
             >
               NEW
@@ -2191,7 +2190,7 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
             <Icon size={11} />
             {meta.label}
           </span>
-          <span aria-hidden style={{ color: 'rgba(255, 255, 255, 0.18)' }}>·</span>
+          <span aria-hidden style={{ color: 'var(--border-default)' }}>·</span>
           <span className="min-w-0 truncate font-mono">
             {entry.module}
           </span>
@@ -2206,19 +2205,19 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
       initial={{ opacity: 0, y: 10, scale: 0.995 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="rounded-lg px-3.5 py-2.5 flex items-center gap-3 transition-colors"
+      className="surface-row rounded-lg px-3.5 py-2.5 flex items-center gap-3"
       style={{
-        background: 'rgba(255, 255, 255, 0.025)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--nested-block-border)',
       }}
     >
       {isFresh && (
         <span
           className="shrink-0 text-[9px] font-bold tracking-wider px-1.5 h-[18px] rounded inline-flex items-center"
           style={{
-            background: 'rgba(34, 197, 94, 0.18)',
-            color: '#86efac',
-            border: '1px solid rgba(34, 197, 94, 0.35)',
+            background: 'var(--semantic-success-soft)',
+            color: 'var(--semantic-success-text)',
+            border: '1px solid var(--semantic-success-border)',
             lineHeight: '1.3',
           }}
           title="自上次查看更新中心以来有新提交"
@@ -2273,24 +2272,24 @@ function getPublishStatusMeta(status?: string | null): PublishStatusMeta {
   if (status === 'published') {
     return {
       label: '已发布',
-      color: '#86efac',
-      bg: 'rgba(34, 197, 94, 0.09)',
-      border: 'rgba(34, 197, 94, 0.28)',
+      color: 'var(--semantic-success-text)',
+      bg: 'var(--semantic-success-soft)',
+      border: 'var(--semantic-success-border)',
     };
   }
   if (status === 'pending') {
     return {
       label: '需要真人审核发布',
-      color: '#fcd34d',
-      bg: 'rgba(234, 179, 8, 0.10)',
-      border: 'rgba(234, 179, 8, 0.28)',
+      color: 'var(--semantic-warning-text)',
+      bg: 'var(--semantic-warning-soft)',
+      border: 'var(--semantic-warning-border)',
     };
   }
   return {
     label: '需要真人审核发布',
-    color: '#cbd5e1',
-    bg: 'rgba(148, 163, 184, 0.09)',
-    border: 'rgba(148, 163, 184, 0.22)',
+    color: 'var(--semantic-neutral-text)',
+    bg: 'var(--semantic-neutral-soft)',
+    border: 'var(--semantic-neutral-border)',
   };
 }
 
@@ -2322,9 +2321,9 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
   const buttonMeta = hasMine
     ? {
         label: '我的缺陷',
-        color: '#f0abfc',
-        bg: 'rgba(217, 70, 239, 0.13)',
-        border: 'rgba(217, 70, 239, 0.36)',
+        color: 'var(--semantic-purple-text)',
+        bg: 'var(--semantic-purple-soft)',
+        border: 'var(--semantic-purple-border)',
         icon: UserCheck,
       }
     : {
@@ -2382,15 +2381,15 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                 key={defect.traceId}
                 className="rounded-md p-2"
                 style={{
-                  background: defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.055)' : 'rgba(255, 255, 255, 0.035)',
-                  border: `1px solid ${defect.isSubmittedByMe ? 'rgba(217, 70, 239, 0.24)' : 'rgba(255, 255, 255, 0.08)'}`,
+                  background: defect.isSubmittedByMe ? 'var(--semantic-purple-soft)' : 'var(--nested-block-bg)',
+                  border: `1px solid ${defect.isSubmittedByMe ? 'var(--semantic-purple-border)' : 'var(--nested-block-border)'}`,
                 }}
               >
                 <div className="flex items-start justify-between gap-2">
                   <a
                     href={buildDefectDetailUrl(defect)}
                     className="text-[13px] font-medium hover:underline"
-                    style={{ color: '#bfdbfe' }}
+                    style={{ color: 'var(--semantic-info-text)' }}
                   >
                     {defect.defectNo ? `#${defect.defectNo}` : '缺陷'} {defect.defectTitle || '未命名缺陷'}
                   </a>
@@ -2399,9 +2398,9 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       <span
                         className="rounded px-1.5 py-0.5 text-[11px]"
                         style={{
-                          color: '#f0abfc',
-                          background: 'rgba(217, 70, 239, 0.12)',
-                          border: '1px solid rgba(217, 70, 239, 0.28)',
+                          color: 'var(--semantic-purple-text)',
+                          background: 'var(--semantic-purple-soft)',
+                          border: '1px solid var(--semantic-purple-border)',
                         }}
                       >
                         我提交的
@@ -2507,14 +2506,14 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
   const statusLabel = item.isDraft ? '草稿' : '待审核';
   const statusStyle = item.isDraft
     ? {
-        background: 'rgba(251, 146, 60, 0.10)',
-        color: '#fdba74',
-        border: '1px solid rgba(251, 146, 60, 0.30)',
+        background: 'var(--semantic-orange-soft)',
+        color: 'var(--semantic-orange-text)',
+        border: '1px solid var(--semantic-orange-border)',
       }
     : {
-        background: 'rgba(34, 197, 94, 0.10)',
-        color: '#86efac',
-        border: '1px solid rgba(34, 197, 94, 0.28)',
+        background: 'var(--semantic-success-soft)',
+        color: 'var(--semantic-success-text)',
+        border: '1px solid var(--semantic-success-border)',
       };
 
   return (
@@ -2524,10 +2523,10 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.99 }}
       transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      className="surface-row rounded-lg px-3.5 py-3 flex items-center gap-3"
       style={{
-        background: 'rgba(255, 255, 255, 0.025)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--nested-block-border)',
         textDecoration: 'none',
       }}
       title={`${item.headBranch} -> ${item.baseBranch}`}
@@ -2535,9 +2534,9 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
       <div
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
-          background: 'rgba(99, 102, 241, 0.12)',
-          color: 'var(--selection-text)',
-          border: '1px solid rgba(99, 102, 241, 0.24)',
+          background: 'var(--semantic-indigo-soft)',
+          color: 'var(--semantic-indigo-text)',
+          border: '1px solid var(--semantic-indigo-border)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         }}
       >
@@ -2547,9 +2546,9 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
       <div
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
-          background: 'rgba(14, 165, 233, 0.10)',
-          color: '#7dd3fc',
-          border: '1px solid rgba(14, 165, 233, 0.22)',
+          background: 'var(--semantic-cyan-soft)',
+          color: 'var(--semantic-cyan-text)',
+          border: '1px solid var(--semantic-cyan-border)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         }}
       >
@@ -2560,8 +2559,8 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
         className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
         style={{
           color: 'var(--text-secondary)',
-          background: 'rgba(255, 255, 255, 0.04)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--nested-block-border)',
         }}
       >
         {item.authorAvatarUrl ? (
@@ -2576,8 +2575,8 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
           <span
             className="h-4 w-4 rounded-full inline-flex items-center justify-center text-[9px] font-semibold"
             style={{
-              background: 'rgba(99, 102, 241, 0.18)',
-              color: 'var(--selection-text)',
+              background: 'var(--semantic-indigo-soft)',
+              color: 'var(--semantic-indigo-text)',
             }}
           >
             {avatarLetter}
@@ -2652,12 +2651,12 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
         delay: isLiveNew ? Math.min(index, 6) * 0.035 : 0,
         ease: [0.25, 0.46, 0.45, 0.94],
       }}
-      className="relative rounded-lg px-3.5 py-3 flex items-center gap-3 transition-colors hover:bg-white/5"
+      className="surface-row relative rounded-lg px-3.5 py-3 flex items-center gap-3"
       style={{
         background: isLiveNew
-          ? 'linear-gradient(90deg, rgba(34, 197, 94, 0.13), rgba(99, 102, 241, 0.07), rgba(255, 255, 255, 0.025))'
-          : 'rgba(255, 255, 255, 0.025)',
-        border: `1px solid ${isLiveNew ? 'rgba(74, 222, 128, 0.30)' : 'rgba(255, 255, 255, 0.06)'}`,
+          ? 'linear-gradient(90deg, var(--semantic-success-soft), var(--semantic-indigo-soft), var(--nested-block-bg))'
+          : 'var(--nested-block-bg)',
+        border: `1px solid ${isLiveNew ? 'var(--semantic-success-border)' : 'var(--nested-block-border)'}`,
         boxShadow: isLiveNew ? '0 0 0 1px rgba(74, 222, 128, 0.08), 0 18px 42px rgba(16, 185, 129, 0.10)' : 'none',
         textDecoration: 'none',
       }}
@@ -2666,9 +2665,9 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       <div
         className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
         style={{
-          background: 'rgba(99, 102, 241, 0.12)',
-          color: 'var(--selection-text)',
-          border: '1px solid rgba(99, 102, 241, 0.24)',
+          background: 'var(--semantic-indigo-soft)',
+          color: 'var(--semantic-indigo-text)',
+          border: '1px solid var(--semantic-indigo-border)',
           fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
         }}
       >
@@ -2678,9 +2677,9 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
       <div
         className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
         style={{
-          color: isMatched ? '#86efac' : 'var(--text-secondary)',
-          background: isMatched ? 'rgba(34, 197, 94, 0.08)' : 'rgba(255, 255, 255, 0.04)',
-          border: `1px solid ${isMatched ? 'rgba(34, 197, 94, 0.28)' : 'rgba(255, 255, 255, 0.08)'}`,
+          color: isMatched ? 'var(--semantic-success-text)' : 'var(--text-secondary)',
+          background: isMatched ? 'var(--semantic-success-soft)' : 'var(--nested-block-bg)',
+          border: `1px solid ${isMatched ? 'var(--semantic-success-border)' : 'var(--nested-block-border)'}`,
         }}
         title={authorTooltip}
       >
@@ -2696,8 +2695,8 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
           <span
             className="h-4 w-4 rounded-full inline-flex items-center justify-center text-[9px] font-semibold"
             style={{
-              background: 'rgba(99, 102, 241, 0.18)',
-              color: 'var(--selection-text)',
+              background: 'var(--semantic-indigo-soft)',
+              color: 'var(--semantic-indigo-text)',
             }}
           >
             {avatarLetter}
@@ -2709,7 +2708,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
           <span
             key={co.name}
             className="inline-flex items-center gap-0.5"
-            style={{ color: co.matchedDisplayName ? '#86efac' : 'var(--text-muted)' }}
+            style={{ color: co.matchedDisplayName ? 'var(--semantic-success-text)' : 'var(--text-muted)' }}
           >
             <span style={{ opacity: 0.55 }}>+</span>
             {co.matchedDisplayName ?? co.name}
@@ -2753,10 +2752,10 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.99 }}
       transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="rounded-lg px-3.5 py-3 flex flex-col gap-2 transition-colors hover:bg-white/5"
+      className="surface-row rounded-lg px-3.5 py-3 flex flex-col gap-2"
       style={{
-        background: 'rgba(255, 255, 255, 0.025)',
-        border: '1px solid rgba(255, 255, 255, 0.06)',
+        background: 'var(--nested-block-bg)',
+        border: '1px solid var(--nested-block-border)',
       }}
     >
       {/* 主行：热修复标记 + 缺陷编号（可点）+ 标题 + 发布状态 + 时间 */}
@@ -2764,9 +2763,9 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
         <span
           className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold"
           style={{
-            background: 'rgba(251, 146, 60, 0.10)',
-            color: '#fdba74',
-            border: '1px solid rgba(251, 146, 60, 0.28)',
+            background: 'var(--semantic-orange-soft)',
+            color: 'var(--semantic-orange-text)',
+            border: '1px solid var(--semantic-orange-border)',
           }}
         >
           <Flame size={11} />
@@ -2776,9 +2775,9 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
           to={defectUrl}
           className="shrink-0 inline-flex items-center gap-1 px-2 h-[24px] rounded-md text-[12px] font-semibold transition-all hover:brightness-110"
           style={{
-            background: 'rgba(59, 130, 246, 0.12)',
-            color: '#bfdbfe',
-            border: '1px solid rgba(59, 130, 246, 0.30)',
+            background: 'var(--semantic-info-soft)',
+            color: 'var(--semantic-info-text)',
+            border: '1px solid var(--semantic-info-border)',
             fontFamily: HOTFIX_MONO,
           }}
           title="查看缺陷详情"
@@ -2830,7 +2829,7 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
             {item.isSubmittedByMe && (
               <span
                 className="inline-flex items-center gap-0.5 rounded px-1.5 py-0.5 text-[11px]"
-                style={{ color: '#f0abfc', background: 'rgba(217, 70, 239, 0.12)', border: '1px solid rgba(217, 70, 239, 0.28)' }}
+                style={{ color: 'var(--semantic-purple-text)', background: 'var(--semantic-purple-soft)', border: '1px solid var(--semantic-purple-border)' }}
               >
                 <UserCheck size={10} />
                 我提交的
