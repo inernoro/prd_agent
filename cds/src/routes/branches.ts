@@ -4636,29 +4636,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    // 每个分支直接下发 CDS 实际发布的全部预览入口：既包含分支主入口，
-    // 也包含可路由 profile 通过 cds.subdomain 发布的命名入口（例如
-    // prd-agent 的 llmgw-web 模型网关控制台）。rootDomains 只表示同一入口
-    // 可用的根域集合，不能替代逻辑入口枚举。CLI / Agent 只能消费
-    // previewUrl(s)，不得再根据 previewSlug、profileId 与 CDS_HOST 猜域名。
-    // previewUrl 保留为主入口兼容字段。
-    const previewHosts = Array.from(new Set(
-      (config.rootDomains?.length ? config.rootDomains : (config.previewDomain ? [config.previewDomain] : []))
-        .map((host) => host.replace(/^https?:\/\//, '').replace(/\/+$/, '').trim())
-        .filter(Boolean),
-    ));
-    const previewHost = previewHosts[0] || '';
+    // 每个分支直接下发 CDS 在公开 previewDomain 上实际发布的全部逻辑入口：
+    // 既包含分支主入口，也包含可路由 profile 通过 cds.subdomain 发布的命名入口。
+    // rootDomains 可能包含隐藏、备用或内部路由域名，不能枚举到 Agent 面向的
+    // previewUrl(s) 中。仅在旧配置缺少 previewDomain 时兼容取首个 rootDomain。
+    // CLI / Agent 只能消费 previewUrl(s)，不得再根据其他字段猜域名。
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '')
+      .trim();
     for (const b of branchesWithSubject as Array<BranchEntry & {
       previewSlug?: string;
       previewUrl?: string;
       previewUrls?: string[];
     }>) {
-      const mainUrls = b.previewSlug
-        ? previewHosts.map((host) => `https://${b.previewSlug}.${host}`)
+      const mainUrls = b.previewSlug && previewHost
+        ? [`https://${b.previewSlug}.${previewHost}`]
         : [];
-      const namedServiceUrls = previewHosts.flatMap((host) =>
-        computeBranchGatewayUrls(b, host).map((entry) => entry.url),
-      );
+      const namedServiceUrls = previewHost
+        ? computeBranchGatewayUrls(b, previewHost).map((entry) => entry.url)
+        : [];
       b.previewUrls = Array.from(new Set([...mainUrls, ...namedServiceUrls]));
       b.previewUrl = b.previewUrls[0] || '';
     }

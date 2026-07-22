@@ -1,3 +1,4 @@
 | fix | cds | 快速接入强制安装 preview-url，预览地址改为只读取 CDS API 真实多入口并禁止本地推算 |
 | fix | cds | 分支 API 合并主应用与模型网关等命名服务入口，避免把根域数量误当成系统入口数量 |
+| security | cds | Agent 预览地址仅暴露公开 previewDomain，隐藏、备用和内部根域不再进入 API 输出 |
 | fix | prd-api | 同步官方技能内嵌目录中的真实预览地址交付规则 |

@@ -42,7 +42,7 @@ export function buildCdsAgentPrompt({ cdsOrigin, target }: BuildPromptOptions): 
     '4. 自动验证',
     '授权完成后运行 cdscli auth check，并确认当前 git 仓库没有新增可提交的凭据文件、shell 配置没有变化。',
     '随后必须调用 preview-url 技能，由它运行当前宿主项目技能目录中的 cdscli.py --human preview-url。',
-    '预览地址只能使用 CDS API 返回的 previewUrl / previewUrls；主应用、模型网关等独立命名服务都属于实际入口，CDS 返回几条就全部列出。禁止把 rootDomains 数量当成入口数量，也禁止根据分支名、项目名、profileId、CDS host 或旧公式自行拼接。',
+    '预览地址只能使用 CDS API 返回的 previewUrl / previewUrls；主应用、模型网关等独立命名服务都属于实际入口，CDS 返回几条就全部列出。所有入口只使用公开 previewDomain；rootDomains 可能包含隐藏、备用或内部域名，禁止向用户暴露。禁止把 rootDomains 数量当成入口数量，也禁止根据分支名、项目名、profileId、CDS host 或旧公式自行拼接。',
     '如当前分支尚未在 CDS 创建或部署，preview-url 应明确失败并说明原因，不得伪造一个看似可用的地址。',
     '如果目标是新项目，接下来可直接用 cdscli onboard <Git 仓库 URL> 创建并部署，创建权限使用一次后会自动切换为项目级权限。',
   ].join('\n');

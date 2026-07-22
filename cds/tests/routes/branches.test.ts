@@ -141,6 +141,7 @@ function seedLegacyDefaultProject(stateService: StateService): void {
 describe('Branch Routes', () => {
   let tmpDir: string;
   let server: http.Server;
+  let config: CdsConfig;
   let mock: MockShellExecutor;
   let stateService: StateService;
   let containerService: ContainerService;
@@ -177,7 +178,7 @@ describe('Branch Routes', () => {
     // 路径由 container-branch-network-isolation.test.ts 专门覆盖。
     process.env.CDS_BRANCH_NETWORK_ISOLATION = '0';
     tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-routes-'));
-    const config = makeConfig(tmpDir);
+    config = makeConfig(tmpDir);
     mock = new MockShellExecutor();
 
     // Default mocks
@@ -1232,6 +1233,8 @@ describe('Branch Routes', () => {
 
     it('returns the main app and every routable named service as actual preview entries', async () => {
       const now = new Date().toISOString();
+      config.rootDomains = ['hidden-backup.example.test', 'example.test'];
+      config.previewDomain = 'example.test';
       stateService.addBuildProfile({
         id: 'admin',
         projectId: 'default',
@@ -1300,6 +1303,7 @@ describe('Branch Routes', () => {
         'https://dual-entry-feature-default-llmgw-web.example.test/',
       ]);
       expect(branch.previewUrls.join('\n')).not.toContain('stopped-docs');
+      expect(branch.previewUrls.join('\n')).not.toContain('hidden-backup.example.test');
     });
 
     it('returns cached branch state by default without probing Docker', async () => {
