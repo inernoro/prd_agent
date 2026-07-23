@@ -27,6 +27,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
+DAILY_REQUIRED_SECTIONS = (
+    "昨日工作总结",
+    "改动规模与深度预算",
+    "标记法则与验收标准",
+    "PR/commit 到结果映射",
+    "覆盖矩阵",
+    "截图回读检查",
+    "重试记录",
+    "未发布状态",
+)
 
 
 def curl(args, retries=5):
@@ -80,11 +90,13 @@ def slugify(s):
 
 def build_meta(report_id, now, reviewer, a, preview):
     generated_at = now.isoformat(timespec="seconds")
+    report_version = (getattr(a, "report_version", "") or "v0.9").strip()
     return (
         "\n\n<!-- acceptance-meta\n"
         "type: acceptance-report\nstandard: MAP-Acceptance-v2\n"
         f"report_id: {report_id}\ndate: {generated_at}\n"
         f"reviewer: {reviewer}\nverdict: {a.verdict}\ntier: {a.tier}\n"
+        f"report_version: {report_version}\n"
         f"target_ref: {a.target}\npreview_url: {preview}\n"
         f"branch: {a.branch}\ncommit: {a.commit}\n-->\n"
     )
@@ -597,6 +609,10 @@ class _EvidenceHtmlParser(HTMLParser):
         self.ids = []
         self.figure_hrefs = []
         self.cards = []
+        self.back_links = 0
+        self.side_tabs = []
+        self.directory_hrefs = []
+        self.mobile_nav_toggles = 0
         self._card = None
 
     def handle_starttag(self, tag, attrs):
@@ -608,6 +624,14 @@ class _EvidenceHtmlParser(HTMLParser):
         if href.startswith("#fig-"):
             self.figure_hrefs.append(href[1:])
         classes = set(values.get("class", "").split())
+        if href == "#evidence-gallery" and "figure-back-link" in classes:
+            self.back_links += 1
+        if tag == "button" and values.get("data-side-tab"):
+            self.side_tabs.append(values["data-side-tab"])
+        if tag == "button" and "data-mobile-nav-toggle" in values:
+            self.mobile_nav_toggles += 1
+        if tag == "a" and "section-nav-item" in classes and href.startswith("#"):
+            self.directory_hrefs.append(href[1:])
         if tag == "a" and "evidence-card" in classes:
             self._card = {
                 "href": href[1:] if href.startswith("#") else href,
@@ -669,6 +693,33 @@ def _interactive_evidence_errors(html_content, manifest):
     for index, card in enumerate(parser.cards, start=1):
         if not card["has_image"] or card["has_placeholder"]:
             errors.append(f"[证据关系] 第 {index} 张证据卡缺少真实缩略图")
+
+    if id_counts.get("evidence-gallery", 0) != 1:
+        errors.append(
+            f"[证据关系] 证据列表锚点 evidence-gallery 应出现 1 次，实际 {id_counts.get('evidence-gallery', 0)} 次"
+        )
+    if parser.back_links != len(expected):
+        errors.append(
+            f"[证据关系] 每张正文证据必须有一个返回证据列表入口：expected={len(expected)} actual={parser.back_links}"
+        )
+    if parser.side_tabs != ["evidence", "contents"]:
+        errors.append(
+            "[报告导航] 左上角必须按顺序提供 evidence/contents 两个 Tab："
+            f"actual={parser.side_tabs}"
+        )
+    if parser.mobile_nav_toggles != 1 or id_counts.get("mobile-nav-drawer", 0) != 1:
+        errors.append(
+            "[报告导航] 移动端必须提供一个可折叠导航按钮和一个抽屉："
+            f"toggle={parser.mobile_nav_toggles} drawer={id_counts.get('mobile-nav-drawer', 0)}"
+        )
+    if not parser.directory_hrefs:
+        errors.append("[报告导航] 报告目录不能为空")
+    unresolved_sections = sorted({
+        section_id for section_id in parser.directory_hrefs
+        if id_counts.get(section_id, 0) != 1
+    })
+    if unresolved_sections:
+        errors.append("[报告导航] 目录存在无法唯一解析的章节：" + "、".join(unresolved_sections))
 
     unresolved = sorted({anchor for anchor in parser.figure_hrefs if id_counts.get(anchor, 0) != 1})
     if unresolved:
@@ -771,7 +822,7 @@ def _collect_problem_items(markdown, manifest):
     seen = set()
     seen_anchor_severity = set()
 
-    def add(severity, title, detail, anchor=""):
+    def add(severity, title, detail, anchor="", badge=""):
         sev = severity or _severity_from_text(" ".join([title or "", detail or ""]))
         if not sev:
             return
@@ -789,33 +840,96 @@ def _collect_problem_items(markdown, manifest):
             "title": (title or "").strip(),
             "detail": (detail or "").strip(),
             "anchor": anchor,
+            "badge": (badge or sev).strip(),
         })
 
-    in_defects = False
-    table_rows = []
-    for line in (markdown or "").splitlines():
-        stripped = line.strip()
-        if re.match(r"^##\s+缺陷清单", stripped):
-            in_defects = True
-            table_rows = []
+    def section_table_rows(section_name):
+        in_section = False
+        table_rows = []
+        for line in (markdown or "").splitlines():
+            stripped = line.strip()
+            if re.match(rf"^##\s+{re.escape(section_name)}(?:\s|$)", stripped):
+                in_section = True
+                continue
+            if in_section and stripped.startswith("## "):
+                break
+            if in_section and stripped.startswith("|"):
+                table_rows.append(stripped)
+            elif in_section and table_rows:
+                break
+        if len(table_rows) < 3:
+            return [], []
+        return _split_markdown_table_row(table_rows[0]), [
+            _split_markdown_table_row(row) for row in table_rows[2:]
+        ]
+
+    def column_index(headers, pattern):
+        for index, header in enumerate(headers):
+            if re.search(pattern, header, re.I):
+                return index
+        return -1
+
+    # 缺陷表允许 `严重级` 不在首列。每日验收常用 `ID | 严重级 | 页面/路径 | 现象...`，
+    # 旧实现只读首列，导致 conditional 报告顶部显示 0 个风险且完全没有重点卡。
+    defect_headers, defect_rows = section_table_rows("缺陷清单")
+    severity_index = column_index(defect_headers, r"严重(?:级|程度)|severity")
+    id_index = column_index(defect_headers, r"^(?:id|编号|缺陷号)$")
+    symptom_index = column_index(defect_headers, r"现象|问题|异常")
+    page_index = column_index(defect_headers, r"页面|路径|模块|位置")
+    for cells in defect_rows:
+        if len(cells) < 2:
             continue
-        if in_defects and stripped.startswith("## "):
-            in_defects = False
-        if in_defects and stripped.startswith("|"):
-            table_rows.append(stripped)
-        elif in_defects and table_rows:
-            break
-    if len(table_rows) >= 3:
-        for row in table_rows[2:]:
-            cells = _split_markdown_table_row(row)
-            if len(cells) < 2:
-                continue
-            severity = cells[0].strip()
-            if not re.fullmatch(r"P[0-3]", severity, re.I):
-                continue
-            evidence = cells[2] if len(cells) > 2 else ""
-            anchor_m = re.search(r"#(fig-[a-z0-9-]+)", evidence)
-            add(severity.upper(), cells[1], "；".join(c for c in cells[2:] if c), anchor_m.group(1) if anchor_m else "")
+        severity = ""
+        if 0 <= severity_index < len(cells):
+            severity = cells[severity_index].strip()
+        if not re.fullmatch(r"P[0-3]", severity, re.I):
+            severity = next(
+                (cell.strip() for cell in cells if re.fullmatch(r"P[0-3]", cell.strip(), re.I)),
+                "",
+            )
+        if not severity:
+            continue
+        defect_id = cells[id_index].strip() if 0 <= id_index < len(cells) else ""
+        symptom = cells[symptom_index].strip() if 0 <= symptom_index < len(cells) else ""
+        page = cells[page_index].strip() if 0 <= page_index < len(cells) else ""
+        title_parts = [part for part in (defect_id, symptom or page or "缺陷") if part]
+        row_text = "；".join(cell for cell in cells if cell)
+        anchor_m = re.search(r"#(fig-[a-z0-9-]+)", row_text, re.I)
+        add(
+            severity.upper(),
+            " · ".join(title_parts),
+            row_text,
+            anchor_m.group(1) if anchor_m else "",
+            severity.upper(),
+        )
+
+    # `有条件通过` 的重点不仅是已确认缺陷，也包括明确未覆盖的条件。优先读取
+    # 总缺口账本，缺失时回退覆盖缺口，并以 P3 展示层级渲染但保留 G1/GAP-01 徽标。
+    gap_headers, gap_rows = section_table_rows("总缺口账本")
+    if not gap_rows:
+        gap_headers, gap_rows = section_table_rows("覆盖缺口")
+    gap_id_index = column_index(gap_headers, r"^(?:id|编号|缺口|缺口编号)$")
+    gap_title_index = column_index(gap_headers, r"未覆盖|缺口|内容|事项|项目")
+    for cells in gap_rows:
+        row_text = "；".join(cell for cell in cells if cell)
+        gap_id = cells[gap_id_index].strip() if 0 <= gap_id_index < len(cells) else ""
+        if not re.fullmatch(r"(?:G\d+|GAP[-_ ]?\d+)", gap_id, re.I):
+            gap_id = next(
+                (
+                    cell.strip()
+                    for cell in cells
+                    if re.fullmatch(r"(?:G\d+|GAP[-_ ]?\d+)", cell.strip(), re.I)
+                ),
+                "",
+            )
+        if not gap_id:
+            continue
+        gap_title = (
+            cells[gap_title_index].strip()
+            if 0 <= gap_title_index < len(cells) and cells[gap_title_index].strip() != gap_id
+            else next((cell.strip() for cell in cells if cell.strip() and cell.strip() != gap_id), "未覆盖项")
+        )
+        add("P3", f"{gap_id} · {gap_title}", row_text, badge=gap_id)
 
     for shot in manifest or []:
         key = _figure_key(shot.get("name"))
@@ -828,6 +942,66 @@ def _collect_problem_items(markdown, manifest):
 
     order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
     return sorted(items, key=lambda it: order.get(it["severity"], 9))
+
+
+def _collect_section_navigation(markdown, problem_items):
+    """Build a deterministic H2 directory and mark sections that contain problems."""
+    lines = (markdown or "").splitlines()
+    sections = []
+    anchor_lines = {}
+    for index, line in enumerate(lines):
+        stripped = line.strip()
+        heading = re.match(r"^##\s+(.+)$", stripped)
+        if heading:
+            title = heading.group(1).strip()
+            sections.append({
+                "title": title,
+                "id": _html_id(title, f"section-{index}"),
+                "line": index,
+                "problems": [],
+            })
+        anchor = re.fullmatch(r'<span id="(fig-[a-z0-9-]+)" class="figure-anchor"></span>', stripped)
+        if anchor:
+            anchor_lines[anchor.group(1)] = index
+
+    def add_problem(section, item):
+        key = (item.get("severity"), item.get("badge"), item.get("anchor"), item.get("title"))
+        existing = {
+            (entry.get("severity"), entry.get("badge"), entry.get("anchor"), entry.get("title"))
+            for entry in section["problems"]
+        }
+        if key not in existing:
+            section["problems"].append(item)
+
+    for item in problem_items or []:
+        target_line = anchor_lines.get(item.get("anchor") or "")
+        if target_line is not None:
+            containing = [
+                section for section in sections
+                if section["line"] <= target_line
+            ]
+            if containing:
+                add_problem(containing[-1], item)
+        severity = item.get("severity")
+        fallback_pattern = r"缺口" if severity == "P3" else r"缺陷清单"
+        fallback = next(
+            (section for section in sections if re.search(fallback_pattern, section["title"])),
+            None,
+        )
+        if fallback:
+            add_problem(fallback, item)
+
+    severity_order = {"P0": 0, "P1": 1, "P2": 2, "P3": 3}
+    for section in sections:
+        severities = [item.get("severity") for item in section["problems"] if item.get("severity")]
+        section["severity"] = min(severities, key=lambda value: severity_order.get(value, 9)) if severities else ""
+        badges = []
+        for item in section["problems"]:
+            badge = item.get("badge") or item.get("severity")
+            if badge and badge not in badges:
+                badges.append(badge)
+        section["badges"] = badges
+    return sections
 
 
 def markdown_to_html(markdown):
@@ -909,26 +1083,69 @@ def markdown_to_html(markdown):
 
 
 def _decorate_problem_figures(body_html, problem_anchors):
-    """Stamp real failed evidence images only.
+    """Stamp real failed or conditional evidence images only.
 
     Pass evidence may mention "no overflow" or "no breakage" in captions; those
-    must not turn red. Failure styling is driven by defect rows or automated
-    warnings mapped to anchors.
+    must not turn red/yellow. Styling is driven by structured defect rows or
+    automated warnings mapped to anchors.
     """
     for anchor, severity in (problem_anchors or {}).items():
         if severity not in {"P0", "P1", "P2"}:
             continue
         marker = f'<span id="{anchor}" class="figure-anchor"></span>'
         if marker in body_html:
+            status_class = "fail" if severity == "P0" else "risk"
+            label = f"验收失败 · {severity}" if severity == "P0" else f"有条件风险 · {severity}"
             body_html = body_html.replace(
                 marker,
-                marker + '<div class="figure-fail-banner" aria-label="验收失败">验收失败</div>',
+                marker
+                + f'<div class="figure-problem-banner is-{status_class}" '
+                + f'data-label="{html.escape(label, quote=True)}" '
+                + f'aria-label="{html.escape(label, quote=True)}">{html.escape(label)}</div>',
                 1,
             )
     return body_html
 
 
-def build_interactive_html(title, verdict, markdown_content, manifest, flavor="acceptance", figure_srcs=None):
+def _decorate_figure_backlinks(body_html, manifest):
+    """Append one return-to-gallery control after every manifest image."""
+    for shot in manifest or []:
+        key = _figure_key(shot.get("name"))
+        anchor = _figure_anchor(key)
+        if not anchor:
+            continue
+        marker = f'<span id="{anchor}" class="figure-anchor"></span>'
+        marker_at = body_html.find(marker)
+        if marker_at < 0:
+            continue
+        next_anchor = body_html.find('<span id="fig-', marker_at + len(marker))
+        search_end = next_anchor if next_anchor >= 0 else len(body_html)
+        image_at = body_html.find("<img ", marker_at + len(marker), search_end)
+        if image_at < 0:
+            continue
+        paragraph_end = body_html.find("</p>", image_at, search_end)
+        if paragraph_end < 0:
+            continue
+        insert_at = paragraph_end + len("</p>")
+        num = (_figure_number(shot.get("name")) or key).upper()
+        backlink = (
+            f'<a class="figure-back-link" data-return-evidence="true" '
+            f'href="#evidence-gallery" aria-label="图{html.escape(num)}返回证据列表">'
+            f'返回证据列表</a>'
+        )
+        body_html = body_html[:insert_at] + backlink + body_html[insert_at:]
+    return body_html
+
+
+def build_interactive_html(
+    title,
+    verdict,
+    markdown_content,
+    manifest,
+    flavor="acceptance",
+    figure_srcs=None,
+    report_version="v0.9",
+):
     """交互式验收 HTML（模板契约 interactive-html-v2 不变，皮肤为「米多刊系」检验档案风）。
 
     flavor 决定刊头身份（.claude/rules/report-design-system.md）：
@@ -952,6 +1169,9 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
+    report_version = (report_version or "v0.9").strip()
+    if not re.fullmatch(r"v\d+\.\d+", report_version):
+        raise RuntimeError(f"报告版本号格式非法：{report_version!r}，应为 v<主版本>.<次版本>")
     manifest_errors = _manifest_figure_errors(manifest)
     if manifest_errors:
         raise RuntimeError("交互报告证据关系门禁未通过：\n- " + "\n- ".join(manifest_errors))
@@ -963,6 +1183,8 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
         if it.get("anchor")
     }
     body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
+    body_html = _decorate_figure_backlinks(body_html, manifest)
+    section_navigation = _collect_section_navigation(markdown_content, problem_items)
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
         "conditional": ("有条件通过", "conditional"),
@@ -1006,6 +1228,31 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
             f'<a class="{card_class}" href="#{anchor}">{badge}'
             f'{thumb}<strong>{label}</strong><span>{cap}</span></a>'
         )
+    directory_items = []
+    indexed_sections = list(enumerate(section_navigation, start=1))
+    severity_order = {"P0": 0, "P1": 1, "P2": 1, "P3": 2}
+    indexed_sections.sort(
+        key=lambda item: (
+            severity_order.get(str(item[1].get("severity") or "").upper(), 3),
+            item[0],
+        )
+    )
+    for index, section in indexed_sections:
+        status_class = _severity_class(section.get("severity") or "")
+        item_class = f"section-nav-item is-{status_class}" if status_class else "section-nav-item"
+        badges = section.get("badges") or []
+        badge_text = "、".join(badges[:3])
+        if len(badges) > 3:
+            badge_text += f" 等{len(badges)}项"
+        marker = (
+            f'<em class="section-nav-badge {status_class}">{html.escape(badge_text)}</em>'
+            if badge_text else ""
+        )
+        directory_items.append(
+            f'<a class="{item_class}" href="#{html.escape(section["id"], quote=True)}">'
+            f'<span><small>{index:02d}</small>{html.escape(section["title"])}</span>{marker}</a>'
+        )
+    directory_html = "".join(directory_items) or '<p class="section-nav-empty">正文没有二级目录</p>'
     summary_cards = [
         ("证据图", str(len(manifest)), "可点击跳转"),
         ("P0 定位项", str(row_fail_count), "阻断证据"),
@@ -1018,16 +1265,23 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
         for label, value, note in summary_cards
     )
     problem_html = ""
-    if problem_items or verdict == "fail":
+    if problem_items or verdict in {"conditional", "fail"}:
         if problem_items:
             cards = []
-            for item in problem_items[:6]:
-                sev = html.escape(item.get("severity") or "")
+            for item in problem_items[:8]:
+                sev = html.escape(item.get("badge") or item.get("severity") or "")
                 cls = _severity_class(item.get("severity") or "") or "gap"
                 title_text = html.escape(item.get("title") or "未通过项")
                 detail = html.escape(item.get("detail") or "")
-                href = f' href="#{html.escape(item["anchor"], quote=True)}"' if item.get("anchor") else ""
-                link_label = "查看证据图" if item.get("anchor") else "查看正文缺陷清单"
+                if item.get("anchor"):
+                    href = f' href="#{html.escape(item["anchor"], quote=True)}"'
+                    link_label = "查看证据图"
+                elif item.get("severity") == "P3":
+                    href = ' href="#总缺口账本"'
+                    link_label = "查看完整缺口账本"
+                else:
+                    href = ' href="#缺陷清单"'
+                    link_label = "查看正文缺陷清单"
                 cards.append(
                     f'<div class="problem-card is-{cls}">'
                     f'<strong><span>{sev}</span>{title_text}</strong>'
@@ -1037,11 +1291,24 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
                 )
             cards_html = "".join(cards)
         else:
-            cards_html = '<div class="problem-card is-fail"><strong><span>P0/P1</span>请查看正文缺陷清单</strong><p>报告 Verdict 为不通过，但未抽取到结构化缺陷行。</p><a href="#缺陷清单">查看缺陷清单</a></div>'
+            fallback_class = "risk" if verdict == "conditional" else "fail"
+            fallback_badge = "条件" if verdict == "conditional" else "P0/P1"
+            cards_html = (
+                f'<div class="problem-card is-{fallback_class}">'
+                f'<strong><span>{fallback_badge}</span>请查看正文风险与缺口清单</strong>'
+                f'<p>报告 Verdict 为{html.escape(verdict_cn)}，但未抽取到结构化重点项。</p>'
+                f'<a href="#缺陷清单">查看缺陷清单</a></div>'
+            )
+        if verdict == "conditional":
+            focus_kicker = "有条件通过重点"
+            focus_title = "先看这里：风险证据和未覆盖项"
+        else:
+            focus_kicker = "不通过定位"
+            focus_title = "先看这里：失败位置和证据"
         problem_html = (
             f'<section class="failure-focus is-{verdict_class}">'
-            f'<div class="focus-kicker">不通过定位</div>'
-            f'<h2>先看这里：失败位置和证据</h2>'
+            f'<div class="focus-kicker">{focus_kicker}</div>'
+            f'<h2>{focus_title}</h2>'
             f'<div class="problem-grid">{cards_html}</div>'
             f'</section>'
         )
@@ -1072,9 +1339,19 @@ aside{{position:sticky;top:0;height:100vh;overflow:auto;border-right:2px solid v
 .side-mast{{display:flex;align-items:center;gap:10px;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--side-line)}}
 .side-mast .side-stamp{{width:34px;height:34px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:12px;box-shadow:2px 2px 0 rgba(0,0,0,.5)}}
 .side-mast b{{font-family:var(--serif);font-size:14.5px;font-weight:700;display:block;letter-spacing:.02em;color:var(--side-text)}}
+.edition-version{{display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid currentColor;border-radius:2px;font-family:var(--mono);font-size:9px;font-weight:700;vertical-align:2px;letter-spacing:.04em}}
 aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .side-mast i{{font-style:normal;font-family:var(--mono);font-size:8.5px;letter-spacing:.22em;color:var(--side-muted);display:block;margin-top:2px}}
 .nav-title{{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--side-muted);margin:0 0 10px}}
+.side-tabs{{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:0 0 12px;padding:3px;border:1px solid var(--side-line);border-radius:3px;background:rgba(0,0,0,.22)}}
+.side-tab{{min-width:0;border:0;background:transparent;color:var(--side-muted);padding:8px 6px;text-align:left;box-shadow:none}}
+.side-tab:hover{{background:rgba(255,255,255,.06);color:var(--side-text)}}
+.side-tab.active{{background:var(--accent);color:#fff7ee}}
+.side-tab span{{display:block;font-size:11px;font-weight:700;line-height:1.25}}
+.side-tab small{{display:block;margin-top:2px;font-size:8px;letter-spacing:.12em;opacity:.72}}
+.side-drawer-toggle{{display:none}}
+.side-panel{{display:none}}
+.side-panel.active{{display:block}}
 .evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}
 .evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:var(--side-text);border:1px solid var(--side-line);background:rgba(255,255,255,.03);border-radius:3px;padding:7px;min-height:64px}}
 .evidence-nav a.is-fail{{border:2px solid #e0604c;background:rgba(180,35,24,.20);box-shadow:0 0 0 1px rgba(224,96,76,.25)}}
@@ -1084,6 +1361,18 @@ aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .nav-copy{{min-width:0}}
 .evidence-nav span{{display:block;font-family:var(--mono);font-size:11px;font-weight:700;margin:0 0 3px;color:#fff}}
 .evidence-nav small{{display:block;color:var(--side-muted);font-size:12px;line-height:1.4;margin-top:0;overflow:hidden;display:-webkit-box;-webkit-line-clamp:3;-webkit-box-orient:vertical}}
+.section-nav{{display:flex;flex-direction:column;gap:5px;margin-bottom:18px}}
+.section-nav-item{{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;text-decoration:none;color:var(--side-text);border:1px solid transparent;border-left:3px solid var(--side-line);border-radius:2px;padding:8px;background:rgba(255,255,255,.025)}}
+.section-nav-item:hover{{border-color:rgba(243,234,217,.45)}}
+.section-nav-item.is-fail{{border:2px solid #e0604c;background:rgba(180,35,24,.20)}}
+.section-nav-item.is-risk{{border-color:#d5a03f;border-left-width:4px;background:rgba(154,103,0,.18)}}
+.section-nav-item.is-gap{{border-color:rgba(243,234,217,.28);border-left-width:4px;background:rgba(255,255,255,.06)}}
+.section-nav-item>span{{min-width:0;font-size:12px;line-height:1.45}}
+.section-nav-item>span small{{display:inline-block;margin-right:6px;color:var(--side-muted);font-family:var(--mono);font-size:9px}}
+.section-nav-badge{{flex-shrink:0;max-width:78px;padding:2px 5px;border-radius:2px;background:var(--fail);color:#fff7ee;font-family:var(--mono);font-size:9px;font-style:normal;line-height:1.35;text-align:center}}
+.section-nav-badge.risk{{background:var(--warn)}}
+.section-nav-badge.gap{{background:rgba(243,234,217,.30);color:var(--side-text)}}
+.section-nav-empty{{color:var(--side-muted);font-size:12px}}
 main{{min-width:0;width:100%;max-width:none;padding:0 34px 72px}}
 .hero{{padding:24px 0 0}}
 .masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
@@ -1106,7 +1395,9 @@ main{{min-width:0;width:100%;max-width:none;padding:0 34px 72px}}
 .metric strong{{display:block;font-family:var(--serif);font-size:24px;line-height:1.15;margin:4px 0;color:var(--ink)}}
 .metric small{{display:block;font-size:10.5px;color:var(--ink-3)}}
 .failure-focus{{margin:22px 0 18px;border:1.5px solid var(--fail);border-radius:3px;background:var(--paper-2);box-shadow:5px 5px 0 rgba(180,35,24,.12);padding:16px 18px}}
+.failure-focus.is-conditional{{border-color:var(--warn);background:rgba(154,103,0,.045);box-shadow:5px 5px 0 rgba(154,103,0,.16)}}
 .focus-kicker{{font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;color:var(--fail);font-weight:600}}
+.failure-focus.is-conditional .focus-kicker{{color:var(--warn)}}
 .failure-focus h2{{margin:6px 0 12px;padding:0;border:none;font-family:var(--serif);font-size:20px;color:var(--ink)}}
 .problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}
 .problem-card{{position:relative;border:1px solid var(--line-2);border-left:5px solid var(--ink-3);border-radius:3px;background:var(--paper-2);padding:12px}}
@@ -1130,6 +1421,7 @@ button:hover{{background:var(--ink);color:var(--paper)}}
 button.active{{background:var(--accent);border-color:var(--accent);color:#fff7ee;font-weight:700}}
 button:focus-visible,input:focus-visible,a:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
 .gallery-title{{font-family:var(--serif);font-size:18px;font-weight:700;margin:26px 0 0;padding-bottom:10px;border-bottom:2px solid var(--ink)}}
+#evidence-gallery{{scroll-margin-top:24px}}
 .evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin:16px 0 22px}}
 .evidence-card{{position:relative;display:block;text-decoration:none;color:var(--ink);background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;overflow:hidden;box-shadow:4px 4px 0 rgba(33,29,24,.10);transition:transform .15s ease,box-shadow .15s ease}}
 .evidence-card:hover{{transform:translate(-1px,-1px);box-shadow:5px 5px 0 rgba(33,29,24,.16)}}
@@ -1173,25 +1465,55 @@ tr.filter-empty-row td{{background:rgba(33,29,24,.035);color:var(--ink-3);font-s
 figure{{margin:18px 0 28px}}
 img{{max-width:100%;height:auto;border:1.5px solid var(--ink);border-radius:3px;display:block;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 figcaption{{color:var(--ink-3);font-size:12.5px;margin-top:8px;line-height:1.7}}
-.figure-fail-banner{{display:none}}
-.figure-fail-banner + p{{position:relative;display:inline-block;max-width:100%}}
-.figure-fail-banner + p::before{{content:"验收失败";position:absolute;left:10px;top:10px;z-index:2;padding:5px 10px;background:var(--fail);color:#fff7ee;border:2px solid #fff7ee;border-radius:2px;font-family:var(--mono);font-size:12px;font-weight:800;letter-spacing:.08em;box-shadow:2px 2px 0 rgba(33,29,24,.45)}}
-.figure-fail-banner + p img{{border:4px solid var(--fail);box-shadow:0 0 0 3px rgba(180,35,24,.20),4px 4px 0 rgba(33,29,24,.10)}}
+.figure-problem-banner{{display:none}}
+.figure-problem-banner + p{{position:relative;display:inline-block;max-width:100%}}
+.figure-problem-banner + p::before{{content:attr(data-label);position:absolute;left:10px;top:10px;z-index:2;padding:5px 10px;background:var(--fail);color:#fff7ee;border:2px solid #fff7ee;border-radius:2px;font-family:var(--mono);font-size:12px;font-weight:800;letter-spacing:.06em;box-shadow:2px 2px 0 rgba(33,29,24,.45)}}
+.figure-problem-banner.is-risk + p::before{{background:var(--warn)}}
+.figure-problem-banner + p img{{border:4px solid var(--fail);box-shadow:0 0 0 3px rgba(180,35,24,.20),4px 4px 0 rgba(33,29,24,.10)}}
+.figure-problem-banner.is-risk + p img{{border-color:var(--warn);box-shadow:0 0 0 3px rgba(154,103,0,.18),4px 4px 0 rgba(33,29,24,.10)}}
+.figure-back-link{{display:inline-flex;align-items:center;margin:-14px 0 26px;padding:6px 10px;border:1px solid var(--line-2);border-radius:2px;background:var(--paper-2);color:var(--accent);font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none;box-shadow:2px 2px 0 rgba(33,29,24,.08)}}
+.figure-back-link:hover{{border-color:var(--accent);background:var(--accent-soft)}}
 .section-toggle{{float:right;font-size:11px;padding:3px 8px}}
 .figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}
 :target{{outline:3px solid var(--accent);outline-offset:3px;border-radius:3px}}
 @media(prefers-reduced-motion:reduce){{*{{scroll-behavior:auto!important;transition:none!important}}}}
 @media(max-width:980px){{
 .layout{{display:block}}
-aside{{position:relative;height:auto;border-right:0;border-bottom:2px solid var(--ink)}}
+aside{{position:sticky;top:0;z-index:20;height:auto;max-height:238px;padding:12px 16px;border-right:0;border-bottom:2px solid var(--ink);box-shadow:0 6px 18px rgba(33,29,24,.16)}}
+.side-mast{{margin-bottom:8px}}
+.side-tabs{{margin-bottom:8px}}
+.side-panel{{max-height:132px;overflow:auto}}
 .evidence-nav{{flex-direction:row;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
 .evidence-nav a{{flex:0 0 210px}}
+.section-nav{{display:flex;gap:7px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
+.section-nav-item{{flex:0 0 220px;margin:0}}
 main{{padding:0 16px 60px}}
 .hero{{padding-top:18px}}
 .metric{{flex:1 1 32%;border-bottom:1px solid var(--line)}}
 .toolbar{{top:0}}
 }}
 @media(max-width:640px){{
+html,body{{overflow-x:clip}}
+aside{{max-height:none;padding:8px 10px;overflow:visible}}
+.side-mast{{gap:8px;padding-bottom:6px;margin-bottom:6px}}
+.side-mast .side-stamp{{width:28px;height:28px;font-size:10px}}
+.side-mast b{{font-size:12.5px}}
+.side-mast i{{display:none}}
+.side-controls{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch}}
+.side-tabs{{margin:0}}
+.side-tab{{padding:6px 7px}}
+.side-tab span{{font-size:10.5px}}
+.side-drawer-toggle{{display:flex;align-items:center;justify-content:center;min-width:68px;border-color:var(--side-line);background:rgba(255,255,255,.04);color:var(--side-text);padding:5px 8px}}
+.side-drawer-toggle:hover{{background:rgba(255,255,255,.10);color:var(--side-text)}}
+.side-drawer-toggle[aria-expanded="true"]{{border-color:var(--accent);background:var(--accent);color:#fff7ee}}
+.side-drawer{{display:none;max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain;margin-top:8px;padding:8px 2px 2px;border-top:1px solid var(--side-line);-webkit-overflow-scrolling:touch}}
+aside.mobile-nav-open .side-drawer{{display:block}}
+.side-panel{{max-height:none;overflow:visible}}
+.evidence-nav,.section-nav{{display:flex;flex-direction:column;gap:6px;overflow:visible;padding:0;margin:0}}
+.evidence-nav a,.section-nav-item{{flex:none;width:100%;margin:0}}
+.evidence-nav a{{grid-template-columns:68px minmax(0,1fr);min-height:58px}}
+.evidence-nav .nav-thumb{{width:68px}}
+.figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
 .title-row{{gap:12px}}
 .badge{{font-size:13px;padding:7px 12px}}
@@ -1201,16 +1523,25 @@ main{{padding:0 16px 60px}}
 </head>
 <body>
 <div class="layout">
-<aside>
-  <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}</b><i>{flavor_en}</i></div></div>
-  <div class="nav-title">证据导航 EVIDENCE</div>
-  <div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div>
+<aside id="report-navigation">
+  <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><i>{flavor_en}</i></div></div>
+  <div class="side-controls">
+    <div class="side-tabs" role="tablist" aria-label="报告导航">
+      <button class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="side-panel-evidence" data-side-tab="evidence"><span>证据导航</span><small>EVIDENCE</small></button>
+      <button class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="side-panel-contents" data-side-tab="contents"><span>报告目录</span><small>CONTENTS</small></button>
+    </div>
+    <button class="side-drawer-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav-drawer" data-mobile-nav-toggle>展开导航</button>
+  </div>
+  <div id="mobile-nav-drawer" class="side-drawer" aria-hidden="false">
+    <div id="side-panel-evidence" class="side-panel active" role="tabpanel"><div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div></div>
+    <div id="side-panel-contents" class="side-panel" role="tabpanel"><nav class="section-nav" aria-label="报告目录">{directory_html}</nav></div>
+  </div>
 </aside>
 <main>
   <header class="hero">
     <div class="masthead">
       <div class="stamp">MAP</div>
-      <div class="t"><b>{flavor_cn}</b><span>{flavor_en}</span></div>
+      <div class="t"><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><span>{flavor_en}</span></div>
       <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span>{report_time_html}</div>
     </div>
     <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span></div>
@@ -1224,12 +1555,55 @@ main{{padding:0 16px 60px}}
     <button data-filter="risk">有缺陷/P1</button>
     <button data-filter="gap">未覆盖</button>
   </div>
-  <section class="evidence-gallery-wrap"><div class="gallery-title">证据缩略图</div><div class="evidence-gallery">{''.join(gallery_cards) or '<p>无截图证据</p>'}</div></section>
+  <section id="evidence-gallery" class="evidence-gallery-wrap"><div class="gallery-title">证据缩略图</div><div class="evidence-gallery">{''.join(gallery_cards) or '<p>无截图证据</p>'}</div></section>
   <article id="reportBody">{body_html}</article>
 </main>
 </div>
 <script>
 (function(){{
+  var reportNavigation=document.getElementById('report-navigation');
+  var mobileNavDrawer=document.getElementById('mobile-nav-drawer');
+  var mobileNavToggle=document.querySelector('[data-mobile-nav-toggle]');
+  var mobileNavQuery=window.matchMedia('(max-width:640px)');
+  function isMobileNavigation(){{return mobileNavQuery.matches;}}
+  function setMobileNavOpen(open){{
+    var expanded=isMobileNavigation()&&Boolean(open);
+    reportNavigation.classList.toggle('mobile-nav-open',expanded);
+    mobileNavToggle.setAttribute('aria-expanded',expanded?'true':'false');
+    mobileNavToggle.textContent=expanded?'收起导航':'展开导航';
+    mobileNavDrawer.setAttribute('aria-hidden',isMobileNavigation()&&!expanded?'true':'false');
+  }}
+  function setSideTab(name){{
+    document.querySelectorAll('[data-side-tab]').forEach(function(tab){{
+      var active=tab.getAttribute('data-side-tab')===name;
+      tab.classList.toggle('active',active);
+      tab.setAttribute('aria-selected',active?'true':'false');
+    }});
+    document.querySelectorAll('.side-panel').forEach(function(panel){{
+      panel.classList.toggle('active',panel.id==='side-panel-'+name);
+    }});
+  }}
+  document.querySelectorAll('[data-side-tab]').forEach(function(tab){{
+    tab.addEventListener('click',function(){{
+      setSideTab(tab.getAttribute('data-side-tab'));
+      if(isMobileNavigation()) setMobileNavOpen(true);
+    }});
+  }});
+  mobileNavToggle.addEventListener('click',function(){{
+    setMobileNavOpen(mobileNavToggle.getAttribute('aria-expanded')!=='true');
+  }});
+  function syncMobileNavigation(){{
+    if(isMobileNavigation()) setMobileNavOpen(false);
+    else{{
+      reportNavigation.classList.remove('mobile-nav-open');
+      mobileNavToggle.setAttribute('aria-expanded','false');
+      mobileNavToggle.textContent='展开导航';
+      mobileNavDrawer.setAttribute('aria-hidden','false');
+    }}
+  }}
+  if(mobileNavQuery.addEventListener) mobileNavQuery.addEventListener('change',syncMobileNavigation);
+  else if(mobileNavQuery.addListener) mobileNavQuery.addListener(syncMobileNavigation);
+  syncMobileNavigation();
   var filterInput=document.getElementById('reportFilter');
   var mode='all';
   function applyFilter(){{
@@ -1283,6 +1657,12 @@ main{{padding:0 16px 60px}}
       n=n.nextElementSibling;
     }}
   }}
+  function targetForHash(hash){{
+    if(!hash||hash.charAt(0)!=='#') return null;
+    var id=hash.slice(1);
+    try{{id=decodeURIComponent(id);}}catch(error){{return null;}}
+    return document.getElementById(id);
+  }}
   document.querySelectorAll('#reportBody h2').forEach(function(h){{
     var b=document.createElement('button');
     b.className='section-toggle';
@@ -1300,21 +1680,34 @@ main{{padding:0 16px 60px}}
       }}
     }});
   }});
-  document.addEventListener('click', function(ev){{
-    var a=ev.target.closest&&ev.target.closest('a[href^="#fig-"]');
-    if(!a) return;
-    ev.preventDefault();
-    var t=document.querySelector(a.getAttribute('href'));
+  function jumpToTarget(hash){{
+    var t=targetForHash(hash);
     if(!t) return;
     expandSectionForTarget(t);
-    t.scrollIntoView({{block:'start'}});
-    if(history&&history.replaceState) history.replaceState(null,'',a.getAttribute('href'));
+    var scroll=function(){{
+      t.scrollIntoView({{block:'start'}});
+      if(history&&history.replaceState) history.replaceState(null,'',hash);
+    }};
+    if(isMobileNavigation()){{
+      setMobileNavOpen(false);
+      requestAnimationFrame(function(){{requestAnimationFrame(scroll);}});
+    }}else scroll();
+  }}
+  document.addEventListener('click', function(ev){{
+    var a=ev.target.closest&&ev.target.closest('a[href^="#"]');
+    if(!a) return;
+    var hash=a.getAttribute('href');
+    var t=targetForHash(hash);
+    if(!t) return;
+    ev.preventDefault();
+    if(a.hasAttribute('data-return-evidence')) setSideTab('evidence');
+    jumpToTarget(hash);
   }});
   window.addEventListener('hashchange', function(){{
-    var t=location.hash&&document.querySelector(location.hash);
+    var t=targetForHash(location.hash);
     expandSectionForTarget(t);
   }});
-  if(location.hash){{setTimeout(function(){{var t=document.querySelector(location.hash); expandSectionForTarget(t); if(t) t.scrollIntoView({{block:'start'}});}},50);}}
+  if(location.hash){{setTimeout(function(){{jumpToTarget(location.hash);}},50);}}
 }})();
 </script>
 </body>
@@ -1442,6 +1835,7 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
         manifest,
         flavor=_report_flavor(a, body),
         figure_srcs=figure_srcs,
+        report_version=a.report_version,
     ) if fmt == "html" else content_md
     size = len(content.encode("utf-8"))
     if size > CDS_REPORT_CAP:
@@ -1515,6 +1909,7 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
         manifest,
         flavor=_report_flavor(a, body),
         figure_srcs=figure_srcs,
+        report_version=a.report_version,
     ) if fmt == "html" else content_md
     ext = "html" if fmt == "html" else "md"
     report_path = os.path.join(out_dir, f"{report_id}.{ext}")
@@ -2094,6 +2489,11 @@ def validate_inputs(a, body, manifest, cfg=None):
         errs.append(f"[档位] 非法：{a.tier}（应为 L0/L1/L2）")
     if a.verdict not in {"pass", "conditional", "fail"}:
         errs.append(f"[Verdict] 非法：{a.verdict}（应为 pass/conditional/fail）")
+    report_version = (getattr(a, "report_version", "") or "v0.9").strip()
+    if not re.fullmatch(r"v\d+\.\d+", report_version):
+        errs.append(
+            f"[报告版本] 非法：{report_version!r}（应为 v<主版本>.<次版本>，且只能人工显式改版）"
+        )
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
@@ -2156,16 +2556,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
     if daily_acceptance_claim:
-        for section in (
-            "昨日工作总结",
-            "改动规模与深度预算",
-            "标记法则与验收标准",
-            "PR/commit 到结果映射",
-            "覆盖矩阵",
-            "截图回读检查",
-            "重试记录",
-            "未发布状态",
-        ):
+        for section in DAILY_REQUIRED_SECTIONS:
             if section not in body:
                 errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
         if not re.search(r"(计划证据数|计划截图数|planned evidence|planned screenshots)", body, re.I):
@@ -2294,6 +2685,11 @@ def main():
     ap.add_argument("--branch", default="")
     ap.add_argument("--commit", default="")
     ap.add_argument("--pr", type=int, default=None, help="关联 PR 编号（E1 部署上下文，便于 E4 回写）")
+    ap.add_argument(
+        "--report-version",
+        default="v0.9",
+        help="验收档案版本号；默认 v0.9。只接受显式人工改版，不根据 Verdict 自动升级",
+    )
     ap.add_argument("--force", action="store_true", help="越过准入校验（仅在确知合理时用，会打印告警）")
     a = ap.parse_args()
 

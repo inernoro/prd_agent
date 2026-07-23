@@ -181,10 +181,12 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         "真实触控移动端证据",
     )
 
-    report_md = compiled_markdown(archive, "# 日报\n\n正文", annotated_manifest)
+    report_md = compiled_markdown(archive, "## 概览\n\n正文", annotated_manifest)
     html = archive.build_interactive_html("日报", "fail", report_md, annotated_manifest)
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
+    if html.count('class="edition-version">v0.9</small>') != 2:
+        raise AssertionError("report version must be visible in the sidebar and masthead")
 
     daily_report = """
 # 每日验收报告
@@ -222,6 +224,10 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("header gap metric must use the four unique ledger rows")
     if "报告时间 · 2026-07-22 07:15:30 CST+0800" not in daily_html:
         raise AssertionError("report time must be visible in the top-right masthead")
+    if "先看这里：风险证据和未覆盖项" not in daily_html:
+        raise AssertionError("conditional reports must expose a risk-and-gap focus block")
+    if "G1 · 设置页在线终态" not in daily_html or "查看完整缺口账本" not in daily_html:
+        raise AssertionError("conditional focus must expose structured gap items")
 
     relationship_manifest = [
         {"name": "01-entry", "caption": "图 01 验证首页入口可以访问", "annotated": True},
@@ -268,11 +274,73 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
     )
     if relationship_html.count('class="evidence-card"') != 3:
         raise AssertionError("every manifest item must have one evidence card")
+    if relationship_html.count('class="figure-back-link"') != 3:
+        raise AssertionError("every body figure must provide a return-to-evidence-list control")
+    if relationship_html.count('data-side-tab=') != 2:
+        raise AssertionError("sidebar must provide evidence and contents tabs")
+    if 'data-side-tab="evidence"' not in relationship_html or 'data-side-tab="contents"' not in relationship_html:
+        raise AssertionError("sidebar tabs must be evidence and contents")
+    if "aside{position:sticky;top:0;z-index:20" not in relationship_html:
+        raise AssertionError("sidebar tabs must remain visible in the embedded narrow report viewport")
+    if relationship_html.count("data-mobile-nav-toggle>") != 1:
+        raise AssertionError("mobile report navigation must provide exactly one drawer toggle")
+    if 'id="mobile-nav-drawer"' not in relationship_html:
+        raise AssertionError("mobile report navigation must provide a controlled drawer")
+    if "aside.mobile-nav-open .side-drawer{display:block}" not in relationship_html:
+        raise AssertionError("mobile report navigation must stay collapsed until explicitly opened")
+    if ".evidence-nav,.section-nav{display:flex;flex-direction:column" not in relationship_html:
+        raise AssertionError("mobile evidence and contents navigation must be vertical, not horizontal carousels")
+    if "html,body{overflow-x:clip}" not in relationship_html:
+        raise AssertionError("mobile page-level horizontal scrolling must be disabled while tables keep local scrolling")
+    if "if(isMobileNavigation()) setMobileNavOpen(true)" not in relationship_html:
+        raise AssertionError("selecting a mobile navigation tab must open its drawer")
+    if "requestAnimationFrame(function(){requestAnimationFrame(scroll);})" not in relationship_html:
+        raise AssertionError("mobile anchor jumps must wait for drawer collapse before measuring the target")
+    if ".figure-anchor,#evidence-gallery,h1,h2,h3{scroll-margin-top:118px}" not in relationship_html:
+        raise AssertionError("mobile targets must reserve the compact sticky navigation height")
+    if "document.getElementById(id)" not in relationship_html or "decodeURIComponent(id)" not in relationship_html:
+        raise AssertionError("encoded Chinese section hashes must resolve through decoded element IDs")
     if '<div class="thumb-placeholder"' in relationship_html or ">无缩略图<" in relationship_html:
         raise AssertionError("interactive reports must never contain thumbnail placeholders")
     assert_no_errors(archive._interactive_evidence_errors(relationship_html, relationship_manifest))
     if "(h||t).scrollIntoView" in relationship_html or "t.scrollIntoView({block:'start'})" not in relationship_html:
         raise AssertionError("card clicks must scroll to the exact figure, not its section heading")
+
+    conditional_body = """
+## 缺陷清单
+
+| ID | 严重级 | 页面/路径 | 现象 | 影响 | 定位证据 | 建议 |
+|---|---|---|---|---|---|---|
+| D1 | P2 | 更新中心 | 浅色文字对比偏低 | 阅读重点不清晰 | [图02](#fig-02-action) | 提高对比度 |
+
+## 总缺口账本
+
+| ID | 未覆盖项 | 解除条件 |
+|---|---|---|
+| G1 | 管理员真实撤销动作 | 提供隔离测试账号 |
+
+## 步骤 1 定位风险
+
+{{IMG:02-action}}
+"""
+    conditional_html = archive.build_interactive_html(
+        "条件验收",
+        "conditional",
+        compiled_markdown(archive, conditional_body, relationship_manifest),
+        relationship_manifest,
+    )
+    if '<span>P1-P2 风险</span><strong>1</strong>' not in conditional_html:
+        raise AssertionError("conditional risk metric must parse severity columns that are not first")
+    if "D1 · 浅色文字对比偏低" not in conditional_html:
+        raise AssertionError("conditional focus must show the structured defect")
+    if 'class="figure-problem-banner is-risk"' not in conditional_html:
+        raise AssertionError("P1/P2 evidence figures must receive an amber risk marker")
+    if 'data-label="有条件风险 · P2"' not in conditional_html:
+        raise AssertionError("conditional figure marker must state the risk severity")
+    if "section-nav-item is-risk" not in conditional_html or "section-nav-item is-gap" not in conditional_html:
+        raise AssertionError("directory must mark risk and gap sections")
+    if conditional_html.index('href="#缺陷清单"') > conditional_html.index('href="#总缺口账本"'):
+        raise AssertionError("directory must place risk sections before gap sections")
 
     missing_source_md = relationship_md.replace(
         "https://assets.example.test/03-result.png",
