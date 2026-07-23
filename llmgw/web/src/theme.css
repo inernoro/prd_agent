@@ -5594,11 +5594,24 @@ a:focus-visible {
   }
 
   .lg-log-table-scroll {
-    overflow-x: auto;
+    overflow-x: hidden;
   }
 
-  .lg-log-table-scroll .lg-log-table {
-    min-width: 1128px !important;
+  .lg-log-table-head,
+  .lg-log-table-row {
+    column-gap: 8px;
+    padding-right: 10px;
+    padding-left: 10px;
+  }
+
+  .lg-log-table-head > div:not(.lg-log-table-settings) {
+    overflow: hidden;
+    text-overflow: ellipsis;
+  }
+
+  .lg-log-table-settings-trigger {
+    width: 28px;
+    height: 28px;
   }
 
   .lg-log-insights {

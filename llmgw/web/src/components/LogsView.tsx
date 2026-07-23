@@ -40,6 +40,11 @@ import {
 
 const PAGE_SIZE = 30;
 const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
+const NARROW_TABLE_COLUMNS: Record<LogsSubTab, string[]> = {
+  generations: ['date', 'model', 'provider', 'status'],
+  upstream: ['date', 'model', 'provider', 'status'],
+  sessions: ['date', 'app', 'primaryModel', 'requests'],
+};
 
 function initialTablePreferences(): Record<LogsSubTab, LogTablePreferences> {
   const defaults = {
@@ -215,6 +220,17 @@ export function LogsView() {
   const [settingsOpen, setSettingsOpen] = useState<LogsSubTab | null>(null);
   const [settingsTab, setSettingsTab] = useState<'columns' | 'density'>('columns');
   const [showExampleGuide, setShowExampleGuide] = useState(false);
+  const [isNarrowViewport, setIsNarrowViewport] = useState(() => (
+    typeof window !== 'undefined' && window.matchMedia('(max-width: 680px)').matches
+  ));
+
+  useEffect(() => {
+    const media = window.matchMedia('(max-width: 680px)');
+    const update = () => setIsNarrowViewport(media.matches);
+    update();
+    media.addEventListener('change', update);
+    return () => media.removeEventListener('change', update);
+  }, []);
 
   useEffect(() => {
     window.localStorage.setItem(TABLE_PREFERENCES_KEY, JSON.stringify(tablePreferences));
@@ -669,9 +685,20 @@ export function LogsView() {
     empty: ReactNode;
   }) {
     const preferences = normalizeLogTablePreferences(columns, tablePreferences[tableKey]);
-    const visibleColumns = resolveLogTableColumns(columns, preferences);
-    const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
-    const tableMinWidth = tableKey === 'generations'
+    const configuredColumns = resolveLogTableColumns(columns, preferences);
+    const narrowKeys = NARROW_TABLE_COLUMNS[tableKey];
+    const visibleColumns = isNarrowViewport
+      ? configuredColumns.filter((column) => narrowKeys.includes(column.key))
+      : configuredColumns;
+    const narrowWidth = (column: ColumnDef) => {
+      if (column.key === 'date') return '86px';
+      if (column.key === 'status' || column.key === 'requests') return '44px';
+      return 'minmax(0, 1fr)';
+    };
+    const gridCols = `${visibleColumns.map((column) => (
+      isNarrowViewport ? narrowWidth(column) : column.width
+    )).join(' ')} ${isNarrowViewport ? '34px' : '42px'}`;
+    const tableMinWidth = isNarrowViewport || tableKey === 'generations'
       ? 0
       : Math.max(920, visibleColumns.length * 132 + 42);
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
