@@ -5833,6 +5833,8 @@ a:focus-visible {
 
   .lg-log-table-scroll {
     overflow-x: auto;
+    overscroll-behavior-x: contain;
+    overscroll-behavior-y: auto;
     scrollbar-gutter: auto;
   }
 
