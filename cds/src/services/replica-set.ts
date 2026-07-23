@@ -296,6 +296,50 @@ export class ReplicaSetService {
     return snapshot;
   }
 
+  /**
+   * 数据库保护罩（用户拍板）：数据库芯片锁按钮的一键克隆——不绑成员，
+   * 把该 infra 承载的当前库整库克隆成隔离副本，进快照台账（保留语义）。
+   * 进度经 onStage 回调（cloning/done/error），路由层暴露轮询端点。
+   */
+  startDbGuard(
+    branchId: string,
+    infraId: string,
+    onStage: (stage: 'cloning' | 'done' | 'error', detail: string, dbName?: string) => void,
+  ): { accepted: boolean; reason?: string } {
+    const branch = this.opts.state.getBranch(branchId);
+    if (!branch) return { accepted: false, reason: `分支不存在: ${branchId}` };
+    // 找到「用这个 infra 当数据库」的服务：逐 profile 解析目标，命中 infraId 即用
+    let target: ReturnType<typeof resolveReplicaDbTarget>['target'] = null;
+    let profileId = '';
+    for (const profile of this.opts.state.getEffectiveProfilesForBranch(branch)) {
+      const resolved = resolveReplicaDbTarget(this.opts.state, branch, resolveEffectiveProfile(profile, branch));
+      if (resolved.target && resolved.target.infra.id === infraId) {
+        target = resolved.target;
+        profileId = profile.id;
+        break;
+      }
+    }
+    if (!target) return { accepted: false, reason: '没有服务把该基础设施用作数据库（或库名 env 缺失），无法定位要保护的库' };
+    const used = (branch.replicaDbSnapshots ?? [])
+      .map((s) => /^guard-(\d+)$/.exec(s.memberId)?.[1]).filter(Boolean).map(Number);
+    const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
+    void cloneReplicaDb({
+      target,
+      memberId: guardId,
+      profileId,
+      now: this.opts.now,
+      onOutput: (line) => onStage('cloning', line),
+    }).then((cloned) => {
+      const liveBranch = this.requireBranch(branchId);
+      liveBranch.replicaDbSnapshots = [...(liveBranch.replicaDbSnapshots || []), cloned.snapshot];
+      this.opts.state.save();
+      onStage('done', `隔离副本 ${cloned.snapshot.dbName} 已就绪（来源 ${cloned.snapshot.sourceDb}）`, cloned.snapshot.dbName);
+    }).catch((err) => {
+      onStage('error', (err as Error).message);
+    });
+    return { accepted: true };
+  }
+
   /** 分支删除/停止路径的级联收割：清掉该分支全部成员容器。 */
   async teardownForBranch(branchId: string): Promise<void> {
     const branch = this.opts.state.getBranch(branchId);

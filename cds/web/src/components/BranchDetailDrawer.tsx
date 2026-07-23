@@ -13,7 +13,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
-import { Layers, Plus } from 'lucide-react';
+import { Layers, Lock, Plus } from 'lucide-react';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -1624,6 +1624,43 @@ export function BranchDetailDrawer({
       onToast?.(err instanceof ApiError ? err.message : String(err));
     }
   }, [branchId, load, onToast]);
+  // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
+  // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
+  const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
+  const startDbGuard = useCallback(async (infraId: string) => {
+    if (!branchId) return;
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
+        method: 'POST',
+        body: { infraId },
+      });
+      setDbGuardBusy((prev) => ({ ...prev, [infraId]: true }));
+      onToast?.('保护罩启动：正在整库克隆隔离副本…');
+      const poll = async (): Promise<void> => {
+        try {
+          const res = await apiRequest<{ run: { stage: string; detail: string; dbName?: string } | null }>(
+            `/api/branches/${encodeURIComponent(branchId)}/db-guard/${encodeURIComponent(infraId)}`,
+          );
+          if (res.run?.stage === 'done') {
+            setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+            onToast?.(res.run.detail || `隔离副本 ${res.run.dbName} 已就绪，见「复制集」页签数据快照`);
+            return;
+          }
+          if (res.run?.stage === 'error') {
+            setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+            onToast?.(`保护罩失败：${res.run.detail}`);
+            return;
+          }
+          setTimeout(() => { void poll(); }, 3000);
+        } catch {
+          setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+        }
+      };
+      setTimeout(() => { void poll(); }, 3000);
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2347,6 +2384,8 @@ export function BranchDetailDrawer({
                     replicaProfileIds={replicaProfileIds}
                     replicaChipInfo={replicaChipInfo}
                     onQuickReplica={quickAddReplicas}
+                    onDbGuard={startDbGuard}
+                    dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
                     serviceLogs={serviceLogs}
@@ -3343,6 +3382,8 @@ function ResourceConsole({
   replicaProfileIds,
   replicaChipInfo,
   onQuickReplica,
+  onDbGuard,
+  dbGuardBusy,
   selectedResource,
   initialDetailTab,
   serviceLogs,
@@ -3363,6 +3404,10 @@ function ResourceConsole({
   replicaChipInfo?: Record<string, { members: number; provisioning: boolean }>;
   /** Railway 式芯片「+」：一键加 N 个当前版本副本 */
   onQuickReplica?: (profileId: string, count: number) => Promise<void> | void;
+  /** 数据库保护罩：锁按钮一键克隆隔离副本 */
+  onDbGuard?: (infraId: string) => Promise<void> | void;
+  /** 正在克隆的 infraId（芯片环绕动画依据） */
+  dbGuardBusy?: Record<string, boolean>;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
   serviceLogs: ServiceLogsState;
@@ -3492,6 +3537,10 @@ function ResourceConsole({
                 // 复制集特殊标识：卡片带靛蓝描边 + 堆叠图标；有启动中成员时光环脉冲
                 const isReplicaSet = !!profileId && !!replicaProfileIds?.has(profileId);
                 const canQuickReplica = resource.source === 'app' && resource.kind === 'app' && !!onQuickReplica;
+                // 数据库保护罩入口：仅 database 类 infra 芯片；克隆中环绕脉冲动画
+                const infraId = resource.source === 'infra' ? ((resource.raw as { id?: string } | undefined)?.id ?? '') : '';
+                const canGuard = resource.source === 'infra' && resource.kind === 'database' && !!onDbGuard && !!infraId;
+                const guarding = !!infraId && !!dbGuardBusy?.[infraId];
                 return (
                   <span key={resource.id} className="relative inline-flex shrink-0">
                     <button
@@ -3503,8 +3552,8 @@ function ResourceConsole({
                       } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
                         isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
                       } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
-                        canQuickReplica ? 'pr-7' : ''
-                      }`}
+                        guarding ? 'animate-pulse ring-2 ring-emerald-400/70' : ''
+                      } ${canQuickReplica || canGuard ? 'pr-7' : ''}`}
                       onClick={() => onSelect(resource)}
                       title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? `\n复制集：${(chipInfo?.members ?? 0) + 1} 个实例并排运行` : ''}`}
                     >
@@ -3531,6 +3580,17 @@ function ResourceConsole({
                         onClick={(e) => { e.stopPropagation(); setPlusMenuFor(plusMenuFor === resource.id ? null : resource.id); }}
                       >
                         <Plus className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    {canGuard ? (
+                      <button
+                        type="button"
+                        disabled={guarding}
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-emerald-500/50 bg-emerald-500/15 text-emerald-600 transition-colors hover:bg-emerald-500 hover:text-white disabled:opacity-60"
+                        title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
+                        onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
+                      >
+                        {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                       </button>
                     ) : null}
                     {plusMenuFor === resource.id ? (

@@ -980,6 +980,8 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/probe$/, '探测复制集分流'],
+    [/^POST \/branches\/(.+)\/db-guard$/, '启动数据库保护罩'],
+    [/^GET \/branches\/(.+)\/db-guard\/(.+)$/, '查询保护罩进度'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members$/, '添加复制集成员'],
     [/^PATCH \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '调整复制集成员'],
     [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],

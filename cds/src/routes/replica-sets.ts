@@ -202,6 +202,41 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     });
   });
 
+  // ── 数据库保护罩（用户拍板：数据库芯片上的锁按钮，一键克隆隔离库 + 可查询进度） ──
+  // 内存态运行表：branchId:infraId → 阶段。CDS 重启丢进度可接受（克隆本身幂等重跑）。
+  const guardRuns = new Map<string, {
+    stage: 'cloning' | 'done' | 'error';
+    detail: string;
+    dbName?: string;
+    startedAt: string;
+  }>();
+
+  router.post('/branches/:branchId/db-guard', async (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const infraId = typeof req.body?.infraId === 'string' ? req.body.infraId.trim() : '';
+    if (!infraId) { res.status(400).json({ error: '缺少 infraId' }); return; }
+    const branch = deps.stateService.getBranch(req.params.branchId)!;
+    const key = `${branch.id}:${infraId}`;
+    if (guardRuns.get(key)?.stage === 'cloning') {
+      res.status(409).json({ error: '该数据库正在克隆中' });
+      return;
+    }
+    const result = deps.replicaSetService.startDbGuard(branch.id, infraId, (stage, detail, dbName) => {
+      guardRuns.set(key, { stage, detail, dbName, startedAt: guardRuns.get(key)?.startedAt || new Date().toISOString() });
+    });
+    if (!result.accepted) { res.status(409).json({ error: result.reason }); return; }
+    guardRuns.set(key, { stage: 'cloning', detail: '正在克隆…', startedAt: new Date().toISOString() });
+    res.status(202).json({ accepted: true, infraId });
+  });
+
+  router.get('/branches/:branchId/db-guard/:infraId', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const run = guardRuns.get(`${req.params.branchId}:${req.params.infraId}`);
+    res.json({ run: run || null });
+  });
+
   return router;
 }
 

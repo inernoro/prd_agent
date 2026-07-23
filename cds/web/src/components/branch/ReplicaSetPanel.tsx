@@ -274,7 +274,7 @@ export function ReplicaSetPanel({
         if (!rs?.enabled || rs.members.length === 0) {
           return (
             <section key={profileId} className="cds-surface-raised cds-hairline px-5 py-4">
-              <div className="flex flex-wrap items-center justify-between gap-3">
+              <div className="flex flex-wrap items-center gap-4">
                 <div className="min-w-0">
                   <div className="flex items-center gap-2 text-sm font-semibold">
                     {profileId}
@@ -325,7 +325,7 @@ export function ReplicaSetPanel({
             key={profileId}
             className="cds-surface-raised overflow-hidden rounded-lg border border-indigo-500/45 shadow-[0_0_0_1px_hsl(239_84%_67%/.15)]"
           >
-            <header className="flex flex-wrap items-center justify-between gap-3 border-b border-indigo-500/25 bg-indigo-500/[.06] px-5 py-3">
+            <header className="flex flex-wrap items-center gap-4 border-b border-indigo-500/25 bg-indigo-500/[.06] px-5 py-3">
               <div className="flex min-w-0 items-center gap-2">
                 <span className="flex h-7 w-7 shrink-0 items-center justify-center rounded-md border border-indigo-500/40 bg-indigo-500/15">
                   <Layers className="h-4 w-4 text-indigo-500" />
@@ -427,7 +427,7 @@ export function ReplicaSetPanel({
               })}
             </div>
 
-            <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3">
+            <footer className="flex flex-wrap items-center gap-4 border-t border-[hsl(var(--hairline))] px-5 py-3">
               {rs.members.length < memberLimit ? (
                 <div className="flex items-center gap-2">
                   <Button
@@ -579,9 +579,11 @@ function MemberRow({
     if (!Number.isFinite(parsed) || parsed === weight) { setDraft(String(weight)); return; }
     onWeight(parsed);
   };
+  // 布局纪律（用户 2026-07-23 拍板）：信息与操作紧邻成组、整体左对齐，
+  // 禁止名称在最左、操作被 flex 推到最右的"左右分割太远"布局。
   return (
-    <div className="flex flex-wrap items-center gap-3 px-5 py-3">
-      <div className="min-w-0 flex-1">
+    <div className="flex flex-wrap items-center gap-x-4 gap-y-1 px-5 py-3">
+      <div className="min-w-[180px] max-w-[300px]">
         <div className="flex flex-wrap items-center gap-2 text-sm font-medium">
           <span className="truncate">{title}</span>
           {pill}
