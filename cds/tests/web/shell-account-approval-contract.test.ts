@@ -38,13 +38,6 @@ const agentGeoMapSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/AgentTerritoryGeoMap.tsx'),
   'utf8',
 );
-const africaMapData = JSON.parse(fs.readFileSync(
-  path.resolve(process.cwd(), 'web/src/data/africa-110m.geo.json'),
-  'utf8',
-)) as {
-  source: string;
-  features: Array<{ properties: { id: string; name: string } }>;
-};
 const globalAgentAccessSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
   'utf8',
@@ -113,25 +106,29 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentDialogSource).toContain('连接已有项目');
     expect(agentDialogSource).toContain('创建一个新项目');
     expect(agentDialogSource).toContain('<select');
-    expect(agentMapSource).toContain('打开世界地图');
+    expect(agentMapSource).toContain('打开任务地图');
     expect(agentMapSource).toContain('选择 Agent 路线');
     expect(agentMapSource).toContain('选择大洲');
     expect(agentMapSource).toContain('选择地界');
     expect(agentMapSource).toContain("lazy(() => import('@/components/AgentTerritoryGeoMap'))");
-    expect(agentGeoMapSource).toContain("from 'd3-geo'");
-    expect(agentGeoMapSource).toContain('geoNaturalEarth1().fitExtent');
-    expect(agentGeoMapSource).toContain('TERRITORIES');
+    expect(agentGeoMapSource).not.toContain("from 'd3-geo'");
+    expect(agentGeoMapSource).toContain('WIDE_TERRITORIES');
+    expect(agentGeoMapSource).toContain('COMPACT_TERRITORIES');
+    expect(agentGeoMapSource).toContain('window.matchMedia');
+    expect(agentGeoMapSource).toContain('data-map-skin={skin}');
+    expect(agentGeoMapSource).toContain('跟随界面');
+    expect(agentGeoMapSource).toContain('雾蓝');
+    expect(agentGeoMapSource).toContain('夜航');
     expect(agentGeoMapSource).toContain('cds-agent-territory-legend');
-    expect(agentGeoMapSource).toContain('真实国界');
-    expect(africaMapData.source).toContain('Natural Earth');
-    expect(africaMapData.features).toHaveLength(51);
+    expect(agentGeoMapSource).toContain('这里不是设置总数');
+    expect(agentGeoMapSource).toContain('代码生成');
     expect(agentMapSource).toContain('branchCount');
     expect(agentMapSource).toContain('SYSTEM_MISSIONS');
     expect(agentMapSource).toContain('PROJECT_MISSIONS');
     expect(agentMapSource).toContain('aria-live="polite"');
     expect(styles).toContain('.cds-agent-world-stage');
     expect(styles).toContain('.cds-agent-world-region');
-    expect(styles).toContain('.cds-agent-world-graticule');
+    expect(styles).toContain('.cds-agent-map-skin-picker');
     expect(styles).toContain('.cds-agent-territory-option');
     expect(styles).toContain('@keyframes cds-agent-geo-pulse');
     expect(styles).not.toContain("url('#agent-land-forest')");

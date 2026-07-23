@@ -200,7 +200,7 @@ export function AgentAccessMap({
         </span>
         <span className="cds-agent-route-trigger-route">
           <small>{continentName}</small>
-          <span>打开世界地图</span>
+          <span>打开任务地图</span>
         </span>
         <ChevronDown className="cds-agent-route-trigger-chevron" aria-hidden="true" />
       </button>
@@ -217,7 +217,7 @@ export function AgentAccessMap({
             <div>
               <DialogTitle>选择 Agent 路线</DialogTitle>
               <DialogDescription>
-                先选择项目大洲，再在相连的地界中确定要交给 Agent 的任务。
+                先选择项目大陆，再在相连的地界中确定要交给 Agent 的任务。
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -275,7 +275,7 @@ export function AgentAccessMap({
             <Suspense
               fallback={(
                 <div className="cds-agent-world-map-loading" role="status">
-                  正在加载真实地理地图
+                  正在生成任务大陆
                 </div>
               )}
             >
