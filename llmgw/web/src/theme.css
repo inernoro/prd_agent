@@ -5849,8 +5849,24 @@ a:focus-visible {
   }
 
   .lg-log-table {
+    height: auto !important;
     font-size: 14px;
     line-height: 1.62;
+  }
+
+  .lg-logs-view {
+    height: auto !important;
+    min-height: 100%;
+  }
+
+  .lg-log-table-card {
+    flex: 0 0 auto !important;
+    overflow: hidden !important;
+  }
+
+  .lg-log-table-body {
+    flex: 0 0 auto !important;
+    overflow: visible !important;
   }
 
   .lg-log-table-head > div:not(.lg-log-table-settings) {
@@ -5864,8 +5880,8 @@ a:focus-visible {
   }
 
   .lg-log-table-settings-trigger {
-    width: 36px;
-    height: 36px;
+    width: 44px;
+    height: 44px;
   }
 
   .lg-log-insights {

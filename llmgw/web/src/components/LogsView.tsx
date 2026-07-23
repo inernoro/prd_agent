@@ -728,7 +728,7 @@ export function LogsView() {
               onTabChange={setSettingsTab}
             />
           </div>
-          <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <div className="lg-log-table-body" style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {items.length === 0
               ? empty
               : items.map((t, idx) => (
@@ -984,7 +984,7 @@ export function LogsView() {
         </section>
       ) : null}
 
-      <Card style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
+      <Card className="lg-log-table-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (
           <>
             {loading && rows.length === 0 ? (
