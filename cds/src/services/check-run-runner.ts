@@ -500,6 +500,15 @@ export class CheckRunRunner {
       const repoFullName = entry.githubRepoFullName;
       const instId = entry.githubInstallationId;
       if (!id || !repoFullName || !instId) continue;
+      // 有关联 DeploymentRun 的分支不在本方法职责内（Codex P2，PR #1235）：
+      //   - run 已终结 → 启动时先跑的 reconcileStale({terminalGraceMs:0}) 已按
+      //     真实终态收尾（红/绿），本方法若再抢跑会把它灰化 + 清 id，失败信息
+      //     永久丢失；
+      //   - run 未终结 → 心跳收割器会在过期后把它收敛为 failed，周期
+      //     reconcileStale 随后写红灯。此处灰化会把「即将有准确结论」的 run
+      //     提前抹掉（且早期 webhook 新部署的 in_progress run 也可能被误灰）。
+      // 本方法只兜「无关联 run 的旧式滞留 id」——那才是真正无从判定的孤儿。
+      if (this.currentDeploymentRun(entry)) continue;
       // DON'T skip building/starting statuses — those are EXACTLY the
       // ones we need to reconcile. reconcileOrphans is only called once
       // at boot; at that moment no deploy is actually in flight in this

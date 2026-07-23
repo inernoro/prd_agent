@@ -3682,10 +3682,21 @@ export function createServer(deps: ServerDeps): express.Express {
       githubApp: githubAppClient,
       config: deps.config,
     });
-    runner.reconcileOrphans().catch((err: Error) => {
-      // eslint-disable-next-line no-console
-      console.warn('[check-run] startup reconciliation failed:', err.message);
-    });
+    // 启动顺序（Codex P2，PR #1235）：先按真实终态收敛（reconcileStale），再
+    // 灰化真正无从判定的孤儿（reconcileOrphans）。顺序反了会让 orphans 抢先把
+    // 「上面 reconcileInterrupted 刚收敛为 failed 的 run」对应的 check run 灰化
+    // 并清掉 id，红灯路径永远执行不到。宽限期取 0：刚启动的进程里不存在在途
+    // finalize，所有残留 id 都来自重启前，无抢跑风险。
+    runner.reconcileStale({ terminalGraceMs: 0 })
+      .catch((err: Error) => {
+        // eslint-disable-next-line no-console
+        console.warn('[check-run] startup stale reconciliation failed:', err.message);
+      })
+      .then(() => runner.reconcileOrphans())
+      .catch((err: Error) => {
+        // eslint-disable-next-line no-console
+        console.warn('[check-run] startup reconciliation failed:', err.message);
+      });
     // 运行期周期收敛（2026-07-23 用户反馈「check run 一直正在部署，点进去才知道失败」）：
     // DeploymentRun 被心跳收割器收敛为 failed、部署被取代、finalize PATCH 丢失等路径
     // 都不经过部署路由末尾的 finalize()，GitHub 上的 check run 会永远黄灯转圈。

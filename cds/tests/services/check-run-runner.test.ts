@@ -248,6 +248,35 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
     expect(stateService.getBranch('b1')?.githubCheckRunId).toBeUndefined();
   });
 
+  it('reconcileOrphans: 有关联 DeploymentRun 的分支不灰化（归 stale/收割管道），无 run 的才灰化（Codex P2）', async () => {
+    // b1：有关联 run（已 failed）——reconcileOrphans 必须跳过，让 reconcileStale 写红灯
+    await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
+    await runner.ensureOpen(branch);
+    runs.fail('dr_stale', {
+      code: 'cds.run.interrupted', owner: 'cds', retryable: true,
+      summary: '心跳过期', phase: 'build', evidenceRefs: [],
+    });
+    // b2：无关联 run 的旧式滞留 id——真正的孤儿，允许灰化
+    const legacy: BranchEntry = {
+      ...branch, id: 'b2', branch: 'feat/legacy', services: {},
+      githubCheckRunId: 33, lastDeploymentRunId: undefined,
+    };
+    stateService.addBranch(legacy);
+
+    await runner.reconcileOrphans();
+    // 只有 b2 的 33 被灰化；b1 的 7 原样保留（id 未清、未被 PATCH）
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(33);
+    expect(updates[0].payload.conclusion).toBe('neutral');
+    expect(stateService.getBranch('b1')?.githubCheckRunId).toBe(7);
+    expect(stateService.getBranch('b2')?.githubCheckRunId).toBeUndefined();
+    // 启动管道随后的 reconcileStale（宽限 0）把 b1 收成红灯
+    const n = await runner.reconcileStale({ terminalGraceMs: 0 });
+    expect(n).toBe(1);
+    expect(updates[1].id).toBe(7);
+    expect(updates[1].payload.conclusion).toBe('failure');
+  });
+
   it('concludeWithoutDeploy: 分支未关联 GitHub（无 repo/sha/installation）→ no-op', async () => {
     let called = 0;
     githubApp.createCheckRun = async () => { called += 1; return { id: 1, url: '' }; };

@@ -3670,10 +3670,22 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
         console.warn(`[ci-wait-watchdog] ${b.id}: ${reason}`);
         // 把 CI 等待超时写成 GitHub 红灯（fire-and-forget）。conclusion 用
         // failure 而非 neutral：对 push 者而言这个 commit 的预览确实没起来。
+        //
+        // sha 锚定说明（Codex P2 权衡，PR #1235）：红灯**始终挂分支 HEAD**
+        // （entry.githubCommitSha），与 ensureOpen 及整个 check-run 生命周期同
+        // 口径。docs-only push 后 HEAD 与等待中的构建目标 ciTargetSha 可能不同
+        // ——但 GitHub PR Checks 面板只展示 HEAD commit 的检查，把红灯挂到旧的
+        // ciTargetSha 上等于让 PR 面板重新静默（本 PR 要治的病）；且分支预览在
+        // HEAD 上确实没起来，红灯语义成立。两个 sha 不同时在摘要里显式标注归属。
+        const ciWaitHeadShort = (b.githubCommitSha || '').slice(0, 7);
+        const ciWaitTargetShort = (b.ciTargetSha || '').slice(0, 7);
+        const ciWaitShaNote = ciWaitTargetShort && ciWaitHeadShort && ciWaitTargetShort !== ciWaitHeadShort
+          ? `\n\n本红灯挂在分支 HEAD ${ciWaitHeadShort}（GitHub PR Checks 面板只展示 HEAD 的检查）；等待超时的构建目标是代码 commit ${ciWaitTargetShort}，HEAD 为其后的 docs-only push。`
+          : '';
         void ciWaitCheckRunRunner?.concludeWithoutDeploy(b, {
           conclusion: 'failure',
           title: 'CI image wait timed out',
-          summary: reason,
+          summary: reason + ciWaitShaNote,
         }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
