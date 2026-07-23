@@ -211,7 +211,7 @@ export class LiveTranscriptionSocket {
     this.queuedFrames.push(frame);
   }
 
-  async finish(timeoutMs = 10_000): Promise<LiveTranscriptionEvent | null> {
+  async finish(timeoutMs = 90_000): Promise<LiveTranscriptionEvent | null> {
     if (this.terminalEvent) return this.terminalEvent;
     this.setState('finalizing');
     const socket = this.socket;
