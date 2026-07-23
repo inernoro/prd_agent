@@ -82,6 +82,31 @@ export interface AgentPageContext extends Omit<AgentMissionDefinition, 'pagePath
   pagePath: string;
 }
 
+export type CdsCapabilityRisk = 'read-only' | 'write' | 'destructive' | 'protocol';
+export type CdsCapabilityAccess = 'public' | 'project' | 'system' | 'human-only' | 'protocol-token';
+export type CdsMcpExposure = 'read-only-candidate' | 'approval-required' | 'not-exposed';
+
+export interface CdsAgentSkillDefinition {
+  id: 'cds' | 'cds-project-scan' | 'cds-deploy-pipeline' | 'cds-release' | 'preview-url';
+  label: string;
+  role: string;
+  required: boolean;
+}
+
+export interface CdsAgentCapabilityDefinition {
+  id: string;
+  label: string;
+  routeSource: string;
+  scope: AgentMissionScope | 'mixed';
+  access: CdsCapabilityAccess;
+  risk: CdsCapabilityRisk;
+  agentUse: 'direct' | 'guided' | 'protocol-only' | 'internal-only';
+  preferredSkill: CdsAgentSkillDefinition['id'];
+  cliFamily?: string;
+  mcpExposure: CdsMcpExposure;
+  note: string;
+}
+
 function projectPath(prefix: string, projectId?: string): string {
   return `${prefix}/${encodeURIComponent(projectId || '<project-id>')}`;
 }
@@ -95,6 +120,142 @@ export const AGENT_MISSION_CATEGORY_DEFINITIONS: readonly AgentMissionCategoryDe
   { id: 'operate', label: '维护与恢复', description: '更新、回滚和任务调度' },
   { id: 'deliver', label: '发布与验收', description: '正式发布和证据归档' },
 ] as const;
+
+export const CDS_AGENT_SKILL_DEFINITIONS: readonly CdsAgentSkillDefinition[] = [
+  { id: 'cds', label: 'CDS 核心技能', role: '认证、能力分诊、环境变量、系统维护和共享 CLI', required: true },
+  { id: 'cds-project-scan', label: '项目扫描技能', role: '扫描仓库、生成和校验 Compose、提交项目接入', required: true },
+  { id: 'cds-deploy-pipeline', label: '部署排障技能', role: '部署、日志、诊断、冒烟和灰度状态', required: true },
+  { id: 'cds-release', label: '正式发布技能', role: '生产目标发现、预检、发布、回滚和证据归档', required: true },
+  { id: 'preview-url', label: '真实预览地址技能', role: '只读取 CDS API 已发布的公开入口', required: true },
+] as const;
+
+type CapabilitySeed = readonly [
+  id: string,
+  label: string,
+  routeSource: string,
+  scope: CdsAgentCapabilityDefinition['scope'],
+  access: CdsCapabilityAccess,
+  risk: CdsCapabilityRisk,
+  agentUse: CdsAgentCapabilityDefinition['agentUse'],
+  preferredSkill: CdsAgentSkillDefinition['id'],
+  cliFamily: string,
+  note: string,
+];
+
+const CDS_AGENT_CAPABILITY_SEEDS = [
+  ['access-requests', 'Agent 项目授权申请', 'access-requests.ts', 'mixed', 'public', 'write', 'direct', 'cds', 'connect', '发起申请可免密，批准和拒绝必须由人类页面完成'],
+  ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
+  ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
+  ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
+  ['bridge', '页面 Bridge 与导航握手', 'bridge.ts', 'project', 'protocol-token', 'protocol', 'protocol-only', 'cds', '', '使用 Bridge 会话令牌和页面批准，不作为万能浏览器控制接口'],
+  ['cache', '缓存状态、导入导出与修复', 'cache.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', 'repair、import 和 purge 需要快照、影响说明和人工批准'],
+  ['cds-events', 'CDS 事件与自刷新', 'cds-events.ts', 'system', 'system', 'write', 'direct', 'cds', '', '事件可只读查询，自刷新属于写操作'],
+  ['cds-system-connections', 'CDS 系统间连接', 'cds-system-connections.ts', 'system', 'protocol-token', 'protocol', 'protocol-only', 'cds', '', '连接签发、接受和撤销走专用长令牌协议'],
+  ['cds-system-topology', 'CDS 网络拓扑', 'cds-system-topology.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '只读拓扑用于判断控制面、节点和路由故障范围'],
+  ['cluster', '集群与 Build Gate', 'cluster.ts', 'system', 'protocol-token', 'destructive', 'guided', 'cds', '', 'join、leave 和调度策略变更必须由系统管理员确认'],
+  ['comment-template', 'PR 评论模板', 'comment-template.ts', 'mixed', 'system', 'write', 'direct', 'cds', '', '预览后再保存，项目模板和系统模板不能混用'],
+  ['deployment-runs', '部署运行与结构化诊断', 'deployment-runs.ts', 'project', 'project', 'read-only', 'direct', 'cds-deploy-pipeline', 'deployment-run', 'SSE 诊断需要持续反馈并保留终态证据'],
+  ['deployment-versions', '不可变部署版本与回滚', 'deployment-versions.ts', 'project', 'project', 'destructive', 'direct', 'cds-deploy-pipeline', 'deployment-version', '部署历史版本前必须锁定完整版本和目标分支'],
+  ['docker-network-health', 'Docker 网络健康', 'docker-network-health.ts', 'system', 'system', 'read-only', 'direct', 'cds', '', '用于网络故障证据，不自动执行网络重建'],
+  ['github-oauth', 'GitHub OAuth 与仓库发现', 'github-oauth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', '设备授权由用户在 GitHub 完成，Agent 只轮询脱敏状态'],
+  ['github-webhook', 'GitHub App、仓库绑定与 Webhook', 'github-webhook.ts', 'mixed', 'system', 'write', 'guided', 'cds', '', 'Webhook 回调由 HMAC 鉴权，不作为普通调用工具'],
+  ['infra-backup', '基础设施备份与恢复', 'infra-backup.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '恢复前必须确认备份、目标资源、影响范围和回滚点'],
+  ['infra-data', '基础设施数据与 Schema', 'infra-data.ts', 'project', 'project', 'write', 'guided', 'cds', '', '查询默认只读，初始化 SQL 和写查询需要额外批准'],
+  ['legacy-cleanup', '遗留数据清理', 'legacy-cleanup.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '只允许先查看状态，再由人类明确批准清理或重命名'],
+  ['managed-projects', '托管项目目录', 'managed-projects.ts', 'system', 'system', 'write', 'direct', 'cds', '', '托管目录和普通项目身份需要分别核对'],
+  ['operator-console', '系统运维审批台', 'operator-console.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', 'AI 可以发起请求和查状态，批准、拒绝和执行仅人类可做'],
+  ['peer-sync', 'Peer Sync 配对与资源同步', 'peer-sync.ts', 'system', 'protocol-token', 'destructive', 'protocol-only', 'cds', 'peer', '配对码、HMAC 和资源 apply 属于专用同步协议'],
+  ['pending-import', '项目配置导入审批', 'pending-import.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'import', 'Agent 可提交，审批和拒绝由页面完成'],
+  ['project-compose', 'Compose 与配置漂移', 'project-compose.ts', 'project', 'project', 'write', 'direct', 'cds-project-scan', 'scan / verify', '变更 Compose 前先读取当前 SSOT 并执行 drift scan'],
+  ['project-infra-resync', '基础设施重新同步', 'project-infra-resync.ts', 'project', 'project', 'destructive', 'guided', 'cds-project-scan', '', '必须先 preview，再批准 execute'],
+  ['project-migration', '项目与数据迁移', 'project-migration.ts', 'project', 'project', 'destructive', 'guided', 'cds', '', '迁移需要来源、目标、快照、进度和可回滚证据'],
+  ['project-storage', '项目存储占用', 'project-storage.ts', 'project', 'project', 'read-only', 'direct', 'cds', '', '只读容量检查可直接执行，清理必须转入对应破坏性能力'],
+  ['projects', '项目、环境变量与 Agent Key', 'projects.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'project / env / key', '所有命令都必须锁定项目 ID，机器凭据不得自行提权'],
+  ['releases', '正式发布控制面', 'releases.ts', 'project', 'project', 'destructive', 'direct', 'cds-release', '', '发现、预检、发布、验证、回滚和归档必须形成完整证据链'],
+  ['remote-hosts', '远程主机、Sidecar 与 Agent 会话', 'remote-hosts.ts', 'mixed', 'system', 'destructive', 'guided', 'cds', '', '主机密钥、工具审批和会话停止需要人类边界'],
+  ['reports', '报告、资产、分享与 PR 回写', 'reports.ts', 'mixed', 'project', 'write', 'direct', 'cds', 'report / report-folder', '分享和推送 PR 前检查脱敏与目标项目'],
+  ['scheduled-jobs', '定时任务与运行记录', 'scheduled-jobs.ts', 'project', 'project', 'write', 'direct', 'cds', 'schedule', '先 parse 和 test，默认不直接创建或执行危险命令'],
+  ['snapshots', '配置快照、回滚与撤销', 'snapshots.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', '破坏性操作前建立快照，优先使用 undo 而不是再次修改'],
+  ['storage-mode', '状态存储模式切换', 'storage-mode.ts', 'system', 'human-only', 'destructive', 'guided', 'cds', '', '切换前必须预检后端、迁移路径和回滚策略'],
+  ['ticket-sso', '平台无关票据 SSO', 'ticket-sso.ts', 'system', 'human-only', 'protocol', 'guided', 'cds', '', '保留当前管理员会话，在隔离会话完成登录验证'],
+  ['workspaces', '工作区、成员与邀请', 'workspaces.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '成员角色和邀请变更必须由工作区管理员确认'],
+  ['server-control-plane', '健康、观测、AI 配对与系统状态', 'server.ts', 'mixed', 'system', 'write', 'direct', 'cds', 'health / auth / self', '公开探针只读，AI 批准和系统写操作保持人类边界'],
+  ['executor-scheduler', 'Executor 注册、容量与调度', 'scheduler/routes.ts', 'system', 'protocol-token', 'destructive', 'internal-only', 'cds', '', '永久 Executor Token 专用，不向普通项目 Agent 暴露'],
+  ['executor-agent', 'Executor 部署代理接口', 'executor/routes.ts', 'system', 'protocol-token', 'destructive', 'internal-only', 'cds-deploy-pipeline', '', '仅供 CDS 调度器与执行节点通信'],
+] as const satisfies readonly CapabilitySeed[];
+
+function deriveMcpExposure(
+  risk: CdsCapabilityRisk,
+  agentUse: CdsAgentCapabilityDefinition['agentUse'],
+): CdsMcpExposure {
+  if (agentUse === 'protocol-only' || agentUse === 'internal-only' || risk === 'protocol') {
+    return 'not-exposed';
+  }
+  if (risk === 'read-only' && agentUse === 'direct') {
+    return 'read-only-candidate';
+  }
+  return 'approval-required';
+}
+
+export const CDS_AGENT_CAPABILITY_DEFINITIONS: readonly CdsAgentCapabilityDefinition[] =
+  CDS_AGENT_CAPABILITY_SEEDS.map(([
+    id,
+    label,
+    routeSource,
+    scope,
+    access,
+    risk,
+    agentUse,
+    preferredSkill,
+    cliFamily,
+    note,
+  ]) => ({
+    id,
+    label,
+    routeSource,
+    scope,
+    access,
+    risk,
+    agentUse,
+    preferredSkill,
+    ...(cliFamily ? { cliFamily } : {}),
+    mcpExposure: deriveMcpExposure(risk, agentUse),
+    note,
+  }));
+
+export const AGENT_MISSION_CAPABILITY_BINDINGS: Record<AgentPageContextId, readonly string[]> = {
+  'agent-access': ['access-requests', 'projects', 'operator-console'],
+  auth: ['auth-local', 'auth-session', 'ticket-sso'],
+  github: ['github-oauth', 'github-webhook'],
+  projects: ['projects', 'managed-projects', 'workspaces'],
+  'system-health': ['server-control-plane', 'cds-system-topology', 'docker-network-health', 'cluster', 'executor-scheduler'],
+  'system-observability': ['server-control-plane', 'cds-events', 'operator-console'],
+  maintenance: ['server-control-plane', 'cache', 'snapshots', 'storage-mode', 'legacy-cleanup'],
+  settings: ['comment-template', 'cds-system-connections', 'peer-sync', 'remote-hosts'],
+  'project-onboarding': ['projects', 'pending-import', 'project-compose'],
+  'code-review': ['project-compose', 'deployment-runs'],
+  branches: ['branches', 'deployment-runs', 'deployment-versions'],
+  'build-diagnostics': ['branches', 'deployment-runs'],
+  'startup-diagnostics': ['branches', 'deployment-runs', 'docker-network-health'],
+  'log-diagnostics': ['branches', 'server-control-plane'],
+  'api-diagnostics': ['branches', 'server-control-plane', 'infra-data'],
+  'preview-diagnostics': ['branches', 'docker-network-health'],
+  'project-settings': ['projects', 'project-compose', 'project-storage', 'comment-template'],
+  'service-integration': ['branches', 'infra-data', 'infra-backup', 'project-infra-resync', 'remote-hosts'],
+  'env-diagnostics': ['projects', 'branches'],
+  release: ['releases', 'remote-hosts'],
+  rollback: ['deployment-versions', 'releases', 'snapshots'],
+  tasks: ['scheduled-jobs'],
+  reports: ['reports'],
+  general: ['branches', 'projects', 'server-control-plane'],
+};
+
+export function getAgentCapabilitiesForMission(
+  contextId: AgentPageContextId,
+): CdsAgentCapabilityDefinition[] {
+  const ids = new Set(AGENT_MISSION_CAPABILITY_BINDINGS[contextId] || []);
+  return CDS_AGENT_CAPABILITY_DEFINITIONS.filter((capability) => ids.has(capability.id));
+}
 
 /**
  * CDS Agent 任务与提示词的唯一注册表。

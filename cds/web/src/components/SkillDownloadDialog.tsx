@@ -245,7 +245,7 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
 function ManualTab(): JSX.Element {
   return (
     <div className="space-y-3 text-sm text-muted-foreground">
-      <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的四个目录复制到当前项目对应的技能目录。</p>
+      <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的五个目录复制到当前项目对应的技能目录。</p>
       <Button asChild>
         <a href="/api/export-skill" download>
           <Download className="h-4 w-4" />

@@ -11,10 +11,13 @@ describe('CDS 技能导出包契约', () => {
   it('导出通用 skills 结构并包含 manifest', () => {
     expect(source).toContain("path.join(packDir, 'skills', skillName)");
     expect(source).toContain("path.join(packDir, 'manifest.json')");
+    expect(source).toContain("path.join(packDir, 'skills', 'cds', 'cli', 'cds-skill-manifest.json')");
     expect(source).toContain("format: 'agent-skills'");
-    expect(source).toContain("['cds', 'cds-deploy-pipeline', 'cds-project-scan', 'preview-url']");
-    expect(source).toContain('缺少 \\`preview-url\\` 即视为接入未完成');
+    expect(source).toContain("['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url']");
+    expect(source).toContain('缺少任一目录即视为接入未完成');
     expect(source).toContain('CDS API 读取当前分支的全部真实预览入口');
+    expect(source).toContain('skills/cds-release/SKILL.md');
+    expect(source).toContain('CDS 技能包不完整，缺少');
   });
 
   it('安装说明不再追加 shell alias 或要求 source', () => {
