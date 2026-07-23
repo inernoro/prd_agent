@@ -442,11 +442,11 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
   const handleTestFileChange = async (e: React.ChangeEvent<HTMLInputElement>) => {
     const fileList = e.target.files;
     if (!fileList || fileList.length === 0 || !testTargetIdRef.current) return;
-    
+
     const files = Array.from(fileList);
     const id = testTargetIdRef.current;
     setTestingId(id);
-    
+
     try {
       const result = await testWatermark({ id, files });
       if (result.success && result.blob) {
@@ -454,15 +454,15 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
         const url = URL.createObjectURL(result.blob);
         const a = document.createElement('a');
         a.href = url;
-        a.download = result.isZip 
-          ? `watermark-test-${Date.now()}.zip` 
+        a.download = result.isZip
+          ? `watermark-test-${Date.now()}.zip`
           : `watermark-test-${Date.now()}.png`;
         document.body.appendChild(a);
         a.click();
         document.body.removeChild(a);
         URL.revokeObjectURL(url);
-        const msg = files.length > 1 
-          ? `已处理 ${files.length} 张图片，下载压缩包中` 
+        const msg = files.length > 1
+          ? `已处理 ${files.length} 张图片，下载压缩包中`
           : '水印测试完成，已开始下载';
         toast.success(msg);
       } else {
@@ -807,8 +807,8 @@ export const WatermarkSettingsPanel = forwardRef(function WatermarkSettingsPanel
                           style={{
                             background: previewUrl && !previewError
                               ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                              : 'rgba(255,255,255,0.02)',
-                            border: previewUrl && !previewError ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                              : 'var(--nested-block-bg)',
+                            border: previewUrl && !previewError ? 'none' : '1px solid var(--border-subtle)',
                             cursor: previewUrl && !previewError ? 'zoom-in' : 'default',
                           }}
                           onClick={() => {
@@ -1406,7 +1406,7 @@ function WatermarkEditor(props: {
                       onChange={(e) => updateConfig({ borderWidth: Number(e.target.value) })}
                       className="flex-1 h-1.5 appearance-none rounded-full cursor-pointer"
                       style={{
-                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, var(--nested-block-bg) ${(((config.borderWidth ?? 2) - 1) / 9) * 100}%, var(--nested-block-bg) 100%)`,
                       }}
                     />
                     <span className="w-6 text-right text-[11px] font-medium tabular-nums text-token-secondary">
@@ -1430,7 +1430,7 @@ function WatermarkEditor(props: {
                       onChange={(e) => updateConfig({ cornerRadius: Number(e.target.value) })}
                       className="flex-1 min-w-0 h-1.5 appearance-none rounded-full cursor-pointer"
                       style={{
-                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) ${((config.cornerRadius ?? 0) / 50) * 100}%, rgba(255,255,255,0.25) 100%)`,
+                        background: `linear-gradient(to right, #3b82f6 0%, #3b82f6 ${((config.cornerRadius ?? 0) / 50) * 100}%, var(--nested-block-bg) ${((config.cornerRadius ?? 0) / 50) * 100}%, var(--nested-block-bg) 100%)`,
                       }}
                     />
                     <span className="w-10 text-right text-[11px] font-medium tabular-nums text-token-secondary">
@@ -2215,8 +2215,8 @@ function WatermarkPreview(props: {
 
   const edgeInputClassName = 'w-[64px] h-7 px-2 text-[11px] rounded-[7px] text-center outline-none';
   const edgeInputStyle = {
-    background: 'rgba(255,255,255,0.08)',
-    border: '1px solid rgba(255,255,255,0.16)',
+    background: 'var(--nested-block-bg)',
+    border: '1px solid var(--border-subtle)',
     color: 'var(--text-muted)',
     fontWeight: 500,
   } as const;
@@ -2233,24 +2233,21 @@ function WatermarkPreview(props: {
       style={{
         width,
         height: canvasHeight,
-        background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'rgba(255,255,255,0.04)',
-        border: '1px dashed rgba(255,255,255,0.12)',
+        background: previewImage ? `url(${previewImage}) center/cover no-repeat` : 'var(--nested-block-bg)',
+        border: '1px dashed var(--border-subtle)',
         overflow: (showDistances || showEdgeInputs) && distancePlacement === 'outside' ? 'visible' : 'hidden',
       }}
     >
       {showCrosshair ? (
         <div className="absolute inset-0 pointer-events-none" style={{ zIndex: 0 }}>
-          <div className="absolute left-1/2 top-0 h-full w-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
-          <div className="absolute top-1/2 left-0 w-full h-px" style={{ background: 'rgba(255,255,255,0.12)' }} />
+          <div className="absolute left-1/2 top-0 h-full w-px bg-token-nested"  />
+          <div className="absolute top-1/2 left-0 w-full h-px bg-token-nested"  />
           <div className="absolute inset-0 grid grid-cols-2 grid-rows-2">
             {(['top-left', 'top-right', 'bottom-left', 'bottom-right'] as WatermarkAnchor[]).map((anchor) => (
               <div
                 key={anchor}
-                className="flex items-center justify-center"
-                style={{
-                  background: activeAnchor === anchor ? 'rgba(255,255,255,0.08)' : 'transparent',
-                  border: '1px solid rgba(255,255,255,0.04)',
-                }}
+                className="flex items-center justify-center border border-token-subtle"
+                style={{ background: activeAnchor === anchor ? 'var(--nested-block-bg)' : 'transparent' }}
               >
                 {showQuadrantLabels ? (
                   <span style={{ color: 'var(--text-primary)', opacity: 0.2, fontSize: 12 }}>
@@ -2266,25 +2263,25 @@ function WatermarkPreview(props: {
         <div className="absolute pointer-events-none" style={{ zIndex: 2, ...distanceWrapperStyle }}>
           <div
             className={topLabelClass}
-            style={{ color: activeSides.top ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+            style={{ color: activeSides.top ? '#FF5C77' : 'var(--text-muted)' }}
           >
             {distanceLabels.top}px
           </div>
           <div
             className={rightLabelClass}
-            style={{ color: activeSides.right ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+            style={{ color: activeSides.right ? '#FF5C77' : 'var(--text-muted)' }}
           >
             {distanceLabels.right}px
           </div>
           <div
             className={bottomLabelClass}
-            style={{ color: activeSides.bottom ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+            style={{ color: activeSides.bottom ? '#FF5C77' : 'var(--text-muted)' }}
           >
             {distanceLabels.bottom}px
           </div>
           <div
             className={leftLabelClass}
-            style={{ color: activeSides.left ? '#FF5C77' : 'rgba(255,255,255,0.32)' }}
+            style={{ color: activeSides.left ? '#FF5C77' : 'var(--text-muted)' }}
           >
             {distanceLabels.left}px
           </div>

@@ -58,11 +58,11 @@ export function CcasAgentPage() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2">
-            <h1 className="text-xl font-semibold text-white truncate">赋码采集关联系统智能体</h1>
+            <h1 className="text-xl font-semibold text-token-primary truncate">赋码采集关联系统智能体</h1>
           </div>
-          <p className="text-xs text-white/50 truncate">{activeTabDef.desc}</p>
+          <p className="text-xs text-token-secondary truncate">{activeTabDef.desc}</p>
           {meta?.authorName && (
-            <p className="text-[11px] text-white/35 mt-0.5 inline-flex items-center gap-1">
+            <p className="text-[11px] text-token-muted mt-0.5 inline-flex items-center gap-1">
               <User className="w-3 h-3" />
               作者：{meta.authorName}
             </p>
@@ -71,7 +71,7 @@ export function CcasAgentPage() {
         <button
           type="button"
           onClick={() => setHelpOpen(true)}
-          className="shrink-0 h-8 px-3 rounded-lg border border-white/12 bg-white/5 hover:bg-white/10 text-xs text-white/75 inline-flex items-center gap-1.5 transition"
+          className="shrink-0 h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-secondary inline-flex items-center gap-1.5 transition"
           title="查看使用说明和教程"
         >
           <HelpCircle className="w-3.5 h-3.5 text-amber-300/85" />
@@ -136,27 +136,27 @@ function CcasHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void 
       onClick={onClose}
     >
       <aside
-        className="h-full border-l border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
+        className="h-full border-l border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col"
         style={{ width: 'min(92vw, 520px)', maxHeight: '100vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+        <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
           <div>
-            <h2 className="text-base font-semibold text-white">赋码采集关联智能体使用帮助</h2>
-            <p className="mt-1 text-xs text-white/45">从业务描述、知识库到 PRD、素材和流程图的一站式辅助。</p>
+            <h2 className="text-base font-semibold text-token-primary">赋码采集关联智能体使用帮助</h2>
+            <p className="mt-1 text-xs text-token-muted">从业务描述、知识库到 PRD、素材和流程图的一站式辅助。</p>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-white/55">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
             <X className="w-4 h-4" />
           </button>
         </header>
 
         <div
-          className="flex-1 px-5 py-4 space-y-4 text-sm text-white/75"
+          className="flex-1 px-5 py-4 space-y-4 text-sm text-token-secondary"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">推荐使用路径</h3>
-            <ol className="list-decimal list-inside space-y-1.5 text-white/65">
+          <section className="rounded-xl border border-token-subtle bg-token-nested p-4">
+            <h3 className="text-sm font-medium text-token-primary mb-2">推荐使用路径</h3>
+            <ol className="list-decimal list-inside space-y-1.5 text-token-secondary">
               <li>先在「知识库」上传项目背景、设备清单、接口规范、历史 PRD。</li>
               <li>回到本页面，在 PRD 文档生成或智能客服里点击「引用知识库」。</li>
               <li>需要完整上下文时选择「整库」，只想精确控制事实来源时选择单篇文档。</li>
@@ -164,9 +164,9 @@ function CcasHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void 
             </ol>
           </section>
 
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">五个功能区怎么用</h3>
-            <div className="space-y-2 text-white/65">
+          <section className="rounded-xl border border-token-subtle bg-token-nested p-4">
+            <h3 className="text-sm font-medium text-token-primary mb-2">五个功能区怎么用</h3>
+            <div className="space-y-2 text-token-secondary">
               <p><span className="text-amber-200/90">PRD 文档生成：</span>把产品背景、产线设备、关联模式写清楚，AI 会按工程版或敏捷版模板输出；初稿生成后可用底部「改稿助手」多轮追问微调。</p>
               <p><span className="text-amber-200/90">设备素材库：</span>生成裹包机、工业相机、龙门架等设备图，后续可复用到流程图节点。</p>
               <p><span className="text-amber-200/90">流程示意图：</span>输入流程描述后解析为 ReactFlow 节点和边，可拖动调整并保存。</p>

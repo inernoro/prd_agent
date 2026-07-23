@@ -111,7 +111,7 @@ export function TaskDetailDrawer({
             <div className="flex items-center gap-3">
               <div
                 className="w-10 h-10 rounded-lg flex items-center justify-center"
-                style={{ background: 'rgba(255,255,255,0.1)' }}
+                style={{ background: 'var(--bg-card)' }}
               >
                 {task.status === 'completed' && <FileText size={20} style={{ color: statusTextColors[task.status] }} />}
                 {task.status === 'failed' && <AlertCircle size={20} style={{ color: statusTextColors[task.status] }} />}
@@ -144,7 +144,7 @@ export function TaskDetailDrawer({
             </div>
           </div>
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 基本信息 */}
           <Section title="基本信息" icon={<FileText size={16} />}>
@@ -154,7 +154,7 @@ export function TaskDetailDrawer({
             {task.originalSubject && <InfoRow label="主题" value={task.originalSubject} />}
           </Section>
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 发送者信息 */}
           <Section title="发送者" icon={<User size={16} />}>
@@ -166,7 +166,7 @@ export function TaskDetailDrawer({
             {task.whitelistId && <InfoRow label="白名单 ID" value={task.whitelistId} mono />}
           </Section>
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 原始内容 */}
           <Section title="原始内容" icon={<Mail size={16} />}>
@@ -186,7 +186,7 @@ export function TaskDetailDrawer({
           {/* 解析参数 */}
           {Object.keys(task.parsedParameters).length > 0 && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="解析参数">
                 <div
                   className="p-3 rounded-lg text-xs font-mono"
@@ -204,7 +204,7 @@ export function TaskDetailDrawer({
           {/* 附件 */}
           {task.attachments.length > 0 && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title={`附件 (${task.attachments.length})`}>
                 <div className="space-y-2">
                   {task.attachments.map((att) => (
@@ -243,7 +243,7 @@ export function TaskDetailDrawer({
           {/* 执行结果 */}
           {task.result && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="执行结果">
                 <InfoRow label="类型" value={task.result.type} />
                 {task.result.textContent && (
@@ -272,7 +272,7 @@ export function TaskDetailDrawer({
           {/* 错误信息 */}
           {task.error && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="错误信息" icon={<AlertCircle size={16} />}>
                 <div
                   className="p-3 rounded-lg text-sm"
@@ -290,7 +290,7 @@ export function TaskDetailDrawer({
             </>
           )}
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 时间线 */}
           <Section title="时间线" icon={<Clock size={16} />}>
@@ -306,7 +306,7 @@ export function TaskDetailDrawer({
           {/* 状态历史 */}
           {task.statusHistory.length > 0 && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="状态历史">
                 <div className="space-y-2">
                   {task.statusHistory.map((change, idx) => (
@@ -333,7 +333,7 @@ export function TaskDetailDrawer({
           {/* 响应记录 */}
           {task.responsesSent.length > 0 && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="响应记录">
                 <div className="space-y-2">
                   {task.responsesSent.map((resp, idx) => (
@@ -367,7 +367,7 @@ export function TaskDetailDrawer({
           {/* 元数据 */}
           {Object.keys(task.metadata).length > 0 && (
             <>
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
               <Section title="元数据">
                 <div
                   className="p-3 rounded-lg text-xs font-mono"

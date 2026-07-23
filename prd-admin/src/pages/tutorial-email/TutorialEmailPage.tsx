@@ -164,8 +164,8 @@ function SequencesTab() {
                 <div>
                   <div className="font-medium" style={{ color: 'var(--text-primary)' }}>
                     {seq.name}
-                    <span className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded"
-                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-secondary)' }}>
+                    <span className="ml-2 text-xs font-mono px-1.5 py-0.5 rounded bg-token-nested"
+                      style={{ color: 'var(--text-secondary)' }}>
                       {seq.sequenceKey}
                     </span>
                   </div>
@@ -564,8 +564,8 @@ function AssetsTab() {
               <div className="flex items-center justify-between mt-1">
                 <div className="flex gap-1">
                   {asset.tags.map((tag) => (
-                    <span key={tag} className="text-[10px] px-1 py-0.5 rounded"
-                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)' }}>
+                    <span key={tag} className="text-[10px] px-1 py-0.5 rounded bg-token-nested"
+                      style={{ color: 'var(--text-muted)' }}>
                       {tag}
                     </span>
                   ))}
@@ -704,8 +704,8 @@ function EnrollmentsTab() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-2 py-1 text-xs rounded-md"
-            style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            className="px-2 py-1 text-xs rounded-md bg-token-nested"
+            style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
           >
             <option value="">全部状态</option>
             <option value="active">进行中</option>
@@ -752,8 +752,8 @@ function EnrollmentsTab() {
                 {enr.status === 'active' && (
                   <button
                     onClick={() => handleUnsubscribe(enr.id)}
-                    className="text-xs px-2 py-1 rounded-md"
-                    style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                    className="text-xs px-2 py-1 rounded-md bg-token-nested"
+                    style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                   >
                     退订
                   </button>

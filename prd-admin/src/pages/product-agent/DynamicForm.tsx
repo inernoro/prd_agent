@@ -106,13 +106,13 @@ export function FormFieldsRenderer({
       {sorted.map((f) => (
         <div key={f.key} className="flex flex-col gap-1">
           {!hideLabels && (
-            <label className="text-xs text-white/55">
+            <label className="text-xs text-token-secondary">
               {f.label || f.key}
               {f.required && <span className="text-red-300/70 ml-1">*</span>}
             </label>
           )}
           <FieldControl field={f} value={values[f.key] ?? f.defaultValue ?? ''} onChange={(v) => onChange(f.key, v)} productId={productId ?? null} fileUploadHint={fileUploadHint} />
-          {!hideLabels && f.helpText && <span className="text-[11px] text-white/30">{f.helpText}</span>}
+          {!hideLabels && f.helpText && <span className="text-[11px] text-token-muted">{f.helpText}</span>}
         </div>
       ))}
     </div>
@@ -120,7 +120,7 @@ export function FormFieldsRenderer({
 }
 
 function FieldControl({ field, value, onChange, productId, fileUploadHint }: { field: FormField; value: string; onChange: (v: string) => void; productId: string | null; fileUploadHint?: string }) {
-  const base = 'px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
+  const base = 'px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40';
   switch (field.type) {
     case 'textarea':
       return <textarea value={value} onChange={(e) => onChange(e.target.value)} rows={3} placeholder={field.placeholder ?? ''} className={`${base} resize-none`} />;
@@ -140,7 +140,7 @@ function FieldControl({ field, value, onChange, productId, fileUploadHint }: { f
       return <input type="datetime-local" value={value} onChange={(e) => onChange(e.target.value)} className={base} />;
     case 'checkbox':
       return (
-        <label className="flex items-center gap-2 text-sm text-white/70">
+        <label className="flex items-center gap-2 text-sm text-token-secondary">
           <input type="checkbox" checked={value === 'true'} onChange={(e) => onChange(e.target.checked ? 'true' : 'false')} className="accent-cyan-500" /> 是
         </label>
       );
@@ -163,7 +163,7 @@ function FieldControl({ field, value, onChange, productId, fileUploadHint }: { f
       return (
         <div className="flex flex-wrap gap-1.5">
           {(field.options ?? []).map((o) => (
-            <button key={o.value} type="button" onClick={() => toggle(o.value)} className={`px-2.5 py-1 rounded-md text-xs border ${selected.includes(o.value) ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}>
+            <button key={o.value} type="button" onClick={() => toggle(o.value)} className={`px-2.5 py-1 rounded-md text-xs border ${selected.includes(o.value) ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}>
               {o.label}
             </button>
           ))}
@@ -217,7 +217,7 @@ function FileField({ value, onChange, uploadHint = '点击或拖拽上传附件�
           if (e.dataTransfer.files.length) void addFiles(e.dataTransfer.files);
         }}
         onClick={() => inputRef.current?.click()}
-        className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-white/15 text-white/50 text-sm hover:border-cyan-500/40 hover:text-white/70 cursor-pointer ${uploadHint === '' ? 'px-3 py-2' : 'px-3 py-3'}`}
+        className={`flex items-center justify-center gap-2 rounded-lg border border-dashed border-token-subtle text-token-secondary text-sm hover:border-cyan-500/40 hover-text-primary cursor-pointer ${uploadHint === '' ? 'px-3 py-2' : 'px-3 py-3'}`}
       >
         {uploading ? <MapSpinner size={14} /> : <Upload size={15} />}
         {uploading ? '上传中…' : uploadHint}
@@ -235,16 +235,16 @@ function FileField({ value, onChange, uploadHint = '点击或拖拽上传附件�
       {items.length > 0 && (
         <div className="flex flex-wrap gap-2">
           {items.map((it) => (
-            <div key={it.id} className="relative group rounded-lg border border-white/10 bg-white/[0.02] overflow-hidden" style={{ width: 96 }}>
+            <div key={it.id} className="relative group rounded-lg border border-token-subtle bg-token-nested overflow-hidden" style={{ width: 96 }}>
               <a href={it.url} target="_blank" rel="noreferrer" className="block">
                 {it.mime?.startsWith('image/') ? (
                   <img src={it.url} alt={it.name} className="w-full h-20 object-cover" />
                 ) : (
-                  <div className="w-full h-20 flex items-center justify-center text-white/40"><FileText size={24} /></div>
+                  <div className="w-full h-20 flex items-center justify-center text-token-muted"><FileText size={24} /></div>
                 )}
-                <div className="px-1.5 py-1 text-[10px] text-white/60 truncate">{it.name}</div>
+                <div className="px-1.5 py-1 text-[10px] text-token-secondary truncate">{it.name}</div>
               </a>
-              <button onClick={() => remove(it.id)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-white/70 hover:text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
+              <button onClick={() => remove(it.id)} className="absolute top-1 right-1 w-5 h-5 rounded-full bg-black/60 text-token-secondary hover:text-red-300 flex items-center justify-center opacity-0 group-hover:opacity-100">
                 <X size={12} />
               </button>
             </div>
@@ -313,23 +313,23 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
     onChange(ref.current.innerHTML);
   };
 
-  const btn = 'w-7 h-7 flex items-center justify-center rounded text-white/55 hover:text-white hover:bg-white/10';
+  const btn = 'w-7 h-7 flex items-center justify-center rounded text-token-secondary hover-text-primary hover-bg-soft';
   return (
-    <div className="rounded-lg border border-white/10 bg-white/5 overflow-hidden">
-      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-white/10 bg-white/[0.02]">
+    <div className="rounded-lg border border-token-subtle bg-token-nested overflow-hidden">
+      <div className="flex items-center gap-0.5 px-2 py-1 border-b border-token-subtle bg-token-nested">
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('bold')} className={btn} title="加粗"><Bold size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('italic')} className={btn} title="斜体"><Italic size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('underline')} className={btn} title="下划线"><Underline size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('formatBlock', 'H3')} className={btn} title="标题"><Heading size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertUnorderedList')} className={btn} title="无序列表"><List size={14} /></button>
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={() => exec('insertOrderedList')} className={btn} title="有序列表"><ListOrdered size={14} /></button>
-        <span className="w-px h-4 bg-white/10 mx-0.5" />
+        <span className="w-px h-4 bg-token-nested mx-0.5" />
         <button type="button" onMouseDown={(e) => e.preventDefault()} onClick={clearFormatting} className={btn} title="清除格式（去底色/颜色/字体，只留结构）"><RemoveFormatting size={14} /></button>
-        <span className="ml-1 text-[10px] text-white/30">{uploading ? '图片上传中…' : '粘贴自动去底色 · 可直接粘贴截图'}</span>
+        <span className="ml-1 text-[10px] text-token-muted">{uploading ? '图片上传中…' : '粘贴自动去底色 · 可直接粘贴截图'}</span>
       </div>
       <div className="relative">
         {placeholder && !value && (
-          <div className="absolute top-2 left-3 text-sm text-white/25 pointer-events-none">{placeholder}</div>
+          <div className="absolute top-2 left-3 text-sm text-token-muted pointer-events-none">{placeholder}</div>
         )}
         <div
           ref={ref}
@@ -345,7 +345,7 @@ export function RichTextField({ value, onChange, minHeight = 120, placeholder }:
               void insertImageFile(f);
             }
           }}
-          className="px-3 py-2 text-sm text-white/90 outline-none prose-product"
+          className="px-3 py-2 text-sm text-token-primary outline-none prose-product"
           style={{ lineHeight: 1.6, minHeight }}
         />
       </div>
@@ -408,7 +408,7 @@ function RelationField({ value, onChange, entityType, productId }: { value: stri
     };
   }, [productId, entityType]);
 
-  if (!entityType) return <div className="text-[11px] text-white/30">未配置关联对象类型</div>;
+  if (!entityType) return <div className="text-[11px] text-token-muted">未配置关联对象类型</div>;
   const { placeholder, countUnit } = relationComboboxMeta(entityType);
 
   return (

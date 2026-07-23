@@ -45,13 +45,8 @@ export default function VisualAgentFullscreenPage() {
       <button
         type="button"
         onClick={onBack}
-        className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200"
-        style={{
-          background: '#2c2c2e',
-          border: '1px solid rgba(255,255,255,0.08)',
-          boxShadow: '0 4px 16px rgba(0,0,0,0.35)',
-          color: 'var(--text-primary)',
-        }}
+        className="fixed top-5 left-5 z-50 flex h-9 w-9 items-center justify-center rounded-full transition-all duration-200 border border-token-subtle"
+        style={{ background: '#2c2c2e', boxShadow: '0 4px 16px rgba(0,0,0,0.35)', color: 'var(--text-primary)' }}
         onMouseEnter={(e) => {
           e.currentTarget.style.background = '#363638';
           e.currentTarget.style.borderColor = 'rgba(255, 255, 255, 0.12)';

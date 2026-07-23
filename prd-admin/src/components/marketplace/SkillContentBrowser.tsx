@@ -102,7 +102,7 @@ function FileRow({
         <button
           type="button"
           onClick={() => onToggle(node.path)}
-          className="flex w-full items-center gap-1.5 rounded-[6px] px-2 py-1 text-left text-[12px] transition-colors hover:bg-white/6"
+          className="flex w-full items-center gap-1.5 rounded-[6px] px-2 py-1 text-left text-[12px] transition-colors hover-bg-soft"
           style={{ paddingLeft: 8 + depth * 14, color: 'var(--text-secondary)' }}
         >
           {isOpen ? <ChevronDown size={13} /> : <ChevronRight size={13} />}

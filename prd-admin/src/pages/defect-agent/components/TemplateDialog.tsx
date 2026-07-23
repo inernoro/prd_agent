@@ -251,11 +251,8 @@ export function TemplateDialog() {
               {myTemplates.map((template) => (
                 <div
                   key={template.id}
-                  className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors hover:bg-white/5"
-                  style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
+                  className="flex items-center gap-3 px-4 py-3 rounded-xl transition-colors hover-bg-soft bg-token-nested border border-token-subtle"
+
                 >
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-2">
@@ -285,20 +282,20 @@ export function TemplateDialog() {
                   <div className="flex items-center gap-1">
                     <button
                       onClick={() => startEdit(template)}
-                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover-bg-soft transition-colors"
                       title="编辑"
                     >
                       <Pencil size={14} style={{ color: 'var(--text-muted)' }} />
                     </button>
                     <button
-                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover-bg-soft transition-colors"
                       title="分享"
                     >
                       <Share2 size={14} style={{ color: 'var(--text-muted)' }} />
                     </button>
                     <button
                       onClick={() => handleDelete(template)}
-                      className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+                      className="p-2 rounded-lg hover-bg-soft transition-colors"
                       title="删除"
                     >
                       <Trash2
@@ -332,11 +329,8 @@ export function TemplateDialog() {
                   {sharedTemplates.map((template) => (
                     <div
                       key={template.id}
-                      className="flex items-center gap-3 px-4 py-3 rounded-xl"
-                      style={{
-                        background: 'rgba(255,255,255,0.02)',
-                        border: '1px solid rgba(255,255,255,0.04)',
-                      }}
+                      className="flex items-center gap-3 px-4 py-3 rounded-xl bg-token-nested border border-token-subtle"
+
                     >
                       <div className="flex-1 min-w-0">
                         <div

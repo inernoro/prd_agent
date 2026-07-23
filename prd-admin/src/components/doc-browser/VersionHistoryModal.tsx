@@ -125,20 +125,13 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
       style={{ background: 'rgba(0,0,0,0.6)', backdropFilter: 'blur(2px)' }}
       onClick={onClose}>
       <div
-        className="rounded-xl flex flex-col"
-        style={{
-          width: 'min(960px, 92vw)', height: '80vh', maxHeight: '80vh',
-          // 必须用不透明的 elevated 面色：--bg-card 在暗色主题是 rgba(255,255,255,0.08)（半透明卡片色），
-          // 直接当弹窗底会透出背景正文造成重叠（用户实测）。浮层走 --bg-elevated（两主题均不透明）。
-          background: 'var(--bg-elevated, #1e1e24)',
-          border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.5)',
-        }}
+        className="rounded-xl flex flex-col border border-token-subtle"
+        style={{ width: 'min(960px, 92vw)', height: '80vh', maxHeight: '80vh', background: 'var(--bg-elevated, #1e1e24)', boxShadow: '0 24px 64px rgba(0,0,0,0.5)' }}
         onClick={(e) => e.stopPropagation()}>
         {/* 头部 */}
-        <div className="shrink-0 flex items-center justify-between px-5 py-3.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-b-token-subtle" >
           <div className="flex items-center gap-2 min-w-0">
-            <History size={15} style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }} />
+            <History size={15} style={{ color: 'var(--text-secondary, var(--text-secondary))' }} />
             <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>历史版本</span>
             <span className="text-[12px] truncate" style={{ color: 'var(--text-muted)' }}>· {entryTitle}</span>
           </div>
@@ -150,7 +143,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
         {/* 主体：左列表 + 右预览 */}
         <div className="flex-1 flex min-h-0">
           {/* 版本列表 */}
-          <div className="shrink-0 flex flex-col" style={{ width: 280, borderRight: '1px solid rgba(255,255,255,0.08)', minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <div className="shrink-0 flex flex-col border-r border-r-token-subtle" style={{ width: 280, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
             {versions === null ? (
               <MapSectionLoader text="正在加载版本…" />
             ) : versions.length === 0 ? (
@@ -177,7 +170,7 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
                         // 当前在线正文；只声称它是最新的一条快照（恒为真），不误导成「当前内容」（Codex P2）。
                         <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(34,197,94,0.12)', color: 'rgba(34,197,94,0.95)' }} title="最新的一条历史快照（个别写入路径不产生版本，未必等于当前在线正文）">最新</span>
                       )}
-                      <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>{SOURCE_LABEL[v.source] ?? v.source}</span>
+                      <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested" style={{ color: 'var(--text-muted)' }}>{SOURCE_LABEL[v.source] ?? v.source}</span>
                     </div>
                     <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       {/* 列表场景禁用每实例刷新定时器（最多 100 行各开一个 interval）—— 项目规则 / Bugbot */}
@@ -198,13 +191,13 @@ export function VersionHistoryModal({ entryId, entryTitle, api, onRestored, onCl
               {detailLoading ? (
                 <MapSectionLoader text="正在加载正文…" />
               ) : detail ? (
-                <pre className="text-[12px] whitespace-pre-wrap break-words font-mono" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))', margin: 0 }}>{detail.content || '（空内容）'}</pre>
+                <pre className="text-[12px] whitespace-pre-wrap break-words font-mono" style={{ color: 'var(--text-secondary, var(--text-secondary))', margin: 0 }}>{detail.content || '（空内容）'}</pre>
               ) : (
                 <div className="text-[12px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>选择左侧版本查看正文</div>
               )}
             </div>
             {/* 底部操作 */}
-            <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-t-token-subtle" >
               <button
                 onClick={handleRestore}
                 // 不再因「是最新快照」就禁用恢复：部分写入路径（如 AI 改写/续写、reprocess apply）

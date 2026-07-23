@@ -29,7 +29,7 @@ const ROLE_LABEL: Record<ProductMember['role'], string> = {
 const ROLE_BADGE: Record<ProductMember['role'], string> = {
   owner: 'bg-amber-500/15 text-amber-300 border-amber-500/30',
   admin: 'bg-purple-500/15 text-purple-300 border-purple-500/30',
-  member: 'bg-white/5 text-white/50 border-white/10',
+  member: 'bg-token-nested text-token-secondary border-token-subtle',
 };
 
 export function ProductTeamTab({ productId }: { productId: string }) {
@@ -98,11 +98,11 @@ export function ProductTeamTab({ productId }: { productId: string }) {
   };
 
   if (loading) return <MapSectionLoader text="正在加载团队…" />;
-  if (!data) return <div className="text-white/40 text-sm">团队信息加载失败</div>;
+  if (!data) return <div className="text-token-muted text-sm">团队信息加载失败</div>;
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-[12px] text-white/40 leading-relaxed">
+      <p className="text-[12px] text-token-muted leading-relaxed">
         管理本产品的团队成员与产品管理员。
         {canManageAdmins
           ? '你可以增删成员，并指派/撤销产品管理员。'
@@ -149,7 +149,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
               key={m.userId}
               id={m.userId}
               selection={selection}
-              className="pa-row flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-white/[0.03] border border-white/5"
+              className="pa-row flex items-center justify-between gap-3 px-3 py-2.5 rounded-lg bg-token-nested border border-token-subtle"
               trailing={
                 <div className="flex items-center gap-1.5 shrink-0">
                   {busy && <MapSpinner size={14} />}
@@ -167,7 +167,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
                     <button
                       onClick={() => onSetRole(m.userId, 'member')}
                       disabled={busy}
-                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-white/50 hover:bg-white/10 disabled:opacity-40"
+                      className="flex items-center gap-1 px-2 py-1 rounded-md text-[12px] text-token-secondary hover-bg-soft disabled:opacity-40"
                       title="撤销产品管理员"
                     >
                       <ShieldOff size={13} /> 取消管理员
@@ -188,7 +188,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
             >
               <div className="flex items-center gap-2.5 min-w-0">
                 {isOwner && <Crown size={14} className="text-amber-300 shrink-0" />}
-                <span className="text-sm text-white/85 truncate">{m.displayName}</span>
+                <span className="text-sm text-token-primary truncate">{m.displayName}</span>
                 <span className={`shrink-0 px-1.5 py-0.5 rounded text-[11px] border ${ROLE_BADGE[m.role]}`}>
                   {ROLE_LABEL[m.role]}
                 </span>
@@ -198,7 +198,7 @@ export function ProductTeamTab({ productId }: { productId: string }) {
         })}
       </div>
       {members.length <= 1 && (
-        <p className="text-[12px] text-white/30">
+        <p className="text-[12px] text-token-muted">
           目前只有负责人。{canManageMembers ? '通过上方搜索框添加协作成员。' : ''}
         </p>
       )}

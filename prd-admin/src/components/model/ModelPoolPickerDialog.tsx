@@ -410,8 +410,8 @@ export function ModelPoolPickerDialog({
     <div className="flex-1 min-h-0 flex gap-3">
       {/* 左栏：平台列表 + "全部" - 固定 180px 宽，自身滚动 */}
       <div
-        className="shrink-0 min-h-0 overflow-auto rounded-[12px] p-1.5 space-y-0.5"
-        style={{ width: 180, border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}
+        className="shrink-0 min-h-0 overflow-auto rounded-[12px] p-1.5 space-y-0.5 bg-token-nested"
+        style={{ width: 180, border: '1px solid var(--border-subtle)' }}
       >
         <PlatformSourceItem
           label="全部"
@@ -550,7 +550,7 @@ export function ModelPoolPickerDialog({
                   onClick={() => toggleAggregatedModel(row)}
                   className="w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md transition-colors"
                   style={{
-                    background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'rgba(255,255,255,0.025)',
+                    background: isSelected ? 'rgba(59, 130, 246, 0.12)' : 'var(--nested-block-bg)',
                     border: isSelected ? '1px solid rgba(59, 130, 246, 0.4)' : '1px solid transparent',
                   }}
                 >
@@ -589,7 +589,7 @@ export function ModelPoolPickerDialog({
 
   // 底部选择池
   const bottomPool = (
-    <div className="rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+    <div className="rounded-[16px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           已选择 {pool.length} 个
@@ -629,8 +629,8 @@ export function ModelPoolPickerDialog({
             <button
               key={keyOf(m)}
               type="button"
-              className="px-3 py-1 rounded-[999px] text-xs"
-              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}
+              className="px-3 py-1 rounded-[999px] text-xs bg-token-nested"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               onClick={() => {
                 const k = keyOf(m);
                 setPool((prev) => prev.filter((x) => keyOf(x) !== k));
@@ -715,7 +715,7 @@ export function ModelPoolPickerDialog({
                         ? 'rgba(59, 130, 246, 0.12)'
                         : isMatching
                           ? 'rgba(34, 197, 94, 0.06)'
-                          : 'rgba(255,255,255,0.025)',
+                          : 'var(--nested-block-bg)',
                       border: isSelected
                         ? '1px solid rgba(59, 130, 246, 0.4)'
                         : isMatching
@@ -776,7 +776,7 @@ export function ModelPoolPickerDialog({
         </div>
 
         {/* 底部：摘要 + 确认 */}
-        <div className="shrink-0 rounded-[12px] p-3 flex items-center justify-between gap-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+        <div className="shrink-0 rounded-[12px] p-3 flex items-center justify-between gap-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
           <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
             已选择 {bindingSelectedIds.length} 个模型池
             {bindingSelectedIds.length > 1 && ' · 多个池按优先级调度'}
@@ -899,8 +899,8 @@ function PlatformSourceItem({
         </span>
       ) : typeof count === 'number' ? (
         <span
-          className="shrink-0 text-[10px] px-1 rounded"
-          style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+          className="shrink-0 text-[10px] px-1 rounded bg-token-nested"
+          style={{ color: 'var(--text-muted)' }}
         >
           {count}
         </span>

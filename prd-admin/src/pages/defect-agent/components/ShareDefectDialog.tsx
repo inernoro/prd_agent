@@ -174,12 +174,8 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
                 <select
                   value={projectId}
                   onChange={(e) => setProjectId(e.target.value)}
-                  className="w-full h-9 rounded-lg px-3 text-sm"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-9 rounded-lg px-3 text-sm bg-token-nested border border-token-subtle"
+                  style={{ color: 'var(--text-primary)' }}
                 >
                   <option value="">请选择...</option>
                   {projects.map((p) => (
@@ -227,19 +223,15 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
               <input
                 readOnly
                 value={shareUrl}
-                className="flex-1 h-9 rounded-lg px-3 text-sm"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-primary)',
-                }}
+                className="flex-1 h-9 rounded-lg px-3 text-sm bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
               />
               <Button variant="secondary" size="sm" onClick={handleCopy}>
                 {copied ? <Check size={14} /> : <Copy size={14} />}
               </Button>
             </div>
 
-            <div className="rounded-lg p-3 text-xs" style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+            <div className="rounded-lg p-3 text-xs bg-token-nested border border-token-subtle" style={{ color: 'var(--text-muted)' }}>
               <div>域名：{agentLaunch?.domain || window.location.origin}</div>
               <div>认证：{tempApiKey ? 'Authorization: Bearer <临时密钥>' : '未签发；打开分享链接后一键创建临时密钥'}</div>
               <div>范围：{agentLaunch?.scope.type || scope} {agentLaunch?.scope.defectCount ? `(${agentLaunch.scope.defectCount} 个缺陷)` : ''}</div>
@@ -259,12 +251,8 @@ export function ShareDefectDialog({ open, onClose, defectId, defectIds }: ShareD
                 <input
                   readOnly
                   value={tempApiKey}
-                  className="w-full h-9 rounded-lg px-3 text-xs font-mono"
-                  style={{
-                    background: 'rgba(255,255,255,0.06)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-9 rounded-lg px-3 text-xs font-mono bg-token-nested border border-token-subtle"
+                  style={{ color: 'var(--text-primary)' }}
                 />
                 <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
                   明文密钥只显示一次，过期时间：{formatExpiry(tempKeyExpiresAt)}
@@ -330,8 +318,8 @@ function ScopeBtn({ active, onClick, children }: { active: boolean; onClick: () 
       onClick={onClick}
       className="h-8 px-3 rounded-lg text-xs font-medium transition-all"
       style={{
-        background: active ? 'rgba(255,255,255,0.12)' : 'rgba(255,255,255,0.04)',
-        border: `1px solid ${active ? 'rgba(255,255,255,0.25)' : 'rgba(255,255,255,0.08)'}`,
+        background: active ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
+        border: `1px solid ${active ? 'var(--border-subtle)' : 'var(--border-subtle)'}`,
         color: active ? 'var(--text-primary)' : 'var(--text-muted)',
       }}
     >

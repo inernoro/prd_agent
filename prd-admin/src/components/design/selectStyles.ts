@@ -20,7 +20,7 @@ export function selectTriggerClass(args: {
   return cn(
     selectTriggerBase,
     selectPaddingLeft(args.hasLeftIcon),
-    'hover:border-white/20',
+    'hover:border-token-subtle',
     'focus-visible:ring-2 focus-visible:ring-white/20',
     selectSizeClass(args.uiSize),
     args.disabled ? 'opacity-60 cursor-not-allowed' : 'cursor-pointer',
@@ -30,7 +30,7 @@ export function selectTriggerClass(args: {
 
 export const selectTriggerStyle: React.CSSProperties = {
   background: 'var(--bg-input)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  border: '1px solid var(--border-subtle)',
   color: 'var(--text-primary)',
   whiteSpace: 'nowrap',
   overflow: 'hidden',
@@ -54,9 +54,9 @@ export const selectViewportStyle: React.CSSProperties = {
 
 export const selectItemClass = cn(
   'px-3 py-2 rounded-[8px] text-sm cursor-pointer outline-none whitespace-nowrap',
-  'hover:bg-white/8',
-  'focus:bg-white/8',
-  'data-[highlighted]:bg-white/8',
+  'hover-bg-soft',
+  'focus:bg-token-nested',
+  'data-[highlighted]:bg-token-nested',
   'data-[disabled]:opacity-40 data-[disabled]:pointer-events-none'
 );
 

@@ -161,7 +161,7 @@ function EditorInner({
       insertImageChip: (option: ImageOption, opts?: { ready?: boolean; preserveFocus?: boolean }) => {
         // 保存当前焦点元素（用于 preserveFocus 模式）
         const prevActiveElement = opts?.preserveFocus ? document.activeElement as HTMLElement | null : null;
-        
+
         editor.update(() => {
           const root = $getRoot();
           const chipNode = $createImageChipNode({
@@ -171,7 +171,7 @@ function EditorInner({
             label: option.label,
             ready: opts?.ready, // 默认 undefined/false = 灰色待选
           });
-          
+
           // 直接在编辑器末尾追加节点
           const lastChild = root.getLastChild();
           if ($isParagraphNode(lastChild)) {
@@ -196,7 +196,7 @@ function EditorInner({
             root.append(para);
           }
         }, { discrete: true }); // discrete: 避免触发不必要的副作用
-        
+
         // 恢复焦点：requestAnimationFrame 确保在 Lexical 内部调度完成后执行
         if (prevActiveElement) {
           requestAnimationFrame(() => {
@@ -415,7 +415,7 @@ function EditorInner({
               overflowY: 'auto',
               padding: 0,
               background: 'transparent',
-              color: 'var(--text-primary, rgba(255,255,255,0.9))',
+              color: 'var(--text-primary, var(--text-primary))',
               fontSize: 14,
               lineHeight: '20px',
               ...style,
@@ -430,7 +430,7 @@ function EditorInner({
               left: 0,
               right: 0,
               pointerEvents: 'none',
-              color: 'var(--text-muted, rgba(255,255,255,0.4))',
+              color: 'var(--text-muted, var(--text-muted))',
               fontSize: 14,
               lineHeight: '20px',
               userSelect: 'none',

@@ -87,7 +87,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle bg-token-nested" >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -229,7 +229,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
             </div>
 
             {total > pageSize && (
-              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+              <div className="flex justify-between items-center pt-4 mt-4 border-t border-token-subtle">
                 <div className="text-sm text-muted-foreground">共 {total} 条</div>
                 <div className="flex gap-2">
                   <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
@@ -288,7 +288,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                 </Badge>
               </div>
 
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
 
               {/* 基本信息 */}
               <div>
@@ -307,7 +307,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
                 </div>
               </div>
 
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
 
               {/* 时间信息 */}
               <div>
@@ -333,7 +333,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
               {/* Token 使用 */}
               {(selectedLog.inputTokens !== null || selectedLog.outputTokens !== null) && (
                 <>
-                  <div className="border-t border-white/10" />
+                  <div className="border-t border-token-subtle" />
                   <div>
                     <h4 className="text-sm font-medium mb-3">Token 使用</h4>
                     <div className="grid grid-cols-3 gap-3">
@@ -370,7 +370,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
               {/* 错误信息 */}
               {selectedLog.errorCode && (
                 <>
-                  <div className="border-t border-white/10" />
+                  <div className="border-t border-token-subtle" />
                   <div>
                     <h4 className="text-sm font-medium mb-3 text-red-400">错误信息</h4>
                     <div
@@ -384,7 +384,7 @@ export default function LogsPanel({ onActionsReady }: LogsPanelProps) {
               )}
 
               {/* 操作按钮 */}
-              <div className="flex justify-end pt-4 border-t border-white/10">
+              <div className="flex justify-end pt-4 border-t border-token-subtle">
                 <Button onClick={() => setDetailOpen(false)}>关闭</Button>
               </div>
             </div>

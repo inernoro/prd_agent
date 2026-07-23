@@ -157,7 +157,7 @@ export function ShortVideoMaterialDialog({ storeId, storeName, onClose, onCreate
                 type="button"
                 onClick={submit}
                 disabled={!canSubmit}
-                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-[8px] bg-token-accent px-4 text-[13px] font-semibold text-white transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
+                className="inline-flex h-10 w-full items-center justify-center gap-2 rounded-[8px] bg-token-accent px-4 text-[13px] font-semibold text-token-primary transition-opacity disabled:cursor-not-allowed disabled:opacity-50"
               >
                 {running ? <Loader2 size={16} className="animate-spin" /> : <Video size={16} />}
                 {running ? '解析入库中' : '解析为知识库素材'}

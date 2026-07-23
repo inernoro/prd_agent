@@ -211,7 +211,7 @@ function ManagerList({ icon: Icon, hint, items, footer, addPlaceholder, onAdd, o
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3 max-w-2xl">
-      <div className="shrink-0 flex items-start gap-2 text-xs text-white/45 px-1">
+      <div className="shrink-0 flex items-start gap-2 text-xs text-token-muted px-1">
         <Icon size={14} className="mt-0.5 shrink-0 text-cyan-400/70" /> {hint}
       </div>
 
@@ -222,7 +222,7 @@ function ManagerList({ icon: Icon, hint, items, footer, addPlaceholder, onAdd, o
             onChange={(e) => setAdding(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') submitAdd(); }}
             placeholder={addPlaceholder}
-            className="flex-1 px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25"
+            className="flex-1 px-3 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted"
           />
           <button
             onClick={submitAdd}
@@ -236,13 +236,13 @@ function ManagerList({ icon: Icon, hint, items, footer, addPlaceholder, onAdd, o
 
       <div className="flex-1 min-h-0 overflow-y-auto flex flex-col gap-1.5" style={{ overscrollBehavior: 'contain' }}>
         {items.length === 0 ? (
-          <div className="text-xs text-white/35 text-center py-12 px-6">{empty}</div>
+          <div className="text-xs text-token-muted text-center py-12 px-6">{empty}</div>
         ) : (
           items.map((it) => {
             const id = idOf(it);
             const isEditing = editing === id;
             return (
-              <div key={id} className="pa-row flex items-center gap-2 px-3 py-2 rounded-lg bg-white/[0.03] border border-white/5">
+              <div key={id} className="pa-row flex items-center gap-2 px-3 py-2 rounded-lg bg-token-nested border border-token-subtle">
                 {isEditing ? (
                   <>
                     <input
@@ -253,17 +253,17 @@ function ManagerList({ icon: Icon, hint, items, footer, addPlaceholder, onAdd, o
                         if (e.key === 'Enter') { void onRename(id, editValue); setEditing(null); }
                         if (e.key === 'Escape') setEditing(null);
                       }}
-                      className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white outline-none focus:border-cyan-500/40"
+                      className="flex-1 bg-token-nested border border-token-subtle rounded px-2 py-1 text-sm text-token-primary outline-none focus:border-cyan-500/40"
                     />
                     <button onClick={() => { void onRename(id, editValue); setEditing(null); }} className="text-cyan-300 hover:text-cyan-200 p-1" title="保存"><Check size={14} /></button>
-                    <button onClick={() => setEditing(null)} className="text-white/40 hover:text-white p-1" title="取消"><X size={14} /></button>
+                    <button onClick={() => setEditing(null)} className="text-token-muted hover-text-primary p-1" title="取消"><X size={14} /></button>
                   </>
                 ) : (
                   <>
-                    <span className="flex-1 text-sm text-white/85 truncate">{it.name}</span>
-                    {it.desc && <span className="text-[11px] text-white/35 shrink-0">{it.desc}</span>}
-                    <button onClick={() => { setEditing(id); setEditValue(it.name); }} className="text-white/40 hover:text-cyan-300 p-1 shrink-0" title="改名"><Pencil size={13} /></button>
-                    <button onClick={() => void onDelete(id)} className="text-white/40 hover:text-red-300 p-1 shrink-0" title="删除"><Trash2 size={13} /></button>
+                    <span className="flex-1 text-sm text-token-primary truncate">{it.name}</span>
+                    {it.desc && <span className="text-[11px] text-token-muted shrink-0">{it.desc}</span>}
+                    <button onClick={() => { setEditing(id); setEditValue(it.name); }} className="text-token-muted hover:text-cyan-300 p-1 shrink-0" title="改名"><Pencil size={13} /></button>
+                    <button onClick={() => void onDelete(id)} className="text-token-muted hover:text-red-300 p-1 shrink-0" title="删除"><Trash2 size={13} /></button>
                   </>
                 )}
               </div>
@@ -271,7 +271,7 @@ function ManagerList({ icon: Icon, hint, items, footer, addPlaceholder, onAdd, o
           })
         )}
       </div>
-      {footer && <div className="shrink-0 text-[11px] text-white/30 px-1">{footer}</div>}
+      {footer && <div className="shrink-0 text-[11px] text-token-muted px-1">{footer}</div>}
     </div>
   );
 }

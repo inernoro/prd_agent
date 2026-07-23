@@ -102,23 +102,23 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center bg-black/60 backdrop-blur-sm">
       <div
-        className="relative w-full max-w-lg mx-4 rounded-2xl border border-white/10 shadow-2xl"
+        className="relative w-full max-w-lg mx-4 rounded-2xl border border-token-subtle shadow-2xl"
         style={{ background: 'var(--bg-primary, #1a1a2e)' }}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-6 py-4 border-b border-white/8">
-          <h2 className="text-base font-semibold text-white/90 flex items-center gap-2">
+        <div className="flex items-center justify-between px-6 py-4 border-b border-token-subtle">
+          <h2 className="text-base font-semibold text-token-primary flex items-center gap-2">
             <Bell className="w-4 h-4" />
             Webhook 通知配置
           </h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white/80 cursor-pointer">
+          <button onClick={onClose} className="text-token-muted hover-text-primary cursor-pointer">
             <X className="w-5 h-5" />
           </button>
         </div>
 
         {/* Body */}
         <div className="px-6 py-4 max-h-[60vh] overflow-y-auto">
-          <p className="text-xs text-white/40 mb-4">
+          <p className="text-xs text-token-muted mb-4">
             评审完成后自动推送评分结果到企微/钉钉/飞书群聊。
           </p>
 
@@ -128,15 +128,15 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
 
           {/* Webhook list */}
           {loading ? (
-            <div className="text-center py-8 text-white/30 text-sm">加载中...</div>
+            <div className="text-center py-8 text-token-muted text-sm">加载中...</div>
           ) : webhooks.length === 0 && !showForm ? (
-            <div className="text-center py-8 text-white/30 text-sm">暂未配置 Webhook</div>
+            <div className="text-center py-8 text-token-muted text-sm">暂未配置 Webhook</div>
           ) : (
             <div className="flex flex-col gap-2 mb-3">
               {webhooks.map((wh) => (
                 <div
                   key={wh.id}
-                  className="rounded-lg border border-white/8 bg-white/3 px-3 py-2.5"
+                  className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5"
                 >
                   <div className="flex items-center justify-between mb-1">
                     <div className="flex items-center gap-2">
@@ -149,7 +149,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                       >
                         {ReviewWebhookChannelLabels[wh.channel] || wh.channel}
                       </span>
-                      {wh.name && <span className="text-xs text-white/70">{wh.name}</span>}
+                      {wh.name && <span className="text-xs text-token-secondary">{wh.name}</span>}
                       <span className="text-[10px]" style={{ color: wh.isEnabled ? 'rgba(34,197,94,0.6)' : 'rgba(156,163,175,0.5)' }}>
                         {wh.isEnabled ? '已启用' : '已禁用'}
                       </span>
@@ -159,20 +159,20 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                     </div>
                     <div className="flex items-center gap-0.5">
                       <button onClick={() => handleTest(wh)} disabled={testingId === wh.id}
-                        className="p-1 rounded hover:bg-white/10 cursor-pointer" title="测试">
-                        <TestTube className="w-3.5 h-3.5 text-white/40" />
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title="测试">
+                        <TestTube className="w-3.5 h-3.5 text-token-muted" />
                       </button>
                       <button onClick={() => handleToggle(wh)}
-                        className="p-1 rounded hover:bg-white/10 cursor-pointer" title={wh.isEnabled ? '禁用' : '启用'}>
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title={wh.isEnabled ? '禁用' : '启用'}>
                         <Bell className="w-3.5 h-3.5" style={{ color: wh.isEnabled ? 'rgba(34,197,94,0.7)' : 'rgba(156,163,175,0.5)' }} />
                       </button>
                       <button onClick={() => handleDelete(wh.id)}
-                        className="p-1 rounded hover:bg-white/10 cursor-pointer" title="删除">
+                        className="p-1 rounded hover-bg-soft cursor-pointer" title="删除">
                         <Trash2 className="w-3.5 h-3.5 text-red-400/60" />
                       </button>
                     </div>
                   </div>
-                  <div className="text-[10px] text-white/30 truncate">{wh.webhookUrl}</div>
+                  <div className="text-[10px] text-token-muted truncate">{wh.webhookUrl}</div>
                   <div className="flex gap-1 mt-1">
                     {wh.triggerEvents.map((evt) => (
                       <span key={evt} className="text-[9px] px-1.5 py-0.5 rounded bg-indigo-500/10 text-indigo-400/70">
@@ -187,12 +187,12 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
 
           {/* Create form */}
           {showForm && (
-            <div className="rounded-lg border border-white/10 bg-white/3 p-3 mb-3 flex flex-col gap-2.5">
-              <div className="text-xs font-medium text-white/70">新建 Webhook</div>
+            <div className="rounded-lg border border-token-subtle bg-token-nested p-3 mb-3 flex flex-col gap-2.5">
+              <div className="text-xs font-medium text-token-secondary">新建 Webhook</div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/40">渠道</label>
+                <label className="text-[10px] text-token-muted">渠道</label>
                 <select
-                  className="text-xs px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-white/80"
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
                   value={formChannel}
                   onChange={(e) => setFormChannel(e.target.value)}
                 >
@@ -202,20 +202,20 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                 </select>
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/40">备注名称（可选）</label>
+                <label className="text-[10px] text-token-muted">备注名称（可选）</label>
                 <input
                   type="text"
-                  className="text-xs px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-white/80"
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
                   placeholder="如：产品群"
                   value={formName}
                   onChange={(e) => setFormName(e.target.value)}
                 />
               </div>
               <div className="flex flex-col gap-1">
-                <label className="text-[10px] text-white/40">Webhook URL</label>
+                <label className="text-[10px] text-token-muted">Webhook URL</label>
                 <input
                   type="url"
-                  className="text-xs px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-white/80"
+                  className="text-xs px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-token-primary"
                   placeholder="粘贴群机器人的 Webhook URL"
                   value={formUrl}
                   onChange={(e) => setFormUrl(e.target.value)}
@@ -229,7 +229,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                     onChange={(e) => setFormMentionAll(e.target.checked)}
                     className="accent-indigo-500"
                   />
-                  <span className="text-[11px] text-white/60">@所有人（需群主身份，开启后消息改为纯文本格式）</span>
+                  <span className="text-[11px] text-token-secondary">@所有人（需群主身份，开启后消息改为纯文本格式）</span>
                 </label>
               )}
               <div className="flex items-center gap-2 pt-1">
@@ -242,7 +242,7 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
                 </button>
                 <button
                   onClick={() => setShowForm(false)}
-                  className="text-xs px-3 py-1.5 rounded-md text-white/50 hover:text-white/80 cursor-pointer"
+                  className="text-xs px-3 py-1.5 rounded-md text-token-secondary hover-text-primary cursor-pointer"
                 >
                   取消
                 </button>
@@ -252,18 +252,18 @@ export function ReviewAgentWebhookModal({ open, onClose }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="flex items-center justify-between px-6 py-3 border-t border-white/8">
+        <div className="flex items-center justify-between px-6 py-3 border-t border-token-subtle">
           {!showForm ? (
             <button
               onClick={() => setShowForm(true)}
-              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-white/5 hover:bg-white/10 text-white/60 hover:text-white/80 border border-white/10 cursor-pointer"
+              className="flex items-center gap-1 text-xs px-3 py-1.5 rounded-md bg-token-nested hover-bg-soft text-token-secondary hover-text-primary border border-token-subtle cursor-pointer"
             >
               <Plus className="w-3.5 h-3.5" /> 添加 Webhook
             </button>
           ) : <div />}
           <button
             onClick={onClose}
-            className="text-xs px-3 py-1.5 rounded-md text-white/50 hover:text-white/80 cursor-pointer"
+            className="text-xs px-3 py-1.5 rounded-md text-token-secondary hover-text-primary cursor-pointer"
           >
             关闭
           </button>

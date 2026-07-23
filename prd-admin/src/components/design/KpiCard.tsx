@@ -108,8 +108,8 @@ export function KpiCard({
           >
             {loading ? (
               <span
-                className="inline-block w-16 h-7 rounded-lg animate-pulse"
-                style={{ background: 'rgba(255,255,255,0.06)' }}
+                className="inline-block w-16 h-7 rounded-lg animate-pulse bg-token-nested"
+
               />
             ) : animated && typeof value === 'number' ? (
               <CountUp to={value} duration={2} separator="," />

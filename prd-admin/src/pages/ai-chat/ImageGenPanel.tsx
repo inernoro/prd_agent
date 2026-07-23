@@ -455,7 +455,7 @@ export default function ImageGenPanel() {
                     <div
                       key={it.key}
                       className="rounded-[16px] p-3"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                      style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
                     >
                       <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                         {it.status === 'error' ? '失败' : it.status === 'done' ? '完成' : it.status === 'running' ? '生成中' : '等待'}
@@ -484,8 +484,8 @@ export default function ImageGenPanel() {
                           className="w-full rounded-[12px] overflow-hidden"
                           style={{
                             height: 180,
-                            background: 'rgba(0,0,0,0.18)',
-                            border: '1px solid rgba(255,255,255,0.10)',
+                            background: 'var(--nested-block-bg)',
+                            border: '1px solid var(--border-subtle)',
                             position: 'relative',
                           }}
                           onClick={() => {
@@ -519,8 +519,8 @@ export default function ImageGenPanel() {
                             <div
                               className="absolute left-2 bottom-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center pointer-events-none"
                               style={{
-                                border: '1px solid rgba(255,255,255,0.10)',
-                                background: 'rgba(0,0,0,0.20)',
+                                border: '1px solid var(--border-subtle)',
+                                background: 'var(--nested-block-bg)',
                                 color: 'var(--text-secondary)',
                               }}
                               title="点击放大预览"
@@ -537,8 +537,8 @@ export default function ImageGenPanel() {
                               className={[
                                 'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                 'transition-all duration-150',
-                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                'hover-bg-soft hover-border-token hover:-translate-y-px',
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -556,8 +556,8 @@ export default function ImageGenPanel() {
                               className={[
                                 'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                 'transition-all duration-150',
-                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                'hover-bg-soft hover-border-token hover:-translate-y-px',
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -575,8 +575,8 @@ export default function ImageGenPanel() {
                               className={[
                                 'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                 'transition-all duration-150',
-                                'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                'hover-bg-soft hover-border-token hover:-translate-y-px',
                               ].join(' ')}
                               onClick={(e) => {
                                 e.stopPropagation();
@@ -592,7 +592,7 @@ export default function ImageGenPanel() {
                           </div>
                         </div>
                       ) : (
-                        <div className="h-[180px] rounded-[12px] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.10)' }}>
+                        <div className="h-[180px] rounded-[12px] flex items-center justify-center" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
                           <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
                             {it.status === 'error' ? (it.errorMessage || '生图失败') : '暂无内容'}
                           </span>
@@ -642,7 +642,7 @@ export default function ImageGenPanel() {
           value={prompt}
           onChange={(e) => setPrompt(e.target.value)}
           className="mt-4 w-full min-h-[120px] rounded-[16px] px-4 py-3 text-sm outline-none"
-          style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+          style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
           placeholder="输入生图提示词（也用于批量 plan）"
         />
 
@@ -670,7 +670,7 @@ export default function ImageGenPanel() {
         ) : null}
 
         {planResult ? (
-          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}>
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               批量计划：{planResult.total} 张（{planResult.items?.length ?? 0} 项）
             </div>
@@ -685,7 +685,7 @@ export default function ImageGenPanel() {
         ) : null}
 
         {batchRunning || batchLog ? (
-          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+          <div className="mt-4 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}>
             <div className="flex items-center justify-between gap-3">
               <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
                 批量进度
@@ -746,7 +746,7 @@ export default function ImageGenPanel() {
               </div>
             ) : null}
 
-            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)' }}>
+            <div className="flex-1 min-h-0 overflow-auto rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)' }}>
               {imagePreview.src ? (
                 <div className="w-full h-full flex items-center justify-center">
                   <img

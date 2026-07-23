@@ -46,11 +46,8 @@ export function ColorPicker({ value, onChange, title }: ColorPickerProps) {
         <Popover.Trigger asChild>
           <button
             type="button"
-            className="h-5 w-5 rounded-[3px] cursor-pointer transition-transform hover:scale-105 shrink-0"
-            style={{
-              background: value,
-              border: '1px solid rgba(255,255,255,0.2)',
-            }}
+            className="h-5 w-5 rounded-[3px] cursor-pointer transition-transform hover:scale-105 shrink-0 border border-token-subtle"
+            style={{ background: value }}
             title={title}
           />
         </Popover.Trigger>

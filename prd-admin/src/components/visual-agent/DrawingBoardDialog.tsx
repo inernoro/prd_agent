@@ -452,7 +452,7 @@ export function DrawingBoardDialog({
           {/* Brush size */}
           <button
             type="button"
-            className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10"
+            className="w-5 h-5 flex items-center justify-center rounded hover-bg-soft"
             style={{ color: 'rgba(255,255,255,0.5)' }}
             onClick={() => setBrushIdx(i => Math.max(0, i - 1))}
           >
@@ -469,7 +469,7 @@ export function DrawingBoardDialog({
           />
           <button
             type="button"
-            className="w-5 h-5 flex items-center justify-center rounded hover:bg-white/10"
+            className="w-5 h-5 flex items-center justify-center rounded hover-bg-soft"
             style={{ color: 'rgba(255,255,255,0.5)' }}
             onClick={() => setBrushIdx(i => Math.min(BRUSH_SIZES.length - 1, i + 1))}
           >
@@ -507,7 +507,7 @@ export function DrawingBoardDialog({
           {/* Upload reference */}
           <button
             type="button"
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all hover:bg-white/10"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all hover-bg-soft"
             style={{ color: 'rgba(255,255,255,0.55)' }}
             title="上传参考图"
             onClick={handleUploadRef}
@@ -518,7 +518,7 @@ export function DrawingBoardDialog({
           {/* Clear */}
           <button
             type="button"
-            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all hover:bg-white/10"
+            className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs transition-all hover-bg-soft"
             style={{ color: 'rgba(255,255,255,0.55)' }}
             onClick={handleClear}
           >
@@ -658,7 +658,7 @@ export function DrawingBoardDialog({
                       <button
                         key={idx}
                         type="button"
-                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all hover:bg-white/10"
+                        className="flex items-center gap-1 px-2 py-1 rounded text-[10px] font-medium transition-all hover-bg-soft"
                         style={{
                           color: 'rgba(34,197,94,0.9)',
                           border: '1px solid rgba(34,197,94,0.25)',

@@ -275,7 +275,7 @@ export function LlmGenerationsView() {
     );
   };
 
-  const selectStyle: CSSProperties = { background: 'var(--bg-input, rgba(255,255,255,0.04))', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', borderRadius: 8, height: 30, padding: '0 8px', fontSize: 12 };
+  const selectStyle: CSSProperties = { background: 'var(--bg-input, var(--nested-block-bg))', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', borderRadius: 8, height: 30, padding: '0 8px', fontSize: 12 };
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
@@ -284,7 +284,7 @@ export function LlmGenerationsView() {
         <div className="shrink-0 flex items-center gap-2 overflow-x-auto pb-1" style={{ overscrollBehavior: 'contain' }}>
           <div className="inline-flex rounded-lg overflow-hidden shrink-0" style={{ border: '1px solid var(--border-subtle)' }}>
             {TIME_RANGE_PRESETS.map((p) => (
-              <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium whitespace-nowrap" style={{ background: presetKey === p.key ? 'var(--bg-elevated, rgba(255,255,255,0.08))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
+              <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium whitespace-nowrap" style={{ background: presetKey === p.key ? 'var(--bg-elevated, var(--nested-block-bg))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
             ))}
           </div>
           <select value={filterModel} onChange={(e) => setFilterModel(e.target.value)} style={{ ...selectStyle, maxWidth: 140 }} className="shrink-0">
@@ -316,7 +316,7 @@ export function LlmGenerationsView() {
             </select>
             <div className="inline-flex rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
               {TIME_RANGE_PRESETS.map((p) => (
-                <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium" style={{ background: presetKey === p.key ? 'var(--bg-elevated, rgba(255,255,255,0.08))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
+                <button key={p.key} onClick={() => setPresetKey(p.key)} className="px-2.5 h-[30px] text-[11px] font-medium" style={{ background: presetKey === p.key ? 'var(--bg-elevated, var(--nested-block-bg))' : 'transparent', color: presetKey === p.key ? 'var(--text-primary)' : 'var(--text-muted)' }}>{p.label}</button>
               ))}
             </div>
             <Button variant="secondary" size="sm" onClick={refresh} disabled={loading || sessLoading}>

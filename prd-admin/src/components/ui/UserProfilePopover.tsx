@@ -113,19 +113,19 @@ export function UserProfilePopover({
   const [profile, setProfile] = useState<UserProfileResponse | null>(null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
-  
+
   // 权限相关状态
   const [authz, setAuthz] = useState<AdminUserAuthzSnapshot | null>(null);
   const [systemRoles, setSystemRoles] = useState<SystemRoleDto[]>([]);
   const [authzLoading, setAuthzLoading] = useState(false);
   const [authzExpanded, setAuthzExpanded] = useState(false);
-  
+
   // Popover 控制状态
   const [open, setOpen] = useState(false);
   const [isClicked, setIsClicked] = useState(false);
   const hoverTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
   const leaveTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null);
-  
+
   const canAuthzManage = useAuthStore((s) => Array.isArray(s.permissions) && s.permissions.includes('authz.manage'));
 
   const loadProfile = useCallback(async () => {
@@ -145,7 +145,7 @@ export function UserProfilePopover({
       setLoading(false);
     }
   }, [userId, profile, loading]);
-  
+
   const loadAuthz = async () => {
     if (authz || authzLoading || !canAuthzManage) return;
     setAuthzLoading(true);
@@ -179,7 +179,7 @@ export function UserProfilePopover({
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
     }
-    
+
     // 延迟打开，给用户反应时间
     if (!open && !isClicked) {
       hoverTimeoutRef.current = setTimeout(() => {
@@ -195,7 +195,7 @@ export function UserProfilePopover({
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
     }
-    
+
     // 如果不是点击锁定状态，延迟关闭
     if (!isClicked) {
       leaveTimeoutRef.current = setTimeout(() => {
@@ -207,7 +207,7 @@ export function UserProfilePopover({
   // 处理点击打开/关闭
   const handleTriggerClick = useCallback((e: React.MouseEvent) => {
     e.stopPropagation();
-    
+
     if (hoverTimeoutRef.current) {
       clearTimeout(hoverTimeoutRef.current);
       hoverTimeoutRef.current = null;
@@ -216,7 +216,7 @@ export function UserProfilePopover({
       clearTimeout(leaveTimeoutRef.current);
       leaveTimeoutRef.current = null;
     }
-    
+
     if (open && isClicked) {
       // 已经是点击打开状态，再次点击关闭
       setOpen(false);
@@ -260,10 +260,10 @@ export function UserProfilePopover({
     avatarFileName: avatarFileName ?? null,
     avatarUrl,
   });
-  
+
   const currentRole = profile?.role || role || 'DEV';
   const roleCfg = roleIconConfig[currentRole] || roleIconConfig.DEV;
-  
+
   // 获取系统角色名称
   const getSystemRoleName = (key: string | null | undefined) => {
     if (!key || key === 'none') return '无角色';
@@ -308,7 +308,7 @@ export function UserProfilePopover({
               {/* 头部信息 */}
               <div className="flex items-center gap-2.5">
                 {/* 头像（点击可修改） */}
-                <div 
+                <div
                   className="relative h-10 w-10 rounded-[10px] overflow-hidden shrink-0 ring-1 ring-white/10 cursor-pointer group"
                   onClick={(e) => {
                     e.stopPropagation();
@@ -325,7 +325,7 @@ export function UserProfilePopover({
                   />
                   {/* 编辑悬浮层 */}
                   <div className="absolute inset-0 flex items-center justify-center bg-black/40 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Pencil size={14} className="text-white" />
+                    <Pencil size={14} className="text-token-primary" />
                   </div>
                   {/* 角色图标（右下角） */}
                   <span
@@ -523,7 +523,7 @@ export function UserProfilePopover({
                 <div className="pt-2 border-t border-token-subtle">
                   <button
                     type="button"
-                    className="flex items-center justify-between w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover:bg-white/5"
+                    className="flex items-center justify-between w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover-bg-soft"
                     onClick={(e) => {
                       e.stopPropagation();
                       if (!authz && !authzLoading) {
@@ -538,7 +538,7 @@ export function UserProfilePopover({
                     </div>
                     {authzExpanded ? <ChevronUp size={12} /> : <ChevronDown size={12} />}
                   </button>
-                  
+
                   {authzExpanded && (
                     <div className="mt-2 px-2 space-y-2">
                       {authzLoading ? (
@@ -550,12 +550,12 @@ export function UserProfilePopover({
                           {/* 系统角色 */}
                           <div className="flex items-center justify-between">
                             <span className="text-[10px] text-token-muted">系统角色：</span>
-                            <span 
+                            <span
                               className="text-[10px] font-medium px-1.5 py-0.5 rounded-[4px]"
-                              style={{ 
-                                background: authz.effectiveSystemRoleKey && authz.effectiveSystemRoleKey !== 'none' 
-                                  ? 'rgba(99,102,241,0.12)' 
-                                  : 'rgba(255,255,255,0.04)',
+                              style={{
+                                background: authz.effectiveSystemRoleKey && authz.effectiveSystemRoleKey !== 'none'
+                                  ? 'rgba(99,102,241,0.12)'
+                                  : 'var(--nested-block-bg)',
                                 color: authz.effectiveSystemRoleKey && authz.effectiveSystemRoleKey !== 'none'
                                   ? 'var(--accent-gold)'
                                   : 'var(--text-muted)',
@@ -564,7 +564,7 @@ export function UserProfilePopover({
                               {getSystemRoleName(authz.effectiveSystemRoleKey)}
                             </span>
                           </div>
-                          
+
                           {/* 权限数量统计 */}
                           <div className="flex items-center gap-3 text-[10px] text-token-muted">
                             {authz.permAllow.length > 0 && (
@@ -581,7 +581,7 @@ export function UserProfilePopover({
                               <span>无额外权限配置</span>
                             )}
                           </div>
-                          
+
                           {/* 显示角色包含的权限（前5个） */}
                           {(() => {
                             const roleData = systemRoles.find((r) => r.key === authz.effectiveSystemRoleKey);
@@ -633,7 +633,7 @@ export function UserProfilePopover({
               <div className="pt-2 border-t border-token-subtle">
                 <button
                   type="button"
-                  className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover:bg-white/5"
+                  className="flex items-center gap-1.5 w-full px-2 py-1.5 rounded-[6px] text-[11px] text-token-secondary transition-colors hover-bg-soft"
                   onClick={(e) => {
                     e.stopPropagation();
                     setOpen(false);

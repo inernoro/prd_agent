@@ -4,7 +4,7 @@ import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
 
 /**
  * PageHeader 组件
- * 
+ *
  * 注意：完全避免使用 color-mix() 函数（兼容性问题，详见 Card.tsx 注释）
  */
 type PageHeaderProps = {
@@ -37,7 +37,7 @@ export function PageHeader(props: PageHeaderProps) {
             onClick={() => handleChange(tab.key)}
             className={`flex items-center gap-2 px-3 h-[28px] text-[12px] font-semibold transition-all duration-150 shrink-0 whitespace-nowrap ${active ? 'rounded-[9px]' : ''}`}
             style={{
-              color: active ? '#ffffff' : 'rgba(255, 255, 255, 0.75)',
+              color: active ? '#ffffff' : 'var(--text-secondary)',
               background: active ? 'var(--gold-gradient)' : 'transparent',
               boxShadow: active
                 ? '0 2px 8px -1px rgba(99, 102, 241, 0.45), 0 0 0 1px rgba(255, 255, 255, 0.12) inset'

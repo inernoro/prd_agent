@@ -323,8 +323,7 @@ export function NotificationSubscriptionsPanel() {
           <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             推送方式
             <select
-              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              className="prd-field h-9 rounded-[8px] px-2 text-[12px] outline-none"
               value={selectedPresetKey}
               onChange={(e) => {
                 const preset = presets.find((item) => item.key === e.target.value);
@@ -340,8 +339,7 @@ export function NotificationSubscriptionsPanel() {
           <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             请求方式
             <select
-              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              className="prd-field h-9 rounded-[8px] px-2 text-[12px] outline-none"
               value={draft.method}
               disabled={isBark}
               onChange={(e) => update({ method: e.target.value as 'GET' | 'POST' })}
@@ -353,8 +351,7 @@ export function NotificationSubscriptionsPanel() {
           <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
             Content-Type
             <input
-              className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-              style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+              className="prd-field h-9 rounded-[8px] px-2 text-[12px] outline-none"
               value={draft.contentType}
               disabled={isBark}
               onChange={(e) => update({ contentType: e.target.value })}
@@ -368,8 +365,7 @@ export function NotificationSubscriptionsPanel() {
               <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Bark Key
                 <input
-                  className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                   placeholder="只填写 Bark 推送 Key"
                   value={draft.barkKey || ''}
                   onChange={(e) => update({ barkKey: e.target.value })}
@@ -378,14 +374,13 @@ export function NotificationSubscriptionsPanel() {
               <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Bark 服务地址
                 <input
-                  className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                   value={draft.barkServerUrl || 'https://api.day.app'}
                   onChange={(e) => update({ barkServerUrl: e.target.value })}
                 />
               </label>
             </div>
-            <details className="rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+            <details className="surface-inset rounded-[10px] px-3 py-2">
               <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
                 高级参数
               </summary>
@@ -394,8 +389,7 @@ export function NotificationSubscriptionsPanel() {
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     分组模板
                     <input
-                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                       value={draft.barkGroup || ''}
                       onChange={(e) => update({ barkGroup: e.target.value })}
                     />
@@ -403,8 +397,7 @@ export function NotificationSubscriptionsPanel() {
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     声音
                     <input
-                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      className="prd-field h-9 rounded-[8px] px-2 text-[12px] outline-none"
                       placeholder="默认"
                       value={draft.barkSound || ''}
                       onChange={(e) => update({ barkSound: e.target.value })}
@@ -413,8 +406,7 @@ export function NotificationSubscriptionsPanel() {
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     时效级别
                     <select
-                      className="h-9 rounded-[8px] border px-2 text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      className="prd-field h-9 rounded-[8px] px-2 text-[12px] outline-none"
                       value={draft.barkLevel || ''}
                       onChange={(e) => update({ barkLevel: e.target.value })}
                     >
@@ -430,8 +422,7 @@ export function NotificationSubscriptionsPanel() {
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     跳转 URL 模板
                     <input
-                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                       value={draft.barkUrlTemplate || ''}
                       onChange={(e) => update({ barkUrlTemplate: e.target.value })}
                     />
@@ -439,8 +430,7 @@ export function NotificationSubscriptionsPanel() {
                   <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     图标 URL 模板
                     <input
-                      className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                      style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                      className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                       value={draft.barkIcon || ''}
                       onChange={(e) => update({ barkIcon: e.target.value })}
                     />
@@ -449,8 +439,7 @@ export function NotificationSubscriptionsPanel() {
                 <label className="flex min-w-0 flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   图片 URL 模板
                   <input
-                    className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                    style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                    className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                     value={draft.barkImageTemplate || ''}
                     onChange={(e) => update({ barkImageTemplate: e.target.value })}
                   />
@@ -472,8 +461,7 @@ export function NotificationSubscriptionsPanel() {
             <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
               URL 模板
               <input
-                className="h-9 rounded-[8px] border px-2 font-mono text-[12px] outline-none"
-                style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                className="prd-field h-9 rounded-[8px] px-2 font-mono text-[12px] outline-none"
                 placeholder="https://api.day.app/YOUR_KEY/MAP System-{{appname}}/{{message}}"
                 value={draft.urlTemplate}
                 onChange={(e) => update({ urlTemplate: e.target.value })}
@@ -483,8 +471,7 @@ export function NotificationSubscriptionsPanel() {
               <label className="flex flex-col gap-1.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 Body 模板
                 <textarea
-                  className="min-h-[82px] resize-y rounded-[8px] border px-2 py-2 font-mono text-[12px] leading-relaxed outline-none"
-                  style={{ borderColor: 'rgba(255,255,255,0.12)', background: 'rgba(10,10,14,0.55)', color: 'var(--text-primary)' }}
+                  className="prd-field min-h-[82px] resize-y rounded-[8px] px-2 py-2 font-mono text-[12px] leading-relaxed outline-none"
                   value={draft.bodyTemplate || ''}
                   onChange={(e) => update({ bodyTemplate: e.target.value })}
                 />
@@ -535,10 +522,7 @@ export function NotificationSubscriptionsPanel() {
         </div>
       )}
 
-      <section
-        className="rounded-[14px] border px-4 py-3"
-        style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.045)' }}
-      >
+      <section className="surface-inset rounded-[14px] px-4 py-3">
         <div className="flex items-start justify-between gap-3">
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
@@ -551,9 +535,9 @@ export function NotificationSubscriptionsPanel() {
                   key={item.key}
                   className="rounded-full border px-2.5 py-1 text-[12px]"
                   style={{
-                    borderColor: item.configured ? 'rgba(34,197,94,0.35)' : 'rgba(255,255,255,0.1)',
-                    background: item.configured ? 'rgba(34,197,94,0.12)' : 'rgba(255,255,255,0.045)',
-                    color: item.configured ? '#86efac' : 'var(--text-muted)',
+                    borderColor: item.configured ? 'var(--semantic-success-border)' : 'var(--border-subtle)',
+                    background: item.configured ? 'var(--semantic-success-soft)' : 'var(--bg-nested)',
+                    color: item.configured ? 'var(--semantic-success-text)' : 'var(--text-muted)',
                   }}
                 >
                   {item.label} · {item.configured ? '已配置' : '未配置'}
@@ -561,9 +545,9 @@ export function NotificationSubscriptionsPanel() {
               ))}
             </div>
           </div>
-          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px]" style={{ background: 'rgba(129,140,248,0.16)', color: '#c7d2fe' }}>{defaultChannelName}</span>
+          <span className="shrink-0 rounded-full px-2 py-0.5 text-[10px]" style={{ background: 'var(--semantic-info-soft)', color: 'var(--semantic-info-text)' }}>{defaultChannelName}</span>
         </div>
-        <details className="mt-3 rounded-[10px] border px-3 py-2" style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(255,255,255,0.025)' }}>
+        <details className="surface-inset mt-3 rounded-[10px] px-3 py-2">
           <summary className="cursor-pointer text-[12px]" style={{ color: 'var(--text-secondary)' }}>
             配置默认推送通道
           </summary>
@@ -573,11 +557,8 @@ export function NotificationSubscriptionsPanel() {
         </details>
       </section>
 
-      <section
-        className="flex min-h-0 flex-1 flex-col rounded-[14px] border"
-        style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.035)' }}
-      >
-        <div className="shrink-0 border-b px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+      <section className="surface-inset flex min-h-0 flex-1 flex-col rounded-[14px]">
+        <div className="shrink-0 border-b border-token-subtle px-4 py-3">
           <div className="flex items-center justify-between gap-2">
             <div className="flex items-center gap-1.5 text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
               <SlidersHorizontal size={14} />
@@ -606,10 +587,10 @@ export function NotificationSubscriptionsPanel() {
                   role="button"
                   aria-pressed={draft.enabled}
                   tabIndex={0}
-                  className="grid min-h-[86px] min-w-0 cursor-pointer grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-[12px] border px-3 py-3 text-left outline-none transition-all hover:border-indigo-300/50 hover:bg-white/[0.055] focus-visible:ring-2 focus-visible:ring-indigo-300/50 active:scale-[0.995]"
+                  className="hover-bg-soft grid min-h-[86px] min-w-0 cursor-pointer grid-cols-[40px_minmax(0,1fr)] items-center gap-3 rounded-[12px] border px-3 py-3 text-left outline-none transition-all hover:border-indigo-300/50 focus-visible:ring-2 focus-visible:ring-indigo-300/50 active:scale-[0.995]"
                   style={{
-                    borderColor: selected ? 'rgba(129,140,248,0.62)' : advancedSelected ? 'rgba(255,255,255,0.16)' : 'rgba(255,255,255,0.08)',
-                    background: selected ? 'rgba(99,102,241,0.16)' : 'rgba(255,255,255,0.025)',
+                    borderColor: selected ? 'var(--semantic-info-border)' : advancedSelected ? 'var(--border-default)' : 'var(--border-subtle)',
+                    background: selected ? 'var(--semantic-info-soft)' : 'var(--bg-nested)',
                     boxShadow: selected ? 'inset 0 0 0 1px rgba(129,140,248,0.18)' : 'none',
                   }}
                   onClick={() => toggleTopicEnabled(topic.key)}
@@ -627,8 +608,8 @@ export function NotificationSubscriptionsPanel() {
                       <span
                         className="shrink-0 rounded-full px-1.5 py-0.5 text-[10px]"
                         style={{
-                          background: draft.enabled ? 'rgba(34,197,94,0.14)' : 'rgba(255,255,255,0.06)',
-                          color: draft.enabled ? '#86efac' : 'var(--text-muted)',
+                          background: draft.enabled ? 'var(--semantic-success-soft)' : 'var(--bg-nested)',
+                          color: draft.enabled ? 'var(--semantic-success-text)' : 'var(--text-muted)',
                         }}
                       >
                         {draft.enabled ? '接收' : '关闭'}
@@ -641,7 +622,7 @@ export function NotificationSubscriptionsPanel() {
                       <span className="truncate text-[11px]" style={{ color: draft.enabled ? 'var(--text-secondary)' : 'var(--text-muted)' }}>
                         {statusText}
                       </span>
-                      {draft.enabled && <CheckCircle2 size={14} className="shrink-0" style={{ color: '#a5b4fc' }} />}
+                      {draft.enabled && <CheckCircle2 size={14} className="shrink-0" style={{ color: 'var(--semantic-info-text)' }} />}
                     </div>
                   </div>
                 </div>
@@ -651,7 +632,7 @@ export function NotificationSubscriptionsPanel() {
         </div>
 
         {selectedTopic && selectedDraft && (
-          <div className="shrink-0 border-t px-4 py-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+          <div className="shrink-0 border-t border-token-subtle px-4 py-3">
             <div className="flex flex-wrap items-center justify-between gap-2">
               <div className="min-w-0 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                 当前测试：<span style={{ color: 'var(--text-secondary)' }}>{selectedTopic.label}</span>
@@ -659,8 +640,7 @@ export function NotificationSubscriptionsPanel() {
               <div className="flex items-center gap-2">
                 <button
                   type="button"
-                  className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
-                  style={{ background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                  className="surface-action hover-bg-soft inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] text-token-primary transition-all active:scale-[0.97] disabled:opacity-60"
                   onClick={() => testTopic(selectedTopic.key)}
                   disabled={testingKey === selectedTopic.key || savingKey !== null}
                 >
@@ -670,11 +650,11 @@ export function NotificationSubscriptionsPanel() {
                 <button
                   type="button"
                   className="inline-flex items-center gap-1.5 rounded-full px-3 py-1.5 text-[12px] transition-all hover:brightness-110 active:scale-[0.97] disabled:opacity-60"
-                  style={{ background: 'var(--accent-gold)', color: '#1a1a1a' }}
+                  style={{ background: 'var(--accent-gold)', color: 'var(--button-primary-fg)' }}
                   onClick={() => saveAllTopics()}
                   disabled={savingKey !== null || testingKey === selectedTopic.key}
                 >
-                  {savingKey ? <MapSpinner size={12} color="#1a1a1a" /> : <Save size={13} />}
+                  {savingKey ? <MapSpinner size={12} color="var(--button-primary-fg)" /> : <Save size={13} />}
                   保存默认通道和接收范围
                 </button>
               </div>

@@ -239,7 +239,7 @@ export function StatsPanel() {
                     <span
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
                       style={{
-                        background: idx < 3 ? 'rgba(99,102,241,0.2)' : 'rgba(255,255,255,0.06)',
+                        background: idx < 3 ? 'rgba(99,102,241,0.2)' : 'var(--nested-block-bg)',
                         color: idx < 3 ? 'rgba(99,102,241,0.9)' : 'var(--text-muted)',
                       }}
                     >
@@ -276,7 +276,7 @@ export function StatsPanel() {
                     <span
                       className="w-5 h-5 rounded-full flex items-center justify-center text-[10px] font-bold shrink-0"
                       style={{
-                        background: idx < 3 ? 'rgba(249,115,22,0.2)' : 'rgba(255,255,255,0.06)',
+                        background: idx < 3 ? 'rgba(249,115,22,0.2)' : 'var(--nested-block-bg)',
                         color: idx < 3 ? 'rgba(249,115,22,0.9)' : 'var(--text-muted)',
                       }}
                     >

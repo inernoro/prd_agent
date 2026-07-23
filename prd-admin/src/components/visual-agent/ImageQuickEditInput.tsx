@@ -53,7 +53,7 @@ export function ImageQuickEditInput({
           : 'rgba(32, 32, 38, 0.92)',
         border: focused
           ? '1px solid rgba(99, 102, 241, 0.50)'
-          : '1px solid rgba(255, 255, 255, 0.14)',
+          : '1px solid var(--border-subtle)',
         boxShadow: focused
           ? '0 8px 32px rgba(0,0,0,0.45), 0 0 0 2px rgba(99, 102, 241, 0.18)'
           : '0 8px 32px rgba(0,0,0,0.45), 0 0 0 1px rgba(255,255,255,0.06) inset',
@@ -64,7 +64,7 @@ export function ImageQuickEditInput({
       {/* 快捷编辑标签 */}
       <span
         className="shrink-0 text-[11px] font-medium select-none whitespace-nowrap"
-        style={{ color: 'rgba(255, 255, 255, 0.40)' }}
+        style={{ color: 'var(--text-muted)' }}
       >
         快捷编辑
       </span>
@@ -73,8 +73,8 @@ export function ImageQuickEditInput({
       <input
         ref={inputRef}
         type="text"
-        className="flex-1 min-w-0 h-full bg-transparent text-[13px] placeholder:text-white/25"
-        style={{ color: 'rgba(255, 255, 255, 0.88)', outline: 'none', border: 'none', boxShadow: 'none' }}
+        className="flex-1 min-w-0 h-full bg-transparent text-[13px] placeholder:text-token-muted"
+        style={{ color: 'var(--text-primary)', outline: 'none', border: 'none', boxShadow: 'none' }}
         placeholder="Describe your edit here"
         value={text}
         onChange={(e) => setText(e.target.value)}

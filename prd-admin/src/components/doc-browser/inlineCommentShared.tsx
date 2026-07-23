@@ -101,7 +101,7 @@ export function CommentLine({
             </button>
           )}
         </div>
-        <p className="text-[12px] whitespace-pre-wrap break-words mt-0.5" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>
+        <p className="text-[12px] whitespace-pre-wrap break-words mt-0.5" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
           {comment.content}
         </p>
       </div>
@@ -139,8 +139,8 @@ export function ReplyBox({
           }
         }}
         placeholder={placeholder}
-        className="flex-1 h-7 rounded-[8px] px-2.5 text-[11.5px] outline-none"
-        style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.09)', color: 'var(--text-primary)' }}
+        className="flex-1 h-7 rounded-[8px] px-2.5 text-[11.5px] outline-none bg-token-nested border border-token-subtle"
+        style={{ color: 'var(--text-primary)' }}
       />
       <button
         onClick={submit}

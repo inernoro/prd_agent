@@ -58,9 +58,9 @@ function DescTemplatePicker({ onApply }: { onApply: (content: string) => void })
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
+          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-token-subtle bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
             {templates.map((t) => (
-              <button key={t.id} type="button" onClick={() => { onApply(t.content); setOpen(false); }} className="w-full text-left px-2.5 py-1.5 rounded text-sm text-white/80 hover:bg-white/5 truncate" title={t.name}>{t.name}</button>
+              <button key={t.id} type="button" onClick={() => { onApply(t.content); setOpen(false); }} className="w-full text-left px-2.5 py-1.5 rounded text-sm text-token-primary hover-bg-soft truncate" title={t.name}>{t.name}</button>
             ))}
           </div>
         </>
@@ -102,7 +102,7 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
           onChange={(e) => setText(e.target.value)}
           rows={3}
           placeholder={speech.listening ? '正在聆听，说出需求背景、客户、要改的功能模块…' : '粘贴或语音输入原始需求，AI 自动拆解并回填标题、来源、客户、父需求、关联功能等字段…'}
-          className="flex-1 min-w-0 bg-black/20 border border-white/10 rounded-md px-2.5 py-2 text-[13px] text-white outline-none focus:border-cyan-500/40 resize-none placeholder:text-white/25"
+          className="flex-1 min-w-0 bg-token-nested border border-token-subtle rounded-md px-2.5 py-2 text-[13px] text-token-primary outline-none focus:border-cyan-500/40 resize-none placeholder-token-muted"
         />
         <div className="flex items-center gap-2 shrink-0">
           {speech.supported && !isStreaming && (
@@ -110,13 +110,13 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
               type="button"
               onClick={toggleVoice}
               title={speech.listening ? '停止语音输入' : '语音输入'}
-              className={`flex items-center justify-center w-8 h-8 rounded-md border text-xs ${speech.listening ? 'border-red-400/50 text-red-200 bg-red-500/10' : 'border-white/15 text-white/60 hover:bg-white/5'}`}
+              className={`flex items-center justify-center w-8 h-8 rounded-md border text-xs ${speech.listening ? 'border-red-400/50 text-red-200 bg-red-500/10' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
             >
               {speech.listening ? <MicOff size={14} /> : <Mic size={14} />}
             </button>
           )}
           {isStreaming ? (
-            <button type="button" onClick={abort} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-white/15 text-white/70 text-xs"><MapSpinner size={13} /> 停止</button>
+            <button type="button" onClick={abort} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md border border-token-subtle text-token-secondary text-xs"><MapSpinner size={13} /> 停止</button>
           ) : (
             <button type="button" onClick={runFill} disabled={!text.trim()} className="flex items-center gap-1 px-2.5 py-1.5 rounded-md bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-xs disabled:opacity-40">
               <Sparkles size={13} /> 智能填充
@@ -125,8 +125,8 @@ function AiFillBar({ productId, templateId, onFill }: { productId: string; templ
         </div>
       </div>
       {speech.listening && <div className="mt-1.5 text-[11px] text-red-200/80">正在录音，说完点麦克风停止或直接智能填充</div>}
-      {phase !== 'idle' && <div className={`mt-1.5 text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-white/45'}`}>{phaseMessage}</div>}
-      {isStreaming && typing && <div className="mt-1.5 text-[11px] text-white/40 font-mono max-h-16 overflow-y-auto whitespace-pre-wrap">{typing}</div>}
+      {phase !== 'idle' && <div className={`mt-1.5 text-[11px] ${phase === 'error' ? 'text-red-300/80' : 'text-token-muted'}`}>{phaseMessage}</div>}
+      {isStreaming && typing && <div className="mt-1.5 text-[11px] text-token-muted font-mono max-h-16 overflow-y-auto whitespace-pre-wrap">{typing}</div>}
     </div>
   );
 }
@@ -136,7 +136,7 @@ function RequirementOriginSelect({ value, onChange }: { value: RequirementOrigin
     <select
       value={value}
       onChange={(e) => onChange(e.target.value as RequirementOriginValue)}
-      className="w-full h-9 rounded-[8px] border border-white/12 bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring"
+      className="w-full h-9 rounded-[8px] border border-token-subtle bg-[var(--bg-input)] px-2.5 text-[13px] text-token-primary outline-none focus:border-cyan-500/40 no-focus-ring"
     >
       {REQUIREMENT_ORIGIN_OPTIONS.map((o) => (
         <option key={o.value || '__empty'} value={o.value}>{o.label}</option>
@@ -153,7 +153,7 @@ function GradePicker({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: Item
           key={g}
           type="button"
           onClick={() => setGrade(g)}
-          className={`px-2 py-0.5 rounded text-[12px] border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/45 border-white/10 hover:bg-white/5'}`}
+          className={`px-2 py-0.5 rounded text-[12px] border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-token-muted border-token-subtle hover-bg-soft'}`}
         >
           {ITEM_GRADE_LABEL[g]}
         </button>
@@ -321,13 +321,13 @@ export function RequirementCreateForm({
   const cancel = useSmartBack('/product-agent');
 
   return (
-    <div className="flex flex-col gap-0 w-full rounded-lg border border-white/10 bg-[#0f1014] overflow-hidden">
+    <div className="flex flex-col gap-0 w-full rounded-lg border border-token-subtle bg-[#0f1014] overflow-hidden">
       {/* TAPD 顶栏：类型 + 操作 */}
-      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-white/8 bg-[#13151a]">
+      <div className="flex items-center gap-3 px-4 py-2.5 border-b border-token-subtle bg-[#13151a]">
         <span className="text-[12px] px-2 py-0.5 rounded text-amber-200 bg-amber-500/15 border border-amber-500/25">需求</span>
-        <span className="text-[12px] text-white/35">新建</span>
+        <span className="text-[12px] text-token-muted">新建</span>
         {initialStateLabel && (
-          <span className="text-[11px] px-2 py-0.5 rounded bg-white/[0.06] text-white/70 border border-white/10">
+          <span className="text-[11px] px-2 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle">
             {initialStateLabel}
           </span>
         )}
@@ -337,7 +337,7 @@ export function RequirementCreateForm({
               {validationError}
             </span>
           )}
-          <button type="button" onClick={cancel} className="shrink-0 px-3 py-1.5 rounded-md text-[13px] text-white/60 border border-white/10 hover:bg-white/5">取消</button>
+          <button type="button" onClick={cancel} className="shrink-0 px-3 py-1.5 rounded-md text-[13px] text-token-secondary border border-token-subtle hover-bg-soft">取消</button>
           <button type="button" onClick={() => void create()} disabled={saving || !!validationError || !title.trim()}
             title={validationError ?? undefined}
             className="shrink-0 flex items-center gap-1.5 px-3.5 py-1.5 rounded-md text-[13px] bg-cyan-500 text-slate-950 font-medium hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed">
@@ -347,22 +347,22 @@ export function RequirementCreateForm({
       </div>
 
       {/* 标题行（TAPD：全宽单行输入） */}
-      <div className="px-4 py-3 border-b border-white/8 bg-[#111318]">
+      <div className="px-4 py-3 border-b border-token-subtle bg-[#111318]">
         <input
           value={title}
           onChange={(e) => setTitle(e.target.value)}
           placeholder="请输入标题"
-          className="w-full bg-transparent text-lg font-medium text-white outline-none placeholder:text-white/25"
+          className="w-full bg-transparent text-lg font-medium text-token-primary outline-none placeholder-token-muted"
         />
       </div>
 
       {/* 双栏：左描述 / 右属性（全宽 TAPD 约 7:3） */}
       <div className="grid grid-cols-1 xl:grid-cols-[minmax(0,1fr)_minmax(360px,420px)] gap-0 items-stretch">
-        <div className="flex flex-col gap-4 p-5 xl:p-6 border-b xl:border-b-0 xl:border-r border-white/8 min-h-[560px]">
+        <div className="flex flex-col gap-4 p-5 xl:p-6 border-b xl:border-b-0 xl:border-r border-token-subtle min-h-[560px]">
           <AiFillBar productId={productId} templateId={template?.id} onFill={onAiFill} />
-          <div className="flex-1 flex flex-col rounded-lg border border-white/10 bg-[#13151a] overflow-hidden min-h-[460px]">
-            <div className="flex items-center justify-between px-3 py-2 border-b border-white/8 shrink-0">
-              <span className="text-[12px] text-white/55">详情描述</span>
+          <div className="flex-1 flex flex-col rounded-lg border border-token-subtle bg-[#13151a] overflow-hidden min-h-[460px]">
+            <div className="flex items-center justify-between px-3 py-2 border-b border-token-subtle shrink-0">
+              <span className="text-[12px] text-token-secondary">详情描述</span>
               <DescTemplatePicker onApply={(c) => setDescription((p) => mergeDesc(p, c))} />
             </div>
             <div className="flex-1 min-h-0 p-2">
@@ -392,8 +392,8 @@ export function RequirementCreateForm({
                     value={formData[originDetail.formKey] ?? ''}
                     onChange={(e) => setFormData((d) => ({ ...d, [originDetail.formKey]: e.target.value }))}
                     placeholder={`请输入${originDetail.label}`}
-                    className={`w-full h-9 rounded-[8px] border bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder:text-white/25 ${
-                      validationError?.includes(originDetail.label) ? 'border-amber-400/50' : 'border-white/12'
+                    className={`w-full h-9 rounded-[8px] border bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring placeholder-token-muted ${
+                      validationError?.includes(originDetail.label) ? 'border-amber-400/50' : 'border-token-subtle'
                     }`}
                   />
                 )}

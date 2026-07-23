@@ -126,11 +126,8 @@ export function ConfigCard<T extends IConfigCardItem>({
             >
               {/* 左侧内容 */}
               <div
-                className="overflow-auto border rounded-[6px]"
-                style={{
-                  borderColor: 'rgba(255,255,255,0.08)',
-                  background: 'rgba(255,255,255,0.02)',
-                }}
+                className="overflow-auto border rounded-[6px] border-token-subtle bg-token-nested"
+
               >
                 {renderContent?.(item)}
               </div>
@@ -142,12 +139,8 @@ export function ConfigCard<T extends IConfigCardItem>({
             </div>
           ) : (
             <div
-              className="overflow-auto border rounded-[6px]"
-              style={{
-                height: `${contentHeight}px`,
-                borderColor: 'rgba(255,255,255,0.08)',
-                background: 'rgba(255,255,255,0.02)',
-              }}
+              className="overflow-auto border rounded-[6px] border-token-subtle bg-token-nested"
+              style={{ height: `${contentHeight}px` }}
             >
               {renderContent?.(item)}
             </div>
@@ -365,8 +358,8 @@ export const ImagePreview: React.FC<{
       style={{
         background: hasValidImage
           ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-          : 'rgba(255,255,255,0.02)',
-        border: hasValidImage ? 'none' : '1px solid rgba(255,255,255,0.08)',
+          : 'var(--nested-block-bg)',
+        border: hasValidImage ? 'none' : '1px solid var(--border-subtle)',
         cursor: hasValidImage && onClick ? 'zoom-in' : 'default',
       }}
       onClick={hasValidImage ? onClick : undefined}

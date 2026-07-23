@@ -232,9 +232,9 @@ export function UserSearchSelect({
         width: pos.width,
         maxHeight: pos.maxHeight,
         zIndex: 9999,
-        background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
-        border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-        boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+        background: 'var(--panel-solid)',
+        border: '1px solid var(--border-subtle)',
+        boxShadow: 'var(--shadow-glass-panel)',
         backdropFilter: 'blur(40px) saturate(180%)',
         WebkitBackdropFilter: 'blur(40px) saturate(180%)',
       }}
@@ -245,14 +245,14 @@ export function UserSearchSelect({
         {showAllOption && !q && (
           <>
             <div
-              className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+              className="hover-bg-soft flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors"
               style={!value ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
               onClick={() => {
                 onChange('');
                 closePanel();
               }}
             >
-              <div className="w-8 h-8 rounded-full flex items-center justify-center shrink-0" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div className="bg-token-nested w-8 h-8 rounded-full flex items-center justify-center shrink-0">
                 <Users size={14} style={{ color: 'var(--text-muted)' }} />
               </div>
               <span className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>
@@ -260,7 +260,7 @@ export function UserSearchSelect({
               </span>
               {!value && <Check size={14} className="ml-auto shrink-0" style={{ color: 'var(--accent-gold)' }} />}
             </div>
-            <div className="mx-3 my-0.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }} />
+            <div className="mx-3 my-0.5 border-b border-token-subtle" />
           </>
         )}
 
@@ -280,7 +280,7 @@ export function UserSearchSelect({
             return (
               <div
                 key={u.userId}
-                className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                className="hover-bg-soft flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors"
                 style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                 onClick={() => {
                   onChange(u.userId);
@@ -328,7 +328,7 @@ export function UserSearchSelect({
       </div>
 
       {/* Footer count */}
-      <div className="px-3 py-1.5 text-[10px] shrink-0" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+      <div className="px-3 py-1.5 text-[10px] shrink-0 border-t border-token-subtle" style={{ color: 'var(--text-muted)' }}>
         {q ? `${filtered.length} / ${users.length} 人匹配` : `共 ${users.length} 人`}
       </div>
     </div>,
@@ -342,7 +342,7 @@ export function UserSearchSelect({
         className={`flex items-center gap-2 ${triggerHeight} w-full ${triggerRadius} px-2.5 ${triggerFontSize}`}
         style={{
           background: 'var(--bg-input)',
-          border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
+          border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-subtle)',
           color: 'var(--text-primary)',
           ...style,
         }}

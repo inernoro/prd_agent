@@ -77,7 +77,7 @@ function StatCell({ icon: Icon, value }: { icon: typeof FolderOpen; value?: numb
   const v = value ?? 0;
   if (v === 0) return <span className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>-</span>;
   return (
-    <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+    <span className="inline-flex items-center gap-1 text-[11px] text-token-secondary">
       <Icon size={11} style={{ color: 'var(--text-tertiary)' }} />
       {v}
     </span>
@@ -371,7 +371,7 @@ export default function UsersPage() {
     setCreateSubmitting(false);
     setCreateMiduoMobile('');
     setCreateOpen(true);
-    
+
     // 加载系统角色列表
     try {
       const res = await getSystemRoles();
@@ -402,7 +402,7 @@ export default function UsersPage() {
         setCreateError(res.error?.message || '创建失败');
         return;
       }
-      
+
       // 设置权限角色
       if (createSystemRoleKey && createSystemRoleKey !== 'none') {
         try {
@@ -415,10 +415,10 @@ export default function UsersPage() {
           // 权限设置失败不影响用户创建成功
         }
       }
-      
+
       toast.success('创建成功', `用户 ${res.data.username} 已创建，可继续设置头像`);
       setCreateOpen(false);
-      
+
       // 打开头像编辑对话框
       setAvatarTargetUser({
         userId: res.data.userId,
@@ -431,7 +431,7 @@ export default function UsersPage() {
         avatarUrl: null,
       });
       setAvatarOpen(true);
-      
+
       await load();
     } finally {
       setCreateSubmitting(false);
@@ -501,7 +501,7 @@ export default function UsersPage() {
 
   const onSwitchToUser = async (u: UserRow) => {
     if (!u?.userId) return;
-    
+
     const confirmed = await systemDialog.confirm({
       title: '切换用户登录',
       message: `确定要切换到用户 "${u.displayName}" (${u.username}) 登录吗？\n\n切换后将以该用户身份进行操作，当前管理员会话将被替换。`,
@@ -509,9 +509,9 @@ export default function UsersPage() {
       confirmText: '确认切换',
       cancelText: '取消',
     });
-    
+
     if (!confirmed) return;
-    
+
     setSwitchingUserId(u.userId);
     try {
       const res = await adminImpersonate(u.userId, 3600); // 1小时有效期
@@ -519,7 +519,7 @@ export default function UsersPage() {
         toast.error(res.error?.message || '切换用户失败');
         return;
       }
-      
+
       // 更新认证状态（补充 avatar 信息，API 未返回但 UserRow 中有）
       authLogin(
         {
@@ -822,7 +822,7 @@ export default function UsersPage() {
 
     try {
       const res = await initializeUsers();
-      
+
       if (!res.success) {
         toast.error('初始化失败', res.error?.message || '初始化用户失败');
         return;
@@ -942,15 +942,14 @@ export default function UsersPage() {
           <div className={`flex items-center gap-2.5 ${isMobile ? 'w-full' : 'min-w-0'}`}>
             <div className={`${isMobile ? 'flex-1 min-w-0' : 'flex-1 min-w-[200px] max-w-[320px]'}`}>
               <div className="relative">
-                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={15} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
                   value={search}
                   onChange={(e) => {
                     setSearch(e.target.value);
                     setPage(1);
                   }}
-                  className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20"
-                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
+                  className="h-[36px] w-full rounded-[10px] pl-9 pr-4 text-[13px] outline-none transition-all duration-200 focus:ring-2 focus:ring-[var(--accent-gold)]/20 bg-token-nested border border-token-subtle text-token-primary"
                   placeholder="搜索用户名或昵称"
                 />
               </div>
@@ -991,15 +990,15 @@ export default function UsersPage() {
               <Link2 size={12} className="mr-1" />
               SSO 接入
             </Button>
-            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
             <Button variant="secondary" size="xs" onClick={openCreateUser}>
               创建用户
             </Button>
-            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleForceExpireAll}>
               一键过期
             </Button>
-            <div className="mx-0.5 h-6 w-px bg-white/8" aria-hidden />
+            <div className="mx-0.5 h-6 w-px bg-token-nested" aria-hidden />
             <Button variant="danger" size="xs" onClick={handleInitializeUsers}>
               初始化
             </Button>
@@ -1022,11 +1021,11 @@ export default function UsersPage() {
                 onChange={toggleSelectAll}
                 className="accent-[var(--accent-gold)]"
               />
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>
+              <span className="text-[12px] font-medium text-token-primary">
                 全选
               </span>
             </label>
-            <span className="text-[12px]" style={{ color: 'var(--text-secondary)' }}>
+            <span className="text-[12px] text-token-secondary">
               已选 {selectedUserIds.size} 个用户
             </span>
             <div className="ml-auto flex items-center gap-2">
@@ -1056,7 +1055,7 @@ export default function UsersPage() {
           {loading ? (
             <MapSectionLoader />
           ) : items.length === 0 ? (
-            <div className="py-12 text-center text-sm" style={{ color: 'var(--text-muted)' }}>
+            <div className="py-12 text-center text-sm text-token-muted">
               暂无数据
             </div>
           ) : (
@@ -1104,7 +1103,7 @@ export default function UsersPage() {
                     return (
                       <tr
                         key={u.userId}
-                        className="group transition-colors hover:bg-white/[0.03]"
+                        className="group transition-colors hover-bg-soft/[0.03]"
                         style={{ borderBottom: '1px solid var(--border-primary)' }}
                       >
                         {/* 选择框 */}
@@ -1159,7 +1158,7 @@ export default function UsersPage() {
                             </UserProfilePopover>
                             <div className="min-w-0">
                               <div className="flex items-center gap-1.5">
-                                <span className="text-[12px] font-semibold truncate max-w-[140px]" style={{ color: 'var(--text-primary)' }} title={displayName}>
+                                <span className="text-[12px] font-semibold truncate max-w-[140px] text-token-primary" title={displayName}>
                                   {displayName}
                                 </span>
                                 {isBot && (
@@ -1168,7 +1167,7 @@ export default function UsersPage() {
                                   </span>
                                 )}
                               </div>
-                              <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }} title={`@${u.username}`}>
+                              <div className="text-[11px] truncate text-token-muted" title={`@${u.username}`}>
                                 @{u.username}
                               </div>
                             </div>
@@ -1260,14 +1259,14 @@ export default function UsersPage() {
                         </td>
 
                         {/* 最后活跃 */}
-                        <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                        <td className="py-2 px-2 whitespace-nowrap text-token-muted">
                           {fmtRelativeTime(u.lastActiveAt || u.lastLoginAt) || (
                             <span style={{ color: 'var(--text-tertiary)' }}>-</span>
                           )}
                         </td>
 
                         {/* 创建时间 */}
-                        <td className="py-2 px-2 whitespace-nowrap" style={{ color: 'var(--text-muted)' }}>
+                        <td className="py-2 px-2 whitespace-nowrap text-token-muted">
                           {u.createdAt ? new Date(u.createdAt).toLocaleDateString() : '-'}
                         </td>
 
@@ -1277,8 +1276,7 @@ export default function UsersPage() {
                             <DropdownMenu.Trigger asChild>
                               <button
                                 type="button"
-                                className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors opacity-0 group-hover:opacity-100 hover:bg-white/10"
-                                style={{ color: 'var(--text-secondary)' }}
+                                className="inline-flex items-center justify-center h-6 w-6 rounded-[6px] transition-colors opacity-0 group-hover:opacity-100 hover-bg-soft text-token-secondary"
                                 aria-label="更多操作"
                               >
                                 <MoreVertical size={14} />
@@ -1293,7 +1291,7 @@ export default function UsersPage() {
                                 style={{ zIndex: 90, ...glassPanel }}
                               >
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft"
                                   style={{ color: u.status === 'Active' ? 'rgba(239,68,68,0.9)' : 'rgba(34,197,94,0.9)' }}
                                   disabled={statusUpdatingUserId === u.userId}
                                   onSelect={(e) => { e.preventDefault(); onToggleStatus(u); }}
@@ -1305,8 +1303,7 @@ export default function UsersPage() {
 
                                 <DropdownMenu.Sub>
                                   <DropdownMenu.SubTrigger
-                                    className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                    style={{ color: 'var(--text-primary)' }}
+                                    className="flex items-center justify-between gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   >
                                     切换角色
                                     <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6" /></svg>
@@ -1319,7 +1316,7 @@ export default function UsersPage() {
                                         return (
                                           <DropdownMenu.Item
                                             key={r}
-                                            className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
+                                            className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft"
                                             style={{ color: u.role === r ? meta.color : 'var(--text-primary)' }}
                                             disabled={roleUpdatingUserId === u.userId || u.role === r}
                                             onSelect={(e) => { e.preventDefault(); onSetRole(u, r); }}
@@ -1338,8 +1335,7 @@ export default function UsersPage() {
 
                                 {isLockedUser(u) && (
                                   <DropdownMenu.Item
-                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                    style={{ color: 'var(--text-primary)' }}
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                     disabled={unlockingUserId === u.userId}
                                     onSelect={(e) => { e.preventDefault(); onUnlock(u); }}
                                   >
@@ -1348,46 +1344,40 @@ export default function UsersPage() {
                                 )}
                                 {isHumanUser(u) && (
                                   <DropdownMenu.Item
-                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                    style={{ color: 'var(--text-primary)' }}
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                     onSelect={(e) => { e.preventDefault(); openChangeDisplayName(u); }}
                                   >
                                     <Pencil size={12} /> 修改姓名
                                   </DropdownMenu.Item>
                                 )}
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); openChangeAvatar(u); }}
                                 >
                                   修改头像
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); openChangePassword(u); }}
                                 >
                                   修改密码
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); openForceExpire(u); }}
                                 >
                                   一键过期
                                 </DropdownMenu.Item>
                                 {canAuthzManage && (
                                   <DropdownMenu.Item
-                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                    style={{ color: 'var(--text-primary)' }}
+                                    className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                     onSelect={(e) => { e.preventDefault(); void openUserAuthz(u); }}
                                   >
                                     后台权限
                                   </DropdownMenu.Item>
                                 )}
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); void openRateLimitConfig(u); }}
                                 >
                                   <Gauge size={12} /> 限流配置
@@ -1396,8 +1386,7 @@ export default function UsersPage() {
                                 <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   disabled={switchingUserId === u.userId}
                                   onSelect={(e) => { e.preventDefault(); onSwitchToUser(u); }}
                                 >
@@ -1407,15 +1396,13 @@ export default function UsersPage() {
                                 <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--nested-block-border)' }} />
 
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); navigate(`/logs?tab=llm&userId=${encodeURIComponent(u.userId)}`); }}
                                 >
                                   LLM 日志
                                 </DropdownMenu.Item>
                                 <DropdownMenu.Item
-                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover:bg-white/5"
-                                  style={{ color: 'var(--text-primary)' }}
+                                  className="flex items-center gap-2 rounded-[6px] px-2.5 py-1.5 text-[12px] outline-none cursor-pointer hover-bg-soft text-token-primary"
                                   onSelect={(e) => { e.preventDefault(); navigate(`/logs?tab=system&userId=${encodeURIComponent(u.userId)}`); }}
                                 >
                                   系统日志
@@ -1433,8 +1420,8 @@ export default function UsersPage() {
           )}
         </div>
 
-        <div className="mt-3 pt-3 flex items-center justify-between border-t border-white/8">
-          <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-3 pt-3 flex items-center justify-between border-t border-token-subtle">
+          <div className="text-[12px] text-token-muted">
             共 {total} 人 · 第 {page} / {Math.max(1, Math.ceil(total / 50))} 页
           </div>
           <div className="flex items-center gap-1.5">
@@ -1483,8 +1470,7 @@ export default function UsersPage() {
               {/* 头像预览（点击提示创建后可修改） */}
               <div className="shrink-0">
                 <div
-                  className="h-16 w-16 rounded-[12px] overflow-hidden flex items-center justify-center relative group cursor-pointer"
-                  style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)' }}
+                  className="h-16 w-16 rounded-[12px] overflow-hidden flex items-center justify-center relative group cursor-pointer bg-token-input-hover border border-token-default"
                   title="创建成功后可设置头像"
                   onClick={() => toast.info('提示', '请先完成用户创建，创建成功后将自动弹出头像设置')}
                 >
@@ -1495,18 +1481,18 @@ export default function UsersPage() {
                   />
                   {/* 悬浮提示 */}
                   <div className="absolute inset-0 flex items-center justify-center bg-black/50 opacity-0 group-hover:opacity-100 transition-opacity">
-                    <Pencil size={16} className="text-white" />
+                    <Pencil size={16} className="text-token-primary" />
                   </div>
                 </div>
-                <div className="text-[10px] text-center mt-1" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-[10px] text-center mt-1 text-token-muted">
                   创建后可改
                 </div>
               </div>
-              
+
               {/* 用户名 + 显示名称 */}
               <div className="flex-1 grid grid-cols-2 gap-3">
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>用户名</div>
+                  <div className="text-sm font-semibold text-token-secondary">用户名</div>
                   <input
                     value={createUsername}
                     onChange={(e) => {
@@ -1518,14 +1504,13 @@ export default function UsersPage() {
                         setCreateDisplayName(val);
                       }
                     }}
-                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                     placeholder="4-32位"
                     autoComplete="off"
                   />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>显示名称</div>
+                  <div className="text-sm font-semibold text-token-secondary">显示名称</div>
                   <input
                     value={createDisplayName}
                     onChange={(e) => {
@@ -1533,8 +1518,7 @@ export default function UsersPage() {
                       setCreateDisplayNameManuallyEdited(true);
                       setCreateError(null);
                     }}
-                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                     placeholder="自动同步"
                     autoComplete="off"
                   />
@@ -1545,7 +1529,7 @@ export default function UsersPage() {
             {/* 第二行：密码 */}
             <div className="grid grid-cols-2 gap-3">
               <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>密码</div>
+                <div className="text-sm font-semibold text-token-secondary">密码</div>
                 <input
                   value={createPwd}
                   onChange={(e) => {
@@ -1553,22 +1537,20 @@ export default function UsersPage() {
                     setCreateError(null);
                   }}
                   type="password"
-                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                   placeholder="设置登录密码"
                   autoComplete="new-password"
                 />
               </div>
               <div>
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>米多手机号</div>
+                <div className="text-sm font-semibold text-token-secondary">米多手机号</div>
                 <input
                   value={createMiduoMobile}
                   onChange={(e) => {
                     setCreateMiduoMobile(e.target.value);
                     setCreateError(null);
                   }}
-                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                   placeholder="可选，仅保存 hash"
                   autoComplete="off"
                 />
@@ -1579,17 +1561,16 @@ export default function UsersPage() {
             <div className="grid grid-cols-2 gap-4 items-stretch">
               {/* 角色选择 */}
               <div className="flex flex-col">
-                <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>角色</div>
+                <div className="text-sm font-semibold mb-2 text-token-secondary">角色</div>
                 <div
-                  className="rounded-[10px] p-2 space-y-1 flex-1 overflow-y-auto max-h-[260px]"
-                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                  className="rounded-[10px] p-2 space-y-1 flex-1 overflow-y-auto max-h-[260px] bg-token-nested border border-token-subtle"
                 >
                   {ALL_ROLES.map((key) => {
                     const meta = getRoleMeta(key);
                     return (
                       <label
                         key={key}
-                        className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                        className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover-bg-soft"
                       >
                         <input
                           type="radio"
@@ -1599,8 +1580,8 @@ export default function UsersPage() {
                           onChange={() => setCreateRole(key)}
                           className="accent-[var(--accent-gold)]"
                         />
-                        <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>{key}</span>
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.label}</span>
+                        <span className="text-[12px] font-medium text-token-primary">{key}</span>
+                        <span className="text-[11px] text-token-muted">{meta.label}</span>
                       </label>
                     );
                   })}
@@ -1609,10 +1590,9 @@ export default function UsersPage() {
 
               {/* 权限选择 */}
               <div className="flex flex-col">
-                <div className="text-sm font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>权限</div>
+                <div className="text-sm font-semibold mb-2 text-token-secondary">权限</div>
                 <div
-                  className="rounded-[10px] p-2 space-y-1 flex-1"
-                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
+                  className="rounded-[10px] p-2 space-y-1 flex-1 bg-token-nested border border-token-subtle"
                 >
                   {(createSystemRoles.length > 0 ? createSystemRoles : [
                     { key: 'admin', name: '管理员' },
@@ -1623,7 +1603,7 @@ export default function UsersPage() {
                   ]).map((r) => (
                     <label
                       key={r.key}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover:bg-white/5"
+                      className="flex items-center gap-2 px-2 py-1.5 rounded-[6px] cursor-pointer transition-colors hover-bg-soft"
                     >
                       <input
                         type="radio"
@@ -1633,7 +1613,7 @@ export default function UsersPage() {
                         onChange={() => setCreateSystemRoleKey(r.key)}
                         className="accent-[var(--accent-gold)]"
                       />
-                      <span className="text-[12px]" style={{ color: 'var(--text-primary)' }}>{r.name}</span>
+                      <span className="text-[12px] text-token-primary">{r.name}</span>
                     </label>
                   ))}
                 </div>
@@ -1686,11 +1666,11 @@ export default function UsersPage() {
               <MapSectionLoader />
             ) : (
               <>
-                <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
+                <div className="rounded-[12px] p-3 bg-token-nested border border-token-subtle">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第一步：粘贴交接信息</div>
-                      <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>直接粘贴 APP00013 交接 Markdown，系统会自动填 appCode、密钥、回调地址。</div>
+                      <div className="text-sm font-semibold text-token-secondary">第一步：粘贴交接信息</div>
+                      <div className="mt-0.5 text-[12px] text-token-muted">直接粘贴 APP00013 交接 Markdown，系统会自动填 appCode、密钥、回调地址。</div>
                     </div>
                     <Button variant="secondary" size="xs" onClick={applyMiduoHandoffText} disabled={!miduoHandoffText.trim()}>
                       自动识别
@@ -1699,14 +1679,13 @@ export default function UsersPage() {
                   <textarea
                     value={miduoHandoffText}
                     onChange={(e) => setMiduoHandoffText(e.target.value)}
-                    className="mt-3 min-h-[88px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-3 min-h-[88px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono bg-token-input border border-token-default text-token-primary"
                     placeholder="把 APP00013 接入交付信息粘贴到这里"
                   />
                 </div>
 
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第二步：确认并保存配置</div>
-                <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-sm font-semibold text-token-secondary">第二步：确认并保存配置</div>
+                <label className="flex items-center gap-2 text-sm text-token-primary">
                   <input
                     type="checkbox"
                     checked={miduoEnabled}
@@ -1715,7 +1694,7 @@ export default function UsersPage() {
                   />
                   启用登录页米多星球 SSO
                 </label>
-                <label className="flex items-start gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+                <label className="flex items-start gap-2 text-sm text-token-primary">
                   <input
                     type="checkbox"
                     checked={passwordLoginDisabled}
@@ -1724,7 +1703,7 @@ export default function UsersPage() {
                   />
                   <span>
                     <span className="block">禁用密码登录，仅允许 SSO</span>
-                    <span className="mt-0.5 block text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    <span className="mt-0.5 block text-[12px] text-token-muted">
                       保存后登录页会隐藏账号密码入口；需要破窗恢复时，在服务端设置 MAP_PASSWORD_LOGIN_BREAK_GLASS=true 并重启。
                     </span>
                   </span>
@@ -1736,57 +1715,52 @@ export default function UsersPage() {
                 )}
                 <div className="grid grid-cols-2 gap-3">
                   <div>
-                    <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>Base URL</div>
+                    <div className="text-sm font-semibold text-token-secondary">Base URL</div>
                     <input
                       value={miduoBaseUrl}
                       onChange={(e) => setMiduoBaseUrl(e.target.value)}
-                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                       placeholder="https://admin.ebcone.cn"
                     />
                   </div>
                   <div>
-                    <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>appCode</div>
+                    <div className="text-sm font-semibold text-token-secondary">appCode</div>
                     <input
                       value={miduoAppCode}
                       onChange={(e) => setMiduoAppCode(e.target.value)}
-                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                      style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                      className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                       placeholder="APP00013"
                     />
                   </div>
                 </div>
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                  <div className="text-sm font-semibold text-token-secondary">
                     appSecret {miduoHasSecret ? '（已配置，留空则不修改）' : ''}
                   </div>
                   <input
                     value={miduoAppSecret}
                     onChange={(e) => setMiduoAppSecret(e.target.value)}
                     type="password"
-                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                     placeholder={miduoHasSecret ? '留空保持原密钥' : '输入 appSecret'}
                     autoComplete="new-password"
                   />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>回调地址</div>
+                  <div className="text-sm font-semibold text-token-secondary">回调地址</div>
                   <input
                     value={miduoRedirectUri}
                     onChange={(e) => setMiduoRedirectUri(e.target.value)}
-                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                     placeholder="https://map.ebcone.net/login"
                   />
                 </div>
                 <div>
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>登录项名称</div>
+                  <div className="text-sm font-semibold text-token-secondary">登录项名称</div>
                   <input
                     value={miduoLabel}
                     onChange={(e) => setMiduoLabel(e.target.value)}
-                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-1.5 h-9 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                     placeholder="米多星球"
                   />
                 </div>
@@ -1795,17 +1769,17 @@ export default function UsersPage() {
                     {miduoConfigError}
                   </div>
                 )}
-                <div className="flex items-center justify-end gap-2 border-b border-white/8 pb-4">
+                <div className="flex items-center justify-end gap-2 border-b border-token-subtle pb-4">
                   <Button variant="primary" size="sm" onClick={saveMiduoConfig} disabled={miduoConfigSaving}>
                     {miduoConfigSaving ? '保存中...' : '保存配置'}
                   </Button>
                 </div>
 
-                <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
+                <div className="rounded-[12px] p-3 bg-token-nested border border-token-subtle">
                   <div className="flex items-center justify-between gap-2">
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>第三步：导入用户绑定</div>
-                      <div className="mt-0.5 text-[12px]" style={{ color: 'var(--text-muted)' }}>生成模板后只需要补手机号。每行格式：用户名 姓名 手机号。</div>
+                      <div className="text-sm font-semibold text-token-secondary">第三步：导入用户绑定</div>
+                      <div className="mt-0.5 text-[12px] text-token-muted">生成模板后只需要补手机号。每行格式：用户名 姓名 手机号。</div>
                     </div>
                     <Button variant="secondary" size="xs" onClick={fillMiduoBindingTemplate}>
                       生成当前列表模板
@@ -1814,12 +1788,11 @@ export default function UsersPage() {
                   <textarea
                     value={miduoImportText}
                     onChange={(e) => setMiduoImportText(e.target.value)}
-                    className="mt-3 min-h-[180px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="mt-3 min-h-[180px] w-full rounded-[10px] px-3 py-2 text-sm outline-none font-mono bg-token-input border border-token-default text-token-primary"
                     placeholder={'zhangsan 张三 13800001111\nlisi 李四 13900002222'}
                   />
                   {miduoImportResult && (
-                    <div className="mt-3 rounded-[10px] px-3 py-2 text-sm" style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}>
+                    <div className="mt-3 rounded-[10px] px-3 py-2 text-sm bg-token-input border border-token-default text-token-primary">
                       <div>成功 {miduoImportResult.importedCount} 条，失败 {miduoImportResult.failedCount} 条</div>
                       {miduoImportResult.failedItems.length > 0 && (
                         <div className="mt-2 max-h-[120px] overflow-auto space-y-1" style={{ color: 'rgba(239,68,68,0.95)' }}>
@@ -1879,15 +1852,14 @@ export default function UsersPage() {
         content={
           <div className="space-y-4">
             <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>姓名</div>
+              <div className="text-sm font-semibold text-token-secondary">姓名</div>
               <input
                 value={nameValue}
                 onChange={(e) => {
                   setNameValue(e.target.value);
                   setNameError(null);
                 }}
-                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                 placeholder="请输入姓名（1-50 字符）"
                 autoComplete="off"
               />
@@ -1930,7 +1902,7 @@ export default function UsersPage() {
         content={
           <div className="space-y-4">
             <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>新密码</div>
+              <div className="text-sm font-semibold text-token-secondary">新密码</div>
               <input
                 value={pwd}
                 onChange={(e) => {
@@ -1938,14 +1910,13 @@ export default function UsersPage() {
                   setPwdSubmitError(null);
                 }}
                 type="password"
-                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="mt-2 h-10 w-full rounded-[14px] px-4 text-sm outline-none bg-token-input border border-token-default text-token-primary"
                 placeholder="设置登录密码"
                 autoComplete="new-password"
               />
             </div>
 
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-xs text-token-muted">
               该用户下次登录时将被要求重新设置密码
             </div>
 
@@ -1990,12 +1961,12 @@ export default function UsersPage() {
         description={forceExpireTargetUser ? `${forceExpireTargetUser.displayName} · ${forceExpireTargetUser.userId}` : undefined}
         content={
           <div className="space-y-4">
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-sm text-token-muted">
               说明：此操作会让所选端的登录态立刻失效（可用于测试过期/踢下线）。
             </div>
 
             <div className="grid gap-2">
-              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+              <label className="flex items-center gap-2 text-sm text-token-primary">
                 <input
                   type="checkbox"
                   checked={forceTargets.admin}
@@ -2003,7 +1974,7 @@ export default function UsersPage() {
                 />
                 踢 Admin（Web 管理端）
               </label>
-              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-primary)' }}>
+              <label className="flex items-center gap-2 text-sm text-token-primary">
                 <input
                   type="checkbox"
                   checked={forceTargets.desktop}
@@ -2053,12 +2024,12 @@ export default function UsersPage() {
         description={authzUser ? `${authzUser.displayName} · ${authzUser.userId}` : undefined}
         content={
           <div className="space-y-4">
-            <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-sm text-token-muted">
               说明：菜单/路由由 permission 推导。这里设置该用户的 system role（主）以及 allow/deny（例外）。
             </div>
 
             <div>
-              <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>系统角色（systemRoleKey）</div>
+              <div className="text-sm font-semibold text-token-secondary">系统角色（systemRoleKey）</div>
               <Select
                 value={authzSystemRoleKey}
                 onChange={(e) => setAuthzSystemRoleKey(e.target.value)}
@@ -2075,14 +2046,13 @@ export default function UsersPage() {
 
             <div className="grid grid-cols-2 gap-3">
               <div className="min-w-0">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>额外允许（勾选 permission）</div>
-                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
+                <div className="text-sm font-semibold text-token-secondary">额外允许（勾选 permission）</div>
+                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px] bg-token-input border border-token-default">
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzAllowSet.has(k);
                     return (
-                      <label key={`allow-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover:bg-white/5">
+                      <label key={`allow-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover-bg-soft">
                         <input
                           type="checkbox"
                           checked={checked}
@@ -2090,8 +2060,8 @@ export default function UsersPage() {
                           onChange={() => toggleAuthzSet('allow', k)}
                         />
                         <div className="min-w-0">
-                          <div className="text-xs" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
-                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-xs text-token-primary">{p.name}</div>
+                          <div className="text-[11px] mt-0.5 text-token-muted">
                             <span className="opacity-80">{k}</span>
                             {p.description ? ` · ${p.description}` : ''}
                           </div>
@@ -2100,20 +2070,19 @@ export default function UsersPage() {
                     );
                   })}
                   {authzCatalog.length === 0 && !authzLoading ? (
-                    <div className="text-xs px-2 py-1" style={{ color: 'var(--text-muted)' }}>权限清单为空</div>
+                    <div className="text-xs px-2 py-1 text-token-muted">权限清单为空</div>
                   ) : null}
                 </div>
               </div>
 
               <div className="min-w-0">
-                <div className="text-sm font-semibold" style={{ color: 'var(--text-secondary)' }}>禁止（勾选 permission）</div>
-                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px]"
-                     style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}>
+                <div className="text-sm font-semibold text-token-secondary">禁止（勾选 permission）</div>
+                <div className="mt-2 rounded-[14px] p-2 overflow-auto min-h-[160px] max-h-[220px] bg-token-input border border-token-default">
                   {authzCatalog.map((p) => {
                     const k = String(p.key || '').trim();
                     const checked = authzDenySet.has(k);
                     return (
-                      <label key={`deny-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover:bg-white/5">
+                      <label key={`deny-${k}`} className="flex items-start gap-2 px-2 py-1 rounded-[10px] hover-bg-soft">
                         <input
                           type="checkbox"
                           checked={checked}
@@ -2121,8 +2090,8 @@ export default function UsersPage() {
                           onChange={() => toggleAuthzSet('deny', k)}
                         />
                         <div className="min-w-0">
-                          <div className="text-xs" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
-                          <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-xs text-token-primary">{p.name}</div>
+                          <div className="text-[11px] mt-0.5 text-token-muted">
                             <span className="opacity-80">{k}</span>
                             {p.description ? ` · ${p.description}` : ''}
                           </div>
@@ -2131,7 +2100,7 @@ export default function UsersPage() {
                     );
                   })}
                   {authzCatalog.length === 0 && !authzLoading ? (
-                    <div className="text-xs px-2 py-1" style={{ color: 'var(--text-muted)' }}>权限清单为空</div>
+                    <div className="text-xs px-2 py-1 text-token-muted">权限清单为空</div>
                   ) : null}
                 </div>
               </div>
@@ -2168,14 +2137,13 @@ export default function UsersPage() {
               <MapSectionLoader />
             ) : (
               <>
-                <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-sm text-token-muted">
                   全局默认：每分钟 {rateLimitGlobalMaxRpm} 次，最大并发 {rateLimitGlobalMaxConcurrent}
                 </div>
 
                 {/* 豁免开关 */}
                 <div
-                  className="rounded-[14px] p-4"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
+                  className="rounded-[14px] p-4 bg-token-input border border-token-default"
                 >
                   <label className="flex items-center gap-3 cursor-pointer">
                     <input
@@ -2186,10 +2154,10 @@ export default function UsersPage() {
                       className="w-4 h-4"
                     />
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-sm font-semibold text-token-primary">
                         豁免限流
                       </div>
-                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-xs mt-0.5 text-token-muted">
                         开启后该用户不受任何限流约束（仅限特殊用户）
                       </div>
                     </div>
@@ -2199,8 +2167,7 @@ export default function UsersPage() {
                 {/* 自定义配置 */}
                 {!rateLimitIsExempt && (
                   <div
-                    className="rounded-[14px] p-4"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)' }}
+                    className="rounded-[14px] p-4 bg-token-input border border-token-default"
                   >
                     <label className="flex items-center gap-3 cursor-pointer">
                       <input
@@ -2211,10 +2178,10 @@ export default function UsersPage() {
                         className="w-4 h-4"
                       />
                       <div>
-                        <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
+                        <div className="text-sm font-semibold text-token-primary">
                           使用自定义配置
                         </div>
-                        <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-xs mt-0.5 text-token-muted">
                           不勾选则使用全局默认配置
                         </div>
                       </div>
@@ -2223,7 +2190,7 @@ export default function UsersPage() {
                     {rateLimitUseCustom && (
                       <div className="mt-4 grid grid-cols-2 gap-4">
                         <div>
-                          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                          <label className="text-xs font-medium text-token-secondary">
                             每分钟最大请求数
                           </label>
                           <input
@@ -2233,12 +2200,11 @@ export default function UsersPage() {
                             disabled={rateLimitSaving}
                             min={1}
                             max={100000}
-                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input-hover border border-token-default text-token-primary"
                           />
                         </div>
                         <div>
-                          <label className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>
+                          <label className="text-xs font-medium text-token-secondary">
                             最大并发请求数
                           </label>
                           <input
@@ -2248,8 +2214,7 @@ export default function UsersPage() {
                             disabled={rateLimitSaving}
                             min={1}
                             max={10000}
-                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none"
-                            style={{ background: 'var(--bg-input-hover)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                            className="mt-1 h-10 w-full rounded-[10px] px-3 text-sm outline-none bg-token-input-hover border border-token-default text-token-primary"
                           />
                         </div>
                       </div>

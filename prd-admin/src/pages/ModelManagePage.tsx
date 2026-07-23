@@ -387,12 +387,12 @@ export default function ModelManagePage() {
 
   useEffect(() => {
     load();
-     
+
   }, []);
 
   useEffect(() => {
     void loadModelStats();
-     
+
   }, []);
 
   // 主模型选中后的瞬时动效（行闪一下 + 星星弹一下）
@@ -1212,18 +1212,14 @@ export default function ModelManagePage() {
         {/* 左侧：平台列表（导航风格），移动端隐藏 */}
         <GlassCard animated glow className={`p-0 overflow-hidden flex flex-col ${isMobile ? 'hidden' : ''}`}>
           {/* 折叠/展开按钮 */}
-          <div className="p-2 flex items-center justify-between" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="p-2 flex items-center justify-between border-b border-token-subtle">
             {!platformSidebarCollapsed && (
-              <div className="text-sm font-semibold px-2" style={{ color: 'var(--text-primary)' }}>平台</div>
+              <div className="text-sm font-semibold px-2 text-token-primary">平台</div>
             )}
             <button
               type="button"
               onClick={() => setPlatformSidebarCollapsed((prev) => !prev)}
-              className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] transition-colors hover:bg-white/6 shrink-0 ml-auto"
-              style={{
-                border: '1px solid var(--border-default)',
-                color: 'var(--text-secondary)',
-              }}
+              className="inline-flex items-center justify-center h-8 w-8 rounded-[8px] transition-colors hover-bg-soft shrink-0 ml-auto border border-token-default text-token-secondary"
               title={platformSidebarCollapsed ? '展开平台列表' : '折叠平台列表'}
             >
               {platformSidebarCollapsed ? <ChevronRight size={16} /> : <ChevronLeft size={16} />}
@@ -1231,12 +1227,11 @@ export default function ModelManagePage() {
           </div>
           {!platformSidebarCollapsed && (
             <>
-          <div className="p-3" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className="p-3 border-b border-token-subtle">
             <div className="relative">
               <Search
                 size={16}
-                className="absolute left-3 top-1/2 -translate-y-1/2"
-                style={{ color: 'var(--text-muted)' }}
+                className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted"
               />
               <input
                 value={platformSearch}
@@ -1268,7 +1263,7 @@ export default function ModelManagePage() {
                   setSelectedPlatformId('__all__');
                 }
               }}
-              className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
+              className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover-bg-soft cursor-pointer select-none"
               style={{
                 background: selectedPlatformId === '__all__' ? 'var(--bg-input)' : 'transparent',
                 border: selectedPlatformId === '__all__' ? '1px solid var(--border-default)' : '1px solid transparent',
@@ -1281,8 +1276,8 @@ export default function ModelManagePage() {
                 <LayoutGrid size={16} />
               </div>
               <div className="min-w-0 flex-1">
-                <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>全部</div>
-                <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>共 {models.length} 个模型</div>
+                <div className="text-sm font-semibold truncate text-token-primary">全部</div>
+                <div className="text-xs truncate text-token-muted">共 {models.length} 个模型</div>
               </div>
               <Badge variant="subtle">{models.length}</Badge>
             </div>
@@ -1304,7 +1299,7 @@ export default function ModelManagePage() {
                         setSelectedPlatformId(p.id);
                       }
                     }}
-                    className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover:bg-white/2 cursor-pointer select-none"
+                    className="w-full flex items-center gap-3 rounded-[14px] px-3 py-2.5 text-left transition-colors hover-bg-soft cursor-pointer select-none"
                     style={{
                       background: isSelected ? 'var(--bg-input)' : 'transparent',
                       border: isSelected ? '1px solid var(--border-default)' : '1px solid transparent',
@@ -1313,12 +1308,12 @@ export default function ModelManagePage() {
                     {platformAvatar(p)}
                     <div className="min-w-0 flex-1">
                       <div className="flex items-center gap-2 min-w-0">
-                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>{p.name}</div>
+                        <div className="text-sm font-semibold truncate text-token-primary">{p.name}</div>
                         {p.enabled && (
                           <span className="inline-block h-2 w-2 rounded-full" style={{ background: 'rgba(34,197,94,0.9)' }} />
                         )}
                       </div>
-                      <div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{count} 个模型</div>
+                      <div className="text-xs truncate text-token-muted">{count} 个模型</div>
                     </div>
                     <button
                       type="button"
@@ -1350,7 +1345,7 @@ export default function ModelManagePage() {
             </div>
           </div>
 
-          <div className="p-3" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="p-3 border-t border-token-subtle">
             <div className="relative">
               <Button
                 variant="secondary"
@@ -1411,8 +1406,7 @@ export default function ModelManagePage() {
                 // 虚拟中继平台：只提供跳转入口
                 <button
                   type="button"
-                  className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                  style={{ color: 'var(--text-primary)' }}
+                  className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover-bg-soft text-token-primary"
                   onClick={() => {
                     closePlatformCtxMenu();
                     setSearchParams({ tab: 'exchange' }, { replace: true });
@@ -1426,8 +1420,7 @@ export default function ModelManagePage() {
                 <>
                   <button
                     type="button"
-                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                    style={{ color: 'var(--text-primary)' }}
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover-bg-soft text-token-primary"
                     onClick={() => {
                       const p = platformCtxMenu.platform;
                       closePlatformCtxMenu();
@@ -1440,7 +1433,7 @@ export default function ModelManagePage() {
                   </button>
                   <button
                     type="button"
-                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
+                    className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover-bg-soft"
                     style={{ color: 'rgba(239,68,68,0.9)' }}
                     onClick={() => {
                       const p = platformCtxMenu.platform;
@@ -1457,8 +1450,7 @@ export default function ModelManagePage() {
               <div className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
               <button
                 type="button"
-                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover:bg-white/5"
-                style={{ color: 'var(--text-secondary)' }}
+                className="w-full flex items-center gap-2 rounded-[12px] px-3 py-2 text-sm hover-bg-soft text-token-secondary"
                 onClick={() => closePlatformCtxMenu()}
               >
                 取消
@@ -1469,20 +1461,20 @@ export default function ModelManagePage() {
 
         {/* 右侧：平台详情 + 模型列表 */}
         <GlassCard animated glow variant={selectedPlatform ? 'gold' : 'default'} className="p-0 overflow-hidden flex flex-col">
-          <div className={`p-4 flex ${isMobile ? 'flex-col gap-3' : 'items-start justify-between gap-4'}`} style={{ borderBottom: '1px solid var(--border-subtle)' }}>
+          <div className={`p-4 flex ${isMobile ? 'flex-col gap-3' : 'items-start justify-between gap-4'} border-b border-token-subtle`}>
             <div className="min-w-0">
               <div className="flex items-center gap-2 min-w-0">
-                <div className="text-lg font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-lg font-semibold truncate text-token-primary">
                   {selectedPlatform ? selectedPlatform.name : (selectedPlatformId === '__all__' ? '全部模型' : '请选择平台')}
                 </div>
                 {selectedPlatform && <Badge variant="subtle">{selectedPlatform.platformType}</Badge>}
               </div>
               {selectedPlatform ? null : isAll ? (
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 text-xs text-token-muted">
                   展示全部平台的模型列表
                 </div>
               ) : (
-                <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-1 text-xs text-token-muted">
                   {isMobile ? '点击上方"平台管理"选择平台' : '从左侧选择一个平台以查看配置与模型列表'}
                 </div>
               )}
@@ -1493,8 +1485,7 @@ export default function ModelManagePage() {
                 <div className={`relative ${isMobile ? 'flex-1' : ''}`}>
                   <Search
                     size={16}
-                    className="absolute left-3 top-1/2 -translate-y-1/2"
-                    style={{ color: 'var(--text-muted)' }}
+                    className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted"
                   />
                   <input
                     value={modelSearch}
@@ -1518,7 +1509,7 @@ export default function ModelManagePage() {
                 content={
                   <div className="leading-snug">
                     <div className="font-semibold">模型地图</div>
-                    <div style={{ color: 'var(--text-muted)' }}>查看主/意图/识图/生图/嵌入/重排的当前选择</div>
+                    <div className="text-token-muted">查看主/意图/识图/生图/嵌入/重排的当前选择</div>
                   </div>
                 }
                 side="bottom"
@@ -1531,8 +1522,7 @@ export default function ModelManagePage() {
                     onClick={() => setModelMapOpen(true)}
                     aria-label="打开模型地图"
                     disabled={models.length === 0}
-                    className="h-[35px] w-[35px] p-0 rounded-[12px]"
-                    style={{ color: 'var(--text-secondary)' }}
+                    className="h-[35px] w-[35px] p-0 rounded-[12px] text-token-secondary"
                   >
                     {/* 几何六芒星图标：避免五角星视觉 */}
                     <svg width="18" height="18" viewBox="0 0 100 100" aria-hidden="true">
@@ -1547,7 +1537,7 @@ export default function ModelManagePage() {
                 content={
                   <div className="leading-snug">
                     <div className="font-semibold">数据迁移</div>
-                    <div style={{ color: 'var(--text-muted)' }}>导入/导出平台 + 密钥 + 启用模型（JSON）</div>
+                    <div className="text-token-muted">导入/导出平台 + 密钥 + 启用模型（JSON）</div>
                   </div>
                 }
                 side="bottom"
@@ -1559,8 +1549,7 @@ export default function ModelManagePage() {
                     size="sm"
                     onClick={() => setDataTransferOpen(true)}
                     aria-label="打开数据迁移"
-                    className="h-[35px] w-[35px] p-0 rounded-[12px]"
-                    style={{ color: 'var(--text-secondary)' }}
+                    className="h-[35px] w-[35px] p-0 rounded-[12px] text-token-secondary"
                   >
                     <DatabaseZap size={18} />
                   </Button>
@@ -1569,7 +1558,7 @@ export default function ModelManagePage() {
 
               {selectedPlatform && !isExchangePlatform && (
                 <>
-                  <div className="text-xs" style={{ color: 'var(--text-muted)' }}>启用</div>
+                  <div className="text-xs text-token-muted">启用</div>
                   <button
                     type="button"
                     onClick={async () => {
@@ -1603,20 +1592,15 @@ export default function ModelManagePage() {
                 {selectedPlatform && !isExchangePlatform && (
                   <>
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 密钥</div>
+                      <div className="text-sm font-semibold text-token-primary">API 密钥</div>
                       <div className="mt-2">
                         <div
-                          className="flex h-[30px] box-border items-center overflow-hidden rounded-[14px]"
-                          style={{
-                            background: 'var(--bg-input)',
-                            border: '1px solid var(--border-default)',
-                          }}
+                          className="flex h-[30px] box-border items-center overflow-hidden rounded-[14px] bg-token-input border border-token-default"
                         >
                           <input
                             value={apiKeyDraft}
                             onChange={(e) => setApiKeyDraft(e.target.value)}
-                            className="h-full w-full flex-1 bg-transparent px-4 text-sm outline-none"
-                            style={{ color: 'var(--text-primary)' }}
+                            className="h-full w-full flex-1 bg-transparent px-4 text-sm outline-none text-token-primary"
                             type={showApiKey ? 'text' : 'password'}
                             name="platform-api-key"
                             autoComplete="new-password"
@@ -1639,11 +1623,10 @@ export default function ModelManagePage() {
 
                           <button
                             type="button"
-                            className="h-full w-[30px] inline-flex items-center justify-center transition-colors hover:bg-white/5 disabled:opacity-60 disabled:cursor-not-allowed"
+                            className="h-full w-[30px] inline-flex items-center justify-center transition-colors hover-bg-soft disabled:opacity-60 disabled:cursor-not-allowed text-token-secondary"
                             onClick={() => setShowApiKey((v) => !v)}
                             aria-label={showApiKey ? '隐藏' : '显示'}
                             disabled={platformChecking}
-                            style={{ color: 'var(--text-secondary)' }}
                           >
                             {showApiKey ? <EyeOff size={18} /> : <Eye size={18} />}
                           </button>
@@ -1654,22 +1637,21 @@ export default function ModelManagePage() {
                             type="button"
                             onClick={onCheckPlatform}
                             disabled={platformChecking}
-                            className="h-full px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:opacity-60 disabled:cursor-not-allowed"
-                            style={{ color: 'var(--text-primary)' }}
+                            className="h-full px-4 text-[13px] font-semibold transition-colors hover-bg-soft disabled:opacity-60 disabled:cursor-not-allowed text-token-primary"
                           >
                             {platformChecking ? '检测中' : '检测'}
                           </button>
                         </div>
                       </div>
                       {platformCheckMsg && (
-                        <div className="mt-2 text-xs" style={{ color: 'var(--text-secondary)' }}>
+                        <div className="mt-2 text-xs text-token-secondary">
                           {platformCheckMsg}
                         </div>
                       )}
                     </div>
 
                     <div>
-                      <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>API 地址</div>
+                      <div className="text-sm font-semibold text-token-primary">API 地址</div>
                       <div className="mt-2">
                         <input
                           value={apiUrlDraft}
@@ -1702,14 +1684,13 @@ export default function ModelManagePage() {
                     className="flex items-center justify-between rounded-[14px] px-4 py-3"
                     style={{ background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
                   >
-                    <div className="text-sm" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-sm text-token-muted">
                       此平台由「模型中继」驱动，密钥和 API 地址请在中继配置页管理
                     </div>
                     <button
                       type="button"
                       onClick={() => setSearchParams({ tab: 'exchange' }, { replace: true })}
-                      className="ml-4 shrink-0 flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-colors hover:bg-white/8"
-                      style={{ color: 'var(--accent-primary)', border: '1px solid var(--border-default)' }}
+                      className="ml-4 shrink-0 flex items-center gap-1.5 rounded-[10px] px-3 py-1.5 text-xs font-semibold transition-colors hover-bg-soft text-token-accent border border-token-default"
                     >
                       <Link2 size={12} />
                       前往编辑
@@ -1720,16 +1701,16 @@ export default function ModelManagePage() {
                 <div>
                   <div className="mt-4">
                     {displayedModels.length === 0 ? (
-                      <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无模型</div>
+                      <div className="py-10 text-center text-token-muted">暂无模型</div>
                     ) : (
                       <div className="space-y-2">
-                        <div className="rounded-[16px] overflow-hidden" style={{ border: '1px solid var(--border-subtle)' }}>
-                          <div className="divide-y divide-white/30">
+                        <div className="rounded-[16px] overflow-hidden border border-token-subtle">
+                          <div className="divide-y divide-token-subtle">
                             {displayedModels.map((m) => (
                               <div
                                 key={m.id}
                                 className={[
-                                  `px-4 py-3 flex ${isMobile ? 'flex-col gap-2' : 'items-center justify-between'} hover:bg-white/2`,
+                                  `px-4 py-3 flex ${isMobile ? 'flex-col gap-2' : 'items-center justify-between'} hover-bg-soft`,
                                   mainJustSetId === m.id ? 'main-row-flash' : '',
                                 ].join(' ')}
                               >
@@ -1742,8 +1723,7 @@ export default function ModelManagePage() {
                                       return <PlatformLabel name={p.name} />;
                                     })() : null}
                                     <div
-                                      className="text-sm font-semibold truncate"
-                                      style={{ color: 'var(--text-primary)' }}
+                                      className="text-sm font-semibold truncate text-token-primary"
                                       title={m.modelName}
                                     >
                                       {m.name}
@@ -1826,7 +1806,7 @@ export default function ModelManagePage() {
                                     {(() => {
                                       if (modelStatsLoading) return null;
                                       if (!allStatsExpanded && !expandedStatsModelIds.has(m.id)) return null;
-                                      
+
                                       const key = String(m.modelName ?? '').trim().toLowerCase();
                                       const sFromLogs = key ? modelStatsByModel[key] : undefined;
                                       const reqFromModel = Math.max(0, Number(m.callCount ?? 0));
@@ -1905,11 +1885,7 @@ export default function ModelManagePage() {
                                     {/* 一键添加到模型池按钮 */}
                                     <button
                                       type="button"
-                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
-                                      style={{
-                                        border: '1px solid var(--border-default)',
-                                        color: 'var(--text-secondary)',
-                                      }}
+                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover-bg-soft border border-token-default text-token-secondary"
                                       title="一键添加到模型池"
                                       aria-label="一键添加到模型池"
                                       onClick={() => void openAddToPoolDialog(m)}
@@ -1919,7 +1895,7 @@ export default function ModelManagePage() {
 
                                     <button
                                       type="button"
-                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover:bg-white/6"
+                                      className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors disabled:opacity-60 disabled:cursor-not-allowed hover-bg-soft"
                                       disabled={testingModelId != null}
                                       onClick={() => void onTest(m)}
                                       style={
@@ -1948,7 +1924,7 @@ export default function ModelManagePage() {
                                         toast.info('Exchange 模型通过「应用模型池」绑定');
                                       };
                                       return (
-                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
+                                    <div className="inline-flex items-center gap-1 rounded-[10px] px-1.5 py-1 border border-token-default bg-token-nested">
                                     <Button
                                       variant="ghost"
                                       size="sm"
@@ -2031,11 +2007,7 @@ export default function ModelManagePage() {
                                         <button
                                           type="button"
                                           onClick={(e) => e.stopPropagation()}
-                                          className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover:bg-white/6"
-                                          style={{
-                                            border: '1px solid var(--border-default)',
-                                            color: 'var(--text-secondary)',
-                                          }}
+                                          className="inline-flex items-center justify-center h-[32px] w-[32px] rounded-[10px] transition-colors hover-bg-soft border border-token-default text-token-secondary"
                                           aria-label="更多操作"
                                           title="更多操作"
                                         >
@@ -2060,7 +2032,7 @@ export default function ModelManagePage() {
                                         >
                                           {/* Prompt Cache 切换 */}
                                           <DropdownMenu.Item
-                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
+                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover-bg-soft"
                                             style={{ color: m.enablePromptCache ? 'rgba(34,197,94,0.95)' : 'var(--text-primary)' }}
                                             disabled={modelCacheTogglingId != null}
                                             onSelect={(e) => {
@@ -2074,8 +2046,7 @@ export default function ModelManagePage() {
                                           </DropdownMenu.Item>
                                           <DropdownMenu.Separator className="h-px my-1" style={{ background: 'var(--border-subtle)' }} />
                                           <DropdownMenu.Item
-                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover:bg-white/5"
-                                            style={{ color: 'var(--text-primary)' }}
+                                            className="flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm outline-none cursor-pointer hover-bg-soft text-token-primary"
                                             onSelect={(e) => {
                                               e.preventDefault();
                                               openEditModel(m);
@@ -2100,7 +2071,7 @@ export default function ModelManagePage() {
                                           >
                                             <button
                                               type="button"
-                                              className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover:bg-white/5"
+                                              className="w-full flex items-center gap-2 rounded-[8px] px-3 py-2 text-sm hover-bg-soft"
                                               style={{ color: 'rgba(239,68,68,0.95)' }}
                                               onClick={(e) => e.stopPropagation()}
                                             >
@@ -2122,13 +2093,13 @@ export default function ModelManagePage() {
                 </div>
               </div>
             ) : (
-              <div className="py-16 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="py-16 text-center text-token-muted">
                 请选择左侧平台
               </div>
             )}
           </div>
 
-          <div className="p-3 flex items-center gap-2 flex-wrap" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+          <div className="p-3 flex items-center gap-2 flex-wrap border-t border-token-subtle">
             {isAll ? (
               <Button
                 variant="secondary"
@@ -2178,7 +2149,7 @@ export default function ModelManagePage() {
               <button
                 type="button"
                 onClick={() => setSearchParams({ tab: 'exchange' }, { replace: true })}
-                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-[10px] font-semibold transition-colors hover:bg-white/8"
+                className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-[10px] font-semibold transition-colors hover-bg-soft"
                 style={{ color: 'var(--accent-primary)', background: 'var(--surface-2)', border: '1px solid var(--border-subtle)' }}
               >
                 <Link2 size={12} />
@@ -2216,7 +2187,7 @@ export default function ModelManagePage() {
         content={
           <div className="space-y-4">
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>名称</div>
+              <div className="text-sm text-token-secondary">名称</div>
               <input
                 value={platformForm.name}
                 onChange={(e) => setPlatformForm((s) => ({ ...s, name: e.target.value }))}
@@ -2227,7 +2198,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>类型</div>
+              <div className="text-sm text-token-secondary">类型</div>
               <Select
                 value={platformForm.platformType}
                 onChange={(e) => setPlatformForm((s) => ({ ...s, platformType: e.target.value }))}
@@ -2243,9 +2214,9 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-sm text-token-secondary">
                 ProviderId（可选）
-                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <span className="ml-2 text-xs text-token-muted">
                   用于 Cherry 分组/特例（如 silicon/dashscope）
                 </span>
               </div>
@@ -2259,9 +2230,9 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-sm text-token-secondary">
                 成本估算（本地）
-                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <span className="ml-2 text-xs text-token-muted">
                   仅用于管理后台展示，不写入后端
                 </span>
               </div>
@@ -2291,7 +2262,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>API URL</div>
+              <div className="text-sm text-token-secondary">API URL</div>
               <input
                 value={platformForm.apiUrl}
                 onChange={(e) => setPlatformForm((s) => ({ ...s, apiUrl: e.target.value }))}
@@ -2302,7 +2273,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>API Key {editingPlatform ? '（留空不变）' : ''}</div>
+              <div className="text-sm text-token-secondary">API Key {editingPlatform ? '（留空不变）' : ''}</div>
               <input
                 value={platformForm.apiKey}
                 onChange={(e) => setPlatformForm((s) => ({ ...s, apiKey: e.target.value }))}
@@ -2312,7 +2283,7 @@ export default function ModelManagePage() {
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <label className="flex items-center gap-2 text-sm text-token-secondary">
               <input
                 type="checkbox"
                 checked={platformForm.enabled}
@@ -2359,7 +2330,7 @@ export default function ModelManagePage() {
         content={
           <div className="space-y-4">
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>名称</div>
+              <div className="text-sm text-token-secondary">名称</div>
               <input
                 value={modelForm.name}
                 onChange={(e) => setModelForm((s) => ({ ...s, name: e.target.value }))}
@@ -2370,7 +2341,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>Model Name</div>
+              <div className="text-sm text-token-secondary">Model Name</div>
               <input
                 value={modelForm.modelName}
                 onChange={(e) => setModelForm((s) => ({ ...s, modelName: e.target.value }))}
@@ -2381,7 +2352,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>平台</div>
+              <div className="text-sm text-token-secondary">平台</div>
               <Select
                 value={modelForm.platformId}
                 onChange={(e) => setModelForm((s) => ({ ...s, platformId: e.target.value }))}
@@ -2394,7 +2365,7 @@ export default function ModelManagePage() {
             </div>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>分组（可选）</div>
+              <div className="text-sm text-token-secondary">分组（可选）</div>
               <input
                 value={modelForm.group}
                 onChange={(e) => setModelForm((s) => ({ ...s, group: e.target.value }))}
@@ -2404,7 +2375,7 @@ export default function ModelManagePage() {
               />
             </div>
 
-            <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <label className="flex items-center gap-2 text-sm text-token-secondary">
               <input
                 type="checkbox"
                 checked={modelForm.enabled}
@@ -2413,7 +2384,7 @@ export default function ModelManagePage() {
               启用
             </label>
 
-            <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <label className="flex items-center gap-2 text-sm text-token-secondary">
               <input
                 type="checkbox"
                 checked={modelForm.enablePromptCache}
@@ -2423,9 +2394,9 @@ export default function ModelManagePage() {
             </label>
 
             <div className="grid gap-2">
-              <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <div className="text-sm text-token-secondary">
                 Max Tokens（可选）
-                <span className="ml-2 text-xs" style={{ color: 'var(--text-muted)' }}>
+                <span className="ml-2 text-xs text-token-muted">
                   留空使用默认 4096；将透传到请求的 max_tokens
                 </span>
               </div>
@@ -2487,7 +2458,7 @@ export default function ModelManagePage() {
           content={
             <div className="space-y-4">
               <div className="grid gap-2">
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型池名称</div>
+                <div className="text-sm text-token-secondary">模型池名称</div>
                 <input
                   value={addToPoolForm.name}
                   onChange={(e) => setAddToPoolForm((s) => ({ ...s, name: e.target.value }))}
@@ -2498,7 +2469,7 @@ export default function ModelManagePage() {
               </div>
 
               <div className="grid gap-2">
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型池代码</div>
+                <div className="text-sm text-token-secondary">模型池代码</div>
                 <input
                   value={addToPoolForm.code}
                   onChange={(e) => setAddToPoolForm((s) => ({ ...s, code: e.target.value }))}
@@ -2509,7 +2480,7 @@ export default function ModelManagePage() {
               </div>
 
               <div className="grid gap-2">
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>模型类型</div>
+                <div className="text-sm text-token-secondary">模型类型</div>
                 <ModelTypePicker
                   value={addToPoolForm.modelType}
                   onChange={(v) => setAddToPoolForm((s) => ({ ...s, modelType: v }))}
@@ -2517,7 +2488,7 @@ export default function ModelManagePage() {
               </div>
 
               <div className="grid gap-2">
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>优先级</div>
+                <div className="text-sm text-token-secondary">优先级</div>
                 <input
                   type="number"
                   value={addToPoolForm.priority}
@@ -2531,7 +2502,7 @@ export default function ModelManagePage() {
               </div>
 
               <div className="grid gap-2">
-                <div className="text-sm" style={{ color: 'var(--text-secondary)' }}>描述（可选）</div>
+                <div className="text-sm text-token-secondary">描述（可选）</div>
                 <textarea
                   value={addToPoolForm.description}
                   onChange={(e) => setAddToPoolForm((s) => ({ ...s, description: e.target.value }))}
@@ -2542,7 +2513,7 @@ export default function ModelManagePage() {
                 />
               </div>
 
-              <label className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
+              <label className="flex items-center gap-2 text-sm text-token-secondary">
                 <input
                   type="checkbox"
                   checked={addToPoolForm.isDefaultForType}
@@ -2552,8 +2523,8 @@ export default function ModelManagePage() {
               </label>
 
               {/* 预览将添加的模型 */}
-              <div className="rounded-[12px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}>
-                <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+              <div className="rounded-[12px] p-3 bg-token-nested border border-token-subtle">
+                <div className="text-[11px] font-semibold mb-2 text-token-muted">
                   将添加的模型
                 </div>
                 <ModelListItem

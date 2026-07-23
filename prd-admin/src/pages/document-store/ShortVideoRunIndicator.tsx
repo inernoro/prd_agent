@@ -136,8 +136,8 @@ export function ShortVideoRunIndicator({
             onClick={() => onOpenRun(r)}
           >
             <div
-              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px]"
-              style={{ background: 'rgba(255,255,255,0.05)', color: accent }}
+              className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px] bg-token-nested"
+              style={{ color: accent }}
             >
               {r.status === 'done'
                 ? <CheckCircle2 size={14} />
@@ -154,7 +154,7 @@ export function ShortVideoRunIndicator({
             </div>
             {r.status !== 'running' && (
               <button
-                className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
+                className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted hover-bg-soft"
                 title="移除"
                 onClick={(e) => { e.stopPropagation(); dismissRun(r.runId); }}
               >
