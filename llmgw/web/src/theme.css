@@ -5601,7 +5601,7 @@ a:focus-visible {
   }
 
   .lg-mobile-tenant-switcher {
-    width: auto;
+    width: calc(100% - 16px);
     max-width: none;
     display: block;
     margin: 0 8px 12px;
