@@ -57,6 +57,7 @@ import {
   renderTemplate,
 } from '../services/comment-template.js';
 import { broadcastSelfStatus } from './branches.js';
+import { CheckRunRunner } from '../services/check-run-runner.js';
 
 export interface GitHubWebhookRouterDeps {
   stateService: StateService;
@@ -192,6 +193,13 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
     config,
     githubApp: githubApp || undefined,
   });
+
+  // 2026-07-23: 部署派发失败时向 GitHub 写一个已完结的 failure check run。
+  // 派发失败发生在部署路由的 ensureOpen 之前，此前 GitHub 上该 commit 连
+  // "CDS Deploy" 条目都没有——push 后彻底静默，用户以为 CDS 没收到。
+  const checkRunRunner = githubApp
+    ? new CheckRunRunner({ stateService, githubApp, config })
+    : undefined;
 
   // ── POST /api/github/webhook ───────────────────────────────────────
   router.post('/github/webhook', async (req: RawBodyRequest, res) => {
@@ -490,6 +498,18 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
           outcome.dispatchReason = `部署派发失败: ${message}`;
           outcome.error = message;
           markWebhookDeployDispatchFailed(stateService, request.branchId, message);
+          // 把派发失败写成 GitHub 上的红灯（fire-and-forget，绝不阻塞 webhook
+          // 10s 响应窗口）。没有这一步，push 后 PR Checks 面板上什么都不出现。
+          if (checkRunRunner) {
+            const failedBranch = stateService.getBranch(request.branchId);
+            if (failedBranch) {
+              void checkRunRunner.concludeWithoutDeploy(failedBranch, {
+                conclusion: 'failure',
+                title: 'Deploy dispatch failed',
+                summary: `Webhook 部署未启动: ${message}\n\n部署请求未能到达 CDS 部署端点，构建从未开始。修复后可 push 新 commit 或在 PR 评论 \`/cds redeploy\` 重试。`,
+              }).catch(() => { /* best-effort */ });
+            }
+          }
           // eslint-disable-next-line no-console
           console.error(
             `[webhook] deploy dispatch failed for branch=${request.branchId}:`,

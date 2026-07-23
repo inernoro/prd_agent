@@ -206,6 +206,36 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
     expect(updates[0].payload.output.summary).toContain('回写丢失');
   });
 
+  it('concludeWithoutDeploy: 部署未启动的失败直接创建已完结的 failure check run，不落 id', async () => {
+    let created: any;
+    githubApp.createCheckRun = async (_inst: number, _o: string, _r: string, payload: any) => {
+      created = payload;
+      return { id: 55, url: 'https://api.github.test/checks/55' };
+    };
+    await runner.concludeWithoutDeploy(branch, {
+      conclusion: 'failure',
+      title: 'Deploy dispatch failed',
+      summary: 'Webhook 部署未启动: 内部部署端点 503',
+    });
+    expect(created.status).toBe('completed');
+    expect(created.conclusion).toBe('failure');
+    expect(created.headSha).toBe('1234567890abcdef');
+    expect(created.output.summary).toContain('内部部署端点 503');
+    // 已完结的 run 不落 id：不需要 finalize，也不能覆盖在途部署的 id
+    expect(stateService.getBranch('b1')?.githubCheckRunId).toBeUndefined();
+  });
+
+  it('concludeWithoutDeploy: 分支未关联 GitHub（无 repo/sha/installation）→ no-op', async () => {
+    let called = 0;
+    githubApp.createCheckRun = async () => { called += 1; return { id: 1, url: '' }; };
+    const unlinked = { ...branch, id: 'b2', githubRepoFullName: undefined };
+    stateService.addBranch(unlinked as any);
+    await runner.concludeWithoutDeploy(unlinked as any, {
+      conclusion: 'failure', title: 't', summary: 's',
+    });
+    expect(called).toBe(0);
+  });
+
   it('无关联 run 且分支已终结为 error → 补收尾为 failure；分支仍 building → 不触碰', async () => {
     await runner.ensureOpen(branch); // 无 DeploymentRun（旧式部署）
     // 分支仍 building：不触碰

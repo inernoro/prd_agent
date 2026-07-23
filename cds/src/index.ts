@@ -51,6 +51,8 @@ import { shouldPruneDeletedBranchStartupResidue } from './services/startup-recon
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
+import { CheckRunRunner } from './services/check-run-runner.js';
+import { GitHubAppClient } from './services/github-app-client.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -3590,6 +3592,22 @@ const CI_WAIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
 })();
+// 2026-07-23: CI 等待超时也要写回 GitHub。极速版分支 push 后 CDS 只是在等项目
+// 自己的 CI 编镜像，从未进入部署路由（ensureOpen 不会跑），此前超时只写 CDS 内部
+// 的 ciImageError——GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR 上
+// 看到的是彻底静默。这里独立构造一个 CheckRunRunner（与 server.ts 内部实例互不
+// 干扰，GitHubAppClient 仅是 token 缓存的无状态封装），超时时补一个红灯。
+const ciWaitCheckRunRunner = config.githubApp
+  ? new CheckRunRunner({
+      stateService,
+      githubApp: new GitHubAppClient({
+        appId: config.githubApp.appId,
+        privateKey: config.githubApp.privateKey,
+        appSlug: config.githubApp.appSlug,
+      }),
+      config,
+    })
+  : undefined;
 function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
   const check = (): void => {
     try {
@@ -3650,6 +3668,13 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           },
         });
         console.warn(`[ci-wait-watchdog] ${b.id}: ${reason}`);
+        // 把 CI 等待超时写成 GitHub 红灯（fire-and-forget）。conclusion 用
+        // failure 而非 neutral：对 push 者而言这个 commit 的预览确实没起来。
+        void ciWaitCheckRunRunner?.concludeWithoutDeploy(b, {
+          conclusion: 'failure',
+          title: 'CI image wait timed out',
+          summary: reason,
+        }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
   };

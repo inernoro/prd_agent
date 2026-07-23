@@ -296,6 +296,53 @@ export class CheckRunRunner {
   }
 
   /**
+   * 为「部署从未启动」的失败直接创建一个已完结的 check run（单次 API 调用）。
+   *
+   * 与 ensureOpen/finalize 的适用面不同：那对组合服务于「部署路由真的跑起来了」
+   * 的生命周期；而 webhook 派发失败、极速版等待 CI 镜像超时这类失败发生在
+   * ensureOpen 之前——此前它们只写 CDS 内部状态（branch.errorMessage /
+   * ciImageError），GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR
+   * Checks 面板看到的是彻底的静默（与「部署失败但黄灯转圈」同族，2026-07-23
+   * 举一反三排查发现）。本方法把这类失败显式写成红灯/灰灯。
+   *
+   * 不落 githubCheckRunId（已完结，无需后续 finalize；也不能覆盖在途部署的 id）。
+   * best-effort：任何错误只记日志不冒泡。
+   */
+  async concludeWithoutDeploy(entry: BranchEntry, opts: {
+    conclusion: 'failure' | 'neutral';
+    title: string;
+    summary: string;
+  }): Promise<void> {
+    if (!this.enabled) return;
+    const repoFullName = entry.githubRepoFullName;
+    const headSha = entry.githubCommitSha;
+    const instId = entry.githubInstallationId;
+    if (!repoFullName || !headSha || !instId) return;
+    const parsed = this.parseRepo(repoFullName);
+    if (!parsed) return;
+    const at = new Date().toISOString();
+    try {
+      await this.deps.githubApp!.createCheckRun(instId, parsed.owner, parsed.repo, {
+        name: 'CDS Deploy',
+        headSha,
+        status: 'completed',
+        conclusion: opts.conclusion,
+        startedAt: at,
+        completedAt: at,
+        detailsUrl: this.buildDetailsUrl(entry.id),
+        externalId: entry.id,
+        output: { title: opts.title, summary: opts.summary },
+      });
+    } catch (err) {
+      // eslint-disable-next-line no-console
+      console.warn(
+        `[check-run] concludeWithoutDeploy failed for branch=${entry.id}:`,
+        (err as Error).message,
+      );
+    }
+  }
+
+  /**
    * 周期收敛「CDS 内部已终结、GitHub 上还挂着 in_progress」的 check run。
    *
    * 病根（2026-07-23 用户反馈）：部署实际已失败——DeploymentRun 被心跳收割器
