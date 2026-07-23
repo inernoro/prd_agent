@@ -41,7 +41,7 @@ import {
 const PAGE_SIZE = 30;
 const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
 const NARROW_TABLE_MIN_WIDTH: Record<LogsSubTab, number> = {
-  generations: 1220,
+  generations: 1780,
   upstream: 980,
   sessions: 1080,
 };
@@ -691,7 +691,7 @@ export function LogsView() {
     const tableMinWidth = isNarrowViewport
       ? NARROW_TABLE_MIN_WIDTH[tableKey]
       : tableKey === 'generations'
-        ? 1220
+        ? 1780
         : Math.max(920, visibleColumns.length * 132 + 42);
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');

@@ -12,8 +12,8 @@
   --bg-hover: rgba(255, 255, 255, 0.055);
 
   --text-primary: #f8fafc;
-  --text-secondary: #a1a1aa;
-  --text-muted: #8b8b94;
+  --text-secondary: #c4c4cc;
+  --text-muted: #a1a1aa;
 
   --border-subtle: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.16);
@@ -614,8 +614,8 @@
   --bg-hover: rgba(17, 24, 39, 0.045);
 
   --text-primary: #111827;
-  --text-secondary: #4b5563;
-  --text-muted: #6b7280;
+  --text-secondary: #374151;
+  --text-muted: #4b5563;
 
   --border-subtle: #e5e7eb;
   --border-strong: #d1d5db;
@@ -2916,6 +2916,27 @@ a:focus-visible {
   font-family: ui-monospace, SFMono-Regular, Menlo, monospace;
 }
 
+.lg-provider-response-track {
+  width: 100%;
+  height: 6px;
+  display: block;
+  margin-top: 8px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--bg-elevated);
+}
+
+.lg-provider-response-track > span {
+  height: 100%;
+  display: block;
+  border-radius: inherit;
+  background: var(--ok);
+}
+
+.lg-provider-response-track > span.is-warning {
+  background: var(--warn);
+}
+
 .lg-provider-response-pool,
 .lg-provider-response-reason {
   margin-top: 4px;
@@ -3048,17 +3069,17 @@ a:focus-visible {
 .lg-logs-heading h1 {
   margin: 0;
   color: var(--text-primary);
-  font-size: 24px;
-  font-weight: 650;
-  line-height: 1.15;
-  letter-spacing: -0.035em;
+  font-size: 20px;
+  font-weight: 600;
+  line-height: 1.8;
+  letter-spacing: -0.02em;
 }
 
 .lg-logs-heading p {
-  margin: 3px 0 0;
+  margin: 0;
   color: var(--text-muted);
-  font-size: 15px;
-  line-height: 1.45;
+  font-size: 14px;
+  line-height: 1.625;
 }
 
 .lg-log-page-actions {
@@ -3187,8 +3208,9 @@ a:focus-visible {
 
 .lg-log-table {
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.35;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.625;
   letter-spacing: -0.008em;
 }
 
@@ -3199,6 +3221,20 @@ a:focus-visible {
   overflow-x: auto;
   overscroll-behavior: contain;
   scrollbar-gutter: stable;
+  scrollbar-color: color-mix(in srgb, var(--text-muted) 48%, transparent) transparent;
+  scrollbar-width: thin;
+}
+
+.lg-log-table-scroll::-webkit-scrollbar {
+  height: 4px;
+}
+
+.lg-log-table-scroll:hover::-webkit-scrollbar {
+  height: 6px;
+}
+
+.lg-log-table-scroll::-webkit-scrollbar-thumb {
+  background: color-mix(in srgb, var(--text-muted) 48%, transparent);
 }
 
 .lg-log-table-head,
@@ -3216,14 +3252,17 @@ a:focus-visible {
 .lg-log-table-head > div:not(.lg-log-table-settings) {
   min-width: 0;
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 14px;
   font-weight: 500;
+  line-height: 1.625;
   letter-spacing: 0;
   white-space: nowrap;
 }
 
 .lg-log-table-row > div {
-  font-size: 15px;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.625;
 }
 
 .lg-log-table-head > div:first-child,
@@ -3252,7 +3291,7 @@ a:focus-visible {
 }
 
 .lg-log-table[data-density='comfortable'] .lg-log-table-row > div {
-  font-size: 15px;
+  font-size: 14px;
 }
 
 .lg-log-column-info {
@@ -3460,9 +3499,10 @@ a:focus-visible {
 }
 
 .lg-log-insights {
-  min-height: 136px;
+  min-height: 230px;
   display: grid;
-  grid-template-columns: minmax(320px, 1.15fr) minmax(520px, 2fr);
+  grid-template-rows: minmax(146px, 1fr) 76px;
+  grid-template-columns: minmax(0, 1fr);
   gap: 8px;
   flex-shrink: 0;
 }
@@ -5878,7 +5918,7 @@ a:focus-visible {
   }
 
   .lg-log-table-head > div:not(.lg-log-table-settings) {
-    font-size: 13px;
+    font-size: 14px;
   }
 
   .lg-log-table-row > div,
@@ -5895,6 +5935,7 @@ a:focus-visible {
   .lg-log-insights {
     min-height: 0;
     grid-template-columns: minmax(0, 1fr);
+    grid-template-rows: minmax(144px, auto) 68px;
     gap: 10px;
   }
 

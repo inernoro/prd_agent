@@ -102,19 +102,19 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '105px', required: true },
-  { key: 'generation', label: '请求 ID', width: 'minmax(118px, 0.8fr)', defaultVisible: false },
-  { key: 'model', label: '模型', width: 'minmax(95px, 1.05fr)' },
-  { key: 'provider', label: 'Provider', width: 'minmax(90px, 0.9fr)' },
-  { key: 'app', label: 'App', width: 'minmax(140px, 1.6fr)', tip: '点击查看 appCaller 摘要与治理入口' },
-  { key: 'input', label: '输入', width: '60px', align: 'right' },
-  { key: 'output', label: '输出', width: '60px', align: 'right' },
-  { key: 'cost', label: '费用', width: '78px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
-  { key: 'usage', label: '用途', width: '68px' },
-  { key: 'speed', label: '速度', width: '76px', align: 'right', tip: '输出 Token / 秒' },
-  { key: 'finish', label: '结束原因', width: '78px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
-  { key: 'user', label: '客户端用户', width: 'minmax(80px, 0.7fr)' },
-  { key: 'status', label: '状态', width: '54px', align: 'center', required: true },
+  { key: 'date', label: '时间', width: '120px', required: true },
+  { key: 'generation', label: '请求 ID', width: '180px', defaultVisible: false },
+  { key: 'model', label: '模型', width: '170px' },
+  { key: 'provider', label: 'Provider', width: '165px' },
+  { key: 'app', label: 'App', width: '300px', tip: '点击查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: '86px', align: 'right' },
+  { key: 'output', label: '输出', width: '86px', align: 'right' },
+  { key: 'cost', label: '费用', width: '100px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
+  { key: 'usage', label: '用途', width: '96px' },
+  { key: 'speed', label: '速度', width: '98px', align: 'right', tip: '输出 Token / 秒' },
+  { key: 'finish', label: '结束原因', width: '110px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
+  { key: 'user', label: '客户端用户', width: '170px' },
+  { key: 'status', label: '状态', width: '60px', align: 'center', required: true },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
