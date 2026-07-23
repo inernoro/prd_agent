@@ -3,6 +3,7 @@ import {
   normalizeReviewStreamError,
   shouldAutoStartReviewStream,
   shouldPollReviewStatus,
+  shouldRecoverAfterReviewStreamClosed,
 } from './reviewStreamRecovery';
 
 describe('review stream recovery', () => {
@@ -29,5 +30,13 @@ describe('review stream recovery', () => {
     expect(shouldAutoStartReviewStream('Running', 'submission-1', null)).toBe(false);
     expect(shouldPollReviewStatus('Running', false)).toBe(true);
     expect(shouldPollReviewStatus('Running', true)).toBe(false);
+  });
+
+  it('SSE 未收到终态事件即自然断开时恢复后端状态同步', () => {
+    expect(shouldRecoverAfterReviewStreamClosed(true, 'done')).toBe(true);
+    expect(shouldRecoverAfterReviewStreamClosed(true, 'error')).toBe(true);
+    expect(shouldRecoverAfterReviewStreamClosed(true, 'connecting')).toBe(false);
+    expect(shouldRecoverAfterReviewStreamClosed(true, 'streaming')).toBe(false);
+    expect(shouldRecoverAfterReviewStreamClosed(false, 'done')).toBe(false);
   });
 });

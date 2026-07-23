@@ -17,6 +17,7 @@ import {
   normalizeReviewStreamError,
   shouldAutoStartReviewStream,
   shouldPollReviewStatus,
+  shouldRecoverAfterReviewStreamClosed,
 } from './reviewStreamRecovery';
 
 const APPEAL_WINDOW_HOURS = 3;
@@ -309,6 +310,14 @@ export function ReviewAgentResultPage() {
     }, 2000);
     return () => window.clearInterval(timer);
   }, [submission, streaming, loadData]);
+
+  // 代理空闲超时等场景可能让 SSE 在没有 done/error 事件时自然结束。
+  // Hook 会进入终态，但不会调用页面回调；此处同步释放本地连接态并回读后端权威状态。
+  useEffect(() => {
+    if (!shouldRecoverAfterReviewStreamClosed(streaming, sse.phase)) return;
+    setStreaming(false);
+    void loadData();
+  }, [streaming, sse.phase, loadData]);
 
   function retryReviewStream() {
     if (!id || streaming || submission?.status !== 'Queued') return;

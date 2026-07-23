@@ -1,4 +1,5 @@
 import type { ReviewSubmission } from '@/services';
+import type { SsePhase } from '@/lib/useSseStream';
 
 type ReviewStatus = ReviewSubmission['status'];
 
@@ -41,4 +42,11 @@ export function shouldAutoStartReviewStream(
 
 export function shouldPollReviewStatus(status: ReviewStatus, streaming: boolean): boolean {
   return status === 'Running' && !streaming;
+}
+
+export function shouldRecoverAfterReviewStreamClosed(
+  streaming: boolean,
+  phase: SsePhase,
+): boolean {
+  return streaming && (phase === 'done' || phase === 'error');
 }
