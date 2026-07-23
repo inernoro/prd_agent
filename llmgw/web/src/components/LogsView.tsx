@@ -40,10 +40,10 @@ import {
 
 const PAGE_SIZE = 30;
 const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
-const NARROW_TABLE_COLUMNS: Record<LogsSubTab, string[]> = {
-  generations: ['date', 'model', 'provider', 'status'],
-  upstream: ['date', 'model', 'provider', 'status'],
-  sessions: ['date', 'app', 'primaryModel', 'requests'],
+const NARROW_TABLE_MIN_WIDTH: Record<LogsSubTab, number> = {
+  generations: 1220,
+  upstream: 980,
+  sessions: 1080,
 };
 
 function initialTablePreferences(): Record<LogsSubTab, LogTablePreferences> {
@@ -686,21 +686,13 @@ export function LogsView() {
   }) {
     const preferences = normalizeLogTablePreferences(columns, tablePreferences[tableKey]);
     const configuredColumns = resolveLogTableColumns(columns, preferences);
-    const narrowKeys = NARROW_TABLE_COLUMNS[tableKey];
-    const visibleColumns = isNarrowViewport
-      ? configuredColumns.filter((column) => narrowKeys.includes(column.key))
-      : configuredColumns;
-    const narrowWidth = (column: ColumnDef) => {
-      if (column.key === 'date') return '86px';
-      if (column.key === 'status' || column.key === 'requests') return '44px';
-      return 'minmax(0, 1fr)';
-    };
-    const gridCols = `${visibleColumns.map((column) => (
-      isNarrowViewport ? narrowWidth(column) : column.width
-    )).join(' ')} ${isNarrowViewport ? '34px' : '42px'}`;
-    const tableMinWidth = isNarrowViewport || tableKey === 'generations'
-      ? 0
-      : Math.max(920, visibleColumns.length * 132 + 42);
+    const visibleColumns = configuredColumns;
+    const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
+    const tableMinWidth = isNarrowViewport
+      ? NARROW_TABLE_MIN_WIDTH[tableKey]
+      : tableKey === 'generations'
+        ? 1220
+        : Math.max(920, visibleColumns.length * 132 + 42);
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     const updatePreferences = (value: LogTablePreferences) => setTablePreferences((current) => ({ ...current, [tableKey]: value }));
