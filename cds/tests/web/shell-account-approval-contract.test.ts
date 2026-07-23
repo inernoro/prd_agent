@@ -34,10 +34,6 @@ const agentMapSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/AgentAccessMap.tsx'),
   'utf8',
 );
-const agentTerritorySource = fs.readFileSync(
-  path.resolve(process.cwd(), 'web/src/lib/agent-territory.ts'),
-  'utf8',
-);
 const globalAgentAccessSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
   'utf8',
@@ -96,27 +92,28 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(globalAgentAccessSource).toContain('className="cds-agent-access-floating"');
     expect(globalAgentAccessSource).toContain("data-preview-instance={isChildPreviewCdsInstance() ? 'true' : 'false'}");
     expect(styles).toMatch(/\.cds-agent-access-floating\[data-preview-instance='true'\]\s*\{[\s\S]*?bottom:\s*4\.75rem;/);
-    expect(agentDialogSource).toContain('data-agent-context={selectedContext.id}');
-    expect(agentDialogSource).toContain('当前页面任务');
+    expect(agentMapSource).toContain('data-agent-context={context.id}');
+    expect(agentMapSource).toContain('当前页面任务');
   });
 
-  it('用连续领土地图和任务地标替代传统下拉，并让切换结果进入 Agent 上下文', () => {
+  it('只在当前任务入口中展开世界地图，并按大洲和地界选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
     expect(agentDialogSource).toContain('createAgentMissionContext(missionId, effectiveProjectId)');
-    expect(agentDialogSource).not.toContain('<select');
-    expect(agentMapSource).toContain('Agent 接入地图');
-    expect(agentMapSource).toContain('选择一块项目领土，再前往任务地标');
-    expect(agentMapSource).toContain('createAgentTerritoryLayout');
+    expect(agentDialogSource).toContain('连接已有项目');
+    expect(agentDialogSource).toContain('创建一个新项目');
+    expect(agentDialogSource).toContain('<select');
+    expect(agentMapSource).toContain('打开世界地图');
+    expect(agentMapSource).toContain('选择 Agent 路线');
+    expect(agentMapSource).toContain('选择大洲');
+    expect(agentMapSource).toContain('选择地界');
+    expect(agentMapSource).toContain('REGION_SHAPES');
     expect(agentMapSource).toContain('branchCount');
-    expect(agentTerritorySource).toContain('MIN_AREA_FACTOR');
-    expect(agentTerritorySource).toContain('MAX_AREA_FACTOR');
-    expect(agentTerritorySource).toContain('projectActivity');
     expect(agentMapSource).toContain('SYSTEM_MISSIONS');
     expect(agentMapSource).toContain('PROJECT_MISSIONS');
     expect(agentMapSource).toContain('aria-live="polite"');
-    expect(styles).toContain('.cds-agent-territory-map');
-    expect(styles).toContain(".cds-agent-territory[data-terrain='");
-    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.cds-agent-territory/);
+    expect(styles).toContain('.cds-agent-world-stage');
+    expect(styles).toContain('.cds-agent-world-region');
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.cds-agent-world-region/);
   });
 
   it('登录与认证页可以把 SSO 配置直接交给 Agent，并声明密钥保护策略', () => {

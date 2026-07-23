@@ -7,10 +7,6 @@ import {
   PROJECT_SKILL_PATHS,
   resolveAgentPageContext,
 } from '../../web/src/lib/agent-onboarding.js';
-import {
-  createAgentTerritoryLayout,
-  createAgentTerritoryWeights,
-} from '../../web/src/lib/agent-territory.js';
 
 describe('CDS Agent 接入口令', () => {
   it('已有项目口令不含密钥，不修改全局环境，并使用页面批准', () => {
@@ -92,41 +88,6 @@ describe('CDS Agent 接入口令', () => {
     expect(createAgentMissionContext('project-settings', 'project/a').pagePath).toBe('/settings/project%2Fa');
     expect(getAgentMissionScope('auth')).toBe('system');
     expect(getAgentMissionScope('branches')).toBe('project');
-  });
-
-  it('按项目规模预测连续地图面积，并限制最大最小地块比例', () => {
-    const projects = [
-      { id: 'small', name: '小项目', slug: 'small', branchCount: 0 },
-      { id: 'medium', name: '中项目', slug: 'medium', branchCount: 8, runningBranchCount: 2 },
-      { id: 'large', name: '大项目', slug: 'large', branchCount: 120, runningBranchCount: 18 },
-    ];
-    const weights = createAgentTerritoryWeights(projects);
-    const small = weights.find((item) => item.key === 'project:small')?.weight || 0;
-    const medium = weights.find((item) => item.key === 'project:medium')?.weight || 0;
-    const large = weights.find((item) => item.key === 'project:large')?.weight || 0;
-
-    expect(medium).toBeGreaterThan(small);
-    expect(large).toBeGreaterThan(medium);
-    expect(large / small).toBeLessThanOrEqual(1.65 / 0.72);
-  });
-
-  it('领土地块完整覆盖地图且不会越界', () => {
-    const layout = createAgentTerritoryLayout([
-      { id: 'a', name: 'A', slug: 'a', branchCount: 2 },
-      { id: 'b', name: 'B', slug: 'b', branchCount: 12 },
-      { id: 'c', name: 'C', slug: 'c', branchCount: 5 },
-      { id: 'd', name: 'D', slug: 'd', branchCount: 1 },
-    ]);
-
-    expect(layout).toHaveLength(6);
-    expect(layout.reduce((sum, item) => sum + item.areaPercent, 0)).toBeCloseTo(100, 8);
-    for (const territory of layout) {
-      expect(territory.x).toBeGreaterThanOrEqual(0);
-      expect(territory.y).toBeGreaterThanOrEqual(0);
-      expect(territory.x + territory.width).toBeLessThanOrEqual(100.0000001);
-      expect(territory.y + territory.height).toBeLessThanOrEqual(100.0000001);
-      expect(territory.areaPercent).toBeGreaterThan(0);
-    }
   });
 
   it('系统级页面优先连接 CDS Self，项目页面按 URL 选择当前项目', () => {

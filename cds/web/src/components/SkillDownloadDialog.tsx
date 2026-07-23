@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck, Sparkles } from 'lucide-react';
+import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
@@ -86,6 +86,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
   const target: CdsConnectTarget = mapSelection.kind === 'new'
     ? { kind: 'new' }
     : { kind: 'existing', projectId: effectiveProjectId || '<project-id>' };
+  const targetKind = mapSelection.kind === 'new' ? 'new' : 'existing';
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
@@ -97,6 +98,14 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     if (selection.kind === 'new' || selectedScope !== nextScope) {
       setMissionId(defaultMissionForMap(selection));
     }
+  };
+  const chooseExistingTarget = (): void => {
+    const projectId = effectiveProjectId || projects[0]?.id;
+    if (!projectId) return;
+    handleMapSelection({ kind: 'project', projectId });
+  };
+  const chooseProject = (projectId: string): void => {
+    handleMapSelection({ kind: 'project', projectId });
   };
 
   return (
@@ -113,27 +122,6 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </DialogDescription>
         </DialogHeader>
 
-        {selectedContext ? (
-          <div
-            className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3"
-            data-agent-context={selectedContext.id}
-            data-agent-page={selectedContext.pagePath}
-          >
-            <div className="flex items-start gap-3">
-              <div className="mt-0.5 rounded-md border border-primary/25 bg-primary/10 p-2 text-primary">
-                <Sparkles className="h-4 w-4" />
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-wider text-primary">
-                  {selectedContext.id === sourceContext.id ? '当前页面任务' : '地图任务'}
-                </div>
-                <div className="mt-1 font-medium text-foreground">{selectedContext.title}</div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{selectedContext.summary}</p>
-              </div>
-            </div>
-          </div>
-        ) : null}
-
         <AgentAccessMap
           projects={projects}
           selection={mapSelection}
@@ -142,6 +130,49 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           onSelectionChange={handleMapSelection}
           onMissionChange={setMissionId}
         />
+
+        <div className="grid gap-2 sm:grid-cols-2">
+          <button
+            type="button"
+            onClick={chooseExistingTarget}
+            disabled={projects.length === 0}
+            className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+              targetKind === 'existing'
+                ? 'border-primary bg-primary/10 text-foreground'
+                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-muted-foreground'
+            } disabled:cursor-not-allowed disabled:opacity-50`}
+          >
+            <div className="font-medium">连接已有项目</div>
+            <div className="mt-0.5 text-xs">只获得所选项目的权限</div>
+          </button>
+          <button
+            type="button"
+            onClick={() => handleMapSelection({ kind: 'new' })}
+            className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
+              targetKind === 'new'
+                ? 'border-primary bg-primary/10 text-foreground'
+                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-muted-foreground'
+            }`}
+          >
+            <div className="font-medium">创建一个新项目</div>
+            <div className="mt-0.5 text-xs">一次性权限，创建后自动失效</div>
+          </button>
+        </div>
+
+        {targetKind === 'existing' ? (
+          <label className="space-y-1 text-sm">
+            <span className="text-xs font-medium text-foreground">选择项目</span>
+            <select
+              value={effectiveProjectId}
+              onChange={(event) => chooseProject(event.target.value)}
+              className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 text-sm text-foreground"
+            >
+              {projects.map((project) => (
+                <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>
+              ))}
+            </select>
+          </label>
+        ) : null}
 
         <nav className="flex gap-1 border-b border-[hsl(var(--hairline))]">
           {TABS.map((tab) => {
