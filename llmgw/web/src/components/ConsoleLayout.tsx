@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Boxes, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock, Layers3,
-  ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
+  Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
   ShieldCheck, Shuffle, Sun, Tags, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -102,14 +102,34 @@ export function ConsoleLayout() {
           <span>LLM Gateway</span>
         </div>
 
-        <label className="lg-tenant-switcher">
-          <Building2 size={14} />
-          <select aria-label="切换租户" value={tenant?.id ?? tenants.find((item) => item.current)?.id ?? ''} disabled={switching} onChange={(event) => void changeTenant(event.target.value)}>
-            {tenants.length === 0 ? <option value={tenant?.id ?? ''}>{tenant?.name ?? '当前租户'}</option> : null}
-            {tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-          <ChevronDown size={13} />
-        </label>
+        <details className="lg-tenant-switcher">
+          <summary aria-label="切换组织" aria-busy={switching}>
+            <Building2 size={14} />
+            <span><small>组织</small><strong>{tenant?.name ?? tenants.find((item) => item.current)?.name ?? '当前组织'}</strong></span>
+            <ChevronDown size={13} />
+          </summary>
+          <div className="lg-tenant-popover">
+            <header><strong>组织</strong><span>隔离成员、密钥、路由、预算与日志</span></header>
+            <div role="menu" aria-label="可用组织">
+              {(tenants.length > 0 ? tenants : [{
+                id: tenant?.id ?? '',
+                name: tenant?.name ?? '当前组织',
+                slug: '',
+                role: tenant?.role ?? 'member',
+                current: true,
+              }]).map((item) => {
+                const selected = item.id === tenant?.id || item.current;
+                return (
+                  <button key={item.id || item.name} type="button" role="menuitemradio" aria-checked={selected} disabled={switching} onClick={() => void changeTenant(item.id)}>
+                    <span><strong>{item.name}</strong><small>{item.role}</small></span>
+                    {selected ? <Check size={15} /> : null}
+                  </button>
+                );
+              })}
+            </div>
+            <NavLink to="/organization"><Building2 size={14} /><span>管理团队与成员</span></NavLink>
+          </div>
+        </details>
 
         {canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
           <Search size={15} />

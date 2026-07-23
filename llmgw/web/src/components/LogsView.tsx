@@ -32,7 +32,6 @@ import {
   fmtMs,
   fmtCompact,
   fmtCost,
-  computeTokPerSec,
   statusBadgeStyle,
   userLabel,
   deriveLifecycle,
@@ -73,6 +72,47 @@ const TRANSPORT_META: Record<string, { label: string; color: string; bg: string 
 function getTransportMeta(t?: string | null) {
   if (!t) return null;
   return TRANSPORT_META[t.toLowerCase()] ?? { label: t, color: 'var(--text-secondary)', bg: 'var(--bg-elevated)' };
+}
+
+function isImageGeneration(item: LlmLogListItem) {
+  const requestType = item.requestType?.toLowerCase() ?? '';
+  const model = item.model?.toLowerCase() ?? '';
+  return requestType === 'generation'
+    || requestType === 'image'
+    || requestType === 'image-gen'
+    || /(image|imagen|dall-e|banana|flux|sdxl)/.test(model);
+}
+
+function formatInputUsage(item: LlmLogListItem) {
+  if (item.inputTokens != null) return `${fmtCompact(item.inputTokens)} tok`;
+  if (isImageGeneration(item)) return '1 prompt';
+  return DASH;
+}
+
+function formatOutputUsage(item: LlmLogListItem) {
+  if (item.outputTokens != null) return `${fmtCompact(item.outputTokens)} tok`;
+  if (item.imageSuccessCount != null) return `${item.imageSuccessCount} image`;
+  return DASH;
+}
+
+function formatRecordedCost(it: LlmLogListItem) {
+  if (it.providerReportedCost != null)
+    return fmtCost(it.providerReportedCost, it.providerCostCurrency || 'USD');
+  if (it.estimatedCost != null)
+    return fmtCost(it.estimatedCost, it.estimatedCostCurrency);
+  return '未计价';
+}
+
+function formatThroughput(item: LlmLogListItem) {
+  if (item.outputTokens != null && item.durationMs && item.durationMs > 0) {
+    const tokensPerSecond = Math.round((item.outputTokens / item.durationMs) * 1000 * 10) / 10;
+    return `${tokensPerSecond} tok/s`;
+  }
+  if (item.imageSuccessCount != null && item.durationMs && item.durationMs > 0) {
+    const imagesPerMinute = Math.round((item.imageSuccessCount / item.durationMs) * 60_000 * 10) / 10;
+    return `${imagesPerMinute} image/min`;
+  }
+  return DASH;
 }
 
 function initialQueryValue(key: string) {
@@ -381,7 +421,7 @@ export function LogsView() {
           >
             <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
               <ModelEntityIcon model={modelName} />
-              <span className="lg-truncate lg-log-model-name">{modelName}</span>
+              <span className="lg-truncate lg-log-model-name" style={{ fontSize: 14, fontWeight: 550 }}>{modelName}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -427,9 +467,9 @@ export function LogsView() {
         );
       }
       case 'input':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.inputTokens)}{it.inputTokens == null ? '' : ' tok'}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatInputUsage(it)}</span>;
       case 'output':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCompact(it.outputTokens)}{it.outputTokens == null ? '' : ' tok'}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatOutputUsage(it)}</span>;
       case 'tokens':
         return (
           <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
@@ -437,7 +477,15 @@ export function LogsView() {
           </span>
         );
       case 'cost':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtCost(it.estimatedCost, it.estimatedCostCurrency)}</span>;
+        return (
+          <span
+            className="tabular"
+            style={{ fontSize: 14, color: 'var(--text-secondary)' }}
+            title={it.providerReportedCost == null && it.estimatedCost == null ? '上游未返回费用，且当前模型尚未配置计价规则' : undefined}
+          >
+            {formatRecordedCost(it)}
+          </span>
+        );
       case 'latency':
         return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
@@ -447,8 +495,7 @@ export function LogsView() {
       case 'usage':
         return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
-        const t = computeTokPerSec(it.outputTokens, it.durationMs);
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{t == null ? DASH : `${t} tok/s`}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatThroughput(it)}</span>;
       }
       case 'finish':
         return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.finishReason || DASH}</span>;

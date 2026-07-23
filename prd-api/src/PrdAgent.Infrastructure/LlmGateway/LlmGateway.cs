@@ -3846,7 +3846,16 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
             var answerText = responseBody.Length > 10000
                 ? responseBody.Substring(0, 10000) + "...[truncated]"
                 : responseBody;
-            var cost = EstimateCost(resolution, tokenUsage: null, countCall: statusCode >= 200 && statusCode < 300);
+            var rawUsage = RawGatewayUsageParser.Parse(responseBody);
+            var tokenUsage = rawUsage.InputTokens is not null || rawUsage.OutputTokens is not null
+                ? new GatewayTokenUsage
+                {
+                    InputTokens = rawUsage.InputTokens,
+                    OutputTokens = rawUsage.OutputTokens,
+                    Source = "response_body"
+                }
+                : null;
+            var cost = EstimateCost(resolution, tokenUsage, countCall: statusCode >= 200 && statusCode < 300);
 
             _logWriter.MarkDone(
                 logId,
@@ -3856,12 +3865,12 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     {
                         ["content-type"] = "application/json"
                     },
-                    InputTokens: null,
-                    OutputTokens: null,
+                    InputTokens: rawUsage.InputTokens,
+                    OutputTokens: rawUsage.OutputTokens,
                     CacheCreationInputTokens: null,
                     CacheReadInputTokens: null,
-                    TokenUsageSource: "missing",
-                    ImageSuccessCount: null,
+                    TokenUsageSource: tokenUsage?.Source ?? "missing",
+                    ImageSuccessCount: rawUsage.ImageSuccessCount,
                     AnswerText: answerText,
                     ThinkingText: null,
                     AssembledTextChars: responseBody.Length,
@@ -3869,6 +3878,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     Status: status,
                     EndedAt: DateTime.UtcNow,
                     DurationMs: durationMs,
+                    FinishReason: rawUsage.FinishReason,
                     EstimatedInputCost: cost.Input,
                     EstimatedOutputCost: cost.Output,
                     EstimatedCallCost: cost.Call,
@@ -3890,7 +3900,9 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ResolutionReason: resolution.ResolutionReason,
                     ModelResolutionType: ParseResolutionType(resolution.ResolutionType),
                     ModelGroupId: resolution.ModelGroupId,
-                    ModelGroupName: resolution.ModelGroupName));
+                    ModelGroupName: resolution.ModelGroupName,
+                    ProviderReportedCost: rawUsage.ProviderReportedCost,
+                    ProviderCostCurrency: rawUsage.ProviderCostCurrency));
         }
         catch (Exception ex)
         {

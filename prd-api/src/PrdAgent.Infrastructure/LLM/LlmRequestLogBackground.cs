@@ -135,7 +135,9 @@ public sealed class LlmRequestLogBackground
             .Set(l => l.EstimatedCallCost, done.EstimatedCallCost)
             .Set(l => l.EstimatedCost, done.EstimatedCost)
             .Set(l => l.EstimatedCostCurrency, done.EstimatedCostCurrency)
-            .Set(l => l.EstimatedCostUsd, done.EstimatedCostUsd);
+            .Set(l => l.EstimatedCostUsd, done.EstimatedCostUsd)
+            .Set(l => l.ProviderReportedCost, done.ProviderReportedCost)
+            .Set(l => l.ProviderCostCurrency, done.ProviderCostCurrency);
         if (done.ProviderAttempts is not null)
         {
             update = update.Set(l => l.ProviderAttempts, done.ProviderAttempts);
