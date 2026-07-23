@@ -3565,6 +3565,17 @@ public class GatewayDataDomainGuardTests
     }
 
     [Fact]
+    public void GatewayWeb_UsesPublicSubpathForEntryAndFontAssets()
+    {
+        var vite = ReadRepoFile("llmgw/web/vite.config.ts");
+        var nginx = ReadRepoFile("llmgw/web/nginx.conf");
+
+        Assert.Contains("base: '/llmgw/'", vite);
+        Assert.Contains("location ^~ /llmgw/assets/", nginx);
+        Assert.Contains("alias /usr/share/nginx/html/assets/;", nginx);
+    }
+
+    [Fact]
     public void ExternalTenant_CannotMasqueradeAsMapServiceKeyPurpose()
     {
         var console = ReadRepoFile("llmgw/console-api/Program.cs");
