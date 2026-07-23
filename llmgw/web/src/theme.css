@@ -5861,6 +5861,12 @@ a:focus-visible {
     min-height: 100%;
   }
 
+  .lg-console-content:has(.lg-logs-view) {
+    overflow-x: hidden;
+    overflow-y: auto;
+    overscroll-behavior-y: contain;
+  }
+
   .lg-log-table-card {
     flex: 0 0 auto !important;
     overflow: hidden !important;
