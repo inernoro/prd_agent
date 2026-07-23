@@ -334,10 +334,18 @@ export class CheckRunRunner {
     conclusion: 'failure' | 'neutral';
     title: string;
     summary: string;
+    /**
+     * 显式指定 check run 挂的 commit sha（缺省取 entry.githubCommitSha）。
+     * webhook 派发失败必须钉住**被派发的** commitSha（Codex P2，PR #1235）：
+     * 派发调用挂起期间若有新 push 刷新分支元数据，读可变的 entry 会把红灯
+     * 误挂到新 HEAD 上——而新 push 会触发自己的部署与 check run，失败归属
+     * 必须留在真正派发失败的那个 commit。
+     */
+    headSha?: string;
   }): Promise<void> {
     if (!this.enabled) return;
     const repoFullName = entry.githubRepoFullName;
-    const headSha = entry.githubCommitSha;
+    const headSha = opts.headSha ?? entry.githubCommitSha;
     const instId = entry.githubInstallationId;
     if (!repoFullName || !headSha || !instId) return;
     const parsed = this.parseRepo(repoFullName);
@@ -423,8 +431,21 @@ export class CheckRunRunner {
           conclusion = 'cancelled';
           summary = '部署被取消或被更高优先级操作取代（check run 由后台看门狗补收尾）';
         } else {
-          conclusion = 'success';
-          summary = '部署已成功完成（当时的 check run 回写丢失，由后台看门狗补收尾）';
+          // run=running：部署本体成功。但 branches.ts 在自动冒烟失败时会把
+          // check conclusion 定为 failure、而 run 仍推进到 running（transition
+          // 事件带 detail.smokeOk=false）——丢失的 PATCH 不能被补成绿灯，否则
+          // 冒烟失败对 reviewer 隐身（Codex P2，PR #1235）。从 run 事件里回读
+          // 冒烟结论：任一 running 事件带 smokeOk=false 即判 failure。
+          const smokeFailed = run.events.some((ev) =>
+            ev.status === 'running' && (ev.detail as { smokeOk?: unknown } | undefined)?.smokeOk === false,
+          );
+          if (smokeFailed) {
+            conclusion = 'failure';
+            summary = '部署运行完成，但自动冒烟未通过（当时的 check run 回写丢失，由后台看门狗补收尾）';
+          } else {
+            conclusion = 'success';
+            summary = '部署已成功完成（当时的 check run 回写丢失，由后台看门狗补收尾）';
+          }
         }
       } else {
         // 无关联 run（旧式部署 / run 记录缺失）：只在分支已终结时保守收尾；

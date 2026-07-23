@@ -248,6 +248,42 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
     expect(stateService.getBranch('b1')?.githubCheckRunId).toBeUndefined();
   });
 
+  it('run=running 但冒烟失败（detail.smokeOk=false）→ 补收尾为 failure 而非 success（Codex P2）', async () => {
+    await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
+    await runner.ensureOpen(branch);
+    runs.transition('dr_stale', 'preparing', { phase: 'prepare', message: 'prepare' });
+    runs.transition('dr_stale', 'building', { phase: 'build', message: 'build' });
+    runs.transition('dr_stale', 'starting', { phase: 'start', message: 'start' });
+    runs.transition('dr_stale', 'verifying', { phase: 'verify', message: 'verify' });
+    runs.transition('dr_stale', 'running', {
+      phase: 'complete',
+      message: '部署运行完成，自动冒烟未通过',
+      detail: { smokeOk: false },
+    });
+
+    const n = await runner.reconcileStale({ now: afterGrace() });
+    expect(n).toBe(1);
+    expect(updates[0].payload.conclusion).toBe('failure');
+    expect(updates[0].payload.output.summary).toContain('冒烟未通过');
+  });
+
+  it('concludeWithoutDeploy: headSha 覆盖钉住被派发的 commit，不读可变的分支元数据（Codex P2）', async () => {
+    let created: any;
+    githubApp.createCheckRun = async (_inst: number, _o: string, _r: string, payload: any) => {
+      created = payload;
+      return { id: 66, url: 'https://api.github.test/checks/66' };
+    };
+    // 模拟：派发挂起期间新 push 已把分支元数据刷成新 HEAD
+    branch.githubCommitSha = 'newerheadsha0000';
+    await runner.concludeWithoutDeploy(branch, {
+      conclusion: 'failure',
+      title: 'Deploy dispatch failed',
+      summary: '派发失败',
+      headSha: 'dispatchedsha0000',
+    });
+    expect(created.headSha).toBe('dispatchedsha0000');
+  });
+
   it('reconcileOrphans: 有关联 DeploymentRun 的分支不灰化（归 stale/收割管道），无 run 的才灰化（Codex P2）', async () => {
     // b1：有关联 run（已 failed）——reconcileOrphans 必须跳过，让 reconcileStale 写红灯
     await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });

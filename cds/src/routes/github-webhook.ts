@@ -507,6 +507,10 @@ export function createGithubWebhookRouter(deps: GitHubWebhookRouterDeps): Router
                 conclusion: 'failure',
                 title: 'Deploy dispatch failed',
                 summary: `Webhook 部署未启动: ${message}\n\n部署请求未能到达 CDS 部署端点，构建从未开始。修复后可 push 新 commit 或在 PR 评论 \`/cds redeploy\` 重试。`,
+                // 钉住本次被派发的 commit：派发调用挂起期间新 push 可能已刷新
+                // entry.githubCommitSha，红灯必须留在真正派发失败的 sha 上
+                // （新 push 会触发自己的部署与 check run）（Codex P2）。
+                headSha: request.commitSha,
               }).catch(() => { /* best-effort */ });
             }
           }
