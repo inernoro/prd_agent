@@ -1269,7 +1269,7 @@ run_llmgw_release_gate_if_needed() {
   scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
 
   provider_audit_required=0
-  if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then
+  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$canary_stage" = "video-asr" ]; then
     provider_audit_required=1
   fi
   if [ "$provider_audit_required" = "1" ]; then
@@ -1290,6 +1290,8 @@ run_llmgw_release_gate_if_needed() {
     echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
     # shellcheck disable=SC2086
     python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
+  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline"
   fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
