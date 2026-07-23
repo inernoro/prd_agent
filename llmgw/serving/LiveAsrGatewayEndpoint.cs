@@ -94,18 +94,29 @@ public static class LiveAsrGatewayEndpoint
                 return;
             }
 
-            var primary = await resolver.ResolveAsync(
+            // 实时端点必须先声明流式协议意图。字幕 AppCaller 的默认池可能是批量 ASR；
+            // 若只做 auto resolve，会先选中健康的批量模型，再被实时候选策略过滤成空。
+            // 两次解析均属于发送前的“计算阶段”：preferred 保证当前豆包流式池可被发现，
+            // automatic 则保留未来把 AppCaller 绑定到多流式候选池后的自动降级能力。
+            var preferred = await resolver.ResolveAsync(
+                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+                ModelTypes.Asr,
+                expectedModel: LiveAsrCandidatePolicy.PreferredModel,
+                ct: CancellationToken.None);
+            var automatic = await resolver.ResolveAsync(
                 AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
                 ModelTypes.Asr,
                 ct: CancellationToken.None);
-            var candidates = LiveAsrCandidatePolicy.Select(primary);
+            var candidates = LiveAsrCandidatePolicy.Select(preferred, automatic);
             if (candidates.Count == 0)
             {
                 await EmitAsync(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Degraded,
                     ErrorCode = "LIVE_ASR_MODEL_UNAVAILABLE",
-                    Message = primary.ErrorMessage ?? "模型池没有可用的实时 ASR 方案，录音结束后将自动批量转写",
+                    Message = preferred.ErrorMessage
+                        ?? automatic.ErrorMessage
+                        ?? "模型池没有可用的实时 ASR 方案，录音结束后将自动批量转写",
                 });
                 return;
             }

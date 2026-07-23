@@ -113,11 +113,14 @@ public sealed class LiveAsrSessionResult
 public static class LiveAsrCandidatePolicy
 {
     public const int MaxAttempts = 3;
+    public const string PreferredModel = "doubao-asr-stream";
 
-    public static List<ModelResolutionResult> Select(ModelResolutionResult primary)
+    public static List<ModelResolutionResult> Select(params ModelResolutionResult[] resolutions)
     {
-        return new[] { primary }
-            .Concat(primary.RetryCandidates ?? [])
+        return resolutions
+            .Where(resolution => resolution is not null)
+            .SelectMany(resolution => new[] { resolution }
+                .Concat(resolution.RetryCandidates ?? []))
             .Where(candidate =>
                 candidate.Success
                 && candidate.IsExchange

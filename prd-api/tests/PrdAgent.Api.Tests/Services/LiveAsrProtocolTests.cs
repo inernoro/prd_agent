@@ -50,8 +50,8 @@ public class LiveAsrProtocolTests
     [Fact]
     public void CandidatePolicy_ShouldOnlyKeepThreeUniqueStreamingCandidates()
     {
-        var primary = Candidate("p1", "m1", "doubao-asr-stream");
-        primary.RetryCandidates =
+        var preferred = Candidate("p1", "m1", "doubao-asr-stream");
+        preferred.RetryCandidates =
         [
             Candidate("p1", "m1", "doubao-asr-stream"),
             Candidate("p2", "m2", "doubao-asr"),
@@ -59,10 +59,23 @@ public class LiveAsrProtocolTests
             Candidate("p4", "m4", "doubao-asr-stream"),
             Candidate("p5", "m5", "doubao-asr-stream"),
         ];
+        var automaticBatch = Candidate("batch", "openai/gpt-audio", "passthrough");
 
-        var selected = LiveAsrCandidatePolicy.Select(primary);
+        var selected = LiveAsrCandidatePolicy.Select(preferred, automaticBatch);
 
         selected.Select(x => x.ActualModel).ShouldBe(["m1", "m3", "m4"]);
+    }
+
+    [Fact]
+    public void CandidatePolicy_ShouldKeepPreferredStreamWhenAutomaticPoolIsBatchOnly()
+    {
+        var preferred = Candidate("doubao", LiveAsrCandidatePolicy.PreferredModel, "doubao-asr-stream");
+        var automaticBatch = Candidate("openrouter", "openai/gpt-audio", "passthrough");
+
+        var selected = LiveAsrCandidatePolicy.Select(preferred, automaticBatch);
+
+        selected.Count.ShouldBe(1);
+        selected[0].ActualModel.ShouldBe(LiveAsrCandidatePolicy.PreferredModel);
     }
 
     [Fact]
