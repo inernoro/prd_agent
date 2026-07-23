@@ -258,7 +258,7 @@ export function ProjectDetailPage() {
   }
   if (!project) {
     return (
-      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014] text-white/40 text-sm">项目不存在或无权访问</div>
+      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014] text-token-muted text-sm">项目不存在或无权访问</div>
     );
   }
 
@@ -290,7 +290,7 @@ export function ProjectDetailPage() {
       subtitle={project.projectNo}
       topSlot={
         <div className="mb-2">
-          <button onClick={() => navigate('/pm-agent?nav=projects')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
+          <button onClick={() => navigate('/pm-agent?nav=projects')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover:text-token-primary">
             <ArrowLeft size={13} /> 项目列表
           </button>
         </div>
@@ -669,7 +669,7 @@ function MoreActionsMenu({ canManage, onDiagnosis, onClosure, onEvaluate }: {
             const Icon = it.icon;
             return (
               <button key={it.label} onClick={() => { setOpen(false); it.run(); }}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-left hover:bg-white/5"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[12px] text-left hover-bg-soft"
                 style={{ color: 'var(--text-primary)' }}>
                 <Icon size={14} style={{ color: 'var(--text-muted)' }} /> {it.label}
               </button>

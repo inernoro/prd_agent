@@ -760,11 +760,7 @@ export function SpotlightOverlay() {
           <button
             type="button"
             onClick={closeWithFlyBack}
-            style={{
-              fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 999,
-              border: 'none', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.8)',
-              cursor: 'pointer',
-            }}
+            className="bg-token-nested" style={{ fontSize: 12, fontWeight: 600, padding: '5px 10px', borderRadius: 999, border: 'none', color: 'rgba(255,255,255,0.8)', cursor: 'pointer' }}
           >
             关闭引导
           </button>
@@ -923,7 +919,7 @@ export function SpotlightOverlay() {
                 <span>任务进度</span>
                 <span style={{ fontVariantNumeric: 'tabular-nums' }}>{stepIndex + 1} / {steps.length}</span>
               </div>
-              <div style={{ height: 5, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden', marginBottom: 8 }}>
+              <div className="bg-token-nested" style={{ height: 5, borderRadius: 999, overflow: 'hidden', marginBottom: 8 }}>
                 <div style={{ height: '100%', width: `${((stepIndex + 1) / steps.length) * 100}%`, background: 'linear-gradient(90deg,#818cf8,#a78bfa)', transition: 'width 260ms cubic-bezier(.2,.8,.2,1)' }} />
               </div>
               <div style={{ maxHeight: 128, overflowY: 'auto', overscrollBehavior: 'contain', margin: '0 -2px', padding: '0 2px' }}>
@@ -1027,16 +1023,7 @@ export function SpotlightOverlay() {
                   const btn = e.currentTarget.getBoundingClientRect();
                   completeTour(btn.left + btn.width / 2, btn.top + btn.height / 2);
                 }}
-                style={{
-                  fontSize: 12,
-                  fontWeight: 600,
-                  padding: '5px 10px',
-                  border: 'none',
-                  borderRadius: 999,
-                  background: 'rgba(255,255,255,0.08)',
-                  color: 'rgba(255,255,255,0.8)',
-                  cursor: 'pointer',
-                }}
+                className="bg-token-nested" style={{ fontSize: 12, fontWeight: 600, padding: '5px 10px', border: 'none', borderRadius: 999, color: 'rgba(255,255,255,0.8)', cursor: 'pointer' }}
               >
                 {steps && steps.length > 0 ? '完成 🎉' : '知道了'}
               </button>

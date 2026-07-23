@@ -78,19 +78,19 @@ export function ShituAgentPage() {
         </div>
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h1 className="text-xl font-semibold text-white truncate">识途</h1>
+            <h1 className="text-xl font-semibold text-token-primary truncate">识途</h1>
             {activeModel?.name && (
-              <span className="text-[11px] text-white/40 font-mono shrink-0">
+              <span className="text-[11px] text-token-muted font-mono shrink-0">
                 ● {activeModel.name}
                 {activeModel.platform ? ` · ${activeModel.platform}` : ''}
               </span>
             )}
           </div>
-          <p className="text-xs text-white/50 truncate">
+          <p className="text-xs text-token-secondary truncate">
             {activeTab?.description ?? '新人文化与制度问答 — 企业文化 / 事故教训 / 规章制度 / 奖赏表彰'}
           </p>
           {meta?.authorName && (
-            <p className="text-[11px] text-white/35 mt-0.5 inline-flex items-center gap-1">
+            <p className="text-[11px] text-token-muted mt-0.5 inline-flex items-center gap-1">
               <User className="w-3 h-3" />
               作者：{meta.authorName}
             </p>
@@ -99,7 +99,7 @@ export function ShituAgentPage() {
         <button
           type="button"
           onClick={() => setHelpOpen(true)}
-          className="shrink-0 h-8 px-3 rounded-lg border border-white/12 bg-white/5 hover:bg-white/10 text-xs text-white/75 inline-flex items-center gap-1.5 transition"
+          className="shrink-0 h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-secondary inline-flex items-center gap-1.5 transition"
           title="查看使用说明"
         >
           <HelpCircle className="w-3.5 h-3.5 text-sky-300/85" />

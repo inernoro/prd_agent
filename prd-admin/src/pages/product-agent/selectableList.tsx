@@ -130,7 +130,7 @@ export function SelectableRow({
   onClick,
   children,
   trailing,
-  className = 'pa-row group/list-row flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.04]',
+  className = 'pa-row group/list-row flex items-center gap-3 px-3 py-2.5 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft/[0.04]',
 }: {
   id: string;
   selection: ListSelectionState;

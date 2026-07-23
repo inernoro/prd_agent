@@ -598,13 +598,13 @@ export function ExecutionDetailPanel() {
       )}
 
       {/* Tab switcher */}
-      <div className="flex gap-1 p-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)' }}>
+      <div className="flex gap-1 p-1 rounded-lg bg-token-nested" >
         <button
           onClick={() => setActiveTab('logs')}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-xs font-medium transition-all ${
             activeTab === 'logs'
-              ? 'bg-white/10 text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+              ? 'bg-token-nested text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground hover-bg-soft'
           }`}
         >
           <Terminal className="w-3.5 h-3.5" />
@@ -614,8 +614,8 @@ export function ExecutionDetailPanel() {
           onClick={() => setActiveTab('nodes')}
           className={`flex-1 flex items-center justify-center gap-1.5 py-2 px-3 rounded-md text-xs font-medium transition-all ${
             activeTab === 'nodes'
-              ? 'bg-white/10 text-foreground shadow-sm'
-              : 'text-muted-foreground hover:text-foreground hover:bg-white/5'
+              ? 'bg-token-nested text-foreground shadow-sm'
+              : 'text-muted-foreground hover:text-foreground hover-bg-soft'
           }`}
         >
           <LayoutList className="w-3.5 h-3.5" />
@@ -629,7 +629,7 @@ export function ExecutionDetailPanel() {
           className="rounded-xl border border-border overflow-hidden"
           style={{ background: 'rgba(0,0,0,0.2)' }}
         >
-          <div className="flex items-center justify-between px-4 py-2.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="flex items-center justify-between px-4 py-2.5 border-b border-b-token-subtle" >
             <div className="flex items-center gap-2">
               <ScrollText className="w-3.5 h-3.5 text-muted-foreground" />
               <span className="text-xs font-medium text-muted-foreground">
@@ -645,11 +645,11 @@ export function ExecutionDetailPanel() {
           </div>
           {/* ── LLM 实时思考面板 ── */}
           {(llmStreamActive || llmStreamContent) && (
-            <div style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="border-b border-b-token-subtle" >
               <button
                 type="button"
                 onClick={() => setLlmStreamExpanded(!llmStreamExpanded)}
-                className="w-full flex items-center justify-between px-4 py-2 hover:bg-white/5 transition-colors"
+                className="w-full flex items-center justify-between px-4 py-2 hover-bg-soft transition-colors"
               >
                 <div className="flex items-center gap-2">
                   <Brain className="w-3.5 h-3.5" style={{ color: 'rgba(139,92,246,0.9)' }} />
@@ -884,7 +884,7 @@ function LogLine({ entry }: { entry: LogEntry }) {
 
   return (
     <div
-      className="group px-4 py-1.5 flex items-start gap-2 hover:bg-white/[0.02] transition-colors"
+      className="group px-4 py-1.5 flex items-start gap-2 hover-bg-soft/[0.02] transition-colors"
       style={{ background: entry.level === 'error' ? colors.bg : undefined }}
     >
       {/* Time */}
@@ -900,12 +900,8 @@ function LogLine({ entry }: { entry: LogEntry }) {
         <div className="flex items-center gap-1.5 flex-wrap">
           {entry.nodeName && (
             <span
-              className="px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0"
-              style={{
-                background: 'rgba(255,255,255,0.06)',
-                color: 'var(--text-muted)',
-                border: '1px solid rgba(255,255,255,0.08)',
-              }}
+              className="px-1.5 py-0.5 rounded text-[10px] font-medium flex-shrink-0 bg-token-nested border border-token-subtle"
+              style={{ color: 'var(--text-muted)' }}
             >
               {entry.nodeName}
             </span>
@@ -940,12 +936,8 @@ function LogLine({ entry }: { entry: LogEntry }) {
             </div>
             {expanded && (
               <pre
-                className="mt-1.5 text-[10px] rounded-md p-2.5 max-h-48 overflow-auto whitespace-pre-wrap leading-relaxed"
-                style={{
-                  background: 'rgba(0,0,0,0.2)',
-                  color: 'var(--text-secondary)',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                }}
+                className="mt-1.5 text-[10px] rounded-md p-2.5 max-h-48 overflow-auto whitespace-pre-wrap leading-relaxed border border-token-subtle"
+                style={{ background: 'rgba(0,0,0,0.2)', color: 'var(--text-secondary)' }}
               >
                 {entry.detail}
               </pre>

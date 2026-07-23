@@ -43,13 +43,13 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
 
   return (
     // 与「我的待办」按 3:7 分高（flexGrow），网格内部滚动
-    <div className="min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4" style={{ flexGrow: 3, flexBasis: 0 }}>
+    <div className="min-h-0 flex flex-col rounded-xl border border-token-subtle bg-token-nested p-4" style={{ flexGrow: 3, flexBasis: 0 }}>
       <div className="shrink-0 flex items-center gap-2 mb-3">
         <Zap size={15} className="text-amber-300" />
-        <span className="text-sm font-semibold text-white/80">快捷操作</span>
+        <span className="text-sm font-semibold text-token-primary">快捷操作</span>
         <button
           onClick={() => setConfigOpen(true)}
-          className="ml-auto flex items-center gap-1 text-[11px] text-white/45 hover:text-white/85 px-1.5 py-1 rounded hover:bg-white/5"
+          className="ml-auto flex items-center gap-1 text-[11px] text-token-muted hover-text-primary px-1.5 py-1 rounded hover-bg-soft"
           title="配置展示哪些快捷操作"
         >
           <Settings2 size={13} /> 配置
@@ -58,7 +58,7 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
       {loading ? (
         <div className="flex-1 flex items-center justify-center"><MapSpinner size={18} /></div>
       ) : actions.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center text-[12px] text-white/35 text-center px-4">还没有快捷操作，点右上角「配置」添加。</div>
+        <div className="flex-1 flex items-center justify-center text-[12px] text-token-muted text-center px-4">还没有快捷操作，点右上角「配置」添加。</div>
       ) : (
         // 配置很多时网格内部滚动，不撑破 30% 高度
         <div className="flex-1 grid grid-cols-2 gap-2 content-start" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -68,10 +68,10 @@ export function QuickActionsCard({ productId, gotoTab }: { productId: string; go
               <button
                 key={a.id}
                 onClick={() => a.run(ctx)}
-                className="pa-row flex items-center gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
+                className="pa-row flex items-center gap-2 px-2.5 py-2 rounded-lg border border-token-subtle bg-token-nested hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
               >
-                <Icon size={14} className={a.group === 'create' ? 'text-cyan-300 shrink-0' : 'text-white/50 shrink-0'} />
-                <span className="text-[12px] text-white/85 truncate">{a.label}</span>
+                <Icon size={14} className={a.group === 'create' ? 'text-cyan-300 shrink-0' : 'text-token-secondary shrink-0'} />
+                <span className="text-[12px] text-token-primary truncate">{a.label}</span>
               </button>
             );
           })}
@@ -131,35 +131,35 @@ function QuickActionsConfigDialog({
   const dialog = (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col"
+        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 480, maxWidth: '92vw', maxHeight: '82vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
           <div>
-            <h2 className="text-sm font-semibold text-white">配置快捷操作</h2>
-            <p className="text-[11px] text-white/40 mt-0.5">勾选要展示在工作台的操作并排序，所有产品共用这份配置</p>
+            <h2 className="text-sm font-semibold text-token-primary">配置快捷操作</h2>
+            <p className="text-[11px] text-token-muted mt-0.5">勾选要展示在工作台的操作并排序，所有产品共用这份配置</p>
           </div>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>
         </div>
 
         <div className="flex-1 p-4 flex flex-col gap-4" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {/* 已选（可排序） */}
           <div>
-            <div className="text-xs font-medium text-white/50 mb-2">已选（{selectedDefs.length}，按此顺序展示）</div>
+            <div className="text-xs font-medium text-token-secondary mb-2">已选（{selectedDefs.length}，按此顺序展示）</div>
             {selectedDefs.length === 0 ? (
-              <div className="text-[12px] text-white/30 py-3 text-center rounded-lg border border-dashed border-white/10">从下方添加操作</div>
+              <div className="text-[12px] text-token-muted py-3 text-center rounded-lg border border-dashed border-token-subtle">从下方添加操作</div>
             ) : (
               <div className="flex flex-col gap-1.5">
                 {selectedDefs.map((a, i) => {
                   const Icon = a.icon;
                   return (
-                    <div key={a.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.03]">
-                      <Icon size={14} className="text-white/55 shrink-0" />
-                      <span className="text-[12px] text-white/85 flex-1 truncate">{a.label}</span>
-                      <button onClick={() => move(i, -1)} disabled={i === 0} className="text-white/35 hover:text-white disabled:opacity-25" title="上移"><ArrowUp size={13} /></button>
-                      <button onClick={() => move(i, 1)} disabled={i === selectedDefs.length - 1} className="text-white/35 hover:text-white disabled:opacity-25" title="下移"><ArrowDown size={13} /></button>
-                      <button onClick={() => setSelected((p) => p.filter((x) => x !== a.id))} className="text-white/35 hover:text-red-300" title="移除"><Trash2 size={13} /></button>
+                    <div key={a.id} className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-token-subtle bg-token-nested">
+                      <Icon size={14} className="text-token-secondary shrink-0" />
+                      <span className="text-[12px] text-token-primary flex-1 truncate">{a.label}</span>
+                      <button onClick={() => move(i, -1)} disabled={i === 0} className="text-token-muted hover-text-primary disabled:opacity-25" title="上移"><ArrowUp size={13} /></button>
+                      <button onClick={() => move(i, 1)} disabled={i === selectedDefs.length - 1} className="text-token-muted hover-text-primary disabled:opacity-25" title="下移"><ArrowDown size={13} /></button>
+                      <button onClick={() => setSelected((p) => p.filter((x) => x !== a.id))} className="text-token-muted hover:text-red-300" title="移除"><Trash2 size={13} /></button>
                     </div>
                   );
                 })}
@@ -173,7 +173,7 @@ function QuickActionsConfigDialog({
             if (rest.length === 0) return null;
             return (
               <div key={g}>
-                <div className="text-xs font-medium text-white/50 mb-2">{QUICK_ACTION_GROUP_LABEL[g]}</div>
+                <div className="text-xs font-medium text-token-secondary mb-2">{QUICK_ACTION_GROUP_LABEL[g]}</div>
                 <div className="grid grid-cols-2 gap-1.5">
                   {rest.map((a) => {
                     const Icon = a.icon;
@@ -181,11 +181,11 @@ function QuickActionsConfigDialog({
                       <button
                         key={a.id}
                         onClick={() => setSelected((p) => [...p, a.id])}
-                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-white/10 bg-white/[0.02] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
+                        className="flex items-center gap-2 px-2.5 py-1.5 rounded-lg border border-token-subtle bg-token-nested hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
                       >
-                        <Icon size={14} className="text-white/45 shrink-0" />
-                        <span className="text-[12px] text-white/75 flex-1 truncate">{a.label}</span>
-                        <Plus size={13} className="text-white/35 shrink-0" />
+                        <Icon size={14} className="text-token-muted shrink-0" />
+                        <span className="text-[12px] text-token-secondary flex-1 truncate">{a.label}</span>
+                        <Plus size={13} className="text-token-muted shrink-0" />
                       </button>
                     );
                   })}
@@ -195,8 +195,8 @@ function QuickActionsConfigDialog({
           })}
         </div>
 
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10 shrink-0">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-token-subtle shrink-0">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">取消</button>
           <button
             onClick={save}
             disabled={saving}

@@ -344,7 +344,7 @@ function MoreItem({ icon, label, onClick, disabled, dataTourId }: {
       data-tour-id={dataTourId}
       onClick={onClick}
       disabled={disabled}
-      className="flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] transition-colors hover:bg-white/6 disabled:opacity-50"
+      className="hover-bg-soft flex w-full items-center gap-2.5 px-3 py-2 text-left text-[12px] transition-colors disabled:opacity-50"
       style={{ color: 'var(--text-primary)' }}
     >
       <span className="text-token-muted">{icon}</span>
@@ -453,7 +453,7 @@ function CreateStoreDialog({ onClose, onCreated }: {
             </span>
           </div>
           <button onClick={safeClose} disabled={loading}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6 disabled:opacity-40 disabled:cursor-not-allowed">
+            className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 disabled:opacity-40 disabled:cursor-not-allowed">
             <X size={15} />
           </button>
         </div>
@@ -565,7 +565,7 @@ function EditStoreDialog({ storeId, initialName, initialTags, onClose, onSaved }
             </span>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+            className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200">
             <X size={15} />
           </button>
         </div>
@@ -697,7 +697,7 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
             </span>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors hover:bg-white/6">
+            className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors">
             <X size={15} />
           </button>
         </div>
@@ -834,7 +834,7 @@ function ShareDialog({ storeId, storeName, isPublic, entryId, entryTitle, onClos
                           </button>
                           <button
                             onClick={() => handleRevoke(link.id)}
-                            className="flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors hover:text-token-error flex-shrink-0"
+                            className="hover-text-error flex h-8 cursor-pointer items-center gap-1 rounded-[8px] px-2.5 text-[11px] text-token-muted transition-colors flex-shrink-0"
                             title="撤销此分享（撤销后链接立即失效）">
                             <Trash2 size={11} /> 撤销
                           </button>
@@ -1659,7 +1659,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         title={
           <div className="flex items-center gap-2">
             <button onClick={onBack}
-              className="cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+              className="hover-bg-soft cursor-pointer rounded-[8px] px-2 py-1 text-[12px] text-token-muted transition-colors duration-200">
               <ArrowLeft size={14} />
             </button>
             {!isMobile && <Library size={14} className="text-token-muted" />}
@@ -2246,8 +2246,8 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 title="点击展开查看进度"
                 onClick={() => setReprocessTarget({ id: r.sourceEntryId, title: r.sourceTitle })}
               >
-                <div className="flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px]"
-                  style={{ background: 'rgba(255,255,255,0.05)', color: accent }}>
+                <div className="bg-token-nested flex h-7 w-7 flex-shrink-0 items-center justify-center rounded-[8px]"
+                  style={{ color: accent }}>
                   {r.status === 'done'
                     ? <CheckCircle2 size={14} />
                     : r.status === 'failed'
@@ -2266,7 +2266,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   <Wand2 size={12} className="flex-shrink-0 text-token-muted" />
                 ) : (
                   <button
-                    className="flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted hover:bg-white/6"
+                    className="hover-bg-soft flex h-5 w-5 flex-shrink-0 items-center justify-center rounded-[6px] text-token-muted"
                     title="移除"
                     onClick={(e) => { e.stopPropagation(); dismissRun(r.runId); }}
                   >
@@ -2393,16 +2393,9 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
   const accentColor = mode === 'github' ? '130,80,223' : '234,179,8';
 
   return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center"
-      style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
+    <div className="surface-backdrop fixed inset-0 z-50 flex items-center justify-center"
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[560px] max-w-[92vw] rounded-[16px] p-6"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          border: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '0 24px 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="surface-popover w-[560px] max-w-[92vw] rounded-[16px] p-6">
         <div className="flex items-center justify-between mb-5">
           <div className="flex items-center gap-2.5">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center"
@@ -2412,7 +2405,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
             <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>添加订阅源</span>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+            className="hover-bg-soft w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer transition-colors duration-200"
             style={{ color: 'var(--text-muted)' }}>
             <X size={15} />
           </button>
@@ -2424,8 +2417,8 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
             <button key={m} onClick={() => { setMode(m); setError(''); }}
               className="flex-1 py-2 rounded-[10px] text-[12px] font-semibold cursor-pointer flex items-center justify-center gap-1.5 transition-all duration-200"
               style={{
-                background: mode === m ? `rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.1)` : 'rgba(255,255,255,0.02)',
-                border: mode === m ? `1px solid rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.2)` : '1px solid rgba(255,255,255,0.06)',
+                background: mode === m ? `rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.1)` : 'var(--bg-nested)',
+                border: mode === m ? `1px solid rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.2)` : '1px solid var(--border-subtle)',
                 color: mode === m ? `rgba(${m === 'github' ? '130,80,223' : '234,179,8'},0.9)` : 'var(--text-muted)',
               }}>
               <Icon size={13} /> {label}
@@ -2440,8 +2433,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>GitHub 目录地址</label>
                 <input value={githubUrl} onChange={e => setGithubUrl(e.target.value)}
                   placeholder="https://github.com/owner/repo/tree/main/doc"
-                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+                  className="prd-field w-full h-9 px-3 rounded-[10px] text-[13px] outline-none" />
                 <p className="text-[11px] mt-1" style={{ color: 'var(--text-muted)' }}>
                   自动同步目录下所有 .md 文件，支持增量更新（SHA 去重）
                 </p>
@@ -2449,8 +2441,7 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题（可选，默认用仓库名）</label>
                 <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：项目文档"
-                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+                  className="prd-field w-full h-9 px-3 rounded-[10px] text-[13px] outline-none" />
               </div>
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
@@ -2459,8 +2450,8 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
                     <button key={m} onClick={() => setGithubInterval(m)}
                       className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
                       style={{
-                        background: githubInterval === m ? 'rgba(130,80,223,0.1)' : 'rgba(255,255,255,0.02)',
-                        border: githubInterval === m ? '1px solid rgba(130,80,223,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                        background: githubInterval === m ? 'rgba(130,80,223,0.1)' : 'var(--bg-nested)',
+                        border: githubInterval === m ? '1px solid rgba(130,80,223,0.2)' : '1px solid var(--border-subtle)',
                         color: githubInterval === m ? 'rgba(130,80,223,0.9)' : 'var(--text-muted)',
                       }}>
                       {m < 1440 ? `${m / 60}小时` : '每天'}
@@ -2474,14 +2465,12 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>标题</label>
                 <input value={title} onChange={e => setTitle(e.target.value)} placeholder="如：React 官方博客"
-                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+                  className="prd-field w-full h-9 px-3 rounded-[10px] text-[13px] outline-none" />
               </div>
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>源地址（RSS / 网页 URL）</label>
                 <input value={sourceUrl} onChange={e => setSourceUrl(e.target.value)} placeholder="https://example.com/feed.xml"
-                  className="w-full h-9 px-3 rounded-[10px] text-[13px] outline-none"
-                  style={{ background: 'var(--input-bg, rgba(255,255,255,0.05))', border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))', color: 'var(--text-primary)' }} />
+                  className="prd-field w-full h-9 px-3 rounded-[10px] text-[13px] outline-none" />
               </div>
               <div>
                 <label className="block text-[12px] mb-1.5" style={{ color: 'var(--text-muted)' }}>同步间隔</label>
@@ -2490,8 +2479,8 @@ function SubscribeDialog({ storeId, onClose, onCreated }: {
                     <button key={m} onClick={() => setInterval(m)}
                       className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200"
                       style={{
-                        background: interval === m ? 'rgba(234,179,8,0.1)' : 'rgba(255,255,255,0.02)',
-                        border: interval === m ? '1px solid rgba(234,179,8,0.2)' : '1px solid rgba(255,255,255,0.06)',
+                        background: interval === m ? 'rgba(234,179,8,0.1)' : 'var(--bg-nested)',
+                        border: interval === m ? '1px solid rgba(234,179,8,0.2)' : '1px solid var(--border-subtle)',
                         color: interval === m ? 'rgba(234,179,8,0.9)' : 'var(--text-muted)',
                       }}>
                       {m < 60 ? `${m}分钟` : m < 1440 ? `${m / 60}小时` : '每天'}
@@ -3234,13 +3223,13 @@ export function DocumentStorePage() {
               className={isMobile
                 ? 'h-10 pl-8 pr-8 rounded-[12px] text-[14px] outline-none w-full'
                 : 'h-8 pl-7 pr-7 rounded-[8px] text-[12px] outline-none w-[200px] focus:w-[260px] transition-all'}
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+              style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
             />
             {search && (
               <button
                 type="button"
                 onClick={() => setSearch('')}
-                className="absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full flex items-center justify-center hover:bg-white/10 transition-colors"
+                className="hover-bg-soft absolute right-2 top-1/2 -translate-y-1/2 h-4 w-4 rounded-full flex items-center justify-center transition-colors"
                 title="清除搜索"
                 style={{ color: 'var(--text-muted)' }}
               >
@@ -3309,15 +3298,10 @@ export function DocumentStorePage() {
             </button>
             {tagOpen && (
               <div
-                className="absolute right-0 top-[36px] z-[120] w-[260px] rounded-[10px] shadow-lg overflow-hidden"
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
-                }}
+                className="surface-popover absolute right-0 top-[36px] z-[120] w-[260px] rounded-[10px] overflow-hidden"
               >
                 {/* 标签搜索 */}
-                <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                <div className="border-b border-token-subtle p-2">
                   <div className="relative">
                     <Search size={11} className="absolute left-2 top-1/2 -translate-y-1/2 pointer-events-none" style={{ color: 'var(--text-muted)' }} />
                     <input
@@ -3325,8 +3309,7 @@ export function DocumentStorePage() {
                       value={tagQuery}
                       onChange={(e) => setTagQuery(e.target.value)}
                       placeholder="搜索标签"
-                      className="w-full h-7 pl-7 pr-2 rounded-[6px] text-[12px] outline-none"
-                      style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
+                      className="prd-field w-full h-7 pl-7 pr-2 rounded-[6px] text-[12px] outline-none"
                     />
                   </div>
                 </div>
@@ -3345,7 +3328,7 @@ export function DocumentStorePage() {
                         onClick={() => {
                           setTagFilter(prev => prev.includes(tag) ? prev.filter(t => t !== tag) : [...prev, tag]);
                         }}
-                        className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
+                        className="hover-bg-soft w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between transition-colors"
                         style={{ color: active ? 'var(--selection-text)' : 'var(--text-primary)' }}
                       >
                         <span className="flex items-center gap-2 min-w-0">
@@ -3368,14 +3351,14 @@ export function DocumentStorePage() {
                 </div>
                 {/* 底部操作行 */}
                 {tagFilter.length > 0 && (
-                  <div className="p-2 border-t flex items-center justify-between" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+                  <div className="border-t border-token-subtle p-2 flex items-center justify-between">
                     <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                       已选 {tagFilter.length} 个
                     </span>
                     <button
                       type="button"
                       onClick={() => setTagFilter([])}
-                      className="text-[11px] px-2 h-6 rounded-[6px] hover:bg-white/6 transition-colors"
+                      className="hover-bg-soft text-[11px] px-2 h-6 rounded-[6px] transition-colors"
                       style={{ color: 'var(--text-muted)' }}
                     >
                       清除全部
@@ -3405,12 +3388,7 @@ export function DocumentStorePage() {
             </button>
             {sortOpen && (
               <div
-                className="absolute right-0 top-[36px] z-[120] min-w-[160px] rounded-[10px] py-1 shadow-lg"
-                style={{
-                  background: 'var(--bg-elevated)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
-                }}
+                className="surface-popover absolute right-0 top-[36px] z-[120] min-w-[160px] rounded-[10px] py-1"
               >
                 {SORT_OPTIONS.map(opt => {
                   const active = opt.key === sortKey;
@@ -3419,7 +3397,7 @@ export function DocumentStorePage() {
                       key={opt.key}
                       type="button"
                       onClick={() => { setSortKey(opt.key); setSortOpen(false); }}
-                      className="w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between hover:bg-white/6 transition-colors"
+                      className="hover-bg-soft w-full text-left px-3 py-1.5 text-[12px] flex items-center justify-between transition-colors"
                       style={{ color: active ? 'var(--selection-text)' : 'var(--text-primary)' }}
                     >
                       <span>{opt.label}</span>
@@ -3504,7 +3482,7 @@ export function DocumentStorePage() {
             {tab === 'team' && (
               <section className="space-y-2">
                 <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>团队范围</div>
-                <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="surface-inset rounded-[14px] p-2">
                   <TeamScopeBar
                     moduleKey="document-store"
                     value={teamScope}
@@ -3581,8 +3559,7 @@ export function DocumentStorePage() {
                   <button
                     type="button"
                     onClick={() => { setShowMobileFilters(false); setShowAccountViewers(true); }}
-                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
                   >
                     <BarChart3 size={17} />
                     <span className="text-[12px]">统计</span>
@@ -3590,8 +3567,7 @@ export function DocumentStorePage() {
                   <button
                     type="button"
                     onClick={() => { setShowMobileFilters(false); setShowSendToPeer(true); }}
-                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
                   >
                     <ArrowLeftRight size={17} />
                     <span className="text-[12px]">批量同步</span>
@@ -3599,8 +3575,7 @@ export function DocumentStorePage() {
                   <button
                     type="button"
                     onClick={() => { setShowMobileFilters(false); setShowOpenApi(true); }}
-                    className="h-16 rounded-[14px] flex flex-col items-center justify-center gap-1"
-                    style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}
+                    className="surface-action hover-bg-soft h-16 rounded-[14px] flex flex-col items-center justify-center gap-1 text-token-primary"
                   >
                     <KeyRound size={17} />
                     <span className="text-[12px]">接入 AI</span>
@@ -3872,12 +3847,10 @@ export function DocumentStorePage() {
                     {/* 最近文档预览列表 — 文章迷你目录（序号 + 标题 + 更多计数） */}
                     <div className="flex-1 mt-2.5 min-h-[88px]">
                       {(s.recentEntries?.length ?? 0) > 0 ? (
-                        <div className="rounded-[9px] overflow-hidden"
-                          style={{ background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                        <div className="surface-inset rounded-[9px] overflow-hidden">
                           {s.recentEntries.slice(0, 3).map((entry, idx) => (
                             <div key={entry.id}
-                              className="flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-white/[0.04]"
-                              style={{ borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)' }}>
+                              className={`flex items-center gap-2 px-2.5 py-1.5 transition-colors hover:bg-[var(--bg-card-hover)] ${idx === 0 ? '' : 'border-t border-token-subtle'}`}>
                               <span className="text-[10px] w-3.5 text-center flex-shrink-0 tabular-nums" style={{ color: 'var(--text-muted)' }}>
                                 {idx + 1}
                               </span>
@@ -3903,22 +3876,19 @@ export function DocumentStorePage() {
                             </div>
                           ))}
                           {(s.recentEntries?.length ?? 0) >= 3 && s.documentCount > (s.recentEntries?.length ?? 0) && (
-                            <div className="flex items-center justify-center px-2.5 py-1.5 text-[10.5px]"
-                              style={{ borderTop: '1px solid rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}>
+                            <div className="flex items-center justify-center border-t border-token-subtle px-2.5 py-1.5 text-[10.5px] text-token-muted">
                               + 还有 {s.documentCount - (s.recentEntries?.length ?? 0)} 篇
                             </div>
                           )}
                         </div>
                       ) : (
-                        <div className="flex items-center justify-center h-full rounded-[9px]"
-                          style={{ background: 'rgba(255,255,255,0.02)', border: '1px dashed rgba(255,255,255,0.08)', minHeight: '88px' }}>
+                        <div className="surface-inset flex min-h-[88px] h-full items-center justify-center rounded-[9px] border-dashed">
                           <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库暂无内容</span>
                         </div>
                       )}
                     </div>
 
-                    <div className="flex items-center justify-between mt-2.5 pt-3"
-                      style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                    <div className="flex items-center justify-between mt-2.5 border-t border-token-subtle pt-3">
                       <div className="flex items-center gap-3.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
                         <span className="inline-flex items-center gap-1" title="文档数">
                           <FileText size={11} /> {s.documentCount}
@@ -3942,7 +3912,7 @@ export function DocumentStorePage() {
                             style={{ border: '2px solid var(--bg-card, #1b1b1e)' }}
                           />
                         ) : (
-                          <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-white"
+                          <span className="w-6 h-6 rounded-full flex items-center justify-center text-[10px] font-bold text-token-primary"
                             style={{ background: `linear-gradient(135deg, ${c1}, ${c2})`, border: '2px solid var(--bg-card, #1b1b1e)' }}>
                             {s.name.trim().charAt(0).toUpperCase()}
                           </span>
@@ -4171,7 +4141,7 @@ function StorePickerDialog({ actionLabel, scope, teamId, onPick, onCreateNew, on
             <p className="text-[14px] font-semibold text-token-primary">{actionLabel}：放进哪个知识库？</p>
             <button
               onClick={onClose}
-              className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+              className="hover-bg-soft flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted">
               <X size={14} />
             </button>
           </div>
@@ -4201,7 +4171,7 @@ function StorePickerDialog({ actionLabel, scope, teamId, onPick, onCreateNew, on
               <button
                 key={s.id}
                 onClick={() => onPick(s.id)}
-                className="flex w-full cursor-pointer items-center justify-between gap-2 rounded-[10px] px-3 py-2.5 text-left transition-colors hover:bg-white/6">
+                className="hover-bg-soft flex w-full cursor-pointer items-center justify-between gap-2 rounded-[10px] px-3 py-2.5 text-left transition-colors">
                 <span className="flex min-w-0 items-center gap-2.5">
                   <Library size={14} className="shrink-0 text-token-muted" />
                   <span className="truncate text-[13px] text-token-primary">{s.name}</span>

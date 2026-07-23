@@ -577,7 +577,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             <button
               onClick={() => stopRecorder('discard')}
               aria-label="取消录音"
-              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover:bg-white/6">
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft">
               <X size={15} />
             </button>
           </div>
@@ -593,7 +593,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             style={{ borderTop: '1px solid var(--border-faint)' }}>
             <button
               onClick={() => { stopRecorder('discard'); onPickFile(targetStoreId || storeId); }}
-              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover:bg-white/6">
+              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft">
               <FileUp size={13} /> 已有录音文件？上传音频文件
             </button>
           </div>

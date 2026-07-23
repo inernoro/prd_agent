@@ -64,7 +64,7 @@ export function RetractButton({ domain, itemKey, label, onRetracted }: RetractBu
           e.stopPropagation();
           setConfirmOpen(true);
         }}
-        className="inline-flex items-center gap-1 rounded-md border border-white/15 bg-black/35 px-1.5 py-0.5 text-[10px] text-white/75 backdrop-blur-sm transition-all hover:border-rose-400/40 hover:bg-rose-500/15 hover:text-rose-100"
+        className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-black/35 px-1.5 py-0.5 text-[10px] text-white/75 backdrop-blur-sm transition-all hover:border-rose-400/40 hover:bg-rose-500/15 hover:text-rose-100"
         title="取消公开（变回私有）"
       >
         <EyeOff size={10} />
@@ -98,7 +98,7 @@ export function RetractButton({ domain, itemKey, label, onRetracted }: RetractBu
           setError(null);
         }}
         disabled={loading}
-        className="rounded border border-white/15 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/75 hover:bg-white/10"
+        className="rounded border border-token-subtle bg-token-nested px-1.5 py-0.5 text-[10px] text-token-secondary hover-bg-soft"
       >
         取消
       </button>

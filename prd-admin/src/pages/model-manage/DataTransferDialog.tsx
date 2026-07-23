@@ -238,8 +238,8 @@ export function DataTransferDialog({
               onClick={() => setTab('export')}
               className="h-9 px-3 rounded-[12px] text-sm font-semibold transition-colors"
               style={{
-                background: tab === 'export' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                border: '1px solid rgba(255,255,255,0.10)',
+                background: tab === 'export' ? 'var(--nested-block-bg)' : 'transparent',
+                border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
               }}
             >
@@ -250,8 +250,8 @@ export function DataTransferDialog({
               onClick={() => setTab('import')}
               className="h-9 px-3 rounded-[12px] text-sm font-semibold transition-colors"
               style={{
-                background: tab === 'import' ? 'rgba(255,255,255,0.08)' : 'transparent',
-                border: '1px solid rgba(255,255,255,0.10)',
+                background: tab === 'import' ? 'var(--nested-block-bg)' : 'transparent',
+                border: '1px solid var(--border-subtle)',
                 color: 'var(--text-primary)',
               }}
             >
@@ -303,7 +303,7 @@ export function DataTransferDialog({
               <div className="flex items-center gap-2">
                 <label
                   className="inline-flex items-center gap-2 h-9 px-3 rounded-[12px] text-sm font-semibold cursor-pointer transition-colors"
-                  style={{ border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
                 >
                   <Upload size={16} />
                   选择文件
@@ -326,7 +326,7 @@ export function DataTransferDialog({
             )}
           </div>
 
-          <div className="mt-4 rounded-[14px] p-3 text-xs" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-secondary)' }}>
+          <div className="mt-4 rounded-[14px] p-3 text-xs" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
             注意：导出 JSON **包含明文密钥 apiKey**。建议仅在本机离线保存，避免粘贴到聊天、工单或公共仓库中。
           </div>
 
@@ -341,7 +341,7 @@ export function DataTransferDialog({
                     className="w-full flex-1 min-h-0 rounded-[14px] p-3 text-xs outline-none"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                       lineHeight: 1.5,
@@ -360,7 +360,7 @@ export function DataTransferDialog({
                     className="w-full flex-1 min-h-0 rounded-[14px] p-3 text-xs outline-none"
                     style={{
                       background: 'var(--bg-input)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      border: '1px solid var(--border-subtle)',
                       color: 'var(--text-primary)',
                       fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace',
                       lineHeight: 1.5,
@@ -374,7 +374,7 @@ export function DataTransferDialog({
 
             {tab === 'import' ? (
               <div className="min-h-0 flex flex-col gap-3">
-                <div className="rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)' }}>
+                <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}>
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>导入选项</div>
                   <div className="mt-3 space-y-2 text-sm" style={{ color: 'var(--text-secondary)' }}>
                     <label className="flex items-center gap-2">
@@ -412,7 +412,7 @@ export function DataTransferDialog({
                   </div>
                 </div>
 
-                <div className="rounded-[14px] p-3" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)' }}>
+                <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}>
                   <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>校验</div>
                   <div className="mt-2 text-xs" style={{ color: 'var(--text-muted)', lineHeight: 1.5 }}>
                     {importSummary ? (
@@ -427,7 +427,7 @@ export function DataTransferDialog({
                   </div>
                 </div>
 
-                <div className="rounded-[14px] p-3 text-xs" style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)', color: 'var(--text-muted)' }}>
+                <div className="rounded-[14px] p-3 text-xs" style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}>
                   导入策略：平台按名称匹配。勾选“强制覆盖”时同名平台会更新（平台 id 保持不变）；未勾选时仅新增不存在的平台。模型按 platformId + modelId upsert；导入列表内模型会被设为启用，但不会自动禁用现有其它模型。
                 </div>
               </div>

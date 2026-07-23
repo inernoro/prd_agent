@@ -112,7 +112,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
       {/* 关闭按钮 */}
       <button
         onClick={onClose}
-        className="absolute top-4 right-4 z-10 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover:bg-white/15"
+        className="absolute top-4 right-4 z-10 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover-bg-soft"
         style={glassPanel}
       >
         <X size={20} style={{ color: 'white' }} />
@@ -138,12 +138,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
             {/* ═══ 左侧缩略图列表 — 更宽 + 上下阴影渐隐 ═══ */}
             {assets.length > 1 && (
               <div
-                className="shrink-0 relative"
-                style={{
-                  width: 120,
-                  borderRight: '1px solid rgba(255,255,255,0.06)',
-                  background: 'rgba(0,0,0,0.25)',
-                }}
+                className="shrink-0 relative border-r border-r-token-subtle"
+                style={{ width: 120, background: 'var(--nested-block-bg)' }}
               >
                 {/* 顶部阴影渐隐 */}
                 <div
@@ -176,7 +172,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                         height: 94,
                         border: i === selectedAssetIndex
                           ? '2.5px solid var(--accent-primary, #818CF8)'
-                          : '2px solid rgba(255,255,255,0.08)',
+                          : '2px solid var(--border-subtle)',
                         opacity: i === selectedAssetIndex ? 1 : 0.55,
                         boxShadow: i === selectedAssetIndex ? '0 0 16px rgba(99,102,241,0.35)' : 'none',
                         transform: i === selectedAssetIndex ? 'scale(1.04)' : 'scale(1)',
@@ -211,10 +207,10 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                   />
                 ) : (
                   <div
-                    className="w-64 h-64 rounded-xl flex items-center justify-center"
-                    style={{ background: 'rgba(255,255,255,0.03)' }}
+                    className="w-64 h-64 rounded-xl flex items-center justify-center bg-token-nested"
+
                   >
-                    <ImageIcon size={48} style={{ color: 'rgba(255,255,255,0.1)' }} />
+                    <ImageIcon size={48} style={{ color: 'var(--text-muted)' }} />
                   </div>
                 )}
               </div>
@@ -223,7 +219,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
               {assets.length > 1 && (
                 <>
                   <button
-                    className="absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover:bg-white/15"
+                    className="absolute left-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover-bg-soft"
                     style={glassPanel}
                     onClick={() => setSelectedAssetIndex((i) => Math.max(0, i - 1))}
                     disabled={selectedAssetIndex === 0}
@@ -231,7 +227,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                     <ChevronLeft size={20} style={{ color: 'white', opacity: selectedAssetIndex === 0 ? 0.3 : 1 }} />
                   </button>
                   <button
-                    className="absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover:bg-white/15"
+                    className="absolute right-3 top-1/2 -translate-y-1/2 h-10 w-10 rounded-full flex items-center justify-center transition-colors duration-200 hover-bg-soft"
                     style={glassPanel}
                     onClick={() => setSelectedAssetIndex((i) => Math.min(assets.length - 1, i + 1))}
                     disabled={selectedAssetIndex === assets.length - 1}
@@ -250,14 +246,11 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
 
             {/* ═══ 右侧信息面板 ═══ */}
             <div
-              className="shrink-0 flex flex-col overflow-hidden"
-              style={{
-                width: 380,
-                borderLeft: '1px solid rgba(255,255,255,0.06)',
-              }}
+              className="shrink-0 flex flex-col overflow-hidden border-l border-l-token-subtle"
+              style={{ width: 380 }}
             >
               {/* 作者信息 + 统计 */}
-              <div className="shrink-0 px-5 pt-5 pb-3" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+              <div className="shrink-0 px-5 pt-5 pb-3 border-b border-b-token-subtle" >
                 <div className="flex items-center justify-between">
                   <div className="flex items-center gap-3 min-w-0">
                     <img
@@ -270,7 +263,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                       <div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary, #fff)' }}>
                         {sub?.ownerUserName}
                       </div>
-                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
+                      <div className="text-xs mt-0.5" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
                         {sub?.createdAt ? new Date(sub.createdAt).toLocaleDateString('zh-CN') : ''}
                       </div>
                     </div>
@@ -318,7 +311,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                 <div className="flex-1 min-h-0 overflow-y-auto px-5 py-3" style={{ scrollbarWidth: 'none' }}>
                   {/* ── 正文 Tab（仅文学创作） ── */}
                   {rightTab === 'article' && isLiterary && (
-                    <div className="text-sm leading-relaxed arena-markdown" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
+                    <div className="text-sm leading-relaxed arena-markdown" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
                       <ReactMarkdown remarkPlugins={[remarkGfm, remarkBreaks]}>
                         {detail.articleContent || '暂无文章内容'}
                       </ReactMarkdown>
@@ -335,12 +328,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                           提示词
                         </div>
                         <div
-                          className="text-sm leading-relaxed rounded-xl p-3.5"
-                          style={{
-                            color: 'var(--text-secondary, rgba(255,255,255,0.7))',
-                            background: 'rgba(255,255,255,0.03)',
-                            border: '1px solid rgba(255,255,255,0.04)',
-                          }}
+                          className="text-sm leading-relaxed rounded-xl p-3.5 bg-token-nested border border-token-subtle"
+                          style={{ color: 'var(--text-secondary, var(--text-secondary))' }}
                         >
                           {selectedAsset?.prompt || genInfo?.promptText || sub?.prompt || '无提示词'}
                         </div>
@@ -374,11 +363,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                             系统提示词
                           </div>
                           <div
-                            className="rounded-xl p-3.5"
-                            style={{
-                              background: 'rgba(255,255,255,0.03)',
-                              border: '1px solid rgba(255,255,255,0.04)',
-                            }}
+                            className="rounded-xl p-3.5 bg-token-nested border border-token-subtle"
+
                           >
                             <div className="text-xs font-medium mb-1" style={{ color: 'var(--text-primary)' }}>
                               {genInfo.systemPromptName}
@@ -422,8 +408,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                                 key={asset.id}
                                 className="rounded-xl p-3 cursor-pointer transition-all duration-200"
                                 style={{
-                                  background: i === selectedAssetIndex ? 'rgba(99,102,241,0.1)' : 'rgba(255,255,255,0.03)',
-                                  border: i === selectedAssetIndex ? '1px solid rgba(99,102,241,0.3)' : '1px solid rgba(255,255,255,0.04)',
+                                  background: i === selectedAssetIndex ? 'rgba(99,102,241,0.1)' : 'var(--nested-block-bg)',
+                                  border: i === selectedAssetIndex ? '1px solid rgba(99,102,241,0.3)' : '1px solid var(--border-subtle)',
                                 }}
                                 onClick={() => setSelectedAssetIndex(i)}
                               >
@@ -470,8 +456,8 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                               <img
                                 src={genInfo.initImageUrl}
                                 alt="参考图"
-                                className="w-full rounded-xl object-contain"
-                                style={{ maxHeight: 200, background: 'rgba(255,255,255,0.02)', border: '1px solid rgba(255,255,255,0.06)' }}
+                                className="w-full rounded-xl object-contain bg-token-nested border border-token-subtle"
+                                style={{ maxHeight: 200 }}
                               />
                             </div>
                           )}
@@ -482,12 +468,12 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                               <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>参考图列表</div>
                               <div className="grid grid-cols-2 gap-2">
                                 {genInfo.imageRefs.map((ref, i) => (
-                                  <div key={ref.refId || i} className="rounded-xl overflow-hidden" style={{ border: '1px solid rgba(255,255,255,0.06)' }}>
+                                  <div key={ref.refId || i} className="rounded-xl overflow-hidden border border-token-subtle" >
                                     {ref.url && (
                                       <img src={ref.url} alt={ref.label || ''} className="w-full aspect-square object-cover" />
                                     )}
                                     {(ref.label || ref.role) && (
-                                      <div className="px-2 py-1.5 text-[11px]" style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.02)' }}>
+                                      <div className="px-2 py-1.5 text-[11px] bg-token-nested" style={{ color: 'var(--text-muted)' }}>
                                         {ref.label || ref.role}
                                       </div>
                                     )}
@@ -498,7 +484,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                           )}
                         </>
                       ) : (
-                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
+                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
                           <ImagePlus size={32} style={{ opacity: 0.3 }} />
                           <span className="text-xs">未使用参考图</span>
                         </div>
@@ -543,7 +529,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
                           }}
                         />
                       ) : (
-                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}>
+                        <div className="flex flex-col items-center justify-center py-8 gap-2" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
                           <Droplets size={32} style={{ opacity: 0.3 }} />
                           <span className="text-xs">未使用水印</span>
                         </div>
@@ -554,7 +540,7 @@ export function SubmissionDetailModal({ submissionId, onClose, onLikeChanged }: 
 
                 {/* ── 右下角：输出物（同项目作品扇形列表） ── */}
                 {assets.length > 1 && (
-                  <div className="shrink-0 px-5 pb-4 pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+                  <div className="shrink-0 px-5 pb-4 pt-2 border-t border-t-token-subtle" >
                     <div className="text-xs font-medium mb-2" style={{ color: 'var(--text-muted)' }}>
                       同项目作品 ({assets.length})
                     </div>
@@ -608,9 +594,9 @@ function InfoBadge({ icon, label, accent }: { icon: React.ReactNode; label: stri
     <span
       className="inline-flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-[11px] font-medium"
       style={{
-        background: accent ? 'rgba(99,102,241,0.12)' : 'rgba(255,255,255,0.04)',
-        border: accent ? '1px solid rgba(99,102,241,0.25)' : '1px solid rgba(255,255,255,0.06)',
-        color: accent ? 'var(--accent-primary, #818CF8)' : 'var(--text-secondary, rgba(255,255,255,0.6))',
+        background: accent ? 'rgba(99,102,241,0.12)' : 'var(--nested-block-bg)',
+        border: accent ? '1px solid rgba(99,102,241,0.25)' : '1px solid var(--border-subtle)',
+        color: accent ? 'var(--accent-primary, #818CF8)' : 'var(--text-secondary, var(--text-secondary))',
       }}
     >
       {icon}

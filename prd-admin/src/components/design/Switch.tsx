@@ -37,8 +37,8 @@ export function Switch({
         className
       )}
       style={{
-        background: checked ? 'rgba(34,197,94,0.22)' : 'rgba(255,255,255,0.10)',
-        border: checked ? '1px solid rgba(34,197,94,0.35)' : '1px solid rgba(255,255,255,0.14)',
+        background: checked ? 'rgba(34,197,94,0.22)' : 'var(--nested-block-bg)',
+        border: checked ? '1px solid rgba(34,197,94,0.35)' : '1px solid var(--border-subtle)',
       }}
     >
       <span

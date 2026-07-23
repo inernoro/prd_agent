@@ -284,7 +284,7 @@ export function MyRecordsListPanel() {
                     style={{
                       color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                       background: active
-                        ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
+                        ? (isLight ? 'var(--bg-card)' : 'var(--nested-block-bg)')
                         : 'transparent',
                       boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
@@ -364,7 +364,7 @@ export function MyRecordsListPanel() {
                     style={{
                       color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                       background: active
-                        ? (isLight ? 'rgba(15, 23, 42, 0.08)' : 'rgba(255, 255, 255, 0.08)')
+                        ? (isLight ? 'rgba(15, 23, 42, 0.08)' : 'var(--nested-block-bg)')
                         : 'transparent',
                       border: `1px solid ${active ? 'var(--text-primary)' : 'var(--border-primary)'}`,
                     }}
@@ -497,7 +497,7 @@ export function MyRecordsListPanel() {
                           key={idx}
                           className="flex items-start gap-2 px-2.5 py-2 rounded-lg"
                           style={{
-                            background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'rgba(255, 255, 255, 0.025)',
+                            background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'var(--nested-block-bg)',
                             border: '1px solid var(--border-primary)',
                           }}
                         >
@@ -519,7 +519,7 @@ export function MyRecordsListPanel() {
                                       key={t}
                                       className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[10.5px]"
                                       style={{
-                                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)',
+                                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--nested-block-bg)',
                                         color: 'var(--text-secondary)',
                                         border: '1px solid var(--border-primary)',
                                       }}

@@ -37,14 +37,14 @@ export function PrMarkdown({ children, variant = 'block', className }: Props) {
             const isBlock = /language-/.test(cls ?? '');
             if (isBlock) {
               return (
-                <pre className="bg-black/50 border border-white/10 rounded-lg p-3 text-[11px] text-white/85 font-mono whitespace-pre-wrap break-words overflow-x-auto my-2">
+                <pre className="bg-token-nested border border-token-subtle rounded-lg p-3 text-[11px] text-token-primary font-mono whitespace-pre-wrap break-words overflow-x-auto my-2">
                   <code {...props}>{c}</code>
                 </pre>
               );
             }
             return (
               <code
-                className="px-1 py-0.5 rounded bg-white/10 text-[0.85em] text-sky-200 font-mono break-words"
+                className="px-1 py-0.5 rounded bg-token-nested text-[0.85em] text-sky-200 font-mono break-words"
                 {...props}
               >
                 {c}
@@ -81,25 +81,25 @@ export function PrMarkdown({ children, variant = 'block', className }: Props) {
           },
           // 标题：block 模式保留小一级
           h1({ children: c }) {
-            return <h3 className="text-sm font-semibold text-white mt-3 mb-1.5">{c}</h3>;
+            return <h3 className="text-sm font-semibold text-token-primary mt-3 mb-1.5">{c}</h3>;
           },
           h2({ children: c }) {
-            return <h4 className="text-xs font-semibold text-white/90 mt-2 mb-1">{c}</h4>;
+            return <h4 className="text-xs font-semibold text-token-primary mt-2 mb-1">{c}</h4>;
           },
           h3({ children: c }) {
-            return <h5 className="text-xs font-semibold text-white/80 mt-2 mb-1">{c}</h5>;
+            return <h5 className="text-xs font-semibold text-token-primary mt-2 mb-1">{c}</h5>;
           },
           // 强调
           strong({ children: c }) {
-            return <strong className="text-white font-semibold">{c}</strong>;
+            return <strong className="text-token-primary font-semibold">{c}</strong>;
           },
           em({ children: c }) {
-            return <em className="italic text-white/90">{c}</em>;
+            return <em className="italic text-token-primary">{c}</em>;
           },
           // blockquote
           blockquote({ children: c }) {
             return (
-              <blockquote className="border-l-2 border-sky-400/50 pl-3 my-2 text-white/70 italic">
+              <blockquote className="border-l-2 border-sky-400/50 pl-3 my-2 text-token-secondary italic">
                 {c}
               </blockquote>
             );
@@ -114,16 +114,16 @@ export function PrMarkdown({ children, variant = 'block', className }: Props) {
           },
           th({ children: c }) {
             return (
-              <th className="border border-white/10 bg-white/5 px-2 py-1 text-left text-white/80 font-semibold">
+              <th className="border border-token-subtle bg-token-nested px-2 py-1 text-left text-token-primary font-semibold">
                 {c}
               </th>
             );
           },
           td({ children: c }) {
-            return <td className="border border-white/10 px-2 py-1 text-white/75">{c}</td>;
+            return <td className="border border-token-subtle px-2 py-1 text-token-secondary">{c}</td>;
           },
           hr() {
-            return <hr className="my-3 border-white/10" />;
+            return <hr className="my-3 border-token-subtle" />;
           },
         }}
       >

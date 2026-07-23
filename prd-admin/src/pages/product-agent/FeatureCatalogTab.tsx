@@ -51,7 +51,7 @@ function FeatureTreeNodeRow({
         type="button"
         onClick={() => onSelect(node.feature.id)}
         className={`flex w-full items-center gap-1 rounded-md py-1.5 pr-2 text-left text-xs transition-colors ${
-          isSelected ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/70 hover:bg-white/5'
+          isSelected ? 'bg-cyan-500/15 text-cyan-100' : 'text-token-secondary hover-bg-soft'
         }`}
         style={{ paddingLeft: 8 + depth * 14 }}
       >
@@ -61,7 +61,7 @@ function FeatureTreeNodeRow({
             tabIndex={0}
             onClick={(e) => { e.stopPropagation(); onToggle(node.feature.id); }}
             onKeyDown={(e) => { if (e.key === 'Enter') { e.stopPropagation(); onToggle(node.feature.id); } }}
-            className="flex h-5 w-5 shrink-0 items-center justify-center text-white/40 hover:text-white"
+            className="flex h-5 w-5 shrink-0 items-center justify-center text-token-muted hover-text-primary"
           >
             {isExpanded ? <ChevronDown size={14} /> : <ChevronRight size={14} />}
           </span>
@@ -70,7 +70,7 @@ function FeatureTreeNodeRow({
         )}
         <span className="min-w-0 flex-1 truncate">{node.feature.title}</span>
         {hasChildren && (
-          <span className="shrink-0 text-[10px] text-white/30">{countDescendants(node) + 1}</span>
+          <span className="shrink-0 text-[10px] text-token-muted">{countDescendants(node) + 1}</span>
         )}
       </button>
       {hasChildren && isExpanded && node.children.map((child) => (
@@ -272,14 +272,14 @@ export function FeatureCatalogTab({
   return (
     <div className="flex h-full min-h-0 flex-col">
       {!productPicker && (
-        <div className="shrink-0 border-b border-white/10 px-4 py-3">
-          <h2 className="text-base font-semibold text-white">功能</h2>
+        <div className="shrink-0 border-b border-token-subtle px-4 py-3">
+          <h2 className="text-base font-semibold text-token-primary">功能</h2>
         </div>
       )}
       <div className="flex h-full min-h-0 flex-1">
-        <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-white/10 bg-[#121317]">
-          <div className="shrink-0 border-b border-white/10 px-3 py-2">
-            <div className="flex items-center gap-1.5 text-[11px] text-white/40">
+        <aside className="flex h-full min-h-0 w-60 shrink-0 flex-col border-r border-token-subtle bg-[#121317]">
+          <div className="shrink-0 border-b border-token-subtle px-3 py-2">
+            <div className="flex items-center gap-1.5 text-[11px] text-token-muted">
               <FolderTree size={13} /> 功能目录
             </div>
           </div>
@@ -288,14 +288,14 @@ export function FeatureCatalogTab({
               type="button"
               onClick={() => setSelectedId(null)}
               className={`mb-1 flex w-full items-center rounded-md px-2 py-1.5 text-left text-xs ${
-                selectedId === null ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/60 hover:bg-white/5'
+                selectedId === null ? 'bg-cyan-500/15 text-cyan-100' : 'text-token-secondary hover-bg-soft'
               }`}
             >
               全部功能
-              <span className="ml-auto text-[10px] text-white/30">{scopedFeatures.length}</span>
+              <span className="ml-auto text-[10px] text-token-muted">{scopedFeatures.length}</span>
             </button>
             {tree.length === 0 ? (
-              <div className="px-2 py-6 text-center text-[11px] text-white/30">
+              <div className="px-2 py-6 text-center text-[11px] text-token-muted">
                 暂无目录。可「导入目录结构」或「新建功能」。
               </div>
             ) : tree.map((node) => (
@@ -313,17 +313,17 @@ export function FeatureCatalogTab({
         </aside>
 
         <div className="flex h-full min-h-0 min-w-0 flex-1 flex-col bg-[#0f1014]">
-          <div className="shrink-0 border-b border-white/10 px-4 py-2.5">
-            <div className="text-sm font-medium text-white/85 truncate">
+          <div className="shrink-0 border-b border-token-subtle px-4 py-2.5">
+            <div className="text-sm font-medium text-token-primary truncate">
               {selectedNode ? selectedNode.title : '全部功能'}
             </div>
-            <div className="text-[11px] text-white/40 mt-0.5">
+            <div className="text-[11px] text-token-muted mt-0.5">
               {selectedNode
                 ? `展示「${selectedNode.title}」及其下所有层级共 ${visibleRows.length} 条记录`
                 : `共 ${visibleRows.length} 条功能记录`}
             </div>
           </div>
-          <div className="shrink-0 flex flex-nowrap items-center gap-2 border-b border-white/10 px-4 py-2.5 overflow-x-auto">
+          <div className="shrink-0 flex flex-nowrap items-center gap-2 border-b border-token-subtle px-4 py-2.5 overflow-x-auto">
             {productPicker && (
               <div className="h-8 w-[min(100%,200px)] min-w-[140px] shrink-0">
                 <ItemSearchSelect
@@ -340,7 +340,7 @@ export function FeatureCatalogTab({
             <select
               value={releaseId}
               onChange={(e) => { setReleaseId(e.target.value); setSelectedId(null); }}
-              className="h-8 min-w-[140px] max-w-[200px] shrink-0 rounded-lg border border-white/10 bg-[#15171c] px-2.5 text-xs text-white outline-none focus:border-cyan-400/50"
+              className="h-8 min-w-[140px] max-w-[200px] shrink-0 rounded-lg border border-token-subtle bg-[#15171c] px-2.5 text-xs text-token-primary outline-none focus:border-cyan-400/50"
             >
               <option value="">全部正式版本</option>
               {releases.map((r) => (
@@ -352,7 +352,7 @@ export function FeatureCatalogTab({
               <button
                 type="button"
                 onClick={() => setShowImportDialog(true)}
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 text-xs text-white/70 hover:bg-white/10"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 text-xs text-token-secondary hover-bg-soft"
               >
                 <Upload size={14} /> 导入目录结构
               </button>
@@ -370,7 +370,7 @@ export function FeatureCatalogTab({
               <button
                 type="button"
                 onClick={() => navigate(`/product-agent/p/${productId}/release/new`)}
-                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-white/10 px-3 text-xs text-white/45 hover:bg-white/5"
+                className="inline-flex h-8 shrink-0 items-center gap-1.5 rounded-lg border border-token-subtle px-3 text-xs text-token-muted hover-bg-soft"
               >
                 申领正式版本号
               </button>
@@ -384,10 +384,10 @@ export function FeatureCatalogTab({
               selection={selection}
               onDone={reload}
               onExport={exportSelected}
-              className="shrink-0 px-4 py-2 border-b border-white/10"
+              className="shrink-0 px-4 py-2 border-b border-token-subtle"
             />
             {visibleRows.length === 0 ? (
-              <div className="flex h-full items-center justify-center text-sm text-white/35">
+              <div className="flex h-full items-center justify-center text-sm text-token-muted">
                 {trackedOnly
                   ? '还没有追踪的功能。打开详情页标题右侧星标即可追踪。'
                   : scopedFeatures.length === 0
@@ -399,7 +399,7 @@ export function FeatureCatalogTab({
                 <colgroup>
                   <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
                 </colgroup>
-                <thead className="sticky top-0 z-10 bg-[#0f1014] text-white/45 border-b border-white/10">
+                <thead className="sticky top-0 z-10 bg-[#0f1014] text-token-muted border-b border-token-subtle">
                   <tr>
                     <ListTableSelectionHeader selection={tableSelection} disabled={visibleRows.length === 0} />
                     <th className="px-3 py-2.5 font-medium whitespace-nowrap">编号</th>
@@ -420,24 +420,24 @@ export function FeatureCatalogTab({
                     <tr
                       key={f.id}
                       onClick={() => navigate(`/product-agent/p/${productId}/feature/${f.id}`)}
-                      className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')}
+                      className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')}
                     >
                       <ListTableSelectionCell selection={tableSelection} id={f.id} />
                       <td className="px-3 py-2.5 font-mono text-cyan-200/80 whitespace-nowrap">{f.featureNo}</td>
-                      <td className="px-3 py-2.5 text-white/50 max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
+                      <td className="px-3 py-2.5 text-token-secondary max-w-[200px] truncate" title={featurePathLabel(scopedFeatures, f.id)}>
                         {featurePathLabel(scopedFeatures, f.id)}
                       </td>
-                      <td className="px-3 py-2.5 text-white/85">{f.title}</td>
-                      <td className="px-3 py-2.5 text-white/55">{f.officialReleaseId ? releaseName.get(f.officialReleaseId) ?? '—' : '—'}</td>
-                      <td className="px-3 py-2.5 text-white/55">
+                      <td className="px-3 py-2.5 text-token-primary">{f.title}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">{f.officialReleaseId ? releaseName.get(f.officialReleaseId) ?? '—' : '—'}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">
                         {resolveRequirementStateLabel(f.currentState ?? '', workflow) || '—'}
                       </td>
-                      <td className="px-3 py-2.5 text-white/55">{FEATURE_TYPE_LABEL[f.featureType] ?? f.featureType}</td>
-                      <td className="px-3 py-2.5 text-white/55">{f.moduleName || '—'}</td>
-                      <td className="px-3 py-2.5 text-white/55">{f.assigneeId ? userNames.get(f.assigneeId) ?? f.assigneeId : '—'}</td>
-                      <td className="px-3 py-2.5 text-white/55">{userNames.get(f.ownerId) ?? f.ownerId}</td>
-                      <td className="px-3 py-2.5 text-white/55">{f.requirementIds.length}</td>
-                      <td className="px-3 py-2.5 text-white/35 whitespace-nowrap">
+                      <td className="px-3 py-2.5 text-token-secondary">{FEATURE_TYPE_LABEL[f.featureType] ?? f.featureType}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">{f.moduleName || '—'}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">{f.assigneeId ? userNames.get(f.assigneeId) ?? f.assigneeId : '—'}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">{userNames.get(f.ownerId) ?? f.ownerId}</td>
+                      <td className="px-3 py-2.5 text-token-secondary">{f.requirementIds.length}</td>
+                      <td className="px-3 py-2.5 text-token-muted whitespace-nowrap">
                         {new Date(f.updatedAt).toLocaleDateString('zh-CN')}
                       </td>
                     </tr>

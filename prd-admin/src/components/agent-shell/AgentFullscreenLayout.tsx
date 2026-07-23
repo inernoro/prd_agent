@@ -51,20 +51,20 @@ export function AgentFullscreenLayout<K extends string>({
   return (
     <div className="h-screen min-h-0 flex bg-[#0f1014]">
       {/* 左侧导航（可收起为图标条） */}
-      <aside className={`${collapsed ? 'w-14' : 'w-52'} shrink-0 flex flex-col border-r border-white/10 bg-[#121317] transition-[width] duration-150`}>
-        <div className={`${collapsed ? 'px-2' : 'px-4'} py-4 border-b border-white/10 shrink-0`}>
+      <aside className={`${collapsed ? 'w-14' : 'w-52'} shrink-0 flex flex-col border-r border-token-subtle bg-[#121317] transition-[width] duration-150`}>
+        <div className={`${collapsed ? 'px-2' : 'px-4'} py-4 border-b border-token-subtle shrink-0`}>
           {!collapsed && topSlot}
           <div className={`flex items-center ${collapsed ? 'justify-center' : 'justify-between gap-2'}`}>
             {!collapsed && (
               <div className="min-w-0">
-                <div className="text-white font-semibold truncate">{title}</div>
-                {subtitle && <div className="text-[11px] text-white/40 mt-0.5 truncate">{subtitle}</div>}
+                <div className="text-token-primary font-semibold truncate">{title}</div>
+                {subtitle && <div className="text-[11px] text-token-muted mt-0.5 truncate">{subtitle}</div>}
               </div>
             )}
             <button
               onClick={toggleCollapsed}
               title={collapsed ? '展开导航' : '收起导航'}
-              className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white shrink-0"
+              className="p-1.5 rounded hover-bg-soft text-token-secondary hover:text-token-primary shrink-0"
             >
               {collapsed ? <PanelLeftOpen size={16} /> : <PanelLeftClose size={16} />}
             </button>
@@ -80,16 +80,16 @@ export function AgentFullscreenLayout<K extends string>({
                 <div key={it.key}>
                   {it.dividerBefore && (
                     (it.groupLabel && !collapsed) ? (
-                      <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-white/40">{it.groupLabel}</div>
+                      <div className="px-3 pt-3 pb-1 text-[11px] font-medium text-token-muted">{it.groupLabel}</div>
                     ) : (
-                      <div className="my-1.5 mx-2 border-t border-white/10" />
+                      <div className="my-1.5 mx-2 border-t border-token-subtle" />
                     )
                   )}
                   <button
                     onClick={() => onSelect(it.key)}
                     title={collapsed ? it.label : undefined}
                     className={`w-full flex items-center ${collapsed ? 'justify-center px-0' : 'gap-2.5 px-3'} py-2 rounded-lg text-sm transition-colors border-l-2 ${
-                      isActive ? 'text-white' : 'text-white/55 hover:text-white hover:bg-white/5 border-transparent'
+                      isActive ? 'text-token-primary' : 'text-token-secondary hover:text-token-primary hover-bg-soft border-transparent'
                     }`}
                     style={isActive ? { borderLeftColor: accent, background: `${accent}1A` } : undefined}
                   >
@@ -129,10 +129,10 @@ export function SectionShell({
   const displayTitle = count == null ? title : formatListSectionTitle(title, count);
   return (
     <div className="flex flex-col h-full min-h-0">
-      <div className="shrink-0 flex items-center justify-between gap-3 px-6 py-4 border-b border-white/10">
+      <div className="shrink-0 flex items-center justify-between gap-3 px-6 py-4 border-b border-token-subtle">
         <div>
-          <h2 className="text-base font-semibold text-white">{displayTitle}</h2>
-          {desc && <p className="text-xs text-white/40 mt-0.5">{desc}</p>}
+          <h2 className="text-base font-semibold text-token-primary">{displayTitle}</h2>
+          {desc && <p className="text-xs text-token-muted mt-0.5">{desc}</p>}
         </div>
         {actions}
       </div>

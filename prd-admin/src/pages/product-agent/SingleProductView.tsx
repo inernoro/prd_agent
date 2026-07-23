@@ -146,14 +146,14 @@ export function SingleProductView() {
 
   if (loading) {
     return (
-      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014]">
+      <div className="h-screen min-h-0 flex items-center justify-center bg-token-card">
         <MapSectionLoader text="正在加载产品…" />
       </div>
     );
   }
   if (!product) {
     return (
-      <div className="h-screen min-h-0 flex items-center justify-center bg-[#0f1014] text-white/40 text-sm">产品不存在或无权访问</div>
+      <div className="h-screen min-h-0 flex items-center justify-center bg-token-card text-token-muted text-sm">产品不存在或无权访问</div>
     );
   }
 
@@ -168,7 +168,7 @@ export function SingleProductView() {
       subtitle={`${product.productNo} · ${categoryLabel(categories, product.grade)}`}
       topSlot={
         <div className="mb-2">
-          <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white">
+          <button onClick={() => navigate('/product-agent')} className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary">
             <ArrowLeft size={13} /> 产品列表
           </button>
         </div>
@@ -180,7 +180,7 @@ export function SingleProductView() {
       {active === 'overview' ? (
         // 工作台：AI助手主区（70%）+ 右栏待办/快捷操作（30%），撑满高度各自滚动
         <div className="flex-1 min-h-0 flex">
-          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-token-subtle" style={{ width: '70%' }}>
             <ProductAssistantPanel productId={product.id} productName={product.name} />
           </div>
           <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>
@@ -233,8 +233,8 @@ function BoardTab({ productId }: { productId: string }) {
   return (
     <div className="h-full min-h-0 flex flex-col gap-3">
       <div className="shrink-0 flex items-center gap-2">
-        <h2 className="text-sm font-semibold text-white/80">需求看板</h2>
-        <span className="text-[11px] text-white/35">拖拽卡片到目标列即可流转需求状态；功能状态请查看所属版本</span>
+        <h2 className="text-sm font-semibold text-token-primary">需求看板</h2>
+        <span className="text-[11px] text-token-muted-faint">拖拽卡片到目标列即可流转需求状态；功能状态请查看所属版本</span>
       </div>
       <div className="flex-1 min-h-0">
         <KanbanBoard productId={productId} entityType="requirement" />
@@ -274,17 +274,17 @@ function MyTodos({ product }: { product: Product }) {
 
   // 工作台右栏窄卡片：与快捷操作按 7:3 分高（flexGrow），列表内部滚动
   return (
-    <div className="min-h-0 flex flex-col rounded-xl border border-white/10 bg-white/[0.02] p-4" style={{ flexGrow: 7, flexBasis: 0 }}>
+    <div className="min-h-0 flex flex-col rounded-xl border border-token-subtle bg-token-nested p-4" style={{ flexGrow: 7, flexBasis: 0 }}>
       <div className="shrink-0 flex items-center gap-2 mb-1">
         <ListChecks size={15} className="text-cyan-400" />
-        <span className="text-sm font-semibold text-white/80">我的待办</span>
+        <span className="text-sm font-semibold text-token-primary">我的待办</span>
         <span className="ml-auto text-xs px-2 py-0.5 rounded-full bg-cyan-500/15 text-cyan-300 border border-cyan-500/30">{total}</span>
       </div>
-      <div className="shrink-0 text-[11px] text-white/40 mb-3">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</div>
+      <div className="shrink-0 text-[11px] text-token-muted mb-3">只显示当前需要我处理的需求 / 功能 / 缺陷，已处理或流转走的自动消失</div>
       {loading ? (
         <div className="flex-1 flex items-center justify-center"><MapSpinner size={18} /></div>
       ) : total === 0 ? (
-        <div className="text-[12px] text-white/35 py-6 text-center">暂无待办，保持清爽。</div>
+        <div className="text-[12px] text-token-muted-faint py-6 text-center">暂无待办，保持清爽。</div>
       ) : (
         <div className="flex-1 flex flex-col gap-1.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {items.map((it) => (
@@ -300,11 +300,11 @@ function MyTodos({ product }: { product: Product }) {
 
 function TodoRow({ kind, color, no, title, state, onClick }: { kind: string; color: string; no: string; title: string; state?: string | null; onClick: () => void }) {
   return (
-    <button onClick={onClick} className="pa-row shrink-0 text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-white/5">
+    <button onClick={onClick} className="pa-row shrink-0 text-left flex items-center gap-2.5 px-2.5 py-2 rounded-lg border border-token-subtle">
       <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color, background: `${color}1a` }}>{kind}</span>
-      <span className="text-[11px] font-mono text-white/35 shrink-0">{no}</span>
-      <span className="text-sm text-white/85 truncate flex-1">{title}</span>
-      {state && <span className="text-[11px] px-1.5 py-0.5 rounded bg-white/8 text-white/55 border border-white/10 shrink-0">{state}</span>}
+      <span className="text-[11px] font-mono text-token-muted-faint shrink-0">{no}</span>
+      <span className="text-sm text-token-primary truncate flex-1">{title}</span>
+      {state && <span className="text-[11px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle shrink-0">{state}</span>}
     </button>
   );
 }
@@ -346,7 +346,7 @@ export function LegacyVersionsTab({ productId }: { productId: string }) {
   return (
     <div className="flex flex-col gap-5">
       <div className="flex flex-col gap-3">
-        <div className="text-xs font-medium text-white/50">版本</div>
+        <div className="text-xs font-medium text-token-secondary">版本</div>
         <QuickAdd value={name} setValue={setName} onAdd={add} saving={saving} placeholder="版本名，如 v2.0" />
         {loading ? (
           <MapSectionLoader text="正在加载版本…" />
@@ -371,8 +371,8 @@ export function LegacyVersionsTab({ productId }: { productId: string }) {
         )}
       </div>
 
-      <div className="border-t border-white/10 pt-4">
-        <div className="text-xs font-medium text-white/50 mb-2">大版本升级申请</div>
+      <div className="border-t border-token-subtle pt-4">
+        <div className="text-xs font-medium text-token-secondary mb-2">大版本升级申请</div>
         <UpgradeRequestsTab productId={productId} />
       </div>
     </div>
@@ -480,13 +480,13 @@ function RequirementsTab({ productId }: { productId: string }) {
       <div className="shrink-0 flex items-center justify-between gap-2 flex-wrap">
         <NewButton label="新建需求" onClick={() => navigate(`/product-agent/p/${productId}/requirement/new`)} />
         <div className="flex items-center gap-1.5">
-          <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-xs disabled:opacity-40">
+          <button onClick={() => exportCsv(false)} disabled={items.length === 0} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg border border-token-subtle text-token-secondary hover-text-primary hover-bg-soft text-xs disabled:opacity-40">
             <Download size={13} /> 导出CSV
           </button>
           {items.length > 0 && <ViewToggle view={view} setView={setView} />}
         </div>
       </div>
-      <p className="shrink-0 text-xs text-white/35">仅显示你作为负责人或处理人的需求。</p>
+      <p className="shrink-0 text-xs text-token-muted-faint">仅显示你作为负责人或处理人的需求。</p>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的需求。你是负责人或处理人的需求会出现在这里；点「新建需求」可创建新条目。" />
       ) : (
@@ -495,7 +495,7 @@ function RequirementsTab({ productId }: { productId: string }) {
           <div className="flex min-w-0 flex-1 items-center gap-2 flex-wrap">{bar}</div>
         </div>
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">
+          <div className="text-center text-token-muted-faint text-sm py-10">
             {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : '没有匹配的需求，调整筛选条件试试。'}
           </div>
         ) : view === 'board' && workflow && workflow.states.length > 0 ? (
@@ -519,7 +519,7 @@ function RequirementsTab({ productId }: { productId: string }) {
             onDone={reload}
             onExport={() => exportCsv(true)}
           />
-          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
+          <div className="min-h-0 flex-1 overflow-auto rounded-xl border border-token-subtle" style={{ overscrollBehavior: 'contain' }}>
             <RequirementDataTable
               items={filtered}
               selection={tableSelection}
@@ -565,7 +565,7 @@ function RequirementDataTable({
     .filter((field) => field !== 'ID')
     .sort((left, right) => left.localeCompare(right, 'zh-CN')), [items]);
   const rows = orderByHierarchy(items);
-  const cell = 'truncate px-3 py-2 text-xs text-white/60';
+  const cell = 'truncate px-3 py-2 text-xs text-token-secondary';
   const dynamicColCount = sourceFields.length;
   const minTableWidth = 1060 + dynamicColCount * 120;
 
@@ -586,7 +586,7 @@ function RequirementDataTable({
         <col style={{ width: '9%' }} />
         <col style={{ width: 48 }} />
       </colgroup>
-      <thead className="sticky top-0 z-10 bg-[#0f1014] text-[11px] text-white/45 border-b border-white/10">
+      <thead className="sticky top-0 z-10 bg-token-card text-[11px] text-token-muted border-b border-token-subtle">
         <tr>
           <ListTableSelectionHeader selection={selection} disabled={rows.length === 0} />
           <th className="px-3 py-2.5 font-medium whitespace-nowrap">ID</th>
@@ -605,12 +605,12 @@ function RequirementDataTable({
       </thead>
       <tbody>
         {rows.map(({ item, depth }) => (
-          <tr key={item.id} onClick={() => openDetail(item.id)} className={listSelectionRowClass('cursor-pointer border-t border-white/5 hover:bg-white/[0.03]')}>
+          <tr key={item.id} onClick={() => openDetail(item.id)} className={listSelectionRowClass('cursor-pointer border-t border-token-subtle hover-bg-soft')}>
             <ListTableSelectionCell selection={selection} id={item.id} />
             <td className={`${cell} whitespace-nowrap font-mono text-cyan-200/80`}>{item.requirementNo}</td>
-            <td className="px-3 py-2 text-white/85">
+            <td className="px-3 py-2 text-token-primary">
               <div className="truncate" style={{ paddingLeft: depth * 20 }} title={item.title}>
-                {depth > 0 && <span className="mr-1 text-white/25">└</span>}
+                {depth > 0 && <span className="mr-1 text-token-muted-faint">└</span>}
                 {item.title}
               </div>
             </td>
@@ -623,7 +623,7 @@ function RequirementDataTable({
             {sourceFields.map((field) => <td key={field} className={cell} title={item.sourceSnapshot?.fields?.[field]}>{item.sourceSnapshot?.fields?.[field] || '-'}</td>)}
             <td className={`${cell} whitespace-nowrap`}>{new Date(item.createdAt).toLocaleString('zh-CN')}</td>
             <td className={`${cell} whitespace-nowrap`}>{new Date(item.updatedAt).toLocaleString('zh-CN')}</td>
-            <td className="px-3 py-2 text-center" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-white/30 hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
+            <td className="px-3 py-2 text-center" onClick={(event) => event.stopPropagation()}><button onClick={() => void onDelete(item.id)} className="text-token-muted-faint hover:text-red-300" title="删除"><Trash2 size={14} /></button></td>
           </tr>
         ))}
       </tbody>
@@ -706,7 +706,7 @@ function DefectsTab({ productId }: { productId: string }) {
           <Plus size={15} /> 新建缺陷
         </button>
       </div>
-      <p className="text-xs text-white/35">仅显示你作为处理人或上报人的缺陷。</p>
+      <p className="text-xs text-token-muted-faint">仅显示你作为处理人或上报人的缺陷。</p>
       {items.length === 0 ? (
         <EmptyHint text="没有与你相关的缺陷。你是处理人或上报人的缺陷会出现在这里；点「新建缺陷」可创建新条目。" />
       ) : (
@@ -716,12 +716,12 @@ function DefectsTab({ productId }: { productId: string }) {
         </div>
         <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
         {filtered.length === 0 ? (
-          <div className="text-center text-white/35 text-sm py-10">
+          <div className="text-center text-token-muted-faint text-sm py-10">
             {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : '没有匹配的缺陷，调整筛选条件试试。'}
           </div>
         ) : (
         <div className="flex flex-col gap-2">
-          <div className="flex items-center gap-3 px-3 py-2 text-[11px] font-medium text-white/45 border-b border-white/10">
+          <div className="flex items-center gap-3 px-3 py-2 text-[11px] font-medium text-token-muted border-b border-token-subtle">
             <span className="w-24 shrink-0">ID</span>
             <span className="min-w-0 flex-1">{formatListSectionTitle('标题', filtered.length)}</span>
             <span className="w-16 shrink-0 text-right">状态</span>
@@ -732,13 +732,13 @@ function DefectsTab({ productId }: { productId: string }) {
               id={d.id}
               selection={selection}
               onClick={() => navigate(`/product-agent/p/${productId}/defect/${d.id}`)}
-              className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
+              className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-token-subtle bg-token-nested"
               trailing={
                 <div className="flex items-center gap-2 shrink-0">
                   <span className="opacity-0 group-hover:opacity-100 text-[11px] text-cyan-300/70 transition-opacity">查看详情</span>
                   <button
                     onClick={(e) => { e.stopPropagation(); void untraceDefect(d.id).then(reload); }}
-                    className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+                    className="opacity-0 group-hover:opacity-100 text-token-muted-faint hover:text-red-300 transition-opacity"
                   >
                     <Trash2 size={14} />
                   </button>
@@ -747,10 +747,10 @@ function DefectsTab({ productId }: { productId: string }) {
             >
               <div className="min-w-0 text-left flex-1">
                 <div className="flex items-center gap-2">
-                  <span className="text-sm text-white/90 truncate">{d.title || '(无标题)'}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 shrink-0">{defectStatusLabel(d.status)}</span>
+                  <span className="text-sm text-token-primary truncate">{d.title || '(无标题)'}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{defectStatusLabel(d.status)}</span>
                 </div>
-                <div className="text-[11px] text-white/40 mt-0.5 truncate">
+                <div className="text-[11px] text-token-muted mt-0.5 truncate">
                   {`${d.defectNo}${d.tracedRequirementId ? ' · 已追溯到需求' : d.tracedVersionId ? ' · 已追溯到版本' : ' · 仅追溯到产品'}`}
                 </div>
               </div>
@@ -783,13 +783,13 @@ function ViewToggle({ view, setView }: { view: 'list' | 'board'; setView: (v: 'l
     <>
       <button
         onClick={() => setView('list')}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'list' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'list' ? 'bg-token-nested text-token-primary' : 'text-token-muted hover-bg-soft'}`}
       >
         <List size={13} /> 列表
       </button>
       <button
         onClick={() => setView('board')}
-        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'board' ? 'bg-white/10 text-white' : 'text-white/40 hover:bg-white/5'}`}
+        className={`flex items-center gap-1 px-2 py-1 rounded-md text-xs ${view === 'board' ? 'bg-token-nested text-token-primary' : 'text-token-muted hover-bg-soft'}`}
       >
         <LayoutGrid size={13} /> 看板
       </button>
@@ -819,7 +819,7 @@ function QuickAdd({
           if (e.key === 'Enter') onAdd();
         }}
         placeholder={placeholder}
-        className="flex-1 px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+        className="flex-1 px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
       />
       <button
         onClick={onAdd}
@@ -848,17 +848,17 @@ function Row({
   actionLabel?: string;
 }) {
   return (
-    <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.02]">
+    <div className="pa-row group flex items-center justify-between gap-3 px-3 py-2 rounded-lg border border-token-subtle bg-token-nested">
       <button
         onClick={onClick}
         disabled={!onClick}
         className={`min-w-0 text-left flex-1 ${onClick ? 'cursor-pointer' : 'cursor-default'}`}
       >
         <div className="flex items-center gap-2">
-          <span className="text-sm text-white/90 truncate">{title}</span>
-          {badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/60 shrink-0">{badge}</span>}
+          <span className="text-sm text-token-primary truncate">{title}</span>
+          {badge && <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{badge}</span>}
         </div>
-        {sub && <div className="text-[11px] text-white/40 mt-0.5 truncate">{sub}</div>}
+        {sub && <div className="text-[11px] text-token-muted mt-0.5 truncate">{sub}</div>}
       </button>
       <div className="flex items-center gap-2 shrink-0">
         {onClick && actionLabel && (
@@ -867,7 +867,7 @@ function Row({
         {onDelete && (
           <button
             onClick={onDelete}
-            className="opacity-0 group-hover:opacity-100 text-white/30 hover:text-red-300 transition-opacity"
+            className="opacity-0 group-hover:opacity-100 text-token-muted-faint hover:text-red-300 transition-opacity"
           >
             <Trash2 size={14} />
           </button>
@@ -878,7 +878,7 @@ function Row({
 }
 
 function EmptyHint({ text }: { text: string }) {
-  return <div className="text-center text-white/40 text-xs py-10 px-6">{text}</div>;
+  return <div className="text-center text-token-muted text-xs py-10 px-6">{text}</div>;
 }
 
 /** 按工作流状态分列的看板，支持拖拽卡片改状态（走合法流转）。 */
@@ -950,12 +950,12 @@ function StateBoard({
               setOverState(s.key);
             }}
             onDrop={() => void drop(s.key)}
-            className={`w-56 shrink-0 rounded-lg border bg-white/[0.02] p-2 flex flex-col gap-2 ${overState === s.key ? 'border-cyan-500/50' : 'border-white/10'}`}
+            className={`w-56 shrink-0 rounded-lg border bg-token-nested p-2 flex flex-col gap-2 ${overState === s.key ? 'border-cyan-500/50' : 'border-token-subtle'}`}
             style={{ minHeight: 160 }}
           >
             <div className="text-xs font-medium flex items-center justify-between px-0.5" style={{ color: s.color ?? '#e8e8ec' }}>
               <span>{s.label || s.key}</span>
-              <span className="text-white/30">{list.length}</span>
+              <span className="text-token-muted-faint">{list.length}</span>
             </div>
             {list.map((r) => (
               <div
@@ -963,16 +963,16 @@ function StateBoard({
                 draggable
                 onDragStart={() => setDragId(r.id)}
                 onClick={() => onCardClick(r)}
-                className="pa-row cursor-grab active:cursor-grabbing rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
+                className="pa-row cursor-grab active:cursor-grabbing rounded-md border border-token-subtle bg-token-nested px-2 py-1.5"
               >
                 <div className="flex items-center gap-1.5">
-                  <span className="text-[10px] px-1 py-0.5 rounded bg-white/10 text-white/60">{ITEM_GRADE_LABEL[r.grade]}</span>
-                  <span className="text-xs text-white/85 truncate">{r.title}</span>
+                  <span className="text-[10px] px-1 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[r.grade]}</span>
+                  <span className="text-xs text-token-primary truncate">{r.title}</span>
                 </div>
-                <div className="text-[10px] text-white/40 mt-0.5 truncate">{r.requirementNo}</div>
+                <div className="text-[10px] text-token-muted mt-0.5 truncate">{r.requirementNo}</div>
               </div>
             ))}
-            {list.length === 0 && <div className="text-[10px] text-white/25 text-center py-2">拖到此列</div>}
+            {list.length === 0 && <div className="text-[10px] text-token-muted-faint text-center py-2">拖到此列</div>}
           </div>
         );
       })}
@@ -1016,22 +1016,22 @@ function GradeBoard({
       {cols.map((g) => {
         const list = items.filter((i) => i.grade === g);
         return (
-          <div key={g} className="rounded-lg border border-white/10 bg-white/[0.02] p-2 flex flex-col gap-2" style={{ minHeight: 140 }}>
-            <div className="text-xs font-medium text-white/50 flex items-center justify-between px-0.5">
+          <div key={g} className="rounded-lg border border-token-subtle bg-token-nested p-2 flex flex-col gap-2" style={{ minHeight: 140 }}>
+            <div className="text-xs font-medium text-token-secondary flex items-center justify-between px-0.5">
               <span>{ITEM_GRADE_LABEL[g]}</span>
-              <span className="text-white/30">{list.length}</span>
+              <span className="text-token-muted-faint">{list.length}</span>
             </div>
             {list.map((r) => (
               <button
                 key={r.id}
                 onClick={() => onCardClick(r)}
-                className="pa-row text-left rounded-md border border-white/10 bg-white/[0.03] px-2 py-1.5"
+                className="pa-row text-left rounded-md border border-token-subtle bg-token-nested px-2 py-1.5"
               >
-                <div className="text-xs text-white/85 truncate">{r.title}</div>
-                <div className="text-[10px] text-white/40 mt-0.5 truncate">{renderSub(r)}</div>
+                <div className="text-xs text-token-primary truncate">{r.title}</div>
+                <div className="text-[10px] text-token-muted mt-0.5 truncate">{renderSub(r)}</div>
               </button>
             ))}
-            {list.length === 0 && <div className="text-[10px] text-white/25 text-center py-2">空</div>}
+            {list.length === 0 && <div className="text-[10px] text-token-muted-faint text-center py-2">空</div>}
           </div>
         );
       })}

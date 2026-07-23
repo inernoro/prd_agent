@@ -122,7 +122,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle bg-token-nested" >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Webhook size={18} className="text-muted-foreground" />
@@ -141,7 +141,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
               <div
                 className="p-4 rounded-lg"
                 style={{
-                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                  background: webhookStats.isEnabled ? 'rgba(34,197,94,0.06)' : 'var(--bg-card)',
                   border: webhookStats.isEnabled ? '1px solid rgba(34,197,94,0.2)' : '1px solid var(--nested-block-border)',
                 }}
               >
@@ -175,7 +175,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
             </section>
           )}
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 白名单规则 */}
           <section>
@@ -256,7 +256,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                       />
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                          <button className="p-1.5 rounded hover-bg-soft transition-colors text-muted-foreground hover:text-foreground">
                             <MoreVertical size={16} />
                           </button>
                         </DropdownMenu.Trigger>
@@ -270,14 +270,14 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
                             }}
                           >
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft"
                               onSelect={() => { setEditingWhitelist(wl); setEditDialogOpen(true); }}
                             >
                               <Pencil size={14} /> 编辑
                             </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                            <DropdownMenu.Separator className="my-1 h-px bg-token-nested" />
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft text-red-400"
                               onSelect={() => handleDelete(wl.id, wl.identifierPattern)}
                             >
                               <Trash2 size={14} /> 删除
@@ -292,7 +292,7 @@ export default function ChannelsPanel({ onActionsReady }: ChannelsPanelProps) {
             </div>
 
             {total > pageSize && (
-              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+              <div className="flex justify-between items-center pt-4 mt-4 border-t border-token-subtle">
                 <div className="text-sm text-muted-foreground">共 {total} 条</div>
                 <div className="flex gap-2">
                   <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>

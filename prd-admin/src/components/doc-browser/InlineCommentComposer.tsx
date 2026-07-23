@@ -87,7 +87,7 @@ export function InlineCommentComposer({
     >
       <div className="flex items-center justify-between mb-2">
         <span className="text-[10px] font-semibold" style={{ color: 'var(--text-muted)' }}>划词批注</span>
-        <button onClick={onClose} className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
+        <button onClick={onClose} className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors"
           style={{ color: 'var(--text-muted)' }} title="关闭">
           <X size={13} />
         </button>
@@ -123,8 +123,8 @@ export function InlineCommentComposer({
         }}
         placeholder="写下你的批注…（⌘/Ctrl + Enter 发送）"
         rows={3}
-        className="w-full px-2.5 py-2 rounded-[8px] text-[12px] outline-none resize-none"
-        style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)', color: 'var(--text-primary)' }}
+        className="w-full px-2.5 py-2 rounded-[8px] text-[12px] outline-none resize-none bg-token-nested border border-token-subtle"
+        style={{ color: 'var(--text-primary)' }}
       />
       <div className="flex items-center justify-between mt-2">
         <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>

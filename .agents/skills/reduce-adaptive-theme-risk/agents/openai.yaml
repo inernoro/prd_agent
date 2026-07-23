@@ -1,0 +1,4 @@
+interface:
+  display_name: "自适应主题风险治理"
+  short_description: "扫描、评分并持续降低浅色主题边界与表面风险，建立回归闸门"
+  default_prompt: "Use $reduce-adaptive-theme-risk to scan, prioritize, fix, and verify adaptive theme risks without breaking intentional visual surfaces."

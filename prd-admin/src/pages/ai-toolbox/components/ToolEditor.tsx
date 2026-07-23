@@ -640,7 +640,7 @@ export function ToolEditor() {
                 )}
                 <button
                   onClick={() => removeKnowledgeFile(file.id)}
-                  className="p-1 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                  className="p-1 rounded hover-bg-soft transition-colors flex-shrink-0"
                 >
                   <X size={12} className="text-token-muted" />
                 </button>
@@ -783,7 +783,7 @@ export function ToolEditor() {
           onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) })}
           className="w-full h-2 rounded-full appearance-none cursor-pointer"
           style={{
-            background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255, 255, 255, 0.1) ${form.temperature * 100}%)`,
+            background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, var(--nested-block-bg) ${form.temperature * 100}%)`,
           }}
         />
         <div className="text-token-muted flex justify-between text-[10px] mt-1.5">
@@ -900,11 +900,8 @@ export function ToolEditor() {
                     </button>
                     {showIconPicker && (
                       <div
-                        className="absolute top-full left-0 mt-2 p-3 rounded-xl border shadow-xl z-10 grid grid-cols-8 gap-1.5 w-[300px]"
-                        style={{
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          borderColor: 'rgba(255, 255, 255, 0.1)',
-                        }}
+                        className="absolute top-full left-0 mt-2 p-3 rounded-xl border shadow-xl z-10 grid grid-cols-8 gap-1.5 w-[300px] bg-token-nested border-token-subtle"
+
                       >
                         {ICON_OPTIONS.map((iconName) => {
                           const Icon = getIconComponent(iconName);
@@ -916,7 +913,7 @@ export function ToolEditor() {
                                 setForm({ ...form, icon: iconName });
                                 setShowIconPicker(false);
                               }}
-                              className="w-8 h-8 rounded-lg flex items-center justify-center hover:bg-white/10 transition-all hover:scale-110"
+                              className="w-8 h-8 rounded-lg flex items-center justify-center hover-bg-soft transition-all hover:scale-110"
                               style={{
                                 background: form.icon === iconName
                                   ? `hsla(${hue}, 60%, 50%, 0.2)`
@@ -948,7 +945,7 @@ export function ToolEditor() {
                         <span
                           className="text-[10px]"
                           style={{
-                            color: nameCharCount > maxNameLength ? 'rgb(239, 68, 68)' : 'rgba(255, 255, 255, 0.5)',
+                            color: nameCharCount > maxNameLength ? 'rgb(239, 68, 68)' : 'var(--text-secondary)',
                           }}
                         >
                           {nameCharCount}/{maxNameLength}
@@ -1027,7 +1024,7 @@ export function ToolEditor() {
                         : 'transparent',
                       color: activeTab === tab.key
                         ? `hsla(${tab.hue}, 70%, 75%, 1)`
-                        : 'rgba(255, 255, 255, 0.5)',
+                        : 'var(--text-secondary)',
                       border: activeTab === tab.key
                         ? `1px solid hsla(${tab.hue}, 60%, 55%, 0.3)`
                         : '1px solid transparent',
@@ -1058,26 +1055,20 @@ export function ToolEditor() {
               >
                 <div className="flex items-center gap-2">
                   <div
-                    className="w-6 h-6 rounded-lg flex items-center justify-center"
-                    style={{
-                      background: 'rgba(255, 255, 255, 0.05)',
-                      border: '1px solid rgba(255, 255, 255, 0.08)',
-                    }}
+                    className="w-6 h-6 rounded-lg flex items-center justify-center bg-token-nested border border-token-subtle"
+
                   >
-                    <Settings size={12} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+                    <Settings size={12} style={{ color: 'var(--text-secondary)' }} />
                   </div>
                   <span className="text-token-primary text-[13px] font-semibold">
                     高级设置
                   </span>
                 </div>
                 <div
-                  className="w-6 h-6 rounded-lg flex items-center justify-center transition-transform"
-                  style={{
-                    background: 'rgba(255, 255, 255, 0.03)',
-                    transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)',
-                  }}
+                  className="w-6 h-6 rounded-lg flex items-center justify-center transition-transform bg-token-nested"
+                  style={{ transform: showAdvanced ? 'rotate(180deg)' : 'rotate(0deg)' }}
                 >
-                  <ChevronDown size={14} style={{ color: 'rgba(255, 255, 255, 0.5)' }} />
+                  <ChevronDown size={14} style={{ color: 'var(--text-secondary)' }} />
                 </div>
               </button>
               {showAdvanced && (
@@ -1171,7 +1162,7 @@ export function ToolEditor() {
                   className="text-token-primary flex-1 bg-transparent text-[12px] outline-none"
                 />
                 <button
-                  className="p-1.5 rounded-lg transition-all hover:bg-white/10"
+                  className="p-1.5 rounded-lg transition-all hover-bg-soft"
                   style={{ color: 'var(--accent-primary)' }}
                 >
                   <Send size={14} />

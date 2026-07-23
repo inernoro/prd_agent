@@ -222,7 +222,7 @@ export function CcasPrdReviseChat({
       <div className="shrink-0 px-3 py-2 border-b border-amber-400/15 flex items-center justify-between gap-2">
         <div className="min-w-0">
           <h3 className="text-xs font-medium text-amber-100/95">改稿助手</h3>
-          <p className="text-[10px] text-white/45 truncate">
+          <p className="text-[10px] text-token-muted truncate">
             在上方文档基础上多轮调整；Ctrl+Enter 发送
           </p>
         </div>
@@ -248,10 +248,10 @@ export function CcasPrdReviseChat({
             <div
               key={m.id}
               className={`text-[11px] leading-relaxed ${
-                m.role === 'user' ? 'text-white/85' : 'text-white/65'
+                m.role === 'user' ? 'text-token-primary' : 'text-token-secondary'
               }`}
             >
-              <span className="text-white/40 mr-1.5">{m.role === 'user' ? '你' : '助手'}</span>
+              <span className="text-token-muted mr-1.5">{m.role === 'user' ? '你' : '助手'}</span>
               {m.streaming ? (
                 <span className="inline-flex items-center gap-1 text-amber-200/80">
                   <Loader2 className="w-3 h-3 animate-spin" />
@@ -266,7 +266,7 @@ export function CcasPrdReviseChat({
                 <span className="whitespace-pre-wrap">{m.content}</span>
               )}
               {m.model?.name && !m.streaming && (
-                <div className="mt-0.5 text-[9px] font-mono text-white/30">
+                <div className="mt-0.5 text-[9px] font-mono text-token-muted">
                   {m.model.name}
                   {m.model.platform ? ` · ${m.model.platform}` : ''}
                 </div>
@@ -284,7 +284,7 @@ export function CcasPrdReviseChat({
               type="button"
               onClick={() => void send(p)}
               disabled={isStreaming}
-              className="text-[10px] px-2 py-1 rounded-md border border-white/10 bg-white/5 text-white/55 hover:bg-white/10 hover:text-white/75 transition text-left"
+              className="text-[10px] px-2 py-1 rounded-md border border-token-subtle bg-token-nested text-token-secondary hover-bg-soft hover:text-token-secondary transition text-left"
             >
               {p}
             </button>
@@ -300,7 +300,7 @@ export function CcasPrdReviseChat({
           placeholder="例：把第二章设备数量改成 4 台相机；补充垛码校验失败时的告警文案…"
           rows={2}
           disabled={isStreaming}
-          className="flex-1 min-h-[52px] rounded-md bg-black/30 border border-white/15 px-2.5 py-2 text-xs text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/50 resize-none"
+          className="flex-1 min-h-[52px] rounded-md bg-token-nested border border-token-subtle px-2.5 py-2 text-xs text-token-primary placeholder:text-token-muted focus:outline-none focus:border-amber-400/50 resize-none"
         />
         <div className="flex flex-col gap-1 shrink-0">
           {isStreaming ? (

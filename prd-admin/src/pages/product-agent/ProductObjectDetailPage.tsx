@@ -156,9 +156,9 @@ export function ProductObjectDetailPage() {
 
   if (kind === 'release') {
     return (
-      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
-        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
-          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+      <div className="h-screen min-h-0 flex flex-col bg-token-card">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary shrink-0" title="返回">
             <ArrowLeft size={16} />
           </button>
           <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>
@@ -174,9 +174,9 @@ export function ProductObjectDetailPage() {
 
   if (kind === 'initiation') {
     return (
-      <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
-        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
-          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white shrink-0" title="返回">
+      <div className="h-screen min-h-0 flex flex-col bg-token-card">
+        <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
+          <button onClick={back} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary shrink-0" title="返回">
             <ArrowLeft size={16} />
           </button>
           <span className="rounded-md border border-amber-400/30 bg-amber-400/10 px-2 py-0.5 text-xs text-amber-200">内部版本</span>
@@ -191,11 +191,11 @@ export function ProductObjectDetailPage() {
   }
 
   return (
-    <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+    <div className="h-screen min-h-0 flex flex-col bg-token-card">
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
         <button
           onClick={back}
-          className="flex items-center justify-center w-8 h-8 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 shrink-0"
+          className="flex items-center justify-center w-8 h-8 rounded-lg border border-token-subtle text-token-secondary hover-text-primary hover-bg-soft shrink-0"
           title="返回"
         >
           <ArrowLeft size={16} />
@@ -275,7 +275,7 @@ export function ProductObjectDetailPage() {
               gotoFeature={(fid) => navigate(`/product-agent/p/${productId}/feature/${fid}`)}
             />
           ) : (
-            <div className="text-white/40 text-sm text-center py-10">不支持的对象类型</div>
+            <div className="text-token-muted text-sm text-center py-10">不支持的对象类型</div>
           )}
         </div>
       </div>
@@ -342,9 +342,9 @@ function DetailScaffold({
   return (
     <div className="flex flex-col gap-4">
       {/* 头部 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02]">
+      <div className="rounded-xl border border-token-subtle bg-token-nested">
         <div className="flex items-center gap-2 px-4 pt-3">
-          <span className="text-[11px] font-mono text-white/40">{no}</span>
+          <span className="text-[11px] font-mono text-token-muted">{no}</span>
           <span className="text-[10px] px-1.5 py-0.5 rounded" style={{ color: kindColor, background: `${kindColor}1a` }}>{kindLabel}</span>
           {(onSave || headerActions) && (
             <div className="ml-auto flex items-center gap-2.5">
@@ -370,7 +370,7 @@ function DetailScaffold({
                 readOnly={readOnlyTitle}
                 onChange={(e) => onTitleChange?.(e.target.value)}
                 placeholder={titlePlaceholder}
-                className="flex-1 min-w-0 bg-transparent text-xl font-semibold text-white outline-none placeholder:text-white/25 read-only:cursor-default"
+                className="flex-1 min-w-0 bg-transparent text-xl font-semibold text-token-primary outline-none placeholder-token-muted read-only:cursor-default"
               />
               {!readOnlyTitle && <span className="text-red-300/70 text-sm shrink-0">*</span>}
             </div>
@@ -385,7 +385,7 @@ function DetailScaffold({
             )}
           </div>
         </div>
-        {workflow && <div className="px-4 py-2.5 border-t border-white/5">{workflow}</div>}
+        {workflow && <div className="px-4 py-2.5 border-t border-token-subtle">{workflow}</div>}
       </div>
 
       {/* 主体：split 左 70% / 右 30%；stack 单列全宽 */}
@@ -404,10 +404,10 @@ function DetailScaffold({
 
 function Card({ title, action, children, dense }: { title?: string; action?: React.ReactNode; children: React.ReactNode; dense?: boolean }) {
   return (
-    <div className={`rounded-xl border border-white/10 bg-white/[0.02] ${dense ? 'p-3.5' : 'p-4'}`}>
+    <div className={`rounded-xl border border-token-subtle bg-token-nested ${dense ? 'p-3.5' : 'p-4'}`}>
       {(title || action) && (
         <div className="flex items-center justify-between mb-3">
-          {title && <div className="text-xs font-semibold text-white/60">{title}</div>}
+          {title && <div className="text-xs font-semibold text-token-secondary">{title}</div>}
           {action}
         </div>
       )}
@@ -418,7 +418,7 @@ function Card({ title, action, children, dense }: { title?: string; action?: Rea
 
 function FieldLabel({ children, required }: { children: React.ReactNode; required?: boolean }) {
   return (
-    <label className="text-xs text-white/55">
+    <label className="text-xs text-token-secondary">
       {children}
       {required && <span className="text-red-300/70 ml-1">*</span>}
     </label>
@@ -432,7 +432,7 @@ function GradeField({ grade, setGrade }: { grade: ItemGrade; setGrade: (g: ItemG
         <button
           key={g}
           onClick={() => setGrade(g)}
-          className={`px-2 py-1 rounded-md text-xs border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+          className={`px-2 py-1 rounded-md text-xs border ${grade === g ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-token-muted border-token-subtle hover-bg-soft'}`}
         >
           {ITEM_GRADE_LABEL[g]}
         </button>
@@ -447,7 +447,7 @@ function ParentSelect({ value, onChange, options, placeholder }: { value: string
     <select
       value={value}
       onChange={(e) => onChange(e.target.value)}
-      className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+      className="px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
     >
       <option value="">{placeholder}</option>
       {options.map((o) => (
@@ -469,7 +469,7 @@ function PlainTextArea({ value, onChange, placeholder }: { value: string; onChan
       onChange={(event) => onChange(event.target.value)}
       placeholder={placeholder}
       rows={6}
-      className="w-full resize-y rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm leading-6 text-white outline-none placeholder:text-white/25 focus:border-cyan-500/40"
+      className="w-full resize-y rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm leading-6 text-token-primary outline-none placeholder-token-muted focus:border-cyan-500/40"
       style={{ minHeight: 132, overscrollBehavior: 'contain' }}
     />
   );
@@ -480,7 +480,7 @@ function TraceButton({ onClick }: { onClick: () => void }) {
   return (
     <button
       onClick={onClick}
-      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/70 hover:bg-white/5 hover:text-cyan-200 text-sm"
+      className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover:text-cyan-200 text-sm"
       title="在图谱中查看本对象的全部关联（动态高亮）"
     >
       <Share2 size={14} /> 追溯关系路径
@@ -502,16 +502,16 @@ function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId:
   }, [onClose]);
   return createPortal(
     <div className="fixed inset-0 z-[100] flex">
-      <div className="flex-1 bg-black/40" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
+      <div className="flex-1 bg-token-nested" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
       <div
-        className="h-full bg-[#0f1014] border-l border-white/10 flex flex-col shadow-2xl"
+        className="h-full bg-token-card border-l border-token-subtle flex flex-col shadow-2xl"
         style={{ width: '70%', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform .25s ease' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
-          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
+          <span className="flex items-center gap-2 text-sm font-semibold text-token-primary">
             <Share2 size={15} className="text-cyan-400" /> 追溯关系路径 · {title}
           </span>
-          <button onClick={onClose} className="text-white/40 hover:text-white" title="关闭"><X size={16} /></button>
+          <button onClick={onClose} className="text-token-muted hover-text-primary" title="关闭"><X size={16} /></button>
         </div>
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={productId} focusNodeId={nodeId} />
@@ -565,12 +565,12 @@ function DescTemplatePicker({ entityType, onApply }: { entityType: ProductEntity
       {open && (
         <>
           <div className="fixed inset-0 z-10" onClick={() => setOpen(false)} />
-          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-white/10 bg-[#1b1d22] shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
+          <div className="absolute right-0 top-6 z-20 w-56 max-h-72 overflow-y-auto rounded-lg border border-token-subtle bg-token-card shadow-xl p-1" style={{ overscrollBehavior: 'contain' }}>
             {templates.map((t) => (
               <button
                 key={t.id}
                 onClick={() => { onApply(t.content); setOpen(false); }}
-                className="w-full text-left px-2.5 py-1.5 rounded text-sm text-white/80 hover:bg-white/5 truncate"
+                className="w-full text-left px-2.5 py-1.5 rounded text-sm text-token-primary hover-bg-soft truncate"
                 title={t.name}
               >
                 {t.name}
@@ -584,11 +584,11 @@ function DescTemplatePicker({ entityType, onApply }: { entityType: ProductEntity
 }
 
 function Chips({ items, empty }: { items: string[]; empty: string }) {
-  if (items.length === 0) return <div className="text-[11px] text-white/30">{empty}</div>;
+  if (items.length === 0) return <div className="text-[11px] text-token-muted-faint">{empty}</div>;
   return (
     <div className="flex flex-wrap gap-1.5">
       {items.map((t, i) => (
-        <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-white/8 text-white/70 border border-white/10">
+        <span key={i} className="text-[11px] px-2 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle">
           {t}
         </span>
       ))}
@@ -599,8 +599,8 @@ function Chips({ items, empty }: { items: string[]; empty: string }) {
 function InfoRow({ label, value }: { label: string; value: string }) {
   return (
     <div className="flex items-center justify-between gap-2 text-[11px]">
-      <span className="text-white/40">{label}</span>
-      <span className="text-white/60">{value}</span>
+      <span className="text-token-muted">{label}</span>
+      <span className="text-token-secondary">{value}</span>
     </div>
   );
 }
@@ -608,7 +608,7 @@ function InfoRow({ label, value }: { label: string; value: string }) {
 /** 属性字段表：左列字段名、右列值，一行一个字段 */
 function AttributeFieldTable({ rows }: { rows: { label: string; value: React.ReactNode }[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
+    <div className="overflow-x-auto rounded-lg border border-token-subtle">
       <table className="w-full table-fixed text-sm">
         <colgroup>
           <col style={{ width: '22%' }} />
@@ -616,9 +616,9 @@ function AttributeFieldTable({ rows }: { rows: { label: string; value: React.Rea
         </colgroup>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className="border-t border-white/5 first:border-t-0">
-              <td className="px-4 py-3 text-xs font-medium text-white/45 bg-white/[0.02] align-top">{row.label}</td>
-              <td className="px-4 py-3 text-sm text-white/80 min-w-0">{row.value}</td>
+            <tr key={row.label} className="border-t border-token-subtle first:border-t-0">
+              <td className="px-4 py-3 text-xs font-medium text-token-muted bg-token-nested align-top">{row.label}</td>
+              <td className="px-4 py-3 text-sm text-token-primary min-w-0">{row.value}</td>
             </tr>
           ))}
         </tbody>
@@ -639,11 +639,11 @@ function DetailRecordTable({
   onRowClick?: (id: string) => void;
 }) {
   if (rows.length === 0) {
-    return <div className="py-10 text-center text-sm text-white/35">{emptyText}</div>;
+    return <div className="py-10 text-center text-sm text-token-muted-faint">{emptyText}</div>;
   }
-  const cell = 'px-3 py-2.5 text-xs text-white/65 truncate';
+  const cell = 'px-3 py-2.5 text-xs text-token-secondary truncate';
   return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
+    <div className="overflow-x-auto rounded-lg border border-token-subtle">
       <table className="w-full table-fixed text-left text-sm min-w-[960px]">
         {columns.some((c) => c.width) && (
           <colgroup>
@@ -652,7 +652,7 @@ function DetailRecordTable({
             ))}
           </colgroup>
         )}
-        <thead className="bg-white/[0.03] text-[11px] text-white/45 border-b border-white/10">
+        <thead className="bg-token-nested text-[11px] text-token-muted border-b border-token-subtle">
           <tr>
             {columns.map((c) => (
               <th key={c.header} className={`px-3 py-2.5 font-medium whitespace-nowrap ${c.className ?? ''}`}>{c.header}</th>
@@ -664,7 +664,7 @@ function DetailRecordTable({
             <tr
               key={row.id}
               onClick={() => onRowClick?.(row.id)}
-              className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+              className={`border-t border-token-subtle ${onRowClick ? 'cursor-pointer hover-bg-soft' : ''}`}
             >
               {columns.map((c) => (
                 <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>
@@ -678,7 +678,7 @@ function DetailRecordTable({
 }
 
 function NotFound() {
-  return <div className="text-white/40 text-sm text-center py-10">对象不存在或已删除</div>;
+  return <div className="text-token-muted text-sm text-center py-10">对象不存在或已删除</div>;
 }
 
 // ════════════════════════ 新建功能（布局对齐功能详情）════════════════════════
@@ -787,7 +787,7 @@ function FeatureCreateForm({
             <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="填写核心业务规则、限制条件和边界" />
           </Card>
           <Card title="验收标准">
-            <p className="text-[11px] text-white/35 mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
+            <p className="text-[11px] text-token-muted-faint mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
             <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="例：给定合法输入，系统返回预期结果；异常场景有明确提示…" />
           </Card>
           <Card title="备注">
@@ -799,7 +799,7 @@ function FeatureCreateForm({
             </Card>
           )}
           {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
-          <p className="text-[11px] text-white/35 px-1">保存后进入功能详情，可继续维护版本纳入、缺陷追溯与状态流转。</p>
+          <p className="text-[11px] text-token-muted-faint px-1">保存后进入功能详情，可继续维护版本纳入、缺陷追溯与状态流转。</p>
         </>
       }
       sidebar={
@@ -808,12 +808,12 @@ function FeatureCreateForm({
             <div className="flex flex-col gap-3.5">
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>所属功能模块</FieldLabel>
-                <p className="text-[11px] text-white/35 -mt-0.5">从功能目录树逐级点选，或在搜索框输入路径/名称快捷定位</p>
+                <p className="text-[11px] text-token-muted-faint -mt-0.5">从功能目录树逐级点选，或在搜索框输入路径/名称快捷定位</p>
                 <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} />
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>功能类型</FieldLabel>
-                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none">
                   {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
                 </select>
               </div>
@@ -836,7 +836,7 @@ function FeatureCreateForm({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel required>内部版本号</FieldLabel>
-                <p className="text-[11px] text-white/35 -mt-0.5">立项时确定本功能归属的内部版本（T 号），关联下方内部版本记录</p>
+                <p className="text-[11px] text-token-muted-faint -mt-0.5">立项时确定本功能归属的内部版本（T 号），关联下方内部版本记录</p>
                 <InternalVersionSelect value={plannedVersionId} onChange={setPlannedVersionId} versions={versions} />
                 {plannedVersionId && (
                   <FeatureInternalVersionLink
@@ -847,13 +847,13 @@ function FeatureCreateForm({
               </div>
               <div className="flex flex-col gap-1.5">
                 <FieldLabel>正式版本号</FieldLabel>
-                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+                <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none">
                   <option value="">上线后回写</option>
                   {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
                 </select>
               </div>
               {split.others.length > 0 && (
-                <div className="pt-1 border-t border-white/5">
+                <div className="pt-1 border-t border-token-subtle">
                   <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
                 </div>
               )}
@@ -861,7 +861,7 @@ function FeatureCreateForm({
           </Card>
           <Card title="主需求与关联需求">
             {requirements.length === 0 ? (
-              <div className="text-[11px] text-white/30">该产品还没有需求，请先创建需求后再新建功能</div>
+              <div className="text-[11px] text-token-muted-faint">该产品还没有需求，请先创建需求后再新建功能</div>
             ) : (
               <div className="space-y-3">
                 <div className="flex flex-col gap-1.5">
@@ -963,7 +963,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
     if (res.success && res.data) onCreated(res.data.id);
   };
 
-  const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
+  const selectCls = 'w-full px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40';
 
   return (
     <DetailScaffold
@@ -984,7 +984,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
           {!canSubmit && (
             <p className="text-[11px] text-amber-300/70 px-1">请填写「标题」「关联功能」后才能提交。</p>
           )}
-          <p className="text-[11px] text-white/35 px-1">创建后进入缺陷详情页，自动追溯到本产品与所选功能；可在缺陷管理智能体继续处理流转。</p>
+          <p className="text-[11px] text-token-muted-faint px-1">创建后进入缺陷详情页，自动追溯到本产品与所选功能；可在缺陷管理智能体继续处理流转。</p>
         </>
       }
       sidebar={
@@ -1004,7 +1004,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
                 <option value="">请选择功能</option>
                 {features.map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}
               </select>
-              <span className="text-[10px] text-white/30">缺陷通过功能关联到需求，请先选择所属功能。</span>
+              <span className="text-[10px] text-token-muted-faint">缺陷通过功能关联到需求，请先选择所属功能。</span>
             </div>
             <div className="flex flex-col gap-1.5">
               <FieldLabel>关联版本</FieldLabel>
@@ -1012,7 +1012,7 @@ function CreateDefectForm({ productId, onCreated }: { productId: string; onCreat
                 <option value="">不关联</option>
                 {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
               </select>
-              <span className="text-[10px] text-white/30">默认填充所选功能当前的版本，可手动调整。</span>
+              <span className="text-[10px] text-token-muted-faint">默认填充所选功能当前的版本，可手动调整。</span>
             </div>
           </div>
         </Card>
@@ -1127,20 +1127,20 @@ function RequirementDetail({
             <Card title={`评论与流转 · ${requirement.sourceSnapshot.comments.length}`}>
               <div className="flex flex-col gap-3">
                 {requirement.sourceSnapshot.comments.map((comment, index) => (
-                  <div key={`${comment.author}-${comment.createdAt ?? index}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3">
+                  <div key={`${comment.author}-${comment.createdAt ?? index}`} className="rounded-lg border border-token-subtle bg-token-nested p-3">
                     <div className="flex items-start gap-2">
                       <MessageSquareText size={15} className="text-cyan-300 mt-0.5 shrink-0" />
                       <div className="min-w-0 flex-1">
                         <div className="flex items-center justify-between gap-3">
-                          <div className="text-sm text-white/80">
+                          <div className="text-sm text-token-primary">
                             <span className="font-medium">{comment.author || '未知用户'}</span>
-                            <span className="text-white/40 ml-2">{comment.title}</span>
+                            <span className="text-token-muted ml-2">{comment.title}</span>
                           </div>
-                          <span className="text-[11px] text-white/35 shrink-0">{fmtDate(comment.createdAt)}</span>
+                          <span className="text-[11px] text-token-muted-faint shrink-0">{fmtDate(comment.createdAt)}</span>
                         </div>
                         {comment.content && (
                           <div
-                            className="mt-2 text-sm text-white/65 prose-product leading-6"
+                            className="mt-2 text-sm text-token-secondary prose-product leading-6"
                             dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(comment.content)) }}
                           />
                         )}
@@ -1189,7 +1189,7 @@ function RequirementDetail({
                 <FieldLabel>处理人</FieldLabel>
                 <ProductAssigneePicker productId={productId} value={assigneeId} onChange={setAssigneeId} />
               </div>
-              <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+              <label className="flex items-center gap-2 text-sm text-token-secondary cursor-pointer">
                 <input
                   type="checkbox"
                   checked={formData[REQUIREMENT_PRODUCT_DEFECT_FORM_KEY] === REQUIREMENT_PRODUCT_DEFECT_VALUE}
@@ -1208,7 +1208,7 @@ function RequirementDetail({
                 />
               </div>
               {split.others.length > 0 && (
-                <div className="pt-1 border-t border-white/5">
+                <div className="pt-1 border-t border-token-subtle">
                   <FormFieldsRenderer fields={split.others} values={formData} onChange={setField} productId={productId} />
                 </div>
               )}
@@ -1224,11 +1224,11 @@ function RequirementDetail({
           >
             <div className="flex flex-col gap-3">
               <div>
-                <div className="text-[11px] text-white/40 mb-1.5">客户</div>
+                <div className="text-[11px] text-token-muted mb-1.5">客户</div>
                 <Chips items={requirement.customerIds.map((c) => customerName.get(c) ?? c)} empty="未关联客户" />
               </div>
               <div>
-                <div className="text-[11px] text-white/40 mb-1.5">归属版本</div>
+                <div className="text-[11px] text-token-muted mb-1.5">归属版本</div>
                 <Chips items={requirement.versionIds.map((v) => versionName.get(v) ?? v)} empty="未归属版本" />
               </div>
             </div>
@@ -1319,32 +1319,32 @@ function RequirementExtendedFields({ requirement }: { requirement: Requirement }
           {snapshot.ccNames.length > 0 && <InfoRow label="抄送人" value={snapshot.ccNames.join('、')} />}
         </>
       )}
-      <div className="pt-2 border-t border-white/8 flex flex-col gap-2">
+      <div className="pt-2 border-t border-token-subtle flex flex-col gap-2">
         <InfoRow label="创建时间" value={fmtDate(snapshot.sourceCreatedAt)} />
         <InfoRow label="最后修改" value={fmtDate(snapshot.sourceModifiedAt)} />
         {snapshot.importedFileName && <InfoRow label="导入文件" value={snapshot.importedFileName} />}
         <InfoRow label="导入时间" value={fmtDate(snapshot.importedAt)} />
       </div>
-      <div className="pt-2 border-t border-white/8" />
+      <div className="pt-2 border-t border-token-subtle" />
     </>
   );
 }
 
 function DefectList({ defects, onClick, empty }: { defects: TracedDefect[]; onClick: (id: string) => void; empty: string }) {
-  if (defects.length === 0) return <div className="text-[11px] text-white/30">{empty}</div>;
+  if (defects.length === 0) return <div className="text-[11px] text-token-muted-faint">{empty}</div>;
   return (
     <div className="flex flex-col gap-1">
       {defects.map((d) => (
         <button
           key={d.id}
           onClick={() => onClick(d.id)}
-          className="pa-row text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-white/10 bg-white/[0.02]"
+          className="pa-row text-left flex items-center justify-between gap-2 px-2.5 py-2 rounded-lg border border-token-subtle bg-token-nested"
         >
-          <span className="text-sm text-white/80 truncate">
-            <span className="text-[10px] text-white/40 mr-1.5 font-mono">{d.defectNo}</span>
+          <span className="text-sm text-token-primary truncate">
+            <span className="text-[10px] text-token-muted mr-1.5 font-mono">{d.defectNo}</span>
             {d.title || '(无标题)'}
           </span>
-          <span className="text-[10px] text-white/40 shrink-0">{d.status}</span>
+          <span className="text-[10px] text-token-muted shrink-0">{d.status}</span>
         </button>
       ))}
     </div>
@@ -1358,15 +1358,15 @@ function FeatureRequirementLink({
   requirement?: Requirement;
   onOpen: (id: string) => void;
 }) {
-  if (!requirement) return <span className="text-xs text-white/35">未选择</span>;
+  if (!requirement) return <span className="text-xs text-token-muted-faint">未选择</span>;
   return (
     <button
       type="button"
       onClick={() => onOpen(requirement.id)}
-      className="w-full text-left rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 hover:border-cyan-400/30 hover:bg-cyan-400/5"
+      className="w-full text-left rounded-md border border-token-subtle bg-token-nested px-2.5 py-2 hover:border-cyan-400/30 hover:bg-cyan-400/5"
     >
       <span className="block text-[10px] font-mono text-cyan-200/80">{requirement.requirementNo}</span>
-      <span className="block text-xs text-white/80 truncate mt-0.5">{requirement.title}</span>
+      <span className="block text-xs text-token-primary truncate mt-0.5">{requirement.title}</span>
     </button>
   );
 }
@@ -1383,13 +1383,13 @@ function FeatureInternalVersionLink({
     <button
       type="button"
       onClick={() => onOpen(version.id)}
-      className="w-full text-left rounded-md border border-white/10 bg-white/[0.03] px-2.5 py-2 hover:border-violet-400/30 hover:bg-violet-400/5"
+      className="w-full text-left rounded-md border border-token-subtle bg-token-nested px-2.5 py-2 hover:border-violet-400/30 hover:bg-violet-400/5"
     >
       <span className="block text-[10px] font-mono text-violet-200/80">{version.versionName}</span>
       {version.description && (
-        <span className="block text-xs text-white/60 truncate mt-0.5">{version.description}</span>
+        <span className="block text-xs text-token-secondary truncate mt-0.5">{version.description}</span>
       )}
-      <span className="block text-[10px] text-white/35 mt-1">点击查看内部版本详情</span>
+      <span className="block text-[10px] text-token-muted-faint mt-1">点击查看内部版本详情</span>
     </button>
   );
 }
@@ -1407,7 +1407,7 @@ function InternalVersionSelect({
     <select
       value={value}
       onChange={(event) => onChange(event.target.value)}
-      className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none"
+      className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none"
     >
       <option value="">请选择内部版本（T 号）</option>
       {versions.map((version) => (
@@ -1591,17 +1591,17 @@ function FeatureDetail({
             <div className="flex flex-col gap-4">
               <div>
                 <FieldLabel required>功能说明</FieldLabel>
-                <p className="text-[11px] text-white/35 mt-1 mb-2">面向的业务场景与本次交付目标</p>
+                <p className="text-[11px] text-token-muted-faint mt-1 mb-2">面向的业务场景与本次交付目标</p>
                 <DescriptionField value={description} onChange={setDescription} />
               </div>
               <div>
                 <FieldLabel required>关键规则</FieldLabel>
-                <p className="text-[11px] text-white/35 mt-1 mb-2">核心业务规则、限制条件与边界（输入约束、权限、判空等）</p>
+                <p className="text-[11px] text-token-muted-faint mt-1 mb-2">核心业务规则、限制条件与边界（输入约束、权限、判空等）</p>
                 <PlainTextArea value={keyRules} onChange={setKeyRules} placeholder="例：仅负责人可认领；单日上限 20 条；必填客户编号…" />
               </div>
               <div>
                 <FieldLabel required>验收标准</FieldLabel>
-                <p className="text-[11px] text-white/35 mt-1 mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
+                <p className="text-[11px] text-token-muted-faint mt-1 mb-2">写清怎样算做完、测试和产品怎样验收（给定场景与条件，系统应出现什么结果）</p>
                 <PlainTextArea value={acceptanceCriteria} onChange={setAcceptanceCriteria} placeholder="例：给定合法输入，系统返回预期结果；异常场景有明确提示…" />
               </div>
               <div>
@@ -1629,22 +1629,22 @@ function FeatureDetail({
             </TapdPropertyRow>
             {feature.externalId && (
               <TapdPropertyRow label="外部 ID">
-                <span className="text-xs text-white/60 pt-2 block">{feature.externalId}</span>
+                <span className="text-xs text-token-secondary pt-2 block">{feature.externalId}</span>
               </TapdPropertyRow>
             )}
             <TapdPropertyRow label="所属产品">
-              <span className="text-xs text-white/75 pt-2 block">{productName}</span>
+              <span className="text-xs text-token-primary pt-2 block">{productName}</span>
             </TapdPropertyRow>
             <TapdPropertyRow label="所属功能模块" required>
               <FeatureModuleSearchSelect value={moduleName} onChange={setModuleName} features={allFeatures} uiSize="md" />
             </TapdPropertyRow>
             {catalogPath && catalogPath !== moduleName && (
               <TapdPropertyRow label="目录路径">
-                <span className="text-[11px] text-white/45 pt-2 block leading-relaxed">{catalogPath}</span>
+                <span className="text-[11px] text-token-muted pt-2 block leading-relaxed">{catalogPath}</span>
               </TapdPropertyRow>
             )}
             <TapdPropertyRow label="功能类型" required>
-              <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+              <select value={featureType} onChange={(event) => setFeatureType(event.target.value as FeatureBusinessType)} className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none">
                 {FEATURE_TYPES.map((item) => <option key={item.value} value={item.value}>{item.label}</option>)}
               </select>
             </TapdPropertyRow>
@@ -1664,20 +1664,20 @@ function FeatureDetail({
             </TapdPropertyRow>
             {parentFeature && (
               <TapdPropertyRow label="父功能路径">
-                <span className="text-[11px] text-white/45 pt-2 block">{featurePathLabel(allFeatures, parentFeature.id)}</span>
+                <span className="text-[11px] text-token-muted pt-2 block">{featurePathLabel(allFeatures, parentFeature.id)}</span>
               </TapdPropertyRow>
             )}
             {feature.currentState && (
               <TapdPropertyRow label="状态">
                 <div className="flex items-center gap-2 flex-wrap pt-1">
-                  <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10">
+                  <span className="text-xs px-2 py-1 rounded-md bg-token-nested text-token-secondary border border-token-subtle">
                     {workflow?.states.find((s) => s.key === feature.currentState)?.label ?? feature.currentState}
                   </span>
                   {(() => {
                     const sla = slaInfo(feature.stateEnteredAt, workflow?.states.find((s) => s.key === feature.currentState)?.slaHours);
                     if (!sla) return null;
                     return (
-                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${sla.overdue ? 'text-red-300 border-red-500/30 bg-red-500/10' : 'text-white/40 border-white/10'}`}>
+                      <span className={`text-[10px] px-1.5 py-0.5 rounded border ${sla.overdue ? 'text-red-300 border-red-500/30 bg-red-500/10' : 'text-token-muted border-token-subtle'}`}>
                         停留 {sla.label}{sla.overdue ? ' · 超时' : ''}
                       </span>
                     );
@@ -1688,7 +1688,7 @@ function FeatureDetail({
           </TapdPropertyPanel>
 
           <TapdPropertyPanel title="版本信息">
-            <p className="px-3 pb-2 text-[11px] text-white/35 leading-relaxed">立项时指定内部版本号，关联本产品的内部版本（T 号）；正式上线后回写 V 号。</p>
+            <p className="px-3 pb-2 text-[11px] text-token-muted-faint leading-relaxed">立项时指定内部版本号，关联本产品的内部版本（T 号）；正式上线后回写 V 号。</p>
             <TapdPropertyRow label="内部版本号" required>
               <InternalVersionSelect value={plannedVersionId} onChange={setPlannedVersionId} versions={versions} />
             </TapdPropertyRow>
@@ -1701,7 +1701,7 @@ function FeatureDetail({
               </div>
             )}
             <TapdPropertyRow label="正式版本号">
-              <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-[#15171c] px-3 py-2 text-sm text-white outline-none">
+              <select value={officialReleaseId} onChange={(event) => setOfficialReleaseId(event.target.value)} className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none">
                 <option value="">上线后回写 V 号</option>
                 {releases.filter((release) => release.vCode).map((release) => <option key={release.id} value={release.id}>{release.vCode} · {release.planName}</option>)}
               </select>
@@ -1718,7 +1718,7 @@ function FeatureDetail({
 
           <TapdPropertyPanel title="需求关联">
             {requirements.length === 0 ? (
-              <div className="px-3 py-4 text-[11px] text-white/30">该产品还没有需求，请先在需求池建立主需求来源。</div>
+              <div className="px-3 py-4 text-[11px] text-token-muted-faint">该产品还没有需求，请先在需求池建立主需求来源。</div>
             ) : (
               <>
                 <TapdPropertyRow label="主需求" required>
@@ -1788,10 +1788,10 @@ function FeatureDetail({
 
           <TapdPropertyPanel title="系统信息">
             <TapdPropertyRow label="创建时间">
-              <span className="text-xs text-white/55 pt-2 block">{fmtDate(feature.createdAt)}</span>
+              <span className="text-xs text-token-secondary pt-2 block">{fmtDate(feature.createdAt)}</span>
             </TapdPropertyRow>
             <TapdPropertyRow label="更新时间">
-              <span className="text-xs text-white/55 pt-2 block">{fmtDate(feature.updatedAt)}</span>
+              <span className="text-xs text-token-secondary pt-2 block">{fmtDate(feature.updatedAt)}</span>
             </TapdPropertyRow>
           </TapdPropertyPanel>
         </>
@@ -1912,7 +1912,7 @@ function VersionDetail({
                 key={lc}
                 type="button"
                 onClick={() => setLifecycle(lc)}
-                className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-white/40 border-white/10 hover:bg-white/5'}`}
+                className={`px-2 py-1 rounded-md text-xs border ${lifecycle === lc ? 'bg-cyan-500/20 text-cyan-200 border-cyan-500/40' : 'text-token-muted border-token-subtle hover-bg-soft'}`}
               >
                 {VERSION_LIFECYCLE_LABEL[lc]}
               </button>
@@ -1925,7 +1925,7 @@ function VersionDetail({
         value: (
           <label className="inline-flex items-center gap-2 cursor-pointer">
             <input type="checkbox" checked={isMajor} onChange={(e) => setIsMajor(e.target.checked)} className="accent-cyan-500" />
-            <span className="text-sm text-white/70">{isMajor ? '是' : '否'}</span>
+            <span className="text-sm text-token-secondary">{isMajor ? '是' : '否'}</span>
           </label>
         ),
       },
@@ -1945,7 +1945,7 @@ function VersionDetail({
       rows.push({
         label: '工作流状态',
         value: (
-          <span className="text-xs px-2 py-1 rounded-md bg-white/8 text-white/70 border border-white/10 inline-block">
+          <span className="text-xs px-2 py-1 rounded-md bg-token-nested text-token-secondary border border-token-subtle inline-block">
             {workflow?.states.find((s) => s.key === version.currentState)?.label ?? version.currentState}
           </span>
         ),
@@ -2014,7 +2014,7 @@ function VersionDetail({
 
   return (
     <>
-      <div className="mb-4 flex border-b border-white/10">
+      <div className="mb-4 flex border-b border-token-subtle">
         <VersionDetailTab active={detailTab === 'basic'} onClick={() => setDetailTab('basic')}>基础信息</VersionDetailTab>
         <VersionDetailTab active={detailTab === 'requirements'} onClick={() => setDetailTab('requirements')}>
           需求
@@ -2069,7 +2069,7 @@ function VersionDetail({
           </>
         ) : detailTab === 'requirements' ? (
           <Card title={`关联需求 · 已纳入 ${linkedRequirements.length} / ${requirements.length}`} action={
-            <span className="text-[11px] text-white/35">勾选纳入后点顶部保存</span>
+            <span className="text-[11px] text-token-muted-faint">勾选纳入后点顶部保存</span>
           }>
             <DetailRecordTable
               emptyText="该产品还没有需求"
@@ -2091,7 +2091,7 @@ function VersionDetail({
                   ),
                 },
                 { header: 'ID', width: '10%', render: (row) => <span className="font-mono text-cyan-200/80">{(row as Requirement).requirementNo}</span> },
-                { header: '标题', width: '22%', render: (row) => <span className="text-white/85 truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
+                { header: '标题', width: '22%', render: (row) => <span className="text-token-primary truncate block" title={(row as Requirement).title}>{(row as Requirement).title}</span> },
                 { header: '分级', width: '7%', render: (row) => ITEM_GRADE_LABEL[(row as Requirement).grade] },
                 { header: '状态', width: '10%', render: (row) => resolveRequirementStateLabel((row as Requirement).currentState ?? '', reqWorkflow) || '—' },
                 { header: '处理人', width: '10%', render: (row) => nameOf((row as Requirement).assigneeId) },
@@ -2116,7 +2116,7 @@ function VersionDetail({
           </Card>
         ) : (
           <Card title={`纳入功能 · 已纳入 ${linkedFeatures.length} / ${features.length}`} action={
-            <span className="text-[11px] text-white/35">勾选即写入，无需点保存</span>
+            <span className="text-[11px] text-token-muted-faint">勾选即写入，无需点保存</span>
           }>
             <DetailRecordTable
               emptyText="该产品还没有功能"
@@ -2138,7 +2138,7 @@ function VersionDetail({
                   ),
                 },
                 { header: '功能编号', width: '10%', render: (row) => <span className="font-mono text-violet-200/80">{(row as Feature).featureNo}</span> },
-                { header: '标题', width: '18%', render: (row) => <span className="text-white/85 truncate block" title={(row as Feature).title}>{(row as Feature).title}</span> },
+                { header: '标题', width: '18%', render: (row) => <span className="text-token-primary truncate block" title={(row as Feature).title}>{(row as Feature).title}</span> },
                 { header: '所属模块', width: '14%', render: (row) => (row as Feature).moduleName || '—' },
                 { header: '功能类型', width: '9%', render: (row) => FEATURE_TYPE_LABEL[(row as Feature).featureType] ?? (row as Feature).featureType },
                 { header: '状态', width: '10%', render: (row) => featWorkflow?.states.find((s) => s.key === (row as Feature).currentState)?.label ?? (row as Feature).currentState ?? '—' },
@@ -2178,7 +2178,7 @@ function VersionDetailTab({ active, children, onClick }: { active: boolean; chil
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}
     >
       {children}
     </button>

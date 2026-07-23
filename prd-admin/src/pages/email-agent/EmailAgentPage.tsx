@@ -134,10 +134,10 @@ export function EmailAgentPage() {
           <Mail className="w-5 h-5 text-sky-300" />
         </div>
         <div className="flex-1 min-w-0">
-          <h1 className="text-xl font-semibold text-white truncate">邮件模板智能体</h1>
-          <p className="text-xs text-white/50 truncate">常用流程邮件模板库：内容 / 发送 / 抄送对象一键复制，填几个变量即可用，还能让 AI 起草润色</p>
+          <h1 className="text-xl font-semibold text-token-primary truncate">邮件模板智能体</h1>
+          <p className="text-xs text-token-secondary truncate">常用流程邮件模板库：内容 / 发送 / 抄送对象一键复制，填几个变量即可用，还能让 AI 起草润色</p>
           {meta?.authorName && (
-            <p className="text-[11px] text-white/35 mt-0.5 inline-flex items-center gap-1">
+            <p className="text-[11px] text-token-muted-faint mt-0.5 inline-flex items-center gap-1">
               <User className="w-3 h-3" /> 作者：{meta.authorName}
             </p>
           )}
@@ -145,7 +145,7 @@ export function EmailAgentPage() {
         <button
           type="button"
           onClick={() => setHelpOpen(true)}
-          className="shrink-0 h-8 px-3 rounded-lg border border-white/12 bg-white/5 hover:bg-white/10 text-xs text-white/75 inline-flex items-center gap-1.5 transition"
+          className="shrink-0 h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-primary inline-flex items-center gap-1.5 transition"
         >
           <HelpCircle className="w-3.5 h-3.5 text-sky-300/85" /> 使用帮助
         </button>
@@ -157,12 +157,12 @@ export function EmailAgentPage() {
         <div className="w-[300px] shrink-0 flex flex-col gap-3 min-h-0">
           <div className="shrink-0 flex items-center gap-2">
             <div className="relative flex-1">
-              <Search className="w-3.5 h-3.5 text-white/35 absolute left-2.5 top-1/2 -translate-y-1/2" />
+              <Search className="w-3.5 h-3.5 text-token-muted-faint absolute left-2.5 top-1/2 -translate-y-1/2" />
               <input
                 value={keyword}
                 onChange={(e) => setKeyword(e.target.value)}
                 placeholder="搜索模板"
-                className="w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] pl-8 pr-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40"
+                className="w-full h-9 rounded-lg border border-token-subtle bg-token-nested pl-8 pr-3 text-sm text-token-primary placeholder-token-muted outline-none focus:border-sky-400/40"
               />
             </div>
             <Button variant="primary" size="sm" onClick={() => { setEditing(null); setEditorOpen(true); }}>
@@ -179,7 +179,7 @@ export function EmailAgentPage() {
             ))}
           </div>
 
-          <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-white/10 bg-white/[0.02]">
+          <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-token-subtle bg-token-nested">
             {loading ? (
               <div className="h-full flex items-center justify-center"><MapSectionLoader /></div>
             ) : error ? (
@@ -188,30 +188,30 @@ export function EmailAgentPage() {
               </div>
             ) : templates.length === 0 ? (
               <div className="h-full flex flex-col items-center justify-center text-center px-4 gap-2">
-                <Mail className="w-8 h-8 text-white/20" />
-                <p className="text-sm text-white/45">没有匹配的模板</p>
+                <Mail className="w-8 h-8 text-token-muted-faint" />
+                <p className="text-sm text-token-muted">没有匹配的模板</p>
                 <Button variant="secondary" size="sm" onClick={() => { setEditing(null); setEditorOpen(true); }}>
                   <Plus className="w-3.5 h-3.5" /> 新建模板
                 </Button>
               </div>
             ) : (
-              <ul className="divide-y divide-white/5">
+              <ul className="divide-y divide-token-subtle">
                 {templates.map((t) => (
                   <li key={t.id}>
                     <button
                       type="button"
                       onClick={() => setSelectedId(t.id)}
                       className={`w-full text-left px-3 py-2.5 transition ${
-                        selectedId === t.id ? 'bg-sky-500/15' : 'hover:bg-white/[0.04]'
+                        selectedId === t.id ? 'bg-sky-500/15' : 'hover-bg-soft'
                       }`}
                     >
                       <div className="flex items-center gap-2">
-                        <span className="text-sm text-white/90 truncate flex-1">{t.title}</span>
+                        <span className="text-sm text-token-primary truncate flex-1">{t.title}</span>
                         {t.isSystem && (
-                          <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50">预置</span>
+                          <span className="shrink-0 text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">预置</span>
                         )}
                       </div>
-                      <div className="mt-1 flex items-center gap-2 text-[11px] text-white/40">
+                      <div className="mt-1 flex items-center gap-2 text-[11px] text-token-muted">
                         <span className="px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-200/80">{catLabel(t.category)}</span>
                         {t.usageCount > 0 && (
                           <span className="inline-flex items-center gap-0.5"><Star className="w-2.5 h-2.5" /> {t.usageCount}</span>
@@ -227,7 +227,7 @@ export function EmailAgentPage() {
         </div>
 
         {/* 右侧：详情 */}
-        <div className="flex-1 min-h-0 rounded-xl border border-white/10 bg-white/[0.02] overflow-auto">
+        <div className="flex-1 min-h-0 rounded-xl border border-token-subtle bg-token-nested overflow-auto">
           {selected ? (
             <EmailTemplateDetail
               tpl={selected}
@@ -245,8 +245,8 @@ export function EmailAgentPage() {
             />
           ) : (
             <div className="h-full flex flex-col items-center justify-center text-center gap-3 px-6">
-              <Mail className="w-10 h-10 text-white/15" />
-              <p className="text-sm text-white/45">从左侧选择一个模板，或新建一个</p>
+              <Mail className="w-10 h-10 text-token-muted-faint" />
+              <p className="text-sm text-token-muted">从左侧选择一个模板，或新建一个</p>
               <div className="flex items-center gap-2">
                 <Button variant="secondary" size="sm" onClick={() => setAiOpen(true)}>
                   <Sparkles className="w-3.5 h-3.5" /> 让 AI 起草
@@ -288,7 +288,7 @@ function CatChip({ active, onClick, children }: { active: boolean; onClick: () =
       type="button"
       onClick={onClick}
       className={`h-7 px-2.5 rounded-full text-xs border transition ${
-        active ? 'border-sky-400/50 bg-sky-500/20 text-white' : 'border-white/12 bg-white/5 text-white/60 hover:text-white/85'
+        active ? 'border-sky-400/50 bg-sky-500/20 text-white' : 'border-token-subtle bg-token-nested text-token-secondary hover-text-primary'
       }`}
     >
       {children}
@@ -331,13 +331,13 @@ function EmailTemplateDetail({
       <div className="flex items-start gap-3">
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-2 flex-wrap">
-            <h2 className="text-lg font-semibold text-white">{tpl.title}</h2>
+            <h2 className="text-lg font-semibold text-token-primary">{tpl.title}</h2>
             <span className="text-[11px] px-1.5 py-0.5 rounded bg-sky-500/10 text-sky-200/80">{catLabel(tpl.category)}</span>
-            {tpl.isSystem && <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/50">系统预置</span>}
+            {tpl.isSystem && <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">系统预置</span>}
           </div>
-          {tpl.scenario && <p className="mt-1 text-xs text-white/50">{tpl.scenario}</p>}
+          {tpl.scenario && <p className="mt-1 text-xs text-token-secondary">{tpl.scenario}</p>}
           {tpl.createdByName && (
-            <p className="mt-1 text-[11px] text-white/35 inline-flex items-center gap-1">
+            <p className="mt-1 text-[11px] text-token-muted-faint inline-flex items-center gap-1">
               <User className="w-3 h-3" /> {tpl.createdByName}
             </p>
           )}
@@ -355,7 +355,7 @@ function EmailTemplateDetail({
               <Button variant="secondary" size="sm" onClick={onDuplicate}>
                 <Files className="w-3.5 h-3.5" />
               </Button>
-              <button type="button" onClick={onDelete} className="h-[28px] px-2 rounded-[9px] text-white/45 hover:text-red-300 hover:bg-white/10 inline-flex items-center">
+              <button type="button" onClick={onDelete} className="h-[28px] px-2 rounded-[9px] text-token-muted hover:text-red-300 hover-bg-soft inline-flex items-center">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </>
@@ -370,9 +370,9 @@ function EmailTemplateDetail({
       </div>
 
       {/* 可编辑邮件内容：直接改，改完复制。主题 + 正文两个可编辑框 */}
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
-        <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
-          <span className="text-[11px] text-white/45">邮件内容（可直接修改后复制）</span>
+      <div className="rounded-xl border border-token-subtle bg-token-nested overflow-hidden">
+        <div className="px-3 py-2 border-b border-token-subtle flex items-center justify-between gap-2">
+          <span className="text-[11px] text-token-muted">邮件内容（可直接修改后复制）</span>
           <div className="flex items-center gap-1.5">
             <CopyBtn label="复制主题" active={copiedKey === 'subject'} onClick={() => onCopy(subject, 'subject', tpl)} />
             <CopyBtn label="复制正文" active={copiedKey === 'body'} onClick={() => onCopy(body, 'body', tpl)} />
@@ -380,22 +380,22 @@ function EmailTemplateDetail({
         </div>
         <div className="px-3 py-3 space-y-3">
           <div>
-            <label className="block text-[11px] text-white/45 mb-1">主题</label>
+            <label className="block text-[11px] text-token-muted mb-1">主题</label>
             <input
               value={subject}
               onChange={(e) => onSubjectChange(e.target.value)}
               placeholder="邮件主题"
-              className="w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40"
+              className="w-full h-9 rounded-lg border border-token-subtle bg-token-nested px-3 text-sm text-token-primary placeholder-token-muted outline-none focus:border-sky-400/40"
             />
           </div>
           <div>
-            <label className="block text-[11px] text-white/45 mb-1">正文</label>
+            <label className="block text-[11px] text-token-muted mb-1">正文</label>
             <textarea
               value={body}
               onChange={(e) => onBodyChange(e.target.value)}
               placeholder="邮件正文，可直接修改"
               rows={16}
-              className="w-full rounded-lg border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-sky-400/40 resize-y leading-relaxed"
+              className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary placeholder-token-muted outline-none focus:border-sky-400/40 resize-y leading-relaxed"
             />
           </div>
         </div>
@@ -416,16 +416,16 @@ function EmailTemplateDetail({
 
 function RecipientsBlock({ title, list }: { title: string; list: EmailTemplate['toRecipients'] }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2">
-      <div className="text-[11px] text-white/45 mb-1">{title}</div>
+    <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2">
+      <div className="text-[11px] text-token-muted mb-1">{title}</div>
       {list.length === 0 ? (
-        <div className="text-xs text-white/30">无</div>
+        <div className="text-xs text-token-muted-faint">无</div>
       ) : (
         <div className="flex flex-wrap gap-1.5">
           {list.map((r, i) => (
-            <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-white/[0.06] text-white/75 border border-white/10" title={r.email || r.note || ''}>
+            <span key={i} className="text-xs px-2 py-0.5 rounded-full bg-token-nested text-token-primary border border-token-subtle" title={r.email || r.note || ''}>
               {r.name}
-              {r.note ? <span className="text-white/40">（{r.note}）</span> : null}
+              {r.note ? <span className="text-token-muted">（{r.note}）</span> : null}
             </span>
           ))}
         </div>
@@ -437,7 +437,7 @@ function RecipientsBlock({ title, list }: { title: string; list: EmailTemplate['
 
 function CopyBtn({ label, active, onClick }: { label: string; active: boolean; onClick: () => void }) {
   return (
-    <button type="button" onClick={onClick} className="h-7 px-2 rounded-md text-[11px] text-white/70 hover:bg-white/10 inline-flex items-center gap-1">
+    <button type="button" onClick={onClick} className="h-7 px-2 rounded-md text-[11px] text-token-secondary hover-bg-soft inline-flex items-center gap-1">
       {active ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />} {label}
     </button>
   );
@@ -458,20 +458,20 @@ function EmailHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void
   const drawer = (
     <div className="fixed inset-0 z-[100] flex justify-end" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
       <aside
-        className="h-full border-l border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
+        className="h-full border-l border-token-subtle bg-token-card shadow-2xl flex flex-col"
         style={{ width: 'min(92vw, 480px)', maxHeight: '100vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-white">邮件模板智能体使用帮助</h2>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-white/55">
+        <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-token-primary">邮件模板智能体使用帮助</h2>
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
             <X className="w-4 h-4" />
           </button>
         </header>
-        <div className="flex-1 px-5 py-4 space-y-4 text-sm text-white/75" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">怎么用</h3>
-            <ol className="list-decimal list-inside space-y-1.5 text-white/65">
+        <div className="flex-1 px-5 py-4 space-y-4 text-sm text-token-primary" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          <section className="rounded-xl border border-token-subtle bg-token-nested p-4">
+            <h3 className="text-sm font-medium text-token-primary mb-2">怎么用</h3>
+            <ol className="list-decimal list-inside space-y-1.5 text-token-secondary">
               <li>左侧挑一个贴近你场景的模板（系统已内置请假 / 加班 / 汇报 / 通知 / 交接 / 报销）。</li>
               <li>右侧「填写变量」把姓名、日期、事由等填上，成品预览会实时套用。</li>
               <li>点「一键复制整封邮件」，收件人 / 抄送 / 主题 / 正文一起进剪贴板，粘贴到邮件客户端微调即可发送。</li>
@@ -479,9 +479,9 @@ function EmailHelpDrawer({ open, onClose }: { open: boolean; onClose: () => void
               <li>常用的自己写法可「新建」或把系统模板「另存为」后编辑，沉淀成你的专属模板库。</li>
             </ol>
           </section>
-          <section className="rounded-xl border border-white/10 bg-white/[0.04] p-4">
-            <h3 className="text-sm font-medium text-white mb-2">占位符</h3>
-            <p className="text-white/65">正文里 {'{{name}}'} 这类记号就是变量，填写后自动替换；没填的会原样保留，方便你一眼看到还差什么。</p>
+          <section className="rounded-xl border border-token-subtle bg-token-nested p-4">
+            <h3 className="text-sm font-medium text-token-primary mb-2">占位符</h3>
+            <p className="text-token-secondary">正文里 {'{{name}}'} 这类记号就是变量，填写后自动替换；没填的会原样保留，方便你一眼看到还差什么。</p>
           </section>
         </div>
       </aside>

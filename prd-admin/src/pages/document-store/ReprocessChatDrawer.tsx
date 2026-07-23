@@ -1691,14 +1691,14 @@ export function ReprocessChatDrawer({
                 onClick={handleNewConversation}
                 disabled={isBusy}
                 title="清空当前对话，开启全新 AI 对话"
-                className="flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] text-token-muted hover:bg-white/8 transition-colors disabled:opacity-50"
+                className="flex h-7 items-center gap-1 rounded-[8px] px-2 text-[11px] text-token-muted hover-bg-soft transition-colors disabled:opacity-50"
               >
                 <Plus size={13} /> 新对话
               </button>
             )}
             <button
               onClick={onClose}
-              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8 transition-colors"
+              className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover-bg-soft transition-colors"
             >
               <X size={16} />
             </button>
@@ -1715,10 +1715,10 @@ export function ReprocessChatDrawer({
             style={{
               background: active
                 ? 'rgba(168,85,247,0.12)'
-                : 'rgba(255,255,255,0.04)',
+                : 'var(--nested-block-bg)',
               border: active
                 ? '1px solid rgba(168,85,247,0.4)'
-                : '1px dashed rgba(255,255,255,0.18)',
+                : '1px dashed var(--border-subtle)',
             }}
           >
             {activeLabel ? (
@@ -1741,9 +1741,9 @@ export function ReprocessChatDrawer({
               <span className="inline-flex items-center justify-center rounded-[6px]"
                 style={{
                   width: 25, height: 25,
-                  background: 'rgba(255,255,255,0.06)',
-                  color: 'rgba(255,255,255,0.4)',
-                  border: '1px dashed rgba(255,255,255,0.18)',
+                  background: 'var(--nested-block-bg)',
+                  color: 'var(--text-muted)',
+                  border: '1px dashed var(--border-subtle)',
                 }}
               >
                 <Bot size={13} />
@@ -1778,7 +1778,7 @@ export function ReprocessChatDrawer({
                 className="absolute left-5 right-5 mt-1.5 rounded-[12px] shadow-2xl overflow-hidden"
                 style={{
                   background: 'rgba(20, 18, 26, 0.98)',
-                  border: '1px solid rgba(255,255,255,0.10)',
+                  border: '1px solid var(--border-subtle)',
                   backdropFilter: 'blur(20px)',
                   zIndex: 50,
                   maxHeight: '60vh',
@@ -1847,8 +1847,8 @@ export function ReprocessChatDrawer({
 
                     <button
                       onClick={() => { setShowCreateAgent(true); setPickerOpen(false); }}
-                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover:bg-white/4 transition-colors text-left"
-                      style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                      className="w-full flex items-center gap-2.5 px-3 py-2.5 hover-bg-soft transition-colors text-left border-t border-t-token-subtle"
+
                     >
                       <span
                         className="inline-flex items-center justify-center rounded-[6px]"
@@ -2110,9 +2110,9 @@ function DropdownSection({
   children: React.ReactNode;
 }) {
   return (
-    <div className="py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+    <div className="py-1.5 border-b border-b-token-subtle" >
       <div className="px-3 pt-2 pb-1.5">
-        <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'rgba(255,255,255,0.55)' }}>
+        <p className="text-[10px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-secondary)' }}>
           {title}
         </p>
         {subtitle && (
@@ -2162,7 +2162,7 @@ function DropdownRow({
           <p className="text-[12px] font-semibold text-token-primary truncate">{title}</p>
           {badge && (
             <span className="text-[9px] font-semibold px-1.5 rounded shrink-0"
-              style={{ background: badgeColor ?? 'rgba(255,255,255,0.10)', color: 'rgba(255,255,255,0.85)' }}
+              style={{ background: badgeColor ?? 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
             >{badge}</span>
           )}
         </div>
@@ -2357,7 +2357,7 @@ function MessageBubble({
         >
           {msg.invoker && (
             <span className="inline-flex items-center gap-1 mr-2 mb-1 px-1.5 py-0.5 rounded-[5px] text-[9.5px] font-semibold"
-              style={{ background: 'rgba(255,255,255,0.10)' }}
+              style={{ background: 'var(--nested-block-bg)' }}
             >
               {msg.invoker.kind === 'toolbox' ? <Sparkles size={9} /> : <Bot size={9} />}
               {msg.invoker.label}
@@ -2381,8 +2381,8 @@ function MessageBubble({
       <div
         className="rounded-[14px] p-3 text-[12px] max-w-[88%] w-full"
         style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.08)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--border-subtle)',
         }}
       >
         <div className="text-[10px] text-token-muted mb-1.5 flex items-center gap-1.5">
@@ -2424,7 +2424,7 @@ function MessageBubble({
                 <div
                   key={`${art.url}-${i}`}
                   className="rounded-[10px] overflow-hidden"
-                  style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(0,0,0,0.20)' }}
+                  style={{ border: '1px solid var(--border-subtle)', background: 'var(--nested-block-bg)' }}
                 >
                   <img
                     src={art.url ?? ''}
@@ -2434,8 +2434,8 @@ function MessageBubble({
                     loading="lazy"
                   />
                   <div
-                    className="flex flex-wrap gap-1.5 p-2"
-                    style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}
+                    className="flex flex-wrap gap-1.5 p-2 border-t border-t-token-subtle"
+
                   >
                     <ApplyBtn icon={<ImagePlus size={10} />} label="插入文档"
                       busy={artBusy('append')} applied={false}
@@ -2459,7 +2459,7 @@ function MessageBubble({
         )}
 
         {canApply && (
-          <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+          <div className="flex flex-wrap gap-1.5 mt-3 pt-2.5 border-t border-token-subtle" >
             <ApplyBtn icon={<Replace size={10} />} label="替换原文"
               busy={busyMode === 'replace'} applied={msg.applied === 'replace'}
               disabled={!!applying} onClick={() => onApply(msg.id, 'replace')} />
@@ -2525,7 +2525,7 @@ function QuickActionGroups({
     );
   };
   return (
-    <div className="mt-3 pt-2.5 border-t space-y-2.5" style={{ borderColor: 'rgba(255,255,255,0.06)' }}>
+    <div className="mt-3 pt-2.5 border-t space-y-2.5 border-token-subtle" >
       {renderGroup('已入库产物', assetActions)}
       {renderGroup('继续加工', processingActions)}
     </div>
@@ -2590,7 +2590,7 @@ function ApplyBtn({
       onClick={onClick}
       disabled={disabled || busy}
       title={title ?? label}
-      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
+      className="inline-flex items-center gap-1 rounded-[7px] px-2.5 py-1.5 text-[10px] font-medium hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed transition-colors whitespace-nowrap"
       style={{ background: bg, color, border }}
     >
       {busy ? <RotateCw size={10} className="animate-spin" /> : icon}
@@ -2651,7 +2651,7 @@ function CreateAgentModal({
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover-bg-soft"
           >
             <X size={14} />
           </button>

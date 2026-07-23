@@ -28,8 +28,8 @@ export function AddPrForm() {
   };
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5">
-      <div className="text-sm text-white/60 mb-3">添加 PR</div>
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-5">
+      <div className="text-sm text-token-secondary mb-3">添加 PR</div>
       <div className="space-y-3">
         <input
           type="url"
@@ -44,7 +44,7 @@ export function AddPrForm() {
           placeholder="https://github.com/owner/repo/pull/123"
           disabled={submitting}
           data-tour-id="pr-review-url-input"
-          className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 text-white placeholder-white/30 text-sm focus:border-white/30 focus:outline-none disabled:opacity-50"
+          className="w-full px-3 py-2.5 rounded-lg bg-token-nested border border-token-subtle text-token-primary placeholder-white/30 text-sm focus:border-token-subtle focus:outline-none disabled:opacity-50"
         />
         <input
           type="text"
@@ -52,7 +52,7 @@ export function AddPrForm() {
           onChange={(e) => setNote(e.target.value)}
           placeholder="备注（可选）"
           disabled={submitting}
-          className="w-full px-3 py-2.5 rounded-lg bg-black/30 border border-white/10 text-white placeholder-white/30 text-sm focus:border-white/30 focus:outline-none disabled:opacity-50"
+          className="w-full px-3 py-2.5 rounded-lg bg-token-nested border border-token-subtle text-token-primary placeholder-white/30 text-sm focus:border-token-subtle focus:outline-none disabled:opacity-50"
         />
         <button
           type="button"

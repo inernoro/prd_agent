@@ -136,8 +136,8 @@ export function AlignmentPanel({ itemId, cached }: Props) {
             <Sparkles size={18} className="text-violet-300" />
           </div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-white">AI 对齐度检查</div>
-            <div className="text-xs text-white/50 mt-0.5 leading-relaxed">
+            <div className="text-sm font-semibold text-token-primary">AI 对齐度检查</div>
+            <div className="text-xs text-token-secondary mt-0.5 leading-relaxed">
               对比 PR 作者描述与实际代码变更，检测"说了没做 / 做了没说"的偏差，
               并给出一个 0-100 的对齐度分数。
             </div>
@@ -168,7 +168,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
         </div>
         {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
         {preview && (
-          <div className="rounded-lg border border-white/10 bg-black/30 p-3 max-h-72 overflow-auto text-[13px] text-white/85">
+          <div className="rounded-lg border border-token-subtle bg-token-nested p-3 max-h-72 overflow-auto text-[13px] text-token-primary">
             <StreamingText
               text={preview}
               streaming={isRunning}
@@ -180,7 +180,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
         <button
           type="button"
           onClick={() => sse.abort()}
-          className="text-xs text-white/50 hover:text-white/80 transition"
+          className="text-xs text-token-secondary hover-text-primary transition"
         >
           中止
         </button>
@@ -202,7 +202,7 @@ export function AlignmentPanel({ itemId, cached }: Props) {
         <button
           type="button"
           onClick={handleStart}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 transition"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-token-nested text-token-primary text-xs hover-bg-soft transition"
         >
           <RefreshCw size={12} />
           重新分析
@@ -253,7 +253,7 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
           <div className="text-[9px] uppercase tracking-wide mt-0.5">score</div>
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-xs text-white/50">
+          <div className="flex items-center gap-2 text-xs text-token-secondary">
             <Sparkles size={12} />
             <span>AI 对齐度检查</span>
             {report.durationMs > 0 && (
@@ -265,7 +265,7 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
             )}
           </div>
           {report.summary && (
-            <div className="mt-1.5 text-sm text-white font-medium leading-snug">
+            <div className="mt-1.5 text-sm text-token-primary font-medium leading-snug">
               <PrMarkdown variant="inline">{report.summary}</PrMarkdown>
             </div>
           )}
@@ -274,7 +274,7 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
           type="button"
           onClick={onRerun}
           title="重新分析"
-          className="shrink-0 p-2 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition"
+          className="shrink-0 p-2 rounded-lg bg-token-nested text-token-secondary hover-bg-soft hover-text-primary transition"
         >
           <RefreshCw size={14} />
         </button>
@@ -321,10 +321,10 @@ function AlignmentResult({ report, onRerun, error }: ResultProps) {
 
       {/* 原始 markdown 折叠 */}
       <details className="text-xs">
-        <summary className="text-white/40 hover:text-white/60 cursor-pointer select-none">
+        <summary className="text-token-muted hover-text-primary cursor-pointer select-none">
           查看原始 Markdown
         </summary>
-        <pre className="mt-2 bg-black/30 border border-white/5 rounded p-3 text-[11px] text-white/70 whitespace-pre-wrap break-words font-mono max-h-72 overflow-auto">
+        <pre className="mt-2 bg-token-nested border border-token-subtle rounded p-3 text-[11px] text-token-secondary whitespace-pre-wrap break-words font-mono max-h-72 overflow-auto">
           {report.markdown}
         </pre>
       </details>
@@ -356,10 +356,10 @@ function Section({ title, color, icon, items }: SectionProps) {
         <span>{title}</span>
         <span className="text-[10px] opacity-60">· {items.length}</span>
       </div>
-      <ul className="space-y-1.5 text-xs text-white/85">
+      <ul className="space-y-1.5 text-xs text-token-primary">
         {items.map((it, i) => (
           <li key={i} className="leading-relaxed flex gap-1.5">
-            <span className="text-white/30">•</span>
+            <span className="text-token-muted">•</span>
             <div className="flex-1 min-w-0">
               <PrMarkdown variant="inline">{it}</PrMarkdown>
             </div>
@@ -372,9 +372,9 @@ function Section({ title, color, icon, items }: SectionProps) {
 
 function InlineBlock({ title, content }: { title: string; content: string }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-      <div className="text-xs font-semibold text-white/70 mb-1">{title}</div>
-      <div className="text-xs text-white/85 leading-relaxed">
+    <div className="rounded-lg border border-token-subtle bg-token-nested p-3">
+      <div className="text-xs font-semibold text-token-secondary mb-1">{title}</div>
+      <div className="text-xs text-token-primary leading-relaxed">
         <PrMarkdown>{content}</PrMarkdown>
       </div>
     </div>
@@ -429,7 +429,7 @@ interface ModelBadgeProps {
 function ModelBadge({ model }: ModelBadgeProps) {
   if (!model.model) return null;
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-white/40 font-mono">
+    <div className="flex items-center gap-1.5 text-[11px] text-token-muted font-mono">
       <CircleDot size={10} className="text-violet-400" />
       <span>{model.model}</span>
       {model.platform && <span className="opacity-60">· {model.platform}</span>}

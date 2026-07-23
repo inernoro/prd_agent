@@ -313,7 +313,7 @@ export function UpdateTimeline({ code }: { code: string }) {
         <button
           type="button"
           onClick={() => setShowSource((v) => !v)}
-          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
+          className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover-bg-soft transition-colors"
           style={{ color: 'var(--text-muted)' }}
           title={showSource ? '隐藏源码' : '查看源码'}
         >
@@ -332,7 +332,7 @@ export function UpdateTimeline({ code }: { code: string }) {
           style={{
             margin: 0,
             padding: '10px 14px',
-            background: 'rgba(0,0,0,0.22)',
+            background: 'var(--nested-block-bg)',
             color: 'var(--text-secondary)',
             fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
             borderTop: '1px solid var(--border-faint)',

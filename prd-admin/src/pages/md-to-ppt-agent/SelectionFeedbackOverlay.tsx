@@ -155,14 +155,14 @@ export function SelectionFeedbackOverlay(props: SelectionFeedbackOverlayProps): 
       ref={overlayRef}
       data-testid="selection-overlay"
       className="absolute inset-0 select-none"
-      style={{ zIndex: 30, background: 'rgba(0,0,0,0.18)', cursor: 'crosshair' }}
+      style={{ zIndex: 30, background: 'var(--nested-block-bg)', cursor: 'crosshair' }}
       onMouseDown={handleMouseDown}
       onMouseMove={handleMouseMove}
       onMouseUp={handleMouseUp}
     >
       {/* 顶部提示 pill */}
       <div
-        className="absolute left-1/2 flex items-center gap-2 rounded-full border border-white/10 bg-[var(--bg-elevated)] px-3 py-1 text-[10px] text-[var(--text-secondary)] shadow-lg"
+        className="absolute left-1/2 flex items-center gap-2 rounded-full border border-token-subtle bg-[var(--bg-elevated)] px-3 py-1 text-[10px] text-[var(--text-secondary)] shadow-lg"
         style={{ top: 8, transform: 'translateX(-50%)', pointerEvents: 'none' }}
       >
         拖动框选要修改的区域 · Esc 退出
@@ -196,7 +196,7 @@ export function SelectionFeedbackOverlay(props: SelectionFeedbackOverlayProps): 
       {/* 备注输入卡：框定格后出现 */}
       {rect && frozen && (
         <div
-          className="absolute flex items-center gap-1.5 rounded-lg border border-white/10 bg-[var(--bg-elevated)] p-1.5 shadow-xl"
+          className="absolute flex items-center gap-1.5 rounded-lg border border-token-subtle bg-[var(--bg-elevated)] p-1.5 shadow-xl"
           style={{ top: cardTop, left: cardLeft, width: NOTE_CARD_WIDTH }}
           onMouseDown={(e) => e.stopPropagation()}
         >
@@ -209,7 +209,7 @@ export function SelectionFeedbackOverlay(props: SelectionFeedbackOverlayProps): 
               if (e.key === 'Enter') handleSubmit();
             }}
             placeholder="想怎么改这块？例：换成图表"
-            className="flex-1 min-w-0 bg-white/4 border border-white/8 rounded-md px-2 py-1 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-purple-500/40"
+            className="flex-1 min-w-0 bg-token-nested border border-token-subtle rounded-md px-2 py-1 text-[11px] text-[var(--text-primary)] placeholder:text-[var(--text-tertiary)] outline-none focus:border-purple-500/40"
           />
           <button
             type="button"
@@ -221,7 +221,7 @@ export function SelectionFeedbackOverlay(props: SelectionFeedbackOverlayProps): 
           <button
             type="button"
             onClick={reset}
-            className="shrink-0 rounded-md bg-white/5 border border-white/8 px-2 py-1 text-[10px] text-[var(--text-secondary)] hover:bg-white/10 transition-colors"
+            className="shrink-0 rounded-md bg-token-nested border border-token-subtle px-2 py-1 text-[10px] text-[var(--text-secondary)] hover-bg-soft transition-colors"
           >
             重画
           </button>

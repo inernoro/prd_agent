@@ -742,16 +742,16 @@ async function downloadImage(src: string, filename: string) {
     .replaceAll('>', '-')
     .replaceAll('|', '-')
     .slice(0, 80);
-  
+
   const finalName = safe ? `${safe}.png` : 'image.png';
-  
+
   try {
     // 使用 fetch + blob 方式下载，解决跨域图片无法直接下载的问题
     const response = await fetch(src, { mode: 'cors' });
     if (!response.ok) throw new Error('Fetch failed');
     const blob = await response.blob();
     const blobUrl = URL.createObjectURL(blob);
-    
+
     const a = document.createElement('a');
     a.href = blobUrl;
     a.download = finalName;
@@ -759,7 +759,7 @@ async function downloadImage(src: string, filename: string) {
     document.body.appendChild(a);
     a.click();
     document.body.removeChild(a);
-    
+
     // 延迟释放 blob URL
     setTimeout(() => URL.revokeObjectURL(blobUrl), 1000);
   } catch {
@@ -1415,7 +1415,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
   const quickInputRef = useRef<HTMLTextAreaElement | null>(null);
   const quickPanelRef = useRef<HTMLDivElement | null>(null); // 快捷输入框容器，用于 GPU 加速更新
   const activeComposerRef = useRef<'right' | 'quick'>('right');
-  
+
   // 两阶段选择富文本编辑器 ref
   const richComposerRef = useRef<TwoPhaseRichComposerRef | null>(null);
   const composingRef = useRef(false);
@@ -1438,7 +1438,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
   const [canvas, setCanvas] = useState<CanvasImageItem[]>([]);
   const canvasRef = useRef<CanvasImageItem[]>([]);
-  
+
   // 图片选项（用于 @ 下拉菜单）
   const imageOptions = useMemo<ImageOption[]>(() => {
     return canvas
@@ -1454,7 +1454,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
       })
       .filter((opt) => opt.refId > 0);
   }, [canvas]);
-  
+
   const [selectedKeys, setSelectedKeys] = useState<string[]>([]);
   const selectedKeysRef = useRef<string[]>([]);
   useEffect(() => {
@@ -1478,7 +1478,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * ============================================================
    * 选择状态管理器 - 所有修改 selectedKeys 的操作必须通过这里
    * ============================================================
-   * 
+   *
    * 设计原则：
    * - 禁止直接调用 setSelectedKeys（除了这个管理器内部）
    * - 所有选择操作通过 selectionManager 进行
@@ -2001,7 +2001,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
    * 选择管理器实现 - 同步 selectedKeys（四个球）和 chip（对勾）
    * ============================================================
    */
-  
+
   // 内部方法：同步 chip 到当前选中的图片
   const syncChipsToSelection = useCallback((newKeys: string[]) => {
     richComposerRef.current?.clearPending();
@@ -4702,7 +4702,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
         const maxExisting = canvasRef.current.reduce((acc, x) => (typeof x.refId === 'number' && x.refId > acc ? x.refId : acc), 0);
         const newRefId = Math.max(nextRefId, maxExisting + 1);
         setNextRefId(newRefId + 1);
-        
+
         const inlineCanvasItem: CanvasImageItem = {
           key: inlineKey,
           createdAt: Date.now(),
@@ -4884,7 +4884,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
 
     // 确保有 refId
     ensureRefIdForKey(it.key);
-    
+
     // 使用统一方法同时更新四个球和 chip
     updateSelectionWithChips([it.key], 'replace');
   }, [ensureRefIdForKey, updateSelectionWithChips]);
@@ -5885,7 +5885,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               for (const key of hits) {
                 ensureRefIdForKey(key);
               }
-              
+
               if (!box.shift) {
                 // 非 Shift：使用统一方法替换选中
                 updateSelectionWithChips(hits, 'replace');
@@ -6096,7 +6096,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       const shift = e.shiftKey || e.metaKey || e.ctrlKey;
                       const wasSelected = selectedKeys.includes(it.key);
                       let nextKeys: string[];
-                      
+
                       if (shift) {
                         // Shift+点击：追加选中（不取消已选中的）
                         nextKeys = wasSelected ? selectedKeys : [...selectedKeys, it.key];
@@ -6700,7 +6700,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                         const nameBoxW = Math.max(48, Math.floor(Math.min(labelBoxW - sizeLabelW - gap, Math.max(48, nameNeedW))));
                         // 如果名字中包含 @imgN 引用，则尝试使用 MessageContentRenderer 渲染为 Chip
                         const isChipLabel = name.match(/@img\d+/);
-                        
+
                         return (
                           <div
                             key={`ui_sel_${it.key}`}
@@ -7125,7 +7125,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       <DropdownMenu.Trigger asChild>
                         <button
                           type="button"
-                          className="text-[11px] font-medium inline-flex items-center gap-1 rounded-full px-2.5 h-6 hover:bg-white/5 transition-colors"
+                          className="text-[11px] font-medium inline-flex items-center gap-1 rounded-full px-2.5 h-6 hover-bg-soft transition-colors"
                           style={{
                             background: 'rgba(99, 102, 241, 0.12)',
                             border: '1px solid rgba(99, 102, 241, 0.35)',
@@ -7224,7 +7224,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full text-left rounded-[12px] px-3 py-2 hover:bg-white/5 disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
+                                    className="w-full text-left rounded-[12px] px-3 py-2 hover-bg-soft disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
                                     style={{
                                       border: using ? '1px solid rgba(250,204,21,0.35)' : '1px solid transparent',
                                       background: using ? 'rgba(250,204,21,0.08)' : 'transparent',
@@ -7308,7 +7308,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             <div className="surface-popover inline-flex h-9 items-center gap-1 whitespace-nowrap rounded-full px-1.5 text-token-secondary">
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover-bg-soft shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current / 1.07));
@@ -7324,7 +7324,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               </div>
               <button
                 type="button"
-                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
+                className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover-bg-soft shrink-0"
                 onClick={() => {
                   const c = stageCenterClient();
                   zoomAt(c.x, c.y, clampZoom(zoomRef.current * 1.07));
@@ -7338,7 +7338,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 移动端精简：只保留 适配 按钮，隐藏 100% 和排列 */}
               <button
                 type="button"
-                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
+                className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover-bg-soft whitespace-nowrap shrink-0"
                 onClick={fitToSelection}
                 disabled={canvas.length === 0}
                 title="适配选中/全部 (Shift+2) | 适配全部 (Shift+1) | 100% (Shift+0)"
@@ -7349,7 +7349,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <>
                   <button
                     type="button"
-                    className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover:bg-white/5 whitespace-nowrap shrink-0"
+                    className="h-8 px-2 rounded-[999px] text-[10px] font-semibold hover-bg-soft whitespace-nowrap shrink-0"
                     onClick={() => {
                       const c = stageCenterClient();
                       zoomAt(c.x, c.y, 1);
@@ -7362,7 +7362,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <div className="h-4 w-px shrink-0 border-l border-token-subtle mx-0.5" />
                   <button
                     type="button"
-                    className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover:bg-white/5 shrink-0"
+                    className="h-8 w-8 rounded-[999px] inline-flex items-center justify-center hover-bg-soft shrink-0"
                     onClick={arrangeGrid}
                     disabled={canvas.length === 0}
                     title="自动排列（网格布局）"
@@ -7406,8 +7406,8 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className={`h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover:bg-white/12 ${
-                        tempHand ? 'bg-white/12' : ''
+                      className={`h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent transition-colors hover-bg-soft ${
+                        tempHand ? 'bg-token-nested' : ''
                       } text-token-secondary`}
                       title={
                         effectiveTool === 'hand'
@@ -7455,7 +7455,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       </div>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
+                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover-bg-soft"
                         onClick={() => {
                           setActiveTool('select');
                           setToolMenuOpen(false);
@@ -7473,7 +7473,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                       </button>
                       <button
                         type="button"
-                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover:bg-white/5"
+                        className="flex w-full items-center gap-3 rounded-[14px] px-3 py-2 text-token-primary hover-bg-soft"
                         onClick={() => {
                           setActiveTool('hand');
                           setToolMenuOpen(false);
@@ -7498,7 +7498,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   移除未开发的"上传视频/智能画板"禁用占位，见 .claude/rules/chief-designer-usability.md 奥卡姆原则）*/}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="上传图片"
                 aria-label="上传图片"
                 onClick={() => openImageFilePicker()}
@@ -7533,7 +7533,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                      className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                       title="形状"
                       aria-label="形状"
                     >
@@ -7631,7 +7631,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 文字 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="文字（T）"
                 aria-label="文字"
                 onClick={() => {
@@ -7649,7 +7649,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 图像生成器 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="图像生成器（A）"
                 aria-label="图像生成器"
                 onClick={() => {
@@ -7706,7 +7706,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 手绘板 */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft"
                 title="手绘板"
                 aria-label="手绘板"
                 onClick={() => setDrawingBoardOpen(true)}
@@ -7717,7 +7717,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
               {/* 删除选中（放到底部） */}
               <button
                 type="button"
-                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover:bg-white/12 disabled:opacity-50 disabled:cursor-not-allowed"
+                className="h-11 w-11 rounded-[14px] inline-flex items-center justify-center bg-transparent text-token-secondary transition-colors hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                 onClick={() => void confirmAndDeleteSelectedKeys([...selectedKeys])}
                 disabled={selectedKeys.length === 0}
                 title="删除选中"
@@ -7836,7 +7836,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <button
                   type="button"
                   onClick={() => setShowLogs(true)}
-                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
+                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover-bg-soft"
                   aria-label="查看 LLM 日志"
                   title="查看 LLM 日志"
                 >
@@ -7848,7 +7848,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     setDefectFlash(false);
                     useGlobalDefectStore.getState().openDialog();
                   }}
-                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
+                  className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover-bg-soft"
                   aria-label="提交缺陷"
                   title="提交缺陷"
                 >
@@ -7857,7 +7857,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <button
                   type="button"
                   onClick={() => setAutoSubmitEnabled((v) => !v)}
-                  className={`h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 ${autoSubmitEnabled ? 'surface-action-success' : 'text-token-muted'}`}
+                  className={`h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover-bg-soft ${autoSubmitEnabled ? 'surface-action-success' : 'text-token-muted'}`}
                   aria-label={autoSubmitEnabled ? '投稿已开启（点击关闭）' : '投稿已关闭（点击开启）'}
                   title={autoSubmitEnabled ? '投稿已开启 — 生成的图片会自动投稿到作品广场，点击关闭' : '投稿已关闭 — 点击开启自动投稿'}
                 >
@@ -7878,7 +7878,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   <button
                     type="button"
                     onClick={() => setMobileShowChat(false)}
-                    className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover:bg-white/10"
+                    className="h-6 w-6 shrink-0 inline-flex items-center justify-center rounded-md text-token-muted transition-colors duration-200 hover-bg-soft"
                     aria-label="关闭聊天"
                   >
                     <ChevronDown size={14} />
@@ -8080,7 +8080,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                     <button
                                       key={m.id}
                                       type="button"
-                                      className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
+                                      className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                       onClick={() => {
                                         replaceMentionAtCursor(`@model(${m.name || m.modelName}) `);
                                       }}
@@ -8109,7 +8109,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                                   <button
                                     key={m.id}
                                     type="button"
-                                    className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
+                                    className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                     onClick={() => {
                                       replaceMentionAtCursor(`@vision(${m.name || m.modelName}) `);
                                     }}
@@ -8131,7 +8131,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                               </div>
                               <button
                                 type="button"
-                                className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover:bg-white/5"
+                                className="w-full rounded-[10px] px-2 py-1.5 text-left text-token-primary hover-bg-soft"
                                 onClick={() => {
                                   setMentionOpen(false);
                                   setMentionQuery('');
@@ -8475,7 +8475,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             <button
                               key={preset.label}
                               type="button"
-                              className="h-5 px-2 rounded-full text-[10px] font-medium transition-colors hover:bg-white/10"
+                              className="h-5 px-2 rounded-full text-[10px] font-medium transition-colors hover-bg-soft"
                               style={{
                                 border: stylePromptDraft === preset.value ? '1px solid rgba(168, 85, 247, 0.5)' : '1px solid rgba(255,255,255,0.12)',
                                 background: stylePromptDraft === preset.value ? 'rgba(168, 85, 247, 0.15)' : 'rgba(255,255,255,0.04)',
@@ -8504,7 +8504,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                             {stylePromptActive ? (
                               <button
                                 type="button"
-                                className="h-6 px-2.5 rounded-full text-[11px] font-medium transition-colors hover:bg-white/10"
+                                className="h-6 px-2.5 rounded-full text-[11px] font-medium transition-colors hover-bg-soft"
                                 style={{
                                   border: '1px solid rgba(239, 68, 68, 0.35)',
                                   background: 'rgba(239, 68, 68, 0.10)',
@@ -8616,7 +8616,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
           >
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 const multiSelected = selectedKeys.length > 1;
@@ -8637,7 +8637,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {imgContextMenu.src ? (
               <button
                 type="button"
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
                 style={{ color: 'rgba(255,255,255,0.88)' }}
                 onClick={() => {
                   void copyImageToClipboard(imgContextMenu.src);
@@ -8650,7 +8650,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             ) : null}
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 if (selectedKeys.length > 1) {
@@ -8670,7 +8670,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {imgContextMenu.src ? (
               <button
                 type="button"
-                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
                 style={{ color: 'rgba(255,255,255,0.88)' }}
                 onClick={() => {
                   setPreview({ open: true, src: imgContextMenu.src, prompt: imgContextMenu.prompt });
@@ -8689,7 +8689,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                 <div className="group/export relative">
                   <button
                     type="button"
-                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+                    className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
                     style={{ color: 'rgba(255,255,255,0.88)' }}
                   >
                     <Share size={16} />
@@ -8706,7 +8706,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                   >
                     <button
                       type="button"
-                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover-bg-soft transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
                         if (selectedKeys.length > 1) {
@@ -8725,7 +8725,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </button>
                     <button
                       type="button"
-                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover-bg-soft transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
                         if (selectedKeys.length > 1) {
@@ -8744,7 +8744,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
                     </button>
                     <button
                       type="button"
-                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover:bg-white/8 transition-colors"
+                      className="w-full flex items-center gap-2.5 px-3 py-1.5 text-[13px] font-medium hover-bg-soft transition-colors"
                       style={{ color: 'rgba(255,255,255,0.88)' }}
                       onClick={() => {
                         if (selectedKeys.length > 1) {
@@ -8772,7 +8772,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             {/* 图层操作 */}
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 layerBringToFront();
@@ -8785,7 +8785,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </button>
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 layerMoveUp();
@@ -8798,7 +8798,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </button>
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 layerMoveDown();
@@ -8811,7 +8811,7 @@ export default function AdvancedVisualAgentTab(props: { workspaceId: string; ini
             </button>
             <button
               type="button"
-              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover:bg-white/8 transition-colors"
+              className="w-full flex items-center gap-2.5 px-3 py-2 text-[14px] font-medium hover-bg-soft transition-colors"
               style={{ color: 'rgba(255,255,255,0.88)' }}
               onClick={() => {
                 layerSendToBack();

@@ -1,6 +1,7 @@
 #!/usr/bin/env node
+/* global console, process */
 
-import { existsSync, readdirSync, readFileSync, statSync } from 'node:fs';
+import { existsSync, readdirSync, readFileSync, statSync, writeFileSync } from 'node:fs';
 import path from 'node:path';
 
 const SOURCE_EXTENSIONS = new Set(['.tsx', '.ts', '.jsx', '.js', '.css']);
@@ -62,6 +63,21 @@ const PATTERNS = {
     regex: /color\s*:\s*(?:hsla?\(|['"`]hsla?\()/gi,
     weight: 0,
   },
+  adaptiveBorderRisk: {
+    label: 'adaptive border risk',
+    regex: /(?:\bborder(?:Top|Bottom|Left|Right|Color)?\s*:\s*['"`][^\n]{0,120}rgba\(\s*255\s*,\s*255\s*,\s*255|\b(?:border(?:-[tblrxy])?|divide)-(?:white|black)(?:\/(?:\d+|\[[^\]]+\]))?)/gi,
+    weight: 0,
+  },
+  adaptiveSurfaceRisk: {
+    label: 'adaptive surface risk',
+    regex: /(?:\bbackground(?:Color)?\s*:\s*['"`]rgba\(\s*255\s*,\s*255\s*,\s*255|(?<!hover:)\bbg-white(?:\/(?:\d+|\[[^\]]+\])))/gi,
+    weight: 0,
+  },
+  adaptiveHoverRisk: {
+    label: 'adaptive hover risk',
+    regex: /\bhover:bg-white(?:\/(?:\d+|\[[^\]]+\]))/gi,
+    weight: 0,
+  },
   surfaceUse: {
     label: 'surface use',
     regex: /\bsurface(?:-|")|\bGlassCard\b|\bCard\b|\bButton\b|\bPageHeader\b/g,
@@ -71,6 +87,10 @@ const PATTERNS = {
 
 const PRINT_TOP = Number.parseInt(getArgValue('--top') ?? '25', 10);
 const JSON_OUTPUT = process.argv.includes('--json');
+const DETAILS_OUTPUT = process.argv.includes('--details');
+const CHECK_BASELINE = process.argv.includes('--check-baseline');
+const UPDATE_BASELINE = process.argv.includes('--update-baseline');
+const METRIC_VERSION = 3;
 const EXCLUDE_PATTERNS = getArgValues('--exclude')
   .flatMap((value) => value.split(','))
   .map((value) => value.trim())
@@ -105,6 +125,14 @@ function resolveProjectRoot() {
   throw new Error('Cannot find prd-admin/src from current working directory.');
 }
 
+function baselinePath(projectRoot) {
+  return path.join(projectRoot, 'scripts', 'style-debt-baseline.json');
+}
+
+function classificationPath(projectRoot) {
+  return path.join(projectRoot, 'scripts', 'theme-risk-classification.json');
+}
+
 function walkFiles(dir, files = []) {
   for (const entry of readdirSync(dir)) {
     if (entry === 'node_modules' || entry === 'dist' || entry.startsWith('.')) continue;
@@ -122,6 +150,21 @@ function walkFiles(dir, files = []) {
 function countMatches(text, regex) {
   regex.lastIndex = 0;
   return Array.from(text.matchAll(regex)).length;
+}
+
+function collectMatches(text, patternKey, regex) {
+  regex.lastIndex = 0;
+  return Array.from(text.matchAll(regex)).map((match) => ({
+    kind: patternKey,
+    line: text.slice(0, match.index).split('\n').length,
+    snippet: match[0].replace(/\s+/g, ' ').trim().slice(0, 180),
+  }));
+}
+
+function isPreciseAdaptiveFinding(finding) {
+  if (finding.kind !== 'adaptiveBorderRisk') return true;
+  return !/^border(?:Top|Bottom|Left|Right|Color)?\s*:\s*['"`](?:none|var\(--)/i
+    .test(finding.snippet);
 }
 
 function moduleKey(relativePath) {
@@ -145,11 +188,35 @@ function analyzeFile(projectRoot, filePath) {
     counts[key] = countMatches(text, pattern.regex);
   }
 
-  const undeclaredThemeRisk = FULL_DARK_SURFACE_FILES.has(relativePath)
+  const isFullDarkSurface = FULL_DARK_SURFACE_FILES.has(relativePath);
+  if (isFullDarkSurface) {
+    counts.adaptiveBorderRisk = 0;
+    counts.adaptiveSurfaceRisk = 0;
+    counts.adaptiveHoverRisk = 0;
+  }
+
+  const undeclaredThemeRisk = isFullDarkSurface
     ? counts.dynamicTextColor
     : Math.max(0, counts.fixedThemeSurface - counts.declaredDarkScope)
       + counts.fixedThemeText
       + counts.dynamicTextColor;
+  const adaptiveThemeRisk =
+    counts.adaptiveBorderRisk + counts.adaptiveSurfaceRisk + counts.adaptiveHoverRisk;
+  const preciseAdaptiveFindings = isFullDarkSurface
+    ? []
+    : ['adaptiveBorderRisk', 'adaptiveSurfaceRisk', 'adaptiveHoverRisk']
+        .flatMap((key) => collectMatches(text, key, PATTERNS[key].regex))
+        .filter(isPreciseAdaptiveFinding)
+        .map((finding) => ({ ...finding, path: relativePath }));
+  const preciseAdaptiveBorderRisk = preciseAdaptiveFindings
+    .filter((finding) => finding.kind === 'adaptiveBorderRisk').length;
+  const preciseAdaptiveSurfaceRisk = preciseAdaptiveFindings
+    .filter((finding) => finding.kind === 'adaptiveSurfaceRisk').length;
+  const preciseAdaptiveHoverRisk = preciseAdaptiveFindings
+    .filter((finding) => finding.kind === 'adaptiveHoverRisk').length;
+  const preciseAdaptiveThemeRisk =
+    preciseAdaptiveBorderRisk + preciseAdaptiveSurfaceRisk + preciseAdaptiveHoverRisk;
+  const adaptiveFindings = DETAILS_OUTPUT ? preciseAdaptiveFindings : [];
 
   const score =
     counts.inlineStyle * PATTERNS.inlineStyle.weight +
@@ -164,8 +231,87 @@ function analyzeFile(projectRoot, filePath) {
     module: moduleKey(relativePath),
     score,
     undeclaredThemeRisk,
+    adaptiveThemeRisk,
+    preciseAdaptiveBorderRisk,
+    preciseAdaptiveSurfaceRisk,
+    preciseAdaptiveHoverRisk,
+    preciseAdaptiveThemeRisk,
+    adaptiveFindings,
     ...counts,
   };
+}
+
+function scoreSnapshot(report) {
+  return {
+    score: report.totals.score,
+    undeclaredThemeRisk: report.totals.undeclaredThemeRisk,
+    adaptiveBorderRisk: report.totals.adaptiveBorderRisk,
+    adaptiveSurfaceRisk: report.totals.adaptiveSurfaceRisk,
+    adaptiveHoverRisk: report.totals.adaptiveHoverRisk,
+    adaptiveThemeRisk: report.totals.adaptiveThemeRisk,
+    actionableThemeRisk: report.themeLayers.actionableThemeRisk,
+    ordinaryUiRisk: report.themeLayers.ordinaryUiRisk,
+    unclassifiedThemeRisk: report.themeLayers.unclassifiedThemeRisk,
+  };
+}
+
+function loadBaseline(projectRoot) {
+  const filePath = baselinePath(projectRoot);
+  if (!existsSync(filePath)) {
+    throw new Error(`Missing style debt baseline: ${filePath}`);
+  }
+  return { filePath, value: JSON.parse(readFileSync(filePath, 'utf8')) };
+}
+
+function checkBaseline(report) {
+  const { value } = loadBaseline(report.projectRoot);
+  const current = scoreSnapshot(report);
+  const violations = value.enforcedMetrics.flatMap((metric) => {
+    const ceiling = value.currentCeiling[metric];
+    return current[metric] > ceiling
+      ? [`${metric}: ${ceiling} -> ${current[metric]}`]
+      : [];
+  });
+  violations.push(...report.classification.errors);
+
+  console.log('\nStyle debt baseline');
+  console.log(`Metric version: ${value.metricVersion}`);
+  console.log(`Program baseline score: ${value.programBaseline.score}`);
+  console.log(`Current score: ${current.score}`);
+  console.log(`Program baseline adaptive risk: ${value.programBaseline.adaptiveThemeRisk}`);
+  console.log(`Current adaptive risk: ${current.adaptiveThemeRisk}`);
+  console.log(`Current actionable theme risk: ${current.actionableThemeRisk}`);
+  console.log(`Current unclassified theme risk: ${current.unclassifiedThemeRisk}`);
+  console.log(`Milestone target score: ${value.milestoneTarget.score}`);
+  console.log(`Milestone target undeclared risk: ${value.milestoneTarget.undeclaredThemeRisk}`);
+  console.log(`Milestone target adaptive risk: ${value.milestoneTarget.adaptiveThemeRisk}`);
+  const milestoneMet = Object.entries(value.milestoneTarget)
+    .every(([metric, target]) => current[metric] <= target);
+  console.log(`Milestone status: ${milestoneMet ? 'ACHIEVED' : 'IN PROGRESS'}`);
+  if (value.nextTarget) {
+    console.log(`Next target score: ${value.nextTarget.score}`);
+    console.log(`Next target undeclared risk: ${value.nextTarget.undeclaredThemeRisk}`);
+    console.log(`Next target adaptive risk: ${value.nextTarget.adaptiveThemeRisk}`);
+  }
+
+  if (violations.length > 0) {
+    console.error('\nStyle debt ratchet failed');
+    for (const violation of violations) console.error(`- ${violation}`);
+    process.exitCode = 1;
+  } else {
+    console.log('Style debt ratchet: PASS');
+  }
+}
+
+function updateBaseline(report) {
+  const { filePath, value } = loadBaseline(report.projectRoot);
+  const next = {
+    ...value,
+    updatedAt: new Date().toISOString(),
+    currentCeiling: scoreSnapshot(report),
+  };
+  writeFileSync(filePath, `${JSON.stringify(next, null, 2)}\n`);
+  console.log(`Updated style debt baseline: ${filePath}`);
 }
 
 function isExcluded(row) {
@@ -182,11 +328,78 @@ function summarize(projectRoot) {
       acc.files += 1;
       acc.score += row.score;
       acc.undeclaredThemeRisk += row.undeclaredThemeRisk;
+      acc.adaptiveThemeRisk += row.adaptiveThemeRisk;
+      acc.preciseAdaptiveBorderRisk += row.preciseAdaptiveBorderRisk;
+      acc.preciseAdaptiveSurfaceRisk += row.preciseAdaptiveSurfaceRisk;
+      acc.preciseAdaptiveHoverRisk += row.preciseAdaptiveHoverRisk;
+      acc.preciseAdaptiveThemeRisk += row.preciseAdaptiveThemeRisk;
       for (const key of Object.keys(PATTERNS)) acc[key] += row[key];
       return acc;
     },
-    { files: 0, score: 0, undeclaredThemeRisk: 0, ...emptyPatternCounts },
+    {
+      files: 0,
+      score: 0,
+      undeclaredThemeRisk: 0,
+      adaptiveThemeRisk: 0,
+      preciseAdaptiveBorderRisk: 0,
+      preciseAdaptiveSurfaceRisk: 0,
+      preciseAdaptiveHoverRisk: 0,
+      preciseAdaptiveThemeRisk: 0,
+      ...emptyPatternCounts,
+    },
   );
+
+  const classificationManifest = JSON.parse(
+    readFileSync(classificationPath(projectRoot), 'utf8'),
+  );
+  const classificationEntries = [
+    ...classificationManifest.intentionalVisualFiles,
+    ...classificationManifest.infrastructureFiles,
+  ];
+  const classifiedPaths = new Set(classificationEntries.map((entry) => entry.path));
+  const rowPaths = new Set(rows.map((row) => row.path));
+  const duplicatePaths = classificationEntries
+    .map((entry) => entry.path)
+    .filter((entryPath, index, all) => all.indexOf(entryPath) !== index);
+  const classificationErrors = [
+    ...duplicatePaths.map((entryPath) => `Duplicate theme classification: ${entryPath}`),
+    ...classificationEntries
+      .filter((entry) => !rowPaths.has(entry.path))
+      .map((entry) => `Theme classification path does not exist: ${entry.path}`),
+    ...classificationEntries
+      .filter((entry) => !entry.category || !entry.scope || !entry.rationale)
+      .map((entry) => `Incomplete theme classification: ${entry.path}`),
+  ];
+  const ordinaryRows = rows.filter((row) => !classifiedPaths.has(row.path));
+  const intentionalRows = rows.filter((row) => classifiedPaths.has(row.path));
+  const ordinaryAdaptiveRisk = ordinaryRows
+    .reduce((sum, row) => sum + row.preciseAdaptiveThemeRisk, 0);
+  const ordinaryFixedSurfaceRisk = ordinaryRows
+    .reduce((sum, row) => sum + row.fixedThemeSurface, 0);
+  const actionableThemeRisk = ordinaryAdaptiveRisk + ordinaryFixedSurfaceRisk;
+  const themeLayers = {
+    metricVersion: METRIC_VERSION,
+    rawMaintenanceDebt: totals.score,
+    legacyThemeSignals: {
+      undeclaredThemeRisk: totals.undeclaredThemeRisk,
+      adaptiveThemeRisk: totals.adaptiveThemeRisk,
+    },
+    actionableThemeRisk,
+    ordinaryUiRisk: actionableThemeRisk,
+    unclassifiedThemeRisk: actionableThemeRisk,
+    intentionalVisualDebt: intentionalRows.reduce(
+      (sum, row) => sum + row.undeclaredThemeRisk + row.preciseAdaptiveThemeRisk,
+      0,
+    ),
+    semanticContrastDebt: ordinaryRows.reduce(
+      (sum, row) => sum + row.fixedThemeText,
+      0,
+    ),
+    dynamicVisualDebt: ordinaryRows.reduce(
+      (sum, row) => sum + row.dynamicTextColor,
+      0,
+    ),
+  };
 
   const modules = new Map();
   for (const row of rows) {
@@ -195,25 +408,44 @@ function summarize(projectRoot) {
       files: 0,
       score: 0,
       undeclaredThemeRisk: 0,
+      adaptiveThemeRisk: 0,
       ...emptyPatternCounts,
     };
     current.files += 1;
     current.score += row.score;
     current.undeclaredThemeRisk += row.undeclaredThemeRisk;
+    current.adaptiveThemeRisk += row.adaptiveThemeRisk;
     for (const key of Object.keys(PATTERNS)) current[key] += row[key];
     modules.set(row.module, current);
   }
+  const adaptiveRows = rows
+    .filter((row) => row.adaptiveThemeRisk > 0)
+    .sort((a, b) => b.adaptiveThemeRisk - a.adaptiveThemeRisk);
 
   return {
+    metricVersion: METRIC_VERSION,
     projectRoot,
     generatedAt: new Date().toISOString(),
     excluded: EXCLUDE_PATTERNS,
     totals,
+    themeLayers,
+    classification: {
+      schemaVersion: classificationManifest.schemaVersion,
+      classifiedFiles: classifiedPaths.size,
+      errors: classificationErrors,
+    },
     topFiles: rows.filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, PRINT_TOP),
     topThemeRisks: rows.filter((row) => row.undeclaredThemeRisk > 0)
       .sort((a, b) => b.undeclaredThemeRisk - a.undeclaredThemeRisk)
       .slice(0, PRINT_TOP),
-    topModules: Array.from(modules.values()).filter((row) => row.score > 0).sort((a, b) => b.score - a.score).slice(0, PRINT_TOP),
+    topAdaptiveThemeRisks: adaptiveRows.slice(0, PRINT_TOP),
+    adaptiveFindings: DETAILS_OUTPUT
+      ? adaptiveRows.flatMap((row) => row.adaptiveFindings).slice(0, PRINT_TOP * 5)
+      : [],
+    topModules: Array.from(modules.values())
+      .filter((row) => row.score > 0 || row.adaptiveThemeRisk > 0)
+      .sort((a, b) => b.score - a.score)
+      .slice(0, PRINT_TOP),
   };
 }
 
@@ -233,6 +465,12 @@ function printHuman(report) {
   console.log('');
   console.log(`Files scanned: ${report.totals.files}`);
   console.log(`Debt score: ${report.totals.score}`);
+  console.log(`Metric version: ${report.metricVersion}`);
+  console.log(`Actionable theme risk: ${report.themeLayers.actionableThemeRisk}`);
+  console.log(`Ordinary UI risk: ${report.themeLayers.ordinaryUiRisk}`);
+  console.log(`Unclassified theme risk: ${report.themeLayers.unclassifiedThemeRisk}`);
+  console.log(`Intentional visual debt: ${report.themeLayers.intentionalVisualDebt}`);
+  console.log(`Semantic contrast debt: ${report.themeLayers.semanticContrastDebt}`);
   console.log(`Inline style: ${report.totals.inlineStyle}`);
   console.log(`Hard-coded color: ${report.totals.hardColor}`);
   console.log(`Arbitrary Tailwind: ${report.totals.arbitraryTailwind}`);
@@ -244,6 +482,10 @@ function printHuman(report) {
   console.log(`Fixed theme text: ${report.totals.fixedThemeText}`);
   console.log(`Dynamic text color: ${report.totals.dynamicTextColor}`);
   console.log(`Undeclared theme risk: ${report.totals.undeclaredThemeRisk}`);
+  console.log(`Adaptive border risk: ${report.totals.adaptiveBorderRisk}`);
+  console.log(`Adaptive surface risk: ${report.totals.adaptiveSurfaceRisk}`);
+  console.log(`Adaptive hover risk: ${report.totals.adaptiveHoverRisk}`);
+  console.log(`Adaptive theme risk: ${report.totals.adaptiveThemeRisk}`);
   console.log(`Surface/design usage signals: ${report.totals.surfaceUse}`);
 
   const columns = [
@@ -260,12 +502,27 @@ function printHuman(report) {
     { key: 'fixedThemeSurface', label: 'fixed-bg' },
     { key: 'fixedThemeText', label: 'fixed-text' },
     { key: 'dynamicTextColor', label: 'dynamic-text' },
+    { key: 'adaptiveThemeRisk', label: 'adaptive' },
     { key: 'surfaceUse', label: 'surface' },
   ];
 
   printTable('Top modules', report.topModules, [...columns, { key: 'module', label: 'module' }]);
   printTable('Top files', report.topFiles, [...columns, { key: 'path', label: 'path' }]);
   printTable('Top undeclared theme risks', report.topThemeRisks, [...columns, { key: 'path', label: 'path' }]);
+  printTable('Top adaptive theme risks', report.topAdaptiveThemeRisks, [
+    { key: 'adaptiveThemeRisk', label: 'adaptive' },
+    { key: 'adaptiveBorderRisk', label: 'border' },
+    { key: 'adaptiveSurfaceRisk', label: 'surface' },
+    { key: 'adaptiveHoverRisk', label: 'hover' },
+    { key: 'path', label: 'path' },
+  ]);
+
+  if (report.adaptiveFindings.length > 0) {
+    console.log('\nActionable adaptive theme findings');
+    for (const finding of report.adaptiveFindings) {
+      console.log(`${finding.path}:${finding.line}\t${finding.kind}\t${finding.snippet}`);
+    }
+  }
 
   console.log('\nNext actions');
   console.log('- Convert container-level background/border/shadow styles to surface, surface-inset, or GlassCard.');
@@ -281,3 +538,5 @@ if (JSON_OUTPUT) {
 } else {
   printHuman(report);
 }
+if (CHECK_BASELINE) checkBaseline(report);
+if (UPDATE_BASELINE) updateBaseline(report);

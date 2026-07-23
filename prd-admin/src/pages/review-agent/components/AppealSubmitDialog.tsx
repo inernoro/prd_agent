@@ -101,7 +101,7 @@ export function AppealSubmitDialog({
       maxWidth={640}
       content={
         <div className="flex flex-col gap-4">
-          <div className="text-xs text-white/55 leading-relaxed">
+          <div className="text-xs text-token-secondary leading-relaxed">
             申诉提交后将由有权限的管理员审理。请在评审完成后 <strong>{APPEAL_WINDOW_HOURS} 小时内</strong> 提交，
             清楚说明你认为评审结果存在偏差的具体原因。支持粘贴图片佐证（每张 ≤5MB）。
           </div>
@@ -113,7 +113,7 @@ export function AppealSubmitDialog({
             onPaste={handlePaste}
             onInput={handleInput}
             data-placeholder="详细说明你对评审结果的异议，并粘贴方案截图或对比图作为佐证..."
-            className="appeal-editor min-h-[180px] max-h-[360px] overflow-y-auto px-3 py-2.5 rounded-lg border border-white/10 bg-white/5 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+            className="appeal-editor min-h-[180px] max-h-[360px] overflow-y-auto px-3 py-2.5 rounded-lg border border-token-subtle bg-token-nested text-sm text-token-primary focus:outline-none focus:border-indigo-500/50"
             style={{ overscrollBehavior: 'contain', lineHeight: '1.6' }}
           />
 
@@ -124,14 +124,14 @@ export function AppealSubmitDialog({
           )}
 
           <div className="flex items-center justify-between gap-3 pt-2">
-            <div className="text-xs text-white/40">
+            <div className="text-xs text-token-muted">
               {imageAttachmentIds.length} 张图片 · {plainLen} 字{uploadingImg && ' · 上传图片中...'}
             </div>
             <div className="flex gap-2">
               <button
                 onClick={onClose}
                 disabled={submitting}
-                className="text-sm px-4 py-2 rounded-lg bg-white/5 border border-white/10 text-white/70 hover:bg-white/10 transition-colors"
+                className="text-sm px-4 py-2 rounded-lg bg-token-nested border border-token-subtle text-token-secondary hover-bg-soft transition-colors"
               >取消</button>
               <button
                 onClick={handleSubmit}

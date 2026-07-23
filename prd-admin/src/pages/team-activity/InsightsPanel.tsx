@@ -761,7 +761,7 @@ export function InsightsPanel({ from, to }: { from?: string; to?: string }) {
             </div>
           </div>
         ) : (
-          <div className="divide-y divide-white/[0.04]">
+          <div className="divide-y divide-token-subtle/[0.04]">
             {data.items.map((item) => {
               const meta = getInsightKindMeta(item.kind);
               const Icon = meta.icon;

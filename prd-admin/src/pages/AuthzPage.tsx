@@ -237,7 +237,7 @@ export default function AuthzPage() {
             e.stopPropagation();
             setSelectedUserId(null);
           }}
-          className="ml-0.5 p-0.5 rounded hover:bg-white/10"
+          className="ml-0.5 p-0.5 rounded hover-bg-soft"
         >
           <X size={10} />
         </button>
@@ -256,7 +256,7 @@ export default function AuthzPage() {
       <button
         type="button"
         onClick={() => setCreateOpen(true)}
-        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
+        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover-bg-soft"
         style={{
           background: 'var(--bg-input-hover)',
           border: '1px solid var(--border-default)',
@@ -277,7 +277,7 @@ export default function AuthzPage() {
             navigate('/users');
           }
         }}
-        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover:bg-white/10"
+        className="h-7 flex items-center gap-1.5 px-2.5 rounded-lg text-xs font-medium transition-colors hover-bg-soft"
         style={{
           background: activeUser ? 'rgba(99, 102, 241, 0.12)' : 'var(--bg-input-hover)',
           border: activeUser ? '1px solid rgba(99, 102, 241, 0.25)' : '1px solid var(--border-default)',
@@ -293,7 +293,7 @@ export default function AuthzPage() {
         type="button"
         onClick={resetBuiltIns}
         disabled={resetSubmitting}
-        className="h-7 w-7 flex items-center justify-center rounded-lg transition-colors hover:bg-white/10 disabled:opacity-50"
+        className="h-7 w-7 flex items-center justify-center rounded-lg transition-colors hover-bg-soft disabled:opacity-50"
         style={{
           background: 'var(--bg-input-hover)',
           border: '1px solid var(--border-default)',
@@ -428,7 +428,7 @@ export default function AuthzPage() {
               <button
                 type="button"
                 onClick={() => setUserDropdownOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
               >
                 <X size={16} style={{ color: 'var(--text-muted)' }} />
               </button>
@@ -457,7 +457,7 @@ export default function AuthzPage() {
                         }}
                         className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200"
                         style={{
-                          background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                          background: isSelected ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card)',
                           border: isSelected ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid transparent',
                         }}
                       >
@@ -506,7 +506,7 @@ export default function AuthzPage() {
                     setSelectedUserId(null);
                     setUserDropdownOpen(false);
                   }}
-                  className="text-xs px-2 py-1 rounded-md hover:bg-white/5 transition-colors"
+                  className="text-xs px-2 py-1 rounded-md hover-bg-soft transition-colors"
                   style={{ color: 'rgba(99, 102, 241, 0.8)' }}
                 >
                   清除选择
@@ -553,7 +553,7 @@ export default function AuthzPage() {
               <button
                 type="button"
                 onClick={() => !assignRoleSubmitting && setAssignRoleOpen(false)}
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
                 disabled={assignRoleSubmitting}
               >
                 <X size={16} style={{ color: 'var(--text-muted)' }} />
@@ -601,7 +601,7 @@ export default function AuthzPage() {
                       disabled={assignRoleSubmitting}
                       className="w-full px-4 py-3 text-left rounded-xl transition-all duration-200 disabled:opacity-50"
                       style={{
-                        background: isCurrentRole ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                        background: isCurrentRole ? 'rgba(99, 102, 241, 0.15)' : 'var(--bg-card)',
                         border: isCurrentRole ? '1px solid rgba(99, 102, 241, 0.3)' : '1px solid var(--nested-block-border)',
                       }}
                     >

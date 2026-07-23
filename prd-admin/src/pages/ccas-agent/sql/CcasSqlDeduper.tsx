@@ -21,9 +21,9 @@ function OptionChip({ label, checked, onChange }: OptionChipProps) {
     <label
       className="inline-flex items-center gap-1.5 text-xs cursor-pointer select-none px-2.5 py-1 rounded-md border transition"
       style={{
-        borderColor: checked ? 'rgba(252, 211, 77, 0.45)' : 'rgba(255,255,255,0.10)',
-        background: checked ? 'rgba(252, 211, 77, 0.10)' : 'rgba(255,255,255,0.03)',
-        color: checked ? 'rgba(252, 211, 77, 0.95)' : 'rgba(255,255,255,0.70)',
+        borderColor: checked ? 'rgba(252, 211, 77, 0.45)' : 'var(--border-subtle)',
+        background: checked ? 'rgba(252, 211, 77, 0.10)' : 'var(--nested-block-bg)',
+        color: checked ? 'rgba(252, 211, 77, 0.95)' : 'var(--text-secondary)',
       }}
     >
       <input
@@ -111,7 +111,7 @@ export function CcasSqlDeduper() {
       className="flex-1 min-h-0 flex flex-col gap-4"
       style={{ overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
     >
-      <p className="text-xs text-white/55 leading-relaxed flex items-start gap-1.5">
+      <p className="text-xs text-token-secondary leading-relaxed flex items-start gap-1.5">
         <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/70" />
         <span>按行去重，空行自动忽略。下面三个开关分别控制：是否保留原始顺序、是否忽略大小写、比较前是否去掉首尾空白。</span>
       </p>
@@ -124,9 +124,9 @@ export function CcasSqlDeduper() {
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs text-white/65">
+          <div className="flex items-center justify-between text-xs text-token-secondary">
             <span>输入原始数据</span>
-            <span className="flex items-center gap-3 text-white/40">
+            <span className="flex items-center gap-3 text-token-muted">
               <span>原始：{rawRows}</span>
               {duplicateCount > 0 && (
                 <span className="text-red-300/85">重复：{duplicateCount}</span>
@@ -139,15 +139,15 @@ export function CcasSqlDeduper() {
             spellCheck={false}
             rows={14}
             placeholder={SAMPLE_PLACEHOLDER}
-            className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 font-mono leading-relaxed placeholder:text-white/30 focus:outline-none focus:border-amber-300/40 transition"
+            className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary font-mono leading-relaxed placeholder:text-token-muted focus:outline-none focus:border-amber-300/40 transition"
             style={{ resize: 'vertical', minHeight: 280 }}
           />
         </div>
 
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs text-white/65">
+          <div className="flex items-center justify-between text-xs text-token-secondary">
             <span>去重后输出</span>
-            <span className="flex items-center gap-3 text-white/40">
+            <span className="flex items-center gap-3 text-token-muted">
               <span className="text-emerald-300/85">去重后：{uniqueRows}</span>
               {removedCount > 0 && <span>移除：{removedCount}</span>}
             </span>
@@ -158,7 +158,7 @@ export function CcasSqlDeduper() {
             spellCheck={false}
             rows={14}
             placeholder="去重结果会显示在这里"
-            className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-emerald-200/90 font-mono leading-relaxed placeholder:text-white/30 focus:outline-none focus:border-amber-300/40 transition"
+            className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-emerald-200/90 font-mono leading-relaxed placeholder:text-token-muted focus:outline-none focus:border-amber-300/40 transition"
             style={{ resize: 'vertical', minHeight: 280 }}
           />
         </div>

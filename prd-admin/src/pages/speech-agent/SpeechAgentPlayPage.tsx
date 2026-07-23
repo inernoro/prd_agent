@@ -291,8 +291,8 @@ export default function SpeechAgentPlayPage() {
         type="button"
         onClick={goExit}
         aria-label="退出 (ESC)"
-        className="absolute top-7 right-8 z-30 w-10 h-10 rounded-full flex items-center justify-center"
-        style={{ background: 'rgba(255,255,255,0.7)', border: '1px solid rgba(26,42,49,0.18)', color: '#183a4a' }}
+        className="absolute top-7 right-8 z-30 w-10 h-10 rounded-full flex items-center justify-center bg-token-nested"
+        style={{ border: '1px solid rgba(26,42,49,0.18)', color: '#183a4a' }}
       >
         <X size={16} />
       </button>
@@ -349,11 +349,7 @@ export default function SpeechAgentPlayPage() {
       </div>
 
       {/* 底部控制条 — 玻璃质感面板 */}
-      <footer className="shrink-0 relative z-20" style={{
-        background: 'rgba(255,255,255,0.72)',
-        backdropFilter: 'blur(16px)',
-        borderTop: '1px solid rgba(26,42,49,0.12)',
-      }}>
+      <footer className="shrink-0 relative z-20 bg-token-nested" style={{ backdropFilter: 'blur(16px)', borderTop: '1px solid rgba(26,42,49,0.12)' }}>
         <div className={`transition-all ${controlsCollapsed ? 'py-2 px-7' : 'px-7 py-4'}`}>
           <div className="flex items-center gap-4">
             <button type="button" onClick={() => setControlsCollapsed((v) => !v)}
@@ -617,15 +613,8 @@ function MindCard({
       <div
         onClick={(e) => { e.stopPropagation(); onImageClick(); }}
         onDoubleClick={(e) => e.stopPropagation()}
-        className="mx-auto"
-        style={{
-          width: 145, height: 76, marginTop: 4,
-          border: '1px solid rgba(31,52,56,0.12)',
-          borderRadius: 7,
-          background: 'rgba(255,255,255,0.7)',
-          overflow: 'hidden',
-          cursor: 'zoom-in',
-        }}
+        className="mx-auto bg-token-nested"
+        style={{ width: 145, height: 76, marginTop: 4, border: '1px solid rgba(31,52,56,0.12)', borderRadius: 7, overflow: 'hidden', cursor: 'zoom-in' }}
         role="button"
         aria-label="点击查看大图"
         {...(node.raw.imageUrl

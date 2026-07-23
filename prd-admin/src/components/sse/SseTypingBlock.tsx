@@ -39,16 +39,8 @@ export function SseTypingBlock({
         </span>
       )}
       <div
-        className="px-3 py-2 rounded-lg text-xs font-mono overflow-x-auto"
-        style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid rgba(255,255,255,0.06)',
-          color: 'var(--text-muted)',
-          maxHeight,
-          overflowY: 'auto',
-          whiteSpace: 'pre-wrap',
-          wordBreak: 'break-all',
-        }}
+        className="px-3 py-2 rounded-lg text-xs font-mono overflow-x-auto bg-token-nested border border-token-subtle"
+        style={{ color: 'var(--text-muted)', maxHeight, overflowY: 'auto', whiteSpace: 'pre-wrap', wordBreak: 'break-all' }}
       >
         {/* maxTailChars 走 StreamingText 内置尾窗 + 绝对 offset key, 避免预先 slice 导致的 key 漂移闪烁 */}
         <StreamingText text={text} streaming={showCursor} mode="blur" maxTailChars={tailChars} />

@@ -35,13 +35,13 @@ function ProgressBar({ value }: { value: number }) {
   const pct = Math.min(100, Math.max(0, value * 100));
   return (
     <div className="flex items-center gap-2 min-w-[120px]">
-      <div className="flex-1 h-1.5 bg-white/10 rounded-full overflow-hidden">
+      <div className="flex-1 h-1.5 bg-token-nested rounded-full overflow-hidden">
         <div
           className="h-full bg-emerald-500/60 transition-all"
           style={{ width: `${pct}%` }}
         />
       </div>
-      <span className="text-xs text-white/70 tabular-nums w-12 text-right">{pct.toFixed(1)}%</span>
+      <span className="text-xs text-token-secondary tabular-nums w-12 text-right">{pct.toFixed(1)}%</span>
     </div>
   );
 }
@@ -50,7 +50,7 @@ function RankBadge({ rank }: { rank: number }) {
   if (rank === 1) return <Trophy className="w-4 h-4 text-yellow-400" />;
   if (rank === 2) return <Medal className="w-4 h-4 text-slate-300" />;
   if (rank === 3) return <Medal className="w-4 h-4 text-amber-600" />;
-  return <span className="text-xs text-white/40 tabular-nums">{rank}</span>;
+  return <span className="text-xs text-token-muted tabular-nums">{rank}</span>;
 }
 
 function SortHeader({
@@ -68,7 +68,7 @@ function SortHeader({
     <button
       onClick={onClick}
       className={`flex items-center gap-1 text-xs font-medium transition-colors ${
-        active ? 'text-indigo-300' : 'text-white/50 hover:text-white/80'
+        active ? 'text-indigo-300' : 'text-token-secondary hover-text-primary'
       }`}
     >
       {children}
@@ -89,15 +89,15 @@ function StatCard({
   progress?: number | null;
 }) {
   return (
-    <div className="bg-white/3 border border-white/8 rounded-lg p-4 flex flex-col gap-2">
-      <div className="text-xs text-white/40">{label}</div>
-      <div className="text-2xl font-semibold text-white tabular-nums">{value}</div>
+    <div className="bg-token-nested border border-token-subtle rounded-lg p-4 flex flex-col gap-2">
+      <div className="text-xs text-token-muted">{label}</div>
+      <div className="text-2xl font-semibold text-token-primary tabular-nums">{value}</div>
       {progress != null && (
-        <div className="h-1 bg-white/10 rounded-full overflow-hidden">
+        <div className="h-1 bg-token-nested rounded-full overflow-hidden">
           <div className="h-full bg-emerald-500/60" style={{ width: `${Math.min(100, progress * 100)}%` }} />
         </div>
       )}
-      {hint && <div className="text-[11px] text-white/30">{hint}</div>}
+      {hint && <div className="text-[11px] text-token-muted">{hint}</div>}
     </div>
   );
 }
@@ -186,14 +186,14 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
             type="month"
             value={startMonth}
             onChange={e => setStartMonth(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+            className="bg-token-nested border border-token-subtle rounded-lg px-3 py-1.5 text-sm text-token-primary focus:outline-none focus:border-indigo-500/50"
           />
-          <span className="text-xs text-white/40">至</span>
+          <span className="text-xs text-token-muted">至</span>
           <input
             type="month"
             value={endMonth}
             onChange={e => setEndMonth(e.target.value)}
-            className="bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white focus:outline-none focus:border-indigo-500/50"
+            className="bg-token-nested border border-token-subtle rounded-lg px-3 py-1.5 text-sm text-token-primary focus:outline-none focus:border-indigo-500/50"
           />
         </div>
         <div className="flex gap-1.5">
@@ -211,7 +211,7 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
                 className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                   active
                     ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                    : 'border-white/10 text-white/60 hover:text-white hover:border-white/30'
+                    : 'border-token-subtle text-token-secondary hover-text-primary hover-border-token'
                 }`}
               >
                 {s.label}
@@ -253,19 +253,19 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
           {error}
         </div>
       ) : sortedItems.length === 0 ? (
-        <div className="flex flex-col items-center gap-3 py-16 text-white/40">
-          <BarChart3 className="w-10 h-10 text-white/20" />
+        <div className="flex flex-col items-center gap-3 py-16 text-token-muted">
+          <BarChart3 className="w-10 h-10 text-token-muted" />
           <div className="text-sm">所选时段内暂无评审完成的数据</div>
-          <div className="text-xs text-white/30">尝试扩大时间范围或换个维度查看</div>
+          <div className="text-xs text-token-muted">尝试扩大时间范围或换个维度查看</div>
         </div>
       ) : (
-        <div className="border border-white/8 rounded-lg overflow-hidden">
+        <div className="border border-token-subtle rounded-lg overflow-hidden">
           <div className="overflow-x-auto">
             <table className="w-full text-sm">
-              <thead className="bg-white/3 border-b border-white/8">
+              <thead className="bg-token-nested border-b border-token-subtle">
                 <tr>
-                  <th className="px-4 py-2.5 text-left w-12 text-xs font-medium text-white/50">排名</th>
-                  <th className="px-4 py-2.5 text-left text-xs font-medium text-white/50">
+                  <th className="px-4 py-2.5 text-left w-12 text-xs font-medium text-token-secondary">排名</th>
+                  <th className="px-4 py-2.5 text-left text-xs font-medium text-token-secondary">
                     {groupBy === 'submitter' ? '提交人' : '方案'}
                   </th>
                   <th className="px-4 py-2.5 text-right w-24">
@@ -287,19 +287,19 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
               </thead>
               <tbody>
                 {sortedItems.map((item, idx) => (
-                  <tr key={item.key} className="border-b border-white/5 last:border-b-0 hover:bg-white/3 transition-colors">
+                  <tr key={item.key} className="border-b border-token-subtle last:border-b-0 hover-bg-soft transition-colors">
                     <td className="px-4 py-3">
                       <div className="flex items-center justify-center w-6">
                         <RankBadge rank={idx + 1} />
                       </div>
                     </td>
                     <td className="px-4 py-3">
-                      <div className="text-white truncate max-w-md" title={item.name}>{item.name}</div>
+                      <div className="text-token-primary truncate max-w-md" title={item.name}>{item.name}</div>
                       {groupBy === 'document' && (
-                        <div className="text-[11px] text-white/40 mt-0.5">{item.submitterName}</div>
+                        <div className="text-[11px] text-token-muted mt-0.5">{item.submitterName}</div>
                       )}
                     </td>
-                    <td className="px-4 py-3 text-right tabular-nums text-white/80">{item.totalCount}</td>
+                    <td className="px-4 py-3 text-right tabular-nums text-token-primary">{item.totalCount}</td>
                     <td className="px-4 py-3">
                       <div className="flex justify-end">
                         <ProgressBar value={item.passRate} />
@@ -307,7 +307,7 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
                     </td>
                     <td className="px-4 py-3">
                       {item.firstTimePassRate == null ? (
-                        <div className="text-right text-xs text-white/30">— 无通过</div>
+                        <div className="text-right text-xs text-token-muted">— 无通过</div>
                       ) : (
                         <div className="flex justify-end">
                           <ProgressBar value={item.firstTimePassRate} />
@@ -323,7 +323,7 @@ export function ReviewLeaderboardView({ groupBy }: Props) {
       )}
 
       {/* 统计口径说明 */}
-      <p className="text-[11px] text-white/30 leading-relaxed">
+      <p className="text-[11px] text-token-muted leading-relaxed">
         说明：方案按「提交人 + 标题」去重，同标题的多次提交视为同一方案。
         「一次性通过率」= 一次提交即通过、且未使用「重新上传方案」救机会的方案数 / 该用户在此期间的方案总数；
         系统故障导致的「重新评审」不计入用户重评。

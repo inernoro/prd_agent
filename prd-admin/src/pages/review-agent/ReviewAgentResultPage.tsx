@@ -60,9 +60,9 @@ function CheckboxBadge({ state }: { state: 'yes' | 'no' | 'none' }) {
     return <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/15 text-cyan-300">是</span>;
   }
   if (state === 'no') {
-    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-white/55">否</span>;
+    return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">否</span>;
   }
-  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/4 text-white/30">未勾</span>;
+  return <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-muted">未勾</span>;
 }
 
 function verdictLabel(item: DimensionCheckItemResult): { text: string; tone: 'pass' | 'fail-soft' | 'fail-hard' } {
@@ -88,21 +88,21 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
   return (
     <div
       className="rounded-lg overflow-hidden"
-      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.08)' }}
+      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
     >
-      <div className="flex items-center justify-between px-3 py-2 border-b border-white/5">
-        <p className="text-xs text-white/50 font-medium">全局规则检查清单（读取用户表格勾选 + 反作弊核查）</p>
-        <p className="text-xs tabular-nums text-white/40">
+      <div className="flex items-center justify-between px-3 py-2 border-b border-token-subtle">
+        <p className="text-xs text-token-secondary font-medium">全局规则检查清单（读取用户表格勾选 + 反作弊核查）</p>
+        <p className="text-xs tabular-nums text-token-muted">
           通过 <span className="text-emerald-400">{passed}</span> / {total}
         </p>
       </div>
-      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 px-3 py-1.5 border-b border-white/5 text-[10px] text-white/35">
+      <div className="grid grid-cols-[1fr_auto_auto_auto] gap-x-3 gap-y-1 px-3 py-1.5 border-b border-token-subtle text-[10px] text-token-muted">
         <div>检查项</div>
         <div className="text-center">是否涉及</div>
         <div className="text-center">方案是否包含</div>
         <div className="text-center">评审判定</div>
       </div>
-      <div className="divide-y divide-white/5">
+      <div className="divide-y divide-token-subtle">
         {Object.entries(grouped).map(([cat, list]) => (
           <div key={cat} className="px-3 py-2">
             <p className="text-[11px] text-indigo-400/80 mb-1.5 font-medium">{cat}</p>
@@ -120,11 +120,11 @@ function ChecklistTable({ items }: { items: DimensionCheckItemResult[] }) {
                     className={`grid grid-cols-[1fr_auto_auto_auto] items-start gap-x-3 gap-y-0.5 rounded px-2 py-1.5 ${v.tone === 'fail-hard' ? 'bg-rose-500/5' : ''}`}
                   >
                     <div className="min-w-0">
-                      <p className={`text-xs leading-relaxed ${item.passed ? 'text-white/55' : 'text-white/70'}`}>
+                      <p className={`text-xs leading-relaxed ${item.passed ? 'text-token-secondary' : 'text-token-secondary'}`}>
                         {item.text}
                       </p>
                       {item.evidence && (
-                        <p className="text-[11px] text-white/35 mt-0.5 leading-relaxed">{item.evidence}</p>
+                        <p className="text-[11px] text-token-muted mt-0.5 leading-relaxed">{item.evidence}</p>
                       )}
                     </div>
                     <div className="text-center pt-0.5"><CheckboxBadge state={item.involvedChecked} /></div>
@@ -164,7 +164,7 @@ function RawOutputDebug({ result }: { result: ReviewResult }) {
         {expanded ? '收起' : '查看'} AI 原始输出（用于诊断）
       </button>
       {expanded && (
-        <pre className="mt-3 text-xs text-white/50 bg-black/20 rounded p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all">
+        <pre className="mt-3 text-xs text-token-secondary bg-token-nested rounded p-3 overflow-auto max-h-64 whitespace-pre-wrap break-all">
           {result.fullMarkdown || '（空）'}
         </pre>
       )}
@@ -512,7 +512,7 @@ export function ReviewAgentResultPage() {
   if (!submission) {
     return (
       <div className="max-w-2xl mx-auto px-4 py-8 text-center">
-        <p className="text-white/40">提交记录不存在</p>
+        <p className="text-token-muted">提交记录不存在</p>
         <button onClick={() => navigate('/review-agent')} className="mt-4 text-indigo-400 hover:text-indigo-300 text-sm">
           返回列表
         </button>
@@ -532,22 +532,22 @@ export function ReviewAgentResultPage() {
       {/* 返回导航 */}
       <button
         onClick={goBack}
-        className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 mb-6 transition-colors"
+        className="flex items-center gap-1.5 text-sm text-token-muted hover-text-primary mb-6 transition-colors"
       >
         <ArrowLeft className="w-4 h-4" />
         返回我的提交
       </button>
 
       {/* 方案信息 */}
-      <div className="bg-white/3 border border-white/8 rounded-xl p-5 mb-6">
+      <div className="bg-token-nested border border-token-subtle rounded-xl p-5 mb-6">
         <div className="flex items-start justify-between gap-4">
           <div className="flex items-center gap-3">
             <div className="w-9 h-9 rounded-lg bg-indigo-500/10 flex items-center justify-center flex-shrink-0">
               <ClipboardCheck className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <h1 className="text-base font-semibold text-white">{submission.title}</h1>
-              <p className="text-xs text-white/40 mt-0.5">{submission.fileName} · {new Date(submission.submittedAt).toLocaleString('zh-CN')}</p>
+              <h1 className="text-base font-semibold text-token-primary">{submission.title}</h1>
+              <p className="text-xs text-token-muted mt-0.5">{submission.fileName} · {new Date(submission.submittedAt).toLocaleString('zh-CN')}</p>
             </div>
           </div>
           {/* 总分/状态 */}
@@ -679,7 +679,7 @@ export function ReviewAgentResultPage() {
           {hasAppealRecord && (
             <button
               onClick={() => setShowHistoryDrawer(true)}
-              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 border border-white/10 text-white/70 transition-colors"
+              className="flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft border border-token-subtle text-token-secondary transition-colors"
             >
               <History className="w-3.5 h-3.5" /> 申诉历史
             </button>
@@ -726,8 +726,8 @@ export function ReviewAgentResultPage() {
         <div className="mb-6 space-y-4">
           <SsePhaseBar phase={sse.phase} message={sse.phaseMessage} />
           {sse.typing && (
-            <div className="bg-white/3 border border-white/8 rounded-xl p-4">
-              <p className="text-xs text-white/40 mb-2 font-medium">AI 评审中...</p>
+            <div className="bg-token-nested border border-token-subtle rounded-xl p-4">
+              <p className="text-xs text-token-muted mb-2 font-medium">AI 评审中...</p>
               <SseTypingBlock text={sse.typing} />
             </div>
           )}
@@ -737,7 +737,7 @@ export function ReviewAgentResultPage() {
       {/* 分项评分结果 */}
       {dimensionScores.length > 0 && (
         <div className="mb-6">
-          <h2 className="text-sm font-medium text-white/60 mb-3">分项评分</h2>
+          <h2 className="text-sm font-medium text-token-secondary mb-3">分项评分</h2>
           <div className="space-y-2">
             {dimensionScores.map((dim) => {
               const pct = dim.maxScore > 0 ? (dim.score / dim.maxScore) * 100 : 0;
@@ -747,33 +747,33 @@ export function ReviewAgentResultPage() {
               const dimCfg = dimConfigs.find(c => c.key === dim.key);
 
               return (
-                <div key={dim.key} className="bg-white/3 border border-white/8 rounded-lg overflow-hidden">
+                <div key={dim.key} className="bg-token-nested border border-token-subtle rounded-lg overflow-hidden">
                   <button
-                    className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/3 transition-colors"
+                    className="w-full flex items-center gap-3 px-4 py-3 hover-bg-soft transition-colors"
                     onClick={() => toggleDim(dim.key)}
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center justify-between mb-1.5">
-                        <span className="text-sm text-white/80">{dim.name}</span>
+                        <span className="text-sm text-token-primary">{dim.name}</span>
                         <span className={`text-sm font-semibold tabular-nums ${scoreColor}`}>
                           {dim.score}/{dim.maxScore}
                         </span>
                       </div>
-                      <div className="h-1.5 bg-white/8 rounded-full overflow-hidden">
+                      <div className="h-1.5 bg-token-nested rounded-full overflow-hidden">
                         <div
                           className={`h-full rounded-full transition-all duration-500 ${barColor}`}
                           style={{ width: `${pct}%` }}
                         />
                       </div>
                     </div>
-                    <div className="text-white/30 flex-shrink-0">
+                    <div className="text-token-muted flex-shrink-0">
                       {isExpanded ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
                     </div>
                   </button>
                   {isExpanded && (
-                    <div className="px-4 pb-3 border-t border-white/5 pt-3 space-y-2.5">
+                    <div className="px-4 pb-3 border-t border-token-subtle pt-3 space-y-2.5">
                       {dim.comment && (
-                        <p className="text-sm text-white/60 leading-relaxed">{dim.comment}</p>
+                        <p className="text-sm text-token-secondary leading-relaxed">{dim.comment}</p>
                       )}
                       {dim.items && dim.items.length > 0 && (
                         <ChecklistTable items={dim.items} />
@@ -781,7 +781,7 @@ export function ReviewAgentResultPage() {
                       {dimCfg?.description && (
                         <div className="rounded-lg px-3 py-2" style={{ background: 'rgba(99,102,241,0.06)', border: '1px solid rgba(99,102,241,0.15)' }}>
                           <p className="text-xs text-indigo-400/70 mb-1 font-medium">明细要求</p>
-                          <p className="text-xs text-white/40 leading-relaxed whitespace-pre-wrap">{dimCfg.description}</p>
+                          <p className="text-xs text-token-muted leading-relaxed whitespace-pre-wrap">{dimCfg.description}</p>
                         </div>
                       )}
                     </div>
@@ -795,30 +795,30 @@ export function ReviewAgentResultPage() {
 
       {/* 评审历史（含被重传/重跑覆盖之前的旧结果），按需折叠展开 */}
       {isDone && !isRunning && (
-        <div className="mb-6 bg-white/3 border border-white/8 rounded-xl">
+        <div className="mb-6 bg-token-nested border border-token-subtle rounded-xl">
           <button
             onClick={() => {
               const next = !showHistory;
               setShowHistory(next);
               if (next && resultHistory.length === 0) loadResultHistory();
             }}
-            className="w-full flex items-center justify-between px-5 py-3 text-sm text-white/70 hover:text-white transition-colors"
+            className="w-full flex items-center justify-between px-5 py-3 text-sm text-token-secondary hover-text-primary transition-colors"
           >
             <span className="flex items-center gap-2">
               <ClockIcon className="w-4 h-4" />
-              评审历史 {resultHistory.length > 0 && <span className="text-xs text-white/40">（共 {resultHistory.length} 次）</span>}
+              评审历史 {resultHistory.length > 0 && <span className="text-xs text-token-muted">（共 {resultHistory.length} 次）</span>}
             </span>
             {showHistory ? <ChevronUp className="w-4 h-4" /> : <ChevronDown className="w-4 h-4" />}
           </button>
           {showHistory && (
-            <div className="px-5 pb-4 border-t border-white/5">
+            <div className="px-5 pb-4 border-t border-token-subtle">
               {resultHistory.length === 0 ? (
-                <div className="text-xs text-white/40 py-3">仅本次评审，无更早历史。</div>
+                <div className="text-xs text-token-muted py-3">仅本次评审，无更早历史。</div>
               ) : (
                 <ul className="space-y-2 mt-3">
                   {resultHistory.map((r, i) => (
                     <li key={r.id} className="flex items-center gap-3 text-xs">
-                      <span className="text-white/40 tabular-nums w-12">#{resultHistory.length - i}</span>
+                      <span className="text-token-muted tabular-nums w-12">#{resultHistory.length - i}</span>
                       <span className={`tabular-nums font-medium ${r.isPassed ? 'text-emerald-400' : 'text-orange-400'}`}>
                         {r.totalScore}分
                       </span>
@@ -826,7 +826,7 @@ export function ReviewAgentResultPage() {
                         {r.isPassed ? <CheckCircle className="w-3 h-3" /> : <XCircle className="w-3 h-3" />}
                         {r.isPassed ? '通过' : '未通过'}
                       </span>
-                      <span className="text-white/40">{new Date(r.scoredAt).toLocaleString('zh-CN')}</span>
+                      <span className="text-token-muted">{new Date(r.scoredAt).toLocaleString('zh-CN')}</span>
                       {r.adjustmentLog && r.adjustmentLog.length > 0 && (
                         <span className="text-amber-400/60">（系统兜底 {r.adjustmentLog.length} 项）</span>
                       )}
@@ -859,9 +859,9 @@ export function ReviewAgentResultPage() {
 
       {/* AI 总结评语 */}
       {summary && !isRunning && (
-        <div className="mb-6 bg-white/3 border border-white/8 rounded-xl p-5">
-          <h2 className="text-sm font-medium text-white/60 mb-3">AI 总结评语</h2>
-          <p className="text-sm text-white/70 leading-relaxed">{summary}</p>
+        <div className="mb-6 bg-token-nested border border-token-subtle rounded-xl p-5">
+          <h2 className="text-sm font-medium text-token-secondary mb-3">AI 总结评语</h2>
+          <p className="text-sm text-token-secondary leading-relaxed">{summary}</p>
         </div>
       )}
 
@@ -886,7 +886,7 @@ export function ReviewAgentResultPage() {
             )}
           </div>
           {submission.submitterName && (
-            <div className="flex items-center gap-1.5 text-sm text-white/35">
+            <div className="flex items-center gap-1.5 text-sm text-token-muted">
               <User className="w-3.5 h-3.5" />
               {submission.submitterName}
             </div>

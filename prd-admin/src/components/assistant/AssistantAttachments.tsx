@@ -86,7 +86,7 @@ export function AttachmentUploadButton({
       <button
         onClick={pick}
         disabled={disabled || uploading}
-        className="flex items-center justify-center w-8 h-8 rounded-lg border bg-white/5 text-white/55 border-white/10 hover:text-white hover:bg-white/10 disabled:opacity-40 transition-colors"
+        className="flex items-center justify-center w-8 h-8 rounded-lg border bg-token-nested text-token-secondary border-token-subtle hover:text-token-primary hover-bg-soft disabled:opacity-40 transition-colors"
         title={full ? `最多 ${MAX_ASSISTANT_ATTACHMENTS} 个附件` : '上传附件作为上下文（支持 md / pdf）'}
       >
         {uploading ? <MapSpinner size={14} /> : <Paperclip size={15} />}
@@ -117,8 +117,8 @@ export function AttachmentChips({
         >
           <FileText size={11} className="shrink-0" style={{ color: accent }} />
           <span className="truncate" style={{ maxWidth: 180 }}>{f.name}</span>
-          <span className="text-white/35 shrink-0">{f.chars}字{f.truncated ? '·截断' : ''}</span>
-          <button onClick={() => onRemove(i)} className="shrink-0 text-white/40 hover:text-white" title="移除附件">
+          <span className="text-token-muted shrink-0">{f.chars}字{f.truncated ? '·截断' : ''}</span>
+          <button onClick={() => onRemove(i)} className="shrink-0 text-token-muted hover:text-token-primary" title="移除附件">
             <X size={11} />
           </button>
         </span>

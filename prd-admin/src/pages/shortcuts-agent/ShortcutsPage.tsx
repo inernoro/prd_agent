@@ -414,14 +414,7 @@ function LiveCollectionsPanel() {
       {loading ? (
         <div style={{ color: 'var(--text-muted)', fontSize: 13 }}>加载中...</div>
       ) : items.length === 0 ? (
-        <div style={{
-          padding: '18px 12px',
-          borderRadius: 10,
-          background: 'rgba(255,255,255,0.03)',
-          color: 'var(--text-muted)',
-          fontSize: 13,
-          textAlign: 'center',
-        }}>
+        <div className="bg-token-nested" style={{ padding: '18px 12px', borderRadius: 10, color: 'var(--text-muted)', fontSize: 13, textAlign: 'center' }}>
           暂无分享记录。添加快捷指令后，从手机分享任意链接即可在这里看到。
         </div>
       ) : (
@@ -429,12 +422,7 @@ function LiveCollectionsPanel() {
           {items.map((item) => (
             <div
               key={item.id}
-              style={{
-                padding: '10px 12px',
-                borderRadius: 10,
-                background: 'rgba(255,255,255,0.035)',
-                border: '1px solid rgba(255,255,255,0.05)',
-              }}
+              className="bg-token-nested border border-token-subtle" style={{ padding: '10px 12px', borderRadius: 10 }}
             >
               <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
                 <span style={{
