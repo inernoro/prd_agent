@@ -192,6 +192,98 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldKeepBoundedWindowsForLongRecording()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"窗口原文"}""",
+            });
+        var resolver = HealthyResolver();
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            resolver.Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        for (var index = 1; index <= 12; index++)
+        {
+            await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+                index,
+                new byte[LiveAsrBatchFallbackService.WindowBytes]));
+        }
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(13, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask);
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.Split("窗口原文").Length.ShouldBe(13);
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(12));
+    }
+
+    [Fact]
+    public async Task BatchFallback_ShouldSwitchCandidateWhenFirstProviderFails()
+    {
+        var first = BatchCandidate("first", "first-audio");
+        var second = BatchCandidate("second", "second-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                GatewayRawRequest _,
+                GatewayModelResolution resolution,
+                CancellationToken _) =>
+                resolution.ActualModel == "first-audio"
+                    ? GatewayRawResponse.Fail("PROVIDER_FAILED", "首选供应商失败", 503)
+                    : new GatewayRawResponse
+                    {
+                        Success = true,
+                        StatusCode = 200,
+                        Content = """{"text":"备用供应商成功"}""",
+                    });
+        var resolver = HealthyResolver();
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            resolver.Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            new byte[LiveAsrBatchFallbackService.WindowBytes]));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [first, second],
+            frames.Reader,
+            _ => Task.CompletedTask);
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldBe("备用供应商成功");
+        resolver.Verify(x => x.RecordFailureAsync(
+            It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "first"),
+            It.IsAny<CancellationToken>()), Times.Once);
+        resolver.Verify(x => x.RecordSuccessAsync(
+            It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "second"),
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public void WebSocketAuth_ShouldReadTokenOnlyOnExactLiveTranscriptionSuffix()
     {
         LiveAsrWebSocketAuth.ExtractToken(
@@ -222,4 +314,29 @@ public class LiveAsrProtocolTests
             ActualModel = model,
             ExchangeTransformerType = transformer,
         };
+
+    private static ModelResolutionResult BatchCandidate(string platform, string model)
+        => new()
+        {
+            Success = true,
+            ActualPlatformId = platform,
+            ActualPlatformName = platform,
+            ActualModel = model,
+            PlatformType = "openai",
+            Protocol = "openrouter",
+        };
+
+    private static Mock<IModelResolver> HealthyResolver()
+    {
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.RecordSuccessAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        resolver.Setup(x => x.RecordFailureAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        return resolver;
+    }
 }
