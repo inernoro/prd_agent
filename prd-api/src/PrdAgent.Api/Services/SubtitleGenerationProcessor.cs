@@ -179,24 +179,27 @@ public class SubtitleGenerationProcessor
         if (!isAudio && !isVideo)
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（转录仅支持音频/视频）");
 
+        // 录音期间已稳定完成的实时原文不依赖对象存储。R2/COS 故障时，
+        // 音频由 Mongo 分片耐久保全并后台归档，快捷录音仍应立即生成原文。
+        var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
+
         string? fileUrl = null;
-        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        if (liveTranscript == null && !string.IsNullOrEmpty(entry.AttachmentId))
         {
             var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
             fileUrl = att?.Url;
         }
-        if (string.IsNullOrEmpty(fileUrl))
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl))
             throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
 
         // 1) 优先采用录音期间已稳定完成的实时转写；只有实时链路未完成或已降级时，
         // 才下载完整录音并走三路批处理 ASR。录音文件始终保留，后续仍可重新校准。
-        var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
         if (liveTranscript != null)
             await UpdateProgressAsync(db, runStore, run, 50, "实时转写已完成");
         var segments = liveTranscript == null
-            ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo)
+            ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl!, isVideo)
             : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
         var transcriptPlain = string.Join("\n", segments
             .Where(s => !string.IsNullOrWhiteSpace(s.Text))
