@@ -1387,6 +1387,92 @@ def _project_slug_hints(repo_root: str) -> list[str]:
     return unique((directory_slug or origin_slug,))
 
 
+def _git_changed_paths_since_default_branch(repo_root: str) -> list[str]:
+    """读取当前分支相对默认分支的改动路径，不调用 shell、不猜远端地址。"""
+    for default_ref in ("origin/main", "main", "origin/master", "master"):
+        try:
+            merge_base = subprocess.check_output(
+                ["git", "merge-base", "HEAD", default_ref],
+                cwd=repo_root, text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            if not merge_base:
+                continue
+            raw = subprocess.check_output(
+                ["git", "diff", "--name-only", f"{merge_base}..HEAD"],
+                cwd=repo_root, text=True, stderr=subprocess.DEVNULL,
+            )
+            return [
+                path.strip().replace("\\", "/").lstrip("/")
+                for path in raw.splitlines()
+                if path.strip()
+            ]
+        except (subprocess.CalledProcessError, OSError):
+            continue
+    return []
+
+
+def _cds_self_project_slug_hint(repo_root: str) -> str:
+    """CDS 自托管仓库的分支按改动范围选择独立的 ``cds-self`` 项目。
+
+    同一个 GitHub 仓库可以同时登记业务项目和 CDS Self 项目。仅靠仓库目录名
+    会稳定命中业务项目（例如 ``prd-agent``），导致 Agent 给出一条能打开、
+    但内容属于另一个项目的预览地址。这里以 self-host compose 为显式标记，
+    并且只在有效代码改动全部位于 ``cds/**`` 时启用；混合改动继续走常规项目，
+    避免把业务发布误路由到 CDS Self。
+    """
+    marker = os.path.join(repo_root, "cds", "cds-compose.selfhost.yml")
+    if not os.path.isfile(marker):
+        return ""
+
+    changed_paths = _git_changed_paths_since_default_branch(repo_root)
+    auxiliary_prefixes = (
+        "changelogs/",
+        "doc/",
+        ".agents/",
+        ".claude/",
+        ".codex/",
+        ".Codex/",
+    )
+    effective_paths = [
+        path for path in changed_paths
+        if path not in {"AGENTS.md"}
+        and not path.startswith(auxiliary_prefixes)
+    ]
+    if not effective_paths or not all(
+        path == "cds" or path.startswith("cds/")
+        for path in effective_paths
+    ):
+        return ""
+
+    try:
+        with open(marker, "r", encoding="utf-8") as file:
+            marker_text = file.read()
+    except OSError:
+        return ""
+    project_block = re.search(
+        r"(?ms)^x-cds-project:\s*\n(?P<body>(?:^[ \t]+.*\n?)*)",
+        marker_text,
+    )
+    if not project_block:
+        return ""
+    name_match = re.search(
+        r"(?m)^[ \t]+name:\s*[\"']?([^\"'\s#]+)",
+        project_block.group("body"),
+    )
+    return _slugify_for_preview(name_match.group(1)) if name_match else ""
+
+
+def _branch_lookup_project_slug_hints(repo_root: str) -> list[str]:
+    """分支查询身份：显式配置优先，其次 CDS Self 范围路由，最后常规项目。"""
+    explicit = os.environ.get("CDS_PROJECT_SLUG", "").strip()
+    if explicit:
+        return [_slugify_for_preview(explicit)]
+    self_host_slug = _cds_self_project_slug_hint(repo_root)
+    if self_host_slug:
+        return [self_host_slug]
+    return _project_slug_hints(repo_root)
+
+
 def _compute_preview_slug(branch: str, project_slug: str) -> str:
     """与 cds/src/services/preview-slug.ts:computePreviewSlug 完全一致（v3）。
 
@@ -1644,7 +1730,7 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
         return
 
-    project_slug_hints = _project_slug_hints(repo_root)
+    project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
 
     # Step 1: 必须有 CDS 实际连接上下文。`main()` 已会自动读取
     # .cds/credentials.json，因此一键接入后不需要污染 shell 环境变量。
@@ -1743,7 +1829,7 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    project_slug_hints = _project_slug_hints(repo_root)
+    project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
