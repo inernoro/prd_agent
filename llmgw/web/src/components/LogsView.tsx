@@ -39,7 +39,7 @@ import {
 } from '@/lib/logsHelpers';
 
 const PAGE_SIZE = 30;
-const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v2';
+const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
 
 function initialTablePreferences(): Record<LogsSubTab, LogTablePreferences> {
   const defaults = {
@@ -384,7 +384,7 @@ export function LogsView() {
       case 'date': {
         const lc = deriveLifecycle(it);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, fontSize: 14, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
             <span
               title={`生命周期：${lc.label}`}
               className={lc.pulse ? 'lg-pulse' : undefined}
@@ -421,7 +421,7 @@ export function LogsView() {
           >
             <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
               <ModelEntityIcon model={modelName} />
-              <span className="lg-truncate lg-log-model-name" style={{ fontSize: 14, fontWeight: 550 }}>{modelName}</span>
+              <span className="lg-truncate lg-log-model-name">{modelName}</span>
             </span>
           </LogEntityHoverCard>
         );
@@ -467,12 +467,12 @@ export function LogsView() {
         );
       }
       case 'input':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatInputUsage(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatInputUsage(it)}</span>;
       case 'output':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatOutputUsage(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatOutputUsage(it)}</span>;
       case 'tokens':
         return (
-          <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+          <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
@@ -480,34 +480,34 @@ export function LogsView() {
         return (
           <span
             className="tabular"
-            style={{ fontSize: 14, color: 'var(--text-secondary)' }}
+            style={{ color: 'var(--text-secondary)' }}
             title={it.providerReportedCost == null && it.estimatedCost == null ? '上游未返回费用，且当前模型尚未配置计价规则' : undefined}
           >
             {formatRecordedCost(it)}
           </span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'usage':
-        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
+        return <span style={{ color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{formatThroughput(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatThroughput(it)}</span>;
       }
       case 'finish':
-        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.finishReason || DASH}</span>;
+        return <span style={{ color: 'var(--text-secondary)' }}>{it.finishReason || DASH}</span>;
       case 'user':
         return (
-          <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }} title={userLabel(it)}>
+          <span className="lg-truncate" style={{ color: 'var(--text-secondary)' }} title={userLabel(it)}>
             {userLabel(it)}
           </span>
         );
       case 'stream':
         return (
-          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>
+          <span style={{ color: 'var(--text-muted)' }}>
             {it.isStreaming == null ? DASH : it.isStreaming ? '流式' : '非流'}
           </span>
         );
@@ -672,14 +672,14 @@ export function LogsView() {
     const visibleColumns = resolveLogTableColumns(columns, preferences);
     const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
     const tableMinWidth = tableKey === 'generations'
-      ? Math.max(1040, visibleColumns.length * 105 + 235)
+      ? 0
       : Math.max(920, visibleColumns.length * 132 + 42);
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     const updatePreferences = (value: LogTablePreferences) => setTablePreferences((current) => ({ ...current, [tableKey]: value }));
     return (
-      <div style={{ flex: 1, minHeight: 0, overflowX: 'auto', overscrollBehavior: 'contain' }}>
-        <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth }}>
+      <div className="lg-log-table-scroll">
+        <div className="lg-log-table" data-density={preferences.density} style={{ height: '100%', display: 'flex', flexDirection: 'column', minWidth: tableMinWidth || undefined }}>
           <div
             className="lg-log-table-head"
             style={{
@@ -824,127 +824,115 @@ export function LogsView() {
     setFilterClientCode('');
     setFilterEnvironment('');
   };
-  const advancedFilterCount = [
-    filterAppCaller,
-    filterTransport,
-    filterRequestType,
-    filterSourceSystem,
-    filterIngressProtocol,
-    filterModelPolicy,
-    filterReleaseCommit.trim(),
-    filterRunId.trim(),
-    filterSessionId.trim(),
-    filterModelPoolId.trim(),
-    filterServiceKeyId,
-    filterClientCode,
-    filterEnvironment,
-  ].filter(Boolean).length;
   const successRate = summary?.total
     ? `${Math.round((summary.succeeded / summary.total) * 1000) / 10}%`
     : DASH;
 
   return (
-    <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
+    <div className="lg-logs-view" style={{ height: '100%', minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>
           <p>逐条查看模型、Provider、Token、费用与耗时。</p>
         </div>
-        <span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span>
-      </header>
-
-      <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
-
-      <div className="lg-log-toolbar">
-        <form
-          className="lg-log-search"
-          onSubmit={(event) => {
-            event.preventDefault();
-            setFilterRequestId(requestIdDraft.trim());
-          }}
-        >
-          <Search size={14} aria-hidden="true" />
-          <input
-            aria-label="按请求 ID 查找"
-            value={requestIdDraft}
-            onChange={(event) => setRequestIdDraft(event.target.value)}
-            onKeyDown={(event) => {
-              if (event.key === 'Escape') {
-                setRequestIdDraft('');
-                setFilterRequestId('');
-              }
-            }}
-            placeholder="查找 requestId"
-            spellCheck={false}
-          />
-          <button type="submit">查找</button>
-        </form>
-        <select aria-label="状态" value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)}>
-          <option value="">全部状态</option>
-          {meta.statuses.map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
-        <select aria-label="模型" value={filterModel} onChange={(event) => setFilterModel(event.target.value)}>
-          <option value="">全部模型</option>
-          {meta.models.map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
-        <select aria-label="Provider" value={filterProvider} onChange={(event) => setFilterProvider(event.target.value)}>
-          <option value="">全部 Provider</option>
-          {meta.providers.map((value) => <option key={value} value={value}>{value}</option>)}
-        </select>
-        <select aria-label="时间范围" value={presetKey} onChange={(event) => setPresetKey(event.target.value)}>
-          {TIME_RANGE_PRESETS.map((preset) => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
-        </select>
-        {activeFilterCount > 0 ? <button className="lg-log-clear" type="button" onClick={clearFilters}>清除 {activeFilterCount}</button> : null}
-        <Button variant="ghost" size="sm" aria-label="刷新日志" title="刷新日志" onClick={refresh} disabled={loading || sessLoading}>
-          {loading || sessLoading ? <Spinner size={14} /> : <RefreshCw size={14} />}
-        </Button>
-      </div>
-
-      <details className="lg-log-filters">
-        <summary><SlidersHorizontal size={13} aria-hidden="true" />更多筛选{advancedFilterCount > 0 ? ` ${advancedFilterCount}` : ''}</summary>
-        <div>
-          <select aria-label="调用方" value={filterClientCode} onChange={(event) => setFilterClientCode(event.target.value)}>
-            <option value="">全部调用方</option>
-            {meta.clientCodes.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="环境" value={filterEnvironment} onChange={(event) => setFilterEnvironment(event.target.value)}>
-            <option value="">全部环境</option>
-            {meta.environments.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="接入密钥" value={filterServiceKeyId} onChange={(event) => setFilterServiceKeyId(event.target.value)}>
-            <option value="">全部接入密钥</option>
-            {meta.serviceKeyIds.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="来源系统" value={filterSourceSystem} onChange={(event) => setFilterSourceSystem(event.target.value)}>
-            <option value="">全部来源系统</option>
-            {meta.sourceSystems.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="入口协议" value={filterIngressProtocol} onChange={(event) => setFilterIngressProtocol(event.target.value)}>
-            <option value="">全部入口协议</option>
-            {meta.ingressProtocols.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="路由策略" value={filterModelPolicy} onChange={(event) => setFilterModelPolicy(event.target.value)}>
-            <option value="">全部路由策略</option>
-            {meta.modelPolicies.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <input aria-label="发布提交" value={filterReleaseCommit} onChange={(event) => setFilterReleaseCommit(event.target.value)} placeholder="发布提交" spellCheck={false} />
-          <input aria-label="运行 ID" value={filterRunId} onChange={(event) => setFilterRunId(event.target.value)} placeholder="运行 ID" spellCheck={false} />
-          <input aria-label="会话 ID" value={filterSessionId} onChange={(event) => setFilterSessionId(event.target.value)} placeholder="会话 ID" spellCheck={false} />
-          <input aria-label="模型池 ID" value={filterModelPoolId} onChange={(event) => setFilterModelPoolId(event.target.value)} placeholder="模型池 ID" spellCheck={false} />
-          <select aria-label="应用" value={filterAppCaller} onChange={(event) => setFilterAppCaller(event.target.value)}>
-            <option value="">全部应用</option>
-            {meta.appCallers.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="传输方式" value={filterTransport} onChange={(event) => setFilterTransport(event.target.value)}>
-            <option value="">全部传输方式</option>
-            {meta.transports.map((value) => <option key={value} value={value}>{value}</option>)}
-          </select>
-          <select aria-label="请求类型" value={filterRequestType} onChange={(event) => setFilterRequestType(event.target.value)}>
-            <option value="">全部请求类型</option>
-            {meta.requestTypes.map((value) => <option key={value} value={value}>{value}</option>)}
+        <div className="lg-log-page-actions">
+          <span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span>
+          <Button variant="ghost" size="sm" aria-label="刷新日志" title="刷新日志" onClick={refresh} disabled={loading || sessLoading}>
+            {loading || sessLoading ? <Spinner size={15} /> : <RefreshCw size={15} />}
+          </Button>
+          <details className="lg-log-filters lg-log-filter-menu">
+            <summary aria-label="筛选日志" title="筛选日志">
+              <SlidersHorizontal size={16} aria-hidden="true" />
+              {activeFilterCount > 0 ? <span className="lg-log-filter-count">{activeFilterCount}</span> : null}
+            </summary>
+            <div>
+              <form
+                className="lg-log-search"
+                onSubmit={(event) => {
+                  event.preventDefault();
+                  setFilterRequestId(requestIdDraft.trim());
+                }}
+              >
+                <Search size={15} aria-hidden="true" />
+                <input
+                  aria-label="按请求 ID 查找"
+                  value={requestIdDraft}
+                  onChange={(event) => setRequestIdDraft(event.target.value)}
+                  onKeyDown={(event) => {
+                    if (event.key === 'Escape') {
+                      setRequestIdDraft('');
+                      setFilterRequestId('');
+                    }
+                  }}
+                  placeholder="查找 requestId"
+                  spellCheck={false}
+                />
+                <button type="submit">查找</button>
+              </form>
+              <select aria-label="状态" value={filterStatus} onChange={(event) => setFilterStatus(event.target.value)}>
+                <option value="">全部状态</option>
+                {meta.statuses.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="模型" value={filterModel} onChange={(event) => setFilterModel(event.target.value)}>
+                <option value="">全部模型</option>
+                {meta.models.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="Provider" value={filterProvider} onChange={(event) => setFilterProvider(event.target.value)}>
+                <option value="">全部 Provider</option>
+                {meta.providers.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="调用方" value={filterClientCode} onChange={(event) => setFilterClientCode(event.target.value)}>
+                <option value="">全部调用方</option>
+                {meta.clientCodes.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="环境" value={filterEnvironment} onChange={(event) => setFilterEnvironment(event.target.value)}>
+                <option value="">全部环境</option>
+                {meta.environments.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="接入密钥" value={filterServiceKeyId} onChange={(event) => setFilterServiceKeyId(event.target.value)}>
+                <option value="">全部接入密钥</option>
+                {meta.serviceKeyIds.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="来源系统" value={filterSourceSystem} onChange={(event) => setFilterSourceSystem(event.target.value)}>
+                <option value="">全部来源系统</option>
+                {meta.sourceSystems.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="入口协议" value={filterIngressProtocol} onChange={(event) => setFilterIngressProtocol(event.target.value)}>
+                <option value="">全部入口协议</option>
+                {meta.ingressProtocols.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="路由策略" value={filterModelPolicy} onChange={(event) => setFilterModelPolicy(event.target.value)}>
+                <option value="">全部路由策略</option>
+                {meta.modelPolicies.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <input aria-label="发布提交" value={filterReleaseCommit} onChange={(event) => setFilterReleaseCommit(event.target.value)} placeholder="发布提交" spellCheck={false} />
+              <input aria-label="运行 ID" value={filterRunId} onChange={(event) => setFilterRunId(event.target.value)} placeholder="运行 ID" spellCheck={false} />
+              <input aria-label="会话 ID" value={filterSessionId} onChange={(event) => setFilterSessionId(event.target.value)} placeholder="会话 ID" spellCheck={false} />
+              <input aria-label="模型池 ID" value={filterModelPoolId} onChange={(event) => setFilterModelPoolId(event.target.value)} placeholder="模型池 ID" spellCheck={false} />
+              <select aria-label="应用" value={filterAppCaller} onChange={(event) => setFilterAppCaller(event.target.value)}>
+                <option value="">全部应用</option>
+                {meta.appCallers.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="传输方式" value={filterTransport} onChange={(event) => setFilterTransport(event.target.value)}>
+                <option value="">全部传输方式</option>
+                {meta.transports.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              <select aria-label="请求类型" value={filterRequestType} onChange={(event) => setFilterRequestType(event.target.value)}>
+                <option value="">全部请求类型</option>
+                {meta.requestTypes.map((value) => <option key={value} value={value}>{value}</option>)}
+              </select>
+              {activeFilterCount > 0 ? <button className="lg-log-clear" type="button" onClick={clearFilters}>清除 {activeFilterCount} 个筛选</button> : null}
+            </div>
+          </details>
+          <select className="lg-log-range" aria-label="时间范围" value={presetKey} onChange={(event) => setPresetKey(event.target.value)}>
+            {TIME_RANGE_PRESETS.map((preset) => <option key={preset.key} value={preset.key}>{preset.label}</option>)}
           </select>
         </div>
-      </details>
+      </header>
+
+      <div className="lg-logs-tabs">
+        <TabBar items={LOGS_SUBTABS} activeKey={subtab} onChange={(k) => setSubtab(k)} />
+      </div>
 
       {metaError || listError ? (
         <div
@@ -966,7 +954,7 @@ export function LogsView() {
         <section className="lg-log-insights" aria-label="请求汇总趋势">
           <div className="lg-log-insight-chart">
             <div><strong>请求趋势</strong><span>{TIME_RANGE_PRESETS.find((preset) => preset.key === presetKey)?.label}</span></div>
-            <MiniBarChart data={series} height={88} />
+            <MiniBarChart data={series} height={118} />
           </div>
           <div className="lg-log-insight-metrics">
             <div><span>请求</span><strong className="tabular">{fmtCompact(summary?.total)}</strong></div>
