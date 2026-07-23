@@ -20,6 +20,7 @@ public sealed class LiveAsrBatchFallbackService
     public const int BytesPerSample = 2;
     public const int WindowBytes = SampleRate * WindowSeconds * BytesPerSample;
     public const int MinimumProviderSeconds = 15;
+    public const int SpeechAmplitudeThreshold = 128;
 
     private readonly ILlmGateway _gateway;
     private readonly IModelResolver _resolver;
@@ -148,6 +149,11 @@ public sealed class LiveAsrBatchFallbackService
         int windowIndex,
         Func<LiveAsrEvent, Task> emit)
     {
+        // 纯静音窗口不发给多模态模型。否则部分模型会把静音补全成
+        // “请播放音频”等解释性文本，既污染原文又产生无效调用成本。
+        if (!HasLikelySpeech(pcm))
+            return string.Empty;
+
         var wave = EncodeWave(pcm, MinimumProviderSeconds);
         for (var index = 0; index < candidates.Count; index++)
         {
@@ -305,7 +311,7 @@ public sealed class LiveAsrBatchFallbackService
                                 new JsonObject
                                 {
                                     ["type"] = "text",
-                                    ["text"] = "请逐字转写这段音频。只输出原文；没有人声时只输出 NO_SPEECH。",
+                                    ["text"] = "音频已附在本消息中。请逐字转写，只输出音频里真实说出的话，不要解释、确认或要求播放音频；没有人声时只输出 NO_SPEECH。",
                                 },
                                 new JsonObject
                                 {
@@ -392,6 +398,27 @@ public sealed class LiveAsrBatchFallbackService
 
     private static bool IsNoSpeech(string text)
         => text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase);
+
+    public static bool HasLikelySpeech(byte[] pcm)
+    {
+        if (pcm.Length < BytesPerSample)
+            return false;
+
+        var samples = pcm.Length / BytesPerSample;
+        var requiredActiveSamples = Math.Max(8, samples / 100);
+        var activeSamples = 0;
+        for (var offset = 0; offset + 1 < pcm.Length; offset += BytesPerSample)
+        {
+            var amplitude = Math.Abs((int)BinaryPrimitives.ReadInt16LittleEndian(
+                pcm.AsSpan(offset, BytesPerSample)));
+            if (amplitude < SpeechAmplitudeThreshold)
+                continue;
+            activeSamples++;
+            if (activeSamples >= requiredActiveSamples)
+                return true;
+        }
+        return false;
+    }
 
     private static string JoinTranscript(IEnumerable<string> parts)
         => string.Join(" ", parts.Where(part => !string.IsNullOrWhiteSpace(part))).Trim();

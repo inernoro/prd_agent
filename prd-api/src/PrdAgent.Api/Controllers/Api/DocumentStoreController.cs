@@ -1,6 +1,7 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
+using Amazon.S3;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -1892,9 +1893,38 @@ public class DocumentStoreController : ControllerBase
         }
 
         var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
-        var stored = await CreateUploadedDocumentEntryAsync(
-            store, actorId, actorName, avatarFileName,
-            session.FileName, session.MimeType, audioBytes, parentId: null, CancellationToken.None);
+        (DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl) stored;
+        try
+        {
+            stored = await CreateUploadedDocumentEntryAsync(
+                store, actorId, actorName, avatarFileName,
+                session.FileName, session.MimeType, audioBytes, parentId: null,
+                CancellationToken.None, assetSaveAttempts: 3);
+        }
+        catch (AmazonS3Exception ex)
+        {
+            // 云存储短暂异常不能把会话永久卡死在 Completing。回退为 Uploading 后，
+            // 前端可安全幂等重试；Mongo 分片和本地保险箱都继续保留。
+            await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+                s => s.Id == sessionId
+                     && s.UserId == userId
+                     && s.Status == DocumentRecordingUploadStatus.Completing
+                     && string.IsNullOrEmpty(s.EntryId),
+                Builders<DocumentRecordingUploadSession>.Update
+                    .Set(s => s.Status, DocumentRecordingUploadStatus.Uploading)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                    .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
+                cancellationToken: CancellationToken.None);
+            _logger.LogError(
+                ex,
+                "[document-store] 录音归档存储暂时不可用，会话已恢复为可重试状态 session={SessionId}",
+                sessionId);
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail(
+                    ErrorCodes.INTERNAL_ERROR,
+                    "录音已安全保留，存储暂时不可用，请稍后重试"));
+        }
 
         if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(claimed.LiveTranscript))
@@ -1970,12 +2000,33 @@ public class DocumentStoreController : ControllerBase
             string mime,
             byte[] bytes,
             string? parentId,
-            CancellationToken cancellationToken)
+            CancellationToken cancellationToken,
+            int assetSaveAttempts = 1)
     {
         // 传原始文件名，让存储优先沿用扩展名；浏览器上报的 m4a MIME 并不可靠。
-        var stored = await _assetStorage.SaveAsync(
-            bytes, mime, cancellationToken,
-            domain: "prd-agent", type: "doc", fileName: fileName);
+        StoredAsset? stored = null;
+        var attempts = Math.Clamp(assetSaveAttempts, 1, 3);
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                stored = await _assetStorage.SaveAsync(
+                    bytes, mime, cancellationToken,
+                    domain: "prd-agent", type: "doc", fileName: fileName);
+                break;
+            }
+            catch (AmazonS3Exception ex) when (attempt < attempts)
+            {
+                _logger.LogWarning(
+                    ex,
+                    "[document-store] 录音资产写入失败，准备第 {NextAttempt}/{TotalAttempts} 次尝试",
+                    attempt + 1,
+                    attempts);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+            }
+        }
+        if (stored == null)
+            throw new InvalidOperationException("资产存储未返回结果");
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))

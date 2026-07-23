@@ -121,6 +121,22 @@ public class LiveAsrProtocolTests
         wave[^1].ShouldBe((byte)0);
     }
 
+    [Fact]
+    public void BatchFallbackSpeechGate_ShouldRejectSilenceAndKeepAudiblePcm()
+    {
+        LiveAsrBatchFallbackService.HasLikelySpeech(
+                new byte[LiveAsrBatchFallbackService.WindowBytes])
+            .ShouldBeFalse();
+
+        var audible = new byte[LiveAsrBatchFallbackService.WindowBytes];
+        for (var offset = 0; offset < audible.Length / 50; offset += 2)
+        {
+            audible[offset] = 0;
+            audible[offset + 1] = 1;
+        }
+        LiveAsrBatchFallbackService.HasLikelySpeech(audible).ShouldBeTrue();
+    }
+
     [Theory]
     [InlineData("""{"text":"第一段"}""", "第一段")]
     [InlineData("""{"result":{"text":"第二段"}}""", "第二段")]
@@ -165,7 +181,7 @@ public class LiveAsrProtocolTests
         var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
             1,
-            new byte[LiveAsrBatchFallbackService.WindowBytes]));
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
         frames.Writer.TryComplete();
         var events = new List<LiveAsrEvent>();
@@ -192,6 +208,36 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldSkipSilentWindowWithoutProviderCall()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            new byte[LiveAsrBatchFallbackService.WindowBytes]));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask);
+
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
+        result.Error.ShouldBe("没有识别到有效语音");
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+    }
+
+    [Fact]
     public async Task BatchFallback_ShouldKeepBoundedWindowsForLongRecording()
     {
         var candidate = BatchCandidate("primary", "openai/gpt-audio");
@@ -214,9 +260,15 @@ public class LiveAsrProtocolTests
         var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
         for (var index = 1; index <= 12; index++)
         {
+            var audible = new byte[LiveAsrBatchFallbackService.WindowBytes];
+            for (var offset = 0; offset < audible.Length / 50; offset += 2)
+            {
+                audible[offset] = 0;
+                audible[offset + 1] = 1;
+            }
             await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
                 index,
-                new byte[LiveAsrBatchFallbackService.WindowBytes]));
+                audible));
         }
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(13, [], IsFinal: true));
         frames.Writer.TryComplete();
@@ -264,7 +316,7 @@ public class LiveAsrProtocolTests
         var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
             1,
-            new byte[LiveAsrBatchFallbackService.WindowBytes]));
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
         frames.Writer.TryComplete();
 
