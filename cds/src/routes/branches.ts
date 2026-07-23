@@ -11870,6 +11870,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
 
+    // 2026-07-23: 本轮部署打开的 check-run id（try 外声明，供 superseded catch
+    // 分支收尾用）。被取代的部署此前直接 return，check run 永远停在 in_progress。
+    let openedCheckRunId: number | undefined;
+
     // 构建排队可视化（2026-07-09）：把 build-gate 的排队状态挂到 entry.buildQueue，
     // 分支卡显示「排队中 · 前面还有 N 个」并把排队时间从耗时对比中剔除。
     // 声明在 try 外，finally 兜底 dispose（部署 throw 也不许留下「排队中」残影）。
@@ -11939,7 +11943,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不再重复推导。若三者都没解析出来,check-run / 极速版 tag 推导是 no-op。
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
-      await checkRunRunner.ensureOpen(entry);
+      // 用 ensureOpen 的**返回值**记住本轮的 check-run id。禁止在 await 之后
+      // 重读 state 上的可变指针：并发的取代方部署可能已把 githubCheckRunId
+      // 盖成它自己的，重读会把别人的 id 记成自己的、并在 superseded 收尾时
+      // 误杀对方的 check run（Codex P2，PR #1235）。
+      openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
       // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
       // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
@@ -13042,6 +13050,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
         opLog.finishedAt = new Date().toISOString();
         stateService.appendLog(id, opLog);
         stateService.save();
+        // 2026-07-23: 被取代的部署此前直接 return，本轮打开的 check run 永远停在
+        // in_progress（GitHub 上黄灯转圈、既不报错也不成功）。按**本轮记下的显式
+        // id** 收尾为 cancelled——不能依赖 entry.githubCheckRunId 等值判断：新部署
+        // 的 ensureOpen 可能已抢先把它盖成新 id，旧 run 就成了无状态指针的孤儿，
+        // reconcileStale 也够不到（state 里只剩新 id）（Codex P2，PR #1235）。
+        // finalize 内部的 CAS 保证不会误清新部署盖上的 id。best-effort，失败只
+        // 记事件不冒泡。
+        try {
+          const latestEntry = stateService.getBranch(id);
+          if (openedCheckRunId && latestEntry) {
+            await checkRunRunner.finalize(latestEntry, {
+              conclusion: 'cancelled',
+              summary: `部署被更高优先级操作取代: ${errMsg}`,
+              checkRunId: openedCheckRunId,
+              runId: deploymentRun?.id,
+            });
+          }
+        } catch (finalizeErr) {
+          const m = (finalizeErr as Error)?.message || String(finalizeErr);
+          logEvent({
+            step: 'check-run-finalize',
+            status: 'warning',
+            title: `被取代部署的 check run 收尾失败: ${m.slice(0, 120)}`,
+            log: m,
+            timestamp: new Date().toISOString(),
+          });
+        }
         sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
         return;
       }

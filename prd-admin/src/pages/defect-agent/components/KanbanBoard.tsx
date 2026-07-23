@@ -94,11 +94,8 @@ export function KanbanBoard() {
                 {col.label}
               </span>
               <span
-                className="text-[11px] ml-auto font-mono px-1.5 rounded"
-                style={{
-                  background: 'rgba(255,255,255,0.08)',
-                  color: 'var(--text-muted)',
-                }}
+                className="text-[11px] ml-auto font-mono px-1.5 rounded bg-token-nested"
+                style={{ color: 'var(--text-muted)' }}
               >
                 {items.length}
               </span>
@@ -106,12 +103,8 @@ export function KanbanBoard() {
 
             {/* Column Body */}
             <div
-              className="flex-1 min-h-0 overflow-y-auto space-y-2 px-1 py-2 rounded-b-xl"
-              style={{
-                background: 'rgba(255,255,255,0.02)',
-                border: '1px solid rgba(255,255,255,0.04)',
-                borderTop: 'none',
-              }}
+              className="flex-1 min-h-0 overflow-y-auto space-y-2 px-1 py-2 rounded-b-xl bg-token-nested border border-token-subtle"
+              style={{ borderTop: 'none' }}
             >
               {items.length === 0 ? (
                 <div
@@ -151,11 +144,8 @@ function KanbanCard({
   return (
     <div
       onClick={onClick}
-      className="px-3 py-2.5 rounded-lg cursor-pointer transition-all hover:scale-[1.01]"
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.06)',
-      }}
+      className="px-3 py-2.5 rounded-lg cursor-pointer transition-all hover:scale-[1.01] bg-token-nested border border-token-subtle"
+
     >
       {/* Defect No + Severity */}
       <div className="flex items-center gap-1.5 mb-1.5">

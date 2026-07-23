@@ -191,7 +191,7 @@ function AssetGridCard({
                 className="absolute inset-0 flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-200"
                 style={{ background: 'rgba(0,0,0,0.35)' }}
               >
-                <Film size={22} style={{ color: 'rgba(255,255,255,0.85)' }} />
+                <Film size={22} style={{ color: 'var(--text-primary)' }} />
               </div>
             )}
           </>
@@ -378,7 +378,7 @@ function DetailPanel({
         <button
           type="button"
           onClick={onClose}
-          className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover:bg-white/8"
+          className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover-bg-soft"
           style={{ color: 'var(--text-muted)' }}
         >
           <X size={16} />
@@ -1049,7 +1049,7 @@ export default function DesktopAssetsPage() {
               type="button"
               onClick={() => fetchAssets(activeTab)}
               disabled={loading}
-              className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover:bg-white/6"
+              className="h-7 w-7 inline-flex items-center justify-center rounded-lg transition-colors hover-bg-soft"
               style={{ color: 'var(--text-muted)' }}
               title="刷新"
             >

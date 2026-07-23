@@ -85,4 +85,4 @@ export function fmtTime(s: string | undefined): string {
 export const NO_CATEGORY = '__none__';
 
 /** 聚焦容器统一样式：内部 input 加 .no-focus-ring 去掉全局紫色 outline，容器走 focus-within 青色边 */
-export const FOCUS_BOX = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
+export const FOCUS_BOX = 'flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle transition-colors focus-within:border-cyan-500/40 focus-within:bg-token-nested';

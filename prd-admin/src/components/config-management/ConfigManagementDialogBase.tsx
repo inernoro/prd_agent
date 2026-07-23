@@ -298,7 +298,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                     type="button"
                     onClick={() => setCategoryFilter(opt.key)}
                     className={`px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                      categoryFilter === opt.key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                      categoryFilter === opt.key ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft'
                     }`}
                     style={{ color: categoryFilter === opt.key ? undefined : 'var(--text-muted)' }}
                   >
@@ -315,7 +315,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                   type="button"
                   onClick={() => setSortBy(opt.key)}
                   className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                    sortBy === opt.key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                    sortBy === opt.key ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft'
                   }`}
                   style={{ color: sortBy === opt.key ? undefined : 'var(--text-muted)' }}
                 >
@@ -430,7 +430,7 @@ export const ConfigManagementDialogBase = forwardRef<ConfigManagementDialogHandl
                   type="button"
                   onClick={() => setViewMode(tab.key)}
                   className={`flex items-center gap-1.5 px-4 py-2 rounded-lg text-sm font-medium transition-all ${
-                    viewMode === tab.key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                    viewMode === tab.key ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft text-gray-400'
                   }`}
                 >
                   {tab.icon}

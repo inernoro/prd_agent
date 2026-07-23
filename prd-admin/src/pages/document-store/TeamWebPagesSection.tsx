@@ -106,7 +106,7 @@ export function TeamWebPagesSection({ teamId }: { teamId: string | null }) {
                       ))}
                     </div>
                   )}
-                  <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}>
+                  <div className="flex items-center justify-between pt-2 border-t border-t-token-subtle" >
                     <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }} title="浏览次数">
                       <Eye size={11} /> {site.viewCount}
                     </span>

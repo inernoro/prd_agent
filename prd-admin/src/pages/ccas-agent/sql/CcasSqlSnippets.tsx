@@ -109,22 +109,22 @@ export function CcasSqlSnippets() {
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
       <div className="shrink-0 flex flex-col gap-2 sm:flex-row sm:items-center sm:justify-between">
-        <p className="text-xs text-white/55 leading-relaxed">
+        <p className="text-xs text-token-secondary leading-relaxed">
           团队公认的 CCAS 排查 SQL 集合，按数据库版本分组。点左侧目录浏览，右上角一键复制。
         </p>
         <div className="relative shrink-0 w-full sm:w-72">
-          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-white/40" />
+          <Search className="w-3.5 h-3.5 absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
           <input
             type="text"
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索标题 / 备注 / SQL 内容"
-            className="w-full h-8 pl-7 pr-2.5 rounded-md border border-white/10 bg-white/[0.04] text-xs text-white/85 placeholder:text-white/35 focus:outline-none focus:border-amber-300/40 transition"
+            className="w-full h-8 pl-7 pr-2.5 rounded-md border border-token-subtle bg-token-nested text-xs text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-300/40 transition"
           />
         </div>
       </div>
 
-      <div className="shrink-0 text-[11px] text-white/40">
+      <div className="shrink-0 text-[11px] text-token-muted">
         共 {SQL_SNIPPET_TOTAL} 条预设
         {keyword.trim() && (
           <span>
@@ -133,20 +133,20 @@ export function CcasSqlSnippets() {
         )}
       </div>
 
-      <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-0 rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+      <div className="flex-1 min-h-0 flex flex-col md:flex-row gap-0 rounded-xl border border-token-subtle bg-token-nested overflow-hidden">
         <aside
-          className="shrink-0 md:w-64 lg:w-72 max-h-60 md:max-h-full md:border-r border-b md:border-b-0 border-white/8 bg-white/[0.015]"
+          className="shrink-0 md:w-64 lg:w-72 max-h-60 md:max-h-full md:border-r border-b md:border-b-0 border-token-subtle bg-token-nested"
           style={{ overflowY: 'auto', minHeight: 0 }}
         >
           {filteredGroups.length === 0 ? (
-            <div className="px-4 py-6 text-center text-xs text-white/40">
+            <div className="px-4 py-6 text-center text-xs text-token-muted">
               没有匹配的语句
             </div>
           ) : (
             <nav className="py-2">
               {filteredGroups.map((group) => (
                 <div key={group.id} className="px-2 pb-2">
-                  <div className="px-2 pt-1.5 pb-1 text-[10.5px] uppercase tracking-wider text-white/40 font-semibold">
+                  <div className="px-2 pt-1.5 pb-1 text-[10.5px] uppercase tracking-wider text-token-muted font-semibold">
                     {group.name}
                   </div>
                   <ul className="flex flex-col">
@@ -158,7 +158,7 @@ export function CcasSqlSnippets() {
                             type="button"
                             onClick={() => setSelectedId(s.id)}
                             data-active={isActive}
-                            className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-white/75 hover:text-white hover:bg-white/[0.06] data-[active=true]:bg-amber-300/12 data-[active=true]:text-amber-200 data-[active=true]:font-medium transition flex items-center gap-2"
+                            className="w-full text-left px-2.5 py-1.5 rounded-md text-xs text-token-secondary hover-text-primary hover-bg-soft data-[active=true]:bg-amber-300/12 data-[active=true]:text-amber-200 data-[active=true]:font-medium transition flex items-center gap-2"
                           >
                             <span
                               aria-hidden
@@ -183,11 +183,11 @@ export function CcasSqlSnippets() {
         <div className="flex-1 min-h-0" style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {selected ? (
             <article className="flex flex-col">
-              <header className="sticky top-0 z-10 px-4 py-3 border-b border-white/8 bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
+              <header className="sticky top-0 z-10 px-4 py-3 border-b border-token-subtle bg-[#0f1014]/95 backdrop-blur flex items-center justify-between gap-3">
                 <div className="flex items-center gap-2 min-w-0">
-                  <h3 className="text-sm font-semibold text-white/95 truncate">{selected.title}</h3>
+                  <h3 className="text-sm font-semibold text-token-primary truncate">{selected.title}</h3>
                   <DialectBadge dialect={selected.dialect} />
-                  <span className="text-[10.5px] text-white/40 truncate">· {selected.groupName}</span>
+                  <span className="text-[10.5px] text-token-muted truncate">· {selected.groupName}</span>
                 </div>
                 <button
                   type="button"
@@ -201,21 +201,21 @@ export function CcasSqlSnippets() {
               </header>
 
               {selected.note && (
-                <div className="px-4 py-2 text-[11.5px] text-white/55 flex items-start gap-1.5 border-b border-white/6 bg-white/[0.01]">
+                <div className="px-4 py-2 text-[11.5px] text-token-secondary flex items-start gap-1.5 border-b border-token-subtle bg-token-nested">
                   <Info className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/60" />
                   <span>{selected.note}</span>
                 </div>
               )}
 
               <pre
-                className="text-[13px] leading-[1.65] text-white/90 font-mono px-4 py-4 m-0 overflow-x-auto"
+                className="text-[13px] leading-[1.65] text-token-primary font-mono px-4 py-4 m-0 overflow-x-auto"
                 style={{ tabSize: 2 }}
               >
                 <code>{selected.sql}</code>
               </pre>
             </article>
           ) : (
-            <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-2 text-white/40 px-6">
+            <div className="h-full min-h-[220px] flex flex-col items-center justify-center text-center gap-2 text-token-muted px-6">
               <BookOpen className="w-6 h-6" />
               <div className="text-xs">从左侧目录选一条 SQL 查看</div>
             </div>

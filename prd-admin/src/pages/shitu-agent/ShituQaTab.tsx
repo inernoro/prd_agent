@@ -174,8 +174,8 @@ export function ShituQaTab({ categoryKey, categoryLabel, storeId, exampleQuestio
   };
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/20">
-      <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center gap-2 text-[11px] text-white/55">
+    <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-token-subtle bg-token-nested">
+      <div className="shrink-0 px-4 py-2 border-b border-token-subtle flex items-center gap-2 text-[11px] text-token-secondary">
         <Sparkles className="w-3.5 h-3.5 text-sky-300/70" />
         <span>{categoryLabel} · 严格 RAG 问答</span>
         {phaseHint && (
@@ -205,19 +205,19 @@ export function ShituQaTab({ categoryKey, categoryLabel, storeId, exampleQuestio
         )}
       </div>
 
-      <div className="shrink-0 border-t border-white/10 bg-black/30 px-4 py-3">
-        <div className="rounded-xl border border-white/15 bg-black/40 focus-within:border-sky-400/50 transition">
+      <div className="shrink-0 border-t border-token-subtle bg-token-nested px-4 py-3">
+        <div className="rounded-xl border border-token-subtle bg-token-nested focus-within:border-sky-400/50 transition">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             onKeyDown={onComposerKeydown}
             rows={3}
             placeholder={`就「${categoryLabel}」提问…（Cmd/Ctrl+Enter 发送）`}
-            className="w-full bg-transparent border-0 px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none resize-none"
+            className="w-full bg-transparent border-0 px-3 py-2.5 text-sm text-token-primary placeholder-token-muted focus:outline-none resize-none"
             disabled={isStreaming}
           />
-          <div className="flex items-center gap-2 px-2 py-2 border-t border-white/10">
-            <span className="text-[10px] text-white/35 flex-1">自动挂载当前分类知识库，知识库无内容时会明确告知</span>
+          <div className="flex items-center gap-2 px-2 py-2 border-t border-token-subtle">
+            <span className="text-[10px] text-token-muted flex-1">自动挂载当前分类知识库，知识库无内容时会明确告知</span>
             {isStreaming ? (
               <Button onClick={abort} variant="ghost" className="!h-7 !px-2.5 !text-[11px]">
                 <StopCircle className="w-3 h-3 mr-1" />
@@ -250,8 +250,8 @@ function Welcome({
       <div className="w-12 h-12 rounded-full bg-sky-500/10 border border-sky-400/25 flex items-center justify-center mb-4">
         <Sparkles className="w-6 h-6 text-sky-300" />
       </div>
-      <h2 className="text-lg font-semibold text-white mb-1.5">识途 · {categoryLabel}</h2>
-      <p className="text-sm text-white/55 mb-6 leading-relaxed">
+      <h2 className="text-lg font-semibold text-token-primary mb-1.5">识途 · {categoryLabel}</h2>
+      <p className="text-sm text-token-secondary mb-6 leading-relaxed">
         基于当前分类知识库的严格 RAG 问答。只回答资料覆盖到的内容；没有就明说，不杜撰。
       </p>
       <div className="w-full grid grid-cols-1 sm:grid-cols-2 gap-2">
@@ -260,9 +260,9 @@ function Welcome({
             key={q}
             type="button"
             onClick={() => onPick(q)}
-            className="text-left rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition px-3 py-2.5"
+            className="text-left rounded-lg border border-token-subtle bg-token-nested hover-bg-soft hover-border-token transition px-3 py-2.5"
           >
-            <div className="text-[12px] text-white/85 line-clamp-2">{q}</div>
+            <div className="text-[12px] text-token-primary line-clamp-2">{q}</div>
           </button>
         ))}
       </div>
@@ -278,7 +278,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
           isUser
             ? 'bg-sky-500/15 border border-sky-400/25 text-white/95'
-            : 'bg-white/[0.04] border border-white/10 text-white/90'
+            : 'bg-token-nested border border-token-subtle text-token-primary'
         }`}
       >
         {isUser ? (
@@ -293,7 +293,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             ) : msg.content ? (
               <MarkdownContent content={msg.content} variant="compact" />
             ) : (
-              <div className="text-sm text-white/45 inline-flex items-center gap-1.5">
+              <div className="text-sm text-token-muted inline-flex items-center gap-1.5">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 正在思考…
               </div>
@@ -307,13 +307,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             )}
 
             {!msg.streaming && msg.references && msg.references.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-white/10">
-                <div className="text-[10px] text-white/40 mb-1">引用脚注（与回答中 [N] 对应）</div>
-                <ol className="text-[11px] text-white/70 space-y-0.5 list-decimal list-inside">
+              <div className="mt-3 pt-2 border-t border-token-subtle">
+                <div className="text-[10px] text-token-muted mb-1">引用脚注（与回答中 [N] 对应）</div>
+                <ol className="text-[11px] text-token-secondary space-y-0.5 list-decimal list-inside">
                   {msg.references.map((r) => (
                     <li key={r.entryId}>
-                      <span className="text-white/85">{r.title}</span>
-                      <span className="text-white/35 ml-1">~{Math.round(r.chars / 1000)}k 字</span>
+                      <span className="text-token-primary">{r.title}</span>
+                      <span className="text-token-muted ml-1">~{Math.round(r.chars / 1000)}k 字</span>
                     </li>
                   ))}
                 </ol>
@@ -321,7 +321,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             )}
 
             {!msg.streaming && msg.model?.name && (
-              <div className="mt-1.5 text-[10px] text-white/35 font-mono">
+              <div className="mt-1.5 text-[10px] text-token-muted font-mono">
                 ● {msg.model.name}
                 {msg.model.platform ? ` · ${msg.model.platform}` : ''}
               </div>

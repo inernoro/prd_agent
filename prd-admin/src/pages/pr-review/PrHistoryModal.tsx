@@ -178,7 +178,7 @@ export function PrHistoryModal({ itemId, htmlUrl, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-5xl rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        className="relative w-full max-w-5xl rounded-xl border border-token-subtle bg-token-card shadow-2xl flex flex-col overflow-hidden"
         style={{
           // 关键：用 inline style 强制高度 = 视口 90%，绕过 Tailwind JIT
           // 可能遇到的任何 arbitrary value 问题（用户反馈过两次 modal 超出
@@ -189,17 +189,17 @@ export function PrHistoryModal({ itemId, htmlUrl, onClose }: Props) {
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-token-subtle shrink-0">
           <History size={18} className="text-violet-300" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white">GitHub 审查历史</div>
-            <div className="text-[11px] text-white/50 mt-0.5">按 tab 懒加载，单次请求 300-600ms</div>
+            <div className="text-sm font-semibold text-token-primary">GitHub 审查历史</div>
+            <div className="text-[11px] text-token-secondary mt-0.5">按 tab 懒加载，单次请求 300-600ms</div>
           </div>
           <a
             href={htmlUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-xs transition"
+            className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary hover-text-primary text-xs transition"
           >
             <ExternalLink size={12} />
             GitHub
@@ -207,14 +207,14 @@ export function PrHistoryModal({ itemId, htmlUrl, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition"
+            className="p-2 rounded-lg text-token-secondary hover-text-primary hover-bg-soft transition"
           >
             <X size={16} />
           </button>
         </div>
 
         {/* Tab bar */}
-        <div className="flex items-center gap-1 px-4 border-b border-white/10 shrink-0 overflow-x-auto">
+        <div className="flex items-center gap-1 px-4 border-b border-token-subtle shrink-0 overflow-x-auto">
           {TAB_ORDER.map((t) => {
             const s = (states as Record<TabKey, TabState<unknown>>)[t.key];
             return (
@@ -338,7 +338,7 @@ function TabWrapper<T>({
   }
 
   if (state.items.length === 0) {
-    return <div className="text-center text-xs text-white/40 py-16">{emptyText}</div>;
+    return <div className="text-center text-xs text-token-muted py-16">{emptyText}</div>;
   }
 
   return (
@@ -350,7 +350,7 @@ function TabWrapper<T>({
             type="button"
             onClick={onLoadMore}
             disabled={state.loading}
-            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white/5 hover:bg-white/10 disabled:opacity-50 text-xs text-white/80 transition border border-white/10"
+            className="flex items-center gap-2 px-4 py-2 rounded-lg bg-token-nested hover-bg-soft disabled:opacity-50 text-xs text-token-primary transition border border-token-subtle"
           >
             {state.loading ? (
               <MapSpinner size={14} />
@@ -362,7 +362,7 @@ function TabWrapper<T>({
         </div>
       )}
       {!state.hasMore && state.items.length > 30 && (
-        <div className="mt-4 text-center text-[10px] text-white/30">
+        <div className="mt-4 text-center text-[10px] text-token-muted-faint">
           已加载全部 {state.items.length} 条
         </div>
       )}
@@ -394,7 +394,7 @@ function TabButton({
       type="button"
       onClick={onClick}
       className={`flex items-center gap-1.5 px-3 py-2 text-xs transition relative shrink-0 ${
-        active ? 'text-white' : 'text-white/50 hover:text-white/80'
+        active ? 'text-token-primary' : 'text-token-secondary hover-text-primary'
       }`}
     >
       {icon}
@@ -404,7 +404,7 @@ function TabButton({
       ) : count != null ? (
         <span
           className={`text-[10px] px-1.5 rounded-full ${
-            active ? 'bg-violet-500/30 text-violet-200' : 'bg-white/5 text-white/40'
+            active ? 'bg-violet-500/30 text-violet-200' : 'bg-token-nested text-token-muted'
           }`}
         >
           {count}
@@ -423,7 +423,7 @@ function TabButton({
 
 function TimelineTab({ events }: { events: PrHistoryTimelineEvent[] }) {
   return (
-    <ol className="relative border-l-2 border-white/10 ml-3 space-y-3">
+    <ol className="relative border-l-2 border-token-subtle ml-3 space-y-3">
       {events.map((ev, i) => {
         const meta = timelineEventMeta(ev.event);
         return (
@@ -431,29 +431,29 @@ function TimelineTab({ events }: { events: PrHistoryTimelineEvent[] }) {
             <div
               className={`absolute w-4 h-4 rounded-full -left-[9px] flex items-center justify-center ${meta.dotBg}`}
             >
-              <div className="w-1.5 h-1.5 rounded-full bg-white/80" />
+              <div className="w-1.5 h-1.5 rounded-full bg-token-nested0" />
             </div>
             <div className={`rounded-lg border px-3 py-2 ${meta.color}`}>
               <div className="flex items-start gap-2">
                 <div className="shrink-0 mt-0.5">{meta.icon}</div>
                 <div className="flex-1 min-w-0">
                   <div className="text-xs leading-relaxed">
-                    {ev.actorLogin && <span className="font-semibold text-white">{ev.actorLogin}</span>}{' '}
-                    <span className="text-white/75">{buildTimelineDescription(ev)}</span>
+                    {ev.actorLogin && <span className="font-semibold text-token-primary">{ev.actorLogin}</span>}{' '}
+                    <span className="text-token-primary">{buildTimelineDescription(ev)}</span>
                   </div>
                   {ev.commitMessage && (
-                    <div className="mt-1 text-[11px] text-white/60 font-mono break-words">
+                    <div className="mt-1 text-[11px] text-token-secondary font-mono break-words">
                       {ev.commitMessage}
-                      {ev.commitSha && <span className="ml-2 text-white/40">{ev.commitSha.slice(0, 7)}</span>}
+                      {ev.commitSha && <span className="ml-2 text-token-muted">{ev.commitSha.slice(0, 7)}</span>}
                     </div>
                   )}
                   {ev.body && (
-                    <div className="mt-1.5 text-[12px] text-white/75">
+                    <div className="mt-1.5 text-[12px] text-token-primary">
                       <PrMarkdown variant="inline">{ev.body}</PrMarkdown>
                     </div>
                   )}
                   {ev.createdAt && (
-                    <div className="mt-1 text-[10px] text-white/35 font-mono flex items-center gap-1">
+                    <div className="mt-1 text-[10px] text-token-muted-faint font-mono flex items-center gap-1">
                       <Clock size={10} />
                       {formatDateTime(ev.createdAt)}
                     </div>
@@ -481,7 +481,7 @@ function timelineEventMeta(event: string): TimelineMeta {
     case 'reviewed':
       return { icon: <Eye size={12} className="text-violet-300" />, color: 'border-violet-500/20 bg-violet-500/[0.04]', dotBg: 'bg-violet-500/40' };
     case 'commented':
-      return { icon: <MessageSquare size={12} className="text-white/60" />, color: 'border-white/10 bg-white/[0.02]', dotBg: 'bg-white/30' };
+      return { icon: <MessageSquare size={12} className="text-token-secondary" />, color: 'border-token-subtle bg-token-nested', dotBg: 'bg-token-nested0' };
     case 'labeled':
     case 'unlabeled':
       return { icon: <Tag size={12} className="text-amber-300" />, color: 'border-amber-500/20 bg-amber-500/[0.04]', dotBg: 'bg-amber-500/40' };
@@ -500,16 +500,16 @@ function timelineEventMeta(event: string): TimelineMeta {
     case 'head_ref_force_pushed':
       return { icon: <AlertCircle size={12} className="text-orange-300" />, color: 'border-orange-500/20 bg-orange-500/[0.04]', dotBg: 'bg-orange-500/40' };
     case 'head_ref_deleted':
-      return { icon: <MinusCircle size={12} className="text-white/40" />, color: 'border-white/10 bg-white/[0.02]', dotBg: 'bg-white/20' };
+      return { icon: <MinusCircle size={12} className="text-token-muted" />, color: 'border-token-subtle bg-token-nested', dotBg: 'bg-token-muted' };
     case 'renamed':
       return { icon: <Pencil size={12} className="text-cyan-300" />, color: 'border-cyan-500/20 bg-cyan-500/[0.04]', dotBg: 'bg-cyan-500/40' };
     case 'ready_for_review':
       return { icon: <Play size={12} className="text-emerald-300" />, color: 'border-emerald-500/20 bg-emerald-500/[0.04]', dotBg: 'bg-emerald-500/40' };
     case 'convert_to_draft':
     case 'converted_to_draft':
-      return { icon: <FileText size={12} className="text-white/60" />, color: 'border-white/10 bg-white/[0.02]', dotBg: 'bg-white/30' };
+      return { icon: <FileText size={12} className="text-token-secondary" />, color: 'border-token-subtle bg-token-nested', dotBg: 'bg-token-nested0' };
     default:
-      return { icon: <History size={12} className="text-white/40" />, color: 'border-white/10 bg-white/[0.02]', dotBg: 'bg-white/25' };
+      return { icon: <History size={12} className="text-token-muted" />, color: 'border-token-subtle bg-token-nested', dotBg: 'bg-token-muted' };
   }
 }
 
@@ -575,15 +575,15 @@ function CommitsTab({ commits }: { commits: PrHistoryCommit[] }) {
           href={c.htmlUrl ?? '#'}
           target="_blank"
           rel="noopener noreferrer"
-          className="block rounded-lg border border-white/10 bg-white/[0.02] hover:bg-white/[0.04] hover:border-white/20 transition p-3"
+          className="block rounded-lg border border-token-subtle bg-token-nested hover-bg-soft hover-border-token transition p-3"
         >
           <div className="flex items-start gap-3">
             <GitCommit size={14} className="text-sky-300 mt-0.5 shrink-0" />
             <div className="flex-1 min-w-0">
-              <div className="text-[13px] text-white leading-snug break-words">
+              <div className="text-[13px] text-token-primary leading-snug break-words">
                 {c.message.split('\n')[0]}
               </div>
-              <div className="mt-1 flex items-center gap-2 text-[11px] text-white/50 font-mono flex-wrap">
+              <div className="mt-1 flex items-center gap-2 text-[11px] text-token-secondary font-mono flex-wrap">
                 <span className="text-sky-300">{c.sha.slice(0, 7)}</span>
                 <span>·</span>
                 <span>{c.authorLogin ?? c.authorName}</span>
@@ -595,7 +595,7 @@ function CommitsTab({ commits }: { commits: PrHistoryCommit[] }) {
                 )}
               </div>
             </div>
-            <ExternalLink size={12} className="text-white/30 mt-1" />
+            <ExternalLink size={12} className="text-token-muted-faint mt-1" />
           </div>
         </a>
       ))}
@@ -618,16 +618,16 @@ function ReviewsTab({ reviews }: { reviews: PrHistoryReview[] }) {
               <div className="shrink-0 mt-0.5">{meta.icon}</div>
               <div className="flex-1 min-w-0">
                 <div className="text-xs">
-                  <span className="font-semibold text-white">{r.authorLogin}</span>{' '}
-                  <span className="text-white/70">{meta.label}</span>
+                  <span className="font-semibold text-token-primary">{r.authorLogin}</span>{' '}
+                  <span className="text-token-secondary">{meta.label}</span>
                 </div>
                 {r.body && r.body.trim() && (
-                  <div className="mt-2 text-[13px] text-white/85">
+                  <div className="mt-2 text-[13px] text-token-primary">
                     <PrMarkdown>{r.body}</PrMarkdown>
                   </div>
                 )}
                 {r.submittedAt && (
-                  <div className="mt-1.5 text-[10px] text-white/35 font-mono flex items-center gap-1">
+                  <div className="mt-1.5 text-[10px] text-token-muted-faint font-mono flex items-center gap-1">
                     <Clock size={10} />
                     {formatDateTime(r.submittedAt)}
                   </div>
@@ -650,11 +650,11 @@ function reviewStateMeta(state: string) {
     case 'COMMENTED':
       return { icon: <MessageSquare size={14} className="text-sky-300" />, label: '评论', color: 'border-sky-500/20 bg-sky-500/[0.04]' };
     case 'DISMISSED':
-      return { icon: <MinusCircle size={14} className="text-white/50" />, label: '已废弃', color: 'border-white/10 bg-white/[0.02]' };
+      return { icon: <MinusCircle size={14} className="text-token-secondary" />, label: '已废弃', color: 'border-token-subtle bg-token-nested' };
     case 'PENDING':
       return { icon: <Clock size={14} className="text-amber-300" />, label: '草稿中', color: 'border-amber-500/20 bg-amber-500/[0.04]' };
     default:
-      return { icon: <Eye size={14} className="text-white/50" />, label: state, color: 'border-white/10 bg-white/[0.02]' };
+      return { icon: <Eye size={14} className="text-token-secondary" />, label: state, color: 'border-token-subtle bg-token-nested' };
   }
 }
 
@@ -666,16 +666,16 @@ function IssueCommentsTab({ comments }: { comments: PrHistoryIssueComment[] }) {
   return (
     <div className="space-y-3">
       {comments.map((c) => (
-        <div key={c.id} className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
+        <div key={c.id} className="rounded-lg border border-token-subtle bg-token-nested p-3">
           <div className="flex items-start gap-2">
-            <MessageSquare size={14} className="text-white/50 mt-0.5" />
+            <MessageSquare size={14} className="text-token-secondary mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-white/50">
-                <span className="font-semibold text-white">{c.authorLogin}</span>
+              <div className="flex items-center gap-2 text-[11px] text-token-secondary">
+                <span className="font-semibold text-token-primary">{c.authorLogin}</span>
                 {c.createdAt && <span className="font-mono">{formatDateTime(c.createdAt)}</span>}
               </div>
               {c.body && (
-                <div className="mt-2 text-[13px] text-white/85">
+                <div className="mt-2 text-[13px] text-token-primary">
                   <PrMarkdown>{c.body}</PrMarkdown>
                 </div>
               )}
@@ -699,21 +699,21 @@ function ReviewCommentsTab({ comments }: { comments: PrHistoryReviewComment[] })
           <div className="flex items-start gap-2">
             <MessageSquare size={14} className="text-sky-300 mt-0.5" />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-[11px] text-white/50 flex-wrap">
-                <span className="font-semibold text-white">{c.authorLogin}</span>
+              <div className="flex items-center gap-2 text-[11px] text-token-secondary flex-wrap">
+                <span className="font-semibold text-token-primary">{c.authorLogin}</span>
                 {c.createdAt && <span className="font-mono">{formatDateTime(c.createdAt)}</span>}
               </div>
               {c.path && (
-                <div className="mt-1 text-[11px] text-white/50 font-mono">
+                <div className="mt-1 text-[11px] text-token-secondary font-mono">
                   <FileText size={10} className="inline mr-1" />
                   {c.path}
-                  {c.line != null && <span className="text-white/40">:L{c.line}</span>}
+                  {c.line != null && <span className="text-token-muted">:L{c.line}</span>}
                 </div>
               )}
               {c.diffHunk && (
-                <pre className="mt-1.5 text-[10px] leading-relaxed font-mono whitespace-pre overflow-x-auto bg-black/40 rounded p-2 max-h-32 border border-white/5">
+                <pre className="mt-1.5 text-[10px] leading-relaxed font-mono whitespace-pre overflow-x-auto bg-token-nested rounded p-2 max-h-32 border border-token-subtle">
                   {c.diffHunk.split('\n').map((line, i) => {
-                    let cls = 'text-white/60';
+                    let cls = 'text-token-secondary';
                     if (line.startsWith('+') && !line.startsWith('+++')) cls = 'text-emerald-300';
                     else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-red-300';
                     else if (line.startsWith('@@')) cls = 'text-sky-300';
@@ -726,7 +726,7 @@ function ReviewCommentsTab({ comments }: { comments: PrHistoryReviewComment[] })
                 </pre>
               )}
               {c.body && (
-                <div className="mt-2 text-[13px] text-white/85">
+                <div className="mt-2 text-[13px] text-token-primary">
                   <PrMarkdown>{c.body}</PrMarkdown>
                 </div>
               )}
@@ -753,13 +753,13 @@ function ChecksTab({ runs }: { runs: PrHistoryCheckRun[] }) {
             href={r.htmlUrl ?? '#'}
             target="_blank"
             rel="noopener noreferrer"
-            className={`block rounded-lg border p-3 transition hover:bg-white/[0.04] ${meta.color}`}
+            className={`block rounded-lg border p-3 transition hover-bg-soft ${meta.color}`}
           >
             <div className="flex items-start gap-3">
               <div className="shrink-0 mt-0.5">{meta.icon}</div>
               <div className="flex-1 min-w-0">
-                <div className="text-[13px] text-white leading-snug truncate">{r.name}</div>
-                <div className="mt-1 flex items-center gap-2 text-[11px] text-white/50 font-mono flex-wrap">
+                <div className="text-[13px] text-token-primary leading-snug truncate">{r.name}</div>
+                <div className="mt-1 flex items-center gap-2 text-[11px] text-token-secondary font-mono flex-wrap">
                   <span>{meta.label}</span>
                   {r.appName && (
                     <>
@@ -789,7 +789,7 @@ function ChecksTab({ runs }: { runs: PrHistoryCheckRun[] }) {
                   )}
                 </div>
               </div>
-              <ExternalLink size={12} className="text-white/30 mt-1" />
+              <ExternalLink size={12} className="text-token-muted-faint mt-1" />
             </div>
           </a>
         );
@@ -806,22 +806,22 @@ function checkRunMeta(r: PrHistoryCheckRun) {
       case 'failure':
         return { icon: <XCircle size={14} className="text-red-300" />, label: '失败', color: 'border-red-500/20 bg-red-500/[0.04]' };
       case 'cancelled':
-        return { icon: <MinusCircle size={14} className="text-white/50" />, label: '已取消', color: 'border-white/10 bg-white/[0.02]' };
+        return { icon: <MinusCircle size={14} className="text-token-secondary" />, label: '已取消', color: 'border-token-subtle bg-token-nested' };
       case 'skipped':
-        return { icon: <MinusCircle size={14} className="text-white/40" />, label: '已跳过', color: 'border-white/10 bg-white/[0.02]' };
+        return { icon: <MinusCircle size={14} className="text-token-muted" />, label: '已跳过', color: 'border-token-subtle bg-token-nested' };
       case 'timed_out':
         return { icon: <Clock size={14} className="text-amber-300" />, label: '超时', color: 'border-amber-500/20 bg-amber-500/[0.04]' };
       case 'action_required':
         return { icon: <AlertCircle size={14} className="text-orange-300" />, label: '需要操作', color: 'border-orange-500/20 bg-orange-500/[0.04]' };
       case 'neutral':
       default:
-        return { icon: <MinusCircle size={14} className="text-white/50" />, label: r.conclusion ?? '完成', color: 'border-white/10 bg-white/[0.02]' };
+        return { icon: <MinusCircle size={14} className="text-token-secondary" />, label: r.conclusion ?? '完成', color: 'border-token-subtle bg-token-nested' };
     }
   }
   if (r.status === 'in_progress') {
     return { icon: <MapSpinner size={14} color="#7dd3fc" />, label: '运行中', color: 'border-sky-500/20 bg-sky-500/[0.04]' };
   }
-  return { icon: <Clock size={14} className="text-white/50" />, label: r.status, color: 'border-white/10 bg-white/[0.02]' };
+  return { icon: <Clock size={14} className="text-token-secondary" />, label: r.status, color: 'border-token-subtle bg-token-nested' };
 }
 
 // ============================================================

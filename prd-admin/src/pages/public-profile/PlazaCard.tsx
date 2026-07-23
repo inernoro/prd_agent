@@ -130,7 +130,7 @@ export function PlazaCard({
                 {title || '未命名'}
               </h3>
               {meta && (
-                <div className="flex items-center gap-2 text-[10px] text-white/60 drop-shadow">
+                <div className="flex items-center gap-2 text-[10px] text-token-secondary drop-shadow">
                   {meta}
                 </div>
               )}

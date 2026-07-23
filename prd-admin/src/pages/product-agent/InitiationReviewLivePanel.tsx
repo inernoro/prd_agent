@@ -64,11 +64,11 @@ export function InitiationReviewLivePanel({
   return (
     <div className="space-y-4 rounded-xl border border-cyan-400/20 bg-cyan-400/5 p-4">
       <div>
-        <div className="mb-1.5 flex items-center justify-between text-xs text-white/50">
+        <div className="mb-1.5 flex items-center justify-between text-xs text-token-secondary">
           <span>评审进度</span>
           <span className="tabular-nums">{progressPercent}%</span>
         </div>
-        <div className="h-1.5 overflow-hidden rounded-full bg-white/10">
+        <div className="h-1.5 overflow-hidden rounded-full bg-token-nested">
           <div
             className="h-full rounded-full bg-cyan-400 transition-all duration-500"
             style={{ width: `${progressPercent}%` }}
@@ -88,13 +88,13 @@ export function InitiationReviewLivePanel({
 
       {dimensionScores.length > 0 && (
         <div className="space-y-2">
-          <p className="text-xs font-medium text-white/50">分项评分（实时）</p>
+          <p className="text-xs font-medium text-token-secondary">分项评分（实时）</p>
           {dimensionScores.map((dim) => (
             <div
               key={dim.key}
-              className="flex items-center justify-between rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2"
+              className="flex items-center justify-between rounded-lg border border-token-subtle bg-token-nested px-3 py-2"
             >
-              <span className="text-sm text-white/75">{dim.name}</span>
+              <span className="text-sm text-token-secondary">{dim.name}</span>
               <span className={`text-sm font-semibold tabular-nums ${scoreTone(dim.score, dim.maxScore)}`}>
                 {dim.score}/{dim.maxScore}
               </span>
@@ -121,16 +121,16 @@ export function InitiationReviewLivePanel({
       )}
 
       <div>
-        <p className="mb-2 text-xs font-medium text-white/50">过程日志</p>
+        <p className="mb-2 text-xs font-medium text-token-secondary">过程日志</p>
         <div
-          className="max-h-44 overflow-y-auto rounded-lg border border-white/8 bg-black/20 px-3 py-2 font-mono text-[11px] leading-relaxed text-white/60"
+          className="max-h-44 overflow-y-auto rounded-lg border border-token-subtle bg-token-nested px-3 py-2 font-mono text-[11px] leading-relaxed text-token-secondary"
         >
           {logs.length === 0 ? (
-            <span className="text-white/35">等待开始…</span>
+            <span className="text-token-muted">等待开始…</span>
           ) : (
             logs.map((entry) => (
               <div key={entry.id} className="flex gap-2 py-0.5">
-                <span className="shrink-0 text-white/30">{entry.at}</span>
+                <span className="shrink-0 text-token-muted">{entry.at}</span>
                 <span>{entry.text}</span>
               </div>
             ))

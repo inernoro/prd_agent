@@ -124,7 +124,7 @@ export function BottomSheet({
                 {title}
               </DialogPrimitive.Title>
               <DialogPrimitive.Close
-                className="h-9 w-9 inline-flex items-center justify-center rounded-xl text-token-secondary hover:bg-white/5"
+                className="h-9 w-9 inline-flex items-center justify-center rounded-xl text-token-secondary hover-bg-soft"
                 aria-label="关闭"
               >
                 <X size={18} />

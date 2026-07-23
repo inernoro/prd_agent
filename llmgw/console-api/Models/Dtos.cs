@@ -115,6 +115,8 @@ public sealed class LlmLogListItem
     public int? StatusCode { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public string? TokenUsageSource { get; set; }
+    public int? ImageSuccessCount { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }

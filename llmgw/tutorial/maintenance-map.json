@@ -14,6 +14,7 @@
     {"id":"home","pagePath":"llmgw/web/src/pages/OverviewPage.tsx","tutorialSourceIds":["chapter-03"]},
     {"id":"logs","pagePath":"llmgw/web/src/pages/LogsPage.tsx","tutorialSourceIds":["chapter-13","chapter-21","chapter-30","practical-image-03","practical-image-04"]},
     {"id":"log-detail","pagePath":"llmgw/web/src/pages/LogDetailPage.tsx","tutorialSourceIds":["chapter-13","chapter-21"]},
+    {"id":"log-entity-details","pagePath":"llmgw/web/src/pages/EntityDetailsPages.tsx","tutorialSourceIds":["chapter-06","chapter-07","chapter-09","chapter-13","chapter-14","chapter-18","chapter-21","practical-image-01","practical-image-02","practical-image-03","practical-image-04"]},
     {"id":"app-callers","pagePath":"llmgw/web/src/pages/AppCallersPage.tsx","tutorialSourceIds":["chapter-09","chapter-14","practical-image-02"]},
     {"id":"prompt-policy","pagePath":"llmgw/web/src/pages/PromptPolicyPage.tsx","tutorialSourceIds":["chapter-20","chapter-24"]},
     {"id":"model-pools","pagePath":"llmgw/web/src/pages/ModelPoolsPage.tsx","tutorialSourceIds":["chapter-08","chapter-17","chapter-18"]},

@@ -783,9 +783,9 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
     return (
       <div className="mt-2 space-y-2">
         <div className="flex flex-wrap gap-2 text-xs">
-          <span className="rounded bg-white/10 px-2 py-1 text-white/70">{String(payload.toolName ?? 'tool')}</span>
-          <span className="rounded bg-white/10 px-2 py-1 text-white/55">{String(payload.risk ?? 'readonly')}</span>
-          <span className="rounded bg-white/10 px-2 py-1 text-white/55">{String(payload.status ?? 'pending')}</span>
+          <span className="rounded bg-token-nested px-2 py-1 text-white/70">{String(payload.toolName ?? 'tool')}</span>
+          <span className="rounded bg-token-nested px-2 py-1 text-white/55">{String(payload.risk ?? 'readonly')}</span>
+          <span className="rounded bg-token-nested px-2 py-1 text-white/55">{String(payload.status ?? 'pending')}</span>
         </div>
         <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words text-xs leading-relaxed text-white/62">{String(payload.argsSummary ?? '{}')}</pre>
       </div>
@@ -798,7 +798,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
       const files = detail.files.map((item) => String(item));
       return (
         <div className="mt-2 space-y-2 text-xs">
-          <div className="inline-flex rounded bg-white/10 px-2 py-1 text-white/70">
+          <div className="inline-flex rounded bg-token-nested px-2 py-1 text-white/70">
             文件树: {files.length} 个文件{detail.truncated ? '，已截断' : ''}
           </div>
           <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{files.join('\n')}</pre>
@@ -813,8 +813,8 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
         <div className="mt-2 space-y-2 text-xs">
           {'branch' in detail && (
             <div className="flex flex-wrap gap-2">
-              <span className="rounded bg-white/10 px-2 py-1 text-white/70">branch: {String(detail.branch ?? 'unknown')}</span>
-              <span className="rounded bg-white/10 px-2 py-1 text-white/70">commit: {String(detail.commit ?? 'unknown')}</span>
+              <span className="rounded bg-token-nested px-2 py-1 text-white/70">branch: {String(detail.branch ?? 'unknown')}</span>
+              <span className="rounded bg-token-nested px-2 py-1 text-white/70">commit: {String(detail.commit ?? 'unknown')}</span>
             </div>
           )}
           {typeof detail.status === 'string' && detail.status && (
@@ -832,7 +832,7 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
     if (detail && ('exitCode' in detail || 'stdout' in detail || 'stderr' in detail)) {
       return (
         <div className="mt-2 space-y-2 text-xs">
-          <div className="inline-flex rounded bg-white/10 px-2 py-1 text-white/70">exitCode: {String(detail.exitCode ?? 'unknown')}</div>
+          <div className="inline-flex rounded bg-token-nested px-2 py-1 text-white/70">exitCode: {String(detail.exitCode ?? 'unknown')}</div>
           {typeof detail.stdout === 'string' && detail.stdout && (
             <pre className="max-h-[220px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{detail.stdout}</pre>
           )}
@@ -849,8 +849,8 @@ function EventBody({ event }: { event: InfraAgentEventView }) {
       return (
         <div className="mt-2 space-y-2 text-xs">
           <div className="flex flex-wrap gap-2">
-            {'title' in state && <span className="rounded bg-white/10 px-2 py-1 text-white/70">title: {String(state.title ?? 'unknown')}</span>}
-            {'url' in state && <span className="rounded bg-white/10 px-2 py-1 text-white/70 break-all">url: {String(state.url ?? '')}</span>}
+            {'title' in state && <span className="rounded bg-token-nested px-2 py-1 text-white/70">title: {String(state.title ?? 'unknown')}</span>}
+            {'url' in state && <span className="rounded bg-token-nested px-2 py-1 text-white/70 break-all">url: {String(state.url ?? '')}</span>}
           </div>
           {typeof state.domTree === 'string' && state.domTree && (
             <pre className="max-h-[260px] overflow-auto whitespace-pre-wrap break-words rounded bg-black/25 p-2 text-white/68">{state.domTree}</pre>
@@ -3954,7 +3954,7 @@ export default function CdsAgentPage() {
 	      <div className="surface-tone-dark h-full min-h-0 overflow-hidden px-3 py-4 text-white sm:px-5" data-surface-tone="dark" style={{ background: '#0F0F10' }}>
 	        <div className={`mx-auto grid h-[calc(100vh-112px)] max-w-[1880px] gap-4 ${rightPanelCollapsed ? "xl:grid-cols-[292px_minmax(0,1fr)]" : "xl:grid-cols-[292px_minmax(0,1fr)_336px]"}`}>
 	          <aside className="min-h-0 overflow-hidden rounded-2xl" style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.08)' }}>
-	            <div className="flex items-center justify-between gap-2 border-b border-white/10 px-4 py-3">
+	            <div className="flex items-center justify-between gap-2 border-b border-token-subtle px-4 py-3">
 	              <div className="min-w-0">
 	                <div className="text-sm font-semibold text-white/82">任务</div>
 	                <div className="mt-0.5 truncate text-xs text-white/38">{sortedSessions.length} 个会话 · {activeSession ? statusLabel(activeSessionEffectiveStatus) : '待运行'}</div>
@@ -4040,7 +4040,7 @@ export default function CdsAgentPage() {
 	          </aside>
 
 	          <main className="relative flex min-h-0 flex-col overflow-hidden rounded-2xl" style={{ background: 'rgba(18,18,18,0.94)', border: '1px solid rgba(255,255,255,0.075)' }}>
-	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-5 py-3">
+	            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-token-subtle px-5 py-3">
 	              <div className="min-w-0">
 	                <div className="flex items-center gap-2">
 	                  <span className={`h-2.5 w-2.5 rounded-full ${isLiveStatus ? 'animate-pulse bg-sky-400' : activeSession ? 'bg-white/28' : 'bg-amber-300/80'}`} />
@@ -4220,7 +4220,7 @@ export default function CdsAgentPage() {
                           {!forcedOpen && <span className="shrink-0 text-white/35">{open ? '收起' : '展开'}</span>}
                         </button>
                         {open && (
-                          <div className="space-y-1.5 border-t border-white/10 px-3 py-2">
+                          <div className="space-y-1.5 border-t border-token-subtle px-3 py-2">
                             {events.map((event) => {
                               const payload = parsePayload(event);
                               const approvalId = typeof payload.approvalId === 'string' ? payload.approvalId : '';
@@ -4253,7 +4253,7 @@ export default function CdsAgentPage() {
                                     {canExpand && <span className="shrink-0 text-white/30">{stepOpen ? '收起' : '详情'}</span>}
                                   </button>
                                   {stepOpen && canExpand && (
-                                    <div className="mt-1 border-t border-white/10 pt-1"><EventBody event={event} /></div>
+                                    <div className="mt-1 border-t border-token-subtle pt-1"><EventBody event={event} /></div>
                                   )}
                                   {waitingApproval && (
                                     <div className="mt-2 flex gap-2">
@@ -4313,7 +4313,7 @@ export default function CdsAgentPage() {
 
 	          {!rightPanelCollapsed && (
 	          <aside className="min-h-0 overflow-y-auto rounded-2xl" style={{ background: 'rgba(255,255,255,0.055)', border: '1px solid rgba(255,255,255,0.08)', overscrollBehavior: 'contain' }}>
-	            <div className="border-b border-white/10 px-4 py-4">
+	            <div className="border-b border-token-subtle px-4 py-4">
 	              <div className="flex items-center justify-between gap-3">
 	                <div>
 	                  <div className="text-sm font-semibold text-white/82">{showRunProgress ? '运行进展' : '准备情况'}</div>
@@ -4342,7 +4342,7 @@ export default function CdsAgentPage() {
 	                  );
 	                })}
                   {showRunProgress && (
-                    <div className="border-t border-white/10 pt-3">
+                    <div className="border-t border-token-subtle pt-3">
                       <div className="mb-2 text-[11px] font-semibold uppercase tracking-normal text-white/34">任务运行</div>
                       <div className="space-y-3">
                         {runProgressChecklist.map((item) => {
@@ -4367,7 +4367,7 @@ export default function CdsAgentPage() {
 	            </div>
 
 	            {showOpsPanels && (<>
-	            <div className="border-b border-white/10 px-4 py-4">
+	            <div className="border-b border-token-subtle px-4 py-4">
 	              <div className="mb-3 flex items-center justify-between gap-2">
 	                <div className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><GitPullRequest size={14} /> Git</div>
 	                <span className="rounded-full px-2 py-0.5 text-[11px]" style={{ background: gitContext.prUrl ? 'rgba(34,197,94,0.13)' : 'rgba(148,163,184,0.1)', color: gitContext.prUrl ? 'rgba(134,239,172,0.95)' : 'rgba(148,163,184,0.86)' }}>
@@ -4386,7 +4386,7 @@ export default function CdsAgentPage() {
 	              )}
 	            </div>
 
-	            <div className="border-b border-white/10 px-4 py-4">
+	            <div className="border-b border-token-subtle px-4 py-4">
 	              <div className="mb-3 flex items-center justify-between gap-2">
 	                <span className="inline-flex items-center gap-2 text-sm font-semibold text-white/76"><FileText size={14} /> 证据</span>
 	                <button
@@ -4624,7 +4624,7 @@ export default function CdsAgentPage() {
                   href={nextCdsAgentSchedule.workflowPath}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover-bg-soft/[0.04]"
                   style={{ background: 'rgba(15,23,42,0.36)', border: '1px solid rgba(148,163,184,0.12)' }}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -4639,7 +4639,7 @@ export default function CdsAgentPage() {
                   href={latestScheduledExecution.workbenchPath || latestScheduledExecution.workflowPath}
                   target="_blank"
                   rel="noopener noreferrer"
-                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                  className="min-w-0 rounded-lg px-3 py-2 transition-colors hover-bg-soft/[0.04]"
                   style={{ background: 'rgba(15,23,42,0.36)', border: '1px solid rgba(148,163,184,0.12)' }}
                 >
                   <div className="flex items-center justify-between gap-2">
@@ -4715,7 +4715,7 @@ export default function CdsAgentPage() {
                 href={policy.path}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="min-w-0 rounded-lg px-3 py-2 transition-colors hover:bg-white/[0.04]"
+                className="min-w-0 rounded-lg px-3 py-2 transition-colors hover-bg-soft/[0.04]"
                 style={{ background: 'rgba(2,6,23,0.28)', border: '1px solid rgba(148,163,184,0.12)' }}
               >
                 <div className="flex items-center justify-between gap-2">
@@ -5161,7 +5161,7 @@ export default function CdsAgentPage() {
           </aside>
 
           <main className="flex min-h-[720px] flex-col rounded-xl" style={{ background: 'rgba(255,255,255,0.035)', border: '1px solid rgba(255,255,255,0.09)' }}>
-            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-white/10 px-4 py-3">
+            <div className="flex flex-wrap items-center justify-between gap-3 border-b border-token-subtle px-4 py-3">
               <div>
                 <div className="text-sm font-semibold text-white/90">{activeSession?.title ?? '未选择会话'}</div>
                 <div className="mt-1 text-xs text-white/45">

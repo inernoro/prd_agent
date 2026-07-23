@@ -139,7 +139,9 @@ public record LlmLogDone(
     string? ResolutionReason = null,
     ModelResolutionType? ModelResolutionType = null,
     string? ModelGroupId = null,
-    string? ModelGroupName = null);
+    string? ModelGroupName = null,
+    decimal? ProviderReportedCost = null,
+    string? ProviderCostCurrency = null);
 
 public interface ILlmRequestLogWriter
 {

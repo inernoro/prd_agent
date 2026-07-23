@@ -217,26 +217,26 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
           minHeight: 0,
           background: '#0f1014',
           borderRadius: 24,
-          border: '1px solid rgba(255,255,255,0.1)',
+          border: '1px solid var(--border-subtle)',
           boxShadow: '0 40px 80px -20px rgba(0,0,0,0.6), 0 0 120px rgba(124,58,237,0.18)',
         }}
       >
         {/* Header */}
-        <div className="shrink-0 px-6 py-5 flex items-center justify-between border-b" style={{ borderColor: 'rgba(255,255,255,0.08)' }}>
+        <div className="shrink-0 px-6 py-5 flex items-center justify-between border-b border-token-subtle" >
           <div>
-            <div className="text-[16px] font-semibold text-white inline-flex items-center gap-2">
+            <div className="text-[16px] font-semibold text-token-primary inline-flex items-center gap-2">
               <Sparkles size={16} className="text-pink-400" />
               新建自动发布
             </div>
-            <div className="text-[12px] text-white/55 mt-1">把工作流执行/调度收口到海报编辑页 — 选工作流、填博主信息、选版式即可发布</div>
+            <div className="text-[12px] text-token-secondary mt-1">把工作流执行/调度收口到海报编辑页 — 选工作流、填博主信息、选版式即可发布</div>
           </div>
           <button
             type="button"
             aria-label="关闭"
             disabled={submitting}
             onClick={onClose}
-            className="w-8 h-8 rounded-full flex items-center justify-center hover:bg-white/10 disabled:opacity-40"
-            style={{ color: 'rgba(255,255,255,0.7)' }}
+            className="w-8 h-8 rounded-full flex items-center justify-center hover-bg-soft disabled:opacity-40"
+            style={{ color: 'var(--text-secondary)' }}
           >
             <X size={16} />
           </button>
@@ -244,7 +244,7 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
 
         {/* Mode Tabs */}
         <div className="shrink-0 px-6 pt-4">
-          <div className="grid grid-cols-3 gap-2 p-1 rounded-xl" style={{ background: 'rgba(255,255,255,0.04)' }}>
+          <div className="grid grid-cols-3 gap-2 p-1 rounded-xl" style={{ background: 'var(--nested-block-bg)' }}>
             <ModeTab active={mode === 'now'} onClick={() => setMode('now')} icon={<Play size={14} />} label="立即执行" />
             <ModeTab active={mode === 'once'} onClick={() => setMode('once')} icon={<Calendar size={14} />} label="定时一次" />
             <ModeTab active={mode === 'cron'} onClick={() => setMode('cron')} icon={<Repeat size={14} />} label="循环 (Cron)" />
@@ -259,9 +259,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
           {/* 工作流选择 */}
           <Field label="选择工作流" required>
             {loadingWorkflows ? (
-              <div className="text-[12px] text-white/55 inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> 加载中…</div>
+              <div className="text-[12px] text-token-secondary inline-flex items-center gap-2"><Loader2 size={12} className="animate-spin" /> 加载中…</div>
             ) : workflows.length === 0 ? (
-              <div className="text-[12px] text-white/55">还没有工作流，先去工作流编辑器创建一个</div>
+              <div className="text-[12px] text-token-secondary">还没有工作流，先去工作流编辑器创建一个</div>
             ) : (
               <SelectInput
                 value={selectedWorkflowId}
@@ -280,9 +280,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                 onChange={(e) => setRunAtLocal(e.target.value)}
                 className="w-full h-9 px-3 rounded-lg text-[13px] outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.92)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
                   colorScheme: 'dark',
                 }}
               />
@@ -297,13 +297,13 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                 placeholder="0 9 * * *"
                 className="w-full h-9 px-3 rounded-lg text-[13px] outline-none font-mono"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.92)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
                 }}
               />
-              <div className="text-[11px] text-white/45 mt-1">
-                例：<code className="text-white/70">0 9 * * *</code> 每天 9 点；<code className="text-white/70">0 9 * * 1</code> 每周一 9 点
+              <div className="text-[11px] text-token-muted mt-1">
+                例：<code className="text-token-secondary">0 9 * * *</code> 每天 9 点；<code className="text-token-secondary">0 9 * * 1</code> 每周一 9 点
               </div>
             </Field>
           )}
@@ -316,9 +316,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                 placeholder="例：每天早 9 点抓博主视频"
                 className="w-full h-9 px-3 rounded-lg text-[13px] outline-none"
                 style={{
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'rgba(255,255,255,0.92)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
+                  color: 'var(--text-primary)',
                 }}
               />
             </Field>
@@ -327,7 +327,7 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
           {/* 工作流变量 */}
           {selectedWorkflow && selectedWorkflow.variables.length > 0 && (
             <div className="space-y-2 pt-2">
-              <div className="text-[12px] font-semibold text-white/75">工作流变量</div>
+              <div className="text-[12px] font-semibold text-token-secondary">工作流变量</div>
               {selectedWorkflow.variables.map((v) => (
                 <Field
                   key={v.key}
@@ -341,9 +341,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                     placeholder={v.defaultValue ?? ''}
                     className="w-full h-9 px-3 rounded-lg text-[13px] outline-none"
                     style={{
-                      background: 'rgba(255,255,255,0.04)',
-                      border: '1px solid rgba(255,255,255,0.12)',
-                      color: 'rgba(255,255,255,0.92)',
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--border-subtle)',
+                      color: 'var(--text-primary)',
                     }}
                   />
                 </Field>
@@ -351,21 +351,21 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
             </div>
           )}
           {selectedWorkflow && selectedWorkflow.variables.length === 0 && (
-            <div className="text-[11px] text-white/45 px-3 py-2 rounded-md" style={{ background: 'rgba(255,255,255,0.04)' }}>
+            <div className="text-[11px] text-token-muted px-3 py-2 rounded-md" style={{ background: 'var(--nested-block-bg)' }}>
               该工作流未声明变量。如需传入博主id/视频个数，请去工作流编辑器为这些字段加变量绑定。
             </div>
           )}
 
           {/* 海报版式 */}
           <div className="space-y-2 pt-2">
-            <div className="text-[12px] font-semibold text-white/75">海报版式（运行时覆盖工作流配置）</div>
+            <div className="text-[12px] font-semibold text-token-secondary">海报版式（运行时覆盖工作流配置）</div>
             <Field label="presentationMode 版式">
               <SelectInput
                 value={presentationMode}
                 onChange={(v) => setPresentationMode(v as WeeklyPosterPresentationMode)}
                 options={PRESENTATION_OPTIONS.map((o) => ({ value: o.value, label: o.label }))}
               />
-              <div className="text-[11px] text-white/45 mt-1">
+              <div className="text-[11px] text-token-muted mt-1">
                 {PRESENTATION_OPTIONS.find((o) => o.value === presentationMode)?.hint}
               </div>
             </Field>
@@ -383,7 +383,7 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                   value={accentColor}
                   onChange={(e) => setAccentColor(e.target.value)}
                   className="w-10 h-9 rounded-lg cursor-pointer"
-                  style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)' }}
+                  style={{ background: 'transparent', border: '1px solid var(--border-subtle)' }}
                 />
                 <input
                   type="text"
@@ -391,9 +391,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
                   onChange={(e) => setAccentColor(e.target.value)}
                   className="w-32 h-9 px-3 rounded-lg text-[13px] outline-none font-mono"
                   style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
-                    color: 'rgba(255,255,255,0.92)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
+                    color: 'var(--text-primary)',
                   }}
                 />
               </div>
@@ -402,8 +402,8 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
 
           {/* Tips */}
           <div className="pt-2">
-            <div className="text-[11px] font-semibold text-white/55 mb-1">提示</div>
-            <ul className="text-[11px] text-white/45 space-y-0.5 list-disc pl-4">
+            <div className="text-[11px] font-semibold text-token-secondary mb-1">提示</div>
+            <ul className="text-[11px] text-token-muted space-y-0.5 list-disc pl-4">
               {POSTER_TIPS.map((t) => <li key={t}>{t}</li>)}
             </ul>
           </div>
@@ -411,10 +411,10 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
 
         {/* Footer */}
         <div
-          className="shrink-0 px-6 py-4 flex items-center justify-between border-t"
-          style={{ borderColor: 'rgba(255,255,255,0.08)', background: 'rgba(0,0,0,0.2)' }}
+          className="shrink-0 px-6 py-4 flex items-center justify-between border-t border-token-subtle"
+          style={{ background: 'rgba(0,0,0,0.2)' }}
         >
-          <div className="text-[11px] text-white/40 inline-flex items-center gap-1">
+          <div className="text-[11px] text-token-muted inline-flex items-center gap-1">
             <Eye size={12} /> 预览效果与首页弹窗完全一致（同一 PosterCarousel 组件）
           </div>
           <div className="flex items-center gap-2">
@@ -424,9 +424,9 @@ export function AutoPublishDialog({ open, onClose, onPublished }: AutoPublishDia
               disabled={submitting}
               className="h-9 px-4 rounded-lg text-[13px] disabled:opacity-40"
               style={{
-                background: 'rgba(255,255,255,0.06)',
-                color: 'rgba(255,255,255,0.78)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                background: 'var(--nested-block-bg)',
+                color: 'var(--text-secondary)',
+                border: '1px solid var(--border-subtle)',
               }}
             >
               取消
@@ -462,7 +462,7 @@ function ModeTab({ active, onClick, icon, label }: { active: boolean; onClick: (
       className="h-8 rounded-lg text-[12px] font-medium inline-flex items-center justify-center gap-1.5 transition-all"
       style={{
         background: active ? 'rgba(255,0,80,0.16)' : 'transparent',
-        color: active ? '#ff4d8c' : 'rgba(255,255,255,0.7)',
+        color: active ? '#ff4d8c' : 'var(--text-secondary)',
         border: active ? '1px solid rgba(255,77,140,0.32)' : '1px solid transparent',
       }}
     >
@@ -475,9 +475,9 @@ function ModeTab({ active, onClick, icon, label }: { active: boolean; onClick: (
 function Field({ label, required, hint, children }: { label: string; required?: boolean; hint?: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[11px] font-medium text-white/65 mb-1.5 inline-flex items-center gap-2">
+      <div className="text-[11px] font-medium text-token-secondary mb-1.5 inline-flex items-center gap-2">
         <span>{label}{required && <span className="text-pink-400 ml-0.5">*</span>}</span>
-        {hint && <code className="text-[10px] text-white/35 font-mono">{hint}</code>}
+        {hint && <code className="text-[10px] text-token-muted font-mono">{hint}</code>}
       </div>
       {children}
     </div>
@@ -492,9 +492,9 @@ function SelectInput({ value, onChange, options }: { value: string; onChange: (v
         onChange={(e) => onChange(e.target.value)}
         className="w-full h-9 px-3 pr-8 rounded-lg text-[13px] outline-none appearance-none"
         style={{
-          background: 'rgba(255,255,255,0.04)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          color: 'rgba(255,255,255,0.92)',
+          background: 'var(--nested-block-bg)',
+          border: '1px solid var(--border-subtle)',
+          color: 'var(--text-primary)',
           colorScheme: 'dark',
         }}
       >
@@ -502,7 +502,7 @@ function SelectInput({ value, onChange, options }: { value: string; onChange: (v
           <option key={o.value} value={o.value} style={{ background: '#1a1b22', color: '#fff' }}>{o.label}</option>
         ))}
       </select>
-      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-white/40" />
+      <ChevronDown size={14} className="absolute right-3 top-1/2 -translate-y-1/2 pointer-events-none text-token-muted" />
     </div>
   );
 }

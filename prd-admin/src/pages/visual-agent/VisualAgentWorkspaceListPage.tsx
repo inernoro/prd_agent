@@ -158,8 +158,8 @@ function ToolbarButton(props: {
     <div className="relative">
       <button
         type="button"
-        className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover:bg-white/10 hover:scale-105 active:scale-95"
-        style={{ color: 'rgba(255,255,255,0.7)' }}
+        className="h-10 w-10 rounded-xl inline-flex items-center justify-center transition-all duration-200 hover-bg-soft hover:scale-105 active:scale-95"
+        style={{ color: 'var(--text-secondary)' }}
         onClick={props.onClick}
         onMouseEnter={() => setShowTooltip(true)}
         onMouseLeave={() => setShowTooltip(false)}
@@ -287,7 +287,7 @@ function useTypingPlaceholder() {
 
   useEffect(() => {
     const currentText = TYPING_TEXTS[textIndex] || '';
-    
+
     const timeout = setTimeout(() => {
       if (!isDeleting) {
         // 打字中
@@ -473,18 +473,8 @@ function QuickInputBox(props: {
             >
               <button
                 type="button"
-                className="inline-flex items-center gap-1.5"
-                style={{
-                  height: 20,
-                  maxWidth: 140,
-                  paddingLeft: 4,
-                  paddingRight: 6,
-                  borderRadius: 4,
-                  overflow: 'hidden',
-                  border: '1px solid rgba(255,255,255,0.22)',
-                  background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                  color: 'rgba(255,255,255,0.82)',
-                }}
+                className="inline-flex items-center gap-1.5 border border-token-subtle bg-token-nested"
+                style={{ height: 20, maxWidth: 140, paddingLeft: 4, paddingRight: 6, borderRadius: 4, overflow: 'hidden', color: 'var(--text-primary)' }}
                 title={`参考图：${selectedImage.file.name}`}
                 aria-label="预览参考图"
                 onClick={(e) => {
@@ -513,16 +503,7 @@ function QuickInputBox(props: {
                 </span>
                 {/* 图片缩略图 */}
                 <span
-                  style={{
-                    width: 14,
-                    height: 14,
-                    borderRadius: 3,
-                    overflow: 'hidden',
-                    border: '1px solid rgba(255,255,255,0.22)',
-                    background: 'var(--bg-input-hover)',
-                    display: 'inline-flex',
-                    flex: '0 0 auto',
-                  }}
+                  className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, overflow: 'hidden', background: 'var(--bg-input-hover)', display: 'inline-flex', flex: '0 0 auto' }}
                 >
                   <img
                     src={selectedImage.previewUrl}
@@ -585,7 +566,7 @@ function QuickInputBox(props: {
             rows={2}
             data-tour-id="visual-prompt-input"
             className="w-full bg-transparent text-[15px] resize-none leading-relaxed no-focus-ring"
-            style={{ 
+            style={{
               color: '#fff',
               minHeight: '52px',
               border: 'none',
@@ -621,7 +602,7 @@ function QuickInputBox(props: {
               data-tour-id="visual-image-btn"
               onClick={handleImageButtonClick}
               disabled={loading}
-              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover:bg-white/8 disabled:opacity-50 disabled:cursor-not-allowed"
+              className="h-8 px-3 rounded-lg flex items-center gap-1.5 text-[13px] font-medium transition-all duration-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
               style={{
                 background: 'rgba(99, 102, 241, 0.1)',
                 color: 'rgba(199, 210, 254, 0.55)',
@@ -646,10 +627,10 @@ function QuickInputBox(props: {
               type="button"
               data-tour-id="visual-defect-btn"
               onClick={() => openDefectDialog()}
-              className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover:bg-white/10"
+              className="h-9 w-9 rounded-xl flex items-center justify-center transition-all duration-200 hover-bg-soft"
               style={{
                 background: 'var(--bg-input-hover)',
-                color: 'rgba(255,255,255,0.5)',
+                color: 'var(--text-secondary)',
                 border: '1px solid var(--border-subtle)',
               }}
               title="提交缺陷 (Cmd/Ctrl+B)"
@@ -726,11 +707,11 @@ function ScenarioTags(props: { onSelect: (prompt: string) => void; activeKey: st
             key={tag.key}
             type="button"
             onClick={() => onSelect(tag.prompt)}
-            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover:bg-white/8 shrink-0"
+            className="flex items-center gap-1.5 px-3.5 py-2 rounded-xl text-[13px] font-medium transition-all duration-200 hover-bg-soft shrink-0"
             style={{
               background: isActive ? 'rgba(99,102,241,0.1)' : 'transparent',
-              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid rgba(255,255,255,0.1)',
-              color: isActive ? 'rgba(255,255,255,0.95)' : 'rgba(199,210,254,0.55)',
+              border: isActive ? '1px solid rgba(99,102,241,0.22)' : '1px solid var(--border-subtle)',
+              color: isActive ? 'var(--text-primary)' : 'rgba(199,210,254,0.55)',
             }}
           >
             <Icon size={14} style={{ opacity: isActive ? 1 : 0.65 }} />
@@ -790,10 +771,10 @@ function ProjectCard(props: {
       </div>
       {/* 信息区域 */}
       <div className="pt-2.5 px-0.5">
-        <div className="text-[13px] font-semibold truncate" style={{ color: 'rgba(255,255,255,0.9)' }}>
+        <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
           {ws.title || '未命名'}
         </div>
-        <div className="mt-1 text-[11px] flex items-center justify-between" style={{ color: 'rgba(255,255,255,0.45)' }}>
+        <div className="mt-1 text-[11px] flex items-center justify-between" style={{ color: 'var(--text-muted)' }}>
           <span>{formatDate(ws.updatedAt)}</span>
           <div
             className={
@@ -854,11 +835,8 @@ function NewProjectCard(props: { onClick: () => void }) {
     >
       {/* 封面区域 - 与其他卡片高度一致 */}
       <div
-        className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-white/25"
-        style={{
-          border: '1.5px dashed rgba(255,255,255,0.2)',
-          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-        }}
+        className="h-[160px] rounded-xl flex flex-col items-center justify-center gap-2.5 transition-all duration-300 group-hover:scale-[1.02] group-hover:border-token-subtle bg-token-nested"
+        style={{ border: '1.5px dashed var(--border-subtle)' }}
       >
         <div
           className="w-12 h-12 rounded-full flex items-center justify-center transition-all duration-300 group-hover:scale-110"
@@ -867,9 +845,9 @@ function NewProjectCard(props: { onClick: () => void }) {
             border: '1px solid var(--border-default)',
           }}
         >
-          <Plus size={22} style={{ color: 'rgba(255,255,255,0.6)' }} />
+          <Plus size={22} style={{ color: 'var(--text-secondary)' }} />
         </div>
-        <span className="text-[13px] font-medium" style={{ color: 'rgba(255,255,255,0.5)' }}>
+        <span className="text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
           新建项目
         </span>
       </div>
@@ -923,7 +901,7 @@ function ProjectCarousel(props: {
           <h2
             data-tour-id="visual-projects"
             className="text-[14px] font-medium tracking-wide"
-            style={{ color: 'rgba(255,255,255,0.5)', textTransform: 'uppercase', letterSpacing: '0.05em' }}
+            style={{ color: 'var(--text-secondary)', textTransform: 'uppercase', letterSpacing: '0.05em' }}
           >
             最近项目
           </h2>
@@ -1410,7 +1388,7 @@ export default function VisualAgentWorkspaceListPage(props: { fullscreenMode?: b
                       <button
                         key={u.userId}
                         type="button"
-                        className="w-full flex items-center gap-3 rounded-lg px-3 py-2 hover:bg-white/5"
+                        className="w-full flex items-center gap-3 rounded-lg px-3 py-2 hover-bg-soft"
                         style={{ border: '1px solid transparent', color: 'var(--text-primary)' }}
                         onClick={() => {
                           setMemberSet((prev) => {

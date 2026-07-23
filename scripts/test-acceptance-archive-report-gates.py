@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +50,97 @@ def compiled_markdown(archive, body, manifest):
 
 def main() -> None:
     archive = load_archive_module()
+
+    naming_now = datetime(2026, 7, 23, 10, 0)
+    naming_cfg = {"project": "prd-agent"}
+
+    daily_args = SimpleNamespace(
+        report_kind="每日验收",
+        title_focus="全量变更",
+        report_date="2026-07-22",
+        target="昨日全量变更 · 每日巡检 · 验收报告",
+        module="每日验收",
+        feature="",
+        type="",
+        pr=None,
+        commit="e581ce4548",
+    )
+    daily_title, daily_kind, daily_date = archive.build_report_title(
+        daily_args, naming_cfg, naming_now, "# 每日验收报告"
+    )
+    if (daily_title, daily_kind, daily_date) != (
+        "每日验收 · 全量变更 · 2026-07-22",
+        "每日验收",
+        "2026-07-22",
+    ):
+        raise AssertionError(f"unexpected daily acceptance title: {daily_title}")
+    if "prd-agent" in daily_title or "验收报告" in daily_title:
+        raise AssertionError("project and redundant report suffix must not occupy the acceptance title")
+
+    function_args = SimpleNamespace(
+        report_kind="",
+        title_focus="",
+        report_date="",
+        target="授权表主题样式",
+        module="开放平台",
+        feature="授权表主题",
+        type="修复",
+        pr=None,
+        commit="710ce135d0",
+    )
+    function_title, function_kind, function_date = archive.build_report_title(
+        function_args, naming_cfg, naming_now, "# 功能验收"
+    )
+    if (function_title, function_kind, function_date) != (
+        "功能验收 · 开放平台 / 授权表主题 · 2026-07-23",
+        "功能验收",
+        "2026-07-23",
+    ):
+        raise AssertionError(f"unexpected function acceptance title: {function_title}")
+
+    pr_args = SimpleNamespace(
+        report_kind="",
+        title_focus="授权表主题",
+        report_date="2026-07-23",
+        target="PR #1227 验收",
+        module="开放平台",
+        feature="",
+        type="修复",
+        pr=1227,
+        commit="710ce135d0",
+    )
+    pr_title, pr_kind, _ = archive.build_report_title(pr_args, naming_cfg, naming_now, "# PR 验收")
+    if pr_kind != "PR验收" or pr_title != "PR验收 · #1227 / 开放平台 / 授权表主题 · 2026-07-23":
+        raise AssertionError(f"unexpected PR acceptance title: {pr_title}")
+
+    defect_args = SimpleNamespace(
+        report_kind="",
+        title_focus="开放平台授权表",
+        report_date="2026-07-23",
+        target="缺陷复测",
+        module="",
+        feature="",
+        type="修复",
+        pr=None,
+        commit="710ce135d0",
+    )
+    defect_title, defect_kind, _ = archive.build_report_title(
+        defect_args, naming_cfg, naming_now, "# 缺陷复测"
+    )
+    if defect_kind != "缺陷复测" or defect_title != "缺陷复测 · 开放平台授权表 · 2026-07-23":
+        raise AssertionError(f"unexpected defect retest title: {defect_title}")
+    try:
+        archive._validate_report_date("2026-7-3")
+    except archive.argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("report date must require zero-padded YYYY-MM-DD")
+    try:
+        archive._validate_report_date("2026-02-30")
+    except archive.argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("report date must reject impossible calendar dates")
 
     annotated_manifest = [{"name": "01-report-page", "caption": "图 01 框出遮挡区域", "annotated": True}]
     overview_manifest = [{"name": "01-report-page", "caption": "图 01 总览", "annotated": False, "overview": True}]
@@ -181,10 +274,12 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         "真实触控移动端证据",
     )
 
-    report_md = compiled_markdown(archive, "# 日报\n\n正文", annotated_manifest)
+    report_md = compiled_markdown(archive, "## 概览\n\n正文", annotated_manifest)
     html = archive.build_interactive_html("日报", "fail", report_md, annotated_manifest)
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
+    if html.count('class="edition-version">v0.9</small>') != 2:
+        raise AssertionError("report version must be visible in the sidebar and masthead")
 
     daily_report = """
 # 每日验收报告
@@ -222,6 +317,10 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("header gap metric must use the four unique ledger rows")
     if "报告时间 · 2026-07-22 07:15:30 CST+0800" not in daily_html:
         raise AssertionError("report time must be visible in the top-right masthead")
+    if "先看这里：风险证据和未覆盖项" not in daily_html:
+        raise AssertionError("conditional reports must expose a risk-and-gap focus block")
+    if "G1 · 设置页在线终态" not in daily_html or "查看完整缺口账本" not in daily_html:
+        raise AssertionError("conditional focus must expose structured gap items")
 
     relationship_manifest = [
         {"name": "01-entry", "caption": "图 01 验证首页入口可以访问", "annotated": True},
@@ -268,11 +367,73 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
     )
     if relationship_html.count('class="evidence-card"') != 3:
         raise AssertionError("every manifest item must have one evidence card")
+    if relationship_html.count('class="figure-back-link"') != 3:
+        raise AssertionError("every body figure must provide a return-to-evidence-list control")
+    if relationship_html.count('data-side-tab=') != 2:
+        raise AssertionError("sidebar must provide evidence and contents tabs")
+    if 'data-side-tab="evidence"' not in relationship_html or 'data-side-tab="contents"' not in relationship_html:
+        raise AssertionError("sidebar tabs must be evidence and contents")
+    if "aside{position:sticky;top:0;z-index:20" not in relationship_html:
+        raise AssertionError("sidebar tabs must remain visible in the embedded narrow report viewport")
+    if relationship_html.count("data-mobile-nav-toggle>") != 1:
+        raise AssertionError("mobile report navigation must provide exactly one drawer toggle")
+    if 'id="mobile-nav-drawer"' not in relationship_html:
+        raise AssertionError("mobile report navigation must provide a controlled drawer")
+    if "aside.mobile-nav-open .side-drawer{display:block}" not in relationship_html:
+        raise AssertionError("mobile report navigation must stay collapsed until explicitly opened")
+    if ".evidence-nav,.section-nav{display:flex;flex-direction:column" not in relationship_html:
+        raise AssertionError("mobile evidence and contents navigation must be vertical, not horizontal carousels")
+    if "html,body{overflow-x:clip}" not in relationship_html:
+        raise AssertionError("mobile page-level horizontal scrolling must be disabled while tables keep local scrolling")
+    if "if(isMobileNavigation()) setMobileNavOpen(true)" not in relationship_html:
+        raise AssertionError("selecting a mobile navigation tab must open its drawer")
+    if "requestAnimationFrame(function(){requestAnimationFrame(scroll);})" not in relationship_html:
+        raise AssertionError("mobile anchor jumps must wait for drawer collapse before measuring the target")
+    if ".figure-anchor,#evidence-gallery,h1,h2,h3{scroll-margin-top:118px}" not in relationship_html:
+        raise AssertionError("mobile targets must reserve the compact sticky navigation height")
+    if "document.getElementById(id)" not in relationship_html or "decodeURIComponent(id)" not in relationship_html:
+        raise AssertionError("encoded Chinese section hashes must resolve through decoded element IDs")
     if '<div class="thumb-placeholder"' in relationship_html or ">无缩略图<" in relationship_html:
         raise AssertionError("interactive reports must never contain thumbnail placeholders")
     assert_no_errors(archive._interactive_evidence_errors(relationship_html, relationship_manifest))
     if "(h||t).scrollIntoView" in relationship_html or "t.scrollIntoView({block:'start'})" not in relationship_html:
         raise AssertionError("card clicks must scroll to the exact figure, not its section heading")
+
+    conditional_body = """
+## 缺陷清单
+
+| ID | 严重级 | 页面/路径 | 现象 | 影响 | 定位证据 | 建议 |
+|---|---|---|---|---|---|---|
+| D1 | P2 | 更新中心 | 浅色文字对比偏低 | 阅读重点不清晰 | [图02](#fig-02-action) | 提高对比度 |
+
+## 总缺口账本
+
+| ID | 未覆盖项 | 解除条件 |
+|---|---|---|
+| G1 | 管理员真实撤销动作 | 提供隔离测试账号 |
+
+## 步骤 1 定位风险
+
+{{IMG:02-action}}
+"""
+    conditional_html = archive.build_interactive_html(
+        "条件验收",
+        "conditional",
+        compiled_markdown(archive, conditional_body, relationship_manifest),
+        relationship_manifest,
+    )
+    if '<span>P1-P2 风险</span><strong>1</strong>' not in conditional_html:
+        raise AssertionError("conditional risk metric must parse severity columns that are not first")
+    if "D1 · 浅色文字对比偏低" not in conditional_html:
+        raise AssertionError("conditional focus must show the structured defect")
+    if 'class="figure-problem-banner is-risk"' not in conditional_html:
+        raise AssertionError("P1/P2 evidence figures must receive an amber risk marker")
+    if 'data-label="有条件风险 · P2"' not in conditional_html:
+        raise AssertionError("conditional figure marker must state the risk severity")
+    if "section-nav-item is-risk" not in conditional_html or "section-nav-item is-gap" not in conditional_html:
+        raise AssertionError("directory must mark risk and gap sections")
+    if conditional_html.index('href="#缺陷清单"') > conditional_html.index('href="#总缺口账本"'):
+        raise AssertionError("directory must place risk sections before gap sections")
 
     missing_source_md = relationship_md.replace(
         "https://assets.example.test/03-result.png",

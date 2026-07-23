@@ -534,17 +534,11 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
       >
         {/* 头部工具栏 - 液态玻璃效果 */}
         <div
-          className="flex items-center justify-between px-4 py-3 rounded-t-xl"
-          style={{
-            ...glassPanel,
-            background: `
-              radial-gradient(ellipse 80% 50% at 50% 0%, rgba(255, 255, 255, 0.15) 0%, transparent 50%),
-              linear-gradient(180deg, rgba(255, 255, 255, 0.12) 0%, rgba(255, 255, 255, 0.04) 100%)
-            `,
-            border: undefined,
-            borderBottom: '1px solid rgba(255, 255, 255, 0.15)',
-            boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset',
-          }}
+          className="flex items-center justify-between px-4 py-3 rounded-t-xl border-b border-b-token-subtle"
+          style={{ ...glassPanel, background: `
+              radial-gradient(ellipse 80% 50% at 50% 0%, var(--nested-block-bg) 0%, transparent 50%),
+              linear-gradient(180deg, var(--nested-block-bg) 0%, var(--nested-block-bg) 100%)
+            `, border: undefined, boxShadow: '0 1px 0 0 rgba(255, 255, 255, 0.1) inset, 0 -1px 0 0 rgba(0, 0, 0, 0.1) inset' }}
         >
           <div className="flex items-center gap-3">
             <div>
@@ -565,7 +559,7 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
 
           <div className="flex items-center gap-2">
             {/* 尺寸切换 */}
-            <div className="flex items-center gap-1 px-2 py-1 rounded-lg" style={{ background: 'rgba(255,255,255,0.05)' }}>
+            <div className="flex items-center gap-1 px-2 py-1 rounded-lg bg-token-nested" >
               {PRESET_SIZES.map((size) => {
                 const Icon = size.icon;
                 return (
@@ -587,8 +581,8 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
 
             {/* FPS 显示 */}
             <div
-              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs"
-              style={{ background: 'rgba(255,255,255,0.05)', color: fps >= 50 ? '#4ade80' : fps >= 30 ? '#fbbf24' : '#f87171' }}
+              className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs bg-token-nested"
+              style={{ color: fps >= 50 ? '#4ade80' : fps >= 30 ? '#fbbf24' : '#f87171' }}
             >
               <Gauge size={12} />
               {fps} FPS
@@ -629,14 +623,8 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
           >
             <div
               key={key}
-              className="relative overflow-hidden rounded-lg"
-              style={{
-                width: currentSize ? currentSize.width : '100%',
-                height: currentSize ? currentSize.height : '100%',
-                maxWidth: '100%',
-                maxHeight: '100%',
-                border: '1px solid rgba(255,255,255,0.1)',
-              }}
+              className="relative overflow-hidden rounded-lg border border-token-subtle"
+              style={{ width: currentSize ? currentSize.width : '100%', height: currentSize ? currentSize.height : '100%', maxWidth: '100%', maxHeight: '100%' }}
             >
               <Suspense fallback={<div className="flex items-center justify-center h-full"><PrdLoader size={32} /></div>}>
                 {config.render(currentSize || undefined)}
@@ -653,17 +641,11 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
           {/* 参数面板 - 液态玻璃效果 */}
           {showParams && (
             <div
-              className="w-80 overflow-y-auto rounded-br-xl"
-              style={{
-                ...glassPanel,
-                background: `
-                  radial-gradient(ellipse 100% 30% at 0% 0%, rgba(255, 255, 255, 0.1) 0%, transparent 50%),
-                  linear-gradient(180deg, rgba(255, 255, 255, 0.1) 0%, rgba(255, 255, 255, 0.03) 100%)
-                `,
-                border: undefined,
-                borderLeft: '1px solid rgba(255, 255, 255, 0.12)',
-                boxShadow: '1px 0 0 0 rgba(255, 255, 255, 0.05) inset',
-              }}
+              className="w-80 overflow-y-auto rounded-br-xl border-l border-l-token-subtle"
+              style={{ ...glassPanel, background: `
+                  radial-gradient(ellipse 100% 30% at 0% 0%, var(--nested-block-bg) 0%, transparent 50%),
+                  linear-gradient(180deg, var(--nested-block-bg) 0%, var(--nested-block-bg) 100%)
+                `, border: undefined, boxShadow: '1px 0 0 0 rgba(255, 255, 255, 0.05) inset' }}
             >
               <div className="p-4 space-y-4">
                 {/* 性能信息 */}
@@ -705,7 +687,7 @@ function EffectModal({ config, onClose }: { config: EffectConfig; onClose: () =>
                     <div className="text-xs font-semibold mb-2" style={{ color: 'var(--text-primary)' }}>可用参数</div>
                     <div className="space-y-2">
                       {config.params.map((param) => (
-                        <div key={param.name} className="p-2 rounded-lg" style={{ background: 'rgba(255,255,255,0.03)' }}>
+                        <div key={param.name} className="p-2 rounded-lg bg-token-nested" >
                           <div className="flex items-center gap-2">
                             <code className="text-xs px-1.5 py-0.5 rounded" style={{ background: 'rgba(139, 92, 246, 0.2)', color: 'rgba(139, 92, 246, 0.9)' }}>
                               {param.name}
@@ -776,7 +758,7 @@ function EffectCard({ config, onClick }: { config: EffectConfig; onClick: () => 
         )}
       </div>
 
-      <div className="relative rounded-lg overflow-hidden flex-1" style={{ minHeight: '180px', background: 'rgba(0, 0, 0, 0.4)', border: '1px solid rgba(255, 255, 255, 0.1)' }}>
+      <div className="relative rounded-lg overflow-hidden flex-1 border border-token-subtle" style={{ minHeight: '180px', background: 'rgba(0, 0, 0, 0.4)' }}>
         <Suspense fallback={<div className="flex items-center justify-center h-full"><PrdLoader size={32} /></div>}>
           <div key={key} className="w-full h-full">{config.render()}</div>
         </Suspense>

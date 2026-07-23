@@ -101,7 +101,7 @@ export function SpaceBar({
       className="h-8 px-3 rounded-[8px] text-[13px] flex items-center gap-1.5 shrink-0 whitespace-nowrap transition-colors"
       style={on
         ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
-        : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+        : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
     >
       {label}
     </button>
@@ -120,7 +120,7 @@ export function SpaceBar({
           title="新建 / 加入团队空间"
           onClick={() => { setAdding((o) => !o); setAddValue(''); }}
           className="h-8 w-8 rounded-[8px] flex items-center justify-center shrink-0"
-          style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
+          style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}
         >
           {adding ? <X size={15} /> : <Plus size={15} />}
         </button>
@@ -147,7 +147,7 @@ export function SpaceBar({
               className="h-8 px-3 rounded-[8px] text-[13px] shrink-0"
               style={addValue.trim() && !addBusy
                 ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
-                : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+                : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
             >
               {addBusy ? '处理中…' : /^INV-/i.test(addValue.trim()) ? '加入' : '创建'}
             </button>
@@ -193,7 +193,7 @@ export function SpaceBar({
                 className="h-7 px-2.5 rounded-full text-[12px] flex items-center gap-1 shrink-0 transition-colors"
                 style={current.teamId === t.team.id
                   ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                  : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
               >
                 <Users size={11} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span>
               </button>
@@ -242,19 +242,19 @@ export function TeamSpaceHeader({
         )}
       </button>
       {team.myRole === 'admin' && (
-        <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5"
-          style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+        <button type="button" className="h-8 px-3 rounded-[8px] text-[12px] flex items-center gap-1.5 border border-token-subtle"
+          style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
           onClick={() => { setManagerInitialTab('invite'); setManagerOpen(true); }} title="搜索用户并直接添加为成员">
           <UserPlus size={13} />
           邀请成员
         </button>
       )}
       {myWebHostingRole === 'viewer' && (
-        <span className="text-[11px] px-1.5 py-0.5 rounded" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>你是查看者（只读）</span>
+        <span className="text-[11px] px-1.5 py-0.5 rounded bg-token-nested" style={{ color: 'var(--text-muted)' }}>你是查看者（只读）</span>
       )}
       {team.myRole === 'admin' && (
-        <button type="button" className="h-8 w-8 rounded-[8px] flex items-center justify-center ml-auto"
-          style={{ background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+        <button type="button" className="h-8 w-8 rounded-[8px] flex items-center justify-center ml-auto border border-token-subtle"
+          style={{ background: 'transparent', color: 'var(--text-muted)' }}
           title="成员与角色 / 重命名 / 删除空间" onClick={() => { setManagerInitialTab(null); setManagerOpen(true); }}>
           <Settings size={15} />
         </button>

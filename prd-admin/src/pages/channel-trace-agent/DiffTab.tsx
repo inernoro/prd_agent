@@ -116,20 +116,20 @@ export function DiffTab() {
   return (
     <div className="h-full min-h-0 flex">
       {/* 左：描述输入 + 结果 */}
-      <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
+      <div className="flex-1 min-w-0 flex flex-col border-r border-token-subtle">
         <div className="shrink-0 px-6 pt-5 pb-3 space-y-2.5">
-          <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
+          <div className="text-sm font-medium text-token-primary inline-flex items-center gap-1.5">
             <GitCompare className="w-4 h-4 text-emerald-400" />
             功能描述 vs 代码实现异同分析
           </div>
-          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-white/45">
+          <div className="flex flex-wrap items-center gap-1.5 text-[11px] text-token-muted">
             <Github className="w-3.5 h-3.5" />
             内置扫描仓库：
             {builtinRepos.length === 0 ? (
               <span>加载中…</span>
             ) : (
               builtinRepos.map((r) => (
-                <span key={r.name} className="px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+                <span key={r.name} className="px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">
                   {r.name}@{r.branch}
                 </span>
               ))
@@ -148,7 +148,7 @@ export function DiffTab() {
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="对比任务标题（可选），如：窜货判定逻辑核对"
-            className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+            className="w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
           />
           <textarea
             value={description}
@@ -158,10 +158,10 @@ export function DiffTab() {
             }}
             rows={4}
             placeholder="具体描述要核对的功能/业务规则，越具体越好（涉及的实体、流程、边界、状态流转）。子 agent 会按描述去两个仓库里找相关代码再做异同分析。（Ctrl/⌘+Enter 开始）"
-            className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 leading-relaxed focus:outline-none focus:border-emerald-500/40"
+            className="w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted leading-relaxed focus:outline-none focus:border-emerald-500/40"
           />
           <div className="flex items-center justify-between">
-            <div className="text-[11px] text-white/40 font-mono">
+            <div className="text-[11px] text-token-muted font-mono">
               {resultModel?.model ? `● ${resultModel.model}${resultModel.platform ? ` · ${resultModel.platform}` : ''}` : ''}
             </div>
             <button
@@ -180,7 +180,7 @@ export function DiffTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {viewing && (
-            <div className="text-xs text-white/45 mb-2">
+            <div className="text-xs text-token-muted mb-2">
               历史记录：{viewing.title} · {new Date(viewing.createdAt).toLocaleString('zh-CN')}
               {viewing.scannedRepos?.length > 0 && ` · 扫描：${viewing.scannedRepos.join(', ')}`}
             </div>
@@ -188,9 +188,9 @@ export function DiffTab() {
 
           {keywords.length > 0 && (
             <div className="mb-2">
-              <span className="text-[11px] text-white/45">检索关键词：</span>
+              <span className="text-[11px] text-token-muted">检索关键词：</span>
               {keywords.map((k) => (
-                <span key={k} className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+                <span key={k} className="ml-1 text-[11px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">
                   {k}
                 </span>
               ))}
@@ -215,13 +215,13 @@ export function DiffTab() {
 
           {shownHits.length > 0 && (
             <div className="mb-3">
-              <div className="text-xs text-white/50 mb-1.5 inline-flex items-center gap-1">
+              <div className="text-xs text-token-secondary mb-1.5 inline-flex items-center gap-1">
                 <FileCode className="w-3.5 h-3.5" />
                 命中代码（{shownHits.length}）
               </div>
               <div className="space-y-1">
                 {shownHits.map((h, i) => (
-                  <div key={`${h.repo}-${h.path}-${i}`} className="text-[11px] text-white/60 font-mono truncate">
+                  <div key={`${h.repo}-${h.path}-${i}`} className="text-[11px] text-token-secondary font-mono truncate">
                     <span className="text-emerald-300/80">[{h.repo}]</span> {h.path}
                   </div>
                 ))}
@@ -230,19 +230,19 @@ export function DiffTab() {
           )}
 
           {isStreaming && !typing && (
-            <div className="flex items-center gap-2 text-sm text-white/50 py-4">
+            <div className="flex items-center gap-2 text-sm text-token-secondary py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               {phaseMessage || '子 agent 处理中…'}
             </div>
           )}
           {resultText ? (
-            <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3">
+            <div className="rounded-xl bg-token-nested border border-token-subtle px-4 py-3">
               <MarkdownContent content={resultText} variant="reading" />
             </div>
           ) : (
             !isStreaming &&
             keywords.length === 0 && (
-              <div className="text-sm text-white/35 py-10 text-center">
+              <div className="text-sm text-token-muted py-10 text-center">
                 描述要核对的功能，子 agent 会扫描内置两个仓库的相关代码，给出与你描述的异同分析。
               </div>
             )
@@ -255,8 +255,8 @@ export function DiffTab() {
 
       {/* 右：历史记录 */}
       <div className="w-[320px] shrink-0 flex flex-col">
-        <div className="shrink-0 px-4 pt-5 pb-3 text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
-          <History className="w-4 h-4 text-white/50" />
+        <div className="shrink-0 px-4 pt-5 pb-3 text-sm font-medium text-token-primary inline-flex items-center gap-1.5">
+          <History className="w-4 h-4 text-token-secondary" />
           分析历史
         </div>
         <div
@@ -264,7 +264,7 @@ export function DiffTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {history.length === 0 ? (
-            <div className="text-sm text-white/35 py-10 text-center">暂无分析记录。</div>
+            <div className="text-sm text-token-muted py-10 text-center">暂无分析记录。</div>
           ) : (
             history.map((it) => (
               <div
@@ -273,13 +273,13 @@ export function DiffTab() {
                 className={`rounded-lg border px-3 py-2.5 cursor-pointer group transition-colors ${
                   viewing?.id === it.id
                     ? 'bg-emerald-500/10 border-emerald-500/30'
-                    : 'bg-white/3 border-white/10 hover:bg-white/5'
+                    : 'bg-token-nested border-token-subtle hover-bg-soft'
                 }`}
               >
                 <div className="flex items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-white/90 font-medium truncate">{it.title}</div>
-                    <div className="text-[11px] text-white/40 mt-1">
+                    <div className="text-sm text-token-primary font-medium truncate">{it.title}</div>
+                    <div className="text-[11px] text-token-muted mt-1">
                       {it.status === 'Done'
                         ? new Date(it.createdAt).toLocaleString('zh-CN')
                         : it.status === 'Error'
@@ -292,7 +292,7 @@ export function DiffTab() {
                       e.stopPropagation();
                       void onDelete(it.id);
                     }}
-                    className="shrink-0 p-1 rounded text-white/40 hover:text-rose-400 hover:bg-white/10 opacity-0 group-hover:opacity-100 transition-opacity"
+                    className="shrink-0 p-1 rounded text-token-muted hover:text-rose-400 hover-bg-soft opacity-0 group-hover:opacity-100 transition-opacity"
                     title="删除"
                   >
                     <Trash2 className="w-3.5 h-3.5" />

@@ -215,28 +215,28 @@ export function RequirementRtfImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="w-full max-w-4xl rounded-xl border border-white/15 bg-[#111319] shadow-2xl flex flex-col"
+        className="w-full max-w-4xl rounded-xl border border-token-subtle bg-[#111319] shadow-2xl flex flex-col"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
-        <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-white/10">
+        <div className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-token-subtle">
           <div>
-            <div className="text-base font-semibold text-white">导入 RTF 需求</div>
-            <div className="text-xs text-white/45 mt-1">支持 TAPD 单文件批量导出：一个 RTF 可解析为多条需求；相同需求 ID 会更新原记录。</div>
+            <div className="text-base font-semibold text-token-primary">导入 RTF 需求</div>
+            <div className="text-xs text-token-muted mt-1">支持 TAPD 单文件批量导出：一个 RTF 可解析为多条需求；相同需求 ID 会更新原记录。</div>
           </div>
-          <button onClick={onClose} disabled={importing} className="p-1.5 rounded-lg text-white/45 hover:text-white hover:bg-white/10 disabled:opacity-40" title="关闭">
+          <button onClick={onClose} disabled={importing} className="p-1.5 rounded-lg text-token-muted hover-text-primary hover-bg-soft disabled:opacity-40" title="关闭">
             <X size={17} />
           </button>
         </div>
 
         <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
           {parsing ? (
-            <div className="py-16 flex items-center justify-center gap-2 text-sm text-white/55">
+            <div className="py-16 flex items-center justify-center gap-2 text-sm text-token-secondary">
               <MapSpinner size={16} /> 正在解析 {files.length} 个 RTF 文件
             </div>
           ) : (
             <div className="flex flex-col gap-3">
               {parsedFiles.map((item) => (
-                <div key={`${item.file.name}-${item.file.lastModified}`} className="rounded-lg border border-white/10 bg-white/[0.025] p-3.5">
+                <div key={`${item.file.name}-${item.file.lastModified}`} className="rounded-lg border border-token-subtle bg-token-card p-3.5">
                   {item.error ? (
                     <div className="flex items-start gap-2 text-sm text-red-200">
                       <AlertCircle size={16} className="mt-0.5 shrink-0" />
@@ -244,7 +244,7 @@ export function RequirementRtfImportDialog({
                     </div>
                   ) : (
                     <div className="flex flex-col gap-2.5">
-                      <div className="text-[11px] text-white/40 font-mono truncate">
+                      <div className="text-[11px] text-token-muted font-mono truncate">
                         {item.file.name}
                         {item.requirements.length > 1 && (
                           <span className="ml-2 text-cyan-300/80">共 {item.requirements.length} 条需求</span>
@@ -256,8 +256,8 @@ export function RequirementRtfImportDialog({
                             <FileText size={17} />
                           </div>
                           <div className="min-w-0 flex-1">
-                            <div className="text-sm font-medium text-white truncate">{reqItem.requirement.title}</div>
-                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-white/50">
+                            <div className="text-sm font-medium text-token-primary truncate">{reqItem.requirement.title}</div>
+                            <div className="flex flex-wrap gap-x-4 gap-y-1 mt-2 text-xs text-token-secondary">
                               <span>ID：{reqItem.requirement.externalId}</span>
                               <span>状态：{reqItem.requirement.sourceStatus || '空'}</span>
                               <span>优先级：{reqItem.requirement.sourcePriority || '空'}</span>
@@ -277,7 +277,7 @@ export function RequirementRtfImportDialog({
           )}
         </div>
 
-        <div className="shrink-0 px-5 py-4 border-t border-white/10">
+        <div className="shrink-0 px-5 py-4 border-t border-token-subtle">
           {progress && <div className="mb-3 text-xs text-cyan-200/80">{progress}</div>}
           {result && (
             <div className="mb-3 text-xs text-emerald-200">
@@ -296,12 +296,12 @@ export function RequirementRtfImportDialog({
             </div>
           )}
           <div className="flex items-center justify-between gap-3">
-            <div className="text-xs text-white/40">
+            <div className="text-xs text-token-muted">
               {files.length} 个文件，识别 {totalRequirementCount} 条需求
               {failedFileCount > 0 ? `，失败 ${failedFileCount} 个文件` : ''}
             </div>
             <div className="flex items-center gap-2">
-              <button onClick={onClose} disabled={importing} className="px-3.5 py-2 rounded-lg border border-white/10 text-sm text-white/60 hover:text-white hover:bg-white/5 disabled:opacity-40">
+              <button onClick={onClose} disabled={importing} className="px-3.5 py-2 rounded-lg border border-token-subtle text-sm text-token-secondary hover-text-primary hover-bg-soft disabled:opacity-40">
                 {result ? '完成' : '取消'}
               </button>
               {!result && (

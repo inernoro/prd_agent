@@ -1,0 +1,354 @@
+{
+  "schemaVersion": 1,
+  "policy": {
+    "ordinaryUi": "普通管理界面不得保留固定白色边框、表面或悬浮态。",
+    "intentionalVisual": "仅专用视觉组件、作品预览、数据画布、全暗体验和主题基础设施可登记例外。",
+    "scopeRule": "整文件例外只允许用于职责单一的专用组件；混合页面必须迁移外围控件或拆出专用组件。"
+  },
+  "intentionalVisualFiles": [
+    {
+      "path": "components/showcase/LiteraryCard.tsx",
+      "category": "artifact-preview",
+      "scope": "文学作品封面卡片",
+      "rationale": "固定明暗关系属于作品封面合成结果，不跟随管理界面主题。"
+    },
+    {
+      "path": "components/daily-tips/SpotlightOverlay.tsx",
+      "category": "dark-island",
+      "scope": "新手引导聚光浮层",
+      "rationale": "浮层覆盖任意宿主页面，使用独立暗色表面保证提示始终可读。"
+    },
+    {
+      "path": "components/daily-tips/TipsDrawer.tsx",
+      "category": "dark-island",
+      "scope": "每日技巧抽屉",
+      "rationale": "抽屉使用独立暗色品牌表面，不继承宿主页面主题。"
+    },
+    {
+      "path": "components/MobileCompatGate.tsx",
+      "category": "dark-island",
+      "scope": "移动兼容提示浮层",
+      "rationale": "浮层已显式声明独立暗色表面，确保跨页面提示稳定可读。"
+    },
+    {
+      "path": "components/PdfThumbnail.tsx",
+      "category": "artifact-preview",
+      "scope": "PDF 页面缩略图",
+      "rationale": "缩略图颜色属于文档预览内容。"
+    },
+    {
+      "path": "components/showcase/ShowcaseGallery.tsx",
+      "category": "artifact-preview",
+      "scope": "作品展厅预览卡片",
+      "rationale": "预览卡片保留作品自身视觉，外层已声明暗色表面。"
+    },
+    {
+      "path": "components/showcase/SubmissionCard.tsx",
+      "category": "artifact-preview",
+      "scope": "作品投稿预览卡片",
+      "rationale": "卡片首要职责是还原投稿作品视觉。"
+    },
+    {
+      "path": "components/ui/ImageLightbox.tsx",
+      "category": "dark-island",
+      "scope": "图片灯箱",
+      "rationale": "灯箱覆盖任意宿主页面，固定暗色遮罩保证图像对比。"
+    },
+    {
+      "path": "components/visual-agent/DrawingBoardDialog.tsx",
+      "category": "canvas",
+      "scope": "绘图画布与画布工具",
+      "rationale": "画布坐标、选框和绘制控制需要稳定的固定视觉对比。"
+    },
+    {
+      "path": "components/visual-agent/ImageQuickActionBar.tsx",
+      "category": "canvas",
+      "scope": "图像画布快捷操作浮层",
+      "rationale": "浮层叠加在任意图像上，固定对比不依赖应用主题。"
+    },
+    {
+      "path": "components/visual-agent/MaskPaintCanvas.tsx",
+      "category": "canvas",
+      "scope": "蒙版绘制画布",
+      "rationale": "蒙版、笔刷和选区颜色是图像编辑语义。"
+    },
+    {
+      "path": "components/visual-agent/QuickActionConfigPanel.tsx",
+      "category": "canvas",
+      "scope": "视觉画布快捷工具配置",
+      "rationale": "配置浮层与画布工具共用固定视觉语言。"
+    },
+    {
+      "path": "components/visual-agent/SizePickerPanel.tsx",
+      "category": "canvas",
+      "scope": "画布尺寸选择器",
+      "rationale": "尺寸预览是画布内视觉控件。"
+    },
+    {
+      "path": "components/visual-creation/VisualCreationMiniPanel.tsx",
+      "category": "canvas",
+      "scope": "视觉创作迷你工作台",
+      "rationale": "工作台叠加在创作画布上，需要稳定暗色对比。"
+    },
+    {
+      "path": "components/weekly-poster/WeeklyPosterModal.tsx",
+      "category": "dark-island",
+      "scope": "周报海报生成模态框",
+      "rationale": "该模态框已显式声明独立暗色表面，不受宿主主题影响。"
+    },
+    {
+      "path": "pages/_dev/MobileAuditPage.tsx",
+      "category": "development-probe",
+      "scope": "移动端视觉审计实验页",
+      "rationale": "仅用于开发期固定视觉基准比对。"
+    },
+    {
+      "path": "pages/_dev/RichComposerLab.tsx",
+      "category": "development-probe",
+      "scope": "富文本编辑器实验页",
+      "rationale": "仅用于开发期固定视觉基准比对。"
+    },
+    {
+      "path": "pages/_dev/StreamingTextLab.tsx",
+      "category": "development-probe",
+      "scope": "流式文本实验页",
+      "rationale": "仅用于开发期固定视觉基准比对。"
+    },
+    {
+      "path": "pages/_mockup/InlineCommentOverlayProbe.tsx",
+      "category": "development-probe",
+      "scope": "行内评论浮层原型",
+      "rationale": "仅用于开发期固定视觉基准比对。"
+    },
+    {
+      "path": "pages/ai-chat/AdvancedVisualAgentTab.tsx",
+      "category": "canvas",
+      "scope": "高级视觉创作画布",
+      "rationale": "画布、选框、图层与图像浮层需保持固定视觉语义。"
+    },
+    {
+      "path": "pages/arena/ArenaPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "模型竞技场体验",
+      "rationale": "竞技场是独立沉浸式暗色体验，视觉不随管理界面主题切换。"
+    },
+    {
+      "path": "pages/cds-agent/CdsAgentPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "CDS Agent 控制台",
+      "rationale": "控制台已显式声明独立暗色表面，固定终端视觉不随管理界面主题切换。"
+    },
+    {
+      "path": "pages/document-store/DocumentGalaxyView.tsx",
+      "category": "data-visualization",
+      "scope": "知识星系图",
+      "rationale": "节点、连线和星空背景是数据编码视觉。"
+    },
+    {
+      "path": "pages/emergence/EmergenceCanvas.tsx",
+      "category": "data-visualization",
+      "scope": "能力涌现关系画布",
+      "rationale": "节点和连线颜色承担数据编码含义。"
+    },
+    {
+      "path": "pages/emergence/EmergenceNode.tsx",
+      "category": "data-visualization",
+      "scope": "能力涌现节点",
+      "rationale": "节点颜色承担状态和分组编码含义。"
+    },
+    {
+      "path": "pages/home/components/ProductMockup.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页产品界面模型",
+      "rationale": "模型是营销插画的一部分，不是可交互管理界面。"
+    },
+    {
+      "path": "pages/home/components/StaticBackdrop.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页静态品牌背景",
+      "rationale": "背景光效属于品牌插画，不承担界面信息层级。"
+    },
+    {
+      "path": "pages/home/sections/AgentGrid.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页 Agent 展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/CompatibilityStack.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页兼容栈展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/FeatureDeepDive.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页功能深潜展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/FinalCta.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页结尾行动区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/HeroSection.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页首屏",
+      "rationale": "首页首屏使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/HowItWorks.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页流程展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/SignatureCinema.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页电影式展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/ThreePillars.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页三支柱展示区",
+      "rationale": "首页展示区使用独立品牌视觉。"
+    },
+    {
+      "path": "pages/home/sections/WorkflowCanvas.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页工作流示意画布",
+      "rationale": "示意画布是营销插画，不是管理界面。"
+    },
+    {
+      "path": "components/effects/HomeAmbientBackdrop.tsx",
+      "category": "marketing-artifact",
+      "scope": "首页环境光背景",
+      "rationale": "环境光属于品牌插画，不承担界面信息层级。"
+    },
+    {
+      "path": "components/login/XAiBackdrop.tsx",
+      "category": "marketing-artifact",
+      "scope": "登录页品牌背景",
+      "rationale": "背景光效属于品牌插画，不承担界面信息层级。"
+    },
+    {
+      "path": "components/three/AttentionLandscape.tsx",
+      "category": "data-visualization",
+      "scope": "注意力地形三维可视化",
+      "rationale": "光照和材质颜色是三维数据视觉的一部分。"
+    },
+    {
+      "path": "pages/literary-agent/ArticleIllustrationEditorPage.tsx",
+      "category": "canvas",
+      "scope": "文章配图编辑画布",
+      "rationale": "编辑画布及图像叠层需要稳定视觉对比。"
+    },
+    {
+      "path": "pages/LoginPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "品牌登录体验",
+      "rationale": "登录页是独立品牌入口，固定暗色视觉不继承管理界面主题。"
+    },
+    {
+      "path": "pages/product-agent/ProductGraphCanvas.tsx",
+      "category": "data-visualization",
+      "scope": "产品关系图画布",
+      "rationale": "节点、边与状态颜色承担数据编码含义。"
+    },
+    {
+      "path": "pages/visual-agent/MobileVisualAgentEditor.tsx",
+      "category": "canvas",
+      "scope": "移动端视觉编辑画布",
+      "rationale": "编辑画布及图像叠层需要稳定视觉对比。"
+    },
+    {
+      "path": "pages/visual-storyboard/VisualStoryboardPage.tsx",
+      "category": "canvas",
+      "scope": "视觉分镜画布",
+      "rationale": "分镜画布与作品预览需要稳定视觉对比。"
+    },
+    {
+      "path": "pages/weekly-poster/PosterDesignerPage.tsx",
+      "category": "artifact-authoring",
+      "scope": "周报海报画布与作品渲染",
+      "rationale": "海报的固定颜色属于作品内容，不能被应用主题重写。"
+    },
+    {
+      "path": "pages/PortfolioShowcasePage.tsx",
+      "category": "artifact-preview",
+      "scope": "作品集展厅",
+      "rationale": "作品预览保留作品自身视觉，展厅已声明独立暗色表面。"
+    },
+    {
+      "path": "pages/ReportTeamShareViewPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "团队报告公开分享页",
+      "rationale": "公开分享页是脱离管理后台的独立暗色阅读体验。"
+    },
+    {
+      "path": "pages/ShortLinkRouter.tsx",
+      "category": "full-dark-experience",
+      "scope": "公开短链跳转状态页",
+      "rationale": "页面脱离管理后台独立展示，使用固定品牌暗色视觉。"
+    },
+    {
+      "path": "pages/ShareViewPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "网页公开分享页",
+      "rationale": "公开分享页是脱离管理后台的独立暗色阅读体验。"
+    },
+    {
+      "path": "pages/SkillShareViewPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "技能公开分享页",
+      "rationale": "公开分享页是脱离管理后台的独立暗色阅读体验。"
+    },
+    {
+      "path": "pages/speech-agent/SpeechAgentPlayPage.tsx",
+      "category": "full-dark-experience",
+      "scope": "语音播放体验",
+      "rationale": "媒体播放页采用独立暗色舞台，保证波形与字幕对比。"
+    },
+    {
+      "path": "pages/workflow-agent/tapdHtmlTemplate.ts",
+      "category": "artifact-output",
+      "scope": "导出的 TAPD HTML 与图表主题",
+      "rationale": "颜色属于独立导出物，不受管理界面主题变量控制。"
+    },
+    {
+      "path": "pages/ai-toolbox/components/ProjectRouteAgentCardArt.tsx",
+      "category": "marketing-artifact",
+      "scope": "百宝箱卡片插画",
+      "rationale": "颜色属于卡片插画，不承担普通界面文字层级。"
+    }
+  ],
+  "infrastructureFiles": [
+    {
+      "path": "components/design/GlassCard.tsx",
+      "category": "theme-infrastructure",
+      "scope": "共享玻璃卡片主题实现",
+      "rationale": "固定颜色仅作为 CSS 变量缺失时的回退，正常渲染由主题变量控制。"
+    },
+    {
+      "path": "lib/glassStyles.ts",
+      "category": "theme-infrastructure",
+      "scope": "共享玻璃样式回退值",
+      "rationale": "固定颜色仅作为 CSS 变量缺失时的暗色回退，不直接定义页面主题。"
+    },
+    {
+      "path": "lib/platformColors.ts",
+      "category": "semantic-palette",
+      "scope": "平台品牌色注册表",
+      "rationale": "颜色表示平台身份，不属于界面表面主题。"
+    },
+    {
+      "path": "lib/__tests__/themeSystem.test.ts",
+      "category": "test-fixture",
+      "scope": "主题守卫测试样本",
+      "rationale": "固定颜色仅存在于断言和反例样本中。"
+    }
+  ]
+}

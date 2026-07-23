@@ -128,7 +128,7 @@ function StatCell({
         {label}
       </div>
       <div
-        className="font-medium text-white"
+        className="font-medium text-token-primary"
         style={{
           fontFamily: 'var(--font-display)',
           fontSize: 'clamp(2.25rem, 4.5vw, 3.5rem)',
@@ -225,9 +225,9 @@ function LeaderboardRowItem({
       <div
         className="w-7 h-7 rounded flex items-center justify-center text-[12px] font-semibold shrink-0"
         style={{
-          background: isTop ? `${accent}22` : 'rgba(255, 255, 255, 0.04)',
-          border: isTop ? `1px solid ${accent}55` : '1px solid rgba(255, 255, 255, 0.08)',
-          color: isTop ? accent : 'rgba(255, 255, 255, 0.5)',
+          background: isTop ? `${accent}22` : 'var(--nested-block-bg)',
+          border: isTop ? `1px solid ${accent}55` : '1px solid var(--border-subtle)',
+          color: isTop ? accent : 'var(--text-secondary)',
           fontFamily: 'var(--font-terminal)',
           textShadow: isTop ? `0 0 8px ${accent}88` : undefined,
         }}
@@ -236,13 +236,13 @@ function LeaderboardRowItem({
       </div>
       <div className="flex-1 min-w-0 flex items-baseline gap-2">
         <span
-          className="text-[13px] text-white/90 truncate"
+          className="text-[13px] text-token-primary truncate"
           style={{ fontFamily: 'var(--font-display)' }}
         >
           {name}
         </span>
         <span
-          className="text-[10px] text-white/40"
+          className="text-[10px] text-token-muted"
           style={{ fontFamily: 'var(--font-terminal)' }}
         >
           · {usage}

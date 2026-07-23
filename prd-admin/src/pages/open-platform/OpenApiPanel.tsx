@@ -98,10 +98,10 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
       {/* 概览：说明 + 指标 */}
       <div className="flex flex-col lg:flex-row gap-3">
         <GlassCard className="p-4 flex items-start gap-3 flex-1">
-          <Plug size={18} className="text-white/50 mt-0.5 shrink-0" />
-          <div className="text-[13px] text-white/70 leading-relaxed">
-            <div className="font-medium text-white/85 mb-1">开放接口 · OpenAI 兼容对外网关</div>
-            外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-white/[0.06]">/api/v1</code>，密钥 <code className="px-1 rounded bg-white/[0.06]">sk-ak-*</code>。点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
+          <Plug size={18} className="text-token-secondary mt-0.5 shrink-0" />
+          <div className="text-[13px] text-token-secondary leading-relaxed">
+            <div className="font-medium text-token-primary mb-1">开放接口 · OpenAI 兼容对外网关</div>
+            外部客户用标准 OpenAI 方式接入，Base URL <code className="px-1 rounded bg-token-nested">/api/v1</code>，密钥 <code className="px-1 rounded bg-token-nested">sk-ak-*</code>。点「管理」配模型白名单 / 限额，并查该客户调用日志排障。
           </div>
         </GlassCard>
         <div data-tour-id="open-api-stats" className="grid grid-cols-3 gap-2.5 lg:w-[420px] shrink-0">
@@ -116,19 +116,19 @@ export default function OpenApiPanel({ onActionsReady }: { onActionsReady?: (a: 
         <MapSectionLoader text="正在加载开放接口…" />
       ) : rows.length === 0 ? (
         <GlassCard className="p-10 flex flex-col items-center justify-center text-center gap-3">
-          <ShieldAlert size={32} className="text-white/30" />
-          <div className="text-white/70 text-sm">还没有授予 <code className="px-1 rounded bg-white/[0.06]">open-api:call</code> 的 Key</div>
-          <div className="text-white/45 text-xs max-w-md">在「接入 AI」弹窗创建 sk-ak-* Key 并勾选 open-api:call scope 后即可在此管理。</div>
+          <ShieldAlert size={32} className="text-token-muted" />
+          <div className="text-token-secondary text-sm">还没有授予 <code className="px-1 rounded bg-token-nested">open-api:call</code> 的 Key</div>
+          <div className="text-token-muted text-xs max-w-md">在「接入 AI」弹窗创建 sk-ak-* Key 并勾选 open-api:call scope 后即可在此管理。</div>
         </GlassCard>
       ) : (
         <>
           <div className="flex items-center gap-2">
             <div className="relative flex-1 max-w-xs">
-              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-white/30" />
+              <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
               <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="搜索 Key / 客户…"
-                className="w-full bg-white/[0.04] border border-white/[0.1] rounded-lg pl-8 pr-3 py-1.5 text-xs text-white/85 focus:outline-none focus:border-white/25" />
+                className="w-full bg-token-nested border border-token-subtle rounded-lg pl-8 pr-3 py-1.5 text-xs text-token-primary focus:outline-none focus:border-[var(--border-hover)]" />
             </div>
-            <span className="text-white/35 text-xs">{filtered.length} / {rows.length}</span>
+            <span className="text-token-muted text-xs">{filtered.length} / {rows.length}</span>
           </div>
 
           <div className="grid gap-3" style={{ gridTemplateColumns: 'repeat(auto-fill, minmax(330px, 1fr))' }}>
@@ -151,9 +151,9 @@ function fmtK(n: number): string { return n >= 1000 ? `${(n / 1000).toFixed(1)}k
 function StatTile({ label, value, sub }: { label: string; value: string; sub?: string }) {
   return (
     <GlassCard className="p-3 flex flex-col justify-center">
-      <div className="text-white/40 text-[11px]">{label}</div>
-      <div className="text-white/90 text-lg font-semibold leading-tight mt-0.5">{value}</div>
-      {sub && <div className="text-white/30 text-[10px] mt-0.5 truncate">{sub}</div>}
+      <div className="text-token-muted text-[11px]">{label}</div>
+      <div className="text-token-primary text-lg font-semibold leading-tight mt-0.5">{value}</div>
+      {sub && <div className="text-token-muted text-[10px] mt-0.5 truncate">{sub}</div>}
     </GlassCard>
   );
 }
@@ -167,42 +167,42 @@ function KeyCard({ r, onManage }: { r: BindingRow; onManage: () => void }) {
   const extra = Math.max(0, r.chatModels.length - 1);
   const quotaPct = r.dailyTokenQuota ? Math.min(100, Math.round((r.todayTokens / r.dailyTokenQuota) * 100)) : null;
   return (
-    <GlassCard className="p-4 flex flex-col gap-3 transition-colors hover:border-white/20">
+    <GlassCard className="p-4 flex flex-col gap-3 transition-colors hover-border-token">
       <div className="flex items-center gap-2.5">
         <div className="w-8 h-8 rounded-lg flex items-center justify-center text-[13px] font-semibold shrink-0"
           style={{ background: `${color}26`, color }}>{(r.name || '?').slice(0, 1).toUpperCase()}</div>
         <div className="min-w-0 flex-1">
-          <div className="text-white/90 text-sm truncate">{r.name}</div>
-          <div className="text-white/40 text-xs truncate">{r.ownerName}</div>
+          <div className="text-token-primary text-sm truncate">{r.name}</div>
+          <div className="text-token-muted text-xs truncate">{r.ownerName}</div>
         </div>
-        <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${r.isActive ? 'text-emerald-300/90 bg-emerald-500/10' : 'text-white/40 bg-white/[0.05]'}`}>
-          <span className={`w-1.5 h-1.5 rounded-full ${r.isActive ? 'bg-emerald-400' : 'bg-white/30'}`} />{r.isActive ? '启用' : '禁用'}
+        <span className={`inline-flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded ${r.isActive ? 'text-emerald-300/90 bg-emerald-500/10' : 'text-token-muted bg-token-nested'}`}>
+          <span className={`w-1.5 h-1.5 rounded-full ${r.isActive ? 'bg-emerald-400' : 'bg-token-card'}`} />{r.isActive ? '启用' : '禁用'}
         </span>
       </div>
 
       <div className="flex flex-wrap items-center gap-1.5">
-        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-white/[0.06] text-white/75 text-[11px]">
-          {r.chatModels.length ? <span className="text-emerald-400 text-[10px]">默认</span> : <span className="text-white/35 text-[10px]">默认池</span>}
+        <span className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded bg-token-nested text-token-secondary text-[11px]">
+          {r.chatModels.length ? <span className="text-emerald-400 text-[10px]">默认</span> : <span className="text-token-muted text-[10px]">默认池</span>}
           <span className="truncate max-w-[150px]">{defaultModel}</span>
         </span>
-        {extra > 0 && <span className="px-1.5 py-0.5 rounded bg-white/[0.04] text-white/45 text-[11px]">+{extra}</span>}
+        {extra > 0 && <span className="px-1.5 py-0.5 rounded bg-token-nested text-token-muted text-[11px]">+{extra}</span>}
         {r.chatIsFallback && <span className="px-1.5 py-0.5 rounded bg-amber-500/15 text-amber-300 text-[11px]">降级</span>}
       </div>
 
       <div className="flex flex-col gap-1">
         <div className="flex items-center justify-between text-[11px]">
-          <span className="text-white/40">今日用量</span>
-          <span className="text-white/70">{r.todayRequests} 次 · {r.todayTokens.toLocaleString()} tok</span>
+          <span className="text-token-muted">今日用量</span>
+          <span className="text-token-secondary">{r.todayRequests} 次 · {r.todayTokens.toLocaleString()} tok</span>
         </div>
         {quotaPct !== null && (
-          <div className="h-1 rounded-full bg-white/[0.06] overflow-hidden">
+          <div className="h-1 rounded-full bg-token-nested overflow-hidden">
             <div className="h-full rounded-full" style={{ width: `${quotaPct}%`, background: quotaPct >= 90 ? '#ef4444' : quotaPct >= 70 ? '#f59e0b' : '#10b981' }} />
           </div>
         )}
       </div>
 
-      <div className="flex items-center justify-between pt-2 border-t border-white/[0.06]">
-        <span className="text-white/35 text-[11px]">限速 {r.rateLimitPerMin ? `${r.rateLimitPerMin}/min` : '默认'}</span>
+      <div className="flex items-center justify-between pt-2 border-t border-token-subtle">
+        <span className="text-token-muted text-[11px]">限速 {r.rateLimitPerMin ? `${r.rateLimitPerMin}/min` : '默认'}</span>
         <Button variant="ghost" onClick={onManage}><Settings2 size={13} /> 管理</Button>
       </div>
     </GlassCard>
@@ -273,32 +273,32 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
       style={{ background: shown ? 'rgba(0,0,0,0.55)' : 'rgba(0,0,0,0)', transition: 'background 200ms' }}
       onClick={onClose}>
       <div
-        className="h-full bg-[#161618] border-l border-white/10 flex flex-col"
+        className="h-full bg-[#161618] border-l border-token-subtle flex flex-col"
         style={{ width: 'min(560px, 100vw)', boxShadow: '-24px 0 60px rgba(0,0,0,0.45)', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform 220ms cubic-bezier(0.22,1,0.36,1)' }}
         onClick={(e) => e.stopPropagation()}>
 
         {/* Header */}
-        <div className="px-6 py-4 border-b border-white/[0.08] shrink-0 flex items-start justify-between gap-3">
+        <div className="px-6 py-4 border-b border-token-subtle shrink-0 flex items-start justify-between gap-3">
           <div className="min-w-0">
-            <div className="text-white/90 text-[15px] font-medium truncate">{row.name}</div>
-            <div className="text-white/40 text-xs mt-1 flex items-center gap-2">
+            <div className="text-token-primary text-[15px] font-medium truncate">{row.name}</div>
+            <div className="text-token-muted text-xs mt-1 flex items-center gap-2">
               <span>{row.ownerName}</span>
-              <span className={`inline-flex items-center gap-1 ${row.isActive ? 'text-emerald-400/80' : 'text-white/35'}`}>
-                <span className={`w-1.5 h-1.5 rounded-full ${row.isActive ? 'bg-emerald-400' : 'bg-white/30'}`} />
+              <span className={`inline-flex items-center gap-1 ${row.isActive ? 'text-emerald-400/80' : 'text-token-muted'}`}>
+                <span className={`w-1.5 h-1.5 rounded-full ${row.isActive ? 'bg-emerald-400' : 'bg-token-card'}`} />
                 {row.isActive ? '启用' : '已禁用'}
               </span>
-              <span className="text-white/30">今日 {totalToday}</span>
+              <span className="text-token-muted">今日 {totalToday}</span>
             </div>
           </div>
-          <button className="text-white/40 hover:text-white/85 -mr-1 mt-0.5" onClick={onClose}><X size={18} /></button>
+          <button className="text-token-muted hover-text-primary -mr-1 mt-0.5" onClick={onClose}><X size={18} /></button>
         </div>
 
         {/* Segmented tabs */}
         <div className="px-6 pt-4 shrink-0">
-          <div className="inline-flex rounded-lg bg-white/[0.05] p-0.5 text-xs">
+          <div className="inline-flex rounded-lg bg-token-nested p-0.5 text-xs">
             {([['config', '配置', Settings2], ['logs', '调用日志 / 调试', Activity]] as const).map(([k, label, Icon]) => (
               <button key={k} onClick={() => setTab(k)}
-                className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-colors ${tab === k ? 'bg-white/[0.10] text-white/90' : 'text-white/45 hover:text-white/70'}`}>
+                className={`px-3.5 py-1.5 rounded-md flex items-center gap-1.5 transition-colors ${tab === k ? 'bg-token-card text-token-primary' : 'text-token-muted hover-text-primary'}`}>
                 <Icon size={13} /> {label}
               </button>
             ))}
@@ -312,12 +312,12 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
               <Section title="模型白名单" hint="客户用 model 字段在白名单内自选；第一个为默认；留空=走默认池">
                 <div className="flex flex-col gap-4">
                   <div>
-                    <div className="text-white/55 text-xs mb-2">Chat（/v1/chat/completions）</div>
+                    <div className="text-token-secondary text-xs mb-2">Chat（/v1/chat/completions）</div>
                     <WhitelistPicker options={chatOptions} value={chat} onChange={setChat} />
                   </div>
-                  <div className="h-px bg-white/[0.06]" />
+                  <div className="h-px bg-token-nested" />
                   <div>
-                    <div className="text-white/55 text-xs mb-2">生图（/v1/images/generations）</div>
+                    <div className="text-token-secondary text-xs mb-2">生图（/v1/images/generations）</div>
                     <WhitelistPicker options={imageOptions} value={image} onChange={setImage} />
                   </div>
                 </div>
@@ -334,37 +334,37 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
           ) : (
             <div className="flex flex-col gap-3 h-full">
               <div className="flex items-center justify-between shrink-0">
-                <div className="text-white/45 text-xs">最近调用 · 客户报错给响应 id 即可凭 requestId 定位</div>
+                <div className="text-token-muted text-xs">最近调用 · 客户报错给响应 id 即可凭 requestId 定位</div>
                 <Button variant="ghost" onClick={loadLogs} disabled={logsLoading}><RefreshCw size={13} /> 刷新</Button>
               </div>
               {logsLoading ? <MapSectionLoader text="加载日志…" />
                 : logs.length === 0 ? (
-                  <div className="flex-1 flex flex-col items-center justify-center text-white/35 text-xs gap-2 py-12">
-                    <Activity size={26} className="text-white/20" />暂无调用记录
+                  <div className="flex-1 flex flex-col items-center justify-center text-token-muted text-xs gap-2 py-12">
+                    <Activity size={26} className="text-token-muted" />暂无调用记录
                   </div>
                 ) : (
                   <div className="flex flex-col gap-1.5">
                     {logs.map((l) => (
-                      <div key={l.requestId} className="rounded-lg bg-white/[0.03] border border-white/[0.06] px-3 py-2 text-xs">
+                      <div key={l.requestId} className="rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-xs">
                         <div className="flex items-center justify-between gap-2">
                           <div className="flex items-center gap-2 min-w-0">
                             <span className={`px-1.5 py-0.5 rounded text-[11px] font-medium ${l.statusCode >= 400 ? 'bg-rose-500/15 text-rose-300' : 'bg-emerald-500/15 text-emerald-300'}`}>{l.statusCode}</span>
-                            <span className="text-white/55">{l.endpoint}</span>
+                            <span className="text-token-secondary">{l.endpoint}</span>
                             {l.errorCode && <span className="text-rose-300/80">{l.errorCode}</span>}
                             {l.isFallback && <span className="text-amber-400">降级</span>}
                           </div>
-                          <span className="text-white/35 shrink-0">{new Date(l.createdAt).toLocaleString('zh-CN', { hour12: false }).slice(5, 17)}</span>
+                          <span className="text-token-muted shrink-0">{new Date(l.createdAt).toLocaleString('zh-CN', { hour12: false }).slice(5, 17)}</span>
                         </div>
-                        <div className="flex items-center justify-between gap-2 mt-1.5 text-white/45">
+                        <div className="flex items-center justify-between gap-2 mt-1.5 text-token-muted">
                           <span className="truncate">
-                            <span className="text-white/35">{l.requestedModel ?? '(默认)'}</span>
-                            <span className="text-white/25"> → </span>
-                            <span className="text-white/70">{l.resolvedModel ?? '—'}</span>
+                            <span className="text-token-muted">{l.requestedModel ?? '(默认)'}</span>
+                            <span className="text-token-muted"> → </span>
+                            <span className="text-token-secondary">{l.resolvedModel ?? '—'}</span>
                           </span>
                           <span className="shrink-0 flex items-center gap-3">
                             <span>{(l.promptTokens ?? 0) + (l.completionTokens ?? 0) || 0} tok</span>
                             <span>{l.durationMs}ms</span>
-                            <button className="inline-flex items-center gap-1 hover:text-white/80" title="复制 requestId"
+                            <button className="inline-flex items-center gap-1 hover-text-primary" title="复制 requestId"
                               onClick={() => { navigator.clipboard?.writeText(l.requestId); toast.success('已复制 requestId'); }}>
                               {l.requestId.slice(0, 8)}<Copy size={11} />
                             </button>
@@ -380,7 +380,7 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
 
         {/* Sticky footer (config only) */}
         {tab === 'config' && (
-          <div className="px-6 py-3.5 border-t border-white/[0.08] shrink-0 flex items-center justify-end gap-2">
+          <div className="px-6 py-3.5 border-t border-token-subtle shrink-0 flex items-center justify-end gap-2">
             <Button variant="ghost" onClick={onClose}>取消</Button>
             <Button variant="primary" onClick={save} disabled={saving}>{saving ? <MapSpinner size={14} /> : null} 保存配置</Button>
           </div>
@@ -394,9 +394,9 @@ function KeyDetailDrawer({ row, chatOptions, imageOptions, onClose, onSaved }: {
 
 function Section({ title, hint, children }: { title: string; hint?: string; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/[0.07] bg-white/[0.015] p-4">
-      <div className="text-white/80 text-[13px] font-medium">{title}</div>
-      {hint && <div className="text-white/35 text-xs mt-0.5 mb-3">{hint}</div>}
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
+      <div className="text-token-primary text-[13px] font-medium">{title}</div>
+      {hint && <div className="text-token-muted text-xs mt-0.5 mb-3">{hint}</div>}
       {!hint && <div className="mb-3" />}
       {children}
     </div>
@@ -406,11 +406,11 @@ function Section({ title, hint, children }: { title: string; hint?: string; chil
 function NumField({ label, unit, value, onChange }: { label: string; unit: string; value: string; onChange: (v: string) => void }) {
   return (
     <label className="flex flex-col gap-1">
-      <span className="text-white/45 text-xs">{label}</span>
-      <div className="flex items-center bg-white/[0.04] border border-white/[0.12] rounded-md focus-within:border-white/30">
+      <span className="text-token-muted text-xs">{label}</span>
+      <div className="flex items-center bg-token-nested border border-token-subtle rounded-md focus-within:border-[var(--border-hover)]">
         <input type="number" min={1} value={value} placeholder="不限" onChange={(e) => onChange(e.target.value)}
-          className="bg-transparent px-2 py-1.5 text-white/85 text-xs w-full focus:outline-none" />
-        <span className="text-white/30 text-[10px] pr-2 shrink-0">{unit}</span>
+          className="bg-transparent px-2 py-1.5 text-token-primary text-xs w-full focus:outline-none" />
+        <span className="text-token-muted text-[10px] pr-2 shrink-0">{unit}</span>
       </div>
     </label>
   );
@@ -422,18 +422,18 @@ function WhitelistPicker({ options, value, onChange }: { options: WLOption[]; va
   return (
     <div>
       <div className="flex flex-wrap gap-1.5 mb-2">
-        {value.length === 0 && <span className="text-white/30 text-xs py-1">未配置 · 走默认池</span>}
+        {value.length === 0 && <span className="text-token-muted text-xs py-1">未配置 · 走默认池</span>}
         {value.map((m, i) => (
-          <span key={m} className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md bg-white/[0.07] border border-white/[0.08] text-white/80 text-xs">
+          <span key={m} className="inline-flex items-center gap-1.5 pl-2 pr-1.5 py-1 rounded-md bg-token-nested border border-token-subtle text-token-primary text-xs">
             {i === 0 && <span className="text-emerald-400 text-[10px] font-medium">默认</span>}
             {labelOf(m)}
-            <button type="button" className="text-white/35 hover:text-white/85" onClick={() => onChange(value.filter((x) => x !== m))}><X size={11} /></button>
+            <button type="button" className="text-token-muted hover-text-primary" onClick={() => onChange(value.filter((x) => x !== m))}><X size={11} /></button>
           </span>
         ))}
       </div>
       {remaining.length > 0 && (
         <select value="" onChange={(e) => { if (e.target.value) onChange([...value, e.target.value]); }}
-          className="bg-white/[0.04] border border-white/[0.12] rounded-md px-2 py-1.5 text-white/70 text-xs w-full focus:outline-none focus:border-white/30">
+          className="bg-token-nested border border-token-subtle rounded-md px-2 py-1.5 text-token-secondary text-xs w-full focus:outline-none focus:border-[var(--border-hover)]">
           <option value="" className="bg-[#1E1F20]">+ 添加模型 / 模型池…</option>
           {remaining.map((o) => <option key={o.value} value={o.value} className="bg-[#1E1F20]">{o.label}</option>)}
         </select>

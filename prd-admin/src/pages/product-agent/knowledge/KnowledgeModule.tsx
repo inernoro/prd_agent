@@ -83,7 +83,7 @@ export function KnowledgeModule({ productId }: { productId: string }) {
   }, [storeId, reloadAllEntries, reloadStore]);
 
   if (loading) return <MapSectionLoader text="正在准备知识库…" />;
-  if (!storeId) return <div className="text-sm text-white/40 text-center py-10">知识库加载失败</div>;
+  if (!storeId) return <div className="text-sm text-token-muted text-center py-10">知识库加载失败</div>;
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-3 p-4">
@@ -95,7 +95,7 @@ export function KnowledgeModule({ productId }: { productId: string }) {
             <button
               key={t.key}
               onClick={() => setTab(t.key)}
-              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-white/50 border-transparent hover:bg-white/5 hover:text-white/80'}`}
+              className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm border ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-token-secondary border-transparent hover-bg-soft hover:text-token-primary'}`}
             >
               <Icon size={14} /> {t.label}
             </button>
