@@ -3225,7 +3225,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("sourceSystemDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("ingressProtocolDistribution: LogsBucketItem[]", consoleTypes);
         Assert.Contains("modelPolicyDistribution: LogsBucketItem[]", consoleTypes);
-        Assert.Contains("<details className=\"lg-log-filters\">", logsView);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logsView);
         Assert.Contains("meta.ingressProtocols.map", logsView);
         Assert.Contains("setFilterIngressProtocol", logsView);
         Assert.Contains("meta.modelPolicies.map", logsView);
@@ -3279,7 +3279,9 @@ public class GatewayDataDomainGuardTests
         foreach (var group in new[] { "工作区", "路由", "开发者", "组织", "治理", "设置" })
             Assert.Contains($"label: '{group}'", layout);
         Assert.Contains("<aside className={`lg-console-sidebar", layout);
-        Assert.Contains("className=\"lg-tenant-switcher\"", layout);
+        Assert.Contains("className={`lg-tenant-switcher ${className}`}", layout);
+        Assert.Contains("renderTenantSwitcher('lg-desktop-tenant-switcher')", layout);
+        Assert.Contains("renderTenantSwitcher('lg-mobile-tenant-switcher')", layout);
         Assert.Contains("按 requestId 定位请求", layout);
         Assert.Contains("健康状态", home);
         Assert.Contains("Quickstart", home);
@@ -3443,6 +3445,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
         Assert.Contains("上游耗时", drawer);
@@ -3465,9 +3468,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("原始数据", drawer);
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", drawer);
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
-        Assert.Contains("<details className=\"lg-log-filters\">", logs);
+        Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.Contains("fontSize: 14, fontWeight: 550", logs);
+        Assert.Contains(".lg-log-table {", theme);
+        Assert.Contains("font-size: 14px;", theme);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
