@@ -21,6 +21,7 @@ public sealed class LiveAsrBatchFallbackService
     public const int WindowBytes = SampleRate * WindowSeconds * BytesPerSample;
     public const int MinimumProviderSeconds = 15;
     public const int SpeechAmplitudeThreshold = 128;
+    public const int ProviderValidationAttempts = 4;
 
     private readonly ILlmGateway _gateway;
     private readonly IModelResolver _resolver;
@@ -158,24 +159,26 @@ public sealed class LiveAsrBatchFallbackService
         for (var index = 0; index < candidates.Count; index++)
         {
             var candidate = candidates[index];
-            for (var providerAttempt = 1; providerAttempt <= 2; providerAttempt++)
+            for (var providerAttempt = 1;
+                 providerAttempt <= ProviderValidationAttempts;
+                 providerAttempt++)
             {
                 await emit(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Status,
                     Provider = candidate.ActualPlatformName,
                     Model = candidate.ActualModel,
-                    Attempt = (index * 2) + providerAttempt,
-                    TotalAttempts = candidates.Count * 2,
+                    Attempt = (index * ProviderValidationAttempts) + providerAttempt,
+                    TotalAttempts = candidates.Count * ProviderValidationAttempts,
                     Message = providerAttempt == 1
                         ? $"正在识别第 {windowIndex} 个实时片段"
-                        : $"正在校验第 {windowIndex} 个实时片段",
+                        : $"正在进行第 {providerAttempt - 1} 次转写校验",
                 });
 
                 try
                 {
                     var response = await _gateway.SendRawWithResolutionAsync(
-                        BuildRequest(candidate, wave),
+                        BuildRequest(candidate, wave, providerAttempt),
                         candidate.ToGatewayResolution(),
                         CancellationToken.None);
                     var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
@@ -302,7 +305,10 @@ public sealed class LiveAsrBatchFallbackService
         return null;
     }
 
-    private static GatewayRawRequest BuildRequest(ModelResolutionResult candidate, byte[] wave)
+    private static GatewayRawRequest BuildRequest(
+        ModelResolutionResult candidate,
+        byte[] wave,
+        int providerAttempt)
     {
         if (candidate.IsExchange
             && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
@@ -314,6 +320,9 @@ public sealed class LiveAsrBatchFallbackService
 
         if (ShouldUseChatAudio(candidate))
         {
+            var prompt = providerAttempt == 1
+                ? "音频已附在本消息的 input_audio 中。请逐字转写，只输出音频里真实说出的话，不要解释、确认或要求播放音频；没有人声时只输出 NO_SPEECH。"
+                : $"这是第 {providerAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
             return BaseRequest(
                 candidate,
                 endpointPath: "/v1/chat/completions",
@@ -321,6 +330,7 @@ public sealed class LiveAsrBatchFallbackService
                 {
                     ["model"] = candidate.ActualModel,
                     ["modalities"] = new JsonArray("text"),
+                    ["temperature"] = 0,
                     ["messages"] = new JsonArray
                     {
                         new JsonObject
@@ -331,7 +341,7 @@ public sealed class LiveAsrBatchFallbackService
                                 new JsonObject
                                 {
                                     ["type"] = "text",
-                                    ["text"] = "音频已附在本消息中。请逐字转写，只输出音频里真实说出的话，不要解释、确认或要求播放音频；没有人声时只输出 NO_SPEECH。",
+                                    ["text"] = prompt,
                                 },
                                 new JsonObject
                                 {

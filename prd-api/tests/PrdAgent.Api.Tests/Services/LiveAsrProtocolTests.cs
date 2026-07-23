@@ -394,6 +394,49 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldUseFourBoundedValidationAttempts()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        var responses = 0;
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() =>
+            {
+                responses++;
+                return new GatewayRawResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = responses < LiveAsrBatchFallbackService.ProviderValidationAttempts
+                        ? """{"text":"好的，请将音频上传后，我会立即开始转写。"}"""
+                        : """{"text":"我认为跑步最重要的是身体健康。"}""",
+                };
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask);
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldContain("身体健康");
+        responses.ShouldBe(LiveAsrBatchFallbackService.ProviderValidationAttempts);
+    }
+
+    [Fact]
     public void WebSocketAuth_ShouldReadTokenOnlyOnExactLiveTranscriptionSuffix()
     {
         LiveAsrWebSocketAuth.ExtractToken(
