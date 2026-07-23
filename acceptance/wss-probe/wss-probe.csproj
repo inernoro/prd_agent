@@ -1,0 +1,13 @@
+<Project Sdk="Microsoft.NET.Sdk.Web">
+  <PropertyGroup>
+    <TargetFramework>net8.0</TargetFramework>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <Nullable>enable</Nullable>
+  </PropertyGroup>
+  <ItemGroup>
+    <Compile Include="../../prd-api/src/PrdAgent.Core/Interfaces/ISafeOutboundUrlValidator.cs" Link="ProductSource/ISafeOutboundUrlValidator.cs" />
+    <Compile Include="../../prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundUrlValidator.cs" Link="ProductSource/SafeOutboundUrlValidator.cs" />
+    <Compile Include="../../prd-api/src/PrdAgent.Infrastructure/Services/SafeOutboundWebSocketConnector.cs" Link="ProductSource/SafeOutboundWebSocketConnector.cs" />
+    <Compile Include="../../prd-api/src/PrdAgent.Infrastructure/LlmGateway/Asr/DoubaoStreamAsrService.cs" Link="ProductSource/DoubaoStreamAsrService.cs" />
+  </ItemGroup>
+</Project>
