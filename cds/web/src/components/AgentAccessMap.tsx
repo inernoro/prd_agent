@@ -1,4 +1,4 @@
-import { lazy, Suspense, useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
   CalendarClock,
   Check,
@@ -7,6 +7,7 @@ import {
   FolderKanban,
   GitBranch,
   Github,
+  Info,
   KeyRound,
   Map as MapIcon,
   MapPinned,
@@ -34,8 +35,6 @@ import {
   type AgentPageContext,
   type AgentPageContextId,
 } from '@/lib/agent-onboarding';
-
-const AgentTerritoryGeoMap = lazy(() => import('@/components/AgentTerritoryGeoMap'));
 
 export type AgentAccessMapSelection =
   | { kind: 'system' }
@@ -83,16 +82,12 @@ function sameSelection(left: AgentAccessMapSelection, right: AgentAccessMapSelec
     && (left.kind !== 'project' || (right.kind === 'project' && left.projectId === right.projectId));
 }
 
-function selectionKey(selection: AgentAccessMapSelection): string {
-  return selection.kind === 'project' ? `project:${selection.projectId}` : selection.kind;
-}
-
 function selectionName(
   selection: AgentAccessMapSelection,
   projects: AgentProjectOption[],
 ): string {
   if (selection.kind === 'system') return 'CDS 控制中枢';
-  if (selection.kind === 'new') return '未绘制大陆';
+  if (selection.kind === 'new') return '新项目';
   return projects.find((project) => project.id === selection.projectId)?.name || selection.projectId;
 }
 
@@ -147,7 +142,7 @@ export function AgentAccessMap({
       selection: { kind: 'system' },
       name: 'CDS 控制中枢',
       code: 'SYSTEM',
-      metric: `${SYSTEM_MISSIONS.length} 块地界`,
+      metric: `${SYSTEM_MISSIONS.length} 类任务`,
     },
     ...projects.map((project) => ({
       key: `project:${project.id}`,
@@ -159,7 +154,7 @@ export function AgentAccessMap({
     {
       key: 'new',
       selection: { kind: 'new' },
-      name: '开辟新大陆',
+      name: '创建新项目',
       code: 'NEW PROJECT',
       metric: '一次性权限',
     },
@@ -200,7 +195,7 @@ export function AgentAccessMap({
         </span>
         <span className="cds-agent-route-trigger-route">
           <small>{continentName}</small>
-          <span>打开任务地图</span>
+          <span>选择任务</span>
         </span>
         <ChevronDown className="cds-agent-route-trigger-chevron" aria-hidden="true" />
       </button>
@@ -217,7 +212,7 @@ export function AgentAccessMap({
             <div>
               <DialogTitle>选择 Agent 路线</DialogTitle>
               <DialogDescription>
-                先选择项目大陆，再在相连的地界中确定要交给 Agent 的任务。
+                先选择项目，再从一排任务入口中确定要交给 Agent 的工作。
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -226,11 +221,11 @@ export function AgentAccessMap({
             <div className="cds-agent-world-step-heading">
               <span>1</span>
               <div>
-                <h3 id="agent-continent-title">选择大洲</h3>
-                <p>每个项目是一块大洲，系统任务位于控制中枢。</p>
+                <h3 id="agent-continent-title">选择项目</h3>
+                <p>先确定 Agent 要连接的项目范围。</p>
               </div>
             </div>
-            <div className="cds-agent-continent-rail" role="listbox" aria-label="项目大洲">
+            <div className="cds-agent-continent-rail" role="listbox" aria-label="项目范围">
               {continentOptions.map((option) => {
                 const selected = sameSelection(option.selection, draftSelection);
                 return (
@@ -262,33 +257,61 @@ export function AgentAccessMap({
             <div className="cds-agent-world-step-heading">
               <span>2</span>
               <div>
-                <h3 id="agent-region-title">选择地界</h3>
-                <p>{draftContinentName} 的任务紧密相连，点击地界规划路线。</p>
+                <h3 id="agent-region-title">选择任务</h3>
+                <p>选择 Agent 要处理的任务类别。</p>
               </div>
               <div className="cds-agent-world-current-continent">
-                <small>当前大洲</small>
+                <small>当前项目</small>
                 <strong>{draftContinentName}</strong>
                 <code>{draftContinentCode}</code>
               </div>
             </div>
 
-            <Suspense
-              fallback={(
-                <div className="cds-agent-world-map-loading" role="status">
-                  正在生成任务大陆
-                </div>
-              )}
-            >
-              <AgentTerritoryGeoMap
-                key={selectionKey(draftSelection)}
-                continentName={draftContinentName}
-                missions={draftMissions}
-                selectedMissionId={draftMission.id}
-                singleRegion={draftSelection.kind === 'new'}
-                sourceContextId={sourceContextId}
-                onMissionChange={setDraftMissionId}
-              />
-            </Suspense>
+            <div className="cds-agent-mission-list">
+              <div className="cds-agent-mission-list-meta">
+                <span>
+                  <strong>{draftMissions.length} 类任务入口</strong>
+                  <small>这不是设置总数，进入页面后 Agent 会读取完整设置。</small>
+                </span>
+                <Info aria-hidden="true" />
+              </div>
+              <div
+                className="cds-agent-mission-strip"
+                role="listbox"
+                aria-label={`${draftContinentName}的 Agent 任务`}
+                data-single={draftMissions.length === 1 ? 'true' : 'false'}
+                style={{
+                  gridTemplateColumns: `repeat(${draftMissions.length}, minmax(148px, 1fr))`,
+                } as CSSProperties}
+              >
+                {draftMissions.map((mission, index) => {
+                  const Icon = mission.icon;
+                  const selected = mission.id === draftMission.id;
+                  const fromCurrentPage = sourceContextId === mission.id;
+                  return (
+                    <button
+                      key={mission.id}
+                      type="button"
+                      role="option"
+                      aria-selected={selected}
+                      className="cds-agent-mission-card"
+                      data-selected={selected ? 'true' : 'false'}
+                      onClick={() => setDraftMissionId(mission.id)}
+                    >
+                      <span className="cds-agent-mission-card-index">{index + 1}</span>
+                      <span className="cds-agent-mission-card-icon" aria-hidden="true">
+                        <Icon />
+                      </span>
+                      <span className="cds-agent-mission-card-copy">
+                        <strong>{mission.label}</strong>
+                        <small>{fromCurrentPage ? '当前页面入口' : mission.description}</small>
+                      </span>
+                      <Check className="cds-agent-mission-card-check" aria-hidden="true" />
+                    </button>
+                  );
+                })}
+              </div>
+            </div>
           </section>
 
           <div className="cds-agent-world-footer">

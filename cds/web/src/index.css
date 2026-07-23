@@ -4829,3 +4829,215 @@
     height: auto;
   }
 }
+
+/* Agent 任务横排列表：一排 N 个，窄屏仅列表内部横向滚动。 */
+.cds-agent-mission-list {
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.9rem;
+  background: hsl(var(--surface-raised));
+  padding: 0.75rem;
+  box-shadow: 0 8px 22px hsl(var(--foreground) / 0.045);
+}
+
+.cds-agent-mission-list-meta {
+  display: flex;
+  min-height: 44px;
+  align-items: center;
+  justify-content: space-between;
+  gap: 0.75rem;
+  border-bottom: 1px solid hsl(var(--border));
+  padding: 0 0.15rem 0.65rem;
+}
+
+.cds-agent-mission-list-meta > span {
+  display: grid;
+  min-width: 0;
+  gap: 0.12rem;
+}
+
+.cds-agent-mission-list-meta strong {
+  color: hsl(var(--foreground));
+  font-size: 0.8125rem;
+  font-weight: 680;
+}
+
+.cds-agent-mission-list-meta small {
+  overflow: hidden;
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.cds-agent-mission-list-meta > svg {
+  width: 1rem;
+  height: 1rem;
+  flex: 0 0 auto;
+  color: hsl(var(--primary));
+}
+
+.cds-agent-mission-strip {
+  display: grid;
+  min-width: 0;
+  gap: 0.5rem;
+  overflow-x: auto;
+  overscroll-behavior-x: contain;
+  padding: 0.65rem 0.1rem 0.15rem;
+  scrollbar-width: thin;
+  scroll-snap-type: x proximity;
+}
+
+.cds-agent-mission-strip[data-single='true'] {
+  grid-template-columns: minmax(220px, 320px) !important;
+}
+
+.cds-agent-mission-card {
+  position: relative;
+  display: grid;
+  min-width: 0;
+  min-height: 112px;
+  grid-template-columns: 28px minmax(0, 1fr) 18px;
+  grid-template-rows: 30px 1fr;
+  align-items: center;
+  gap: 0.4rem 0.5rem;
+  overflow: hidden;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.75rem;
+  background: hsl(var(--background));
+  padding: 0.7rem;
+  color: hsl(var(--foreground));
+  text-align: left;
+  cursor: pointer;
+  scroll-snap-align: start;
+  transition:
+    border-color 180ms ease,
+    background-color 180ms ease,
+    box-shadow 180ms ease;
+}
+
+.cds-agent-mission-card:hover {
+  border-color: hsl(var(--primary) / 0.42);
+  background: hsl(var(--primary) / 0.035);
+  box-shadow: 0 5px 14px hsl(var(--foreground) / 0.06);
+}
+
+.cds-agent-mission-card:focus-visible {
+  outline: 2px solid hsl(var(--ring));
+  outline-offset: 2px;
+}
+
+.cds-agent-mission-card[data-selected='true'] {
+  border-color: hsl(var(--primary) / 0.72);
+  background: hsl(var(--primary) / 0.075);
+  box-shadow:
+    inset 3px 0 0 hsl(var(--primary)),
+    0 5px 15px hsl(var(--primary) / 0.1);
+}
+
+.cds-agent-mission-card-index {
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border-radius: 999px;
+  background: hsl(var(--muted));
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  font-weight: 720;
+}
+
+.cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-index {
+  background: hsl(var(--primary));
+  color: hsl(var(--primary-foreground));
+}
+
+.cds-agent-mission-card-icon {
+  display: grid;
+  width: 30px;
+  height: 30px;
+  place-items: center;
+  border: 1px solid hsl(var(--border));
+  border-radius: 0.55rem;
+  background: hsl(var(--surface-sunken));
+  color: hsl(var(--muted-foreground));
+}
+
+.cds-agent-mission-card-icon svg {
+  width: 1rem;
+  height: 1rem;
+}
+
+.cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-icon {
+  border-color: hsl(var(--primary) / 0.3);
+  background: hsl(var(--primary) / 0.1);
+  color: hsl(var(--primary));
+}
+
+.cds-agent-mission-card-copy {
+  display: grid;
+  min-width: 0;
+  grid-column: 2 / 4;
+  gap: 0.2rem;
+  align-self: start;
+}
+
+.cds-agent-mission-card-copy strong,
+.cds-agent-mission-card-copy small {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.cds-agent-mission-card-copy strong {
+  color: hsl(var(--foreground));
+  font-size: 0.8125rem;
+  font-weight: 680;
+  white-space: nowrap;
+}
+
+.cds-agent-mission-card-copy small {
+  color: hsl(var(--muted-foreground));
+  font-size: 0.6875rem;
+  line-height: 1.4;
+}
+
+.cds-agent-mission-card-check {
+  width: 0.95rem;
+  height: 0.95rem;
+  color: hsl(var(--primary));
+  opacity: 0;
+}
+
+.cds-agent-mission-card[data-selected='true'] .cds-agent-mission-card-check {
+  opacity: 1;
+}
+
+@media (max-width: 640px) {
+  .cds-agent-mission-list {
+    padding: 0.65rem;
+  }
+
+  .cds-agent-mission-list-meta {
+    align-items: flex-start;
+  }
+
+  .cds-agent-mission-list-meta small {
+    white-space: normal;
+  }
+
+  .cds-agent-mission-strip {
+    margin-right: -0.65rem;
+    padding-right: 0.65rem;
+  }
+
+  .cds-agent-mission-card {
+    min-height: 108px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .cds-agent-mission-card {
+    transition: none;
+  }
+}
