@@ -27,6 +27,16 @@ from html.parser import HTMLParser
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
+DAILY_REQUIRED_SECTIONS = (
+    "昨日工作总结",
+    "改动规模与深度预算",
+    "标记法则与验收标准",
+    "PR/commit 到结果映射",
+    "覆盖矩阵",
+    "截图回读检查",
+    "重试记录",
+    "未发布状态",
+)
 
 
 def curl(args, retries=5):
@@ -2465,16 +2475,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
     if daily_acceptance_claim:
-        for section in (
-            "昨日工作总结",
-            "改动规模与深度预算",
-            "标记法则与验收标准",
-            "PR/commit 到结果映射",
-            "覆盖矩阵",
-            "截图回读检查",
-            "重试记录",
-            "未发布状态",
-        ):
+        for section in DAILY_REQUIRED_SECTIONS:
             if section not in body:
                 errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
         if not re.search(r"(计划证据数|计划截图数|planned evidence|planned screenshots)", body, re.I):
