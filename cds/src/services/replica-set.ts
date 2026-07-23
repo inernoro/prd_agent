@@ -391,7 +391,7 @@ export class ReplicaSetService {
         memberProfile,
         serviceState,
         onOutput,
-        this.opts.state.getCustomEnv(branch.projectId),
+        this.buildMemberEnv(branch),
         { actor: 'replica-set', trigger: 'replica-set-member' },
       );
       let ready = true;
@@ -428,6 +428,24 @@ export class ReplicaSetService {
         statusMessage: (err as Error).message,
       });
     }
+  }
+
+  /**
+   * 成员运行 env：与部署循环 getMergedEnv 同口径（2026-07-23 真实验收修复）——
+   * 首版只传 getCustomEnv，缺 CDS 派生变量（CDS_HOST / CDS_<infra>_PORT），
+   * env 模板解析直接失败「环境变量模板缺少值」。合并顺序与 branches.ts 一致：
+   * cds 派生 → 镜像加速 → 项目/全局自定义 → 分支 scope → 项目身份保留键。
+   */
+  private buildMemberEnv(branch: BranchEntry): Record<string, string> {
+    const projectId = branch.projectId || 'default';
+    const project = this.opts.state.getProject(projectId);
+    return {
+      ...this.opts.state.getCdsEnvVars(projectId),
+      ...this.opts.state.getMirrorEnvVars(),
+      ...this.opts.state.getCustomEnv(projectId),
+      ...this.opts.state.getCustomEnvScope(branch.id),
+      ...(project ? { CDS_PROJECT_ID: project.id, CDS_PROJECT_SLUG: project.slug } : {}),
+    };
   }
 
   private patchMember(
