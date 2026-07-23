@@ -224,6 +224,7 @@ export function QuickstartPage() {
     setBundle(nextBundle);
     setSnippetTab('client');
     void checkRealRoute(nextBundle);
+    void runTest(nextBundle, 'safe');
   };
 
   const checkRealRoute = async (target = bundle) => {
@@ -298,8 +299,8 @@ export function QuickstartPage() {
     setPreparingRoute(false);
   };
 
-  const runTest = async () => {
-    if (!bundle || (testMode === 'real' && !realRouteReady)) return;
+  const runTest = async (target = bundle, mode = testMode) => {
+    if (!target || (mode === 'real' && !realRouteReady)) return;
     setTesting(true);
     setTestResult(null);
     setActionError(null);
@@ -308,27 +309,27 @@ export function QuickstartPage() {
     const requestId = createRequestId();
     try {
       const headers: Record<string, string> = {
-        Authorization: `Bearer ${bundle.key}`,
+        Authorization: `Bearer ${target.key}`,
         'Content-Type': 'application/json',
         'X-Gateway-Source': 'external',
-        'X-Gateway-App-Caller': bundle.appCallerCode,
+        'X-Gateway-App-Caller': target.appCallerCode,
         'X-Request-Id': requestId,
       };
-      if (testMode === 'safe') headers['X-Gateway-Dry-Run'] = 'quickstart';
+      if (mode === 'safe') headers['X-Gateway-Dry-Run'] = 'quickstart';
       const response = await fetch(new URL(definition.path, `${normalizedBaseUrl}/`).toString(), {
         method: 'POST',
         headers,
-        body: JSON.stringify(dryRunBody(protocol, bundle.requestType, bundle.appCallerCode, requestId)),
+        body: JSON.stringify(dryRunBody(protocol, target.requestType, target.appCallerCode, requestId)),
         credentials: 'omit',
       });
       const payload = await response.json().catch(() => null) as Record<string, unknown> | null;
       const actualRequestId = readRequestId(response, payload) || requestId;
       const upstreamCalled = readUpstreamCalled(response, payload);
       if (!response.ok) {
-        setTestResult({ ok: false, message: readErrorMessage(payload) || `${testMode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId });
-      } else if (testMode === 'safe' && upstreamCalled === false) {
-        setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(bundle.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
-      } else if (testMode === 'safe') {
+        setTestResult({ ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId });
+      } else if (mode === 'safe' && upstreamCalled === false) {
+        setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(target.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
+      } else if (mode === 'safe') {
         setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
       } else {
         const actualModel = readActualModel(payload) || currentRoutePreview?.actualModel || '已解析模型';
@@ -391,7 +392,7 @@ export function QuickstartPage() {
       <div style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <header>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Rocket size={19} /><h1 style={{ margin: 0, fontSize: 20, lineHeight: '36px', fontWeight: 600 }}>Quickstart</h1></div>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>选择客户端，生成一份配置，完成首次连接。高级身份、协议和真实路由仍可在本页展开。</p>
+          <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>目标 3 分钟：选择客户端，生成配置，系统自动验证密钥和团队边界。高级选项默认收起。</p>
         </header>
 
         <section className="lg-client-presets" aria-label="接入方式">
@@ -405,8 +406,8 @@ export function QuickstartPage() {
 
         <section className="lg-quickstart-steps" style={{ ...gridStyle, gridTemplateColumns: 'repeat(3, minmax(0, 1fr))' }}>
           <Step number="1" title={`选择 ${selectedClient.label}`} text="系统已自动填写团队、appCaller、协议和安全默认值。" />
-          <Step number="2" title="生成并复制" text="一次生成 appCaller、API Key 和客户端配置，密钥只显示一次。" />
-          <Step number="3" title="连接并验证" text="粘贴到客户端并点击检查；需要排查时再用 requestId 回查。" />
+          <Step number="2" title="生成并自动验证" text="一次生成 appCaller 与 API Key，自动执行不访问付费上游的安全测试。" />
+          <Step number="3" title="复制并连接" text="复制客户端配置即可使用；失败时用自动生成的 requestId 回查。" />
         </section>
 
         <section style={cardStyle}>
@@ -448,7 +449,7 @@ export function QuickstartPage() {
             <div><strong>{creatingStage === 'app-caller' ? '正在创建 appCaller' : creatingStage === 'key' ? '正在签发团队密钥' : bundle ? '接入配置已生成' : '尚未生成接入配置'}</strong><small>{bundle ? `密钥 ${bundle.keyPrefix}，只授权当前 ${requestTypeLabel(bundle.requestType)} appCaller 和上方四种协议，默认限制 60 次/分钟；切换协议后可直接测试。` : '不会创建通配 key；密钥默认限制 60 次/分钟，也不会调用付费模型。'}</small></div>
             <div style={{ display: 'flex', gap: 7, flexWrap: 'wrap', justifyContent: 'flex-end' }}>
               {canCreateAccess && bundle ? <Button variant="ghost" onClick={editIdentity}>修改身份</Button> : null}
-              {canCreateAccess ? <Button variant="primary" title={activeTeams.length === 0 ? '请先创建团队' : undefined} disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : `生成 ${selectedClient.label} 配置`}</Button> : null}
+              {canCreateAccess ? <Button variant="primary" title={activeTeams.length === 0 ? '请先创建团队' : undefined} disabled={organizationLoading || creatingStage !== null || activeTeams.length === 0} onClick={() => void createAccessBundle()}><KeyRound size={14} />{creatingStage ? '生成中' : bundle ? '再签一把同配置 key' : `生成并验证 ${selectedClient.label}`}</Button> : null}
             </div>
           </div>
 
@@ -478,7 +479,7 @@ export function QuickstartPage() {
           <p style={hintStyle}>{snippetMode === 'safe' ? <>cURL 与 Agent Skill 默认带 <code>X-Gateway-Dry-Run: quickstart</code>，不会产生上游费用。</> : <>当前示例不带 dry-run，会执行一次真实模型调用；请先核对下方真实路由。</>} 不要把密钥提交到仓库、截图、URL 或共享日志。</p>
 
           <div className="lg-safe-test-panel" style={{ marginTop: 12 }}>
-            <div><Play size={17} /><span><strong>控制台直测</strong><small>这是可选的验证，不影响复制客户端配置。先测安全连通；明确选择真实模型时才会产生费用。</small></span></div>
+            <div><Play size={17} /><span><strong>接入验证</strong><small>生成配置后会自动执行安全连通测试；只有明确选择真实模型时才会产生费用。</small></span></div>
             <div className="lg-test-mode" role="group" aria-label="测试模式">
               <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
               <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '在下方展开真实路由，确认当前地址已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>

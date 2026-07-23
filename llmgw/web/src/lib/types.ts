@@ -78,6 +78,8 @@ export type LlmLogListItem = {
   statusCode?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  tokenUsageSource?: string | null;
+  imageSuccessCount?: number | null;
   estimatedCost?: number | null;
   estimatedCostCurrency?: string | null;
   estimatedCostUsd?: number | null;
