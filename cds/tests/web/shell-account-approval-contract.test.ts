@@ -106,6 +106,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
+    expect(agentDialogSource).toContain('grid grid-cols-3');
+    expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
     expect(agentDialogSource).toContain('createAgentMissionContext(missionId, effectiveProjectId)');
     expect(agentDialogSource).toContain('连接已有项目');
     expect(agentDialogSource).toContain('创建一个新项目');

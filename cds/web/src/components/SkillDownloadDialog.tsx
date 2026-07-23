@@ -174,7 +174,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </label>
         ) : null}
 
-        <nav className="flex gap-1 border-b border-[hsl(var(--hairline))]">
+        <nav className="grid grid-cols-3 gap-1 border-b border-[hsl(var(--hairline))]">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -183,11 +183,11 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
                 key={tab.key}
                 type="button"
                 onClick={() => setActive(tab.key)}
-                className={`relative inline-flex h-10 shrink-0 items-center gap-2 px-3 text-sm transition-colors ${
+                className={`relative inline-flex h-10 min-w-0 items-center justify-center gap-1 px-1 text-sm transition-colors sm:gap-2 sm:px-3 ${
                   selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="hidden h-4 w-4 sm:block" />
                 <span>{tab.label}</span>
                 {tab.recommended ? (
                   <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
