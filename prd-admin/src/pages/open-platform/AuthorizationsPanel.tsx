@@ -15,6 +15,11 @@ import {
   Key,
   ExternalLink,
   Lock,
+  Bug,
+  FileText,
+  Github,
+  Plug,
+  type LucideIcon,
 } from 'lucide-react';
 import {
   listAuthorizations,
@@ -31,11 +36,93 @@ interface Props {
   onActionsReady?: (actions: React.ReactNode) => void;
 }
 
-const TYPE_ICONS: Record<string, string> = {
-  tapd: '🐛',
-  yuque: '📝',
-  github: '🐙',
+const TYPE_ICONS: Record<string, LucideIcon> = {
+  tapd: Bug,
+  yuque: FileText,
+  github: Github,
 };
+
+function AuthorizationTypeIcon({ type, size = 16 }: { type: string; size?: number }) {
+  const Icon = TYPE_ICONS[type] ?? Plug;
+  return <Icon size={size} aria-hidden="true" />;
+}
+
+interface AuthorizationTableProps {
+  items: AuthorizationSummary[];
+  onValidate: (id: string) => void;
+  onEdit: (item: AuthorizationSummary) => void;
+  onRevoke: (item: AuthorizationSummary) => void;
+}
+
+export function AuthorizationTable({ items, onValidate, onEdit, onRevoke }: AuthorizationTableProps) {
+  return (
+    <table className="w-full text-sm">
+      <thead>
+        <tr className="border-b border-token-subtle text-xs text-token-secondary">
+          <th className="text-left py-2 px-3 font-medium">类型</th>
+          <th className="text-left py-2 px-3 font-medium">名称</th>
+          <th className="text-left py-2 px-3 font-medium">状态</th>
+          <th className="text-left py-2 px-3 font-medium">元数据</th>
+          <th className="text-left py-2 px-3 font-medium">最近使用</th>
+          <th className="text-left py-2 px-3 font-medium">过期</th>
+          <th className="text-right py-2 px-3 font-medium">操作</th>
+        </tr>
+      </thead>
+      <tbody>
+        {items.map((it) => (
+          <tr key={it.id} className="surface-row border-b border-token-subtle">
+            <td className="py-3 px-3">
+              <span className="inline-flex items-center gap-2 text-xs uppercase text-token-secondary">
+                <AuthorizationTypeIcon type={it.type} />
+                <span>{it.type}</span>
+              </span>
+            </td>
+            <td className="py-3 px-3 text-token-primary">{it.name}</td>
+            <td className="py-3 px-3">{statusBadge(it.status, it.readOnly)}</td>
+            <td className="py-3 px-3 text-xs text-token-secondary">
+              {Object.entries(it.metadata || {}).slice(0, 2).map(([k, v]) => (
+                <div key={k}>{k}: {String(v).substring(0, 40)}</div>
+              ))}
+            </td>
+            <td className="py-3 px-3 text-xs text-token-secondary">{formatTime(it.lastUsedAt)}</td>
+            <td className="py-3 px-3 text-xs text-token-secondary">
+              {it.expiresAt ? formatTime(it.expiresAt) : '-'}
+            </td>
+            <td className="py-3 px-3 text-right">
+              <div className="inline-flex items-center gap-1">
+                {!it.readOnly && (
+                  <button
+                    onClick={() => onValidate(it.id)}
+                    className="p-1.5 rounded text-token-muted hover:bg-token-nested hover-text-primary"
+                    title="验证"
+                  >
+                    <CheckCircle2 size={14} />
+                  </button>
+                )}
+                {!it.readOnly && (
+                  <button
+                    onClick={() => onEdit(it)}
+                    className="p-1.5 rounded text-token-muted hover:bg-token-nested hover-text-primary"
+                    title="编辑"
+                  >
+                    <Key size={14} />
+                  </button>
+                )}
+                <button
+                  onClick={() => onRevoke(it)}
+                  className="p-1.5 rounded text-token-muted hover:bg-red-500/10 hover:text-semantic-danger"
+                  title={it.readOnly ? '原模块处理' : '撤销'}
+                >
+                  <Trash2 size={14} />
+                </button>
+              </div>
+            </td>
+          </tr>
+        ))}
+      </tbody>
+    </table>
+  );
+}
 
 function statusBadge(status: string, readOnly?: boolean) {
   if (readOnly) return <Badge variant="subtle">只读</Badge>;
@@ -164,69 +251,12 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
       {items.length > 0 && (
         <div className="flex-1 min-h-0 overflow-y-auto">
           <GlassCard>
-            <table className="w-full text-sm">
-              <thead>
-                <tr className="text-xs text-white/50 border-b border-white/10">
-                  <th className="text-left py-2 px-3 font-medium">类型</th>
-                  <th className="text-left py-2 px-3 font-medium">名称</th>
-                  <th className="text-left py-2 px-3 font-medium">状态</th>
-                  <th className="text-left py-2 px-3 font-medium">元数据</th>
-                  <th className="text-left py-2 px-3 font-medium">最近使用</th>
-                  <th className="text-left py-2 px-3 font-medium">过期</th>
-                  <th className="text-right py-2 px-3 font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {items.map((it) => (
-                  <tr key={it.id} className="border-b border-white/5 hover:bg-white/[0.03]">
-                    <td className="py-3 px-3">
-                      <span className="text-lg mr-2">{TYPE_ICONS[it.type] || '🔌'}</span>
-                      <span className="text-white/70 text-xs uppercase">{it.type}</span>
-                    </td>
-                    <td className="py-3 px-3 text-white/90">{it.name}</td>
-                    <td className="py-3 px-3">{statusBadge(it.status, it.readOnly)}</td>
-                    <td className="py-3 px-3 text-white/60 text-xs">
-                      {Object.entries(it.metadata || {}).slice(0, 2).map(([k, v]) => (
-                        <div key={k}>{k}: {String(v).substring(0, 40)}</div>
-                      ))}
-                    </td>
-                    <td className="py-3 px-3 text-white/60 text-xs">{formatTime(it.lastUsedAt)}</td>
-                    <td className="py-3 px-3 text-white/60 text-xs">
-                      {it.expiresAt ? formatTime(it.expiresAt) : '-'}
-                    </td>
-                    <td className="py-3 px-3 text-right">
-                      <div className="inline-flex items-center gap-1">
-                        {!it.readOnly && (
-                          <button
-                            onClick={() => handleValidate(it.id)}
-                            className="p-1.5 rounded hover:bg-white/10 text-white/60 hover:text-white/90"
-                            title="验证"
-                          >
-                            <CheckCircle2 size={14} />
-                          </button>
-                        )}
-                        {!it.readOnly && (
-                          <button
-                            onClick={() => setEditing(it)}
-                            className="p-1.5 rounded hover:bg-white/10 text-white/60 hover:text-white/90"
-                            title="编辑"
-                          >
-                            <Key size={14} />
-                          </button>
-                        )}
-                        <button
-                          onClick={() => handleRevoke(it)}
-                          className="p-1.5 rounded hover:bg-red-500/20 text-white/60 hover:text-red-400"
-                          title={it.readOnly ? '原模块处理' : '撤销'}
-                        >
-                          <Trash2 size={14} />
-                        </button>
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
+            <AuthorizationTable
+              items={items}
+              onValidate={handleValidate}
+              onEdit={setEditing}
+              onRevoke={handleRevoke}
+            />
           </GlassCard>
         </div>
       )}
@@ -313,7 +343,7 @@ function AddAuthorizationDialog({
                   onClick={() => setSelectedType(t.typeKey)}
                   className="p-4 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 text-left transition"
                 >
-                  <div className="text-2xl mb-1">{TYPE_ICONS[t.typeKey] || '🔌'}</div>
+                  <div className="mb-1 text-token-secondary"><AuthorizationTypeIcon type={t.typeKey} size={24} /></div>
                   <div className="text-white/90 text-sm font-medium">{t.displayName}</div>
                   <div className="text-white/40 text-xs mt-1">{t.fields.length} 个字段</div>
                 </button>
@@ -329,7 +359,7 @@ function AddAuthorizationDialog({
             <div>
               <div className="text-xs text-white/60 mb-1">类型</div>
               <div className="flex items-center gap-2 p-2 rounded bg-white/5 border border-white/10">
-                <span className="text-xl">{TYPE_ICONS[selectedType]}</span>
+                <AuthorizationTypeIcon type={selectedType} size={20} />
                 <span className="text-white/90">{current?.displayName}</span>
                 <button onClick={() => { setSelectedType(''); setCredentials({}); }} className="ml-auto text-xs text-white/50 hover:text-white/80">
                   切换
