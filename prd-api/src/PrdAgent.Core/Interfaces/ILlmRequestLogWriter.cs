@@ -141,7 +141,12 @@ public record LlmLogDone(
     string? ModelGroupId = null,
     string? ModelGroupName = null,
     decimal? ProviderReportedCost = null,
-    string? ProviderCostCurrency = null);
+    string? ProviderCostCurrency = null,
+    List<LlmLogImagePayload>? OutputImagePayloads = null);
+
+public sealed record LlmLogImagePayload(
+    string Base64Data,
+    string MimeType);
 
 public interface ILlmRequestLogWriter
 {

@@ -10,7 +10,10 @@ public sealed class RawGatewayUsageParserTests
     {
         const string response = """
         {
-          "data": [{ "b64_json": "redacted" }, { "url": "https://example.test/image.png" }],
+          "data": [
+            { "b64_json": "aGVsbG8=", "media_type": "image/webp" },
+            { "url": "https://example.test/image.png" }
+          ],
           "usage": {
             "prompt_tokens": 12,
             "completion_tokens": 34,
@@ -28,11 +31,42 @@ public sealed class RawGatewayUsageParserTests
         Assert.Equal("completed", result.FinishReason);
         Assert.Equal(0.015m, result.ProviderReportedCost);
         Assert.Equal("USD", result.ProviderCostCurrency);
+        var outputImage = Assert.Single(result.OutputImages);
+        Assert.Equal("aGVsbG8=", outputImage.Base64Data);
+        Assert.Equal("image/webp", outputImage.MimeType);
         Assert.True(result.HasReportedUsage);
     }
 
     [Fact]
-    public void Parse_GeminiImageResponse_CollectsUsageAndNativeFinishReason()
+    public void Parse_OpenRouterDocumentedImageResponse_PreservesReportedUsageWithoutInventingPromptCount()
+    {
+        const string response = """
+        {
+          "data": [{
+            "b64_json": "aGVsbG8=",
+            "media_type": "image/png"
+          }],
+          "usage": {
+            "prompt_tokens": 0,
+            "completion_tokens": 4175,
+            "total_tokens": 4175,
+            "cost": 0.04
+          }
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(0, result.InputTokens);
+        Assert.Equal(4175, result.OutputTokens);
+        Assert.Equal(1, result.ImageSuccessCount);
+        Assert.Equal(0.04m, result.ProviderReportedCost);
+        Assert.Equal("USD", result.ProviderCostCurrency);
+        Assert.Single(result.OutputImages);
+    }
+
+    [Fact]
+    public void Parse_GeminiImageResponse_CollectsUsageNativeFinishReasonAndPayload()
     {
         const string response = """
         {
@@ -43,7 +77,7 @@ public sealed class RawGatewayUsageParserTests
           "candidates": [{
             "finishReason": "STOP",
             "content": {
-              "parts": [{ "inlineData": { "mimeType": "image/png", "data": "redacted" } }]
+              "parts": [{ "inlineData": { "mimeType": "image/png", "data": "aGVsbG8=" } }]
             }
           }]
         }
@@ -56,6 +90,24 @@ public sealed class RawGatewayUsageParserTests
         Assert.Equal(1, result.ImageSuccessCount);
         Assert.Equal("STOP", result.FinishReason);
         Assert.Null(result.ProviderReportedCost);
+        Assert.Single(result.OutputImages);
+    }
+
+    [Fact]
+    public void RedactImagePayloadsForLog_RemovesBase64ButKeepsUsage()
+    {
+        const string response = """
+        {
+          "data": [{ "b64_json": "aGVsbG8=", "media_type": "image/png" }],
+          "usage": { "completion_tokens": 42 }
+        }
+        """;
+
+        var redacted = RawGatewayUsageParser.RedactImagePayloadsForLog(response);
+
+        Assert.DoesNotContain("aGVsbG8=", redacted);
+        Assert.Contains("[IMAGE_BASE64_REDACTED]", redacted);
+        Assert.Contains("\"completion_tokens\": 42", redacted);
     }
 
     [Fact]

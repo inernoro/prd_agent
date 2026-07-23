@@ -3843,10 +3843,13 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
         try
         {
             var status = statusCode >= 200 && statusCode < 300 ? "succeeded" : "failed";
-            var answerText = responseBody.Length > 10000
-                ? responseBody.Substring(0, 10000) + "...[truncated]"
-                : responseBody;
             var rawUsage = RawGatewayUsageParser.Parse(responseBody);
+            var responseForLog = rawUsage.OutputImages.Count > 0
+                ? RawGatewayUsageParser.RedactImagePayloadsForLog(responseBody)
+                : responseBody;
+            var answerText = responseForLog.Length > 10000
+                ? responseForLog.Substring(0, 10000) + "...[truncated]"
+                : responseForLog;
             var tokenUsage = rawUsage.InputTokens is not null || rawUsage.OutputTokens is not null
                 ? new GatewayTokenUsage
                 {
@@ -3902,7 +3905,10 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ModelGroupId: resolution.ModelGroupId,
                     ModelGroupName: resolution.ModelGroupName,
                     ProviderReportedCost: rawUsage.ProviderReportedCost,
-                    ProviderCostCurrency: rawUsage.ProviderCostCurrency));
+                    ProviderCostCurrency: rawUsage.ProviderCostCurrency,
+                    OutputImagePayloads: rawUsage.OutputImages
+                        .Select(image => new LlmLogImagePayload(image.Base64Data, image.MimeType))
+                        .ToList()));
         }
         catch (Exception ex)
         {

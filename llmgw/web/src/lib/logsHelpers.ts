@@ -111,7 +111,7 @@ export const GENERATIONS_COLUMNS: ColumnDef[] = [
   { key: 'output', label: '输出', width: '104px', align: 'right' },
   { key: 'cost', label: '费用', width: '116px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
   { key: 'usage', label: '用途', width: '100px' },
-  { key: 'speed', label: '速度', width: '104px', align: 'right', tip: '输出 Token / 秒' },
+  { key: 'speed', label: '速度', width: '104px', align: 'right', tip: '文本为输出 Token / 秒；图片为平均每张生成耗时' },
   { key: 'finish', label: '结束原因', width: '122px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
   { key: 'user', label: '客户端用户', width: '170px' },
   { key: 'status', label: '状态', width: '60px', align: 'center', required: true },
