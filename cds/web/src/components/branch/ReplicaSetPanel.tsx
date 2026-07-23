@@ -129,6 +129,25 @@ export function ReplicaSetPanel({
   const [state, setState] = useState<PanelState>({ status: 'loading' });
   const [busy, setBusy] = useState<string | null>(null);
   const [addingProfile, setAddingProfile] = useState<string | null>(null);
+  const [probeResults, setProbeResults] = useState<Record<string, { tally: Record<string, number>; count: number } | 'running'>>({});
+
+  // 分流实测：CDS 服务端向真实入口发 20 个无粘性请求，统计响应头 X-CDS-Replica 真实落点
+  const runProbe = useCallback(async (profileId: string) => {
+    if (!previewUrl) { onToast?.('该分支还没有预览入口，无法探测'); return; }
+    let host = '';
+    try { host = new URL(previewUrl).hostname; } catch { onToast?.('预览入口地址异常'); return; }
+    setProbeResults((prev) => ({ ...prev, [profileId]: 'running' }));
+    try {
+      const res = await apiRequest<{ tally: Record<string, number>; count: number }>(
+        `/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`,
+        { method: 'POST', body: { host, path: '/', count: 20 } },
+      );
+      setProbeResults((prev) => ({ ...prev, [profileId]: { tally: res.tally, count: res.count } }));
+    } catch (err) {
+      setProbeResults((prev) => { const next = { ...prev }; delete next[profileId]; return next; });
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, previewUrl, onToast]);
 
   const load = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setState({ status: 'loading' });
@@ -437,10 +456,50 @@ export function ReplicaSetPanel({
               ) : (
                 <span className="text-xs text-muted-foreground">成员数已达上限 {memberLimit}</span>
               )}
-              <span className="text-[11px] text-muted-foreground">
-                粘性：cookie cds_rs / header x-cds-replica / query ?__rs=成员id
-              </span>
+              <div className="flex items-center gap-2">
+                <Button
+                  type="button"
+                  size="sm"
+                  variant="outline"
+                  disabled={probeResults[profileId] === 'running'}
+                  onClick={() => void runProbe(profileId)}
+                  title="服务端向真实入口发 20 个独立请求，统计响应头 X-CDS-Replica 的真实落点（可自行 curl -I 核对）"
+                >
+                  {probeResults[profileId] === 'running' ? <Loader2 className="animate-spin" /> : <RefreshCw />}
+                  分流实测
+                </Button>
+                <span className="text-[11px] text-muted-foreground">
+                  粘性：cookie cds_rs / ?__rs=成员id · 每个响应带 X-CDS-Replica 标记头
+                </span>
+              </div>
             </footer>
+            {(() => {
+              const probe = probeResults[profileId];
+              if (!probe || probe === 'running') return null;
+              const entries = Object.entries(probe.tally).sort((a, b) => b[1] - a[1]);
+              return (
+                <div className="border-t border-[hsl(var(--hairline))] px-5 py-3">
+                  <div className="mb-2 text-[11px] text-muted-foreground">
+                    分流实测：{probe.count} 个真实请求穿过入口转发器，按响应头 X-CDS-Replica 统计落点
+                  </div>
+                  <div className="flex h-3 overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+                    {entries.map(([who, n], i) => (
+                      <div
+                        key={who}
+                        style={{ width: `${(n / probe.count) * 100}%` }}
+                        className={who === 'primary' ? 'bg-muted-foreground/50' : who === 'error' ? 'bg-destructive/70' : i % 2 ? 'bg-indigo-400' : 'bg-indigo-600'}
+                        title={`${who}: ${n} 次`}
+                      />
+                    ))}
+                  </div>
+                  <div className="mt-1.5 flex flex-wrap gap-3 text-[11px] tabular-nums text-muted-foreground">
+                    {entries.map(([who, n]) => (
+                      <span key={who}>{who === 'primary' ? '主版本' : who}: {n} 次（{Math.round((n / probe.count) * 100)}%）</span>
+                    ))}
+                  </div>
+                </div>
+              );
+            })()}
             {addingProfile === profileId ? (
               <div className="border-t border-[hsl(var(--hairline))] px-5 pb-4">
                 <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId, dbMode) => addMember(profileId, versionId, dbMode)} />

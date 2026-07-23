@@ -979,6 +979,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
     [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/probe$/, '探测复制集分流'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members$/, '添加复制集成员'],
     [/^PATCH \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '调整复制集成员'],
     [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],

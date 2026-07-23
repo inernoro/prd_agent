@@ -275,6 +275,12 @@ const server = http.createServer((req, res) => {
   if (route?.replicaGroup && route.replicaMemberId && sticky !== route.replicaMemberId) {
     res.setHeader('Set-Cookie', `cds_rs=${route.replicaMemberId}; Path=/; Max-Age=1800; SameSite=Lax`);
   }
+  // 可观测性（用户拍板）：复制集链路的每个响应都盖「谁服务的」标记头，
+  // curl -I / 浏览器 DevTools / 探测端点都能核对——分流不是摆设。
+  if (route?.replicaGroup && route.replicaMemberId) {
+    res.setHeader('X-CDS-Replica', route.replicaMemberId);
+    res.setHeader('X-CDS-Replica-Group', route.replicaGroup);
+  }
   void proxy.handle(req, res, route);
 });
 

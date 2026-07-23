@@ -39,6 +39,42 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     }
   });
 
+  /**
+   * 分流探测（强校验性）：CDS 服务端向真实入口（本机 forwarder，带预览 Host）
+   * 发 N 个「无粘性」的独立请求，统计响应头 X-CDS-Replica 的真实落点分布。
+   * 不是前端动画——每一条都是真实穿过 forwarder 加权选择的 HTTP 请求。
+   */
+  router.post('/branches/:branchId/replica-sets/:profileId/probe', async (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const host = typeof req.body?.host === 'string' ? req.body.host.trim().toLowerCase() : '';
+    if (!host || !/^[a-z0-9.-]+$/.test(host)) { res.status(400).json({ error: '缺少合法的入口 host' }); return; }
+    const path = typeof req.body?.path === 'string' && req.body.path.startsWith('/') ? req.body.path : '/';
+    const count = Math.max(1, Math.min(50, Number(req.body?.count) || 20));
+    const forwarderPort = Number(process.env.CDS_FORWARDER_PORT) || 9090;
+    const hits: Array<{ seq: number; servedBy: string; status: number }> = [];
+    const tally: Record<string, number> = {};
+    for (let i = 0; i < count; i += 1) {
+      try {
+        const upstream = await fetch(`http://127.0.0.1:${forwarderPort}${path}${path.includes('?') ? '&' : '?'}__probe=${i}`, {
+          method: 'GET',
+          headers: { Host: host, 'X-CDS-Probe': '1' },
+          redirect: 'manual',
+          signal: AbortSignal.timeout(8000),
+        });
+        void upstream.arrayBuffer().catch(() => undefined);
+        const servedBy = upstream.headers.get('x-cds-replica') || 'primary';
+        hits.push({ seq: i + 1, servedBy, status: upstream.status });
+        tally[servedBy] = (tally[servedBy] || 0) + 1;
+      } catch (err) {
+        hits.push({ seq: i + 1, servedBy: 'error', status: 0 });
+        tally.error = (tally.error || 0) + 1;
+        void err;
+      }
+    }
+    res.json({ count, host, path, tally, hits });
+  });
+
   // 隔离库快照删除（保留语义的唯一出口：显式删除才 drop 数据库）
   router.delete('/branches/:branchId/replica-db-snapshots/:snapshotId', async (req, res) => {
     const access = guard(req, req.params.branchId);

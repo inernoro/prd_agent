@@ -204,8 +204,19 @@ export class ReplicaSetService {
       throw new ReplicaSetError(409, '该版本已是复制集成员');
     }
 
+    // 成员命名规范（用户拍板）：res-1 / res-2 … 顺位递增，不用随机串。
+    // 序号取「现役成员 + 隔离库快照」已用序号的 max+1，防止下线重加后与
+    // 快照 id（rsdb_<memberId>）撞车。
+    const usedOrdinals = [
+      ...rs.members.map((m) => m.id),
+      ...((branch.replicaDbSnapshots ?? []).map((s) => s.memberId)),
+    ]
+      .map((mid) => /^res-(\d+)$/.exec(mid)?.[1])
+      .filter(Boolean)
+      .map(Number);
+    const nextOrdinal = usedOrdinals.length ? Math.max(...usedOrdinals) + 1 : 1;
     const member: ReplicaMember = {
-      id: newReplicaMemberId(),
+      id: `res-${nextOrdinal}`,
       versionId: version.id,
       label: input.label?.trim() || (isQuickReplica ? `副本 ${rs.members.length + 1}` : version.commitSha.slice(0, 7)),
       // 快速副本默认与主同权重（相对权重体系 = 均分流量，Railway 语义）；历史版本默认 0 只挂直达
@@ -340,6 +351,14 @@ export class ReplicaSetService {
       fallbackImage: undefined,
       sourceFallbackProfile: undefined,
       hotReload: undefined,
+      // 实例指纹（硬实力取证）：每个副本容器注入自己的身份 env。
+      // 应用可读可回显；即使应用不理会，docker inspect / 容器 env 也能对账，
+      // 配合 forwarder 的 X-CDS-Replica 响应头形成完整追踪链。
+      env: {
+        ...(baseProfile.env || {}),
+        CDS_REPLICA_ID: memberId,
+        CDS_REPLICA_INSTANCE: `${memberId}-${Math.random().toString(16).slice(2, 10)}`,
+      },
     };
 
     const usedPorts = await this.collectListeningPorts();
