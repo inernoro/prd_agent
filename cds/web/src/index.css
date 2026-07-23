@@ -1442,6 +1442,7 @@
   }
 
   .cds-agent-continent {
+    position: relative;
     display: grid;
     min-width: 178px;
     min-height: 68px;
@@ -1460,6 +1461,21 @@
       border-color 180ms ease,
       background-color 180ms ease,
       box-shadow 180ms ease;
+    isolation: isolate;
+    overflow: hidden;
+  }
+
+  .cds-agent-continent::after {
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background-image:
+      linear-gradient(90deg, transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%),
+      linear-gradient(transparent 48%, hsl(188 100% 68% / 0.08) 50%, transparent 52%);
+    background-size: 18px 18px;
+    content: '';
+    opacity: 0.42;
+    mask-image: linear-gradient(110deg, transparent 4%, black 62%, transparent);
   }
 
   .cds-agent-continent:hover {
@@ -1476,7 +1492,16 @@
     border-color: hsl(var(--primary) / 0.72);
     background:
       linear-gradient(135deg, hsl(var(--primary) / 0.14), hsl(var(--primary) / 0.055));
-    box-shadow: inset 0 0 0 1px hsl(var(--primary) / 0.14);
+    box-shadow:
+      inset 0 0 0 1px hsl(var(--primary) / 0.14),
+      inset 0 -18px 30px hsl(188 100% 48% / 0.055);
+  }
+
+  .cds-agent-continent[data-selected='true']::after {
+    background-image:
+      linear-gradient(90deg, transparent 48%, hsl(var(--primary) / 0.12) 50%, transparent 52%),
+      linear-gradient(transparent 48%, hsl(var(--primary) / 0.12) 50%, transparent 52%);
+    opacity: 0.78;
   }
 
   .cds-agent-continent-marker {
@@ -1560,49 +1585,84 @@
 
   .cds-agent-world-stage {
     position: relative;
+    --map-cyan: 188 100% 62%;
+    --map-blue: 207 100% 64%;
     min-height: 300px;
     overflow: hidden;
-    border: 1px solid hsl(193 26% 24% / 0.72);
+    border: 1px solid hsl(var(--map-cyan) / 0.28);
     border-radius: 0.9rem;
     isolation: isolate;
     background:
-      radial-gradient(circle at 50% 43%, hsl(188 53% 34% / 0.2), transparent 42%),
-      linear-gradient(155deg, hsl(208 42% 14%), hsl(192 41% 10%));
+      radial-gradient(circle at 52% 46%, hsl(188 100% 44% / 0.14), transparent 46%),
+      radial-gradient(circle at 16% 76%, hsl(var(--primary) / 0.08), transparent 28%),
+      linear-gradient(155deg, hsl(209 63% 8%), hsl(196 70% 5%));
     box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.06),
-      inset 0 -70px 100px hsl(220 38% 4% / 0.3);
+      inset 0 1px 0 hsl(var(--map-cyan) / 0.16),
+      inset 0 -80px 120px hsl(220 78% 2% / 0.5),
+      0 0 28px hsl(188 100% 44% / 0.08);
     animation: cds-agent-world-arrive 320ms cubic-bezier(0.16, 1, 0.3, 1) both;
   }
 
-  [data-theme='light'] .cds-agent-world-stage {
-    border-color: hsl(190 24% 73%);
+  .cds-agent-world-stage::before {
+    position: absolute;
+    inset: 0;
+    z-index: 3;
     background:
-      radial-gradient(circle at 50% 43%, hsl(180 53% 78% / 0.28), transparent 42%),
-      linear-gradient(155deg, hsl(198 50% 91%), hsl(184 43% 84%));
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 56px 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) left 13px top 13px / 1px 56px no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 56px 1px no-repeat,
+      linear-gradient(hsl(var(--map-cyan) / 0.54), transparent 18px) right 13px top 13px / 1px 56px no-repeat,
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 56px 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) left 13px bottom 13px / 1px 56px no-repeat,
+      linear-gradient(-90deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 56px 1px no-repeat,
+      linear-gradient(0deg, hsl(var(--map-cyan) / 0.38), transparent 18px) right 13px bottom 13px / 1px 56px no-repeat;
+    content: '';
+    pointer-events: none;
+  }
+
+  .cds-agent-world-stage::after {
+    position: absolute;
+    inset: -34% 0 auto;
+    z-index: 2;
+    height: 34%;
+    background: linear-gradient(
+      to bottom,
+      transparent,
+      hsl(var(--map-cyan) / 0.025) 58%,
+      hsl(var(--map-cyan) / 0.22) 99%,
+      transparent
+    );
+    content: '';
+    mix-blend-mode: screen;
+    pointer-events: none;
+    animation: cds-agent-world-scan 5.4s cubic-bezier(0.4, 0, 0.2, 1) infinite;
+  }
+
+  [data-theme='light'] .cds-agent-world-stage {
+    border-color: hsl(191 72% 35% / 0.56);
+    background:
+      radial-gradient(circle at 52% 46%, hsl(188 100% 44% / 0.16), transparent 46%),
+      radial-gradient(circle at 16% 76%, hsl(var(--primary) / 0.09), transparent 28%),
+      linear-gradient(155deg, hsl(207 56% 11%), hsl(194 62% 7%));
     box-shadow:
-      inset 0 1px 0 hsl(0 0% 100% / 0.78),
-      inset 0 -70px 100px hsl(190 31% 40% / 0.08);
+      inset 0 1px 0 hsl(var(--map-cyan) / 0.18),
+      inset 0 -80px 120px hsl(220 78% 2% / 0.42),
+      0 10px 30px hsl(196 42% 16% / 0.16);
   }
 
   .cds-agent-world-ocean-grid {
     position: absolute;
     inset: 0;
     z-index: -1;
-    opacity: 0.48;
+    opacity: 0.66;
     background-image:
-      linear-gradient(hsl(0 0% 100% / 0.035) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(0 0% 100% / 0.035) 1px, transparent 1px),
-      radial-gradient(circle, hsl(0 0% 100% / 0.13) 1px, transparent 1.5px);
+      linear-gradient(hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
+      linear-gradient(90deg, hsl(var(--map-cyan) / 0.075) 1px, transparent 1px),
+      radial-gradient(circle, hsl(var(--map-cyan) / 0.24) 1px, transparent 1.5px),
+      repeating-radial-gradient(circle at 50% 44%, transparent 0 44px, hsl(var(--map-cyan) / 0.055) 45px 46px);
     background-position: center;
-    background-size: 32px 32px, 32px 32px, 68px 68px;
-    mask-image: radial-gradient(circle at center, black, transparent 86%);
-  }
-
-  [data-theme='light'] .cds-agent-world-ocean-grid {
-    background-image:
-      linear-gradient(hsl(203 32% 28% / 0.055) 1px, transparent 1px),
-      linear-gradient(90deg, hsl(203 32% 28% / 0.055) 1px, transparent 1px),
-      radial-gradient(circle, hsl(203 32% 28% / 0.15) 1px, transparent 1.5px);
+    background-size: 28px 28px, 28px 28px, 72px 72px, auto;
+    mask-image: radial-gradient(ellipse at center, black 12%, transparent 92%);
   }
 
   .cds-agent-world-svg {
@@ -1611,16 +1671,47 @@
     height: 300px;
   }
 
-  .cds-agent-world-coastline {
-    fill: hsl(184 56% 58% / 0.25);
-    stroke: hsl(179 47% 69% / 0.56);
-    stroke-width: 12;
-    stroke-linejoin: round;
+  .cds-agent-world-hud path {
+    fill: none;
+    stroke: hsl(var(--map-cyan) / 0.14);
+    stroke-dasharray: 2 9;
+    stroke-width: 0.8;
+    vector-effect: non-scaling-stroke;
   }
 
-  [data-theme='light'] .cds-agent-world-coastline {
-    fill: hsl(184 46% 45% / 0.14);
-    stroke: hsl(184 42% 48% / 0.34);
+  .cds-agent-world-hud text {
+    fill: hsl(var(--map-cyan) / 0.42);
+    font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace;
+    font-size: 8px;
+    letter-spacing: 0.08em;
+  }
+
+  .cds-agent-world-depth-line {
+    fill: none;
+    stroke: hsl(var(--map-cyan) / 0.22);
+    stroke-dasharray: 3 7;
+    stroke-width: 1;
+    transform-box: fill-box;
+    transform-origin: center;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .cds-agent-world-depth-line--outer {
+    transform: scale(1.035);
+  }
+
+  .cds-agent-world-depth-line--inner {
+    stroke: hsl(var(--map-cyan) / 0.34);
+    stroke-dasharray: 1 5;
+    transform: scale(0.975);
+  }
+
+  .cds-agent-world-coastline {
+    fill: url('#agent-electronic-ocean');
+    stroke: hsl(var(--map-cyan) / 0.88);
+    stroke-width: 3;
+    stroke-linejoin: round;
+    vector-effect: non-scaling-stroke;
   }
 
   .cds-agent-world-region {
@@ -1630,10 +1721,10 @@
     animation-delay: calc(var(--region-order) * 42ms);
   }
 
-  .cds-agent-world-region path {
-    fill: url('#agent-land-forest');
-    stroke: hsl(158 26% 16% / 0.78);
-    stroke-width: 2.5;
+  .cds-agent-world-region-fill {
+    fill: hsl(var(--region-hue) 76% 46% / 0.13);
+    stroke: hsl(var(--region-hue) 96% 72% / 0.64);
+    stroke-width: 1.8;
     stroke-linejoin: round;
     vector-effect: non-scaling-stroke;
     transition:
@@ -1642,35 +1733,128 @@
       stroke 200ms ease;
   }
 
-  .cds-agent-world-region:nth-of-type(3n + 1) path {
-    fill: url('#agent-land-ridge');
+  .cds-agent-world-region-grid {
+    fill: url('#agent-electronic-hex');
+    opacity: 0.6;
+    pointer-events: none;
+    stroke: none;
   }
 
-  .cds-agent-world-region:nth-of-type(3n + 2) path {
-    fill: url('#agent-land-coast');
+  .cds-agent-world-region-contour {
+    fill: none;
+    opacity: 0.46;
+    pointer-events: none;
+    stroke: hsl(var(--region-hue) 100% 72% / 0.34);
+    stroke-dasharray: 2 6;
+    stroke-width: 1;
+    transform: scale(var(--contour-scale));
+    transform-box: fill-box;
+    transform-origin: center;
+    vector-effect: non-scaling-stroke;
   }
 
-  .cds-agent-world-region:hover path {
-    stroke: hsl(39 92% 70%);
-    filter: brightness(1.11) saturate(1.08);
+  .cds-agent-world-region:hover .cds-agent-world-region-fill {
+    fill: hsl(var(--region-hue) 90% 52% / 0.21);
+    stroke: hsl(var(--map-cyan) / 0.94);
+    filter: drop-shadow(0 0 7px hsl(var(--map-cyan) / 0.34));
   }
 
   .cds-agent-world-region:focus {
     outline: none;
   }
 
-  .cds-agent-world-region:focus-visible path {
-    stroke: hsl(var(--primary));
-    stroke-width: 5;
-  }
-
-  .cds-agent-world-region[data-selected='true'] path {
+  .cds-agent-world-region:focus-visible .cds-agent-world-region-fill {
     stroke: hsl(var(--primary));
     stroke-width: 4;
+  }
+
+  .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-fill {
+    fill: hsl(var(--primary) / 0.2);
+    stroke: hsl(var(--primary));
+    stroke-width: 3;
     filter:
-      brightness(1.1)
-      saturate(1.12)
-      drop-shadow(0 0 8px hsl(var(--primary) / 0.38));
+      drop-shadow(0 0 5px hsl(var(--primary) / 0.56))
+      drop-shadow(0 0 14px hsl(var(--primary) / 0.2));
+  }
+
+  .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-grid {
+    opacity: 0.8;
+    filter: sepia(1) saturate(4) hue-rotate(330deg);
+  }
+
+  .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-contour {
+    stroke: hsl(var(--primary) / 0.52);
+  }
+
+  .cds-agent-world-data-node {
+    color: hsl(var(--region-hue) 100% 72% / 0.66);
+    pointer-events: none;
+  }
+
+  .cds-agent-world-data-node circle:first-child {
+    fill: hsl(var(--region-hue) 92% 48% / 0.08);
+    stroke: currentColor;
+    stroke-width: 0.8;
+  }
+
+  .cds-agent-world-data-node circle:nth-child(2) {
+    fill: currentColor;
+    filter: drop-shadow(0 0 4px currentColor);
+  }
+
+  .cds-agent-world-data-node path {
+    fill: none;
+    stroke: currentColor;
+    stroke-width: 0.8;
+  }
+
+  .cds-agent-world-region[data-selected='true'] .cds-agent-world-data-node {
+    color: hsl(var(--primary) / 0.78);
+  }
+
+  .cds-agent-world-region-feature {
+    fill: none;
+    opacity: 0.46;
+    pointer-events: none;
+    stroke: hsl(var(--region-hue) 100% 78% / 0.66);
+    stroke-dasharray: 2 5;
+    stroke-linecap: round;
+    stroke-linejoin: round;
+    stroke-width: 1;
+    vector-effect: non-scaling-stroke;
+  }
+
+  .cds-agent-world-region-feature:nth-of-type(even) {
+    opacity: 0.3;
+    stroke-dasharray: 8 4 1 4;
+  }
+
+  .cds-agent-world-region[data-selected='true'] .cds-agent-world-region-feature {
+    stroke: hsl(var(--primary) / 0.58);
+  }
+
+  .cds-agent-world-island {
+    color: hsl(var(--map-cyan) / 0.72);
+    pointer-events: none;
+  }
+
+  .cds-agent-world-island path:first-child {
+    fill: hsl(190 84% 48% / 0.12);
+    stroke: currentColor;
+    stroke-width: 1.8;
+    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.34));
+  }
+
+  .cds-agent-world-island path:nth-child(2) {
+    fill: none;
+    stroke: hsl(var(--map-cyan) / 0.42);
+    stroke-dasharray: 2 4;
+    stroke-width: 0.8;
+  }
+
+  .cds-agent-world-island circle {
+    fill: hsl(var(--map-cyan));
+    filter: drop-shadow(0 0 5px hsl(var(--map-cyan) / 0.72));
   }
 
   .cds-agent-world-region-label {
@@ -1683,7 +1867,9 @@
     gap: 0.08rem 0.45rem;
     color: hsl(0 0% 98%);
     font-family: inherit;
-    text-shadow: 0 1px 5px hsl(220 38% 4% / 0.78);
+    text-shadow:
+      0 1px 5px hsl(220 38% 4% / 0.9),
+      0 0 8px hsl(var(--map-cyan) / 0.16);
   }
 
   .cds-agent-world-region-label > span {
@@ -1692,9 +1878,11 @@
     height: 28px;
     grid-row: 1 / 3;
     place-items: center;
-    border: 1px solid hsl(0 0% 100% / 0.23);
-    border-radius: 999px;
-    background: hsl(220 34% 7% / 0.42);
+    border: 1px solid hsl(var(--map-cyan) / 0.3);
+    border-radius: 0.38rem;
+    background:
+      linear-gradient(135deg, hsl(var(--map-cyan) / 0.14), transparent),
+      hsl(220 52% 5% / 0.64);
     backdrop-filter: blur(5px);
   }
 
@@ -1725,14 +1913,31 @@
     white-space: nowrap;
   }
 
+  .cds-agent-world-signal-rings {
+    fill: none;
+    pointer-events: none;
+    stroke: hsl(var(--primary) / 0.74);
+    stroke-width: 1.5;
+  }
+
+  .cds-agent-world-signal-rings circle {
+    opacity: 0;
+    transform-box: fill-box;
+    transform-origin: center;
+    animation: cds-agent-world-signal 2.4s ease-out infinite;
+    animation-delay: calc(var(--ring-order) * 180ms);
+  }
+
   .cds-agent-world-route {
     fill: none;
     stroke: hsl(var(--primary));
-    stroke-dasharray: 8 8;
+    stroke-dasharray: 4 8;
     stroke-linecap: round;
-    stroke-width: 2.5;
+    stroke-width: 2.2;
     pointer-events: none;
-    filter: drop-shadow(0 0 5px hsl(var(--primary) / 0.5));
+    filter:
+      drop-shadow(0 0 3px hsl(var(--primary) / 0.8))
+      drop-shadow(0 0 8px hsl(var(--primary) / 0.28));
     animation: cds-agent-world-route-flow 900ms ease-out both;
   }
 
@@ -1741,9 +1946,20 @@
     stroke: hsl(0 0% 100% / 0.82);
     stroke-width: 3;
     pointer-events: none;
-    transform-box: fill-box;
-    transform-origin: center;
-    animation: cds-agent-world-beacon 1.6s ease-out infinite;
+    filter: url('#agent-amber-glow');
+  }
+
+  .cds-agent-world-route-terminal {
+    fill: none;
+    pointer-events: none;
+    stroke: hsl(var(--primary) / 0.76);
+    stroke-width: 1.5;
+  }
+
+  .cds-agent-world-route-terminal circle:last-child {
+    fill: hsl(var(--primary));
+    stroke: none;
+    filter: url('#agent-amber-glow');
   }
 
   .cds-agent-world-compass {
@@ -1793,7 +2009,8 @@
   }
 
   .cds-agent-world-map-caption i[data-kind='land'] {
-    background: hsl(157 35% 48%);
+    background: hsl(var(--map-cyan));
+    box-shadow: 0 0 7px hsl(var(--map-cyan) / 0.54);
   }
 
   .cds-agent-world-map-caption i[data-kind='route'] {
@@ -1801,8 +2018,8 @@
     box-shadow: 0 0 0 3px hsl(var(--primary) / 0.14);
   }
 
-  .cds-agent-world-stage[data-single-region='true'] .cds-agent-world-region path {
-    fill: url('#agent-land-ridge');
+  .cds-agent-world-stage[data-single-region='true'] .cds-agent-world-region-fill {
+    fill: hsl(var(--primary) / 0.18);
   }
 
   .cds-agent-world-footer {
@@ -1889,15 +2106,34 @@
     }
   }
 
-  @keyframes cds-agent-world-beacon {
+  @keyframes cds-agent-world-scan {
     0%,
-    100% {
-      opacity: 1;
-      transform: scale(1);
+    12% {
+      opacity: 0;
+      transform: translateY(0);
     }
-    55% {
-      opacity: 0.62;
-      transform: scale(1.55);
+    24% {
+      opacity: 0.72;
+    }
+    74% {
+      opacity: 0.42;
+    }
+    88%,
+    100% {
+      opacity: 0;
+      transform: translateY(390%);
+    }
+  }
+
+  @keyframes cds-agent-world-signal {
+    0% {
+      opacity: 0.72;
+      transform: scale(0.45);
+    }
+    72%,
+    100% {
+      opacity: 0;
+      transform: scale(1.16);
     }
   }
 
@@ -1962,12 +2198,18 @@
   @media (prefers-reduced-motion: reduce) {
     .cds-agent-route-trigger-chevron,
     .cds-agent-world-stage,
+    .cds-agent-world-stage::after,
     .cds-agent-world-region,
     .cds-agent-world-region path,
     .cds-agent-world-route,
-    .cds-agent-world-route-beacon {
+    .cds-agent-world-route-beacon,
+    .cds-agent-world-signal-rings circle {
       animation: none;
       transition: none;
+    }
+
+    .cds-agent-world-signal-rings circle {
+      opacity: 0.34;
     }
   }
 

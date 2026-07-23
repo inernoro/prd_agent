@@ -51,6 +51,8 @@ interface RegionShape {
   path: string;
   labelX: number;
   labelY: number;
+  nodes: Array<{ x: number; y: number }>;
+  features: string[];
 }
 
 interface Props {
@@ -82,37 +84,156 @@ const NEW_PROJECT_MISSIONS: AgentMapMission[] = [
   { id: 'projects', label: '开辟新项目', description: '识别仓库并申请一次性权限', icon: Plus },
 ];
 
+const NORTHWEST_TO_CENTER = [
+  [410, 66], [434, 74], [452, 88], [471, 103], [497, 126],
+  [488, 151], [476, 181], [460, 213],
+] as const;
+
+const WEST_TO_CENTER = [
+  [128, 164], [151, 183], [174, 205], [201, 219], [236, 224],
+  [275, 213], [317, 202], [360, 196], [405, 205], [460, 213],
+] as const;
+
+const CENTER_TO_EAST = [
+  [460, 213], [497, 218], [532, 232], [568, 230],
+  [607, 226], [645, 235], [680, 233], [710, 228],
+] as const;
+
+const CENTER_TO_SOUTH = [
+  [460, 213], [451, 239], [438, 267], [421, 295],
+] as const;
+
+const EAST_TO_SOUTH = [
+  [710, 228], [704, 252], [692, 279], [681, 301], [670, 320],
+] as const;
+
+function continuePath(points: ReadonlyArray<readonly [number, number]>): string {
+  return points.slice(1).map(([x, y]) => `L${x} ${y}`).join(' ');
+}
+
+function reversePath(points: ReadonlyArray<readonly [number, number]>): string {
+  return [...points].reverse().slice(1).map(([x, y]) => `L${x} ${y}`).join(' ');
+}
+
 /*
- * 五块地界共享边界，组成一块完整大陆。路径按同一组边界点绘制，
- * 保证视觉上紧密相连，而不是把矩形卡片伪装成地图。
+ * 五块地界共享同一组边界点，外缘使用海湾、岬角和半岛组成完整大陆。
+ * 共享边界只定义一次再正反复用，避免相邻区域出现裂缝。
  */
 const REGION_SHAPES: RegionShape[] = [
   {
-    path: 'M146 80 C210 36 321 38 403 60 C442 70 472 91 495 123 L459 211 C411 206 366 191 319 199 C272 207 231 225 186 214 L132 156 C122 126 127 101 146 80 Z',
-    labelX: 302,
-    labelY: 128,
+    path: [
+      'M148 88',
+      'C164 74 184 77 199 64 C216 48 238 63 254 52',
+      'C277 38 299 55 319 48 C351 37 379 53 410 66',
+      continuePath(NORTHWEST_TO_CENTER),
+      reversePath(WEST_TO_CENTER),
+      'C116 151 116 139 127 128 C119 112 132 98 148 88 Z',
+    ].join(' '),
+    labelX: 294,
+    labelY: 132,
+    nodes: [{ x: 194, y: 103 }, { x: 367, y: 94 }, { x: 231, y: 181 }],
+    features: [
+      'M168 126 C211 92 274 82 337 91 C372 96 399 110 426 135',
+      'M177 153 C225 126 279 119 332 126 C365 131 392 145 414 164',
+      'M207 181 C249 161 301 157 350 166 C373 170 393 180 407 191',
+    ],
   },
   {
-    path: 'M403 60 C495 31 611 38 691 74 C729 91 753 117 754 148 L710 229 C653 238 599 224 550 230 L459 211 L495 123 C472 91 442 70 403 60 Z',
-    labelX: 604,
-    labelY: 129,
+    path: [
+      'M410 66',
+      'C438 56 468 47 499 55 C522 39 551 52 574 47',
+      'C605 45 628 55 648 66 C683 59 714 77 735 100',
+      'C755 112 753 132 758 148 C746 171 733 201 710 228',
+      reversePath(CENTER_TO_EAST),
+      reversePath(NORTHWEST_TO_CENTER),
+      'Z',
+    ].join(' '),
+    labelX: 599,
+    labelY: 132,
+    nodes: [{ x: 488, y: 84 }, { x: 675, y: 112 }, { x: 641, y: 193 }],
+    features: [
+      'M485 105 L526 78 L558 111 L585 72 L615 118 L648 88 L690 128',
+      'M514 158 C549 128 590 130 624 150 C651 165 677 177 712 174',
+      'M495 193 C540 174 581 180 615 199 C641 213 668 214 697 205',
+    ],
   },
   {
-    path: 'M132 156 L186 214 C231 225 272 207 319 199 C366 191 411 206 459 211 L423 289 C386 322 336 349 280 363 C224 375 163 349 126 310 C96 278 102 213 132 156 Z',
+    path: [
+      'M128 164',
+      continuePath(WEST_TO_CENTER),
+      continuePath(CENTER_TO_SOUTH),
+      'C391 321 364 340 332 348 C311 364 282 367 258 359',
+      'C229 372 205 357 184 347 C158 338 146 321 129 306',
+      'C112 286 118 264 106 244 C101 220 112 195 118 177',
+      'C120 171 123 167 128 164 Z',
+    ].join(' '),
     labelX: 267,
     labelY: 284,
+    nodes: [{ x: 151, y: 248 }, { x: 340, y: 242 }, { x: 219, y: 333 }],
+    features: [
+      'M137 238 C190 219 238 237 272 266 C300 290 337 300 384 292',
+      'M145 278 C191 257 230 269 260 299 C285 323 320 333 362 326',
+      'M178 326 C212 310 246 315 275 338',
+    ],
   },
   {
-    path: 'M459 211 L550 230 C599 224 653 238 710 229 L672 316 C628 347 570 371 501 382 C470 365 444 333 423 289 Z',
-    labelX: 535,
-    labelY: 298,
+    path: [
+      'M460 213',
+      continuePath(CENTER_TO_EAST),
+      continuePath(EAST_TO_SOUTH),
+      'C646 340 620 347 590 351 C570 367 540 374 507 382',
+      'C477 373 453 351 433 326 C429 314 425 304 421 295',
+      reversePath(CENTER_TO_SOUTH),
+      'Z',
+    ].join(' '),
+    labelX: 544,
+    labelY: 300,
+    nodes: [{ x: 478, y: 263 }, { x: 625, y: 277 }, { x: 551, y: 351 }],
+    features: [
+      'M467 257 L500 244 L528 267 L561 250 L592 276 L625 260 L666 286',
+      'M449 293 C489 276 528 283 559 308 C584 329 615 331 650 316',
+      'M477 337 C513 319 552 326 584 351',
+    ],
   },
   {
-    path: 'M754 148 C786 154 810 176 812 205 C816 248 803 290 777 322 C748 345 708 341 672 316 L710 229 Z',
-    labelX: 750,
+    path: [
+      'M758 148',
+      'C779 153 789 167 807 174 C821 191 811 208 818 224',
+      'C824 248 805 266 804 286 C791 307 778 325 751 336',
+      'C723 346 697 334 670 320',
+      reversePath(EAST_TO_SOUTH),
+      'L710 228 C733 201 746 171 758 148 Z',
+    ].join(' '),
+    labelX: 758,
     labelY: 242,
+    nodes: [{ x: 778, y: 183 }, { x: 783, y: 282 }, { x: 723, y: 310 }],
+    features: [
+      'M748 172 C781 186 789 210 775 232 C763 251 766 271 791 294',
+      'M728 205 C752 219 759 239 748 260 C737 279 740 298 758 318',
+      'M715 254 C730 268 733 286 724 305',
+    ],
   },
 ];
+
+const CONTINENT_OUTLINE = [
+  'M410 66',
+  'C438 56 468 47 499 55 C522 39 551 52 574 47',
+  'C605 45 628 55 648 66 C683 59 714 77 735 100',
+  'C755 112 753 132 758 148 C779 153 789 167 807 174',
+  'C821 191 811 208 818 224 C824 248 805 266 804 286',
+  'C791 307 778 325 751 336 C723 346 697 334 670 320',
+  'C646 340 620 347 590 351 C570 367 540 374 507 382',
+  'C477 373 453 351 433 326 C429 314 425 304 421 295',
+  'C391 321 364 340 332 348 C311 364 282 367 258 359',
+  'C229 372 205 357 184 347 C158 338 146 321 129 306',
+  'C112 286 118 264 106 244 C101 220 112 195 118 177',
+  'C120 171 123 167 128 164 C116 151 116 139 127 128',
+  'C119 112 132 98 148 88 C164 74 184 77 199 64',
+  'C216 48 238 63 254 52 C277 38 299 55 319 48',
+  'C351 37 379 53 410 66 Z',
+].join(' ');
+
+const REGION_HUES = [187, 178, 194, 207, 246];
 
 function sameSelection(left: AgentAccessMapSelection, right: AgentAccessMapSelection): boolean {
   return left.kind === right.kind
@@ -335,29 +456,59 @@ export function AgentAccessMap({
                 aria-label={`${draftContinentName}地界地图`}
               >
                 <defs>
-                  <linearGradient id="agent-land-forest" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="hsl(157 35% 48%)" />
-                    <stop offset="1" stopColor="hsl(169 31% 29%)" />
+                  <linearGradient id="agent-electronic-ocean" x1="0" y1="0" x2="1" y2="1">
+                    <stop offset="0" stopColor="hsl(195 94% 48%)" stopOpacity="0.16" />
+                    <stop offset="0.48" stopColor="hsl(184 88% 50%)" stopOpacity="0.05" />
+                    <stop offset="1" stopColor="hsl(223 84% 56%)" stopOpacity="0.12" />
                   </linearGradient>
-                  <linearGradient id="agent-land-ridge" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="hsl(42 44% 57%)" />
-                    <stop offset="1" stopColor="hsl(77 32% 34%)" />
-                  </linearGradient>
-                  <linearGradient id="agent-land-coast" x1="0" y1="0" x2="1" y2="1">
-                    <stop offset="0" stopColor="hsl(178 38% 47%)" />
-                    <stop offset="1" stopColor="hsl(203 42% 32%)" />
-                  </linearGradient>
-                  <filter id="agent-land-shadow" x="-20%" y="-20%" width="140%" height="140%">
-                    <feDropShadow dx="0" dy="8" stdDeviation="7" floodColor="hsl(213 42% 5%)" floodOpacity="0.38" />
+                  <pattern id="agent-electronic-hex" width="28" height="24" patternUnits="userSpaceOnUse">
+                    <path
+                      d="M7 1H21L27 12L21 23H7L1 12Z"
+                      fill="none"
+                      stroke="hsl(187 100% 69%)"
+                      strokeOpacity="0.15"
+                      strokeWidth="0.8"
+                    />
+                  </pattern>
+                  <filter id="agent-cyan-glow" x="-40%" y="-40%" width="180%" height="180%">
+                    <feGaussianBlur stdDeviation="4" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
+                  </filter>
+                  <filter id="agent-amber-glow" x="-80%" y="-80%" width="260%" height="260%">
+                    <feGaussianBlur stdDeviation="6" result="blur" />
+                    <feMerge>
+                      <feMergeNode in="blur" />
+                      <feMergeNode in="SourceGraphic" />
+                    </feMerge>
                   </filter>
                 </defs>
 
+                <g className="cds-agent-world-hud" aria-hidden="true">
+                  <path d="M40 70H880M40 140H880M40 210H880M40 280H880M40 350H880" />
+                  <path d="M120 30V390M260 30V390M400 30V390M540 30V390M680 30V390M820 30V390" />
+                  <text x="42" y="64">60</text>
+                  <text x="42" y="134">45</text>
+                  <text x="42" y="204">30</text>
+                  <text x="42" y="274">15</text>
+                  <text x="108" y="404">-120</text>
+                  <text x="248" y="404">-90</text>
+                  <text x="392" y="404">-60</text>
+                  <text x="532" y="404">-30</text>
+                  <text x="678" y="404">0</text>
+                  <text x="812" y="404">30</text>
+                </g>
+
+                <path className="cds-agent-world-depth-line cds-agent-world-depth-line--outer" d={CONTINENT_OUTLINE} aria-hidden="true" />
                 <path
                   className="cds-agent-world-coastline"
-                  d="M146 80 C210 36 321 38 403 60 C495 31 611 38 691 74 C729 91 753 117 754 148 C786 154 810 176 812 205 C816 248 803 290 777 322 C748 345 708 341 672 316 C628 347 570 371 501 382 C470 365 444 333 423 289 C386 322 336 349 280 363 C224 375 163 349 126 310 C96 278 102 213 132 156 C122 126 127 101 146 80 Z"
-                  filter="url(#agent-land-shadow)"
+                  d={CONTINENT_OUTLINE}
+                  filter="url(#agent-cyan-glow)"
                   aria-hidden="true"
                 />
+                <path className="cds-agent-world-depth-line cds-agent-world-depth-line--inner" d={CONTINENT_OUTLINE} aria-hidden="true" />
 
                 {draftMissions.map((mission, index) => {
                   const shape = REGION_SHAPES[index];
@@ -375,9 +526,45 @@ export function AgentAccessMap({
                       aria-label={`${mission.label}，${mission.description}`}
                       onClick={() => setDraftMissionId(mission.id)}
                       onKeyDown={(event) => handleRegionKeyDown(event, () => setDraftMissionId(mission.id))}
-                      style={{ '--region-order': index } as CSSProperties}
+                      style={{
+                        '--region-order': index,
+                        '--region-hue': REGION_HUES[index],
+                      } as CSSProperties}
                     >
-                      <path d={shape.path} />
+                      <path className="cds-agent-world-region-fill" d={shape.path} />
+                      <path className="cds-agent-world-region-grid" d={shape.path} />
+                      <path
+                        className="cds-agent-world-region-contour"
+                        d={shape.path}
+                        style={{ '--contour-scale': 0.94 } as CSSProperties}
+                        aria-hidden="true"
+                      />
+                      <path
+                        className="cds-agent-world-region-contour"
+                        d={shape.path}
+                        style={{ '--contour-scale': 0.86 } as CSSProperties}
+                        aria-hidden="true"
+                      />
+                      {shape.nodes.map((node, nodeIndex) => (
+                        <g
+                          key={`${mission.id}-node-${nodeIndex}`}
+                          className="cds-agent-world-data-node"
+                          transform={`translate(${node.x} ${node.y})`}
+                          aria-hidden="true"
+                        >
+                          <circle r="7" />
+                          <circle r="2.2" />
+                          <path d="M-12 0H-7M7 0H12M0-12V-7M0 7V12" />
+                        </g>
+                      ))}
+                      {shape.features.map((feature, featureIndex) => (
+                        <path
+                          key={`${mission.id}-feature-${featureIndex}`}
+                          className="cds-agent-world-region-feature"
+                          d={feature}
+                          aria-hidden="true"
+                        />
+                      ))}
                       <foreignObject
                         x={shape.labelX - 76}
                         y={shape.labelY - 30}
@@ -395,6 +582,20 @@ export function AgentAccessMap({
                   );
                 })}
 
+                <g className="cds-agent-world-island" aria-hidden="true">
+                  <path d="M838 287 C852 277 870 281 878 294 C889 302 886 318 879 329 C869 340 850 338 839 328 C829 317 828 299 838 287 Z" />
+                  <path d="M844 295 C854 288 867 292 872 301 C878 310 871 323 862 328" />
+                  <circle cx="856" cy="307" r="3" />
+                </g>
+                <g
+                  className="cds-agent-world-signal-rings"
+                  transform={`translate(${selectedShape.labelX} ${selectedShape.labelY - 31})`}
+                  aria-hidden="true"
+                >
+                  <circle r="18" style={{ '--ring-order': 0 } as CSSProperties} />
+                  <circle r="30" style={{ '--ring-order': 1 } as CSSProperties} />
+                  <circle r="43" style={{ '--ring-order': 2 } as CSSProperties} />
+                </g>
                 <path
                   className="cds-agent-world-route"
                   d={`M ${selectedShape.labelX} ${selectedShape.labelY - 30} C ${selectedShape.labelX} 62 460 88 460 42`}
@@ -407,7 +608,11 @@ export function AgentAccessMap({
                   r="8"
                   aria-hidden="true"
                 />
-                <g className="cds-agent-world-compass" transform="translate(850 324)" aria-hidden="true">
+                <g className="cds-agent-world-route-terminal" transform="translate(460 42)" aria-hidden="true">
+                  <circle r="10" />
+                  <circle r="3" />
+                </g>
+                <g className="cds-agent-world-compass" transform="translate(878 360)" aria-hidden="true">
                   <text x="0" y="-18">北</text>
                   <path d="M0 -12 L8 18 L0 12 L-8 18 Z" />
                 </g>

@@ -107,12 +107,18 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMapSource).toContain('选择大洲');
     expect(agentMapSource).toContain('选择地界');
     expect(agentMapSource).toContain('REGION_SHAPES');
+    expect(agentMapSource).toContain('agent-electronic-hex');
+    expect(agentMapSource).toContain('cds-agent-world-data-node');
+    expect(agentMapSource).toContain('cds-agent-world-signal-rings');
     expect(agentMapSource).toContain('branchCount');
     expect(agentMapSource).toContain('SYSTEM_MISSIONS');
     expect(agentMapSource).toContain('PROJECT_MISSIONS');
     expect(agentMapSource).toContain('aria-live="polite"');
     expect(styles).toContain('.cds-agent-world-stage');
     expect(styles).toContain('.cds-agent-world-region');
+    expect(styles).toContain('.cds-agent-world-hud');
+    expect(styles).toContain('@keyframes cds-agent-world-scan');
+    expect(styles).not.toContain("url('#agent-land-forest')");
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.cds-agent-world-region/);
   });
 
