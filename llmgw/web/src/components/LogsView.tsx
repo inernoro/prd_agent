@@ -41,7 +41,7 @@ import {
 const PAGE_SIZE = 30;
 const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
 const NARROW_TABLE_MIN_WIDTH: Record<LogsSubTab, number> = {
-  generations: 1220,
+  generations: 1832,
   upstream: 980,
   sessions: 1080,
 };
@@ -464,7 +464,7 @@ export function LogsView() {
         const title = `应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
         const code = it.appCallerCode?.trim();
         if (!code) {
-          return <span className="lg-log-entity" title={title}><AppEntityIcon /><span className="lg-truncate">{appLabel(it)}</span></span>;
+          return <span className="lg-log-entity" title={title}><AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} /><span className="lg-truncate">{appLabel(it)}</span></span>;
         }
         return (
           <LogEntityHoverCard
@@ -473,10 +473,10 @@ export function LogsView() {
             subtitle={[it.sourceSystem || 'App', it.clientCode, it.environment].filter(Boolean).join(' · ')}
             description={it.appCallerTitle || it.appCallerCodeDisplayName || '进入详情可查看调用身份、模型路由、预算、速率治理与最近请求。'}
             actionLabel="查看 App"
-            icon={<AppEntityIcon size="lg" />}
+            icon={<AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} size="lg" />}
           >
             <span className="lg-log-entity" title={title}>
-              <AppEntityIcon />
+              <AppEntityIcon app={appLabel(it)} sourceSystem={it.sourceSystem} />
               <span className="lg-truncate">{appLabel(it)}</span>
             </span>
           </LogEntityHoverCard>
@@ -615,9 +615,9 @@ export function LogsView() {
             subtitle="会话调用 App"
             description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
             actionLabel="查看 App"
-            icon={<AppEntityIcon size="lg" />}
+            icon={<AppEntityIcon app={it.appCallerCode} size="lg" />}
           >
-            <span className="lg-log-entity"><AppEntityIcon /><span className="lg-truncate">{it.appCallerCode}</span></span>
+            <span className="lg-log-entity"><AppEntityIcon app={it.appCallerCode} /><span className="lg-truncate">{it.appCallerCode}</span></span>
           </LogEntityHoverCard>
         ) : <span className="lg-log-app-label">{DASH}</span>;
       case 'primaryModel':
@@ -691,7 +691,7 @@ export function LogsView() {
     const tableMinWidth = isNarrowViewport
       ? NARROW_TABLE_MIN_WIDTH[tableKey]
       : tableKey === 'generations'
-        ? 1220
+        ? 1832
         : Math.max(920, visibleColumns.length * 132 + 42);
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
@@ -973,7 +973,7 @@ export function LogsView() {
         <section className="lg-log-insights" aria-label="请求汇总趋势">
           <div className="lg-log-insight-chart">
             <div><strong>请求趋势</strong><span>{TIME_RANGE_PRESETS.find((preset) => preset.key === presetKey)?.label}</span></div>
-            <MiniBarChart data={series} height={118} />
+            <MiniBarChart data={series} height={82} />
           </div>
           <div className="lg-log-insight-metrics">
             <div><span>请求</span><strong className="tabular">{fmtCompact(summary?.total)}</strong></div>

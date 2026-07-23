@@ -2,15 +2,17 @@
 // 移植自 prd-admin GenerationDetailsDrawer，主题 token，缺字段统一「—」。
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowUpRight, Copy, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, Clock3, Coins, Copy, Gauge, RotateCcw, Timer, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
+import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
 import { DASH, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
-function MetricCard({ title, value, note }: { title: string; value: string; note?: string }) {
+function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
   return (
     <div
       style={{
@@ -22,7 +24,7 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)' }}>{icon}{title}</div>
       <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
       {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
@@ -174,6 +176,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
         error: detail.error,
         reason: detail.resolutionReason,
       }];
+  const maxDuration = Math.max(1, ...attempts.map((attempt) => attempt.durationMs ?? 0));
   return (
     <section>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
@@ -201,6 +204,12 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
               <span className="lg-provider-response-main">
                 <span className="lg-provider-response-provider">{provider}</span>
                 <span className="lg-provider-response-model">{attempt.model || DASH}</span>
+                <span className="lg-provider-response-track" aria-hidden="true">
+                  <span
+                    className={warning ? 'is-warning' : ''}
+                    style={{ width: `${Math.max(5, ((attempt.durationMs ?? 0) / maxDuration) * 100)}%` }}
+                  />
+                </span>
                 {pool ? <span className="lg-provider-response-pool">模型池：{pool}</span> : null}
                 {attempt.error || attempt.reason ? (
                   <span className="lg-provider-response-reason" style={{ color: warning ? 'var(--warn)' : 'var(--text-muted)' }}>
@@ -396,8 +405,9 @@ export function GenerationDetailsDrawer({
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h2>
             )}
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}><ModelEntityIcon model={detail.logicalModelPublicId || detail.model} />{detail.logicalModelPublicId || detail.model || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><ProviderEntityIcon provider={detail.platformName || detail.provider} />{detail.platformName || detail.provider || DASH}</span>
+              {detail.appCallerCode ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><AppEntityIcon app={detail.appCallerCode} sourceSystem={detail.sourceSystem} />{detail.appCallerCode.startsWith('G-') ? detail.appCallerCode : `G-${detail.appCallerCode}`}</span> : null}
               <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
@@ -487,9 +497,9 @@ export function GenerationDetailsDrawer({
               {viewTab === 'overview' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7 }}>
-                    <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
-                    <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
-                    <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
+                    <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} icon={<Clock3 size={15} aria-hidden="true" />} />
+                    <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
+                    <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} icon={<Gauge size={15} aria-hidden="true" />} />
                     <MetricCard
                       title="费用"
                       value={detail.providerReportedCost == null
@@ -498,12 +508,14 @@ export function GenerationDetailsDrawer({
                       note={detail.providerReportedCost != null
                         ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
                         : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
+                      icon={<Coins size={15} aria-hidden="true" />}
                     />
-                    <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" />
+                    <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" icon={<Coins size={15} aria-hidden="true" />} />
                     <MetricCard
                       title="回退"
                       value={detail.isFallback ? '是' : '否'}
                       note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
+                      icon={<RotateCcw size={15} aria-hidden="true" />}
                     />
                   </div>
                   <section>

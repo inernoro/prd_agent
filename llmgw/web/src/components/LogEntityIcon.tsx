@@ -4,11 +4,16 @@ import {
   AudioLines,
   Bot,
   Boxes,
+  BookOpen,
+  BrainCircuit,
+  Cherry,
   Cloud,
   FlaskConical,
   Image,
   MessagesSquare,
   Network,
+  PawPrint,
+  ShieldCheck,
   Workflow,
 } from 'lucide-react';
 import type { SimpleIcon } from 'simple-icons';
@@ -30,11 +35,13 @@ import {
 type IconRule = {
   match: RegExp;
   icon?: LucideIcon;
-  brand?: SimpleIcon | 'deepseek';
+  brand?: SimpleIcon | 'deepseek' | 'map';
   tone: string;
 };
 
 const MODEL_ICON_RULES: IconRule[] = [
+  { match: /(nanobanana|nano-banana|imagen)/i, brand: siGooglegemini, tone: 'brand' },
+  { match: /(gpt-image|image2|dall-e)/i, brand: siOpenai, tone: 'brand' },
   { match: /(image|dall-e|imagen|banana|flux|sdxl|vision)/i, icon: Image, tone: 'violet' },
   { match: /(audio|speech|whisper|tts|voice)/i, icon: AudioLines, tone: 'amber' },
   { match: /(embed|rerank|vector)/i, icon: Workflow, tone: 'cyan' },
@@ -60,8 +67,19 @@ const PROVIDER_ICON_RULES: IconRule[] = [
   { match: /(bytedance|火山|字节)/i, brand: siBytedance, tone: 'brand' },
   { match: /openai/i, brand: siOpenai, tone: 'brand' },
   { match: /(silicon|硅基)/i, icon: Workflow, tone: 'green' },
+  { match: /(apiyi.*openai|api-yi.*openai)/i, brand: siOpenai, tone: 'brand' },
   { match: /(apiyi|api-yi)/i, icon: Bot, tone: 'blue' },
   { match: /(dry-run|stub|mock)/i, icon: FlaskConical, tone: 'amber' },
+];
+
+const APP_ICON_RULES: IconRule[] = [
+  { match: /(map-internal|miduo)/i, brand: 'map', tone: 'brand' },
+  { match: /(cherry|cherry-studio)/i, icon: Cherry, tone: 'violet' },
+  { match: /(openclaw|claw)/i, icon: PawPrint, tone: 'amber' },
+  { match: /(visual|image|illustration|(?:^|[.\s_-])art(?:$|[.\s_-]))/i, icon: Image, tone: 'violet' },
+  { match: /(review|audit|guard)/i, icon: ShieldCheck, tone: 'green' },
+  { match: /(literary|book|write)/i, icon: BookOpen, tone: 'blue' },
+  { match: /(quickstart|agent)/i, icon: BrainCircuit, tone: 'cyan' },
 ];
 
 function resolveIcon(value: string | null | undefined, rules: IconRule[], fallback: IconRule): IconRule {
@@ -75,11 +93,20 @@ function EntityIcon({ rule, label, size = 'sm' }: { rule: IconRule; label: strin
   const pixelSize = size === 'lg' ? 26 : 13;
   return (
     <span className={`lg-log-entity-icon lg-log-entity-icon-${rule.tone} lg-log-entity-icon-${size}`} aria-hidden="true" title={label}>
-      {rule.brand === 'deepseek' ? <DeepSeekMark size={pixelSize} /> : rule.brand ? <SimpleBrandMark icon={rule.brand} size={pixelSize} /> : rule.icon ? (() => {
+      {rule.brand === 'deepseek' ? <DeepSeekMark size={pixelSize} /> : rule.brand === 'map' ? <MapMark size={pixelSize} /> : rule.brand ? <SimpleBrandMark icon={rule.brand} size={pixelSize} /> : rule.icon ? (() => {
         const Icon = rule.icon;
         return <Icon size={pixelSize} strokeWidth={1.9} />;
       })() : null}
     </span>
+  );
+}
+
+function MapMark({ size }: { size: number }) {
+  return (
+    <svg width={size} height={size} viewBox="0 0 24 24" role="img" aria-label="MAP">
+      <path fill="#7c3aed" d="M3 5.5A2.5 2.5 0 0 1 5.5 3h13A2.5 2.5 0 0 1 21 5.5v13a2.5 2.5 0 0 1-2.5 2.5h-13A2.5 2.5 0 0 1 3 18.5z" />
+      <path fill="#fff" d="M6.2 16.8V7.2h2.1l3.7 5.3 3.7-5.3h2.1v9.6h-2.3v-5.9L12 15.7l-3.5-4.8v5.9z" />
+    </svg>
   );
 }
 
@@ -107,8 +134,9 @@ export function ProviderEntityIcon({ provider, size }: { provider?: string | nul
   return <EntityIcon rule={resolveIcon(provider, PROVIDER_ICON_RULES, { match: /.*/, icon: Cloud, tone: 'neutral' })} label={provider || 'Provider'} size={size} />;
 }
 
-export function AppEntityIcon({ size }: { size?: EntityIconSize } = {}) {
-  return <EntityIcon rule={{ match: /.*/, icon: AppWindow, tone: 'blue' }} label="App" size={size} />;
+export function AppEntityIcon({ app, sourceSystem, size }: { app?: string | null; sourceSystem?: string | null; size?: EntityIconSize } = {}) {
+  const identity = [app, sourceSystem].filter(Boolean).join(' ');
+  return <EntityIcon rule={resolveIcon(identity, APP_ICON_RULES, { match: /.*/, icon: AppWindow, tone: 'blue' })} label={app || 'App'} size={size} />;
 }
 
 export function SessionEntityIcon() {
