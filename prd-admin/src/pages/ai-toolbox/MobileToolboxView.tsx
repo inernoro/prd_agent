@@ -252,8 +252,9 @@ function AgentCard({ item, onClick }: { item: ToolboxItem; onClick: () => void }
             right: 12,
             fontSize: 10,
             fontWeight: 700,
-            color: '#fff',
-            background: 'rgba(0,0,0,0.3)',
+            color: 'var(--media-card-tag-text)',
+            background: 'var(--media-card-tag-bg)',
+            border: '1px solid var(--media-card-tag-border)',
             padding: '3px 7px',
             borderRadius: 7,
           }}

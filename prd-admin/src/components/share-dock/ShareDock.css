@@ -55,7 +55,7 @@
 }
 
 .dock-slot[data-dock-hover='true'] .dock-slot__hint {
-  color: rgba(255, 255, 255, 0.85);
+  color: var(--text-primary);
 }
 
 /* 拖拽进行中但 pointer 未在此槽位：加轻微呼吸光晕提示"可以落这里" */
@@ -158,4 +158,169 @@
   --slot-ring-soft: rgba(165, 180, 252, 0.35);
   --slot-glow: rgba(99, 102, 241, 0.55);
   --slot-inner-glow: rgba(99, 102, 241, 0.25);
+}
+
+/* ── Adaptive floating panel contract ──
+ * ShareDock is a shared admin surface, not a permanently dark creative canvas.
+ * It therefore consumes global surface/text/elevation tokens in both themes. */
+.share-dock__panel,
+.share-dock__collapsed {
+  color: var(--text-primary);
+  background: color-mix(in srgb, var(--panel-solid) 92%, transparent);
+  border: 1px solid var(--border-default);
+  box-shadow: var(--shadow-card-hover);
+  backdrop-filter: blur(18px) saturate(135%);
+  -webkit-backdrop-filter: blur(18px) saturate(135%);
+}
+
+.share-dock__collapsed {
+  border-right: 0;
+  box-shadow: var(--shadow-card);
+}
+
+.share-dock__collapsed:hover,
+.share-dock__panel--active,
+.share-dock__collapsed--active {
+  background: var(--bg-elevated);
+  border-color: var(--border-hover);
+  box-shadow: var(--shadow-card-hover), 0 0 0 2px var(--semantic-info-border);
+}
+
+.share-dock__header {
+  background: var(--bg-card);
+  border-bottom: 1px solid var(--border-faint);
+}
+
+.share-dock__badge {
+  color: var(--semantic-info-text);
+  background: var(--semantic-info-soft);
+  border: 1px solid var(--semantic-info-border);
+}
+
+.share-dock__dropzone {
+  color: var(--text-secondary);
+  background: var(--bg-input);
+  border: 1px dashed var(--border-default);
+}
+
+.share-dock__dropzone[data-state='idle']:hover {
+  color: var(--text-primary);
+  background: var(--bg-input-hover);
+  border-color: var(--border-hover);
+}
+
+.share-dock__dropzone[data-file-over='true'] {
+  color: var(--semantic-info-text);
+  background: var(--semantic-info-soft);
+  border-color: var(--semantic-info-border);
+}
+
+.share-dock__dropzone[data-state='done'],
+.share-dock__dropzone[data-state='choosing'] {
+  color: var(--semantic-success-text);
+  background: var(--semantic-success-soft);
+  border-color: var(--semantic-success-border);
+}
+
+.share-dock__choice {
+  border: 1px solid;
+}
+
+.share-dock__choice--info {
+  color: var(--semantic-info-text);
+  background: var(--semantic-info-soft);
+  border-color: var(--semantic-info-border);
+}
+
+.share-dock__choice--warning {
+  color: var(--semantic-warning-text);
+  background: var(--semantic-warning-soft);
+  border-color: var(--semantic-warning-border);
+}
+
+.share-dock__choice:hover {
+  filter: brightness(1.06) saturate(1.05);
+}
+
+.share-dock__result-input {
+  color: var(--text-primary);
+  background: var(--bg-input);
+  border: 1px solid var(--border-default);
+}
+
+.share-dock__footer {
+  color: var(--text-secondary);
+  background: var(--bg-nested);
+  border-top: 1px solid var(--border-faint);
+}
+
+/* Tone names express semantic intent. Theme-specific values come from tokens. */
+.dock-slot--sky {
+  --slot-bg-from: var(--semantic-info-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-info-border);
+  --slot-text: var(--semantic-info-text);
+  --slot-tone: var(--semantic-info-text);
+}
+.dock-slot--violet {
+  --slot-bg-from: var(--semantic-purple-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-purple-border);
+  --slot-text: var(--semantic-purple-text);
+  --slot-tone: var(--semantic-purple-text);
+}
+.dock-slot--rose {
+  --slot-bg-from: var(--semantic-danger-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-danger-border);
+  --slot-text: var(--semantic-danger-text);
+  --slot-tone: var(--semantic-danger-text);
+}
+.dock-slot--emerald {
+  --slot-bg-from: var(--semantic-success-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-success-border);
+  --slot-text: var(--semantic-success-text);
+  --slot-tone: var(--semantic-success-text);
+}
+.dock-slot--amber {
+  --slot-bg-from: var(--semantic-warning-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-warning-border);
+  --slot-text: var(--semantic-warning-text);
+  --slot-tone: var(--semantic-warning-text);
+}
+.dock-slot--indigo {
+  --slot-bg-from: var(--semantic-indigo-soft);
+  --slot-bg-to: var(--bg-input);
+  --slot-border: var(--semantic-indigo-border);
+  --slot-text: var(--semantic-indigo-text);
+  --slot-tone: var(--semantic-indigo-text);
+}
+
+.dock-slot--sky,
+.dock-slot--violet,
+.dock-slot--rose,
+.dock-slot--emerald,
+.dock-slot--amber,
+.dock-slot--indigo {
+  --slot-bg-hover-from: color-mix(in srgb, var(--slot-tone) 20%, var(--bg-input));
+  --slot-bg-hover-to: color-mix(in srgb, var(--slot-tone) 10%, var(--bg-input));
+  --slot-border-hover: var(--slot-tone);
+  --slot-text-hover: var(--text-primary);
+  --slot-ring: color-mix(in srgb, var(--slot-tone) 66%, transparent);
+  --slot-ring-soft: color-mix(in srgb, var(--slot-tone) 28%, transparent);
+  --slot-glow: color-mix(in srgb, var(--slot-tone) 30%, transparent);
+  --slot-inner-glow: color-mix(in srgb, var(--slot-tone) 14%, transparent);
+}
+
+.dock-slot__hint {
+  color: var(--text-muted);
+}
+
+@media (max-width: 479px) {
+  .share-dock__panel {
+    max-height: calc(100dvh - 16px);
+    overflow-y: auto;
+  }
 }

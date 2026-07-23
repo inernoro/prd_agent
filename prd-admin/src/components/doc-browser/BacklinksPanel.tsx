@@ -48,7 +48,7 @@ function highlightContext(context: string, anchor: string): JSX.Element {
       {context.slice(0, idx)}
       <mark
         style={{
-          background: 'rgba(255, 220, 100, 0.22)',
+          background: 'var(--semantic-warning-bg)',
           color: 'inherit',
           padding: '0 2px',
           borderRadius: 2,
@@ -113,8 +113,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
         style={{
           marginTop: 48,
           paddingTop: 24,
-          borderTop: '2px solid rgba(255,255,255,0.08)',
-          color: 'rgba(255,255,255,0.4)',
+          borderTop: '2px solid var(--border-faint)',
+          color: 'var(--text-muted)',
           fontSize: 13,
         }}
       >
@@ -129,8 +129,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
         style={{
           marginTop: 48,
           paddingTop: 24,
-          borderTop: '2px solid rgba(255,255,255,0.08)',
-          color: 'rgba(255,150,150,0.7)',
+          borderTop: '2px solid var(--border-faint)',
+          color: 'var(--semantic-danger-text)',
           fontSize: 13,
         }}
       >
@@ -146,8 +146,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
         style={{
           marginTop: 48,
           paddingTop: 24,
-          borderTop: '2px solid rgba(255,255,255,0.08)',
-          color: 'rgba(255,255,255,0.35)',
+          borderTop: '2px solid var(--border-faint)',
+          color: 'var(--text-muted)',
           fontSize: 13,
           display: 'flex',
           alignItems: 'center',
@@ -155,7 +155,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
         }}
       >
         <Link2 size={14} />
-        还没有文档引用这篇，也没有指向其他文档的链接。在正文里输入 <code style={{ background: 'rgba(255,255,255,0.06)', padding: '1px 6px', borderRadius: 3 }}>[[标题]]</code> 试试。
+        还没有文档引用这篇，也没有指向其他文档的链接。在正文里输入 <code style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)', color: 'var(--text-secondary)', padding: '1px 6px', borderRadius: 3 }}>[[标题]]</code> 试试。
       </div>
     );
   }
@@ -165,7 +165,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
       style={{
         marginTop: 48,
         paddingTop: 24,
-        borderTop: '2px solid rgba(255,255,255,0.08)',
+        borderTop: '2px solid var(--border-faint)',
       }}
     >
       {/* 反向链接 */}
@@ -180,7 +180,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
               gap: 8,
               fontSize: 14,
               fontWeight: 600,
-              color: 'rgba(255,255,255,0.85)',
+              color: 'var(--text-primary)',
               cursor: 'pointer',
               background: 'transparent',
               border: 'none',
@@ -193,8 +193,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
             被以下文档引用
             <span
               style={{
-                background: 'rgba(255,255,255,0.1)',
-                color: 'rgba(255,255,255,0.7)',
+                background: 'var(--selection-bg)',
+                color: 'var(--selection-text)',
                 padding: '2px 8px',
                 borderRadius: 10,
                 fontSize: 11,
@@ -212,8 +212,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                   type="button"
                   onClick={() => handleJump(bl.fromEntryId, bl.fromTitle)}
                   style={{
-                    background: 'rgba(255,255,255,0.03)',
-                    border: '1px solid rgba(255,255,255,0.08)',
+                    background: 'var(--bg-nested)',
+                    border: '1px solid var(--border-faint)',
                     borderRadius: 8,
                     padding: '14px 16px',
                     cursor: 'pointer',
@@ -222,12 +222,12 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                     color: 'inherit',
                   }}
                   onMouseEnter={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(124,156,255,0.5)';
-                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(124,156,255,0.06)';
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-focus)';
+                    (e.currentTarget as HTMLButtonElement).style.background = 'var(--selection-bg)';
                   }}
                   onMouseLeave={(e) => {
-                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'rgba(255,255,255,0.08)';
-                    (e.currentTarget as HTMLButtonElement).style.background = 'rgba(255,255,255,0.03)';
+                    (e.currentTarget as HTMLButtonElement).style.borderColor = 'var(--border-faint)';
+                    (e.currentTarget as HTMLButtonElement).style.background = 'var(--bg-nested)';
                   }}
                 >
                   <div
@@ -235,7 +235,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                       fontSize: 14,
                       fontWeight: 600,
                       marginBottom: 6,
-                      color: 'rgba(255,255,255,0.95)',
+                      color: 'var(--text-primary)',
                       display: 'flex',
                       alignItems: 'center',
                       gap: 6,
@@ -250,8 +250,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                           alignItems: 'center',
                           gap: 2,
                           fontSize: 10,
-                          color: 'rgba(180,140,255,0.8)',
-                          background: 'rgba(180,140,255,0.1)',
+                          color: 'var(--semantic-purple-text)',
+                          background: 'var(--semantic-purple-bg)',
                           padding: '1px 6px',
                           borderRadius: 8,
                           fontWeight: 500,
@@ -265,7 +265,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                   <div
                     style={{
                       fontSize: 13,
-                      color: 'rgba(255,255,255,0.65)',
+                      color: 'var(--text-secondary)',
                       lineHeight: 1.6,
                     }}
                   >
@@ -274,7 +274,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                   <div
                     style={{
                       fontSize: 11,
-                      color: 'rgba(255,255,255,0.4)',
+                      color: 'var(--text-muted)',
                       marginTop: 8,
                     }}
                   >
@@ -299,7 +299,7 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
               gap: 8,
               fontSize: 13,
               fontWeight: 500,
-              color: 'rgba(255,255,255,0.65)',
+              color: 'var(--text-secondary)',
               cursor: 'pointer',
               background: 'transparent',
               border: 'none',
@@ -311,8 +311,8 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
             本文档引用了
             <span
               style={{
-                background: 'rgba(255,255,255,0.08)',
-                color: 'rgba(255,255,255,0.55)',
+                background: 'var(--bg-nested)',
+                color: 'var(--text-muted)',
                 padding: '1px 6px',
                 borderRadius: 8,
                 fontSize: 10,
@@ -330,13 +330,13 @@ export function BacklinksPanel({ entryId, onLoaded, onJumpToEntry }: Props) {
                   type="button"
                   onClick={() => handleJump(fl.toEntryId, fl.toTitle)}
                   style={{
-                    background: 'rgba(124,156,255,0.08)',
-                    border: '1px solid rgba(124,156,255,0.25)',
+                    background: 'var(--semantic-info-bg)',
+                    border: '1px solid var(--semantic-info-border)',
                     borderRadius: 6,
                     padding: '4px 10px',
                     cursor: 'pointer',
                     fontSize: 12,
-                    color: 'rgba(124,156,255,0.95)',
+                    color: 'var(--semantic-info-text)',
                   }}
                 >
                   {fl.toTitle}

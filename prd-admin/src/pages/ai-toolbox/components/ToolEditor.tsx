@@ -502,8 +502,8 @@ export function ToolEditor() {
                       <div
                         className="w-6 h-6 rounded-md flex items-center justify-center flex-shrink-0 overflow-hidden text-[13px]"
                         style={{
-                          background: selected.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.1)',
-                          border: `1px solid ${selected.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.15)'}`,
+                          background: selected.avatarUrl ? 'transparent' : 'var(--selection-bg)',
+                          border: `1px solid ${selected.avatarUrl ? 'var(--border-faint)' : 'var(--selection-border)'}`,
                         }}
                       >
                         {selected.avatarUrl
@@ -554,8 +554,8 @@ export function ToolEditor() {
                       <div
                         className="w-7 h-7 rounded-lg flex items-center justify-center flex-shrink-0 overflow-hidden text-[14px]"
                         style={{
-                          background: wf.avatarUrl ? 'transparent' : 'rgba(99,102,241,0.08)',
-                          border: `1px solid ${wf.avatarUrl ? 'rgba(255,255,255,0.08)' : 'rgba(99,102,241,0.12)'}`,
+                          background: wf.avatarUrl ? 'transparent' : 'var(--selection-bg)',
+                          border: `1px solid ${wf.avatarUrl ? 'var(--border-faint)' : 'var(--selection-border)'}`,
                         }}
                       >
                         {wf.avatarUrl

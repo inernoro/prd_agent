@@ -15,8 +15,8 @@ export interface MobileFabProps {
 }
 
 export function MobileFab({ onClick, icon: Icon = Plus, label, accent }: MobileFabProps) {
-  const from = accent?.from ?? '#5E5CE6';
-  const to = accent?.to ?? '#0A84FF';
+  const from = accent?.from ?? 'var(--mobile-fab-from)';
+  const to = accent?.to ?? 'var(--mobile-fab-to)';
   return (
     <button
       type="button"
@@ -34,8 +34,8 @@ export function MobileFab({ onClick, icon: Icon = Plus, label, accent }: MobileF
         borderRadius: label ? 20 : 19,
         border: 'none',
         background: `linear-gradient(135deg, ${from}, ${to})`,
-        boxShadow: `0 12px 30px -8px ${from}99`,
-        color: '#fff',
+        boxShadow: accent ? `0 12px 30px -8px ${from}99` : '0 12px 30px -8px var(--mobile-fab-shadow)',
+        color: accent ? '#fff' : 'var(--mobile-fab-text)',
         zIndex: 120,
         transition: 'transform 0.15s ease',
       }}

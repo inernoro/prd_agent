@@ -133,9 +133,9 @@ type HomeQuickLink = {
 };
 
 /**
- * 首页置顶入口（胶囊行）。
+ * 首页置顶入口（扁平导航坞）。
  * - 最多 MAX_HOME_QUICK_LINKS 个，用户可在偏好里定制
- * - 零封面零横幅：入口只承担导航，desc 收进 title 提示
+ * - 零封面零横幅：入口只承担导航，名称与说明共享同一栅格
  * - 「更新中心」带未读徽章，通过 `id==='updates'` 触发
  */
 const QUICK_LINKS_BASE: HomeQuickLink[] = [
@@ -341,11 +341,10 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
   );
 }
 
-// ── Recent Work Chip（「继续上次」：履历胶囊条，不做成卡片） ──
+// ── Recent Work Card（「继续上次」：工作现场，不与下方智能体入口抢层级） ──
 //
-// 2026-07-08 用户反馈：脚印长得像卡片会和下方智能体区雷同，且一行只有
-// 三四个铺不满。改为 ghost 胶囊（透明底 + 发丝描边 + 小图标 + 标题 + 时间），
-// flex-wrap 铺满整行——脚印是"痕迹"，视觉重量必须低于下方的"入口"。
+// 这里展示的是用户正在进行的真实工作，不是导航标签。卡片只呈现后端已提供的
+// 类型、标题、时间与可选进度；低矮矩形、弱表面、无封面，保持工作台感。
 
 /** 与后端 HomeRecentWorkController 的 agentKey 枚举一一对应（iconKey 走 ICON_HUE 色阶尺） */
 const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconKey: string }> = {
@@ -358,16 +357,18 @@ const RECENT_AGENT_META: Record<string, { icon: LucideIcon; label: string; iconK
   'document-store': { icon: Library, label: '知识库', iconKey: 'Library' },
 };
 
-function RecentWorkChip({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
+function RecentWorkCard({ item, onClick }: { item: RecentWorkItemDto; onClick: () => void }) {
   const meta = RECENT_AGENT_META[item.agentKey] ?? { icon: Bot, label: '智能体', iconKey: 'Bot' };
   const accent = getAccent(meta.iconKey);
   const Icon = meta.icon;
+  const progress = item.progress == null ? null : Math.max(0, Math.min(1, item.progress));
   return (
     <button
       type="button"
       onClick={onClick}
-      title={`${meta.label} · ${item.title}`}
-      className="home-launcher-recent group inline-flex min-w-0 cursor-pointer items-center gap-2 h-9 pl-3 pr-3.5 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+      title={`继续处理：${item.title}`}
+      aria-label={`继续处理${meta.label}工作：${item.title}`}
+      className="home-launcher-recent group min-w-0 cursor-pointer text-left rounded-[10px] transition-colors duration-200 focus-visible:outline-none"
       onMouseEnter={(e) => {
         e.currentTarget.style.background = accent.faint;
         e.currentTarget.style.borderColor = accent.border;
@@ -377,15 +378,42 @@ function RecentWorkChip({ item, onClick }: { item: RecentWorkItemDto; onClick: (
         e.currentTarget.style.borderColor = '';
       }}
     >
-      <Icon size={14} className="shrink-0" style={{ color: accent.color }} />
-      <span
-        className="text-[12.5px] font-medium truncate"
-        style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))', maxWidth: 220 }}
-      >
-        {item.title}
+      <span className="flex min-w-0 items-start gap-3">
+        <span
+          className="home-launcher-recent-icon inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-[9px]"
+          style={{ color: accent.color, background: accent.faint, borderColor: accent.border }}
+        >
+          <Icon size={16} />
+        </span>
+        <span className="min-w-0 flex-1">
+          <span className="flex min-w-0 items-center justify-between gap-2">
+            <span className="truncate text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>
+              {meta.label}{item.progressLabel ? ` · ${item.progressLabel}` : ''}
+            </span>
+            <span className="shrink-0 text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+              <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
+            </span>
+          </span>
+          <span className="mt-1 block truncate text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            {item.title || '未命名工作'}
+          </span>
+        </span>
       </span>
-      <span className="shrink-0 text-[11px]" style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}>
-        <RelativeTime value={item.lastActiveAt} refreshIntervalMs={0} />
+      <span className="mt-3 flex items-center gap-3">
+        {progress != null ? (
+          <span className="home-launcher-recent-progress h-1 min-w-0 flex-1 overflow-hidden rounded-full" aria-hidden>
+            <span
+              className="block h-full rounded-full"
+              style={{ width: `${Math.round(progress * 100)}%`, background: accent.color }}
+            />
+          </span>
+        ) : (
+          <span className="home-launcher-recent-divider h-px min-w-0 flex-1" aria-hidden />
+        )}
+        <span className="inline-flex shrink-0 items-center gap-1 text-[11px] font-medium" style={{ color: 'var(--accent-primary)' }}>
+          继续
+          <ArrowRight size={12} className="transition-transform duration-200 group-hover:translate-x-0.5" />
+        </span>
       </span>
     </button>
   );
@@ -590,6 +618,13 @@ export default function AgentLauncherPage() {
 
   const greeting = getGreeting();
   const displayName = user?.displayName || '';
+  const recentPreviewCount = isMobile ? 3 : 5;
+  const visibleRecentWork = recentExpanded
+    ? recentWorkItems
+    : recentWorkItems.slice(0, recentPreviewCount);
+  const commandShortcutLabel = typeof navigator !== 'undefined' && /Mac|iPhone|iPad/.test(navigator.platform)
+    ? '⌘ K'
+    : 'Ctrl K';
 
   return (
     <div
@@ -604,12 +639,10 @@ export default function AgentLauncherPage() {
         {/* ── 页面主体内容（悬浮在背景图之上） ── */}
         <div className="relative z-10">
 
-            {/* Hero content */}
-            <div className={`relative ${isMobile ? 'px-5 pt-7 pb-4' : 'px-5 pt-7 pb-5'}`}>
-              {/* flex-wrap：中等宽度(1024-1190px,非 mobile)下让右栏整体换行落到问候语下方，
-                  避免「左列 + 搜索 280 + 教程 280」单行不换挤爆视口(Codex) */}
-              <div className={`flex ${isMobile ? 'flex-col gap-4' : 'items-start justify-between gap-x-8 gap-y-6 flex-wrap'}`}>
-                <div className="shrink-0">
+            {/* 克制型工作台门头：问候、主搜索、学习中心共享同一栅格，不做营销式横幅。 */}
+            <div className="home-launcher-masthead relative px-5 pt-6">
+              <div className="home-launcher-masthead-grid">
+                <div className="home-launcher-intro min-w-0">
                   {/* 小型 eyebrow 标签：品牌定位 */}
                   <Reveal delay={REVEAL.heroEyebrow} duration={REVEAL_DURATION}>
                     <div
@@ -648,45 +681,40 @@ export default function AgentLauncherPage() {
                   </Reveal>
                 </div>
 
-                {/* 右栏：搜索框 + 教程中心承接卡，搜索在左、教程在右，顶部对齐分列 */}
-                <Reveal delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
-                  {/* 非 mobile 右栏:去掉 shrink-0 + min-w-0,让 rail 能收缩到内容列实际宽度;
-                      flex-wrap + 子项 maxWidth:100% 保证窄到 <576px(侧栏展开的平板)时搜索/教程竖向堆叠而非横向溢出(Codex P2) */}
-                  <div className={isMobile ? 'flex flex-col gap-3 w-full' : 'flex flex-wrap items-start gap-4 min-w-0'}>
-                    {/* 搜索框：移到顶部、教程左侧 */}
-                    <div className="relative" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
-                      <Search
-                        size={15}
-                        className="absolute left-3 top-1/2 -translate-y-1/2 pointer-events-none"
-                        style={{ color: 'var(--text-muted, rgba(255,255,255,0.3))' }}
-                      />
-                      <input
-                        data-tour-id="home-search"
-                        type="text"
-                        placeholder="搜索 Agent..."
-                        value={searchQuery}
-                        onChange={(e) => setSearchQuery(e.target.value)}
-                        aria-label="搜索智能体"
-                        className="home-launcher-search w-full h-9 pl-9 pr-4 rounded-lg text-[13px] outline-none transition-[background-color,border-color,box-shadow] duration-150"
-                      />
-                    </div>
-
-                    {/* 教程中心承接卡（搜索态隐藏） */}
-                    {!searchQuery.trim() && (
-                      <div className="flex flex-col gap-2" style={{ width: isMobile ? '100%' : 280, maxWidth: '100%' }}>
-                        <LearningCenterTeaser />
-                      </div>
-                    )}
+                <Reveal className="home-launcher-command min-w-0" delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <div className="relative w-full">
+                    <Search
+                      size={17}
+                      className="pointer-events-none absolute left-4 top-1/2 -translate-y-1/2"
+                      style={{ color: 'var(--text-muted)' }}
+                    />
+                    <input
+                      data-tour-id="home-search"
+                      type="search"
+                      placeholder="搜索智能体或工作内容"
+                      value={searchQuery}
+                      onChange={(e) => setSearchQuery(e.target.value)}
+                      aria-label="搜索智能体或工作内容"
+                      className="home-launcher-search h-12 w-full rounded-[11px] pl-11 pr-20 text-[13px] outline-none transition-[background-color,border-color,box-shadow] duration-200"
+                    />
+                    <kbd className="home-launcher-search-shortcut pointer-events-none absolute right-3 top-1/2 -translate-y-1/2 rounded-md px-2 py-1 text-[10px] font-medium">
+                      {commandShortcutLabel}
+                    </kbd>
                   </div>
                 </Reveal>
-              </div>
-            </div>
-            {/* end hero content */}
 
-            {/* ── 置顶入口 — 平台级快捷方式（胶囊行：零封面零横幅，入口就长得像入口） ── */}
+                <Reveal className="home-launcher-learning min-w-0" delay={REVEAL.heroSearch} duration={REVEAL_DURATION}>
+                  <LearningCenterTeaser />
+                </Reveal>
+              </div>
+
+            {/* 平台级快捷方式：扁平导航坞，靠分隔线建立秩序，不再逐项套胶囊。 */}
             {!searchQuery.trim() && quickLinks.length > 0 && (
-              <Reveal delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 flex flex-wrap items-center ${isMobile ? 'px-5 pb-4 gap-2' : 'px-5 pb-4 gap-2.5'}`}>
+              <Reveal className="mt-5" delay={REVEAL.quickLinks} duration={REVEAL_DURATION}>
+                <nav
+                  aria-label="首页快捷入口"
+                  className={`home-launcher-quick-nav home-launcher-quick-nav--${Math.min(quickLinks.length, MAX_HOME_QUICK_LINKS)}`}
+                >
                   {quickLinks.map((link) => {
                     const Icon = link.icon;
                     const isUpdates = link.id === 'updates';
@@ -698,16 +726,21 @@ export default function AgentLauncherPage() {
                         data-tour-id={`quicklink-${link.id}`}
                         onClick={() => navigate(link.path)}
                         title={link.desc}
-                        className="home-launcher-quick-link group inline-flex cursor-pointer items-center gap-2 h-9 rounded-full transition-colors duration-150 px-3.5 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+                        className="home-launcher-quick-link group flex min-w-0 cursor-pointer items-center gap-3 px-4 py-3 text-left transition-colors duration-200 focus-visible:outline-none"
                       >
-                        <Icon size={15} style={{ color: 'var(--text-muted, rgba(214,216,212,0.66))' }} />
-                        <span className="text-[12.5px] font-medium" style={{ color: 'var(--text-primary, rgba(255,255,255,0.9))' }}>
-                          {link.label}
+                        <Icon size={16} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                        <span className="min-w-0 flex-1">
+                          <span className="block truncate text-[12.5px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                            {link.label}
+                          </span>
+                          <span className="mt-0.5 block truncate text-[10.5px]" style={{ color: 'var(--text-muted)' }}>
+                            {link.desc}
+                          </span>
                         </span>
                         {showUnread && (
                           <span
-                            className="px-1.5 h-[18px] min-w-[18px] rounded-full inline-flex items-center justify-center text-[10px] font-bold"
-                            style={{ background: 'rgba(232,233,230,0.82)', color: '#18191b' }}
+                            className="inline-flex h-[18px] min-w-[18px] shrink-0 items-center justify-center rounded-full px-1.5 text-[10px] font-bold"
+                            style={{ background: 'var(--accent-primary)', color: 'var(--bg-base)' }}
                           >
                             {changelogUnread > 9 ? '9+' : changelogUnread}
                           </span>
@@ -715,47 +748,58 @@ export default function AgentLauncherPage() {
                       </button>
                     );
                   })}
-                </div>
+                </nav>
               </Reveal>
             )}
 
-            {/* ── 继续上次 — 回到最近的工作现场（无数据时整体不渲染，新用户不见空壳） ── */}
+            {/* 继续上次：真实工作现场，收起是一行工作台，展开后浏览全部。 */}
             {!searchQuery.trim() && recentWorkItems.length > 0 && (
-              <Reveal delay={REVEAL.recent} duration={REVEAL_DURATION}>
-                <div className={`relative z-10 ${isMobile ? 'px-5 pb-6' : 'px-5 pb-8'}`}>
-                  <SectionHeader eyebrow="CONTINUE" title="继续上次" />
-                  {/* 履历胶囊条：flex-wrap 铺满整行；默认露一批（桌面 8 条），展开看全部 */}
-                  <div className="flex flex-wrap items-center gap-2">
-                    {(recentExpanded ? recentWorkItems : recentWorkItems.slice(0, isMobile ? 3 : 8)).map((item) => (
-                      <RecentWorkChip
+              <Reveal className="pb-6 pt-5" delay={REVEAL.recent} duration={REVEAL_DURATION}>
+                <section aria-labelledby="home-recent-heading">
+                  <div className="mb-3 flex items-end justify-between gap-4">
+                    <div className="min-w-0">
+                      <div className="text-[10px] font-semibold tracking-[0.13em]" style={{ color: 'var(--section-label-text)' }}>
+                        CONTINUE
+                      </div>
+                      <div className="mt-1 flex min-w-0 items-baseline gap-2.5">
+                        <h2 id="home-recent-heading" className="text-[18px] font-semibold tracking-tight" style={{ color: 'var(--text-primary)' }}>
+                          继续上次
+                        </h2>
+                        <span className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          回到最近的工作现场
+                        </span>
+                      </div>
+                    </div>
+                    {recentWorkItems.length > recentPreviewCount && (
+                      <button
+                        type="button"
+                        onClick={() => setRecentExpanded((value) => !value)}
+                        aria-expanded={recentExpanded}
+                        className="home-launcher-recent-more inline-flex min-h-11 shrink-0 cursor-pointer items-center gap-1.5 px-2 text-[11.5px] font-medium transition-colors duration-200 focus-visible:outline-none"
+                      >
+                        <History size={13} />
+                        {recentExpanded ? '收起' : `查看全部 ${recentWorkItems.length}`}
+                        <ArrowRight
+                          size={12}
+                          className={`transition-transform duration-200 ${recentExpanded ? '-rotate-90' : 'rotate-0'}`}
+                        />
+                      </button>
+                    )}
+                  </div>
+                  <div className={`home-launcher-recent-grid ${recentExpanded ? 'is-expanded' : ''}`}>
+                    {visibleRecentWork.map((item) => (
+                      <RecentWorkCard
                         key={`${item.agentKey}:${item.route}`}
                         item={item}
                         onClick={() => navigate(item.route)}
                       />
                     ))}
-                    {recentWorkItems.length > (isMobile ? 3 : 8) && (
-                      <button
-                        type="button"
-                        onClick={() => setRecentExpanded((v) => !v)}
-                        className="home-launcher-recent-more group inline-flex cursor-pointer items-center gap-1.5 h-9 px-3.5 rounded-full transition-colors duration-150 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
-                      >
-                        <History size={13} />
-                        <span className="text-[12px] font-medium">
-                          {recentExpanded ? '收起' : `还有 ${recentWorkItems.length - (isMobile ? 3 : 8)} 条`}
-                        </span>
-                        <ArrowRight
-                          size={12}
-                          className={`transition-transform duration-200 ${recentExpanded ? '-rotate-90' : 'rotate-90'}`}
-                        />
-                      </button>
-                    )}
                   </div>
-                </div>
+                </section>
               </Reveal>
             )}
-
+            </div>
           </div>
-          {/* end expansive hero banner */}
 
         <div className={isMobile ? 'px-4 pt-1 pb-8' : 'px-5 pt-1 pb-12'}>
           {/* ── Loading ── */}

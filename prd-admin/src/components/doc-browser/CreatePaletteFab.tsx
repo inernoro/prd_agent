@@ -145,7 +145,7 @@ export function CreatePaletteFab({ actions, onDoubleActivation }: {
             width: size,
             // 子项与一级项的图标圆心对齐同一竖线（相对 44px 基准居中缩进）
             marginRight: (44 - size) / 2,
-            background: a.hue ?? 'rgba(59,130,246,0.92)',
+            background: a.hue ?? 'var(--button-primary-bg)',
             color: '#fff',
             opacity: isGroup && expanded ? 0.85 : 1,
             boxShadow: '0 6px 18px rgba(0,0,0,0.4)',
@@ -215,9 +215,9 @@ export function CreatePaletteFab({ actions, onDoubleActivation }: {
           title="单击新增内容，双击直接录音"
           className="relative flex h-14 w-14 cursor-pointer items-center justify-center rounded-full"
           style={{
-            background: 'linear-gradient(135deg, rgba(59,130,246,0.95), rgba(99,102,241,0.95))',
-            color: '#fff',
-            boxShadow: '0 8px 24px rgba(59,130,246,0.45)',
+            background: 'var(--button-primary-bg)',
+            color: 'var(--button-primary-fg)',
+            boxShadow: 'var(--button-primary-shadow)',
             touchAction: 'manipulation',
           }}
           whileTap={{ scale: 0.92 }}

@@ -961,14 +961,15 @@
     animation-delay: calc(var(--gi, 0) * 0.32s);
   }
 
-  /* 加载器:逐面组装 → 保持 → 溶解 → 循环 */
-  .cds-gem--loader {
-    animation: cds-gem-veil 2.9s ease-in-out infinite;
-  }
-
+  /* 加载器:组装-碎裂叙事(2026-07-22 用户定稿的核心签名)。
+     旧版是「逐面组装 → 完整静止保持约 1.5s → 整体 veil 淡出」——周期一半时间
+     是死相,重启浮层一等十几秒基本停在完整静止星上,被误认成另一个 logo。
+     新版:逐面弹入组装 → 驻留段轮流呼吸(永不静止)→ 逐面旋转碎裂 → 循环;
+     整体不再淡出,破碎叙事贯穿始终。周期可用 --cds-gem-dur 按场景覆盖。
+     与服务端等待页同签名:cds/src/loading-pages/gem.ts 的 GEM_STORY_CSS。 */
   .cds-gem--loader .cds-gem-facet {
-    animation: cds-gem-assemble 2.9s cubic-bezier(0.34, 1.56, 0.64, 1) infinite;
-    animation-delay: calc(var(--gi, 0) * 0.1s);
+    animation: cds-gem-story var(--cds-gem-dur, 2.9s) cubic-bezier(0.4, 0.1, 0.4, 0.9) infinite both;
+    animation-delay: calc(var(--gi, 0) * 0.07s);
   }
 
   .cds-logo-loader {
@@ -1116,28 +1117,39 @@
     }
   }
 
-  @keyframes cds-gem-assemble {
+  /* 组装-碎裂叙事:弹入 → 呼吸驻留 → 旋转碎裂。与 loading-pages/gem.ts 同步。 */
+  @keyframes cds-gem-story {
     0% {
       transform: scale(0);
       opacity: 0;
     }
-    10% {
+    9% {
+      transform: scale(1.1);
+      opacity: 1;
+    }
+    13% {
       transform: scale(1);
       opacity: 1;
     }
-    100% {
+    30% {
+      opacity: 1;
+    }
+    45% {
+      opacity: 0.68;
+    }
+    60% {
+      opacity: 1;
+    }
+    76% {
       transform: scale(1);
       opacity: 1;
     }
-  }
-
-  @keyframes cds-gem-veil {
-    0%,
-    78% {
-      opacity: 1;
+    88% {
+      transform: scale(0.5) rotate(-10deg);
+      opacity: 0;
     }
-    92%,
     100% {
+      transform: scale(0);
       opacity: 0;
     }
   }

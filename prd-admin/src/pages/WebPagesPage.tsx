@@ -289,7 +289,7 @@ function SegmentPills({
     <div
       className="inline-flex max-w-full items-center gap-1 overflow-x-auto p-1 rounded-lg shrink-0"
       style={{
-        background: 'rgba(255,255,255,0.04)',
+        background: 'var(--bg-card)',
         border: '1px solid var(--border-default)',
         scrollbarWidth: 'none',
       }}
@@ -305,10 +305,10 @@ function SegmentPills({
             style={
               active
                 ? {
-                    background: 'rgba(99,102,241,0.22)',
-                    color: '#c7d2fe',
+                    background: 'var(--selection-bg)',
+                    color: 'var(--selection-text)',
                     fontWeight: 500,
-                    boxShadow: 'inset 0 0 0 1px rgba(99,102,241,0.45)',
+                    boxShadow: 'inset 0 0 0 1px var(--selection-border)',
                   }
                 : {
                     background: 'transparent',
@@ -995,9 +995,9 @@ export default function WebPagesPage() {
                 data-tour-id="webpages-mobile-filter"
                 className="h-10 px-3 rounded-[12px] inline-flex items-center gap-1.5 shrink-0"
                 style={{
-                  background: filterCount > 0 ? 'rgba(10,132,255,0.16)' : 'rgba(255,255,255,0.06)',
-                  border: `1px solid ${filterCount > 0 ? 'rgba(10,132,255,0.32)' : 'rgba(255,255,255,0.10)'}`,
-                  color: filterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
+                  background: filterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-card)',
+                  border: `1px solid ${filterCount > 0 ? 'var(--selection-border)' : 'var(--border-subtle)'}`,
+                  color: filterCount > 0 ? 'var(--selection-text)' : 'var(--text-primary)',
                 }}
               >
                 <Settings2 size={15} />
@@ -1049,9 +1049,9 @@ export default function WebPagesPage() {
               data-tour-id="webpages-desktop-filter"
               className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 shrink-0 text-sm font-semibold"
               style={{
-                background: showDesktopFilters || filterCount > 0 ? 'rgba(10,132,255,0.14)' : 'var(--bg-input)',
-                border: `1px solid ${showDesktopFilters || filterCount > 0 ? 'rgba(10,132,255,0.34)' : 'var(--border-default)'}`,
-                color: showDesktopFilters || filterCount > 0 ? '#8ab4ff' : 'var(--text-primary)',
+                background: showDesktopFilters || filterCount > 0 ? 'var(--selection-bg)' : 'var(--bg-input)',
+                border: `1px solid ${showDesktopFilters || filterCount > 0 ? 'var(--selection-border)' : 'var(--border-default)'}`,
+                color: showDesktopFilters || filterCount > 0 ? 'var(--selection-text)' : 'var(--text-primary)',
               }}
             >
               <Settings2 size={15} />
@@ -1252,7 +1252,7 @@ export default function WebPagesPage() {
                         onClick={() => setActiveFolder(null)}
                         className="h-8 px-3 rounded-full text-[13px]"
                         style={activeFolder === null
-                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                          ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                           : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
                       >
                         全部文件夹
@@ -1264,7 +1264,7 @@ export default function WebPagesPage() {
                           onClick={() => setActiveFolder(f)}
                           className="h-8 px-3 rounded-full text-[13px]"
                           style={activeFolder === f
-                            ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                            ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                             : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
                         >
                           {f}
@@ -1283,7 +1283,7 @@ export default function WebPagesPage() {
                         onClick={() => setActiveTag(null)}
                         className="h-8 px-3 rounded-full text-[13px]"
                         style={!activeTag
-                          ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                          ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                           : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
                       >
                         全部标签
@@ -1295,7 +1295,7 @@ export default function WebPagesPage() {
                           onClick={() => setActiveTag(t.tag === activeTag ? null : t.tag)}
                           className="h-8 px-3 rounded-full text-[13px]"
                           style={activeTag === t.tag
-                            ? { background: 'rgba(10,132,255,0.22)', color: '#bfdbfe' }
+                            ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
                             : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
                         >
                           {t.tag} ({t.count})
@@ -2397,7 +2397,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
 
           <div className="absolute left-3 top-3 z-20 flex items-center gap-1.5">
             {isPublic && (
-              <span className="inline-flex h-7 items-center gap-1 rounded-full bg-sky-500/25 px-2.5 text-[11px] font-semibold text-sky-50 shadow-md backdrop-blur-md">
+              <span className="inline-flex h-7 items-center gap-1 rounded-full px-2.5 text-[11px] font-semibold shadow-md backdrop-blur-md" style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}>
                 <Globe size={12} /> 公开
               </span>
             )}
@@ -2443,7 +2443,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
                 c.canSetVisibility
                   ? isPublic
                     ? { label: '取消公开', icon: <Lock size={13} />, onClick: onTogglePublic, color: '#fca5a5' }
-                    : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: '#7dd3fc' }
+                    : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: 'var(--semantic-success-text)' }
                   : null,
                 isPublic
                   ? { label: '转存到知识库', icon: <BookOpen size={13} />, onClick: onTransferToLibrary }
@@ -2705,7 +2705,8 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           )}
           {isPublic && (
             <span
-              className="inline-flex items-center gap-0.5 rounded-full bg-sky-500/25 px-1.5 py-0.5 text-[10px] font-medium text-sky-200"
+              className="inline-flex items-center gap-0.5 rounded-full px-1.5 py-0.5 text-[10px] font-medium"
+              style={{ background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }}
               title="已公开"
             >
               <Globe size={10} /> 公开
@@ -2752,7 +2753,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             c.canSetVisibility
               ? isPublic
                 ? { label: '取消公开', icon: <Lock size={13} />, onClick: onTogglePublic, color: '#fca5a5' }
-                : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: '#7dd3fc' }
+                : { label: '发布到公开页', icon: <Globe size={13} />, onClick: onTogglePublic, color: 'var(--semantic-success-text)' }
               : null,
             onComments
               ? { label: '评论管理', icon: <MessageSquare size={13} />, onClick: onComments }

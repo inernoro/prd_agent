@@ -1138,16 +1138,16 @@ function OnboardingGuide({ hasTeam, hasTemplate }: { hasTeam: boolean; hasTempla
               disabled={!step.action}
               className="flex flex-col items-center gap-2 p-4 rounded-xl w-[140px] transition-all duration-200 cursor-pointer hover:scale-[1.02]"
               style={{
-                background: step.done ? 'rgba(34, 197, 94, 0.06)' : 'var(--bg-secondary)',
-                border: `1px solid ${step.done ? 'rgba(34, 197, 94, 0.2)' : 'var(--border-primary)'}`,
+                background: step.done ? 'var(--semantic-success-bg)' : 'var(--bg-secondary)',
+                border: `1px solid ${step.done ? 'var(--semantic-success-border)' : 'var(--border-primary)'}`,
                 opacity: step.action ? 1 : 0.5,
               }}
             >
               <div
                 className="w-8 h-8 rounded-full flex items-center justify-center text-[14px] font-bold"
                 style={{
-                  background: step.done ? 'rgba(34, 197, 94, 0.15)' : 'rgba(59, 130, 246, 0.1)',
-                  color: step.done ? 'rgba(34, 197, 94, 0.9)' : 'rgba(59, 130, 246, 0.8)',
+                  background: step.done ? 'var(--semantic-success-bg)' : 'var(--selection-icon-bg)',
+                  color: step.done ? 'var(--semantic-success-text)' : 'var(--selection-text)',
                 }}
               >
                 {step.done ? <CheckCircle2 size={16} /> : i + 1}
