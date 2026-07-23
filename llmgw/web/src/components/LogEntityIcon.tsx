@@ -38,25 +38,27 @@ function resolveIcon(value: string | null | undefined, rules: IconRule[], fallba
   return rules.find((rule) => rule.match.test(normalized)) ?? fallback;
 }
 
-function EntityIcon({ rule, label }: { rule: IconRule; label: string }) {
+type EntityIconSize = 'sm' | 'lg';
+
+function EntityIcon({ rule, label, size = 'sm' }: { rule: IconRule; label: string; size?: EntityIconSize }) {
   const Icon = rule.icon;
   return (
-    <span className={`lg-log-entity-icon lg-log-entity-icon-${rule.tone}`} aria-hidden="true" title={label}>
-      <Icon size={13} strokeWidth={1.9} />
+    <span className={`lg-log-entity-icon lg-log-entity-icon-${rule.tone} lg-log-entity-icon-${size}`} aria-hidden="true" title={label}>
+      <Icon size={size === 'lg' ? 26 : 13} strokeWidth={1.9} />
     </span>
   );
 }
 
-export function ModelEntityIcon({ model }: { model?: string | null }) {
-  return <EntityIcon rule={resolveIcon(model, MODEL_ICON_RULES, { match: /.*/, icon: Boxes, tone: 'neutral' })} label="模型" />;
+export function ModelEntityIcon({ model, size }: { model?: string | null; size?: EntityIconSize }) {
+  return <EntityIcon rule={resolveIcon(model, MODEL_ICON_RULES, { match: /.*/, icon: Boxes, tone: 'neutral' })} label="模型" size={size} />;
 }
 
-export function ProviderEntityIcon({ provider }: { provider?: string | null }) {
-  return <EntityIcon rule={resolveIcon(provider, PROVIDER_ICON_RULES, { match: /.*/, icon: Cloud, tone: 'neutral' })} label="Provider" />;
+export function ProviderEntityIcon({ provider, size }: { provider?: string | null; size?: EntityIconSize }) {
+  return <EntityIcon rule={resolveIcon(provider, PROVIDER_ICON_RULES, { match: /.*/, icon: Cloud, tone: 'neutral' })} label="Provider" size={size} />;
 }
 
-export function AppEntityIcon() {
-  return <EntityIcon rule={{ match: /.*/, icon: AppWindow, tone: 'blue' }} label="App" />;
+export function AppEntityIcon({ size }: { size?: EntityIconSize } = {}) {
+  return <EntityIcon rule={{ match: /.*/, icon: AppWindow, tone: 'blue' }} label="App" size={size} />;
 }
 
 export function SessionEntityIcon() {

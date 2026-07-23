@@ -3457,7 +3457,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("无法打开这条生成记录", drawer);
         Assert.Contains("请求详情加载失败，请稍后重试", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("setSelectedId(matched.id)", logs);
+        Assert.Contains("setSelectedLogId(matched.id)", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
@@ -3467,7 +3467,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
         Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.Contains("fontSize: 11, fontWeight: 600", logs);
+        Assert.Contains("fontSize: 14, fontWeight: 550", logs);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
