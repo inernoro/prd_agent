@@ -10,6 +10,7 @@ from types import SimpleNamespace
 
 SCRIPTS_DIR = Path(__file__).resolve().parents[1]
 MODULE_PATH = SCRIPTS_DIR / "llmgw-rollout-ledger.py"
+EXEC_DEP_PATH = SCRIPTS_DIR.parent / "exec_dep.sh"
 SPEC = importlib.util.spec_from_file_location("llmgw_rollout_ledger", MODULE_PATH)
 assert SPEC and SPEC.loader
 LEDGER = importlib.util.module_from_spec(SPEC)
@@ -156,6 +157,22 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                 json_out=str(directory / "baseline.json"),
             ))
             self.assertEqual(1, result)
+
+    def test_maintenance_release_inherits_provider_audit_but_video_asr_canary_does_not(self) -> None:
+        source = EXEC_DEP_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } '
+            '|| [ "$canary_stage" = "video-asr" ]; then',
+            source,
+        )
+        self.assertIn(
+            "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline",
+            source,
+        )
+        self.assertNotIn(
+            'if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then',
+            source,
+        )
 
 
 if __name__ == "__main__":
