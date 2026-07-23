@@ -4,7 +4,8 @@ using System.Text.Json.Nodes;
 namespace PrdAgent.Infrastructure.LlmGateway;
 
 internal sealed record RawGatewayOutputImage(
-    string Base64Data,
+    string? Base64Data,
+    string? SourceUrl,
     string MimeType);
 
 internal sealed record RawGatewayUsage(
@@ -213,7 +214,7 @@ internal static class RawGatewayUsageParser
         var images = new List<RawGatewayOutputImage>();
         var totalChars = 0;
 
-        void Add(string? encoded, string? mimeType)
+        void AddBase64(string? encoded, string? mimeType)
         {
             if (images.Count >= MaxStoredImageCount || string.IsNullOrWhiteSpace(encoded)) return;
             var payload = encoded.Trim();
@@ -230,7 +231,22 @@ internal static class RawGatewayUsageParser
                 return;
 
             totalChars += payload.Length;
-            images.Add(new RawGatewayOutputImage(payload, mime));
+            images.Add(new RawGatewayOutputImage(payload, null, mime));
+        }
+
+        void AddUrl(string? sourceUrl, string? mimeType)
+        {
+            if (images.Count >= MaxStoredImageCount || string.IsNullOrWhiteSpace(sourceUrl)) return;
+            var candidate = sourceUrl.Trim();
+            if (TrySplitDataUrl(candidate, out var dataUrlMime, out var dataUrlPayload))
+            {
+                AddBase64(dataUrlPayload, dataUrlMime);
+                return;
+            }
+            if (!Uri.TryCreate(candidate, UriKind.Absolute, out var uri)
+                || (uri.Scheme != Uri.UriSchemeHttps && uri.Scheme != Uri.UriSchemeHttp))
+                return;
+            images.Add(new RawGatewayOutputImage(null, uri.AbsoluteUri, NormalizeMimeType(mimeType)));
         }
 
         if (TryGetProperty(root, "data", out var data) && data.ValueKind == JsonValueKind.Array)
@@ -238,13 +254,15 @@ internal static class RawGatewayUsageParser
             foreach (var item in data.EnumerateArray())
             {
                 if (item.ValueKind != JsonValueKind.Object) continue;
-                Add(ReadString(item, "b64_json", "image_base64"), ReadString(item, "media_type", "mime_type"));
+                var mimeType = ReadString(item, "media_type", "mime_type");
+                AddBase64(ReadString(item, "b64_json", "image_base64"), mimeType);
+                AddUrl(ReadString(item, "url"), mimeType);
                 if (TryGetProperty(item, "image_url", out var imageUrl))
                 {
                     if (imageUrl.ValueKind == JsonValueKind.String)
-                        Add(imageUrl.GetString(), ReadString(item, "media_type", "mime_type"));
+                        AddUrl(imageUrl.GetString(), mimeType);
                     else if (imageUrl.ValueKind == JsonValueKind.Object)
-                        Add(ReadString(imageUrl, "url"), ReadString(item, "media_type", "mime_type"));
+                        AddUrl(ReadString(imageUrl, "url"), mimeType);
                 }
             }
         }
@@ -254,11 +272,19 @@ internal static class RawGatewayUsageParser
             foreach (var item in rawImages.EnumerateArray())
             {
                 if (item.ValueKind == JsonValueKind.String)
-                    Add(item.GetString(), null);
+                {
+                    var value = item.GetString();
+                    if (value?.StartsWith("data:", StringComparison.OrdinalIgnoreCase) == true)
+                        AddBase64(value, null);
+                    else
+                        AddUrl(value, null);
+                }
                 else if (item.ValueKind == JsonValueKind.Object)
-                    Add(
-                        ReadString(item, "b64_json", "data", "url"),
-                        ReadString(item, "media_type", "mime_type", "mimeType"));
+                {
+                    var mimeType = ReadString(item, "media_type", "mime_type", "mimeType");
+                    AddBase64(ReadString(item, "b64_json", "data"), mimeType);
+                    AddUrl(ReadString(item, "url"), mimeType);
+                }
             }
         }
 
@@ -278,7 +304,7 @@ internal static class RawGatewayUsageParser
                         if (!TryGetProperty(part, propertyName, out var inlineData)
                             || inlineData.ValueKind != JsonValueKind.Object)
                             continue;
-                        Add(
+                        AddBase64(
                             ReadString(inlineData, "data"),
                             ReadString(inlineData, "mimeType", "mime_type"));
                     }

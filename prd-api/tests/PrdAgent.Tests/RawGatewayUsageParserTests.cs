@@ -31,10 +31,41 @@ public sealed class RawGatewayUsageParserTests
         Assert.Equal("completed", result.FinishReason);
         Assert.Equal(0.015m, result.ProviderReportedCost);
         Assert.Equal("USD", result.ProviderCostCurrency);
-        var outputImage = Assert.Single(result.OutputImages);
-        Assert.Equal("aGVsbG8=", outputImage.Base64Data);
-        Assert.Equal("image/webp", outputImage.MimeType);
+        Assert.Collection(
+            result.OutputImages,
+            outputImage =>
+            {
+                Assert.Equal("aGVsbG8=", outputImage.Base64Data);
+                Assert.Null(outputImage.SourceUrl);
+                Assert.Equal("image/webp", outputImage.MimeType);
+            },
+            outputImage =>
+            {
+                Assert.Null(outputImage.Base64Data);
+                Assert.Equal("https://example.test/image.png", outputImage.SourceUrl);
+            });
         Assert.True(result.HasReportedUsage);
+    }
+
+    [Fact]
+    public void Parse_UrlOnlyImageResponse_CollectsDisplayableImageWithoutTreatingUrlAsBase64()
+    {
+        const string response = """
+        {
+          "data": [{
+            "image_url": { "url": "https://cdn.example.test/generated.webp" },
+            "media_type": "image/webp"
+          }]
+        }
+        """;
+
+        var result = RawGatewayUsageParser.Parse(response);
+
+        Assert.Equal(1, result.ImageSuccessCount);
+        var outputImage = Assert.Single(result.OutputImages);
+        Assert.Null(outputImage.Base64Data);
+        Assert.Equal("https://cdn.example.test/generated.webp", outputImage.SourceUrl);
+        Assert.Equal("image/webp", outputImage.MimeType);
     }
 
     [Fact]
@@ -62,7 +93,8 @@ public sealed class RawGatewayUsageParserTests
         Assert.Equal(1, result.ImageSuccessCount);
         Assert.Equal(0.04m, result.ProviderReportedCost);
         Assert.Equal("USD", result.ProviderCostCurrency);
-        Assert.Single(result.OutputImages);
+        var outputImage = Assert.Single(result.OutputImages);
+        Assert.Null(outputImage.SourceUrl);
     }
 
     [Fact]

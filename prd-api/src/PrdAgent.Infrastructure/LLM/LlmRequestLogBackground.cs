@@ -214,6 +214,19 @@ public sealed class LlmRequestLogBackground
                     var storedImages = new List<LlmLogImage>(op.Images.Count);
                     foreach (var image in op.Images)
                     {
+                        if (!string.IsNullOrWhiteSpace(image.SourceUrl))
+                        {
+                            storedImages.Add(new LlmLogImage
+                            {
+                                Url = image.SourceUrl,
+                                OriginalUrl = image.SourceUrl,
+                                Label = "生成结果",
+                                MimeType = image.MimeType,
+                            });
+                            continue;
+                        }
+                        if (string.IsNullOrWhiteSpace(image.Base64Data))
+                            continue;
                         var bytes = Convert.FromBase64String(image.Base64Data);
                         var stored = await _assetStorage.SaveAsync(
                             bytes,

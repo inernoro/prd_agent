@@ -3907,7 +3907,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     ProviderReportedCost: rawUsage.ProviderReportedCost,
                     ProviderCostCurrency: rawUsage.ProviderCostCurrency,
                     OutputImagePayloads: rawUsage.OutputImages
-                        .Select(image => new LlmLogImagePayload(image.Base64Data, image.MimeType))
+                        .Select(image => new LlmLogImagePayload(image.Base64Data, image.SourceUrl, image.MimeType))
                         .ToList()));
         }
         catch (Exception ex)

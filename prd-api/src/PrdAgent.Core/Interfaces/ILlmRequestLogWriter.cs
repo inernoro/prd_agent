@@ -145,7 +145,8 @@ public record LlmLogDone(
     List<LlmLogImagePayload>? OutputImagePayloads = null);
 
 public sealed record LlmLogImagePayload(
-    string Base64Data,
+    string? Base64Data,
+    string? SourceUrl,
     string MimeType);
 
 public interface ILlmRequestLogWriter
