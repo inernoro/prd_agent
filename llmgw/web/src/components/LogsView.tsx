@@ -9,8 +9,8 @@ import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } fr
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
 import { MiniBarChart } from './MiniBarChart';
 import { GenerationDetailsDrawer } from './GenerationDetailsDrawer';
-import { AppCallerDetailsDrawer } from './AppCallerDetailsDrawer';
 import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
+import { LogEntityHoverCard } from './LogEntityHoverCard';
 import { LogTableSettings } from './LogTableSettings';
 import {
   DASH,
@@ -86,6 +86,25 @@ function appLabel(item: Pick<LlmLogListItem, 'appCallerCode' | 'appCallerCodeDis
   return item.appCallerCodeDisplayName || item.appCallerTitle || DASH;
 }
 
+function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logicalModelPublicId' | 'model' | 'platformId'>) {
+  const query = new URLSearchParams();
+  if (item.logicalModelId) query.set('logicalModelId', item.logicalModelId);
+  if (item.logicalModelPublicId || item.model) query.set('model', item.logicalModelPublicId || item.model);
+  if (item.platformId) query.set('platformId', item.platformId);
+  return `/models/view?${query.toString()}`;
+}
+
+function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
+  const query = new URLSearchParams();
+  if (item.platformId) query.set('id', item.platformId);
+  if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
+  return `/platforms/view?${query.toString()}`;
+}
+
+function appDetailsHref(code: string) {
+  return `/app-callers/view?code=${encodeURIComponent(code.replace(/^G-/, ''))}`;
+}
+
 export function LogsView() {
   const location = useLocation();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
@@ -152,7 +171,6 @@ export function LogsView() {
   const [series, setSeries] = useState<TimeseriesPoint[]>([]);
 
   const [selectedLogId, setSelectedLogId] = useState<string | null>(null);
-  const [selectedAppLog, setSelectedAppLog] = useState<LlmLogListItem | null>(null);
   const [tablePreferences, setTablePreferences] = useState(initialTablePreferences);
   const [settingsOpen, setSettingsOpen] = useState<LogsSubTab | null>(null);
   const [settingsTab, setSettingsTab] = useState<'columns' | 'density'>('columns');
@@ -351,36 +369,61 @@ export function LogsView() {
         const tp = getTransportMeta(it.transport);
         const modelName = it.logicalModelPublicId || it.model || DASH;
         return (
-          <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
-            <ModelEntityIcon model={modelName} />
-            <span className="lg-truncate lg-log-model-name">{modelName}</span>
-          </span>
+          <LogEntityHoverCard
+            href={modelDetailsHref(it)}
+            label={modelName}
+            subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', proto?.label, tp?.label].filter(Boolean).join(' · ')}
+            description={it.logicalModelPublicId && it.model !== it.logicalModelPublicId
+              ? `本次请求解析到上游模型 ${it.model}。进入详情可查看 Provider、能力、价格、路由与最近请求。`
+              : '进入详情可查看 Provider、能力、价格、路由与最近请求。'}
+            actionLabel="查看模型"
+            icon={<ModelEntityIcon model={modelName} size="lg" />}
+          >
+            <span className="lg-log-entity" title={[it.logicalModelPublicId ? `实际上游 ${it.model}` : null, proto ? `协议 ${proto.label}` : null, tp ? `传输 ${tp.label}` : null].filter(Boolean).join('；')}>
+              <ModelEntityIcon model={modelName} />
+              <span className="lg-truncate lg-log-model-name">{modelName}</span>
+            </span>
+          </LogEntityHoverCard>
         );
       }
       case 'provider': {
         const providerName = it.platformName || it.provider || DASH;
         return (
-          <span className="lg-log-entity" title={providerName}>
-            <ProviderEntityIcon provider={providerName} />
-            <span className="lg-truncate">{providerName}</span>
-          </span>
+          <LogEntityHoverCard
+            href={providerDetailsHref(it)}
+            label={providerName}
+            subtitle={[it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
+            description="进入详情可查看连接方式、托管模型、并发与最近请求；不会显示密钥明文。"
+            actionLabel="查看 Provider"
+            icon={<ProviderEntityIcon provider={providerName} size="lg" />}
+          >
+            <span className="lg-log-entity" title={providerName}>
+              <ProviderEntityIcon provider={providerName} />
+              <span className="lg-truncate">{providerName}</span>
+            </span>
+          </LogEntityHoverCard>
         );
       }
       case 'app': {
         const title = `应用：${appLabel(it)}；调用身份：${it.clientCode || '历史未标注'}${it.environment ? `；环境：${it.environment}` : ''}`;
+        const code = it.appCallerCode?.trim();
+        if (!code) {
+          return <span className="lg-log-entity" title={title}><AppEntityIcon /><span className="lg-truncate">{appLabel(it)}</span></span>;
+        }
         return (
-          <button
-            type="button"
-            className="lg-log-app-button"
-            title={`${title}；点击在右侧查看摘要`}
-            onClick={(event) => {
-              event.stopPropagation();
-              setSelectedAppLog(it);
-            }}
+          <LogEntityHoverCard
+            href={appDetailsHref(code)}
+            label={appLabel(it)}
+            subtitle={[it.sourceSystem || 'App', it.clientCode, it.environment].filter(Boolean).join(' · ')}
+            description={it.appCallerTitle || it.appCallerCodeDisplayName || '进入详情可查看调用身份、模型路由、预算、速率治理与最近请求。'}
+            actionLabel="查看 App"
+            icon={<AppEntityIcon size="lg" />}
           >
-            <AppEntityIcon />
-            <span className="lg-truncate">{appLabel(it)}</span>
-          </button>
+            <span className="lg-log-entity" title={title}>
+              <AppEntityIcon />
+              <span className="lg-truncate">{appLabel(it)}</span>
+            </span>
+          </LogEntityHoverCard>
         );
       }
       case 'input':
@@ -432,14 +475,34 @@ export function LogsView() {
         return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
-          <span className="lg-log-entity" title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
-            <ModelEntityIcon model={it.logicalModelPublicId || it.model} />
-            <span className="lg-truncate lg-log-model-name">{it.logicalModelPublicId || it.model || DASH}</span>
-          </span>
+          <LogEntityHoverCard
+            href={modelDetailsHref(it)}
+            label={it.logicalModelPublicId || it.model || DASH}
+            subtitle={[it.logicalModelPublicId ? '逻辑模型' : '上游模型', it.protocol].filter(Boolean).join(' · ')}
+            description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
+            actionLabel="查看模型"
+            icon={<ModelEntityIcon model={it.logicalModelPublicId || it.model} size="lg" />}
+          >
+            <span className="lg-log-entity" title={it.logicalModelPublicId ? `逻辑模型 ${it.logicalModelPublicId}；实际上游 ${it.model}` : it.model}>
+              <ModelEntityIcon model={it.logicalModelPublicId || it.model} />
+              <span className="lg-truncate lg-log-model-name">{it.logicalModelPublicId || it.model || DASH}</span>
+            </span>
+          </LogEntityHoverCard>
         );
       case 'provider': {
         const providerName = it.platformName || it.provider || DASH;
-        return <span className="lg-log-entity"><ProviderEntityIcon provider={providerName} /><span className="lg-truncate">{providerName}</span></span>;
+        return (
+          <LogEntityHoverCard
+            href={providerDetailsHref(it)}
+            label={providerName}
+            subtitle={[it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
+            description="进入详情可查看连接方式、托管模型、并发与最近请求。"
+            actionLabel="查看 Provider"
+            icon={<ProviderEntityIcon provider={providerName} size="lg" />}
+          >
+            <span className="lg-log-entity"><ProviderEntityIcon provider={providerName} /><span className="lg-truncate">{providerName}</span></span>
+          </LogEntityHoverCard>
+        );
       }
       case 'genId':
         return (
@@ -483,19 +546,43 @@ export function LogsView() {
         );
       case 'app':
         return it.appCallerCode ? (
-          <Link
-            className="lg-truncate lg-log-app-link"
-            to={`/app-callers?search=${encodeURIComponent(it.appCallerCode)}&focus=${encodeURIComponent(it.appCallerCode)}`}
-            title="进入 App 页面"
-            onClick={(event) => event.stopPropagation()}
+          <LogEntityHoverCard
+            href={appDetailsHref(it.appCallerCode)}
+            label={it.appCallerCode.startsWith('G-') ? it.appCallerCode : `G-${it.appCallerCode}`}
+            subtitle="会话调用 App"
+            description="进入详情可查看调用身份、路由、治理和该 App 的最近请求。"
+            actionLabel="查看 App"
+            icon={<AppEntityIcon size="lg" />}
           >
-            {it.appCallerCode}
-          </Link>
+            <span className="lg-log-entity"><AppEntityIcon /><span className="lg-truncate">{it.appCallerCode}</span></span>
+          </LogEntityHoverCard>
         ) : <span className="lg-log-app-label">{DASH}</span>;
       case 'primaryModel':
-        return <span className="lg-truncate" style={{ fontSize: 14, fontWeight: 550, color: 'var(--text-primary)' }}>{it.primaryModel || DASH}</span>;
+        return it.primaryModel ? (
+          <LogEntityHoverCard
+            href={`/models/view?model=${encodeURIComponent(it.primaryModel)}`}
+            label={it.primaryModel}
+            subtitle="会话主要模型"
+            description="进入详情可查看该模型的能力、Provider、路由和最近请求。"
+            actionLabel="查看模型"
+            icon={<ModelEntityIcon model={it.primaryModel} size="lg" />}
+          >
+            <span className="lg-log-entity"><ModelEntityIcon model={it.primaryModel} /><span className="lg-truncate lg-log-model-name">{it.primaryModel}</span></span>
+          </LogEntityHoverCard>
+        ) : <span className="lg-log-app-label">{DASH}</span>;
       case 'primaryProvider':
-        return <span className="lg-truncate" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.primaryProvider || DASH}</span>;
+        return it.primaryProvider ? (
+          <LogEntityHoverCard
+            href={`/platforms/view?name=${encodeURIComponent(it.primaryProvider)}`}
+            label={it.primaryProvider}
+            subtitle="会话主要 Provider"
+            description="进入详情可查看连接方式、托管模型、并发与最近请求。"
+            actionLabel="查看 Provider"
+            icon={<ProviderEntityIcon provider={it.primaryProvider} size="lg" />}
+          >
+            <span className="lg-log-entity"><ProviderEntityIcon provider={it.primaryProvider} /><span className="lg-truncate">{it.primaryProvider}</span></span>
+          </LogEntityHoverCard>
+        ) : <span className="lg-log-app-label">{DASH}</span>;
       case 'supporting':
         return it.supportingModels.length ? (
           <span style={{ display: 'flex', flexWrap: 'wrap', gap: 4 }}>
@@ -902,7 +989,6 @@ export function LogsView() {
       {showExampleGuide ? <div className="lg-example-guide" role="dialog" aria-modal="true" aria-label="请求记录示例说明"><button className="lg-example-backdrop" type="button" aria-label="关闭示例说明" onClick={() => setShowExampleGuide(false)} /><Card><div className="lg-section-heading"><div><div className="lg-card-kicker">示例说明</div><h2>一条请求记录能回答什么</h2></div><button className="lg-secondary-action" type="button" onClick={() => setShowExampleGuide(false)}>关闭</button></div><div className="lg-example-fields"><div><strong>请求 ID</strong><span>用于从客户端错误定位到这一条调用。</span></div><div><strong>应用与模型</strong><span>说明谁发起请求，以及平台最终选择了哪个模型。</span></div><div><strong>状态与耗时</strong><span>判断调用是否成功、失败发生在哪里、响应用了多久。</span></div><div><strong>Token 与费用</strong><span>有完整价格快照时显示估算；缺价格保持未知，不显示为 0。</span></div></div><p>这只是字段说明，不会在当前租户中写入或伪造示例数据。</p></Card></div> : null}
 
       {selectedLogId ? <GenerationDetailsDrawer logId={selectedLogId} onClose={() => setSelectedLogId(null)} /> : null}
-      {selectedAppLog ? <AppCallerDetailsDrawer log={selectedAppLog} onClose={() => setSelectedAppLog(null)} /> : null}
 
     </div>
   );
