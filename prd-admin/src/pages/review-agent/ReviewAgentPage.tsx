@@ -79,8 +79,8 @@ export function ReviewAgentPage() {
             <ClipboardCheck className="w-5 h-5 text-indigo-400" />
           </div>
           <div>
-            <h1 className="text-xl font-semibold text-white">产品评审智能体</h1>
-            <p className="text-sm text-white/40 mt-0.5">上传产品方案，AI 多维度评审打分</p>
+            <h1 className="text-xl font-semibold text-token-primary">产品评审智能体</h1>
+            <p className="text-sm text-token-muted mt-0.5">上传产品方案，AI 多维度评审打分</p>
           </div>
         </div>
         <div className="flex items-center gap-2">
@@ -89,7 +89,7 @@ export function ReviewAgentPage() {
             <>
               <button
                 onClick={() => setWebhookModalOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-colors"
+                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
                 title="Webhook 通知配置"
               >
                 <Bell className="w-3.5 h-3.5" />
@@ -97,7 +97,7 @@ export function ReviewAgentPage() {
               </button>
               <button
                 onClick={() => setDimsModalOpen(true)}
-                className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-colors"
+                className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
                 title="评审维度配置"
               >
                 <Settings2 className="w-3.5 h-3.5" />
@@ -108,7 +108,7 @@ export function ReviewAgentPage() {
           {canViewAll && (
             <button
               onClick={() => navigate('/review-agent/all')}
-              className="flex items-center gap-1.5 text-sm text-white/50 hover:text-white/80 bg-white/5 hover:bg-white/10 border border-white/10 rounded-lg px-3 py-2 transition-colors"
+              className="flex items-center gap-1.5 text-sm text-token-secondary hover-text-primary bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-3 py-2 transition-colors"
             >
               <Users className="w-3.5 h-3.5" />
               全部提交
@@ -126,7 +126,7 @@ export function ReviewAgentPage() {
 
       {/* 筛选 Tab + 搜索 */}
       <div className="flex items-center gap-3 mb-5">
-        <div className="flex gap-1 p-1 bg-white/5 rounded-lg border border-white/8">
+        <div className="flex gap-1 p-1 bg-token-nested rounded-lg border border-token-subtle">
           {FILTER_TABS.map(tab => (
             <button
               key={tab.key}
@@ -134,7 +134,7 @@ export function ReviewAgentPage() {
               className={`text-xs px-3 py-1.5 rounded-md transition-colors ${
                 activeTab === tab.key
                   ? 'bg-indigo-600 text-white'
-                  : 'text-white/50 hover:text-white/80'
+                  : 'text-token-secondary hover-text-primary'
               }`}
             >
               {tab.label}
@@ -142,13 +142,13 @@ export function ReviewAgentPage() {
           ))}
         </div>
         <div className="flex-1 relative">
-          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/30" />
+          <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-token-muted" />
           <input
             type="text"
             value={search}
             onChange={e => setSearch(e.target.value)}
             placeholder="搜索方案标题..."
-            className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
+            className="w-full bg-token-nested border border-token-subtle rounded-lg pl-9 pr-4 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-indigo-500/50 transition-colors"
           />
         </div>
       </div>
@@ -159,15 +159,15 @@ export function ReviewAgentPage() {
           <MapSectionLoader />
         ) : filtered.length === 0 ? (
           <div className="text-center py-16 space-y-4">
-            <div className="w-14 h-14 rounded-2xl bg-white/3 flex items-center justify-center mx-auto">
-              <ClipboardCheck className="w-7 h-7 text-white/20" />
+            <div className="w-14 h-14 rounded-2xl bg-token-nested flex items-center justify-center mx-auto">
+              <ClipboardCheck className="w-7 h-7 text-token-muted" />
             </div>
             <div>
-              <p className="text-white/40 text-sm">
+              <p className="text-token-muted text-sm">
                 {activeTab === 'all' ? '还没有提交记录' : activeTab === 'passed' ? '暂无通过的记录' : activeTab === 'notPassed' ? '暂无未通过的记录' : '暂无失败的记录'}
               </p>
               {activeTab === 'all' && (
-                <p className="text-white/25 text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>
+                <p className="text-token-muted text-xs mt-1">上传产品方案，AI 将帮助你预先发现评审问题</p>
               )}
             </div>
             {activeTab === 'all' && (
@@ -188,13 +188,13 @@ export function ReviewAgentPage() {
                 <button
                   key={item.id}
                   onClick={() => navigate(`/review-agent/submissions/${item.id}`)}
-                  className="w-full flex items-center gap-4 bg-white/3 hover:bg-white/5 border border-white/8 rounded-xl px-5 py-4 text-left transition-colors group"
+                  className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-xl px-5 py-4 text-left transition-colors group"
                 >
                   <div className="flex-1 min-w-0">
-                    <p className="text-sm font-medium text-white truncate group-hover:text-indigo-200 transition-colors">
+                    <p className="text-sm font-medium text-token-primary truncate group-hover:text-indigo-200 transition-colors">
                       {item.title}
                     </p>
-                    <div className="flex items-center gap-3 text-xs text-white/35 mt-1">
+                    <div className="flex items-center gap-3 text-xs text-token-muted mt-1">
                       <span>{item.fileName}</span>
                       <span>·</span>
                       <span>{new Date(item.submittedAt).toLocaleDateString('zh-CN', { month: 'short', day: 'numeric', hour: '2-digit', minute: '2-digit' })}</span>
@@ -204,7 +204,7 @@ export function ReviewAgentPage() {
                     {statusInfo.icon}
                     {statusInfo.label}
                   </div>
-                  <ChevronRight className="w-4 h-4 text-white/20 group-hover:text-white/40 transition-colors flex-shrink-0" />
+                  <ChevronRight className="w-4 h-4 text-token-muted group-hover:text-[var(--text-primary)] transition-colors flex-shrink-0" />
                 </button>
               );
             })}
@@ -218,17 +218,17 @@ export function ReviewAgentPage() {
           <button
             disabled={page <= 1}
             onClick={() => setPage(p => p - 1)}
-            className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
           >
-            <ChevronLeft className="w-4 h-4 text-white/70" />
+            <ChevronLeft className="w-4 h-4 text-token-secondary" />
           </button>
-          <span className="text-sm text-white/50">第 {page} / {totalPages} 页</span>
+          <span className="text-sm text-token-secondary">第 {page} / {totalPages} 页</span>
           <button
             disabled={page >= totalPages}
             onClick={() => setPage(p => p + 1)}
-            className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
           >
-            <ChevronRight className="w-4 h-4 text-white/70" />
+            <ChevronRight className="w-4 h-4 text-token-secondary" />
           </button>
         </div>
       )}

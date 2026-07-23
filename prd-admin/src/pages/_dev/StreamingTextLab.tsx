@@ -66,7 +66,7 @@ function StreamCard({ mode, label, desc, sample }: { mode: StreamingMode; label:
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-5 flex flex-col gap-3" style={{ minHeight: 220 }}>
+    <div className="rounded-xl border border-token-subtle bg-white/[0.02] p-5 flex flex-col gap-3" style={{ minHeight: 220 }}>
       <div className="flex items-center justify-between gap-2">
         <div>
           <div className="text-sm font-semibold text-white/90">{label}</div>
@@ -76,7 +76,7 @@ function StreamCard({ mode, label, desc, sample }: { mode: StreamingMode; label:
           type="button"
           onClick={start}
           disabled={streaming}
-          className="px-2.5 py-1 rounded-md text-[11px] bg-white/5 hover:bg-white/10 disabled:opacity-40 text-white/70 border border-white/10"
+          className="px-2.5 py-1 rounded-md text-[11px] bg-token-nested hover-bg-soft disabled:opacity-40 text-white/70 border border-token-subtle"
         >
           {streaming ? '播放中…' : '重播'}
         </button>
@@ -95,7 +95,7 @@ export default function StreamingTextLab() {
         <div>
           <h1 className="text-xl font-semibold">流式文本动效实验场 · Streaming Text Lab</h1>
           <p className="text-sm text-white/60 mt-1">
-            统一基础设施 <code className="px-1.5 py-0.5 rounded bg-white/5 text-white/80">{'<StreamingText />'}</code>{' '}
+            统一基础设施 <code className="px-1.5 py-0.5 rounded bg-token-nested text-white/80">{'<StreamingText />'}</code>{' '}
             演示与回归。默认 mode = blur, 设计来源 Claude Design (2026-05-13)。
           </p>
         </div>

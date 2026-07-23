@@ -84,12 +84,8 @@ export function DefectList() {
         value={searchQuery}
         onChange={(e) => setSearchQuery(e.target.value)}
         placeholder="搜索编号、标题或内容..."
-        className="w-full h-7 pl-7 pr-7 rounded-lg text-[12px] outline-none"
-        style={{
-          background: 'rgba(255,255,255,0.06)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          color: 'var(--text-primary)',
-        }}
+        className="w-full h-7 pl-7 pr-7 rounded-lg text-[12px] outline-none bg-token-nested border border-token-subtle"
+        style={{ color: 'var(--text-primary)' }}
       />
       {searchQuery && (
         <button
@@ -143,7 +139,7 @@ export function DefectList() {
         {archivedDefects.length > 0 && (
           <>
             <div
-              className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none transition-colors hover:bg-white/5"
+              className="flex items-center gap-2 px-3 py-2 cursor-pointer select-none transition-colors hover-bg-soft"
               style={{ borderBottom: '1px solid var(--border-subtle)' }}
               onClick={() => setArchivedCollapsed(!archivedCollapsed)}
             >
@@ -157,8 +153,8 @@ export function DefectList() {
                 已归档
               </span>
               <span
-                className="text-[10px] px-1.5 py-0.5 rounded"
-                style={{ color: 'var(--text-muted)', background: 'rgba(255,255,255,0.06)' }}
+                className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested"
+                style={{ color: 'var(--text-muted)' }}
               >
                 {archivedDefects.length}
               </span>
@@ -208,7 +204,7 @@ export function DefectList() {
         <div className="mt-2">
           {/* 折叠标题栏 */}
           <div
-            className="flex items-center gap-2 px-2 py-2 rounded-lg cursor-pointer select-none mb-3 transition-colors hover:bg-white/5"
+            className="flex items-center gap-2 px-2 py-2 rounded-lg cursor-pointer select-none mb-3 transition-colors hover-bg-soft"
             onClick={() => setArchivedCollapsed(!archivedCollapsed)}
           >
             {archivedCollapsed ? (
@@ -224,11 +220,8 @@ export function DefectList() {
               已归档
             </span>
             <span
-              className="text-[10px] px-1.5 py-0.5 rounded"
-              style={{
-                color: 'var(--text-muted)',
-                background: 'rgba(255,255,255,0.06)',
-              }}
+              className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested"
+              style={{ color: 'var(--text-muted)' }}
             >
               {archivedDefects.length}
             </span>

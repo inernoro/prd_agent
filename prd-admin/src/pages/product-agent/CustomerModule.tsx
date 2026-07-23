@@ -56,7 +56,7 @@ function SubModuleTab({ on, onClick, children }: { on: boolean; onClick: () => v
   return (
     <button
       onClick={onClick}
-      className={`rounded-lg border px-3.5 py-1.5 text-sm ${on ? 'border-cyan-500/45 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/55 hover:bg-white/5'}`}
+      className={`rounded-lg border px-3.5 py-1.5 text-sm ${on ? 'border-cyan-500/45 bg-cyan-500/15 text-cyan-200' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
     >
       {children}
     </button>
@@ -96,13 +96,13 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
-          <Search size={14} className="text-white/40" />
+        <div className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5">
+          <Search size={14} className="text-token-muted" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="搜索商户名称 / 编号"
-            className="w-48 bg-transparent text-sm text-white outline-none"
+            className="w-48 bg-transparent text-sm text-token-primary outline-none"
           />
         </div>
         <button
@@ -116,11 +116,11 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
       {loading ? (
         <MapSectionLoader text="正在加载客户…" />
       ) : rows.length === 0 ? (
-        <div className="py-12 text-center text-sm text-white/40">还没有客户。点击右上角「新增客户」录入，需求里即可关联。</div>
+        <div className="py-12 text-center text-sm text-token-muted">还没有客户。点击右上角「新增客户」录入，需求里即可关联。</div>
       ) : (
-        <div className="overflow-hidden rounded-xl border border-white/10">
+        <div className="overflow-hidden rounded-xl border border-token-subtle">
           <table className="w-full text-left text-sm">
-            <thead className="bg-white/[0.03] text-xs text-white/45">
+            <thead className="bg-token-nested text-xs text-token-muted">
               <tr>
                 <th className="px-4 py-2.5 font-medium">商户编号</th>
                 <th className="px-4 py-2.5 font-medium">商户名称</th>
@@ -136,14 +136,14 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
                 <tr
                   key={c.id}
                   onClick={() => setSelected(c)}
-                  className="group cursor-pointer border-t border-white/5 hover:bg-white/[0.03]"
+                  className="group cursor-pointer border-t border-token-subtle hover-bg-soft"
                 >
-                  <td className="px-4 py-3 font-mono text-xs text-white/45">{c.merchantNo || '-'}</td>
-                  <td className="px-4 py-3 text-white/90">{c.name}</td>
-                  <td className="px-4 py-3 text-xs text-white/55">{c.shortName || '-'}</td>
+                  <td className="px-4 py-3 font-mono text-xs text-token-muted">{c.merchantNo || '-'}</td>
+                  <td className="px-4 py-3 text-token-primary">{c.name}</td>
+                  <td className="px-4 py-3 text-xs text-token-secondary">{c.shortName || '-'}</td>
                   <td className="px-4 py-3 text-xs"><CertBadge value={c.certStatus} /></td>
-                  <td className="px-4 py-3 text-xs text-white/55">{c.region || '-'}</td>
-                  <td className="px-4 py-3 text-xs text-white/55">{c.industry || '-'}</td>
+                  <td className="px-4 py-3 text-xs text-token-secondary">{c.region || '-'}</td>
+                  <td className="px-4 py-3 text-xs text-token-secondary">{c.industry || '-'}</td>
                   <td className="px-4 py-3 text-right" onClick={(e) => e.stopPropagation()}>
                     <button
                       onClick={() => onConsult(c.id)}
@@ -164,11 +164,11 @@ function CustomerManage({ isAdmin, onConsult }: { isAdmin: boolean; onConsult: (
 }
 
 function CertBadge({ value }: { value?: string | null }) {
-  if (!value) return <span className="text-white/35">-</span>;
+  if (!value) return <span className="text-token-muted">-</span>;
   const tone =
     value === '已认证' ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300'
       : value === '认证失败' ? 'border-rose-400/25 bg-rose-400/10 text-rose-300'
-        : 'border-white/15 bg-white/5 text-white/60';
+        : 'border-token-subtle bg-token-nested text-token-secondary';
   return <span className={`rounded-full border px-2 py-0.5 text-[11px] ${tone}`}>{value}</span>;
 }
 
@@ -199,10 +199,10 @@ function CustomerDetail({
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-center gap-3">
-        <button onClick={onBack} className="flex items-center gap-1 text-xs text-white/45 hover:text-white">
+        <button onClick={onBack} className="flex items-center gap-1 text-xs text-token-muted hover-text-primary">
           <ArrowLeft size={13} /> 返回客户列表
         </button>
-        <h3 className="text-base font-semibold text-white">{isNew ? '新增客户' : customer!.name}</h3>
+        <h3 className="text-base font-semibold text-token-primary">{isNew ? '新增客户' : customer!.name}</h3>
         {!isNew && (
           <button
             onClick={() => onConsult(customer!.id)}
@@ -238,7 +238,7 @@ function TabBtn({ on, onClick, children }: { on: boolean; onClick: () => void; c
   return (
     <button
       onClick={onClick}
-      className={`rounded-md border px-3 py-1 text-sm ${on ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/50 hover:bg-white/5'}`}
+      className={`rounded-md border px-3 py-1 text-sm ${on ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
     >
       {children}
     </button>
@@ -247,7 +247,7 @@ function TabBtn({ on, onClick, children }: { on: boolean; onClick: () => void; c
 
 // ── 客户信息（基础商户字段 + 按客户表单配置的自定义字段） ──
 
-const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+const inputCls = 'rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted';
 
 function CustomerInfoForm({
   customer,
@@ -348,8 +348,8 @@ function CustomerInfoForm({
       </Field>
 
       {customFields.length > 0 && (
-        <div className="flex flex-col gap-2 rounded-xl border border-white/10 bg-white/[0.02] p-4">
-          <div className="text-xs font-medium text-white/55">自定义字段（按「设置 → 客户 → 客户表单」配置）</div>
+        <div className="flex flex-col gap-2 rounded-xl border border-token-subtle bg-token-nested p-4">
+          <div className="text-xs font-medium text-token-secondary">自定义字段（按「设置 → 客户 → 客户表单」配置）</div>
           <FormFieldsRenderer
             fields={customFields}
             values={formData}
@@ -376,7 +376,7 @@ function CustomerInfoForm({
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div className="flex flex-col gap-1.5">
-      <label className="text-xs text-white/55">{label}</label>
+      <label className="text-xs text-token-secondary">{label}</label>
       {children}
     </div>
   );
@@ -418,7 +418,7 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+      <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
         <RichTextField value={content} onChange={setContent} minHeight={120} placeholder={FOLLOW_UP_PLACEHOLDER} />
         <div className="mt-2 flex justify-end">
           <button onClick={add} disabled={saving} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
@@ -430,17 +430,17 @@ function FollowUpTimeline({ customerId }: { customerId: string }) {
       {loading ? (
         <MapSectionLoader text="正在加载跟进记录…" />
       ) : items.length === 0 ? (
-        <div className="py-10 text-center text-sm text-white/40">还没有跟进记录。在上方记录客户的动态、需求或共识。</div>
+        <div className="py-10 text-center text-sm text-token-muted">还没有跟进记录。在上方记录客户的动态、需求或共识。</div>
       ) : (
         <div className="flex flex-col gap-3">
           {items.map((f) => (
-            <div key={f.id} className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
-              <div className="mb-2 flex items-center gap-3 text-[11px] text-white/40">
+            <div key={f.id} className="rounded-xl border border-token-subtle bg-token-nested p-3">
+              <div className="mb-2 flex items-center gap-3 text-[11px] text-token-muted">
                 <span className="flex items-center gap-1"><UserIcon size={11} /> {f.createdByName || '—'}</span>
                 <span className="flex items-center gap-1"><Clock size={11} /> {fmtTime(f.createdAt)}</span>
-                <button onClick={() => remove(f)} className="ml-auto text-white/30 hover:text-red-300" title="删除"><Trash2 size={12} /></button>
+                <button onClick={() => remove(f)} className="ml-auto text-token-muted hover:text-red-300" title="删除"><Trash2 size={12} /></button>
               </div>
-              <div className="prose-sm text-sm leading-relaxed text-white/80 [&_*]:!text-white/80" dangerouslySetInnerHTML={{ __html: f.content }} />
+              <div className="prose-sm text-sm leading-relaxed text-token-primary [&_*]:!text-token-primary" dangerouslySetInnerHTML={{ __html: f.content }} />
             </div>
           ))}
         </div>

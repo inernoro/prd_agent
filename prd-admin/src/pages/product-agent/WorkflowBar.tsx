@@ -110,15 +110,15 @@ export function WorkflowBar({
 
   return (
     <>
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3 flex flex-wrap items-center gap-2">
-        <span className="text-xs text-white/45">当前状态</span>
+      <div className="rounded-xl border border-token-subtle bg-token-nested p-3 flex flex-wrap items-center gap-2">
+        <span className="text-xs text-token-muted">当前状态</span>
         <span
-          className="text-xs px-2 py-0.5 rounded font-medium"
-          style={{ background: 'rgba(255,255,255,0.06)', color: state?.color ?? '#e8e8ec' }}
+          className="text-xs px-2 py-0.5 rounded font-medium bg-token-nested"
+          style={{ color: state?.color ?? '#e8e8ec' }}
         >
           {isRequirement ? resolveRequirementStateLabel(currentState, workflow, importedStatusLabel) : (state?.label ?? currentState ?? '未设置')}
         </span>
-        {available.length > 0 && <span className="text-white/20 mx-1">|</span>}
+        {available.length > 0 && <span className="text-token-muted mx-1">|</span>}
         {available.map((t) => (
           <button
             key={t.key}

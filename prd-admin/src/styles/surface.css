@@ -2795,8 +2795,8 @@
   gap: 8px;
   padding: 6px 10px;
   border-radius: 8px;
-  background: rgba(0, 0, 0, 0.28);
-  border: 1px solid rgba(255, 255, 255, 0.08);
+  background: var(--nested-block-bg);
+  border: 1px solid var(--border-subtle);
   font-family: ui-monospace, 'SF Mono', Menlo, monospace;
   font-size: 12px;
   width: fit-content;

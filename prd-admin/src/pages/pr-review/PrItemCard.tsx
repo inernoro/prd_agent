@@ -80,19 +80,19 @@ export function PrItemCard({ item }: Props) {
 
   return (
     <div
-      className={`rounded-xl border ${hasError ? 'border-red-500/30 bg-red-500/5' : 'border-white/10 bg-white/[0.03]'} transition overflow-hidden`}
+      className={`rounded-xl border ${hasError ? 'border-red-500/30 bg-red-500/5' : 'border-token-subtle bg-token-nested'} transition overflow-hidden`}
     >
       {/* Header: 折叠态（点击区域 + 右上角浮动按钮）*/}
       <div className="relative">
         <button
           type="button"
           onClick={() => setExpanded((v) => !v)}
-          className="w-full px-5 py-4 pr-16 text-left hover:bg-white/5 transition"
+          className="w-full px-5 py-4 pr-16 text-left hover-bg-soft transition"
         >
           <div className="flex items-start gap-3">
             <Icon size={18} className={visual.color.split(' ')[0] + ' mt-1 shrink-0'} />
             <div className="flex-1 min-w-0">
-              <div className="flex items-center gap-2 text-xs text-white/50">
+              <div className="flex items-center gap-2 text-xs text-token-secondary">
                 <span className="font-mono">
                   {item.owner}/{item.repo}#{item.number}
                 </span>
@@ -106,7 +106,7 @@ export function PrItemCard({ item }: Props) {
                   </span>
                 )}
               </div>
-              <div className="mt-1 text-sm font-semibold text-white truncate">
+              <div className="mt-1 text-sm font-semibold text-token-primary truncate">
                 {snapshot?.title ?? '（尚未拉取到标题）'}
               </div>
               {hasError && (
@@ -114,7 +114,7 @@ export function PrItemCard({ item }: Props) {
                   {item.lastRefreshError}
                 </div>
               )}
-              <div className="mt-1 flex items-center gap-3 text-xs text-white/40">
+              <div className="mt-1 flex items-center gap-3 text-xs text-token-muted">
                 {snapshot?.authorLogin && <span>作者 {snapshot.authorLogin}</span>}
                 {snapshot && (
                   <span>
@@ -145,27 +145,27 @@ export function PrItemCard({ item }: Props) {
 
       {/* Expanded: 详情 + 笔记 */}
       {expanded && (
-        <div className="px-5 pb-5 border-t border-white/5">
+        <div className="px-5 pb-5 border-t border-token-subtle">
           {/* 元数据网格 */}
           <div className="grid grid-cols-2 md:grid-cols-3 gap-3 mt-4 text-xs">
             <div>
-              <div className="text-white/40">PR 创建</div>
-              <div className="text-white/80">{formatDateTime(snapshot?.createdAt)}</div>
+              <div className="text-token-muted">PR 创建</div>
+              <div className="text-token-primary">{formatDateTime(snapshot?.createdAt)}</div>
             </div>
             <div>
-              <div className="text-white/40">合并时间</div>
-              <div className="text-white/80">{formatDateTime(snapshot?.mergedAt)}</div>
+              <div className="text-token-muted">合并时间</div>
+              <div className="text-token-primary">{formatDateTime(snapshot?.mergedAt)}</div>
             </div>
             <div>
-              <div className="text-white/40">最近刷新</div>
-              <div className="text-white/80">{formatDateTime(item.lastRefreshedAt)}</div>
+              <div className="text-token-muted">最近刷新</div>
+              <div className="text-token-primary">{formatDateTime(item.lastRefreshedAt)}</div>
             </div>
             {snapshot?.labels && snapshot.labels.length > 0 && (
               <div className="col-span-full">
-                <div className="text-white/40 mb-1">标签</div>
+                <div className="text-token-muted mb-1">标签</div>
                 <div className="flex flex-wrap gap-1">
                   {snapshot.labels.map((l) => (
-                    <span key={l} className="px-2 py-0.5 rounded-md bg-white/10 text-white/80 text-[11px]">
+                    <span key={l} className="px-2 py-0.5 rounded-md bg-token-nested text-token-primary text-[11px]">
                       {l}
                     </span>
                   ))}
@@ -184,7 +184,7 @@ export function PrItemCard({ item }: Props) {
 
           {/* 笔记 */}
           <div className="mt-4">
-            <div className="flex items-center justify-between text-xs text-white/40 mb-1.5">
+            <div className="flex items-center justify-between text-xs text-token-muted mb-1.5">
               <span>我的笔记（Markdown，失焦自动保存）</span>
               {savingNote && (
                 <span className="flex items-center gap-1">
@@ -199,7 +199,7 @@ export function PrItemCard({ item }: Props) {
               onBlur={handleNoteBlur}
               placeholder="写下你的审查想法..."
               rows={4}
-              className="w-full px-3 py-2 rounded-lg bg-black/30 border border-white/10 text-white placeholder-white/30 text-sm focus:border-white/30 focus:outline-none resize-none"
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-token-primary placeholder-token-muted text-sm focus:border-[var(--border-hover)] focus:outline-none resize-none"
             />
           </div>
 
@@ -229,7 +229,7 @@ export function PrItemCard({ item }: Props) {
               type="button"
               onClick={() => void refreshItem(item.id)}
               disabled={refreshing}
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 disabled:opacity-50 transition"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-50 transition"
             >
               {refreshing ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
               刷新
@@ -238,7 +238,7 @@ export function PrItemCard({ item }: Props) {
               href={item.htmlUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 transition"
+              className="flex items-center gap-2 px-3 py-2 rounded-lg bg-token-nested text-token-primary text-xs hover-bg-soft transition"
             >
               <ExternalLink size={14} />
               在 GitHub 打开

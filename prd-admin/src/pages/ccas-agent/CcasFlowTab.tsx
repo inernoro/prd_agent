@@ -81,20 +81,20 @@ interface CcasNodeData extends Record<string, unknown> {
 
 function CcasNodeView({ data }: NodeProps<Node<CcasNodeData>>) {
   return (
-    <div className="rounded-lg border border-white/15 bg-[#1a1c22] shadow-md min-w-[140px] max-w-[260px]">
+    <div className="rounded-lg border border-token-subtle bg-[#1a1c22] shadow-md min-w-[140px] max-w-[260px]">
       <Handle type="target" position={Position.Left} className="!bg-amber-400/70" />
       <Handle type="source" position={Position.Right} className="!bg-amber-400/70" />
       <Handle type="target" position={Position.Top} id="top" className="!bg-amber-400/70" />
       <Handle type="source" position={Position.Bottom} id="bottom" className="!bg-amber-400/70" />
-      <div className="px-2 py-1 text-[11px] text-amber-200/90 border-b border-white/10 truncate">{data.label}</div>
-      <div className="aspect-[4/3] bg-black/40 flex items-center justify-center text-white/30">
+      <div className="px-2 py-1 text-[11px] text-amber-200/90 border-b border-token-subtle truncate">{data.label}</div>
+      <div className="aspect-[4/3] bg-token-nested flex items-center justify-center text-token-muted">
         {data.assetUrl ? (
           <img src={data.assetUrl} alt={data.label} className="w-full h-full object-contain" />
         ) : (
           <ImageIcon className="w-6 h-6" />
         )}
       </div>
-      {data.note && <div className="px-2 py-1 text-[10px] text-white/50 truncate" title={data.note}>{data.note}</div>}
+      {data.note && <div className="px-2 py-1 text-[10px] text-token-secondary truncate" title={data.note}>{data.note}</div>}
     </div>
   );
 }
@@ -334,7 +334,7 @@ function FlowInner({ meta }: Props) {
             background: hexToRgba(g.color || '#9CA3AF', 0.06),
           }}
         >
-          <div className="text-[10px] text-white/45 px-1.5 py-0.5 bg-black/40 rounded m-1">{g.label}</div>
+          <div className="text-[10px] text-token-muted px-1.5 py-0.5 bg-token-nested rounded m-1">{g.label}</div>
         </div>
       )),
     [groups]
@@ -344,28 +344,28 @@ function FlowInner({ meta }: Props) {
     <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-[340px_1fr] gap-4 overflow-hidden">
       {/* 左：表单 + 控制 + 历史 */}
       <div className="flex flex-col gap-3 min-h-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <h2 className="text-sm font-medium text-white mb-3">流程描述</h2>
-          <label className="block text-xs text-white/65 mb-1">流程标题</label>
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
+          <h2 className="text-sm font-medium text-token-primary mb-3">流程描述</h2>
+          <label className="block text-xs text-token-secondary mb-1">流程标题</label>
           <input
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="如：瓶箱垛采集关联整体流程"
-            className="w-full mb-2 rounded-md bg-black/30 border border-white/15 px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60"
+            className="w-full mb-2 rounded-md bg-token-nested border border-token-subtle px-3 py-1.5 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-400/60"
           />
 
-          <label className="block text-xs text-white/65 mb-1">关联模式</label>
+          <label className="block text-xs text-token-secondary mb-1">关联模式</label>
           <select
             value={associationMode}
             onChange={(e) => setAssociationMode(e.target.value)}
-            className="w-full mb-2 rounded-md bg-black/30 border border-white/15 px-3 py-1.5 text-sm text-white focus:outline-none focus:border-amber-400/60"
+            className="w-full mb-2 rounded-md bg-token-nested border border-token-subtle px-3 py-1.5 text-sm text-token-primary focus:outline-none focus:border-amber-400/60"
           >
             {meta.associationModes.map((m) => (
               <option key={m.key} value={m.label}>{m.label}（{m.description}）</option>
             ))}
           </select>
 
-          <label className="block text-xs text-white/65 mb-1">流程描述（设备 + 位置 + 流向）</label>
+          <label className="block text-xs text-token-secondary mb-1">流程描述（设备 + 位置 + 流向）</label>
           <textarea
             value={description}
             onChange={(e) => setDescription(e.target.value)}
@@ -375,11 +375,11 @@ function FlowInner({ meta }: Props) {
 裹包机后接龙门架（带 1 个工业相机做剔除校验），NC 不通过则剔除；
 继续走 80 米传送带，途经墙体上的工控机展示画面；
 最终到达箱码垛工位，由工业相机做尾箱计数。`}
-            className="w-full mb-1 rounded-md bg-black/30 border border-white/15 px-3 py-1.5 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60"
+            className="w-full mb-1 rounded-md bg-token-nested border border-token-subtle px-3 py-1.5 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-400/60"
           />
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4 flex flex-col gap-2">
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4 flex flex-col gap-2">
           <div className="flex flex-wrap gap-2">
             <Button onClick={onParse} disabled={isStreaming || !description.trim()} className="!h-9 !px-3 !text-xs">
               {isStreaming ? (
@@ -399,7 +399,7 @@ function FlowInner({ meta }: Props) {
           </div>
 
           {(phaseMsg || model.name) && (
-            <div className="text-[11px] text-white/45 flex items-center gap-2 flex-wrap">
+            <div className="text-[11px] text-token-muted flex items-center gap-2 flex-wrap">
               {phaseMsg && <span>{phaseMsg}</span>}
               {model.name && (
                 <span className="font-mono opacity-70">
@@ -413,13 +413,13 @@ function FlowInner({ meta }: Props) {
               <AlertCircle className="w-3.5 h-3.5" /> {errorMsg}
             </div>
           )}
-          <div className="text-[11px] text-white/40 leading-relaxed">
+          <div className="text-[11px] text-token-muted leading-relaxed">
             提示：节点的设备图来自「设备素材库」（按设备名匹配）。先在素材库 Tab 生成或上传对应设备图，再回来生成流程图，节点会自动套图。
           </div>
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <h2 className="text-sm font-medium text-white mb-2 flex items-center gap-1.5">
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
+          <h2 className="text-sm font-medium text-token-primary mb-2 flex items-center gap-1.5">
             <ListTree className="w-4 h-4" /> 我的流程图（{diagrams.length}）
             <Button variant="ghost" onClick={reloadDiagrams} className="!h-6 !px-1.5 !text-[10px] ml-auto">
               <RefreshCw className="w-3 h-3" />
@@ -427,7 +427,7 @@ function FlowInner({ meta }: Props) {
           </h2>
           <div className="flex flex-col gap-1 max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
             {diagrams.length === 0 ? (
-              <div className="text-[11px] text-white/35 py-2">暂无保存记录</div>
+              <div className="text-[11px] text-token-muted py-2">暂无保存记录</div>
             ) : (
               diagrams.map((d) => (
                 <button
@@ -437,11 +437,11 @@ function FlowInner({ meta }: Props) {
                   className={`text-left rounded-md border px-2 py-1.5 transition ${
                     savedId === d.id
                       ? 'border-amber-400/60 bg-amber-500/10'
-                      : 'border-white/10 bg-white/5 hover:bg-white/10'
+                      : 'border-token-subtle bg-token-nested hover-bg-soft'
                   }`}
                 >
-                  <div className="text-xs text-white truncate">{d.title}</div>
-                  <div className="text-[10px] text-white/35">
+                  <div className="text-xs text-token-primary truncate">{d.title}</div>
+                  <div className="text-[10px] text-token-muted">
                     {d.associationMode ?? '自定义'} · {new Date(d.updatedAt).toLocaleString()}
                   </div>
                 </button>
@@ -452,7 +452,7 @@ function FlowInner({ meta }: Props) {
       </div>
 
       {/* 右：画布 */}
-      <div className="relative flex flex-col min-h-0 rounded-lg border border-white/10 bg-[#0c0d11] overflow-hidden">
+      <div className="relative flex flex-col min-h-0 rounded-lg border border-token-subtle bg-[#0c0d11] overflow-hidden">
         <div className="absolute inset-0">
           {/* group 色块铺底 */}
           <div className="absolute inset-0">{groupBlocks}</div>
@@ -472,7 +472,7 @@ function FlowInner({ meta }: Props) {
           </ReactFlow>
         </div>
         {nodes.length === 0 && phase === 'idle' && (
-          <div className="absolute inset-0 flex items-center justify-center text-sm text-white/35 pointer-events-none">
+          <div className="absolute inset-0 flex items-center justify-center text-sm text-token-muted pointer-events-none">
             <div className="text-center">
               <Layers className="w-8 h-8 mx-auto mb-2 opacity-50" />
               填好描述 → 点「AI 解析」即可看到流程图
@@ -481,7 +481,7 @@ function FlowInner({ meta }: Props) {
         )}
         {thinkText && phase === 'streaming' && (
           <div
-            className="absolute bottom-2 right-2 max-w-[340px] max-h-[180px] overflow-y-auto rounded bg-black/70 backdrop-blur px-2 py-1.5 text-[10px] text-white/55 font-mono whitespace-pre-wrap"
+            className="absolute bottom-2 right-2 max-w-[340px] max-h-[180px] overflow-y-auto rounded bg-black/70 backdrop-blur px-2 py-1.5 text-[10px] text-token-secondary font-mono whitespace-pre-wrap"
             style={{ overscrollBehavior: 'contain' }}
           >
             {thinkText.length > 1200 ? thinkText.slice(-1200) : thinkText}

@@ -253,8 +253,8 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
                   disabled={uploading}
                   className="w-full py-8 rounded-[10px] flex flex-col items-center justify-center gap-2 cursor-pointer transition-all duration-200"
                   style={{
-                    background: dragging ? 'rgba(147,51,234,0.06)' : 'rgba(255,255,255,0.02)',
-                    border: `1.5px dashed ${dragging ? 'rgba(147,51,234,0.4)' : 'rgba(255,255,255,0.12)'}`,
+                    background: dragging ? 'rgba(147,51,234,0.06)' : 'var(--nested-block-bg)',
+                    border: `1.5px dashed ${dragging ? 'rgba(147,51,234,0.4)' : 'var(--border-subtle)'}`,
                   }}
                 >
                   {uploading ? (
@@ -342,8 +342,8 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
             onClick={() => setInjectSystem(!injectSystem)}
             className="w-10 h-[22px] rounded-full cursor-pointer transition-all duration-200 flex-shrink-0"
             style={{
-              background: injectSystem ? 'rgba(34,197,94,0.5)' : 'rgba(255,255,255,0.1)',
-              border: `1px solid ${injectSystem ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.1)'}`,
+              background: injectSystem ? 'rgba(34,197,94,0.5)' : 'var(--nested-block-bg)',
+              border: `1px solid ${injectSystem ? 'rgba(34,197,94,0.3)' : 'var(--border-subtle)'}`,
               position: 'relative',
             }}
           >
@@ -351,7 +351,7 @@ export function EmergenceCreateDialog({ onClose, onCreated, initialSeedTitle, in
               className="w-4 h-4 rounded-full absolute top-[2px] transition-all duration-200"
               style={{
                 left: injectSystem ? 21 : 2,
-                background: injectSystem ? '#fff' : 'rgba(255,255,255,0.4)',
+                background: injectSystem ? '#fff' : 'var(--nested-block-bg)',
               }}
             />
           </button>

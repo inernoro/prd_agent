@@ -223,7 +223,7 @@ export default function WeeklyPosterEditorPage() {
         <button
           type="button"
           onClick={handleCreate}
-          className="inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium text-white transition-all hover:scale-[1.02]"
+          className="inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium text-token-primary transition-all hover:scale-[1.02]"
           style={{
             background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
             boxShadow: '0 4px 16px rgba(124,58,237,0.3)',
@@ -365,7 +365,7 @@ export default function WeeklyPosterEditorPage() {
                     <button
                       type="button"
                       onClick={handlePublish}
-                      className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-all hover:scale-[1.03]"
+                      className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-token-primary transition-all hover:scale-[1.03]"
                       style={{
                         background: 'linear-gradient(135deg, #00f0ff 0%, #7c3aed 50%, #f43f5e 100%)',
                         boxShadow: '0 4px 14px rgba(124,58,237,0.3)',
@@ -635,15 +635,10 @@ function PageEditor({
       {/* 配图预览 + 主色调 */}
       <div className="flex items-start gap-3">
         <div
-          className="shrink-0 rounded-md overflow-hidden relative"
-          style={{
-            width: 140,
-            height: 88,
-            background: page.imageUrl
+          className="shrink-0 rounded-md overflow-hidden relative border border-token-subtle"
+          style={{ width: 140, height: 88, background: page.imageUrl
               ? undefined
-              : `linear-gradient(135deg, ${page.accentColor || DEFAULT_ACCENT}, #0a0a12)`,
-            border: '1px solid rgba(255,255,255,0.12)',
-          }}
+              : `linear-gradient(135deg, ${page.accentColor || DEFAULT_ACCENT}, #0a0a12)` }}
         >
           {page.imageUrl ? (
             <img
@@ -653,7 +648,7 @@ function PageEditor({
               draggable={false}
             />
           ) : (
-            <div className="absolute inset-0 flex items-center justify-center text-[10px] text-white/50">
+            <div className="absolute inset-0 flex items-center justify-center text-[10px] text-token-secondary">
               未生成
             </div>
           )}

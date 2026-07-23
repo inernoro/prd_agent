@@ -65,8 +65,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         <img
           src={fileUrl}
           alt={entry.title}
-          className="max-w-full max-h-[80vh] rounded-lg"
-          style={{ border: '1px solid rgba(255,255,255,0.06)', boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
+          className="max-w-full max-h-[80vh] rounded-lg border border-token-subtle"
+          style={{ boxShadow: '0 8px 32px rgba(0,0,0,0.3)' }}
         />
       </div>
     );
@@ -79,8 +79,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         <video
           src={fileUrl}
           controls
-          className="max-w-full max-h-[80vh] rounded-lg"
-          style={{ border: '1px solid rgba(255,255,255,0.06)' }}
+          className="max-w-full max-h-[80vh] rounded-lg border border-token-subtle"
+
         />
       </div>
     );
@@ -115,8 +115,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
       <iframe
         src={fileUrl}
         title={entry.title}
-        className="w-full rounded-lg"
-        style={{ height: '100%', minHeight: 420, border: '1px solid rgba(255,255,255,0.06)' }}
+        className="w-full rounded-lg border border-token-subtle"
+        style={{ height: '100%', minHeight: 420 }}
       />
     );
   }
@@ -179,10 +179,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
-        className="w-full rounded-lg"
+        className="w-full rounded-lg border border-token-subtle"
         // overflowAnchor none：把 iframe 从外层滚动器的 scroll anchoring 候选里摘出去，
         // 自增高过程中浏览器不再为"补偿高度变化"回调 scrollTop（滚动阻滞感的另一半根因）。
-        style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, border: '1px solid rgba(255,255,255,0.06)', background: '#fff', overflowAnchor: 'none' }}
+        style={{ height: fileUrl ? '100%' : 'auto', minHeight: 480, background: '#fff', overflowAnchor: 'none' }}
       />
     );
   }
@@ -204,7 +204,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             href={referenceUrl}
             target="_blank"
             rel="noopener noreferrer"
-            className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] transition-colors hover:bg-white/6"
+            className="inline-flex h-6 items-center gap-1 rounded-[6px] px-2 text-[11px] transition-colors hover-bg-soft"
             style={{ color: 'var(--accent-primary)' }}
           >
             新窗口打开
@@ -213,8 +213,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         <iframe
           src={referenceUrl}
           title={entry.title}
-          className="w-full rounded-lg"
-          style={{ height: 'calc(100vh - 240px)', border: '1px solid rgba(255,255,255,0.06)' }}
+          className="w-full rounded-lg border border-token-subtle"
+          style={{ height: 'calc(100vh - 240px)' }}
         />
       </div>
     );
@@ -262,8 +262,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
           这是一个 GitHub 目录订阅。它本身不含正文——同步下来的文件已作为独立文档收录在本知识库中，可在左侧目录里查看。
         </p>
         {(owner && repo) && (
-          <div className="text-[11px] font-mono px-3 py-2 rounded-[8px]"
-            style={{ background: 'var(--bg-tertiary, rgba(255,255,255,0.04))', color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' }}>
+          <div className="text-[11px] font-mono px-3 py-2 rounded-[8px] bg-token-nested"
+            style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-faint)' }}>
             {owner}/{repo} · {path || '/'} · {branch}
           </div>
         )}

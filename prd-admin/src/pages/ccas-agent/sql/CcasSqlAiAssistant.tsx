@@ -190,10 +190,10 @@ export function CcasSqlAiAssistant() {
   const modelChip = useMemo(() => {
     if (!model.name) return null;
     return (
-      <div className="inline-flex items-center gap-1.5 text-[11px] text-white/45 font-mono">
+      <div className="inline-flex items-center gap-1.5 text-[11px] text-token-muted font-mono">
         <span className="inline-block w-1.5 h-1.5 rounded-full bg-emerald-400/80" />
         {model.name}
-        {model.platform && <span className="text-white/30">· {model.platform}</span>}
+        {model.platform && <span className="text-token-muted">· {model.platform}</span>}
       </div>
     );
   }, [model]);
@@ -204,16 +204,16 @@ export function CcasSqlAiAssistant() {
       style={{ overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
     >
       <div className="shrink-0 flex items-center justify-between gap-3">
-        <div className="flex items-center gap-2 text-xs text-white/60">
+        <div className="flex items-center gap-2 text-xs text-token-secondary">
           <Sparkles className="w-3.5 h-3.5 text-amber-300/85" />
           <span>把陈智版 / 米多版 schema 内化进提示词，自然语言提问即可。</span>
         </div>
         {modelChip}
       </div>
 
-      <div className="shrink-0 rounded-xl border border-white/10 bg-white/[0.03] p-3 flex flex-col gap-3">
+      <div className="shrink-0 rounded-xl border border-token-subtle bg-token-nested p-3 flex flex-col gap-3">
         <div className="flex flex-col gap-1.5">
-          <div className="text-[11px] text-white/45 flex items-center gap-1.5">
+          <div className="text-[11px] text-token-muted flex items-center gap-1.5">
             <Database className="w-3 h-3" />
             数据库版本
           </div>
@@ -227,11 +227,11 @@ export function CcasSqlAiAssistant() {
                   onClick={() => setDialect(opt.value)}
                   disabled={streaming}
                   data-active={active}
-                  className="px-3 py-1.5 rounded-md text-xs border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                  className="px-3 py-1.5 rounded-md text-xs border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                   style={{
-                    borderColor: active ? undefined : 'rgba(255,255,255,0.10)',
-                    color: active ? undefined : 'rgba(255,255,255,0.75)',
-                    background: active ? undefined : 'rgba(255,255,255,0.03)',
+                    borderColor: active ? undefined : 'var(--border-subtle)',
+                    color: active ? undefined : 'var(--text-secondary)',
+                    background: active ? undefined : 'var(--nested-block-bg)',
                   }}
                   title={opt.hint}
                 >
@@ -244,7 +244,7 @@ export function CcasSqlAiAssistant() {
 
         {showAssociationPicker && (
           <div className="flex flex-col gap-1.5">
-            <div className="text-[11px] text-white/45">关联模式（陈智版 BagCode/BoxCode 语义随模式变化）</div>
+            <div className="text-[11px] text-token-muted">关联模式（陈智版 BagCode/BoxCode 语义随模式变化）</div>
             <div className="flex flex-wrap gap-1.5">
               {CCAS_SQL_AI_ASSOCIATION_MODES.map((opt) => {
                 const active = opt.value === associationMode;
@@ -255,11 +255,11 @@ export function CcasSqlAiAssistant() {
                     onClick={() => setAssociationMode(opt.value)}
                     disabled={streaming}
                     data-active={active}
-                    className="px-2.5 py-1.5 rounded-md text-[11.5px] border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                    className="px-2.5 py-1.5 rounded-md text-[11.5px] border transition data-[active=true]:bg-amber-300/12 data-[active=true]:border-amber-300/55 data-[active=true]:text-amber-200 hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                     style={{
-                      borderColor: active ? undefined : 'rgba(255,255,255,0.10)',
-                      color: active ? undefined : 'rgba(255,255,255,0.75)',
-                      background: active ? undefined : 'rgba(255,255,255,0.03)',
+                      borderColor: active ? undefined : 'var(--border-subtle)',
+                      color: active ? undefined : 'var(--text-secondary)',
+                      background: active ? undefined : 'var(--nested-block-bg)',
                     }}
                     title={opt.hint}
                   >
@@ -273,17 +273,17 @@ export function CcasSqlAiAssistant() {
       </div>
 
       <div className="shrink-0 flex flex-col gap-2">
-        <div className="text-[11px] text-white/45 flex items-center justify-between">
+        <div className="text-[11px] text-token-muted flex items-center justify-between">
           <span>你的问题</span>
           <span className="flex flex-wrap items-center gap-1.5">
-            <span className="text-white/35">示例：</span>
+            <span className="text-token-muted">示例：</span>
             {QUICK_EXAMPLES.map((ex, i) => (
               <button
                 key={i}
                 type="button"
                 onClick={() => setQuestion(ex)}
                 disabled={streaming}
-                className="px-2 py-0.5 rounded text-[11px] text-white/55 hover:text-amber-200 hover:bg-amber-300/10 border border-white/8 hover:border-amber-300/35 transition disabled:opacity-50 disabled:cursor-not-allowed"
+                className="px-2 py-0.5 rounded text-[11px] text-token-secondary hover:text-amber-200 hover:bg-amber-300/10 border border-token-subtle hover:border-amber-300/35 transition disabled:opacity-50 disabled:cursor-not-allowed"
                 title={ex}
               >
                 {ex.length > 14 ? ex.slice(0, 14) + '…' : ex}
@@ -298,7 +298,7 @@ export function CcasSqlAiAssistant() {
           placeholder="用大白话描述你想查 / 改什么数据；越具体效果越好。例：查 1109070016 这个箱码下挂了几个盒码，按采集时间排序"
           spellCheck={false}
           disabled={streaming}
-          className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 leading-relaxed placeholder:text-white/30 focus:outline-none focus:border-amber-300/40 transition disabled:opacity-60"
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary leading-relaxed placeholder-token-muted focus:outline-none focus:border-amber-300/40 transition disabled:opacity-60"
           style={{ resize: 'vertical', minHeight: 96 }}
           onKeyDown={(e) => {
             if ((e.metaKey || e.ctrlKey) && e.key === 'Enter') {
@@ -323,13 +323,13 @@ export function CcasSqlAiAssistant() {
             <Eraser className="w-3.5 h-3.5" />
             清空
           </Button>
-          <span className="text-[10.5px] text-white/35 ml-auto">Ctrl/Cmd + Enter 提交</span>
+          <span className="text-[10.5px] text-token-muted ml-auto">Ctrl/Cmd + Enter 提交</span>
         </div>
       </div>
 
       <div className="flex-1 flex flex-col gap-2" style={{ minHeight: 200 }}>
         <div className="shrink-0 flex items-center justify-between">
-          <div className="text-[11px] text-white/45 flex items-center gap-2">
+          <div className="text-[11px] text-token-muted flex items-center gap-2">
             <span>AI 答复</span>
             {streaming && phaseMsg && (
               <span className="text-amber-300/80 inline-flex items-center gap-1">
@@ -337,7 +337,7 @@ export function CcasSqlAiAssistant() {
                 {phaseMsg}
               </span>
             )}
-            {!streaming && phaseMsg && <span className="text-white/40">· {phaseMsg}</span>}
+            {!streaming && phaseMsg && <span className="text-token-muted">· {phaseMsg}</span>}
           </div>
           <div className="flex items-center gap-1.5">
             <Button variant="secondary" size="sm" onClick={handleCopySql} disabled={!answer}>
@@ -359,17 +359,17 @@ export function CcasSqlAiAssistant() {
         )}
 
         <div
-          className="flex-1 rounded-xl border border-white/10 bg-white/[0.02] px-4 py-3"
+          className="flex-1 rounded-xl border border-token-subtle bg-token-nested px-4 py-3"
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {answer ? (
             <MarkdownContent content={answer} />
           ) : streaming ? (
-            <div className="text-xs text-white/40">等待 AI 答复…</div>
+            <div className="text-xs text-token-muted">等待 AI 答复…</div>
           ) : (
-            <div className="text-xs text-white/35 flex flex-col gap-1.5">
+            <div className="text-xs text-token-muted flex flex-col gap-1.5">
               <div>没有答复。先选数据库版本和关联模式（陈智版），描述你的问题再点「生成 SQL」。</div>
-              <div className="text-white/30">提示：AI 只产出 SQL 文本，不会连数据库执行。请到 Navicat / DBeaver / SSMS 执行，并务必先在测试库验证。</div>
+              <div className="text-token-muted">提示：AI 只产出 SQL 文本，不会连数据库执行。请到 Navicat / DBeaver / SSMS 执行，并务必先在测试库验证。</div>
             </div>
           )}
         </div>

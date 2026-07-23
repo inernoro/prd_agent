@@ -231,15 +231,7 @@ function ImageChipComponent({
       <img
         src={src}
         alt=""
-        style={{
-          width: 14,
-          height: 14,
-          borderRadius: 3,
-          objectFit: 'cover',
-          flexShrink: 0,
-          border: '1px solid rgba(255,255,255,0.22)',
-          opacity: imgOpacity,
-        }}
+        className="border border-token-subtle" style={{ width: 14, height: 14, borderRadius: 3, objectFit: 'cover', flexShrink: 0, opacity: imgOpacity }}
       />
       {/* 标签 */}
       <span

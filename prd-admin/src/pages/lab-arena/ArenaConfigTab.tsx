@@ -363,11 +363,8 @@ export default function ArenaConfigTab() {
                       {group.name}
                     </span>
                     <span
-                      className="text-[11px] font-mono px-1.5 py-0.5 rounded"
-                      style={{
-                        color: 'var(--text-muted)',
-                        background: 'rgba(255,255,255,0.05)',
-                      }}
+                      className="text-[11px] font-mono px-1.5 py-0.5 rounded bg-token-nested"
+                      style={{ color: 'var(--text-muted)' }}
                     >
                       {group.key}
                     </span>
@@ -439,12 +436,8 @@ export default function ArenaConfigTab() {
 
       {/* Tip */}
       <div
-        className="text-xs px-4 py-3 rounded-xl"
-        style={{
-          color: 'var(--text-muted)',
-          background: 'rgba(255,255,255,0.03)',
-          border: '1px solid var(--border-default)',
-        }}
+        className="text-xs px-4 py-3 rounded-xl bg-token-nested"
+        style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
       >
         提示：用户在 /arena 页面对战时，模型名称以匿名方式展示（助手 A / B / C ...），用户手动点击后才揭晓真实身份。
       </div>
@@ -548,8 +541,8 @@ export default function ArenaConfigTab() {
             <div className="space-y-4 pt-1">
               {/* Read-only: platform + model */}
               <div
-                className="rounded-[12px] px-3 py-2.5 text-sm"
-                style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid var(--border-subtle)' }}
+                className="rounded-[12px] px-3 py-2.5 text-sm bg-token-nested"
+                style={{ border: '1px solid var(--border-subtle)' }}
               >
                 <div style={{ color: 'var(--text-secondary)' }}>
                   {platformMap.get(editingSlot.platformId) || editingSlot.platformId}
@@ -644,7 +637,7 @@ function SlotCard({
             'flex items-center gap-1 text-[11px] px-2 py-1 rounded-lg transition-colors',
             slot.enabled
               ? 'text-emerald-400 hover:bg-emerald-500/10'
-              : 'hover:bg-white/5',
+              : 'hover-bg-soft',
           )}
           style={{ color: slot.enabled ? undefined : 'var(--text-muted)' }}
           onClick={onToggle}

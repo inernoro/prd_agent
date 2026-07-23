@@ -203,9 +203,9 @@ export function UserMultiSearchSelect({
           width: pos.width,
           maxHeight: pos.maxHeight,
           zIndex: 9999,
-          background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+          background: 'var(--panel-solid)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-glass-panel)',
           backdropFilter: 'blur(40px) saturate(180%)',
           WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         }}
@@ -239,14 +239,14 @@ export function UserMultiSearchSelect({
               return (
                 <div
                   key={uid}
-                  className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                  className="hover-bg-soft flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors"
                   style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                   onClick={() => toggleUser(uid)}
                 >
                   <div
                     className="w-4 h-4 rounded shrink-0 flex items-center justify-center transition-colors"
                     style={{
-                      border: isSelected ? '1.5px solid var(--accent-gold, #d4af37)' : '1.5px solid rgba(255,255,255,0.2)',
+                      border: isSelected ? '1.5px solid var(--accent-gold)' : '1.5px solid var(--border-default)',
                       background: isSelected ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.15)' : 'transparent',
                     }}
                   >
@@ -279,8 +279,8 @@ export function UserMultiSearchSelect({
         </div>
 
         <div
-          className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between"
-          style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}
+          className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between border-t border-token-subtle"
+          style={{ color: 'var(--text-muted)' }}
         >
           <span>{q ? `${filtered.length} / ${availableUsers.length} 人匹配` : `共 ${availableUsers.length} 人`}</span>
           {value.length > 0 && <span style={{ color: 'var(--accent-gold)' }}>已选 {value.length} 人</span>}
@@ -296,7 +296,7 @@ export function UserMultiSearchSelect({
         className={`flex items-center gap-2 w-full ${triggerMinHeight} ${isCompact ? 'rounded-[12px]' : 'rounded-[10px]'} px-2.5 py-1.5 text-[13px] flex-wrap`}
         style={{
           background: 'var(--bg-input)',
-          border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
+          border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-subtle)',
           color: 'var(--text-primary)',
           ...style,
         }}
@@ -305,12 +305,7 @@ export function UserMultiSearchSelect({
         {selectedUsers.map((u) => (
           <span
             key={u.userId}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
-            style={{
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              color: 'var(--text-primary)',
-            }}
+            className="surface-inset inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium text-token-primary"
           >
             {u.displayName}
             <X

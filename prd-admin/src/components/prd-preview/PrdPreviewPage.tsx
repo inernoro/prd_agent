@@ -604,7 +604,7 @@ export default function PrdPreviewPage(props: {
             <button
               type="button"
               onClick={onRequestClose}
-              className="h-8 px-2 rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5"
+              className="h-8 px-2 rounded-md transition-colors hover-bg-soft dark:hover-bg-soft"
               style={{ color: 'var(--text-secondary)' }}
               title="返回"
               aria-label="返回"
@@ -624,7 +624,7 @@ export default function PrdPreviewPage(props: {
         <div className="flex items-center gap-1.5">
           <button
             type="button"
-            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${tocOpen ? 'text-indigo-400' : ''}`}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover-bg-soft ${tocOpen ? 'text-indigo-400' : ''}`}
             style={tocOpen ? undefined : { color: 'var(--text-secondary)' }}
             onClick={() => setTocOpen((v) => !v)}
             aria-label="章节目录"
@@ -636,7 +636,7 @@ export default function PrdPreviewPage(props: {
           </button>
           <button
             type="button"
-            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${commentsOpen ? 'text-indigo-400' : ''}`}
+            className={`h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-black/5 dark:hover-bg-soft ${commentsOpen ? 'text-indigo-400' : ''}`}
             style={commentsOpen ? undefined : { color: 'var(--text-secondary)' }}
             onClick={() => setCommentsOpen((v) => !v)}
             aria-label="评论"
@@ -671,7 +671,7 @@ export default function PrdPreviewPage(props: {
                         setActiveHeadingTitle(t.text);
                         scrollToHeading(t.id);
                       }}
-                      className={`w-full text-left text-xs rounded-md pr-2 py-1 transition-colors hover:bg-black/5 dark:hover:bg-white/5 ${tocIndentClass(t.level)} ${
+                      className={`w-full text-left text-xs rounded-md pr-2 py-1 transition-colors hover:bg-black/5 dark:hover-bg-soft ${tocIndentClass(t.level)} ${
                         activeHeadingId === t.id ? 'text-indigo-400' : 'hover:text-indigo-300'
                       }`}
                       style={activeHeadingId === t.id ? undefined : { color: 'var(--text-secondary)' }}
@@ -789,7 +789,7 @@ export default function PrdPreviewPage(props: {
             <div className="mt-2 flex items-center justify-between gap-2">
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-token-subtle dark:border-token-subtle hover-bg-soft dark:hover-bg-soft"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) - 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) <= 0}
@@ -798,7 +798,7 @@ export default function PrdPreviewPage(props: {
               </button>
               <button
                 type="button"
-                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-black/10 dark:border-white/10 hover:bg-black/5 dark:hover:bg-white/5"
+                className="px-2 py-1 text-xs rounded-md disabled:opacity-50 border border-token-subtle dark:border-token-subtle hover-bg-soft dark:hover-bg-soft"
                 style={{ color: 'var(--text-secondary)' }}
                 onClick={() => setNavActiveIndex((navActiveIndex ?? 0) + 1)}
                 disabled={!highlightReady || (navActiveIndex ?? 0) >= navCitations.length - 1}

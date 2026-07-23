@@ -179,7 +179,7 @@ function WorkspaceCard({
           <div className="absolute inset-0 pointer-events-none select-none">
             <span
               className="absolute -right-4 -top-4 text-[140px] font-serif leading-none"
-              style={{ color: 'rgba(255,255,255,0.03)' }}
+              style={{ color: 'var(--text-muted)' }}
             >
               "
             </span>
@@ -202,21 +202,18 @@ function WorkspaceCard({
           <div className="flex items-center justify-between">
             {badgeLabel ? (
               <div
-                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md"
-                style={{
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid rgba(255,255,255,0.08)',
-                }}
+                className="flex items-center gap-1.5 px-2.5 py-1 rounded-full backdrop-blur-md border border-token-subtle"
+                style={{ background: 'rgba(0,0,0,0.3)' }}
               >
                 <FolderOpen size={11} style={{ color: 'rgba(165,180,252,0.9)' }} />
-                <span className="text-[10px] font-medium truncate max-w-[120px]" style={{ color: 'rgba(255,255,255,0.75)' }}>
+                <span className="text-[10px] font-medium truncate max-w-[120px]" style={{ color: 'var(--text-secondary)' }}>
                   {badgeLabel}
                 </span>
               </div>
             ) : (
               <div />
             )}
-            <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {dateStr}
             </span>
           </div>
@@ -232,7 +229,7 @@ function WorkspaceCard({
             {preview && (
               <p
                 className="text-[11px] leading-relaxed line-clamp-2"
-                style={{ color: 'rgba(255,255,255,0.55)' }}
+                style={{ color: 'var(--text-secondary)' }}
               >
                 {preview}
               </p>
@@ -603,7 +600,7 @@ export default function LiteraryAgentWorkspaceListPage() {
             <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
               {dayGroup.dateKey}
             </span>
-            <div className="flex-1 h-px ml-2" style={{ background: 'rgba(255,255,255,0.06)' }} />
+            <div className="flex-1 h-px ml-2 bg-token-nested"  />
           </div>
           {renderCardGrid(dayGroup.items)}
         </div>
@@ -627,7 +624,7 @@ export default function LiteraryAgentWorkspaceListPage() {
             <div
               className={cn(
                 'flex items-center gap-2 px-2 py-1.5 rounded-lg cursor-pointer select-none mb-3 transition-colors',
-                isDragOver ? 'bg-white/10 ring-1 ring-white/20' : 'hover:bg-white/5',
+                isDragOver ? 'bg-token-nested ring-1 ring-white/20' : 'hover-bg-soft',
               )}
               onClick={() => folderName && toggleFolder(folderName)}
               onContextMenu={(e) => folderName && handleFolderContextMenu(e, folderName)}
@@ -665,11 +662,8 @@ export default function LiteraryAgentWorkspaceListPage() {
   const viewModeToggle = (
     <div
       data-tour-id="literary-view-toggle"
-      className="flex items-center rounded-lg overflow-hidden"
-      style={{
-        background: 'rgba(255,255,255,0.04)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
+      className="flex items-center rounded-lg overflow-hidden bg-token-nested border border-token-subtle"
+
     >
       <button
         type="button"
@@ -748,11 +742,8 @@ export default function LiteraryAgentWorkspaceListPage() {
             {Array.from({ length: 8 }).map((_, i) => (
               <div
                 key={i}
-                className="animate-pulse rounded-2xl"
-                style={{
-                  aspectRatio: '3/2',
-                  background: 'rgba(255,255,255,0.03)',
-                }}
+                className="animate-pulse rounded-2xl bg-token-nested"
+                style={{ aspectRatio: '3/2' }}
               />
             ))}
           </div>

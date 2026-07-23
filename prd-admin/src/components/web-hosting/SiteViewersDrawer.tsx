@@ -75,21 +75,14 @@ export function SiteViewersDrawer({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-lg rounded-2xl border flex flex-col"
-        style={{
-          height: '80vh',
-          maxHeight: '80vh',
-          background: 'var(--bg-elevated)',
-          borderColor: 'var(--border-subtle, rgba(127,127,127,0.18))',
-          color: 'var(--text-primary)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
-        }}
+        className="w-full max-w-lg rounded-2xl border flex flex-col border-token-subtle"
+        style={{ height: '80vh', maxHeight: '80vh', background: 'var(--bg-elevated)', color: 'var(--text-primary)', boxShadow: '0 24px 64px rgba(0,0,0,0.35)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
-          className="shrink-0 flex items-start justify-between gap-3 px-5 py-4 border-b"
-          style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
+          className="shrink-0 flex items-start justify-between gap-3 px-5 py-4 border-b border-token-subtle"
+
         >
           <div className="min-w-0">
             <div className="flex items-center gap-2 text-sm font-semibold">
@@ -107,7 +100,7 @@ export function SiteViewersDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-black/10"
+            className="shrink-0 rounded-lg p-1.5 transition-colors hover-bg-soft"
             style={{ color: 'var(--text-secondary)' }}
             aria-label="关闭"
           >
@@ -117,11 +110,8 @@ export function SiteViewersDrawer({
 
         {/* Stats */}
         <div
-          className="shrink-0 flex items-center gap-5 px-5 py-3 text-xs border-b"
-          style={{
-            color: 'var(--text-secondary)',
-            borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))',
-          }}
+          className="shrink-0 flex items-center gap-5 px-5 py-3 text-xs border-b border-token-subtle"
+          style={{ color: 'var(--text-secondary)' }}
         >
           <span className="inline-flex items-center gap-1.5">
             <Eye size={13} />
@@ -156,7 +146,7 @@ export function SiteViewersDrawer({
               {items.map((v, idx) => (
                 <li
                   key={`${v.viewerUserId}-${v.viewedAt}-${idx}`}
-                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover:bg-black/5"
+                  className="flex items-center gap-3 rounded-lg px-3 py-2.5 transition-colors hover-bg-soft"
                 >
                   <UserAvatar
                     src={resolveAvatarUrl({ avatarFileName: v.viewerAvatarFileName })}

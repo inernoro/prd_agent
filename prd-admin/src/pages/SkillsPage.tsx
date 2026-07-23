@@ -709,18 +709,18 @@ export default function SkillsPage() {
                   <div className="flex flex-col items-center py-3 gap-1 flex-1">
                     <button
                       onClick={() => setListCollapsed(false)}
-                      className="w-8 h-8 rounded-lg flex items-center justify-center text-white/40 hover:text-white/70 hover:bg-white/10 transition"
+                      className="w-8 h-8 rounded-lg flex items-center justify-center text-token-muted hover-text-primary hover-bg-soft transition"
                       title="展开列表"
                     >
                       <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M9 18l6-6-6-6"/></svg>
                     </button>
-                    <div className="w-6 border-t border-white/10 my-1" />
+                    <div className="w-6 border-t border-token-subtle my-1" />
                     {skills.slice(0, 8).map(s => (
                       <button
                         key={s.skillKey}
                         onClick={() => { handleSelect(s); setListCollapsed(false); }}
                         className={`w-8 h-8 rounded-lg flex items-center justify-center text-sm transition ${
-                          selected?.skillKey === s.skillKey ? 'bg-white/15' : 'hover:bg-white/8'
+                          selected?.skillKey === s.skillKey ? 'bg-token-card' : 'hover-bg-soft'
                         }`}
                         title={s.title}
                       >
@@ -728,13 +728,13 @@ export default function SkillsPage() {
                       </button>
                     ))}
                     {skills.length > 8 && (
-                      <span className="text-[9px] text-white/20 mt-1">+{skills.length - 8}</span>
+                      <span className="text-[9px] text-token-muted mt-1">+{skills.length - 8}</span>
                     )}
                   </div>
                 ) : (
                   <>
                     {/* 展开态 - 搜索 + 列表 */}
-                    <div className="p-3 border-b border-white/10 flex items-center gap-2">
+                    <div className="p-3 border-b border-token-subtle flex items-center gap-2">
                       <input
                         type="text"
                         value={searchQuery}
@@ -746,7 +746,7 @@ export default function SkillsPage() {
                       {!isMobile && (
                         <button
                           onClick={() => setListCollapsed(true)}
-                          className="w-7 h-7 rounded-lg flex items-center justify-center text-white/30 hover:text-white/60 hover:bg-white/10 transition shrink-0"
+                          className="w-7 h-7 rounded-lg flex items-center justify-center text-token-muted hover-text-primary hover-bg-soft transition shrink-0"
                           title="折叠列表"
                         >
                           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"><path d="M15 18l-6-6 6-6"/></svg>
@@ -759,7 +759,7 @@ export default function SkillsPage() {
 
                       {!loading && grouped.system.length > 0 && (
                         <div>
-                          <div className="text-[10px] uppercase tracking-wider text-white/30 px-2 mb-1 flex items-center gap-1.5">
+                          <div className="text-[10px] uppercase tracking-wider text-token-muted px-2 mb-1 flex items-center gap-1.5">
                             <span style={{ color: 'rgba(245, 158, 11, 0.7)' }}>●</span> 系统技能
                           </div>
                           {grouped.system
@@ -781,7 +781,7 @@ export default function SkillsPage() {
 
                       {!loading && grouped.public.length > 0 && (
                         <div>
-                          <div className="text-[10px] uppercase tracking-wider text-white/30 px-2 mb-1 flex items-center gap-1.5">
+                          <div className="text-[10px] uppercase tracking-wider text-token-muted px-2 mb-1 flex items-center gap-1.5">
                             <span style={{ color: 'rgba(34, 197, 94, 0.7)' }}>●</span> 公共技能
                           </div>
                           {grouped.public
@@ -804,8 +804,8 @@ export default function SkillsPage() {
                       {!loading && skills.length === 0 && (
                         <div className="text-center py-12 px-4">
                           <div className="text-3xl mb-3">🎯</div>
-                          <div className="text-sm text-white/50 mb-1">还没有技能</div>
-                          <div className="text-xs text-white/30 mb-4">从模板市场一键创建，或手动新建</div>
+                          <div className="text-sm text-token-secondary mb-1">还没有技能</div>
+                          <div className="text-xs text-token-muted mb-4">从模板市场一键创建，或手动新建</div>
                           <button
                             onClick={() => setActiveTab('templates')}
                             className="text-xs px-4 py-2 rounded-lg transition"
@@ -836,15 +836,15 @@ export default function SkillsPage() {
               {!showEditor ? (
                 <div className="flex-1 flex flex-col items-center justify-center text-center px-6">
                   <div className="text-5xl mb-4">⚡</div>
-                  <div className="text-sm text-white/60 mb-2">选择左侧技能编辑</div>
-                  <div className="text-xs text-white/30 mb-6">或从模板市场一键创建新技能</div>
+                  <div className="text-sm text-token-secondary mb-2">选择左侧技能编辑</div>
+                  <div className="text-xs text-token-muted mb-6">或从模板市场一键创建新技能</div>
                   <div className="flex gap-2">
                     <button
                       onClick={handleNew}
                       className="text-xs px-4 py-2 rounded-lg transition"
                       style={{
-                        background: 'rgba(255, 255, 255, 0.06)',
-                        border: '1px solid rgba(255, 255, 255, 0.14)',
+                        background: 'var(--nested-block-bg)',
+                        border: '1px solid var(--border-subtle)',
                         color: 'var(--text-secondary)',
                       }}
                     >
@@ -866,12 +866,12 @@ export default function SkillsPage() {
               ) : (
                 <>
                   {/* 顶栏 */}
-                  <div className="p-4 border-b border-white/10 flex flex-wrap items-center justify-between gap-2">
+                  <div className="p-4 border-b border-token-subtle flex flex-wrap items-center justify-between gap-2">
                     <div className="flex items-center gap-2">
                       {isMobile && (
                         <button
                           onClick={handleMobileBack}
-                          className="text-xs px-2 py-1.5 rounded-lg bg-white/10 text-white/60 hover:bg-white/15 transition"
+                          className="text-xs px-2 py-1.5 rounded-lg bg-token-nested text-token-secondary hover-bg-soft transition"
                         >
                           &larr; 返回
                         </button>
@@ -879,7 +879,7 @@ export default function SkillsPage() {
                       {!isMobile && listCollapsed && (
                         <button
                           onClick={() => setListCollapsed(false)}
-                          className="text-xs px-2 py-1.5 rounded-lg bg-white/6 text-white/40 hover:text-white/60 hover:bg-white/10 transition"
+                          className="text-xs px-2 py-1.5 rounded-lg bg-token-nested text-token-muted hover-text-primary hover-bg-soft transition"
                           title="展开技能列表"
                         >
                           ☰
@@ -936,18 +936,18 @@ export default function SkillsPage() {
                         </div>
                       </Field>
                       <div>
-                        <label className="text-xs text-white/50 mb-1 block">适用角色</label>
+                        <label className="text-xs text-token-secondary mb-1 block">适用角色</label>
                         <div className="flex gap-1.5">
                           {ROLE_OPTIONS.map(r => (
                             <button key={r} onClick={() => toggleRole(r)}
                               className={`text-xs px-3 py-1.5 rounded-lg border transition ${
                                 roles.includes(r)
                                   ? 'border-amber-400/60 bg-amber-500/20 text-amber-300'
-                                  : 'border-white/10 bg-white/5 text-white/40 hover:border-white/20'
+                                  : 'border-token-subtle bg-token-nested text-token-muted hover-border-token'
                               }`}
                             >{r}</button>
                           ))}
-                          {roles.length === 0 && <span className="text-[10px] text-white/30 self-center ml-1">全部</span>}
+                          {roles.length === 0 && <span className="text-[10px] text-token-muted self-center ml-1">全部</span>}
                         </div>
                       </div>
                     </div>
@@ -968,9 +968,9 @@ export default function SkillsPage() {
                           }}
                           className="absolute bottom-2 right-2 h-8 w-8 inline-flex items-center justify-center rounded-[10px] transition-colors"
                           style={{
-                            background: optBusy ? 'rgba(239,68,68,0.12)' : 'rgba(255,255,255,0.06)',
-                            border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid rgba(255,255,255,0.14)',
-                            color: optBusy ? 'rgba(239,68,68,0.95)' : 'rgba(255,255,255,0.5)',
+                            background: optBusy ? 'rgba(239,68,68,0.12)' : 'var(--nested-block-bg)',
+                            border: optBusy ? '1px solid rgba(239,68,68,0.28)' : '1px solid var(--border-subtle)',
+                            color: optBusy ? 'rgba(239,68,68,0.95)' : 'var(--text-secondary)',
                           }}
                           title={optBusy ? '停止优化' : '魔法棒：优化提示词（大模型）'}
                         >
@@ -980,15 +980,15 @@ export default function SkillsPage() {
                     </Field>
 
                     <div className="flex items-center gap-3 flex-wrap">
-                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                      <label className="flex items-center gap-1.5 text-xs text-token-secondary">
                         <input type="checkbox" checked={isEnabled} onChange={e => setIsEnabled(e.target.checked)} />
                         启用
                       </label>
-                      <label className="flex items-center gap-1.5 text-xs text-white/60">
+                      <label className="flex items-center gap-1.5 text-xs text-token-secondary">
                         <input type="checkbox" checked={isBuiltIn} onChange={e => setIsBuiltIn(e.target.checked)} />
                         内置
                       </label>
-                      <span className="text-white/10">|</span>
+                      <span className="text-token-muted">|</span>
                       <Field label="排序">
                         <input type="number" value={order} onChange={e => setOrder(Number(e.target.value))}
                           className="field-input w-16" />
@@ -1000,19 +1000,19 @@ export default function SkillsPage() {
                       <button
                         type="button"
                         onClick={() => setAdvancedOpen(!advancedOpen)}
-                        className="text-xs text-white/40 hover:text-white/60 transition flex items-center gap-1.5"
+                        className="text-xs text-token-muted hover-text-primary transition flex items-center gap-1.5"
                       >
                         <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2"
                           className={`transition-transform ${advancedOpen ? 'rotate-90' : ''}`}
                         ><path d="M9 18l6-6-6-6"/></svg>
                         高级配置
-                        <span className="text-white/20">
+                        <span className="text-token-muted">
                           （SkillKey / 分类 / 描述 / 标签 / 上下文 / 输出模式 / 模型类型）
                         </span>
                       </button>
 
                       {advancedOpen && (
-                        <div className="mt-3 space-y-4 pl-3 border-l border-white/8">
+                        <div className="mt-3 space-y-4 pl-3 border-l border-token-subtle">
                           <Section title="基本信息">
                             <div className="grid grid-cols-1 sm:grid-cols-2 gap-3">
                               <Field label="SkillKey">
@@ -1054,11 +1054,11 @@ export default function SkillsPage() {
                                 </select>
                               </Field>
                               <div className="flex flex-wrap items-end gap-4 pb-1">
-                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                <label className="flex items-center gap-1.5 text-xs text-token-secondary">
                                   <input type="checkbox" checked={acceptsUserInput} onChange={e => setAcceptsUserInput(e.target.checked)} />
                                   接受用户输入
                                 </label>
-                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                <label className="flex items-center gap-1.5 text-xs text-token-secondary">
                                   <input type="checkbox" checked={acceptsAttachments} onChange={e => setAcceptsAttachments(e.target.checked)} />
                                   接受附件
                                 </label>
@@ -1086,7 +1086,7 @@ export default function SkillsPage() {
                                 </select>
                               </Field>
                               <div className="flex items-end pb-1">
-                                <label className="flex items-center gap-1.5 text-xs text-white/60">
+                                <label className="flex items-center gap-1.5 text-xs text-token-secondary">
                                   <input type="checkbox" checked={echoToChat} onChange={e => setEchoToChat(e.target.checked)} />
                                   同时回显到对话
                                 </label>
@@ -1150,8 +1150,8 @@ export default function SkillsPage() {
             {filteredTemplates.length === 0 && (
               <div className="text-center py-16">
                 <div className="text-3xl mb-3">🔍</div>
-                <div className="text-sm text-white/50">没有找到匹配的模板</div>
-                <div className="text-xs text-white/30 mt-1">试试其他关键词或分类</div>
+                <div className="text-sm text-token-secondary">没有找到匹配的模板</div>
+                <div className="text-xs text-token-muted mt-1">试试其他关键词或分类</div>
               </div>
             )}
           </div>
@@ -1183,7 +1183,7 @@ export default function SkillsPage() {
               <div className="flex items-center gap-2">
                 <button onClick={() => void startOptimize()} disabled={optBusy}
                   className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-secondary)' }}>
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
                   <Sparkles size={14} /> 重新优化
                 </button>
                 <button onClick={cancelOptimize} disabled={!optBusy}
@@ -1201,7 +1201,7 @@ export default function SkillsPage() {
                     try { await navigator.clipboard.writeText(t); setMsg({ type: 'ok', text: '已复制优化结果' }); } catch { /* ignore */ }
                   }} disabled={optBusy || !optText.trim()}
                   className="text-xs px-3 py-1.5 rounded-lg transition disabled:opacity-40 inline-flex items-center gap-1.5"
-                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.14)', color: 'var(--text-secondary)' }}>
+                  style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}>
                   <Copy size={14} /> 复制
                 </button>
               </div>
@@ -1277,7 +1277,7 @@ function StatCard({ label, value, icon, color }: { label: string; value: number;
       </div>
       <div className="min-w-0">
         <div className="text-lg font-bold" style={{ color }}>{value}</div>
-        <div className="text-[10px] text-white/40 truncate">{label}</div>
+        <div className="text-[10px] text-token-muted truncate">{label}</div>
       </div>
     </GlassCard>
   );
@@ -1312,7 +1312,7 @@ function TemplateCard({
               {template.icon}
             </div>
             <div className="min-w-0">
-              <div className="text-sm font-semibold text-white/90 truncate">{template.title}</div>
+              <div className="text-sm font-semibold text-token-primary truncate">{template.title}</div>
               <div className="flex items-center gap-1.5 mt-0.5">
                 <Badge variant="subtle" size="sm">{catInfo.icon} {catInfo.label}</Badge>
                 {template.roles.length > 0 && (
@@ -1322,7 +1322,7 @@ function TemplateCard({
             </div>
           </div>
         </div>
-        <div className="text-xs text-white/45 leading-relaxed line-clamp-2">
+        <div className="text-xs text-token-muted leading-relaxed line-clamp-2">
           {template.description}
         </div>
       </div>
@@ -1334,9 +1334,9 @@ function TemplateCard({
             key={tag}
             className="text-[10px] px-2 py-0.5 rounded-full"
             style={{
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.08)',
-              color: 'rgba(255,255,255,0.45)',
+              background: 'var(--nested-block-bg)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-muted)',
             }}
           >
             {tag}
@@ -1361,9 +1361,9 @@ function TemplateCard({
         <div
           className="text-[11px] leading-relaxed rounded-lg p-2.5 font-mono line-clamp-3"
           style={{
-            background: 'rgba(255,255,255,0.02)',
-            border: '1px solid rgba(255,255,255,0.06)',
-            color: 'rgba(255,255,255,0.35)',
+            background: 'var(--nested-block-bg)',
+            border: '1px solid var(--border-subtle)',
+            color: 'var(--text-muted)',
           }}
         >
           {template.promptTemplate.slice(0, 120)}...
@@ -1371,7 +1371,7 @@ function TemplateCard({
       </div>
 
       {/* 底部操作 */}
-      <div className="px-4 pb-4 pt-1 border-t border-white/5">
+      <div className="px-4 pb-4 pt-1 border-t border-token-subtle">
         <button
           onClick={created ? undefined : onUse}
           disabled={created}
@@ -1379,8 +1379,8 @@ function TemplateCard({
           style={
             created
               ? {
-                  background: 'rgba(255,255,255,0.04)',
-                  color: 'rgba(255,255,255,0.25)',
+                  background: 'var(--nested-block-bg)',
+                  color: 'var(--text-muted)',
                   cursor: 'default',
                 }
               : {
@@ -1410,9 +1410,9 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
               boxShadow: '0 2px 8px -1px rgba(99, 102, 241, 0.35)',
             }
           : {
-              background: 'rgba(255,255,255,0.04)',
-              border: '1px solid rgba(255,255,255,0.1)',
-              color: 'rgba(255,255,255,0.5)',
+              background: 'var(--nested-block-bg)',
+              border: '1px solid var(--border-subtle)',
+              color: 'var(--text-secondary)',
             }
       }
     >
@@ -1424,7 +1424,7 @@ function FilterChip({ label, active, onClick }: { label: string; active: boolean
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div>
-      <h3 className="text-xs font-semibold text-white/50 uppercase tracking-wider mb-2 border-b border-white/5 pb-1">
+      <h3 className="text-xs font-semibold text-token-secondary uppercase tracking-wider mb-2 border-b border-token-subtle pb-1">
         {title}
       </h3>
       {children}
@@ -1435,7 +1435,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
 function Field({ label, className, children }: { label: string; className?: string; children: React.ReactNode }) {
   return (
     <div className={className}>
-      <label className="text-xs text-white/50 mb-1 block">{label}</label>
+      <label className="text-xs text-token-secondary mb-1 block">{label}</label>
       {children}
     </div>
   );
@@ -1461,10 +1461,10 @@ function SkillListItem({ skill, active, onClick, dragOver, onDragStart, onDragOv
       onClick={onClick}
       className={`w-full text-left px-3 py-2.5 rounded-lg text-xs transition cursor-pointer ${
         active
-          ? 'bg-white/10 border border-white/20'
+          ? 'bg-token-nested border border-token-subtle'
           : dragOver
-            ? 'bg-white/8 border border-amber-400/40'
-            : 'hover:bg-white/5 border border-transparent'
+            ? 'bg-token-nested border border-amber-400/40'
+            : 'hover-bg-soft border border-transparent'
       }`}
       style={{ cursor: 'grab' }}
     >
@@ -1478,16 +1478,16 @@ function SkillListItem({ skill, active, onClick, dragOver, onDragStart, onDragOv
             )}
           </div>
           <div className="flex items-center gap-1.5 mt-0.5">
-            <span className="text-[10px] text-white/25">{catInfo.icon} {catInfo.label}</span>
+            <span className="text-[10px] text-token-muted">{catInfo.icon} {catInfo.label}</span>
             {skill.roles.length > 0 && (
-              <span className="text-[10px] text-white/25">· {skill.roles.join('/')}</span>
+              <span className="text-[10px] text-token-muted">· {skill.roles.join('/')}</span>
             )}
             {skill.usageCount > 0 && (
-              <span className="text-[10px] text-white/20">· {skill.usageCount} 次</span>
+              <span className="text-[10px] text-token-muted">· {skill.usageCount} 次</span>
             )}
           </div>
         </div>
-        <span className="text-[10px] text-white/15 shrink-0">#{skill.order}</span>
+        <span className="text-[10px] text-token-muted shrink-0">#{skill.order}</span>
       </div>
     </div>
   );

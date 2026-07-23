@@ -122,7 +122,7 @@ export function SearchableSelect({
           }}
         >
           {/* 搜索框 */}
-          <div className="p-2 border-b" style={{ borderColor: 'rgba(255,255,255,0.12)' }}>
+          <div className="p-2 border-b border-token-subtle" >
             <div className="relative">
               <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
               <input
@@ -131,12 +131,8 @@ export function SearchableSelect({
                 value={search}
                 onChange={(e) => setSearch(e.target.value)}
                 placeholder="搜索..."
-                className="w-full pl-8 pr-7 h-8 rounded-[8px] text-sm outline-none"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-primary)',
-                }}
+                className="w-full pl-8 pr-7 h-8 rounded-[8px] text-sm outline-none border border-token-subtle"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 onKeyDown={(e) => {
                   if (e.key === 'Escape') {
                     setOpen(false);

@@ -104,7 +104,7 @@ function LandingInner() {
 
   return (
     <div
-      className="min-h-screen bg-[#030306] text-white overflow-x-hidden"
+      className="min-h-screen bg-[#030306] text-token-primary overflow-x-hidden"
       style={{ scrollBehavior: 'smooth', fontFamily: 'var(--font-body)' }}
       data-lang={lang}
     >
@@ -128,7 +128,7 @@ function LandingInner() {
             <div className="flex items-center gap-3 shrink-0">
               <MapLogo className="w-9 h-9 rounded-[10px]" />
               <span
-                className="text-[15px] font-medium text-white/90 hidden xl:inline"
+                className="text-[15px] font-medium text-token-primary hidden xl:inline"
                 style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.005em' }}
               >
                 {t.footer.brand}
@@ -143,7 +143,7 @@ function LandingInner() {
                   href={item.href}
                   target={item.external ? '_blank' : undefined}
                   rel={item.external ? 'noopener noreferrer' : undefined}
-                  className="text-[13px] text-white/55 hover:text-white transition-colors whitespace-nowrap"
+                  className="text-[13px] text-token-secondary hover:text-token-primary transition-colors whitespace-nowrap"
                   style={{ fontFamily: 'var(--font-display)', letterSpacing: '0.01em' }}
                 >
                   {item.label}
@@ -157,7 +157,7 @@ function LandingInner() {
 
               <button
                 onClick={handleGetStarted}
-                className="px-4 py-2 rounded-full text-[13px] font-medium text-white transition-all duration-200 hover:scale-[1.02]"
+                className="px-4 py-2 rounded-full text-[13px] font-medium text-token-primary transition-all duration-200 hover:scale-[1.02]"
                 style={{
                   background: HERO_GRADIENT,
                   boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',
@@ -170,7 +170,7 @@ function LandingInner() {
 
               <button
                 onClick={() => setMobileMenuOpen(true)}
-                className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                className="md:hidden flex items-center justify-center w-9 h-9 rounded-lg text-token-secondary hover:text-token-primary hover-bg-soft transition-colors"
                 aria-label="Open menu"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -186,18 +186,18 @@ function LandingInner() {
       {mobileMenuOpen && (
         <div className="fixed inset-0 z-[100] md:hidden">
           <div className="absolute inset-0 bg-black/85 backdrop-blur-md" onClick={() => setMobileMenuOpen(false)} />
-          <div className="absolute inset-x-0 top-0 bg-[#0a0a12]/96 backdrop-blur-xl border-b border-white/10 animate-[landingMenuIn_0.2s_ease-out]">
+          <div className="absolute inset-x-0 top-0 bg-[#0a0a12]/96 backdrop-blur-xl border-b border-token-subtle animate-[landingMenuIn_0.2s_ease-out]">
             <style>{`@keyframes landingMenuIn{from{opacity:0;transform:translateY(-8px)}to{opacity:1;transform:translateY(0)}}`}</style>
             <div className="flex items-center justify-between px-6 py-4">
               <div className="flex items-center gap-3">
                 <MapLogo className="w-9 h-9 rounded-[10px]" />
-                <span className="text-[15px] font-medium text-white/90" style={{ fontFamily: 'var(--font-display)' }}>
+                <span className="text-[15px] font-medium text-token-primary" style={{ fontFamily: 'var(--font-display)' }}>
                   {t.footer.brand}
                 </span>
               </div>
               <button
                 onClick={() => setMobileMenuOpen(false)}
-                className="flex items-center justify-center w-9 h-9 rounded-lg text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                className="flex items-center justify-center w-9 h-9 rounded-lg text-token-secondary hover:text-token-primary hover-bg-soft transition-colors"
                 aria-label="Close menu"
               >
                 <svg className="w-5 h-5" fill="none" viewBox="0 0 24 24" stroke="currentColor" strokeWidth={2}>
@@ -213,7 +213,7 @@ function LandingInner() {
                   target={item.external ? '_blank' : undefined}
                   rel={item.external ? 'noopener noreferrer' : undefined}
                   onClick={() => setMobileMenuOpen(false)}
-                  className="block px-4 py-3 rounded-xl text-[15px] text-white/70 hover:text-white hover:bg-white/5 transition-colors"
+                  className="block px-4 py-3 rounded-xl text-[15px] text-token-secondary hover:text-token-primary hover-bg-soft transition-colors"
                   style={{ fontFamily: 'var(--font-display)' }}
                 >
                   {item.label}
@@ -230,7 +230,7 @@ function LandingInner() {
                     setMobileMenuOpen(false);
                     handleGetStarted();
                   }}
-                  className="w-full py-3 rounded-full text-[15px] font-medium text-white transition-all hover:opacity-90"
+                  className="w-full py-3 rounded-full text-[15px] font-medium text-token-primary transition-all hover:opacity-90"
                   style={{
                     background: HERO_GRADIENT,
                     boxShadow: '0 0 20px rgba(124, 108, 240, 0.32)',

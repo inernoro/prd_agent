@@ -174,23 +174,19 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4" onClick={onClose}>
       <div className="absolute inset-0 bg-black/60 backdrop-blur-sm" />
       <div
-        className="relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col"
-        style={{
-          background: 'rgba(12, 15, 28, 0.97)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          maxHeight: '85vh',
-        }}
+        className="relative w-full max-w-xl rounded-2xl overflow-hidden flex flex-col border border-token-subtle"
+        style={{ background: 'rgba(12, 15, 28, 0.97)', maxHeight: '85vh' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center justify-between px-5 py-4 border-b border-white/8">
+        <div className="flex items-center justify-between px-5 py-4 border-b border-token-subtle">
           <div>
-            <h2 className="text-sm font-semibold text-white">评审维度配置</h2>
-            <p className="text-xs text-white/40 mt-0.5">
+            <h2 className="text-sm font-semibold text-token-primary">评审维度配置</h2>
+            <p className="text-xs text-token-muted mt-0.5">
               满分 <span className="text-indigo-400 font-medium">{totalScore}</span> 分（≥80 分视为通过）
             </p>
           </div>
-          <button onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/8 transition-colors text-white/40 hover:text-white/70">
+          <button onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft transition-colors text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
@@ -211,15 +207,15 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
               <div className="w-5 h-5 border-2 border-indigo-500/40 border-t-indigo-400 rounded-full animate-spin" />
             </div>
           ) : dims.length === 0 ? (
-            <p className="text-center text-white/30 text-sm py-8">暂无维度，点击下方添加</p>
+            <p className="text-center text-token-muted text-sm py-8">暂无维度，点击下方添加</p>
           ) : (
             dims.map((dim, idx) => {
               const isExpanded = expandedKeys.has(dim.key);
               return (
                 <div
                   key={dim.key}
-                  className="rounded-xl overflow-hidden"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.07)' }}
+                  className="rounded-xl overflow-hidden bg-token-nested border border-token-subtle"
+
                 >
                   {/* Row: controls + name + score + expand/delete */}
                   <div className="flex items-center gap-2 px-3 py-2.5">
@@ -228,14 +224,14 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                       <button
                         onClick={() => moveUp(idx)}
                         disabled={idx === 0}
-                        className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
+                        className="w-4 h-3 flex items-center justify-center text-token-muted hover-text-primary disabled:opacity-20 transition-colors"
                       >
                         <GripVertical className="w-3 h-3 rotate-90 -scale-y-100" />
                       </button>
                       <button
                         onClick={() => moveDown(idx)}
                         disabled={idx === dims.length - 1}
-                        className="w-4 h-3 flex items-center justify-center text-white/25 hover:text-white/60 disabled:opacity-20 transition-colors"
+                        className="w-4 h-3 flex items-center justify-center text-token-muted hover-text-primary disabled:opacity-20 transition-colors"
                       >
                         <GripVertical className="w-3 h-3 rotate-90" />
                       </button>
@@ -244,7 +240,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                     {/* Active toggle */}
                     <button
                       onClick={() => updateDim(idx, { isActive: !dim.isActive })}
-                      className={`w-2 h-2 rounded-full shrink-0 transition-colors ${dim.isActive ? 'bg-indigo-400' : 'bg-white/15'}`}
+                      className={`w-2 h-2 rounded-full shrink-0 transition-colors ${dim.isActive ? 'bg-indigo-400' : 'bg-token-card'}`}
                       title={dim.isActive ? '点击禁用' : '点击启用'}
                     />
 
@@ -253,7 +249,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                       value={dim.name}
                       onChange={e => updateDim(idx, { name: e.target.value })}
                       placeholder="维度名称"
-                      className="flex-1 bg-transparent text-sm text-white placeholder-white/25 outline-none min-w-0"
+                      className="flex-1 bg-transparent text-sm text-token-primary placeholder-token-muted outline-none min-w-0"
                     />
 
                     {/* Max score */}
@@ -264,15 +260,15 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                         max={100}
                         value={dim.maxScore}
                         onChange={e => updateDim(idx, { maxScore: Math.max(1, parseInt(e.target.value) || 1) })}
-                        className="w-12 bg-white/5 rounded-lg text-center text-sm text-white outline-none px-1 py-0.5 border border-white/8"
+                        className="w-12 bg-token-nested rounded-lg text-center text-sm text-token-primary outline-none px-1 py-0.5 border border-token-subtle"
                       />
-                      <span className="text-xs text-white/30">分</span>
+                      <span className="text-xs text-token-muted">分</span>
                     </div>
 
                     {/* Expand criteria */}
                     <button
                       onClick={() => toggleExpand(dim.key)}
-                      className="p-1 rounded-lg hover:bg-white/8 text-white/25 hover:text-white/60 transition-colors shrink-0"
+                      className="p-1 rounded-lg hover-bg-soft text-token-muted hover-text-primary transition-colors shrink-0"
                       title="展开/折叠明细要求"
                     >
                       {isExpanded ? <ChevronUp className="w-3.5 h-3.5" /> : <ChevronDown className="w-3.5 h-3.5" />}
@@ -281,7 +277,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
                     {/* Delete */}
                     <button
                       onClick={() => removeDim(idx)}
-                      className="p-1 rounded-lg hover:bg-rose-500/15 text-white/25 hover:text-rose-400 transition-colors shrink-0"
+                      className="p-1 rounded-lg hover:bg-rose-500/15 text-token-muted hover:text-rose-400 transition-colors shrink-0"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
                     </button>
@@ -289,34 +285,34 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
 
                   {/* Expandable: description / criteria */}
                   {isExpanded && (
-                    <div className="px-3 pb-3 border-t border-white/5 pt-2.5 space-y-2.5">
+                    <div className="px-3 pb-3 border-t border-token-subtle pt-2.5 space-y-2.5">
                       <div>
-                        <p className="text-xs text-white/35 mb-1.5">明细要求 <span className="text-white/20">（写入评审提示词，指导 AI 评分）</span></p>
+                        <p className="text-xs text-token-muted mb-1.5">明细要求 <span className="text-token-muted">（写入评审提示词，指导 AI 评分）</span></p>
                         <textarea
                           value={dim.description}
                           onChange={e => updateDim(idx, { description: e.target.value })}
                           placeholder="描述该维度的评分依据、检查要点和扣分规则..."
                           rows={4}
-                          className="w-full bg-black/20 rounded-lg text-sm text-white/80 placeholder-white/20 outline-none px-3 py-2 resize-none border border-white/8 focus:border-indigo-500/40 transition-colors leading-relaxed"
+                          className="w-full bg-token-nested rounded-lg text-sm text-token-primary placeholder-token-muted outline-none px-3 py-2 resize-none border border-token-subtle focus:border-indigo-500/40 transition-colors leading-relaxed"
                         />
                       </div>
                       {dim.items && dim.items.length > 0 && (
                         <div>
-                          <p className="text-xs text-white/35 mb-1.5">
-                            清单检查项 <span className="text-white/20">（共 {dim.items.length} 项，二段判断：涉及 → 覆盖）</span>
+                          <p className="text-xs text-token-muted mb-1.5">
+                            清单检查项 <span className="text-token-muted">（共 {dim.items.length} 项，二段判断：涉及 → 覆盖）</span>
                           </p>
                           <div
                             className="rounded-lg overflow-hidden"
                             style={{ background: 'rgba(99,102,241,0.05)', border: '1px solid rgba(99,102,241,0.15)' }}
                           >
                             {Object.entries(groupItemsByCategory(dim.items)).map(([cat, list]) => (
-                              <div key={cat} className="px-3 py-2 border-b border-white/5 last:border-b-0">
+                              <div key={cat} className="px-3 py-2 border-b border-token-subtle last:border-b-0">
                                 <p className="text-[11px] text-indigo-300/80 font-medium mb-1">{cat}</p>
                                 <ul className="space-y-0.5">
                                   {list.map(it => (
-                                    <li key={it.id} className="text-xs text-white/55 leading-relaxed">
+                                    <li key={it.id} className="text-xs text-token-secondary leading-relaxed">
                                       • {it.text}
-                                      {it.note && <span className="text-white/30 ml-1">（{it.note}）</span>}
+                                      {it.note && <span className="text-token-muted ml-1">（{it.note}）</span>}
                                     </li>
                                   ))}
                                 </ul>
@@ -334,7 +330,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
         </div>
 
         {/* Footer */}
-        <div className="border-t border-white/8 px-4 py-3 flex items-center justify-between gap-3">
+        <div className="border-t border-token-subtle px-4 py-3 flex items-center justify-between gap-3">
           <div className="flex items-center gap-4">
             <button
               onClick={addDim}
@@ -357,7 +353,7 @@ export function ReviewAgentDimensionsModal({ open, onClose }: Props) {
             {error && <p className="text-xs text-rose-400">{error}</p>}
             <button
               onClick={onClose}
-              className="text-sm text-white/40 hover:text-white/70 transition-colors px-3 py-1.5"
+              className="text-sm text-token-muted hover-text-primary transition-colors px-3 py-1.5"
             >
               取消
             </button>

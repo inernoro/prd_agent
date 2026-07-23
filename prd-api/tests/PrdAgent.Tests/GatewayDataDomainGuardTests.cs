@@ -3472,6 +3472,9 @@ public class GatewayDataDomainGuardTests
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
         Assert.Contains("font-size: 14px;", theme);
+        Assert.Contains("subtitle=\"会话主要模型\"", logs);
+        Assert.Contains("lg-truncate lg-log-model-name", logs);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);

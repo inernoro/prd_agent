@@ -530,7 +530,7 @@ export default function AppShell() {
       }))
       .filter((g) => g.items.length > 0);
   }, [visibleItems, effectiveNavOrder, effectiveNavHidden, permissions, isRoot]);
-  
+
   // 首页为 Agent Launcher 沉浸页，不自动跳转，让用户自主选择 Agent
   const isHomePage = location.pathname === '/';
 
@@ -852,7 +852,7 @@ export default function AppShell() {
               {/* 收缩按钮 */}
               <button
                 type="button"
-                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover:bg-white/10"
+                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover-bg-soft"
                 style={{ color: 'var(--text-muted)' }}
                 onClick={() => setToastCollapsed(true)}
                 aria-label="收缩通知"
@@ -863,7 +863,7 @@ export default function AppShell() {
               {/* 关闭按钮 */}
               <button
                 type="button"
-                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover:bg-white/10"
+                className="h-7 w-7 shrink-0 inline-flex items-center justify-center rounded-full transition-colors hover-bg-soft"
                 style={{ color: 'var(--text-muted)' }}
                 onClick={() => dismissToast(toastNotification.id)}
                 aria-label="稍后提醒"
@@ -909,7 +909,7 @@ export default function AppShell() {
                           window.open(att.url, '_blank');
                         }
                       }}
-                      className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                      className="inline-flex items-center gap-1.5 text-[11px] px-2 py-1 rounded-[6px] transition-colors hover-bg-soft cursor-pointer no-underline"
                       style={{ color: 'var(--accent-gold)' }}
                     >
                       <Download size={12} />
@@ -940,8 +940,8 @@ export default function AppShell() {
                   </button>
                   <button
                     type="button"
-                    className="shrink-0 px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover:bg-white/12 active:scale-[0.97]"
-                    style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)' }}
+                    className="shrink-0 px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97]"
+                    style={{ background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                     onClick={dismissAllToasts}
                   >
                     全部忽略
@@ -954,7 +954,7 @@ export default function AppShell() {
                   <DropdownMenu.Trigger asChild>
                     <button
                       type="button"
-                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[12px] rounded-[9px] transition-colors hover:bg-white/10"
+                      className="inline-flex items-center gap-1 px-2 py-1.5 text-[12px] rounded-[9px] transition-colors hover-bg-soft"
                       style={{ color: 'var(--text-muted)' }}
                       title="免打扰:暂停通知自动弹出"
                     >
@@ -979,7 +979,7 @@ export default function AppShell() {
                       ].map((opt) => (
                         <DropdownMenu.Item
                           key={opt.label}
-                          className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover:bg-white/8 text-[13px]"
+                          className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover-bg-soft text-[13px]"
                           style={{ color: 'var(--text-secondary)' }}
                           onSelect={() => snooze(opt.ms)}
                         >
@@ -988,7 +988,7 @@ export default function AppShell() {
                         </DropdownMenu.Item>
                       ))}
                       <DropdownMenu.Item
-                        className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover:bg-white/8 text-[13px]"
+                        className="flex items-center gap-2 px-2.5 py-2 rounded-[8px] cursor-pointer outline-none transition-colors hover-bg-soft text-[13px]"
                         style={{ color: 'var(--text-secondary)' }}
                         onSelect={() => {
                           const end = new Date();
@@ -1007,8 +1007,8 @@ export default function AppShell() {
                   <button
                     type="button"
                     disabled={handlingId === toastNotification.id}
-                    className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover:bg-white/15 active:scale-[0.97] disabled:opacity-60"
-                    style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                    className="px-3 py-1.5 text-[12px] rounded-[9px] transition-all duration-100 hover-bg-soft active:scale-[0.97] disabled:opacity-60"
+                    style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
                     onClick={() => handleNotification(toastNotification.id, toastNotification.actionUrl)}
                   >
                     {toastNotification.actionLabel || '查看详情'}
@@ -1122,12 +1122,12 @@ export default function AppShell() {
             {groupedNav.map((group, gi) => (
               <div key={group.key}>
                 {gi > 0 && (
-                  <div className="h-px mx-3 my-3.5" style={{ background: 'rgba(255,255,255,0.06)' }} />
+                  <div className="h-px mx-3 my-3.5" style={{ background: 'var(--nested-block-bg)' }} />
                 )}
                 {group.label && (
                   <div
                     className="px-3 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
-                    style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                    style={{ color: 'var(--text-muted, var(--text-muted))' }}
                   >
                     {group.label}
                   </div>
@@ -1144,7 +1144,7 @@ export default function AppShell() {
                         'min-h-[var(--mobile-min-touch,44px)]',
                       )}
                       style={{
-                        background: active ? 'rgba(255, 255, 255, 0.06)' : 'transparent',
+                        background: active ? 'var(--nested-block-bg)' : 'transparent',
                         color: active ? 'var(--text-primary)' : 'var(--text-secondary)',
                       }}
                     >
@@ -1164,7 +1164,7 @@ export default function AppShell() {
                 type="button"
                 disabled={gatewayOpening}
                 onClick={() => void openLlmGateway()}
-                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover:bg-white/6 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
+                className="flex min-h-[44px] items-center gap-3 rounded-xl px-3 py-2.5 transition-colors hover-bg-soft focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] disabled:cursor-not-allowed disabled:opacity-50"
                 style={{ color: 'var(--text-secondary)' }}
               >
                 <Server size={18} />
@@ -1328,7 +1328,7 @@ export default function AppShell() {
                   {!collapsed && group.label && (
                     <div
                       className="px-2.5 pt-1 pb-1 text-[10px] font-semibold tracking-[0.08em] uppercase select-none"
-                      style={{ color: 'var(--text-muted, rgba(255,255,255,0.32))' }}
+                      style={{ color: 'var(--text-muted, var(--text-muted))' }}
                     >
                       {group.label}
                     </div>
@@ -1421,7 +1421,7 @@ export default function AppShell() {
               {/* 悬停背景效果 */}
               <div
                 className="absolute inset-0 rounded-[10px] opacity-0 group-hover:opacity-100 transition-opacity duration-200"
-                style={{ background: 'rgba(255, 255, 255, 0.03)' }}
+                style={{ background: 'var(--nested-block-bg)' }}
               />
 
               <div className={cn('relative flex items-center', collapsed ? 'justify-center' : 'gap-3')}>
@@ -1471,7 +1471,7 @@ export default function AppShell() {
                   <div className="flex items-center gap-3">
                     <div
                       className="h-10 w-10 rounded-full overflow-hidden shrink-0"
-                      style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255, 255, 255, 0.08)' }}
+                      style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--border-subtle)' }}
                     >
                       <UserAvatar
                         src={resolveAvatarUrl({
@@ -1498,12 +1498,12 @@ export default function AppShell() {
 
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
                 {/* 我的空间：顶部入口。账户管理已合并到 /settings?tab=account，不再出现在此菜单 */}
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/settings?tab=user-space')}
                 >
@@ -1519,7 +1519,7 @@ export default function AppShell() {
 
                 {/* 学习中心:全部官方教程 + 完成进度(诉求 11) */}
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/learning-center')}
                 >
@@ -1534,7 +1534,7 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6 data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
                   style={{ color: 'var(--text-secondary)' }}
                   disabled={!user?.username}
                   onSelect={() => {
@@ -1553,7 +1553,7 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/settings')}
                 >
@@ -1569,7 +1569,7 @@ export default function AppShell() {
 
                 {user?.role === 'ADMIN' && (
                   <DropdownMenu.Item
-                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover:bg-white/6 focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
+                    className="flex min-h-[44px] items-center gap-3 rounded-[10px] px-3 py-2.5 cursor-pointer outline-none transition-colors hover-bg-soft focus-visible:ring-2 focus-visible:ring-[var(--border-focus)] data-[disabled]:cursor-not-allowed data-[disabled]:opacity-50"
                     style={{ color: 'var(--text-secondary)' }}
                     disabled={gatewayOpening}
                     onSelect={(event) => {
@@ -1585,7 +1585,7 @@ export default function AppShell() {
 
                 {/* 液态玻璃一键开关：点击不关菜单（preventDefault），让用户当场看到整个界面玻璃开/关的变化 */}
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={(e) => {
                     e.preventDefault();
@@ -1602,7 +1602,7 @@ export default function AppShell() {
                     style={
                       glassOn
                         ? { background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }
-                        : { background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-muted)' }
+                        : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }
                     }
                   >
                     {glassOn ? '已开启' : '已关闭'}
@@ -1610,7 +1610,7 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
                     setNotificationDialogTab('list');
@@ -1631,7 +1631,7 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/changelog')}
                 >
@@ -1648,7 +1648,7 @@ export default function AppShell() {
                 </DropdownMenu.Item>
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => navigate('/data-transfers')}
                 >
@@ -1664,7 +1664,7 @@ export default function AppShell() {
                     原则：用户菜单只保留「账户 + 系统 + 我的空间 / 个人主页 + 退出」四类，不承载工具导航。 */}
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => useGlobalDefectStore.getState().openDialog()}
                 >
@@ -1680,11 +1680,11 @@ export default function AppShell() {
 
                 <DropdownMenu.Separator
                   className="h-px mx-2 my-1"
-                  style={{ background: 'linear-gradient(90deg, transparent 0%, rgba(255, 255, 255, 0.08) 20%, rgba(255, 255, 255, 0.08) 80%, transparent 100%)' }}
+                  style={{ background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 20%, var(--nested-block-bg) 80%, transparent 100%)' }}
                 />
 
                 <DropdownMenu.Item
-                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover:bg-white/6"
+                  className="flex items-center gap-3 px-3 py-2.5 rounded-[10px] cursor-pointer outline-none transition-colors hover-bg-soft"
                   style={{ color: 'var(--text-secondary)' }}
                   onSelect={() => {
                     useAgentSwitcherStore.getState().resetServerSync();
@@ -1743,7 +1743,7 @@ export default function AppShell() {
               <div className="flex h-full min-h-0 flex-col gap-3">
                 <div
                   className="grid grid-cols-2 rounded-[12px] p-1"
-                  style={{ background: 'rgba(255,255,255,0.06)' }}
+                  style={{ background: 'var(--nested-block-bg)' }}
                 >
                   {[
                     { key: 'list' as const, label: '通知列表' },
@@ -1775,8 +1775,8 @@ export default function AppShell() {
                   </div>
                   <button
                     type="button"
-                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] transition-all hover:bg-white/15 active:scale-[0.97]"
-                    style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+                    className="inline-flex items-center gap-2 rounded-full px-3 py-1.5 text-[12px] transition-all hover-bg-soft active:scale-[0.97]"
+                    style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
                     onClick={() => handleAllNotifications()}
                     disabled={notificationCount === 0}
                   >
@@ -1803,7 +1803,7 @@ export default function AppShell() {
                       </div>
 
                       {section.items.length === 0 && !notificationsLoading && (
-                        <div className="rounded-[12px] border border-dashed border-white/10 px-4 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                        <div className="rounded-[12px] border border-dashed border-token-subtle px-4 py-4 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
                           {section.empty}
                         </div>
                       )}
@@ -1835,7 +1835,7 @@ export default function AppShell() {
                                   {item.sourceLabel && item.sourceLabel !== variant.label && (
                                     <span
                                       className="rounded-full px-2 py-0.5 text-[10px]"
-                                      style={{ background: 'rgba(255,255,255,0.1)', color: tone.text }}
+                                      style={{ background: 'var(--nested-block-bg)', color: tone.text }}
                                     >
                                       {item.sourceLabel}
                                     </span>
@@ -1876,10 +1876,10 @@ export default function AppShell() {
                                             window.open(att.url, '_blank');
                                           }
                                         }}
-                                        className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover:bg-white/10 cursor-pointer no-underline"
+                                        className="inline-flex items-center gap-1.5 text-[11px] px-2.5 py-1 rounded-[6px] transition-colors hover-bg-soft cursor-pointer no-underline"
                                         style={{
-                                          background: 'rgba(255,255,255,0.06)',
-                                          border: '1px solid rgba(255,255,255,0.1)',
+                                          background: 'var(--nested-block-bg)',
+                                          border: '1px solid var(--border-subtle)',
                                           color: 'var(--accent-gold)',
                                         }}
                                       >
@@ -1902,8 +1902,8 @@ export default function AppShell() {
                                 {item.actionUrl && (
                                   <button
                                     type="button"
-                                    className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover:bg-white/20 active:scale-[0.97]"
-                                    style={{ background: 'rgba(255, 255, 255, 0.15)', color: 'var(--text-primary)' }}
+                                    className="rounded-full px-3 py-1.5 text-[12px] whitespace-nowrap transition-all hover-bg-soft active:scale-[0.97]"
+                                    style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}
                                     onClick={() => handleNotification(item.id, item.actionUrl)}
                                   >
                                     {item.actionLabel || '去处理'}

@@ -449,7 +449,7 @@ export function TechDocFormatAgentPage() {
   }, [currentPath, loadProjectContext, selectedRepo]);
 
   const inputClass =
-    'w-full rounded-xl border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)] outline-none focus:border-indigo-400/50';
+    'w-full rounded-xl border border-token-subtle bg-token-nested px-3 py-2 text-sm text-[color:var(--text-primary)] placeholder:text-[color:var(--text-muted)] outline-none focus:border-indigo-400/50';
 
   return (
     <div className="h-full min-h-0 flex flex-col gap-4 p-5">
@@ -535,7 +535,7 @@ export function TechDocFormatAgentPage() {
                 />
               </label>
 
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
                 <div className="mb-2 flex items-center justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2 text-xs font-semibold text-[color:var(--text-primary)]">
@@ -567,7 +567,7 @@ export function TechDocFormatAgentPage() {
                 {requirementFiles.length > 0 ? (
                   <div className="space-y-2">
                     {requirementFiles.map((file) => (
-                      <div key={file.name} className="flex items-center gap-2 rounded-lg border border-white/10 bg-black/20 px-2 py-1.5">
+                      <div key={file.name} className="flex items-center gap-2 rounded-lg border border-token-subtle bg-token-nested px-2 py-1.5">
                         <FileText size={13} className="shrink-0 text-indigo-200" />
                         <div className="min-w-0 flex-1">
                           <div className="truncate text-xs text-[color:var(--text-primary)]">{file.name}</div>
@@ -575,7 +575,7 @@ export function TechDocFormatAgentPage() {
                         </div>
                         <button
                           type="button"
-                          className="rounded p-1 text-[color:var(--text-secondary)] hover:bg-white/10 hover:text-[color:var(--text-primary)]"
+                          className="rounded p-1 text-[color:var(--text-secondary)] hover-bg-soft hover:text-[color:var(--text-primary)]"
                           onClick={() => removeRequirementFile(file.name)}
                           aria-label={`移除 ${file.name}`}
                         >
@@ -585,13 +585,13 @@ export function TechDocFormatAgentPage() {
                     ))}
                   </div>
                 ) : (
-                  <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
+                  <div className="rounded-lg border border-dashed border-token-subtle px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
                     还没有上传需求文件
                   </div>
                 )}
               </div>
 
-              <div className="rounded-xl border border-white/10 bg-white/[0.03] p-3">
+              <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
                 <div className="mb-3 flex items-start justify-between gap-2">
                   <div>
                     <div className="flex items-center gap-2 text-xs font-semibold text-[color:var(--text-primary)]">
@@ -622,7 +622,7 @@ export function TechDocFormatAgentPage() {
 
                 {githubAuth?.oauthConfigured && !githubAuth.connected && (
                   <div className="space-y-3">
-                    <div className="rounded-lg border border-white/10 bg-black/20 p-3 text-xs text-[color:var(--text-secondary)]">
+                    <div className="rounded-lg border border-token-subtle bg-token-nested p-3 text-xs text-[color:var(--text-secondary)]">
                       当前未连接 GitHub。连接后可读取你有权限访问的仓库列表。
                     </div>
                     <Button variant="primary" size="sm" onClick={startGitHubConnect}>
@@ -638,7 +638,7 @@ export function TechDocFormatAgentPage() {
                       <span>授权码：<span className="font-mono font-semibold">{deviceFlow.userCode}</span></span>
                       <button
                         type="button"
-                        className="inline-flex items-center gap-1 rounded bg-white/10 px-2 py-1"
+                        className="inline-flex items-center gap-1 rounded bg-token-nested px-2 py-1"
                         onClick={() => window.open(deviceFlow.verificationUriComplete, '_blank', 'noopener,noreferrer')}
                       >
                         <Link2 size={12} />
@@ -689,13 +689,13 @@ export function TechDocFormatAgentPage() {
                           className={`w-full rounded-lg border px-3 py-2 text-left transition ${
                             selectedRepo?.id === repo.id
                               ? 'border-indigo-400/40 bg-indigo-500/10'
-                              : 'border-white/10 bg-black/20 hover:bg-white/[0.05]'
+                              : 'border-token-subtle bg-token-nested hover-bg-soft'
                           }`}
                           onClick={() => handleSelectRepo(repo)}
                         >
                           <div className="flex items-center justify-between gap-2">
                             <span className="truncate text-xs font-semibold text-[color:var(--text-primary)]">{repo.fullName}</span>
-                            <span className="shrink-0 rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-[color:var(--text-secondary)]">
+                            <span className="shrink-0 rounded-full border border-token-subtle px-2 py-0.5 text-[10px] text-[color:var(--text-secondary)]">
                               {repo.isPrivate ? '私有' : '公开'}
                             </span>
                           </div>
@@ -706,14 +706,14 @@ export function TechDocFormatAgentPage() {
                         </button>
                       ))}
                       {repos.length === 0 && !reposLoading && (
-                        <div className="rounded-lg border border-dashed border-white/10 px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
+                        <div className="rounded-lg border border-dashed border-token-subtle px-3 py-4 text-center text-xs text-[color:var(--text-secondary)]">
                           暂无仓库，连接后点击搜索刷新
                         </div>
                       )}
                     </div>
 
                     {selectedRepo && (
-                      <div className="rounded-lg border border-white/10 bg-black/20 p-2">
+                      <div className="rounded-lg border border-token-subtle bg-token-nested p-2">
                         <div className="mb-2 flex items-center justify-between gap-2 text-xs">
                           <button
                             type="button"
@@ -758,7 +758,7 @@ export function TechDocFormatAgentPage() {
                           {!treeLoading && currentPath && (
                             <button
                               type="button"
-                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover:bg-white/10"
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover-bg-soft"
                               onClick={() => {
                                 const parent = currentPath.split('/').slice(0, -1).join('/');
                                 void loadTree(selectedRepo, parent);
@@ -772,7 +772,7 @@ export function TechDocFormatAgentPage() {
                             <button
                               key={item.path}
                               type="button"
-                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                              className="flex w-full items-center gap-2 rounded px-2 py-1.5 text-left text-xs text-[color:var(--text-secondary)] hover-bg-soft disabled:opacity-50"
                               onClick={() => handleOpenTreePath(item)}
                               disabled={item.type !== 'dir'}
                             >
@@ -814,7 +814,7 @@ export function TechDocFormatAgentPage() {
                 />
               </label>
             </div>
-            <div className="shrink-0 flex flex-wrap gap-2 border-t border-white/10 pt-3">
+            <div className="shrink-0 flex flex-wrap gap-2 border-t border-token-subtle pt-3">
               <Button variant="secondary" size="sm" onClick={handleBuildDraft}>
                 <FileText size={14} />
                 生成底稿
@@ -832,7 +832,7 @@ export function TechDocFormatAgentPage() {
           </GlassCard>
 
           <GlassCard className="min-h-0 flex flex-col p-4" overflow="hidden">
-            <div className="shrink-0 flex flex-col gap-2 border-b border-white/10 pb-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="shrink-0 flex flex-col gap-2 border-b border-token-subtle pb-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-[color:var(--text-primary)]">输出文档与自动校验</h2>
                 <p className="mt-1 text-xs text-[color:var(--text-secondary)]">
@@ -868,7 +868,7 @@ export function TechDocFormatAgentPage() {
                 </span>
               )}
               {modelInfo?.model && (
-                <span className="rounded-full border border-white/10 bg-white/[0.04] px-3 py-1 text-[color:var(--text-secondary)]">
+                <span className="rounded-full border border-token-subtle bg-token-nested px-3 py-1 text-[color:var(--text-secondary)]">
                   模型：{modelInfo.model}{modelInfo.platform ? ` / ${modelInfo.platform}` : ''}
                 </span>
               )}
@@ -884,7 +884,7 @@ export function TechDocFormatAgentPage() {
             </div>
 
             <div
-              className="mt-3 min-h-0 flex-1 rounded-xl border border-white/10 bg-black/20 p-3"
+              className="mt-3 min-h-0 flex-1 rounded-xl border border-token-subtle bg-token-nested p-3"
               style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
             >
               {generatedDoc ? (
@@ -913,7 +913,7 @@ export function TechDocFormatAgentPage() {
       {activeTab === 'check' && (
         <div className="min-h-0 flex-1 grid gap-4 xl:grid-cols-[minmax(0,1fr)_420px]">
           <GlassCard className="min-h-0 flex flex-col p-4" overflow="hidden">
-            <div className="shrink-0 flex flex-col gap-2 border-b border-white/10 pb-3 lg:flex-row lg:items-center lg:justify-between">
+            <div className="shrink-0 flex flex-col gap-2 border-b border-token-subtle pb-3 lg:flex-row lg:items-center lg:justify-between">
               <div>
                 <h2 className="text-base font-semibold text-[color:var(--text-primary)]">上传或粘贴技术分析文档</h2>
                 <p className="mt-1 text-xs text-[color:var(--text-secondary)]">
@@ -942,7 +942,7 @@ export function TechDocFormatAgentPage() {
               <div className="shrink-0 mt-3 text-xs text-[color:var(--text-secondary)]">当前文件：{checkFileName}</div>
             )}
             <textarea
-              className="mt-3 min-h-0 flex-1 resize-none rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs leading-relaxed text-[color:var(--text-primary)] outline-none focus:border-indigo-400/50"
+              className="mt-3 min-h-0 flex-1 resize-none rounded-xl border border-token-subtle bg-token-nested p-3 font-mono text-xs leading-relaxed text-[color:var(--text-primary)] outline-none focus:border-indigo-400/50"
               style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
               value={checkDoc}
               onChange={(e) => setCheckDoc(e.target.value)}
@@ -951,7 +951,7 @@ export function TechDocFormatAgentPage() {
           </GlassCard>
 
           <GlassCard className="min-h-0 flex flex-col p-4" overflow="hidden">
-            <div className="shrink-0 flex items-center justify-between border-b border-white/10 pb-3">
+            <div className="shrink-0 flex items-center justify-between border-b border-token-subtle pb-3">
               <div>
                 <h2 className="text-base font-semibold text-[color:var(--text-primary)]">检查结果</h2>
                 <p className="mt-1 text-xs text-[color:var(--text-secondary)]">错误为交付阻断项，建议项用于模板细节对齐。</p>
@@ -970,7 +970,7 @@ export function TechDocFormatAgentPage() {
 
       {activeTab === 'template' && (
         <GlassCard className="min-h-0 flex-1 flex flex-col p-4" overflow="hidden">
-          <div className="shrink-0 flex flex-col gap-2 border-b border-white/10 pb-3 lg:flex-row lg:items-center lg:justify-between">
+          <div className="shrink-0 flex flex-col gap-2 border-b border-token-subtle pb-3 lg:flex-row lg:items-center lg:justify-between">
             <div>
               <h2 className="text-base font-semibold text-[color:var(--text-primary)]">PM2502 模板真源</h2>
               <p className="mt-1 text-xs text-[color:var(--text-secondary)]">
@@ -989,7 +989,7 @@ export function TechDocFormatAgentPage() {
             </div>
           </div>
           <pre
-            className="mt-3 min-h-0 flex-1 whitespace-pre-wrap rounded-xl border border-white/10 bg-black/20 p-3 font-mono text-xs leading-relaxed text-[color:var(--text-primary)]"
+            className="mt-3 min-h-0 flex-1 whitespace-pre-wrap rounded-xl border border-token-subtle bg-token-nested p-3 font-mono text-xs leading-relaxed text-[color:var(--text-primary)]"
             style={{ overflowY: 'auto', overscrollBehavior: 'contain' }}
           >
             {PM2502_TECH_DOC_TEMPLATE}
@@ -1035,7 +1035,7 @@ function MetricCard({
         : 'text-[color:var(--text-primary)]';
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.04] p-3">
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
       <div className={`text-lg font-semibold ${toneClass}`}>{value}</div>
       <div className="mt-1 text-xs text-[color:var(--text-secondary)]">{label}</div>
     </div>
@@ -1055,11 +1055,11 @@ function IssueList({ issues, compact = false }: { issues: TechDocIssue[]; compac
 
   return (
     <div
-      className="mt-3 min-h-0 space-y-2 rounded-xl border border-white/10 bg-white/[0.03] p-3"
+      className="mt-3 min-h-0 space-y-2 rounded-xl border border-token-subtle bg-token-nested p-3"
       style={compact ? { overflowY: 'auto', overscrollBehavior: 'contain' } : undefined}
     >
       {visibleIssues.map((issue) => (
-        <div key={issue.id} className="rounded-lg border border-white/10 bg-black/20 p-3">
+        <div key={issue.id} className="rounded-lg border border-token-subtle bg-token-nested p-3">
           <div className="flex items-start gap-2">
             {issue.severity === 'error' ? (
               <XCircle size={14} className="mt-0.5 shrink-0 text-red-300" />
@@ -1069,7 +1069,7 @@ function IssueList({ issues, compact = false }: { issues: TechDocIssue[]; compac
             <div className="min-w-0 flex-1">
               <div className="flex flex-wrap items-center gap-2">
                 <span className="text-sm font-semibold text-[color:var(--text-primary)]">{issue.title}</span>
-                <span className="rounded-full border border-white/10 px-2 py-0.5 text-[10px] text-[color:var(--text-secondary)]">
+                <span className="rounded-full border border-token-subtle px-2 py-0.5 text-[10px] text-[color:var(--text-secondary)]">
                   {severityLabel(issue.severity)}
                 </span>
               </div>

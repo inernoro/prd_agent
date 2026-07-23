@@ -94,7 +94,7 @@ export function MobileCompatGate({ pathname }: Props) {
           type="button"
           aria-label="关闭提示"
           onClick={() => setBannerClosed(true)}
-          className="shrink-0 p-1 rounded hover:bg-white/10"
+          className="shrink-0 p-1 rounded hover-bg-soft"
           style={{ color: 'var(--semantic-warning-text)' }}
         >
           <X size={12} />
@@ -112,14 +112,9 @@ export function MobileCompatGate({ pathname }: Props) {
       style={{ background: 'rgba(8, 8, 12, 0.82)', backdropFilter: 'blur(8px)' }}
     >
       <div
-        className="surface-tone-dark w-full max-w-md rounded-2xl p-5"
+        className="surface-tone-dark w-full max-w-md rounded-2xl p-5 border border-token-subtle"
         data-surface-tone="dark"
-        style={{
-          background: 'rgba(22, 22, 28, 0.95)',
-          border: '1px solid rgba(255, 255, 255, 0.08)',
-          color: 'var(--text-primary, #f7f7fb)',
-          boxShadow: '0 20px 40px rgba(0,0,0,0.5)',
-        }}
+        style={{ background: 'rgba(22, 22, 28, 0.95)', color: 'var(--text-primary, #f7f7fb)', boxShadow: '0 20px 40px rgba(0,0,0,0.5)' }}
       >
         <div className="flex items-start gap-3 mb-3">
           <div
@@ -147,8 +142,8 @@ export function MobileCompatGate({ pathname }: Props) {
           <button
             type="button"
             onClick={copyLink}
-            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] transition-all active:scale-95"
-            style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+            className="inline-flex items-center gap-1.5 px-4 py-2.5 rounded-xl text-[13px] transition-all active:scale-95 bg-token-nested"
+            style={{ color: 'var(--text-primary)' }}
           >
             <Copy size={13} /> 复制链接
           </button>

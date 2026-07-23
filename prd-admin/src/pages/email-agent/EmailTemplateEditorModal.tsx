@@ -111,17 +111,17 @@ export function EmailTemplateEditorModal({ open, onClose, categories, editing, o
   const modal = (
     <div className="fixed inset-0 z-[100] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={onClose}>
       <div
-        className="w-full rounded-2xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
+        className="w-full rounded-2xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col"
         style={{ maxWidth: '760px', height: '88vh', maxHeight: '88vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
-          <h2 className="text-base font-semibold text-white">{editing ? '编辑模板' : '新建模板'}</h2>
+        <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
+          <h2 className="text-base font-semibold text-token-primary">{editing ? '编辑模板' : '新建模板'}</h2>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="sm" onClick={() => setAiOpen(true)}>
               <Sparkles className="w-3.5 h-3.5" /> AI 起草正文
             </Button>
-            <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-white/55">
+            <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
               <X className="w-4 h-4" />
             </button>
           </div>
@@ -164,7 +164,7 @@ export function EmailTemplateEditorModal({ open, onClose, categories, editing, o
           <VariableEditor list={variables} onChange={setVariables} />
         </div>
 
-        <footer className="shrink-0 px-5 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+        <footer className="shrink-0 px-5 py-3 border-t border-token-subtle flex items-center justify-end gap-2">
           <Button variant="ghost" size="sm" onClick={onClose}>取消</Button>
           <Button variant="primary" size="sm" onClick={save} disabled={saving}>
             <Save className="w-3.5 h-3.5" /> {saving ? '保存中…' : '保存'}
@@ -188,12 +188,12 @@ export function EmailTemplateEditorModal({ open, onClose, categories, editing, o
 }
 
 const inputCls =
-  'w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-indigo-400/40';
+  'w-full h-9 rounded-lg border border-token-subtle bg-token-nested px-3 text-sm text-token-primary placeholder-token-muted outline-none focus:border-indigo-400/40';
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <label className="block text-xs text-white/60 mb-1.5">{label}</label>
+      <label className="block text-xs text-token-secondary mb-1.5">{label}</label>
       {children}
     </div>
   );
@@ -212,19 +212,19 @@ function RecipientEditor({
     onChange(list.map((r, idx) => (idx === i ? { ...r, ...patch } : r)));
   };
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
       <div className="flex items-center justify-between mb-2">
-        <span className="text-xs text-white/70">{title}</span>
+        <span className="text-xs text-token-secondary">{title}</span>
         <button
           type="button"
           onClick={() => onChange([...list, emptyRecipient()])}
-          className="h-7 px-2 rounded-md text-[11px] text-white/70 hover:bg-white/10 inline-flex items-center gap-1"
+          className="h-7 px-2 rounded-md text-[11px] text-token-secondary hover-bg-soft inline-flex items-center gap-1"
         >
           <Plus className="w-3 h-3" /> 添加
         </button>
       </div>
       {list.length === 0 ? (
-        <p className="text-[11px] text-white/30">暂无</p>
+        <p className="text-[11px] text-token-muted">暂无</p>
       ) : (
         <div className="space-y-2">
           {list.map((r, i) => (
@@ -232,7 +232,7 @@ function RecipientEditor({
               <input value={r.name} onChange={(e) => update(i, { name: e.target.value })} placeholder="角色/姓名" className={`${inputCls} h-8 flex-1`} />
               <input value={r.email ?? ''} onChange={(e) => update(i, { email: e.target.value })} placeholder="邮箱（可空）" className={`${inputCls} h-8 flex-1`} />
               <input value={r.note ?? ''} onChange={(e) => update(i, { note: e.target.value })} placeholder="备注" className={`${inputCls} h-8 w-24`} />
-              <button type="button" onClick={() => onChange(list.filter((_, idx) => idx !== i))} className="p-1.5 rounded-md text-white/40 hover:text-red-300 hover:bg-white/10">
+              <button type="button" onClick={() => onChange(list.filter((_, idx) => idx !== i))} className="p-1.5 rounded-md text-token-muted hover:text-red-300 hover-bg-soft">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>
@@ -254,20 +254,20 @@ function VariableEditor({
     onChange(list.map((v, idx) => (idx === i ? { ...v, ...patch } : v)));
   };
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-3">
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
       <div className="flex items-center justify-between mb-1">
-        <span className="text-xs text-white/70">占位符变量</span>
+        <span className="text-xs text-token-secondary">占位符变量</span>
         <button
           type="button"
           onClick={() => onChange([...list, emptyVariable()])}
-          className="h-7 px-2 rounded-md text-[11px] text-white/70 hover:bg-white/10 inline-flex items-center gap-1"
+          className="h-7 px-2 rounded-md text-[11px] text-token-secondary hover-bg-soft inline-flex items-center gap-1"
         >
           <Plus className="w-3 h-3" /> 添加
         </button>
       </div>
-      <p className="text-[11px] text-white/30 mb-2">正文里用 {'{{key}}'} 引用，填写后一键复制会自动替换。</p>
+      <p className="text-[11px] text-token-muted mb-2">正文里用 {'{{key}}'} 引用，填写后一键复制会自动替换。</p>
       {list.length === 0 ? (
-        <p className="text-[11px] text-white/30">暂无</p>
+        <p className="text-[11px] text-token-muted">暂无</p>
       ) : (
         <div className="space-y-2">
           {list.map((v, i) => (
@@ -275,10 +275,10 @@ function VariableEditor({
               <input value={v.key} onChange={(e) => update(i, { key: e.target.value })} placeholder="key" className={`${inputCls} h-8 w-28 font-mono`} />
               <input value={v.label} onChange={(e) => update(i, { label: e.target.value })} placeholder="显示标签" className={`${inputCls} h-8 flex-1`} />
               <input value={v.defaultValue ?? ''} onChange={(e) => update(i, { defaultValue: e.target.value })} placeholder="默认值" className={`${inputCls} h-8 w-28`} />
-              <label className="text-[11px] text-white/50 inline-flex items-center gap-1 shrink-0">
+              <label className="text-[11px] text-token-secondary inline-flex items-center gap-1 shrink-0">
                 <input type="checkbox" checked={!!v.multiline} onChange={(e) => update(i, { multiline: e.target.checked })} /> 多行
               </label>
-              <button type="button" onClick={() => onChange(list.filter((_, idx) => idx !== i))} className="p-1.5 rounded-md text-white/40 hover:text-red-300 hover:bg-white/10">
+              <button type="button" onClick={() => onChange(list.filter((_, idx) => idx !== i))} className="p-1.5 rounded-md text-token-muted hover:text-red-300 hover-bg-soft">
                 <Trash2 className="w-3.5 h-3.5" />
               </button>
             </div>

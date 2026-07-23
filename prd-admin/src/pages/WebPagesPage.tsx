@@ -936,8 +936,7 @@ export default function WebPagesPage() {
                 onClick={() => setShowAnalytics(true)}
                 title="分享统计（PV/IP/时间线）"
                 aria-label="分享统计"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-                style={{ color: 'var(--text-muted)' }}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))] text-token-muted"
               >
                 <BarChart3 size={15} />
               </button>
@@ -947,8 +946,7 @@ export default function WebPagesPage() {
                 onClick={() => { setShareTargetId(null); setShowSharesPanel(true); }}
                 title="分享管理"
                 aria-label="分享管理"
-                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))]"
-                style={{ color: 'var(--text-muted)' }}
+                className="h-8 w-8 inline-flex items-center justify-center rounded-md transition-colors hover:bg-[var(--bg-hover,rgba(255,255,255,0.06))] text-token-muted"
               >
                 <Link2 size={15} />
               </button>
@@ -975,7 +973,7 @@ export default function WebPagesPage() {
           <div className="px-2 pt-1 flex flex-col gap-2">
             <div className="flex items-center gap-2">
               <div className="relative min-w-0 flex-1">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
                   type="text"
                   placeholder="搜索站点名称、描述..."
@@ -1005,7 +1003,7 @@ export default function WebPagesPage() {
                 {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
               </button>
             </div>
-            <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px]" style={{ color: 'var(--text-muted)' }}>
+            <div className="flex items-center gap-1.5 overflow-hidden whitespace-nowrap text-[12px] text-token-muted">
               <span className="truncate">{activeSpaceLabel}</span>
               <span className="opacity-45">·</span>
               <span className="truncate">{activeFolderLabel}</span>
@@ -1028,7 +1026,7 @@ export default function WebPagesPage() {
             </div>
 
             <div className="relative min-w-[260px] flex-1">
-              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 type="text"
                 placeholder="搜索站点名称、描述..."
@@ -1059,7 +1057,7 @@ export default function WebPagesPage() {
               {filterCount > 0 && <span className="text-[12px] tabular-nums">{filterCount}</span>}
             </button>
 
-            <div className="min-w-0 shrink text-[12px] whitespace-nowrap overflow-hidden text-ellipsis" style={{ color: 'var(--text-muted)' }}>
+            <div className="min-w-0 shrink text-[12px] whitespace-nowrap overflow-hidden text-ellipsis text-token-muted">
               {activeFolderLabel} · {activeSortLabel} · 共 {total} 个站点
             </div>
           </div>
@@ -1078,7 +1076,7 @@ export default function WebPagesPage() {
             style={{ overflow: 'visible' }}
           >
             <div className="space-y-1">
-              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>卡片尺寸</div>
+              <div className="text-[11px] font-semibold text-token-muted">卡片尺寸</div>
               <div data-tour-id="webpages-card-size-pills" title="调整网页卡片大小，刷新后保持">
                 <SegmentPills
                   options={CARD_SIZE_OPTIONS.map(({ value, label }) => ({ value, label }))}
@@ -1089,14 +1087,14 @@ export default function WebPagesPage() {
             </div>
 
             <div className="space-y-1">
-              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>排序</div>
+              <div className="text-[11px] font-semibold text-token-muted">排序</div>
               <div data-tour-id="webpages-sort-pills">
                 <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
               </div>
             </div>
 
             <div className="space-y-1">
-              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>组织方式</div>
+              <div className="text-[11px] font-semibold text-token-muted">组织方式</div>
               <div data-tour-id="webpages-group-pills">
                 <SegmentPills
                   options={[
@@ -1110,8 +1108,8 @@ export default function WebPagesPage() {
             </div>
 
             <div className="space-y-1">
-              <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>视图</div>
-              <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+              <div className="text-[11px] font-semibold text-token-muted">视图</div>
+              <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden border border-token-default">
                 <button
                   onClick={() => setViewMode('grid')}
                   className="h-8 px-3 inline-flex items-center gap-1.5 transition-colors text-sm"
@@ -1131,7 +1129,7 @@ export default function WebPagesPage() {
 
             {currentSpace.kind !== 'team' && (
               <div className="space-y-1 md:col-span-2 xl:col-span-4">
-                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>文件夹</div>
+                <div className="text-[11px] font-semibold text-token-muted">文件夹</div>
                 <div
                   data-tour-id="webpages-folders"
                   className="flex min-h-8 items-center gap-1.5 overflow-x-auto"
@@ -1140,19 +1138,19 @@ export default function WebPagesPage() {
                   {spaceFolders.length > 0 ? (
                     <>
                       <button type="button" onClick={() => setActiveFolder(null)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0"
-                        style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                        style={activeFolder === null ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                         全部
                       </button>
                       {spaceFolders.map((f) => (
                         <button key={f} type="button" onClick={() => setActiveFolder(f)} className="h-7 px-2.5 rounded-full text-[12px] shrink-0 inline-flex items-center gap-1"
-                          style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}>
+                          style={activeFolder === f ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                           <Folder size={11} /> {f}
                         </button>
                       ))}
                     </>
                   ) : (
                     <div className="inline-flex items-center gap-1.5 h-7 px-2.5 rounded-full text-[11px]"
-                      style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
+                      style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}>
                       <Folder size={11} /> 文件夹（上传站点时填写「文件夹」字段即可在此分类）
                     </div>
                   )}
@@ -1162,7 +1160,7 @@ export default function WebPagesPage() {
 
             {tags.length > 0 && (
               <div className="space-y-1 md:col-span-2 xl:col-span-4">
-                <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="text-[11px] font-semibold text-token-muted">标签</div>
                 <div className="flex min-h-8 items-center gap-1.5 overflow-x-auto" style={{ scrollbarWidth: 'none' }}>
                   <button
                     type="button"
@@ -1170,7 +1168,7 @@ export default function WebPagesPage() {
                     className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
                     style={{
                       background: !activeTag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
-                      border: !activeTag ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+                      border: !activeTag ? '1px solid transparent' : '1px solid var(--border-subtle)',
                       color: !activeTag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
                     }}
                   >
@@ -1184,7 +1182,7 @@ export default function WebPagesPage() {
                       className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
                       style={{
                         background: activeTag === t.tag ? 'rgba(212,175,55,0.18)' : 'var(--bg-input)',
-                        border: activeTag === t.tag ? '1px solid transparent' : '1px solid rgba(255,255,255,0.1)',
+                        border: activeTag === t.tag ? '1px solid transparent' : '1px solid var(--border-subtle)',
                         color: activeTag === t.tag ? 'var(--accent-gold, #d4af37)' : 'var(--text-muted)',
                       }}
                     >
@@ -1211,22 +1209,22 @@ export default function WebPagesPage() {
           >
               <div className="px-5 pb-4 space-y-5">
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>空间</div>
-                  <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="text-[12px] font-semibold text-token-muted">空间</div>
+                  <div className="rounded-[14px] p-2 bg-token-nested border border-token-subtle">
                     <SpaceBar current={currentSpace} onChange={enterSpace} />
                   </div>
                 </section>
 
                 {currentSpace.kind === 'team' && (
                   <section className="space-y-2">
-                    <div className="rounded-[14px] p-2" style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div className="rounded-[14px] p-2 bg-token-nested border border-token-subtle">
                       <TeamSpaceHeader teamId={currentSpace.teamId} myWebHostingRole={myWebHostingRole} />
                     </div>
                   </section>
                 )}
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-[12px] font-semibold text-token-muted">
                     {currentSpace.kind === 'team' ? '团队分组' : '文件夹'}
                   </div>
                   {currentSpace.kind === 'team' ? (
@@ -1253,7 +1251,7 @@ export default function WebPagesPage() {
                         className="h-8 px-3 rounded-full text-[13px]"
                         style={activeFolder === null
                           ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                          : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                       >
                         全部文件夹
                       </button>
@@ -1265,7 +1263,7 @@ export default function WebPagesPage() {
                           className="h-8 px-3 rounded-full text-[13px]"
                           style={activeFolder === f
                             ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                            : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                            : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                         >
                           {f}
                         </button>
@@ -1276,7 +1274,7 @@ export default function WebPagesPage() {
 
                 {tags.length > 0 && (
                   <section className="space-y-2">
-                    <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>标签</div>
+                    <div className="text-[12px] font-semibold text-token-muted">标签</div>
                     <div className="flex flex-wrap gap-2">
                       <button
                         type="button"
@@ -1284,7 +1282,7 @@ export default function WebPagesPage() {
                         className="h-8 px-3 rounded-full text-[13px]"
                         style={!activeTag
                           ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                          : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                          : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                       >
                         全部标签
                       </button>
@@ -1296,7 +1294,7 @@ export default function WebPagesPage() {
                           className="h-8 px-3 rounded-full text-[13px]"
                           style={activeTag === t.tag
                             ? { background: 'var(--selection-bg)', color: 'var(--selection-text)' }
-                            : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                            : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)' }}
                         >
                           {t.tag} ({t.count})
                         </button>
@@ -1306,12 +1304,12 @@ export default function WebPagesPage() {
                 )}
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>排序</div>
+                  <div className="text-[12px] font-semibold text-token-muted">排序</div>
                   <SegmentPills options={SORT_OPTIONS} value={sort} onChange={setSort} />
                 </section>
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>分组方式</div>
+                  <div className="text-[12px] font-semibold text-token-muted">分组方式</div>
                   <SegmentPills
                     options={[
                       { value: 'time', label: '日期' },
@@ -1323,8 +1321,8 @@ export default function WebPagesPage() {
                 </section>
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>显示</div>
-                  <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden" style={{ border: '1px solid var(--border-default)' }}>
+                  <div className="text-[12px] font-semibold text-token-muted">显示</div>
+                  <div data-tour-id="webpages-view-toggle" className="inline-flex items-center rounded-lg overflow-hidden border border-token-default">
                     <button
                       type="button"
                       onClick={() => setViewMode('grid')}
@@ -1345,7 +1343,7 @@ export default function WebPagesPage() {
                 </section>
 
                 <section className="space-y-2">
-                  <div className="text-[12px] font-semibold" style={{ color: 'var(--text-muted)' }}>更多操作</div>
+                  <div className="text-[12px] font-semibold text-token-muted">更多操作</div>
                   <div className="grid grid-cols-2 gap-2">
                     <button
                       type="button"
@@ -1353,8 +1351,7 @@ export default function WebPagesPage() {
                         setShowMobileFilters(false);
                         setShowAnalytics(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold"
-                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <BarChart3 size={15} /> 分享统计
                     </button>
@@ -1365,8 +1362,7 @@ export default function WebPagesPage() {
                         setShareTargetId(null);
                         setShowSharesPanel(true);
                       }}
-                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold"
-                      style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                      className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold bg-token-nested text-token-primary border border-token-subtle"
                     >
                       <Link2 size={15} /> 分享管理
                     </button>
@@ -1377,8 +1373,7 @@ export default function WebPagesPage() {
                           setShowMobileFilters(false);
                           setShowCopyFromPersonal(true);
                         }}
-                        className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2"
-                        style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        className="h-10 rounded-[12px] inline-flex items-center justify-center gap-1.5 text-[13px] font-semibold col-span-2 bg-token-nested text-token-primary border border-token-subtle"
                       >
                         <FolderInput size={15} /> 从个人空间添加
                       </button>
@@ -1391,7 +1386,7 @@ export default function WebPagesPage() {
 
         {selectedIds.size > 0 && (
           <div className="surface-nav-bar flex items-center gap-2" style={{ overflow: 'visible' }}>
-            <span className="text-sm" style={{ color: 'var(--text-muted)' }}>已选 {selectedIds.size} 项</span>
+            <span className="text-sm text-token-muted">已选 {selectedIds.size} 项</span>
             {/* 团队作用域按角色门控批量操作；个人作用域全开（站点都是自己的）。后端是最终权威。 */}
             {(teamScope.scope !== 'team' || canShareInWebHosting(myWebHostingRole)) && (
               <Button size="xs" variant="secondary" onClick={handleBatchShare}><Share2 size={12} className="mr-1" /> 合集分享</Button>
@@ -1399,8 +1394,7 @@ export default function WebPagesPage() {
             {/* 团队空间：把选中的网页移入专题/分类（编辑权限） */}
             {teamScope.scope === 'team' && canEditInWebHosting(myWebHostingRole) && teamGroups.length > 0 && (
               <select
-                className="h-7 px-2 rounded-[8px] text-[12px] outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                className="h-7 px-2 rounded-[8px] text-[12px] outline-none bg-token-input border border-token-default text-token-primary"
                 value=""
                 onChange={async (e) => {
                   const v = e.target.value;
@@ -1451,11 +1445,11 @@ export default function WebPagesPage() {
         )}
         <div className="flex-1 min-w-0 flex flex-col">
       {loading && sites.length === 0 ? (
-        <div className="flex-1 flex items-center justify-center" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex-1 flex items-center justify-center text-token-muted">
           加载中...
         </div>
       ) : displaySites.length === 0 ? (
-        <div className="flex-1 flex flex-col items-center justify-center gap-3" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex-1 flex flex-col items-center justify-center gap-3 text-token-muted">
           <UploadCloud size={48} strokeWidth={1} />
           <p>{currentSpace.kind === 'team' ? (activeGroupId ? '这个分组还没有网页' : '这个团队空间还没有网页') : activeFolder ? '这个文件夹还没有网页' : '还没有托管的网页'}</p>
           {/* 与顶部上传按钮同款权限闸门：团队空间只读 viewer 不展示上传入口，
@@ -1470,7 +1464,7 @@ export default function WebPagesPage() {
           <div
             data-tour-id="webpages-card"
             className="mt-2 inline-flex items-center gap-2 px-3 py-2 rounded-lg text-[11px]"
-            style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}
+            style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}
           >
             示例卡片预览：标题 · 描述
             <span data-tour-id="webpages-viewcount" className="inline-flex items-center gap-0.5">
@@ -1483,11 +1477,11 @@ export default function WebPagesPage() {
           {siteGroups.map(group => (
             <div key={group.key} className="flex flex-col gap-2">
               {/* 分节标题：时间桶（今天/昨天/M月D日）或文件夹名 */}
-              <div className="flex items-center gap-2 text-xs font-medium" style={{ color: 'var(--text-muted)' }}>
+              <div className="flex items-center gap-2 text-xs font-medium text-token-muted">
                 {groupMode === 'folder' ? (
-                  <Folder size={12} style={{ color: 'var(--accent-primary)' }} />
+                  <Folder size={12} className="text-token-accent" />
                 ) : (
-                  <Clock size={12} style={{ color: 'var(--accent-primary)' }} />
+                  <Clock size={12} className="text-token-accent" />
                 )}
                 <span>{group.label}</span>
                 <span style={{ color: 'var(--text-faint, var(--text-muted))' }}>· {group.items.length}</span>
@@ -1548,18 +1542,18 @@ export default function WebPagesPage() {
               >
                 <AlertTriangle size={16} className="mt-0.5 shrink-0" style={{ color: '#fb923c' }} />
                 <span>
-                  即将用新文件覆盖「<span style={{ color: 'var(--text-primary)' }}>{replaceTarget.site.title}</span>」的全部网页内容，
-                  原有文件将被清理且<span style={{ color: 'var(--text-primary)' }}>无法恢复</span>。访问链接保持不变。
+                  即将用新文件覆盖「<span className="text-token-primary">{replaceTarget.site.title}</span>」的全部网页内容，
+                  原有文件将被清理且<span className="text-token-primary">无法恢复</span>。访问链接保持不变。
                 </span>
               </div>
               <div
                 className="flex items-center gap-2.5 rounded-xl p-3"
                 style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}
               >
-                <Replace size={18} style={{ color: 'var(--accent-primary)' }} />
+                <Replace size={18} className="text-token-accent" />
                 <div className="min-w-0 flex-1">
-                  <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{replaceTarget.file.name}</p>
-                  <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{fmtSize(replaceTarget.file.size)}</p>
+                  <p className="truncate text-sm font-medium text-token-primary">{replaceTarget.file.name}</p>
+                  <p className="text-[11px] text-token-muted">{fmtSize(replaceTarget.file.size)}</p>
                 </div>
               </div>
               <div className="flex justify-end gap-2">
@@ -1755,7 +1749,7 @@ function TeamGroupsTree({
         onDoubleClick={() => { if (canEdit) setEditing({ id: g.id, value: g.name }); }}
         onKeyDown={(e) => { if (e.key === 'Enter') onSelect(on ? null : g.id); }}
         title={canEdit ? '双击重命名' : undefined}
-        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        className="group/tree-item w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
         style={itemStyle(on)}
       >
         <Folder size={11} className="shrink-0" />
@@ -1793,13 +1787,12 @@ function TeamGroupsTree({
   const section = (kind: 'topic' | 'daily', label: string, items: WebPageGroup[]) => (
     <div className="space-y-0.5">
       <div className="flex items-center justify-between h-6 px-2">
-        <span className="text-[11px] font-medium" style={{ color: 'var(--text-muted)' }}>{label}</span>
+        <span className="text-[11px] font-medium text-token-muted">{label}</span>
         {canEdit && (
           <button
             type="button"
             title={kind === 'topic' ? '新建专题（可先建空专题再加内容）' : '新建日常分类'}
-            className="opacity-60 hover:opacity-100"
-            style={{ color: 'var(--text-muted)' }}
+            className="opacity-60 hover:opacity-100 text-token-muted"
             onClick={() => { setCreating(kind); setName(''); }}
           >
             <Plus size={12} />
@@ -1808,7 +1801,7 @@ function TeamGroupsTree({
       </div>
       {items.map(row)}
       {items.length === 0 && creating !== kind && (
-        <div className="px-2 py-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <div className="px-2 py-1 text-[11px] text-token-muted">
           {canEdit ? `点 + 新建${label}` : `还没有${label}`}
         </div>
       )}
@@ -1847,7 +1840,7 @@ function TeamGroupsTree({
         tabIndex={0}
         onClick={() => onSelect(null)}
         onKeyDown={(e) => { if (e.key === 'Enter') onSelect(null); }}
-        className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+        className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
         style={itemStyle(activeGroupId === null)}
       >
         <Grid3X3 size={11} className="shrink-0" />
@@ -1860,7 +1853,7 @@ function TeamGroupsTree({
           tabIndex={0}
           onClick={() => onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID)}
           onKeyDown={(e) => { if (e.key === 'Enter') onSelect(activeGroupId === UNGROUPED_ID ? null : UNGROUPED_ID); }}
-          className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover:bg-white/5"
+          className="w-full h-7 px-2 rounded-[6px] text-[12px] flex items-center gap-1.5 cursor-pointer transition-colors hover-bg-soft"
           style={itemStyle(activeGroupId === UNGROUPED_ID)}
         >
           <FolderInput size={11} className="shrink-0" />
@@ -1933,20 +1926,19 @@ function CopyFromPersonalDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
-      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 560, height: '70vh', maxHeight: '70vh', background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>从个人空间添加网页</span>
-          <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 560, height: '70vh', maxHeight: '70vh', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between border-b border-token-subtle">
+          <span className="text-[15px] font-semibold text-token-primary">从个人空间添加网页</span>
+          <button type="button" onClick={onClose} className="text-token-muted"><X size={18} /></button>
         </div>
         <div className="shrink-0 px-4 pt-3 flex items-center gap-2">
           <div className="relative flex-1">
-            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="搜索个人空间的网页…"
-              className="w-full h-8 pl-8 pr-2 rounded-[8px] text-[13px] outline-none"
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              className="w-full h-8 pl-8 pr-2 rounded-[8px] text-[13px] outline-none bg-token-input border border-token-subtle text-token-primary"
             />
           </div>
           {groups.length > 0 && (
@@ -1954,8 +1946,7 @@ function CopyFromPersonalDialog({
               value={targetGroupId}
               onChange={(e) => setTargetGroupId(e.target.value)}
               title="副本归入的专题/分类（可选）"
-              className="h-8 px-2 rounded-[8px] text-[12px] outline-none"
-              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              className="h-8 px-2 rounded-[8px] text-[12px] outline-none bg-token-input border border-token-subtle text-token-primary"
             >
               <option value="">不归入分组</option>
               {groups.map((g) => (
@@ -1964,14 +1955,14 @@ function CopyFromPersonalDialog({
             </select>
           )}
         </div>
-        <p className="shrink-0 px-4 pt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <p className="shrink-0 px-4 pt-2 text-[11px] text-token-muted">
           复制 = 物理拷贝一份独立副本进团队空间，原个人网页的链接、分享、规则全部不受影响。
         </p>
         <div className="flex-1 p-4 space-y-1.5" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
           {loading ? (
             <MapSectionLoader text="正在加载个人空间网页…" />
           ) : filtered.length === 0 ? (
-            <div className="flex flex-col items-center justify-center gap-2 py-10" style={{ color: 'var(--text-muted)' }}>
+            <div className="flex flex-col items-center justify-center gap-2 py-10 text-token-muted">
               <UploadCloud size={32} strokeWidth={1} />
               <p className="text-[13px]">{keyword ? '没有匹配的网页' : '个人空间还没有可复制的网页'}</p>
             </div>
@@ -1979,11 +1970,10 @@ function CopyFromPersonalDialog({
             filtered.map((site) => {
               const copied = copiedIds.has(site.id);
               return (
-                <div key={site.id} className="flex items-center gap-3 px-3 py-2 rounded-[10px]"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                <div key={site.id} className="flex items-center gap-3 px-3 py-2 rounded-[10px] bg-token-input border border-token-subtle">
                   <div className="min-w-0 flex-1">
-                    <p className="truncate text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{site.title}</p>
-                    <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <p className="truncate text-[13px] font-medium text-token-primary">{site.title}</p>
+                    <p className="truncate text-[11px] text-token-muted">
                       {site.files.length} 个文件 · {fmtSize(site.totalSize)} · {relativeTime(site.updatedAt)}
                     </p>
                   </div>
@@ -2029,7 +2019,7 @@ function MoveSiteDialog({
       className="w-full flex items-center gap-2 px-3 py-2 rounded-[8px] text-[13px] text-left"
       style={on
         ? { background: 'rgba(212,175,55,0.16)', color: 'var(--text-primary)', border: '1px solid var(--accent-gold, #d4af37)' }
-        : { background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}
+        : { background: 'var(--bg-input)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)' }}
     >
       {label}
     </button>
@@ -2037,13 +2027,13 @@ function MoveSiteDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center p-4" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
-      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 420, maxHeight: '80vh', background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)' }} onClick={(e) => e.stopPropagation()}>
-        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-          <span className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>移动「{site.title}」</span>
-          <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}><X size={18} /></button>
+      <div className="rounded-[14px] w-full flex flex-col" style={{ maxWidth: 420, maxHeight: '80vh', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }} onClick={(e) => e.stopPropagation()}>
+        <div className="shrink-0 px-5 h-[52px] flex items-center justify-between border-b border-token-subtle">
+          <span className="text-[15px] font-semibold truncate text-token-primary">移动「{site.title}」</span>
+          <button type="button" onClick={onClose} className="text-token-muted"><X size={18} /></button>
         </div>
         <div className="flex-1 min-h-0 overflow-auto p-4 space-y-3" style={{ overscrollBehavior: 'contain' }}>
-          <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>移动到哪个空间</div>
+          <div className="text-[12px] text-token-muted">移动到哪个空间</div>
           <div className="flex flex-col gap-1.5">
             {row(<><User size={14} /> 个人空间</>, space.kind === 'personal', () => setSpace({ kind: 'personal' }), 'personal')}
             {teams.map((t) =>
@@ -2055,16 +2045,15 @@ function MoveSiteDialog({
               ),
             )}
           </div>
-          <div className="text-[12px] pt-1" style={{ color: 'var(--text-muted)' }}>文件夹（空间内组织，可留空）</div>
+          <div className="text-[12px] pt-1 text-token-muted">文件夹（空间内组织，可留空）</div>
           <input
             value={folder}
             onChange={(e) => setFolder(e.target.value)}
             placeholder="文件夹名（留空 = 不归档）"
-            className="w-full h-9 px-3 rounded-[8px] text-[13px] outline-none"
-            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            className="w-full h-9 px-3 rounded-[8px] text-[13px] outline-none bg-token-input border border-token-subtle text-token-primary"
           />
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-4 py-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="shrink-0 flex justify-end gap-2 px-4 py-3 border-t border-token-subtle">
           <Button size="sm" variant="ghost" onClick={onClose}>取消</Button>
           <Button size="sm" variant="primary" onClick={() => onMove(space, folder.trim() || null)}>移动</Button>
         </div>
@@ -2193,7 +2182,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
         <div className="flex flex-col gap-3">
           {/* 标题输入：默认拿站点标题，转存前可改 */}
           <div className="flex flex-col gap-1">
-            <label className="text-[11px]" style={{ color: 'var(--text-muted)' }}>知识库条目标题</label>
+            <label className="text-[11px] text-token-muted">知识库条目标题</label>
             <input
               type="text"
               value={entryTitle}
@@ -2214,7 +2203,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
           ) : error && stores.length === 0 ? (
             <p className="text-sm py-6 text-center" style={{ color: '#ef4444' }}>{error}</p>
           ) : stores.length === 0 ? (
-            <div className="flex flex-col items-center gap-3 py-6" style={{ color: 'var(--text-muted)' }}>
+            <div className="flex flex-col items-center gap-3 py-6 text-token-muted">
               <Library size={36} strokeWidth={1.4} />
               <p className="text-sm">还没有任何知识库</p>
               <p className="text-xs">先到「智识殿堂」创建一个，再回来转存。</p>
@@ -2238,10 +2227,10 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
                         border: '1px solid var(--border-default)',
                       }}
                     >
-                      <Library size={18} style={{ color: 'var(--accent-primary)' }} />
+                      <Library size={18} className="text-token-accent" />
                       <div className="min-w-0 flex-1">
-                        <p className="truncate text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{store.name}</p>
-                        <p className="truncate text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <p className="truncate text-sm font-medium text-token-primary">{store.name}</p>
+                        <p className="truncate text-[11px] text-token-muted">
                           {store.description || `${store.documentCount ?? 0} 个文档`}
                         </p>
                       </div>
@@ -2252,7 +2241,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
                       ) : isSubmitting ? (
                         <MapSpinner size={14} />
                       ) : (
-                        <span className="text-xs opacity-0 transition-opacity group-hover/store:opacity-100" style={{ color: 'var(--text-secondary)' }}>
+                        <span className="text-xs opacity-0 transition-opacity group-hover/store:opacity-100 text-token-secondary">
                           转存 →
                         </span>
                       )}
@@ -2260,7 +2249,7 @@ function TransferToLibraryDialog({ site, onClose }: { site: HostedSite; onClose:
                   );
                 })}
               </div>
-              <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-[11px] text-token-muted">
                 以引用方式保存：知识库里新建一条指向当前公开链接的条目，预览自动 iframe 嵌入站点页面。
               </p>
             </>
@@ -2349,7 +2338,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
       <div
         className="relative overflow-hidden rounded-[18px] border transition-all duration-300 group-hover:-translate-y-0.5 group-hover:shadow-xl group-hover:shadow-black/25"
         style={{
-          background: 'linear-gradient(180deg, rgba(255,255,255,0.055), rgba(255,255,255,0.025))',
+          background: 'linear-gradient(180deg, var(--nested-block-bg), var(--nested-block-bg))',
           borderColor: fileDragOver ? 'var(--accent-primary)' : selected ? 'var(--accent-primary)' : 'var(--border-default)',
         }}
       >
@@ -2362,9 +2351,9 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
               border: '2px dashed var(--accent-primary)',
             }}
           >
-            <Replace size={30} className="text-white" />
-            <span className="text-[15px] font-semibold text-white">替换此网页</span>
-            <span className="px-3 text-center text-[11px] text-white/80">松开以替换「{site.title}」的内容</span>
+            <Replace size={30} className="text-token-primary" />
+            <span className="text-[15px] font-semibold text-token-primary">替换此网页</span>
+            <span className="px-3 text-center text-[11px] text-token-primary">松开以替换「{site.title}」的内容</span>
           </div>
         )}
         <div
@@ -2404,7 +2393,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
             <button
               type="button"
               onClick={(e) => { e.stopPropagation(); onSelect(); }}
-              className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-white/80 opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
+              className="inline-flex h-7 cursor-pointer items-center gap-1 rounded-full bg-black/30 px-2.5 text-[11px] font-medium text-token-primary opacity-0 shadow-md backdrop-blur-md transition-opacity hover:bg-black/48 group-hover:opacity-100"
               title={selected ? '取消选择' : '选择'}
             >
               <input
@@ -2421,7 +2410,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
           {/* 来源标签：手动上传是常态，不展示；仅工作流/API/分享保存等非常态来源才标注 */}
           {site.sourceType !== 'upload' && (
             <div className="absolute right-3 top-3 z-20 flex items-center gap-1.5">
-              <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-white/78 backdrop-blur-md">
+              <span className="inline-flex h-7 items-center rounded-full bg-black/34 px-2.5 text-[10px] font-medium text-token-secondary backdrop-blur-md">
                 {sourceTypeLabels[site.sourceType] ?? site.sourceType}
               </span>
             </div>
@@ -2491,7 +2480,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
             </p>
           </div>
 
-          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="flex flex-wrap items-center gap-x-2.5 gap-y-0.5 text-[11px] text-token-muted">
             <span data-tour-id="webpages-viewcount" className="flex items-center gap-0.5"><Eye size={11} />{site.viewCount}</span>
             <span className="flex items-center gap-0.5"><Clock size={11} />{relativeTime(site.createdAt)}</span>
             <span className="flex items-center gap-0.5"><FileArchive size={11} />{site.files.length} 文件</span>
@@ -2501,7 +2490,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
 
           {/* 团队作用域：左下角显示创建者头像 + 昵称 */}
           {ownerCard && (
-            <div className="flex items-center gap-1.5 text-[11px]" style={{ color: 'var(--text-secondary)' }}>
+            <div className="flex items-center gap-1.5 text-[11px] text-token-secondary">
               <UserAvatar
                 src={resolveAvatarUrl({ avatarFileName: ownerCard.avatarFileName })}
                 className="w-4 h-4 rounded-full"
@@ -2522,7 +2511,7 @@ export function SiteCard({ site, selected, fresh, shared, caps, ownerCard, onSel
                 </span>
               ))}
               {site.tags.length > 3 && (
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[10px] text-token-muted">
                   +{site.tags.length - 3}
                 </span>
               )}
@@ -2553,7 +2542,7 @@ function IconAction({
     <button
       type="button"
       onClick={(e) => { e.stopPropagation(); onClick(); }}
-      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+      className="inline-flex h-7 w-7 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
       title={label}
       aria-label={label}
       style={c ? { color: c } : undefined}
@@ -2587,7 +2576,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
           e.stopPropagation();
           setOpen((v) => !v);
         }}
-        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-white/88 shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
+        className="inline-flex h-7 w-7 shrink-0 cursor-pointer items-center justify-center rounded-full bg-black/38 text-token-primary shadow-md backdrop-blur-md transition-colors hover:bg-black/58"
         title="更多设置"
         aria-label="更多设置"
         data-no-drag
@@ -2607,7 +2596,7 @@ function MoreActionsButton({ actions }: { actions: MoreAction[] }) {
             <button
               key={action.label}
               type="button"
-              className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover:bg-white/10"
+              className="flex h-8 w-full items-center gap-2 rounded-md px-2.5 text-left text-xs font-medium transition-colors hover-bg-soft"
               style={{ color: action.color ?? (action.danger ? '#fecaca' : 'var(--text-secondary)') }}
               onClick={() => {
                 setOpen(false);
@@ -2713,14 +2702,14 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
             </span>
           )}
         </div>
-        <div className="flex items-center gap-3 mt-0.5 text-xs" style={{ color: 'var(--text-muted)' }}>
+        <div className="flex items-center gap-3 mt-0.5 text-xs text-token-muted">
           <span>{site.files.length} 个文件</span>
           <span>{fmtSize(site.totalSize)}</span>
           <span>{site.entryFile}</span>
         </div>
       </div>
 
-      <div className="flex items-center gap-3 text-xs shrink-0" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-3 text-xs shrink-0 text-token-muted">
         {site.folder && <span className="flex items-center gap-1"><FolderOpen size={12} /> {site.folder}</span>}
         <span className="flex items-center gap-1"><Eye size={12} /> {site.viewCount}</span>
         <span>{relativeTime(site.createdAt)}</span>
@@ -2728,7 +2717,7 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
 
       <div className="flex items-center gap-1 shrink-0">
         <button onClick={handleVisit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="打开" aria-label="打开">
-          <ExternalLink size={14} style={{ color: 'var(--text-muted)' }} />
+          <ExternalLink size={14} className="text-token-muted" />
         </button>
         {c.canShare && (
           <button
@@ -2739,12 +2728,12 @@ function SiteListItem({ site, selected, shared, caps, onSelect, onEdit, onDelete
           >
             {shared
               ? <Link2 size={14} style={{ color: '#fcd34d' }} />
-              : <Share2 size={14} style={{ color: 'var(--text-muted)' }} />}
+              : <Share2 size={14} className="text-token-muted" />}
           </button>
         )}
         {c.canEdit && (
           <button onClick={onEdit} className="p-1 rounded hover:bg-[var(--bg-hover)]" title="编辑" aria-label="编辑">
-            <Edit3 size={14} style={{ color: 'var(--text-muted)' }} />
+            <Edit3 size={14} className="text-token-muted" />
           </button>
         )}
         <MoreActionsButton
@@ -2868,16 +2857,16 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
                 onDragLeave={() => setDragOver(false)}
                 onDrop={handleDrop}
               >
-                <UploadCloud size={32} style={{ color: 'var(--text-muted)' }} />
+                <UploadCloud size={32} className="text-token-muted" />
                 {file ? (
                   <div className="text-center">
-                    <p className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>{file.name}</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{fmtSize(file.size)}</p>
+                    <p className="text-sm font-medium text-token-primary">{file.name}</p>
+                    <p className="text-xs text-token-muted">{fmtSize(file.size)}</p>
                   </div>
                 ) : (
                   <div className="text-center">
-                    <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>拖拽文件到此处，或点击选择</p>
-                    <p className="text-xs" style={{ color: 'var(--text-muted)' }}>支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB；ZIP 最多 5000 个文件</p>
+                    <p className="text-sm text-token-secondary">拖拽文件到此处，或点击选择</p>
+                    <p className="text-xs text-token-muted">支持 .html / .zip / .md / .pdf / 视频（.mp4/.webm/.mov），最大 500MB；ZIP 最多 5000 个文件</p>
                   </div>
                 )}
                 <input
@@ -2890,10 +2879,10 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
               </div>
             ) : (
               <div className="flex items-center gap-3 p-3 rounded-lg" style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-default)' }}>
-                <FileCode2 size={20} style={{ color: 'var(--accent-primary)' }} />
+                <FileCode2 size={20} className="text-token-accent" />
                 <div className="flex-1">
-                  <p className="text-sm" style={{ color: 'var(--text-primary)' }}>{item.entryFile}</p>
-                  <p className="text-xs" style={{ color: 'var(--text-muted)' }}>{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
+                  <p className="text-sm text-token-primary">{item.entryFile}</p>
+                  <p className="text-xs text-token-muted">{item.files.length} 个文件, {fmtSize(item.totalSize)}</p>
                 </div>
                 <Button size="xs" variant="secondary" onClick={() => fileInputRef.current?.click()}>
                   <Upload size={12} className="mr-1" /> 重新上传
@@ -2909,7 +2898,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
             )}
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>站点标题</span>
+              <span className="text-xs font-medium text-token-secondary">站点标题</span>
               <input
                 type="text"
                 value={title}
@@ -2921,7 +2910,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
             </label>
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>描述</span>
+              <span className="text-xs font-medium text-token-secondary">描述</span>
               <textarea
                 value={description}
                 onChange={e => setDescription(e.target.value)}
@@ -2933,7 +2922,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
             </label>
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>标签（逗号分隔）</span>
+              <span className="text-xs font-medium text-token-secondary">标签（逗号分隔）</span>
               <input
                 type="text"
                 value={tagInput}
@@ -2945,7 +2934,7 @@ function UploadEditDialog({ item, folders, onClose, onSaved, initialFile }: {
             </label>
 
             <label className="flex flex-col gap-1">
-              <span className="text-xs font-medium" style={{ color: 'var(--text-secondary)' }}>文件夹</span>
+              <span className="text-xs font-medium text-token-secondary">文件夹</span>
               <input
                 type="text"
                 value={folder}
@@ -3229,7 +3218,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 <Lock size={16} style={{ color: 'rgba(59, 130, 246, 0.9)', flexShrink: 0 }} />
                 <div className="flex-1">
                   <div className="text-xs mb-1" style={{ color: 'rgba(59, 130, 246, 0.8)' }}>访问密码</div>
-                  <code className="text-sm font-mono font-bold tracking-wider" style={{ color: 'var(--text-primary)' }}>{result.password}</code>
+                  <code className="text-sm font-mono font-bold tracking-wider text-token-primary">{result.password}</code>
                 </div>
                 <Button size="sm" variant="ghost" onClick={() => {
                   navigator.clipboard.writeText(result!.password!);
@@ -3238,7 +3227,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                 </Button>
               </div>
             )}
-            <p className="text-xs" style={{ color: 'var(--text-muted)' }}>
+            <p className="text-xs text-token-muted">
               {result.password ? '复制按钮会同时复制链接和密码' : '此链接无需密码，任何人可直接访问'}
             </p>
             <div className="flex justify-end">
@@ -3248,11 +3237,11 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
         ) : (
           <div className="flex flex-col gap-3">
             {isCollection && (
-              <p className="text-sm" style={{ color: 'var(--text-muted)' }}>
+              <p className="text-sm text-token-muted">
                 将分享 {siteIds!.length} 个站点的合集
               </p>
             )}
-            <p className="text-sm" style={{ color: 'var(--text-secondary)' }}>
+            <p className="text-sm text-token-secondary">
               选择访问范围即可一键生成链接，标题自动生成。
             </p>
 
@@ -3261,7 +3250,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               {/* 谁能访问 — 防盗核心控件（PR 2026-05-28）：头像/图标 + 短标题分段卡，
                   说明仅展示选中项一行（公开项走橙色风险色） */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>谁能访问</span>
+                <span className="text-xs text-token-muted">谁能访问</span>
                 <div className="flex gap-2">
                   <button type="button" onClick={() => setVisibility('owner-only')} style={segCardStyle(visibility === 'owner-only')}>
                     {myAvatar
@@ -3287,8 +3276,8 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               <div className="flex flex-col gap-1.5">
                 <label className="flex items-center gap-2 cursor-pointer text-sm" title={isShort ? '短链场景密码不可关闭' : ''}>
                   <input type="checkbox" checked={usePassword} onChange={e => handleTogglePassword(e.target.checked)} />
-                  <Lock size={13} style={{ color: 'var(--text-muted)' }} />
-                  <span style={{ color: 'var(--text-secondary)' }}>
+                  <Lock size={13} className="text-token-muted" />
+                  <span className="text-token-secondary">
                     密码保护{isShort && <span style={{ color: '#f97316' }}>（短链必须）</span>}
                   </span>
                 </label>
@@ -3320,7 +3309,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
 
               {/* 有效期 — 胶囊代替下拉 */}
               <div className="flex flex-col gap-1.5">
-                <span className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-xs text-token-muted">
                   <Clock size={12} className="inline mr-1" />有效期
                 </span>
                 <div className="flex gap-2 flex-wrap">
@@ -3351,15 +3340,14 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
               <button
                 type="button"
                 onClick={() => setShowAdvanced(v => !v)}
-                className="text-xs flex items-center gap-1 self-start"
-                style={{ color: 'var(--text-muted)' }}
+                className="text-xs flex items-center gap-1 self-start text-token-muted"
               >
                 <span style={{ display: 'inline-block', transform: showAdvanced ? 'rotate(90deg)' : 'none', transition: 'transform 120ms' }}>›</span>
                 高级选项{!showAdvanced && <span> · 链接形式：{linkType === 'long' ? '长链（推荐）' : '数字短链'}</span>}
               </button>
               {showAdvanced && (
                 <div className="flex flex-col gap-1.5">
-                  <span className="text-xs" style={{ color: 'var(--text-muted)' }}>链接形式</span>
+                  <span className="text-xs text-token-muted">链接形式</span>
                   <div className="flex gap-2">
                     <button type="button" onClick={() => setLinkType('long')} style={segCardStyle(linkType === 'long')}>
                       <Link2 size={20} style={{ color: linkType === 'long' ? '#3b82f6' : 'var(--text-secondary)' }} />
@@ -3420,7 +3408,7 @@ function ShareDialog({ siteId, siteIds, onClose, onCreated }: {
                     </h3>
                   </div>
                   <div className="px-6 pt-4 pb-5">
-                    <ul className="text-sm flex flex-col gap-1.5 mb-4" style={{ color: 'var(--text-secondary)' }}>
+                    <ul className="text-sm flex flex-col gap-1.5 mb-4 text-token-secondary">
                       <li>· 数字短链 /s/123 是全局自增 ID，攻击者可从 1 起逐个尝试</li>
                       <li>· 没有密码的短链意味着任何获得链接（甚至猜对数字）的人都能查看内容</li>
                       <li>· 你即将分享的内容如果包含未公开信息，请改用字母长链或保留密码</li>
@@ -3577,7 +3565,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
             className="flex items-start justify-between gap-3 p-3 mb-3 rounded-lg"
             style={{ background: 'var(--bg-elevated)', border: '1px dashed var(--border-default)' }}
           >
-            <div className="text-xs leading-relaxed min-w-0 flex-1" style={{ color: 'var(--text-secondary)' }}>
+            <div className="text-xs leading-relaxed min-w-0 flex-1 text-token-secondary">
               {scopedSiteId
                 ? '每次创建都生成新链接（不复用旧的）。过期 7 天内仍可续期。'
                 : '查看所有分享链接、续期、撤销，或查看访问日志。'}
@@ -3595,9 +3583,9 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
           </div>
 
           {loading ? (
-            <div className="py-8 text-center text-sm" style={{ color: 'var(--text-muted)' }}>加载中...</div>
+            <div className="py-8 text-center text-sm text-token-muted">加载中...</div>
           ) : visibleShares.length === 0 ? (
-            <div className="py-8 text-center text-sm flex flex-col items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+            <div className="py-8 text-center text-sm flex flex-col items-center gap-3 text-token-muted">
               <div>{scopedSiteId ? '此网页还没有分享链接' : '还没有创建过分享链接'}</div>
               {scopedSiteId && (
                 <Button size="sm" variant="primary" onClick={() => setShowCreate(true)}>
@@ -3623,13 +3611,12 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                   >
                     <div className="flex-1 min-w-0">
                       <div className="flex items-center gap-2 flex-wrap">
-                        <Link2 size={14} style={{ color: 'var(--text-muted)' }} />
+                        <Link2 size={14} className="text-token-muted" />
                         <a
                           href={shareUrlOf(share)}
                           target="_blank"
                           rel="noopener"
-                          className="text-sm font-medium truncate hover:underline"
-                          style={{ color: 'var(--text-primary)' }}
+                          className="text-sm font-medium truncate hover:underline text-token-primary"
                           title="预览分享链接"
                         >
                           {share.title || (share.shareType === 'collection' ? `合集 (${share.siteIds.length} 站)` : '单站点分享')}
@@ -3654,7 +3641,7 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                           </span>
                         )}
                       </div>
-                      <div className="flex items-center gap-3 mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                      <div className="flex items-center gap-3 mt-1 text-xs text-token-muted">
                         <span className="flex items-center gap-1"><Eye size={10} /> {share.viewCount} PV</span>
                         {(share.uniqueIpCount ?? 0) > 0 && (
                           <span title="基于访问日志估算的访客线索">{share.uniqueIpCount} 位访客</span>
@@ -3718,15 +3705,15 @@ function SharesPanel({ shares, setShares, onClose, scopedSiteId, scopedSiteTitle
                       className="ml-6 mt-1 mb-2 p-3 rounded-lg text-xs"
                       style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
                     >
-                      <div className="font-medium mb-2" style={{ color: 'var(--text-secondary)' }}>观看记录</div>
+                      <div className="font-medium mb-2 text-token-secondary">观看记录</div>
                       {logsLoading ? (
-                        <div style={{ color: 'var(--text-muted)' }}>加载中...</div>
+                        <div className="text-token-muted">加载中...</div>
                       ) : viewLogs.length === 0 ? (
-                        <div style={{ color: 'var(--text-muted)' }}>暂无观看记录</div>
+                        <div className="text-token-muted">暂无观看记录</div>
                       ) : (
                         <div className="flex flex-col gap-1.5 max-h-48 overflow-y-auto">
                           {viewLogs.map(log => (
-                            <div key={log.id} className="flex items-center gap-3" style={{ color: 'var(--text-muted)' }}>
+                            <div key={log.id} className="flex items-center gap-3 text-token-muted">
                               <span style={{ color: log.viewerName ? 'var(--text-primary)' : 'var(--text-muted)', minWidth: 70 }}>
                                 {log.viewerName || '匿名访客'}
                               </span>
