@@ -3686,6 +3686,31 @@ export function createServer(deps: ServerDeps): express.Express {
       // eslint-disable-next-line no-console
       console.warn('[check-run] startup reconciliation failed:', err.message);
     });
+    // 运行期周期收敛（2026-07-23 用户反馈「check run 一直正在部署，点进去才知道失败」）：
+    // DeploymentRun 被心跳收割器收敛为 failed、部署被取代、finalize PATCH 丢失等路径
+    // 都不经过部署路由末尾的 finalize()，GitHub 上的 check run 会永远黄灯转圈。
+    // 每 5 分钟按 run/分支真实终态补收尾（与 deployment-run 周期收割同节奏——
+    // 收割器先把心跳过期的 run 收敛为 failed，本轮或下一轮这里就把红灯写回 GitHub）。
+    {
+      let staleSweepBusy = false;
+      const staleSweep = setInterval(() => {
+        if (staleSweepBusy) return;
+        staleSweepBusy = true;
+        runner.reconcileStale()
+          .then((n) => {
+            if (n > 0) {
+              // eslint-disable-next-line no-console
+              console.warn(`[check-run] 周期收敛：${n} 个滞留 in_progress 的 check run 已按真实终态补收尾`);
+            }
+          })
+          .catch((err: Error) => {
+            // eslint-disable-next-line no-console
+            console.warn('[check-run] 周期收敛失败:', err.message);
+          })
+          .finally(() => { staleSweepBusy = false; });
+      }, 5 * 60 * 1000);
+      staleSweep.unref?.();
+    }
   }
 
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。

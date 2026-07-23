@@ -296,6 +296,114 @@ export class CheckRunRunner {
   }
 
   /**
+   * 周期收敛「CDS 内部已终结、GitHub 上还挂着 in_progress」的 check run。
+   *
+   * 病根（2026-07-23 用户反馈）：部署实际已失败——DeploymentRun 被心跳收割器
+   * （reconcileInterrupted）收敛为 failed、或部署被更高优先级操作取代——但这些
+   * 路径都不经过部署路由末尾的 finalize()，GitHub PR Checks 面板上的
+   * "CDS Deploy" 于是永远黄灯转圈（"构建第 2/3 层…Started 8m ago"），既不报错
+   * 也不成功；用户点进 CDS 才发现早失败了。此前唯一的兜底 reconcileOrphans
+   * 只在 CDS 重启时跑一次，运行期的 stranded check run 无人收尾。
+   *
+   * 本方法按分支上残留的 githubCheckRunId + 关联 DeploymentRun 的**真实终态**
+   * 补收尾：
+   *   - run failed    → conclusion=failure（带结构化失败根因，finalize 自动嵌入）
+   *   - run cancelled → conclusion=cancelled（被取代/取消）
+   *   - run running   → conclusion=success（部署其实成功了，只是当时 finalize
+   *                     的 PATCH 丢失——网络抖动或进程被打断）
+   *   - run 仍在途（心跳新鲜） → 不触碰，属于合法长构建
+   *   - 无关联 run    → 分支已处于终结态才收尾（error→failure / running→success /
+   *                     其余→neutral）；分支仍 building/starting 时不触碰，交给
+   *                     deploy-stuck-reconciler 先把分支收敛，下一轮再补收尾
+   *
+   * 竞态防护：run 终结后需超过 terminalGraceMs（默认 3 分钟）才动手——部署路由
+   * 自己的 finalize 就发生在 run 终结后的几秒内，宽限期保证不与在途收尾抢跑；
+   * 动手前重读分支，githubCheckRunId 或 lastDeploymentRunId 已被新一轮部署替换
+   * 则跳过（新部署的 ensureOpen 会创建新 check run，旧 id 已不归本轮管）。
+   *
+   * 返回本轮补收尾的数量，供调用方打日志。
+   */
+  async reconcileStale(options: {
+    now?: Date;
+    /** run 终结后的宽限期，避免与部署路由自己的 finalize 抢跑。默认 3 分钟。 */
+    terminalGraceMs?: number;
+  } = {}): Promise<number> {
+    if (!this.enabled) return 0;
+    const now = options.now ?? new Date();
+    const terminalGraceMs = options.terminalGraceMs ?? 3 * 60_000;
+    const TERMINAL_RUN_STATUSES = new Set(['running', 'failed', 'cancelled']);
+    const NON_TERMINAL_BRANCH_STATES = new Set(['starting', 'building', 'stopping', 'restarting']);
+    let finalized = 0;
+
+    for (const entry of this.deps.stateService.getAllBranches()) {
+      const id = entry.githubCheckRunId;
+      if (!id || !entry.githubRepoFullName || !entry.githubInstallationId) continue;
+      const run = this.currentDeploymentRun(entry);
+
+      let conclusion: 'success' | 'failure' | 'neutral' | 'cancelled';
+      let summary: string;
+      if (run) {
+        // 有关联 run：一切以 run 的真实终态为准（分支 status 可能自己也卡死了）。
+        if (!TERMINAL_RUN_STATUSES.has(run.status)) continue; // 合法在途，不触碰
+        const finishedMs = Date.parse(run.finishedAt || run.updatedAt || '');
+        if (!Number.isFinite(finishedMs) || now.getTime() - finishedMs < terminalGraceMs) continue;
+        if (run.status === 'failed') {
+          conclusion = 'failure';
+          summary = `部署已失败：${run.failure?.summary || run.events[run.events.length - 1]?.message || '原因见 DeploymentRun 事件'}（check run 由后台看门狗补收尾）`;
+        } else if (run.status === 'cancelled') {
+          conclusion = 'cancelled';
+          summary = '部署被取消或被更高优先级操作取代（check run 由后台看门狗补收尾）';
+        } else {
+          conclusion = 'success';
+          summary = '部署已成功完成（当时的 check run 回写丢失，由后台看门狗补收尾）';
+        }
+      } else {
+        // 无关联 run（旧式部署 / run 记录缺失）：只在分支已终结时保守收尾；
+        // 仍在 building/starting 的交给 deploy-stuck-reconciler 先收敛分支状态。
+        if (NON_TERMINAL_BRANCH_STATES.has(entry.status)) continue;
+        const startMs = Date.parse(entry.lastDeployStartedAt || '');
+        if (Number.isFinite(startMs) && now.getTime() - startMs < terminalGraceMs) continue;
+        if (entry.status === 'error') {
+          conclusion = 'failure';
+          summary = `部署已失败：${entry.errorMessage || '原因见 CDS 分支日志'}（check run 由后台看门狗补收尾）`;
+        } else if (entry.status === 'running') {
+          conclusion = 'success';
+          summary = '部署已成功完成（当时的 check run 回写丢失，由后台看门狗补收尾）';
+        } else {
+          conclusion = 'neutral';
+          summary = `分支当前为 ${entry.status}，部署流程早已结束但 check run 未收尾，已标记为 neutral`;
+        }
+      }
+
+      // 竞态防护：重读分支，check-run id / run id 已被新一轮部署替换则跳过。
+      const latest = this.deps.stateService.getBranch(entry.id);
+      if (!latest || latest.githubCheckRunId !== id) continue;
+      if (run && latest.lastDeploymentRunId !== run.id) continue;
+
+      try {
+        await this.finalize(latest, {
+          conclusion,
+          summary,
+          previewUrl: conclusion === 'success' ? this.derivePreviewUrl(latest) : undefined,
+        });
+        finalized += 1;
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[check-run] reconcileStale: branch=${entry.id} checkRun=${id} → ${conclusion}` +
+          (run ? ` (run=${run.id} status=${run.status})` : ` (branch.status=${entry.status})`),
+        );
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn(
+          `[check-run] reconcileStale finalize failed for branch=${entry.id}:`,
+          (err as Error).message,
+        );
+      }
+    }
+    return finalized;
+  }
+
+  /**
    * Reconcile orphan check-runs on CDS startup.
    *
    * Background: when CDS restarts mid-deploy (self-update / self-force-

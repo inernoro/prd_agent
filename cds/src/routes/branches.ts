@@ -11870,6 +11870,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
 
+    // 2026-07-23: 本轮部署打开的 check-run id（try 外声明，供 superseded catch
+    // 分支收尾用）。被取代的部署此前直接 return，check run 永远停在 in_progress。
+    let openedCheckRunId: number | undefined;
+
     // 构建排队可视化（2026-07-09）：把 build-gate 的排队状态挂到 entry.buildQueue，
     // 分支卡显示「排队中 · 前面还有 N 个」并把排队时间从耗时对比中剔除。
     // 声明在 try 外，finally 兜底 dispose（部署 throw 也不许留下「排队中」残影）。
@@ -11940,6 +11944,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
       await checkRunRunner.ensureOpen(entry);
+      // ensureOpen 把新 check-run id 落进 state；重读拿到本轮的 id（entry 与
+      // state 内是同一对象引用，这里重读只为不依赖该实现细节）。
+      openedCheckRunId = stateService.getBranch(id)?.githubCheckRunId;
 
       // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
       // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
@@ -13042,6 +13049,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
         opLog.finishedAt = new Date().toISOString();
         stateService.appendLog(id, opLog);
         stateService.save();
+        // 2026-07-23: 被取代的部署此前直接 return，本轮打开的 check run 永远停在
+        // in_progress（GitHub 上黄灯转圈、既不报错也不成功）。若 check-run id 仍是
+        // 本轮的（未被取代方新部署的 ensureOpen 替换），就地收尾为 cancelled；
+        // 已被替换则归新部署管，不触碰。best-effort，失败只记事件不冒泡。
+        try {
+          const latestEntry = stateService.getBranch(id);
+          if (openedCheckRunId && latestEntry?.githubCheckRunId === openedCheckRunId) {
+            await checkRunRunner.finalize(latestEntry, {
+              conclusion: 'cancelled',
+              summary: `部署被更高优先级操作取代: ${errMsg}`,
+            });
+          }
+        } catch (finalizeErr) {
+          const m = (finalizeErr as Error)?.message || String(finalizeErr);
+          logEvent({
+            step: 'check-run-finalize',
+            status: 'warning',
+            title: `被取代部署的 check run 收尾失败: ${m.slice(0, 120)}`,
+            log: m,
+            timestamp: new Date().toISOString(),
+          });
+        }
         sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
         return;
       }
