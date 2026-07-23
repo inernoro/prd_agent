@@ -49,7 +49,17 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     if (access) { res.status(access.status).json(access.body); return; }
     const host = typeof req.body?.host === 'string' ? req.body.host.trim().toLowerCase() : '';
     if (!host || !/^[a-z0-9.-]+$/.test(host)) { res.status(400).json({ error: '缺少合法的入口 host' }); return; }
-    const path = typeof req.body?.path === 'string' && req.body.path.startsWith('/') ? req.body.path : '/';
+    // 探测 path 必须命中「被复制集化的这个服务」的路由（验收 P1-1：写死 '/'
+    // 会打在前端容器上，永远显示 100% 主版本）。未显式传 path 时按 profile
+    // 的 pathPrefixes / api-convention 自动推导。
+    let path = typeof req.body?.path === 'string' && req.body.path.startsWith('/') ? req.body.path : '';
+    if (!path) {
+      const branchEntry = deps.stateService.getBranch(req.params.branchId)!;
+      const profile = deps.stateService.getEffectiveProfilesForBranch(branchEntry)
+        .find((p) => p.id === req.params.profileId);
+      path = profile?.pathPrefixes?.[0]
+        || (req.params.profileId.includes('api') || req.params.profileId.includes('backend') ? '/api/' : '/');
+    }
     const count = Math.max(1, Math.min(50, Number(req.body?.count) || 20));
     const forwarderPort = Number(process.env.CDS_FORWARDER_PORT) || 9090;
     const hits: Array<{ seq: number; servedBy: string; status: number }> = [];

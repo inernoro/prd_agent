@@ -14,6 +14,7 @@ import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplit
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
 import { Layers, Lock, Plus } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -3428,7 +3429,9 @@ function ResourceConsole({
       .filter((group) => group.items.length > 0);
   }, [resources]);
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
-  const [plusMenuFor, setPlusMenuFor] = useState<string | null>(null);
+  // 菜单锚点带屏幕坐标：菜单经 createPortal 挂 body（验收 P1-2：渲染在
+  // overflow-x-auto 芯片行内会被裁剪到肉眼不可见，frontend-modal 规则第 2 条）
+  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; left: number; top: number } | null>(null);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -3577,7 +3580,12 @@ function ResourceConsole({
                         type="button"
                         className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-indigo-500/50 bg-indigo-500/15 text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
                         title="加副本（当前版本再起实例，自动均分流量）"
-                        onClick={(e) => { e.stopPropagation(); setPlusMenuFor(plusMenuFor === resource.id ? null : resource.id); }}
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (plusMenuFor?.id === resource.id) { setPlusMenuFor(null); return; }
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setPlusMenuFor({ id: resource.id, left: Math.max(8, rect.right - 160), top: rect.bottom + 6 });
+                        }}
                       >
                         <Plus className="h-3 w-3" />
                       </button>
@@ -3593,8 +3601,11 @@ function ResourceConsole({
                         {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
                       </button>
                     ) : null}
-                    {plusMenuFor === resource.id ? (
-                      <div className="absolute right-0 top-10 z-50 w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg">
+                    {plusMenuFor?.id === resource.id ? createPortal(
+                      <div
+                        className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
+                        style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
+                      >
                         <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[11px] text-muted-foreground">加几个副本？</div>
                         {[1, 2, 3].map((n) => (
                           <button
@@ -3607,7 +3618,8 @@ function ResourceConsole({
                             <span className="text-[10px] text-muted-foreground">确认</span>
                           </button>
                         ))}
-                      </div>
+                      </div>,
+                      document.body,
                     ) : null}
                   </span>
                 );

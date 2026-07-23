@@ -140,7 +140,9 @@ export function ReplicaSetPanel({
     try {
       const res = await apiRequest<{ tally: Record<string, number>; count: number }>(
         `/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`,
-        { method: 'POST', body: { host, path: '/', count: 20 } },
+        // path 由后端按该服务的 pathPrefixes / api-convention 推导（验收 P1-1：
+        // 前端写死 '/' 会打在未复制集化的前端容器上，永远 100% 主版本）
+        { method: 'POST', body: { host, count: 20 } },
       );
       setProbeResults((prev) => ({ ...prev, [profileId]: { tally: res.tally, count: res.count } }));
     } catch (err) {
