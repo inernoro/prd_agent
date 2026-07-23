@@ -31,6 +31,7 @@ import {
   Tags,
   Trash2,
   X,
+  Layers,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -5494,6 +5495,22 @@ const BranchCard = memo(function BranchCard({
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
+        {/* 复制集标识（design.cds.replica-set）：分支卡一眼可见"这条分支有多版本并排"的特殊性 */}
+        {(() => {
+          const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: unknown[] }> }).replicaSets;
+          const replicaCount = Object.values(replicaSets ?? {})
+            .reduce((sum, rs) => sum + (rs?.enabled && (rs.members?.length ?? 0) > 0 ? (rs.members?.length ?? 0) : 0), 0);
+          if (replicaCount === 0) return null;
+          return (
+            <span
+              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.35)]"
+              title={`复制集模式：${replicaCount} 个副本/版本与主容器并排运行（配置仅存于本分支，删分支即消失）`}
+            >
+              <Layers className="h-3.5 w-3.5" />
+              复制集 x{replicaCount + 1}
+            </span>
+          );
+        })()}
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
             在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
             让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。

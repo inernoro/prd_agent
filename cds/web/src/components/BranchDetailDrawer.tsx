@@ -13,7 +13,7 @@ import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
-import { Layers } from 'lucide-react';
+import { Layers, Plus } from 'lucide-react';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -1596,6 +1596,34 @@ export function BranchDetailDrawer({
     }
     return set;
   }, [branch?.replicaSets]);
+  // 芯片级复制集信息：成员数 + 是否有启动中的成员（光环动画依据）
+  const replicaChipInfo = useMemo(() => {
+    const map: Record<string, { members: number; provisioning: boolean }> = {};
+    for (const [profileId, replicaSet] of Object.entries(branch?.replicaSets ?? {})) {
+      if (!replicaSet?.enabled) continue;
+      map[profileId] = {
+        members: replicaSet.members?.length ?? 0,
+        provisioning: (replicaSet.members ?? []).some((m) => m.status === 'provisioning'),
+      };
+    }
+    return map;
+  }, [branch?.replicaSets]);
+  // Railway 式「+ N 副本」：当前版本同版本实例，权重自动均分（design.cds.replica-set MVP-3）
+  const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
+    if (!branchId) return;
+    try {
+      for (let i = 0; i < count; i += 1) {
+        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/members`, {
+          method: 'POST',
+          body: {},
+        });
+      }
+      onToast?.(`${profileId} 正在启动 ${count} 个副本，就绪后自动均分流量`);
+      void load();
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, load, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2317,6 +2345,8 @@ export function BranchDetailDrawer({
                   <ResourceConsole
                     resources={resources}
                     replicaProfileIds={replicaProfileIds}
+                    replicaChipInfo={replicaChipInfo}
+                    onQuickReplica={quickAddReplicas}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
                     serviceLogs={serviceLogs}
@@ -3311,6 +3341,8 @@ function resourceInitialDetailTab(
 function ResourceConsole({
   resources,
   replicaProfileIds,
+  replicaChipInfo,
+  onQuickReplica,
   selectedResource,
   initialDetailTab,
   serviceLogs,
@@ -3327,6 +3359,10 @@ function ResourceConsole({
   resources: BranchResource[];
   /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
   replicaProfileIds?: Set<string>;
+  /** 芯片级复制集信息：成员数 + 是否有启动中成员（光环动画） */
+  replicaChipInfo?: Record<string, { members: number; provisioning: boolean }>;
+  /** Railway 式芯片「+」：一键加 N 个当前版本副本 */
+  onQuickReplica?: (profileId: string, count: number) => Promise<void> | void;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
   serviceLogs: ServiceLogsState;
@@ -3347,6 +3383,7 @@ function ResourceConsole({
       .filter((group) => group.items.length > 0);
   }, [resources]);
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
+  const [plusMenuFor, setPlusMenuFor] = useState<string | null>(null);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -3450,33 +3487,69 @@ function ResourceConsole({
               </span>
               {group.items.map((resource) => {
                 const active = selectedResource?.id === resource.id;
-                // 复制集特殊标识：卡片带靛蓝描边 + 堆叠图标（同一服务多版本并排在跑）
-                const isReplicaSet = resource.source === 'app'
-                  && !!replicaProfileIds?.has((resource.raw as ServiceState | undefined)?.profileId ?? '');
+                const profileId = resource.source === 'app' ? ((resource.raw as ServiceState | undefined)?.profileId ?? '') : '';
+                const chipInfo = profileId ? replicaChipInfo?.[profileId] : undefined;
+                // 复制集特殊标识：卡片带靛蓝描边 + 堆叠图标；有启动中成员时光环脉冲
+                const isReplicaSet = !!profileId && !!replicaProfileIds?.has(profileId);
+                const canQuickReplica = resource.source === 'app' && resource.kind === 'app' && !!onQuickReplica;
                 return (
-                  <button
-                    key={resource.id}
-                    type="button"
-                    className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
-                      active
-                        ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
-                        : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                    } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
-                      isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
-                    }`}
-                    onClick={() => onSelect(resource)}
-                    title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? '\n复制集模式：多版本并排运行中' : ''}`}
-                  >
-                    <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="flex items-center gap-1 truncate text-xs font-semibold">
-                        <span className="truncate">{resource.runtime}</span>
-                        {isReplicaSet ? <Layers className="h-3 w-3 shrink-0 text-indigo-500" /> : null}
+                  <span key={resource.id} className="relative inline-flex shrink-0">
+                    <button
+                      type="button"
+                      className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
+                        active
+                          ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
+                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
+                      } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
+                        isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
+                      } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
+                        canQuickReplica ? 'pr-7' : ''
+                      }`}
+                      onClick={() => onSelect(resource)}
+                      title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? `\n复制集：${(chipInfo?.members ?? 0) + 1} 个实例并排运行` : ''}`}
+                    >
+                      <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1 truncate text-xs font-semibold">
+                          <span className="truncate">{resource.runtime}</span>
+                          {isReplicaSet ? (
+                            <span className="inline-flex items-center gap-0.5 text-indigo-500">
+                              <Layers className="h-3 w-3 shrink-0" />
+                              <span className="text-[10px] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
                       </span>
-                      <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
-                    </span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
-                  </button>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
+                    </button>
+                    {canQuickReplica ? (
+                      <button
+                        type="button"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-indigo-500/50 bg-indigo-500/15 text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
+                        title="加副本（当前版本再起实例，自动均分流量）"
+                        onClick={(e) => { e.stopPropagation(); setPlusMenuFor(plusMenuFor === resource.id ? null : resource.id); }}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    {plusMenuFor === resource.id ? (
+                      <div className="absolute right-0 top-10 z-50 w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg">
+                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[11px] text-muted-foreground">加几个副本？</div>
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className="flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-indigo-500/10"
+                            onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
+                          >
+                            <span>{n} 个副本</span>
+                            <span className="text-[10px] text-muted-foreground">确认</span>
+                          </button>
+                        ))}
+                      </div>
+                    ) : null}
+                  </span>
                 );
               })}
             </div>
