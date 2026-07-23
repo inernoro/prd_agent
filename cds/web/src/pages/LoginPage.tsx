@@ -17,12 +17,19 @@
  */
 import { useEffect, useMemo, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
-import { ArrowRight, Eye, EyeOff, Github, Loader2, Moon, Sun } from 'lucide-react';
+import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
 import { ShinyText } from '@/components/effects/ShinyText';
 import { CdsGem } from '@/components/brand/CdsGem';
 import { Button } from '@/components/ui/button';
-import { apiUrl, fetchAuthPublicStatus, fetchBootstrapStatus, bootstrapFirstUser, fetchSessionAuthed } from '@/lib/api';
+import {
+  apiUrl,
+  exchangeTicketSso,
+  fetchAuthPublicStatus,
+  fetchBootstrapStatus,
+  bootstrapFirstUser,
+  fetchSessionAuthed,
+} from '@/lib/api';
 import { useTheme } from '@/lib/theme';
 
 /* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
@@ -59,6 +66,10 @@ function AuthForm(): JSX.Element {
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
+  const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
+    enabled: false,
+    label: '使用 SSO 登录',
+  });
   const [bootstrapName, setBootstrapName] = useState('');
   const target = useMemo(() => redirectTarget(), []);
   const githubLoginHref = useMemo(() => apiUrl(`/api/auth/github/login?redirect=${encodeURIComponent(target)}`), [target]);
@@ -66,8 +77,19 @@ function AuthForm(): JSX.Element {
   useEffect(() => {
     let alive = true;
     fetchAuthPublicStatus()
-      .then((s) => { if (alive) setGithubLoginEnabled(s.loginMethods.github); })
-      .catch(() => { if (alive) setGithubLoginEnabled(false); });
+      .then((s) => {
+        if (!alive) return;
+        setGithubLoginEnabled(s.loginMethods.github);
+        setSsoLogin({
+          enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
+          label: s.sso?.label || '使用 SSO 登录',
+        });
+      })
+      .catch(() => {
+        if (!alive) return;
+        setGithubLoginEnabled(false);
+        setSsoLogin({ enabled: false, label: '使用 SSO 登录' });
+      });
     fetchBootstrapStatus()
       .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
       .catch(() => { /* endpoint absent in non-github modes — ignore */ });
@@ -215,17 +237,29 @@ function AuthForm(): JSX.Element {
         {busy ? null : <ArrowRight className="h-4 w-4" />}
       </Button>
 
-      {needsBootstrap || !githubLoginEnabled ? null : (
+      {needsBootstrap || (!ssoLogin.enabled && !githubLoginEnabled) ? null : (
         <>
           <div className="cds-auth-divider" aria-hidden>
             <span>或</span>
           </div>
-          <Button asChild type="button" variant="outline" className="cds-auth-github">
-            <a href={githubLoginHref}>
-              <Github className="h-4 w-4" />
-              使用 GitHub 登录
-            </a>
-          </Button>
+          <div className="grid gap-2">
+            {ssoLogin.enabled ? (
+              <Button asChild type="button" variant="outline" className="cds-auth-github">
+                <a href={apiUrl(`/api/auth/sso/start?redirect=${encodeURIComponent(target)}`)}>
+                  <KeyRound className="h-4 w-4" />
+                  {ssoLogin.label}
+                </a>
+              </Button>
+            ) : null}
+            {githubLoginEnabled ? (
+              <Button asChild type="button" variant="outline" className="cds-auth-github">
+                <a href={githubLoginHref}>
+                  <Github className="h-4 w-4" />
+                  使用 GitHub 登录
+                </a>
+              </Button>
+            ) : null}
+          </div>
         </>
       )}
 
@@ -439,6 +473,59 @@ export function LoginPage(): JSX.Element {
         </p>
         <span className="cds-auth-footer-tag">每个分支，都是一套在线环境</span>
       </footer>
+    </main>
+  );
+}
+
+function readSsoCallback(): { code: string; state: string } | null {
+  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
+  const code = params.get('code') || '';
+  const state = params.get('state') || '';
+  window.history.replaceState(null, '', window.location.pathname);
+  if (!/^[A-Za-z0-9_-]{32,256}$/.test(code) || !/^[A-Za-z0-9_-]{32,256}$/.test(state)) return null;
+  return { code, state };
+}
+
+export function TicketSsoPage(): JSX.Element {
+  const navigate = useNavigate();
+  const [callback] = useState(readSsoCallback);
+  const [error, setError] = useState('');
+
+  useEffect(() => {
+    let alive = true;
+    if (!callback) {
+      setError('SSO 登录链接无效或已过期，请返回登录页重新发起。');
+      return () => { alive = false; };
+    }
+    void exchangeTicketSso(callback)
+      .then((result) => {
+        if (!alive) return;
+        navigate(result.redirect || '/project-list', { replace: true, viewTransition: true });
+      })
+      .catch(() => {
+        if (alive) setError('SSO 授权未完成，一次性链接可能已使用或已过期。');
+      });
+    return () => { alive = false; };
+  }, [callback, navigate]);
+
+  return (
+    <main className="cds-auth-page cds-grain">
+      <section className="mx-auto flex min-h-screen max-w-lg items-center px-6">
+        <div className="cds-auth-card w-full text-center" role={error ? 'alert' : 'status'} aria-live="polite">
+          <div className="cds-auth-mark justify-center" aria-hidden>
+            {error ? <ShieldCheck className="h-8 w-8" /> : <Loader2 className="h-8 w-8 animate-spin" />}
+          </div>
+          <h1 className="cds-auth-title">{error ? '需要重新发起登录' : '正在安全登录 CDS'}</h1>
+          <p className="cds-auth-sub">
+            {error || '正在核验一次性授权并建立会话，完成后将进入主分支项目列表。'}
+          </p>
+          {error ? (
+            <Button asChild className="mt-5">
+              <Link to="/login" replace>返回登录页</Link>
+            </Button>
+          ) : null}
+        </div>
+      </section>
     </main>
   );
 }

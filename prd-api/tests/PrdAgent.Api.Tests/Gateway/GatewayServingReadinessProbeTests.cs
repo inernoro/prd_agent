@@ -17,6 +17,7 @@ public sealed class GatewayServingReadinessProbeTests
             AnswerMaxChars = 456,
             ErrorMaxChars = 789,
             MiduoSsoAppSecret = "must-not-copy",
+            ConsoleSsoClientSecret = "must-not-copy-either",
             PasswordLoginDisabled = true,
         };
 
@@ -27,6 +28,7 @@ public sealed class GatewayServingReadinessProbeTests
         Assert.Equal(456, copied.AnswerMaxChars);
         Assert.Equal(789, copied.ErrorMaxChars);
         Assert.Null(copied.MiduoSsoAppSecret);
+        Assert.Null(copied.ConsoleSsoClientSecret);
         Assert.Null(copied.PasswordLoginDisabled);
     }
 

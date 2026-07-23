@@ -22,6 +22,7 @@ import { GH_SESSION_COOKIE } from '../routes/auth.js';
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
   '/login',
+  '/auth/sso',
   // Compatibility URL: installSpaFallback redirects it to the React login
   // route while preserving ?redirect=...
   '/login-gh.html',
@@ -32,6 +33,10 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/api/auth/login',
   '/api/auth/bootstrap',
   '/api/auth/bootstrap-status',
+  '/api/auth/sso/public-config',
+  '/api/auth/sso/start',
+  '/api/auth/sso/exchange',
+  '/api/auth/sso/logout',
   '/api/cds-system/connections/authorize',
   '/api/cds-system/connections/token',
   '/api/cds-system/connections/accept',
@@ -92,6 +97,36 @@ export function createGithubAuthMiddleware(deps: {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
     if (isPublicPath(req.path)) {
+      next();
+      return;
+    }
+
+    const ssoIdentity = (req as Request & {
+      cdsSsoIdentity?: {
+        subject: string;
+        username: string;
+        displayName: string;
+        email?: string | null;
+      };
+    }).cdsSsoIdentity;
+    if (ssoIdentity) {
+      (req as any).cdsUser = {
+        id: `sso:${ssoIdentity.subject}`,
+        githubId: -1,
+        githubLogin: ssoIdentity.username,
+        authProvider: 'sso',
+        username: ssoIdentity.username,
+        email: ssoIdentity.email ?? null,
+        name: ssoIdentity.displayName,
+        avatarUrl: null,
+        orgs: [],
+        orgsCheckedAt: new Date().toISOString(),
+        isSystemOwner: true,
+        status: 'active',
+        lastLoginAt: new Date().toISOString(),
+        createdAt: new Date().toISOString(),
+        updatedAt: new Date().toISOString(),
+      };
       next();
       return;
     }

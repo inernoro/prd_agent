@@ -25,6 +25,18 @@
 # 白名单保留通用键等于把父实例门禁密码留给未合并代码，Codex P1）。
 # auth mode 无需配置：子实例启动时自动归一化——有 CDS_PREVIEW_PASSWORD 即
 # basic，没有即 disabled；继承的 CDS_AUTH_MODE（如父实例的 github）不生效。
+#
+# 可选的一键登录同样使用子实例专用前缀，避免父级 SSO 密钥进入未合并代码：
+#   CDS_PREVIEW_SSO_ENABLED=1
+#   CDS_PREVIEW_SSO_PROVIDER_ID=<稳定标识>
+#   CDS_PREVIEW_SSO_LABEL=<登录按钮名称>
+#   CDS_PREVIEW_SSO_AUTHORIZATION_URL=<主身份入口授权地址>
+#   CDS_PREVIEW_SSO_TOKEN_URL=<主身份入口换票地址>
+#   CDS_PREVIEW_SSO_CLIENT_ID=<客户端标识>
+#   CDS_PREVIEW_SSO_CLIENT_SECRET=<子实例专用客户端密钥>
+#   CDS_PREVIEW_SSO_DEFAULT_REDIRECT=/project-list
+# 启动清洗会把这些值重映射为通用 CDS_SSO_*；CDS 代码只实现票据协议，
+# 不判断身份入口是哪一个产品。密码登录与 SSO 可同时保留。
 
 x-cds-project:
   name: cds-self

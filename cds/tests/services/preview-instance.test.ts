@@ -58,13 +58,19 @@ describe('scrubParentSecretsFromEnv', () => {
       // 子实例专用凭据 → 清洗后重映射
       CDS_PREVIEW_USERNAME: 'child-admin',
       CDS_PREVIEW_PASSWORD: 'child-gate',
+      CDS_PREVIEW_SSO_ENABLED: '1',
+      CDS_PREVIEW_SSO_AUTHORIZATION_URL: 'https://map.example/api/console-sso/authorize',
+      CDS_PREVIEW_SSO_TOKEN_URL: 'https://map.example/api/console-sso/token',
+      CDS_PREVIEW_SSO_CLIENT_ID: 'cds-console',
+      CDS_PREVIEW_SSO_CLIENT_SECRET: 'sso-child-secret',
       CDS_HOST: 'keep',
       ASSETS_PROVIDER: 'keep',
     };
     const scrubbed = scrubParentSecretsFromEnv(env);
     expect(scrubbed.sort()).toEqual([
       'AI_ACCESS_KEY', 'CDS_JWT_SECRET', 'CDS_MONGO_URI', 'CDS_PASSWORD',
-      'CDS_PREVIEW_PASSWORD', 'CDS_REDIS_HOST',
+      'CDS_PREVIEW_PASSWORD', 'CDS_PREVIEW_SSO_AUTHORIZATION_URL',
+      'CDS_PREVIEW_SSO_CLIENT_SECRET', 'CDS_PREVIEW_SSO_TOKEN_URL', 'CDS_REDIS_HOST',
       'ConnectionStrings__Default', 'DATABASE_URL', 'GITHUB_TOKEN', 'JWT_SECRET',
       'LLMGW_ADMIN_PASSWORD', 'TENCENT_COS_SECRET_KEY',
     ]);
@@ -73,6 +79,11 @@ describe('scrubParentSecretsFromEnv', () => {
     expect(env.CDS_PASSWORD).toBe('child-gate');
     expect(env.CDS_USERNAME).toBe('child-admin');
     expect(env.CDS_AUTH_MODE).toBe('basic');
+    expect(env.CDS_SSO_ENABLED).toBe('1');
+    expect(env.CDS_SSO_AUTHORIZATION_URL).toBe('https://map.example/api/console-sso/authorize');
+    expect(env.CDS_SSO_TOKEN_URL).toBe('https://map.example/api/console-sso/token');
+    expect(env.CDS_SSO_CLIENT_ID).toBe('cds-console');
+    expect(env.CDS_SSO_CLIENT_SECRET).toBe('sso-child-secret');
     expect(env.CDS_HOST).toBe('keep');
     expect(env.ASSETS_PROVIDER).toBe('keep');
     expect(env.JWT_SECRET).toBeUndefined();

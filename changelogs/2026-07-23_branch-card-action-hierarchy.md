@@ -3,3 +3,5 @@
 | polish | cds | 使用 Shiny Text 重构 AI 操作分支卡片的标题与状态动效 |
 | fix | cds | CDS 专属分支自动优先匹配 CDS Self 预览项目，避免误开业务项目 |
 | polish | cds | 重构侧栏用户菜单与右下角更新、授权提醒层级 |
+| feat | cds | 新增可配置的一次性票据 SSO，和密码登录并存，登录后默认进入主分支项目列表 |
+| feat | prd-api | 新增数据库单次消费的通用控制台 SSO 提供方接口，供 CDS 等外部控制台安全换票 |
