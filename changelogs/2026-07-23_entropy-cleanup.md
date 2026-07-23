@@ -1,0 +1,1 @@
+| chore | doc | 每日熵减计划：D1-D5 全部干净（0 改动，D4 的 pnpm 命中为正文散文提及非技能表行，确认为误报未删），D6 核对 5 条 changelog（快捷知识库录音与转录聚焦/视觉创作接入网关图片模型/CDS 发布弹窗性能修复/前一日熵清理自身/录音上传去重），均无匹配的 design 文档章节需要覆盖（相关内容已由 debt.knowledge-base.md 录音功能台账、debt.cds.performance.md 性能台账与既有网关架构文档覆盖），manifest 累计 472 条 |
