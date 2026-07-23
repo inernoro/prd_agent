@@ -529,16 +529,16 @@ export function PaAssistantChat({ sessionId, onTaskSaved, onSessionUpdated }: Pa
 
             <div className="flex items-center gap-2 text-[10.5px]" style={{ color: 'var(--text-muted)', opacity: 0.6 }}>
               <kbd
-                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-token-nested border border-token-subtle"
+
               >
                 Enter
               </kbd>
               <span>发送</span>
               <span className="opacity-40">·</span>
               <kbd
-                className="px-1.5 py-0.5 rounded font-mono text-[10px]"
-                style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.08)' }}
+                className="px-1.5 py-0.5 rounded font-mono text-[10px] bg-token-nested border border-token-subtle"
+
               >
                 Shift+Enter
               </kbd>

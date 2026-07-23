@@ -134,7 +134,7 @@ export function GoalsDashboard({ goals, cycles = [], onOpen }: Props) {
         <div className="text-[11.5px] font-medium inline-flex items-center gap-1.5" style={{ color: '#EF4444' }}><AlertTriangle size={12} />需关注（低信心 / 风险 / 进度落后）（{stat.watch.length}）</div>
         {stat.watch.length === 0 ? <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无预警目标，进展良好。</div> : stat.watch.map((g) => (
           <button key={g.id} onClick={() => onOpen?.(g)} disabled={!onOpen}
-            className="flex items-center gap-2 text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5">
+            className="flex items-center gap-2 text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover-bg-soft">
             <span className="text-[12px] truncate flex-1" style={{ color: 'var(--text-secondary)' }}>{g.title}</span>
             {g.confidence === 'low' && <span className="text-[10px]" style={{ color: CONF_META.low.color }}>信心低</span>}
             <span className="text-[10px] px-1.5 rounded" style={{ background: `${GOAL_STATUS_REGISTRY[g.status].color}22`, color: GOAL_STATUS_REGISTRY[g.status].color }}>{GOAL_STATUS_REGISTRY[g.status].label}</span>

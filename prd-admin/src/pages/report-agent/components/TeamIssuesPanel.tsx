@@ -190,7 +190,7 @@ function SegmentedFilter({
               className="whitespace-nowrap px-2.5 py-1 rounded-md text-[11px] font-medium transition-all duration-200"
               style={{
                 color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-                background: active ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)') : 'transparent',
+                background: active ? (isLight ? 'var(--bg-card)' : 'var(--nested-block-bg)') : 'transparent',
                 boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
               }}
               onClick={() => onChange(opt.key)}

@@ -174,7 +174,7 @@ export function InteractiveTranscriptDialog({
             {onRestyle && (
               <button
                 onClick={() => { onClose(); onRestyle(); }}
-                className="flex min-h-11 items-center gap-1.5 rounded-[10px] px-3 text-[12px] text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+                className="flex min-h-11 items-center gap-1.5 rounded-[10px] px-3 text-[12px] text-token-secondary transition-colors motion-reduce:transition-none hover-bg-soft"
                 title="使用系统中的其他整理方式重新生成"
               >
                 <RefreshCw size={14} />
@@ -184,7 +184,7 @@ export function InteractiveTranscriptDialog({
             <button
               ref={closeRef}
               onClick={onClose}
-              className="flex h-11 w-11 items-center justify-center rounded-[10px] text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+              className="flex h-11 w-11 items-center justify-center rounded-[10px] text-token-secondary transition-colors motion-reduce:transition-none hover-bg-soft"
               title="关闭交互式播放"
               aria-label="关闭交互式播放"
             >

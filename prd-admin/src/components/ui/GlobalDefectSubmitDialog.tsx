@@ -528,7 +528,7 @@ export function GlobalDefectSubmitDialog() {
           </div>
           <button
             onClick={closeDialog}
-            className="p-2 rounded-lg text-token-muted hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg text-token-muted hover-bg-soft transition-colors"
           >
             <X size={18} />
           </button>
@@ -672,15 +672,12 @@ export function GlobalDefectSubmitDialog() {
                     >
                       {item.file.type.startsWith('image/') ? (
                         <div
-                          className="w-16 h-16 rounded-lg overflow-hidden relative cursor-pointer"
-                          style={{
-                            background: 'rgba(255,255,255,0.06)',
-                            border: item.status === 'done'
+                          className="w-16 h-16 rounded-lg overflow-hidden relative cursor-pointer bg-token-nested"
+                          style={{ border: item.status === 'done'
                               ? '1px solid rgba(100, 255, 150, 0.3)'
                               : item.status === 'error'
                                 ? '1px solid rgba(255, 120, 120, 0.3)'
-                                : '1px solid rgba(255,255,255,0.1)',
-                          }}
+                                : '1px solid var(--border-subtle)' }}
                           onClick={() => setPreviewIndex(previewIndex === index ? null : index)}
                         >
                           <img
@@ -790,7 +787,7 @@ export function GlobalDefectSubmitDialog() {
                 <button
                   type="button"
                   onClick={() => logPreview && logPreview.totalCount > 0 && setLogPreviewExpanded(!logPreviewExpanded)}
-                  className="w-full px-3 py-2 flex items-center gap-2 hover:bg-white/5 transition-colors"
+                  className="w-full px-3 py-2 flex items-center gap-2 hover-bg-soft transition-colors"
                   style={{ cursor: logPreview && logPreview.totalCount > 0 ? 'pointer' : 'default' }}
                 >
                   {logPreviewLoading ? (
@@ -836,9 +833,9 @@ export function GlobalDefectSubmitDialog() {
                     {logPreview.items.map((item, index) => (
                       <div
                         key={index}
-                        className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-mono hover:bg-white/5"
+                        className="px-3 py-1.5 flex items-center gap-2 text-[10px] font-mono hover-bg-soft"
                         style={{
-                          borderBottom: index < logPreview.items.length - 1 ? '1px solid rgba(255,255,255,0.04)' : undefined,
+                          borderBottom: index < logPreview.items.length - 1 ? '1px solid var(--border-subtle)' : undefined,
                         }}
                       >
                         {item.hasError && (
@@ -981,7 +978,7 @@ export function DefectSubmitButton({ collapsed }: { collapsed: boolean }) {
     <button
       type="button"
       onClick={() => openDialog()}
-      className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0"
+      className="h-6 w-6 inline-flex items-center justify-center rounded-md transition-colors duration-200 hover-bg-soft shrink-0"
       style={{ color: 'var(--text-muted)' }}
       aria-label="提交缺陷"
       title={collapsed ? '提交缺陷 (Cmd/Ctrl+B)' : '提交缺陷'}

@@ -49,19 +49,19 @@ export function ImportPasswordModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-sm rounded-xl border border-white/10 bg-[#0f1014] flex flex-col"
+        className="w-full max-w-sm rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col"
       >
-        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-white/10">
-          <div className="text-sm font-medium text-white/90 inline-flex items-center gap-1.5">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-token-subtle">
+          <div className="text-sm font-medium text-token-primary inline-flex items-center gap-1.5">
             <Lock className="w-4 h-4 text-emerald-400" />
             {title}
           </div>
-          <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white/80">
+          <button onClick={onClose} className="p-1 rounded text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="px-5 py-4 space-y-2">
-          <div className="text-xs text-white/55">导入知识库需要口令，请输入后继续。</div>
+          <div className="text-xs text-token-secondary">导入知识库需要口令，请输入后继续。</div>
           <input
             ref={inputRef}
             type="password"
@@ -74,12 +74,12 @@ export function ImportPasswordModal({
               if (e.key === 'Enter') submit();
             }}
             placeholder="请输入导入口令"
-            className="w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+            className="w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
           />
           {error && <div className="text-xs text-rose-400">{error}</div>}
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-white/10">
-          <button onClick={onClose} className="px-3.5 py-1.5 rounded-lg text-sm text-white/70 hover:bg-white/5">
+        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-token-subtle">
+          <button onClick={onClose} className="px-3.5 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">
             取消
           </button>
           <button

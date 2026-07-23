@@ -384,17 +384,17 @@ function CreateTab() {
                       <div className="w-4.5 h-4.5 rounded-full flex items-center justify-center text-[9px] font-bold"
                         style={{
                           width: 18, height: 18,
-                          background: done ? '#22C55E' : current ? '#8B5CF6' : 'rgba(255,255,255,0.06)',
-                          color: done || current ? 'white' : 'rgba(255,255,255,0.25)',
+                          background: done ? '#22C55E' : current ? '#8B5CF6' : 'var(--nested-block-bg)',
+                          color: done || current ? 'white' : 'var(--text-muted)',
                         }}>
                         {done ? <Check size={9} strokeWidth={3} /> : i + 1}
                       </div>
                       <span className="text-[11px] font-medium hidden sm:inline" style={{
-                        color: current ? '#C4B5FD' : done ? 'var(--text-secondary)' : 'rgba(255,255,255,0.2)',
+                        color: current ? '#C4B5FD' : done ? 'var(--text-secondary)' : 'var(--text-muted)',
                       }}>{s.label}</span>
                     </div>
                     {i < stages.length - 1 && (
-                      <div className="w-3 h-px mx-0.5" style={{ background: done ? 'rgba(34,197,94,0.3)' : 'rgba(255,255,255,0.06)' }} />
+                      <div className="w-3 h-px mx-0.5" style={{ background: done ? 'rgba(34,197,94,0.3)' : 'var(--nested-block-bg)' }} />
                     )}
                   </div>
                 );
@@ -422,7 +422,7 @@ function CreateTab() {
                     ? { background: 'rgba(59,130,246,0.12)', color: 'var(--text-primary)', border: '1px solid rgba(59,130,246,0.15)', borderBottomRightRadius: 6 }
                     : msg.role === 'system'
                       ? { background: 'rgba(34,197,94,0.08)', color: 'rgba(34,197,94,0.9)', border: '1px solid rgba(34,197,94,0.12)' }
-                      : { background: 'rgba(255,255,255,0.03)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.06)', borderBottomLeftRadius: 6 }
+                      : { background: 'var(--nested-block-bg)', color: 'var(--text-primary)', border: '1px solid var(--border-subtle)', borderBottomLeftRadius: 6 }
                   }>
                   {msg.role === 'assistant' ? (
                     <StreamingText
@@ -466,9 +466,9 @@ function CreateTab() {
               <button onClick={handleSend} disabled={!input.trim() || isStreaming}
                 className="flex items-center justify-center w-10 h-10 rounded-xl transition-all"
                 style={{
-                  background: input.trim() && !isStreaming ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'rgba(255,255,255,0.04)',
-                  color: input.trim() && !isStreaming ? 'white' : 'rgba(255,255,255,0.2)',
-                  border: '1px solid ' + (input.trim() && !isStreaming ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.06)'),
+                  background: input.trim() && !isStreaming ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'var(--nested-block-bg)',
+                  color: input.trim() && !isStreaming ? 'white' : 'var(--text-muted)',
+                  border: '1px solid ' + (input.trim() && !isStreaming ? 'rgba(139,92,246,0.3)' : 'var(--border-subtle)'),
                 }}>
                 <Send size={16} />
               </button>
@@ -595,11 +595,11 @@ function CreateTab() {
                 </button>
                 <div className="flex gap-2">
                   <button onClick={handleExportMd} disabled={exporting}
-                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover:bg-white/5">
+                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover-bg-soft">
                     <FileText size={13} /> 导出 .md
                   </button>
                   <button onClick={handleExportZip} disabled={exporting}
-                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover:bg-white/5">
+                    className="surface-action flex flex-1 items-center justify-center gap-1.5 rounded-xl px-3 py-2 text-[12px] font-medium text-token-secondary transition-colors hover-bg-soft">
                     <Archive size={13} /> 导出 .zip
                   </button>
                 </div>
@@ -887,7 +887,7 @@ function MySkillsTab({ onSwitchToCreate }: { onSwitchToCreate: () => void }) {
                   <div className="shrink-0 flex items-center gap-0.5 opacity-0 group-hover:opacity-100 transition-all">
                     <button onClick={(e) => { e.stopPropagation(); handleDownloadMd(skill); }}
                       disabled={isDownloading}
-                      className="rounded-lg p-1.5 text-token-secondary transition-colors hover:bg-white/5"
+                      className="rounded-lg p-1.5 text-token-secondary transition-colors hover-bg-soft"
                       title="下载 SKILL.md">
                       {isDownloading ? <MapSpinner size={13} /> : <Download size={13} />}
                     </button>
@@ -1032,7 +1032,7 @@ function ImportSkillDialog({
           </div>
           <button
             onClick={onClose}
-            className="rounded-lg p-1 text-token-muted transition-colors hover:bg-white/5"
+            className="rounded-lg p-1 text-token-muted transition-colors hover-bg-soft"
             aria-label="关闭"
           >
             <ChevronLeft size={16} className="rotate-90" />
@@ -1045,7 +1045,7 @@ function ImportSkillDialog({
           <div
             className="rounded-xl border-2 border-dashed px-4 py-6 text-center transition-colors"
             style={{
-              borderColor: dragOver ? '#8B5CF6' : 'var(--border-subtle, rgba(255,255,255,0.1))',
+              borderColor: dragOver ? '#8B5CF6' : 'var(--border-subtle)',
               background: dragOver ? 'rgba(139,92,246,0.06)' : 'transparent',
             }}
             onDragOver={(e) => { e.preventDefault(); setDragOver(true); }}
@@ -1221,7 +1221,7 @@ function DraftsSection({
                 </div>
                 <div className="mt-2.5 flex items-center gap-2 border-t border-token-subtle pt-2.5">
                   <button onClick={() => onResume(d.sessionId)}
-                    className="surface-action-accent flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors hover:bg-white/5">
+                    className="surface-action-accent flex items-center gap-1 rounded-lg px-2.5 py-1 text-[11px] font-medium transition-colors hover-bg-soft">
                     <Play size={11} /> 继续
                   </button>
                   <div className="flex-1" />
@@ -1398,7 +1398,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
       {/* Breadcrumb */}
       <div className="shrink-0 flex items-center gap-2 mb-2">
         <button onClick={onBack}
-          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-token-muted transition-colors hover:bg-white/5">
+          className="flex items-center gap-1 rounded-lg px-2 py-1 text-[12px] font-medium text-token-muted transition-colors hover-bg-soft">
           <ChevronLeft size={14} /> 返回列表
         </button>
         <span className="text-lg">{skill.icon || '⚡'}</span>
@@ -1423,13 +1423,13 @@ function SkillDetailView({ skill, onBack, onDelete }: {
         )}
         {/* 复制 MD / 下载 zip：与 PlazaSkillDetailView breadcrumb 同构，操作破坏性由低到高 */}
         <button onClick={handleCopySkillMd} disabled={mdCopyState === 'ok'}
-          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover-bg-soft"
           style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
           {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
           {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
         </button>
         <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
-          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover-bg-soft"
           style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
           {zipState === 'loading' ? <MapSpinner size={12} />
             : zipState === 'ok' ? <CheckCircle2 size={12} />
@@ -1437,7 +1437,7 @@ function SkillDetailView({ skill, onBack, onDelete }: {
           {zipState === 'loading' ? '下载中…' : zipState === 'ok' ? '已下载' : zipState === 'err' ? '下载失败' : '下载 .zip'}
         </button>
         <button onClick={handleTogglePublish} disabled={publishing}
-          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover-bg-soft"
           style={{ color: isPublic ? '#F59E0B' : '#8B5CF6' }}>
           {publishing ? <MapSpinner size={12} /> : isPublic ? <EyeOff size={12} /> : <Share2 size={12} />}
           {isPublic ? '取消发布' : '发布到广场'}
@@ -1465,8 +1465,8 @@ function SkillDetailView({ skill, onBack, onDelete }: {
             <button onClick={handleSave} disabled={saving || !dirty}
               className="flex items-center gap-1 px-2.5 py-1 rounded-lg text-[11px] font-medium transition-all"
               style={{
-                background: dirty ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'rgba(255,255,255,0.04)',
-                color: dirty ? 'white' : 'rgba(255,255,255,0.3)',
+                background: dirty ? 'linear-gradient(135deg,#8B5CF6,#6366F1)' : 'var(--nested-block-bg)',
+                color: dirty ? 'white' : 'var(--text-muted)',
               }}>
               <Save size={11} /> {saving ? '保存中…' : '保存'}
             </button>
@@ -1529,11 +1529,11 @@ function SkillDetailView({ skill, onBack, onDelete }: {
               {testResult && !testStreaming && (
                 <div className="flex items-center gap-1">
                   <button onClick={handleCopyText}
-                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-white/5 ${copied === 'text' ? 'text-token-success' : 'text-token-muted'}`}>
+                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover-bg-soft ${copied === 'text' ? 'text-token-success' : 'text-token-muted'}`}>
                     {copied === 'text' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制文本
                   </button>
                   <button onClick={handleCopyMd}
-                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover:bg-white/5 ${copied === 'md' ? 'text-token-success' : 'text-token-muted'}`}>
+                    className={`flex items-center gap-1 rounded-md px-2 py-0.5 text-[10px] font-medium transition-colors hover-bg-soft ${copied === 'md' ? 'text-token-success' : 'text-token-muted'}`}>
                     {copied === 'md' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制 Markdown
                   </button>
                 </div>
@@ -1770,27 +1770,26 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
       {/* Breadcrumb */}
       <div className="shrink-0 flex items-center gap-2 mb-2">
         <button onClick={onBack}
-          className="flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-lg transition-colors hover:bg-white/5"
-          style={{ color: 'var(--text-muted)' }}>
+          className="flex items-center gap-1 text-[12px] font-medium px-2 py-1 rounded-lg transition-colors hover-bg-soft text-token-muted">
           <ChevronLeft size={14} /> 返回广场
         </button>
         <span className="text-lg">{skill.icon || '⚡'}</span>
-        <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{skill.title}</span>
+        <span className="text-[13px] font-semibold text-token-primary">{skill.title}</span>
         <span className="text-[11px] px-1.5 py-0.5 rounded-md" style={{ background: 'rgba(139,92,246,0.1)', color: '#8B5CF6' }}>{skill.category}</span>
         <div className="flex-1" />
-        <span className="flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+        <span className="flex items-center gap-1 text-[11px] text-token-muted">
           {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-4 h-4 rounded-full" /> : <User size={11} />}
           {skill.authorName || '匿名'}
         </span>
         {/* 复制 MD / 下载 zip：与 MySkillDetailView breadcrumb 按钮风格一致（小图标 + 短文案） */}
         <button onClick={handleCopyMd} disabled={mdCopyState === 'ok'}
-          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover-bg-soft"
           style={{ color: mdCopyState === 'ok' ? '#22C55E' : mdCopyState === 'err' ? '#EF4444' : '#8B5CF6' }}>
           {mdCopyState === 'ok' ? <ClipboardCheck size={12} /> : <Copy size={12} />}
           {mdCopyState === 'ok' ? '已复制' : mdCopyState === 'err' ? '复制失败' : '复制 MD'}
         </button>
         <button onClick={handleDownloadZip} disabled={zipState === 'loading'}
-          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover:bg-white/5"
+          className="flex items-center gap-1 text-[11px] px-2.5 py-1 rounded-lg transition-colors hover-bg-soft"
           style={{ color: zipState === 'ok' ? '#22C55E' : zipState === 'err' ? '#EF4444' : 'var(--text-secondary)' }}>
           {zipState === 'loading' ? <MapSpinner size={12} />
             : zipState === 'ok' ? <CheckCircle2 size={12} />
@@ -1803,24 +1802,24 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
       <div className="flex-1 min-h-0 flex gap-3">
         {/* Left: skill info */}
         <GlassCard className="flex flex-col" padding="none" style={{ overflow: 'hidden', flex: '6 6 0%', minWidth: 0 }}>
-          <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <div className="px-4 py-2.5 flex items-center gap-2 border-b border-b-token-subtle" >
             <FileText size={13} style={{ color: '#8B5CF6' }} />
-            <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>技能详情</span>
+            <span className="text-[12px] font-semibold text-token-primary">技能详情</span>
           </div>
           <div className="flex-1 overflow-y-auto px-5 py-4 space-y-4">
             <div>
-              <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>描述</div>
-              <div className="text-[13px] leading-relaxed" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[11px] font-semibold mb-1 text-token-muted">描述</div>
+              <div className="text-[13px] leading-relaxed text-token-primary">
                 {skill.description || '暂无描述'}
               </div>
             </div>
             {skill.tags.length > 0 && (
               <div>
-                <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>标签</div>
+                <div className="text-[11px] font-semibold mb-1 text-token-muted">标签</div>
                 <div className="flex items-center gap-1.5 flex-wrap">
                   {skill.tags.map((tag) => (
-                    <span key={tag} className="text-[11px] px-2 py-0.5 rounded-md"
-                      style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-secondary)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                    <span key={tag} className="text-[11px] px-2 py-0.5 rounded-md bg-token-nested border border-token-subtle"
+                      style={{ color: 'var(--text-secondary)' }}>
                       {tag}
                     </span>
                   ))}
@@ -1828,16 +1827,16 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
               </div>
             )}
             <div>
-              <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>作者</div>
+              <div className="text-[11px] font-semibold mb-1 text-token-muted">作者</div>
               <div className="flex items-center gap-2">
                 {skill.authorAvatar ? <img src={resolveAvatarUrl({ avatarFileName: skill.authorAvatar })} alt="" className="w-6 h-6 rounded-full" /> : <User size={16} />}
-                <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.authorName || '匿名'}</span>
+                <span className="text-[13px] text-token-primary">{skill.authorName || '匿名'}</span>
               </div>
             </div>
             {skill.usageCount > 0 && (
               <div>
-                <div className="text-[11px] font-semibold mb-1" style={{ color: 'var(--text-muted)' }}>使用次数</div>
-                <div className="text-[13px]" style={{ color: 'var(--text-primary)' }}>{skill.usageCount} 次</div>
+                <div className="text-[11px] font-semibold mb-1 text-token-muted">使用次数</div>
+                <div className="text-[13px] text-token-primary">{skill.usageCount} 次</div>
               </div>
             )}
           </div>
@@ -1845,10 +1844,10 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
 
         {/* Right: test panel */}
         <div className="flex flex-col gap-3" style={{ flex: '4 4 0%', minWidth: 0 }}>
-          <GlassCard className="flex flex-col shrink-0" padding="none" style={{ overflow: 'hidden' }}>
-            <div className="px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+          <GlassCard className="flex flex-col shrink-0 overflow-hidden" padding="none">
+            <div className="px-4 py-2.5 flex items-center gap-2 border-b border-b-token-subtle" >
               <Play size={13} style={{ color: '#8B5CF6' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>试用</span>
+              <span className="text-[12px] font-semibold text-token-primary">试用</span>
             </div>
             <div className="p-3">
               <textarea
@@ -1856,8 +1855,8 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
                 onChange={(e) => setTestInput(e.target.value)}
                 placeholder="输入要处理的内容…"
                 rows={4}
-                className="w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.08)' }}
+                className="w-full resize-none rounded-xl px-3 py-2.5 text-[13px] outline-none bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
               />
               <button onClick={handleTest} disabled={testStreaming}
                 className="mt-2 w-full flex items-center justify-center gap-1.5 px-4 py-2 rounded-xl text-[13px] font-medium transition-all"
@@ -1872,13 +1871,13 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
           </GlassCard>
 
           <GlassCard className="flex-1 flex flex-col" padding="none" style={{ overflow: 'hidden', minHeight: 0 }}>
-            <div className="shrink-0 px-4 py-2.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+            <div className="shrink-0 px-4 py-2.5 flex items-center gap-2 border-b border-b-token-subtle" >
               <Bot size={13} style={{ color: '#22C55E' }} />
-              <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>输出结果</span>
+              <span className="text-[12px] font-semibold text-token-primary">输出结果</span>
               <div className="flex-1" />
               {testResult && !testStreaming && (
                 <button onClick={handleCopyText}
-                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover:bg-white/5"
+                  className="flex items-center gap-1 px-2 py-0.5 rounded-md text-[10px] font-medium transition-colors hover-bg-soft"
                   style={{ color: copied === 'text' ? '#22C55E' : 'var(--text-muted)' }}>
                   {copied === 'text' ? <ClipboardCheck size={11} /> : <Copy size={11} />} 复制
                 </button>
@@ -1898,8 +1897,8 @@ function PlazaSkillDetailView({ skill, onBack }: { skill: PlazaSkillItem; onBack
                 </div>
               ) : (
                 <div className="flex flex-col items-center justify-center h-full gap-2">
-                  <Bot size={24} style={{ color: 'rgba(255,255,255,0.08)' }} />
-                  <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                  <Bot size={24} style={{ color: 'var(--text-muted)' }} />
+                  <span className="text-[12px] text-token-muted">
                     输入内容后点击运行
                   </span>
                 </div>

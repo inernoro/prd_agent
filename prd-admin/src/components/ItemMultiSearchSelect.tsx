@@ -62,11 +62,10 @@ export function ItemMultiSearchSelect({
     <div ref={panelRef} className="rounded-[8px] flex flex-col overflow-hidden" style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, ...itemComboboxPanelStyle }}>
       {(panelHeaderRight || (!q && priorityIds.length > 0 && filtered.length > 0)) && (
         <div
-          className="flex items-center justify-between gap-2 px-2 py-1.5 shrink-0"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}
+          className="flex items-center justify-between gap-2 px-2 py-1.5 shrink-0 border-b border-token-subtle"
         >
           {!q && priorityIds.length > 0 && filtered.length > 0 ? (
-            <span className="text-[10px] text-white/35 pl-1">最近使用</span>
+            <span className="text-[10px] text-token-muted pl-1">最近使用</span>
           ) : (
             <span />
           )}

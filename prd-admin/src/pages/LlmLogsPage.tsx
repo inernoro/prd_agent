@@ -30,7 +30,7 @@ import SystemLogsTab from '@/pages/system-logs/SystemLogsTab';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
-    background: 'rgba(0,0,0,0.28)',
+    background: 'var(--nested-block-bg)',
     border: '1px solid var(--border-subtle)',
     borderRadius: 14,
     padding: 12,
@@ -1357,7 +1357,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             onValueChange={setQModel}
             options={[
               { value: '', label: '模型' },
-              ...metaModels.map((m) => ({ value: m, label: m, icon: <Database size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> })),
+              ...metaModels.map((m) => ({ value: m, label: m, icon: <Database size={14} className="text-token-muted opacity-70" /> })),
             ]}
             placeholder="模型"
             leftIcon={<Database size={16} />}
@@ -1387,7 +1387,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
               ...metaAppCallerCodes.map((rp) => {
                 const modelType = rp.value.split('::')[1] || 'unknown';
                 const IconComp = getModelTypeIcon(modelType);
-                return { value: rp.value, label: rp.displayName, icon: <IconComp size={14} style={{ color: 'var(--text-muted)', opacity: 0.7 }} /> };
+                return { value: rp.value, label: rp.displayName, icon: <IconComp size={14} className="text-token-muted opacity-70" /> };
               }),
             ]}
             placeholder="应用"
@@ -1403,7 +1403,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             uiSize="sm"
           />
           <div className="relative">
-            <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Users size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
             <input
               value={qGroupId}
               onChange={(e) => setQGroupId(e.target.value)}
@@ -1413,7 +1413,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             />
           </div>
           <div className="relative">
-            <Clock size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Clock size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
             <input
               value={qSessionId}
               onChange={(e) => setQSessionId(e.target.value)}
@@ -1423,7 +1423,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             />
           </div>
           <div className="relative">
-            <Hash size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Hash size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
             <input
               value={qRequestId}
               onChange={(e) => setQRequestId(e.target.value)}
@@ -1437,11 +1437,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
       <GlassCard animated glow className="p-0 overflow-hidden flex flex-col flex-1 min-h-0">
         <div className="flex-1 min-h-0 overflow-auto">
-          <div className="divide-y divide-white/10">
+          <div className="divide-y divide-token-subtle">
           {loading ? (
             <MapSectionLoader />
           ) : items.length === 0 ? (
-            <div className="py-12 text-center" style={{ color: 'var(--text-muted)' }}>暂无日志</div>
+            <div className="py-12 text-center text-token-muted">暂无日志</div>
           ) : (
             items.map((it) => {
               const active = selectedId === it.id;
@@ -1467,7 +1467,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       loadDetail(it.id);
                     }
                   }}
-                  className="px-4 py-3 cursor-pointer hover:bg-white/2"
+                  className="px-4 py-3 cursor-pointer hover-bg-soft"
                   style={{
                     background: active ? 'var(--nested-block-bg)' : 'transparent',
                   }}
@@ -1478,14 +1478,13 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       <div className="flex items-center gap-2 min-w-0 flex-wrap">
                         {statusBadge(it.status)}
                         {/* 功能描述（中文标题）- 直接使用后端返回的 displayName */}
-                        <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                        <div className="text-sm font-semibold truncate text-token-primary">
                           {it.appCallerCodeDisplayName || it.appCallerCode || '未知'}
                         </div>
                         {/* appCallerCode 标签，悬浮显示全文 */}
                         {it.appCallerCode && (
                           <span
-                            className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help"
-                            style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
+                            className="inline-flex items-center gap-1 text-[10px] font-mono px-1.5 py-0.5 rounded shrink-0 cursor-help bg-token-input-hover text-token-muted"
                             title={it.appCallerCode}
                           >
                             <AppCallerCodeIcon size={10} className="opacity-60" />
@@ -1493,7 +1492,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           </span>
                         )}
                       </div>
-                      <div className="mt-1 text-xs truncate flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-1 text-xs truncate flex items-center gap-1.5 text-token-muted">
                         <Hash size={12} />
                         <span>
                           requestId: {it.requestId}
@@ -1652,8 +1651,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                               {platformName && <PlatformLabel name={platformName} />}
                               {modelId && (
                                 <span
-                                  className="text-[11px] font-semibold truncate"
-                                  style={{ color: 'var(--text-secondary)' }}
+                                  className="text-[11px] font-semibold truncate text-token-secondary"
                                   title={modelId}
                                 >
                                   {modelId}
@@ -1729,23 +1727,23 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                   }}
                                   onClick={(e) => e.stopPropagation()}
                                 >
-                                  <div className="text-xs font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                  <div className="text-xs font-semibold text-token-primary">
                                     允许尺寸（白名单）
                                   </div>
-                                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                  <div className="mt-1 text-[11px] text-token-muted">
                                     {allowedSizesLoadingId === it.id ? '加载中…' : sizes.length ? `${sizes.length} 个` : '暂无（可能是旧日志或尚未学习）'}
                                   </div>
                                   {sizes.length ? (
                                     <div
-                                      className="mt-2 rounded-[10px] p-2"
-                                      style={{ border: '1px solid var(--border-default)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', maxHeight: 220, overflow: 'auto' }}
+                                      className="mt-2 rounded-[10px] p-2 bg-token-nested"
+                                      style={{ border: '1px solid var(--border-default)', maxHeight: 220, overflow: 'auto' }}
                                     >
                                       <div className="flex flex-wrap gap-1.5">
                                         {sizes.map((s, idx) => (
                                           <span
                                             key={`${s}-${idx}`}
                                             className="inline-flex items-center rounded-[10px] px-2 py-1 text-[11px] font-semibold"
-                                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)', background: 'rgba(0,0,0,0.18)' }}
+                                            style={{ border: '1px solid var(--border-default)', color: 'var(--text-secondary)', background: 'var(--nested-block-bg)' }}
                                             title={s}
                                           >
                                             {s}
@@ -1766,25 +1764,24 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       {/* 用户头像 + 用户名 */}
                       {it.userId && (
                         <div className="flex items-center justify-end gap-1.5 mb-1">
-                          <span className="text-[11px] truncate max-w-[100px]" style={{ color: 'var(--text-secondary)' }} title={it.displayName && it.username ? `${it.displayName} ${it.username}` : it.username || it.userId}>
+                          <span className="text-[11px] truncate max-w-[100px] text-token-secondary" title={it.displayName && it.username ? `${it.displayName} ${it.username}` : it.username || it.userId}>
                             {it.displayName && it.username ? `${it.displayName} ${it.username}` : it.username || it.userId}
                           </span>
                           <UserAvatar
                             src={resolveAvatarUrl({ avatarFileName: it.avatarFileName, username: it.username })}
                             alt={it.username || it.userId}
-                            className="w-5 h-5 rounded-full object-cover shrink-0"
-                            style={{ border: '1px solid var(--border-subtle)' }}
+                            className="w-5 h-5 rounded-full object-cover shrink-0 border border-token-subtle"
                           />
                         </div>
                       )}
-                      <div className="text-xs" style={{ color: 'var(--text-secondary)' }}>
+                      <div className="text-xs text-token-secondary">
                         {it.durationMs ? `${it.durationMs}ms` : '-'}
                       </div>
-                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-1 text-[11px] text-token-muted">
                         {formatLocalTime(it.startedAt)}
                         {ttfb !== null ? ` · TTFB ${ttfb}ms` : ''}
                       </div>
-                      <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <div className="mt-1 text-[11px] text-token-muted">
                         in {it.inputTokens ?? '-'} / out {it.outputTokens ?? '-'}
                       </div>
                       {(it.cacheReadInputTokens || it.cacheCreationInputTokens) ? (
@@ -1806,7 +1803,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       }}
                     >
                       <XCircle size={14} className="shrink-0 mt-[1px]" />
-                      <div className="min-w-0 break-words" style={{ wordBreak: 'break-word' }}>
+                      <div className="min-w-0 break-words break-words">
                         {it.error}
                       </div>
                     </div>
@@ -1816,11 +1813,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
             })
           )}
         </div>
-        <div className="p-3 flex items-center justify-between" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+        <div className="p-3 flex items-center justify-between border-t border-token-subtle">
           <Button variant="secondary" size="sm" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={loading || page <= 1}>
             上一页
           </Button>
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>{page}/{totalPages}</div>
+          <div className="text-xs text-token-muted">{page}/{totalPages}</div>
           <Button variant="secondary" size="sm" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={loading || page >= totalPages}>
             下一页
           </Button>
@@ -1849,17 +1846,17 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         contentStyle={{ height: '82vh' }}
         content={
           detailLoading ? (
-            <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>加载详情...</div>
+            <div className="py-10 text-center text-token-muted">加载详情...</div>
           ) : !detail ? (
-            <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
+            <div className="py-10 text-center text-token-muted">暂无详情</div>
           ) : (
             <div className="h-full min-h-0 grid gap-3 grid-cols-1 md:grid-cols-2 overflow-auto md:overflow-hidden">
-              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
+              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0 border border-token-subtle bg-token-nested">
                 <div className="flex items-center justify-between gap-2 flex-wrap">
-                  <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>Request（密钥已隐藏）</div>
+                  <div className="text-sm font-semibold text-token-primary">Request（密钥已隐藏）</div>
                   <div className="flex items-center gap-2 flex-wrap">
                     {copiedHint ? (
-                      <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{copiedHint}</div>
+                      <div className="text-[11px] text-token-muted">{copiedHint}</div>
                     ) : null}
                     <Button
                       variant="secondary"
@@ -1932,16 +1929,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     return (
                       <div
                         key={row.k}
-                        className="rounded-[12px] px-2.5 py-1.5 min-w-0"
-                        style={{
-                          border: '1px solid var(--border-subtle)',
-                          background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                          minWidth: 0,
-                          ...(ss?.container ?? {}),
-                        }}
+                        className="rounded-[12px] px-2.5 py-1.5 min-w-0 bg-token-nested"
+                        style={{ border: '1px solid var(--border-subtle)', minWidth: 0, ...(ss?.container ?? {}) }}
                       >
                       <div className="flex items-center gap-2">
-                        <div className="text-[11px] font-medium shrink-0" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[11px] font-medium shrink-0 text-token-muted">
                           {row.k}
                         </div>
                         <NewsMarquee
@@ -2002,11 +1994,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                   if (chips.length === 0) return null;
                   return (
                     <div className="mt-2 flex flex-wrap items-center gap-1.5">
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>保真参数</span>
+                      <span className="text-[11px] text-token-muted">保真参数</span>
                       {chips.map((c, i) => (
                         <span key={i} className="inline-flex items-center rounded-full px-2 h-5 text-[10px] font-semibold" style={{ color: c.color, background: c.bg }}>{c.label}</span>
                       ))}
-                      {detail.resolutionReason ? <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>· {detail.resolutionReason}</span> : null}
+                      {detail.resolutionReason ? <span className="text-[10px] text-token-muted">· {detail.resolutionReason}</span> : null}
                     </div>
                   );
                 })()}
@@ -2032,7 +2024,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       const stored = raw.length;
                       const hint = isTruncated ? `（已截断：stored ${stored}${orig != null ? ` / original ${orig}` : ''} chars）` : `（${stored} chars）`;
                       return (
-                        <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-xs mb-2 flex items-center justify-between gap-2 text-token-muted">
                           <span>body</span>
                           <span className={isTruncated ? 'text-[11px] font-semibold' : 'text-[11px]'} style={{ color: isTruncated ? 'rgba(255, 160, 160, 0.95)' : 'var(--text-muted)' }}>
                             {hint}
@@ -2066,7 +2058,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       const headerChars = JSON.stringify(headersObj).length;
                       return (
                         <>
-                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-xs mb-2 flex items-center justify-between gap-2 text-token-muted">
                             <span>headers</span>
                             <span className="text-[11px]">
                               {headerKeys} 项 · {headerChars} chars
@@ -2078,11 +2070,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     })()}
                   </div>
 
-                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 text-[11px] text-token-muted">
                       endpointChars: {(joinBaseAndPath(detail.apiBase ?? '', detail.path ?? '') || '').length || '—'}
                     </div>
                 </div>
-                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-2 text-[11px] text-token-muted">
                   {(() => {
                     const sysChars =
                       typeof detail.systemPromptChars === 'number'
@@ -2114,11 +2106,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </div>
               </div>
 
-              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.04)' }}>
+              <div className="rounded-[16px] p-3 overflow-hidden flex flex-col min-h-0 border border-token-subtle bg-token-nested">
                 <div className="flex items-center justify-between gap-2">
-                  <div className="text-sm font-semibold shrink-0" style={{ color: 'var(--text-primary)' }}>Response</div>
+                  <div className="text-sm font-semibold shrink-0 text-token-primary">Response</div>
                   <div className="flex items-center gap-1.5 flex-wrap justify-end">
-                    <div className="flex items-center rounded-[8px] p-0.5" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+                    <div className="flex items-center rounded-[8px] p-0.5 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
                       <button
                         type="button"
                         onClick={() => setAnswerView('preview')}
@@ -2252,7 +2244,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </div>
                 {!isImageLikeLog && (
                   <>
-                    <div className="mt-1 text-xs" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-1 text-xs text-token-muted">
                       {(() => {
                         const s = (detail.tokenUsageSource ?? '').trim().toLowerCase();
                         const label = s === 'reported' ? '上游上报' : (s === 'estimated' ? '估算' : '未上报');
@@ -2270,10 +2262,10 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                       ].map((it) => (
                         <div
                           key={it.k}
-                          className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden"
-                          style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', minWidth: 0 }}
+                          className="rounded-[12px] px-3 py-2 min-w-0 overflow-hidden bg-token-nested"
+                          style={{ border: '1px solid var(--border-subtle)', minWidth: 0 }}
                         >
-                          <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-[11px] text-token-muted">
                             {it.k}
                           </div>
                           <div className="mt-1 min-w-0">
@@ -2293,7 +2285,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         </div>
                       ))}
                     </div>
-                    <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="mt-2 text-[11px] text-token-muted">
                       说明：`—` 表示未上报/未知；`0` 表示真实为 0。
                     </div>
                   </>
@@ -2301,9 +2293,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 <div className={`${isImageLikeLog ? 'mt-2' : 'mt-3'} flex-1 min-h-0 overflow-auto`}>
                   {!isImageLikeLog && (
                     <div className="flex items-center justify-between gap-2">
-                      <div className="text-xs" style={{ color: 'var(--text-muted)' }}>回答</div>
+                      <div className="text-xs text-token-muted">回答</div>
                       {answerHint ? (
-                        <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[11px] text-token-muted">
                           {answerHint}
                         </div>
                       ) : null}
@@ -2378,22 +2370,22 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
 
                       return (
                     <div className="mb-3">
-                      <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+                      <div className="rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
                         {/* Prompt */}
-                        <div className="text-[12px] mb-3" style={{ color: 'var(--text-secondary)' }}>
+                        <div className="text-[12px] mb-3 text-token-secondary">
                           {(detail?.questionText ?? '').trim() || '（无提示词）'}
                         </div>
                         {/* Input ← → Output 双栏（移动端堆叠） */}
-                        <div className="grid gap-3 grid-cols-1 md:grid-cols-2" style={{ alignItems: 'stretch' }}>
+                        <div className="grid gap-3 grid-cols-1 md:grid-cols-2 items-stretch">
                           {/* ===== Input 参考图（左） ===== */}
-                          <div style={{ minWidth: 0 }}>
-                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Input</div>
+                          <div className="min-w-0">
+                            <div className="text-[11px] font-semibold mb-2 text-token-muted">Input</div>
                             {effInputs.length > 0 ? (
                               <div className="space-y-2">
                               {effInputs.map((img, idx) => (
-                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                <div key={`in-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2 border-b border-token-subtle">
+                                    <div className="text-[11px] font-semibold truncate text-token-primary">
                                       {img.label}{effInputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
                                     <Button variant="secondary" size="sm" onClick={async () => {
@@ -2404,25 +2396,25 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                     </Button>
                                   </div>
                                   <img src={img.url} alt={img.label} style={{ width: '100%', height: 200, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
-                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate text-token-muted" title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', height: 120 }}>
-                                <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输入）</div>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', height: 120 }}>
+                                <div className="text-[11px] text-token-muted">（无输入）</div>
                               </div>
                             )}
                           </div>
                           {/* ===== Output 生成图（右） ===== */}
-                          <div style={{ minWidth: 0, display: 'flex', flexDirection: 'column' }}>
-                            <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>Output</div>
+                          <div className="min-w-0 flex flex-col">
+                            <div className="text-[11px] font-semibold mb-2 text-token-muted">Output</div>
                             {effOutputs.length > 0 ? (
                               <div className="space-y-2">
                               {effOutputs.map((img, idx) => (
-                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)' }}>
-                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2" style={{ borderBottom: '1px solid var(--border-subtle)' }}>
-                                    <div className="text-[11px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                                <div key={`out-${idx}`} className="rounded-[12px] overflow-hidden" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)' }}>
+                                  <div className="px-3 py-1.5 flex items-center justify-between gap-2 border-b border-token-subtle">
+                                    <div className="text-[11px] font-semibold truncate text-token-primary">
                                       {img.label}{effOutputs.length > 1 ? ` #${idx + 1}` : ''}
                                     </div>
                                     <Button variant="secondary" size="sm" onClick={async () => {
@@ -2433,12 +2425,12 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                     </Button>
                                   </div>
                                   <img src={img.url} alt={img.label} style={{ width: '100%', height: 280, objectFit: 'contain', display: 'block', background: 'rgba(0,0,0,0.08)' }} />
-                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate" style={{ color: 'var(--text-muted)' }} title={img.sha256}>sha256: {img.sha256}</div>}
+                                  {img.sha256 && <div className="px-3 py-1 text-[10px] truncate text-token-muted" title={img.sha256}>sha256: {img.sha256}</div>}
                                 </div>
                               ))}
                               </div>
                             ) : (
-                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'rgba(0,0,0,0.18)', flex: 1, minHeight: 120 }}>
+                              <div className="rounded-[12px] flex items-center justify-center" style={{ border: '1px solid var(--border-default)', background: 'var(--nested-block-bg)', flex: 1, minHeight: 120 }}>
                                 {detail?.status === 'running' ? (
                                   <MapSectionLoader text="生成中…" />
                                 ) : detail?.status === 'failed' || detail?.status === 'cancelled' ? (
@@ -2446,7 +2438,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                                     {detail?.status === 'cancelled' ? '已取消' : '生成失败'}
                                   </div>
                                 ) : (
-                                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>（无输出）</div>
+                                  <div className="text-[11px] text-token-muted">（无输出）</div>
                                 )}
                               </div>
                             )}
@@ -2458,14 +2450,14 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     })()}
                     {imageGenUpstream ? (
                       <div className="mb-3">
-                        <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-xs mb-2 flex items-center justify-between gap-2 text-token-muted">
                           <span>上游原始响应（脱敏/截断）</span>
-                          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                          <span className="text-[11px] text-token-muted">
                             参考图：{imageGenUpstream.initImageProvided === true ? '已提供' : imageGenUpstream.initImageProvided === false ? '未提供' : '—'} ·
                             {' '}使用：{imageGenUpstream.initImageUsed === true ? '是' : imageGenUpstream.initImageUsed === false ? '否' : '—'}
                           </span>
                         </div>
-                        <div className="text-[11px] mb-2" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[11px] mb-2 text-token-muted">
                           说明：此处来自 Answer 中的 <code>upstreamBodyPreview</code> 字段（上游 HTTP 响应的脱敏预览），用于排查问题；并不代表模型返回了两次数据。
                         </div>
                         <pre style={codeBoxStyle()}>{imageGenUpstream.preview}</pre>
@@ -2488,7 +2480,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                         </button>
                         {thinkingExpanded ? (
                           <div className="px-3 pb-3">
-                            <pre style={{ ...codeBoxStyle(), maxHeight: 400, overflow: 'auto', fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'rgba(0,0,0,0.18)' }}>
+                            <pre style={{ ...codeBoxStyle(), maxHeight: 400, overflow: 'auto', fontSize: 12, lineHeight: 1.6, whiteSpace: 'pre-wrap', wordBreak: 'break-word', background: 'var(--nested-block-bg)' }}>
                               {thinkingText}
                             </pre>
                           </div>
@@ -2498,9 +2490,9 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                     {answerView === 'raw' ? (
                       <>
                         {imageGenUpstream ? (
-                          <div className="text-xs mb-2 flex items-center justify-between gap-2" style={{ color: 'var(--text-muted)' }}>
+                          <div className="text-xs mb-2 flex items-center justify-between gap-2 text-token-muted">
                             <span>系统记录的 Answer（生图归一化摘要）</span>
-                            <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                            <span className="text-[11px] text-token-muted">
                               包含：images/size/requestedSize/effectiveSize 等
                             </span>
                           </div>
@@ -2518,7 +2510,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           jsonCheckPhase === 'passed' ? 'llm-json-scanBox--passed' : '',
                         ].join(' ')}
                         style={{
-                          background: 'rgba(0,0,0,0.22)',
+                          background: 'var(--nested-block-bg)',
                           border: '1px solid var(--border-subtle)',
                           color: 'var(--text-secondary)',
                           overflow: 'auto',
@@ -2537,7 +2529,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                           .prd-md blockquote { margin: 10px 0; padding: 6px 10px; border-left: 3px solid rgba(165,180,252,0.35); background: rgba(165,180,252,0.06); color: rgba(165,180,252,0.92); border-radius: 10px; }
                           .prd-md a { color: #E7CE97; text-decoration: underline; }
                           .prd-md code { font-family: ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, "Liberation Mono", "Courier New", monospace; font-size: 12px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 6px; border-radius: 8px; }
-                          .prd-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 14px; padding: 12px; overflow: auto; }
+                          .prd-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-subtle); border-radius: 14px; padding: 12px; overflow: auto; }
                           .prd-md pre code { background: transparent; border: 0; padding: 0; }
                           .prd-md table { width: 100%; border-collapse: collapse; margin: 10px 0; }
                           .prd-md th,.prd-md td { border: 1px solid rgba(255,255,255,0.10); padding: 6px 8px; }
@@ -2587,11 +2579,11 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
         contentStyle={{ height: '76vh' }}
         content={
           !detail ? (
-            <div className="py-10 text-center" style={{ color: 'var(--text-muted)' }}>暂无详情</div>
+            <div className="py-10 text-center text-token-muted">暂无详情</div>
           ) : (
             <div className="h-full min-h-0 flex flex-col">
               <div className="flex items-center justify-between gap-2">
-                <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
+                <div className="text-xs text-token-muted">
                   点击 body 中的占位符可预览原文（旧数据可能未记录/不可拉取）
                 </div>
                 <Button
@@ -2614,7 +2606,7 @@ export function LlmLogsPanel({ embedded, defaultAppKey, customApis }: {
                 </Button>
               </div>
               {copiedHint ? (
-                <div className="mt-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <div className="mt-2 text-[11px] text-token-muted">
                   {copiedHint}
                 </div>
               ) : null}

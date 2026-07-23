@@ -422,7 +422,7 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted transition-colors hover:bg-white/10 hover:text-token-primary"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted transition-colors hover-bg-soft hover:text-token-primary"
           >
             <X size={14} />
           </button>
@@ -476,8 +476,8 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
               className="flex flex-col items-center justify-center gap-2 rounded-[12px] cursor-pointer transition-all"
               style={{
                 padding: file ? '16px' : '28px 16px',
-                background: dragOver ? 'rgba(56, 189, 248, 0.12)' : 'rgba(255, 255, 255, 0.03)',
-                border: `1px dashed ${dragOver ? 'rgba(56, 189, 248, 0.6)' : 'rgba(255, 255, 255, 0.18)'}`,
+                background: dragOver ? 'rgba(56, 189, 248, 0.12)' : 'var(--nested-block-bg)',
+                border: `1px dashed ${dragOver ? 'rgba(56, 189, 248, 0.6)' : 'var(--border-subtle)'}`,
               }}
             >
               {file ? (
@@ -580,8 +580,8 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
                       flexShrink: 0,
                       background: coverPreview
                         ? `url(${coverPreview}) center/cover`
-                        : 'rgba(255, 255, 255, 0.03)',
-                      border: `1px dashed ${coverPreview ? 'rgba(56, 189, 248, 0.45)' : 'rgba(255, 255, 255, 0.18)'}`,
+                        : 'var(--nested-block-bg)',
+                      border: `1px dashed ${coverPreview ? 'rgba(56, 189, 248, 0.45)' : 'var(--border-subtle)'}`,
                     }}
                   >
                     {!coverPreview && (
@@ -653,10 +653,10 @@ export function SkillUploadDialog({ onClose, onUploaded, editingSkill }: Props) 
                         key={e}
                         type="button"
                         onClick={() => setIconEmoji(e)}
-                        className="w-7 h-7 flex items-center justify-center rounded-[8px] transition-colors hover:bg-white/10"
+                        className="w-7 h-7 flex items-center justify-center rounded-[8px] transition-colors hover-bg-soft"
                         style={{
                           background: iconEmoji === e ? 'rgba(56, 189, 248, 0.2)' : 'transparent',
-                          border: `1px solid ${iconEmoji === e ? 'rgba(56, 189, 248, 0.5)' : 'rgba(255, 255, 255, 0.08)'}`,
+                          border: `1px solid ${iconEmoji === e ? 'rgba(56, 189, 248, 0.5)' : 'var(--border-subtle)'}`,
                         }}
                       >
                         {e}

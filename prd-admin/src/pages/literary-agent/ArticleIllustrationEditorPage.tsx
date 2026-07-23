@@ -533,7 +533,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   const [uploadedFileName, setUploadedFileName] = useState('');
   const fileInputRef = useRef<HTMLInputElement>(null);
   const [isDragging, setIsDragging] = useState(false);
-  
+
   // AI 优化提示词状态
   const [optimizingPromptId, setOptimizingPromptId] = useState<string | null>(null);
 
@@ -656,7 +656,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       markerListRef.current.scrollTop = markerListRef.current.scrollHeight;
     }
   }, [markerRunItems.length]);
-  
+
   // 思考/生成面板自动滚动到底部
   useEffect(() => {
     if (thinkingPanelRef.current && (thinkingContent || rawMarkerOutput)) {
@@ -666,7 +666,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
 
   // 流式生成期间不滚动文章（AI 视图独占左面板，文章未渲染）
   // 文章在流式结束后才显示，无需自动滚动到 marker
-  
+
   // 提示词模板管理（只有用户模板）
   const [userPrompts, setUserPrompts] = useState<PromptTemplate[]>([]);
   const [selectedPrompt, setSelectedPromptRaw] = useState<PromptTemplate | null>(null);
@@ -1037,7 +1037,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         setArticleContent(content);
         setArticleWithMarkers(ws.articleContentWithMarkers || '');
         setArticleWithImages('');
-        
+
         // 优先以服务端 workflow.phase 为准（保证刷新可恢复/不可跳未来）
         const workflowPhase = ws.articleWorkflow?.phase;
         if (workflowPhase) {
@@ -1055,13 +1055,13 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             setPhase(1); // Editing
           }
         }
-        
+
         // 如果有生成的内容，提取标记（用于右侧列表）
         if (ws.articleContentWithMarkers) {
           const extracted = extractMarkers(ws.articleContentWithMarkers);
           setMarkers(extracted);
         }
-        
+
         // 新增：从 workflow.markers 恢复右侧运行状态
         if (ws.articleWorkflow?.markers && ws.articleWorkflow.markers.length > 0) {
           const restoredItems: MarkerRunItem[] = ws.articleWorkflow.markers.map((m: any) => ({
@@ -1098,8 +1098,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   // 根据后端 Run 状态更新前端显示
                   if (runStatus === 'Failed' || runStatus === 'Cancelled') {
                     const errorMsg = runRes.data.items?.[0]?.errorMessage || '生图失败';
-                    setMarkerRunItems(prev => prev.map(x => 
-                      x.markerIndex === item.markerIndex 
+                    setMarkerRunItems(prev => prev.map(x =>
+                      x.markerIndex === item.markerIndex
                         ? { ...x, status: 'error' as MarkerRunStatus, errorMessage: errorMsg }
                         : x
                     ));
@@ -1108,8 +1108,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     const doneItem = runRes.data.items?.[0];
                     const url = doneItem?.url || doneItem?.base64 || item.url;
                     if (url) {
-                      setMarkerRunItems(prev => prev.map(x => 
-                        x.markerIndex === item.markerIndex 
+                      setMarkerRunItems(prev => prev.map(x =>
+                        x.markerIndex === item.markerIndex
                           ? { ...x, status: 'done' as MarkerRunStatus, url, assetUrl: url, errorMessage: null }
                           : x
                       ));
@@ -1123,7 +1123,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             }));
           }
         }
-        
+
         // 记录 workspace 中的 selectedPromptId，加载提示词后恢复选中状态
         pendingSelectedPromptIdRef.current = ws.selectedPromptId || null;
         // 加载文学创作提示词（从后端）
@@ -1141,7 +1141,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       setMarkerRunItemsRestored(false); // 重置标志位，下次 markers 变化时正常处理
       return;
     }
-    
+
     setMarkerRunItems((prev) => {
       const prevByIdx = new Map(prev.map((x) => [x.markerIndex, x]));
       const next: MarkerRunItem[] = markers.map((m) => {
@@ -1232,19 +1232,19 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     if (!file) return;
 
     const fileName = file.name;
-    
+
     try {
       const text = await file.text();
       setArticleContent(text);
       setUploadedFileName(fileName);
-      
+
       // 保存到后端（提交型操作：会触发 version++，清空后续阶段）
       await updateVisualAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
       });
-      
+
       // 上传后直接进入编辑模式并启用预览
       setPhase(1); // Editing
     } catch {
@@ -1294,14 +1294,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const text = await file.text();
       setArticleContent(text);
       setUploadedFileName(file.name);
-      
+
       // 保存到后端
       await updateVisualAgentWorkspace({
         id: workspaceId,
         articleContent: text,
         idempotencyKey: `upload-article-${workspaceId}-${Date.now()}`,
       });
-      
+
       // 上传后直接进入编辑模式
       setPhase(1); // Editing
     } catch {
@@ -1864,9 +1864,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
     }
 
     const dataUrl = finalB64.startsWith('data:') ? finalB64 : `data:image/png;base64,${finalB64}`;
-    const up = await uploadVisualAgentWorkspaceAsset({ 
-      id: workspaceId, 
-      data: dataUrl, 
+    const up = await uploadVisualAgentWorkspaceAsset({
+      id: workspaceId,
+      data: dataUrl,
       prompt: plannedPrompt,
       articleInsertionIndex: markerIndex,
       originalMarkerText: current.markerText
@@ -1954,7 +1954,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const ordered = [...markerRunItemsRef.current]
         .sort((a, b) => a.markerIndex - b.markerIndex)
         .filter(it => it.status !== 'done' && it.status !== 'running');
-      
+
       if (ordered.length === 0) {
         toast.info('没有需要生成的配图');
         setGenerating(false);
@@ -1964,15 +1964,15 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
       const results = await Promise.allSettled(
         ordered.map(it => runSingleMarker(it.markerIndex))
       );
-      
+
       // 检查是否有失败
-      const anyError = results.some(r => r.status === 'rejected') || 
+      const anyError = results.some(r => r.status === 'rejected') ||
                        markerRunItemsRef.current.some(x => x.status === 'error');
-      
+
       setGenerating(false);
       // 3 状态模式：生图完成后仍保持在 MarkersGenerated
       setPhase(2); // MarkersGenerated
-      
+
       if (anyError && !ac.signal.aborted) {
         toast.warning('部分配图生成失败：可在右侧逐条修改并重新生成');
       }
@@ -2464,7 +2464,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
   ];
 
   const configPillBaseClass =
-    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover:bg-white/10 min-w-0 flex-1';
+    'flex items-center gap-1 px-2 py-1 rounded-md cursor-pointer transition-colors hover-bg-soft min-w-0 flex-1';
   const configPillTextClass = 'text-[11px] truncate';
 
   const handleStepClick = async (stepKey: number) => {
@@ -2517,7 +2517,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 type="button"
                 data-tour-id="literary-editor-back"
                 onClick={goBack}
-                className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+                className="p-1.5 rounded-lg hover-bg-soft transition-colors"
                 style={{ color: 'var(--text-muted)' }}
                 title="返回"
               >
@@ -2529,7 +2529,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   {uploadedFileName || '文章内容'}
                 </div>
               </div>
-              
+
               {/* 模型切换器：提示词模型 + 生图模型 */}
               <div className="flex items-center gap-1.5">
                 {/* 提示词/标记生成模型切换器 */}
@@ -2585,7 +2585,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <button
                                 key={m.id}
                                 type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                                 style={{
                                   border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
                                   background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
@@ -2666,7 +2666,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <button
                                 key={m.id}
                                 type="button"
-                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                                className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                                 style={{
                                   border: picked ? '1px solid rgba(250,204,21,0.35)' : '1px solid rgba(255,255,255,0.08)',
                                   background: picked ? 'rgba(250,204,21,0.06)' : 'rgba(255,255,255,0.02)',
@@ -2712,7 +2712,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               <button
                 type="button"
                 onClick={() => setAutoSubmitEnabled((v) => !v)}
-                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
+                className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
                 style={{
                   color: submissionState.submitted ? 'rgba(16, 185, 129, 0.8)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.6)' : 'var(--text-muted)',
                   background: submissionState.submitted ? 'rgba(16, 185, 129, 0.1)' : autoSubmitEnabled ? 'rgba(16, 185, 129, 0.05)' : 'transparent',
@@ -2728,7 +2728,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   type="button"
                   onClick={handleManualSubmit}
                   disabled={manualSubmitting}
-                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover:bg-white/10 shrink-0 text-xs"
+                  className="h-7 px-2 inline-flex items-center gap-1 rounded-md transition-colors duration-200 hover-bg-soft shrink-0 text-xs"
                   style={{
                     color: 'rgba(59, 130, 246, 0.8)',
                     background: 'rgba(59, 130, 246, 0.08)',
@@ -2755,10 +2755,10 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             onDrop={handleDrop}
           >
             <style>{PRD_MD_STYLE}</style>
-            
+
             {/* 拖拽悬浮提示层 */}
             {isDragging && (
-              <div 
+              <div
                 className="absolute inset-0 z-50 flex items-center justify-center pointer-events-none"
                 style={{
                   ...glassBadge,
@@ -2777,7 +2777,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
             )}
-            
+
             {/* 上传阶段：显示上传区域或已上传文件信息 */}
             {phase === 0 && !uploadedFileName && ( // Upload
               <div className="h-full flex flex-col items-center justify-center p-8">
@@ -2803,7 +2803,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                 </div>
               </div>
             )}
-            
+
             {/* 上传阶段：已有文件 */}
             {phase === 0 && uploadedFileName && ( // Upload
               <div className="h-full flex flex-col items-center justify-center p-8">
@@ -3291,7 +3291,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           {/* 配置区 - 单行布局：齿轮 | 三个配置项 | 配置按钮 */}
           <div className="mt-3 pt-3 border-t flex items-center gap-2" style={{ borderColor: 'var(--border-subtle)' }}>
             <Settings size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
-            
+
             {/* 三个配置项 */}
             <div className="flex items-center gap-1.5 flex-1 min-w-0">
               {/* 提示词 */}
@@ -3315,9 +3315,9 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               {/* 风格图 */}
               <div
                 className={configPillBaseClass}
-                style={{ 
+                style={{
                   background: referenceImageConfigs.find(c => c.isActive) ? 'rgba(192, 132, 252, 0.08)' : 'var(--nested-block-bg)',
-                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)' 
+                  border: referenceImageConfigs.find(c => c.isActive) ? '1px solid rgba(192, 132, 252, 0.15)' : '1px solid var(--border-subtle)'
                 }}
                 onClick={() => {
                   const activeRefConfig = referenceImageConfigs.find(c => c.isActive);
@@ -3391,7 +3391,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                           <button
                             key={opt.value}
                             type="button"
-                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover:bg-white/5 transition-colors"
+                            className="w-full text-left rounded-[10px] px-2.5 py-1.5 hover-bg-soft transition-colors"
                             style={{
                               border: picked ? '1px solid rgba(52,211,153,0.35)' : '1px solid rgba(255,255,255,0.08)',
                               background: picked ? 'rgba(52,211,153,0.06)' : 'rgba(255,255,255,0.02)',
@@ -3426,7 +3426,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
             {/* 配置按钮 */}
             <button
               type="button"
-              className="text-[11px] px-2.5 py-1 rounded-md hover:bg-white/10 transition-colors flex-shrink-0 border"
+              className="text-[11px] px-2.5 py-1 rounded-md hover-bg-soft transition-colors flex-shrink-0 border"
               style={{ color: 'var(--text-muted)', borderColor: 'var(--border-subtle)' }}
               onClick={() => setPromptPreviewOpen(true)}
               title="打开全部配置"
@@ -3486,26 +3486,26 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       try {
                         const JSZip = (await import('jszip')).default;
                         const zip = new JSZip();
-                        
+
                         const doneItems = markerRunItems.filter(x => x.status === 'done' && (x.assetUrl || x.url || x.base64));
-                        
+
                         if (doneItems.length === 0) {
                           toast.warning('无可下载图片', '还没有已完成的配图');
                           return;
                         }
-                        
+
                         let successCount = 0;
                         for (const item of doneItems) {
                           const src = item.assetUrl || item.url || (item.base64?.startsWith('data:') ? item.base64 : `data:image/png;base64,${item.base64}`) || '';
-                          
+
                           if (!src) {
                             console.warn(`配图 ${item.markerIndex + 1} 没有图片数据`);
                             continue;
                           }
-                          
+
                           try {
                             let blob: Blob;
-                            
+
                             // 如果是 data URL（base64），直接转换为 blob
                             if (src.startsWith('data:')) {
                               const response = await fetch(src);
@@ -3515,7 +3515,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               blob = await new Promise<Blob>((resolve, reject) => {
                                 const img = new Image();
                                 img.crossOrigin = 'anonymous'; // 尝试启用 CORS
-                                
+
                                 img.onload = () => {
                                   try {
                                     // 创建 canvas 并绘制图片
@@ -3528,7 +3528,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                       return;
                                     }
                                     ctx.drawImage(img, 0, 0);
-                                    
+
                                     // 转换为 blob
                                     canvas.toBlob((b) => {
                                       if (b) {
@@ -3541,34 +3541,34 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                     reject(error);
                                   }
                                 };
-                                
+
                                 img.onerror = () => {
                                   reject(new Error('图片加载失败'));
                                 };
-                                
+
                                 img.src = src;
                               });
                             }
-                            
+
                             zip.file(`配图-${item.markerIndex + 1}.png`, blob);
                             successCount++;
                           } catch (error) {
                             console.error(`Failed to download image ${item.markerIndex + 1}:`, error);
                           }
                         }
-                        
+
                         if (successCount === 0) {
                           toast.error('下载失败', '所有图片下载失败，可能是跨域限制导致');
                           return;
                         }
-                        
+
                         const content = await zip.generateAsync({ type: 'blob' });
                         const link = document.createElement('a');
                         link.href = URL.createObjectURL(content);
                         link.download = `配图-${new Date().getTime()}.zip`;
                         link.click();
                         URL.revokeObjectURL(link.href);
-                        
+
                         toast.success('下载完成', `已打包 ${successCount} 张图片${successCount < doneItems.length ? `（${doneItems.length - successCount} 张失败）` : ''}`);
                       } catch (error) {
                         console.error('Batch download failed:', error);
@@ -4052,8 +4052,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <Button variant="secondary" onClick={handleCancelCreate}>
                     取消
                   </Button>
-                  <Button 
-                    variant="primary" 
+                  <Button
+                    variant="primary"
                     onClick={handleSaveNewPrompt}
                     disabled={!creatingPrompt.title.trim() || !creatingPrompt.content.trim()}
                   >
@@ -4169,8 +4169,8 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                   <Button variant="secondary" onClick={handleCancelEdit}>
                     取消
                   </Button>
-                  <Button 
-                    variant="primary" 
+                  <Button
+                    variant="primary"
                     onClick={handleSaveEdit}
                     disabled={!editingPrompt.title.trim() || !editingPrompt.content.trim()}
                   >
@@ -4195,12 +4195,12 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         contentClassName="overflow-hidden !p-4"
         contentStyle={{ maxHeight: '75vh', height: '75vh' }}
         titleCenter={
-          <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+          <div className="flex items-center gap-1 bg-token-nested rounded-lg p-1">
             <button
               type="button"
               onClick={() => setConfigViewMode('mine')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                configViewMode === 'mine' ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft text-gray-400'
               }`}
             >
               <User size={14} />
@@ -4210,7 +4210,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
               type="button"
               onClick={() => setConfigViewMode('marketplace')}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-md text-sm font-medium transition-all ${
-                configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5 text-gray-400'
+                configViewMode === 'marketplace' ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft text-gray-400'
               }`}
             >
               <Globe size={14} />
@@ -4336,7 +4336,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft disabled:opacity-50"
                                   style={{
                                     color: prompt.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
                                     background: prompt.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
@@ -4359,7 +4359,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 选择按钮 */}
                                 <button
                                   type="button"
-                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{
                                     color: isPromptSelected ? 'white' : 'rgba(156, 163, 175, 0.6)',
                                     background: isPromptSelected ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
@@ -4376,7 +4376,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 编辑/删除按钮组 */}
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{ color: 'var(--text-muted)' }}
                                   onClick={() => handleEditPrompt(prompt)}
                                   title="编辑"
@@ -4538,7 +4538,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                               <div className="flex items-center gap-1.5">
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft disabled:opacity-50"
                                   style={{
                                     color: config.isPublic ? 'rgba(251, 146, 60, 0.9)' : 'var(--text-muted)',
                                     background: config.isPublic ? 'rgba(251, 146, 60, 0.1)' : 'transparent',
@@ -4562,7 +4562,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 选择按钮 */}
                                 <button
                                   type="button"
-                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover:bg-white/10 disabled:opacity-50"
+                                  className="px-2.5 py-1.5 rounded-md transition-all duration-200 hover-bg-soft disabled:opacity-50"
                                   style={{
                                     color: config.isActive ? 'white' : 'rgba(156, 163, 175, 0.6)',
                                     background: config.isActive ? 'rgba(34, 197, 94, 0.95)' : 'transparent',
@@ -4592,7 +4592,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                                 {/* 编辑/删除按钮组 */}
                                 <button
                                   type="button"
-                                  className="p-1.5 rounded-md transition-all duration-200 hover:bg-white/10"
+                                  className="p-1.5 rounded-md transition-all duration-200 hover-bg-soft"
                                   style={{ color: 'var(--text-muted)' }}
                                   onClick={() => {
                                     setEditingRefConfig({ ...config });
@@ -4693,14 +4693,14 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                     />
                   </div>
                   {/* 分类筛选 - 使用类型注册表动态生成 */}
-                  <div className="flex items-center gap-1 bg-white/5 rounded-lg p-1">
+                  <div className="flex items-center gap-1 bg-token-nested rounded-lg p-1">
                     {getCategoryFilterOptions().map(({ key, label, icon: Icon }) => (
                       <button
                         key={key}
                         type="button"
                         onClick={() => setMarketplaceCategoryFilter(key)}
                         className={`flex items-center gap-1 px-2.5 py-1 rounded-md text-xs font-medium transition-all ${
-                          marketplaceCategoryFilter === key ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                          marketplaceCategoryFilter === key ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft'
                         }`}
                         style={{ color: marketplaceCategoryFilter === key ? undefined : 'var(--text-muted)' }}
                       >
@@ -4715,7 +4715,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       type="button"
                       onClick={() => setMarketplaceSortBy('hot')}
                       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        marketplaceSortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                        marketplaceSortBy === 'hot' ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft'
                       }`}
                       style={{ color: marketplaceSortBy === 'hot' ? undefined : 'var(--text-muted)' }}
                     >
@@ -4726,7 +4726,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
                       type="button"
                       onClick={() => setMarketplaceSortBy('new')}
                       className={`flex items-center gap-1 px-3 py-1.5 rounded-lg text-xs font-medium transition-all ${
-                        marketplaceSortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover:bg-white/5'
+                        marketplaceSortBy === 'new' ? 'bg-blue-500/20 text-blue-400' : 'hover-bg-soft'
                       }`}
                       style={{ color: marketplaceSortBy === 'new' ? undefined : 'var(--text-muted)' }}
                     >
@@ -4992,7 +4992,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
         >
           <button
             type="button"
-            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover-bg-soft transition-colors flex items-center gap-2"
             style={{ color: 'var(--text-primary)' }}
             onClick={() => {
               addAnchorAbove(paragraphCtxMenu.pIdx);
@@ -5004,7 +5004,7 @@ export default function ArticleIllustrationEditorPage({ workspaceId }: { workspa
           </button>
           <button
             type="button"
-            className="w-full text-left px-3 py-1.5 text-[12px] hover:bg-white/10 transition-colors flex items-center gap-2"
+            className="w-full text-left px-3 py-1.5 text-[12px] hover-bg-soft transition-colors flex items-center gap-2"
             style={{ color: 'var(--text-primary)' }}
             onClick={() => {
               addAnchorBelow(paragraphCtxMenu.pIdx);

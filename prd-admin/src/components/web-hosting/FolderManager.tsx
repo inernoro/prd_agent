@@ -359,7 +359,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
           type="button"
           onClick={backToList}
           disabled={saving}
-          className="rounded-lg border px-4 py-2 text-sm transition-colors hover:bg-black/5"
+          className="rounded-lg border px-4 py-2 text-sm transition-colors hover-bg-soft"
           style={{ borderColor: BORDER, color: TEXT_SUB }}
         >
           取消
@@ -368,7 +368,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
           type="button"
           onClick={() => void handleSave()}
           disabled={saving}
-          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white transition-opacity disabled:opacity-60"
+          className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-token-primary transition-opacity disabled:opacity-60"
           style={{ background: 'var(--accent, #6366f1)' }}
         >
           {saving ? <MapSpinner size={14} /> : null}
@@ -400,7 +400,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
           <button
             type="button"
             onClick={openCreate}
-            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-white"
+            className="inline-flex items-center gap-2 rounded-lg px-4 py-2 text-sm font-medium text-token-primary"
             style={{ background: 'var(--accent, #6366f1)' }}
           >
             <Plus size={15} />
@@ -452,7 +452,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
                     onClick={() => void handleGenerate(c)}
                     disabled={!canGenerate || generatingId === c.id}
                     title={canGenerate ? '按文件夹生成' : '仅 Markdown 生成器支持一键生成'}
-                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-white transition-opacity disabled:opacity-40"
+                    className="inline-flex items-center gap-1.5 rounded-lg px-2.5 py-1.5 text-xs font-medium text-token-primary transition-opacity disabled:opacity-40"
                     style={{ background: 'var(--accent, #6366f1)' }}
                   >
                     {generatingId === c.id ? <MapSpinner size={13} /> : <Sparkles size={13} />}
@@ -462,7 +462,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
                     type="button"
                     onClick={() => openEdit(c)}
                     title="编辑"
-                    className="rounded-lg p-1.5 transition-colors hover:bg-black/10"
+                    className="rounded-lg p-1.5 transition-colors hover-bg-soft"
                     style={{ color: TEXT_SUB }}
                   >
                     <Pencil size={15} />
@@ -471,7 +471,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
                     type="button"
                     onClick={() => void handleDelete(c)}
                     title="删除"
-                    className="rounded-lg p-1.5 transition-colors hover:bg-black/10"
+                    className="rounded-lg p-1.5 transition-colors hover-bg-soft"
                     style={{ color: TEXT_SUB }}
                   >
                     <Trash2 size={15} />
@@ -515,7 +515,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
               <button
                 type="button"
                 onClick={backToList}
-                className="rounded-lg p-1.5 transition-colors hover:bg-black/10"
+                className="rounded-lg p-1.5 transition-colors hover-bg-soft"
                 style={{ color: TEXT_SUB }}
                 aria-label="返回"
               >
@@ -536,7 +536,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
               <button
                 type="button"
                 onClick={openCreate}
-                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-white"
+                className="inline-flex items-center gap-1.5 rounded-lg px-3 py-1.5 text-xs font-medium text-token-primary"
                 style={{ background: 'var(--accent, #6366f1)' }}
               >
                 <Plus size={14} />
@@ -546,7 +546,7 @@ export function FolderManager({ onClose, onGenerated }: FolderManagerProps) {
             <button
               type="button"
               onClick={onClose}
-              className="rounded-lg p-1.5 transition-colors hover:bg-black/10"
+              className="rounded-lg p-1.5 transition-colors hover-bg-soft"
               style={{ color: TEXT_SUB }}
               aria-label="关闭"
             >

@@ -107,7 +107,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle bg-token-nested" >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <Users size={18} className="text-muted-foreground" />
@@ -176,7 +176,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                     </div>
                     <DropdownMenu.Root>
                       <DropdownMenu.Trigger asChild>
-                        <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                        <button className="p-1.5 rounded hover-bg-soft transition-colors text-muted-foreground hover:text-foreground">
                           <MoreVertical size={16} />
                         </button>
                       </DropdownMenu.Trigger>
@@ -190,7 +190,7 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                           }}
                         >
                           <DropdownMenu.Item
-                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft"
                             onSelect={() => {
                               setEditingMapping(mapping);
                               setEditDialogOpen(true);
@@ -198,9 +198,9 @@ export default function BindingPanel({ onActionsReady }: BindingPanelProps) {
                           >
                             <Pencil size={14} /> 编辑
                           </DropdownMenu.Item>
-                          <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                          <DropdownMenu.Separator className="my-1 h-px bg-token-nested" />
                           <DropdownMenu.Item
-                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                            className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft text-red-400"
                             onSelect={() => handleDelete(mapping.id, mapping.channelIdentifier)}
                           >
                             <Trash2 size={14} /> 删除
@@ -326,7 +326,7 @@ function IdentityMappingDialog({
                 type="email"
                 value={channelIdentifier}
                 onChange={(e) => setChannelIdentifier(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
+                className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none"
                 placeholder="user@example.com"
               />
               <p className="text-xs text-muted-foreground mt-1">
@@ -360,7 +360,7 @@ function IdentityMappingDialog({
             </label>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+          <div className="flex justify-end gap-2 pt-4 border-t border-token-subtle">
             <Button variant="secondary" onClick={onClose}>
               取消
             </Button>

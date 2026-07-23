@@ -89,7 +89,7 @@ export function MermaidDiagram({ code }: { code: string }) {
           <button
             type="button"
             onClick={() => setShowSource(v => !v)}
-            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/5 transition-colors"
+            className="inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover-bg-soft transition-colors"
             style={{ color: 'var(--text-muted)' }}
             title={showSource ? '隐藏源码' : '查看源码'}
           >
@@ -99,7 +99,7 @@ export function MermaidDiagram({ code }: { code: string }) {
           <button
             type="button"
             onClick={handleCopy}
-            className="opacity-0 group-hover/mermaid:opacity-100 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/5 transition-all"
+            className="opacity-0 group-hover/mermaid:opacity-100 inline-flex items-center gap-0.5 px-1.5 py-0.5 rounded hover-bg-soft transition-all"
             style={{ color: 'var(--text-muted)' }}
             title="复制源码"
           >
@@ -140,16 +140,8 @@ export function MermaidDiagram({ code }: { code: string }) {
 
       {(showSource || status === 'error') && (
         <pre
-          className="text-[11.5px] overflow-x-auto"
-          style={{
-            margin: 0,
-            padding: '10px 14px',
-            background: 'rgba(0,0,0,0.3)',
-            color: 'var(--text-secondary)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace',
-            borderTop: '1px solid rgba(255,255,255,0.05)',
-            whiteSpace: 'pre',
-          }}
+          className="text-[11.5px] overflow-x-auto border-t border-t-token-subtle"
+          style={{ margin: 0, padding: '10px 14px', background: 'rgba(0,0,0,0.3)', color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, Consolas, monospace', whiteSpace: 'pre' }}
         >
           {code}
         </pre>

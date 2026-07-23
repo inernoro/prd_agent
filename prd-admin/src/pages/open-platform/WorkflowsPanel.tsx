@@ -156,7 +156,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle bg-token-nested" >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <FileText size={18} className="text-muted-foreground" />
@@ -259,7 +259,7 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                       />
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <button className="p-1.5 rounded hover:bg-white/10 transition-colors text-muted-foreground hover:text-foreground">
+                          <button className="p-1.5 rounded hover-bg-soft transition-colors text-muted-foreground hover:text-foreground">
                             <MoreVertical size={16} />
                           </button>
                         </DropdownMenu.Trigger>
@@ -273,14 +273,14 @@ export default function WorkflowsPanel({ onActionsReady }: WorkflowsPanelProps) 
                             }}
                           >
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10"
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft"
                               onSelect={() => handleEdit(wf)}
                             >
                               <Pencil size={14} /> 编辑
                             </DropdownMenu.Item>
-                            <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                            <DropdownMenu.Separator className="my-1 h-px bg-token-nested" />
                             <DropdownMenu.Item
-                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                              className="flex items-center gap-2 px-3 py-2 text-sm rounded-lg cursor-pointer outline-none hover-bg-soft text-red-400"
                               onSelect={() => handleDelete(wf.id, wf.displayName)}
                             >
                               <Trash2 size={14} /> 删除
@@ -420,11 +420,11 @@ function WorkflowEditDialog({
                 type="text"
                 value={addressPrefix}
                 onChange={(e) => setAddressPrefix(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-                className="flex-1 px-3 py-2 rounded-l-lg bg-white/5 border border-white/10 border-r-0 focus:border-blue-500/50 focus:outline-none"
+                className="flex-1 px-3 py-2 rounded-l-lg bg-token-nested border border-token-subtle border-r-0 focus:border-blue-500/50 focus:outline-none"
                 placeholder="todo"
                 disabled={!emailDomain}
               />
-              <span className="px-3 py-2 rounded-r-lg bg-white/[0.03] border border-white/10 text-muted-foreground text-sm">
+              <span className="px-3 py-2 rounded-r-lg bg-token-nested border border-token-subtle text-muted-foreground text-sm">
                 @{emailDomain || '未配置'}
               </span>
             </div>
@@ -440,7 +440,7 @@ function WorkflowEditDialog({
               type="text"
               value={displayName}
               onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none"
               placeholder="待办事项"
             />
             <p className="text-xs text-muted-foreground mt-1">
@@ -471,7 +471,7 @@ function WorkflowEditDialog({
             <textarea
               value={description}
               onChange={(e) => setDescription(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none"
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none"
               placeholder="发送到此邮箱的邮件会自动创建待办事项"
               rows={2}
             />
@@ -483,14 +483,14 @@ function WorkflowEditDialog({
               <span className="group-open:rotate-90 transition-transform">▶</span>
               高级设置
             </summary>
-            <div className="mt-3 space-y-4 pl-4 border-l border-white/10">
+            <div className="mt-3 space-y-4 pl-4 border-l border-token-subtle">
               {/* 追加提示词 */}
               <div>
                 <label className="block text-sm font-medium mb-1.5">追加提示词</label>
                 <textarea
                   value={customPrompt}
                   onChange={(e) => setCustomPrompt(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
+                  className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-xs font-mono"
                   placeholder="可选，AI 处理邮件时的额外指令..."
                   rows={3}
                 />
@@ -502,7 +502,7 @@ function WorkflowEditDialog({
                 <textarea
                   value={replyTemplate}
                   onChange={(e) => setReplyTemplate(e.target.value)}
-                  className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-xs font-mono"
+                  className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-xs font-mono"
                   placeholder="支持变量：{senderName}, {subject}, {result}"
                   rows={3}
                 />
@@ -511,7 +511,7 @@ function WorkflowEditDialog({
           </details>
 
           {/* 操作按钮 */}
-          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+          <div className="flex justify-end gap-2 pt-4 border-t border-token-subtle">
             <Button variant="secondary" onClick={onClose}>
               取消
             </Button>

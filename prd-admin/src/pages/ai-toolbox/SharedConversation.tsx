@@ -125,9 +125,9 @@ export function SharedConversation() {
                 style={{
                   background: isUser
                     ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.15) 0%, rgba(var(--accent-primary-rgb), 0.08) 100%)'
-                    : 'rgba(255, 255, 255, 0.03)',
+                    : 'var(--nested-block-bg)',
                   color: 'var(--text-primary, #fff)',
-                  border: isUser ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))',
+                  border: isUser ? 'none' : '1px solid var(--border-subtle)',
                 }}
               >
                 {isUser ? (

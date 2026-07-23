@@ -166,7 +166,7 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
           <GlassCard>
             <table className="w-full text-sm">
               <thead>
-                <tr className="text-xs text-white/50 border-b border-white/10">
+                <tr className="text-xs text-token-secondary border-b border-token-subtle">
                   <th className="text-left py-2 px-3 font-medium">类型</th>
                   <th className="text-left py-2 px-3 font-medium">名称</th>
                   <th className="text-left py-2 px-3 font-medium">状态</th>
@@ -178,20 +178,20 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
               </thead>
               <tbody>
                 {items.map((it) => (
-                  <tr key={it.id} className="border-b border-white/5 hover:bg-white/[0.03]">
+                  <tr key={it.id} className="border-b border-token-subtle hover-bg-soft">
                     <td className="py-3 px-3">
                       <span className="text-lg mr-2">{TYPE_ICONS[it.type] || '🔌'}</span>
-                      <span className="text-white/70 text-xs uppercase">{it.type}</span>
+                      <span className="text-token-secondary text-xs uppercase">{it.type}</span>
                     </td>
-                    <td className="py-3 px-3 text-white/90">{it.name}</td>
+                    <td className="py-3 px-3 text-token-primary">{it.name}</td>
                     <td className="py-3 px-3">{statusBadge(it.status, it.readOnly)}</td>
-                    <td className="py-3 px-3 text-white/60 text-xs">
+                    <td className="py-3 px-3 text-token-secondary text-xs">
                       {Object.entries(it.metadata || {}).slice(0, 2).map(([k, v]) => (
                         <div key={k}>{k}: {String(v).substring(0, 40)}</div>
                       ))}
                     </td>
-                    <td className="py-3 px-3 text-white/60 text-xs">{formatTime(it.lastUsedAt)}</td>
-                    <td className="py-3 px-3 text-white/60 text-xs">
+                    <td className="py-3 px-3 text-token-secondary text-xs">{formatTime(it.lastUsedAt)}</td>
+                    <td className="py-3 px-3 text-token-secondary text-xs">
                       {it.expiresAt ? formatTime(it.expiresAt) : '-'}
                     </td>
                     <td className="py-3 px-3 text-right">
@@ -199,7 +199,7 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
                         {!it.readOnly && (
                           <button
                             onClick={() => handleValidate(it.id)}
-                            className="p-1.5 rounded hover:bg-white/10 text-white/60 hover:text-white/90"
+                            className="p-1.5 rounded hover-bg-soft text-token-secondary hover-text-primary"
                             title="验证"
                           >
                             <CheckCircle2 size={14} />
@@ -208,7 +208,7 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
                         {!it.readOnly && (
                           <button
                             onClick={() => setEditing(it)}
-                            className="p-1.5 rounded hover:bg-white/10 text-white/60 hover:text-white/90"
+                            className="p-1.5 rounded hover-bg-soft text-token-secondary hover-text-primary"
                             title="编辑"
                           >
                             <Key size={14} />
@@ -216,7 +216,7 @@ export default function AuthorizationsPanel({ onActionsReady }: Props) {
                         )}
                         <button
                           onClick={() => handleRevoke(it)}
-                          className="p-1.5 rounded hover:bg-red-500/20 text-white/60 hover:text-red-400"
+                          className="p-1.5 rounded hover:bg-red-500/20 text-token-secondary hover:text-red-400"
                           title={it.readOnly ? '原模块处理' : '撤销'}
                         >
                           <Trash2 size={14} />
@@ -305,21 +305,21 @@ function AddAuthorizationDialog({
       <div style={{ minHeight: 0, maxHeight: '60vh', overflowY: 'auto' }} className="flex flex-col gap-4 px-1">
         {!selectedType ? (
           <>
-            <div className="text-xs text-white/60 mb-1">选择要授权的系统</div>
+            <div className="text-xs text-token-secondary mb-1">选择要授权的系统</div>
             <div className="grid grid-cols-2 gap-2">
               {available.map(t => (
                 <button
                   key={t.typeKey}
                   onClick={() => setSelectedType(t.typeKey)}
-                  className="p-4 rounded-lg border border-white/10 hover:border-white/30 hover:bg-white/5 text-left transition"
+                  className="p-4 rounded-lg border border-token-subtle hover-border-token hover-bg-soft text-left transition"
                 >
                   <div className="text-2xl mb-1">{TYPE_ICONS[t.typeKey] || '🔌'}</div>
-                  <div className="text-white/90 text-sm font-medium">{t.displayName}</div>
-                  <div className="text-white/40 text-xs mt-1">{t.fields.length} 个字段</div>
+                  <div className="text-token-primary text-sm font-medium">{t.displayName}</div>
+                  <div className="text-token-muted text-xs mt-1">{t.fields.length} 个字段</div>
                 </button>
               ))}
             </div>
-            <div className="p-3 rounded bg-blue-500/10 border border-blue-500/30 text-xs text-white/70">
+            <div className="p-3 rounded bg-blue-500/10 border border-blue-500/30 text-xs text-token-secondary">
               <ExternalLink size={12} className="inline mr-1" />
               GitHub 授权请前往「PR 审查」模块发起 OAuth Device Flow
             </div>
@@ -327,30 +327,30 @@ function AddAuthorizationDialog({
         ) : (
           <>
             <div>
-              <div className="text-xs text-white/60 mb-1">类型</div>
-              <div className="flex items-center gap-2 p-2 rounded bg-white/5 border border-white/10">
+              <div className="text-xs text-token-secondary mb-1">类型</div>
+              <div className="flex items-center gap-2 p-2 rounded bg-token-nested border border-token-subtle">
                 <span className="text-xl">{TYPE_ICONS[selectedType]}</span>
-                <span className="text-white/90">{current?.displayName}</span>
-                <button onClick={() => { setSelectedType(''); setCredentials({}); }} className="ml-auto text-xs text-white/50 hover:text-white/80">
+                <span className="text-token-primary">{current?.displayName}</span>
+                <button onClick={() => { setSelectedType(''); setCredentials({}); }} className="ml-auto text-xs text-token-secondary hover-text-primary">
                   切换
                 </button>
               </div>
             </div>
 
             <div>
-              <div className="text-xs text-white/60 mb-1">名称 <span className="text-red-400">*</span></div>
+              <div className="text-xs text-token-secondary mb-1">名称 <span className="text-red-400">*</span></div>
               <input
                 type="text"
                 value={name}
                 onChange={(e) => setName(e.target.value)}
                 placeholder="如：生产 TAPD 账号"
-                className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none"
+                className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none"
               />
             </div>
 
             {current?.fields.map(f => (
               <div key={f.key}>
-                <div className="text-xs text-white/60 mb-1">
+                <div className="text-xs text-token-secondary mb-1">
                   {f.label} {f.required && <span className="text-red-400">*</span>}
                 </div>
                 {f.type === 'textarea' ? (
@@ -359,7 +359,7 @@ function AddAuthorizationDialog({
                     onChange={(e) => setCredentials({ ...credentials, [f.key]: e.target.value })}
                     placeholder={f.placeholder}
                     rows={3}
-                    className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none font-mono"
+                    className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none font-mono"
                   />
                 ) : (
                   <input
@@ -367,16 +367,16 @@ function AddAuthorizationDialog({
                     value={credentials[f.key] || ''}
                     onChange={(e) => setCredentials({ ...credentials, [f.key]: e.target.value })}
                     placeholder={f.placeholder}
-                    className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none"
+                    className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none"
                   />
                 )}
                 {f.helpText && (
-                  <div className="text-[11px] text-white/40 mt-1">{f.helpText}</div>
+                  <div className="text-[11px] text-token-muted mt-1">{f.helpText}</div>
                 )}
               </div>
             ))}
 
-            <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-white/70 flex gap-2">
+            <div className="p-2 rounded bg-amber-500/10 border border-amber-500/30 text-xs text-token-secondary flex gap-2">
               <AlertTriangle size={14} className="flex-shrink-0 mt-0.5 text-amber-400" />
               <div>
                 保存时会自动调用第三方 API 验证凭证。验证通过状态为「有效」，否则记为「已过期」但仍保留数据。
@@ -386,7 +386,7 @@ function AddAuthorizationDialog({
         )}
       </div>
 
-      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-white/10">
+      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-token-subtle">
         <Button variant="ghost" onClick={onClose} disabled={saving}>取消</Button>
         <Button variant="primary" onClick={handleSave} disabled={saving || !selectedType}>
           {saving ? '保存中…' : '保存并验证'}
@@ -444,30 +444,30 @@ function EditAuthorizationDialog({
     <>
       <div style={{ minHeight: 0, maxHeight: '60vh', overflowY: 'auto' }} className="flex flex-col gap-4 px-1">
         <div>
-          <div className="text-xs text-white/60 mb-1">名称</div>
+          <div className="text-xs text-token-secondary mb-1">名称</div>
           <input
             type="text"
             value={name}
             onChange={(e) => setName(e.target.value)}
-            className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none"
+            className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none"
           />
         </div>
 
-        <div className="p-3 rounded bg-blue-500/10 border border-blue-500/30 text-xs text-white/70">
+        <div className="p-3 rounded bg-blue-500/10 border border-blue-500/30 text-xs text-token-secondary">
           <Clock size={12} className="inline mr-1" />
           仅填写需要更新的字段。留空的字段保持原值。
         </div>
 
         {current?.fields.map(f => (
           <div key={f.key}>
-            <div className="text-xs text-white/60 mb-1">{f.label}</div>
+            <div className="text-xs text-token-secondary mb-1">{f.label}</div>
             {f.type === 'textarea' ? (
               <textarea
                 value={credentials[f.key] || ''}
                 onChange={(e) => setCredentials({ ...credentials, [f.key]: e.target.value })}
                 placeholder="留空保持原值"
                 rows={3}
-                className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none font-mono"
+                className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none font-mono"
               />
             ) : (
               <input
@@ -475,14 +475,14 @@ function EditAuthorizationDialog({
                 value={credentials[f.key] || ''}
                 onChange={(e) => setCredentials({ ...credentials, [f.key]: e.target.value })}
                 placeholder="留空保持原值"
-                className="w-full px-3 py-2 rounded bg-white/5 border border-white/10 focus:border-white/30 text-white text-sm outline-none"
+                className="w-full px-3 py-2 rounded bg-token-nested border border-token-subtle focus:border-[var(--border-hover)] text-token-primary text-sm outline-none"
               />
             )}
           </div>
         ))}
       </div>
 
-      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-white/10">
+      <div className="flex justify-end gap-2 mt-4 pt-3 border-t border-token-subtle">
         <Button variant="ghost" onClick={onClose} disabled={saving}>取消</Button>
         <Button variant="primary" onClick={handleSave} disabled={saving}>
           {saving ? '保存中…' : '保存'}

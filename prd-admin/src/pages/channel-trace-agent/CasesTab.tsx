@@ -311,9 +311,9 @@ export function CasesTab() {
   return (
     <div className="h-full min-h-0 flex">
       {/* 左：对话式诊断 */}
-      <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
+      <div className="flex-1 min-w-0 flex flex-col border-r border-token-subtle">
         <div className="shrink-0 px-6 pt-4 pb-3 flex items-center gap-2">
-          <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5">
+          <div className="text-sm font-medium text-token-primary inline-flex items-center gap-1.5">
             <Stethoscope className="w-4 h-4 text-emerald-400" />
             线上问题对话式诊断
           </div>
@@ -322,7 +322,7 @@ export function CasesTab() {
               onClick={exportEvidence}
               disabled={!sessionId || exporting || isStreaming}
               title="导出本次诊断的证据包（Markdown：问答 + 召回案例 + 命中代码）"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary hover-bg-soft disabled:opacity-40"
             >
               {exporting ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <FileDown className="w-3.5 h-3.5" />}
               导出
@@ -331,7 +331,7 @@ export function CasesTab() {
               onClick={sinkToDefect}
               disabled={!sessionId || sinking || isStreaming}
               title="把诊断结论沉淀为缺陷（复用缺陷管理，草稿态可继续指派/跟踪）"
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary hover-bg-soft disabled:opacity-40"
             >
               {sinking ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Bug className="w-3.5 h-3.5" />}
               沉淀缺陷
@@ -342,28 +342,28 @@ export function CasesTab() {
                   setHistoryOpen((v) => !v);
                   if (!historyOpen) void loadSessions();
                 }}
-                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10"
+                className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary hover-bg-soft"
               >
                 <History className="w-3.5 h-3.5" />
                 历史
               </button>
               {historyOpen && (
                 <div
-                  className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg border border-white/10 bg-[#15161b] shadow-xl z-20"
+                  className="absolute right-0 top-full mt-1 w-72 max-h-80 overflow-y-auto rounded-lg border border-token-subtle bg-token-card shadow-xl z-20"
                   style={{ overscrollBehavior: 'contain' }}
                 >
                   {sessions.length === 0 ? (
-                    <div className="text-xs text-white/40 px-3 py-4 text-center">暂无历史会话</div>
+                    <div className="text-xs text-token-muted px-3 py-4 text-center">暂无历史会话</div>
                   ) : (
                     sessions.map((s) => (
                       <div
                         key={s.id}
-                        className="flex items-center gap-2 px-3 py-2 hover:bg-white/5 cursor-pointer group"
+                        className="flex items-center gap-2 px-3 py-2 hover-bg-soft cursor-pointer group"
                         onClick={() => void openSession(s.id)}
                       >
                         <div className="flex-1 min-w-0">
-                          <div className="text-xs text-white/85 truncate">{s.title}</div>
-                          <div className="text-[10px] text-white/40">
+                          <div className="text-xs text-token-primary truncate">{s.title}</div>
+                          <div className="text-[10px] text-token-muted">
                             {s.messageCount} 条 · {new Date(s.updatedAt).toLocaleString('zh-CN')}
                           </div>
                         </div>
@@ -372,7 +372,7 @@ export function CasesTab() {
                             e.stopPropagation();
                             void removeSession(s.id);
                           }}
-                          className="shrink-0 p-1 rounded text-white/30 hover:text-rose-400 opacity-0 group-hover:opacity-100"
+                          className="shrink-0 p-1 rounded text-token-muted-faint hover:text-rose-400 opacity-0 group-hover:opacity-100"
                         >
                           <Trash2 className="w-3 h-3" />
                         </button>
@@ -385,7 +385,7 @@ export function CasesTab() {
             <button
               onClick={newSession}
               disabled={isStreaming}
-              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10 disabled:opacity-40"
+              className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary hover-bg-soft disabled:opacity-40"
             >
               <MessageSquarePlus className="w-3.5 h-3.5" />
               新对话
@@ -394,7 +394,7 @@ export function CasesTab() {
         </div>
 
         {model?.model && (
-          <div className="shrink-0 px-6 pb-1 text-[11px] text-white/40 font-mono">
+          <div className="shrink-0 px-6 pb-1 text-[11px] text-token-muted font-mono">
             ● {model.model}
             {model.platform ? ` · ${model.platform}` : ''}
           </div>
@@ -410,7 +410,7 @@ export function CasesTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {messages.length === 0 && !isStreaming && (
-            <div className="text-sm text-white/35 py-10 text-center">
+            <div className="text-sm text-token-muted-faint py-10 text-center">
               描述线上问题，AI 会召回相似历史案例 + 到内置仓库定位代码，初步分析原因；
               <br />
               信息不足时会主动追问，引导你逐步补齐信息链条直到定位问题。
@@ -420,14 +420,14 @@ export function CasesTab() {
           {messages.map((m, i) =>
             m.role === 'user' ? (
               <div key={i} className="flex justify-end">
-                <div className="min-w-0 max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-white/90 whitespace-pre-wrap break-words">
+                <div className="min-w-0 max-w-[80%] rounded-xl bg-emerald-500/15 border border-emerald-500/25 px-3.5 py-2 text-sm text-token-primary whitespace-pre-wrap break-words">
                   {m.content}
                 </div>
               </div>
             ) : (
               <div key={i} className="min-w-0 space-y-1.5">
                 <MsgMeta related={m.relatedCases} hits={m.codeHits} />
-                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                <div className="min-w-0 max-w-full rounded-xl bg-token-nested border border-token-subtle px-4 py-3 text-token-primary break-words">
                   <AssistantAnswer content={m.content} />
                 </div>
               </div>
@@ -438,11 +438,11 @@ export function CasesTab() {
             <div className="min-w-0 space-y-1.5">
               <MsgMeta related={curRelated} hits={curHits} />
               {streamingText ? (
-                <div className="min-w-0 max-w-full rounded-xl bg-white/3 border border-white/10 px-4 py-3 text-white/90 break-words">
+                <div className="min-w-0 max-w-full rounded-xl bg-token-nested border border-token-subtle px-4 py-3 text-token-primary break-words">
                   <AssistantAnswer content={streamingText} streaming />
                 </div>
               ) : (
-                <div className="flex items-center gap-2 text-sm text-white/50 py-2">
+                <div className="flex items-center gap-2 text-sm text-token-secondary py-2">
                   <Loader2 className="w-4 h-4 animate-spin" />
                   {phaseMessage || 'AI 正在分析…'}
                 </div>
@@ -455,7 +455,7 @@ export function CasesTab() {
           )}
         </div>
 
-        <div className="shrink-0 px-6 py-3 border-t border-white/10">
+        <div className="shrink-0 px-6 py-3 border-t border-token-subtle">
           {showPaste && (
             <div className="mb-2">
               <textarea
@@ -463,7 +463,7 @@ export function CasesTab() {
                 onChange={(e) => setContextText(e.target.value)}
                 rows={3}
                 placeholder="粘贴防窜后台报错弹窗 / 列表数据的 HTML 或文本，作为本轮补充上下文（提交后自动清空）。"
-                className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40 font-mono"
+                className="w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-xs text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40 font-mono"
               />
             </div>
           )}
@@ -476,15 +476,15 @@ export function CasesTab() {
               }}
               rows={2}
               placeholder="描述线上问题现象 / 回答 AI 的追问（Ctrl/⌘+Enter 发送）"
-              className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="flex-1 resize-none rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
             <button
               onClick={() => setShowPaste((v) => !v)}
               title="粘贴后台页面 HTML / 文本作为上下文"
-              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover:bg-white/10 ${
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover-bg-soft ${
                 showPaste || contextText.trim()
                   ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-white/5 border-white/10 text-white/75'
+                  : 'bg-token-nested border-token-subtle text-token-primary'
               }`}
             >
               <ClipboardPaste className="w-4 h-4" />
@@ -505,7 +505,7 @@ export function CasesTab() {
       <div className="w-[360px] shrink-0 flex flex-col">
         <div className="shrink-0 px-4 pt-5 pb-3 flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-token-muted-faint absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
@@ -513,13 +513,13 @@ export function CasesTab() {
                 if (e.key === 'Enter') void load(keyword);
               }}
               placeholder="搜索案例"
-              className="w-full rounded-lg bg-white/5 border border-white/10 pl-8 pr-3 py-1.5 text-sm text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="w-full rounded-lg bg-token-nested border border-token-subtle pl-8 pr-3 py-1.5 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <button
             onClick={() => setImportPwOpen(true)}
             disabled={importStream.isStreaming}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft disabled:opacity-40"
             title="导入历史 bug 文件，AI 自动解析为案例（需口令）"
           >
             {importStream.isStreaming ? (
@@ -534,7 +534,7 @@ export function CasesTab() {
               setEditing(null);
               setEditorOpen(true);
             }}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft"
           >
             <Plus className="w-3.5 h-3.5" />
             记录
@@ -558,16 +558,16 @@ export function CasesTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {loading ? (
-            <div className="text-sm text-white/40 py-6 text-center">加载中…</div>
+            <div className="text-sm text-token-muted py-6 text-center">加载中…</div>
           ) : items.length === 0 ? (
-            <div className="text-sm text-white/35 py-10 text-center">
+            <div className="text-sm text-token-muted-faint py-10 text-center">
               暂无案例，点击「记录」或「导入」沉淀线上问题排查经验。
             </div>
           ) : (
             items.map((it) => (
               <div
                 key={it.id}
-                className="rounded-lg bg-white/3 border border-white/10 px-3 py-2.5 group"
+                className="rounded-lg bg-token-nested border border-token-subtle px-3 py-2.5 group"
               >
                 <div className="flex items-start gap-2">
                   <div className="flex-1 min-w-0">
@@ -577,9 +577,9 @@ export function CasesTab() {
                       >
                         {SEVERITY_META[it.severity].label}
                       </span>
-                      <span className="text-sm text-white/90 font-medium truncate">{it.title}</span>
+                      <span className="text-sm text-token-primary font-medium truncate">{it.title}</span>
                     </div>
-                    <div className="text-xs text-white/45 mt-1 line-clamp-2 whitespace-pre-wrap">
+                    <div className="text-xs text-token-muted mt-1 line-clamp-2 whitespace-pre-wrap">
                       {it.symptom}
                     </div>
                     {it.tags.length > 0 && (
@@ -601,14 +601,14 @@ export function CasesTab() {
                         setEditing(it);
                         setEditorOpen(true);
                       }}
-                      className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10"
+                      className="p-1 rounded text-token-muted hover-text-primary hover-bg-soft"
                       title="编辑"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => onDelete(it.id)}
-                      className="p-1 rounded text-white/40 hover:text-rose-400 hover:bg-white/10"
+                      className="p-1 rounded text-token-muted hover:text-rose-400 hover-bg-soft"
                       title="删除"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -672,15 +672,15 @@ function MsgMeta({
   return (
     <div className="flex flex-wrap items-center gap-1.5 text-[11px]">
       {related && related.length > 0 && (
-        <span className="text-white/45">召回案例：</span>
+        <span className="text-token-muted">召回案例：</span>
       )}
       {related?.slice(0, 5).map((c) => (
-        <span key={c.id} className="px-1.5 py-0.5 rounded bg-white/5 text-white/70">
+        <span key={c.id} className="px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">
           {c.title}
         </span>
       ))}
       {hits && hits.length > 0 && (
-        <span className="text-white/45 inline-flex items-center gap-1 ml-1">
+        <span className="text-token-muted inline-flex items-center gap-1 ml-1">
           <FileCode className="w-3 h-3" />
           命中代码 {hits.length}
         </span>
@@ -750,33 +750,33 @@ function CaseEditorModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#0f1014] flex flex-col"
+        className="w-full max-w-2xl rounded-xl border border-token-subtle bg-token-card flex flex-col"
         style={{ maxHeight: '85vh' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-white/10">
-          <div className="text-sm font-medium text-white/90">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-token-subtle">
+          <div className="text-sm font-medium text-token-primary">
             {initial ? '编辑问题案例' : '记录问题案例'}
           </div>
-          <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white/80">
+          <button onClick={onClose} className="p-1 rounded text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 px-5 py-4 space-y-3" style={{ minHeight: 0, overflowY: 'auto' }}>
           <div>
-            <label className="text-xs text-white/55">标题</label>
+            <label className="text-xs text-token-secondary">标题</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="text-xs text-white/55">严重程度</label>
+              <label className="text-xs text-token-secondary">严重程度</label>
               <select
                 value={severity}
                 onChange={(e) => setSeverity(e.target.value as ChannelTraceCaseSeverity)}
-                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+                className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
               >
                 <option value="low">低</option>
                 <option value="medium">中</option>
@@ -784,48 +784,48 @@ function CaseEditorModal({
               </select>
             </div>
             <div className="flex-1">
-              <label className="text-xs text-white/55">标签（逗号分隔）</label>
+              <label className="text-xs text-token-secondary">标签（逗号分隔）</label>
               <input
                 value={tagsInput}
                 onChange={(e) => setTagsInput(e.target.value)}
                 placeholder="上码失败, 关联错乱"
-                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+                className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
               />
             </div>
           </div>
           <div>
-            <label className="text-xs text-white/55">问题现象</label>
+            <label className="text-xs text-token-secondary">问题现象</label>
             <textarea
               value={symptom}
               onChange={(e) => setSymptom(e.target.value)}
               rows={3}
-              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div>
-            <label className="text-xs text-white/55">根因（可选）</label>
+            <label className="text-xs text-token-secondary">根因（可选）</label>
             <textarea
               value={rootCause}
               onChange={(e) => setRootCause(e.target.value)}
               rows={2}
-              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div>
-            <label className="text-xs text-white/55">排查步骤 / 解决方案（可选，支持 Markdown）</label>
+            <label className="text-xs text-token-secondary">排查步骤 / 解决方案（可选，支持 Markdown）</label>
             <textarea
               value={resolution}
               onChange={(e) => setResolution(e.target.value)}
               rows={5}
-              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           {error && <div className="text-xs text-rose-400">{error}</div>}
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-white/10">
+        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-token-subtle">
           <button
             onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg text-sm text-white/70 hover:bg-white/5"
+            className="px-3.5 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft"
           >
             取消
           </button>

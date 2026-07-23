@@ -79,15 +79,7 @@ export default function ShortLinkRouter() {
         background: '#0a0a0a',
       }}>
         <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
-        <div style={{
-          position: 'relative',
-          padding: '40px 32px', textAlign: 'center',
-          borderRadius: 16,
-          background: 'rgba(18, 20, 28, 0.88)',
-          backdropFilter: 'blur(20px)',
-          border: '1px solid rgba(255,255,255,0.1)',
-          maxWidth: 360,
-        }}>
+        <div className="border border-token-subtle" style={{ position: 'relative', padding: '40px 32px', textAlign: 'center', borderRadius: 16, background: 'rgba(18, 20, 28, 0.88)', backdropFilter: 'blur(20px)', maxWidth: 360 }}>
           <div style={{
             width: 64, height: 64, borderRadius: '50%',
             background: 'rgba(239, 68, 68, 0.15)',
@@ -146,15 +138,7 @@ function UnsupportedTargetError({ targetType }: { targetType: string }) {
       background: '#0a0a0a',
     }}>
       <div style={{ position: 'absolute', inset: 0 }}><BlackHoleVortex /></div>
-      <div style={{
-        position: 'relative',
-        padding: '40px 32px', textAlign: 'center',
-        borderRadius: 16,
-        background: 'rgba(18, 20, 28, 0.88)',
-        backdropFilter: 'blur(20px)',
-        border: '1px solid rgba(255,255,255,0.1)',
-        maxWidth: 360,
-      }}>
+      <div className="border border-token-subtle" style={{ position: 'relative', padding: '40px 32px', textAlign: 'center', borderRadius: 16, background: 'rgba(18, 20, 28, 0.88)', backdropFilter: 'blur(20px)', maxWidth: 360 }}>
         <div style={{
           width: 64, height: 64, borderRadius: '50%',
           background: 'rgba(245, 158, 11, 0.15)',

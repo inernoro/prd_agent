@@ -317,13 +317,13 @@ export default function WeeklyPosterWizardPage() {
         <div className="flex items-start justify-between gap-4 mb-6">
           <div>
             <div className="text-[10px] font-semibold tracking-[0.14em] uppercase mb-1"
-              style={{ color: 'rgba(255,255,255,0.4)' }}>
+              style={{ color: 'var(--text-muted)' }}>
               Homepage · Poster
             </div>
-            <h1 className="text-[22px] font-semibold tracking-tight text-white">
+            <h1 className="text-[22px] font-semibold tracking-tight text-token-primary">
               海报工坊
             </h1>
-            <p className="text-[13px] mt-1" style={{ color: 'rgba(255,255,255,0.55)' }}>
+            <p className="text-[13px] mt-1" style={{ color: 'var(--text-secondary)' }}>
               把更新 / 公告 / 活动一键做成主页弹窗海报 — AI 写文字,自动配图
             </p>
           </div>
@@ -342,9 +342,9 @@ export default function WeeklyPosterWizardPage() {
                 }}
                 className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
                 style={{
-                  color: 'rgba(255,255,255,0.7)',
-                  background: 'rgba(255,255,255,0.04)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  color: 'var(--text-secondary)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               >
                 新建空白
@@ -354,9 +354,9 @@ export default function WeeklyPosterWizardPage() {
               to="/weekly-poster/advanced"
               className="inline-flex items-center gap-1.5 px-3 h-8 rounded-md text-[12px] transition-colors"
               style={{
-                color: 'rgba(255,255,255,0.7)',
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.1)',
+                color: 'var(--text-secondary)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
               }}
             >
               <SlidersHorizontal size={12} /> 高级编辑
@@ -380,10 +380,10 @@ export default function WeeklyPosterWizardPage() {
                     className="relative rounded-lg text-left transition-all disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:-translate-y-px"
                     style={{
                       padding: 12,
-                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      background: active ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
                       border: active
-                        ? '1px solid rgba(255,255,255,0.24)'
-                        : '1px solid rgba(255,255,255,0.08)',
+                        ? '1px solid var(--border-subtle)'
+                        : '1px solid var(--border-subtle)',
                       boxShadow: active
                         ? 'inset 0 1px 0 rgba(255,255,255,0.08)'
                         : 'none',
@@ -391,10 +391,10 @@ export default function WeeklyPosterWizardPage() {
                   >
                     <div className="flex items-center gap-2 mb-1.5">
                       <span className="text-[16px]">{t.emoji}</span>
-                      <span className="text-[13px] font-medium text-white">{t.label}</span>
+                      <span className="text-[13px] font-medium text-token-primary">{t.label}</span>
                     </div>
                     <div className="text-[11px] leading-relaxed line-clamp-2"
-                      style={{ color: 'rgba(255,255,255,0.55)' }}>
+                      style={{ color: 'var(--text-secondary)' }}>
                       {t.description}
                     </div>
                   </button>
@@ -416,14 +416,14 @@ export default function WeeklyPosterWizardPage() {
                     disabled={busy}
                     className="rounded-lg text-left transition-all px-3 py-2.5 disabled:opacity-50"
                     style={{
-                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      background: active ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
                       border: active
-                        ? '1px solid rgba(255,255,255,0.24)'
-                        : '1px solid rgba(255,255,255,0.08)',
+                        ? '1px solid var(--border-subtle)'
+                        : '1px solid var(--border-subtle)',
                     }}
                   >
-                    <div className="text-[12px] font-medium text-white">{s.label}</div>
-                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                    <div className="text-[12px] font-medium text-token-primary">{s.label}</div>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                       {s.description}
                     </div>
                   </button>
@@ -439,8 +439,8 @@ export default function WeeklyPosterWizardPage() {
                 placeholder="粘贴任何 markdown —— 周报原文、发布说明、活动介绍…"
                 className="w-full mt-2.5 px-3 py-2 rounded-md text-[12px] outline-none font-mono"
                 style={{
-                  background: 'rgba(0,0,0,0.25)',
-                  border: '1px solid rgba(255,255,255,0.1)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
                   color: 'rgba(255,255,255,0.9)',
                   minHeight: 120,
                 }}
@@ -449,11 +449,11 @@ export default function WeeklyPosterWizardPage() {
             {sourceType === 'knowledge-base' && (
               <div className="mt-2.5">
                 {kbLoading ? (
-                  <div className="flex items-center gap-2 text-[12px] text-white/50 px-3 py-2">
+                  <div className="flex items-center gap-2 text-[12px] text-token-secondary px-3 py-2">
                     <MapSpinner size={12} /> 加载知识库列表…
                   </div>
                 ) : kbEntries.length === 0 ? (
-                  <div className="text-[12px] text-white/50 px-3 py-2">
+                  <div className="text-[12px] text-token-secondary px-3 py-2">
                     知识库里还没有可用文档,去「百宝箱 → 知识库」上传一份再来。
                   </div>
                 ) : (
@@ -463,8 +463,8 @@ export default function WeeklyPosterWizardPage() {
                     disabled={busy}
                     className="w-full px-3 py-2 rounded-md text-[12px] outline-none"
                     style={{
-                      background: 'rgba(0,0,0,0.25)',
-                      border: '1px solid rgba(255,255,255,0.12)',
+                      background: 'var(--nested-block-bg)',
+                      border: '1px solid var(--border-subtle)',
                       color: 'rgba(255,255,255,0.9)',
                     }}
                   >
@@ -490,24 +490,24 @@ export default function WeeklyPosterWizardPage() {
                     key={m.key}
                     className="rounded-lg px-3 py-2.5 transition-colors"
                     style={{
-                      background: active ? 'rgba(255,255,255,0.07)' : 'rgba(255,255,255,0.025)',
+                      background: active ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
                       border: active
-                        ? '1px solid rgba(255,255,255,0.24)'
-                        : '1px solid rgba(255,255,255,0.08)',
+                        ? '1px solid var(--border-subtle)'
+                        : '1px solid var(--border-subtle)',
                       opacity: m.enabled ? 1 : 0.55,
                       cursor: m.enabled ? 'default' : 'not-allowed',
                     }}
                   >
                     <div className="flex items-center gap-1.5">
-                      <div className="text-[12px] font-medium text-white">{m.label}</div>
+                      <div className="text-[12px] font-medium text-token-primary">{m.label}</div>
                       {!m.enabled && (
                         <span className="text-[9px] px-1.5 py-0.5 rounded font-medium"
-                          style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.55)' }}>
+                          style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>
                           敬请期待
                         </span>
                       )}
                     </div>
-                    <div className="text-[10.5px] mt-0.5" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                    <div className="text-[10.5px] mt-0.5" style={{ color: 'var(--text-secondary)' }}>
                       {m.description}
                     </div>
                   </div>
@@ -525,10 +525,10 @@ export default function WeeklyPosterWizardPage() {
               className="inline-flex items-center gap-2 px-6 h-11 rounded-lg text-[14px] font-medium transition-all disabled:cursor-not-allowed"
               style={{
                 background: busy
-                  ? 'rgba(255,255,255,0.06)'
-                  : 'rgba(255,255,255,0.1)',
+                  ? 'var(--nested-block-bg)'
+                  : 'var(--nested-block-bg)',
                 color: '#fff',
-                border: '1px solid rgba(255,255,255,0.2)',
+                border: '1px solid var(--border-subtle)',
                 boxShadow: busy ? 'none' : 'inset 0 1px 0 rgba(255,255,255,0.12)',
                 minWidth: 280,
                 justifyContent: 'center',
@@ -548,7 +548,7 @@ export default function WeeklyPosterWizardPage() {
 
           {modelInfo?.model && (
             <div className="text-center text-[10.5px] font-mono"
-              style={{ color: 'rgba(255,255,255,0.35)' }}>
+              style={{ color: 'var(--text-muted)' }}>
               ● {modelInfo.model}
               {modelInfo.platform ? ` · ${modelInfo.platform}` : ''}
               {sourceSummary ? `   |   ${sourceSummary}` : ''}
@@ -563,7 +563,7 @@ export default function WeeklyPosterWizardPage() {
         {poster && (
           <div className="mt-6">
             <div className="flex items-center justify-between mb-3">
-              <h2 className="text-[13px] font-semibold text-white/85">
+              <h2 className="text-[13px] font-semibold text-token-primary">
                 生成结果 · {(poster.pages ?? []).length} 页
               </h2>
               <div className="flex items-center gap-2">
@@ -571,22 +571,22 @@ export default function WeeklyPosterWizardPage() {
                   type="button"
                   onClick={() => setPreviewOpen(true)}
                   disabled={(poster.pages ?? []).length === 0}
-                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10 disabled:opacity-40 disabled:cursor-not-allowed"
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover-bg-soft disabled:opacity-40 disabled:cursor-not-allowed"
                   style={{
-                    color: 'rgba(255,255,255,0.8)',
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-primary)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   <Eye size={12} /> 预览
                 </button>
                 <Link
                   to="/weekly-poster/advanced"
-                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover:bg-white/10"
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] transition-colors hover-bg-soft"
                   style={{
-                    color: 'rgba(255,255,255,0.7)',
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    color: 'var(--text-secondary)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   <SlidersHorizontal size={12} /> 微调
@@ -595,10 +595,10 @@ export default function WeeklyPosterWizardPage() {
                   type="button"
                   onClick={handlePublish}
                   disabled={publishing || phase !== 'ready'}
-                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-white transition-colors disabled:opacity-50 disabled:cursor-not-allowed enabled:hover:bg-white/20"
+                  className="inline-flex items-center gap-1 px-3 h-8 rounded-md text-[12px] font-medium text-token-primary transition-colors disabled:opacity-50 disabled:cursor-not-allowed enabled:hover-bg-soft"
                   style={{
-                    background: 'rgba(255,255,255,0.12)',
-                    border: '1px solid rgba(255,255,255,0.22)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                   }}
                 >
                   {publishing ? <MapSpinner size={12} /> : <Send size={12} />}
@@ -648,7 +648,7 @@ function TypingPanel({ text }: { text: string }) {
       style={{
         maxWidth: 540,
         background: 'rgba(0,0,0,0.4)',
-        border: '1px solid rgba(255,255,255,0.08)',
+        border: '1px solid var(--border-subtle)',
         color: 'rgba(180,210,255,0.7)',
         fontSize: 11,
         lineHeight: 1.55,
@@ -658,10 +658,10 @@ function TypingPanel({ text }: { text: string }) {
       }}
     >
       <div className="flex items-center justify-between mb-1">
-        <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+        <span className="text-[9px] uppercase tracking-[0.14em]" style={{ color: 'var(--text-muted)' }}>
           AI · 实时输出
         </span>
-        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.35)' }}>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {text.length} 字
         </span>
       </div>
@@ -683,7 +683,7 @@ function Section({ title, children }: { title: string; children: React.ReactNode
   return (
     <section>
       <h2 className="text-[11px] font-semibold tracking-[0.12em] uppercase mb-2.5"
-        style={{ color: 'rgba(255,255,255,0.45)' }}>
+        style={{ color: 'var(--text-muted)' }}>
         {title}
       </h2>
       {children}
@@ -735,7 +735,7 @@ function ResultPageCard({
               style={{
                 background: 'rgba(0,0,0,0.55)',
                 color: 'rgba(255,255,255,0.9)',
-                border: '1px solid rgba(255,255,255,0.15)',
+                border: '1px solid var(--border-subtle)',
               }}>
               <MapSpinner size={10} /> 配图生成中
             </div>
@@ -743,7 +743,7 @@ function ResultPageCard({
         )}
         {progress === 'pending' && !page.imageUrl && (
           <div className="absolute inset-0 flex items-center justify-center text-[10px] tracking-wider"
-            style={{ color: 'rgba(255,255,255,0.5)' }}>
+            style={{ color: 'var(--text-secondary)' }}>
             等待中
           </div>
         )}
@@ -752,8 +752,8 @@ function ResultPageCard({
             type="button"
             onClick={onRegenerate}
             disabled={disabled}
-            className="absolute inset-0 flex items-center justify-center text-[11px] transition-colors hover:bg-white/5"
-            style={{ color: 'rgba(255,255,255,0.7)' }}
+            className="absolute inset-0 flex items-center justify-center text-[11px] transition-colors hover-bg-soft"
+            style={{ color: 'var(--text-secondary)' }}
           >
             <RotateCcw size={12} className="mr-1" /> 生图失败,点这里重试
           </button>
@@ -768,7 +768,7 @@ function ResultPageCard({
             style={{
               background: 'rgba(0,0,0,0.4)',
               color: 'rgba(255,255,255,0.85)',
-              border: '1px solid rgba(255,255,255,0.15)',
+              border: '1px solid var(--border-subtle)',
             }}
           >
             <RotateCcw size={12} />
@@ -778,15 +778,15 @@ function ResultPageCard({
       {/* 文字区 */}
       <div className="p-3">
         <div className="text-[9px] font-semibold tracking-[0.15em] uppercase mb-1"
-          style={{ color: 'rgba(255,255,255,0.4)' }}>
+          style={{ color: 'var(--text-muted)' }}>
           Page {page.order + 1}
         </div>
         <div className="text-[13px] font-semibold line-clamp-1 mb-1"
-          style={{ color: 'rgba(255,255,255,0.92)' }}>
+          style={{ color: 'var(--text-primary)' }}>
           {page.title}
         </div>
         <div className="text-[11px] leading-relaxed line-clamp-3"
-          style={{ color: 'rgba(255,255,255,0.6)' }}>
+          style={{ color: 'var(--text-secondary)' }}>
           {page.body}
         </div>
       </div>

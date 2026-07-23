@@ -156,7 +156,7 @@ export function ImageLightbox({
   };
 
   const iconBtn =
-    'rounded-lg p-1.5 transition-colors hover:bg-white/10 disabled:opacity-30 disabled:cursor-not-allowed';
+    'rounded-lg p-1.5 transition-colors hover-bg-soft disabled:opacity-30 disabled:cursor-not-allowed';
 
   const lightbox = (
     <div
@@ -188,7 +188,7 @@ export function ImageLightbox({
           <button
             type="button"
             onClick={(e) => { e.stopPropagation(); resetView(); }}
-            className="rounded-lg px-2 py-1 text-xs tabular-nums transition-colors hover:bg-white/10"
+            className="rounded-lg px-2 py-1 text-xs tabular-nums transition-colors hover-bg-soft"
             aria-label="复位"
             title="复位 (0)"
             style={{ minWidth: 48 }}
@@ -216,7 +216,7 @@ export function ImageLightbox({
               <RotateCcw size={16} />
             </button>
           )}
-          <span className="mx-1 w-px self-stretch" style={{ background: 'rgba(255,255,255,0.2)' }} />
+          <span className="mx-1 w-px self-stretch bg-token-nested"  />
           <a
             href={src}
             download
@@ -244,7 +244,7 @@ export function ImageLightbox({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); prev(); }}
-          className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover:bg-white/10"
+          className="absolute left-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover-bg-soft"
           style={{ zIndex: 10, color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
           aria-label="上一张 (←)"
           title="上一张 (←)"
@@ -256,7 +256,7 @@ export function ImageLightbox({
         <button
           type="button"
           onClick={(e) => { e.stopPropagation(); next(); }}
-          className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover:bg-white/10"
+          className="absolute right-4 top-1/2 -translate-y-1/2 rounded-full p-3 transition-all hover-bg-soft"
           style={{ zIndex: 10, color: 'rgba(255,255,255,0.85)', background: 'rgba(0,0,0,0.4)' }}
           aria-label="下一张 (→)"
           title="下一张 (→)"

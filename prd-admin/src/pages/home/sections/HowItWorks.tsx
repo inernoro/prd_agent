@@ -104,7 +104,7 @@ function StepCard({
       <p className="text-[13px] text-white/60 leading-[1.7] mb-6">{description}</p>
 
       <div
-        className="px-3.5 py-2.5 rounded-lg bg-black/30 border border-white/[0.06] font-mono text-[11px] text-white/65"
+        className="px-3.5 py-2.5 rounded-lg bg-black/30 border border-token-subtle/[0.06] font-mono text-[11px] text-white/65"
         style={{ letterSpacing: '0.01em' }}
       >
         <span className="select-none" style={{ color: accent }}>

@@ -151,24 +151,24 @@ export class MobileSafeBoundary extends React.Component<Props, State> {
             <button
               type="button"
               onClick={this.goHome}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95"
-              style={{ background: 'rgba(255, 255, 255, 0.08)', color: 'var(--text-primary)' }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95 bg-token-nested"
+              style={{ color: 'var(--text-primary)' }}
             >
               <Home size={14} /> 回首页
             </button>
             <button
               type="button"
               onClick={this.copyStack}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95"
-              style={{ background: 'rgba(255, 255, 255, 0.06)', color: 'var(--text-secondary, #cfd0d7)' }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95 bg-token-nested"
+              style={{ color: 'var(--text-secondary, #cfd0d7)' }}
             >
               <Copy size={14} /> 复制错误
             </button>
             <button
               type="button"
               onClick={() => this.setState({ expanded: !expanded })}
-              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95"
-              style={{ background: 'rgba(255, 255, 255, 0.04)', color: 'var(--text-muted, #8c8d99)' }}
+              className="inline-flex items-center gap-1.5 px-3 py-2 rounded-xl text-[13px] transition-all active:scale-95 bg-token-nested"
+              style={{ color: 'var(--text-muted, #8c8d99)' }}
             >
               {expanded ? <ChevronUp size={14} /> : <ChevronDown size={14} />}
               {expanded ? '收起细节' : '展开细节'}

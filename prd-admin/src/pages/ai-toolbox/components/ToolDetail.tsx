@@ -955,7 +955,7 @@ export function ToolDetail() {
                   <div className="relative">
                     <button
                       onClick={() => setShowSortDropdown(!showSortDropdown)}
-                      className="text-token-muted flex items-center gap-0.5 px-1 py-0.5 rounded hover:bg-white/10 transition-colors text-[10px]"
+                      className="text-token-muted flex items-center gap-0.5 px-1 py-0.5 rounded hover-bg-soft transition-colors text-[10px]"
                     >
                       {{ lastActive: '最近活跃', created: '创建时间', messageCount: '消息数', title: '标题' }[sessionSortBy]}
                       <ChevronDown size={10} />
@@ -963,13 +963,13 @@ export function ToolDetail() {
                     {showSortDropdown && (
                       <div
                         className="absolute right-0 top-full mt-1 py-1 rounded-lg shadow-lg z-10 min-w-[90px]"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255, 255, 255, 0.1)' }}
+                        style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)' }}
                       >
                         {([['lastActive', '最近活跃'], ['created', '创建时间'], ['messageCount', '消息数'], ['title', '标题']] as const).map(([val, label]) => (
                           <button
                             key={val}
                             onClick={() => { setSessionSortBy(val); setShowSortDropdown(false); }}
-                            className="w-full text-left px-3 py-1 text-[11px] hover:bg-white/10 transition-colors"
+                            className="w-full text-left px-3 py-1 text-[11px] hover-bg-soft transition-colors"
                             style={{ color: val === sessionSortBy ? 'var(--text-primary)' : 'var(--text-secondary)' }}
                           >
                             {label}
@@ -978,7 +978,7 @@ export function ToolDetail() {
                       </div>
                     )}
                   </div>
-                  <button onClick={handleNewSession} className="p-1 rounded-lg hover:bg-white/10 transition-colors" title="新建会话">
+                  <button onClick={handleNewSession} className="p-1 rounded-lg hover-bg-soft transition-colors" title="新建会话">
                     <Plus size={14} style={{ color: 'var(--text-muted)' }} />
                   </button>
                 </div>
@@ -994,7 +994,7 @@ export function ToolDetail() {
                   className="text-token-primary flex-1 bg-transparent border-none outline-none text-[11px]"
                 />
                 {sessionSearch && (
-                  <button onClick={() => setSessionSearch('')} className="hover:bg-white/10 rounded p-0.5 transition-colors">
+                  <button onClick={() => setSessionSearch('')} className="hover-bg-soft rounded p-0.5 transition-colors">
                     <X size={10} style={{ color: 'var(--text-muted)' }} />
                   </button>
                 )}
@@ -1024,7 +1024,7 @@ export function ToolDetail() {
                   key={s.id}
                   className="group relative flex items-center gap-2 px-3 py-1.5 mx-1 rounded-lg cursor-pointer transition-colors"
                   style={{
-                    background: s.id === currentSessionId ? 'rgba(255, 255, 255, 0.08)' : 'transparent',
+                    background: s.id === currentSessionId ? 'var(--nested-block-bg)' : 'transparent',
                     opacity: s.isArchived ? 0.5 : 1,
                   }}
                   onClick={() => switchToSession(s.id)}
@@ -1063,21 +1063,21 @@ export function ToolDetail() {
                   <div className="absolute right-1 top-1 hidden group-hover:flex items-center gap-0.5">
                     <button
                       onClick={(e) => handleTogglePin(s.id, e)}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-0.5 rounded hover-bg-soft transition-colors"
                       title={s.isPinned ? '取消置顶' : '置顶'}
                     >
                       <Pin size={10} style={{ color: s.isPinned ? 'var(--accent-primary, #818cf8)' : 'var(--text-muted)' }} />
                     </button>
                     <button
                       onClick={(e) => handleToggleArchive(s.id, e)}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-0.5 rounded hover-bg-soft transition-colors"
                       title={s.isArchived ? '取消归档' : '归档'}
                     >
                       <Archive size={10} style={{ color: 'var(--text-muted)' }} />
                     </button>
                     <button
                       onClick={(e) => { e.stopPropagation(); handleDeleteSession(s.id); }}
-                      className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                      className="p-0.5 rounded hover-bg-soft transition-colors"
                     >
                       <X size={10} style={{ color: 'var(--text-muted)' }} />
                     </button>
@@ -1095,7 +1095,7 @@ export function ToolDetail() {
             <div className="flex items-center justify-end gap-1 px-4 pt-2">
               <button
                 onClick={handleExportChat}
-                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
+                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover-bg-soft transition-colors"
                 title="导出对话"
               >
                 <Download size={12} />
@@ -1103,7 +1103,7 @@ export function ToolDetail() {
               </button>
               <button
                 onClick={handleClearChat}
-                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover:bg-white/10 transition-colors"
+                className="text-token-muted flex items-center gap-1 px-2 py-1 rounded-lg text-[11px] hover-bg-soft transition-colors"
                 title="清空对话"
               >
                 <Eraser size={12} />
@@ -1136,7 +1136,7 @@ export function ToolDetail() {
                     {conversationStarters.map((starter, i) => (
                       <button
                         key={i}
-                        className="border-token-subtle text-token-secondary text-xs px-3 py-1.5 rounded-full border transition-colors hover:bg-white/10"
+                        className="border-token-subtle text-token-secondary text-xs px-3 py-1.5 rounded-full border transition-colors hover-bg-soft"
                         onClick={() => handleSend(starter)}
                       >
                         {starter}
@@ -1198,7 +1198,7 @@ export function ToolDetail() {
                     <span className="text-token-secondary text-xs truncate block max-w-[140px]">{attachment.name}</span>
                     <span className="text-token-muted text-[10px]">{formatFileSize(attachment.file.size)}</span>
                   </div>
-                  <button onClick={() => removeAttachment(attachment.id)} className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0">
+                  <button onClick={() => removeAttachment(attachment.id)} className="p-0.5 rounded hover-bg-soft transition-colors flex-shrink-0">
                     <X size={12} style={{ color: 'var(--text-muted)' }} />
                   </button>
                 </Surface>
@@ -1210,10 +1210,10 @@ export function ToolDetail() {
           <div className="border-token-subtle p-4 border-t">
             <div className="surface-inset flex items-end gap-2 p-2 rounded-xl">
               <div className="flex items-center gap-1 pb-1">
-                <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" title="上传文件">
+                <button onClick={() => fileInputRef.current?.click()} className="p-1.5 rounded-lg hover-bg-soft transition-colors" title="上传文件">
                   <Paperclip size={18} style={{ color: 'var(--text-muted)' }} />
                 </button>
-                <button onClick={() => imageInputRef.current?.click()} className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" title="上传图片">
+                <button onClick={() => imageInputRef.current?.click()} className="p-1.5 rounded-lg hover-bg-soft transition-colors" title="上传图片">
                   <ImagePlus size={18} style={{ color: 'var(--text-muted)' }} />
                 </button>
               </div>
@@ -1278,7 +1278,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
           const isBlock = !!match || codeStr.includes('\n');
           if (!isBlock) {
             return (
-              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255, 255, 255, 0.1)' }} {...props}>{children}</code>
+              <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'var(--nested-block-bg)' }} {...props}>{children}</code>
             );
           }
           // 块级且指定语言 → Prism 高亮
@@ -1289,7 +1289,7 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
                   <span>{match[1]}</span>
                   <button
                     onClick={() => { navigator.clipboard.writeText(codeStr); toast.success('代码已复制'); }}
-                    className="opacity-0 group-hover/code:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all"
+                    className="opacity-0 group-hover/code:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded hover-bg-soft transition-all"
                   >
                     <Copy size={10} /> 复制
                   </button>
@@ -1333,13 +1333,13 @@ const AssistantMarkdown = memo(function AssistantMarkdown({ content }: { content
         h2({ children }) { return <h2 className="text-sm font-bold mb-1.5">{children}</h2>; },
         h3({ children }) { return <h3 className="text-sm font-semibold mb-1">{children}</h3>; },
         blockquote({ children }) {
-          return <blockquote className="border-l-2 pl-3 my-2" style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'var(--text-secondary)' }}>{children}</blockquote>;
+          return <blockquote className="border-l-2 pl-3 my-2 border-token-subtle" style={{ color: 'var(--text-secondary)' }}>{children}</blockquote>;
         },
         table({ children }) {
-          return <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>{children}</table></div>;
+          return <div className="overflow-x-auto my-2"><table className="text-xs border-collapse w-full border-token-subtle" >{children}</table></div>;
         },
-        th({ children }) { return <th className="border px-2 py-1 text-left font-semibold" style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)' }}>{children}</th>; },
-        td({ children }) { return <td className="border px-2 py-1" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>{children}</td>; },
+        th({ children }) { return <th className="border px-2 py-1 text-left font-semibold border-token-subtle" style={{ background: 'var(--nested-block-bg)' }}>{children}</th>; },
+        td({ children }) { return <td className="border px-2 py-1 border-token-subtle" >{children}</td>; },
       }}
     >
       {content}
@@ -1420,7 +1420,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
         {message.attachments && message.attachments.length > 0 && (
           <div className="flex flex-wrap gap-2 mb-1">
             {message.attachments.map(att => (
-              <div key={att.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'rgba(255, 255, 255, 0.05)' }}>
+              <div key={att.id} className="flex items-center gap-2 px-2 py-1.5 rounded-lg" style={{ background: 'var(--nested-block-bg)' }}>
                 {att.type === 'image' && att.url
                   ? <img src={att.url} alt="" className="w-16 h-16 rounded object-cover" />
                   : <><File size={14} style={{ color: 'var(--text-muted)' }} /><span className="text-xs" style={{ color: 'var(--text-secondary)' }}>{att.name}</span></>}
@@ -1458,7 +1458,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
               ? 'rgba(239, 68, 68, 0.1)'
               : isUser
                 ? 'linear-gradient(135deg, rgba(var(--accent-primary-rgb), 0.15) 0%, rgba(var(--accent-primary-rgb), 0.08) 100%)'
-                : 'rgba(255, 255, 255, 0.03)',
+                : 'var(--nested-block-bg)',
             color: isError ? 'rgb(248, 113, 113)' : 'var(--text-primary)',
             border: isError ? '1px solid rgba(239, 68, 68, 0.2)' : undefined,
             minHeight: '1.5em',
@@ -1479,7 +1479,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
                 }}
               />
               <div className="flex items-center gap-2 justify-end">
-                <button onClick={handleCancelEdit} className="text-xs px-2 py-1 rounded hover:bg-white/10 transition-colors" style={{ color: 'var(--text-muted)' }}>取消</button>
+                <button onClick={handleCancelEdit} className="text-xs px-2 py-1 rounded hover-bg-soft transition-colors" style={{ color: 'var(--text-muted)' }}>取消</button>
                 <button onClick={handleConfirmEdit} className="text-xs px-2 py-1 rounded transition-colors" style={{ background: 'var(--selection-icon-bg)', color: 'var(--selection-text)' }}>发送</button>
               </div>
             </div>
@@ -1510,7 +1510,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
             {onCopy && (
               <button
                 onClick={handleCopy}
-                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover-bg-soft transition-all"
                 title="复制内容"
               >
                 {copied
@@ -1522,14 +1522,14 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
               <>
                 <button
                   onClick={() => handleFeedback('up')}
-                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover-bg-soft transition-all"
                   title="有帮助"
                 >
                   <ThumbsUp size={12} style={{ color: feedback === 'up' ? 'rgb(74, 222, 128)' : 'var(--text-muted)' }} fill={feedback === 'up' ? 'rgb(74, 222, 128)' : 'none'} />
                 </button>
                 <button
                   onClick={() => handleFeedback('down')}
-                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                  className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover-bg-soft transition-all"
                   title="没有帮助"
                 >
                   <ThumbsDown size={12} style={{ color: feedback === 'down' ? 'rgb(248, 113, 113)' : 'var(--text-muted)' }} fill={feedback === 'down' ? 'rgb(248, 113, 113)' : 'none'} />
@@ -1539,7 +1539,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
             {onRegenerate && (
               <button
                 onClick={onRegenerate}
-                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover-bg-soft transition-all"
                 title="重新生成"
               >
                 <RefreshCw size={12} style={{ color: 'var(--text-muted)' }} />
@@ -1548,7 +1548,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
             {onEditMessage && (
               <button
                 onClick={handleStartEdit}
-                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover:bg-white/10 transition-all"
+                className="opacity-0 group-hover/msg:opacity-100 p-0.5 rounded hover-bg-soft transition-all"
                 title="编辑消息"
               >
                 <Pencil size={12} style={{ color: 'var(--text-muted)' }} />
@@ -1557,7 +1557,7 @@ function MessageBubble({ message, accentHue, onCopy, onRegenerate, onRetry, onFe
             {onRetry && (
               <button
                 onClick={onRetry}
-                className="opacity-0 group-hover/msg:opacity-100 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all text-[10px]"
+                className="opacity-0 group-hover/msg:opacity-100 flex items-center gap-0.5 px-1.5 py-0.5 rounded hover-bg-soft transition-all text-[10px]"
                 style={{ color: 'var(--status-error)' }}
                 title="重试"
               >

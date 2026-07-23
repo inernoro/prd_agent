@@ -51,7 +51,7 @@ export function DesktopDownload() {
 
             <Reveal delay={120} offset={22}>
               <h2
-                className="text-white font-medium mb-7"
+                className="text-token-primary font-medium mb-7"
                 style={{
                   fontFamily: 'var(--font-display)',
                   fontSize: 'clamp(2rem, 4.8vw, 3.5rem)',
@@ -71,12 +71,12 @@ export function DesktopDownload() {
             </Reveal>
 
             <Reveal delay={240} offset={16}>
-              <p className="text-white/62 text-[15px] leading-[1.75] max-w-md mb-7">
+              <p className="text-token-secondary text-[15px] leading-[1.75] max-w-md mb-7">
                 {t.download.subtitle}
               </p>
             </Reveal>
 
-            <ul className="space-y-3 text-[13.5px] text-white/75">
+            <ul className="space-y-3 text-[13.5px] text-token-secondary">
               {t.download.bullets.map((b, i) => (
                 <Reveal key={i} delay={360 + i * 80} offset={12}>
                   <BulletLine text={b} />
@@ -219,7 +219,7 @@ function PlatformCard({
       <div className="flex-1 min-w-0">
         <div className="flex items-baseline gap-2 mb-0.5">
           <span
-            className="text-[17px] font-medium text-white"
+            className="text-[17px] font-medium text-token-primary"
             style={{ fontFamily: 'var(--font-display)', letterSpacing: '-0.01em' }}
           >
             {name}
@@ -237,7 +237,7 @@ function PlatformCard({
           </span>
         </div>
         <div
-          className="text-[11px] text-white/45"
+          className="text-[11px] text-token-muted"
           style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.06em' }}
         >
           {arch} · {size}

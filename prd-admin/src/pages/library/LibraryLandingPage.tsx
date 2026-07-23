@@ -451,7 +451,7 @@ export function LibraryLandingPage() {
             </h3>
             <p
               className="mb-8 max-w-md mx-auto text-[15px] md:text-[17px]"
-              style={{ color: 'rgba(255,255,255,0.9)', fontWeight: 500 }}
+              style={{ color: 'var(--text-primary)', fontWeight: 500 }}
             >
               加入社区，把你的知识变成一本永不过时的书
             </p>
