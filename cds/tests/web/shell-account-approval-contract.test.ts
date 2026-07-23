@@ -34,6 +34,17 @@ const agentMapSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/AgentAccessMap.tsx'),
   'utf8',
 );
+const agentGeoMapSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/components/AgentTerritoryGeoMap.tsx'),
+  'utf8',
+);
+const africaMapData = JSON.parse(fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/data/africa-110m.geo.json'),
+  'utf8',
+)) as {
+  source: string;
+  features: Array<{ properties: { id: string; name: string } }>;
+};
 const globalAgentAccessSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
   'utf8',
@@ -106,18 +117,23 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMapSource).toContain('选择 Agent 路线');
     expect(agentMapSource).toContain('选择大洲');
     expect(agentMapSource).toContain('选择地界');
-    expect(agentMapSource).toContain('REGION_SHAPES');
-    expect(agentMapSource).toContain('agent-electronic-hex');
-    expect(agentMapSource).toContain('cds-agent-world-data-node');
-    expect(agentMapSource).toContain('cds-agent-world-signal-rings');
+    expect(agentMapSource).toContain("lazy(() => import('@/components/AgentTerritoryGeoMap'))");
+    expect(agentGeoMapSource).toContain("from 'd3-geo'");
+    expect(agentGeoMapSource).toContain('geoNaturalEarth1().fitExtent');
+    expect(agentGeoMapSource).toContain('TERRITORIES');
+    expect(agentGeoMapSource).toContain('cds-agent-territory-legend');
+    expect(agentGeoMapSource).toContain('真实国界');
+    expect(africaMapData.source).toContain('Natural Earth');
+    expect(africaMapData.features).toHaveLength(51);
     expect(agentMapSource).toContain('branchCount');
     expect(agentMapSource).toContain('SYSTEM_MISSIONS');
     expect(agentMapSource).toContain('PROJECT_MISSIONS');
     expect(agentMapSource).toContain('aria-live="polite"');
     expect(styles).toContain('.cds-agent-world-stage');
     expect(styles).toContain('.cds-agent-world-region');
-    expect(styles).toContain('.cds-agent-world-hud');
-    expect(styles).toContain('@keyframes cds-agent-world-scan');
+    expect(styles).toContain('.cds-agent-world-graticule');
+    expect(styles).toContain('.cds-agent-territory-option');
+    expect(styles).toContain('@keyframes cds-agent-geo-pulse');
     expect(styles).not.toContain("url('#agent-land-forest')");
     expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.cds-agent-world-region/);
   });
