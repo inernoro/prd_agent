@@ -3443,6 +3443,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
         Assert.Contains("上游耗时", drawer);
@@ -3457,7 +3458,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("无法打开这条生成记录", drawer);
         Assert.Contains("请求详情加载失败，请稍后重试", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("setSelectedId(matched.id)", logs);
+        Assert.Contains("setSelectedLogId(matched.id)", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
@@ -3467,7 +3468,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
         Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.Contains("fontSize: 11, fontWeight: 600", logs);
+        Assert.Contains("subtitle=\"会话主要模型\"", logs);
+        Assert.Contains("lg-truncate lg-log-model-name", logs);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
