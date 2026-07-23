@@ -3,3 +3,4 @@
 | feat | llmgw | Quickstart 生成配置后自动执行零费用安全验证，收敛三分钟接入路径 |
 | docs | llmgw | 同步组织与团队边界、自动 Quickstart、图片用量和费用证据教程 |
 | polish | llmgw | 日志页打包 Geist 字体并对齐 OpenRouter 的字号、筛选入口、列密度与无横向滚动布局 |
+| fix | llmgw | 重排移动端控制台顶栏，将组织切换移入导航抽屉并补齐可用的请求搜索入口 |
