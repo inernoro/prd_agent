@@ -4,6 +4,7 @@
 from __future__ import annotations
 
 import importlib.util
+import tempfile
 from pathlib import Path
 
 
@@ -28,6 +29,21 @@ def assert_has_error(errors, needle):
 def assert_no_errors(errors):
     if errors:
         raise AssertionError(f"expected no errors, got: {errors}")
+
+
+def compiled_markdown(archive, body, manifest):
+    img_md = {
+        shot["name"]: f'![{shot["caption"]}](https://assets.example.test/{shot["name"]}.png)'
+        for shot in manifest
+    }
+    return archive.assemble(
+        "日报",
+        body,
+        "",
+        "",
+        img_md=img_md,
+        manifest_names=[shot["name"] for shot in manifest],
+    )
 
 
 def main() -> None:
@@ -165,7 +181,8 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         "真实触控移动端证据",
     )
 
-    html = archive.build_interactive_html("日报", "fail", "# 日报\n\n正文", annotated_manifest)
+    report_md = compiled_markdown(archive, "# 日报\n\n正文", annotated_manifest)
+    html = archive.build_interactive_html("日报", "fail", report_md, annotated_manifest)
     if "map-acceptance-template" not in html or 'data-template="map-acceptance-interactive-html-v2"' not in html:
         raise AssertionError("standard interactive HTML is missing the acceptance template marker")
 
@@ -195,12 +212,110 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
 | G4 | 完整转录终态 | 提供可用外部服务 |
 """
     daily_html = archive.build_interactive_html(
-        "日报", "conditional", daily_report, annotated_manifest, flavor="daily"
+        "日报",
+        "conditional",
+        compiled_markdown(archive, daily_report, annotated_manifest),
+        annotated_manifest,
+        flavor="daily",
     )
     if '<span>缺口</span><strong>4</strong>' not in daily_html:
         raise AssertionError("header gap metric must use the four unique ledger rows")
     if "报告时间 · 2026-07-22 07:15:30 CST+0800" not in daily_html:
         raise AssertionError("report time must be visible in the top-right masthead")
+
+    relationship_manifest = [
+        {"name": "01-entry", "caption": "图 01 验证首页入口可以访问", "annotated": True},
+        {"name": "02-action", "caption": "图 02 验证主操作可以执行", "annotated": True},
+        {"name": "03-result", "caption": "图 03 验证结果状态已经更新", "annotated": True},
+    ]
+    partial_body = """
+## 步骤 1
+
+点击首页入口。{{IMG:01-entry}}
+
+## 需求一一对应表
+
+| 需求 | 证据 |
+|---|---|
+| 完整流程 | 图01-03 |
+"""
+    relationship_md = compiled_markdown(archive, partial_body, relationship_manifest)
+    if "## 补充证据（归档程序自动填充）" not in relationship_md:
+        raise AssertionError("manifest images omitted by the writer must be auto-filled")
+    for shot in relationship_manifest:
+        anchor = archive._figure_anchor(archive._figure_key(shot["name"]))
+        if relationship_md.count(f'id="{anchor}"') != 1:
+            raise AssertionError(f"{anchor} must be emitted exactly once")
+    for num in ("01", "02", "03"):
+        if f"[图{num}](#fig-{num}-" not in relationship_md:
+            raise AssertionError("figure ranges must expand into individually linked figures")
+
+    mixed_md = compiled_markdown(
+        archive,
+        "## 步骤 1\n\n{{IMG:01-entry}}\n\n## 证据板\n\n{{EVIDENCE}}",
+        relationship_manifest,
+    )
+    for shot in relationship_manifest:
+        anchor = archive._figure_anchor(archive._figure_key(shot["name"]))
+        if mixed_md.count(f'id="{anchor}"') != 1:
+            raise AssertionError("mixed inline and evidence-board mode must not duplicate anchors")
+
+    relationship_html = archive.build_interactive_html(
+        "日报",
+        "pass",
+        relationship_md,
+        relationship_manifest,
+    )
+    if relationship_html.count('class="evidence-card"') != 3:
+        raise AssertionError("every manifest item must have one evidence card")
+    if '<div class="thumb-placeholder"' in relationship_html or ">无缩略图<" in relationship_html:
+        raise AssertionError("interactive reports must never contain thumbnail placeholders")
+    assert_no_errors(archive._interactive_evidence_errors(relationship_html, relationship_manifest))
+    if "(h||t).scrollIntoView" in relationship_html or "t.scrollIntoView({block:'start'})" not in relationship_html:
+        raise AssertionError("card clicks must scroll to the exact figure, not its section heading")
+
+    missing_source_md = relationship_md.replace(
+        "https://assets.example.test/03-result.png",
+        "",
+    )
+    try:
+        archive.build_interactive_html("日报", "pass", missing_source_md, relationship_manifest)
+    except RuntimeError as exc:
+        if "缺少最终图片地址" not in str(exc):
+            raise
+    else:
+        raise AssertionError("a missing thumbnail source must fail report compilation")
+
+    broken_html = relationship_html.replace(
+        'href="#fig-03-result"',
+        'href="#fig-99-missing"',
+        1,
+    )
+    assert_has_error(
+        archive._interactive_evidence_errors(broken_html, relationship_manifest),
+        "无法唯一解析",
+    )
+
+    with tempfile.TemporaryDirectory() as tmp:
+        first = Path(tmp) / "first.png"
+        second = Path(tmp) / "second.png"
+        first.write_bytes(b"same-image-bytes")
+        second.write_bytes(b"same-image-bytes")
+        duplicate_manifest = [
+            {"name": "01-first", "path": str(first)},
+            {"name": "02-second", "path": str(second)},
+        ]
+        assert_has_error(
+            archive._duplicate_evidence_errors(duplicate_manifest),
+            "文件完全相同",
+        )
+        duplicate_manifest[1]["duplicateOf"] = "01-first"
+        assert_no_errors(archive._duplicate_evidence_errors(duplicate_manifest))
+        second.write_bytes(b"different-image-bytes")
+        assert_has_error(
+            archive._duplicate_evidence_errors(duplicate_manifest),
+            "文件内容不同",
+        )
 
     print("acceptance archive report gates passed")
 

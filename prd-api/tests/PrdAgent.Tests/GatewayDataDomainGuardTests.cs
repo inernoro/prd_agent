@@ -3443,6 +3443,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
         Assert.Contains("上游耗时", drawer);
@@ -3467,7 +3468,9 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
         Assert.Contains("<details className=\"lg-log-filters\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
-        Assert.Contains("fontSize: 14, fontWeight: 550", logs);
+        Assert.Contains("subtitle=\"会话主要模型\"", logs);
+        Assert.Contains("lg-truncate lg-log-model-name", logs);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);

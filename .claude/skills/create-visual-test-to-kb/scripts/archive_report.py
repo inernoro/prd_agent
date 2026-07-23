@@ -22,7 +22,8 @@
     --manifest <harness 产出的 manifest.json：[{name,caption,path}]> \
     [--branch xxx --commit xxx --pr 922]
 """
-import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html
+import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempfile, html, hashlib
+from html.parser import HTMLParser
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
@@ -188,6 +189,29 @@ def link_figure_refs(content, manifest_names):
 
     content = re.sub(r"\]\(#fig-([0-9]{1,3}[A-Za-z]?)\)", link_repl, content)
 
+    def range_repl(m):
+        start_raw, end_raw = m.group(1), m.group(2)
+        start, end = int(start_raw), int(end_raw)
+        if end < start or end - start > 99:
+            return m.group(0)
+        width = max(len(start_raw), len(end_raw))
+        links = []
+        for value in range(start, end + 1):
+            num = str(value).zfill(width)
+            anchor = anchors_by_num.get(num.lower())
+            if not anchor:
+                return m.group(0)
+            links.append(f"[图{num}](#{anchor})")
+        return "、".join(links)
+
+    # 范围引用不能只把首图变成链接，否则「图02-05」会伪装成一个可点击范围，
+    # 实际只指向图02。先确定性展开，再处理单个裸图号。
+    content = re.sub(
+        r"(?<!\[)图\s*([0-9]{1,3})\s*[-–—~至到]\s*([0-9]{1,3})",
+        range_repl,
+        content,
+    )
+
     def repl(m):
         key = m.group(1).lower()
         anchor = anchors_by_num.get(key)
@@ -206,15 +230,51 @@ def assemble(title, body, evidence, meta, img_md=None, manifest_names=None):
       - {{EVIDENCE}}       —— 旧版：把所有截图集中堆到此处（§9 证据段）
     """
     names = list(manifest_names or (img_md or {}).keys())
+    referenced_names = {
+        name.strip()
+        for name in re.findall(r"\{\{IMG:([^}]+)\}\}", body or "")
+    }
+    uses_evidence_board = "{{EVIDENCE}}" in (body or "")
     content = link_figure_refs(body, names)
     if img_md:
         for name, md in img_md.items():
-            content = content.replace("{{IMG:%s}}" % name, _with_figure_anchor(name, md))
+            content = content.replace(
+                "{{IMG:%s}}" % name,
+                "\n\n" + _with_figure_anchor(name, md) + "\n\n",
+            )
     else:
         for name in names:
             ph = "{{IMG:%s}}" % name
-            content = content.replace(ph, _with_figure_anchor(name, ph))
-    return f"# {title}\n\n" + content.replace("{{EVIDENCE}}", evidence) + meta
+            content = content.replace(ph, "\n\n" + _with_figure_anchor(name, ph) + "\n\n")
+    evidence_board = evidence
+    if uses_evidence_board and img_md:
+        # 同时使用逐步插图和证据板时，证据板只补剩余截图，避免同一个 fig id
+        # 在正文出现两次。纯证据板模式仍会按 manifest 顺序放入全部截图。
+        evidence_board = "\n\n".join(
+            _with_figure_anchor(name, img_md[name])
+            for name in names
+            if name not in referenced_names and name in img_md
+        )
+    content = content.replace("{{EVIDENCE}}", evidence_board)
+
+    # manifest 是截图事实源。写作者漏放 {{IMG}} 时，由程序补入统一的补充证据段，
+    # 不能继续生成「有卡片、无图片、无锚点」的半截关系。语义归属仍由 caption/
+    # claim 字段说明；这里只补确定性的图片、图号和锚点，不猜它证明哪条需求。
+    if not uses_evidence_board:
+        missing = [name for name in names if name not in referenced_names]
+        if missing:
+            supplemental = []
+            for name in missing:
+                md = (img_md or {}).get(name) or "{{IMG:%s}}" % name
+                supplemental.append(_with_figure_anchor(name, md))
+            content = (
+                content.rstrip()
+                + "\n\n## 补充证据（归档程序自动填充）\n\n"
+                + "> 以下截图存在于 manifest，但写作源未单独放置。归档程序仅补齐图片与锚点，不推断需求语义。\n\n"
+                + "\n\n".join(supplemental)
+                + "\n"
+            )
+    return f"# {title}\n\n" + content + meta
 
 
 def report_format(cfg, mode):
@@ -529,6 +589,143 @@ def _figure_src_map(markdown):
     return srcs
 
 
+class _EvidenceHtmlParser(HTMLParser):
+    """Collect the relationships that must stay lossless in an archived report."""
+
+    def __init__(self):
+        super().__init__(convert_charrefs=True)
+        self.ids = []
+        self.figure_hrefs = []
+        self.cards = []
+        self._card = None
+
+    def handle_starttag(self, tag, attrs):
+        values = dict(attrs)
+        element_id = values.get("id")
+        if element_id:
+            self.ids.append(element_id)
+        href = values.get("href", "")
+        if href.startswith("#fig-"):
+            self.figure_hrefs.append(href[1:])
+        classes = set(values.get("class", "").split())
+        if tag == "a" and "evidence-card" in classes:
+            self._card = {
+                "href": href[1:] if href.startswith("#") else href,
+                "has_image": False,
+                "has_placeholder": False,
+            }
+            self.cards.append(self._card)
+        elif self._card is not None and tag == "img":
+            self._card["has_image"] = bool(values.get("src", "").strip())
+        elif self._card is not None and "thumb-placeholder" in classes:
+            self._card["has_placeholder"] = True
+
+    def handle_endtag(self, tag):
+        if tag == "a" and self._card is not None:
+            self._card = None
+
+
+def _manifest_figure_errors(manifest):
+    errors = []
+    names = [(shot.get("name") or "").strip() for shot in manifest or []]
+    anchors = [_figure_anchor(_figure_key(name)) for name in names]
+    if any(not name for name in names):
+        errors.append("[证据关系] manifest 存在空 name，无法生成稳定图号和锚点")
+    duplicate_names = sorted({name for name in names if names.count(name) > 1})
+    if duplicate_names:
+        errors.append("[证据关系] manifest 截图名重复：" + "、".join(duplicate_names))
+    invalid_names = [name for name, anchor in zip(names, anchors) if name and not anchor]
+    if invalid_names:
+        errors.append("[证据关系] manifest 截图名无法生成锚点：" + "、".join(invalid_names))
+    duplicate_anchors = sorted({anchor for anchor in anchors if anchor and anchors.count(anchor) > 1})
+    if duplicate_anchors:
+        errors.append("[证据关系] manifest 生成了重复锚点：" + "、".join(duplicate_anchors))
+    return errors
+
+
+def _interactive_evidence_errors(html_content, manifest):
+    """Bidirectional gate: manifest, cards, thumbnails, hrefs and body anchors agree."""
+    errors = _manifest_figure_errors(manifest)
+    parser = _EvidenceHtmlParser()
+    parser.feed(html_content or "")
+    expected = [
+        _figure_anchor(_figure_key(shot.get("name")))
+        for shot in manifest or []
+        if _figure_anchor(_figure_key(shot.get("name")))
+    ]
+    id_counts = {element_id: parser.ids.count(element_id) for element_id in set(parser.ids)}
+
+    for anchor in expected:
+        count = id_counts.get(anchor, 0)
+        if count != 1:
+            errors.append(f"[证据关系] 正文锚点 {anchor} 应出现 1 次，实际 {count} 次")
+
+    card_targets = [card["href"] for card in parser.cards]
+    if card_targets != expected:
+        errors.append(
+            "[证据关系] 缩略图卡片顺序/目标与 manifest 不一致："
+            f"expected={expected} actual={card_targets}"
+        )
+    for index, card in enumerate(parser.cards, start=1):
+        if not card["has_image"] or card["has_placeholder"]:
+            errors.append(f"[证据关系] 第 {index} 张证据卡缺少真实缩略图")
+
+    unresolved = sorted({anchor for anchor in parser.figure_hrefs if id_counts.get(anchor, 0) != 1})
+    if unresolved:
+        errors.append("[证据关系] 存在无法唯一解析的图链接：" + "、".join(unresolved))
+    return errors
+
+
+def _duplicate_evidence_errors(manifest):
+    """Reject accidental evidence cloning unless the manifest declares it explicitly."""
+    errors = []
+    digest_by_name = {}
+    shot_by_name = {}
+
+    def file_digest(path):
+        digest = hashlib.sha256()
+        with open(path, "rb") as source:
+            for chunk in iter(lambda: source.read(1024 * 1024), b""):
+                digest.update(chunk)
+        return digest.hexdigest()
+
+    for shot in manifest or []:
+        name = (shot.get("name") or "").strip()
+        path = shot.get("path") or ""
+        if not name or not os.path.isfile(path):
+            continue
+        digest_by_name[name] = file_digest(path)
+        shot_by_name[name] = shot
+
+    for name, shot in shot_by_name.items():
+        duplicate_of = (shot.get("duplicateOf") or "").strip()
+        if not duplicate_of:
+            continue
+        if duplicate_of not in digest_by_name:
+            errors.append(f"[证据关系] {name} 的 duplicateOf 指向不存在的截图：{duplicate_of}")
+        elif digest_by_name[name] != digest_by_name[duplicate_of]:
+            errors.append(f"[证据关系] {name} 声明 duplicateOf={duplicate_of}，但文件内容不同")
+
+    groups = {}
+    for name, digest in digest_by_name.items():
+        groups.setdefault(digest, []).append(name)
+    for names in groups.values():
+        if len(names) < 2:
+            continue
+        declared = {
+            name for name in names
+            if (shot_by_name[name].get("duplicateOf") or "").strip() in names
+        }
+        undeclared = [name for name in names[1:] if name not in declared]
+        if undeclared:
+            errors.append(
+                "[证据关系] 多张截图文件完全相同却声明不同验证语义："
+                + "、".join(names)
+                + "。确认是复用证据时，为后续截图设置 duplicateOf"
+            )
+    return errors
+
+
 NEGATED_PROBLEM_PAT = re.compile(
     r"(?:无|没有|未发现|未出现|未再|不再|未检测到|不存在|没有发现|没有检测到)"
     r"[^。；;，,\n]{0,32}"
@@ -731,7 +928,7 @@ def _decorate_problem_figures(body_html, problem_anchors):
     return body_html
 
 
-def build_interactive_html(title, verdict, markdown_content, manifest, flavor="acceptance"):
+def build_interactive_html(title, verdict, markdown_content, manifest, flavor="acceptance", figure_srcs=None):
     """交互式验收 HTML（模板契约 interactive-html-v2 不变，皮肤为「米多刊系」检验档案风）。
 
     flavor 决定刊头身份（.claude/rules/report-design-system.md）：
@@ -755,7 +952,10 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
-    figure_srcs = _figure_src_map(markdown_content)
+    manifest_errors = _manifest_figure_errors(manifest)
+    if manifest_errors:
+        raise RuntimeError("交互报告证据关系门禁未通过：\n- " + "\n- ".join(manifest_errors))
+    figure_srcs = dict(figure_srcs or _figure_src_map(markdown_content))
     problem_items = _collect_problem_items(markdown_content, manifest)
     problem_anchors = {
         it["anchor"]: it["severity"]
@@ -787,13 +987,11 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
         label = f"图{num.upper()}"
         cap = html.escape(shot.get("caption") or shot.get("name") or label)
         raw_src = figure_srcs.get(anchor, "")
+        if not raw_src:
+            raise RuntimeError(f"交互报告证据关系门禁未通过：{anchor} 缺少最终图片地址")
         src = html.escape(raw_src, quote=True)
-        if raw_src.startswith("data:image/") or src:
-            thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
-            nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
-        else:
-            thumb = '<div class="thumb-placeholder">无缩略图</div>'
-            nav_thumb = '<div class="nav-thumb thumb-placeholder">无图</div>'
+        thumb = f'<img src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
+        nav_thumb = f'<img class="nav-thumb" src="{src}" alt="{cap}" loading="eager" decoding="async"/>'
         warnings = " ".join(str(w) for w in (shot.get("warnings") or []))
         severity = problem_anchors.get(anchor) or _severity_from_text(warnings)
         status_class = _severity_class(severity)
@@ -847,7 +1045,7 @@ def build_interactive_html(title, verdict, markdown_content, manifest, flavor="a
             f'<div class="problem-grid">{cards_html}</div>'
             f'</section>'
         )
-    return f"""<!doctype html>
+    result = f"""<!doctype html>
 <!-- map-acceptance-template: interactive-html-v2 -->
 <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
 <head>
@@ -1109,9 +1307,7 @@ main{{padding:0 16px 60px}}
     var t=document.querySelector(a.getAttribute('href'));
     if(!t) return;
     expandSectionForTarget(t);
-    var h=t&&t.previousElementSibling;
-    while(h&&h.tagName!=='H2') h=h.previousElementSibling;
-    (h||t).scrollIntoView({{block:'start'}});
+    t.scrollIntoView({{block:'start'}});
     if(history&&history.replaceState) history.replaceState(null,'',a.getAttribute('href'));
   }});
   window.addEventListener('hashchange', function(){{
@@ -1123,6 +1319,10 @@ main{{padding:0 16px 60px}}
 </script>
 </body>
 </html>"""
+    evidence_errors = _interactive_evidence_errors(result, manifest)
+    if evidence_errors:
+        raise RuntimeError("交互报告证据关系门禁未通过：\n- " + "\n- ".join(evidence_errors))
+    return result
 
 
 def _report_flavor(a, body):
@@ -1225,16 +1425,24 @@ def run_cds(cfg, a, title, report_id, body, manifest, now, tags=None):
 
     # 截图先入 CDS 内容寻址资产库；正文只保留不可变 HTTPS 地址。
     # 这样截图数量由证据需要决定，不再占用 10MB 文本正文额度。
-    evid_parts, img_md = [], {}
+    evid_parts, img_md, figure_srcs = [], {}, {}
     for m in manifest:
         uri, asset = _cds_upload_asset(m["path"])
         evid_parts.append(_with_figure_anchor(m["name"], f"**{m['caption']}**\n\n![{m['caption']}]({uri})"))
         img_md[m["name"]] = f"![{m['caption']}]({uri})"
+        figure_srcs[_figure_anchor(_figure_key(m["name"]))] = uri
         print(f"  上传截图 {m['name']} ({asset.get('sizeBytes', os.path.getsize(m['path']))}B) -> {asset.get('name', uri)}")
     meta = build_meta(report_id, now, "cds", a, "")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "cds")
-    content = build_interactive_html(title, a.verdict, content_md, manifest, flavor=_report_flavor(a, body)) if fmt == "html" else content_md
+    content = build_interactive_html(
+        title,
+        a.verdict,
+        content_md,
+        manifest,
+        flavor=_report_flavor(a, body),
+        figure_srcs=figure_srcs,
+    ) if fmt == "html" else content_md
     size = len(content.encode("utf-8"))
     if size > CDS_REPORT_CAP:
         raise RuntimeError(
@@ -1289,17 +1497,25 @@ def run_local(cfg, a, title, report_id, body, manifest, meta, tags=None):
     os.makedirs(out_dir, exist_ok=True)
     shot_dir = os.path.join(out_dir, report_id)
     os.makedirs(shot_dir, exist_ok=True)
-    evid_parts, img_md = [], {}
+    evid_parts, img_md, figure_srcs = [], {}, {}
     for m in manifest:
         dst = os.path.join(shot_dir, f"{m['name']}.png")
         shutil.copyfile(m["path"], dst)
         rel = f"./{report_id}/{m['name']}.png"
         evid_parts.append(_with_figure_anchor(m["name"], f"**{m['caption']}**\n\n![{m['caption']}]({rel})"))
         img_md[m["name"]] = f"![{m['caption']}]({rel})"
+        figure_srcs[_figure_anchor(_figure_key(m["name"]))] = rel
         print(f"  拷贝截图 {m['name']} -> {dst}")
     content_md = assemble(title, body, "\n\n".join(evid_parts), meta, img_md)
     fmt = report_format(cfg, "local")
-    content = build_interactive_html(title, a.verdict, content_md, manifest, flavor=_report_flavor(a, body)) if fmt == "html" else content_md
+    content = build_interactive_html(
+        title,
+        a.verdict,
+        content_md,
+        manifest,
+        flavor=_report_flavor(a, body),
+        figure_srcs=figure_srcs,
+    ) if fmt == "html" else content_md
     ext = "html" if fmt == "html" else "md"
     report_path = os.path.join(out_dir, f"{report_id}.{ext}")
     with open(report_path, "w", encoding="utf-8") as f:
@@ -1881,6 +2097,8 @@ def validate_inputs(a, body, manifest, cfg=None):
     need = TIER_MIN_SHOTS.get(a.tier, 3)
     if len(manifest) < need:
         errs.append(f"[证据] 截图数 {len(manifest)} < {a.tier} 下限 {need}")
+    errs.extend(_manifest_figure_errors(manifest))
+    errs.extend(_duplicate_evidence_errors(manifest))
     errs.extend(_mobile_acceptance_errors(a.tier, body, manifest))
     daily_acceptance_claim = _declares_daily_acceptance(a.target, body)
     deep_daily_claim = _declares_deep_daily_acceptance(a.target, body)
