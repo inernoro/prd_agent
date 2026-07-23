@@ -1265,7 +1265,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_DEPLOY_MIN_FREE_MB:-4096", script);
         Assert.Contains("LLM Gateway exec_dep deploy", script);
         Assert.Contains("provider_audit_required=0", script);
-        Assert.Contains("if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
+        Assert.Contains("if { [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ]; } || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
         Assert.Contains("scripts/llmgw-prod-provider-config-audit.py", script);
         Assert.Contains("LLMGW_PROVIDER_AUDIT_JSON_OUT", script);
         Assert.Contains("LLMGW_PROVIDER_AUDIT_REPORT_MD", script);
