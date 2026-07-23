@@ -25,6 +25,9 @@ export interface AgentProjectOption {
   id: string;
   name: string;
   slug: string;
+  branchCount?: number;
+  runningBranchCount?: number;
+  runningServiceCount?: number;
 }
 
 interface Props {
