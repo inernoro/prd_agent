@@ -10,7 +10,7 @@ import {
 } from './global-update-state';
 
 /*
- * GlobalUpdateBadge — 浮在屏幕左下角的全局 CDS 更新状态徽章。
+ * GlobalUpdateBadge — 位于右下角全局消息栈的 CDS 更新状态徽章。
  *
  * 用户反馈(2026-05-04):「点更新后看不出真的更新了没」「希望有活动部件告诉我
  * 更新中/完成/失败」「订阅了分支,该分支更新了在任何页面左下角弹出可以点击更新」。
@@ -31,7 +31,7 @@ import {
  *   5. ⚠ bundleStale — 后端 SHA != web bundle SHA(build_web 静默失败的征兆)
  *                      显示 warning,点击查看排错
  *
- * 视觉:64px 圆形徽章,左下角悬浮(z-50),hover 展开成横向 chip 显示文字。
+ * 视觉:常驻横向 chip,由 AppShell 的右下角消息栈统一定位。
  * 关闭按钮短期 dismiss(sessionStorage,刷新页面再出现)。
  */
 
@@ -466,7 +466,7 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         </div>
       ) : null}
     <div
-      className="fixed bottom-4 left-4 z-[200] max-w-[calc(100vw-2rem)] select-none"
+      className="max-w-full select-none"
       style={{ pointerEvents: 'auto' }}
     >
       <div

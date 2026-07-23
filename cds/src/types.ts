@@ -1496,6 +1496,15 @@ export interface CdsState {
   /** Tab title override enabled (updates browser tab title with tag or branch short name) */
   tabTitleEnabled?: boolean;
   /**
+   * Optional ticket-based SSO provider for human dashboard login.
+   *
+   * The contract is intentionally provider-neutral: a deployment may point it
+   * at MAP, an internal portal, or another trusted identity broker without
+   * adding provider-specific branches to CDS. The client secret is persisted
+   * sealed by StateService and is never returned by public/status APIs.
+   */
+  ssoConfig?: CdsSsoConfig;
+  /**
    * Legacy 全局 preview mode（PR_A 之后改为 per-project，存在
    * Project.previewMode 上）。新读路径请用 getPreviewModeFor(projectId)。
    * 本字段仍由 setProjectPreviewMode 同步刷新供 PR_A 灰度兼容。
@@ -1779,6 +1788,23 @@ export interface CdsState {
   peerNodes?: PeerNodeRecord[];
   /** WS3：待用的一次性配对码（明文不存，只存 hash），见 PeerPairingCode。 */
   peerPairingCodes?: PeerPairingCode[];
+}
+
+export interface CdsSsoConfig {
+  enabled: boolean;
+  /** Stable provider id used for audit and future multi-provider expansion. */
+  providerId: string;
+  /** Human-facing button label, for example "公司账号". */
+  label: string;
+  /** Browser authorization endpoint. */
+  authorizationUrl: string;
+  /** Server-to-server single-use ticket exchange endpoint. */
+  tokenUrl: string;
+  clientId: string;
+  /** Plaintext only at API input; StateService seals it before persistence. */
+  clientSecret?: unknown;
+  /** Internal CDS route after a successful login. Defaults to /project-list. */
+  defaultRedirect: string;
 }
 
 export type ScheduledJobSchedule =

@@ -134,6 +134,18 @@ db.users.createIndex(
   { sparse: true }
 )
 
+// collection: console_sso_tickets
+// 一次性票据按哈希原子消费；明文授权码不进入数据库。
+db.console_sso_tickets.createIndex(
+  { "CodeHash": 1 },
+  { name: "uniq_console_sso_tickets_code_hash", unique: true }
+)
+// 票据到期后由 MongoDB 自动清理，业务校验仍以 ExpiresAt 为准。
+db.console_sso_tickets.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "ttl_console_sso_tickets_expires_at", expireAfterSeconds: 0 }
+)
+
 // collection: system_roles
 db.system_roles.createIndex({ "Key": 1 })
 

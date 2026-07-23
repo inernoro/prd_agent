@@ -207,6 +207,50 @@ def test_ambiguous_project_matches_die_instead_of_picking_first(monkeypatch):
     assert payload["projectHints"] == ["workspace", "prd-agent"]
 
 
+def test_cds_only_branch_prefers_self_host_project(tmp_path, monkeypatch):
+    """同仓库 CDS 专属分支应优先匹配 self-host 项目，而不是业务项目。"""
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: [
+            "cds/web/src/pages/BranchListPage.tsx",
+            "cds/src/services/preview-instance-seed.ts",
+            "changelogs/2026-07-23_cds-self-preview.md",
+        ],
+    )
+
+    assert cdscli._branch_lookup_project_slug_hints(str(tmp_path)) == ["cds-self"]
+
+
+def test_mixed_branch_keeps_regular_project_routing(tmp_path, monkeypatch):
+    """CDS 与业务模块混改时不得把整个分支误路由到 self-host 项目。"""
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: [
+            "cds/web/src/pages/BranchListPage.tsx",
+            "prd-admin/src/App.tsx",
+        ],
+    )
+    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
+
+    assert cdscli._branch_lookup_project_slug_hints(str(tmp_path)) == [
+        cdscli._slugify_for_preview(tmp_path.name),
+    ]
+
+
 def test_preview_urls_use_api_values_and_preserve_multiple_entries():
     """preview-url 只消费 API 地址，主入口优先且去重。"""
     branch = {
