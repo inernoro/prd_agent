@@ -208,8 +208,10 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
 
   it('finalize(checkRunId 覆盖): 被取代部署收尾自己的旧 run，不误清新部署盖上的 id（Codex P2）', async () => {
     const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
-    // 旧部署打开 check run 7（ensureOpen mock 返回 id=7 并落 state）
-    await runner.ensureOpen(branch);
+    // 旧部署打开 check run 7。调用方靠 ensureOpen 的返回值记住本轮 id（不重读
+    // 可变 state——Codex P2：取代方可能已把 state 指针盖成新 id）
+    const openedId = await runner.ensureOpen(branch);
+    expect(openedId).toBe(7);
     expect(stateService.getBranch('b1')?.githubCheckRunId).toBe(7);
     // 竞态：新部署的 ensureOpen 抢先把 state 上的 id 盖成 8
     stateService.updateBranchGithubMeta('b1', { githubCheckRunId: 8 });

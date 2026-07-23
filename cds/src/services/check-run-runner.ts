@@ -77,15 +77,21 @@ export class CheckRunRunner {
    *
    * No-op when GitHub is disabled or the branch isn't linked. Best-effort —
    * any HTTP or state error is swallowed after logging.
+   *
+   * 返回本次创建的 check-run id（未创建/失败时 undefined）。调用方必须用这个
+   * 返回值记住「自己这轮的 id」，**禁止**在 await 之后重读 entry 上的可变指针
+   * ——并发的取代方部署可能已把 githubCheckRunId 盖成它自己的，重读会把别人
+   * 的 id 记成自己的、并在 superseded 收尾时误杀对方的 check run（Codex P2，
+   * PR #1235）。
    */
-  async ensureOpen(entry: BranchEntry): Promise<void> {
-    if (!this.enabled) return;
+  async ensureOpen(entry: BranchEntry): Promise<number | undefined> {
+    if (!this.enabled) return undefined;
     const repoFullName = entry.githubRepoFullName;
     const headSha = entry.githubCommitSha;
     const instId = entry.githubInstallationId;
-    if (!repoFullName || !headSha || !instId) return;
+    if (!repoFullName || !headSha || !instId) return undefined;
     const parsed = this.parseRepo(repoFullName);
-    if (!parsed) return;
+    if (!parsed) return undefined;
     const run = this.currentDeploymentRun(entry);
 
     try {
@@ -110,12 +116,14 @@ export class CheckRunRunner {
         githubCheckRunId: result.id,
       });
       this.deps.stateService.save();
+      return result.id;
     } catch (err) {
       // eslint-disable-next-line no-console
       console.warn(
         `[check-run] createCheckRun failed for branch=${entry.id}:`,
         (err as Error).message,
       );
+      return undefined;
     }
   }
 

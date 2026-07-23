@@ -11943,10 +11943,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不再重复推导。若三者都没解析出来,check-run / 极速版 tag 推导是 no-op。
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
-      await checkRunRunner.ensureOpen(entry);
-      // ensureOpen 把新 check-run id 落进 state；重读拿到本轮的 id（entry 与
-      // state 内是同一对象引用，这里重读只为不依赖该实现细节）。
-      openedCheckRunId = stateService.getBranch(id)?.githubCheckRunId;
+      // 用 ensureOpen 的**返回值**记住本轮的 check-run id。禁止在 await 之后
+      // 重读 state 上的可变指针：并发的取代方部署可能已把 githubCheckRunId
+      // 盖成它自己的，重读会把别人的 id 记成自己的、并在 superseded 收尾时
+      // 误杀对方的 check run（Codex P2，PR #1235）。
+      openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
       // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
       // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
