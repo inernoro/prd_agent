@@ -13,7 +13,7 @@
  *   4. 等权重等优先级时按 _id 字典序稳定选第一条
  */
 
-import type { RouteRecord } from './types.js';
+import type { ReplicaResolveContext, RouteRecord } from './types.js';
 
 /**
  * 候选项:从 (routes, host, path) 过滤后留下的可能命中,带"匹配评分"用于排序。
@@ -82,11 +82,20 @@ function hostScore(pattern: string, host: string): 0 | 1 | 2 {
 
 /**
  * 主入口。
+ *
+ * 复制集扩展（design.cds.replica-set）：命中的最优路由若带 replicaGroup，
+ * 则在「同组 + 同 host 评分 + 同 prefix 长度」的兄弟路由里二次选择：
+ *   1. 粘性命中（ctx.sticky === replicaMemberId）优先——weight=0 的成员也可被
+ *      粘性直达（0 只表示不参与随机分流，不表示禁用）；
+ *   2. 否则按 weight 加权随机（ctx.rand，默认 Math.random）；
+ *   3. 总权重为 0 时回落主成员（replicaMemberId='primary'），再退组内第一条。
+ * 不带 replicaGroup 的存量路由行为与历史逐字节一致（weight<=0 仍视为禁用）。
  */
 export function resolveRoute(
   routes: RouteRecord[],
   host: string,
   path: string,
+  ctx?: ReplicaResolveContext,
 ): RouteRecord | null {
   if (!routes || routes.length === 0) return null;
   if (!host) return null;
@@ -94,7 +103,8 @@ export function resolveRoute(
   const candidates: Candidate[] = [];
   for (const r of routes) {
     if (!r) continue;
-    if (typeof r.weight === 'number' && r.weight <= 0) continue; // 跳过禁用
+    // weight<=0 = 禁用 —— 但复制集成员例外:0 权重成员仍可被粘性直达
+    if (typeof r.weight === 'number' && r.weight <= 0 && !r.replicaGroup) continue;
     const hs = hostScore(r.host, host);
     if (hs === 0) continue;
     if (!pathPrefixMatches(r.pathPrefix, path)) continue;
@@ -118,5 +128,35 @@ export function resolveRoute(
     return 0;
   });
 
-  return candidates[0].route;
+  const top = candidates[0];
+  if (!top.route.replicaGroup) return top.route;
+
+  const siblings = candidates.filter(
+    (c) =>
+      c.route.replicaGroup === top.route.replicaGroup
+      && c.hostScore === top.hostScore
+      && c.pathPrefixLen === top.pathPrefixLen,
+  );
+  return pickReplica(siblings.map((c) => c.route), ctx);
+}
+
+/** 组内选择：粘性 → 加权随机 → 主成员回落。导出供单测直接覆盖分布。 */
+export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
+  if (group.length === 1) return group[0];
+  if (ctx?.sticky) {
+    const stuck = group.find((r) => r.replicaMemberId === ctx.sticky);
+    if (stuck) return stuck;
+  }
+  const weighted = group.filter((r) => (r.weight ?? 0) > 0);
+  const total = weighted.reduce((sum, r) => sum + (r.weight ?? 0), 0);
+  if (total <= 0) {
+    return group.find((r) => r.replicaMemberId === 'primary') ?? group[0];
+  }
+  const rand = ctx?.rand ?? Math.random;
+  let cursor = rand() * total;
+  for (const r of weighted) {
+    cursor -= r.weight ?? 0;
+    if (cursor < 0) return r;
+  }
+  return weighted[weighted.length - 1];
 }

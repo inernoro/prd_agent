@@ -250,16 +250,37 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
   return true;
 }
 
+/**
+ * 复制集粘性提取（design.cds.replica-set）：query __rs > header x-cds-replica >
+ * cookie cds_rs。返回成员 id（'primary' 或 rs 开头短 id）。
+ */
+function extractReplicaSticky(req: http.IncomingMessage): string | undefined {
+  const url = req.url ?? '/';
+  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_-]+)/);
+  if (queryMatch) return queryMatch[1];
+  const header = req.headers['x-cds-replica'];
+  if (typeof header === 'string' && header.trim()) return header.trim();
+  const cookieMatch = (req.headers.cookie ?? '').match(/(?:^|;\s*)cds_rs=([A-Za-z0-9_-]+)/);
+  if (cookieMatch) return cookieMatch[1];
+  return undefined;
+}
+
 const server = http.createServer((req, res) => {
   if (handleDiagnostic(req, res)) return;
   const host = (req.headers.host ?? '').split(':')[0];
-  const route = resolveRoute(routes, host, req.url ?? '/');
+  const sticky = extractReplicaSticky(req);
+  const route = resolveRoute(routes, host, req.url ?? '/', { sticky });
+  // 复制集会话粘性:选中组内路由后种 cookie,同一浏览器会话不横跳版本。
+  // 30 分钟滑动窗口;成员被移除后 cookie 失配 → resolver 自动回落权重选择。
+  if (route?.replicaGroup && route.replicaMemberId && sticky !== route.replicaMemberId) {
+    res.setHeader('Set-Cookie', `cds_rs=${route.replicaMemberId}; Path=/; Max-Age=1800; SameSite=Lax`);
+  }
   void proxy.handle(req, res, route);
 });
 
 server.on('upgrade', (req, socket, head) => {
   const host = (req.headers.host ?? '').split(':')[0];
-  const route = resolveRoute(routes, host, req.url ?? '/');
+  const route = resolveRoute(routes, host, req.url ?? '/', { sticky: extractReplicaSticky(req) });
   void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
 });
 

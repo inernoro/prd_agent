@@ -13993,6 +13993,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
+      // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (!member.containerName) continue;
+          try {
+            await containerService.stop(member.containerName, stopAttribution.reason, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: `${replicaSet.profileId}--${member.id}`,
+              requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+              operationId: branchOperationLease?.operationId || null,
+              actor: resolveActorFromRequest(req),
+              trigger: triggerFromRequest(req),
+              operation: 'branch-stop-replica-member',
+              source: 'api.stop-branch',
+            });
+          } catch { /* ok */ }
+          member.status = 'stopped';
+        }
+      }
       await archiveBranchContainerLogs({
         stateService,
         containerService,

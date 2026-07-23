@@ -1,0 +1,420 @@
+/**
+ * 复制集模式（Replica Set）控制面 —— design.cds.replica-set（2026-07-23）。
+ *
+ * 一个分支的**单个服务**在同一入口下并排跑多个历史版本：
+ *   - 主容器（branch.services[profileId]）即天然主成员，启用复制集零容器操作；
+ *   - 成员只能从 reusable 的 DeploymentVersion 物化（不可变镜像，pull+run 秒起，
+ *     禁止任何源码编译回退 —— 保证「快速启动」且不绕 build-gate）；
+ *   - 成员运行态记在 ReplicaMember 自身，不进 branch.services（涟漪隔离）；
+ *   - 解散（dissolve）= 收割全部成员容器 + 删配置，分支回到普通模式，零残留。
+ *
+ * 流量分配在数据面：forwarder-route-publisher 发 replicaGroup 组路由，
+ * route-resolver 按权重/粘性选择。本服务只管配置与成员容器生命周期。
+ */
+import type {
+  BranchEntry,
+  BuildProfile,
+  DeploymentVersion,
+  IShellExecutor,
+  ProfileReplicaSet,
+  ReplicaMember,
+  ServiceState,
+} from '../types.js';
+import type { StateService } from './state.js';
+import type { ContainerService } from './container.js';
+import { resolveEffectiveProfile } from './container.js';
+import type { DeploymentVersionService } from './deployment-version.js';
+
+/** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
+export const REPLICA_MEMBER_LIMIT = 3;
+
+/** 成员短 id：`rs` + 6 位 hex。同时用作粘性 cookie 值与直达子域后缀。 */
+export function newReplicaMemberId(rand: () => number = Math.random): string {
+  let suffix = '';
+  for (let i = 0; i < 6; i += 1) suffix += Math.floor(rand() * 16).toString(16);
+  return `rs${suffix}`;
+}
+
+export interface ReplicaSetLogger {
+  info?: (message: string) => void;
+  warn?: (message: string) => void;
+  error?: (message: string) => void;
+}
+
+export interface ReplicaSetServiceOptions {
+  state: StateService;
+  container: ContainerService;
+  versions: DeploymentVersionService;
+  shell: IShellExecutor;
+  /** 端口分配起点（config.portStart） */
+  portStart: number;
+  logger?: ReplicaSetLogger;
+  now?: () => Date;
+}
+
+/** 添加成员的入参。 */
+export interface AddMemberInput {
+  versionId: string;
+  label?: string;
+  /** 默认 0：只挂直达子域，不接主入口流量（简单实用原则）。 */
+  weight?: number;
+  /** MVP-1 仅支持 shared；isolated（一键隔离库 + 数据克隆）在 MVP-2 落地。 */
+  dbMode?: 'shared' | 'isolated';
+}
+
+/** 供 UI 展示的候选版本（该 profile 可秒起的历史版本）。 */
+export interface ReplicaCandidate {
+  versionId: string;
+  commitSha: string;
+  image: string;
+  createdAt: string;
+  isCurrent: boolean;
+}
+
+export class ReplicaSetService {
+  constructor(private readonly opts: ReplicaSetServiceOptions) {}
+
+  private now(): string {
+    return (this.opts.now?.() ?? new Date()).toISOString();
+  }
+
+  /** 分支上全部复制集配置 + 每个 profile 的候选版本。 */
+  list(branchId: string): {
+    branch: BranchEntry;
+    replicaSets: Record<string, ProfileReplicaSet>;
+    candidates: Record<string, ReplicaCandidate[]>;
+  } {
+    const branch = this.requireBranch(branchId);
+    const candidates: Record<string, ReplicaCandidate[]> = {};
+    const versions = this.opts.versions.list({ branchId });
+    for (const profile of this.opts.state.getEffectiveProfilesForBranch(branch)) {
+      const rows: ReplicaCandidate[] = [];
+      for (const version of versions) {
+        const snapshot = version.profiles.find((p) => p.profileId === profile.id);
+        if (!snapshot?.reusable) continue;
+        rows.push({
+          versionId: version.id,
+          commitSha: version.commitSha,
+          image: snapshot.artifactImage,
+          createdAt: version.createdAt,
+          isCurrent: version.id === branch.currentVersionId,
+        });
+      }
+      if (rows.length > 0) candidates[profile.id] = rows;
+    }
+    return { branch, replicaSets: branch.replicaSets ?? {}, candidates };
+  }
+
+  /** 启用复制集：纯配置写入，不动任何容器（启用本身零秒）。幂等。 */
+  enable(branchId: string, profileId: string): ProfileReplicaSet {
+    const branch = this.requireBranch(branchId);
+    this.requireProfile(branch, profileId);
+    branch.replicaSets = branch.replicaSets ?? {};
+    const existing = branch.replicaSets[profileId];
+    if (existing?.enabled) return existing;
+    const rs: ProfileReplicaSet = existing ?? {
+      profileId,
+      enabled: true,
+      primaryWeight: 100,
+      members: [],
+      createdAt: this.now(),
+      updatedAt: this.now(),
+    };
+    rs.enabled = true;
+    rs.updatedAt = this.now();
+    branch.replicaSets[profileId] = rs;
+    this.opts.state.save();
+    this.opts.logger?.info?.(`[replica-set] 启用 ${branchId}/${profileId}`);
+    return rs;
+  }
+
+  /**
+   * 解散 = 一键退回普通模式：移除全部成员容器 + 删除配置。
+   * 完成后分支与从未启用过复制集时完全一致（隔离库按保留语义不动）。
+   */
+  async dissolve(branchId: string, profileId: string): Promise<void> {
+    const branch = this.requireBranch(branchId);
+    const rs = branch.replicaSets?.[profileId];
+    if (!rs) return;
+    for (const member of rs.members) {
+      await this.removeMemberContainer(member);
+    }
+    delete branch.replicaSets![profileId];
+    if (Object.keys(branch.replicaSets!).length === 0) delete branch.replicaSets;
+    this.opts.state.save();
+    this.opts.logger?.info?.(`[replica-set] 解散 ${branchId}/${profileId}（退回普通模式）`);
+  }
+
+  /**
+   * 添加成员并异步物化容器。同步返回 provisioning 态成员；
+   * 启动进展通过 member.status 轮询可见（禁止空白等待由 UI 轮询承担）。
+   */
+  addMember(branchId: string, profileId: string, input: AddMemberInput): ReplicaMember {
+    const branch = this.requireBranch(branchId);
+    const profile = this.requireProfile(branch, profileId);
+    const rs = this.enable(branchId, profileId);
+    if (rs.members.length >= REPLICA_MEMBER_LIMIT) {
+      throw new ReplicaSetError(409, `成员数已达上限 ${REPLICA_MEMBER_LIMIT}，请先下线一个成员`);
+    }
+    if (input.dbMode === 'isolated') {
+      throw new ReplicaSetError(501, '一键隔离数据库（含数据克隆）在 MVP-2 提供，当前成员请使用共享库模式');
+    }
+    const version = this.opts.versions.get(input.versionId);
+    if (!version || version.branchId !== branchId) {
+      throw new ReplicaSetError(404, `部署版本不存在或不属于该分支: ${input.versionId}`);
+    }
+    const snapshot = version.profiles.find((p) => p.profileId === profileId);
+    if (!snapshot) {
+      throw new ReplicaSetError(409, `该版本没有服务 ${profileId} 的快照`);
+    }
+    if (!snapshot.reusable) {
+      throw new ReplicaSetError(409, `该版本的 ${profileId} 产物不可复用（${snapshot.reuseBlockedReason || '非不可变镜像'}），无法秒起为成员`);
+    }
+    if (rs.members.some((m) => m.versionId === version.id && m.status !== 'error')) {
+      throw new ReplicaSetError(409, '该版本已是复制集成员');
+    }
+
+    const member: ReplicaMember = {
+      id: newReplicaMemberId(),
+      versionId: version.id,
+      label: input.label?.trim() || version.commitSha.slice(0, 7),
+      weight: clampWeight(input.weight ?? 0),
+      image: snapshot.artifactImage,
+      commitSha: version.commitSha,
+      status: 'provisioning',
+      dbMode: 'shared',
+      createdAt: this.now(),
+    };
+    rs.members.push(member);
+    rs.updatedAt = this.now();
+    this.opts.state.save();
+
+    void this.materializeMember(branch.id, profileId, member.id, version, profile)
+      .catch((err) => {
+        this.opts.logger?.error?.(
+          `[replica-set] 成员物化失败 ${branchId}/${profileId}/${member.id}: ${(err as Error).message}`,
+        );
+      });
+    return member;
+  }
+
+  /** 改权重 / 标签。改权重 = 纯配置写入，2s 内路由表重发生效，无容器操作。 */
+  updateMember(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    patch: { weight?: number; label?: string; primaryWeight?: number },
+  ): ProfileReplicaSet {
+    const branch = this.requireBranch(branchId);
+    const rs = branch.replicaSets?.[profileId];
+    if (!rs) throw new ReplicaSetError(404, '该服务未启用复制集');
+    if (memberId === 'primary') {
+      if (typeof patch.weight === 'number') rs.primaryWeight = clampWeight(patch.weight);
+    } else {
+      const member = rs.members.find((m) => m.id === memberId);
+      if (!member) throw new ReplicaSetError(404, `成员不存在: ${memberId}`);
+      if (typeof patch.weight === 'number') member.weight = clampWeight(patch.weight);
+      if (typeof patch.label === 'string' && patch.label.trim()) member.label = patch.label.trim();
+    }
+    if (typeof patch.primaryWeight === 'number') rs.primaryWeight = clampWeight(patch.primaryWeight);
+    rs.updatedAt = this.now();
+    this.opts.state.save();
+    return rs;
+  }
+
+  /** 下线成员：移除容器 + 删记录（隔离库按保留语义不动）。 */
+  async removeMember(branchId: string, profileId: string, memberId: string): Promise<void> {
+    const branch = this.requireBranch(branchId);
+    const rs = branch.replicaSets?.[profileId];
+    if (!rs) throw new ReplicaSetError(404, '该服务未启用复制集');
+    const member = rs.members.find((m) => m.id === memberId);
+    if (!member) throw new ReplicaSetError(404, `成员不存在: ${memberId}`);
+    await this.removeMemberContainer(member);
+    rs.members = rs.members.filter((m) => m.id !== memberId);
+    rs.updatedAt = this.now();
+    this.opts.state.save();
+  }
+
+  /** 分支删除/停止路径的级联收割：清掉该分支全部成员容器。 */
+  async teardownForBranch(branchId: string): Promise<void> {
+    const branch = this.opts.state.getBranch(branchId);
+    if (!branch?.replicaSets) return;
+    for (const rs of Object.values(branch.replicaSets)) {
+      for (const member of rs.members) {
+        await this.removeMemberContainer(member).catch((err) => {
+          this.opts.logger?.warn?.(
+            `[replica-set] 分支收割成员容器失败 ${branchId}/${rs.profileId}/${member.id}: ${(err as Error).message}`,
+          );
+        });
+      }
+    }
+    delete branch.replicaSets;
+    this.opts.state.save();
+  }
+
+  /**
+   * 物化成员容器：从版本快照构造独立 profile（id 加 --<memberId> 后缀，
+   * DNS 别名/容器名随之隔离，不与主容器撞车），走 ContainerService.runService
+   * 既有链路（pull、分支网、清理）。全程零编译：
+   *   - prebuiltImage=true 且 fallbackImage/sourceFallbackProfile 置空
+   *     → 镜像拉不到直接失败进 error 态，绝不回退源码编译（不绕 build-gate）。
+   */
+  private async materializeMember(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    version: DeploymentVersion,
+    baseProfile: BuildProfile,
+  ): Promise<void> {
+    const branch = this.requireBranch(branchId);
+    const snapshot = version.profiles.find((p) => p.profileId === profileId)!;
+    const memberProfileId = `${profileId}--${memberId}`;
+    const memberProfile: BuildProfile = {
+      ...baseProfile,
+      id: memberProfileId,
+      name: `${baseProfile.name} · ${memberId}`,
+      dockerImage: snapshot.artifactImage,
+      command: snapshot.runtimeCommand,
+      containerPort: snapshot.containerPort,
+      containerWorkDir: snapshot.containerWorkDir,
+      pathPrefixes: snapshot.pathPrefixes,
+      // 成员不发命名子域（直达入口由发布器按 memberId 生成），避免与主容器同名子域撞车
+      subdomain: undefined,
+      dependsOn: [],
+      readinessProbe: snapshot.readinessProbe,
+      startupSignal: snapshot.startupSignal,
+      activeDeployMode: snapshot.deployedMode,
+      prebuiltImage: true,
+      localArtifact: snapshot.artifactKind === 'managed-image',
+      managedBuild: undefined,
+      fallbackImage: undefined,
+      sourceFallbackProfile: undefined,
+      hotReload: undefined,
+    };
+
+    const usedPorts = await this.collectListeningPorts();
+    const hostPort = this.opts.state.allocatePort(this.opts.portStart, usedPorts);
+    const containerName = `cds-${branch.id}-${profileId}-${memberId}`;
+    const serviceState: ServiceState = {
+      profileId: memberProfileId,
+      containerName,
+      hostPort,
+      status: 'starting',
+    };
+    this.patchMember(branchId, profileId, memberId, { containerName, hostPort });
+
+    const logs: string[] = [];
+    const onOutput = (chunk: string) => {
+      for (const line of chunk.split('\n')) {
+        const trimmed = line.trim();
+        if (trimmed) logs.push(trimmed);
+      }
+      if (logs.length > 40) logs.splice(0, logs.length - 40);
+    };
+
+    try {
+      await this.opts.container.runService(
+        branch,
+        memberProfile,
+        serviceState,
+        onOutput,
+        this.opts.state.getCustomEnv(branch.projectId),
+        { actor: 'replica-set', trigger: 'replica-set-member' },
+      );
+      let ready = true;
+      if (memberProfile.startupSignal) {
+        ready = await this.opts.container.waitForStartupSignal(
+          containerName,
+          memberProfile.startupSignal,
+          onOutput,
+          120,
+        );
+      } else {
+        ready = await this.opts.container.waitForReadiness(
+          hostPort,
+          memberProfile.readinessProbe,
+          undefined,
+          onOutput,
+          containerName,
+        );
+      }
+      if (!ready) {
+        this.patchMember(branchId, profileId, memberId, {
+          status: 'error',
+          statusMessage: `容器已启动但未就绪: ${logs.slice(-5).join(' | ') || '无输出'}`,
+        });
+        return;
+      }
+      this.patchMember(branchId, profileId, memberId, { status: 'running', statusMessage: undefined });
+      this.opts.logger?.info?.(
+        `[replica-set] 成员就绪 ${branchId}/${profileId}/${memberId} :${hostPort} (${snapshot.artifactImage})`,
+      );
+    } catch (err) {
+      this.patchMember(branchId, profileId, memberId, {
+        status: 'error',
+        statusMessage: (err as Error).message,
+      });
+    }
+  }
+
+  private patchMember(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    patch: Partial<ReplicaMember>,
+  ): void {
+    const branch = this.opts.state.getBranch(branchId);
+    const member = branch?.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+    if (!member) return;
+    Object.assign(member, patch);
+    if (branch?.replicaSets?.[profileId]) branch.replicaSets[profileId].updatedAt = this.now();
+    this.opts.state.save();
+  }
+
+  private async removeMemberContainer(member: ReplicaMember): Promise<void> {
+    if (member.containerName) {
+      await this.opts.container.remove(member.containerName, {
+        actor: 'replica-set',
+        trigger: 'replica-set-remove',
+      });
+    }
+    member.status = 'stopped';
+  }
+
+  private requireBranch(branchId: string): BranchEntry {
+    const branch = this.opts.state.getBranch(branchId);
+    if (!branch) throw new ReplicaSetError(404, `分支不存在: ${branchId}`);
+    return branch;
+  }
+
+  private requireProfile(branch: BranchEntry, profileId: string): BuildProfile {
+    const profile = this.opts.state
+      .getEffectiveProfilesForBranch(branch)
+      .find((p) => p.id === profileId);
+    if (!profile) throw new ReplicaSetError(404, `服务不存在: ${profileId}`);
+    return resolveEffectiveProfile(profile, branch);
+  }
+
+  private async collectListeningPorts(): Promise<Set<number>> {
+    const result = await this.opts.shell.exec('ss -H -ltn').catch(() => null);
+    if (!result || result.exitCode !== 0) return new Set();
+    const ports = new Set<number>();
+    for (const line of result.stdout.split('\n')) {
+      const match = line.match(/:(\d+)\s/);
+      if (match) ports.add(Number(match[1]));
+    }
+    return ports;
+  }
+}
+
+export class ReplicaSetError extends Error {
+  constructor(public readonly status: number, message: string) {
+    super(message);
+    this.name = 'ReplicaSetError';
+  }
+}
+
+function clampWeight(value: number): number {
+  if (!Number.isFinite(value)) return 0;
+  return Math.max(0, Math.min(100, Math.round(value)));
+}

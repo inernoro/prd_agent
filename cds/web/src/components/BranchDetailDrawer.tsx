@@ -12,6 +12,8 @@ import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
+import { Layers } from 'lucide-react';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -60,6 +62,8 @@ interface BranchDetailData {
   previewSlug?: string;
   previewUrl?: string;
   services: Record<string, ServiceState>;
+  /** 复制集模式（design.cds.replica-set）：profileId → 配置。用于资源卡特殊标识与「复制集」tab。 */
+  replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
   commitSha?: string;
@@ -336,7 +340,7 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'replicaset' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -365,6 +369,7 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '资源' },
+  { key: 'replicaset', label: '复制集' },       // 2026-07-23 design.cds.replica-set 单服务多版本并排
   { key: 'logs', label: '日志' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
   { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
@@ -1583,6 +1588,14 @@ export function BranchDetailDrawer({
   }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
   const selectedService = services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
+  // 复制集化（含成员）的服务集合：资源卡加特殊标识（design.cds.replica-set）
+  const replicaProfileIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const [profileId, replicaSet] of Object.entries(branch?.replicaSets ?? {})) {
+      if (replicaSet?.enabled && (replicaSet.members?.length ?? 0) > 0) set.add(profileId);
+    }
+    return set;
+  }, [branch?.replicaSets]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -2292,9 +2305,18 @@ export function BranchDetailDrawer({
                   </section>
                 ) : null}
 
+                {activeTab === 'replicaset' ? (
+                  <ReplicaSetPanel
+                    branchId={branch.id}
+                    previewUrl={branch.previewUrl || previewUrl}
+                    onToast={onToast}
+                  />
+                ) : null}
+
                 {activeTab === 'services' ? (
                   <ResourceConsole
                     resources={resources}
+                    replicaProfileIds={replicaProfileIds}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
                     serviceLogs={serviceLogs}
@@ -3288,6 +3310,7 @@ function resourceInitialDetailTab(
 
 function ResourceConsole({
   resources,
+  replicaProfileIds,
   selectedResource,
   initialDetailTab,
   serviceLogs,
@@ -3302,6 +3325,8 @@ function ResourceConsole({
   onCopy,
 }: {
   resources: BranchResource[];
+  /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
+  replicaProfileIds?: Set<string>;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
   serviceLogs: ServiceLogsState;
@@ -3425,6 +3450,9 @@ function ResourceConsole({
               </span>
               {group.items.map((resource) => {
                 const active = selectedResource?.id === resource.id;
+                // 复制集特殊标识：卡片带靛蓝描边 + 堆叠图标（同一服务多版本并排在跑）
+                const isReplicaSet = resource.source === 'app'
+                  && !!replicaProfileIds?.has((resource.raw as ServiceState | undefined)?.profileId ?? '');
                 return (
                   <button
                     key={resource.id}
@@ -3433,13 +3461,18 @@ function ResourceConsole({
                       active
                         ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
                         : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                    } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''}`}
+                    } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
+                      isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
+                    }`}
                     onClick={() => onSelect(resource)}
-                    title={`${resource.displayName}\n${resource.serviceName}`}
+                    title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? '\n复制集模式：多版本并排运行中' : ''}`}
                   >
                     <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
                     <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold">{resource.runtime}</span>
+                      <span className="flex items-center gap-1 truncate text-xs font-semibold">
+                        <span className="truncate">{resource.runtime}</span>
+                        {isReplicaSet ? <Layers className="h-3 w-3 shrink-0 text-indigo-500" /> : null}
+                      </span>
                       <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
                     </span>
                     <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />

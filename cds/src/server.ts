@@ -9,6 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
+import { createReplicaSetsRouter } from './routes/replica-sets.js';
+import { ReplicaSetService } from './services/replica-set.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
@@ -951,6 +953,13 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
+    [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members$/, '添加复制集成员'],
+    [/^PATCH \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '调整复制集成员'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)$/, '启用复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)$/, '解散复制集'],
     [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
@@ -3698,36 +3707,58 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  const dispatchVersion = async (
+    version: import('./types.js').DeploymentVersion,
+    trigger: 'manual' | 'rollback',
+  ): Promise<import('./routes/deployment-versions.js').VersionDispatchResult> => {
+    try {
+      const upstream = await fetch(
+        `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
+            'X-CDS-Source-Project-Id': version.projectId,
+            'X-CDS-Source-Branch-Id': version.branchId,
+          },
+          body: JSON.stringify({ versionId: version.id }),
+        },
+      );
+      const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
+      if (upstream.ok) {
+        void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
+        return { accepted: true, status: upstream.status, runId };
+      }
+      const error = (await upstream.text().catch(() => '')).slice(0, 500);
+      return { accepted: false, status: upstream.status, error };
+    } catch (err) {
+      return { accepted: false, status: 503, error: (err as Error).message };
+    }
+  };
+
   app.use('/api', createDeploymentVersionsRouter({
     deploymentVersionService,
     assertProjectAccess: assertProjectAccess as any,
-    dispatchVersion: async (version, trigger) => {
-      try {
-        const upstream = await fetch(
-          `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CDS-Internal': '1',
-              'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
-              'X-CDS-Source-Project-Id': version.projectId,
-              'X-CDS-Source-Branch-Id': version.branchId,
-            },
-            body: JSON.stringify({ versionId: version.id }),
-          },
-        );
-        const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
-        if (upstream.ok) {
-          void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
-          return { accepted: true, status: upstream.status, runId };
-        }
-        const error = (await upstream.text().catch(() => '')).slice(0, 500);
-        return { accepted: false, status: upstream.status, error };
-      } catch (err) {
-        return { accepted: false, status: 503, error: (err as Error).message };
-      }
-    },
+    dispatchVersion,
+  }));
+
+  // 复制集模式（design.cds.replica-set）：单服务多版本并排 + forwarder 分流。
+  const replicaSetService = new ReplicaSetService({
+    state: deps.stateService,
+    container: deps.containerService,
+    versions: deploymentVersionService,
+    shell: deps.shell,
+    portStart: deps.config.portStart,
+    logger: console,
+  });
+  app.use('/api', createReplicaSetsRouter({
+    stateService: deps.stateService,
+    replicaSetService,
+    deploymentVersionService,
+    assertProjectAccess: assertProjectAccess as any,
+    dispatchVersion,
   }));
 
   app.use('/api', createManagedProjectsRouter({

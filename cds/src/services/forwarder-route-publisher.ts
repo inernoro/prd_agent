@@ -201,8 +201,71 @@ export class ForwarderRoutePublisher {
         if (host) hosts.push(host);
       }
 
+      // 复制集（design.cds.replica-set）:每个启用复制集且有 running 成员的 profile,
+      // 主入口路由扩展成一组同 host 同 prefix 的兄弟路由（primary + members,
+      // replicaGroup 标记）,由 resolver 按权重/粘性选择;成员另获直达子域
+      // `<previewSlug>-<memberId>.<root>`（整套路由,仅该 profile 的端口钉到成员）。
+      const replicaByProfile = new Map<string, {
+        group: string;
+        primaryWeight: number;
+        members: Array<{ id: string; hostPort: number; weight: number }>;
+      }>();
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        if (!rs.enabled) continue;
+        const primarySvc = routableServices.find((s) => s.profileId === rs.profileId);
+        if (!primarySvc) continue;
+        const members = rs.members
+          .filter((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0)
+          .map((m) => ({ id: m.id, hostPort: m.hostPort as number, weight: m.weight }));
+        if (members.length === 0) continue;
+        replicaByProfile.set(rs.profileId, {
+          group: `${branch.id}:${rs.profileId}`,
+          primaryWeight: rs.primaryWeight,
+          members,
+        });
+      }
+
+      // 单条路由入账:普通 profile 原样;复制集 profile 主入口展开成组;
+      // override（成员直达 host）把该 profile 的上游钉到成员端口,不展开组。
+      const pushRoute = (
+        base: RouteRecord,
+        profileId: string,
+        override?: { profileId: string; hostPort: number },
+      ): void => {
+        if (override) {
+          records.push(profileId === override.profileId
+            ? { ...base, upstreamPort: override.hostPort }
+            : base);
+          return;
+        }
+        const replica = replicaByProfile.get(profileId);
+        if (!replica) {
+          records.push(base);
+          return;
+        }
+        records.push({
+          ...base,
+          weight: replica.primaryWeight,
+          replicaGroup: replica.group,
+          replicaMemberId: 'primary',
+        });
+        for (const member of replica.members) {
+          records.push({
+            ...base,
+            _id: `${base._id}:m:${member.id}`,
+            upstreamPort: member.hostPort,
+            weight: member.weight,
+            replicaGroup: replica.group,
+            replicaMemberId: member.id,
+          });
+        }
+      };
+
       let idx = 0;
-      for (const host of hosts) {
+      const emitHostRouteSet = (
+        host: string,
+        override?: { profileId: string; hostPort: number },
+      ): void => {
         // 同一 host 下避免给同一 prefix 重复发布(BuildProfile.pathPrefixes 与
         // convention 兜底可能冲突,前者优先)
         const writtenPrefixes = new Set<string>();
@@ -213,7 +276,7 @@ export class ForwarderRoutePublisher {
           for (const prefix of bp?.pathPrefixes ?? []) {
             if (writtenPrefixes.has(prefix)) continue;
             writtenPrefixes.add(prefix);
-            records.push({
+            pushRoute({
               _id: `${branch.id}:${svc.profileId}:bp:${idx++}`,
               host,
               pathPrefix: prefix,
@@ -226,7 +289,7 @@ export class ForwarderRoutePublisher {
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
-            });
+            }, svc.profileId, override);
           }
         }
         // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
@@ -242,7 +305,7 @@ export class ForwarderRoutePublisher {
           // 变化导致 /api/* 与 / 路由分叉。
           if (apiSvc) {
             writtenPrefixes.add('/api/');
-            records.push({
+            pushRoute({
               _id: `${branch.id}:${apiSvc.profileId}:apiconv:${idx++}`,
               host,
               pathPrefix: '/api/',
@@ -255,11 +318,11 @@ export class ForwarderRoutePublisher {
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
-            });
+            }, apiSvc.profileId, override);
           }
         }
         // 3) 默认 fallback:无 pathPrefix → 所有未匹配 path 走默认 profile(admin/web/frontend)
-        records.push({
+        pushRoute({
           _id: `${branch.id}:${defaultProfile}:default:${idx++}`,
           host,
           upstreamHost: '127.0.0.1',
@@ -269,7 +332,29 @@ export class ForwarderRoutePublisher {
           weight: 100,
           healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
-        });
+        }, defaultProfile, override);
+      };
+
+      for (const host of hosts) {
+        emitHostRouteSet(host);
+      }
+
+      // 复制集成员直达子域:`<previewSlug>-<memberId>.<root>` 整套路由,
+      // 仅复制集 profile 的上游钉到该成员端口,其余服务仍走主容器 ——
+      // 用户拿直达链能浏览整个应用,只有该服务是成员版本。63 字符守卫同命名子域。
+      for (const [profileId, replica] of replicaByProfile) {
+        for (const member of replica.members) {
+          const memberLabel = `${previewSlug}-${member.id}`;
+          if (memberLabel.length > 63) {
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 跳过复制集成员直达子域 ${memberLabel}.*（第一 DNS 标签超 63 octet 上限）；成员仍可经主入口 ?__rs=${member.id} 粘性直达`,
+            );
+            continue;
+          }
+          for (const root of this.opts.rootDomains) {
+            emitHostRouteSet(`${memberLabel}.${root}`, { profileId, hostPort: member.hostPort });
+          }
+        }
       }
 
       // 4) 命名子域路由:声明了 subdomain 的服务获得自己的命名 URL

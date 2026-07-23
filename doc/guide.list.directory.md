@@ -66,6 +66,7 @@
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
+- [CDS 复制集模式（一个入口多版本并排） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
 - [CDS 技能版本与更新架构 · 设计](./design.cds.skill-version-update.md) `design.cds.skill-version-update`
@@ -277,6 +278,7 @@
 - [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
 - [项目迁移（CDS 项目移植） · 债务台账](./debt.cds.project-migration.md) `debt.cds.project-migration`
 - [CDS 过期分支预览页 · 债务台账](./debt.cds.removed-branch-pages.md) `debt.cds.removed-branch-pages`
+- [CDS 复制集模式 · 债务台账](./debt.cds.replica-set.md) `debt.cds.replica-set`
 - [CDS 验收报告治理 · 债务台账](./debt.cds.reports.md) `debt.cds.reports`
 - [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
 - [CDS state.json 影子存储 · 债务台账](./debt.cds.state-json.md) `debt.cds.state-json`

@@ -55,6 +55,23 @@ export interface RouteRecord {
    * 看到 127.0.0.1:port 会找不到分支。
    */
   preserveHost?: boolean;
+  /**
+   * 复制集组标识（design.cds.replica-set）：同 host 同 prefix 的一组并排版本路由
+   * 共享同一个组 id（`<branchId>:<profileId>`）。resolver 命中组内路由时按
+   * 粘性（query __rs / header x-cds-replica / cookie cds_rs）+ weight 加权随机
+   * 在组内选择。absent = 普通路由，行为与历史逐字节一致。
+   */
+  replicaGroup?: string;
+  /** 组内成员 id：'primary'（主容器）或成员短 id（rs 开头）。 */
+  replicaMemberId?: string;
+}
+
+/** 复制集选择上下文：由 forwarder-main 从请求提取，传给 resolveRoute。 */
+export interface ReplicaResolveContext {
+  /** 粘性目标成员 id（query __rs > header x-cds-replica > cookie cds_rs） */
+  sticky?: string;
+  /** 加权随机源，默认 Math.random；测试注入确定值 */
+  rand?: () => number;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */

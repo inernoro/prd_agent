@@ -554,6 +554,56 @@ export interface BranchTombstone {
   removedAt: string;
 }
 
+/**
+ * 复制集成员 —— 一个并排运行的历史版本（2026-07-23，design.cds.replica-set）。
+ *
+ * 只允许从 reusable 的 DeploymentVersion 物化（不可变镜像，零构建秒起）。
+ * 运行态记在成员自身，**不进 branch.services**（services 消费方极多，
+ * 进去会被部署循环 / 发布器约定路由 / 服务卡当成普通服务，涟漪不可控）。
+ */
+export interface ReplicaMember {
+  /** 成员短 id（`rs` + 6 位），也是粘性 cookie / 直达子域后缀的值 */
+  id: string;
+  /** 指向 DeploymentVersion（内容寻址、不可变） */
+  versionId: string;
+  /** 用户可读标签（默认取 commit 短 sha） */
+  label?: string;
+  /** 主入口分流权重 0-100；0 = 只挂直达子域，不接主入口流量（默认） */
+  weight: number;
+  /** 物化快照：该版本此 profile 的不可变镜像引用 */
+  image: string;
+  /** 该版本的 commit sha（展示用） */
+  commitSha?: string;
+  /** 物化后的容器名（cds-<branchId>-<profileId>-<memberId>） */
+  containerName?: string;
+  /** 物化后分配的宿主端口 */
+  hostPort?: number;
+  status: 'provisioning' | 'running' | 'stopped' | 'error';
+  statusMessage?: string;
+  /** 数据库模式：shared=与主容器同库（默认）；isolated=一键隔离库（克隆保留），MVP-2 */
+  dbMode: 'shared' | 'isolated';
+  /** dbMode=isolated 时库名后缀（_rs_<memberId>） */
+  isolatedDbSuffix?: string;
+  createdAt: string;
+}
+
+/**
+ * 单个服务（profile）的复制集配置。挂在 BranchEntry.replicaSets[profileId]。
+ *
+ * 主容器（branch.services[profileId]）即天然主成员，不重建不迁移——
+ * 启用复制集是纯配置写入，零容器操作；解散（退回普通）= 收割全部成员容器
+ * + 删本配置，分支回到与未启用时完全一致的状态。
+ */
+export interface ProfileReplicaSet {
+  profileId: string;
+  enabled: boolean;
+  /** 主容器权重 0-100（与成员权重同一口径） */
+  primaryWeight: number;
+  members: ReplicaMember[];
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
@@ -662,6 +712,12 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /**
+   * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
+   * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
+   * 流量分配见 forwarder-route-publisher（replicaGroup 路由）+ route-resolver（权重/粘性）。
+   */
+  replicaSets?: Record<string, ProfileReplicaSet>;
   /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *
