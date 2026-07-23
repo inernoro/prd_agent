@@ -1,13 +1,21 @@
 import { useEffect, useMemo, useState } from 'react';
 import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck, Sparkles } from 'lucide-react';
 
+import {
+  AgentAccessMap,
+  defaultMissionForMap,
+  type AgentAccessMapSelection,
+} from '@/components/AgentAccessMap';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   buildCdsAgentPrompt,
   chooseAgentProjectId,
+  createAgentMissionContext,
+  getAgentMissionScope,
   PROJECT_SKILL_PATHS,
   type AgentPageContext,
+  type AgentPageContextId,
   type CdsConnectTarget,
 } from '@/lib/agent-onboarding';
 
@@ -34,34 +42,66 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: 
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
+function initialMapSelection(
+  projects: AgentProjectOption[],
+  context: AgentPageContext,
+): AgentAccessMapSelection {
+  if (getAgentMissionScope(context.id) === 'system') return { kind: 'system' };
+  const selectedProjectId = chooseAgentProjectId(projects, context);
+  return selectedProjectId
+    ? { kind: 'project', projectId: selectedProjectId }
+    : { kind: 'new' };
+}
+
 export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
-  const [targetKind, setTargetKind] = useState<'existing' | 'new'>(projects.length > 0 ? 'existing' : 'new');
-  const [projectId, setProjectId] = useState(() => chooseAgentProjectId(projects, context));
+  const sourceContext = context || createAgentMissionContext('projects');
+  const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
+    () => initialMapSelection(projects, sourceContext),
+  );
+  const [missionId, setMissionId] = useState<AgentPageContextId>(sourceContext.id);
 
   useEffect(() => {
     if (!open) return;
-    if (projects.length === 0) {
-      setTargetKind('new');
-      setProjectId('');
-      return;
-    }
-    setTargetKind('existing');
-    setProjectId(chooseAgentProjectId(projects, context));
+    setMapSelection(initialMapSelection(projects, sourceContext));
+    setMissionId(sourceContext.id);
   }, [open, projects, context?.id, context?.pagePath]);
 
-  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
-  const target: CdsConnectTarget = targetKind === 'new'
-    ? { kind: 'new' }
-    : { kind: 'existing', projectId: projectId || '<project-id>' };
-  const prompt = useMemo(
-    () => buildCdsAgentPrompt({ cdsOrigin, target, context }),
-    [cdsOrigin, target.kind, projectId, context?.id, context?.pagePath],
+  const systemProjectId = chooseAgentProjectId(
+    projects,
+    createAgentMissionContext('auth'),
   );
+  const effectiveProjectId = mapSelection.kind === 'system'
+    ? systemProjectId
+    : mapSelection.kind === 'project'
+      ? mapSelection.projectId
+      : '';
+  const selectedContext = missionId === sourceContext.id
+    ? sourceContext
+    : createAgentMissionContext(missionId, effectiveProjectId);
+  const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
+  const target: CdsConnectTarget = mapSelection.kind === 'new'
+    ? { kind: 'new' }
+    : { kind: 'existing', projectId: effectiveProjectId || '<project-id>' };
+  const prompt = useMemo(
+    () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
+    [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
+  );
+  const handleMapSelection = (selection: AgentAccessMapSelection): void => {
+    setMapSelection(selection);
+    const selectedScope = getAgentMissionScope(missionId);
+    const nextScope = selection.kind === 'system' ? 'system' : selection.kind === 'project' ? 'project' : 'system';
+    if (selection.kind === 'new' || selectedScope !== nextScope) {
+      setMissionId(defaultMissionForMap(selection));
+    }
+  };
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-3xl">
+      <DialogContent
+        className="max-w-none"
+        style={{ width: 'min(1080px, calc(100vw - 32px))' }}
+      >
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
@@ -70,67 +110,35 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </DialogDescription>
         </DialogHeader>
 
-        {context ? (
+        {selectedContext ? (
           <div
             className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3"
-            data-agent-context={context.id}
-            data-agent-page={context.pagePath}
+            data-agent-context={selectedContext.id}
+            data-agent-page={selectedContext.pagePath}
           >
             <div className="flex items-start gap-3">
               <div className="mt-0.5 rounded-md border border-primary/25 bg-primary/10 p-2 text-primary">
                 <Sparkles className="h-4 w-4" />
               </div>
               <div className="min-w-0">
-                <div className="text-xs font-medium uppercase tracking-wider text-primary">当前页面任务</div>
-                <div className="mt-1 font-medium text-foreground">{context.title}</div>
-                <p className="mt-1 text-sm leading-6 text-muted-foreground">{context.summary}</p>
+                <div className="text-xs font-medium uppercase tracking-wider text-primary">
+                  {selectedContext.id === sourceContext.id ? '当前页面任务' : '地图任务'}
+                </div>
+                <div className="mt-1 font-medium text-foreground">{selectedContext.title}</div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{selectedContext.summary}</p>
               </div>
             </div>
           </div>
         ) : null}
 
-        <div className="grid gap-2 sm:grid-cols-2">
-          <button
-            type="button"
-            onClick={() => setTargetKind('existing')}
-            disabled={projects.length === 0}
-            className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-              targetKind === 'existing'
-                ? 'border-primary bg-primary/10 text-foreground'
-                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-muted-foreground'
-            } disabled:cursor-not-allowed disabled:opacity-50`}
-          >
-            <div className="font-medium">连接已有项目</div>
-            <div className="mt-0.5 text-xs">只获得所选项目的权限</div>
-          </button>
-          <button
-            type="button"
-            onClick={() => setTargetKind('new')}
-            className={`rounded-md border px-3 py-2 text-left text-sm transition-colors ${
-              targetKind === 'new'
-                ? 'border-primary bg-primary/10 text-foreground'
-                : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] text-muted-foreground'
-            }`}
-          >
-            <div className="font-medium">创建一个新项目</div>
-            <div className="mt-0.5 text-xs">一次性权限，创建后自动失效</div>
-          </button>
-        </div>
-
-        {targetKind === 'existing' ? (
-          <label className="space-y-1 text-sm">
-            <span className="text-xs font-medium text-foreground">选择项目</span>
-            <select
-              value={projectId}
-              onChange={(event) => setProjectId(event.target.value)}
-              className="h-9 w-full rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] px-3 text-sm text-foreground"
-            >
-              {projects.map((project) => (
-                <option key={project.id} value={project.id}>{project.name} ({project.slug})</option>
-              ))}
-            </select>
-          </label>
-        ) : null}
+        <AgentAccessMap
+          projects={projects}
+          selection={mapSelection}
+          context={selectedContext}
+          sourceContextId={sourceContext.id}
+          onSelectionChange={handleMapSelection}
+          onMissionChange={setMissionId}
+        />
 
         <nav className="flex gap-1 border-b border-[hsl(var(--hairline))]">
           {TABS.map((tab) => {

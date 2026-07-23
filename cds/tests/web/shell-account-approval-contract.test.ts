@@ -30,6 +30,10 @@ const agentDialogSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/SkillDownloadDialog.tsx'),
   'utf8',
 );
+const agentMapSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/components/AgentAccessMap.tsx'),
+  'utf8',
+);
 const globalAgentAccessSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
   'utf8',
@@ -86,8 +90,21 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(globalAgentAccessSource).toContain('<SkillDownloadDialog');
     expect(globalAgentAccessSource).toContain('STANDALONE_PATHS');
     expect(globalAgentAccessSource).toContain('className="cds-agent-access-floating"');
-    expect(agentDialogSource).toContain('data-agent-context={context.id}');
+    expect(agentDialogSource).toContain('data-agent-context={selectedContext.id}');
     expect(agentDialogSource).toContain('当前页面任务');
+  });
+
+  it('用项目地图和任务地标替代传统下拉，并让切换结果进入 Agent 上下文', () => {
+    expect(agentDialogSource).toContain('<AgentAccessMap');
+    expect(agentDialogSource).toContain('createAgentMissionContext(missionId, effectiveProjectId)');
+    expect(agentDialogSource).not.toContain('<select');
+    expect(agentMapSource).toContain('Agent 接入地图');
+    expect(agentMapSource).toContain('先选择地图，再选择任务地标');
+    expect(agentMapSource).toContain('SYSTEM_MISSIONS');
+    expect(agentMapSource).toContain('PROJECT_MISSIONS');
+    expect(agentMapSource).toContain('aria-live="polite"');
+    expect(styles).toContain('.cds-agent-map[data-terrain=');
+    expect(styles).toMatch(/@media \(prefers-reduced-motion: reduce\)[\s\S]*?\.cds-agent-map-hub/);
   });
 
   it('登录与认证页可以把 SSO 配置直接交给 Agent，并声明密钥保护策略', () => {

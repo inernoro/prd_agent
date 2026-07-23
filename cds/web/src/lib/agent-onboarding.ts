@@ -36,6 +36,8 @@ export interface AgentProjectIdentity {
   slug?: string;
 }
 
+export type AgentMissionScope = 'system' | 'project';
+
 interface BuildPromptOptions {
   cdsOrigin: string;
   target: CdsConnectTarget;
@@ -49,6 +51,22 @@ export const PROJECT_SKILL_PATHS = [
   { agent: 'Cursor', path: '.cursor/skills' },
   { agent: 'Claude Code', path: '.claude/skills' },
 ] as const;
+
+export const SYSTEM_AGENT_CONTEXT_IDS: AgentPageContextId[] = [
+  'auth',
+  'github',
+  'maintenance',
+  'settings',
+  'projects',
+];
+
+export const PROJECT_AGENT_CONTEXT_IDS: AgentPageContextId[] = [
+  'branches',
+  'project-settings',
+  'release',
+  'tasks',
+  'reports',
+];
 
 const CONTEXT_DEFINITIONS: Record<AgentPageContextId, Omit<AgentPageContext, 'pagePath'>> = {
   projects: {
@@ -163,6 +181,31 @@ export function resolveAgentPageContext(
     else id = 'general';
   }
   return { ...CONTEXT_DEFINITIONS[id], pagePath };
+}
+
+export function getAgentMissionScope(contextId: AgentPageContextId): AgentMissionScope {
+  return SYSTEM_AGENT_CONTEXT_IDS.includes(contextId) ? 'system' : 'project';
+}
+
+export function createAgentMissionContext(
+  contextId: AgentPageContextId,
+  projectId?: string,
+): AgentPageContext {
+  const encodedProjectId = encodeURIComponent(projectId || '<project-id>');
+  const locationByContext: Record<AgentPageContextId, AgentPageLocation> = {
+    projects: { pathname: '/project-list' },
+    branches: { pathname: `/branches/${encodedProjectId}` },
+    'project-settings': { pathname: `/settings/${encodedProjectId}` },
+    auth: { pathname: '/cds-settings', hash: '#auth' },
+    github: { pathname: '/cds-settings', hash: '#github' },
+    maintenance: { pathname: '/cds-settings', hash: '#maintenance' },
+    release: { pathname: '/release-center' },
+    tasks: { pathname: '/task-schedule' },
+    reports: { pathname: '/reports' },
+    settings: { pathname: '/cds-settings' },
+    general: { pathname: '/' },
+  };
+  return resolveAgentPageContext(locationByContext[contextId], contextId);
 }
 
 export function requestAgentAccess(contextId?: AgentPageContextId): void {

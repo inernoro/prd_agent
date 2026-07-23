@@ -2,6 +2,8 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCdsAgentPrompt,
   chooseAgentProjectId,
+  createAgentMissionContext,
+  getAgentMissionScope,
   PROJECT_SKILL_PATHS,
   resolveAgentPageContext,
 } from '../../web/src/lib/agent-onboarding.js';
@@ -77,6 +79,15 @@ describe('CDS Agent 接入口令', () => {
     expect(resolveAgentPageContext({ pathname: '/release-center' }).id).toBe('release');
     expect(resolveAgentPageContext({ pathname: '/cds-settings', hash: '#maintenance' }).id).toBe('maintenance');
     expect(resolveAgentPageContext({ pathname: '/login' }).id).toBe('auth');
+  });
+
+  it('地图任务切换会生成真实功能路径并区分系统与项目范围', () => {
+    expect(createAgentMissionContext('auth').pagePath).toBe('/cds-settings#auth');
+    expect(createAgentMissionContext('github').pagePath).toBe('/cds-settings#github');
+    expect(createAgentMissionContext('branches', 'project/a').pagePath).toBe('/branches/project%2Fa');
+    expect(createAgentMissionContext('project-settings', 'project/a').pagePath).toBe('/settings/project%2Fa');
+    expect(getAgentMissionScope('auth')).toBe('system');
+    expect(getAgentMissionScope('branches')).toBe('project');
   });
 
   it('系统级页面优先连接 CDS Self，项目页面按 URL 选择当前项目', () => {
