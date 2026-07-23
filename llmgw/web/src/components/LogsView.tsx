@@ -139,8 +139,17 @@ function modelDetailsHref(item: Pick<LlmLogListItem, 'logicalModelId' | 'logical
   return `/models/view?${query.toString()}`;
 }
 
+function isExchangeProvider(item: Pick<LlmLogListItem, 'platformName' | 'provider'>) {
+  return /^exchange\s*:/i.test((item.platformName || item.provider || '').trim());
+}
+
 function providerDetailsHref(item: Pick<LlmLogListItem, 'platformId' | 'platformName' | 'provider'>) {
   const query = new URLSearchParams();
+  if (isExchangeProvider(item)) {
+    if (item.platformId) query.set('exchangeId', item.platformId);
+    if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
+    return `/exchanges?${query.toString()}`;
+  }
   if (item.platformId) query.set('id', item.platformId);
   if (item.platformName || item.provider) query.set('name', item.platformName || item.provider);
   return `/platforms/view?${query.toString()}`;
@@ -444,13 +453,16 @@ export function LogsView() {
       }
       case 'provider': {
         const providerName = it.platformName || it.provider || DASH;
+        const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
             href={providerDetailsHref(it)}
             label={providerName}
-            subtitle={[it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
-            description="进入详情可查看连接方式、托管模型、并发与最近请求；不会显示密钥明文。"
-            actionLabel="查看 Provider"
+            subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
+            description={exchangeProvider
+              ? '进入详情可查看 adapter、目标接口、认证边界与模型映射；不会显示密钥明文，也不会试连上游。'
+              : '进入详情可查看连接方式、托管模型、并发与最近请求；不会显示密钥明文。'}
+            actionLabel={exchangeProvider ? '查看 Exchange' : '查看 Provider'}
             icon={<ProviderEntityIcon provider={providerName} size="lg" />}
           >
             <span className="lg-log-entity" title={providerName}>
@@ -554,13 +566,16 @@ export function LogsView() {
         );
       case 'provider': {
         const providerName = it.platformName || it.provider || DASH;
+        const exchangeProvider = isExchangeProvider(it);
         return (
           <LogEntityHoverCard
             href={providerDetailsHref(it)}
             label={providerName}
-            subtitle={[it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
-            description="进入详情可查看连接方式、托管模型、并发与最近请求。"
-            actionLabel="查看 Provider"
+            subtitle={[exchangeProvider ? 'Exchange' : it.protocol || 'Provider', it.transport].filter(Boolean).join(' · ')}
+            description={exchangeProvider
+              ? '进入详情可查看 adapter、目标接口、认证边界与模型映射。'
+              : '进入详情可查看连接方式、托管模型、并发与最近请求。'}
+            actionLabel={exchangeProvider ? '查看 Exchange' : '查看 Provider'}
             icon={<ProviderEntityIcon provider={providerName} size="lg" />}
           >
             <span className="lg-log-entity"><ProviderEntityIcon provider={providerName} /><span className="lg-truncate">{providerName}</span></span>
