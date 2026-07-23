@@ -158,6 +158,7 @@ public static class GatewayRecoveryOperations
 {
     private static readonly TimeSpan OperationLease = TimeSpan.FromMinutes(2);
     private static readonly TimeSpan HeartbeatInterval = TimeSpan.FromSeconds(30);
+    private const string RepairLeaseLostDetail = "repair-lease-lost";
 
     public static GatewayRecoveryOperation New(
         string kind,
@@ -231,21 +232,16 @@ public static class GatewayRecoveryOperations
 
             try
             {
-                var detail = operation.Kind switch
-                {
-                    GatewayRecoveryKinds.TenantCreate => await RepairTenantCreateAsync(database, operation),
-                    GatewayRecoveryKinds.MemberCreate => await RepairMemberCreateAsync(database, operation),
-                    GatewayRecoveryKinds.OwnerMutation => await RepairOwnerMutationAsync(database, operation),
-                    _ => "unknown-operation-kind",
-                };
-                await operations.UpdateOneAsync(
+                var detail = await RepairClaimedAsync(database, operation, token);
+                if (detail == RepairLeaseLostDetail) continue;
+                var completed = await operations.UpdateOneAsync(
                     x => x.Id == operation.Id && x.Status == "repairing" && x.RepairToken == token,
                     Builders<GatewayRecoveryOperation>.Update
                         .Set(x => x.Status, detail == "unknown-operation-kind" ? "repair-failed" : "repaired")
                         .Set(x => x.Detail, detail)
                         .Set(x => x.UpdatedAt, DateTime.UtcNow),
                     cancellationToken: CancellationToken.None);
-                repaired++;
+                if (completed.ModifiedCount == 1) repaired++;
             }
             catch (Exception ex)
             {
@@ -262,22 +258,53 @@ public static class GatewayRecoveryOperations
         return repaired;
     }
 
-    private static async Task<string> RepairTenantCreateAsync(IMongoDatabase database, GatewayRecoveryOperation operation)
+    internal static async Task<string> RepairClaimedAsync(
+        IMongoDatabase database,
+        GatewayRecoveryOperation operation,
+        string repairToken)
     {
+        try
+        {
+            await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
+            return operation.Kind switch
+            {
+                GatewayRecoveryKinds.TenantCreate => await RepairTenantCreateAsync(database, operation, repairToken),
+                GatewayRecoveryKinds.MemberCreate => await RepairMemberCreateAsync(database, operation, repairToken),
+                GatewayRecoveryKinds.OwnerMutation => await RepairOwnerMutationAsync(database, operation, repairToken),
+                _ => "unknown-operation-kind",
+            };
+        }
+        catch (GatewayRecoveryLeaseLostException)
+        {
+            return RepairLeaseLostDetail;
+        }
+    }
+
+    private static async Task<string> RepairTenantCreateAsync(
+        IMongoDatabase database,
+        GatewayRecoveryOperation operation,
+        string repairToken)
+    {
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwMembership>("llmgw_memberships")
             .DeleteOneAsync(x => x.Id == operation.MembershipId && x.TenantId == operation.TenantId, CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwTeam>("llmgw_teams")
             .DeleteOneAsync(x => x.Id == operation.TeamId && x.TenantId == operation.TenantId, CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwTenant>("llmgw_tenants")
             .DeleteOneAsync(x => x.Id == operation.TenantId, CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwUser>("llmgw_console_users").UpdateOneAsync(
             x => x.Id == operation.UserId,
             Builders<LlmGwUser>.Update
                 .Pull(x => x.TenantIds, operation.TenantId)
                 .Set(x => x.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_model_pool_types")
             .DeleteManyAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", operation.TenantId), CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<MongoDB.Bson.BsonDocument>("llmgw_model_pools")
             .DeleteManyAsync(Builders<MongoDB.Bson.BsonDocument>.Filter.And(
                 Builders<MongoDB.Bson.BsonDocument>.Filter.Eq("TenantId", operation.TenantId),
@@ -285,20 +312,29 @@ public static class GatewayRecoveryOperations
         return "tenant-create-rolled-back";
     }
 
-    private static async Task<string> RepairMemberCreateAsync(IMongoDatabase database, GatewayRecoveryOperation operation)
+    private static async Task<string> RepairMemberCreateAsync(
+        IMongoDatabase database,
+        GatewayRecoveryOperation operation,
+        string repairToken)
     {
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await TenantOwnerAuthority.DiscardProvisionedOwnerAsync(
             database.GetCollection<LlmGwTenant>("llmgw_tenants"),
             operation.TenantId,
             operation.MembershipId);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwMembership>("llmgw_memberships")
             .DeleteOneAsync(x => x.Id == operation.MembershipId && x.TenantId == operation.TenantId && x.UserId == operation.UserId, CancellationToken.None);
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await database.GetCollection<LlmGwUser>("llmgw_console_users")
             .DeleteOneAsync(x => x.Id == operation.UserId, CancellationToken.None);
         return "member-create-rolled-back";
     }
 
-    private static async Task<string> RepairOwnerMutationAsync(IMongoDatabase database, GatewayRecoveryOperation operation)
+    private static async Task<string> RepairOwnerMutationAsync(
+        IMongoDatabase database,
+        GatewayRecoveryOperation operation,
+        string repairToken)
     {
         var tenants = database.GetCollection<LlmGwTenant>("llmgw_tenants");
         var memberships = database.GetCollection<LlmGwMembership>("llmgw_memberships");
@@ -313,6 +349,7 @@ public static class GatewayRecoveryOperations
                 && membership.Role == operation.TargetRole
                 && membership.Status == operation.TargetStatus)
             {
+                await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
                 await TenantOwnerAuthority.AddAsync(tenants, operation.TenantId, operation.MembershipId);
                 return "owner-promotion-completed";
             }
@@ -330,6 +367,7 @@ public static class GatewayRecoveryOperations
             membership.TeamIds = operation.TargetTeamIds;
             membership.Version++;
             membership.UpdatedAt = DateTime.UtcNow;
+            await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
             var replaced = await memberships.ReplaceOneAsync(
                 x => x.Id == membership.Id && x.TenantId == membership.TenantId && x.Version == operation.ExpectedMembershipVersion,
                 membership,
@@ -342,9 +380,34 @@ public static class GatewayRecoveryOperations
         if (membership.Role == operation.TargetRole && membership.Status == operation.TargetStatus)
             return "owner-removal-already-completed";
 
+        await RenewRepairLeaseOrThrowAsync(database, operation, repairToken);
         await TenantOwnerAuthority.RestoreAsync(tenants, operation.TenantId, operation.MembershipId);
         return "owner-removal-conflict-restored";
     }
+
+    private static async Task RenewRepairLeaseOrThrowAsync(
+        IMongoDatabase database,
+        GatewayRecoveryOperation operation,
+        string repairToken)
+    {
+        var now = DateTime.UtcNow;
+        var operations = database.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
+        var result = await operations.UpdateOneAsync(
+            x => x.Id == operation.Id
+                 && x.Status == "repairing"
+                 && x.RepairToken == repairToken
+                 && x.RepairGeneration == operation.RepairGeneration
+                 && x.LeaseExpiresAt > now,
+            Builders<GatewayRecoveryOperation>.Update
+                .Set(x => x.LeaseExpiresAt, now.Add(OperationLease))
+                .Set(x => x.UpdatedAt, now),
+            cancellationToken: CancellationToken.None);
+        if (result.MatchedCount != 1) throw new GatewayRecoveryLeaseLostException();
+    }
+}
+
+internal sealed class GatewayRecoveryLeaseLostException : Exception
+{
 }
 
 internal sealed class GatewayRecoveryHeartbeat : IAsyncDisposable
