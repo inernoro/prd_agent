@@ -158,48 +158,68 @@ public sealed class LiveAsrBatchFallbackService
         for (var index = 0; index < candidates.Count; index++)
         {
             var candidate = candidates[index];
-            await emit(new LiveAsrEvent
+            for (var providerAttempt = 1; providerAttempt <= 2; providerAttempt++)
             {
-                Type = LiveAsrEventTypes.Status,
-                Provider = candidate.ActualPlatformName,
-                Model = candidate.ActualModel,
-                Attempt = index + 1,
-                TotalAttempts = candidates.Count,
-                Message = $"正在识别第 {windowIndex} 个实时片段",
-            });
-
-            try
-            {
-                var response = await _gateway.SendRawWithResolutionAsync(
-                    BuildRequest(candidate, wave),
-                    candidate.ToGatewayResolution(),
-                    CancellationToken.None);
-                var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
-                    ? ExtractText(response.Content)
-                    : null;
-                if (!string.IsNullOrWhiteSpace(text))
+                await emit(new LiveAsrEvent
                 {
-                    await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
-                    return IsNoSpeech(text) ? string.Empty : text.Trim();
-                }
+                    Type = LiveAsrEventTypes.Status,
+                    Provider = candidate.ActualPlatformName,
+                    Model = candidate.ActualModel,
+                    Attempt = (index * 2) + providerAttempt,
+                    TotalAttempts = candidates.Count * 2,
+                    Message = providerAttempt == 1
+                        ? $"正在识别第 {windowIndex} 个实时片段"
+                        : $"正在校验第 {windowIndex} 个实时片段",
+                });
 
-                await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
-                _logger.LogWarning(
-                    "滚动窗口 ASR 候选返回空结果 window={Window} candidate={Candidate} status={Status} code={Code}",
-                    windowIndex,
-                    candidate.ActualModel,
-                    response.StatusCode,
-                    response.ErrorCode);
+                try
+                {
+                    var response = await _gateway.SendRawWithResolutionAsync(
+                        BuildRequest(candidate, wave),
+                        candidate.ToGatewayResolution(),
+                        CancellationToken.None);
+                    var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
+                        ? ExtractText(response.Content)
+                        : null;
+                    if (!string.IsNullOrWhiteSpace(text))
+                    {
+                        if (IsNoSpeech(text))
+                        {
+                            await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+                            return string.Empty;
+                        }
+                        if (!LooksLikeAssistantReply(text))
+                        {
+                            await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+                            return text.Trim();
+                        }
+                        _logger.LogWarning(
+                            "滚动窗口 ASR 返回解释性回答，已拒绝写入原文 window={Window} candidate={Candidate} providerAttempt={ProviderAttempt}",
+                            windowIndex,
+                            candidate.ActualModel,
+                            providerAttempt);
+                        continue;
+                    }
+
+                    _logger.LogWarning(
+                        "滚动窗口 ASR 候选返回空结果 window={Window} candidate={Candidate} status={Status} code={Code} providerAttempt={ProviderAttempt}",
+                        windowIndex,
+                        candidate.ActualModel,
+                        response.StatusCode,
+                        response.ErrorCode,
+                        providerAttempt);
+                }
+                catch (Exception ex)
+                {
+                    _logger.LogWarning(
+                        ex,
+                        "滚动窗口 ASR 候选失败 window={Window} candidate={Candidate} providerAttempt={ProviderAttempt}",
+                        windowIndex,
+                        candidate.ActualModel,
+                        providerAttempt);
+                }
             }
-            catch (Exception ex)
-            {
-                await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
-                _logger.LogWarning(
-                    ex,
-                    "滚动窗口 ASR 候选失败 window={Window} candidate={Candidate}",
-                    windowIndex,
-                    candidate.ActualModel);
-            }
+            await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
         }
 
         return null;
@@ -398,6 +418,37 @@ public sealed class LiveAsrBatchFallbackService
 
     private static bool IsNoSpeech(string text)
         => text.Contains("NO_SPEECH", StringComparison.OrdinalIgnoreCase);
+
+    public static bool LooksLikeAssistantReply(string text)
+    {
+        var normalized = text.Trim();
+        if (normalized.Length == 0)
+            return false;
+
+        var mentionsAudio = normalized.Contains("音频", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("audio", StringComparison.OrdinalIgnoreCase);
+        if (!mentionsAudio)
+            return false;
+
+        return normalized.StartsWith("请提供", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("请上传", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("请播放", StringComparison.OrdinalIgnoreCase)
+            || (normalized.StartsWith("好的", StringComparison.OrdinalIgnoreCase)
+                && (normalized.Contains("请提供", StringComparison.OrdinalIgnoreCase)
+                    || normalized.Contains("请上传", StringComparison.OrdinalIgnoreCase)
+                    || normalized.Contains("请播放", StringComparison.OrdinalIgnoreCase)))
+            || normalized.Contains("无法访问", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("无法听到", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("我将为您", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("我将开始", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("provide the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("please provide the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("upload the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("please upload the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("play the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("please play the audio", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("cannot access the audio", StringComparison.OrdinalIgnoreCase);
+    }
 
     public static bool HasLikelySpeech(byte[] pcm)
     {

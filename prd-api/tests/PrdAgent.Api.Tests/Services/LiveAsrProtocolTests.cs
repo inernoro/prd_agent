@@ -146,6 +146,16 @@ public class LiveAsrProtocolTests
         LiveAsrBatchFallbackService.ExtractText(json).ShouldBe(expected);
     }
 
+    [Theory]
+    [InlineData("好的，请提供音频，我将为您逐字转写。", true)]
+    [InlineData("Please upload the audio and I will transcribe it.", true)]
+    [InlineData("他说请播放音频，然后会议就开始了。", false)]
+    [InlineData("我认为跑步最重要的是身体健康。", false)]
+    public void BatchFallbackResponse_ShouldRejectAssistantReplies(string text, bool expected)
+    {
+        LiveAsrBatchFallbackService.LooksLikeAssistantReply(text).ShouldBe(expected);
+    }
+
     [Fact]
     public async Task BatchFallback_ShouldEmitPartialAndFinalDuringRecording()
     {
@@ -333,6 +343,51 @@ public class LiveAsrProtocolTests
         resolver.Verify(x => x.RecordSuccessAsync(
             It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "second"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task BatchFallback_ShouldRetryWhenProviderReturnsAssistantReply()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.SetupSequence(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"好的，请提供音频，我将为您转写。"}""",
+            })
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"我认为跑步最重要的是身体健康。"}""",
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask);
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldContain("身体健康");
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     [Fact]

@@ -2115,9 +2115,21 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             }}
             onUploaded={(entry, vaultSessionId, targetStoreId) => {
               const destination = targetStoreId || storeId;
+              const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
+              const liveTranscriptReady = entry.metadata?.liveTranscriptStatus === 'completed'
+                && Boolean(entry.metadata?.liveTranscript?.trim());
               setShowRecorder(false);
               if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
               void vaultDeleteSession(vaultSessionId);
+              if (archivePending) {
+                toast.info(
+                  '录音已安全保存',
+                  liveTranscriptReady
+                    ? '实时原文已保存，音频正在后台补充云端归档'
+                    : '音频已进入耐久队列，云端恢复后将自动归档',
+                );
+              }
+              if (archivePending && !liveTranscriptReady) return;
               setTranscribeFlow({
                 entryId: entry.id,
                 title: entry.title,

@@ -64,14 +64,18 @@ public class SubtitleGenerationProcessor
         if (!isAudio && !isVideo && !isImage)
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（仅支持音频/视频/图片）");
 
-        // 2) 取 fileUrl：通过 Attachment 间接取
+        // 2) 已完成的实时原文是录音转写一级数据源，不依赖对象存储归档完成。
+        // R2/COS 故障时条目会先由 Mongo 分片耐久保全，后台再补 Attachment。
+        var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
+
+        // 没有实时原文时才要求正式文件 URL，通过 Attachment 间接取。
         string? fileUrl = null;
-        if (!string.IsNullOrEmpty(entry.AttachmentId))
+        if (liveTranscript == null && !string.IsNullOrEmpty(entry.AttachmentId))
         {
             var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
             fileUrl = att?.Url;
         }
-        if (string.IsNullOrEmpty(fileUrl))
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl))
             throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
@@ -80,15 +84,14 @@ public class SubtitleGenerationProcessor
         string subtitleMd;
         if (isAudio || isVideo)
         {
-            var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
             var segments = liveTranscript == null
-                ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo)
+                ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl!, isVideo)
                 : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
             subtitleMd = SubtitleFormatter.FormatAsrSegments(entry.Title, segments);
         }
         else
         {
-            var text = await RecognizeImageAsync(run, db, runStore, fileUrl);
+            var text = await RecognizeImageAsync(run, db, runStore, fileUrl!);
             subtitleMd = SubtitleFormatter.FormatImageText(entry.Title, text);
         }
 

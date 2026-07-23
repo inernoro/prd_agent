@@ -2,6 +2,7 @@ using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
 using Amazon.S3;
+using COSXML.CosException;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -1598,12 +1599,19 @@ public class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var expiredBefore = DateTime.UtcNow;
+        var expiredSessionIds = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.ExpiresAt <= expiredBefore)
+            .Project(s => s.Id)
+            .ToListAsync(CancellationToken.None);
         await _db.DocumentRecordingUploadSessions.DeleteManyAsync(
             s => s.ExpiresAt <= expiredBefore,
             CancellationToken.None);
-        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-            c => c.CreatedAt <= expiredBefore.AddDays(-1),
-            CancellationToken.None);
+        if (expiredSessionIds.Count > 0)
+        {
+            await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                c => expiredSessionIds.Contains(c.SessionId),
+                CancellationToken.None);
+        }
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
@@ -1652,6 +1660,9 @@ public class DocumentStoreController : ControllerBase
             nextChunkIndex = session.NextChunkIndex,
             uploadedBytes = session.UploadedBytes,
             entryId = session.EntryId,
+            archiveStatus = session.ArchiveStatus,
+            archiveAttempts = session.ArchiveAttempts,
+            archiveError = session.ArchiveError,
             liveTranscriptStatus = session.LiveTranscriptStatus,
             liveTranscript = session.LiveTranscript,
             expiresAt = session.ExpiresAt,
@@ -1901,29 +1912,49 @@ public class DocumentStoreController : ControllerBase
                 session.FileName, session.MimeType, audioBytes, parentId: null,
                 CancellationToken.None, assetSaveAttempts: 3);
         }
-        catch (AmazonS3Exception ex)
+        catch (Exception ex) when (IsAssetStorageFailure(ex))
         {
-            // 云存储短暂异常不能把会话永久卡死在 Completing。回退为 Uploading 后，
-            // 前端可安全幂等重试；Mongo 分片和本地保险箱都继续保留。
+            // 对象存储持续异常时，先在 Mongo 建立可见条目并保留全部分片，
+            // 后台归档 Worker 按退避策略继续写 R2/COS。用户不会因为云存储单点
+            // 故障丢录音，也不会被迫停在“失败后重试”的循环里。
+            var pendingEntry = await CreatePendingRecordingEntryAsync(
+                store,
+                actorId,
+                actorName,
+                avatarFileName,
+                claimed,
+                sessionId);
             await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
                 s => s.Id == sessionId
                      && s.UserId == userId
                      && s.Status == DocumentRecordingUploadStatus.Completing
                      && string.IsNullOrEmpty(s.EntryId),
                 Builders<DocumentRecordingUploadSession>.Update
-                    .Set(s => s.Status, DocumentRecordingUploadStatus.Uploading)
+                    .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                    .Set(s => s.EntryId, pendingEntry.Id)
+                    .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                    .Set(s => s.ArchiveAttempts, 3)
+                    .Set(s => s.ArchiveNextAttemptAt, DateTime.UtcNow.AddMinutes(1))
+                    .Set(s => s.ArchiveError, "对象存储暂时不可用，已进入后台归档队列")
                     .Set(s => s.UpdatedAt, DateTime.UtcNow)
-                    .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
+                    .Set(s => s.ExpiresAt, DateTime.UtcNow.AddYears(10)),
                 cancellationToken: CancellationToken.None);
             _logger.LogError(
                 ex,
-                "[document-store] 录音归档存储暂时不可用，会话已恢复为可重试状态 session={SessionId}",
-                sessionId);
-            return StatusCode(
-                StatusCodes.Status503ServiceUnavailable,
-                ApiResponse<object>.Fail(
-                    ErrorCodes.INTERNAL_ERROR,
-                    "录音已安全保留，存储暂时不可用，请稍后重试"));
+                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 耐久队列 session={SessionId} entry={EntryId}",
+                sessionId,
+                pendingEntry.Id);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                entry = pendingEntry,
+                attachmentId = (string?)null,
+                documentId = (string?)null,
+                fileUrl = (string?)null,
+                sessionId,
+                reused = false,
+                archivePending = true,
+                audioProtected = true,
+            }));
         }
 
         if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
@@ -1948,6 +1979,9 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, stored.Entry.Id)
+                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
+                .Set(s => s.ArchiveUrl, stored.FileUrl)
+                .Set(s => s.ArchiveError, null)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
@@ -1990,6 +2024,66 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new { deleted = true }));
     }
 
+    private async Task<DocumentEntry> CreatePendingRecordingEntryAsync(
+        DocumentStore store,
+        string userId,
+        string? userName,
+        string? avatarFileName,
+        DocumentRecordingUploadSession session,
+        string sessionId)
+    {
+        var transcript = session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+            ? session.LiveTranscript?.Trim()
+            : null;
+        var metadata = new Dictionary<string, string>
+        {
+            ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Pending,
+            ["recordingUploadSessionId"] = sessionId,
+        };
+        if (!string.IsNullOrWhiteSpace(transcript))
+        {
+            metadata["liveTranscript"] = transcript;
+            metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
+        }
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
+            metadata["liveTranscriptProvider"] = session.LiveTranscriptProvider;
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
+            metadata["liveTranscriptModel"] = session.LiveTranscriptModel;
+
+        var entry = new DocumentEntry
+        {
+            StoreId = store.Id,
+            Title = session.FileName,
+            Summary = transcript?.Length > 200 ? transcript[..200] : transcript,
+            SourceType = DocumentSourceType.Upload,
+            ContentType = session.MimeType,
+            FileSize = session.UploadedBytes,
+            CreatedBy = userId,
+            CreatedByName = userName,
+            CreatedByAvatarFileName = avatarFileName,
+            UpdatedBy = userId,
+            UpdatedByName = userName,
+            ContentIndex = transcript?.Length > 2000 ? transcript[..2000] : transcript,
+            LastChangedAt = DateTime.UtcNow,
+            Metadata = metadata,
+        };
+        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: CancellationToken.None);
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == store.Id,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, 1)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await LogStoreActivityAsync(
+            store,
+            userId,
+            TeamActivityAction.EntryCreated,
+            "entry",
+            entry.Id,
+            entry.Title);
+        return entry;
+    }
+
     private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>
         CreateUploadedDocumentEntryAsync(
             DocumentStore store,
@@ -2015,7 +2109,7 @@ public class DocumentStoreController : ControllerBase
                     domain: "prd-agent", type: "doc", fileName: fileName);
                 break;
             }
-            catch (AmazonS3Exception ex) when (attempt < attempts)
+            catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
             {
                 _logger.LogWarning(
                     ex,
@@ -2092,6 +2186,13 @@ public class DocumentStoreController : ControllerBase
 
         return (entry, attachment, documentId, stored.Url);
     }
+
+    private static bool IsAssetStorageFailure(Exception ex)
+        => ex is AmazonS3Exception
+            or CosServerException
+            or CosClientException
+            or HttpRequestException
+            or TimeoutException;
 
     /// <summary>
     /// 替换已有条目的文件内容（原地替换）。保留条目 Id / 父文件夹 / 标签 /

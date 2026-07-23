@@ -251,11 +251,13 @@ export async function appendRecordingUploadChunk(sessionId: string, index: numbe
 export async function completeRecordingUpload(sessionId: string) {
   return await apiRequest<{
     entry: import('@/services/contracts/documentStore').DocumentEntry;
-    attachmentId: string;
+    attachmentId?: string | null;
     documentId?: string;
-    fileUrl: string;
+    fileUrl?: string | null;
     sessionId: string;
     reused: boolean;
+    archivePending?: boolean;
+    audioProtected?: boolean;
   }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
 }
 
@@ -267,6 +269,9 @@ export async function getRecordingUpload(sessionId: string) {
     nextChunkIndex: number;
     uploadedBytes: number;
     entryId: string | null;
+    archiveStatus: 'none' | 'pending' | 'archiving' | 'completed';
+    archiveAttempts: number;
+    archiveError?: string | null;
     liveTranscriptStatus: 'pending' | 'active' | 'completed' | 'degraded';
     liveTranscript?: string | null;
     expiresAt: string;

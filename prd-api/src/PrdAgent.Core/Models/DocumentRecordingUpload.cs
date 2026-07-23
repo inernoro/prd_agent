@@ -25,6 +25,17 @@ public class DocumentRecordingUploadSession
 
     public string? EntryId { get; set; }
 
+    /// <summary>正式对象存储归档状态。R2/COS 不可用时为 pending，Mongo 分片继续保留。</summary>
+    public string ArchiveStatus { get; set; } = DocumentRecordingArchiveStatus.None;
+
+    public int ArchiveAttempts { get; set; }
+
+    public DateTime? ArchiveNextAttemptAt { get; set; }
+
+    public string? ArchiveError { get; set; }
+
+    public string? ArchiveUrl { get; set; }
+
     public string LiveTranscriptStatus { get; set; } = DocumentLiveTranscriptStatus.Pending;
 
     public string? LiveTranscript { get; set; }
@@ -81,4 +92,12 @@ public static class DocumentLiveTranscriptStatus
     public const string Active = "active";
     public const string Completed = "completed";
     public const string Degraded = "degraded";
+}
+
+public static class DocumentRecordingArchiveStatus
+{
+    public const string None = "none";
+    public const string Pending = "pending";
+    public const string Archiving = "archiving";
+    public const string Completed = "completed";
 }
