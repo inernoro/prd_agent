@@ -77,10 +77,9 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     const versionId = typeof req.body?.versionId === 'string' ? req.body.versionId.trim() : '';
-    if (!versionId) { res.status(400).json({ error: '缺少 versionId' }); return; }
     try {
       const member = deps.replicaSetService.addMember(req.params.branchId, req.params.profileId, {
-        versionId,
+        versionId: versionId || undefined,
         label: typeof req.body?.label === 'string' ? req.body.label : undefined,
         weight: typeof req.body?.weight === 'number' ? req.body.weight : undefined,
         dbMode: req.body?.dbMode === 'isolated' ? 'isolated' : 'shared',

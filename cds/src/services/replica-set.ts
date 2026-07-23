@@ -61,11 +61,16 @@ export interface ReplicaSetServiceOptions {
 
 /** 添加成员的入参。 */
 export interface AddMemberInput {
-  versionId: string;
+  /**
+   * 省略 = Railway 式「一个 + 号」：用分支当前版本再起一个同版本副本，
+   * 权重自动取主权重（相对权重体系下即与主容器均分流量）。
+   * 显式传 = 高级用法：并排某个历史版本。
+   */
+  versionId?: string;
   label?: string;
-  /** 默认 0：只挂直达子域，不接主入口流量（简单实用原则）。 */
+  /** 省略 versionId（同版本副本）时默认与主均分；显式选历史版本时默认 0（只挂直达链）。 */
   weight?: number;
-  /** MVP-1 仅支持 shared；isolated（一键隔离库 + 数据克隆）在 MVP-2 落地。 */
+  /** isolated = 一键隔离库（先整库克隆再切换）。 */
   dbMode?: 'shared' | 'isolated';
 }
 
@@ -177,9 +182,15 @@ export class ReplicaSetService {
       const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, profile);
       if (!target) throw new ReplicaSetError(409, `无法隔离数据库：${reason}`);
     }
-    const version = this.opts.versions.get(input.versionId);
+    // 「一个 + 号」路径：不传 versionId 就复制当前版本（同版本水平副本）
+    const isQuickReplica = !input.versionId;
+    const targetVersionId = input.versionId || branch.currentVersionId;
+    if (!targetVersionId) {
+      throw new ReplicaSetError(409, '该分支还没有可复用的部署版本（先完成一次极速版/托管构建部署）');
+    }
+    const version = this.opts.versions.get(targetVersionId);
     if (!version || version.branchId !== branchId) {
-      throw new ReplicaSetError(404, `部署版本不存在或不属于该分支: ${input.versionId}`);
+      throw new ReplicaSetError(404, `部署版本不存在或不属于该分支: ${targetVersionId}`);
     }
     const snapshot = version.profiles.find((p) => p.profileId === profileId);
     if (!snapshot) {
@@ -188,15 +199,17 @@ export class ReplicaSetService {
     if (!snapshot.reusable) {
       throw new ReplicaSetError(409, `该版本的 ${profileId} 产物不可复用（${snapshot.reuseBlockedReason || '非不可变镜像'}），无法秒起为成员`);
     }
-    if (rs.members.some((m) => m.versionId === version.id && m.status !== 'error')) {
+    // 同版本查重只拦「显式选历史版本」的误点；快速副本（+ 号）天然就是同版本多实例
+    if (!isQuickReplica && rs.members.some((m) => m.versionId === version.id && m.status !== 'error')) {
       throw new ReplicaSetError(409, '该版本已是复制集成员');
     }
 
     const member: ReplicaMember = {
       id: newReplicaMemberId(),
       versionId: version.id,
-      label: input.label?.trim() || version.commitSha.slice(0, 7),
-      weight: clampWeight(input.weight ?? 0),
+      label: input.label?.trim() || (isQuickReplica ? `副本 ${rs.members.length + 1}` : version.commitSha.slice(0, 7)),
+      // 快速副本默认与主同权重（相对权重体系 = 均分流量，Railway 语义）；历史版本默认 0 只挂直达
+      weight: clampWeight(input.weight ?? (isQuickReplica ? rs.primaryWeight : 0)),
       image: snapshot.artifactImage,
       commitSha: version.commitSha,
       status: 'provisioning',

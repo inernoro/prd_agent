@@ -167,6 +167,16 @@ export function ReplicaSetPanel({
     }
   }, [load, onToast]);
 
+  // 「一个 + 号」：不选版本，直接把当前版本再起一个副本，权重自动与主均分（Railway 语义）
+  const quickAddReplica = useCallback((profileId: string) => {
+    void run(`add:${profileId}`, async () => {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/members`, {
+        method: 'POST',
+        body: {},
+      });
+    }, '副本启动中：当前版本再起一个实例，就绪后自动与主均分流量');
+  }, [branchId, run]);
+
   const addMember = useCallback((profileId: string, versionId: string, dbMode: 'shared' | 'isolated') => {
     setAddingProfile(null);
     void run(`add:${profileId}`, async () => {
@@ -232,8 +242,8 @@ export function ReplicaSetPanel({
   return (
     <div className="grid gap-4">
       <section className="cds-surface-raised cds-hairline px-5 py-3 text-xs leading-5 text-muted-foreground">
-        复制集模式：同一入口下并排跑多个历史版本。成员默认不接主入口流量（权重 0，仅直达链可见），
-        拉高权重即按比例分流；随时可「退回普通模式」。单服务成员上限 {memberLimit} 个。
+        点「副本」一键把当前版本再起一个实例（就绪后与主自动均分流量）；「历史版本」并排旧版做对比或灰度
+        （默认权重 0，仅直达链可见，拉高权重才分流）。随时「退回普通模式」。单服务成员上限 {memberLimit} 个。
       </section>
 
       {profileIds.map((profileId) => {
@@ -259,18 +269,30 @@ export function ReplicaSetPanel({
                       : '暂无可并排的历史版本（需非当前版本的可复用镜像）'}
                   </p>
                 </div>
-                {availableRows.length > 0 ? (
+                <div className="flex shrink-0 items-center gap-2">
                   <Button
                     type="button"
                     size="sm"
-                    variant="outline"
                     disabled={busy !== null}
-                    onClick={() => setAddingProfile(addingProfile === profileId ? null : profileId)}
+                    onClick={() => quickAddReplica(profileId)}
+                    title="当前版本再起一个副本，就绪后与主均分流量"
                   >
-                    <Layers />
-                    复制集化
+                    {busy === `add:${profileId}` ? <Loader2 className="animate-spin" /> : <Plus />}
+                    副本
                   </Button>
-                ) : null}
+                  {availableRows.length > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy !== null}
+                      onClick={() => setAddingProfile(addingProfile === profileId ? null : profileId)}
+                    >
+                      <Layers />
+                      历史版本
+                    </Button>
+                  ) : null}
+                </div>
               </div>
               {addingProfile === profileId ? (
                 <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId, dbMode) => addMember(profileId, versionId, dbMode)} />
@@ -387,21 +409,33 @@ export function ReplicaSetPanel({
             </div>
 
             <footer className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3">
-              {rs.members.length < memberLimit && availableRows.length > 0 ? (
-                <Button
-                  type="button"
-                  size="sm"
-                  variant="outline"
-                  disabled={busy !== null}
-                  onClick={() => setAddingProfile(addingProfile === profileId ? null : profileId)}
-                >
-                  <Plus />
-                  添加成员
-                </Button>
+              {rs.members.length < memberLimit ? (
+                <div className="flex items-center gap-2">
+                  <Button
+                    type="button"
+                    size="sm"
+                    disabled={busy !== null}
+                    onClick={() => quickAddReplica(profileId)}
+                    title="当前版本再起一个副本，就绪后与主均分流量"
+                  >
+                    {busy === `add:${profileId}` ? <Loader2 className="animate-spin" /> : <Plus />}
+                    副本
+                  </Button>
+                  {availableRows.length > 0 ? (
+                    <Button
+                      type="button"
+                      size="sm"
+                      variant="ghost"
+                      disabled={busy !== null}
+                      onClick={() => setAddingProfile(addingProfile === profileId ? null : profileId)}
+                    >
+                      <Layers />
+                      历史版本
+                    </Button>
+                  ) : null}
+                </div>
               ) : (
-                <span className="text-xs text-muted-foreground">
-                  {rs.members.length >= memberLimit ? `成员数已达上限 ${memberLimit}` : '没有更多可并排的历史版本'}
-                </span>
+                <span className="text-xs text-muted-foreground">成员数已达上限 {memberLimit}</span>
               )}
               <span className="text-[11px] text-muted-foreground">
                 粘性：cookie cds_rs / header x-cds-replica / query ?__rs=成员id
