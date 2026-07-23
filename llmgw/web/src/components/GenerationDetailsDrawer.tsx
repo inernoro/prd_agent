@@ -403,7 +403,7 @@ export function GenerationDetailsDrawer({
           </div>
           <div className="lg-generation-header-actions">
             {!isPage ? <Link to={`/logs/${encodeURIComponent(logId)}`} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
-            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 36, minWidth: 36, height: 36, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
+            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
               {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
             </button>
           </div>
