@@ -110,37 +110,19 @@ public class DoubaoAsrTransformer : IAsyncExchangeTransformer
         var fullText = "";
         var segments = new JsonArray();
 
-        if (rawResponse.TryGetPropertyValue("result", out var resultNode) && resultNode is JsonArray resultArr)
+        if (rawResponse.TryGetPropertyValue("result", out var resultNode))
         {
             double currentStart = 0;
-            foreach (var item in resultArr)
+            if (resultNode is JsonObject resultObj)
             {
-                if (item is not JsonObject itemObj) continue;
-
-                var text = "";
-                if (itemObj.TryGetPropertyValue("text", out var textNode))
-                    text = textNode?.GetValue<string>() ?? "";
-
-                double duration = 0;
-                if (itemObj.TryGetPropertyValue("additions", out var additionsNode) &&
-                    additionsNode is JsonObject additions &&
-                    additions.TryGetPropertyValue("duration", out var durNode))
+                AppendResultObject(resultObj, segments, ref fullText, ref currentStart);
+            }
+            else if (resultNode is JsonArray resultArr)
+            {
+                foreach (var item in resultArr)
                 {
-                    var durStr = durNode?.GetValue<string>() ?? "0";
-                    double.TryParse(durStr, out duration);
-                    duration /= 1000.0; // 毫秒 → 秒
-                }
-
-                if (!string.IsNullOrWhiteSpace(text))
-                {
-                    fullText += text;
-                    segments.Add(new JsonObject
-                    {
-                        ["start"] = currentStart,
-                        ["end"] = currentStart + duration,
-                        ["text"] = text
-                    });
-                    currentStart += duration;
+                    if (item is JsonObject itemObj)
+                        AppendResultObject(itemObj, segments, ref fullText, ref currentStart);
                 }
             }
         }
@@ -156,6 +138,101 @@ public class DoubaoAsrTransformer : IAsyncExchangeTransformer
         response["language"] = "zh";
 
         return response;
+    }
+
+    private static void AppendResultObject(
+        JsonObject result,
+        JsonArray segments,
+        ref string fullText,
+        ref double currentStart)
+    {
+        var resultText = TryGetNodeString(result, "text");
+        var utteranceText = "";
+        var segmentCountBefore = segments.Count;
+
+        if (result.TryGetPropertyValue("utterances", out var utterancesNode)
+            && utterancesNode is JsonArray utterances)
+        {
+            foreach (var utteranceNode in utterances)
+            {
+                if (utteranceNode is not JsonObject utterance) continue;
+
+                var text = TryGetNodeString(utterance, "text");
+                if (string.IsNullOrWhiteSpace(text)) continue;
+
+                var startSec = TryGetNodeDouble(utterance, "start_time") / 1000.0;
+                var endSec = TryGetNodeDouble(utterance, "end_time") / 1000.0;
+                if (endSec < startSec) endSec = startSec;
+
+                segments.Add(new JsonObject
+                {
+                    ["start"] = startSec,
+                    ["end"] = endSec,
+                    ["text"] = text
+                });
+                utteranceText += text;
+                currentStart = Math.Max(currentStart, endSec);
+            }
+        }
+
+        if (!string.IsNullOrWhiteSpace(resultText))
+        {
+            fullText += resultText;
+            if (segments.Count == segmentCountBefore)
+            {
+                var durationSec = TryGetDurationSeconds(result);
+                segments.Add(new JsonObject
+                {
+                    ["start"] = currentStart,
+                    ["end"] = currentStart + durationSec,
+                    ["text"] = resultText
+                });
+                currentStart += durationSec;
+            }
+        }
+        else if (!string.IsNullOrWhiteSpace(utteranceText))
+        {
+            fullText += utteranceText;
+        }
+    }
+
+    private static string TryGetNodeString(JsonObject obj, string key)
+    {
+        if (!obj.TryGetPropertyValue(key, out var node) || node == null)
+            return "";
+        try
+        {
+            return node.GetValue<string>() ?? "";
+        }
+        catch
+        {
+            return node.ToString();
+        }
+    }
+
+    private static double TryGetNodeDouble(JsonObject obj, string key)
+    {
+        if (!obj.TryGetPropertyValue(key, out var node) || node == null)
+            return 0;
+        try
+        {
+            return node.GetValue<double>();
+        }
+        catch
+        {
+            return double.TryParse(node.ToString(), out var parsed) ? parsed : 0;
+        }
+    }
+
+    private static double TryGetDurationSeconds(JsonObject result)
+    {
+        if (!result.TryGetPropertyValue("additions", out var additionsNode)
+            || additionsNode is not JsonObject additions)
+        {
+            return 0;
+        }
+
+        return TryGetNodeDouble(additions, "duration") / 1000.0;
     }
 
     // ═══════════════════════════════════════════════════════════

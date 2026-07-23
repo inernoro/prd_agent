@@ -449,8 +449,113 @@ public class SubtitleGenerationProcessor
             resolution.ActualModel, resolution.ActualPlatformName,
             resolution.IsExchange, resolution.ExchangeTransformerType);
 
-        await UpdateProgressAsync(db, runStore, run, 50, "识别中");
+        return await TranscribeWithFallbackAsync(
+            run,
+            bytes,
+            resolution,
+            (attempt, total) => UpdateProgressAsync(
+                db,
+                runStore,
+                run,
+                50,
+                total > 1 ? $"识别中（方案 {attempt}/{total}）" : "识别中"));
+    }
 
+    private async Task<List<SubtitleSegment>> TranscribeWithFallbackAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        ModelResolutionResult primaryResolution,
+        Func<int, int, Task>? onAttempt = null)
+    {
+        const int maxAttempts = 3;
+        var candidates = new[] { primaryResolution }
+            .Concat(primaryResolution.RetryCandidates ?? [])
+            .Where(candidate => candidate.Success && !string.IsNullOrWhiteSpace(candidate.ActualModel))
+            .GroupBy(
+                candidate => $"{candidate.ActualPlatformId}::{candidate.ActualModel}",
+                StringComparer.OrdinalIgnoreCase)
+            .Select(group => group.First())
+            .Take(maxAttempts)
+            .ToList();
+
+        var failures = new List<Dictionary<string, object?>>();
+        for (var index = 0; index < candidates.Count; index++)
+        {
+            var candidate = candidates[index];
+            // 语义降级由本处理器按候选协议重建请求。单次发送不能继续携带候选，
+            // 否则 Gateway 可能拿豆包 JSON 请求去重试 Whisper multipart，协议形状会错位。
+            candidate.RetryCandidates = null;
+
+            if (onAttempt != null)
+                await onAttempt(index + 1, candidates.Count);
+
+            try
+            {
+                var segments = await TranscribeWithResolutionAsync(run, audioBytes, candidate);
+                if (segments.Count == 0)
+                {
+                    throw new SubtitleAsrException(
+                        "ASR 返回为空（上游成功响应中没有可用文字）",
+                        BuildResolverDiagnostic(candidate, "empty-content"));
+                }
+
+                if (index > 0)
+                {
+                    _logger.LogInformation(
+                        "[doc-store-agent] ASR 自动降级成功: attempt={Attempt}/{Total} model={Model} platform={Platform}",
+                        index + 1,
+                        candidates.Count,
+                        candidate.ActualModel,
+                        candidate.ActualPlatformName);
+                }
+                return segments;
+            }
+            catch (SubtitleAsrException ex)
+            {
+                failures.Add(new Dictionary<string, object?>
+                {
+                    ["attempt"] = index + 1,
+                    ["model"] = candidate.ActualModel,
+                    ["platformId"] = candidate.ActualPlatformId,
+                    ["platformName"] = candidate.ActualPlatformName,
+                    ["exchangeTransformerType"] = candidate.ExchangeTransformerType,
+                    ["error"] = ex.Message,
+                });
+
+                if (index == candidates.Count - 1)
+                {
+                    if (candidates.Count == 1)
+                        throw;
+
+                    var diagnostic = new Dictionary<string, object?>(ex.Diagnostic)
+                    {
+                        ["fallbackAttempts"] = failures,
+                    };
+                    throw new SubtitleAsrException(
+                        $"自动尝试 {candidates.Count} 个 ASR 方案仍失败：{ex.Message}",
+                        diagnostic);
+                }
+
+                _logger.LogWarning(
+                    ex,
+                    "[doc-store-agent] ASR 方案失败，自动切换: attempt={Attempt}/{Total} model={Model} nextModel={NextModel}",
+                    index + 1,
+                    candidates.Count,
+                    candidate.ActualModel,
+                    candidates[index + 1].ActualModel);
+            }
+        }
+
+        throw new SubtitleAsrException(
+            "ASR 模型池没有可执行的识别方案",
+            BuildResolverDiagnostic(primaryResolution, "no-candidates"));
+    }
+
+    private async Task<List<SubtitleSegment>> TranscribeWithResolutionAsync(
+        DocumentStoreAgentRun run,
+        byte[] audioBytes,
+        ModelResolutionResult resolution)
+    {
         // 三路分发（参考 TranscriptRunWorker.cs:159-192）
         if (resolution.IsExchange)
         {
@@ -458,7 +563,7 @@ public class SubtitleGenerationProcessor
             {
                 case "doubao-asr-stream":
                     // WebSocket 协议由 LlmGateway/llmgw-serve 执行；本处理器仍只提交 GatewayRawRequest。
-                    return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+                    return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
                         new Dictionary<string, object>
                         {
                             ["model"] = resolution.ActualModel ?? "doubao-asr-stream",
@@ -472,7 +577,7 @@ public class SubtitleGenerationProcessor
                     // Gateway.ConsolidateMultipartToJson 会把 multipart 文件转成 image_urls，
                     // 路径不通。必须把音频以 base64 audio_data 形式塞进 RequestBody。
                     // 参考：Bugbot + Codex 双 P1 review on PR #542 commit 9253b0f
-                    return await TranscribeViaDoubaoAsyncJsonAsync(run, bytes, resolution);
+                    return await TranscribeViaDoubaoAsyncJsonAsync(run, audioBytes, resolution);
 
                 default:
                     throw new SubtitleAsrException(
@@ -492,7 +597,7 @@ public class SubtitleGenerationProcessor
                 "[doc-store-agent] 走多模态 chat 音频转写路径: model={Model} platform={Platform}",
                 resolution.ActualModel, resolution.ActualPlatformName);
             // 上面已统一转成 WAV，chat-audio 只接收规范化后的字节，避免重复转码。
-            return await TranscribeViaChatAudioAsync(run, bytes, resolution.ToGatewayResolution());
+            return await TranscribeViaChatAudioAsync(run, audioBytes, resolution.ToGatewayResolution());
         }
 
         // 非 Exchange 模型 → 走 Whisper HTTP（OpenAI 兼容 /v1/audio/transcriptions）
@@ -503,7 +608,7 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] 走 Whisper HTTP 路径: model={Model} platform={Platform}",
             resolution.ActualModel, resolution.ActualPlatformName);
-        return await TranscribeViaGatewayAsync(run, bytes, resolution.ToGatewayResolution(),
+        return await TranscribeViaGatewayAsync(run, audioBytes, resolution.ToGatewayResolution(),
             new Dictionary<string, object>
             {
                 ["model"] = resolution.ActualModel ?? "whisper-1",
