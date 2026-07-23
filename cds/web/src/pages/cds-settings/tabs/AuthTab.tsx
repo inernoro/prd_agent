@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
+import { Bot, KeyRound, LogOut, ShieldCheck, ShieldOff } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import {
@@ -9,6 +9,7 @@ import {
   updateTicketSsoConfig,
   type TicketSsoConfig,
 } from '@/lib/api';
+import { requestAgentAccess } from '@/lib/agent-onboarding';
 import { CodePill, ErrorBlock, Field, LoadingBlock, Section } from '../components';
 import type { AuthStatusResponse, LoadState } from '../types';
 
@@ -177,7 +178,11 @@ export function AuthTab(): JSX.Element {
           </div>
         </div>
 
-        <div className="rounded-md border border-border bg-card px-4 py-4">
+        <div
+          className="rounded-md border border-border bg-card px-4 py-4"
+          data-agent-capability="auth.sso.configure"
+          data-agent-secret-policy="protected-input-only"
+        >
           <div className="flex flex-wrap items-start justify-between gap-3">
             <div>
               <div className="font-medium">单点登录提供方</div>
@@ -194,6 +199,27 @@ export function AuthTab(): JSX.Element {
               />
               允许 SSO 登录
             </label>
+          </div>
+
+          <div className="mt-4 flex flex-col gap-3 rounded-md border border-primary/30 bg-primary/5 px-3 py-3 sm:flex-row sm:items-center sm:justify-between">
+            <div className="flex min-w-0 items-start gap-3">
+              <Bot className="mt-0.5 h-5 w-5 shrink-0 text-primary" />
+              <div>
+                <div className="text-sm font-medium text-foreground">不需要先学习 SSO 协议</div>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  Agent 会读取脱敏状态、准备回调与票据配置并完成验证。客户端密钥只在受保护的输入框中填写。
+                </p>
+              </div>
+            </div>
+            <Button
+              type="button"
+              variant="outline"
+              className="shrink-0 border-primary/35 text-primary hover:text-foreground"
+              onClick={() => requestAgentAccess('auth')}
+            >
+              <Bot />
+              交给 Agent 配置
+            </Button>
           </div>
 
           {sso ? (

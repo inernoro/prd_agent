@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -11,6 +11,10 @@ import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
+import {
+  requestAgentAccess,
+  resolveAgentPageContext,
+} from '@/lib/agent-onboarding';
 import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -237,6 +241,16 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
   const [navOpen, setNavOpen] = useState(false);
   const [authStatus, setAuthStatus] = useState<ShellAuthStatus | null>(null);
   const [logoutState, setLogoutState] = useState<'idle' | 'running' | 'error'>('idle');
+  const routerLocation = useLocation();
+  const agentContext = resolveAgentPageContext(
+    typeof window === 'undefined'
+      ? routerLocation
+      : {
+          pathname: window.location.pathname,
+          search: window.location.search,
+          hash: window.location.hash,
+        },
+  );
   // 预览实例（CDS 托管 CDS）提示条。初值取服务端注入的 window 标记（预览域名下
   // 立即生效、无探针竞态），仍用 /api/instance-mode 探针确认；探针失败按「非预览
   // 实例」处理，不打扰生产。
@@ -310,7 +324,12 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
 
   return (
     <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
-    <div className="cds-app-shell" data-nav-open={navOpen ? 'true' : 'false'}>
+    <div
+      className="cds-app-shell"
+      data-nav-open={navOpen ? 'true' : 'false'}
+      data-agent-context={agentContext.id}
+      data-agent-page={agentContext.pagePath}
+    >
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
@@ -319,6 +338,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         user={authStatus?.user}
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
+        onAgentAccess={() => requestAgentAccess()}
       />
       {/* Mobile slide-in drawer — replaces the rail on phones. */}
       <MobileNavDrawer
@@ -330,6 +350,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         user={authStatus?.user}
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
+        onAgentAccess={() => requestAgentAccess()}
       />
       {/* display: contents —— 让页面渲染的 topbar / main 直接成为壳网格的 item,
           topbar 才能横贯全宽(2026-07-05「顶部导航贯穿」,见 index.css .cds-app-shell)。 */}
@@ -399,13 +420,23 @@ interface RailNavProps {
   user?: ShellUser | null;
   logoutState: 'idle' | 'running' | 'error';
   onLogout: () => void;
+  onAgentAccess: () => void;
 }
 
 /*
  * RailNav — the nav body shared by the desktop rail and the mobile drawer.
  * `onNavigate` lets the mobile drawer close itself when a link is tapped.
  */
-function RailNav({ active, canLogout, authMode, user, logoutState, onLogout, onNavigate }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+function RailNav({
+  active,
+  canLogout,
+  authMode,
+  user,
+  logoutState,
+  onLogout,
+  onAgentAccess,
+  onNavigate,
+}: RailNavProps & { onNavigate?: () => void }): JSX.Element {
   return (
     <>
       <div className="cds-rail-section">
@@ -464,6 +495,20 @@ function RailNav({ active, canLogout, authMode, user, logoutState, onLogout, onN
       </div>
       <div className="flex-1" />
       <div className="cds-rail-footer">
+        <button
+          type="button"
+          className="cds-rail-item cds-agent-access-entry"
+          onClick={() => {
+            onAgentAccess();
+            onNavigate?.();
+          }}
+          aria-label="接入 Agent"
+          title="接入 Agent：把当前页面任务交给 Agent"
+          data-agent-action="connect"
+        >
+          <Bot />
+          <span>接入 Agent</span>
+        </button>
         <Link
           to="/cds-settings"
           className="cds-rail-item"
@@ -509,7 +554,7 @@ function UserAccountMenu({
   onLogout,
   onNavigate,
   user,
-}: Omit<RailNavProps, 'active'> & { onNavigate?: () => void }): JSX.Element {
+}: Omit<RailNavProps, 'active' | 'onAgentAccess'> & { onNavigate?: () => void }): JSX.Element {
   const { mode, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });

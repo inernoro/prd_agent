@@ -6,6 +6,7 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 // ConsoleLayout 故意走静态 import:外壳(侧栏/命令面板/全局徽章)进入口 chunk,
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
 import { ConsoleLayout } from '@/components/layout/AppShell';
+import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
@@ -248,6 +249,7 @@ export function App(): JSX.Element {
       {/* v7_startTransition:路由切换包进 React startTransition —— 懒加载 chunk
           就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
       <BrowserRouter future={{ v7_startTransition: true }}>
+        <GlobalAgentAccess />
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}

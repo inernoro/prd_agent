@@ -1,13 +1,18 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck } from 'lucide-react';
+import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck, Sparkles } from 'lucide-react';
 
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
-import { buildCdsAgentPrompt, PROJECT_SKILL_PATHS, type CdsConnectTarget } from '@/lib/agent-onboarding';
+import {
+  buildCdsAgentPrompt,
+  PROJECT_SKILL_PATHS,
+  type AgentPageContext,
+  type CdsConnectTarget,
+} from '@/lib/agent-onboarding';
 
 const MARKETPLACE_URL = 'https://miduo.org/marketplace?type=skill&keyword=cds';
 
-interface ProjectOption {
+export interface AgentProjectOption {
   id: string;
   name: string;
   slug: string;
@@ -16,7 +21,8 @@ interface ProjectOption {
 interface Props {
   open: boolean;
   onOpenChange: (open: boolean) => void;
-  projects: ProjectOption[];
+  projects: AgentProjectOption[];
+  context?: AgentPageContext;
 }
 
 type TabKey = 'connect' | 'manual' | 'marketplace';
@@ -27,7 +33,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: 
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
 
-export function SkillDownloadDialog({ open, onOpenChange, projects }: Props): JSX.Element {
+export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
   const [targetKind, setTargetKind] = useState<'existing' | 'new'>(projects.length > 0 ? 'existing' : 'new');
   const [projectId, setProjectId] = useState(projects[0]?.id || '');
@@ -39,6 +45,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects }: Props): JS
       setProjectId('');
       return;
     }
+    if (!projectId) setTargetKind('existing');
     setProjectId((current) => current && projects.some((project) => project.id === current) ? current : projects[0].id);
   }, [open, projects]);
 
@@ -46,18 +53,40 @@ export function SkillDownloadDialog({ open, onOpenChange, projects }: Props): JS
   const target: CdsConnectTarget = targetKind === 'new'
     ? { kind: 'new' }
     : { kind: 'existing', projectId: projectId || '<project-id>' };
-  const prompt = useMemo(() => buildCdsAgentPrompt({ cdsOrigin, target }), [cdsOrigin, target.kind, projectId]);
+  const prompt = useMemo(
+    () => buildCdsAgentPrompt({ cdsOrigin, target, context }),
+    [cdsOrigin, target.kind, projectId, context?.id, context?.pagePath],
+  );
 
   return (
     <Dialog open={open} onOpenChange={onOpenChange}>
-      <DialogContent className="max-w-2xl">
+      <DialogContent className="max-w-3xl">
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
-            选择目标后把接入口令交给 Codex、Cursor 或 Claude Code。授权在 CDS 页面完成，
-            不需要复制密钥，也不会修改电脑的环境变量或终端配置。
+            Agent 会同时获得当前页面的任务上下文和安全边界。授权仍在 CDS 页面完成，
+            不需要学习底层参数，也不需要把密钥复制到对话中。
           </DialogDescription>
         </DialogHeader>
+
+        {context ? (
+          <div
+            className="rounded-lg border border-primary/30 bg-primary/5 px-4 py-3"
+            data-agent-context={context.id}
+            data-agent-page={context.pagePath}
+          >
+            <div className="flex items-start gap-3">
+              <div className="mt-0.5 rounded-md border border-primary/25 bg-primary/10 p-2 text-primary">
+                <Sparkles className="h-4 w-4" />
+              </div>
+              <div className="min-w-0">
+                <div className="text-xs font-medium uppercase tracking-wider text-primary">当前页面任务</div>
+                <div className="mt-1 font-medium text-foreground">{context.title}</div>
+                <p className="mt-1 text-sm leading-6 text-muted-foreground">{context.summary}</p>
+              </div>
+            </div>
+          </div>
+        ) : null}
 
         <div className="grid gap-2 sm:grid-cols-2">
           <button
@@ -128,7 +157,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects }: Props): JS
           })}
         </nav>
 
-        <div className="min-h-[280px]">
+        <div className="min-h-[260px]">
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
           {active === 'marketplace' ? <MarketplaceTab /> : null}

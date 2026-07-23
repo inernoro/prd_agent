@@ -1,5 +1,9 @@
 import { describe, expect, it } from 'vitest';
-import { buildCdsAgentPrompt, PROJECT_SKILL_PATHS } from '../../web/src/lib/agent-onboarding.js';
+import {
+  buildCdsAgentPrompt,
+  PROJECT_SKILL_PATHS,
+  resolveAgentPageContext,
+} from '../../web/src/lib/agent-onboarding.js';
 
 describe('CDS Agent 接入口令', () => {
   it('已有项目口令不含密钥，不修改全局环境，并使用页面批准', () => {
@@ -41,6 +45,37 @@ describe('CDS Agent 接入口令', () => {
     });
     expect(prompt).toContain('--new-project');
     expect(prompt).toContain('创建权限使用一次后会自动切换为项目级权限');
+  });
+
+  it('从登录与认证页面生成 SSO 专属上下文，并禁止密钥进入对话', () => {
+    const context = resolveAgentPageContext({
+      pathname: '/cds-settings',
+      hash: '#auth',
+    });
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'existing', projectId: 'proj-a' },
+      context,
+    });
+
+    expect(context.id).toBe('auth');
+    expect(prompt).toContain('登录与 SSO 认证');
+    expect(prompt).toContain('https://cds.example/cds-settings#auth');
+    expect(prompt).toContain('/api/auth/status');
+    expect(prompt).toContain('/api/auth/sso/config');
+    expect(prompt).toContain('客户端密钥和登录密码只允许在受保护的页面输入框或运行环境中处理');
+    expect(prompt).toContain('SSO 登录后默认返回 /project-list');
+    expect(prompt).not.toContain('clientSecret=');
+    expect(prompt).not.toContain('CDS_PASSWORD=');
+  });
+
+  it('为常用页面解析稳定的 Agent 任务上下文', () => {
+    expect(resolveAgentPageContext({ pathname: '/project-list' }).id).toBe('projects');
+    expect(resolveAgentPageContext({ pathname: '/branches/project-a' }).id).toBe('branches');
+    expect(resolveAgentPageContext({ pathname: '/settings/project-a' }).id).toBe('project-settings');
+    expect(resolveAgentPageContext({ pathname: '/release-center' }).id).toBe('release');
+    expect(resolveAgentPageContext({ pathname: '/cds-settings', hash: '#maintenance' }).id).toBe('maintenance');
+    expect(resolveAgentPageContext({ pathname: '/login' }).id).toBe('auth');
   });
 
   it('列出三个 Agent 的项目级技能目录', () => {

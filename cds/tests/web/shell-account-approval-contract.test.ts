@@ -22,6 +22,22 @@ const pendingImportSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/PendingImportInbox.tsx'),
   'utf8',
 );
+const authTabSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/pages/cds-settings/tabs/AuthTab.tsx'),
+  'utf8',
+);
+const agentDialogSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/components/SkillDownloadDialog.tsx'),
+  'utf8',
+);
+const globalAgentAccessSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
+  'utf8',
+);
+const appSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/App.tsx'),
+  'utf8',
+);
 const commitInboxSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/CommitInbox.tsx'),
   'utf8',
@@ -51,6 +67,35 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(shellSource).toContain('退出登录');
     expect(shellSource).not.toContain('cds-rail-item cds-rail-item--danger');
     expect(shellSource).not.toContain('function FloatingThemeToggle');
+  });
+
+  it('在侧栏常驻 Agent 接入入口，并由全局壳层提供上下文弹窗', () => {
+    const footerIndex = shellSource.indexOf('<div className="cds-rail-footer">');
+    const agentIndex = shellSource.indexOf('aria-label="接入 Agent"', footerIndex);
+    const settingsIndex = shellSource.indexOf('aria-label="CDS 系统设置"', footerIndex);
+    const accountIndex = shellSource.indexOf('<UserAccountMenu', footerIndex);
+
+    expect(agentIndex).toBeGreaterThan(footerIndex);
+    expect(settingsIndex).toBeGreaterThan(agentIndex);
+    expect(accountIndex).toBeGreaterThan(settingsIndex);
+    expect(shellSource).toContain('data-agent-action="connect"');
+    expect(shellSource).toContain('data-agent-context={agentContext.id}');
+    expect(shellSource).toContain('requestAgentAccess()');
+    expect(appSource).toContain('<GlobalAgentAccess />');
+    expect(globalAgentAccessSource).toContain('OPEN_AGENT_ACCESS_EVENT');
+    expect(globalAgentAccessSource).toContain('<SkillDownloadDialog');
+    expect(globalAgentAccessSource).toContain('STANDALONE_PATHS');
+    expect(globalAgentAccessSource).toContain('className="cds-agent-access-floating"');
+    expect(agentDialogSource).toContain('data-agent-context={context.id}');
+    expect(agentDialogSource).toContain('当前页面任务');
+  });
+
+  it('登录与认证页可以把 SSO 配置直接交给 Agent，并声明密钥保护策略', () => {
+    expect(authTabSource).toContain('data-agent-capability="auth.sso.configure"');
+    expect(authTabSource).toContain('data-agent-secret-policy="protected-input-only"');
+    expect(authTabSource).toContain("requestAgentAccess('auth')");
+    expect(authTabSource).toContain('交给 Agent 配置');
+    expect(authTabSource).toContain('客户端密钥只在受保护的输入框中填写');
   });
 
   it('从认证状态接口向壳层返回安全的用户展示信息', () => {
