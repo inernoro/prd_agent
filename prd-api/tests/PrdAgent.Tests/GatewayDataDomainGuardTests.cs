@@ -3488,7 +3488,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("font-size: 14px;", theme);
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
-        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*450", theme);
         Assert.Contains("--log-text-entity: #fcfcfe", theme);
         Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
         Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);

@@ -570,9 +570,9 @@ export function AppCallerDetailsPage() {
           id: 'governance',
           title: 'Governance',
           content: <Facts items={[
-            { label: '月预算', value: app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
-            { label: '单次预占', value: app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
-            { label: '每分钟请求', value: app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
+            { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
+            { label: '单次预占', value: !registered ? '未登记' : app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
+            { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
             { label: '负责人', value: app.owner || '未指定' },
             { label: '首次观察', value: app.firstSeenAt ? fmtDate(app.firstSeenAt) : '未记录' },
             { label: '最近更新', value: app.updatedAt ? fmtDate(app.updatedAt) : '未记录' },

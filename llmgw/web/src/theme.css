@@ -3485,7 +3485,7 @@ a:focus-visible {
 
 .lg-log-model-name {
   color: var(--log-text-entity);
-  font-weight: 560;
+  font-weight: 450;
 }
 
 .lg-log-entity-icon {
