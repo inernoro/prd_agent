@@ -5,6 +5,7 @@ import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import {
   buildCdsAgentPrompt,
+  chooseAgentProjectId,
   PROJECT_SKILL_PATHS,
   type AgentPageContext,
   type CdsConnectTarget,
@@ -36,7 +37,7 @@ const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: 
 export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
   const [active, setActive] = useState<TabKey>('connect');
   const [targetKind, setTargetKind] = useState<'existing' | 'new'>(projects.length > 0 ? 'existing' : 'new');
-  const [projectId, setProjectId] = useState(projects[0]?.id || '');
+  const [projectId, setProjectId] = useState(() => chooseAgentProjectId(projects, context));
 
   useEffect(() => {
     if (!open) return;
@@ -45,9 +46,9 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
       setProjectId('');
       return;
     }
-    if (!projectId) setTargetKind('existing');
-    setProjectId((current) => current && projects.some((project) => project.id === current) ? current : projects[0].id);
-  }, [open, projects]);
+    setTargetKind('existing');
+    setProjectId(chooseAgentProjectId(projects, context));
+  }, [open, projects, context?.id, context?.pagePath]);
 
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
   const target: CdsConnectTarget = targetKind === 'new'

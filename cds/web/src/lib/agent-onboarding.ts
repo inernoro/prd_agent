@@ -30,6 +30,12 @@ export interface AgentPageLocation {
   hash?: string;
 }
 
+export interface AgentProjectIdentity {
+  id: string;
+  name?: string;
+  slug?: string;
+}
+
 interface BuildPromptOptions {
   cdsOrigin: string;
   target: CdsConnectTarget;
@@ -164,6 +170,30 @@ export function requestAgentAccess(contextId?: AgentPageContextId): void {
   window.dispatchEvent(new CustomEvent(OPEN_AGENT_ACCESS_EVENT, {
     detail: contextId ? { contextId } : undefined,
   }));
+}
+
+export function chooseAgentProjectId(
+  projects: AgentProjectIdentity[],
+  context?: AgentPageContext,
+): string {
+  if (projects.length === 0) return '';
+  if (context?.id === 'branches' || context?.id === 'project-settings') {
+    const match = context.pagePath.match(/^\/(?:branches|settings)\/([^/?#]+)/);
+    if (match) {
+      const projectId = decodeURIComponent(match[1]);
+      const currentProject = projects.find((project) => project.id === projectId || project.slug === projectId);
+      if (currentProject) return currentProject.id;
+    }
+  }
+  if (context && ['auth', 'github', 'maintenance', 'settings'].includes(context.id)) {
+    const cdsSelf = projects.find((project) =>
+      project.id === 'cds-self' ||
+      project.slug === 'cds-self' ||
+      project.name?.trim().toLowerCase() === 'cds self'
+    );
+    if (cdsSelf) return cdsSelf.id;
+  }
+  return projects[0].id;
 }
 
 export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptOptions): string {

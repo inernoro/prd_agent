@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   buildCdsAgentPrompt,
+  chooseAgentProjectId,
   PROJECT_SKILL_PATHS,
   resolveAgentPageContext,
 } from '../../web/src/lib/agent-onboarding.js';
@@ -76,6 +77,20 @@ describe('CDS Agent 接入口令', () => {
     expect(resolveAgentPageContext({ pathname: '/release-center' }).id).toBe('release');
     expect(resolveAgentPageContext({ pathname: '/cds-settings', hash: '#maintenance' }).id).toBe('maintenance');
     expect(resolveAgentPageContext({ pathname: '/login' }).id).toBe('auth');
+  });
+
+  it('系统级页面优先连接 CDS Self，项目页面按 URL 选择当前项目', () => {
+    const projects = [
+      { id: 'prd-agent', name: 'MAP平台', slug: 'prd-agent' },
+      { id: 'cds-self', name: 'CDS Self', slug: 'cds-self' },
+      { id: 'other', name: '其他项目', slug: 'other' },
+    ];
+    const authContext = resolveAgentPageContext({ pathname: '/cds-settings', hash: '#auth' });
+    const branchContext = resolveAgentPageContext({ pathname: '/branches/other' });
+
+    expect(chooseAgentProjectId(projects, authContext)).toBe('cds-self');
+    expect(chooseAgentProjectId(projects, branchContext)).toBe('other');
+    expect(chooseAgentProjectId(projects)).toBe('prd-agent');
   });
 
   it('列出三个 Agent 的项目级技能目录', () => {
