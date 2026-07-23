@@ -4,8 +4,10 @@
 from __future__ import annotations
 
 import importlib.util
+from datetime import datetime
 import tempfile
 from pathlib import Path
+from types import SimpleNamespace
 
 
 ROOT = Path(__file__).resolve().parents[1]
@@ -48,6 +50,97 @@ def compiled_markdown(archive, body, manifest):
 
 def main() -> None:
     archive = load_archive_module()
+
+    naming_now = datetime(2026, 7, 23, 10, 0)
+    naming_cfg = {"project": "prd-agent"}
+
+    daily_args = SimpleNamespace(
+        report_kind="每日验收",
+        title_focus="全量变更",
+        report_date="2026-07-22",
+        target="昨日全量变更 · 每日巡检 · 验收报告",
+        module="每日验收",
+        feature="",
+        type="",
+        pr=None,
+        commit="e581ce4548",
+    )
+    daily_title, daily_kind, daily_date = archive.build_report_title(
+        daily_args, naming_cfg, naming_now, "# 每日验收报告"
+    )
+    if (daily_title, daily_kind, daily_date) != (
+        "每日验收 · 全量变更 · 2026-07-22",
+        "每日验收",
+        "2026-07-22",
+    ):
+        raise AssertionError(f"unexpected daily acceptance title: {daily_title}")
+    if "prd-agent" in daily_title or "验收报告" in daily_title:
+        raise AssertionError("project and redundant report suffix must not occupy the acceptance title")
+
+    function_args = SimpleNamespace(
+        report_kind="",
+        title_focus="",
+        report_date="",
+        target="授权表主题样式",
+        module="开放平台",
+        feature="授权表主题",
+        type="修复",
+        pr=None,
+        commit="710ce135d0",
+    )
+    function_title, function_kind, function_date = archive.build_report_title(
+        function_args, naming_cfg, naming_now, "# 功能验收"
+    )
+    if (function_title, function_kind, function_date) != (
+        "功能验收 · 开放平台 / 授权表主题 · 2026-07-23",
+        "功能验收",
+        "2026-07-23",
+    ):
+        raise AssertionError(f"unexpected function acceptance title: {function_title}")
+
+    pr_args = SimpleNamespace(
+        report_kind="",
+        title_focus="授权表主题",
+        report_date="2026-07-23",
+        target="PR #1227 验收",
+        module="开放平台",
+        feature="",
+        type="修复",
+        pr=1227,
+        commit="710ce135d0",
+    )
+    pr_title, pr_kind, _ = archive.build_report_title(pr_args, naming_cfg, naming_now, "# PR 验收")
+    if pr_kind != "PR验收" or pr_title != "PR验收 · #1227 / 开放平台 / 授权表主题 · 2026-07-23":
+        raise AssertionError(f"unexpected PR acceptance title: {pr_title}")
+
+    defect_args = SimpleNamespace(
+        report_kind="",
+        title_focus="开放平台授权表",
+        report_date="2026-07-23",
+        target="缺陷复测",
+        module="",
+        feature="",
+        type="修复",
+        pr=None,
+        commit="710ce135d0",
+    )
+    defect_title, defect_kind, _ = archive.build_report_title(
+        defect_args, naming_cfg, naming_now, "# 缺陷复测"
+    )
+    if defect_kind != "缺陷复测" or defect_title != "缺陷复测 · 开放平台授权表 · 2026-07-23":
+        raise AssertionError(f"unexpected defect retest title: {defect_title}")
+    try:
+        archive._validate_report_date("2026-7-3")
+    except archive.argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("report date must require zero-padded YYYY-MM-DD")
+    try:
+        archive._validate_report_date("2026-02-30")
+    except archive.argparse.ArgumentTypeError:
+        pass
+    else:
+        raise AssertionError("report date must reject impossible calendar dates")
 
     annotated_manifest = [{"name": "01-report-page", "caption": "图 01 框出遮挡区域", "annotated": True}]
     overview_manifest = [{"name": "01-report-page", "caption": "图 01 总览", "annotated": False, "overview": True}]

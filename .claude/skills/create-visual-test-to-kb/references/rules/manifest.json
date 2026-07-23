@@ -1,13 +1,13 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "f884f161ba4395ec673923dc04cf762a24a798c3+worktree",
-  "generatedAt": "2026-07-23T10:37:20.596657+00:00",
+  "sourceCommit": "d65c7587e5c992f4986fcfe9560ddeeb3233dd8e+worktree",
+  "generatedAt": "2026-07-23T12:01:44.970232+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
       "sourcePath": "doc/rule.acceptance.map-enterprise.md",
       "snapshotPath": "references/rules/rule.acceptance.map-enterprise.md",
-      "contentHash": "sha256:b14ebef99743cab89b7bee43a0168095e94fe08a170a8a41bc7b15ffc8166122"
+      "contentHash": "sha256:3109669c29bf53f7cbf42880a2789e47b83878a4419ffd308bb93523bccdcdd0"
     },
     {
       "sourceId": "acceptance.rule.ssot",
@@ -31,7 +31,7 @@
       "sourceId": "acceptance.design.knowledge-governance",
       "sourcePath": "doc/design.acceptance.knowledge-governance.md",
       "snapshotPath": "references/rules/design.acceptance.knowledge-governance.md",
-      "contentHash": "sha256:d154bbfefeecdef0cc746c18f1fd6f98fc34c42b5bd0bb06b638d766e4a21986"
+      "contentHash": "sha256:436048e71b1660e88701c23371efb434505b495ea30e6e9137194d199366fe64"
     }
   ]
 }
