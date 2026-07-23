@@ -1,7 +1,7 @@
 {
   "kind": "acceptance-rule-snapshots",
-  "sourceCommit": "084f062ed01dcc8c9a2d7468b38c4713dbbf2e1b+worktree",
-  "generatedAt": "2026-07-23T07:03:59.409980+00:00",
+  "sourceCommit": "3466477a142a9ceea89ae26cf454f3bb6a6e8ff5+worktree",
+  "generatedAt": "2026-07-23T09:39:02.560294+00:00",
   "sources": [
     {
       "sourceId": "acceptance.rule.enterprise",
@@ -25,7 +25,7 @@
       "sourceId": "acceptance.guide.report-evidence",
       "sourcePath": "doc/guide.acceptance.report-evidence.md",
       "snapshotPath": "references/rules/guide.acceptance.report-evidence.md",
-      "contentHash": "sha256:49de0d4816fc84a9e8fd5e46c827a2fec87d85f571ea624988dc137fff4b1757"
+      "contentHash": "sha256:f0e80fb3b591c3774c3740a576dfb7162e3730212301a0aafeee4c6cec8da3d8"
     },
     {
       "sourceId": "acceptance.design.knowledge-governance",
