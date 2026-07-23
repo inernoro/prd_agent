@@ -580,11 +580,31 @@ export interface ReplicaMember {
   hostPort?: number;
   status: 'provisioning' | 'running' | 'stopped' | 'error';
   statusMessage?: string;
-  /** 数据库模式：shared=与主容器同库（默认）；isolated=一键隔离库（克隆保留），MVP-2 */
+  /** 数据库模式：shared=与主容器同库（默认）；isolated=一键隔离库（先克隆当前数据再切换） */
   dbMode: 'shared' | 'isolated';
-  /** dbMode=isolated 时库名后缀（_rs_<memberId>） */
-  isolatedDbSuffix?: string;
+  /** dbMode=isolated 时的隔离库全名（<源库>_rs_<memberId>） */
+  isolatedDbName?: string;
   createdAt: string;
+}
+
+/**
+ * 复制集隔离库快照（design.cds.replica-set MVP-2）。
+ * dbMode=isolated 的成员启动前，把当前库整库克隆成隔离库；成员下线/复制集解散
+ * 后隔离库**保留**（这就是「一键隔离数据库(保留)」的保留语义），在快照列表可见，
+ * 手动删除才 drop。
+ */
+export interface ReplicaDbSnapshot {
+  id: string;
+  profileId: string;
+  memberId: string;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  /** 克隆来源库名（克隆时间点的主库） */
+  sourceDb: string;
+  /** 隔离库名 */
+  dbName: string;
+  /** 执行克隆的 infra 容器名（drop 时复用） */
+  infraContainer: string;
+  clonedAt: string;
 }
 
 /**
@@ -718,6 +738,11 @@ export interface BranchEntry {
    * 流量分配见 forwarder-route-publisher（replicaGroup 路由）+ route-resolver（权重/粘性）。
    */
   replicaSets?: Record<string, ProfileReplicaSet>;
+  /**
+   * 复制集隔离库快照台账（保留语义）：成员下线后隔离库不删，记录在这里，
+   * 手动删除才 drop。详见 ReplicaDbSnapshot。
+   */
+  replicaDbSnapshots?: ReplicaDbSnapshot[];
   /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *

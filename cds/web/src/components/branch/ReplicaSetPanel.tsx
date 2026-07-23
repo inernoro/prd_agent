@@ -10,7 +10,7 @@
  * 成员时 4s 轮询，杜绝空白等待。
  */
 import { useCallback, useEffect, useState } from 'react';
-import { ArrowUpCircle, ExternalLink, Layers, Loader2, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
+import { ArrowUpCircle, DatabaseZap, ExternalLink, Layers, Loader2, Plus, RefreshCw, Trash2, Undo2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -27,7 +27,18 @@ export interface ReplicaMemberView {
   status: 'provisioning' | 'running' | 'stopped' | 'error';
   statusMessage?: string;
   dbMode: 'shared' | 'isolated';
+  isolatedDbName?: string;
   createdAt: string;
+}
+
+export interface ReplicaDbSnapshotView {
+  id: string;
+  profileId: string;
+  memberId: string;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  sourceDb: string;
+  dbName: string;
+  clonedAt: string;
 }
 
 export interface ProfileReplicaSetView {
@@ -49,6 +60,7 @@ interface ReplicaCandidateView {
 interface ReplicaSetsResponse {
   replicaSets: Record<string, ProfileReplicaSetView>;
   candidates: Record<string, ReplicaCandidateView[]>;
+  snapshots?: ReplicaDbSnapshotView[];
   memberLimit: number;
 }
 
@@ -155,14 +167,16 @@ export function ReplicaSetPanel({
     }
   }, [load, onToast]);
 
-  const addMember = useCallback((profileId: string, versionId: string) => {
+  const addMember = useCallback((profileId: string, versionId: string, dbMode: 'shared' | 'isolated') => {
     setAddingProfile(null);
     void run(`add:${profileId}`, async () => {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/members`, {
         method: 'POST',
-        body: { versionId },
+        body: { versionId, dbMode },
       });
-    }, '成员启动中：从保留镜像秒起，无需重新构建');
+    }, dbMode === 'isolated'
+      ? '成员启动中：先克隆数据库到隔离库，再从保留镜像秒起'
+      : '成员启动中：从保留镜像秒起，无需重新构建');
   }, [branchId, run]);
 
   const setWeight = useCallback((profileId: string, memberId: string, weight: number) => {
@@ -259,7 +273,7 @@ export function ReplicaSetPanel({
                 ) : null}
               </div>
               {addingProfile === profileId ? (
-                <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId) => addMember(profileId, versionId)} />
+                <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId, dbMode) => addMember(profileId, versionId, dbMode)} />
               ) : null}
             </section>
           );
@@ -320,7 +334,7 @@ export function ReplicaSetPanel({
                   <MemberRow
                     key={member.id}
                     title={`${member.label || member.id}`}
-                    subtitle={`${member.commitSha ? member.commitSha.slice(0, 7) : member.versionId}${member.hostPort ? ` · :${member.hostPort}` : ''}`}
+                    subtitle={`${member.commitSha ? member.commitSha.slice(0, 7) : member.versionId}${member.hostPort ? ` · :${member.hostPort}` : ''}${member.dbMode === 'isolated' ? ` · 隔离库 ${member.isolatedDbName || '(克隆中)'}` : ''}`}
                     pill={statusPill(member)}
                     weight={member.weight}
                     busy={busy === `weight:${profileId}:${member.id}`}
@@ -395,12 +409,53 @@ export function ReplicaSetPanel({
             </footer>
             {addingProfile === profileId ? (
               <div className="border-t border-[hsl(var(--hairline))] px-5 pb-4">
-                <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId) => addMember(profileId, versionId)} />
+                <CandidatePicker rows={availableRows} busy={busy === `add:${profileId}`} onPick={(versionId, dbMode) => addMember(profileId, versionId, dbMode)} />
               </div>
             ) : null}
           </section>
         );
       })}
+
+      {(state.data.snapshots ?? []).length > 0 ? (
+        <section className="cds-surface-raised cds-hairline px-5 py-4">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <DatabaseZap className="h-4 w-4 text-indigo-500" />
+            隔离库数据快照（{state.data.snapshots!.length}）
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            成员下线后隔离库保留在这里（克隆时间点的数据副本）。确认不再需要时手动删除，才会真正 drop 数据库。
+          </p>
+          <div className="mt-3 grid gap-2">
+            {state.data.snapshots!.map((snapshot) => (
+              <div
+                key={snapshot.id}
+                className="flex flex-wrap items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs"
+              >
+                <div className="min-w-0">
+                  <div className="font-mono font-semibold">{snapshot.dbName}</div>
+                  <div className="mt-0.5 text-[11px] text-muted-foreground">
+                    {snapshot.engine} · 来源 {snapshot.sourceDb} · 服务 {snapshot.profileId} · {new Date(snapshot.clonedAt).toLocaleString()}
+                  </div>
+                </div>
+                <ConfirmAction
+                  title="删除隔离库"
+                  description={`将执行 DROP DATABASE ${snapshot.dbName}，数据不可恢复。确认删除？`}
+                  confirmLabel="删除数据库"
+                  trigger={(
+                    <Button type="button" size="sm" variant="ghost" disabled={busy !== null}>
+                      <Trash2 />
+                      删除
+                    </Button>
+                  )}
+                  onConfirm={() => run(`snapshot:${snapshot.id}`, async () => {
+                    await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-db-snapshots/${encodeURIComponent(snapshot.id)}`, { method: 'DELETE' });
+                  }, `隔离库 ${snapshot.dbName} 已删除`)}
+                />
+              </div>
+            ))}
+          </div>
+        </section>
+      ) : null}
     </div>
   );
 }
@@ -467,20 +522,52 @@ function CandidatePicker({
 }: {
   rows: Array<{ versionId: string; commitSha: string; image: string; createdAt: string; isCurrent: boolean }>;
   busy: boolean;
-  onPick: (versionId: string) => void;
+  onPick: (versionId: string, dbMode: 'shared' | 'isolated') => void;
 }): JSX.Element {
+  const [dbMode, setDbMode] = useState<'shared' | 'isolated'>('shared');
   if (rows.length === 0) {
     return <p className="mt-3 text-xs text-muted-foreground">没有可并排的历史版本。</p>;
   }
   return (
     <div className="mt-3 grid gap-2">
-      <p className="text-xs text-muted-foreground">选择一个历史版本并排启动（保留镜像秒起，零构建）：</p>
+      <div className="flex flex-wrap items-center gap-2 text-xs text-muted-foreground">
+        <span>数据库：</span>
+        <button
+          type="button"
+          onClick={() => setDbMode('shared')}
+          className={`rounded-md border px-2 py-1 transition-colors ${
+            dbMode === 'shared'
+              ? 'border-primary bg-primary/10 text-foreground'
+              : 'border-[hsl(var(--hairline))] hover:bg-[hsl(var(--surface-sunken))]'
+          }`}
+        >
+          共享主库
+        </button>
+        <button
+          type="button"
+          onClick={() => setDbMode('isolated')}
+          className={`inline-flex items-center gap-1 rounded-md border px-2 py-1 transition-colors ${
+            dbMode === 'isolated'
+              ? 'border-indigo-500/60 bg-indigo-500/10 text-foreground'
+              : 'border-[hsl(var(--hairline))] hover:bg-[hsl(var(--surface-sunken))]'
+          }`}
+          title="启动前把当前库整库克隆成隔离副本，成员只写隔离库；成员下线后隔离库保留在数据快照列表"
+        >
+          <DatabaseZap className="h-3.5 w-3.5" />
+          一键隔离库（克隆保留）
+        </button>
+      </div>
+      <p className="text-xs text-muted-foreground">
+        {dbMode === 'isolated'
+          ? '将先把当前数据库整库克隆为隔离副本（克隆时间点快照），成员读写隔离库，不碰共享数据。'
+          : '选择一个历史版本并排启动（保留镜像秒起，零构建）：'}
+      </p>
       {rows.slice(0, 8).map((row) => (
         <button
           key={row.versionId}
           type="button"
           disabled={busy}
-          onClick={() => onPick(row.versionId)}
+          onClick={() => onPick(row.versionId, dbMode)}
           className="flex items-center justify-between gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-left text-xs transition-colors hover:border-indigo-500/50 hover:bg-indigo-500/[.06] disabled:opacity-50"
         >
           <span className="min-w-0">

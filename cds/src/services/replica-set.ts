@@ -17,6 +17,7 @@ import type {
   DeploymentVersion,
   IShellExecutor,
   ProfileReplicaSet,
+  ReplicaDbSnapshot,
   ReplicaMember,
   ServiceState,
 } from '../types.js';
@@ -24,6 +25,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { DeploymentVersionService } from './deployment-version.js';
+import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget } from './replica-db-clone.js';
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
@@ -48,6 +50,11 @@ export interface ReplicaSetServiceOptions {
   shell: IShellExecutor;
   /** 端口分配起点（config.portStart） */
   portStart: number;
+  /**
+   * 远端执行器分支判定（debt #6）：executorId 指向非 embedded 执行器的分支，
+   * 成员物化会错误地在 master 本机起容器，直接拒绝。由 server.ts 用 registry 注入。
+   */
+  isRemoteBranch?: (branch: BranchEntry) => boolean;
   logger?: ReplicaSetLogger;
   now?: () => Date;
 }
@@ -83,6 +90,7 @@ export class ReplicaSetService {
     branch: BranchEntry;
     replicaSets: Record<string, ProfileReplicaSet>;
     candidates: Record<string, ReplicaCandidate[]>;
+    snapshots: ReplicaDbSnapshot[];
   } {
     const branch = this.requireBranch(branchId);
     const candidates: Record<string, ReplicaCandidate[]> = {};
@@ -102,7 +110,12 @@ export class ReplicaSetService {
       }
       if (rows.length > 0) candidates[profile.id] = rows;
     }
-    return { branch, replicaSets: branch.replicaSets ?? {}, candidates };
+    return {
+      branch,
+      replicaSets: branch.replicaSets ?? {},
+      candidates,
+      snapshots: branch.replicaDbSnapshots ?? [],
+    };
   }
 
   /** 启用复制集：纯配置写入，不动任何容器（启用本身零秒）。幂等。 */
@@ -152,12 +165,17 @@ export class ReplicaSetService {
   addMember(branchId: string, profileId: string, input: AddMemberInput): ReplicaMember {
     const branch = this.requireBranch(branchId);
     const profile = this.requireProfile(branch, profileId);
+    if (this.opts.isRemoteBranch?.(branch)) {
+      throw new ReplicaSetError(409, '该分支部署在远端执行器上，复制集暂只支持本机（embedded）分支');
+    }
     const rs = this.enable(branchId, profileId);
     if (rs.members.length >= REPLICA_MEMBER_LIMIT) {
       throw new ReplicaSetError(409, `成员数已达上限 ${REPLICA_MEMBER_LIMIT}，请先下线一个成员`);
     }
     if (input.dbMode === 'isolated') {
-      throw new ReplicaSetError(501, '一键隔离数据库（含数据克隆）在 MVP-2 提供，当前成员请使用共享库模式');
+      // 先做可行性预检，把「没有库可隔离 / infra 没在跑」这类失败在同步阶段就讲清楚
+      const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, profile);
+      if (!target) throw new ReplicaSetError(409, `无法隔离数据库：${reason}`);
     }
     const version = this.opts.versions.get(input.versionId);
     if (!version || version.branchId !== branchId) {
@@ -182,7 +200,8 @@ export class ReplicaSetService {
       image: snapshot.artifactImage,
       commitSha: version.commitSha,
       status: 'provisioning',
-      dbMode: 'shared',
+      statusMessage: input.dbMode === 'isolated' ? '正在克隆数据库到隔离库…' : undefined,
+      dbMode: input.dbMode === 'isolated' ? 'isolated' : 'shared',
       createdAt: this.now(),
     };
     rs.members.push(member);
@@ -233,6 +252,24 @@ export class ReplicaSetService {
     rs.members = rs.members.filter((m) => m.id !== memberId);
     rs.updatedAt = this.now();
     this.opts.state.save();
+  }
+
+  /**
+   * 删除隔离库快照：drop 数据库 + 移除台账记录。
+   * 这是「保留语义」的唯一出口——只有用户显式删除才会 drop。
+   */
+  async deleteDbSnapshot(branchId: string, snapshotId: string): Promise<ReplicaDbSnapshot> {
+    const branch = this.requireBranch(branchId);
+    const snapshot = (branch.replicaDbSnapshots || []).find((s) => s.id === snapshotId);
+    if (!snapshot) throw new ReplicaSetError(404, `隔离库快照不存在: ${snapshotId}`);
+    const infra = this.opts.state.getInfraServicesForProject(branch.projectId)
+      .find((svc) => svc.containerName === snapshot.infraContainer);
+    await dropReplicaDb(snapshot, infra?.env || {});
+    branch.replicaDbSnapshots = (branch.replicaDbSnapshots || []).filter((s) => s.id !== snapshotId);
+    if (branch.replicaDbSnapshots.length === 0) delete branch.replicaDbSnapshots;
+    this.opts.state.save();
+    this.opts.logger?.info?.(`[replica-set] 隔离库已删除 ${branchId}/${snapshot.dbName}`);
+    return snapshot;
   }
 
   /** 分支删除/停止路径的级联收割：清掉该分支全部成员容器。 */
@@ -311,6 +348,42 @@ export class ReplicaSetService {
       }
       if (logs.length > 40) logs.splice(0, logs.length - 40);
     };
+
+    // 一键隔离数据库（MVP-2）：先克隆当前库 → 成员 env 指向隔离库 → 才启动容器。
+    // memberProfile.dbScope 钉成 shared：库名已是折算后的运行时全名（含 per-branch
+    // 后缀），不能让 runService 内部再叠一次分支后缀。
+    const currentMember = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
+      .find((m) => m.id === memberId);
+    if (currentMember?.dbMode === 'isolated') {
+      const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
+      if (!target) {
+        this.patchMember(branchId, profileId, memberId, { status: 'error', statusMessage: `无法隔离数据库：${reason}` });
+        return;
+      }
+      try {
+        const cloned = await cloneReplicaDb({
+          target,
+          memberId,
+          profileId,
+          now: this.opts.now,
+          onOutput,
+        });
+        memberProfile.env = { ...(memberProfile.env || {}), ...cloned.envOverride };
+        memberProfile.dbScope = 'shared';
+        const liveBranch = this.requireBranch(branchId);
+        liveBranch.replicaDbSnapshots = [...(liveBranch.replicaDbSnapshots || []), cloned.snapshot];
+        this.patchMember(branchId, profileId, memberId, {
+          isolatedDbName: cloned.snapshot.dbName,
+          statusMessage: '隔离库克隆完成，正在启动容器…',
+        });
+      } catch (err) {
+        this.patchMember(branchId, profileId, memberId, {
+          status: 'error',
+          statusMessage: (err as Error).message,
+        });
+        return;
+      }
+    }
 
     try {
       await this.opts.container.runService(

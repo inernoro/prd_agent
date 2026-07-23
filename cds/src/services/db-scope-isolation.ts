@@ -30,7 +30,7 @@
  *
  * 保留旧无前缀的 key 是为了向后兼容 Phase 8.8 之前导入的项目。
  */
-const PER_BRANCH_DB_ENV_KEYS = [
+export const PER_BRANCH_DB_ENV_KEYS = [
   // Phase 8.8 之后:CDS_* 前缀(cdscli scan 生成的标准命名)
   'CDS_MYSQL_DATABASE',
   'CDS_POSTGRES_DB',

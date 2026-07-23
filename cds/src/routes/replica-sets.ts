@@ -32,8 +32,20 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
-      const { replicaSets, candidates } = deps.replicaSetService.list(req.params.branchId);
-      res.json({ replicaSets, candidates, memberLimit: REPLICA_MEMBER_LIMIT });
+      const { replicaSets, candidates, snapshots } = deps.replicaSetService.list(req.params.branchId);
+      res.json({ replicaSets, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT });
+    } catch (err) {
+      respondError(res, err);
+    }
+  });
+
+  // 隔离库快照删除（保留语义的唯一出口：显式删除才 drop 数据库）
+  router.delete('/branches/:branchId/replica-db-snapshots/:snapshotId', async (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      const snapshot = await deps.replicaSetService.deleteDbSnapshot(req.params.branchId, req.params.snapshotId);
+      res.json({ dropped: true, dbName: snapshot.dbName });
     } catch (err) {
       respondError(res, err);
     }

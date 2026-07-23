@@ -960,6 +960,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)$/, '启用复制集'],
     [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)$/, '解散复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-db-snapshots\/(.+)$/, '删除隔离库快照'],
     [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
@@ -3751,6 +3752,10 @@ export function createServer(deps: ServerDeps): express.Express {
     versions: deploymentVersionService,
     shell: deps.shell,
     portStart: deps.config.portStart,
+    isRemoteBranch: (branch) => !!(
+      branch.executorId
+      && deps.registry?.getAll().some((n) => n.id === branch.executorId && n.role !== 'embedded')
+    ),
     logger: console,
   });
   app.use('/api', createReplicaSetsRouter({
