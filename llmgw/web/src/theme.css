@@ -2,7 +2,7 @@
    暗色为默认；[data-theme="light"] 为浅色。所有颜色走 var()。 */
 
 :root {
-  --font-sans: 'Geist Variable', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei',
+  --font-sans: 'Plus Jakarta Sans Variable', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei',
     -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
   --bg-page: #05080a;
   --bg-surface: #0c1114;
@@ -641,8 +641,9 @@ body,
   background: var(--bg-page);
   color: var(--text-primary);
   font-family: var(--font-sans);
-  font-size: 15px;
-  line-height: 1.5;
+  font-size: 14px;
+  font-weight: 450;
+  line-height: 1.625;
   -webkit-font-smoothing: antialiased;
   text-rendering: optimizeLegibility;
 }
@@ -3499,10 +3500,11 @@ a:focus-visible {
 }
 
 .lg-log-insights {
-  min-height: 230px;
+  height: 112px;
+  min-height: 112px;
   display: grid;
-  grid-template-rows: minmax(146px, 1fr) 76px;
-  grid-template-columns: minmax(0, 1fr);
+  grid-template-columns: minmax(420px, 1.45fr) minmax(440px, 1fr);
+  grid-template-rows: 112px;
   gap: 8px;
   flex-shrink: 0;
 }
@@ -3520,7 +3522,7 @@ a:focus-visible {
   grid-template-columns: 112px minmax(0, 1fr);
   align-items: center;
   overflow: hidden;
-  padding: 10px 14px 8px 16px;
+  padding: 8px 14px 6px 16px;
 }
 
 .lg-mini-bar-chart {
@@ -3659,7 +3661,7 @@ a:focus-visible {
   display: flex;
   flex-direction: column;
   justify-content: center;
-  padding: 14px 16px;
+  padding: 9px 12px;
   border-left: 1px solid var(--border-subtle);
 }
 
@@ -3670,14 +3672,14 @@ a:focus-visible {
 .lg-log-insight-metrics span,
 .lg-log-insight-metrics small {
   color: var(--text-muted);
-  font-size: 13px;
+  font-size: 11px;
 }
 
 .lg-log-insight-metrics strong {
-  margin-top: 5px;
+  margin-top: 3px;
   overflow: hidden;
   color: var(--text-primary);
-  font-size: 20px;
+  font-size: 17px;
   font-weight: 650;
   text-overflow: ellipsis;
   white-space: nowrap;
@@ -5933,41 +5935,21 @@ a:focus-visible {
   }
 
   .lg-log-insights {
-    min-height: 0;
+    height: 120px;
+    min-height: 120px;
     grid-template-columns: minmax(0, 1fr);
-    grid-template-rows: minmax(144px, auto) 68px;
-    gap: 10px;
+    grid-template-rows: 120px;
+    gap: 0;
   }
 
   .lg-log-insight-chart {
-    min-height: 144px;
+    min-height: 120px;
     display: grid;
     grid-template-columns: 82px minmax(0, 1fr);
-    padding: 10px 12px 8px;
+    padding: 8px 12px 6px;
   }
 
   .lg-log-insight-metrics {
-    min-height: 68px;
-    grid-template-columns: repeat(4, minmax(0, 1fr));
-  }
-
-  .lg-log-insight-metrics > div {
-    min-height: 68px;
-    padding: 9px 8px;
-    border-top: 0;
-  }
-
-  .lg-log-insight-metrics span,
-  .lg-log-insight-metrics small {
-    font-size: 11px;
-  }
-
-  .lg-log-insight-metrics strong {
-    margin-top: 3px;
-    font-size: 16px;
-  }
-
-  .lg-log-insight-metrics small {
     display: none;
   }
 

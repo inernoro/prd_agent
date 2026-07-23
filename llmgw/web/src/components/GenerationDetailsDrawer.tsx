@@ -9,6 +9,7 @@ import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
+import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
 import { DASH, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
 function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
@@ -404,8 +405,9 @@ export function GenerationDetailsDrawer({
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h2>
             )}
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}><ModelEntityIcon model={detail.logicalModelPublicId || detail.model} />{detail.logicalModelPublicId || detail.model || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><ProviderEntityIcon provider={detail.platformName || detail.provider} />{detail.platformName || detail.provider || DASH}</span>
+              {detail.appCallerCode ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><AppEntityIcon app={detail.appCallerCode} sourceSystem={detail.sourceSystem} />{detail.appCallerCode.startsWith('G-') ? detail.appCallerCode : `G-${detail.appCallerCode}`}</span> : null}
               <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
