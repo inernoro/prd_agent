@@ -13,6 +13,11 @@ import { uploadAttachment } from '@/services/real/aiToolbox';
 import { useAuthStore } from '@/stores/authStore';
 import { AppealSubmitDialog } from './components/AppealSubmitDialog';
 import { AppealHistoryDrawer } from './components/AppealHistoryDrawer';
+import {
+  normalizeReviewStreamError,
+  shouldAutoStartReviewStream,
+  shouldPollReviewStatus,
+} from './reviewStreamRecovery';
 
 const APPEAL_WINDOW_HOURS = 3;
 
@@ -183,6 +188,8 @@ export function ReviewAgentResultPage() {
   const [dimConfigs, setDimConfigs] = useState<ReviewDimensionConfig[]>([]);
   const [expandedDims, setExpandedDims] = useState<Set<string>>(new Set());
   const [streaming, setStreaming] = useState(false);
+  const [streamError, setStreamError] = useState<string | null>(null);
+  const streamStartedSubmissionRef = useRef<string | null>(null);
   const [rerunning, setRerunning] = useState(false);
   const [showAppealDialog, setShowAppealDialog] = useState(false);
   const [showHistoryDrawer, setShowHistoryDrawer] = useState(false);
@@ -265,24 +272,51 @@ export function ReviewAgentResultPage() {
       },
     },
     onDone: () => {
+      setStreamError(null);
       setStreaming(false);
-      loadData();
+      void loadData();
     },
     onError: (msg) => {
       console.error('评审流错误:', msg);
+      setStreamError(normalizeReviewStreamError(msg));
       setStreaming(false);
-      loadData();
+      void loadData();
     },
   });
 
-  // 自动开始 SSE：未完成的 submission
+  // Queued 只自动发起一次。失败后保留显式重试入口，避免 429 在控制器前发生时
+  // loadData 仍读到 Queued，继而形成无休止的重连与限流循环。
   useEffect(() => {
     if (!submission || streaming) return;
-    if (submission.status === 'Queued' || submission.status === 'Running') {
+    if (shouldAutoStartReviewStream(
+      submission.status,
+      submission.id,
+      streamStartedSubmissionRef.current,
+    )) {
+      streamStartedSubmissionRef.current = submission.id;
+      setStreamError(null);
       setStreaming(true);
-      sse.start({ url: getReviewResultStreamUrl(submission.id) });
+      void sse.start({ url: getReviewResultStreamUrl(submission.id) });
     }
   }, [submission]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Running 说明服务端任务已经开始。该 SSE 端点不支持重复订阅，因此页面刷新或断流后
+  // 只轮询后端权威状态，不再建立会被拒绝的第二条评审流。
+  useEffect(() => {
+    if (!submission || !shouldPollReviewStatus(submission.status, streaming)) return;
+    const timer = window.setInterval(() => {
+      void loadData();
+    }, 2000);
+    return () => window.clearInterval(timer);
+  }, [submission, streaming, loadData]);
+
+  function retryReviewStream() {
+    if (!id || streaming || submission?.status !== 'Queued') return;
+    streamStartedSubmissionRef.current = id;
+    setStreamError(null);
+    setStreaming(true);
+    void sse.start({ url: getReviewResultStreamUrl(id) });
+  }
 
   async function handleRerun() {
     if (!id || rerunning) return;
@@ -290,6 +324,8 @@ export function ReviewAgentResultPage() {
     try {
       const res = await rerunReviewSubmission(id);
       if (res.success) {
+        streamStartedSubmissionRef.current = id;
+        setStreamError(null);
         setResult(null);
         setDimensionScores([]);
         setSummary('');
@@ -322,6 +358,8 @@ export function ReviewAgentResultPage() {
         return;
       }
       // 重置本地评审展示，触发新一轮 SSE。RerunCount 在后端 +1，前端同步更新。
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
       setResult(null);
       setDimensionScores([]);
       setSummary('');
@@ -362,6 +400,8 @@ export function ReviewAgentResultPage() {
         setReuploadError(res.error?.message ?? '替换失败');
         return;
       }
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
       setResult(null);
       setDimensionScores([]);
       setSummary('');
@@ -410,6 +450,8 @@ export function ReviewAgentResultPage() {
         return;
       }
       // 重置本地状态并触发重新评审 SSE
+      streamStartedSubmissionRef.current = id;
+      setStreamError(null);
       setResult(null);
       setDimensionScores([]);
       setSummary('');
@@ -471,7 +513,10 @@ export function ReviewAgentResultPage() {
 
   const isDone = submission.status === 'Done' || totalScore !== null;
   const isError = submission.status === 'Error';
-  const isRunning = streaming || (!isDone && !isError);
+  const isAwaitingRetry = submission.status === 'Queued' && !!streamError && !streaming;
+  const isRunning = streaming
+    || submission.status === 'Running'
+    || (submission.status === 'Queued' && !isAwaitingRetry);
 
   return (
     <div className="max-w-3xl mx-auto px-4 py-6">
@@ -518,6 +563,14 @@ export function ReviewAgentResultPage() {
               <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
                 <MapSpinner size={14} />
                 评审中
+              </div>
+            </div>
+          )}
+          {isAwaitingRetry && (
+            <div className="flex-shrink-0">
+              <div className="flex items-center gap-1.5 text-xs text-amber-400/80">
+                <AlertTriangle className="w-3.5 h-3.5" />
+                等待重试
               </div>
             </div>
           )}
@@ -632,6 +685,30 @@ export function ReviewAgentResultPage() {
         <div className="mb-6 bg-red-500/8 border border-red-500/20 rounded-xl p-4">
           <p className="text-xs font-medium text-red-300/90 mb-1">评审失败原因</p>
           <p className="text-sm text-red-100/80 whitespace-pre-wrap">{submission.errorMessage}</p>
+        </div>
+      )}
+
+      {streamError && !isError && !isDone && (
+        <div className="mb-6 bg-amber-500/8 border border-amber-500/20 rounded-xl p-4">
+          <p className="text-xs font-medium text-amber-300/90 mb-1">
+            {submission.status === 'Running' ? '评审仍在后台执行' : '评审连接暂时失败'}
+          </p>
+          <p className="text-sm text-amber-100/80">
+            {submission.status === 'Running'
+              ? '页面将自动刷新评审结果，无需重复提交。'
+              : streamError}
+          </p>
+          {submission.status === 'Queued' && (
+            <button
+              type="button"
+              onClick={retryReviewStream}
+              disabled={streaming}
+              className="mt-3 inline-flex items-center gap-1.5 rounded-lg border border-amber-400/30 bg-amber-500/15 px-3 py-1.5 text-xs text-amber-200 transition-colors hover:bg-amber-500/25 disabled:opacity-50"
+            >
+              <RefreshCw className="h-3.5 w-3.5" />
+              重新连接评审
+            </button>
+          )}
         </div>
       )}
 

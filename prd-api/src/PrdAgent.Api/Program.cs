@@ -1437,7 +1437,6 @@ if (app.Environment.IsDevelopment())
 app.UseRequestResponseLogging();
 
 app.UseExceptionMiddleware();
-app.UseRateLimiting();
 app.UseCors();
 app.Use(async (context, next) =>
 {
@@ -1469,6 +1468,9 @@ app.Use(async (context, next) =>
     await next();
 });
 app.UseAuthentication();
+// 限流必须位于认证之后，否则所有已登录用户都会退化为共享代理 IP 桶，
+// SSE 长连接还会长期占用同一并发计数，导致同出口用户互相触发 RATE_LIMITED。
+app.UseRateLimiting();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
 // 统一记录"最后操作时间"（仅写请求 + 成功响应）
