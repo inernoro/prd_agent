@@ -430,7 +430,37 @@ public sealed class LiveAsrBatchFallbackService
         if (!mentionsAudio)
             return false;
 
-        return normalized.StartsWith("请提供", StringComparison.OrdinalIgnoreCase)
+        var startsLikeAssistant = normalized.StartsWith("好的", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("可以", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("请", StringComparison.OrdinalIgnoreCase)
+            || normalized.StartsWith("please", StringComparison.OrdinalIgnoreCase);
+        var requestsAudioInput = (normalized.Contains("请", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("please", StringComparison.OrdinalIgnoreCase))
+            && (normalized.Contains("提供", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("上传", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("播放", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("发送", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("provide", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("upload", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("play", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("send", StringComparison.OrdinalIgnoreCase));
+        var promisesTranscription = (normalized.StartsWith("我会", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("我将", StringComparison.OrdinalIgnoreCase)
+                || normalized.StartsWith("I will", StringComparison.OrdinalIgnoreCase))
+            && (normalized.Contains("转写", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("转录", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("transcribe", StringComparison.OrdinalIgnoreCase))
+            && (normalized.Contains("立即", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("马上", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("开始", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("为您", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("帮您", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("right away", StringComparison.OrdinalIgnoreCase)
+                || normalized.Contains("for you", StringComparison.OrdinalIgnoreCase));
+
+        return (startsLikeAssistant && requestsAudioInput)
+            || promisesTranscription
+            || normalized.StartsWith("请提供", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("请上传", StringComparison.OrdinalIgnoreCase)
             || normalized.StartsWith("请播放", StringComparison.OrdinalIgnoreCase)
             || (normalized.StartsWith("好的", StringComparison.OrdinalIgnoreCase)

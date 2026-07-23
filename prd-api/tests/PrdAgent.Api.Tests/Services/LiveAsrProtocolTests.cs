@@ -148,8 +148,11 @@ public class LiveAsrProtocolTests
 
     [Theory]
     [InlineData("好的，请提供音频，我将为您逐字转写。", true)]
+    [InlineData("好的，请将音频上传后，我会立即开始转写。", true)]
+    [InlineData("我会立即开始转写这段音频。", true)]
     [InlineData("Please upload the audio and I will transcribe it.", true)]
     [InlineData("他说请播放音频，然后会议就开始了。", false)]
+    [InlineData("我会把音频发给同事，请他帮我转写。", false)]
     [InlineData("我认为跑步最重要的是身体健康。", false)]
     public void BatchFallbackResponse_ShouldRejectAssistantReplies(string text, bool expected)
     {
