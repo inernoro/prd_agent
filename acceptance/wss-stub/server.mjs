@@ -55,7 +55,7 @@ function encodeDoubaoResponse(sequence, isLast, text) {
   ]);
 }
 
-function consumeFrames(state, chunk, onBinary) {
+function consumeFrames(state, chunk, onBinary, onClose) {
   state.buffer = Buffer.concat([state.buffer, chunk]);
   while (state.buffer.length >= 2) {
     const first = state.buffer[0];
@@ -88,7 +88,10 @@ function consumeFrames(state, chunk, onBinary) {
         payload[index] ^= mask[index % 4];
       }
     }
-    if (opcode === 0x08) return;
+    if (opcode === 0x08) {
+      onClose(payload);
+      return;
+    }
     if (opcode === 0x02) onBinary(payload);
   }
 }
@@ -125,18 +128,29 @@ server.on("upgrade", (request, socket) => {
 
   const state = { buffer: Buffer.alloc(0), received: 0 };
   socket.on("data", (chunk) => {
-    consumeFrames(state, chunk, () => {
-      state.received += 1;
-      stats.binaryMessages += 1;
-      if (state.received === 1) {
-        socket.write(encodeWebSocketBinary(encodeDoubaoResponse(1, false, "")));
-        return;
-      }
-      stats.completedSessions += 1;
-      socket.write(encodeWebSocketBinary(
-        encodeDoubaoResponse(-state.received, true, "CDS WSS stub roundtrip"),
-      ));
-    });
+    consumeFrames(
+      state,
+      chunk,
+      () => {
+        state.received += 1;
+        stats.binaryMessages += 1;
+        if (state.received === 1) {
+          socket.write(encodeWebSocketBinary(encodeDoubaoResponse(1, false, "")));
+          return;
+        }
+        stats.completedSessions += 1;
+        socket.write(encodeWebSocketBinary(
+          encodeDoubaoResponse(-state.received, true, "CDS WSS stub roundtrip"),
+        ));
+      },
+      (payload) => {
+        const closePayload = payload.length > 125 ? Buffer.alloc(0) : payload;
+        socket.end(Buffer.concat([
+          Buffer.from([0x88, closePayload.length]),
+          closePayload,
+        ]));
+      },
+    );
   });
 });
 
