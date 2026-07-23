@@ -3489,6 +3489,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("lg-truncate lg-log-model-name", logs);
         Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
 
+        var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
+        Assert.Contains("CreateClient(\"SafeOutbound\")", imageBackground);
+        Assert.Contains("EnsureSafeHttpUrlAsync", imageBackground);
+        Assert.Contains("ResponseHeadersRead", imageBackground);
+        Assert.Contains("Content-Type 不是 image/*", imageBackground);
+        Assert.Contains("MaxStoredImageBytes", imageBackground);
+        Assert.DoesNotContain("Url = image.SourceUrl", imageBackground);
+
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
         Assert.Contains("<colgroup>", appCallers);

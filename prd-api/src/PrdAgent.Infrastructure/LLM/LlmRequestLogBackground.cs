@@ -37,17 +37,24 @@ public sealed class LlmRequestLogBackground
     private readonly MongoDbContext _db;
     private readonly ILogger<LlmRequestLogBackground> _logger;
     private readonly IAssetStorage _assetStorage;
+    private readonly IHttpClientFactory _httpClientFactory;
+    private readonly ISafeOutboundUrlValidator _urlValidator;
     private readonly Channel<LlmImageStoreOp> _imageStoreQueue;
     private static readonly int[] RetryDelaysMs = [100, 300, 1000, 2000, 5000];
+    private const int MaxStoredImageBytes = 26_250_000;
 
     public LlmRequestLogBackground(
         MongoDbContext db,
         ILogger<LlmRequestLogBackground> logger,
-        IAssetStorage assetStorage)
+        IAssetStorage assetStorage,
+        IHttpClientFactory httpClientFactory,
+        ISafeOutboundUrlValidator urlValidator)
     {
         _db = db;
         _logger = logger;
         _assetStorage = assetStorage;
+        _httpClientFactory = httpClientFactory;
+        _urlValidator = urlValidator;
         _imageStoreQueue = Channel.CreateBounded<LlmImageStoreOp>(
             new BoundedChannelOptions(32)
             {
@@ -214,23 +221,26 @@ public sealed class LlmRequestLogBackground
                     var storedImages = new List<LlmLogImage>(op.Images.Count);
                     foreach (var image in op.Images)
                     {
+                        byte[] bytes;
+                        string mimeType;
                         if (!string.IsNullOrWhiteSpace(image.SourceUrl))
                         {
-                            storedImages.Add(new LlmLogImage
-                            {
-                                Url = image.SourceUrl,
-                                OriginalUrl = image.SourceUrl,
-                                Label = "生成结果",
-                                MimeType = image.MimeType,
-                            });
+                            (bytes, mimeType) = await DownloadImageAsync(image.SourceUrl);
+                        }
+                        else if (!string.IsNullOrWhiteSpace(image.Base64Data))
+                        {
+                            bytes = Convert.FromBase64String(image.Base64Data);
+                            mimeType = image.MimeType;
+                        }
+                        else
+                        {
                             continue;
                         }
-                        if (string.IsNullOrWhiteSpace(image.Base64Data))
-                            continue;
-                        var bytes = Convert.FromBase64String(image.Base64Data);
+                        if (bytes.Length > MaxStoredImageBytes)
+                            throw new InvalidOperationException("生成图片超过日志留存大小上限");
                         var stored = await _assetStorage.SaveAsync(
                             bytes,
-                            image.MimeType,
+                            mimeType,
                             CancellationToken.None,
                             domain: AppDomainPaths.DomainLogs,
                             type: AppDomainPaths.TypeImg);
@@ -269,6 +279,38 @@ public sealed class LlmRequestLogBackground
         {
             _logger.LogError(ex, "LLM output image persistence loop crashed");
         }
+    }
+
+    private async Task<(byte[] Bytes, string MimeType)> DownloadImageAsync(string sourceUrl)
+    {
+        var safeUri = await _urlValidator.EnsureSafeHttpUrlAsync(
+            sourceUrl,
+            "LLM 日志输出图片",
+            CancellationToken.None);
+        using var timeout = new CancellationTokenSource(TimeSpan.FromSeconds(30));
+        using var response = await _httpClientFactory.CreateClient("SafeOutbound").GetAsync(
+            safeUri,
+            HttpCompletionOption.ResponseHeadersRead,
+            timeout.Token);
+        response.EnsureSuccessStatusCode();
+        var contentType = response.Content.Headers.ContentType?.MediaType?.Trim().ToLowerInvariant();
+        if (contentType is null || !contentType.StartsWith("image/", StringComparison.Ordinal))
+            throw new InvalidOperationException("生成图片响应的 Content-Type 不是 image/*");
+        if (response.Content.Headers.ContentLength is > MaxStoredImageBytes)
+            throw new InvalidOperationException("生成图片超过日志留存大小上限");
+
+        await using var input = await response.Content.ReadAsStreamAsync(timeout.Token);
+        await using var output = new MemoryStream();
+        var buffer = new byte[81920];
+        while (true)
+        {
+            var read = await input.ReadAsync(buffer, timeout.Token);
+            if (read == 0) break;
+            if (output.Length + read > MaxStoredImageBytes)
+                throw new InvalidOperationException("生成图片超过日志留存大小上限");
+            await output.WriteAsync(buffer.AsMemory(0, read), timeout.Token);
+        }
+        return (output.ToArray(), contentType);
     }
 
     private async Task UpdateErrorAsync(string logId, string error, int? statusCode)
