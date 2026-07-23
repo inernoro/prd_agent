@@ -54,23 +54,31 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const forwarderPort = Number(process.env.CDS_FORWARDER_PORT) || 9090;
     const hits: Array<{ seq: number; servedBy: string; status: number }> = [];
     const tally: Record<string, number> = {};
-    for (let i = 0; i < count; i += 1) {
-      try {
-        const upstream = await fetch(`http://127.0.0.1:${forwarderPort}${path}${path.includes('?') ? '&' : '?'}__probe=${i}`, {
+    // 必须用原生 http.request：fetch(undici) 会静默忽略自定义 Host 头，
+    // 请求匹配不到分支路由 → 全落 unknown-host 兜底被误记成 primary
+    // （2026-07-23 用户实测「100% 主版本」抓到的真 bug）。
+    const { request: httpRequest } = await import('node:http');
+    const probeOnce = (seq: number): Promise<{ servedBy: string; status: number }> =>
+      new Promise((resolve) => {
+        const req2 = httpRequest({
+          host: '127.0.0.1',
+          port: forwarderPort,
           method: 'GET',
+          path: `${path}${path.includes('?') ? '&' : '?'}__probe=${seq}`,
           headers: { Host: host, 'X-CDS-Probe': '1' },
-          redirect: 'manual',
-          signal: AbortSignal.timeout(8000),
+          timeout: 8000,
+        }, (resp) => {
+          resp.resume();
+          resolve({ servedBy: String(resp.headers['x-cds-replica'] || 'primary'), status: resp.statusCode || 0 });
         });
-        void upstream.arrayBuffer().catch(() => undefined);
-        const servedBy = upstream.headers.get('x-cds-replica') || 'primary';
-        hits.push({ seq: i + 1, servedBy, status: upstream.status });
-        tally[servedBy] = (tally[servedBy] || 0) + 1;
-      } catch (err) {
-        hits.push({ seq: i + 1, servedBy: 'error', status: 0 });
-        tally.error = (tally.error || 0) + 1;
-        void err;
-      }
+        req2.on('timeout', () => { req2.destroy(); resolve({ servedBy: 'error', status: 0 }); });
+        req2.on('error', () => resolve({ servedBy: 'error', status: 0 }));
+        req2.end();
+      });
+    for (let i = 0; i < count; i += 1) {
+      const r = await probeOnce(i);
+      hits.push({ seq: i + 1, servedBy: r.servedBy, status: r.status });
+      tally[r.servedBy] = (tally[r.servedBy] || 0) + 1;
     }
     res.json({ count, host, path, tally, hits });
   });
