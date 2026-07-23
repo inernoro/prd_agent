@@ -17,6 +17,9 @@
   python3 archive_report.py \
     --config <acceptance.config.json> \
     --target "知识库订阅保存双通道" \
+    --report-kind "功能验收" \
+    --title-focus "知识库订阅保存" \
+    --report-date "2026-07-23" \
     --verdict pass --tier L2 \
     --report-md <报告正文.md，速览卡+九段，正文里用 {{EVIDENCE}} 占位> \
     --manifest <harness 产出的 manifest.json：[{name,caption,path}]> \
@@ -26,6 +29,17 @@ import argparse, json, os, subprocess, datetime, re, shutil, time, base64, tempf
 from pathlib import Path
 
 LOCAL_DEFAULT_OUT_DIR = "/tmp/map-acceptance-local"
+REPORT_KINDS = (
+    "功能验收",
+    "每日验收",
+    "PR验收",
+    "Commit验收",
+    "分支验收",
+    "缺陷复测",
+    "视觉回归",
+    "发布验收",
+    "规范演练",
+)
 
 
 def curl(args, retries=5):
@@ -84,6 +98,8 @@ def build_meta(report_id, now, reviewer, a, preview):
         "type: acceptance-report\nstandard: MAP-Acceptance-v2\n"
         f"report_id: {report_id}\ndate: {generated_at}\n"
         f"reviewer: {reviewer}\nverdict: {a.verdict}\ntier: {a.tier}\n"
+        f"report_kind: {getattr(a, 'report_kind', '')}\n"
+        f"report_date: {getattr(a, 'report_date', '')}\n"
         f"target_ref: {a.target}\npreview_url: {preview}\n"
         f"branch: {a.branch}\ncommit: {a.commit}\n-->\n"
     )
@@ -1406,7 +1422,7 @@ def run_doc_store(cfg, a, title, report_id, body, manifest, now, preview, tags=N
     eid = data_or_raise(curl(HJ + ["-X", "POST", "-d", json.dumps({
         "title": title, "summary": f"# {title}",  # 双保险:summary 也以标题打头
         "sourceType": "reference", "contentType": "text/markdown",
-        "tags": tags or [],  # 状态(通过/不通过)+操作方式+档位走标签，不进标题
+        "tags": tags or [],  # 报告类型、状态、操作方式和档位走标签，不进标题
         "metadata": entry_meta,
     }), f"{base}/stores/{rid}/entries"]), "创建知识库条目")["id"]
     print(f"  报告条目 id={eid} title={title} tags={tags or []}")
@@ -1653,6 +1669,106 @@ def _declares_daily_acceptance(target, body):
         text,
         re.I,
     ))
+
+
+def _infer_report_kind(a, body):
+    """Resolve the stable title prefix for every executable acceptance report."""
+    explicit = (getattr(a, "report_kind", "") or "").strip()
+    if explicit:
+        return explicit
+    target = a.target or ""
+    scope_text = _scope_declaration_text(target, body)
+    if _declares_daily_acceptance(target, body):
+        return "每日验收"
+    rules = (
+        ("缺陷复测", r"缺陷复测|defect[- ]retest"),
+        ("视觉回归", r"视觉回归|visual[- ]regression"),
+        ("发布验收", r"发布前(?:阻断)?验收|发布验收|release[- ]preflight"),
+        ("分支验收", r"未发布分支|分支验收|unpublished[- ]branch"),
+        ("Commit验收", r"commit\s*(?:验收|复验|测试|报告)|提交验收"),
+        ("规范演练", r"规范演练|验收样本|acceptance[- ]sample"),
+    )
+    for kind, pattern in rules:
+        if re.search(pattern, scope_text, re.I):
+            return kind
+    if getattr(a, "pr", None) or re.search(r"PR\s*#?\s*\d+|pull[- ]request", scope_text, re.I):
+        return "PR验收"
+    return "功能验收"
+
+
+def _resolve_report_date(a, now):
+    explicit = (getattr(a, "report_date", "") or "").strip()
+    if explicit:
+        return _validate_report_date(explicit)
+    target_date = re.search(r"\b(20\d{2}-\d{2}-\d{2})\b", a.target or "")
+    return _validate_report_date(target_date.group(1)) if target_date else now.strftime("%Y-%m-%d")
+
+
+def _validate_report_date(value):
+    """Require the stable YYYY-MM-DD title date contract."""
+    if not re.fullmatch(r"\d{4}-\d{2}-\d{2}", value or ""):
+        raise argparse.ArgumentTypeError("报告目标日期必须使用 YYYY-MM-DD 格式")
+    try:
+        datetime.date.fromisoformat(value)
+    except ValueError as exc:
+        raise argparse.ArgumentTypeError("报告目标日期不是有效日期") from exc
+    return value
+
+
+def _clean_title_focus(raw, project, report_kind, report_date, operation_type=""):
+    """Keep only the human-distinguishing subject; project/status/type live in metadata."""
+    generic = {
+        project,
+        report_kind,
+        operation_type,
+        "验收报告",
+        "视觉验收",
+        "自动验收",
+        "每日巡检",
+        "巡检特刊",
+    }
+    normalized = []
+    for part in re.split(r"\s*[·|]\s*", raw or ""):
+        value = re.sub(r"^(昨日|昨天|今日|当天)", "", part.strip())
+        value = re.sub(r"\b20\d{2}-\d{2}-\d{2}\b", "", value).strip(" -·/")
+        value = re.sub(r"(?:验收报告)$", "", value).strip(" -·/")
+        if not value or value in generic or value == report_date:
+            continue
+        if value not in normalized:
+            normalized.append(value)
+    return " / ".join(normalized)
+
+
+def build_report_title(a, cfg, now, body):
+    """Unified contract: {report kind} · {focus} · {target date}."""
+    report_kind = _infer_report_kind(a, body)
+    report_date = _resolve_report_date(a, now)
+    raw_focus = (getattr(a, "title_focus", "") or "").strip() or a.feature or a.target
+    focus = _clean_title_focus(
+        raw_focus,
+        (cfg.get("project") or "").strip(),
+        report_kind,
+        report_date,
+        a.type,
+    )
+    module = _clean_title_focus(
+        a.module,
+        (cfg.get("project") or "").strip(),
+        report_kind,
+        report_date,
+        a.type,
+    )
+    if module and module not in focus and focus not in module:
+        focus = f"{module} / {focus}" if focus else module
+    if report_kind == "PR验收" and getattr(a, "pr", None):
+        pr_label = f"#{a.pr}"
+        if pr_label not in focus:
+            focus = f"{pr_label} / {focus}" if focus else pr_label
+    if report_kind == "Commit验收" and (a.commit or "").strip():
+        commit_label = a.commit.strip()[:10]
+        if commit_label not in focus:
+            focus = f"{commit_label} / {focus}" if focus else commit_label
+    return f"{report_kind} · {focus or '验收范围'} · {report_date}", report_kind, report_date
 
 
 def _declares_deep_daily_acceptance(target, body):
@@ -2065,6 +2181,19 @@ def main():
     ap = argparse.ArgumentParser()
     ap.add_argument("--config", required=True)
     ap.add_argument("--target", required=True)
+    ap.add_argument(
+        "--report-kind",
+        default="",
+        choices=REPORT_KINDS,
+        help="标题固定前缀；缺省按目标语义推断，建议复杂验收显式传入",
+    )
+    ap.add_argument("--title-focus", default="", help="标题重点对象；缺省使用 --feature 或 --target")
+    ap.add_argument(
+        "--report-date",
+        default="",
+        type=_validate_report_date,
+        help="标题目标日期，格式 YYYY-MM-DD；缺省从 --target 提取或使用当天",
+    )
     ap.add_argument("--module", default="", help="模块（命名第2段，如 网页托管 / 知识库）")
     ap.add_argument("--feature", default="", help="功能（命名第3段，如 SaaS空间模型；缺省用 --target）")
     ap.add_argument("--type", default="", help="操作方式（命名第4段，如 新增功能 / 优化 / 修复）")
@@ -2086,14 +2215,11 @@ def main():
     now = datetime.datetime.now().astimezone()
     dt = now.strftime(cfg["report"].get("datetimeFormat", "%Y-%m-%d %H:%M:%S %Z%z"))
     verdict_cn = {"pass": "通过", "conditional": "有条件通过", "fail": "不通过"}.get(a.verdict, a.verdict)
-    # 命名固定结构：项目 · 模块 · 功能 · 操作方式 · 验收报告（用户定，2026-05-27）。
-    # verdict（通过/不通过）不进标题——走 tags 标记，不靠改名表达状态。空段自动跳过。
-    segs = [s for s in [cfg["project"], a.module, (a.feature or a.target), a.type] if (s or "").strip()]
-    title = " · ".join(segs) + " · 验收报告"
-    # 标签：状态 + 操作方式 + 档位（取代旧的「标题前缀 [通过]」）
-    tags = [t for t in [verdict_cn, a.type, a.tier] if (t or "").strip()]
-    report_id = f"acc-{cfg['project']}-{now.strftime('%Y%m%d%H%M')}-{slugify(a.target)}"
     body = ensure_report_time(open(a.report_md, encoding="utf-8").read().lstrip(), dt)
+    title, a.report_kind, a.report_date = build_report_title(a, cfg, now, body)
+    # 项目由 projectId、状态由 verdict、操作方式与档位由 metadata/tags 表达，不再挤占标题。
+    tags = [t for t in [verdict_cn, a.report_kind, a.type, a.tier] if (t or "").strip()]
+    report_id = f"acc-{cfg['project']}-{now.strftime('%Y%m%d%H%M')}-{slugify(a.target)}"
     manifest = json.load(open(a.manifest))
 
     # 准入校验：不达标直接拒收，不写库（--force 越权但告警）

@@ -47,7 +47,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 
 1. **模拟人类,禁地址栏直达**:登录后用 `gotoByClick(可见文本)` 点击导航进入目标页,`page.goto` 只许用于登录页。**从导航点不到目标页 = P1 缺陷**(功能做了但用户找不到/没进菜单)——这是 goto 直达永远测不出的真问题。
 2. **人类可读优先**:报告首屏是"验收速览卡"(Verdict + 一句话结论 + 元信息表),不是 YAML。
-3. **命名 + 防 `---`**:报告名业界状态前置 `[{verdict_cn}] {目标} · 验收报告 · {项目} · {日期}`;正文必须以 `# 标题` 打头(目录显示名取 summary 首行,见标准 §2.1)。`archive_report.py` 已内置,手工归档也照此。
+3. **命名 + 防 `---`**:报告名固定为 `{验收前缀} · {重点对象} · {目标日期}`；项目、Verdict、档位、分支、commit、PR 和操作方式走元数据，不进入标题。正文必须以 `# 标题` 打头(目录显示名取 summary 首行,见标准 §2.1)。`archive_report.py` 已内置,手工归档也照此。
 4. **准入门槛(入口准则)**:归档前强制校验——目标有意义、档位/Verdict 合法、截图数达档位下限、证据完整、报告结构齐、无半成品残留;**任一不达标直接拒收、不写库**(见标准 §3.5)。输入不对,输出不可能对。
 5. **证据文件不进代码库**:截图、录屏、临时 HTML、manifest、报告草稿等验收产物必须写到 `/tmp`、系统临时目录、对象存储或知识库,**禁止落到 git 仓库目录内**。默认配置已把 `screenshot.outDir` 与 `report.localOutDir` 指向 `/tmp`;`harness.mjs` 和 `archive_report.py` 会拒绝仓库内截图路径。归档前必须看一眼 `git status --short`,发现 `*.png/*.jpg/*.jpeg/*.webp/*.gif/*.mp4/*.webm` 或 `doc/acceptance/`、`acceptance-*`、`peer-sync-effect-*.html` 这类验收产物在仓库内,先移到 `/tmp` 或删除,不得提交。
 6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
@@ -278,11 +278,11 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
    - **问题定位自测必须入报告**:日报、争议复测、失败报告必须加「问题定位自测」或等价段落。每条 P0/P1/P2 视觉问题要回答:具体页面区域、异常物是什么、挡住或破坏了什么、用户为什么受影响、图内哪个框/圈证明它。回答不出来就不能把该问题写成有效缺陷。
    - **规范一致性自测必须入报告**:日报、争议复测、失败报告必须加「规范一致性自测」或等价段落,核对本轮实际流程是否真的使用 `acceptance-test-design -> acceptance-scenario-orchestrator -> create-visual-test-to-kb`,深度标签是否与证据一致,规范引用是否真正改变了测试动作而不是装饰性引用。
    - **截图回读必须显式写进报告**:截图后不仅要自己看一眼,还要在报告里增加「截图回读检查」表,逐图记录是否截歪、是否加载完成、是否空白、问题是否入镜。发现缓慢加载/半截/空白但不是目标缺陷时,必须重拍;如果空白正是目标缺陷,要在图上框出空白区域并在回读表中说明。
-4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
+4. **归档(默认进 CDS 验收中心,职责分离)**:`python3 scripts/archive_report.py --config acceptance.config.json --target "<目标>" --report-kind "<验收前缀>" --title-focus "<重点对象>" --report-date "<YYYY-MM-DD>" --module "<模块>" --feature "<功能>" --type "<新增功能|优化|修复>" --verdict <pass|conditional|fail> --tier <L0|L1|L2> --report-md <正文.md> --manifest <outDir>/manifest.json [--branch --commit --pr]`。
    - **归属唯一:CDS**。验收能力归 CDS(平台自带、按项目分类、证据链内置);技能**不再分流到 MAP 知识库**——MAP 等系统通过知识库开放协议(peer-sync)从 CDS 拉取展示。`report.mode` 缺省=`cds`;`local` 为离线兜底;`doc-store` 仅向后兼容(需 config 显式保留)。详见 `../cds/reference/acceptance-reports.md`。
    - **交互 HTML 默认**:正文保留 `{{IMG:name}}`/`{{EVIDENCE}}` 结构作为 Markdown 写作源,归档脚本默认转成 `format=html` 交互报告（证据导航/表格筛选/章节折叠/图号跳转）。归档时先把每张截图上传到 CDS report assets,再把正文占位符替换为不可变 URL。10MB 仅是文本/HTML 正文的安全上限,不得通过删减必要截图来迁就该限制。CDS 鉴权走 env `CDS_HOST` + (`CDS_PROJECT_KEY` 或 `AI_ACCESS_KEY`)。仅在下游明确要求 Markdown 时把 config `report.format` 改为 `md`。
    - **按项目 + 文件夹归类(文件夹归类是默认行为,不是可选项)**:报告永远带 projectId(config.report.cdsProjectId > env CDS_PROJECT_ID > config.project);文件夹三级解析 `--folder-path`('/'分隔可嵌套,如 `每日验收/2026-07`) > `config.report.cdsFolder` > `--module` 自动归类——三者都空才落项目根,所以只要按规范传了 `--module`,报告就不会散在根上(2026-07-10 用户反馈 54 份报告大半未归类,由此固化)。服务端在项目作用域内按名 find-or-create,不会跨项目串文件夹。`--verdict/--tier/--branch/--commit/--pr` 作为元数据 + E1 部署上下文 stamp 进报告(看板/跨系统/PR 回写都靠这些)。
-   - **命名固定结构**(用户定):标题 = `项目 · 模块 · 功能 · 操作方式 · 验收报告`(`--module/--feature/--type` 拼装,空段自动跳过)。**状态(通过/不通过)不进标题——走 verdict 元数据徽章**,不靠改名表达状态。
+   - **命名固定结构**(用户定 2026-07-23):标题 = `{验收前缀} · {重点对象} · {目标日期}`。前缀只允许 `功能验收`、`每日验收`、`PR验收`、`Commit验收`、`分支验收`、`缺陷复测`、`视觉回归`、`发布验收`、`规范演练`。复杂验收必须显式传 `--report-kind/--title-focus/--report-date`；每日验收的日期是被验收自然日。项目和状态等信息走 CDS 元数据，不靠标题表达。
    - **必给地址**:收尾必打印「验收归档完成 · CDS 验收中心」块 + `/reports?project=&folder=&report=` 直达深链——每次归档都有一个可达地址交付,绝不静默。
 5. **归档后自查能否打开(强制,创建≠能看)**:拿到可达链接后**必须**跑 `PWPATH=$(npm root -g)/playwright node scripts/verify-open.mjs <url> "<标题里必现的一段>" <最少图片数>`。它 headless 打开真页面断言报告渲染(标题 + 正文 + 截图);默认**最多尝试 3 次**(首试 + 2 次重试),吸收 CDS/Cloudflare/预览网关的偶发抖动和图片慢加载。CDS 直达深链是登录态(headless 需带 CDS 会话或用 `cds/cli/acceptance` proxyroute harness 打开);**匿名分享链 `/r/<token>`(E6)无需登录,headless 可直接断言——首选**。**重试不能抹掉首试失败**:若第 1 次失败、第 2/3 次通过,报告必须记录「第一次结果 / 重试动作 / 最终通过次数 / 最终判定」,并标为链路风险;**exit 0 = 真能看**才算交付完成,**exit 2 = 空白/打不开/截图缺失 → 重新推送验收**(重跑第 4 步,生成新 report_id)。杜绝"建了条目但点开空白"流到用户手里。
 
@@ -307,7 +307,9 @@ node /tmp/my-driver.mjs "$(python3 $SKILL/../cds/cli/cdscli.py --human preview-u
 
 # 4. 归档(默认 cds 验收中心;无 CDS/离线改 config.report.mode=local)
 python3 $SKILL/scripts/archive_report.py --config $SKILL/acceptance.config.json \
-  --target "你的验收目标" --verdict pass --tier L2 \
+  --target "你的验收目标" \
+  --report-kind "功能验收" --title-focus "模块 / 核心能力" --report-date "2026-07-23" \
+  --verdict pass --tier L2 \
   --report-md /tmp/report_body.md --manifest /tmp/acc_shots/manifest.json \
   --branch "$(git branch --show-current)" --commit "$(git rev-parse --short HEAD)"
 ```
