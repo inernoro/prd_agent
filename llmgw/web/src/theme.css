@@ -35,6 +35,7 @@
   --radius-sm: 6px;
   --shadow-card: none;
   --shadow-drawer: -18px 0 48px rgba(0, 0, 0, 0.5);
+  --drawer-backdrop: rgba(0, 0, 0, 0.32);
 }
 
 /* 登录页：未登录状态也清楚说明当前服务、数据边界和下一步。 */
@@ -626,6 +627,7 @@
 
   --shadow-card: none;
   --shadow-drawer: -18px 0 48px rgba(15, 23, 42, 0.12);
+  --drawer-backdrop: rgba(15, 23, 42, 0.16);
 }
 
 * {
