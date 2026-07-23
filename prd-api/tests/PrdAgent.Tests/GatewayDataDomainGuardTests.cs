@@ -3445,6 +3445,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var entityDetails = ReadRepoFile("llmgw/web/src/pages/EntityDetailsPages.tsx");
         var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
@@ -3488,6 +3489,12 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
         Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
+        Assert.Contains("--log-text-entity: #fcfcfe", theme);
+        Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
+        Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);
+        Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
+        Assert.Contains("仅日志观测", entityDetails);
+        Assert.Contains("不补造预算或速率配置", entityDetails);
 
         var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
         Assert.Contains("CreateClient(\"SafeOutbound\")", imageBackground);

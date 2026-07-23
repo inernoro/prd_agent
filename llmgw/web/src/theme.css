@@ -14,6 +14,8 @@
   --text-primary: #f8fafc;
   --text-secondary: #c4c4cc;
   --text-muted: #a1a1aa;
+  --log-text-entity: #fcfcfe;
+  --log-text-muted: rgba(252, 252, 254, 0.627);
 
   --border-subtle: rgba(255, 255, 255, 0.1);
   --border-strong: rgba(255, 255, 255, 0.16);
@@ -617,6 +619,8 @@
   --text-primary: #111827;
   --text-secondary: #374151;
   --text-muted: #4b5563;
+  --log-text-entity: #111827;
+  --log-text-muted: #4b5563;
 
   --border-subtle: #e5e7eb;
   --border-strong: #d1d5db;
@@ -3413,6 +3417,7 @@ a:focus-visible {
 }
 
 .lg-log-table-row > div {
+  color: var(--log-text-muted);
   font-size: 14px;
   font-weight: 450;
   line-height: 1.625;
@@ -3467,7 +3472,7 @@ a:focus-visible {
   min-width: 0;
   align-items: center;
   gap: 7px;
-  color: var(--text-secondary);
+  color: var(--log-text-entity);
 }
 
 .lg-log-app-button {
@@ -3479,7 +3484,7 @@ a:focus-visible {
 }
 
 .lg-log-model-name {
-  color: var(--text-primary);
+  color: var(--log-text-entity);
   font-weight: 560;
 }
 

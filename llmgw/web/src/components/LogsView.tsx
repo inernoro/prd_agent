@@ -425,7 +425,7 @@ export function LogsView() {
       case 'date': {
         const lc = deriveLifecycle(it);
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--text-secondary)', whiteSpace: 'nowrap' }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }}>
             <span
               title={`生命周期：${lc.label}`}
               className={lc.pulse ? 'lg-pulse' : undefined}
@@ -439,7 +439,7 @@ export function LogsView() {
         return (
           <span
             className="lg-truncate"
-            style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
             title={it.requestId || it.id}
           >
             {it.requestId || it.id || DASH}
@@ -513,12 +513,12 @@ export function LogsView() {
         );
       }
       case 'input':
-        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatInputUsage(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{formatInputUsage(it)}</span>;
       case 'output':
-        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatOutputUsage(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{formatOutputUsage(it)}</span>;
       case 'tokens':
         return (
-          <span className="tabular" style={{ color: 'var(--text-secondary)' }}>
+          <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>
             {it.inputTokens == null && it.outputTokens == null ? DASH : fmtCompact((it.inputTokens ?? 0) + (it.outputTokens ?? 0))}
           </span>
         );
@@ -526,34 +526,34 @@ export function LogsView() {
         return (
           <span
             className="tabular"
-            style={{ color: 'var(--text-secondary)' }}
+            style={{ color: 'var(--log-text-muted)' }}
             title={it.providerReportedCost == null && it.estimatedCost == null ? '上游未返回费用，且当前模型尚未配置计价规则' : undefined}
           >
             {formatRecordedCost(it)}
           </span>
         );
       case 'latency':
-        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       case 'status': {
         const s = statusBadgeStyle(it.status, it.statusCode);
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'usage':
-        return <span style={{ color: 'var(--text-secondary)' }}>{it.requestType || DASH}</span>;
+        return <span style={{ color: 'var(--log-text-muted)' }}>{it.requestType || DASH}</span>;
       case 'speed': {
-        return <span className="tabular" style={{ color: 'var(--text-secondary)' }}>{formatThroughput(it)}</span>;
+        return <span className="tabular" style={{ color: 'var(--log-text-muted)' }}>{formatThroughput(it)}</span>;
       }
       case 'finish':
-        return <span style={{ color: 'var(--text-secondary)' }}>{it.finishReason || DASH}</span>;
+        return <span style={{ color: 'var(--log-text-muted)' }}>{it.finishReason || DASH}</span>;
       case 'user':
         return (
-          <span className="lg-truncate" style={{ color: 'var(--text-secondary)' }} title={userLabel(it)}>
+          <span className="lg-truncate" style={{ color: 'var(--log-text-muted)' }} title={userLabel(it)}>
             {userLabel(it)}
           </span>
         );
       case 'stream':
         return (
-          <span style={{ color: 'var(--text-muted)' }}>
+          <span style={{ color: 'var(--log-text-muted)' }}>
             {it.isStreaming == null ? DASH : it.isStreaming ? '流式' : '非流'}
           </span>
         );
@@ -565,7 +565,7 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
           <LogEntityHoverCard
@@ -602,7 +602,7 @@ export function LogsView() {
       }
       case 'genId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
+          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
             {it.requestId || DASH}
           </span>
         );
@@ -611,15 +611,15 @@ export function LogsView() {
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
-        return <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>;
+        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
         return it.isFallback ? (
           <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>否</span>
+          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>否</span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       default:
         return null;
     }
@@ -629,14 +629,14 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return (
-          <span style={{ fontSize: 14, color: 'var(--text-secondary)' }}>
+          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>
             {fmtDate(it.start)}
             {it.end && it.end !== it.start ? ` ~ ${fmtShortTime(it.end)}` : ''}
           </span>
         );
       case 'sessionId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--text-secondary)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
+          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
             {it.sessionId || DASH}
           </span>
         );
@@ -690,10 +690,10 @@ export function LogsView() {
             ) : null}
           </span>
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>
         );
       case 'requests':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--text-secondary)' }}>{it.requestCount}</span>;
+        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{it.requestCount}</span>;
       default:
         return null;
     }
