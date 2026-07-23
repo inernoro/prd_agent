@@ -4740,7 +4740,7 @@
   border: 1px solid hsl(var(--map-line));
   border-radius: 0.6rem;
   background: hsl(var(--map-shell));
-  padding: 0.55rem;
+  padding: 0.4rem 0.5rem;
   color: hsl(var(--map-muted));
 }
 
@@ -4751,23 +4751,32 @@
   color: hsl(var(--map-accent));
 }
 
-.cds-agent-territory-explainer p,
-.cds-agent-territory-explainer strong,
-.cds-agent-territory-explainer span {
-  display: block;
+.cds-agent-territory-explainer p {
   margin: 0;
+  font-size: 0.5625rem;
+  line-height: 1.35;
 }
 
 .cds-agent-territory-explainer strong {
+  display: inline;
+  margin-right: 0.3rem;
   color: hsl(var(--map-text));
-  font-size: 0.625rem;
+  font-size: inherit;
 }
 
 .cds-agent-territory-explainer span {
-  margin-top: 0.12rem;
+  display: inline;
   color: hsl(var(--map-muted));
-  font-size: 0.5625rem;
-  line-height: 1.35;
+  font-size: inherit;
+}
+
+@media (min-width: 641px) and (max-height: 760px) {
+  .cds-agent-world-canvas,
+  .cds-agent-world-map-surface,
+  .cds-agent-world-svg,
+  .cds-agent-territory-legend {
+    height: 326px;
+  }
 }
 
 @media (max-width: 640px) {
