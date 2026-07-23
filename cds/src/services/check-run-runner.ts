@@ -176,6 +176,19 @@ export class CheckRunRunner {
     summary: string;
     previewUrl?: string;
     /**
+     * 显式指定要收尾的 check-run id（缺省取 entry.githubCheckRunId）。
+     * 用于「被取代的部署收尾自己的 check run」：新部署的 ensureOpen 可能已把
+     * entry 上的 id 覆盖成新 run 的，旧部署若只认 state 指针就永远够不到自己
+     * 那个 in_progress 的 run（Codex P2，PR #1235）。带 override 时 state 上的
+     * id 仅在仍等于本 id 时才被清除（CAS），绝不误清新部署的 id。
+     */
+    checkRunId?: number;
+    /**
+     * 显式指定摘要里引用的 DeploymentRun（缺省取 entry.lastDeploymentRunId）。
+     * 与 checkRunId 同因：entry 上的 run 指针可能已被新部署替换。
+     */
+    runId?: string;
+    /**
      * Optional tail of deploy log events to embed in the check-run
      * output. Rendered as a fenced code block in `output.text` — GitHub
      * collapses `text` by default but makes it expandable under a
@@ -191,13 +204,15 @@ export class CheckRunRunner {
     failureDetail?: string;
   }): Promise<void> {
     if (!this.enabled) return;
-    const id = entry.githubCheckRunId;
+    const id = opts.checkRunId ?? entry.githubCheckRunId;
     const repoFullName = entry.githubRepoFullName;
     const instId = entry.githubInstallationId;
     if (!id || !repoFullName || !instId) return;
     const parsed = this.parseRepo(repoFullName);
     if (!parsed) return;
-    const run = this.currentDeploymentRun(entry);
+    const run = opts.runId
+      ? this.deps.stateService.getDeploymentRun(opts.runId)
+      : this.currentDeploymentRun(entry);
 
     const title =
       opts.conclusion === 'success'
@@ -274,11 +289,18 @@ export class CheckRunRunner {
     // overwrite green/red with grey). If the PATCH failed we KEEP the
     // id so the reconciler can try again. Caught by Cursor Bugbot
     // review on #450.
+    //
+    // CAS 语义（Codex P2，PR #1235）：只有 state 上的 id 仍等于刚 PATCH 的那个
+    // 才清除。并发的新一轮部署可能已经用 ensureOpen 盖上了新 id——无条件清除
+    // 会把新部署的 id 抹掉，让它的 finalize 变成 no-op、check run 永远黄灯。
     if (patched) {
-      this.deps.stateService.updateBranchGithubMeta(entry.id, {
-        githubCheckRunId: undefined,
-      });
-      try { this.deps.stateService.save(); } catch { /* best-effort */ }
+      const latest = this.deps.stateService.getBranch(entry.id);
+      if (latest && latest.githubCheckRunId === id) {
+        this.deps.stateService.updateBranchGithubMeta(entry.id, {
+          githubCheckRunId: undefined,
+        });
+        try { this.deps.stateService.save(); } catch { /* best-effort */ }
+      }
     }
   }
 

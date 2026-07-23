@@ -206,6 +206,29 @@ describe('CheckRunRunner.reconcileStale (周期收敛滞留 in_progress 的 chec
     expect(updates[0].payload.output.summary).toContain('回写丢失');
   });
 
+  it('finalize(checkRunId 覆盖): 被取代部署收尾自己的旧 run，不误清新部署盖上的 id（Codex P2）', async () => {
+    const run = await runs.begin({ projectId: 'p1', branchId: 'b1', trigger: 'webhook' });
+    // 旧部署打开 check run 7（ensureOpen mock 返回 id=7 并落 state）
+    await runner.ensureOpen(branch);
+    expect(stateService.getBranch('b1')?.githubCheckRunId).toBe(7);
+    // 竞态：新部署的 ensureOpen 抢先把 state 上的 id 盖成 8
+    stateService.updateBranchGithubMeta('b1', { githubCheckRunId: 8 });
+    // 旧部署按显式 id=7 收尾自己的 run
+    const latest = stateService.getBranch('b1')!;
+    await runner.finalize(latest, {
+      conclusion: 'cancelled',
+      summary: '部署被更高优先级操作取代',
+      checkRunId: 7,
+      runId: run.id,
+    });
+    // PATCH 打在旧 run 7 上，而不是 state 里的新 id 8
+    expect(updates).toHaveLength(1);
+    expect(updates[0].id).toBe(7);
+    expect(updates[0].payload.conclusion).toBe('cancelled');
+    // CAS：state 上的 id 是 8（≠7），不得被清——新部署还要用它 finalize
+    expect(stateService.getBranch('b1')?.githubCheckRunId).toBe(8);
+  });
+
   it('concludeWithoutDeploy: 部署未启动的失败直接创建已完结的 failure check run，不落 id', async () => {
     let created: any;
     githubApp.createCheckRun = async (_inst: number, _o: string, _r: string, payload: any) => {

@@ -13050,15 +13050,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.appendLog(id, opLog);
         stateService.save();
         // 2026-07-23: 被取代的部署此前直接 return，本轮打开的 check run 永远停在
-        // in_progress（GitHub 上黄灯转圈、既不报错也不成功）。若 check-run id 仍是
-        // 本轮的（未被取代方新部署的 ensureOpen 替换），就地收尾为 cancelled；
-        // 已被替换则归新部署管，不触碰。best-effort，失败只记事件不冒泡。
+        // in_progress（GitHub 上黄灯转圈、既不报错也不成功）。按**本轮记下的显式
+        // id** 收尾为 cancelled——不能依赖 entry.githubCheckRunId 等值判断：新部署
+        // 的 ensureOpen 可能已抢先把它盖成新 id，旧 run 就成了无状态指针的孤儿，
+        // reconcileStale 也够不到（state 里只剩新 id）（Codex P2，PR #1235）。
+        // finalize 内部的 CAS 保证不会误清新部署盖上的 id。best-effort，失败只
+        // 记事件不冒泡。
         try {
           const latestEntry = stateService.getBranch(id);
-          if (openedCheckRunId && latestEntry?.githubCheckRunId === openedCheckRunId) {
+          if (openedCheckRunId && latestEntry) {
             await checkRunRunner.finalize(latestEntry, {
               conclusion: 'cancelled',
               summary: `部署被更高优先级操作取代: ${errMsg}`,
+              checkRunId: openedCheckRunId,
+              runId: deploymentRun?.id,
             });
           }
         } catch (finalizeErr) {
