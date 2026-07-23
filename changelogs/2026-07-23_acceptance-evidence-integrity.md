@@ -5,3 +5,4 @@
 | fix | acceptance | 提升每日验收必需章节常量位置，避免官方技能包截断后丢失归档门禁 |
 | test | prd-api | 更新 LLMGW 日志守卫为 HoverCard 与主题样式语义契约 |
 | ci | repository | 补充 LLMGW Web 变更触发跨模块服务端守卫 |
+| fix | acceptance | 手机端验收报告改用紧凑可折叠纵向导航并修复跳转遮挡 |

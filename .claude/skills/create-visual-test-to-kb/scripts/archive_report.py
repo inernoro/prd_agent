@@ -612,6 +612,7 @@ class _EvidenceHtmlParser(HTMLParser):
         self.back_links = 0
         self.side_tabs = []
         self.directory_hrefs = []
+        self.mobile_nav_toggles = 0
         self._card = None
 
     def handle_starttag(self, tag, attrs):
@@ -627,6 +628,8 @@ class _EvidenceHtmlParser(HTMLParser):
             self.back_links += 1
         if tag == "button" and values.get("data-side-tab"):
             self.side_tabs.append(values["data-side-tab"])
+        if tag == "button" and "data-mobile-nav-toggle" in values:
+            self.mobile_nav_toggles += 1
         if tag == "a" and "section-nav-item" in classes and href.startswith("#"):
             self.directory_hrefs.append(href[1:])
         if tag == "a" and "evidence-card" in classes:
@@ -703,6 +706,11 @@ def _interactive_evidence_errors(html_content, manifest):
         errors.append(
             "[报告导航] 左上角必须按顺序提供 evidence/contents 两个 Tab："
             f"actual={parser.side_tabs}"
+        )
+    if parser.mobile_nav_toggles != 1 or id_counts.get("mobile-nav-drawer", 0) != 1:
+        errors.append(
+            "[报告导航] 移动端必须提供一个可折叠导航按钮和一个抽屉："
+            f"toggle={parser.mobile_nav_toggles} drawer={id_counts.get('mobile-nav-drawer', 0)}"
         )
     if not parser.directory_hrefs:
         errors.append("[报告导航] 报告目录不能为空")
@@ -1341,6 +1349,7 @@ aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .side-tab.active{{background:var(--accent);color:#fff7ee}}
 .side-tab span{{display:block;font-size:11px;font-weight:700;line-height:1.25}}
 .side-tab small{{display:block;margin-top:2px;font-size:8px;letter-spacing:.12em;opacity:.72}}
+.side-drawer-toggle{{display:none}}
 .side-panel{{display:none}}
 .side-panel.active{{display:block}}
 .evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}
@@ -1484,6 +1493,27 @@ main{{padding:0 16px 60px}}
 .toolbar{{top:0}}
 }}
 @media(max-width:640px){{
+html,body{{overflow-x:clip}}
+aside{{max-height:none;padding:8px 10px;overflow:visible}}
+.side-mast{{gap:8px;padding-bottom:6px;margin-bottom:6px}}
+.side-mast .side-stamp{{width:28px;height:28px;font-size:10px}}
+.side-mast b{{font-size:12.5px}}
+.side-mast i{{display:none}}
+.side-controls{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch}}
+.side-tabs{{margin:0}}
+.side-tab{{padding:6px 7px}}
+.side-tab span{{font-size:10.5px}}
+.side-drawer-toggle{{display:flex;align-items:center;justify-content:center;min-width:68px;border-color:var(--side-line);background:rgba(255,255,255,.04);color:var(--side-text);padding:5px 8px}}
+.side-drawer-toggle:hover{{background:rgba(255,255,255,.10);color:var(--side-text)}}
+.side-drawer-toggle[aria-expanded="true"]{{border-color:var(--accent);background:var(--accent);color:#fff7ee}}
+.side-drawer{{display:none;max-height:min(52vh,420px);overflow-y:auto;overscroll-behavior:contain;margin-top:8px;padding:8px 2px 2px;border-top:1px solid var(--side-line);-webkit-overflow-scrolling:touch}}
+aside.mobile-nav-open .side-drawer{{display:block}}
+.side-panel{{max-height:none;overflow:visible}}
+.evidence-nav,.section-nav{{display:flex;flex-direction:column;gap:6px;overflow:visible;padding:0;margin:0}}
+.evidence-nav a,.section-nav-item{{flex:none;width:100%;margin:0}}
+.evidence-nav a{{grid-template-columns:68px minmax(0,1fr);min-height:58px}}
+.evidence-nav .nav-thumb{{width:68px}}
+.figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
 .title-row{{gap:12px}}
 .badge{{font-size:13px;padding:7px 12px}}
@@ -1493,14 +1523,19 @@ main{{padding:0 16px 60px}}
 </head>
 <body>
 <div class="layout">
-<aside>
+<aside id="report-navigation">
   <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><i>{flavor_en}</i></div></div>
-  <div class="side-tabs" role="tablist" aria-label="报告导航">
-    <button class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="side-panel-evidence" data-side-tab="evidence"><span>证据导航</span><small>EVIDENCE</small></button>
-    <button class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="side-panel-contents" data-side-tab="contents"><span>报告目录</span><small>CONTENTS</small></button>
+  <div class="side-controls">
+    <div class="side-tabs" role="tablist" aria-label="报告导航">
+      <button class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="side-panel-evidence" data-side-tab="evidence"><span>证据导航</span><small>EVIDENCE</small></button>
+      <button class="side-tab" type="button" role="tab" aria-selected="false" aria-controls="side-panel-contents" data-side-tab="contents"><span>报告目录</span><small>CONTENTS</small></button>
+    </div>
+    <button class="side-drawer-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav-drawer" data-mobile-nav-toggle>展开导航</button>
   </div>
-  <div id="side-panel-evidence" class="side-panel active" role="tabpanel"><div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div></div>
-  <div id="side-panel-contents" class="side-panel" role="tabpanel"><nav class="section-nav" aria-label="报告目录">{directory_html}</nav></div>
+  <div id="mobile-nav-drawer" class="side-drawer" aria-hidden="false">
+    <div id="side-panel-evidence" class="side-panel active" role="tabpanel"><div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div></div>
+    <div id="side-panel-contents" class="side-panel" role="tabpanel"><nav class="section-nav" aria-label="报告目录">{directory_html}</nav></div>
+  </div>
 </aside>
 <main>
   <header class="hero">
@@ -1526,6 +1561,18 @@ main{{padding:0 16px 60px}}
 </div>
 <script>
 (function(){{
+  var reportNavigation=document.getElementById('report-navigation');
+  var mobileNavDrawer=document.getElementById('mobile-nav-drawer');
+  var mobileNavToggle=document.querySelector('[data-mobile-nav-toggle]');
+  var mobileNavQuery=window.matchMedia('(max-width:640px)');
+  function isMobileNavigation(){{return mobileNavQuery.matches;}}
+  function setMobileNavOpen(open){{
+    var expanded=isMobileNavigation()&&Boolean(open);
+    reportNavigation.classList.toggle('mobile-nav-open',expanded);
+    mobileNavToggle.setAttribute('aria-expanded',expanded?'true':'false');
+    mobileNavToggle.textContent=expanded?'收起导航':'展开导航';
+    mobileNavDrawer.setAttribute('aria-hidden',isMobileNavigation()&&!expanded?'true':'false');
+  }}
   function setSideTab(name){{
     document.querySelectorAll('[data-side-tab]').forEach(function(tab){{
       var active=tab.getAttribute('data-side-tab')===name;
@@ -1537,11 +1584,26 @@ main{{padding:0 16px 60px}}
     }});
   }}
   document.querySelectorAll('[data-side-tab]').forEach(function(tab){{
-    tab.addEventListener('click',function(){{setSideTab(tab.getAttribute('data-side-tab'));}});
+    tab.addEventListener('click',function(){{
+      setSideTab(tab.getAttribute('data-side-tab'));
+      if(isMobileNavigation()) setMobileNavOpen(true);
+    }});
   }});
-  document.querySelectorAll('[data-return-evidence]').forEach(function(link){{
-    link.addEventListener('click',function(){{setSideTab('evidence');}});
+  mobileNavToggle.addEventListener('click',function(){{
+    setMobileNavOpen(mobileNavToggle.getAttribute('aria-expanded')!=='true');
   }});
+  function syncMobileNavigation(){{
+    if(isMobileNavigation()) setMobileNavOpen(false);
+    else{{
+      reportNavigation.classList.remove('mobile-nav-open');
+      mobileNavToggle.setAttribute('aria-expanded','false');
+      mobileNavToggle.textContent='展开导航';
+      mobileNavDrawer.setAttribute('aria-hidden','false');
+    }}
+  }}
+  if(mobileNavQuery.addEventListener) mobileNavQuery.addEventListener('change',syncMobileNavigation);
+  else if(mobileNavQuery.addListener) mobileNavQuery.addListener(syncMobileNavigation);
+  syncMobileNavigation();
   var filterInput=document.getElementById('reportFilter');
   var mode='all';
   function applyFilter(){{
@@ -1595,6 +1657,12 @@ main{{padding:0 16px 60px}}
       n=n.nextElementSibling;
     }}
   }}
+  function targetForHash(hash){{
+    if(!hash||hash.charAt(0)!=='#') return null;
+    var id=hash.slice(1);
+    try{{id=decodeURIComponent(id);}}catch(error){{return null;}}
+    return document.getElementById(id);
+  }}
   document.querySelectorAll('#reportBody h2').forEach(function(h){{
     var b=document.createElement('button');
     b.className='section-toggle';
@@ -1612,21 +1680,34 @@ main{{padding:0 16px 60px}}
       }}
     }});
   }});
-  document.addEventListener('click', function(ev){{
-    var a=ev.target.closest&&ev.target.closest('a[href^="#fig-"]');
-    if(!a) return;
-    ev.preventDefault();
-    var t=document.querySelector(a.getAttribute('href'));
+  function jumpToTarget(hash){{
+    var t=targetForHash(hash);
     if(!t) return;
     expandSectionForTarget(t);
-    t.scrollIntoView({{block:'start'}});
-    if(history&&history.replaceState) history.replaceState(null,'',a.getAttribute('href'));
+    var scroll=function(){{
+      t.scrollIntoView({{block:'start'}});
+      if(history&&history.replaceState) history.replaceState(null,'',hash);
+    }};
+    if(isMobileNavigation()){{
+      setMobileNavOpen(false);
+      requestAnimationFrame(function(){{requestAnimationFrame(scroll);}});
+    }}else scroll();
+  }}
+  document.addEventListener('click', function(ev){{
+    var a=ev.target.closest&&ev.target.closest('a[href^="#"]');
+    if(!a) return;
+    var hash=a.getAttribute('href');
+    var t=targetForHash(hash);
+    if(!t) return;
+    ev.preventDefault();
+    if(a.hasAttribute('data-return-evidence')) setSideTab('evidence');
+    jumpToTarget(hash);
   }});
   window.addEventListener('hashchange', function(){{
-    var t=location.hash&&document.querySelector(location.hash);
+    var t=targetForHash(location.hash);
     expandSectionForTarget(t);
   }});
-  if(location.hash){{setTimeout(function(){{var t=document.querySelector(location.hash); expandSectionForTarget(t); if(t) t.scrollIntoView({{block:'start'}});}},50);}}
+  if(location.hash){{setTimeout(function(){{jumpToTarget(location.hash);}},50);}}
 }})();
 </script>
 </body>

@@ -282,6 +282,24 @@ P1: 报告页右侧为空且遮挡正文，没有截图锚点。
         raise AssertionError("sidebar tabs must be evidence and contents")
     if "aside{position:sticky;top:0;z-index:20" not in relationship_html:
         raise AssertionError("sidebar tabs must remain visible in the embedded narrow report viewport")
+    if relationship_html.count("data-mobile-nav-toggle>") != 1:
+        raise AssertionError("mobile report navigation must provide exactly one drawer toggle")
+    if 'id="mobile-nav-drawer"' not in relationship_html:
+        raise AssertionError("mobile report navigation must provide a controlled drawer")
+    if "aside.mobile-nav-open .side-drawer{display:block}" not in relationship_html:
+        raise AssertionError("mobile report navigation must stay collapsed until explicitly opened")
+    if ".evidence-nav,.section-nav{display:flex;flex-direction:column" not in relationship_html:
+        raise AssertionError("mobile evidence and contents navigation must be vertical, not horizontal carousels")
+    if "html,body{overflow-x:clip}" not in relationship_html:
+        raise AssertionError("mobile page-level horizontal scrolling must be disabled while tables keep local scrolling")
+    if "if(isMobileNavigation()) setMobileNavOpen(true)" not in relationship_html:
+        raise AssertionError("selecting a mobile navigation tab must open its drawer")
+    if "requestAnimationFrame(function(){requestAnimationFrame(scroll);})" not in relationship_html:
+        raise AssertionError("mobile anchor jumps must wait for drawer collapse before measuring the target")
+    if ".figure-anchor,#evidence-gallery,h1,h2,h3{scroll-margin-top:118px}" not in relationship_html:
+        raise AssertionError("mobile targets must reserve the compact sticky navigation height")
+    if "document.getElementById(id)" not in relationship_html or "decodeURIComponent(id)" not in relationship_html:
+        raise AssertionError("encoded Chinese section hashes must resolve through decoded element IDs")
     if '<div class="thumb-placeholder"' in relationship_html or ">无缩略图<" in relationship_html:
         raise AssertionError("interactive reports must never contain thumbnail placeholders")
     assert_no_errors(archive._interactive_evidence_errors(relationship_html, relationship_manifest))
