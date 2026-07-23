@@ -1698,6 +1698,7 @@ public static class GatewayHttpEndpoints
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/asr/live", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)

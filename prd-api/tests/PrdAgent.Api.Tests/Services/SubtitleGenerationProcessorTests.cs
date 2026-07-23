@@ -14,6 +14,32 @@ namespace PrdAgent.Api.Tests.Services;
 public class SubtitleGenerationProcessorTests
 {
     [Fact]
+    public void CompletedLiveTranscript_ShouldBeUsed_OnlyWhenStatusAndTextAreValid()
+    {
+        var completed = new DocumentEntry
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed,
+                ["liveTranscript"] = "  已实时识别的原文  ",
+            },
+        };
+        var degraded = new DocumentEntry
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Degraded,
+                ["liveTranscript"] = "不稳定的局部文字",
+            },
+        };
+
+        SubtitleGenerationProcessor.GetCompletedLiveTranscript(completed)
+            .ShouldBe("已实时识别的原文");
+        SubtitleGenerationProcessor.GetCompletedLiveTranscript(degraded)
+            .ShouldBeNull();
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart()
     {
         GatewayRawRequest? capturedRequest = null;

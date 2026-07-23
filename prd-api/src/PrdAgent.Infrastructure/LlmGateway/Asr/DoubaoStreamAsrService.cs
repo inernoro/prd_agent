@@ -3,7 +3,9 @@ using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
+using System.Threading.Channels;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services;
 
 namespace PrdAgent.Infrastructure.LlmGateway;
@@ -569,6 +571,229 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
         }
 
         return result;
+    }
+
+    /// <summary>
+    /// 直接消费浏览器持续产生的 PCM16 帧并实时返回识别快照。
+    /// 与 <see cref="TranscribeWithCallbackAsync"/> 的区别是：本方法不会先等待完整音频，
+    /// 也不会人为按音频时长延迟发送；输入帧到达后立即交给上游。
+    /// </summary>
+    public async Task<LiveAsrSessionResult> TranscribeLivePcmAsync(
+        string wsUrl,
+        string appKey,
+        string accessKey,
+        ChannelReader<LiveAsrAudioFrame> frames,
+        Func<LiveAsrEvent, Task> emit,
+        string? provider,
+        string? model,
+        int attempt,
+        int totalAttempts,
+        Dictionary<string, object>? config = null,
+        CancellationToken ct = default,
+        bool requirePublicPinnedWebSocket = false)
+    {
+        var resourceId = config?.GetValueOrDefault("resourceId")?.ToString()
+            ?? "volc.bigasr.sauc.duration";
+        var requestId = Guid.NewGuid().ToString();
+        var headers = new Dictionary<string, string>
+        {
+            ["X-Api-Resource-Id"] = resourceId,
+            ["X-Api-Request-Id"] = requestId,
+        };
+        if (!string.IsNullOrWhiteSpace(appKey))
+        {
+            headers["X-Api-App-Key"] = appKey;
+            headers["X-Api-Access-Key"] = accessKey;
+        }
+        else
+        {
+            headers["x-api-key"] = accessKey;
+        }
+
+        using var ws = new ClientWebSocket();
+        foreach (var (key, value) in headers)
+            ws.Options.SetRequestHeader(key, value);
+
+        IDisposable? safeTransport = null;
+        long latestAudioSequence = 0;
+        var latestText = string.Empty;
+        try
+        {
+            using var setupCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            setupCts.CancelAfter(TimeSpan.FromSeconds(15));
+            if (requirePublicPinnedWebSocket)
+            {
+                if (_safeWebSocketConnector is null)
+                    throw new InvalidOperationException("外部 WebSocket 安全连接器不可用");
+                safeTransport = await _safeWebSocketConnector.ConnectAsync(ws, wsUrl, setupCts.Token);
+            }
+            else
+            {
+                await ws.ConnectAsync(new Uri(wsUrl), setupCts.Token);
+            }
+
+            var protocolSequence = 1;
+            var fullRequest = BuildFullClientRequest(protocolSequence, channels: 1, bits: 16, rate: 16000, config);
+            await ws.SendAsync(fullRequest, WebSocketMessageType.Binary, endOfMessage: true, setupCts.Token);
+            var init = await ReceiveOneAsync(ws, setupCts.Token);
+            if (init.Code != 0)
+                throw new InvalidOperationException($"ASR 初始化失败: code={init.Code}");
+
+            await emit(new LiveAsrEvent
+            {
+                Type = LiveAsrEventTypes.Ready,
+                Message = totalAttempts > 1
+                    ? $"实时转写已连接（方案 {attempt}/{totalAttempts}）"
+                    : "实时转写已连接",
+                Provider = provider,
+                Model = model,
+                Attempt = attempt,
+                TotalAttempts = totalAttempts,
+            });
+
+            using var sessionCts = CancellationTokenSource.CreateLinkedTokenSource(ct);
+            var sendTask = Task.Run(async () =>
+            {
+                try
+                {
+                    LiveAsrAudioFrame? pending = null;
+                    await foreach (var frame in frames.ReadAllAsync(sessionCts.Token))
+                    {
+                        if (frame.IsFinal)
+                        {
+                            protocolSequence++;
+                            var finalAudio = pending?.Pcm ?? Array.Empty<byte>();
+                            if (pending is not null)
+                                Interlocked.Exchange(ref latestAudioSequence, pending.Sequence);
+                            var finalRequest = BuildAudioOnlyRequest(protocolSequence, finalAudio, isLast: true);
+                            await ws.SendAsync(finalRequest, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+                            return;
+                        }
+
+                        if (pending is not null)
+                        {
+                            protocolSequence++;
+                            Interlocked.Exchange(ref latestAudioSequence, pending.Sequence);
+                            var audioRequest = BuildAudioOnlyRequest(protocolSequence, pending.Pcm, isLast: false);
+                            await ws.SendAsync(audioRequest, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+                        }
+                        pending = frame;
+                    }
+
+                    protocolSequence++;
+                    if (pending is not null)
+                        Interlocked.Exchange(ref latestAudioSequence, pending.Sequence);
+                    var lastRequest = BuildAudioOnlyRequest(
+                        protocolSequence,
+                        pending?.Pcm ?? Array.Empty<byte>(),
+                        isLast: true);
+                    await ws.SendAsync(lastRequest, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
+                }
+                catch
+                {
+                    sessionCts.Cancel();
+                    throw;
+                }
+            }, CancellationToken.None);
+
+            var receiveTask = Task.Run(async () =>
+            {
+                try
+                {
+                    while (!sessionCts.IsCancellationRequested)
+                    {
+                        var response = await ReceiveOneAsync(ws, sessionCts.Token);
+                        if (response.Code != 0)
+                            throw new InvalidOperationException($"ASR 服务返回业务错误码 {response.Code}");
+
+                        var text = ExtractTextFromPayload(response);
+                        if (!string.IsNullOrWhiteSpace(text))
+                        {
+                            latestText = text.Trim();
+                            await emit(new LiveAsrEvent
+                            {
+                                Type = response.IsLastPackage ? LiveAsrEventTypes.Final : LiveAsrEventTypes.Partial,
+                                Sequence = Interlocked.Read(ref latestAudioSequence),
+                                Text = latestText,
+                                Stable = response.IsLastPackage,
+                                Provider = provider,
+                                Model = model,
+                                Attempt = attempt,
+                                TotalAttempts = totalAttempts,
+                            });
+                        }
+
+                        if (response.IsLastPackage)
+                            return;
+                    }
+                }
+                catch
+                {
+                    sessionCts.Cancel();
+                    throw;
+                }
+            }, CancellationToken.None);
+
+            await sendTask;
+            var finalTimeoutSeconds = Math.Clamp(
+                int.TryParse(config?.GetValueOrDefault("finalTimeoutSeconds")?.ToString(), out var configuredTimeout)
+                    ? configuredTimeout
+                    : 8,
+                3,
+                20);
+            var finished = await Task.WhenAny(
+                receiveTask,
+                Task.Delay(TimeSpan.FromSeconds(finalTimeoutSeconds), CancellationToken.None));
+            if (finished != receiveTask)
+            {
+                sessionCts.Cancel();
+                throw new TimeoutException($"实时 ASR 在 {finalTimeoutSeconds} 秒内未返回最终结果");
+            }
+            await receiveTask;
+            return new LiveAsrSessionResult
+            {
+                Completed = !string.IsNullOrWhiteSpace(latestText),
+                Degraded = string.IsNullOrWhiteSpace(latestText),
+                Transcript = latestText,
+                Provider = provider,
+                Model = model,
+                Error = string.IsNullOrWhiteSpace(latestText) ? "实时 ASR 未返回可用文字" : null,
+            };
+        }
+        catch (Exception ex)
+        {
+            _logger.LogWarning(
+                ex,
+                "[DoubaoStreamAsr.Live] 实时会话失败 provider={Provider} model={Model} attempt={Attempt}/{Total}",
+                provider,
+                model,
+                attempt,
+                totalAttempts);
+            return new LiveAsrSessionResult
+            {
+                Completed = false,
+                Degraded = true,
+                Transcript = latestText,
+                Provider = provider,
+                Model = model,
+                Error = ex.Message,
+            };
+        }
+        finally
+        {
+            if (ws.State == WebSocketState.Open)
+            {
+                try
+                {
+                    await ws.CloseAsync(WebSocketCloseStatus.NormalClosure, "done", CancellationToken.None);
+                }
+                catch
+                {
+                    // 实时连接已经完成或异常断开，无需用关闭异常覆盖业务结果。
+                }
+            }
+            safeTransport?.Dispose();
+        }
     }
 
     // ═══════════════════════════════════════════════════════════

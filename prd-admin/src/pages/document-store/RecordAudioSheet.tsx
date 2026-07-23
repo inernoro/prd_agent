@@ -16,6 +16,13 @@ import {
 import type { DocumentEntry } from '@/services/contracts/documentStore';
 import { vaultStartSession, vaultAppendChunk, vaultDeleteSession, vaultUpdateSessionStore } from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  LiveTranscriptionSocket,
+  reduceLiveTranscriptionView,
+  startLivePcmCapture,
+  type LiveTranscriptionState,
+} from './liveTranscription';
 
 /**
  * 录音转笔记的「现场录音」面板：打开即请求麦克风并开始录音（MediaRecorder），
@@ -72,6 +79,10 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
   const [protectedBytes, setProtectedBytes] = useState(0);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const liveTranscriptValueRef = useRef('');
+  const [liveTranscriptState, setLiveTranscriptState] = useState<LiveTranscriptionState>('connecting');
+  const [liveTranscriptMessage, setLiveTranscriptMessage] = useState('正在连接实时转写');
   const [changingDestination, setChangingDestination] = useState(false);
   const [storeOptions, setStoreOptions] = useState<{ id: string; name: string }[]>(
     storeId ? [{ id: storeId, name: storeName || '当前知识库' }] : [],
@@ -95,6 +106,10 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
   const uploadChunkIndexRef = useRef(0);
   const liveUploadFailedRef = useRef(false);
+  const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
+  const pendingLivePcmRef = useRef<Int16Array[]>([]);
+  const stopLiveCaptureRef = useRef<(() => void) | null>(null);
+  const liveCaptureEnabledRef = useRef(true);
   // 完成/取消/组件卸载 的意图标记：onstop 回调按它决定产出 File / 删保险箱 / 保留保险箱。
   // abandon = 录音中组件被卸载（如 SPA 路由跳走）：保留保险箱数据，下次进页可恢复。
   const finishModeRef = useRef<'complete' | 'discard' | 'abandon'>('discard');
@@ -102,6 +117,36 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   onCompleteRef.current = onComplete;
   const onUploadedRef = useRef(onUploaded);
   onUploadedRef.current = onUploaded;
+
+  const connectLiveTranscription = useCallback((sessionId: string) => {
+    if (liveTranscriptionRef.current) return;
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      setLiveTranscriptState('degraded');
+      setLiveTranscriptMessage('登录状态不可用，录音结束后将自动转写');
+      return;
+    }
+    const socket = new LiveTranscriptionSocket(
+      sessionId,
+      token,
+      (event) => {
+        const view = reduceLiveTranscriptionView(liveTranscriptValueRef.current, event);
+        liveTranscriptValueRef.current = view.text;
+        setLiveTranscript(view.text);
+        setLiveTranscriptMessage(view.message);
+      },
+      (nextState) => {
+        setLiveTranscriptState(nextState);
+        if (nextState === 'live') setLiveTranscriptMessage('正在实时转写');
+        if (nextState === 'finalizing') setLiveTranscriptMessage('正在确认最后一句');
+        if (nextState === 'completed') setLiveTranscriptMessage('实时转写已完成');
+        if (nextState === 'degraded') setLiveTranscriptMessage('实时转写已降级，结束后将自动校准');
+      },
+    );
+    liveTranscriptionRef.current = socket;
+    socket.connect();
+    for (const pcm of pendingLivePcmRef.current.splice(0)) socket.send(pcm);
+  }, []);
 
   const ensureUploadSession = useCallback(async (): Promise<string | null> => {
     if (uploadSessionIdRef.current) return uploadSessionIdRef.current;
@@ -114,19 +159,24 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         if (!res.success) {
           liveUploadFailedRef.current = true;
           setLiveProtection('local');
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
           return null;
         }
         uploadSessionIdRef.current = res.data.sessionId;
         setLiveProtection('active');
+        connectLiveTranscription(res.data.sessionId);
         return res.data.sessionId;
       })
       .catch(() => {
         liveUploadFailedRef.current = true;
         setLiveProtection('local');
+        setLiveTranscriptState('degraded');
+        setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
         return null;
       });
     return await uploadSessionPromiseRef.current;
-  }, [storeId]);
+  }, [connectLiveTranscription, storeId]);
 
   const queueLiveChunk = useCallback((blob: Blob) => {
     uploadQueueRef.current = uploadQueueRef.current.then(async () => {
@@ -163,6 +213,13 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
       if (!uploadSessionIdRef.current && !uploadSessionPromiseRef.current && !liveUploadFailedRef.current) return;
       await uploadQueueRef.current;
       const previousSessionId = uploadSessionIdRef.current;
+      liveTranscriptionRef.current?.close();
+      liveTranscriptionRef.current = null;
+      pendingLivePcmRef.current = [];
+      setLiveTranscript('');
+      liveTranscriptValueRef.current = '';
+      setLiveTranscriptState('connecting');
+      setLiveTranscriptMessage('正在连接新知识库的实时转写');
       if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
       uploadSessionIdRef.current = null;
       uploadSessionPromiseRef.current = null;
@@ -200,6 +257,12 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
 
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
+    liveCaptureEnabledRef.current = false;
+    stopLiveCaptureRef.current?.();
+    stopLiveCaptureRef.current = null;
+    liveTranscriptionRef.current?.close();
+    liveTranscriptionRef.current = null;
+    pendingLivePcmRef.current = [];
     // 录音进行中被卸载（SPA 路由跳走等）：标记 abandon —— 停轨会触发 onstop，
     // 不能让默认的 discard 把保险箱数据删掉（那是断网/忘关场景唯一的恢复来源）
     if (finishModeRef.current === 'discard' && recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -213,6 +276,19 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
 
   const stopRecorder = useCallback((mode: 'complete' | 'discard') => {
     finishModeRef.current = mode;
+    if (mode === 'complete') {
+      // 先刷新不足 100ms 的最后一帧，再关闭采集开关。
+      stopLiveCaptureRef.current?.();
+      liveCaptureEnabledRef.current = false;
+    } else {
+      liveCaptureEnabledRef.current = false;
+      stopLiveCaptureRef.current?.();
+    }
+    stopLiveCaptureRef.current = null;
+    if (mode === 'discard') {
+      liveTranscriptionRef.current?.close();
+      liveTranscriptionRef.current = null;
+    }
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') rec.stop();
     else if (mode === 'discard') onClose();
@@ -241,6 +317,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         });
         recorderRef.current = rec;
         void vaultStartSession(vaultIdRef.current, mime || 'audio/webm', storeId);
+        void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
             chunksRef.current.push(e.data);
@@ -258,6 +335,19 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         rec.onstop = async () => {
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
             setState('finalizing');
+            await liveTranscriptionRef.current?.finish();
+            const liveSessionId = uploadSessionIdRef.current;
+            if (liveSessionId) {
+              // upstream final 先到浏览器，MAP 随后才把最终原文写入会话。
+              // 完成音频条目前短轮询确认持久化，避免极小竞态让已成功实时转写又跑一遍批处理。
+              for (let attempt = 0; attempt < 10; attempt++) {
+                const liveStatus = await getRecordingUpload(liveSessionId).catch(() => null);
+                if (!liveStatus?.success
+                    || liveStatus.data.liveTranscriptStatus === 'completed'
+                    || liveStatus.data.liveTranscriptStatus === 'degraded') break;
+                await new Promise((resolve) => window.setTimeout(resolve, 200));
+              }
+            }
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
@@ -309,6 +399,24 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           analyser.fftSize = 512;
           source.connect(analyser);
           analyserRef.current = analyser;
+          try {
+            stopLiveCaptureRef.current = await startLivePcmCapture(ctx, source, (pcm) => {
+              if (!liveCaptureEnabledRef.current || rec.state !== 'recording') return;
+              if (liveTranscriptionRef.current) {
+                liveTranscriptionRef.current.send(pcm);
+                return;
+              }
+            // API 会话建立前先保留十秒 PCM，避免快速开口时丢掉第一句话。
+            if (pendingLivePcmRef.current.length < 100)
+              pendingLivePcmRef.current.push(pcm);
+            });
+          } catch {
+            setLiveTranscriptState('degraded');
+            setLiveTranscriptMessage('当前浏览器无法实时取流，录音结束后将自动转写');
+          }
+        } else {
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('当前浏览器无法实时取流，录音结束后将自动转写');
         }
         setState('recording');
       } catch {
@@ -485,6 +593,29 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             {(protectedBytes / 1024).toFixed(0)} KB
           </span>
         )}
+      </div>
+
+      <div
+        className="w-full rounded-[14px] px-4 py-3 text-left"
+        style={{
+          background: liveTranscriptState === 'degraded'
+            ? 'rgba(245,158,11,0.08)'
+            : 'var(--bg-elevated)',
+          border: liveTranscriptState === 'degraded'
+            ? '1px solid rgba(245,158,11,0.28)'
+            : '1px solid var(--border-faint)',
+        }}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[12px] font-semibold text-token-primary">实时原文</span>
+          <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+        </div>
+        <p className="mt-2 min-h-10 whitespace-pre-wrap text-[13px] leading-6 text-token-secondary">
+          {liveTranscript || (
+            liveTranscriptState === 'degraded'
+              ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'
+              : '开始说话后，识别文字会显示在这里。'
+          )}
+        </p>
       </div>
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}

@@ -25,6 +25,18 @@ public class DocumentRecordingUploadSession
 
     public string? EntryId { get; set; }
 
+    public string LiveTranscriptStatus { get; set; } = DocumentLiveTranscriptStatus.Pending;
+
+    public string? LiveTranscript { get; set; }
+
+    public string? LiveTranscriptProvider { get; set; }
+
+    public string? LiveTranscriptModel { get; set; }
+
+    public string? LiveTranscriptError { get; set; }
+
+    public DateTime? LiveTranscriptUpdatedAt { get; set; }
+
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
@@ -61,4 +73,12 @@ public static class DocumentRecordingUploadStatus
 
     public const string Completed = "completed";
     public const string Cancelled = "cancelled";
+}
+
+public static class DocumentLiveTranscriptStatus
+{
+    public const string Pending = "pending";
+    public const string Active = "active";
+    public const string Completed = "completed";
+    public const string Degraded = "degraded";
 }

@@ -267,6 +267,8 @@ export async function getRecordingUpload(sessionId: string) {
     nextChunkIndex: number;
     uploadedBytes: number;
     entryId: string | null;
+    liveTranscriptStatus: 'pending' | 'active' | 'completed' | 'degraded';
+    liveTranscript?: string | null;
     expiresAt: string;
   }>(api.documentStore.entries.recordingUploadStatus(sessionId), { method: 'GET' });
 }

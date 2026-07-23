@@ -9,6 +9,7 @@ using PrdAgent.LlmGatewayHost;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LLM;
 using PrdAgent.Infrastructure.LlmGateway;
+using PrdAgent.Infrastructure.LlmGateway.Asr;
 using PrdAgent.Infrastructure.Services;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 using PrdAgent.Infrastructure.Security;
@@ -289,6 +290,7 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 
 // LLM Gateway 统一守门员（HOST 既有实现）
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
+builder.Services.AddScoped<DoubaoStreamAsrService>();
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。
@@ -306,6 +308,10 @@ builder.Services.ConfigureHttpJsonOptions(o =>
 
 var app = builder.Build();
 app.UseForwardedHeaders();
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(20),
+});
 app.UseCors(BrowserDryRunCors);
 
 // 端点用的 JSON 选项（与上面口径一致；SSE 端点手动序列化时用）
@@ -331,6 +337,7 @@ gwApiKey ??= DevServeKey; // 非生产保留便利回落
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? string.Empty;
 
 app.MapGatewayServingEndpoints(jsonOpts, gwApiKey, gitCommit);
+app.MapLiveAsrGatewayEndpoint();
 
 app.Run();
 

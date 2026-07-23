@@ -452,6 +452,7 @@ builder.Services.AddScoped<PrdAgent.Api.Services.ContentReprocessApplyService>()
 builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
@@ -798,6 +799,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     context.NoResult();
                     return Task.CompletedTask;
                 }
+                var liveAsrToken = PrdAgent.Api.Services.LiveAsrWebSocketAuth.ExtractToken(
+                    context.Request.Path,
+                    context.Request.Headers.SecWebSocketProtocol);
+                if (!string.IsNullOrWhiteSpace(liveAsrToken))
+                    context.Token = liveAsrToken;
                 return Task.CompletedTask;
             },
             OnTokenValidated = async context =>
@@ -1467,6 +1473,10 @@ app.Use(async (context, next) =>
         SystemPromptRedacted: null,
         ForceFullShadowSample: true));
     await next();
+});
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(20),
 });
 app.UseAuthentication();
 // 认证通过后做 3 天滑动续期（now+72h，按端独立）

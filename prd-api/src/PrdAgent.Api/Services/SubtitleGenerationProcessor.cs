@@ -80,7 +80,10 @@ public class SubtitleGenerationProcessor
         string subtitleMd;
         if (isAudio || isVideo)
         {
-            var segments = await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo);
+            var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
+            var segments = liveTranscript == null
+                ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo)
+                : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
             subtitleMd = SubtitleFormatter.FormatAsrSegments(entry.Title, segments);
         }
         else
@@ -184,8 +187,14 @@ public class SubtitleGenerationProcessor
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
 
-        // 1) ASR 转录（共用字幕生成的三路分发：豆包流式 / 豆包异步 / Whisper HTTP / chat-audio）
-        var segments = await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo);
+        // 1) 优先采用录音期间已稳定完成的实时转写；只有实时链路未完成或已降级时，
+        // 才下载完整录音并走三路批处理 ASR。录音文件始终保留，后续仍可重新校准。
+        var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
+        if (liveTranscript != null)
+            await UpdateProgressAsync(db, runStore, run, 50, "实时转写已完成");
+        var segments = liveTranscript == null
+            ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl, isVideo)
+            : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
         var transcriptPlain = string.Join("\n", segments
             .Where(s => !string.IsNullOrWhiteSpace(s.Text))
             .Select(s => s.Text.Trim()));
@@ -272,6 +281,20 @@ public class SubtitleGenerationProcessor
         _logger.LogInformation(
             "[doc-store-agent] Transcript written in place for {EntryId}, transcript={TLen} chars summary={SLen} chars",
             entry.Id, transcriptPlain.Length, summary.Length);
+    }
+
+    internal static string? GetCompletedLiveTranscript(DocumentEntry entry)
+    {
+        if (entry.Metadata == null
+            || !entry.Metadata.TryGetValue("liveTranscriptStatus", out var status)
+            || !string.Equals(status, DocumentLiveTranscriptStatus.Completed, StringComparison.Ordinal)
+            || !entry.Metadata.TryGetValue("liveTranscript", out var transcript)
+            || string.IsNullOrWhiteSpace(transcript))
+        {
+            return null;
+        }
+
+        return transcript.Trim();
     }
 
     /// <summary>

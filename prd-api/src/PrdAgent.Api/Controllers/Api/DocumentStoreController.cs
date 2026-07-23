@@ -1,5 +1,6 @@
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
+using System.Net.WebSockets;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -47,6 +48,7 @@ public class DocumentStoreController : ControllerBase
     private readonly ILlmGateway _gateway;
     private readonly ILLMRequestContextAccessor _llmRequestContext;
     private readonly DocumentStoreAssetNormalizer _assetNormalizer;
+    private readonly DocumentStoreLiveTranscriptionRelay _liveTranscriptionRelay;
     private readonly ILogger<DocumentStoreController> _logger;
 
     /// <summary>20 MB per file</summary>
@@ -80,6 +82,7 @@ public class DocumentStoreController : ControllerBase
         ILLMRequestContextAccessor llmRequestContext,
         IConfiguration config,
         DocumentStoreAssetNormalizer assetNormalizer,
+        DocumentStoreLiveTranscriptionRelay liveTranscriptionRelay,
         EntryContentWriteService entryContentWriter,
         ILogger<DocumentStoreController> logger)
     {
@@ -100,6 +103,7 @@ public class DocumentStoreController : ControllerBase
         _llmRequestContext = llmRequestContext;
         _config = config;
         _assetNormalizer = assetNormalizer;
+        _liveTranscriptionRelay = liveTranscriptionRelay;
         _entryContentWriter = entryContentWriter;
         _logger = logger;
     }
@@ -1647,8 +1651,74 @@ public class DocumentStoreController : ControllerBase
             nextChunkIndex = session.NextChunkIndex,
             uploadedBytes = session.UploadedBytes,
             entryId = session.EntryId,
+            liveTranscriptStatus = session.LiveTranscriptStatus,
+            liveTranscript = session.LiveTranscript,
             expiresAt = session.ExpiresAt,
         }));
+    }
+
+    /// <summary>
+    /// 录音期间实时转写。JWT 通过 Sec-WebSocket-Protocol 携带，避免查询字符串进入访问日志。
+    /// 会话和用户严格绑定；浏览器断开只会让实时展示降级，不影响 MediaRecorder 分片持久化。
+    /// </summary>
+    [HttpGet("recording-uploads/{sessionId}/live-transcription")]
+    public async Task LiveTranscription(string sessionId)
+    {
+        if (!HttpContext.WebSockets.IsWebSocketRequest)
+        {
+            Response.StatusCode = StatusCodes.Status426UpgradeRequired;
+            return;
+        }
+
+        var userId = GetUserId();
+        var session = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (session == null)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        if (session.Status != DocumentRecordingUploadStatus.Uploading
+            || session.ExpiresAt <= DateTime.UtcNow)
+        {
+            Response.StatusCode = StatusCodes.Status410Gone;
+            return;
+        }
+
+        var requestedProtocols = Request.Headers.SecWebSocketProtocol.ToString()
+            .Split(',', StringSplitOptions.RemoveEmptyEntries | StringSplitOptions.TrimEntries);
+        if (!requestedProtocols.Contains(
+                LiveAsrWebSocketAuth.ApplicationProtocol,
+                StringComparer.Ordinal))
+        {
+            Response.StatusCode = StatusCodes.Status400BadRequest;
+            return;
+        }
+
+        using var browser = await HttpContext.WebSockets.AcceptWebSocketAsync(
+            LiveAsrWebSocketAuth.ApplicationProtocol);
+        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId && s.UserId == userId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.LiveTranscriptStatus, DocumentLiveTranscriptStatus.Active)
+                .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+
+        var result = await _liveTranscriptionRelay.RelayAsync(browser, userId, sessionId);
+        var status = result.Completed
+            ? DocumentLiveTranscriptStatus.Completed
+            : DocumentLiveTranscriptStatus.Degraded;
+        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId && s.UserId == userId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.LiveTranscriptStatus, status)
+                .Set(s => s.LiveTranscript, result.Transcript)
+                .Set(s => s.LiveTranscriptProvider, result.Provider)
+                .Set(s => s.LiveTranscriptModel, result.Model)
+                .Set(s => s.LiveTranscriptError, result.Error)
+                .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
@@ -1825,6 +1895,23 @@ public class DocumentStoreController : ControllerBase
         var stored = await CreateUploadedDocumentEntryAsync(
             store, actorId, actorName, avatarFileName,
             session.FileName, session.MimeType, audioBytes, parentId: null, CancellationToken.None);
+
+        if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+            && !string.IsNullOrWhiteSpace(claimed.LiveTranscript))
+        {
+            var metadata = stored.Entry.Metadata ?? new Dictionary<string, string>();
+            metadata["liveTranscript"] = claimed.LiveTranscript.Trim();
+            metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
+            if (!string.IsNullOrWhiteSpace(claimed.LiveTranscriptProvider))
+                metadata["liveTranscriptProvider"] = claimed.LiveTranscriptProvider;
+            if (!string.IsNullOrWhiteSpace(claimed.LiveTranscriptModel))
+                metadata["liveTranscriptModel"] = claimed.LiveTranscriptModel;
+            stored.Entry.Metadata = metadata;
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == stored.Entry.Id,
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata, metadata),
+                cancellationToken: CancellationToken.None);
+        }
 
         await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId && s.UserId == userId,
