@@ -29,7 +29,7 @@ export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; 
               onPointerEnter={() => setActiveIndex(i)}
               onFocus={() => setActiveIndex(i)}
               onBlur={() => setActiveIndex(null)}
-              onClick={() => setActiveIndex((current) => current === i ? null : i)}
+              onClick={() => setActiveIndex(i)}
             >
               <span
                 className="lg-mini-bar-value"

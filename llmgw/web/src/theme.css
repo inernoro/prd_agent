@@ -5953,6 +5953,13 @@ a:focus-visible {
     min-height: 44px;
   }
 
+  .lg-generation-header-actions > a,
+  .lg-generation-header-actions > button {
+    min-width: 44px;
+    min-height: 44px;
+    height: 44px !important;
+  }
+
   .lg-desktop-tenant-switcher {
     margin-left: auto;
     width: 150px;
