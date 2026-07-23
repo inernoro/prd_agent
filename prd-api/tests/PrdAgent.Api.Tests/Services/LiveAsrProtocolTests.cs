@@ -1,8 +1,12 @@
 using Microsoft.AspNetCore.Http;
+using Microsoft.Extensions.Logging.Abstractions;
+using Moq;
 using PrdAgent.Api.Services;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
+using PrdAgent.LlmGatewayHost;
 using Shouldly;
+using System.Threading.Channels;
 using Xunit;
 
 namespace PrdAgent.Api.Tests.Services;
@@ -76,6 +80,115 @@ public class LiveAsrProtocolTests
 
         selected.Count.ShouldBe(1);
         selected[0].ActualModel.ShouldBe(LiveAsrCandidatePolicy.PreferredModel);
+    }
+
+    [Fact]
+    public void BatchCandidatePolicy_ShouldExcludeStreamAndKeepThreeUniqueFallbacks()
+    {
+        var automatic = Candidate("p1", "openai/gpt-audio", "passthrough");
+        automatic.RetryCandidates =
+        [
+            Candidate("p1", "openai/gpt-audio", "passthrough"),
+            Candidate("p2", "doubao-asr-stream", "doubao-asr-stream"),
+            Candidate("p3", "whisper-large-v3", "passthrough"),
+            Candidate("p4", "doubao-asr-bigmodel", "doubao-asr"),
+            Candidate("p5", "fourth-batch", "passthrough"),
+        ];
+
+        var selected = LiveAsrBatchFallbackService.SelectBatchCandidates(automatic);
+
+        selected.Select(x => x.ActualModel)
+            .ShouldBe(["openai/gpt-audio", "whisper-large-v3", "doubao-asr-bigmodel"]);
+    }
+
+    [Fact]
+    public void BatchFallbackWave_ShouldPadShortPcmToProviderMinimum()
+    {
+        var pcm = new byte[] { 1, 2, 3, 4 };
+
+        var wave = LiveAsrBatchFallbackService.EncodeWave(
+            pcm,
+            LiveAsrBatchFallbackService.MinimumProviderSeconds);
+
+        wave.Length.ShouldBe(
+            44
+            + LiveAsrBatchFallbackService.SampleRate
+            * LiveAsrBatchFallbackService.BytesPerSample
+            * LiveAsrBatchFallbackService.MinimumProviderSeconds);
+        System.Text.Encoding.ASCII.GetString(wave, 0, 4).ShouldBe("RIFF");
+        System.Text.Encoding.ASCII.GetString(wave, 8, 4).ShouldBe("WAVE");
+        wave[44..48].ShouldBe(pcm);
+        wave[^1].ShouldBe((byte)0);
+    }
+
+    [Theory]
+    [InlineData("""{"text":"第一段"}""", "第一段")]
+    [InlineData("""{"result":{"text":"第二段"}}""", "第二段")]
+    [InlineData("""{"choices":[{"message":{"content":"第三段"}}]}""", "第三段")]
+    public void BatchFallbackResponse_ShouldNormalizeSupportedTextShapes(string json, string expected)
+    {
+        LiveAsrBatchFallbackService.ExtractText(json).ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task BatchFallback_ShouldEmitPartialAndFinalDuringRecording()
+    {
+        var candidate = new ModelResolutionResult
+        {
+            Success = true,
+            ActualPlatformId = "openrouter",
+            ActualPlatformName = "OpenRouter",
+            ActualModel = "openai/gpt-audio",
+            PlatformType = "openai",
+            Protocol = "openrouter",
+        };
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"choices":[{"message":{"content":"我认为跑步最重要的是身体健康"}}]}""",
+            });
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.RecordSuccessAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .Returns(Task.CompletedTask);
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            resolver.Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            new byte[LiveAsrBatchFallbackService.WindowBytes]));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldContain("身体健康");
+        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Partial && evt.Stable);
+        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Final && evt.Stable);
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.Is<GatewayRawRequest>(request =>
+                request.EndpointPath == "/v1/chat/completions"
+                && request.RequestBody != null),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

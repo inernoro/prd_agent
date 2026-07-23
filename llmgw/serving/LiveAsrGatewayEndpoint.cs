@@ -48,6 +48,7 @@ public static class LiveAsrGatewayEndpoint
 
         var resolver = http.RequestServices.GetRequiredService<IModelResolver>();
         var asr = http.RequestServices.GetRequiredService<DoubaoStreamAsrService>();
+        var batchFallback = http.RequestServices.GetRequiredService<LiveAsrBatchFallbackService>();
         var logger = http.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("LiveAsrGatewayEndpoint");
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
@@ -108,8 +109,52 @@ public static class LiveAsrGatewayEndpoint
                 ModelTypes.Asr,
                 ct: CancellationToken.None);
             var candidates = LiveAsrCandidatePolicy.Select(preferred, automatic);
+            var batchCandidates = LiveAsrBatchFallbackService.SelectBatchCandidates(automatic);
+            var frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(100)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.Wait,
+            });
+            // 备用路径最多缓存最近一分钟 PCM。正常流式路径不读取它，因此必须 DropOldest，
+            // 不能反向阻塞浏览器录音；若流式在建立阶段失败，窗口 ASR 可立即接管。
+            var batchFrames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(600)
+            {
+                SingleReader = true,
+                SingleWriter = true,
+                FullMode = BoundedChannelFullMode.DropOldest,
+            });
+            var receiveTask = ReceiveFramesAsync(
+                socket,
+                [frames.Writer, batchFrames.Writer],
+                EmitAsync);
+
             if (candidates.Count == 0)
             {
+                if (batchCandidates.Count > 0)
+                {
+                    var drainPrimaryTask = DrainFramesAsync(frames.Reader);
+                    var batchResult = await batchFallback.TranscribeAsync(
+                        batchCandidates,
+                        batchFrames.Reader,
+                        EmitAsync);
+                    if (!batchResult.Completed)
+                    {
+                        await EmitAsync(new LiveAsrEvent
+                        {
+                            Type = LiveAsrEventTypes.Degraded,
+                            Text = batchResult.Transcript,
+                            Stable = false,
+                            Provider = batchResult.Provider,
+                            Model = batchResult.Model,
+                            ErrorCode = "LIVE_ASR_BATCH_FALLBACK_FAILED",
+                            Message = "备用实时转写失败，录音仍在安全保存，结束后将自动批量校准",
+                        });
+                    }
+                    await Task.WhenAll(receiveTask, drainPrimaryTask);
+                    return;
+                }
+
                 await EmitAsync(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Degraded,
@@ -118,16 +163,13 @@ public static class LiveAsrGatewayEndpoint
                         ?? automatic.ErrorMessage
                         ?? "模型池没有可用的实时 ASR 方案，录音结束后将自动批量转写",
                 });
+                await Task.WhenAll(
+                    receiveTask,
+                    DrainFramesAsync(frames.Reader),
+                    DrainFramesAsync(batchFrames.Reader));
                 return;
             }
 
-            var frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(100)
-            {
-                SingleReader = true,
-                SingleWriter = true,
-                FullMode = BoundedChannelFullMode.Wait,
-            });
-            var receiveTask = ReceiveFramesAsync(socket, frames.Writer, EmitAsync);
             LiveAsrSessionResult? finalResult = null;
 
             for (var index = 0; index < candidates.Count; index++)
@@ -188,6 +230,20 @@ public static class LiveAsrGatewayEndpoint
 
             if (finalResult is null || !finalResult.Completed)
             {
+                if (string.IsNullOrWhiteSpace(finalResult?.Transcript) && batchCandidates.Count > 0)
+                {
+                    // 流式候选在建立阶段全部失败：排空主通道解除背压，由已同步缓存的
+                    // 滚动窗口通道接管，用户仍可在录音过程中看到原文。
+                    var drainPrimaryTask = DrainFramesAsync(frames.Reader);
+                    finalResult = await batchFallback.TranscribeAsync(
+                        batchCandidates,
+                        batchFrames.Reader,
+                        EmitAsync);
+                    await Task.WhenAll(receiveTask, drainPrimaryTask);
+                    if (finalResult.Completed)
+                        return;
+                }
+
                 await EmitAsync(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Degraded,
@@ -200,7 +256,10 @@ public static class LiveAsrGatewayEndpoint
                 });
                 // 已无可执行候选时仍持续排空浏览器 PCM，直到收到 finish。
                 // 否则 bounded channel 填满后会卡住接收循环，MAP 无法正常结束会话并持久化降级状态。
-                await Task.WhenAll(receiveTask, DrainFramesAsync(frames.Reader));
+                await Task.WhenAll(
+                    receiveTask,
+                    DrainFramesAsync(frames.Reader),
+                    DrainFramesAsync(batchFrames.Reader));
                 return;
             }
 
@@ -261,7 +320,7 @@ public static class LiveAsrGatewayEndpoint
 
     private static async Task ReceiveFramesAsync(
         WebSocket socket,
-        ChannelWriter<LiveAsrAudioFrame> writer,
+        IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
         Func<LiveAsrEvent, Task> emit)
     {
         long previousSequence = 0;
@@ -301,15 +360,21 @@ public static class LiveAsrGatewayEndpoint
                 }
 
                 previousSequence = frame!.Sequence;
-                await writer.WriteAsync(frame, CancellationToken.None);
+                foreach (var writer in writers)
+                    await writer.WriteAsync(frame, CancellationToken.None);
             }
         }
         finally
         {
-            await writer.WriteAsync(
-                new LiveAsrAudioFrame(previousSequence + 1, Array.Empty<byte>(), IsFinal: true),
-                CancellationToken.None);
-            writer.TryComplete();
+            var finalFrame = new LiveAsrAudioFrame(
+                previousSequence + 1,
+                Array.Empty<byte>(),
+                IsFinal: true);
+            foreach (var writer in writers)
+            {
+                await writer.WriteAsync(finalFrame, CancellationToken.None);
+                writer.TryComplete();
+            }
         }
     }
 
