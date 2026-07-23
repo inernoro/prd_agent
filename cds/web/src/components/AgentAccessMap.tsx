@@ -1,19 +1,27 @@
 import { useEffect, useMemo, useState, type CSSProperties } from 'react';
 import {
+  Activity,
+  Bot,
+  Boxes,
+  Braces,
   CalendarClock,
   Check,
   ChevronDown,
+  CodeXml,
+  Database,
+  Eye,
   FileCheck2,
   FolderKanban,
   GitBranch,
   Github,
   Info,
   KeyRound,
-  Map as MapIcon,
-  MapPinned,
   Plus,
+  Power,
   Rocket,
-  Settings2,
+  RotateCcw,
+  ScrollText,
+  ShieldCheck,
   SlidersHorizontal,
   Sparkles,
   Wrench,
@@ -30,23 +38,23 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import {
+  getAgentMissionCategoriesForScope,
+  getAgentMissionDefinition,
+  getAgentMissionsForCategory,
   PROJECT_AGENT_CONTEXT_IDS,
   SYSTEM_AGENT_CONTEXT_IDS,
   type AgentPageContext,
   type AgentPageContextId,
+  type AgentMissionCategoryId,
+  type AgentMissionDefinition,
+  type AgentMissionIconKey,
+  type AgentMissionScope,
 } from '@/lib/agent-onboarding';
 
 export type AgentAccessMapSelection =
   | { kind: 'system' }
   | { kind: 'project'; projectId: string }
   | { kind: 'new' };
-
-interface AgentMapMission {
-  id: AgentPageContextId;
-  label: string;
-  description: string;
-  icon: LucideIcon;
-}
 
 interface Props {
   projects: AgentProjectOption[];
@@ -57,25 +65,27 @@ interface Props {
   onMissionChange: (contextId: AgentPageContextId) => void;
 }
 
-const SYSTEM_MISSIONS: AgentMapMission[] = [
-  { id: 'auth', label: '登录与 SSO', description: '身份、回调与票据', icon: KeyRound },
-  { id: 'github', label: 'GitHub 接入', description: '仓库与 Webhook', icon: Github },
-  { id: 'maintenance', label: '更新与维护', description: '版本和运行状态', icon: Wrench },
-  { id: 'settings', label: '系统设置', description: '全局规则与偏好', icon: SlidersHorizontal },
-  { id: 'projects', label: '项目总览', description: '项目入口与状态', icon: FolderKanban },
-];
-
-const PROJECT_MISSIONS: AgentMapMission[] = [
-  { id: 'branches', label: '分支部署', description: '构建与预览路线', icon: GitBranch },
-  { id: 'project-settings', label: '项目配置', description: '环境与服务编排', icon: Settings2 },
-  { id: 'release', label: '正式发布', description: '生产发布目标', icon: Rocket },
-  { id: 'tasks', label: '任务调度', description: '计划与执行队列', icon: CalendarClock },
-  { id: 'reports', label: '验收报告', description: '证据与结果归档', icon: FileCheck2 },
-];
-
-const NEW_PROJECT_MISSIONS: AgentMapMission[] = [
-  { id: 'projects', label: '开辟新项目', description: '识别仓库并申请一次性权限', icon: Plus },
-];
+const MISSION_ICON_REGISTRY: Record<AgentMissionIconKey, LucideIcon> = {
+  api: Braces,
+  auth: ShieldCheck,
+  branch: GitBranch,
+  check: FileCheck2,
+  code: CodeXml,
+  database: Database,
+  github: Github,
+  health: Activity,
+  key: KeyRound,
+  logs: ScrollText,
+  maintenance: Wrench,
+  preview: Eye,
+  project: FolderKanban,
+  release: Rocket,
+  rollback: RotateCcw,
+  schedule: CalendarClock,
+  service: Boxes,
+  settings: SlidersHorizontal,
+  startup: Power,
+};
 
 function sameSelection(left: AgentAccessMapSelection, right: AgentAccessMapSelection): boolean {
   return left.kind === right.kind
@@ -100,10 +110,14 @@ function selectionCode(
   return projects.find((project) => project.id === selection.projectId)?.slug || selection.projectId;
 }
 
-function missionsForSelection(selection: AgentAccessMapSelection): AgentMapMission[] {
-  if (selection.kind === 'system') return SYSTEM_MISSIONS;
-  if (selection.kind === 'new') return NEW_PROJECT_MISSIONS;
-  return PROJECT_MISSIONS;
+function missionScopeForSelection(selection: AgentAccessMapSelection): AgentMissionScope {
+  return selection.kind === 'project' ? 'project' : 'system';
+}
+
+function missionsForSelection(selection: AgentAccessMapSelection): AgentMissionDefinition[] {
+  if (selection.kind === 'new') return [getAgentMissionDefinition('projects')];
+  const ids = selection.kind === 'system' ? SYSTEM_AGENT_CONTEXT_IDS : PROJECT_AGENT_CONTEXT_IDS;
+  return ids.map((id) => getAgentMissionDefinition(id));
 }
 
 export function AgentAccessMap({
@@ -117,20 +131,32 @@ export function AgentAccessMap({
   const [open, setOpen] = useState(false);
   const [draftSelection, setDraftSelection] = useState<AgentAccessMapSelection>(selection);
   const [draftMissionId, setDraftMissionId] = useState<AgentPageContextId>(context.id);
+  const [draftCategoryId, setDraftCategoryId] = useState<AgentMissionCategoryId>(context.categoryId);
 
   useEffect(() => {
     if (!open) return;
     setDraftSelection(selection);
     setDraftMissionId(context.id);
-  }, [open, selection, context.id]);
+    setDraftCategoryId(context.categoryId);
+  }, [open, selection, context.id, context.categoryId]);
 
-  const continentName = selectionName(selection, projects);
-  const draftContinentName = selectionName(draftSelection, projects);
-  const draftContinentCode = selectionCode(draftSelection, projects);
-  const draftMissions = missionsForSelection(draftSelection);
-  const draftMission = draftMissions.find((mission) => mission.id === draftMissionId)
-    || draftMissions[0];
-  const continentOptions = useMemo<Array<{
+  const selectionLabel = selectionName(selection, projects);
+  const draftSelectionLabel = selectionName(draftSelection, projects);
+  const draftSelectionCode = selectionCode(draftSelection, projects);
+  const draftScope = missionScopeForSelection(draftSelection);
+  const allDraftMissions = missionsForSelection(draftSelection);
+  const draftCategories = getAgentMissionCategoriesForScope(draftScope)
+    .filter((category) => allDraftMissions.some((mission) => mission.categoryId === category.id));
+  const effectiveCategoryId = draftCategories.some((category) => category.id === draftCategoryId)
+    ? draftCategoryId
+    : allDraftMissions[0].categoryId;
+  const draftMissions = draftSelection.kind === 'new'
+    ? allDraftMissions
+    : getAgentMissionsForCategory(draftScope, effectiveCategoryId);
+  const draftMission = allDraftMissions.find((mission) => mission.id === draftMissionId)
+    || draftMissions[0]
+    || allDraftMissions[0];
+  const projectOptions = useMemo<Array<{
     key: string;
     selection: AgentAccessMapSelection;
     name: string;
@@ -142,7 +168,7 @@ export function AgentAccessMap({
       selection: { kind: 'system' },
       name: 'CDS 控制中枢',
       code: 'SYSTEM',
-      metric: `${SYSTEM_MISSIONS.length} 类任务`,
+      metric: `${SYSTEM_AGENT_CONTEXT_IDS.length} 个任务`,
     },
     ...projects.map((project) => ({
       key: `project:${project.id}`,
@@ -163,7 +189,17 @@ export function AgentAccessMap({
   const chooseContinent = (nextSelection: AgentAccessMapSelection): void => {
     if (sameSelection(nextSelection, draftSelection)) return;
     setDraftSelection(nextSelection);
-    setDraftMissionId(defaultMissionForMap(nextSelection));
+    const defaultMissionId = defaultMissionForMap(nextSelection);
+    setDraftMissionId(defaultMissionId);
+    setDraftCategoryId(getAgentMissionDefinition(defaultMissionId).categoryId);
+  };
+
+  const chooseCategory = (categoryId: AgentMissionCategoryId): void => {
+    if (categoryId === effectiveCategoryId) return;
+    const firstMission = getAgentMissionsForCategory(draftScope, categoryId)[0];
+    if (!firstMission) return;
+    setDraftCategoryId(categoryId);
+    setDraftMissionId(firstMission.id);
   };
 
   const confirmRoute = (): void => {
@@ -188,13 +224,13 @@ export function AgentAccessMap({
         </span>
         <span className="cds-agent-route-trigger-copy">
           <span className="cds-agent-route-trigger-kicker">
-            {context.id === sourceContextId ? '当前页面任务' : '已选择地图任务'}
+            {context.id === sourceContextId ? '当前页面任务' : '已选择 Agent 任务'}
           </span>
           <strong>{context.title}</strong>
           <small>{context.summary}</small>
         </span>
         <span className="cds-agent-route-trigger-route">
-          <small>{continentName}</small>
+          <small>{selectionLabel}</small>
           <span>选择任务</span>
         </span>
         <ChevronDown className="cds-agent-route-trigger-chevron" aria-hidden="true" />
@@ -203,16 +239,21 @@ export function AgentAccessMap({
       <Dialog open={open} onOpenChange={setOpen}>
         <DialogContent
           className="cds-agent-world-dialog max-w-none"
-          style={{ width: 'min(960px, calc(100vw - 32px))' }}
+          style={{
+            width: 'min(960px, calc(100vw - 32px))',
+            maxHeight: 'calc(100dvh - 32px)',
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+          }}
         >
           <DialogHeader className="cds-agent-world-header">
             <div className="cds-agent-world-title-icon" aria-hidden="true">
-              <MapIcon />
+              <Bot />
             </div>
             <div>
-              <DialogTitle>选择 Agent 路线</DialogTitle>
+              <DialogTitle>选择 Agent 任务</DialogTitle>
               <DialogDescription>
-                先选择项目，再从一排任务入口中确定要交给 Agent 的工作。
+                先选择项目，再按分类确定要交给 Agent 的具体工作。
               </DialogDescription>
             </div>
           </DialogHeader>
@@ -226,7 +267,7 @@ export function AgentAccessMap({
               </div>
             </div>
             <div className="cds-agent-continent-rail" role="listbox" aria-label="项目范围">
-              {continentOptions.map((option) => {
+              {projectOptions.map((option) => {
                 const selected = sameSelection(option.selection, draftSelection);
                 return (
                   <button
@@ -240,7 +281,7 @@ export function AgentAccessMap({
                     onClick={() => chooseContinent(option.selection)}
                   >
                     <span className="cds-agent-continent-marker" aria-hidden="true">
-                      {selected ? <Check /> : <MapPinned />}
+                      {selected ? <Check /> : option.selection.kind === 'new' ? <Plus /> : <FolderKanban />}
                     </span>
                     <span>
                       <strong>{option.name}</strong>
@@ -262,30 +303,50 @@ export function AgentAccessMap({
               </div>
               <div className="cds-agent-world-current-continent">
                 <small>当前项目</small>
-                <strong>{draftContinentName}</strong>
-                <code>{draftContinentCode}</code>
+                <strong>{draftSelectionLabel}</strong>
+                <code>{draftSelectionCode}</code>
               </div>
             </div>
 
             <div className="cds-agent-mission-list">
               <div className="cds-agent-mission-list-meta">
                 <span>
-                  <strong>{draftMissions.length} 类任务入口</strong>
-                  <small>这不是设置总数，进入页面后 Agent 会读取完整设置。</small>
+                  <strong>{allDraftMissions.length} 个 Agent 任务</strong>
+                  <small>Agent 会先静默检查项目凭据；已有权限时不会重复要求批准。</small>
                 </span>
-                <Info aria-hidden="true" />
+                <ShieldCheck aria-hidden="true" />
               </div>
+              {draftSelection.kind !== 'new' ? (
+                <nav className="cds-agent-mission-categories" aria-label="任务分类">
+                  {draftCategories.map((category) => {
+                    const selected = category.id === effectiveCategoryId;
+                    const count = allDraftMissions.filter((mission) => mission.categoryId === category.id).length;
+                    return (
+                      <button
+                        key={category.id}
+                        type="button"
+                        aria-pressed={selected}
+                        data-selected={selected ? 'true' : 'false'}
+                        onClick={() => chooseCategory(category.id)}
+                      >
+                        <span>{category.label}</span>
+                        <small>{count}</small>
+                      </button>
+                    );
+                  })}
+                </nav>
+              ) : null}
               <div
                 className="cds-agent-mission-strip"
                 role="listbox"
-                aria-label={`${draftContinentName}的 Agent 任务`}
+                aria-label={`${draftSelectionLabel}的 Agent 任务`}
                 data-single={draftMissions.length === 1 ? 'true' : 'false'}
                 style={{
                   gridTemplateColumns: `repeat(${draftMissions.length}, minmax(148px, 1fr))`,
                 } as CSSProperties}
               >
                 {draftMissions.map((mission, index) => {
-                  const Icon = mission.icon;
+                  const Icon = MISSION_ICON_REGISTRY[mission.icon];
                   const selected = mission.id === draftMission.id;
                   const fromCurrentPage = sourceContextId === mission.id;
                   return (
@@ -303,8 +364,8 @@ export function AgentAccessMap({
                         <Icon />
                       </span>
                       <span className="cds-agent-mission-card-copy">
-                        <strong>{mission.label}</strong>
-                        <small>{fromCurrentPage ? '当前页面入口' : mission.description}</small>
+                        <strong>{mission.shortLabel}</strong>
+                        <small>{fromCurrentPage ? '当前页面入口' : mission.cardDescription}</small>
                       </span>
                       <Check className="cds-agent-mission-card-check" aria-hidden="true" />
                     </button>
@@ -316,15 +377,15 @@ export function AgentAccessMap({
 
           <div className="cds-agent-world-footer">
             <div className="cds-agent-world-route-summary" aria-live="polite">
-              <MapPinned aria-hidden="true" />
+              <Info aria-hidden="true" />
               <span>
-                <small>路线预览</small>
-                <strong>{draftContinentName} / {draftMission.label}</strong>
-                <p>{draftMission.description}</p>
+                <small>任务预览</small>
+                <strong>{draftSelectionLabel} / {draftMission.shortLabel}</strong>
+                <p>{draftMission.summary}</p>
               </span>
             </div>
             <Button type="button" onClick={confirmRoute}>
-              使用这条路线
+              使用这个任务
             </Button>
           </div>
         </DialogContent>

@@ -34,6 +34,14 @@ const agentMapSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/AgentAccessMap.tsx'),
   'utf8',
 );
+const agentMissionRegistrySource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/lib/agent-mission-registry.ts'),
+  'utf8',
+);
+const agentOnboardingSource = fs.readFileSync(
+  path.resolve(process.cwd(), 'web/src/lib/agent-onboarding.ts'),
+  'utf8',
+);
 const globalAgentAccessSource = fs.readFileSync(
   path.resolve(process.cwd(), 'web/src/components/GlobalAgentAccess.tsx'),
   'utf8',
@@ -96,28 +104,36 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMapSource).toContain('当前页面任务');
   });
 
-  it('只在当前任务入口中展开世界地图，并按大洲和地界选择 Agent 上下文', () => {
+  it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
     expect(agentDialogSource).toContain('createAgentMissionContext(missionId, effectiveProjectId)');
     expect(agentDialogSource).toContain('连接已有项目');
     expect(agentDialogSource).toContain('创建一个新项目');
     expect(agentDialogSource).toContain('<select');
     expect(agentMapSource).toContain('选择任务');
-    expect(agentMapSource).toContain('选择 Agent 路线');
+    expect(agentMapSource).toContain('选择 Agent 任务');
     expect(agentMapSource).toContain('选择项目');
-    expect(agentMapSource).toContain('选择任务');
     expect(agentMapSource).toContain('aria-label="项目范围"');
-    expect(agentMapSource).toContain('`${SYSTEM_MISSIONS.length} 类任务`');
+    expect(agentMapSource).toContain('aria-label="任务分类"');
+    expect(agentMapSource).toContain('getAgentMissionCategoriesForScope');
+    expect(agentMapSource).toContain('getAgentMissionsForCategory');
+    expect(agentMapSource).toContain('`${SYSTEM_AGENT_CONTEXT_IDS.length} 个任务`');
     expect(agentMapSource).toContain('cds-agent-mission-strip');
     expect(agentMapSource).toContain('gridTemplateColumns');
-    expect(agentMapSource).toContain('这不是设置总数');
+    expect(agentMapSource).toContain('已有权限时不会重复要求批准');
     expect(agentMapSource).not.toContain('AgentTerritoryGeoMap');
     expect(agentMapSource).not.toContain('开辟新大陆');
     expect(agentMapSource).toContain('branchCount');
-    expect(agentMapSource).toContain('SYSTEM_MISSIONS');
-    expect(agentMapSource).toContain('PROJECT_MISSIONS');
     expect(agentMapSource).toContain('aria-live="polite"');
+    expect(agentMissionRegistrySource).toContain('CDS Agent 任务与提示词的唯一注册表');
+    expect(agentMissionRegistrySource).toContain("'build-diagnostics'");
+    expect(agentMissionRegistrySource).toContain("'startup-diagnostics'");
+    expect(agentMissionRegistrySource).toContain("'api-diagnostics'");
+    expect(agentMissionRegistrySource).toContain("'code-review'");
+    expect(agentOnboardingSource).toContain('二、静默检查认证');
+    expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
     expect(styles).toContain('.cds-agent-mission-strip');
+    expect(styles).toContain('.cds-agent-mission-categories');
     expect(styles).toContain('.cds-agent-mission-card');
     expect(styles).toContain(".cds-agent-mission-card[data-selected='true']");
     expect(styles).not.toContain("url('#agent-land-forest')");
