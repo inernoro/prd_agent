@@ -90,6 +90,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(globalAgentAccessSource).toContain('<SkillDownloadDialog');
     expect(globalAgentAccessSource).toContain('STANDALONE_PATHS');
     expect(globalAgentAccessSource).toContain('className="cds-agent-access-floating"');
+    expect(globalAgentAccessSource).toContain("data-preview-instance={isChildPreviewCdsInstance() ? 'true' : 'false'}");
+    expect(styles).toMatch(/\.cds-agent-access-floating\[data-preview-instance='true'\]\s*\{[\s\S]*?bottom:\s*4\.75rem;/);
     expect(agentDialogSource).toContain('data-agent-context={selectedContext.id}');
     expect(agentDialogSource).toContain('当前页面任务');
   });

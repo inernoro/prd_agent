@@ -9,7 +9,7 @@ import {
   resolveAgentPageContext,
   type AgentPageContextId,
 } from '@/lib/agent-onboarding';
-import { apiRequest } from '@/lib/api';
+import { apiRequest, isChildPreviewCdsInstance } from '@/lib/api';
 
 type AgentProjectsResponse = {
   projects?: Array<{
@@ -81,6 +81,7 @@ export function GlobalAgentAccess(): JSX.Element {
           data-agent-action="connect"
           data-agent-context={context.id}
           data-agent-page={context.pagePath}
+          data-preview-instance={isChildPreviewCdsInstance() ? 'true' : 'false'}
           aria-label="接入 Agent"
         >
           <Bot />

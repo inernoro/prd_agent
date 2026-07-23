@@ -2213,6 +2213,10 @@
     outline-offset: 3px;
   }
 
+  .cds-agent-access-floating[data-preview-instance='true'] {
+    bottom: 4.75rem;
+  }
+
   @media (prefers-reduced-motion: reduce) {
     .cds-agent-access-floating {
       transition: none;
