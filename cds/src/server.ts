@@ -2534,12 +2534,32 @@ export function createServer(deps: ServerDeps): express.Express {
     });
   }
 
-  app.get('/api/auth/status', (_req, res) => {
+  app.get('/api/auth/status', (req, res) => {
+    const sessionUser = (req as {
+      cdsUser?: {
+        username?: string | null;
+        githubLogin?: string | null;
+        name?: string | null;
+        avatarUrl?: string | null;
+        isSystemOwner?: boolean;
+      };
+    }).cdsUser;
+    const user = authMode === 'github' && sessionUser
+      ? {
+          username: sessionUser.username ?? null,
+          githubLogin: sessionUser.githubLogin ?? null,
+          name: sessionUser.name ?? sessionUser.githubLogin ?? sessionUser.username ?? null,
+          avatarUrl: sessionUser.avatarUrl ?? null,
+          isSystemOwner: Boolean(sessionUser.isSystemOwner),
+        }
+      : authMode === 'basic'
+        ? { username: cdsUser }
+        : null;
     res.json({
       mode: authMode,
       enabled: authMode !== 'disabled',
       logoutEndpoint: authMode === 'github' ? '/api/auth/logout' : authMode === 'basic' ? '/api/logout' : null,
-      user: authMode === 'basic' ? { username: cdsUser } : null,
+      user,
     });
   });
 

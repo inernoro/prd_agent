@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, X } from 'lucide-react';
+import { CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -11,7 +11,6 @@ import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
-import { Button } from '@/components/ui/button';
 import { apiUrl, fetchInstanceMode, isChildPreviewCdsInstance } from '@/lib/api';
 import { applyThemeMode, useTheme } from '@/lib/theme';
 import { cn } from '@/lib/utils';
@@ -114,6 +113,15 @@ type ShellAuthStatus = {
   enabled?: boolean;
   mode?: string;
   logoutEndpoint?: string | null;
+  user?: ShellUser | null;
+};
+
+type ShellUser = {
+  username?: string | null;
+  githubLogin?: string | null;
+  name?: string | null;
+  avatarUrl?: string | null;
+  isSystemOwner?: boolean;
 };
 
 const preloadProjectListPage = (): void => { void import('@/pages/ProjectListPage'); };
@@ -302,11 +310,13 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
 
   return (
     <MobileNavContext.Provider value={{ openNav: () => setNavOpen(true) }}>
-    <div className="cds-app-shell">
+    <div className="cds-app-shell" data-nav-open={navOpen ? 'true' : 'false'}>
       {/* Desktop rail — always visible ≥768px, CSS-hidden on phones. */}
       <AppRail
         active={active}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
+        authMode={authStatus?.mode}
+        user={authStatus?.user}
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
       />
@@ -316,6 +326,8 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         onClose={() => setNavOpen(false)}
         active={active}
         canLogout={Boolean(authStatus?.logoutEndpoint)}
+        authMode={authStatus?.mode}
+        user={authStatus?.user}
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
       />
@@ -327,7 +339,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       {/* 预览实例提示条（CDS 托管 CDS，2026-07-15）:固定底部居中 pill，
           提醒这是分支预览出来的子 CDS，宿主/docker 操作已禁用。
           位置说明:顶部居中会遮住 TopBar 的快速部署输入框（真机截图实证），
-          底部两角已被 GlobalUpdateBadge（左）/ 主题切换（右）占用，底部居中为空。
+          底部两侧有全局消息栈，底部居中保留给实例身份提示。
           遵守 mobile-layout-fallback:限宽 + truncate，不用 whitespace-nowrap 溢出。 */}
       {previewInstance && (
         <div className="pointer-events-none fixed bottom-3 left-1/2 z-[120] w-max max-w-[calc(100vw-7rem)] -translate-x-1/2">
@@ -340,143 +352,18 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         </div>
       )}
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
-      {/* 2026-05-04 fix(用户反馈"更新看不出真假"):全局浮动徽章,任何页面
-          都能看到 CDS 更新状态(GitHub 有新版本 / CDS 重启中 / 后端已更新等待
-          刷新 / 前端 bundle 异常)。30s 一次轮询 /api/self-status,基于状态推
-          视觉。 */}
-      <GlobalUpdateBadge />
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
       <OperatorApprovalModal />
-      {/* 2026-05-28 Agent 导入审批徽章 + 抽屉:右下角浮动,
-          pendingCount > 0 时主动出现;flap 熔断事件也走这条 toast。
-          用户反馈:不再需要 AI 给地址才能开审批 */}
-      <PendingImportInbox />
-      {/* 被动授权 — agent 免密发起的授权申请,右下角一键批准即派发授权密钥 */}
-      <AccessRequestInbox />
+      {/* 右下角是唯一的系统提醒区域。需要用户决策的授权在最上方展开，
+          导入审批居中，版本更新固定在底部，多个提醒不会再互相遮挡。 */}
+      <div className="cds-global-action-stack">
+        <AccessRequestInbox />
+        <PendingImportInbox />
+        <GlobalUpdateBadge />
+      </div>
       <CommitInbox />
-      {/* 2026-05-04 主题切换右上角浮动(用户反馈左下角与 GlobalUpdateBadge
-          重叠 + 行业 Vercel/Linear/Notion 都在右上)。fixed 不挤占 TopBar
-          right slot,所有页面共享。 */}
-      <FloatingThemeToggle />
     </div>
     </MobileNavContext.Provider>
-  );
-}
-
-function FloatingThemeToggle(): JSX.Element {
-  const { theme, mode, setTheme } = useTheme();
-  const [open, setOpen] = useState(false);
-  const [toast, setToast] = useState('');
-  // 2026-05-07 用户反馈"右上角按钮被皮肤挡住":悬浮按钮 z-[70] 盖在 TopBar
-  // nav buttons(z 默认)上,导致"运维"等按钮被遮挡。降到 z-[5] 让 nav 按钮
-  // 在上层;同时挪到右下角避开 TopBar 区域,跟 GlobalUpdateBadge(也在底部)
-  // 不重叠靠水平错开(theme 在 right-3,update badge 在 left)。
-  useEffect(() => {
-    if (!toast) return undefined;
-    const timer = window.setTimeout(() => setToast(''), 3000);
-    return () => window.clearTimeout(timer);
-  }, [toast]);
-
-  const modeLabel = (next: 'light' | 'dark' | 'system'): string => {
-    if (next === 'system') return `自动/${theme === 'dark' ? '黑天' : '白天'}`;
-    return next === 'dark' ? '黑天' : '白天';
-  };
-
-  const changeTheme = (
-    next: 'light' | 'dark' | 'system',
-    event: React.MouseEvent<HTMLButtonElement> | React.PointerEvent<HTMLButtonElement>,
-  ): void => {
-    setOpen(false);
-    setToast(modeLabel(next));
-    const prefersReduced = window.matchMedia('(prefers-reduced-motion: reduce)').matches;
-    if (!document.startViewTransition || prefersReduced) {
-      applyThemeMode(next);
-      setTheme(next);
-      return;
-    }
-    const x = event.clientX;
-    const y = event.clientY;
-    const endRadius = Math.hypot(Math.max(x, window.innerWidth - x), Math.max(y, window.innerHeight - y));
-    const transition = document.startViewTransition(() => {
-      applyThemeMode(next);
-      setTheme(next);
-    });
-    void transition.ready.then(() => {
-      document.documentElement.animate(
-        {
-          clipPath: [
-            `circle(0px at ${x}px ${y}px)`,
-            `circle(${endRadius}px at ${x}px ${y}px)`,
-          ],
-        },
-        {
-          duration: 520,
-          easing: 'cubic-bezier(.16,1,.3,1)',
-          pseudoElement: '::view-transition-new(root)',
-        },
-      );
-    }).catch(() => { /* best-effort effect */ });
-  };
-
-  const toggleLightDark = (event: React.MouseEvent<HTMLButtonElement>): void => {
-    changeTheme(theme === 'dark' ? 'light' : 'dark', event);
-  };
-
-  const items = [
-    { mode: 'light' as const, label: '白天', icon: Sun },
-    { mode: 'dark' as const, label: '黑天', icon: Moon },
-    { mode: 'system' as const, label: '自动', icon: Monitor },
-  ];
-
-  return (
-    <div
-      className="cds-theme-toggle fixed bottom-3 right-3 z-[60]"
-      onMouseEnter={() => setOpen(true)}
-      onMouseLeave={() => setOpen(false)}
-      onFocus={() => setOpen(true)}
-      onBlur={(event) => {
-        if (!event.currentTarget.contains(event.relatedTarget)) setOpen(false);
-      }}
-    >
-      {toast ? (
-        <div className="pointer-events-none absolute bottom-full right-0 mb-2 whitespace-nowrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 py-1 text-xs font-medium text-foreground shadow-lg">
-          {toast}
-        </div>
-      ) : null}
-      {open ? (
-        <div className="absolute bottom-full right-0 mb-2 w-32 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-1 shadow-2xl">
-          {items.map((item) => {
-            const Icon = item.icon;
-            const active = mode === item.mode;
-            return (
-              <button
-                key={item.mode}
-                type="button"
-                className={`flex h-8 w-full items-center gap-2 rounded px-2 text-left text-xs transition-colors ${active ? 'bg-primary/10 text-primary' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground'}`}
-                onClick={(event) => {
-                  event.preventDefault();
-                  changeTheme(item.mode, event);
-                }}
-              >
-                <Icon className="h-3.5 w-3.5" />
-                <span className="flex-1">{item.label}</span>
-                {active ? <Check className="h-3.5 w-3.5" /> : null}
-              </button>
-            );
-          })}
-        </div>
-      ) : null}
-      <Button
-        variant="ghost"
-        size="icon"
-        onClick={toggleLightDark}
-        aria-label="切换主题"
-        title={`切换主题(当前: ${mode === 'system' ? `自动/${theme === 'dark' ? '黑天' : '白天'}` : theme === 'dark' ? '黑天' : '白天'})`}
-        className="h-9 w-9 rounded-full bg-[hsl(var(--surface-raised))]/80 backdrop-blur shadow-md hover:bg-[hsl(var(--surface-raised))]"
-      >
-        {mode === 'system' ? <Monitor /> : theme === 'dark' ? <Moon /> : <Sun />}
-      </Button>
-    </div>
   );
 }
 
@@ -508,6 +395,8 @@ export function PaletteHint(): JSX.Element {
 interface RailNavProps {
   active: AppNavKey;
   canLogout: boolean;
+  authMode?: string;
+  user?: ShellUser | null;
   logoutState: 'idle' | 'running' | 'error';
   onLogout: () => void;
 }
@@ -516,7 +405,7 @@ interface RailNavProps {
  * RailNav — the nav body shared by the desktop rail and the mobile drawer.
  * `onNavigate` lets the mobile drawer close itself when a link is tapped.
  */
-function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
+function RailNav({ active, canLogout, authMode, user, logoutState, onLogout, onNavigate }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
   return (
     <>
       <div className="cds-rail-section">
@@ -532,19 +421,6 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
         >
           <LayoutGrid />
           <span>Projects</span>
-        </Link>
-        <Link
-          to="/cds-settings"
-          className="cds-rail-item"
-          data-active={active === 'cds-settings' ? 'true' : 'false'}
-          aria-label="CDS 系统设置"
-          title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
-          onClick={onNavigate}
-          onMouseEnter={preloadCdsSettingsPage}
-          onFocus={preloadCdsSettingsPage}
-        >
-          <Settings />
-          <span>Settings</span>
         </Link>
         <Link
           to="/release-center"
@@ -587,21 +463,189 @@ function RailNav({ active, canLogout, logoutState, onLogout, onNavigate }: RailN
         </Link>
       </div>
       <div className="flex-1" />
+      <div className="cds-rail-footer">
+        <Link
+          to="/cds-settings"
+          className="cds-rail-item"
+          data-active={active === 'cds-settings' ? 'true' : 'false'}
+          aria-label="CDS 系统设置"
+          title="CDS 系统设置（更新 / 存储 / 集群 / 全局变量）"
+          onClick={onNavigate}
+          onMouseEnter={preloadCdsSettingsPage}
+          onFocus={preloadCdsSettingsPage}
+        >
+          <Settings />
+          <span>系统设置</span>
+        </Link>
+        <UserAccountMenu
+          authMode={authMode}
+          canLogout={canLogout}
+          logoutState={logoutState}
+          onLogout={onLogout}
+          onNavigate={onNavigate}
+          user={user}
+        />
+      </div>
+    </>
+  );
+}
+
+function userDisplayName(user?: ShellUser | null): string {
+  return user?.name || user?.username || user?.githubLogin || 'CDS 用户';
+}
+
+function userInitials(user?: ShellUser | null): string {
+  const value = userDisplayName(user).trim();
+  if (!value) return 'CDS';
+  const words = value.split(/\s+/).filter(Boolean);
+  if (words.length > 1) return words.slice(0, 2).map((word) => word[0]).join('').toUpperCase();
+  return Array.from(value).slice(0, 2).join('').toUpperCase();
+}
+
+function UserAccountMenu({
+  authMode,
+  canLogout,
+  logoutState,
+  onLogout,
+  onNavigate,
+  user,
+}: Omit<RailNavProps, 'active'> & { onNavigate?: () => void }): JSX.Element {
+  const { mode, setTheme } = useTheme();
+  const [open, setOpen] = useState(false);
+  const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
+  const triggerRef = useRef<HTMLButtonElement>(null);
+  const menuRef = useRef<HTMLDivElement>(null);
+  const displayName = userDisplayName(user);
+  const accountLabel = user?.githubLogin || user?.username || (authMode === 'disabled' ? '本地模式' : '已登录');
+  const themes = [
+    { mode: 'light' as const, label: '白天', icon: Sun },
+    { mode: 'dark' as const, label: '黑天', icon: Moon },
+    { mode: 'system' as const, label: '自动', icon: Monitor },
+  ];
+
+  const toggle = (): void => {
+    if (!open) {
+      const rect = triggerRef.current?.getBoundingClientRect();
+      if (rect) {
+        const menuWidth = Math.min(272, window.innerWidth - 24);
+        const desktopLeft = rect.right + 8;
+        setPosition({
+          bottom: Math.max(12, window.innerHeight - rect.bottom),
+          left: Math.max(12, Math.min(desktopLeft + menuWidth > window.innerWidth ? rect.left : desktopLeft, window.innerWidth - menuWidth - 12)),
+        });
+      }
+    }
+    setOpen((current) => !current);
+  };
+
+  useEffect(() => {
+    if (!open) return undefined;
+    const close = (event: PointerEvent): void => {
+      const target = event.target as Node;
+      if (!menuRef.current?.contains(target) && !triggerRef.current?.contains(target)) setOpen(false);
+    };
+    const onKey = (event: KeyboardEvent): void => {
+      if (event.key === 'Escape') {
+        setOpen(false);
+        triggerRef.current?.focus();
+      }
+    };
+    document.addEventListener('pointerdown', close);
+    window.addEventListener('keydown', onKey);
+    return () => {
+      document.removeEventListener('pointerdown', close);
+      window.removeEventListener('keydown', onKey);
+    };
+  }, [open]);
+
+  const menu = open ? createPortal(
+    <div
+      ref={menuRef}
+      className="cds-account-menu"
+      style={{ bottom: position.bottom, left: position.left }}
+      role="menu"
+      aria-label="用户设置"
+    >
+      <div className="cds-account-menu-identity">
+        <div className="cds-user-avatar cds-user-avatar--large">
+          {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : <span>{userInitials(user)}</span>}
+        </div>
+        <div className="min-w-0">
+          <div className="truncate text-sm font-semibold text-foreground">{displayName}</div>
+          <div className="truncate text-xs text-muted-foreground">{accountLabel}</div>
+        </div>
+      </div>
+      <Link
+        to="/cds-settings#auth"
+        className="cds-account-menu-item"
+        role="menuitem"
+        onClick={() => {
+          setOpen(false);
+          onNavigate?.();
+        }}
+      >
+        <Settings />
+        <span>用户与认证</span>
+      </Link>
+      <div className="cds-account-theme" aria-label="主题">
+        <div className="mb-2 text-xs font-medium text-muted-foreground">界面主题</div>
+        <div className="grid grid-cols-3 gap-1">
+          {themes.map((item) => {
+            const Icon = item.icon;
+            const active = mode === item.mode;
+            return (
+              <button
+                key={item.mode}
+                type="button"
+                className="cds-account-theme-button"
+                data-active={active ? 'true' : 'false'}
+                onClick={() => {
+                  applyThemeMode(item.mode);
+                  setTheme(item.mode);
+                }}
+              >
+                <Icon />
+                <span>{item.label}</span>
+                {active ? <Check className="cds-account-theme-check" /> : null}
+              </button>
+            );
+          })}
+        </div>
+      </div>
       {canLogout ? (
         <button
           type="button"
-          className="cds-rail-item cds-rail-item--danger"
+          className="cds-account-menu-item cds-account-menu-item--danger"
+          role="menuitem"
           onClick={onLogout}
           disabled={logoutState === 'running'}
-          aria-label="退出登录"
-          title="退出登录"
         >
           <LogOut />
-          <span>
-            {logoutState === 'running' ? '退出中' : logoutState === 'error' ? '退出失败' : 'Logout'}
-          </span>
+          <span>{logoutState === 'running' ? '正在退出' : logoutState === 'error' ? '退出失败，请重试' : '退出登录'}</span>
         </button>
       ) : null}
+    </div>,
+    document.body,
+  ) : null;
+
+  return (
+    <>
+      <button
+        ref={triggerRef}
+        type="button"
+        className="cds-rail-item cds-account-trigger"
+        onClick={toggle}
+        aria-label={`用户设置：${displayName}`}
+        aria-haspopup="menu"
+        aria-expanded={open}
+        title={`用户设置：${displayName}`}
+      >
+        <div className="cds-user-avatar">
+          {user?.avatarUrl ? <img src={user.avatarUrl} alt="" /> : canLogout ? <span>{userInitials(user)}</span> : <UserRound />}
+        </div>
+        <span>{displayName}</span>
+      </button>
+      {menu}
     </>
   );
 }
@@ -612,9 +656,6 @@ function AppRail(props: RailNavProps): JSX.Element {
       {/* 品牌宝石 2026-07-05 起移入横贯全宽的 topbar 左端(用户反馈"logo 放在
           左侧导航总感觉不对"):rail 从 header 之下开始,只承载导航图标。 */}
       <RailNav {...props} />
-      {/* 2026-05-04 主题切换从这里挪到 AppShell 顶层右上(FloatingThemeToggle),
-          原因:左下与 GlobalUpdateBadge 浮动徽章在某些状态下视觉重叠;industry
-          标准位置(Vercel / Linear / Notion / Stripe)都在右上。 */}
     </nav>
   );
 }

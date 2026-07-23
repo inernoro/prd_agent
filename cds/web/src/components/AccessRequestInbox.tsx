@@ -1,11 +1,12 @@
 /*
- * AccessRequestInbox — 被动授权审批盒(右下角)
+ * AccessRequestInbox — 被动授权审批提醒(右下角)
  *
  * 背景:agent 免密直接发起授权申请,用户在右下角一键「批准」即派发一把
  * 全权「授权密钥」,agent 凭它做接下来的所有事(含直接拉项目环境变量/参数),用户
- * 再不用反复手动喂参数。设计完全对齐 PendingImportInbox(同一个右下角被动审批底座):
- *   - 右下角悬浮 button(只在 pendingCount > 0 时显示),点击展开 Dialog
- *   - Dialog 列出全部 pending,每项一个「批准 / 拒绝」按钮
+ * 再不用反复手动喂参数。授权属于必须由用户决策的高优先级消息:
+ *   - 有 pending 时直接展开首条申请,展示来源、范围和目的
+ *   - 卡片上直接提供「批准 / 拒绝」按钮,无需先点开一个小徽章
+ *   - Dialog 负责查看全部 pending 和补充说明
  *   - 订阅 useCdsEvents.lastAccessRequestEvent → 自动刷新
  *   - 挂在 AppShell,任何页面可见
  *
@@ -13,7 +14,7 @@
  */
 
 import { useCallback, useEffect, useState } from 'react';
-import { KeyRound, Loader2, ShieldCheck } from 'lucide-react';
+import { KeyRound, Loader2, ShieldAlert, ShieldCheck } from 'lucide-react';
 import {
   Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle,
 } from '@/components/ui/dialog';
@@ -82,32 +83,93 @@ export function AccessRequestInbox(): JSX.Element | null {
 
   const count = pending.length;
   if (count === 0) return null;
+  const primary = pending[0];
+  const primaryBusy = busy === primary.id;
 
   return (
     <>
-      {/* 右下角徽章 — pending-import 用 bottom-4,这里上移避免重叠 */}
-      <button
-        type="button"
-        onClick={() => setOpen(true)}
-        className="fixed bottom-16 right-4 z-40 inline-flex items-center gap-2 rounded-full
-                   cds-surface-elevated cds-hairline shadow-lg px-4 py-2 text-sm font-medium
-                   text-foreground hover:scale-105 transition-transform"
-        aria-label={`${count} 个待批准的授权申请`}
+      <section
+        className="relative w-full overflow-hidden rounded-xl border border-amber-500/45
+                   bg-[hsl(var(--surface-raised))] shadow-2xl"
+        role="alert"
+        aria-live="assertive"
+        aria-label={`${count} 个授权申请需要处理`}
       >
-        <KeyRound className="h-4 w-4" />
-        <span>授权申请 {count}</span>
-        <span className="inline-flex h-5 min-w-[20px] items-center justify-center rounded-full
-                         bg-destructive text-destructive-foreground text-[11px] px-1.5">
-          {count}
-        </span>
-      </button>
+        <div className="absolute inset-y-0 left-0 w-1 bg-amber-500" aria-hidden />
+        <div className="p-4 pl-5">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full
+                            bg-amber-500/15 text-amber-700 dark:text-amber-300">
+              <ShieldAlert className="h-5 w-5" />
+            </div>
+            <div className="min-w-0 flex-1">
+              <div className="flex items-center justify-between gap-3">
+                <h2 className="text-base font-semibold text-foreground">需要你的授权</h2>
+                <span className="inline-flex h-6 min-w-6 items-center justify-center rounded-full
+                                 bg-amber-500 px-2 text-xs font-bold text-black">
+                  {count}
+                </span>
+              </div>
+              <p className="mt-1 text-sm leading-5 text-muted-foreground">
+                <strong className="text-foreground">{primary.agentName || '未知 Agent'}</strong>
+                {' '}申请
+                {primary.kind === 'bootstrap' ? '创建一个新项目' : (
+                  <>访问项目 <code className="font-mono text-foreground">{primary.projectId}</code></>
+                )}
+              </p>
+              {primary.purpose ? (
+                <p className="mt-2 rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-2
+                              text-xs leading-5 text-foreground/85">
+                  {primary.purpose}
+                </p>
+              ) : null}
+              <p className="mt-2 text-[11px] text-muted-foreground">
+                {new Date(primary.createdAt).toLocaleString('zh-CN')}，授权内容只会交付给发起方一次
+              </p>
+            </div>
+          </div>
+          <div className="mt-4 grid grid-cols-[auto_minmax(0,1fr)] gap-2">
+            <Button
+              type="button"
+              variant="outline"
+              className="min-h-10"
+              onClick={() => { void reject(primary.id); }}
+              disabled={primaryBusy}
+            >
+              {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+              拒绝
+            </Button>
+            <Button
+              type="button"
+              variant="default"
+              className="min-h-10"
+              onClick={() => { void approve(primary.id); }}
+              disabled={primaryBusy}
+            >
+              {primaryBusy ? <Loader2 className="h-4 w-4 animate-spin" /> : <KeyRound className="h-4 w-4" />}
+              {primary.kind === 'bootstrap' ? '批准一次建项目' : '批准项目访问'}
+            </Button>
+          </div>
+          <button
+            type="button"
+            onClick={() => setOpen(true)}
+            className="mt-2 min-h-10 w-full rounded-md text-xs font-medium text-muted-foreground
+                       transition-colors hover:bg-[hsl(var(--surface-sunken))] hover:text-foreground"
+          >
+            {count > 1 ? `查看全部 ${count} 条申请` : '查看申请详情'}
+          </button>
+        </div>
+      </section>
 
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-w-3xl overflow-hidden"
+          style={{ maxHeight: 'min(780px, calc(100dvh - 32px))' }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <ShieldCheck className="h-5 w-5" />
-              授权申请待批准
+              需要你的明确授权
             </DialogTitle>
             <DialogDescription>
               外部 Agent 可以在没有预置密钥时发起申请。已有项目会签发该项目的授权；首次接入
