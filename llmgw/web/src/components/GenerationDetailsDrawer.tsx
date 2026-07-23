@@ -380,7 +380,7 @@ export function GenerationDetailsDrawer({
           top: 0,
           right: 0,
           height: '100vh',
-          width: 'min(820px, 96vw)',
+          width: 'min(820px, 100vw)',
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--bg-page)',

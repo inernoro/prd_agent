@@ -3459,6 +3459,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("['audit', '审计']", drawer);
         Assert.Contains("无法打开这条生成记录", drawer);
         Assert.Contains("请求详情加载失败，请稍后重试", drawer);
+        Assert.Contains("width: 'min(820px, 100vw)'", drawer);
+        Assert.DoesNotContain("width: 'min(820px, 96vw)'", drawer);
         Assert.Contains("openedRequestIdRef", logs);
         Assert.Contains("setSelectedLogId(matched.id)", logs);
         Assert.Contains("Provider 实际费用", drawer);
