@@ -40,7 +40,31 @@
 
 **图 110 App 悬浮信息卡提供身份摘要和独立详情页入口**
 
-![图 110 App 悬浮信息卡提供身份摘要和独立详情页入口](https://cds.miduo.org/api/reports/assets/ae3c97bd97f8d801a10f4d588ff2336a226c8604677007808783ee8c5b43f6fe.png)
+![图 110 App 悬浮信息卡提供身份摘要和独立详情页入口](https://cds.miduo.org/api/reports/assets/18989f235c76016c8c5b074d75a322412d09e33c16f176f331b0cb63962fe9ab.png)
+
+**图 111 模型名称悬浮后出现下划线、模型摘要和“查看模型”按钮**
+
+![图 111 模型名称悬浮后出现下划线、模型摘要和“查看模型”按钮](https://cds.miduo.org/api/reports/assets/b32bea3690e2c1daf4ae3e0fe63b2074000e0ee1e1eeb44ee8721926542982c1.png)
+
+**图 112 模型独立详情页集中展示真实 Provider、能力、路由和最近活动**
+
+![图 112 模型独立详情页集中展示真实 Provider、能力、路由和最近活动](https://cds.miduo.org/api/reports/assets/86ba6dfde76ed6625ac78c49922feb465aec92795acbe502cea1f623f7013a87.png)
+
+**图 113 Provider 名称悬浮后出现连接摘要和“查看 Provider”按钮**
+
+![图 113 Provider 名称悬浮后出现连接摘要和“查看 Provider”按钮](https://cds.miduo.org/api/reports/assets/a9f3a88b9780b4179764c8850ce40daf0206799b530621642f8d66496d62dc24.png)
+
+**图 114 Provider 独立详情页分区展示连接、模型和最近活动**
+
+![图 114 Provider 独立详情页分区展示连接、模型和最近活动](https://cds.miduo.org/api/reports/assets/88b5f4e9a8f611259a3b37231bebd3bc9e7abd018cf82fa49b50ebe834817f57.png)
+
+**图 115 App 独立详情页分区展示身份、路由、治理和最近活动**
+
+![图 115 App 独立详情页分区展示身份、路由、治理和最近活动](https://cds.miduo.org/api/reports/assets/e38e4a3e27ae158758766fa4a44da5efaa44ae25b3da11bee11ac6b4a7d5e58d.png)
+
+**图 116 触控设备直接点击模型名称后进入单列详情页**
+
+![图 116 触控设备直接点击模型名称后进入单列详情页](https://cds.miduo.org/api/reports/assets/c68d77303acb1ab2e9f785f4fcd33b8149310ca772ac323f4c018b8a1f686a51.png)
 
 **图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试**
 
