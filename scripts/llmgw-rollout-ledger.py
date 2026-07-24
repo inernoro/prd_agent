@@ -321,6 +321,7 @@ def _require_release_gate_for_commit(
     require_config_authority: bool = False,
     allow_skipped_runtime_gates: bool = False,
     allow_skipped_config_authority: bool = False,
+    allow_skipped_shadow_checks: bool = False,
 ) -> None:
     payload = _require_pass_json(path, label)
     expected = _normalize_commit(commit)
@@ -332,18 +333,31 @@ def _require_release_gate_for_commit(
         raise SystemExit(f"ERROR: {label} shadowReleaseCommit mismatch: {path} actual={shadow_commit or 'empty'} expected={expected}")
 
     checks = payload.get("shadowChecks") or payload.get("ShadowChecks") or []
-    if not isinstance(checks, list) or not checks:
+    if not isinstance(checks, list):
         raise SystemExit(f"ERROR: {label} missing shadowChecks for same-commit evidence: {path}")
-    for index, item in enumerate(checks, start=1):
-        if not isinstance(item, dict):
-            raise SystemExit(f"ERROR: {label} shadowChecks[{index}] is not an object: {path}")
-        item_commit = _normalize_commit(item.get("releaseCommit") or item.get("ReleaseCommit"))
-        if item_commit != expected:
-            item_label = item.get("label") or item.get("Label") or index
-            raise SystemExit(
-                f"ERROR: {label} shadowChecks[{item_label}] releaseCommit mismatch: "
-                f"{path} actual={item_commit or 'empty'} expected={expected}"
-            )
+    thresholds = payload.get("thresholds") or payload.get("Thresholds") or {}
+    if not isinstance(thresholds, dict):
+        thresholds = {}
+    audited_maintenance_shadow_skip = (
+        allow_skipped_shadow_checks
+        and not checks
+        and bool(thresholds.get("skipGlobalCells") if "skipGlobalCells" in thresholds else thresholds.get("SkipGlobalCells"))
+        and thresholds.get("minTotal", thresholds.get("MinTotal")) == 0
+        and thresholds.get("minPerApp", thresholds.get("MinPerApp")) == 0
+    )
+    if not checks and not audited_maintenance_shadow_skip:
+        raise SystemExit(f"ERROR: {label} missing shadowChecks for same-commit evidence: {path}")
+    if checks:
+        for index, item in enumerate(checks, start=1):
+            if not isinstance(item, dict):
+                raise SystemExit(f"ERROR: {label} shadowChecks[{index}] is not an object: {path}")
+            item_commit = _normalize_commit(item.get("releaseCommit") or item.get("ReleaseCommit"))
+            if item_commit != expected:
+                item_label = item.get("label") or item.get("Label") or index
+                raise SystemExit(
+                    f"ERROR: {label} shadowChecks[{item_label}] releaseCommit mismatch: "
+                    f"{path} actual={item_commit or 'empty'} expected={expected}"
+                )
 
     if require_config_authority:
         config = payload.get("configAuthority") or payload.get("ConfigAuthority") or {}
@@ -1167,6 +1181,7 @@ def append(args: argparse.Namespace) -> int:
                     require_config_authority=args.stage == "http-full",
                     allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
                     allow_skipped_config_authority=bool(maintenance_baseline_commit),
+                    allow_skipped_shadow_checks=bool(maintenance_baseline_commit),
                 )
             if _bool_flag(args.protocol_canary_required):
                 _require_protocol_canary_for_commit(args.protocol_canary_json, "protocol canary evidence", args.commit)
