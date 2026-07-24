@@ -64,6 +64,11 @@ export interface ProxyHandlerOptions {
 }
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
+const LONG_RUNNING_IMAGE_TIMEOUT_MS = 600_000;
+
+function isLongRunningImageRequest(path: string): boolean {
+  return /^\/v1\/images\/(?:generations|edits)(?:\/|\?|$)/i.test(path);
+}
 
 /** 滑动窗口最近 60 秒的请求时间戳 + 最近 N 条延迟。 */
 class StatsCollector {
@@ -413,7 +418,11 @@ export class ProxyHandler {
       const acceptHdr = String(req.headers['accept'] || '').toLowerCase();
       const isLikelySSE = acceptHdr.includes('text/event-stream') ||
         /\/(stream|events|sse)(\?|$|\/)/i.test(outgoingPath);
-      const requestTimeoutMs = isLikelySSE ? 0 : this.opts.upstreamTimeoutMs;
+      const requestTimeoutMs = isLikelySSE
+        ? 0
+        : isLongRunningImageRequest(outgoingPath)
+          ? Math.max(this.opts.upstreamTimeoutMs, LONG_RUNNING_IMAGE_TIMEOUT_MS)
+          : this.opts.upstreamTimeoutMs;
 
       const upstream = http.request(
         {
