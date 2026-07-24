@@ -127,7 +127,7 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                 require_config_authority=True,
             )
 
-    def test_maintenance_baseline_audit_rejects_skipped_baseline_gate(self) -> None:
+    def test_maintenance_baseline_audit_accepts_explicit_legacy_not_required_gate(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             directory = Path(raw)
             stage_path = directory / "stage.json"
@@ -156,7 +156,9 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                 ledger=str(ledger_path),
                 json_out=str(directory / "baseline.json"),
             ))
-            self.assertEqual(1, result)
+            self.assertEqual(0, result)
+            baseline = json.loads((directory / "baseline.json").read_text(encoding="utf-8"))
+            self.assertEqual("pass", baseline["verdict"])
 
     def test_maintenance_release_inherits_provider_audit_but_video_asr_canary_does_not(self) -> None:
         source = EXEC_DEP_PATH.read_text(encoding="utf-8")
