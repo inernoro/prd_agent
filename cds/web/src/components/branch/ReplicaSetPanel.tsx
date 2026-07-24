@@ -1,10 +1,16 @@
 /*
- * ReplicaSetPanel — 复制集流量舞台（草稿-保存执行模型，2026-07-24 用户拍板）。
+ * ReplicaSetPanel — 复制集双画布（两页签定案，2026-07-24 用户拍板）。
  *
- *   - 舞台是唯一视图（行式页签已删除）：Railway 风拓扑，入口 → 实例层 → 数据层。
- *   - 所有变更操作（加副本/下线/权重/复制隔离/回切/关闭复制集）先进「变更清单」
- *     草稿，点「保存执行」才提交后端执行计划，串行执行；执行中可调序/跳过/取消。
- *   - 失败红显具体原因；失败策略可选「仅停止 / 停止并回滚」；执行记录持久可查。
+ *   - 容器级 / 项目级两个页签都是同一种「节点卡画布」（Railway 风拓扑），不是下拉框、不是列表。
+ *   - 容器级：一屏自上而下展示全部容器的调用关系（前端 → 服务 → 服务），关系由后端从
+ *     环境变量引用 + depends_on 推导（GET replica-sets 的 graph 字段，只含 env 键名）。
+ *     每个容器独立加副本 / 权重 / 下线 / 分流实测。
+ *   - 项目级：原版舞台形态 —— 入口 → 全部容器（副本以「复制集成员 · 已负载」特殊标记的
+ *     叠卡呈现，不隐藏）→ 基础设施；整组加副本一键进清单。
+ *   - 数据隔离两级统一战线（debt #22）：隔离决策升到分支级，隔离区一次把所有有副本的
+ *     服务一起切到同一专用隔离实例；部分隔离会黄牌提示「统一战线未对齐」并可一键补齐。
+ *   - 所有变更操作先进「变更清单」草稿，点「保存执行」才提交后端执行计划，串行执行；
+ *     执行中可调序 / 跳过 / 取消；失败红显 + 可选回滚；执行记录持久可查。
  *   - 分流实测是只读诊断，保持即时执行（不进草稿）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
@@ -53,11 +59,17 @@ export interface ProfileReplicaSetView {
 }
 
 interface ReplicaCandidateView { versionId: string; commitSha: string; image: string; createdAt: string; isCurrent: boolean }
+
+interface GraphNodeView { id: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string }
+interface GraphEdgeView { from: string; to: string; envKeys: string[]; dependsOn: boolean }
+interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][] }
+
 interface ReplicaSetsResponse {
   replicaSets: Record<string, ProfileReplicaSetView>;
   candidates: Record<string, ReplicaCandidateView[]>;
   snapshots?: ReplicaDbSnapshotView[];
   memberLimit: number;
+  graph?: ServiceGraphView;
 }
 
 type PlanStepKind = 'add-replica' | 'remove-member' | 'set-weight' | 'isolate-db' | 'revert-db' | 'dissolve';
@@ -105,6 +117,56 @@ const PLAN_STATUS_LABEL: Record<Plan['status'], string> = {
   running: '执行中', done: '全部完成', error: '有失败(已停止)', cancelled: '已取消', 'rolled-back': '失败并已回滚',
 };
 
+/* ── 画布几何共用 ── */
+const CW = 180;
+const edgeD = (x1: number, y1: number, x2: number, y2: number): string => {
+  const k = Math.max(52, (y2 - y1) * 0.55);
+  return `M ${x1} ${y1} C ${x1} ${y1 + k}, ${x2} ${y2 - k}, ${x2} ${y2 - 8}`;
+};
+
+function dataGeo(w: number, dbCount: number) {
+  const dbCW = 168, dbGap = 26;
+  const n = Math.max(dbCount, 1);
+  const leftFrameW = n * dbCW + (n - 1) * dbGap + 28;
+  const rightFrameW = dbCW + 28;
+  const frameGap = 44;
+  const fx = Math.max(6, (w - leftFrameW - frameGap - rightFrameW) / 2);
+  const rightX = fx + leftFrameW + frameGap;
+  return {
+    dbCW, leftFrameW, rightFrameW, fx, rightX,
+    isoX: rightX + 14,
+    dbX: (i: number): number => fx + 14 + i * (dbCW + dbGap),
+    minWidth: leftFrameW + frameGap + rightFrameW + 24,
+  };
+}
+
+/** 分支级隔离统一战线状态（debt #22：禁止一半连主库一半连隔离库） */
+interface BranchIso {
+  state: 'idle' | 'cloning' | 'switching' | 'partial' | 'done';
+  isolatedProfiles: string[];
+  withMembersProfiles: string[];
+  dbNames: string[];
+}
+function computeBranchIso(replicaSets: Record<string, ProfileReplicaSetView>): BranchIso {
+  const entries = Object.values(replicaSets);
+  const withMembers = entries.filter((rs) => rs.enabled && rs.members.length > 0);
+  const isolated = entries.filter((rs) => rs.isolated);
+  const cloning = entries.some((rs) => rs.members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')));
+  const switching = isolated.length > 0 && entries.some((rs) => rs.members.some((m) => m.status === 'provisioning'));
+  let state: BranchIso['state'] = 'idle';
+  if (cloning) state = 'cloning';
+  else if (switching) state = 'switching';
+  else if (isolated.length === 0) state = 'idle';
+  else if (withMembers.every((rs) => rs.isolated)) state = 'done';
+  else state = 'partial';
+  return {
+    state,
+    isolatedProfiles: isolated.map((rs) => rs.profileId),
+    withMembersProfiles: withMembers.map((rs) => rs.profileId),
+    dbNames: isolated.map((rs) => rs.isolated!.dbName),
+  };
+}
+
 export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast }: {
   branchId: string;
   previewUrl?: string;
@@ -116,7 +178,6 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   const [plans, setPlans] = useState<Plan[]>([]);
   const [draft, setDraft] = useState<DraftOp[]>([]);
   const [onFailure, setOnFailure] = useState<'stop' | 'rollback'>('stop');
-  const [stageSel, setStageSel] = useState<string | null>(null);
   const [tab, setTab] = useState<'container' | 'project'>('container');
   const [busy, setBusy] = useState(false);
   const draftSeq = useRef(0);
@@ -202,9 +263,34 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   const { replicaSets, candidates, memberLimit } = state.data;
   const snapshots = state.data.snapshots ?? [];
   const profileIds = Array.from(new Set([...Object.keys(replicaSets), ...Object.keys(candidates)])).sort();
-  const stageProfile = (stageSel && profileIds.includes(stageSel) ? stageSel : undefined)
-    || profileIds.find((p) => replicaSets[p]?.enabled && replicaSets[p].members.length > 0)
-    || profileIds[0];
+  // 旧后端滚动更新期兜底：没有 graph 时退化为单层（不画调用边，卡片仍是画布形态）
+  const graph: ServiceGraphView = state.data.graph ?? { nodes: [], edges: [], layers: [profileIds] };
+  const branchIso = computeBranchIso(replicaSets);
+
+  // 统一战线动作：隔离 / 回切一次覆盖所有符合条件的服务（草稿同入清单）
+  const isolateTargets = profileIds.filter((p) => {
+    const rs = replicaSets[p];
+    const hasMembers = (rs?.enabled && rs.members.length > 0) || draft.some((d) => d.profileId === p && d.kind === 'add-replica');
+    return hasMembers && !rs?.isolated && !draft.some((d) => d.profileId === p && d.kind === 'isolate-db');
+  });
+  const revertTargets = profileIds.filter((p) => !!replicaSets[p]?.isolated && !draft.some((d) => d.profileId === p && d.kind === 'revert-db'));
+  const isolateAll = (): void => {
+    if (isolateTargets.length === 0) { onToast?.('隔离作用于副本——先给容器点「+副本」，同一计划内先加副本再隔离'); return; }
+    isolateTargets.forEach((p) => addDraft({ kind: 'isolate-db', profileId: p, label: `${p} · 复制隔离（统一战线，克隆 → 副本切换，可回切）` }));
+    onToast?.(`统一战线：已加入 ${isolateTargets.length} 个服务的复制隔离草稿`);
+  };
+  const revertAll = (): void => {
+    revertTargets.forEach((p) => addDraft({ kind: 'revert-db', profileId: p, label: `${p} · 回切主库（隔离库转快照保留）` }));
+    if (revertTargets.length) onToast?.(`已加入 ${revertTargets.length} 个服务的回切草稿`);
+  };
+  const draftIsoCount = draft.filter((d) => d.kind === 'isolate-db').length;
+  const draftRevertCount = draft.filter((d) => d.kind === 'revert-db').length;
+
+  const stageProps = {
+    branchId, previewUrl, services, infra: infra ?? [], replicaSets, candidates, memberLimit,
+    draft, onDraft: addDraft, onToast, profileIds, graph, branchIso,
+    isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount,
+  };
 
   return (
     <div className="grid gap-4">
@@ -220,36 +306,13 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
           </button>
         </div>
         <span className="text-[11px] text-muted-foreground">
-          {tab === 'container' ? '单个容器的调用关系与操作，容器胶囊切换' : '整组视角：一键给全部容器加副本 / 整组隔离（同入同清单）'}
+          {tab === 'container'
+            ? '全部容器的调用关系一屏纵览（边来自环境变量引用），每个容器独立操作'
+            : '整组视角：入口 → 全部容器 → 基础设施，一键整组加副本 / 统一战线隔离'}
         </span>
       </section>
 
-      {tab === 'project' ? (
-        <ProjectGroupPanel profileIds={profileIds} replicaSets={replicaSets} services={services} draft={draft} memberLimit={memberLimit} onDraft={addDraft} onToast={onToast} />
-      ) : null}
-
-      {tab === 'container' && stageProfile ? (
-        <ReplicaStage
-          branchId={branchId}
-          profileId={stageProfile}
-          profileIds={profileIds}
-          onSelectProfile={setStageSel}
-          rs={replicaSets[stageProfile]}
-          candidates={candidates[stageProfile] ?? []}
-          service={services?.[stageProfile]}
-          infra={infra ?? []}
-          previewUrl={previewUrl}
-          memberLimit={memberLimit}
-          draft={draft}
-          onDraft={addDraft}
-          onToast={onToast}
-        />
-      ) : null}
-      {tab === 'container' && !stageProfile ? (
-        <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
-          还没有可复制集化的服务：走一次极速版/托管构建部署后即可在此操作。
-        </section>
-      ) : null}
+      {tab === 'container' ? <ContainerGraphStage {...stageProps} /> : <ProjectStage {...stageProps} />}
 
       <PlanBoard
         branchId={branchId}
@@ -264,7 +327,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
         onCall={call}
       />
 
-      {/* 悬浮执行按钮：舞台高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态 */}
+      {/* 悬浮执行按钮：画布高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态 */}
       {(draft.length > 0 && !activePlan) || activePlan ? createPortal(
         <button type="button" disabled={busy || !!activePlan}
           onClick={() => { if (!activePlan) savePlan(); }}
@@ -337,7 +400,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
     <section className="cds-surface-raised cds-hairline px-5 py-4">
       <div className="flex flex-wrap items-center gap-3">
         <span className="text-sm font-semibold">变更清单</span>
-        <span className="text-[11px] text-muted-foreground">舞台上的操作先进清单，点「保存执行」才真正开始；执行中可调序 / 跳过 / 取消</span>
+        <span className="text-[11px] text-muted-foreground">画布上的操作先进清单，点「保存执行」才真正开始；执行中可调序 / 跳过 / 取消</span>
       </div>
 
       {activePlan ? (
@@ -390,7 +453,7 @@ function PlanBoard({ branchId, draft, setDraft, onFailure, setOnFailure, activeP
           </div>
         </div>
       ) : (
-        <p className="mt-2 text-xs text-muted-foreground">暂无待保存的变更。在舞台上点「+副本」「复制隔离」等即可加入清单。</p>
+        <p className="mt-2 text-xs text-muted-foreground">暂无待保存的变更。在画布上点「+副本」「复制隔离」等即可加入清单。</p>
       )}
 
       {history.length > 0 ? (
@@ -454,22 +517,30 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
   );
 }
 
-/* ── 流量舞台（唯一视图；操作产草稿）── */
-function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, candidates, service, infra, previewUrl, memberLimit, draft, onDraft, onToast }: {
+/* ── 两个画布共享的 props ── */
+interface StageSharedProps {
   branchId: string;
-  profileId: string;
-  profileIds: string[];
-  onSelectProfile: (p: string) => void;
-  rs?: ProfileReplicaSetView;
-  candidates: ReplicaCandidateView[];
-  service?: PanelServiceInfo;
-  infra: PanelInfraInfo[];
   previewUrl?: string;
+  services?: Record<string, PanelServiceInfo>;
+  infra: PanelInfraInfo[];
+  replicaSets: Record<string, ProfileReplicaSetView>;
+  candidates: Record<string, ReplicaCandidateView[]>;
   memberLimit: number;
   draft: DraftOp[];
   onDraft: (op: Omit<DraftOp, 'key'>) => void;
   onToast?: (m: string) => void;
-}): JSX.Element {
+  profileIds: string[];
+  graph: ServiceGraphView;
+  branchIso: BranchIso;
+  isolateTargets: string[];
+  revertTargets: string[];
+  isolateAll: () => void;
+  revertAll: () => void;
+  draftIsoCount: number;
+  draftRevertCount: number;
+}
+
+function useMeasuredWidth(): [React.RefObject<HTMLDivElement>, number] {
   const hostRef = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(860);
   useEffect(() => {
@@ -480,85 +551,177 @@ function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, ca
     setW(el.clientWidth);
     return () => ro.disconnect();
   }, []);
+  return [hostRef, w];
+}
+
+const isWebLike = (node: GraphNodeView | undefined, id: string): boolean =>
+  /web|admin|front|console|ui/i.test(id) || (node?.pathPrefixes ?? []).includes('/');
+
+function serviceStatusText(rs: ProfileReplicaSetView | undefined, members: ReplicaMemberView[]): { text: string; danger: boolean } {
+  if (rs?.primaryReachable === false) return { text: '不可达 · 端口拒绝连接', danger: true };
+  if (members.some((m) => m.status === 'error')) return { text: '有副本失败 · 详见下方', danger: true };
+  if (members.some((m) => m.status === 'provisioning')) return { text: '副本创建中…', danger: false };
+  if (members.length > 0) return { text: `1+${members.length} 实例 · 按权重分流`, danger: false };
+  return { text: '单实例 · 可加副本', danger: false };
+}
+
+/* ── 数据层（两个画布共用）：左框共享基础设施 + 右框隔离区（统一战线）── */
+function DataLayerSvg({ geo, fy, fh, iso, draftIsoCount, mainDbX, transferActive }: {
+  geo: ReturnType<typeof dataGeo>; fy: number; fh: number; iso: BranchIso; draftIsoCount: number; mainDbX: number; transferActive: boolean;
+}): JSX.Element {
+  const dbY = fy + 16;
+  return (
+    <>
+      {/* 左框：共享基础设施（主库） */}
+      <rect x={geo.fx} y={fy} width={geo.leftFrameW} height={fh} rx="14" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="7 6" opacity="0.5" />
+      {/* 右框：隔离区（统一战线目的地） */}
+      <rect x={geo.rightX} y={fy} width={geo.rightFrameW} height={fh} rx="14" fill="none"
+        stroke={iso.state === 'partial' ? '#f59e0b' : '#10b981'} strokeWidth="1.6" strokeDasharray="7 6"
+        opacity={iso.state === 'idle' && draftIsoCount === 0 ? 0.45 : 0.9}
+        className={iso.state === 'cloning' ? 'animate-[rsants_1.2s_linear_infinite]' : undefined} />
+      {transferActive ? (
+        <g>
+          <path d={`M ${mainDbX + geo.dbCW} ${dbY + 46} L ${geo.isoX} ${dbY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
+          {/* 转移动画：一枚小库卡从左框飞进右框 */}
+          <g>
+            <animateMotion dur="1.4s" repeatCount="indefinite" path={`M ${mainDbX + geo.dbCW} ${dbY + 40} L ${geo.isoX} ${dbY + 40}`} />
+            <rect x="-13" y="-9" width="26" height="18" rx="4" fill="hsl(var(--background))" stroke="#10b981" strokeWidth="1.6" />
+            <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="700" fill="#10b981">DB</text>
+          </g>
+        </g>
+      ) : null}
+    </>
+  );
+}
+
+function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draftRevertCount, isolateTargets, revertTargets, onIsolateAll, onRevertAll }: {
+  geo: ReturnType<typeof dataGeo>; dbY: number; dbInfra: PanelInfraInfo[]; mainDbIdx: number;
+  iso: BranchIso; draftIsoCount: number; draftRevertCount: number;
+  isolateTargets: string[]; revertTargets: string[]; onIsolateAll: () => void; onRevertAll: () => void;
+}): JSX.Element {
+  const locked = iso.state === 'done';
+  return (
+    <>
+      {(dbInfra.length ? dbInfra : [{ id: 'db', name: '数据库', dockerImage: '', status: 'running' }]).map((s, i) => {
+        const isMainDb = i === mainDbIdx && !/redis/i.test(s.dockerImage || s.id);
+        const lockThis = isMainDb && locked;
+        return (
+          <StageCard key={s.id} x={geo.dbX(i)} y={dbY} w={geo.dbCW} name={s.name || s.id} ico={/redis/i.test(s.dockerImage || s.id) ? 'R' : 'DB'}
+            color={/redis/i.test(s.dockerImage || s.id) ? '#c2372f' : '#10b981'} ok={!lockThis} locked={lockThis}
+            status={lockThis ? '已上锁 · 副本请求已转移' : isMainDb && iso.state === 'partial' ? '主库 · 仍有服务在写' : isMainDb ? '主库' : '共享实例'} foot={`${s.id}-volume`} />
+        );
+      })}
+      {iso.state === 'idle' && draftIsoCount === 0 ? (
+        <button type="button"
+          className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
+          style={{ left: geo.isoX, top: dbY, width: geo.dbCW, height: 92 }}
+          title={`统一战线（分支级）：一次把 ${isolateTargets.length || '所有有副本的'} 个服务的副本切到同一专用隔离实例，禁止一半连主库一半连隔离库。进变更清单，保存后执行`}
+          onClick={onIsolateAll}>
+          <Copy className="h-4 w-4" />复制隔离到此
+          <span className="text-[10px] font-normal opacity-80">统一战线 · 覆盖 {isolateTargets.length} 个服务</span>
+        </button>
+      ) : iso.state === 'idle' && draftIsoCount > 0 ? (
+        <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-amber-500/60 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-400"
+          style={{ left: geo.isoX, top: dbY, width: geo.dbCW, height: 92 }}>
+          <Copy className="h-4 w-4" />复制隔离 · 待保存
+          <span className="text-[10px] font-normal opacity-80">{draftIsoCount} 个服务</span>
+        </div>
+      ) : (
+        <StageCard x={geo.isoX} y={dbY} w={geo.dbCW} name="隔离区" ico="DB" color={iso.state === 'partial' ? '#f59e0b' : '#10b981'}
+          ok={iso.state === 'done'} boot={iso.state === 'cloning'} danger={iso.state === 'partial'}
+          status={iso.state === 'cloning' ? '第1步 复制：拷入数据…'
+            : iso.state === 'switching' ? '第2步 切换：副本改连新库…'
+            : iso.state === 'partial' ? `统一战线未对齐 ${iso.isolatedProfiles.length}/${iso.withMembersProfiles.length}`
+            : draftRevertCount > 0 ? '回切主库 · 待保存' : `专用实例 · ${iso.isolatedProfiles.length} 服务已切换`}
+          foot={iso.dbNames.join(' · ')}
+          extra={(
+            <span className="absolute bottom-1.5 right-1.5 flex gap-1">
+              {iso.state === 'partial' && isolateTargets.length > 0 ? (
+                <button type="button" className="rounded border border-amber-500/60 bg-background px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                  title="把尚未隔离的服务也加入隔离草稿，对齐统一战线" onClick={onIsolateAll}>补齐隔离</button>
+              ) : null}
+              {(iso.state === 'done' || iso.state === 'partial') && revertTargets.length > 0 ? (
+                <button type="button" className="rounded border border-emerald-500/50 bg-background px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                  title="全部已隔离服务回切主库（隔离库转快照保留）" onClick={onRevertAll}>回切主库</button>
+              ) : null}
+            </span>
+          )} />
+      )}
+    </>
+  );
+}
+
+/* ── 容器级画布：全部容器自上而下的调用关系（每容器独立操作）── */
+function ContainerGraphStage(props: StageSharedProps): JSX.Element {
+  const { branchId, previewUrl, services, infra, replicaSets, candidates, memberLimit, draft, onDraft, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount } = props;
+  const [hostRef, w] = useMeasuredWidth();
+  const [weightFor, setWeightFor] = useState<string | null>(null); // `${profileId}:${memberId}`
+  const [weightDraft, setWeightDraft] = useState('');
+  const [pickFor, setPickFor] = useState<string | null>(null);
   const [log, setLog] = useState<string[]>([]);
   const [probeRes, setProbeRes] = useState<ProbeResult | null>(null);
   const [flying, setFlying] = useState<{ path: string; key: number } | null>(null);
-  const [weightFor, setWeightFor] = useState<string | null>(null);
-  const [weightDraft, setWeightDraft] = useState('');
-  const [pickerOpen, setPickerOpen] = useState(false);
   const probing = useRef(false);
 
-  const myDraft = draft.filter((d) => d.profileId === profileId);
-  const draftAdds = myDraft.filter((d) => d.kind === 'add-replica');
-  const draftRemovals = new Set(myDraft.filter((d) => d.kind === 'remove-member').map((d) => d.params?.memberId));
-  const draftIsolate = myDraft.some((d) => d.kind === 'isolate-db');
-  const draftRevert = myDraft.some((d) => d.kind === 'revert-db');
-  const draftWeights = new Map(myDraft.filter((d) => d.kind === 'set-weight').map((d) => [d.params?.memberId, d.params?.weight]));
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  // 分层兜底：graph.layers 可能缺少个别 profile（如仅有历史候选）——补进末层
+  const layered = new Set(graph.layers.flat());
+  const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id)));
+  const missing = profileIds.filter((p) => !layered.has(p));
+  if (missing.length) layers.push(missing);
+  const rows = layers.filter((l) => l.length > 0);
 
-  const members = rs?.enabled ? rs.members : [];
-  const running = members.filter((m) => m.status === 'running');
-  const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
   const entryHost = previewUrl ? new URL(previewUrl).hostname : '预览入口未就绪';
   const dbInfra = infra.filter((s) => /mongo|mysql|mariadb|postgres|redis/i.test(s.dockerImage || s.id));
-  const isoState = rs?.isolated
-    ? (members.some((m) => m.status === 'provisioning') ? 'switching' : 'done')
-    : (members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')) ? 'cloning' : 'idle');
-  const availableRows = candidates.filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
+  const geoProbe = dataGeo(w, Math.max(dbInfra.length, 1));
 
-  const CW = 180;
-  const totalSlots = 1 + members.length + draftAdds.length + (members.length + draftAdds.length < memberLimit ? 1 : 0);
-  const gap = Math.max(12, Math.min(32, (w - totalSlots * CW) / (totalSlots + 1)));
-  const rowW = totalSlots * CW + (totalSlots - 1) * gap;
-  const startX = Math.max(8, (w - rowW) / 2);
-  const entryX = (w - CW) / 2, entryY = 14, instY = 190;
-  // 数据层双框（用户拍板）：左框 = 共享基础设施（主库），右框 = 隔离区（初始空）。
-  // 复制隔离时库从左框「转移动画」到右框，完成后左侧主库上锁置灰——请求转移一眼可见。
-  const dbCW = 168, dbGap = 26;
-  const dbCount = Math.max(dbInfra.length, 1);
-  const leftFrameW = dbCount * dbCW + (dbCount - 1) * dbGap + 28;
-  const rightFrameW = dbCW + 28;
-  const frameGap = 44;
-  const fx = Math.max(6, (w - leftFrameW - frameGap - rightFrameW) / 2);
-  const rightX = fx + leftFrameW + frameGap;
-  const dbY = 430, fy = dbY - 16, fh = 128;
-  const edgeD = (x1: number, y1: number, x2: number, y2: number): string => {
-    const k = Math.max(52, (y2 - y1) * 0.55);
-    return `M ${x1} ${y1} C ${x1} ${y1 + k}, ${x2} ${y2 - k}, ${x2} ${y2 - 8}`;
-  };
+  const gap = 26, bandH = 196, layerTop = 150;
+  const maxRowW = Math.max(0, ...rows.map((l) => l.length * CW + (l.length - 1) * gap));
+  const canvasW = Math.max(w, maxRowW + 24, geoProbe.minWidth);
+  const geo = dataGeo(canvasW, Math.max(dbInfra.length, 1));
+  const entryX = (canvasW - CW) / 2, entryY = 14;
+  const fy = layerTop + rows.length * bandH + 18;
+  const dbY = fy + 16, fh = 128;
+  const height = fy + fh + 44;
   const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
-  const dbX = (i: number): number => fx + 14 + i * (dbCW + dbGap);
-  const isoX = rightX + 14;
-  const mainDbX = dbX(mainDbIdx);
-  const insts = [
-    { id: 'primary', name: '主实例', w: rs?.primaryWeight ?? 100, boot: false, ghost: false, danger: rs?.primaryReachable === false, sub: rs?.primaryReachable === false ? '不可达 · 端口拒绝连接' : 'primary · 滚动更新', port: service?.hostPort },
-    ...members.map((m) => ({
-      id: m.id, name: m.id, w: m.status === 'running' ? m.weight : 0, boot: m.status === 'provisioning', ghost: false,
-      danger: m.status === 'error' || (m.status === 'running' && m.reachable === false),
-      sub: m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? `失败：${m.statusMessage || '未知原因'}` : m.reachable === false ? '不可达 · 建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
-      port: m.hostPort,
-    })),
-    ...draftAdds.map((d, i) => ({ id: d.key, name: `副本(草稿${i + 1})`, w: 0, boot: false, ghost: true, danger: false, sub: d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存', port: undefined })),
-  ];
-  const repXs = insts.map((_, i) => startX + i * (CW + gap) + CW / 2);
-  const canAddMore = members.length + draftAdds.length < memberLimit;
+  const mainDbX = geo.dbX(mainDbIdx);
 
-  const runProbe = async (): Promise<void> => {
+  const pos = new Map<string, { x: number; cx: number; y: number }>();
+  rows.forEach((ids, li) => {
+    const rowW = ids.length * CW + (ids.length - 1) * gap;
+    const startX = Math.max(8, (canvasW - rowW) / 2);
+    ids.forEach((id, i) => {
+      const x = startX + i * (CW + gap);
+      pos.set(id, { x, cx: x + CW / 2, y: layerTop + li * bandH });
+    });
+  });
+
+  // 入口直达面：有 pathPrefixes / subdomain 的服务；一个都没有时退化为第 0 层
+  const entryFacing = profileIds.filter((p) => {
+    const n = nodeById.get(p);
+    return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
+  });
+  const entryTargets = entryFacing.length > 0 ? entryFacing : (rows[0] ?? []);
+  const svcEdges = graph.edges.filter((e) => pos.has(e.from) && pos.has(e.to));
+  const infraEdges = graph.edges.filter((e) => pos.has(e.from) && dbInfra.some((s) => s.id === e.to));
+
+  const runProbe = async (profileId: string): Promise<void> => {
     if (probing.current) return;
     probing.current = true;
-    setLog(['串流模式：每个请求等上一个响应返回才发出——']);
+    setLog([`分流实测 ${profileId} — 串流模式：每个请求等上一个响应返回才发出——`]);
     setProbeRes(null);
     try {
       if (!previewUrl) { onToast?.('该分支还没有预览入口，无法实测'); probing.current = false; return; }
       const res = await apiRequest<ProbeResult>(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`, {
         method: 'POST', body: { host: new URL(previewUrl).hostname, count: 12 },
       });
+      const target = pos.get(profileId);
       for (let i = 0; i < res.hits.length; i += 1) {
         const hit = res.hits[i];
         const missed = hit.servedBy === 'untagged' || hit.servedBy === 'error';
-        const idx = hit.servedBy === 'primary' ? 0 : insts.findIndex((x) => x.id === hit.servedBy);
-        if (!missed && idx >= 0) {
-          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, repXs[idx], instY), key: i });
-          await new Promise((r) => setTimeout(r, 640));
+        if (!missed && target) {
+          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, target.cx, target.y), key: i });
+          await new Promise((r) => setTimeout(r, 520));
           setFlying(null);
         }
         const line = missed
@@ -573,189 +736,196 @@ function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, ca
     probing.current = false;
   };
 
-  const commitWeight = (memberId: string) => {
+  const commitWeight = (profileId: string, memberId: string): void => {
     const v = Math.max(0, Math.min(100, Math.round(Number(weightDraft))));
     setWeightFor(null);
     if (!Number.isFinite(v)) return;
     onDraft({ kind: 'set-weight', profileId, params: { memberId, weight: v }, label: `${profileId} · ${memberId === 'primary' ? '主实例' : memberId} 权重 → ${v}` });
   };
 
+  const pickRows = pickFor
+    ? (candidates[pickFor] ?? []).filter((row) => !row.isCurrent && !(replicaSets[pickFor]?.members ?? []).some((m) => m.versionId === row.versionId && m.status !== 'error'))
+    : [];
+
   return (
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-3">
-        {profileIds.length > 1 ? (
-          <select value={profileId} onChange={(e) => onSelectProfile(e.target.value)}
-            title="切换舞台展示的服务（操作只作用于当前选中服务）"
-            className="h-7 rounded-md border border-[hsl(var(--hairline))] bg-transparent px-2 text-sm font-semibold outline-none focus:border-primary">
-            {profileIds.map((p) => <option key={p} value={p}>{p}</option>)}
-          </select>
-        ) : <b className="text-sm">{profileId}</b>}
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />复制集 · {1 + members.length} 实例</span>
-        {rs?.isolated ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · {rs.isolated.dbName}</span> : null}
-        {myDraft.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{myDraft.length} 项变更待保存</span> : null}
-        <span className="text-[11px] text-muted-foreground">点击权重可改 · 所有操作先进变更清单</span>
+        <b className="text-sm">调用关系画布</b>
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 边=环境变量引用</span>
+        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.withMembersProfiles.length} · 建议补齐</span> : null}
+        {draft.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draft.length} 项变更待保存</span> : null}
+        <span className="text-[11px] text-muted-foreground">悬停连线可看引用的环境变量 · 所有操作先进变更清单</span>
       </div>
 
-      <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
-        style={{ height: 590, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
-        <svg className="pointer-events-none absolute inset-0 h-full w-full">
-          <defs><marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker></defs>
-          {insts.map((inst, i) => {
-            const x2 = repXs[i];
-            const pct = inst.w / tw;
+      <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
+          <svg className="pointer-events-none absolute inset-0" width={canvasW} height={height}>
+            <defs><marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker></defs>
+            {/* 入口 → 直达服务 */}
+            {entryTargets.map((id) => {
+              const p = pos.get(id);
+              if (!p) return null;
+              const hasReplicas = (replicaSets[id]?.members.length ?? 0) > 0;
+              return (
+                <path key={`entry-${id}`} d={edgeD(entryX + CW / 2, entryY + 88, p.cx, p.y)} fill="none"
+                  stroke={hasReplicas ? '#6366f1' : 'hsl(var(--muted-foreground))'} strokeWidth={hasReplicas ? 2 : 1.4}
+                  strokeDasharray="5 5" opacity={hasReplicas ? 0.75 : 0.4} markerEnd="url(#rsArr)" />
+              );
+            })}
+            {/* 服务 → 服务（调用链，来自 env 引用 / depends_on） */}
+            {svcEdges.map((e) => {
+              const a = pos.get(e.from)!, b = pos.get(e.to)!;
+              const midX = (a.cx + b.cx) / 2, midY = (a.y + 96 + b.y) / 2 + 6;
+              const label = e.envKeys.length > 0
+                ? `${e.envKeys[0].length > 22 ? `${e.envKeys[0].slice(0, 21)}…` : e.envKeys[0]}${e.envKeys.length > 1 ? ` +${e.envKeys.length - 1}` : ''}`
+                : 'depends_on';
+              return (
+                <g key={`svc-${e.from}-${e.to}`}>
+                  <path d={edgeD(a.cx, a.y + 96, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity="0.55" markerEnd="url(#rsArr)">
+                    <title>{`${e.from} 调用 ${e.to}\n${e.envKeys.length ? `环境变量引用：${e.envKeys.join('、')}` : ''}${e.dependsOn ? `${e.envKeys.length ? '\n' : ''}depends_on 声明` : ''}`}</title>
+                  </path>
+                  <text x={midX} y={midY} textAnchor="middle" fontSize="9" fill="hsl(var(--muted-foreground))" className="font-mono">
+                    {label}
+                    <title>{e.envKeys.join('、') || 'depends_on'}</title>
+                  </text>
+                </g>
+              );
+            })}
+            {/* 服务 → 基础设施（淡边；隔离后被切换的服务改连隔离区） */}
+            {infraEdges.map((e) => {
+              const a = pos.get(e.from)!;
+              const idx = dbInfra.findIndex((s) => s.id === e.to);
+              const toIso = !!replicaSets[e.from]?.isolated && /mongo|mysql|mariadb|postgres/i.test(dbInfra[idx]?.dockerImage || e.to);
+              const tx = toIso ? geo.isoX + geo.dbCW / 2 : geo.dbX(idx) + geo.dbCW / 2;
+              return (
+                <path key={`infra-${e.from}-${e.to}`} d={edgeD(a.cx, a.y + 96, tx, dbY)} fill="none"
+                  stroke={toIso ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={toIso ? 1.8 : 1.2}
+                  strokeDasharray="5 5" opacity={toIso ? 0.7 : 0.16} markerEnd={toIso ? 'url(#rsArr)' : undefined}>
+                  <title>{`${e.from} → ${e.to}${e.envKeys.length ? `\n环境变量引用：${e.envKeys.join('、')}` : ''}`}</title>
+                </path>
+              );
+            })}
+            <DataLayerSvg geo={geo} fy={fy} fh={fh} iso={branchIso} draftIsoCount={draftIsoCount} mainDbX={mainDbX}
+              transferActive={branchIso.state === 'cloning' || branchIso.state === 'switching'} />
+            {flying ? (
+              <circle key={flying.key} r="4.6" fill="#f59e0b">
+                <animateMotion dur="0.5s" repeatCount="1" fill="freeze" path={flying.path} />
+              </circle>
+            ) : null}
+          </svg>
+
+          <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
+
+          {rows.flatMap((ids) => ids).map((pid) => {
+            const p = pos.get(pid)!;
+            const node = nodeById.get(pid);
+            const rs = replicaSets[pid];
+            const members = rs?.enabled ? rs.members : [];
+            const running = members.filter((m) => m.status === 'running');
+            const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
+            const myDraft = draft.filter((d) => d.profileId === pid);
+            const draftAdds = myDraft.filter((d) => d.kind === 'add-replica');
+            const draftRemovals = new Set(myDraft.filter((d) => d.kind === 'remove-member').map((d) => d.params?.memberId));
+            const canAdd = members.length + draftAdds.length < memberLimit;
+            const st = serviceStatusText(rs, members);
+            const availOld = (candidates[pid] ?? []).filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
             return (
-              <g key={inst.id}>
-                <path d={edgeD(entryX + CW / 2, entryY + 88, x2, instY)} fill="none"
-                  stroke={inst.ghost ? 'hsl(var(--muted-foreground))' : i > 0 && !inst.boot ? '#6366f1' : 'hsl(var(--muted-foreground))'}
-                  strokeWidth={i > 0 && !inst.boot && !inst.ghost ? 2 : 1.4} strokeDasharray="5 5"
-                  opacity={inst.ghost ? 0.18 : inst.boot ? 0.2 : 0.35 + 0.65 * pct} markerEnd={inst.ghost ? undefined : 'url(#rsArr)'} />
-                {i > 0 && !inst.ghost && isoState === 'done' ? (
-                  <>
-                    <path d={edgeD(x2, instY + 92, mainDbX + dbCW / 2, dbY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="5 5" opacity="0.2" />
-                    <g opacity="0.65">
-                      <circle cx={(x2 + mainDbX + dbCW / 2) / 2} cy={(instY + 92 + dbY) / 2 + 12} r="8" fill="hsl(var(--background))" stroke="hsl(var(--muted-foreground))" />
-                      <line x1={(x2 + mainDbX + dbCW / 2) / 2 - 4} y1={(instY + 92 + dbY) / 2 + 16} x2={(x2 + mainDbX + dbCW / 2) / 2 + 4} y2={(instY + 92 + dbY) / 2 + 8} stroke="hsl(var(--muted-foreground))" strokeWidth="1.6" />
-                    </g>
-                    <path d={edgeD(x2, instY + 92, isoX + dbCW / 2, dbY)} fill="none" stroke="#6366f1" strokeWidth="2" strokeDasharray="5 5" opacity="0.8" markerEnd="url(#rsArr)" />
-                  </>
-                ) : !inst.ghost ? (
-                  <path d={edgeD(x2, instY + 92, mainDbX + dbCW / 2, dbY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="5 5" opacity={i === 0 ? 0.35 : 0.3} markerEnd="url(#rsArr)" />
-                ) : null}
-              </g>
+              <div key={pid}>
+                <StageCard x={p.x} y={p.y} w={CW} name={node?.name || pid} ico={isWebLike(node, pid) ? 'WEB' : 'API'}
+                  color="#8b8578" ok={!st.danger} danger={st.danger}
+                  status={st.text} foot={services?.[pid]?.hostPort ? `:${services[pid].hostPort}` : node?.containerPort ? `容器 :${node.containerPort}` : ''}
+                  hero={members.length > 0}
+                  extra={members.length > 0 ? (
+                    <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-indigo-500/60 bg-indigo-500 px-1 text-[10px] font-bold text-white" title={`复制集 · 1 主 + ${members.length} 副本`}>
+                      x{1 + members.length}
+                    </span>
+                  ) : undefined} />
+                {/* 成员条：主实例权重 + 每个副本（权重可点改 / 直达 / 下线）+ 操作行 */}
+                <div className="absolute" style={{ left: p.x, top: p.y + 102, width: CW }}>
+                  {members.length > 0 ? (
+                    <ChipRow key="primary" color="#8b8578" mono="主实例" sub={rs?.primaryReachable === false ? '不可达' : undefined} danger={rs?.primaryReachable === false}
+                      weight={weightFor === `${pid}:primary` ? undefined : `${Math.round(((rs?.primaryWeight ?? 100) / tw) * 100)}%`}
+                      onWeightClick={() => { setWeightFor(`${pid}:primary`); setWeightDraft(String(rs?.primaryWeight ?? 100)); }}
+                      weightInput={weightFor === `${pid}:primary` ? (
+                        <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitWeight(pid, 'primary')} onCancel={() => setWeightFor(null)} />
+                      ) : undefined} />
+                  ) : null}
+                  {members.map((m, mi) => {
+                    const removal = draftRemovals.has(m.id);
+                    const url = memberDirectUrl(previewUrl, m.id);
+                    return (
+                      <ChipRow key={m.id} color={MEMBER_COLORS[mi % MEMBER_COLORS.length]} mono={m.id}
+                        sub={m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? (m.statusMessage || '失败') : removal ? '待下线（草稿）' : m.reachable === false ? '不可达' : undefined}
+                        danger={m.status === 'error' || (m.status === 'running' && m.reachable === false)}
+                        boot={m.status === 'provisioning'} dim={removal}
+                        weight={m.status === 'running' && weightFor !== `${pid}:${m.id}` ? `${Math.round((m.weight / tw) * 100)}%` : undefined}
+                        onWeightClick={m.status === 'running' ? () => { setWeightFor(`${pid}:${m.id}`); setWeightDraft(String(m.weight)); } : undefined}
+                        weightInput={weightFor === `${pid}:${m.id}` ? (
+                          <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitWeight(pid, m.id)} onCancel={() => setWeightFor(null)} />
+                        ) : undefined}
+                        actions={!removal ? (
+                          <>
+                            {url && m.status === 'running' ? (
+                              <a className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary" title="直达该副本" href={url} target="_blank" rel="noreferrer"><ExternalLink className="h-3 w-3" /></a>
+                            ) : null}
+                            <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive" title="下线（进变更清单）"
+                              onClick={() => onDraft({ kind: 'remove-member', profileId: pid, params: { memberId: m.id }, label: `${pid} · 下线 ${m.id}` })}>
+                              <Trash2 className="h-3 w-3" />
+                            </button>
+                          </>
+                        ) : undefined} />
+                    );
+                  })}
+                  {draftAdds.map((d, i) => (
+                    <ChipRow key={d.key} color="#9ca3af" mono={`副本(草稿${i + 1})`} sub={d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存'} ghost />
+                  ))}
+                  <div className="mt-1 flex items-center gap-1">
+                    {canAdd ? (
+                      <button type="button"
+                        className="flex flex-1 items-center justify-center gap-0.5 rounded border border-dashed border-indigo-500/50 bg-indigo-500/[.07] px-1 py-0.5 text-[10px] font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
+                        title="加一个当前版本副本（进变更清单）"
+                        onClick={() => onDraft({ kind: 'add-replica', profileId: pid, label: `${pid} · 新增当前版本副本` })}>
+                        <Plus className="h-3 w-3" />副本
+                      </button>
+                    ) : null}
+                    {canAdd && availOld.length > 0 ? (
+                      <button type="button" className={`rounded border p-0.5 ${pickFor === pid ? 'border-indigo-500 text-indigo-500' : 'border-[hsl(var(--hairline))] bg-background text-muted-foreground hover:text-indigo-500'}`}
+                        title="加历史版本副本（下方选择版本）" onClick={() => setPickFor(pickFor === pid ? null : pid)}>
+                        <Layers className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    {running.length > 0 ? (
+                      <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary"
+                        title="分流实测：真实请求穿过入口统计落点" onClick={() => void runProbe(pid)}>
+                        <RefreshCw className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    {members.length > 0 ? (
+                      <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive"
+                        title="关闭复制集：移除该容器全部副本（进变更清单）"
+                        onClick={() => onDraft({ kind: 'dissolve', profileId: pid, label: `${pid} · 关闭复制集（移除全部副本）` })}>
+                        <Undo2 className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                  </div>
+                </div>
+              </div>
             );
           })}
-          {/* 左框：共享基础设施（主库） */}
-          <rect x={fx} y={fy} width={leftFrameW} height={fh} rx="14" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="7 6" opacity="0.5" />
-          {/* 右框：隔离区（初始为空；转移目的地） */}
-          <rect x={rightX} y={fy} width={rightFrameW} height={fh} rx="14" fill="none" stroke="#10b981" strokeWidth="1.6" strokeDasharray="7 6"
-            opacity={isoState === 'idle' && !draftIsolate ? 0.45 : 0.9}
-            className={isoState === 'cloning' ? 'animate-[rsants_1.2s_linear_infinite]' : undefined} />
-          {isoState === 'cloning' || isoState === 'switching' ? (
-            <g>
-              <path d={`M ${mainDbX + dbCW} ${dbY + 46} L ${isoX} ${dbY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
-              {/* 转移动画：一枚小库卡从左框飞进右框 */}
-              <g>
-                <animateMotion dur="1.4s" repeatCount="indefinite" path={`M ${mainDbX + dbCW} ${dbY + 40} L ${isoX} ${dbY + 40}`} />
-                <rect x="-13" y="-9" width="26" height="18" rx="4" fill="hsl(var(--background))" stroke="#10b981" strokeWidth="1.6" />
-                <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="700" fill="#10b981">DB</text>
-              </g>
-            </g>
-          ) : null}
-          {flying ? (
-            <circle key={flying.key} r="4.6" fill="#f59e0b">
-              <animateMotion dur="0.6s" repeatCount="1" fill="freeze" path={flying.path} />
-            </circle>
-          ) : null}
-        </svg>
 
-        <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
-        {insts.map((inst, i) => (
-          <StageCard key={inst.id} x={startX + i * (CW + gap)} y={instY} w={CW} name={inst.name} ico="API"
-            color={inst.ghost ? '#9ca3af' : i === 0 ? '#8b8578' : '#6366f1'}
-            ok={!inst.boot && !inst.danger && !inst.ghost} danger={inst.danger} ghost={inst.ghost || draftRemovals.has(inst.id)}
-            status={draftRemovals.has(inst.id) ? '待下线（草稿）' : inst.sub} foot={inst.port ? `:${inst.port}` : ''} hero={i > 0 && !inst.ghost} boot={inst.boot}
-            extra={(
-              <span className="absolute right-1 top-1 flex gap-0.5">
-                {!inst.ghost && inst.id !== 'primary' && !draftRemovals.has(inst.id) ? (
-                  <>
-                    {memberDirectUrl(previewUrl, inst.id) && !inst.boot ? (
-                      <a className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary" title="直达该副本"
-                        href={memberDirectUrl(previewUrl, inst.id)!} target="_blank" rel="noreferrer"><ExternalLink className="h-3 w-3" /></a>
-                    ) : null}
-                    <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive" title="下线（进变更清单）"
-                      onClick={() => onDraft({ kind: 'remove-member', profileId, params: { memberId: inst.id }, label: `${profileId} · 下线 ${inst.id}` })}>
-                      <Trash2 className="h-3 w-3" />
-                    </button>
-                  </>
-                ) : null}
-              </span>
-            )}
-            label={inst.ghost ? '草稿' : weightFor === inst.id ? undefined : `${inst.boot ? '…' : `${Math.round((inst.w / tw) * 100)}%${draftWeights.has(inst.id) ? `→${draftWeights.get(inst.id)}` : ''}`}`}
-            labelY={instY - 34} labelX={repXs[i]}
-            onLabelClick={!inst.ghost && !inst.boot ? () => { setWeightFor(inst.id); setWeightDraft(String(inst.id === 'primary' ? rs?.primaryWeight ?? 100 : members.find((m) => m.id === inst.id)?.weight ?? 0)); } : undefined} />
-        ))}
-        {weightFor ? (
-          <input autoFocus type="number" min={0} max={100} value={weightDraft}
-            onChange={(e) => setWeightDraft(e.target.value)}
-            onBlur={() => commitWeight(weightFor)}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitWeight(weightFor); if (e.key === 'Escape') setWeightFor(null); }}
-            className="absolute z-10 h-6 w-16 -translate-x-1/2 -translate-y-1/2 rounded border border-primary bg-background px-1 text-center font-mono text-xs outline-none"
-            style={{ left: repXs[insts.findIndex((x) => x.id === weightFor)] ?? entryX, top: instY - 34 }} />
-        ) : null}
-        {canAddMore ? (
-          <button type="button"
-            className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-indigo-500/50 bg-indigo-500/10 text-xs font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
-            style={{ left: startX + insts.length * (CW + gap), top: instY, width: 120, height: 92 }}
-            title="加一个当前版本副本（进变更清单）"
-            onClick={() => onDraft({ kind: 'add-replica', profileId, label: `${profileId} · 新增当前版本副本` })}>
-            <Plus className="h-5 w-5" />副本
-          </button>
-        ) : null}
-
-        {(dbInfra.length ? dbInfra : [{ id: 'db', name: '数据库', dockerImage: '', status: 'running' }]).map((s, i) => {
-          const isMainDb = i === mainDbIdx && !/redis/i.test(s.dockerImage || s.id);
-          const locked = isMainDb && isoState === 'done';
-          return (
-            <StageCard key={s.id} x={dbX(i)} y={dbY} w={dbCW} name={s.name || s.id} ico={/redis/i.test(s.dockerImage || s.id) ? 'R' : 'DB'}
-              color={/redis/i.test(s.dockerImage || s.id) ? '#c2372f' : '#10b981'} ok={!locked} locked={locked}
-              status={locked ? '已上锁 · 副本请求已转移' : isMainDb ? '主库' : '共享实例'} foot={`${s.id}-volume`} />
-          );
-        })}
-        {isoState === 'idle' && !draftIsolate ? (
-          <button type="button"
-            className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
-            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}
-            title="点击加入变更清单：整库克隆进专用隔离实例，副本切换隔离库（可回切）。没有副本时可在同一计划里先加副本再隔离"
-            onClick={() => {
-              if (members.length + draftAdds.length === 0) onToast?.('隔离作用于副本——已可先点「+副本」，同一计划内先加副本再隔离');
-              onDraft({ kind: 'isolate-db', profileId, label: `${profileId} · 复制隔离（克隆 → 副本切换，可回切）` });
-            }}>
-            <Copy className="h-4 w-4" />复制隔离到此
-          </button>
-        ) : isoState === 'idle' && draftIsolate ? (
-          <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-amber-500/60 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-400"
-            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}>
-            <Copy className="h-4 w-4" />复制隔离 · 待保存
-          </div>
-        ) : (
-          <StageCard x={isoX} y={dbY} w={dbCW} name="隔离库" ico="DB" color="#10b981" ok={isoState === 'done'} boot={isoState === 'cloning'}
-            status={isoState === 'cloning' ? '第1步 复制：拷入数据…' : isoState === 'switching' ? '第2步 切换：副本改连新库…' : draftRevert ? '回切主库 · 待保存' : '专用实例 · 独立读写'}
-            foot={rs?.isolated?.dbName || ''}
-            extra={isoState === 'done' && !draftRevert ? (
-              <button type="button" className="absolute bottom-1.5 right-1.5 rounded border border-emerald-500/50 bg-background px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
-                onClick={() => onDraft({ kind: 'revert-db', profileId, label: `${profileId} · 回切主库（隔离库转快照保留）` })}>回切主库</button>
-            ) : undefined} />
-        )}
-        {running.length > 0 && isoState === 'idle' && !draftIsolate ? (
-          <button type="button" className="absolute z-10 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-md border border-emerald-500/60 bg-background px-2.5 py-1 text-[11px] font-semibold text-emerald-600 shadow-sm hover:bg-emerald-500/10 dark:text-emerald-400"
-            style={{ left: (repXs[Math.min(1, repXs.length - 1)] + mainDbX + dbCW / 2) / 2, top: (instY + 92 + dbY) / 2 + 6 }}
-            title="第1步 复制：整库克隆进专用隔离实例（主库不动）；第2步 切换：副本改连隔离库。进变更清单，保存后执行"
-            onClick={() => onDraft({ kind: 'isolate-db', profileId, label: `${profileId} · 复制隔离（克隆 → 副本切换，可回切）` })}>
-            <Copy className="h-3 w-3" />复制隔离
-          </button>
-        ) : null}
+          <DataLayerCards geo={geo} dbY={dbY} dbInfra={dbInfra} mainDbIdx={mainDbIdx} iso={branchIso}
+            draftIsoCount={draftIsoCount} draftRevertCount={draftRevertCount}
+            isolateTargets={isolateTargets} revertTargets={revertTargets} onIsolateAll={isolateAll} onRevertAll={revertAll} />
+        </div>
       </div>
 
-      <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3">
-        {availableRows.length > 0 && canAddMore ? (
-          <Button type="button" size="sm" variant="ghost" onClick={() => setPickerOpen(!pickerOpen)}><Layers />历史版本副本</Button>
-        ) : null}
-        <Button type="button" size="sm" variant="outline" disabled={probing.current || running.length === 0} onClick={() => void runProbe()}>
-          <RefreshCw />分流实测
-        </Button>
-        {members.length > 0 ? (
-          <Button type="button" size="sm" variant="ghost"
-            onClick={() => onDraft({ kind: 'dissolve', profileId, label: `${profileId} · 关闭复制集（移除全部副本）` })}>
-            <Undo2 />关闭复制集
-          </Button>
-        ) : null}
-        <span className="text-[11px] text-muted-foreground">操作先进变更清单 · 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
-      </div>
-      {pickerOpen ? (
+      {pickFor && pickRows.length > 0 ? (
         <div className="mx-5 mb-3 grid gap-1.5">
-          {availableRows.slice(0, 6).map((row) => (
+          <span className="text-[11px] font-semibold text-muted-foreground">{pickFor} · 选择历史版本作为副本：</span>
+          {pickRows.slice(0, 6).map((row) => (
             <button key={row.versionId} type="button"
-              onClick={() => { setPickerOpen(false); onDraft({ kind: 'add-replica', profileId, params: { versionId: row.versionId }, label: `${profileId} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}` }); }}
+              onClick={() => { setPickFor(null); onDraft({ kind: 'add-replica', profileId: pickFor, params: { versionId: row.versionId }, label: `${pickFor} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}` }); }}
               className="flex items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 text-left text-xs hover:border-indigo-500/50 hover:bg-indigo-500/[.06]">
               <span className="font-mono font-semibold">{row.commitSha.slice(0, 7)}</span>
               <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row.image}</span>
@@ -770,6 +940,181 @@ function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, ca
         </div>
       ) : null}
       {probeRes ? <div className="mx-5 mb-4"><ProbeDashboard result={probeRes} /></div> : null}
+      <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
+        <span className="text-[11px] text-muted-foreground">连线 = 环境变量引用（悬停看键名）· 操作先进变更清单 · 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
+      </div>
+      <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}'}</style>
+    </section>
+  );
+}
+
+/** 成员小条（容器级卡片下方）：状态点 + 名称 + 权重（可点改）+ 动作 */
+function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions, danger, boot, ghost, dim }: {
+  color: string; mono: string; sub?: string; weight?: string; onWeightClick?: () => void; weightInput?: JSX.Element;
+  actions?: JSX.Element; danger?: boolean; boot?: boolean; ghost?: boolean; dim?: boolean;
+}): JSX.Element {
+  return (
+    <div className={`mt-1 flex items-center gap-1 rounded border px-1.5 py-0.5 text-[10px] ${danger ? 'border-destructive/50 bg-destructive/[.05]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : 'border-[hsl(var(--hairline))] bg-background'} ${dim ? 'opacity-50' : ''}`}>
+      {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : (
+        <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ghost ? '#9ca3af' : color }} />
+      )}
+      <span className={`min-w-0 flex-1 truncate font-mono ${danger ? 'text-destructive' : ''}`} title={sub ? `${mono} · ${sub}` : mono}>
+        {mono}{sub ? <span className="ml-1 opacity-70">{sub}</span> : null}
+      </span>
+      {weightInput}
+      {weight !== undefined && !weightInput ? (
+        <button type="button" disabled={!onWeightClick} onClick={onWeightClick}
+          title={onWeightClick ? '点击调整权重（进变更清单）' : undefined}
+          className={`shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 ${onWeightClick ? 'cursor-pointer hover:bg-indigo-500/10' : ''}`}>
+          {weight}
+        </button>
+      ) : null}
+      {actions}
+    </div>
+  );
+}
+
+function WeightInput({ value, onChange, onCommit, onCancel }: { value: string; onChange: (v: string) => void; onCommit: () => void; onCancel: () => void }): JSX.Element {
+  return (
+    <input autoFocus type="number" min={0} max={100} value={value}
+      onChange={(e) => onChange(e.target.value)}
+      onBlur={onCommit}
+      onKeyDown={(e) => { if (e.key === 'Enter') onCommit(); if (e.key === 'Escape') onCancel(); }}
+      className="h-4 w-12 shrink-0 rounded border border-primary bg-background px-0.5 text-center font-mono text-[9px] outline-none" />
+  );
+}
+
+/* ── 项目级画布：原版舞台形态（入口 → 全部容器 → 基础设施），整组操作 ── */
+function ProjectStage(props: StageSharedProps): JSX.Element {
+  const { previewUrl, services, infra, replicaSets, memberLimit, draft, onDraft, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount } = props;
+  const [hostRef, w] = useMeasuredWidth();
+  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+
+  const entryHost = previewUrl ? new URL(previewUrl).hostname : '预览入口未就绪';
+  const dbInfra = infra.filter((s) => /mongo|mysql|mariadb|postgres|redis/i.test(s.dockerImage || s.id));
+  const addable = profileIds.filter((p) => {
+    const members = replicaSets[p]?.enabled ? replicaSets[p].members : [];
+    const adds = draft.filter((d) => d.profileId === p && d.kind === 'add-replica').length;
+    return members.length + adds < memberLimit;
+  });
+
+  const gap = 24;
+  const slots = profileIds.length + (addable.length > 0 ? 1 : 0);
+  const rowW = slots * CW + (slots - 1) * gap;
+  const geoProbe = dataGeo(w, Math.max(dbInfra.length, 1));
+  const canvasW = Math.max(w, rowW + 24, geoProbe.minWidth);
+  const geo = dataGeo(canvasW, Math.max(dbInfra.length, 1));
+  const entryX = (canvasW - CW) / 2, entryY = 14, svcY = 190;
+  const fy = 430 - 16, dbY = 430, fh = 128;
+  const height = fy + fh + 44;
+  const startX = Math.max(8, (canvasW - rowW) / 2);
+  const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
+  const mainDbX = geo.dbX(mainDbIdx);
+  const svcX = (i: number): number => startX + i * (CW + gap);
+
+  return (
+    <section className="cds-surface-raised cds-hairline overflow-hidden">
+      <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-3">
+        <b className="text-sm">项目整组画布</b>
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 整组操作</span>
+        {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.withMembersProfiles.length} · 建议补齐</span> : null}
+        {draft.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draft.length} 项变更待保存</span> : null}
+        <span className="text-[11px] text-muted-foreground">副本以「复制集成员」叠卡标记 · 单容器细操作请切换到容器级</span>
+      </div>
+
+      <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]">
+        <div className="relative" style={{ width: canvasW, height, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
+          <svg className="pointer-events-none absolute inset-0" width={canvasW} height={height}>
+            <defs><marker id="rsArrP" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker></defs>
+            {profileIds.map((pid, i) => {
+              const members = replicaSets[pid]?.enabled ? replicaSets[pid].members : [];
+              const hasReplicas = members.length > 0;
+              const cx = svcX(i) + CW / 2;
+              const isolated = !!replicaSets[pid]?.isolated;
+              const dbTx = isolated ? geo.isoX + geo.dbCW / 2 : mainDbX + geo.dbCW / 2;
+              return (
+                <g key={pid}>
+                  <path d={edgeD(entryX + CW / 2, entryY + 88, cx, svcY)} fill="none"
+                    stroke={hasReplicas ? '#6366f1' : 'hsl(var(--muted-foreground))'} strokeWidth={hasReplicas ? 2 : 1.4}
+                    strokeDasharray="5 5" opacity={hasReplicas ? 0.75 : 0.38} markerEnd="url(#rsArrP)" />
+                  <path d={edgeD(cx, svcY + 96, dbTx, dbY)} fill="none"
+                    stroke={isolated ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={isolated ? 1.8 : 1.2}
+                    strokeDasharray="5 5" opacity={isolated ? 0.65 : 0.2} markerEnd={isolated ? 'url(#rsArrP)' : undefined} />
+                </g>
+              );
+            })}
+            <DataLayerSvg geo={geo} fy={fy} fh={fh} iso={branchIso} draftIsoCount={draftIsoCount} mainDbX={mainDbX}
+              transferActive={branchIso.state === 'cloning' || branchIso.state === 'switching'} />
+          </svg>
+
+          <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
+
+          {profileIds.map((pid, i) => {
+            const node = nodeById.get(pid);
+            const rs = replicaSets[pid];
+            const members = rs?.enabled ? rs.members : [];
+            const adds = draft.filter((d) => d.profileId === pid && d.kind === 'add-replica').length;
+            const st = serviceStatusText(rs, members);
+            const x = svcX(i);
+            const deck = Math.min(members.length, 2);
+            return (
+              <div key={pid}>
+                {/* 副本叠卡（特殊标记，不隐藏）：主卡背后的偏移卡代表复制集成员 */}
+                {Array.from({ length: deck }).map((_, k) => (
+                  <div key={k} className="absolute rounded-xl border border-dashed border-indigo-500/50 bg-background/80"
+                    style={{ left: x + 7 * (k + 1), top: svcY + 7 * (k + 1), width: CW, height: 96 }} />
+                ))}
+                <StageCard x={x} y={svcY} w={CW} name={node?.name || pid} ico={isWebLike(node, pid) ? 'WEB' : 'API'}
+                  color="#8b8578" ok={!st.danger} danger={st.danger} hero={members.length > 0}
+                  status={st.text} foot={services?.[pid]?.hostPort ? `:${services[pid].hostPort}` : node?.containerPort ? `容器 :${node.containerPort}` : ''}
+                  extra={members.length > 0 ? (
+                    <span className="absolute -right-1.5 -top-1.5 inline-flex h-5 min-w-5 items-center justify-center rounded-full border border-indigo-500/60 bg-indigo-500 px-1 text-[10px] font-bold text-white" title={`复制集 · 1 主 + ${members.length} 副本`}>
+                      x{1 + members.length}
+                    </span>
+                  ) : undefined} />
+                {members.length > 0 || adds > 0 ? (
+                  <div className="absolute flex flex-col items-center gap-0.5" style={{ left: x, top: svcY + 108 + 7 * deck, width: CW }}>
+                    {members.length > 0 ? (
+                      <span className="rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-center text-[10px] font-semibold text-indigo-500"
+                        title="这是为你创建的复制集成员容器：入口已做好负载，按权重分流">
+                        复制集成员 x{members.length} · 已负载
+                      </span>
+                    ) : null}
+                    {rs?.isolated ? (
+                      <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[10px] text-emerald-600 dark:text-emerald-400">已隔离 · {rs.isolated.dbName}</span>
+                    ) : null}
+                    {adds > 0 ? (
+                      <span className="rounded border border-dashed border-amber-500/60 bg-amber-500/10 px-1.5 py-0.5 text-[10px] text-amber-600 dark:text-amber-400">+{adds} 副本草稿 · 待保存</span>
+                    ) : null}
+                    {members.some((m) => m.status === 'error') ? (
+                      <span className="rounded border border-destructive/50 bg-destructive/[.06] px-1.5 py-0.5 text-[10px] text-destructive">有副本失败</span>
+                    ) : null}
+                  </div>
+                ) : null}
+              </div>
+            );
+          })}
+
+          {addable.length > 0 ? (
+            <button type="button"
+              className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-indigo-500/50 bg-indigo-500/10 text-xs font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
+              style={{ left: svcX(profileIds.length), top: svcY, width: CW, height: 96 }}
+              title={`给每个未满员的容器各加一个当前版本副本（${addable.length} 个，进变更清单）`}
+              onClick={() => { addable.forEach((p) => onDraft({ kind: 'add-replica', profileId: p, label: `${p} · 新增当前版本副本（整组）` })); onToast?.(`已加入 ${addable.length} 个容器的副本草稿`); }}>
+              <Plus className="h-5 w-5" />整组副本（{addable.length}）
+            </button>
+          ) : null}
+
+          <DataLayerCards geo={geo} dbY={dbY} dbInfra={dbInfra} mainDbIdx={mainDbIdx} iso={branchIso}
+            draftIsoCount={draftIsoCount} draftRevertCount={draftRevertCount}
+            isolateTargets={isolateTargets} revertTargets={revertTargets} onIsolateAll={isolateAll} onRevertAll={revertAll} />
+        </div>
+      </div>
+
+      <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
+        <span className="text-[11px] text-muted-foreground">整组操作与隔离统一战线同入变更清单，保存后串行执行 · 单容器权重/下线/分流实测在容器级页签</span>
+      </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}'}</style>
     </section>
   );
@@ -820,14 +1165,14 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
 }): JSX.Element {
   return (
     <>
-      <div className={`absolute overflow-hidden rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
+      <div className={`absolute rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
         style={{ left: x, top: y, width: w, ...(boot ? { animation: 'rscolorin 2.4s forwards' } : {}), ...(locked ? { filter: 'grayscale(0.9)', opacity: 0.65 } : {}) }}>
         {locked ? (
           <span className="absolute right-1.5 top-1.5 inline-flex h-5 w-5 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground" title="副本请求已转移到隔离区，回切主库可解锁">
             <Lock className="h-3 w-3" />
           </span>
         ) : null}
-        <div className="flex items-center gap-2 px-3 py-2 text-[13px] font-bold">
+        <div className="flex items-center gap-2 overflow-hidden rounded-t-xl px-3 py-2 text-[13px] font-bold">
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[10px] font-extrabold text-white" style={{ background: color }}>{ico}</span>
           <span className="truncate">{name}</span>
         </div>
@@ -836,7 +1181,7 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
           <span className="truncate" title={status}>{status}</span>
         </div>
         {foot !== undefined ? (
-          <div className="border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-1.5 font-mono text-[10px] text-muted-foreground">{foot}</div>
+          <div className="overflow-hidden truncate rounded-b-xl border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-1.5 font-mono text-[10px] text-muted-foreground" title={foot}>{foot || ' '}</div>
         ) : null}
         {extra}
       </div>
@@ -848,60 +1193,5 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
       ) : null}
       <style>{'@keyframes rscolorin{from{filter:grayscale(1);opacity:.45}to{filter:grayscale(0);opacity:1}}'}</style>
     </>
-  );
-}
-
-/* ── 项目级：整组视角（一键全容器加副本 / 整组隔离，草稿同入变更清单；影子分支整组复制为波 6） ── */
-function ProjectGroupPanel({ profileIds, replicaSets, services, draft, memberLimit, onDraft, onToast }: {
-  profileIds: string[];
-  replicaSets: Record<string, ProfileReplicaSetView>;
-  services?: Record<string, PanelServiceInfo>;
-  draft: DraftOp[];
-  memberLimit: number;
-  onDraft: (op: Omit<DraftOp, 'key'>) => void;
-  onToast?: (m: string) => void;
-}): JSX.Element {
-  const rows = profileIds.map((p) => {
-    const rs = replicaSets[p];
-    const members = rs?.enabled ? rs.members : [];
-    const adds = draft.filter((d) => d.profileId === p && d.kind === 'add-replica').length;
-    return { profileId: p, rs, members, adds, running: members.filter((m) => m.status === 'running') };
-  });
-  const addable = rows.filter((r) => r.members.length + r.adds < memberLimit);
-  const isolatable = rows.filter((r) => r.running.length > 0 && !r.rs?.isolated && !draft.some((d) => d.profileId === r.profileId && d.kind === 'isolate-db'));
-  const revertable = rows.filter((r) => !!r.rs?.isolated && !draft.some((d) => d.profileId === r.profileId && d.kind === 'revert-db'));
-
-  return (
-    <section className="cds-surface-raised cds-hairline px-5 py-4">
-      <div className="flex flex-wrap items-center gap-2">
-        <Button type="button" size="sm" disabled={addable.length === 0}
-          title="给每个未满员的容器各加一个当前版本副本（进变更清单）"
-          onClick={() => { addable.forEach((r) => onDraft({ kind: 'add-replica', profileId: r.profileId, label: `${r.profileId} · 新增当前版本副本（整组）` })); onToast?.(`已加入 ${addable.length} 个容器的副本草稿`); }}>
-          <Plus />整组加副本（{addable.length}）
-        </Button>
-        <Button type="button" size="sm" variant="outline" disabled={isolatable.length === 0}
-          title="对每个有运行副本且未隔离的容器加入复制隔离（统一战线：同一批保存执行）"
-          onClick={() => { isolatable.forEach((r) => onDraft({ kind: 'isolate-db', profileId: r.profileId, label: `${r.profileId} · 复制隔离（整组统一战线）` })); onToast?.(`已加入 ${isolatable.length} 个容器的隔离草稿`); }}>
-          <Copy />整组复制隔离（{isolatable.length}）
-        </Button>
-        <Button type="button" size="sm" variant="ghost" disabled={revertable.length === 0}
-          title="对每个已隔离容器加入回切主库（进变更清单）"
-          onClick={() => { revertable.forEach((r) => onDraft({ kind: 'revert-db', profileId: r.profileId, label: `${r.profileId} · 回切主库（整组）` })); onToast?.(`已加入 ${revertable.length} 个容器的回切草稿`); }}>
-          整组回切（{revertable.length}）
-        </Button>
-        <span className="text-[11px] text-muted-foreground">整组影子容器（复用原结构 + 入口负载 + 特殊标记）在路上——当前整组操作经同一变更清单串行执行</span>
-      </div>
-      <div className="mt-3 grid gap-1.5">
-        {rows.map((r) => (
-          <div key={r.profileId} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-3 py-2 text-xs">
-            <b className="w-44 truncate">{r.profileId}</b>
-            <span className="text-muted-foreground">{1 + r.members.length} 实例{r.adds ? ` (+${r.adds} 草稿)` : ''}{services?.[r.profileId]?.hostPort ? ` · :${services[r.profileId].hostPort}` : ''}</span>
-            {r.rs?.isolated ? <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">已隔离 · {r.rs.isolated.dbName}</span> : null}
-            {r.members.some((m) => m.status === 'provisioning') ? <span className="rounded border border-amber-500/50 px-1.5 text-[10px] text-amber-600 dark:text-amber-400">创建中</span> : null}
-            {r.members.some((m) => m.status === 'error') ? <span className="rounded border border-destructive/50 px-1.5 text-[10px] text-destructive">有失败</span> : null}
-          </div>
-        ))}
-      </div>
-    </section>
   );
 }

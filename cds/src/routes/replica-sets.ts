@@ -9,6 +9,7 @@ import { connect as tcpConnect } from 'node:net';
 import type { DeploymentVersion } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
+import { buildServiceGraph } from '../services/service-graph.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
@@ -68,7 +69,13 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
           return [profileId, { ...rs, members, primaryReachable }] as const;
         }),
       ));
-      res.json({ replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT });
+      // 服务调用关系图（容器级画布数据源，两页签定案 2026-07-24）：
+      // 边在服务端由 env 引用 + depends_on 推导，只暴露 env 键名，值绝不出网。
+      const profiles = deps.stateService.getEffectiveProfilesForBranch(branch);
+      const infraForProject = (deps.stateService.getState().infraServices || [])
+        .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
+      const graph = buildServiceGraph(profiles, infraForProject);
+      res.json({ replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT, graph });
     } catch (err) {
       respondError(res, err);
     }
