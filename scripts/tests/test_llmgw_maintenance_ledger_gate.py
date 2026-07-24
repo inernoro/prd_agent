@@ -91,6 +91,47 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                 allow_skipped_config_authority=True,
             )
 
+    def test_audited_maintenance_release_allows_exact_scoped_shadow_skip_shape(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_gate(Path(raw), payload)
+            LEDGER._require_release_gate_for_commit(
+                path,
+                "maintenance gate",
+                COMMIT,
+                require_config_authority=True,
+                allow_skipped_runtime_gates=True,
+                allow_skipped_config_authority=True,
+                allow_skipped_shadow_checks=True,
+            )
+
+    def test_audited_maintenance_release_rejects_empty_shadow_without_exact_skip_shape(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 1,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_gate(Path(raw), payload)
+            with self.assertRaises(SystemExit):
+                LEDGER._require_release_gate_for_commit(
+                    path,
+                    "maintenance gate",
+                    COMMIT,
+                    require_config_authority=True,
+                    allow_skipped_runtime_gates=True,
+                    allow_skipped_config_authority=True,
+                    allow_skipped_shadow_checks=True,
+                )
+
     def test_non_maintenance_release_rejects_skipped_config_authority(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = self.write_gate(Path(raw), gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME))
