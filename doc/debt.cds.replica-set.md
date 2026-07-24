@@ -23,3 +23,5 @@
 | 17 | done(2026-07-24) | 崩溃现场不可追溯 | InfraLifecycleWatcher 常驻 docker events（oom/die/kill/start），GET /api/infra/:id/lifecycle-events 回看；die 137 无 oom=外部 SIGKILL、oom=cgroup OOM、其他=进程自身退出。R7 实战定罪 139 | 残留：只覆盖 cds-infra- 前缀容器；rsdb 专用实例暂不入取证范围 |
 | 18 | open | mysql / postgres 克隆路径无源库大小闸门（mongo 已加），且仍走共享实例内克隆 | 大 mysql/pg 库克隆理论上有同类宿主压力风险（未实测出崩溃） | dataSize 预检推广到双引擎；必要时同款专用实例通道 |
 | 19 | open | 分支删除后专用隔离实例容器（cds-rsdb-*）无自动清理路径 | 分支连快照台账一起删除后，rsdb 容器脱管残留（不入孤儿清扫范围） | 分支删除流程接 teardownForBranch 并级联 dropReplicaDb；或孤儿清扫认领 cds.type=rsdb + 台账比对 |
+| 20 | open | 分支列表卡「复制集 xN」徽章不随抽屉内变更实时刷新（R10 P3） | 下线副本后列表卡计数滞后，整页刷新才对齐 | 抽屉变更后失效列表缓存或走分支 SSE 事件 |
+| 21 | open | 整组复制 =「隐藏影子分支」方向已定（用户提议 + 判定采纳，波 6） | 当前 profile 级隔离下其他服务仍写主库，整组真隔离待影子分支 | shadowOf 分支 + 服务注册进主分支 replicaGroup（forwarder 数据面已支持），详见 design.cds.replica-set |
