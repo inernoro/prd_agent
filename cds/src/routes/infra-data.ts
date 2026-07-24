@@ -153,18 +153,27 @@ export function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000,
   return new Promise((resolve) => {
     const proc = spawn('docker', argv, { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
-    let err = '';
+    // stderr 保留头 8KB + 滚动尾 8KB：长任务（dump/restore）的进度日志会刷满缓冲，
+    // 只留头段会把最后出现的致命错误挤掉（复验 R3-P2 真实事故）
+    let errHead = '';
+    let errTail = '';
+    const ERR_SEG = 8 * 1024;
+    const composeErr = (): string => (errTail ? `${errHead}\n…[stderr 中段截断]…\n${errTail.slice(-ERR_SEG)}` : errHead);
     let truncated = false;
     let settled = false;
     const finish = (r: DockerExecResult) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
-    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } finish({ stdout: out, stderr: err + '\n[超时] 操作被中止（30s）', code: -1, truncated }); }, timeoutMs);
+    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } finish({ stdout: out, stderr: composeErr() + '\n[超时] 操作被中止（30s）', code: -1, truncated }); }, timeoutMs);
     proc.stdout.on('data', (c: Buffer) => {
       if (out.length < maxBytes) out += c.toString();
       else truncated = true;
     });
-    proc.stderr.on('data', (c: Buffer) => { if (err.length < 16 * 1024) err += c.toString(); });
-    proc.on('error', (e) => finish({ stdout: out, stderr: `${err}\n${e.message}`, code: -1, truncated }));
-    proc.on('close', (code) => finish({ stdout: out, stderr: err, code: code ?? -1, truncated }));
+    proc.stderr.on('data', (c: Buffer) => {
+      const s = c.toString();
+      if (errHead.length < ERR_SEG) errHead += s;
+      else errTail = (errTail + s).slice(-ERR_SEG * 2);
+    });
+    proc.on('error', (e) => finish({ stdout: out, stderr: `${composeErr()}\n${e.message}`, code: -1, truncated }));
+    proc.on('close', (code) => finish({ stdout: out, stderr: composeErr(), code: code ?? -1, truncated }));
     try { proc.stdin.write(stdin); proc.stdin.end(); } catch { /* noop */ }
   });
 }

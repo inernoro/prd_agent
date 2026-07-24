@@ -149,6 +149,7 @@ export function ReplicaSetPanel({
   const [view, setView] = useState<'rows' | 'stage'>('rows');
   const [openRow, setOpenRow] = useState<string | null>(null);
   const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [stageSel, setStageSel] = useState<string | null>(null);
 
   const load = useCallback(async (silent = false): Promise<void> => {
     if (!silent) setState({ status: 'loading' });
@@ -264,7 +265,10 @@ export function ReplicaSetPanel({
   const { replicaSets, candidates, memberLimit } = state.data;
   const snapshots = state.data.snapshots ?? [];
   const profileIds = Array.from(new Set([...Object.keys(replicaSets), ...Object.keys(candidates)])).sort();
-  const stageProfile = profileIds.find((p) => replicaSets[p]?.enabled && replicaSets[p].members.length > 0) || profileIds[0];
+  // 舞台默认展示有成员的服务；用户可用切换器显式选定（R3-P3：默认字母序首个会误导「+副本」打到非预期服务）
+  const stageProfile = (stageSel && profileIds.includes(stageSel) ? stageSel : undefined)
+    || profileIds.find((p) => replicaSets[p]?.enabled && replicaSets[p].members.length > 0)
+    || profileIds[0];
 
   return (
     <div className="grid gap-4">
@@ -311,6 +315,8 @@ export function ReplicaSetPanel({
       ) : (
         <ReplicaStage
           profileId={stageProfile}
+          profileIds={profileIds}
+          onSelectProfile={setStageSel}
           rs={stageProfile ? replicaSets[stageProfile] : undefined}
           service={stageProfile ? services?.[stageProfile] : undefined}
           infra={infra ?? []}
@@ -602,8 +608,10 @@ function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
 }
 
 /* ── 方案B：流量舞台（Railway 风拓扑，真实数据/真实 API） ── */
-function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, api, onToast }: {
+function ReplicaStage({ profileId, profileIds, onSelectProfile, rs, service, infra, previewUrl, memberLimit, api, onToast }: {
   profileId?: string;
+  profileIds: string[];
+  onSelectProfile: (profileId: string) => void;
   rs?: ProfileReplicaSetView;
   service?: PanelServiceInfo;
   infra: PanelInfraInfo[];
@@ -712,7 +720,15 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
   return (
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-3">
-        <b className="text-sm">{profileId}</b>
+        {profileIds.length > 1 ? (
+          <select value={profileId} onChange={(e) => onSelectProfile(e.target.value)}
+            title="切换舞台展示的服务（+副本 / 复制隔离等操作只作用于当前选中服务）"
+            className="h-7 rounded-md border border-[hsl(var(--hairline))] bg-transparent px-2 text-sm font-semibold outline-none focus:border-primary">
+            {profileIds.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        ) : (
+          <b className="text-sm">{profileId}</b>
+        )}
         <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500">复制集 · {insts.length} 实例</span>
         {rs?.isolated ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · {rs.isolated.dbName}</span> : null}
         <span className="text-[11px] text-muted-foreground">入口按权重分流 · 会话粘住同一实例</span>

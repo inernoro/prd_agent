@@ -157,6 +157,26 @@ export async function cloneReplicaDb(opts: {
   }
   const c = target.infra.containerName;
   const env = target.infra.env || {};
+  const image = target.infra.dockerImage;
+  const port = target.infra.containerPort
+    || (target.engine === 'mysql' ? 3306 : target.engine === 'postgres' ? 5432 : 27017);
+
+  /**
+   * 复验 R3-P0：克隆此前经 docker exec 在数据库容器 **同 cgroup** 内跑 dump+restore，
+   * 内存压力可把生产 mongod OOM 打崩（实测共享主库 unclean shutdown）。改为独立
+   * 辅助容器：`docker run --rm` 同镜像（自带 client 工具），共享 DB 容器网络命名空间
+   * （127.0.0.1:<port> 直连），并施加内存/CPU 硬上限——压力大时被杀的是辅助容器，
+   * 不是数据库本体。dump/restore 再加单并发限流，进一步压低对主库的冲击。
+   */
+  const helper = (extraEnv: string[], script: string): string[] => [
+    'run', '--rm', '-i', '--pull', 'never',
+    '--network', `container:${c}`,
+    '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    '--entrypoint', 'sh',
+    ...extraEnv,
+    image,
+    '-c', script,
+  ];
 
   let argv: string[];
   let stdin = '';
@@ -166,33 +186,49 @@ export async function cloneReplicaDb(opts: {
     const user = 'root';
     const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
     secrets.push(pw);
-    argv = ['exec', '-i', '-e', `MYSQL_PWD=${pw}`, c, 'sh', '-c',
-      `set -e; mysql -u${user} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
-      `mysqldump -u${user} --single-transaction --routines --triggers ${target.sourceDb} | mysql -u${user} ${dbName}`];
+    const conn = `-h127.0.0.1 -P${port} -u${user}`;
+    argv = helper(['-e', `MYSQL_PWD=${pw}`],
+      `set -e; mysql ${conn} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
+      `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} | mysql ${conn} ${dbName}`);
   } else if (target.engine === 'postgres') {
     const user = env.POSTGRES_USER || 'postgres';
     const pw = env.POSTGRES_PASSWORD || '';
     secrets.push(pw);
-    argv = ['exec', '-i', '-e', `PGPASSWORD=${pw}`, c, 'sh', '-c',
-      `set -e; psql -U ${user} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
-      `pg_dump -U ${user} ${target.sourceDb} | psql -U ${user} -q -v ON_ERROR_STOP=1 -d ${dbName}`];
+    const conn = `-h 127.0.0.1 -p ${port} -U ${user}`;
+    argv = helper(['-e', `PGPASSWORD=${pw}`],
+      `set -e; psql ${conn} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
+      `pg_dump ${conn} ${target.sourceDb} | psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName}`);
   } else {
     const user = env.MONGO_INITDB_ROOT_USERNAME || '';
     const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
     secrets.push(pw);
+    const conn = `--host 127.0.0.1 --port ${port}`;
     const auth = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
-    argv = ['exec', '-i',
-      ...(user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : []),
-      c, 'sh', '-c',
+    argv = helper(user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [],
       `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
-      `mongodump ${auth} --archive -d ${target.sourceDb} | mongorestore ${auth} --archive --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*'`];
+      `mongodump ${conn} ${auth} --archive -d ${target.sourceDb} --numParallelCollections=1 | ` +
+      `mongorestore ${conn} ${auth} --archive --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`);
   }
 
-  opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}）──`);
+  opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
   const result = await runDockerExec(argv, stdin, 600_000, 64 * 1024);
   if (result.code !== 0) {
-    const detail = maskSecretValues(`${result.stderr || result.stdout}`.trim().slice(-800), secrets);
-    throw new Error(`数据库克隆失败（${target.engine}）: ${detail || `exit ${result.code}`}`);
+    // 失败原因保留头尾双段（复验 R3-P2：进度日志刷满缓冲把真正的致命错误挤掉）
+    const raw = `${result.stderr || result.stdout}`.trim();
+    const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
+    // 失败残留清理（复验 R3-P1：半成品克隆库脱管，台账不可见、官方删除通道触达不了）
+    let residue = '';
+    try {
+      await dropReplicaDb({
+        id: `rsdb_${memberId}`, profileId, memberId,
+        engine: target.engine, sourceDb: target.sourceDb, dbName, infraContainer: c,
+        clonedAt: (opts.now?.() ?? new Date()).toISOString(),
+      }, env);
+      residue = '（半成品克隆库已自动清理）';
+    } catch {
+      residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
+    }
+    throw new Error(`数据库克隆失败（${target.engine}）: ${detail || `exit ${result.code}`}${residue}`);
   }
   opts.onOutput?.(`── 隔离库 ${dbName} 克隆完成 ──`);
 
