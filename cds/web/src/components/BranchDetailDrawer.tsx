@@ -1610,16 +1610,19 @@ export function BranchDetailDrawer({
     return map;
   }, [branch?.replicaSets]);
   // Railway 式「+ N 副本」：当前版本同版本实例，权重自动均分（design.cds.replica-set MVP-3）
+  // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
+  // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
   const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
     if (!branchId) return;
     try {
-      for (let i = 0; i < count; i += 1) {
-        await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/members`, {
-          method: 'POST',
-          body: {},
-        });
-      }
-      onToast?.(`${profileId} 正在启动 ${count} 个副本，就绪后自动均分流量`);
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
+        method: 'POST',
+        body: {
+          onFailure: 'stop',
+          steps: Array.from({ length: count }, () => ({ kind: 'add-replica', profileId })),
+        },
+      });
+      onToast?.(`已保存执行计划：${profileId} 新增 ${count} 个副本，进度见复制集页签`);
       void load();
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));

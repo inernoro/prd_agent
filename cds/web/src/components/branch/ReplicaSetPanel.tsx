@@ -9,7 +9,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, Trash2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -116,6 +116,8 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   const [plans, setPlans] = useState<Plan[]>([]);
   const [draft, setDraft] = useState<DraftOp[]>([]);
   const [onFailure, setOnFailure] = useState<'stop' | 'rollback'>('stop');
+  const [stageSel, setStageSel] = useState<string | null>(null);
+  const [tab, setTab] = useState<'container' | 'project'>('container');
   const [busy, setBusy] = useState(false);
   const draftSeq = useRef(0);
 
@@ -200,13 +202,41 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   const { replicaSets, candidates, memberLimit } = state.data;
   const snapshots = state.data.snapshots ?? [];
   const profileIds = Array.from(new Set([...Object.keys(replicaSets), ...Object.keys(candidates)])).sort();
+  const stageProfile = (stageSel && profileIds.includes(stageSel) ? stageSel : undefined)
+    || profileIds.find((p) => replicaSets[p]?.enabled && replicaSets[p].members.length > 0)
+    || profileIds[0];
 
   return (
     <div className="grid gap-4">
-      {profileIds.length > 0 ? (
+      <section className="cds-surface-raised cds-hairline flex flex-wrap items-center gap-3 px-5 py-2.5">
+        <div className="inline-flex overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+          <button type="button" onClick={() => setTab('container')}
+            className={`px-3 py-1.5 text-xs ${tab === 'container' ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}>
+            容器级
+          </button>
+          <button type="button" onClick={() => setTab('project')}
+            className={`px-3 py-1.5 text-xs ${tab === 'project' ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}>
+            项目级
+          </button>
+        </div>
+        <span className="text-[11px] text-muted-foreground">
+          {tab === 'container' ? '单个容器的调用关系与操作，容器胶囊切换' : '整组视角：一键给全部容器加副本 / 整组隔离（同入同清单）'}
+        </span>
+      </section>
+
+      {tab === 'project' ? (
+        <ProjectGroupPanel profileIds={profileIds} replicaSets={replicaSets} services={services} draft={draft} memberLimit={memberLimit} onDraft={addDraft} onToast={onToast} />
+      ) : null}
+
+      {tab === 'container' && stageProfile ? (
         <ReplicaStage
           branchId={branchId}
-          profiles={profileIds.map((p) => ({ profileId: p, rs: replicaSets[p], candidates: candidates[p] ?? [], service: services?.[p] }))}
+          profileId={stageProfile}
+          profileIds={profileIds}
+          onSelectProfile={setStageSel}
+          rs={replicaSets[stageProfile]}
+          candidates={candidates[stageProfile] ?? []}
+          service={services?.[stageProfile]}
           infra={infra ?? []}
           previewUrl={previewUrl}
           memberLimit={memberLimit}
@@ -214,11 +244,12 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
           onDraft={addDraft}
           onToast={onToast}
         />
-      ) : (
+      ) : null}
+      {tab === 'container' && !stageProfile ? (
         <section className="cds-surface-raised cds-hairline px-5 py-8 text-sm text-muted-foreground">
           还没有可复制集化的服务：走一次极速版/托管构建部署后即可在此操作。
         </section>
-      )}
+      ) : null}
 
       <PlanBoard
         branchId={branchId}
@@ -423,10 +454,15 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
   );
 }
 
-/* ── 流量舞台：容器级视图（一屏纵览全部容器，自上而下调用关系；每容器独立操作）── */
-function ReplicaStage({ branchId, profiles, infra, previewUrl, memberLimit, draft, onDraft, onToast }: {
+/* ── 流量舞台（唯一视图；操作产草稿）── */
+function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, candidates, service, infra, previewUrl, memberLimit, draft, onDraft, onToast }: {
   branchId: string;
-  profiles: Array<{ profileId: string; rs?: ProfileReplicaSetView; candidates: ReplicaCandidateView[]; service?: PanelServiceInfo }>;
+  profileId: string;
+  profileIds: string[];
+  onSelectProfile: (p: string) => void;
+  rs?: ProfileReplicaSetView;
+  candidates: ReplicaCandidateView[];
+  service?: PanelServiceInfo;
   infra: PanelInfraInfo[];
   previewUrl?: string;
   memberLimit: number;
@@ -447,21 +483,36 @@ function ReplicaStage({ branchId, profiles, infra, previewUrl, memberLimit, draf
   const [log, setLog] = useState<string[]>([]);
   const [probeRes, setProbeRes] = useState<ProbeResult | null>(null);
   const [flying, setFlying] = useState<{ path: string; key: number } | null>(null);
-  const [weightFor, setWeightFor] = useState<{ profileId: string; memberId: string; x: number; y: number } | null>(null);
+  const [weightFor, setWeightFor] = useState<string | null>(null);
   const [weightDraft, setWeightDraft] = useState('');
-  const [pickerFor, setPickerFor] = useState<string | null>(null);
+  const [pickerOpen, setPickerOpen] = useState(false);
   const probing = useRef(false);
 
+  const myDraft = draft.filter((d) => d.profileId === profileId);
+  const draftAdds = myDraft.filter((d) => d.kind === 'add-replica');
+  const draftRemovals = new Set(myDraft.filter((d) => d.kind === 'remove-member').map((d) => d.params?.memberId));
+  const draftIsolate = myDraft.some((d) => d.kind === 'isolate-db');
+  const draftRevert = myDraft.some((d) => d.kind === 'revert-db');
+  const draftWeights = new Map(myDraft.filter((d) => d.kind === 'set-weight').map((d) => [d.params?.memberId, d.params?.weight]));
+
+  const members = rs?.enabled ? rs.members : [];
+  const running = members.filter((m) => m.status === 'running');
+  const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
   const entryHost = previewUrl ? new URL(previewUrl).hostname : '预览入口未就绪';
   const dbInfra = infra.filter((s) => /mongo|mysql|mariadb|postgres|redis/i.test(s.dockerImage || s.id));
-  const totalInstances = profiles.reduce((n, p) => n + 1 + (p.rs?.enabled ? p.rs.members.length : 0), 0);
-  const draftCount = draft.length;
+  const isoState = rs?.isolated
+    ? (members.some((m) => m.status === 'provisioning') ? 'switching' : 'done')
+    : (members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')) ? 'cloning' : 'idle');
+  const availableRows = candidates.filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
 
-  // 几何：入口在顶部；每个容器一行（自上而下调用关系）；数据层双框在底部
-  const CW = 168, IGAP = 12, LABEL_W = 178, ROW_H = 132;
-  const entryY = 14;
-  const rowY = (i: number): number => 150 + i * ROW_H;
-  const dataY = 150 + profiles.length * ROW_H + 34;
+  const CW = 180;
+  const totalSlots = 1 + members.length + draftAdds.length + (members.length + draftAdds.length < memberLimit ? 1 : 0);
+  const gap = Math.max(12, Math.min(32, (w - totalSlots * CW) / (totalSlots + 1)));
+  const rowW = totalSlots * CW + (totalSlots - 1) * gap;
+  const startX = Math.max(8, (w - rowW) / 2);
+  const entryX = (w - CW) / 2, entryY = 14, instY = 190;
+  // 数据层双框（用户拍板）：左框 = 共享基础设施（主库），右框 = 隔离区（初始空）。
+  // 复制隔离时库从左框「转移动画」到右框，完成后左侧主库上锁置灰——请求转移一眼可见。
   const dbCW = 168, dbGap = 26;
   const dbCount = Math.max(dbInfra.length, 1);
   const leftFrameW = dbCount * dbCW + (dbCount - 1) * dbGap + 28;
@@ -469,71 +520,50 @@ function ReplicaStage({ branchId, profiles, infra, previewUrl, memberLimit, draf
   const frameGap = 44;
   const fx = Math.max(6, (w - leftFrameW - frameGap - rightFrameW) / 2);
   const rightX = fx + leftFrameW + frameGap;
-  const fy = dataY - 16, fh = 128;
+  const dbY = 430, fy = dbY - 16, fh = 128;
+  const edgeD = (x1: number, y1: number, x2: number, y2: number): string => {
+    const k = Math.max(52, (y2 - y1) * 0.55);
+    return `M ${x1} ${y1} C ${x1} ${y1 + k}, ${x2} ${y2 - k}, ${x2} ${y2 - 8}`;
+  };
   const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
   const dbX = (i: number): number => fx + 14 + i * (dbCW + dbGap);
   const isoX = rightX + 14;
   const mainDbX = dbX(mainDbIdx);
-  const entryX = (w - CW) / 2;
-  const canvasH = dataY + fh + 30;
-  const edgeD = (x1: number, y1: number, x2: number, y2: number): string => {
-    const k = Math.max(40, (y2 - y1) * 0.5);
-    return `M ${x1} ${y1} C ${x1} ${y1 + k}, ${x2} ${y2 - k}, ${x2} ${y2 - 8}`;
-  };
+  const insts = [
+    { id: 'primary', name: '主实例', w: rs?.primaryWeight ?? 100, boot: false, ghost: false, danger: rs?.primaryReachable === false, sub: rs?.primaryReachable === false ? '不可达 · 端口拒绝连接' : 'primary · 滚动更新', port: service?.hostPort },
+    ...members.map((m) => ({
+      id: m.id, name: m.id, w: m.status === 'running' ? m.weight : 0, boot: m.status === 'provisioning', ghost: false,
+      danger: m.status === 'error' || (m.status === 'running' && m.reachable === false),
+      sub: m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? `失败：${m.statusMessage || '未知原因'}` : m.reachable === false ? '不可达 · 建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
+      port: m.hostPort,
+    })),
+    ...draftAdds.map((d, i) => ({ id: d.key, name: `副本(草稿${i + 1})`, w: 0, boot: false, ghost: true, danger: false, sub: d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存', port: undefined })),
+  ];
+  const repXs = insts.map((_, i) => startX + i * (CW + gap) + CW / 2);
+  const canAddMore = members.length + draftAdds.length < memberLimit;
 
-  // 每行实例（primary + members + 草稿幽灵）
-  const rows = profiles.map((p, ri) => {
-    const rs = p.rs;
-    const members = rs?.enabled ? rs.members : [];
-    const running = members.filter((m) => m.status === 'running');
-    const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
-    const my = draft.filter((d) => d.profileId === p.profileId);
-    const adds = my.filter((d) => d.kind === 'add-replica');
-    const removals = new Set(my.filter((d) => d.kind === 'remove-member').map((d) => d.params?.memberId));
-    const draftIso = my.some((d) => d.kind === 'isolate-db');
-    const draftRevert = my.some((d) => d.kind === 'revert-db');
-    const draftWeights = new Map(my.filter((d) => d.kind === 'set-weight').map((d) => [d.params?.memberId, d.params?.weight]));
-    const isoState = rs?.isolated
-      ? (members.some((m) => m.status === 'provisioning') ? 'switching' : 'done')
-      : (members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')) ? 'cloning' : 'idle');
-    const insts = [
-      { id: 'primary', name: '主实例', w: rs?.primaryWeight ?? 100, boot: false, ghost: false, danger: rs?.primaryReachable === false, sub: rs?.primaryReachable === false ? '不可达' : 'primary', port: p.service?.hostPort },
-      ...members.map((m) => ({
-        id: m.id, name: m.id, w: m.status === 'running' ? m.weight : 0, boot: m.status === 'provisioning', ghost: false,
-        danger: m.status === 'error' || (m.status === 'running' && m.reachable === false),
-        sub: m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? `失败：${m.statusMessage || ''}` : m.reachable === false ? '不可达 · 建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
-        port: m.hostPort,
-      })),
-      ...adds.map((d, i) => ({ id: d.key, name: `副本(草稿${i + 1})`, w: 0, boot: false, ghost: true, danger: false, sub: '待保存', port: undefined })),
-    ];
-    return { ...p, ri, members, running, tw, adds, removals, draftIso, draftRevert, draftWeights, isoState, insts, y: rowY(ri) };
-  });
-  const anyIsolatedRow = rows.find((r) => r.isoState !== 'idle');
-
-  const runProbe = async (profileId: string): Promise<void> => {
+  const runProbe = async (): Promise<void> => {
     if (probing.current) return;
     probing.current = true;
-    setLog([`实测 ${profileId}：串流模式，每个请求等上一个响应返回——`]);
+    setLog(['串流模式：每个请求等上一个响应返回才发出——']);
     setProbeRes(null);
     try {
       if (!previewUrl) { onToast?.('该分支还没有预览入口，无法实测'); probing.current = false; return; }
       const res = await apiRequest<ProbeResult>(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`, {
         method: 'POST', body: { host: new URL(previewUrl).hostname, count: 12 },
       });
-      const row = rows.find((r) => r.profileId === profileId);
       for (let i = 0; i < res.hits.length; i += 1) {
         const hit = res.hits[i];
         const missed = hit.servedBy === 'untagged' || hit.servedBy === 'error';
-        const idx = row ? (hit.servedBy === 'primary' ? 0 : row.insts.findIndex((x) => x.id === hit.servedBy)) : -1;
-        if (!missed && row && idx >= 0) {
-          const tx = LABEL_W + 12 + idx * (CW + IGAP) + CW / 2;
-          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, tx, row.y), key: i });
-          await new Promise((r) => setTimeout(r, 620));
+        const idx = hit.servedBy === 'primary' ? 0 : insts.findIndex((x) => x.id === hit.servedBy);
+        if (!missed && idx >= 0) {
+          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, repXs[idx], instY), key: i });
+          await new Promise((r) => setTimeout(r, 640));
           setFlying(null);
         }
         const line = missed
           ? `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'error' ? '连接失败' : '未命中复制集路由'}  HTTP ${hit.status}`
-          : `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  HTTP ${hit.status}${hit.status >= 200 && hit.status < 300 ? ' OK' : ' · 业务路由响应'}`;
+          : `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  HTTP ${hit.status}${hit.status >= 200 && hit.status < 300 ? ' OK' : ' · 业务路由响应，落点已验证'}`;
         setLog((prev) => [...prev, line]);
       }
       setProbeRes(res);
@@ -543,56 +573,69 @@ function ReplicaStage({ branchId, profiles, infra, previewUrl, memberLimit, draf
     probing.current = false;
   };
 
-  const commitWeight = (): void => {
-    if (!weightFor) return;
+  const commitWeight = (memberId: string) => {
     const v = Math.max(0, Math.min(100, Math.round(Number(weightDraft))));
-    const target = weightFor;
     setWeightFor(null);
     if (!Number.isFinite(v)) return;
-    onDraft({ kind: 'set-weight', profileId: target.profileId, params: { memberId: target.memberId, weight: v }, label: `${target.profileId} · ${target.memberId === 'primary' ? '主实例' : target.memberId} 权重 → ${v}` });
+    onDraft({ kind: 'set-weight', profileId, params: { memberId, weight: v }, label: `${profileId} · ${memberId === 'primary' ? '主实例' : memberId} 权重 → ${v}` });
   };
 
   return (
     <section className="cds-surface-raised cds-hairline overflow-hidden">
       <div className="flex flex-wrap items-center gap-3 border-b border-[hsl(var(--hairline))] px-5 py-3">
-        <b className="text-sm">容器级视图 · 全部服务</b>
-        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profiles.length} 容器 · {totalInstances} 实例</span>
-        {draftCount > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftCount} 项变更待保存</span> : null}
-        <span className="text-[11px] text-muted-foreground">每行一个容器 · 各自加副本 / 调权重 / 复制隔离 · 操作先进变更清单</span>
+        {profileIds.length > 1 ? (
+          <select value={profileId} onChange={(e) => onSelectProfile(e.target.value)}
+            title="切换舞台展示的服务（操作只作用于当前选中服务）"
+            className="h-7 rounded-md border border-[hsl(var(--hairline))] bg-transparent px-2 text-sm font-semibold outline-none focus:border-primary">
+            {profileIds.map((p) => <option key={p} value={p}>{p}</option>)}
+          </select>
+        ) : <b className="text-sm">{profileId}</b>}
+        <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />复制集 · {1 + members.length} 实例</span>
+        {rs?.isolated ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · {rs.isolated.dbName}</span> : null}
+        {myDraft.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{myDraft.length} 项变更待保存</span> : null}
+        <span className="text-[11px] text-muted-foreground">点击权重可改 · 所有操作先进变更清单</span>
       </div>
 
       <div ref={hostRef} className="relative mx-4 my-4 overflow-x-auto rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]"
-        style={{ height: canvasH, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
+        style={{ height: 590, backgroundImage: 'radial-gradient(hsl(var(--hairline)) 1px, transparent 1px)', backgroundSize: '26px 26px' }}>
         <svg className="pointer-events-none absolute inset-0 h-full w-full">
           <defs><marker id="rsArr" markerWidth="9" markerHeight="9" refX="7" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" fill="hsl(var(--muted-foreground))" /></marker></defs>
-          {rows.map((row) => {
-            const firstX = LABEL_W + 12 + CW / 2;
+          {insts.map((inst, i) => {
+            const x2 = repXs[i];
+            const pct = inst.w / tw;
             return (
-              <g key={row.profileId}>
-                {/* 入口 → 该容器行（调用关系自上而下） */}
-                <path d={edgeD(entryX + CW / 2, entryY + 88, firstX, row.y)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="5 5" opacity="0.32" markerEnd="url(#rsArr)" />
-                {/* 容器行 → 数据层 */}
-                {row.isoState === 'done' ? (
+              <g key={inst.id}>
+                <path d={edgeD(entryX + CW / 2, entryY + 88, x2, instY)} fill="none"
+                  stroke={inst.ghost ? 'hsl(var(--muted-foreground))' : i > 0 && !inst.boot ? '#6366f1' : 'hsl(var(--muted-foreground))'}
+                  strokeWidth={i > 0 && !inst.boot && !inst.ghost ? 2 : 1.4} strokeDasharray="5 5"
+                  opacity={inst.ghost ? 0.18 : inst.boot ? 0.2 : 0.35 + 0.65 * pct} markerEnd={inst.ghost ? undefined : 'url(#rsArr)'} />
+                {i > 0 && !inst.ghost && isoState === 'done' ? (
                   <>
-                    <path d={edgeD(firstX + CW + IGAP, row.y + 92, mainDbX + dbCW / 2, dataY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.3" strokeDasharray="5 5" opacity="0.18" />
-                    <path d={edgeD(firstX + CW + IGAP, row.y + 92, isoX + dbCW / 2, dataY)} fill="none" stroke="#6366f1" strokeWidth="1.8" strokeDasharray="5 5" opacity="0.75" markerEnd="url(#rsArr)" />
+                    <path d={edgeD(x2, instY + 92, mainDbX + dbCW / 2, dbY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="5 5" opacity="0.2" />
+                    <g opacity="0.65">
+                      <circle cx={(x2 + mainDbX + dbCW / 2) / 2} cy={(instY + 92 + dbY) / 2 + 12} r="8" fill="hsl(var(--background))" stroke="hsl(var(--muted-foreground))" />
+                      <line x1={(x2 + mainDbX + dbCW / 2) / 2 - 4} y1={(instY + 92 + dbY) / 2 + 16} x2={(x2 + mainDbX + dbCW / 2) / 2 + 4} y2={(instY + 92 + dbY) / 2 + 8} stroke="hsl(var(--muted-foreground))" strokeWidth="1.6" />
+                    </g>
+                    <path d={edgeD(x2, instY + 92, isoX + dbCW / 2, dbY)} fill="none" stroke="#6366f1" strokeWidth="2" strokeDasharray="5 5" opacity="0.8" markerEnd="url(#rsArr)" />
                   </>
-                ) : (
-                  <path d={edgeD(firstX, row.y + 92, mainDbX + dbCW / 2, dataY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.3" strokeDasharray="5 5" opacity="0.22" markerEnd="url(#rsArr)" />
-                )}
+                ) : !inst.ghost ? (
+                  <path d={edgeD(x2, instY + 92, mainDbX + dbCW / 2, dbY)} fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="5 5" opacity={i === 0 ? 0.35 : 0.3} markerEnd="url(#rsArr)" />
+                ) : null}
               </g>
             );
           })}
-          {/* 左框：共享基础设施；右框：隔离区 */}
+          {/* 左框：共享基础设施（主库） */}
           <rect x={fx} y={fy} width={leftFrameW} height={fh} rx="14" fill="none" stroke="hsl(var(--muted-foreground))" strokeWidth="1.4" strokeDasharray="7 6" opacity="0.5" />
+          {/* 右框：隔离区（初始为空；转移目的地） */}
           <rect x={rightX} y={fy} width={rightFrameW} height={fh} rx="14" fill="none" stroke="#10b981" strokeWidth="1.6" strokeDasharray="7 6"
-            opacity={anyIsolatedRow ? 0.9 : 0.45}
-            className={anyIsolatedRow?.isoState === 'cloning' ? 'animate-[rsants_1.2s_linear_infinite]' : undefined} />
-          {anyIsolatedRow && (anyIsolatedRow.isoState === 'cloning' || anyIsolatedRow.isoState === 'switching') ? (
+            opacity={isoState === 'idle' && !draftIsolate ? 0.45 : 0.9}
+            className={isoState === 'cloning' ? 'animate-[rsants_1.2s_linear_infinite]' : undefined} />
+          {isoState === 'cloning' || isoState === 'switching' ? (
             <g>
-              <path d={`M ${mainDbX + dbCW} ${dataY + 46} L ${isoX} ${dataY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
+              <path d={`M ${mainDbX + dbCW} ${dbY + 46} L ${isoX} ${dbY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
+              {/* 转移动画：一枚小库卡从左框飞进右框 */}
               <g>
-                <animateMotion dur="1.4s" repeatCount="indefinite" path={`M ${mainDbX + dbCW} ${dataY + 40} L ${isoX} ${dataY + 40}`} />
+                <animateMotion dur="1.4s" repeatCount="indefinite" path={`M ${mainDbX + dbCW} ${dbY + 40} L ${isoX} ${dbY + 40}`} />
                 <rect x="-13" y="-9" width="26" height="18" rx="4" fill="hsl(var(--background))" stroke="#10b981" strokeWidth="1.6" />
                 <text x="0" y="4" textAnchor="middle" fontSize="8" fontWeight="700" fill="#10b981">DB</text>
               </g>
@@ -606,119 +649,117 @@ function ReplicaStage({ branchId, profiles, infra, previewUrl, memberLimit, draf
         </svg>
 
         <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
-
-        {rows.map((row) => (
-          <div key={row.profileId}>
-            {/* 行标签：容器名 + 行级操作 */}
-            <div className="absolute rounded-lg border border-[hsl(var(--hairline))] bg-background/85 px-2.5 py-1.5 text-xs" style={{ left: 8, top: row.y, width: LABEL_W - 16 }}>
-              <div className="truncate font-semibold" title={row.profileId}>{row.profileId}</div>
-              <div className="mt-1 flex flex-wrap items-center gap-1">
-                {row.rs?.isolated ? <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1 text-[10px] text-emerald-600 dark:text-emerald-400">已隔离</span> : null}
-                {row.draftIso ? <span className="rounded border border-amber-500/50 px-1 text-[10px] text-amber-600 dark:text-amber-400">隔离·草稿</span> : null}
-                {row.running.length > 0 && row.isoState === 'idle' && !row.draftIso ? (
-                  <button type="button" className="rounded border border-emerald-500/50 px-1 text-[10px] text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400" title="复制隔离：克隆进专用隔离实例，副本切换（进变更清单）"
-                    onClick={() => onDraft({ kind: 'isolate-db', profileId: row.profileId, label: `${row.profileId} · 复制隔离（克隆 → 副本切换，可回切）` })}>
-                    <Copy className="mr-0.5 inline h-2.5 w-2.5" />隔离
-                  </button>
-                ) : null}
-                {row.isoState === 'done' && !row.draftRevert ? (
-                  <button type="button" className="rounded border border-emerald-500/50 px-1 text-[10px] text-emerald-600 hover:bg-emerald-500/10 dark:text-emerald-400" title="回切主库（进变更清单）"
-                    onClick={() => onDraft({ kind: 'revert-db', profileId: row.profileId, label: `${row.profileId} · 回切主库（隔离库转快照保留）` })}>回切</button>
-                ) : null}
-                {row.members.length > 0 ? (
-                  <button type="button" className="rounded border border-[hsl(var(--hairline))] px-1 text-[10px] text-muted-foreground hover:text-destructive" title="关闭复制集（进变更清单）"
-                    onClick={() => onDraft({ kind: 'dissolve', profileId: row.profileId, label: `${row.profileId} · 关闭复制集（移除全部副本）` })}>关闭</button>
-                ) : null}
-                {row.running.length > 0 ? (
-                  <button type="button" className="rounded border border-[hsl(var(--hairline))] px-1 text-[10px] text-muted-foreground hover:text-primary" title="分流实测（即时诊断，不进清单）"
-                    onClick={() => void runProbe(row.profileId)}>实测</button>
-                ) : null}
-                {row.candidates.some((c) => !c.isCurrent) && row.members.length + row.adds.length < memberLimit ? (
-                  <button type="button" className="rounded border border-[hsl(var(--hairline))] px-1 text-[10px] text-muted-foreground hover:text-primary" title="用历史版本加副本"
-                    onClick={() => setPickerFor(pickerFor === row.profileId ? null : row.profileId)}>历史版</button>
-                ) : null}
-              </div>
-            </div>
-            {/* 实例卡 */}
-            {row.insts.map((inst, ii) => (
-              <StageCard key={inst.id} x={LABEL_W + 12 + ii * (CW + IGAP)} y={row.y} w={CW} name={inst.name} ico="API"
-                color={inst.ghost ? '#9ca3af' : ii === 0 ? '#8b8578' : '#6366f1'}
-                ok={!inst.boot && !inst.danger && !inst.ghost} danger={inst.danger} ghost={inst.ghost || row.removals.has(inst.id)}
-                status={row.removals.has(inst.id) ? '待下线（草稿）' : inst.sub} foot={inst.port ? `:${inst.port}` : ''} hero={ii > 0 && !inst.ghost} boot={inst.boot}
-                extra={(
-                  <span className="absolute right-1 top-1 flex gap-0.5">
-                    {!inst.ghost && inst.id !== 'primary' && !row.removals.has(inst.id) ? (
-                      <>
-                        {memberDirectUrl(previewUrl, inst.id) && !inst.boot ? (
-                          <a className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary" title="直达该副本"
-                            href={memberDirectUrl(previewUrl, inst.id)!} target="_blank" rel="noreferrer"><ExternalLink className="h-3 w-3" /></a>
-                        ) : null}
-                        <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive" title="下线（进变更清单）"
-                          onClick={() => onDraft({ kind: 'remove-member', profileId: row.profileId, params: { memberId: inst.id }, label: `${row.profileId} · 下线 ${inst.id}` })}>
-                          <Trash2 className="h-3 w-3" />
-                        </button>
-                      </>
+        {insts.map((inst, i) => (
+          <StageCard key={inst.id} x={startX + i * (CW + gap)} y={instY} w={CW} name={inst.name} ico="API"
+            color={inst.ghost ? '#9ca3af' : i === 0 ? '#8b8578' : '#6366f1'}
+            ok={!inst.boot && !inst.danger && !inst.ghost} danger={inst.danger} ghost={inst.ghost || draftRemovals.has(inst.id)}
+            status={draftRemovals.has(inst.id) ? '待下线（草稿）' : inst.sub} foot={inst.port ? `:${inst.port}` : ''} hero={i > 0 && !inst.ghost} boot={inst.boot}
+            extra={(
+              <span className="absolute right-1 top-1 flex gap-0.5">
+                {!inst.ghost && inst.id !== 'primary' && !draftRemovals.has(inst.id) ? (
+                  <>
+                    {memberDirectUrl(previewUrl, inst.id) && !inst.boot ? (
+                      <a className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary" title="直达该副本"
+                        href={memberDirectUrl(previewUrl, inst.id)!} target="_blank" rel="noreferrer"><ExternalLink className="h-3 w-3" /></a>
                     ) : null}
-                  </span>
-                )}
-                label={inst.ghost ? '草稿' : `${inst.boot ? '…' : `${Math.round((inst.w / row.tw) * 100)}%${row.draftWeights.has(inst.id) ? `→${row.draftWeights.get(inst.id)}` : ''}`}`}
-                labelX={LABEL_W + 12 + ii * (CW + IGAP) + CW / 2} labelY={row.y - 12}
-                onLabelClick={!inst.ghost && !inst.boot ? () => { setWeightFor({ profileId: row.profileId, memberId: inst.id, x: LABEL_W + 12 + ii * (CW + IGAP) + CW / 2, y: row.y - 12 }); setWeightDraft(String(inst.id === 'primary' ? row.rs?.primaryWeight ?? 100 : row.members.find((m) => m.id === inst.id)?.weight ?? 0)); } : undefined} />
-            ))}
-            {/* 行内 + 按钮 */}
-            {row.members.length + row.adds.length < memberLimit ? (
-              <button type="button"
-                className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-indigo-500/50 bg-indigo-500/10 text-xs font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
-                style={{ left: LABEL_W + 12 + row.insts.length * (CW + IGAP), top: row.y, width: 96, height: 92 }}
-                title={`给 ${row.profileId} 加一个当前版本副本（进变更清单）`}
-                onClick={() => onDraft({ kind: 'add-replica', profileId: row.profileId, label: `${row.profileId} · 新增当前版本副本` })}>
-                <Plus className="h-5 w-5" />副本
-              </button>
-            ) : null}
-          </div>
+                    <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive" title="下线（进变更清单）"
+                      onClick={() => onDraft({ kind: 'remove-member', profileId, params: { memberId: inst.id }, label: `${profileId} · 下线 ${inst.id}` })}>
+                      <Trash2 className="h-3 w-3" />
+                    </button>
+                  </>
+                ) : null}
+              </span>
+            )}
+            label={inst.ghost ? '草稿' : weightFor === inst.id ? undefined : `${inst.boot ? '…' : `${Math.round((inst.w / tw) * 100)}%${draftWeights.has(inst.id) ? `→${draftWeights.get(inst.id)}` : ''}`}`}
+            labelY={instY - 34} labelX={repXs[i]}
+            onLabelClick={!inst.ghost && !inst.boot ? () => { setWeightFor(inst.id); setWeightDraft(String(inst.id === 'primary' ? rs?.primaryWeight ?? 100 : members.find((m) => m.id === inst.id)?.weight ?? 0)); } : undefined} />
         ))}
-
         {weightFor ? (
           <input autoFocus type="number" min={0} max={100} value={weightDraft}
             onChange={(e) => setWeightDraft(e.target.value)}
-            onBlur={commitWeight}
-            onKeyDown={(e) => { if (e.key === 'Enter') commitWeight(); if (e.key === 'Escape') setWeightFor(null); }}
+            onBlur={() => commitWeight(weightFor)}
+            onKeyDown={(e) => { if (e.key === 'Enter') commitWeight(weightFor); if (e.key === 'Escape') setWeightFor(null); }}
             className="absolute z-10 h-6 w-16 -translate-x-1/2 -translate-y-1/2 rounded border border-primary bg-background px-1 text-center font-mono text-xs outline-none"
-            style={{ left: weightFor.x, top: weightFor.y }} />
+            style={{ left: repXs[insts.findIndex((x) => x.id === weightFor)] ?? entryX, top: instY - 34 }} />
+        ) : null}
+        {canAddMore ? (
+          <button type="button"
+            className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-indigo-500/50 bg-indigo-500/10 text-xs font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
+            style={{ left: startX + insts.length * (CW + gap), top: instY, width: 120, height: 92 }}
+            title="加一个当前版本副本（进变更清单）"
+            onClick={() => onDraft({ kind: 'add-replica', profileId, label: `${profileId} · 新增当前版本副本` })}>
+            <Plus className="h-5 w-5" />副本
+          </button>
         ) : null}
 
         {(dbInfra.length ? dbInfra : [{ id: 'db', name: '数据库', dockerImage: '', status: 'running' }]).map((s, i) => {
           const isMainDb = i === mainDbIdx && !/redis/i.test(s.dockerImage || s.id);
-          const locked = isMainDb && anyIsolatedRow?.isoState === 'done';
+          const locked = isMainDb && isoState === 'done';
           return (
-            <StageCard key={s.id} x={dbX(i)} y={dataY} w={dbCW} name={s.name || s.id} ico={/redis/i.test(s.dockerImage || s.id) ? 'R' : 'DB'}
+            <StageCard key={s.id} x={dbX(i)} y={dbY} w={dbCW} name={s.name || s.id} ico={/redis/i.test(s.dockerImage || s.id) ? 'R' : 'DB'}
               color={/redis/i.test(s.dockerImage || s.id) ? '#c2372f' : '#10b981'} ok={!locked} locked={locked}
               status={locked ? '已上锁 · 副本请求已转移' : isMainDb ? '主库' : '共享实例'} foot={`${s.id}-volume`} />
           );
         })}
-        {!anyIsolatedRow ? (
-          <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 dark:text-emerald-400"
-            style={{ left: isoX, top: dataY, width: dbCW, height: 92 }}
-            title="隔离区：在容器行点「隔离」即把复制隔离加入变更清单">
-            <span className="text-[18px] leading-none">&#9676;</span>隔离区 · 空
-            <span className="text-[10px] font-normal text-muted-foreground">在容器行点「隔离」</span>
+        {isoState === 'idle' && !draftIsolate ? (
+          <button type="button"
+            className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
+            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}
+            title="点击加入变更清单：整库克隆进专用隔离实例，副本切换隔离库（可回切）。没有副本时可在同一计划里先加副本再隔离"
+            onClick={() => {
+              if (members.length + draftAdds.length === 0) onToast?.('隔离作用于副本——已可先点「+副本」，同一计划内先加副本再隔离');
+              onDraft({ kind: 'isolate-db', profileId, label: `${profileId} · 复制隔离（克隆 → 副本切换，可回切）` });
+            }}>
+            <Copy className="h-4 w-4" />复制隔离到此
+          </button>
+        ) : isoState === 'idle' && draftIsolate ? (
+          <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-amber-500/60 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-400"
+            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}>
+            <Copy className="h-4 w-4" />复制隔离 · 待保存
           </div>
         ) : (
-          <StageCard x={isoX} y={dataY} w={dbCW} name="隔离库" ico="DB" color="#10b981" ok={anyIsolatedRow.isoState === 'done'} boot={anyIsolatedRow.isoState === 'cloning'}
-            status={anyIsolatedRow.isoState === 'cloning' ? '第1步 复制：拷入数据…' : anyIsolatedRow.isoState === 'switching' ? '第2步 切换：副本改连新库…' : `${anyIsolatedRow.profileId} 专用实例`}
-            foot={anyIsolatedRow.rs?.isolated?.dbName || ''} />
+          <StageCard x={isoX} y={dbY} w={dbCW} name="隔离库" ico="DB" color="#10b981" ok={isoState === 'done'} boot={isoState === 'cloning'}
+            status={isoState === 'cloning' ? '第1步 复制：拷入数据…' : isoState === 'switching' ? '第2步 切换：副本改连新库…' : draftRevert ? '回切主库 · 待保存' : '专用实例 · 独立读写'}
+            foot={rs?.isolated?.dbName || ''}
+            extra={isoState === 'done' && !draftRevert ? (
+              <button type="button" className="absolute bottom-1.5 right-1.5 rounded border border-emerald-500/50 bg-background px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400"
+                onClick={() => onDraft({ kind: 'revert-db', profileId, label: `${profileId} · 回切主库（隔离库转快照保留）` })}>回切主库</button>
+            ) : undefined} />
         )}
+        {running.length > 0 && isoState === 'idle' && !draftIsolate ? (
+          <button type="button" className="absolute z-10 inline-flex -translate-x-1/2 -translate-y-1/2 items-center gap-1.5 rounded-md border border-emerald-500/60 bg-background px-2.5 py-1 text-[11px] font-semibold text-emerald-600 shadow-sm hover:bg-emerald-500/10 dark:text-emerald-400"
+            style={{ left: (repXs[Math.min(1, repXs.length - 1)] + mainDbX + dbCW / 2) / 2, top: (instY + 92 + dbY) / 2 + 6 }}
+            title="第1步 复制：整库克隆进专用隔离实例（主库不动）；第2步 切换：副本改连隔离库。进变更清单，保存后执行"
+            onClick={() => onDraft({ kind: 'isolate-db', profileId, label: `${profileId} · 复制隔离（克隆 → 副本切换，可回切）` })}>
+            <Copy className="h-3 w-3" />复制隔离
+          </button>
+        ) : null}
       </div>
 
-      {pickerFor ? (
+      <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3">
+        {availableRows.length > 0 && canAddMore ? (
+          <Button type="button" size="sm" variant="ghost" onClick={() => setPickerOpen(!pickerOpen)}><Layers />历史版本副本</Button>
+        ) : null}
+        <Button type="button" size="sm" variant="outline" disabled={probing.current || running.length === 0} onClick={() => void runProbe()}>
+          <RefreshCw />分流实测
+        </Button>
+        {members.length > 0 ? (
+          <Button type="button" size="sm" variant="ghost"
+            onClick={() => onDraft({ kind: 'dissolve', profileId, label: `${profileId} · 关闭复制集（移除全部副本）` })}>
+            <Undo2 />关闭复制集
+          </Button>
+        ) : null}
+        <span className="text-[11px] text-muted-foreground">操作先进变更清单 · 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
+      </div>
+      {pickerOpen ? (
         <div className="mx-5 mb-3 grid gap-1.5">
-          {(rows.find((r) => r.profileId === pickerFor)?.candidates || []).filter((c) => !c.isCurrent).slice(0, 6).map((row2) => (
-            <button key={row2.versionId} type="button"
-              onClick={() => { setPickerFor(null); onDraft({ kind: 'add-replica', profileId: pickerFor, params: { versionId: row2.versionId }, label: `${pickerFor} · 新增历史版本副本 ${row2.commitSha.slice(0, 7)}` }); }}
+          {availableRows.slice(0, 6).map((row) => (
+            <button key={row.versionId} type="button"
+              onClick={() => { setPickerOpen(false); onDraft({ kind: 'add-replica', profileId, params: { versionId: row.versionId }, label: `${profileId} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}` }); }}
               className="flex items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 text-left text-xs hover:border-indigo-500/50 hover:bg-indigo-500/[.06]">
-              <span className="font-mono font-semibold">{row2.commitSha.slice(0, 7)}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row2.image}</span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(row2.createdAt).toLocaleString()}</span>
+              <span className="font-mono font-semibold">{row.commitSha.slice(0, 7)}</span>
+              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row.image}</span>
+              <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(row.createdAt).toLocaleString()}</span>
             </button>
           ))}
         </div>
@@ -807,5 +848,60 @@ function StageCard({ x, y, w = 180, name, ico, color, ok, danger, ghost, locked,
       ) : null}
       <style>{'@keyframes rscolorin{from{filter:grayscale(1);opacity:.45}to{filter:grayscale(0);opacity:1}}'}</style>
     </>
+  );
+}
+
+/* ── 项目级：整组视角（一键全容器加副本 / 整组隔离，草稿同入变更清单；影子分支整组复制为波 6） ── */
+function ProjectGroupPanel({ profileIds, replicaSets, services, draft, memberLimit, onDraft, onToast }: {
+  profileIds: string[];
+  replicaSets: Record<string, ProfileReplicaSetView>;
+  services?: Record<string, PanelServiceInfo>;
+  draft: DraftOp[];
+  memberLimit: number;
+  onDraft: (op: Omit<DraftOp, 'key'>) => void;
+  onToast?: (m: string) => void;
+}): JSX.Element {
+  const rows = profileIds.map((p) => {
+    const rs = replicaSets[p];
+    const members = rs?.enabled ? rs.members : [];
+    const adds = draft.filter((d) => d.profileId === p && d.kind === 'add-replica').length;
+    return { profileId: p, rs, members, adds, running: members.filter((m) => m.status === 'running') };
+  });
+  const addable = rows.filter((r) => r.members.length + r.adds < memberLimit);
+  const isolatable = rows.filter((r) => r.running.length > 0 && !r.rs?.isolated && !draft.some((d) => d.profileId === r.profileId && d.kind === 'isolate-db'));
+  const revertable = rows.filter((r) => !!r.rs?.isolated && !draft.some((d) => d.profileId === r.profileId && d.kind === 'revert-db'));
+
+  return (
+    <section className="cds-surface-raised cds-hairline px-5 py-4">
+      <div className="flex flex-wrap items-center gap-2">
+        <Button type="button" size="sm" disabled={addable.length === 0}
+          title="给每个未满员的容器各加一个当前版本副本（进变更清单）"
+          onClick={() => { addable.forEach((r) => onDraft({ kind: 'add-replica', profileId: r.profileId, label: `${r.profileId} · 新增当前版本副本（整组）` })); onToast?.(`已加入 ${addable.length} 个容器的副本草稿`); }}>
+          <Plus />整组加副本（{addable.length}）
+        </Button>
+        <Button type="button" size="sm" variant="outline" disabled={isolatable.length === 0}
+          title="对每个有运行副本且未隔离的容器加入复制隔离（统一战线：同一批保存执行）"
+          onClick={() => { isolatable.forEach((r) => onDraft({ kind: 'isolate-db', profileId: r.profileId, label: `${r.profileId} · 复制隔离（整组统一战线）` })); onToast?.(`已加入 ${isolatable.length} 个容器的隔离草稿`); }}>
+          <Copy />整组复制隔离（{isolatable.length}）
+        </Button>
+        <Button type="button" size="sm" variant="ghost" disabled={revertable.length === 0}
+          title="对每个已隔离容器加入回切主库（进变更清单）"
+          onClick={() => { revertable.forEach((r) => onDraft({ kind: 'revert-db', profileId: r.profileId, label: `${r.profileId} · 回切主库（整组）` })); onToast?.(`已加入 ${revertable.length} 个容器的回切草稿`); }}>
+          整组回切（{revertable.length}）
+        </Button>
+        <span className="text-[11px] text-muted-foreground">整组影子容器（复用原结构 + 入口负载 + 特殊标记）在路上——当前整组操作经同一变更清单串行执行</span>
+      </div>
+      <div className="mt-3 grid gap-1.5">
+        {rows.map((r) => (
+          <div key={r.profileId} className="flex flex-wrap items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/40 px-3 py-2 text-xs">
+            <b className="w-44 truncate">{r.profileId}</b>
+            <span className="text-muted-foreground">{1 + r.members.length} 实例{r.adds ? ` (+${r.adds} 草稿)` : ''}{services?.[r.profileId]?.hostPort ? ` · :${services[r.profileId].hostPort}` : ''}</span>
+            {r.rs?.isolated ? <span className="rounded border border-emerald-500/50 bg-emerald-500/10 px-1.5 text-[10px] text-emerald-600 dark:text-emerald-400">已隔离 · {r.rs.isolated.dbName}</span> : null}
+            {r.members.some((m) => m.status === 'provisioning') ? <span className="rounded border border-amber-500/50 px-1.5 text-[10px] text-amber-600 dark:text-amber-400">创建中</span> : null}
+            {r.members.some((m) => m.status === 'error') ? <span className="rounded border border-destructive/50 px-1.5 text-[10px] text-destructive">有失败</span> : null}
+          </div>
+        ))}
+      </div>
+    </section>
   );
 }
