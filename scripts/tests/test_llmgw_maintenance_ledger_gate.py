@@ -176,6 +176,18 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
             source,
         )
 
+    def test_maintenance_release_skips_only_inherited_global_shadow_cells(self) -> None:
+        source = EXEC_DEP_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"',
+            source,
+        )
+        self.assertIn(
+            'args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} '
+            '--min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"',
+            source,
+        )
+
 
 if __name__ == "__main__":
     unittest.main()
