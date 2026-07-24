@@ -3,6 +3,7 @@ using System.Text;
 using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.Services.AssetStorage;
 
@@ -20,6 +21,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
     private readonly ILogger<LlmGatewayOpsCanaryController> _logger;
     private readonly ILLMRequestContextAccessor _ctxAccessor;
     private readonly IAssetStorage _assetStorage;
+    private readonly LlmGatewayDataContext _gatewayData;
 
     public LlmGatewayOpsCanaryController(
         IHttpClientFactory httpFactory,
@@ -27,7 +29,8 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         ILogger<HttpLlmGatewayClient> gatewayLogger,
         ILogger<LlmGatewayOpsCanaryController> logger,
         ILLMRequestContextAccessor ctxAccessor,
-        IAssetStorage assetStorage)
+        IAssetStorage assetStorage,
+        LlmGatewayDataContext gatewayData)
     {
         _httpFactory = httpFactory;
         _config = config;
@@ -35,6 +38,7 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
         _logger = logger;
         _ctxAccessor = ctxAccessor;
         _assetStorage = assetStorage;
+        _gatewayData = gatewayData;
     }
 
     [HttpPost("asr")]
@@ -70,7 +74,8 @@ public sealed class LlmGatewayOpsCanaryController : ControllerBase
             _config,
             _gatewayLogger,
             _ctxAccessor,
-            _assetStorage);
+            _assetStorage,
+            _gatewayData);
 
         using var scope = _ctxAccessor.BeginScope(new LlmRequestContext(
             RequestId: requestId,
