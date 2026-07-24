@@ -2695,12 +2695,15 @@ public class GatewayKeyGateContractTests
                     Title = "Content Vision Quickstart",
                 },
             ]);
-            var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
+            var authorizer = new CapturingScopedKeyAuthorizer(scope => scope is "invoke" or "stream:invoke");
             await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer, gatewayData: data);
             await app.StartAsync();
             (string Path, string Body, string AppCallerCode, string RequestType)[] cases =
             {
                 ("/gw/v1/invoke", "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]},\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::chat", "chat"),
+                ("/gw/v1/send", "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]},\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::chat", "chat"),
+                ("/gw/v1/stream", "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"stream\":true,\"requestBody\":{\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"stream\":true},\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::chat", "chat"),
+                ("/gw/v1/client-stream", "{\"appCallerCode\":\"content.quickstart::chat\",\"modelType\":\"chat\",\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"context\":{\"sourceSystem\":\"external\"}}", "content.quickstart::chat", "chat"),
                 ("/v1/chat/completions", "{\"model\":\"auto\",\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}],\"stream\":false}", "content.quickstart::chat", "chat"),
                 ("/v1/messages", "{\"model\":\"auto\",\"max_tokens\":8,\"messages\":[{\"role\":\"user\",\"content\":\"OK\"}]}", "content.quickstart::chat", "chat"),
                 ("/v1beta/models/auto:generateContent", "{\"contents\":[{\"role\":\"user\",\"parts\":[{\"text\":\"OK\"}]}]}", "content.quickstart::chat", "chat"),
@@ -2733,13 +2736,19 @@ public class GatewayKeyGateContractTests
                 response.Headers.GetValues("X-Request-Id").Single().ShouldBe(requestId);
                 response.Headers.GetValues("X-Gateway-Upstream-Called").Single().ShouldBe("false");
                 responseBody.ShouldContain("dry");
+                if (cases[index].Path.Contains("stream", StringComparison.Ordinal))
+                {
+                    response.Content.Headers.ContentType!.MediaType.ShouldBe("text/event-stream");
+                    responseBody.ShouldContain("data: ");
+                    responseBody.ShouldContain("\"Type\":\"done\"");
+                }
             }
 
             var logs = await data.Database.GetCollection<BsonDocument>("llmrequestlogs")
                 .Find(Builders<BsonDocument>.Filter.Eq("Provider", "gateway-dry-run"))
                 .Sort(Builders<BsonDocument>.Sort.Ascending("RequestId"))
                 .ToListAsync();
-            logs.Count.ShouldBe(8);
+            logs.Count.ShouldBe(11);
             logs.Select(x => x["IngressProtocol"].AsString).ToHashSet().SetEquals(new[]
             {
                 "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",
@@ -2763,7 +2772,7 @@ public class GatewayKeyGateContractTests
             callers.Count.ShouldBe(2);
             foreach (var caller in callers)
             {
-                caller.TotalSeen.ShouldBe(4);
+                caller.TotalSeen.ShouldBe(caller.RequestType == "chat" ? 7 : 4);
                 caller.ObservedIngressProtocols.ToHashSet().SetEquals(new[]
                 {
                     "gw-native", "openai-compatible", "claude-compatible", "gemini-compatible",

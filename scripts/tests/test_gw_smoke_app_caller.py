@@ -21,6 +21,43 @@ def load_smoke_module():
 
 
 class GatewaySmokeAppCallerTests(unittest.TestCase):
+    def test_quickstart_dry_run_header_is_sent_for_post_requests(self):
+        with patch.dict(
+            os.environ,
+            {
+                "GW_SMOKE_QUICKSTART_DRY_RUN": "1",
+                "GW_BASE": "https://gateway.example.test/gw/v1",
+            },
+            clear=False,
+        ):
+            module = load_smoke_module()
+
+        captured = {}
+
+        class FakeResponse:
+            status = 200
+
+            def __enter__(self):
+                return self
+
+            def __exit__(self, *_args):
+                return False
+
+            @staticmethod
+            def read():
+                return b"{}"
+
+        def fake_urlopen(request, timeout):
+            captured["headers"] = dict(request.header_items())
+            captured["timeout"] = timeout
+            return FakeResponse()
+
+        with patch.object(module.urllib.request, "urlopen", side_effect=fake_urlopen):
+            status, _ = module._req("POST", "/invoke", {"AppCallerCode": "release-probe.stable::chat"})
+
+        self.assertEqual(status, 200)
+        self.assertEqual(captured["headers"].get("X-gateway-dry-run"), "quickstart")
+
     def test_configured_app_caller_replaces_default_chat_sample(self):
         configured = "release-probe.stable::chat"
         with patch.dict(
