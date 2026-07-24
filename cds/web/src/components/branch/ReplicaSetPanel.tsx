@@ -28,6 +28,8 @@ export interface ReplicaMemberView {
   dbMode: 'shared' | 'isolated';
   isolatedDbName?: string;
   createdAt: string;
+  /** 服务端 TCP 实测可达性（P1-2：status 只反映控制面意图，健康必须实测） */
+  reachable?: boolean;
 }
 
 export interface ReplicaDbSnapshotView {
@@ -46,6 +48,7 @@ export interface ProfileReplicaSetView {
   primaryWeight: number;
   members: ReplicaMemberView[];
   isolated?: { dbName: string; snapshotId: string; isolatedAt: string };
+  primaryReachable?: boolean;
   updatedAt: string;
 }
 
@@ -99,6 +102,14 @@ function statusPill(member: ReplicaMemberView): JSX.Element {
     );
   }
   if (member.status === 'running') {
+    if (member.reachable === false) {
+      return (
+        <span className="inline-flex items-center gap-1.5 rounded-md border border-destructive/50 bg-destructive/10 px-2 py-0.5 text-[11px] font-semibold text-destructive" title="容器端口拒绝连接（服务端 TCP 实测），仍按权重接流量，建议下线">
+          <span className="h-1.5 w-1.5 rounded-full bg-destructive" />
+          不可达
+        </span>
+      );
+    }
     return (
       <span className="inline-flex items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/10 px-2 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">
         <span className="h-1.5 w-1.5 rounded-full bg-emerald-500" />
@@ -202,11 +213,12 @@ export function ReplicaSetPanel({
     revert: (profileId: string) => run(`rev:${profileId}`, async () => {
       await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/revert-db`, { method: 'POST' });
     }, '回切主库：副本恢复原连接，隔离库转为快照保留'),
-    probe: async (profileId: string): Promise<ProbeResult | null> => {
+    probe: async (profileId: string, path?: string): Promise<ProbeResult | null> => {
       if (!previewUrl) { onToast?.('该分支还没有预览入口，无法实测'); return null; }
       const host = new URL(previewUrl).hostname;
+      const cleanPath = path && path.startsWith('/') ? path : undefined;
       return apiRequest<ProbeResult>(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`, {
-        method: 'POST', body: { host, count: 12 },
+        method: 'POST', body: { host, count: 12, ...(cleanPath ? { path: cleanPath } : {}) },
       });
     },
     deleteSnapshot: (id: string, dbName: string) => run(`snap:${id}`, async () => {
@@ -347,13 +359,15 @@ function ServiceRow({
     dissolve: (p: string) => Promise<void>;
     isolate: (p: string) => Promise<void>;
     revert: (p: string) => Promise<void>;
-    probe: (p: string) => Promise<ProbeResult | null>;
+    probe: (p: string, path?: string) => Promise<ProbeResult | null>;
   };
   const members = rs?.enabled ? rs.members : [];
   const running = members.filter((m) => m.status === 'running');
+  const unreachable = running.filter((m) => m.reachable === false);
   const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
   const availableRows = candidates.filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
   const [probe, setProbe] = useState<ProbeResult | 'running' | null>(null);
+  const [probePath, setProbePath] = useState('');
 
   return (
     <div className="border-t border-[hsl(var(--hairline))] first:border-t-0">
@@ -371,7 +385,7 @@ function ServiceRow({
         <div className="flex w-[84px] gap-1">
           <i className="h-[18px] w-3.5 rounded bg-[hsl(var(--muted-foreground))]/60" title="主实例" />
           {members.map((m) => (
-            <i key={m.id} className={`h-[18px] w-3.5 rounded ${m.status === 'provisioning' ? 'animate-pulse bg-amber-500' : m.status === 'error' ? 'bg-destructive' : 'bg-indigo-500'}`} title={`${m.id} ${m.status}`} />
+            <i key={m.id} className={`h-[18px] w-3.5 rounded ${m.status === 'provisioning' ? 'animate-pulse bg-amber-500' : m.status === 'error' || m.reachable === false ? 'bg-destructive' : 'bg-indigo-500'}`} title={`${m.id} ${m.reachable === false ? '不可达' : m.status}`} />
           ))}
         </div>
         <div className="min-w-[140px] flex-1">
@@ -401,6 +415,14 @@ function ServiceRow({
           ) : null}
         </div>
       </div>
+      {unreachable.length > 0 || rs?.primaryReachable === false ? (
+        <div className="flex flex-wrap items-center gap-2 px-5 pb-2.5 text-[11px] text-destructive">
+          <span className="font-semibold">
+            {[...(rs?.primaryReachable === false ? ['主实例'] : []), ...unreachable.map((m) => m.id)].join('、')} 实际不可达（TCP 拒绝连接），仍按权重接收真实流量
+          </span>
+          <span className="text-muted-foreground">— 建议在「管理」里下线该副本，或将权重调为 0</span>
+        </div>
+      ) : null}
 
       {open ? (
         <div className="grid gap-2.5 border-t border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-5 py-3.5">
@@ -446,9 +468,12 @@ function ServiceRow({
                 ) : null}
                 <Button type="button" size="sm" variant="ghost" disabled={probe === 'running' || running.every((m) => m.weight === 0)}
                   title="服务端串流发 12 个真实请求（逐个等响应），按 X-CDS-Replica 统计落点"
-                  onClick={() => { setProbe('running'); void a.probe(profileId).then((r) => setProbe(r)); }}>
+                  onClick={() => { setProbe('running'); void a.probe(profileId, probePath.trim() || undefined).then((r) => setProbe(r)); }}>
                   {probe === 'running' ? <Loader2 className="animate-spin" /> : <RefreshCw />}分流实测
                 </Button>
+                <input type="text" value={probePath} onChange={(e) => setProbePath(e.target.value)} placeholder="探测路径（默认自动推导）"
+                  title="指定实测请求的路径，需以 / 开头；留空按服务路由前缀自动推导。非 2xx 状态不影响落点判定（以 X-CDS-Replica 头为准）"
+                  className="h-7 w-44 rounded-md border border-[hsl(var(--hairline))] bg-transparent px-2 font-mono text-[11px] outline-none focus:border-primary" />
                 <ConfirmAction title="关闭复制集" description="移除全部副本容器并删除复制集配置，主容器与主入口不受影响。确认？" confirmLabel="关闭复制集"
                   trigger={<Button type="button" size="sm" variant="ghost" disabled={busy !== null}><Undo2 />关闭复制集</Button>}
                   onConfirm={() => a.dissolve(profileId)} />
@@ -515,9 +540,19 @@ function CandidatePicker({ rows, busy, onPick }: {
 }
 
 /* ── 分流实测仪表盘（真实结果） ── */
+const PROBE_WHO_LABEL: Record<string, string> = { primary: '主实例', untagged: '未标记响应', error: '连接失败' };
+
+function probeWhoColor(who: string, i: number): string {
+  if (who === 'primary') return '#8b8578';
+  if (who === 'untagged') return '#9ca3af';
+  if (who === 'error') return '#ef4444';
+  return MEMBER_COLORS[i % MEMBER_COLORS.length];
+}
+
 function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
   const entries = Object.entries(result.tally).sort((x, y) => y[1] - x[1]);
   const C = 2 * Math.PI * 20;
+  const nonOkTagged = result.hits.filter((h) => h.servedBy !== 'untagged' && h.servedBy !== 'error' && (h.status < 200 || h.status >= 300)).length;
   return (
     <div className="flex flex-wrap items-center gap-6 rounded-md border border-[hsl(var(--hairline))] bg-background px-4 py-3">
       <span className="text-xs text-muted-foreground">分流仪表盘<br /><span className="font-mono text-[10px]">{result.count} 请求 · 串流 · {result.path}</span></span>
@@ -527,14 +562,19 @@ function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
           <span key={who} className="flex items-center gap-2.5">
             <svg width="52" height="52">
               <circle cx="26" cy="26" r="20" fill="none" stroke="hsl(var(--hairline))" strokeWidth="6" />
-              <circle cx="26" cy="26" r="20" fill="none" stroke={who === 'primary' ? '#8b8578' : MEMBER_COLORS[i % MEMBER_COLORS.length]} strokeWidth="6"
+              <circle cx="26" cy="26" r="20" fill="none" stroke={probeWhoColor(who, i)} strokeWidth="6"
                 strokeDasharray={C} strokeDashoffset={C * (1 - pct)} strokeLinecap="round" transform="rotate(-90 26 26)" />
               <text x="26" y="30" textAnchor="middle" fontSize="12" fontWeight="700" fill="currentColor">{Math.round(pct * 100)}%</text>
             </svg>
-            <span className="text-xs"><b className="block">{who === 'primary' ? '主实例' : who}</b><span className="font-mono text-[10px] text-muted-foreground">{n} / {result.count} 次</span></span>
+            <span className="text-xs"><b className="block">{PROBE_WHO_LABEL[who] ?? who}</b><span className="font-mono text-[10px] text-muted-foreground">{n} / {result.count} 次</span></span>
           </span>
         );
       })}
+      {nonOkTagged > 0 ? (
+        <span className="basis-full text-[11px] text-muted-foreground">
+          {nonOkTagged} 个请求返回非 2xx（业务路由无此路径）——落点以 X-CDS-Replica 响应头为准，分流统计不受影响；可在探测路径框指定真实存在的接口。
+        </span>
+      ) : null}
     </div>
   );
 }
@@ -584,8 +624,18 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
   const isoState = rs?.isolated ? (members.some((m) => m.status === 'provisioning') ? 'switching' : 'done') : (members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')) ? 'cloning' : 'idle');
 
   const CW = 180;
-  const insts = [{ id: 'primary', name: '主实例', w: rs?.primaryWeight ?? 100, boot: false, sub: 'primary · 滚动更新', port: service?.hostPort }]
-    .concat(members.map((m) => ({ id: m.id, name: m.id, w: m.status === 'running' ? m.weight : 0, boot: m.status === 'provisioning', sub: m.status === 'provisioning' ? (m.statusMessage || '创建中 · 可撤回') : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`, port: m.hostPort })));
+  const insts = [{ id: 'primary', name: '主实例', w: rs?.primaryWeight ?? 100, boot: false, danger: rs?.primaryReachable === false, sub: rs?.primaryReachable === false ? '不可达 · 端口拒绝连接' : 'primary · 滚动更新', port: service?.hostPort }]
+    .concat(members.map((m) => ({
+      id: m.id,
+      name: m.id,
+      w: m.status === 'running' ? m.weight : 0,
+      boot: m.status === 'provisioning',
+      danger: m.status === 'running' && m.reachable === false,
+      sub: m.status === 'provisioning'
+        ? (m.statusMessage || '创建中 · 可撤回')
+        : m.reachable === false ? '不可达 · 端口拒绝连接，建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
+      port: m.hostPort,
+    })));
   const slots = insts.length + (members.length < memberLimit ? 1 : 0);
   const gap = Math.max(12, Math.min(32, (w - slots * CW) / (slots + 1)));
   const rowW = slots * CW + (slots - 1) * gap;
@@ -616,12 +666,17 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
       // 真实结果逐条回放：粒子沿真实命中路径飞 + 日志逐行
       for (let i = 0; i < res.hits.length; i += 1) {
         const hit = res.hits[i];
+        const missed = hit.servedBy === 'untagged' || hit.servedBy === 'error';
         const idx = hit.servedBy === 'primary' ? 0 : insts.findIndex((x) => x.id === hit.servedBy);
-        const target = idx >= 0 ? idx : 0;
-        setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, repXs[target], instY), key: i });
-        await new Promise((r) => setTimeout(r, 640));
-        setFlying(null);
-        setLog((prev) => [...prev, `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  ${hit.status} ${hit.status === 200 ? 'OK' : ''}`]);
+        if (!missed && idx >= 0) {
+          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, repXs[idx], instY), key: i });
+          await new Promise((r) => setTimeout(r, 640));
+          setFlying(null);
+        }
+        const line = missed
+          ? `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'error' ? '连接失败' : '未命中复制集路由（无 X-CDS-Replica 头）'}  HTTP ${hit.status}`
+          : `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  HTTP ${hit.status}${hit.status >= 200 && hit.status < 300 ? ' OK' : ' · 业务路由响应，落点已验证'}`;
+        setLog((prev) => [...prev, line]);
       }
       setProbeRes(res);
     } catch (err) {
@@ -681,7 +736,7 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
 
         <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
         {insts.map((inst, i) => (
-          <StageCard key={inst.id} x={startX + i * (CW + gap)} y={instY} w={CW} name={inst.name} ico="API" color={i === 0 ? '#8b8578' : '#6366f1'} ok={!inst.boot}
+          <StageCard key={inst.id} x={startX + i * (CW + gap)} y={instY} w={CW} name={inst.name} ico="API" color={i === 0 ? '#8b8578' : '#6366f1'} ok={!inst.boot && !inst.danger} danger={inst.danger}
             status={inst.sub} foot={`${inst.port ? `:${inst.port}` : ''}`} hero={i > 0} boot={inst.boot}
             extra={inst.boot && inst.id !== 'primary' ? (
               <button type="button" className="absolute right-1.5 top-1.5 rounded border border-[hsl(var(--hairline))] bg-background px-1.5 text-[10px] text-muted-foreground hover:text-destructive"
@@ -752,20 +807,20 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
   );
 }
 
-function StageCard({ x, y, w = 180, name, ico, color, ok, status, foot, hero, boot, extra, label, labelX, labelY }: {
-  x: number; y: number; w?: number; name: string; ico: string; color: string; ok?: boolean; status: string; foot?: string;
+function StageCard({ x, y, w = 180, name, ico, color, ok, danger, status, foot, hero, boot, extra, label, labelX, labelY }: {
+  x: number; y: number; w?: number; name: string; ico: string; color: string; ok?: boolean; danger?: boolean; status: string; foot?: string;
   hero?: boolean; boot?: boolean; extra?: JSX.Element; label?: string; labelX?: number; labelY?: number;
 }): JSX.Element {
   return (
     <>
-      <div className={`absolute overflow-hidden rounded-xl border bg-background text-xs shadow-md ${hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
+      <div className={`absolute overflow-hidden rounded-xl border bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : hero ? 'border-indigo-500/45' : 'border-[hsl(var(--hairline))]'}`}
         style={{ left: x, top: y, width: w, ...(boot ? { animation: 'rscolorin 2.4s forwards' } : {}) }}>
         <div className="flex items-center gap-2 px-3 py-2 text-[13px] font-bold">
           <span className="inline-flex h-[22px] w-[22px] items-center justify-center rounded-md text-[10px] font-extrabold text-white" style={{ background: color }}>{ico}</span>
           <span className="truncate">{name}</span>
         </div>
-        <div className="flex items-center gap-1.5 px-3 pb-2 text-[11px] text-muted-foreground">
-          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: ok ? '#10b981' : 'hsl(var(--muted-foreground))' }} />
+        <div className={`flex items-center gap-1.5 px-3 pb-2 text-[11px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ok ? '#10b981' : 'hsl(var(--muted-foreground))' }} />
           <span className="truncate">{status}</span>
         </div>
         {foot !== undefined ? (

@@ -34,6 +34,32 @@ function engineForEnvKey(key: string): ReplicaDbEngine | null {
 /** 库名白名单：只允许 [a-z0-9_]，防 shell/SQL 注入 + 三引擎通吃的安全字符集。 */
 const DB_NAME_SAFE = /^[a-z0-9_]+$/i;
 
+/**
+ * 补充家族：应用框架风格的库名 env key（如 .NET 双下划线 `MongoDB__DatabaseName`）。
+ * 只用于复制集隔离时的库定位，**不进 PER_BRANCH_DB_ENV_KEYS**——那份白名单驱动
+ * per-branch 库名改写，部分项目（如 prd-agent）刻意让框架 key 不随分支加后缀。
+ * （验收 P1-1：此前只认白名单家族，prd-agent 的 MongoDB__DatabaseName 直接 409。）
+ */
+const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> = [
+  { engine: 'mongo', re: /^(CDS_)?MONGO(DB)?_{1,2}DATABASE(_?NAME)?$/i },
+  { engine: 'mysql', re: /^(CDS_)?(MYSQL|MARIADB)_{1,2}DATABASE(_?NAME)?$/i },
+  { engine: 'postgres', re: /^(CDS_)?(POSTGRES(QL)?|PG)_{1,2}(DB|DATABASE)(_?NAME)?$/i },
+];
+
+/** 判定某个 env key 是否为库名 key，并归类引擎（白名单 + 框架风格两路）。 */
+function classifyDbEnvKey(key: string): ReplicaDbEngine | null {
+  if ((PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)) return engineForEnvKey(key);
+  for (const { engine, re } of FRAMEWORK_DB_ENV_PATTERNS) {
+    if (re.test(key)) return engine;
+  }
+  return null;
+}
+
+/** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
+function isFrameworkDbKey(key: string): boolean {
+  return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key) && classifyDbEnvKey(key) !== null;
+}
+
 export interface ReplicaDbTarget {
   engine: ReplicaDbEngine;
   /** env 里实际存在、指向该库的全部 key（CDS_ 前缀与裸名可能并存，全部要覆写） */
@@ -58,30 +84,26 @@ export function resolveReplicaDbTarget(
   };
   const runtimeEnv = applyPerBranchDbIsolation(merged, profile.dbScope, branch.branch);
 
-  const presentKeys = PER_BRANCH_DB_ENV_KEYS.filter(
-    (key) => typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '',
-  );
+  const presentKeys = Object.keys(runtimeEnv)
+    .filter((key) => classifyDbEnvKey(key) !== null && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
+    // 框架风格 key 优先（应用真正读的配置）；同类内保持稳定序
+    .sort((a, b) => Number(isFrameworkDbKey(b)) - Number(isFrameworkDbKey(a)));
   if (presentKeys.length === 0) {
-    return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE 家族），无法定位要隔离的库' };
+    return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库' };
   }
 
-  // 取第一个能归类引擎的 key；同引擎的 CDS_ 前缀与裸名 key 一起覆写
-  let engine: ReplicaDbEngine | null = null;
-  let sourceDb = '';
-  for (const key of presentKeys) {
-    const kind = engineForEnvKey(key);
-    if (!kind) continue;
-    engine = kind;
-    sourceDb = runtimeEnv[key];
-    break;
-  }
+  const firstKey = presentKeys[0];
+  const engine = classifyDbEnvKey(firstKey);
+  const sourceDb = runtimeEnv[firstKey];
   if (!engine || !sourceDb) {
     return { target: null, reason: '数据库 env key 无法归类到 mongo/mysql/postgres 引擎' };
   }
   if (!DB_NAME_SAFE.test(sourceDb)) {
     return { target: null, reason: `源库名含不安全字符，拒绝克隆: ${sourceDb}` };
   }
-  const envKeys = presentKeys.filter((key) => engineForEnvKey(key) === engine);
+  // 只覆写「同引擎且指向同一个库」的 key——同引擎但值不同的 key（如 init 库 ≠ 应用库）
+  // 不能一起改，否则会把无关库名静默改指到克隆库
+  const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key) === engine && runtimeEnv[key] === sourceDb);
 
   const infraCandidates = state.getInfraServicesForProject(branch.projectId)
     .filter((svc) => svc.status === 'running' && detectInfraDataKindForEngine(svc, engine));

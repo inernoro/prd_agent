@@ -5,6 +5,7 @@
  * 控制面语义见 services/replica-set.ts；流量分配在 forwarder 数据面。
  */
 import { Router, type Request } from 'express';
+import { connect as tcpConnect } from 'node:net';
 import type { DeploymentVersion } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
@@ -28,12 +29,46 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     return deps.assertProjectAccess(req, branch.projectId);
   };
 
-  router.get('/branches/:branchId/replica-sets', (req, res) => {
+  /** 逐成员真实可达性探测：TCP 直连宿主端口，700ms 超时。
+   * （验收 P1-2：死副本上游 ECONNREFUSED 仍显示绿色「运行中」并持续接流量——
+   * 状态字段只反映控制面意图，健康必须实测。） */
+  const tcpReachable = (port: number, timeoutMs = 700): Promise<boolean> =>
+    new Promise((resolve) => {
+      const sock = tcpConnect({ host: '127.0.0.1', port });
+      let settled = false;
+      const done = (ok: boolean) => {
+        if (settled) return;
+        settled = true;
+        sock.destroy();
+        resolve(ok);
+      };
+      sock.setTimeout(timeoutMs, () => done(false));
+      sock.on('connect', () => done(true));
+      sock.on('error', () => done(false));
+    });
+
+  router.get('/branches/:branchId/replica-sets', async (req, res) => {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
       const { replicaSets, candidates, snapshots } = deps.replicaSetService.list(req.params.branchId);
-      res.json({ replicaSets, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT });
+      const branch = deps.stateService.getBranch(req.params.branchId)!;
+      const enriched = Object.fromEntries(await Promise.all(
+        Object.entries(replicaSets).map(async ([profileId, rs]) => {
+          const primaryPort = branch.services?.[profileId]?.hostPort;
+          const [primaryReachable, members] = await Promise.all([
+            primaryPort && branch.services?.[profileId]?.status === 'running'
+              ? tcpReachable(primaryPort)
+              : Promise.resolve(undefined),
+            Promise.all(rs.members.map(async (m) => ({
+              ...m,
+              reachable: m.status === 'running' && m.hostPort ? await tcpReachable(m.hostPort) : undefined,
+            }))),
+          ]);
+          return [profileId, { ...rs, members, primaryReachable }] as const;
+        }),
+      ));
+      res.json({ replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT });
     } catch (err) {
       respondError(res, err);
     }
@@ -79,7 +114,9 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
           timeout: 8000,
         }, (resp) => {
           resp.resume();
-          resolve({ servedBy: String(resp.headers['x-cds-replica'] || 'primary'), status: resp.statusCode || 0 });
+          // 无 X-CDS-Replica 头 = 没有穿过复制集路由（不能伪装成 primary 落点）
+          const tag = resp.headers['x-cds-replica'];
+          resolve({ servedBy: tag ? String(tag) : 'untagged', status: resp.statusCode || 0 });
         });
         req2.on('timeout', () => { req2.destroy(); resolve({ servedBy: 'error', status: 0 }); });
         req2.on('error', () => resolve({ servedBy: 'error', status: 0 }));

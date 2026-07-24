@@ -89,6 +89,41 @@ describe('resolveReplicaDbTarget', () => {
     expect(reason).toContain('mongo');
   });
 
+  it('识别 .NET 框架风格 MongoDB__DatabaseName（验收 P1-1 回归）', () => {
+    state.setCustomEnv({ MongoDB__DatabaseName: 'prdagent' }, 'proj');
+    addInfra('mongo', 'mongo:7', { MONGO_INITDB_ROOT_USERNAME: 'root', MONGO_INITDB_ROOT_PASSWORD: 'pw' });
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(reason).toBeUndefined();
+    expect(target).not.toBeNull();
+    expect(target!.engine).toBe('mongo');
+    expect(target!.sourceDb).toBe('prdagent');
+    expect(target!.envKeys).toEqual(['MongoDB__DatabaseName']);
+  });
+
+  it('同引擎但值不同的 key 不被一起覆写（init 库不等于应用库）', () => {
+    state.setCustomEnv({ MongoDB__DatabaseName: 'prdagent', MONGO_INITDB_DATABASE: 'admin_init' }, 'proj');
+    addInfra('mongo', 'mongo:7', {});
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target).not.toBeNull();
+    // 框架 key 优先作为源库；值不同的白名单 key 不进覆写清单
+    expect(target!.sourceDb).toBe('prdagent');
+    expect(target!.envKeys).toEqual(['MongoDB__DatabaseName']);
+  });
+
+  it('MySql__Database / Postgres__Database 框架变体也能归类', () => {
+    state.setCustomEnv({ MySql__Database: 'shop' }, 'proj');
+    addInfra('mysql', 'mysql:8', { MYSQL_ROOT_PASSWORD: 'pw' });
+    const a = resolveReplicaDbTarget(state, branch(), profile());
+    expect(a.target?.engine).toBe('mysql');
+    expect(a.target?.sourceDb).toBe('shop');
+
+    state.setCustomEnv({ Postgres__Database: 'ledger' }, 'proj');
+    addInfra('pg', 'postgres:16', { POSTGRES_PASSWORD: 'pw' });
+    const b = resolveReplicaDbTarget(state, branch(), profile());
+    expect(b.target?.engine).toBe('postgres');
+    expect(b.target?.sourceDb).toBe('ledger');
+  });
+
   it('dependsOn 优先选中显式声明的 infra 实例', () => {
     state.setCustomEnv({ POSTGRES_DB: 'main' }, 'proj');
     addInfra('pg-a', 'postgres:16', { POSTGRES_PASSWORD: 'a' });

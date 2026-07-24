@@ -18,3 +18,6 @@
 | feat | cds | 复制隔离数据库（profile 级）：连接线上「复制隔离」按钮两步动画（第1步克隆入保护罩框、主库不动；第2步副本整体切至隔离库），旧连线灰色留影加断开标记，「回切主库」可逆且快照保留 |
 | feat | cds | 后端 isolateProfile/revertProfile API（POST /replica-sets/:profileId/isolate 与 /revert-db）：guard-N 命名单次克隆 + 逐成员重物化换库，ProfileReplicaSet.isolated 台账 |
 | polish | cds | 新增副本走灰卡渐显可撤回；「退回普通模式」更名「关闭复制集」；分流实测升级串流模式（逐请求服务端往返）+ 实时日志 + 终局环形仪表盘 |
+| fix | cds | 验收 P1 双修：复制隔离识别 .NET 框架风格库名 key（MongoDB__DatabaseName / MySql__Database 等，此前只认白名单家族一点即 409）；同引擎值不同的 key 不再一起覆写 |
+| fix | cds | 验收 P1 双修：副本健康实测（服务端 TCP 直连宿主端口）——死副本不再显示绿色运行中，面板红色「不可达」告警 + 舞台红卡提示下线；无 X-CDS-Replica 头的响应不再伪装成主实例落点 |
+| polish | cds | 分流实测支持指定探测路径；非 2xx 业务响应中性展示（落点以 X-CDS-Replica 头为准），仪表盘补充说明避免误读 |
