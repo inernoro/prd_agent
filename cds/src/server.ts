@@ -1080,6 +1080,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
     [/^POST \/branches\/(.+)\/resources\/(.+)\/data\/init-sql$/, '执行分支资源初始化 SQL'],

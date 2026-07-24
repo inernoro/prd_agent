@@ -16,6 +16,9 @@
  * 凭据均通过 docker exec -e 环境变量传入（MYSQL_PWD / PGPASSWORD / RS_MONGO_PW），
  * 不落 shell 参数，脚本里只出现受白名单校验的库名（[a-z0-9_]），无注入面。
  */
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { PER_BRANCH_DB_ENV_KEYS, applyPerBranchDbIsolation } from './db-scope-isolation.js';
@@ -168,10 +171,13 @@ export async function cloneReplicaDb(opts: {
    * （127.0.0.1:<port> 直连），并施加内存/CPU 硬上限——压力大时被杀的是辅助容器，
    * 不是数据库本体。dump/restore 再加单并发限流，进一步压低对主库的冲击。
    */
+  // 两阶段克隆的落盘目录（挂进辅助容器 /rsclone；结束后 finally 清理）
+  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
   const helper = (extraEnv: string[], script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${c}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    '-v', `${scratchDir}:/rsclone`,
     '--entrypoint', 'sh',
     ...extraEnv,
     image,
@@ -204,10 +210,15 @@ export async function cloneReplicaDb(opts: {
     secrets.push(pw);
     const conn = `--host 127.0.0.1 --port ${port}`;
     const auth = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
+    // 复验 R7：两阶段读写错峰——dump 先落盘（gzip 压缩），确认完整后再 restore，
+    // 消除「dump 读压 + restore 写压同时打在 mongod 上」的叠加峰值与管道 broken pipe
+    // 失败模式；阶段间 sleep 5s 让脏页回写喘息。归档文件挂宿主临时目录，克隆结束清理。
     argv = helper(user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [],
       `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
-      `mongodump ${conn} ${auth} --archive -d ${target.sourceDb} --numParallelCollections=1 | ` +
-      `mongorestore ${conn} ${auth} --archive --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`);
+      `echo '── 阶段1/2: mongodump 落盘 ──'; ` +
+      `mongodump ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1; ` +
+      `sleep 5; echo '── 阶段2/2: mongorestore 回灌 ──'; ` +
+      `mongorestore ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`);
   }
 
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
@@ -244,9 +255,11 @@ export async function cloneReplicaDb(opts: {
 
   let result: Awaited<ReturnType<typeof runDockerExec>>;
   try {
+    fs.mkdirSync(scratchDir, { recursive: true });
     result = await runDockerExec(argv, stdin, 600_000, 64 * 1024);
   } finally {
     if (restoreCache) await restoreCache().catch(() => undefined);
+    try { fs.rmSync(scratchDir, { recursive: true, force: true }); } catch { /* noop */ }
   }
   if (result.code !== 0) {
     // 失败原因保留头尾双段（复验 R3-P2：进度日志刷满缓冲把真正的致命错误挤掉）

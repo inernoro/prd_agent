@@ -19,6 +19,7 @@ import { SchedulerService } from './services/scheduler.js';
 import { JanitorService } from './services/janitor.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
+import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
@@ -1864,6 +1865,10 @@ const janitorService = new JanitorService(
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+// infra 生命周期取证器（debt.cds.replica-set #17）：常驻 docker events 监听，
+// 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
+const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
+
 const infraFlapWatchdog = new InfraFlapWatchdog(
   {
     shell,
@@ -2939,6 +2944,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     // 缺 cmd 灾难的根因防御。standalone / scheduler 角色启用,executor 跳过。
     if (config.mode !== 'executor') {
       infraFlapWatchdog.start();
+      infraLifecycleWatcher.start();
     }
     // 2026-07-15:孤儿容器收割器。删除的项目/分支残留的 cds-managed 容器
     //（state 中无 owner）定期停掉——单日取证 68 个孤儿 app 容器 + 用户报告的
@@ -2984,6 +2990,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
+    infraLifecycleWatcher.stop();
     forwarderRoutePublisher?.stop();
     previewCanaryService?.stop();
   }

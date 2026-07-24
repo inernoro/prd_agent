@@ -32,3 +32,5 @@
 | fix | cds | 复验 R5-P1：profile 级隔离克隆透传 onOutput——克隆保护/进度写进成员 statusMessage（UI 可见）+ 服务端日志，「受保护克隆」与「未受保护」从此可区分 |
 | security | cds | 复验 R6 熔断闸门：mongo 整库克隆前预检源库 dataSize，超 CDS_REPLICA_CLONE_MAX_MB（默认 512MB）拒绝并明示原因——大库克隆在共享宿主上六轮验收四次打崩生产 mongod（WT cache 收紧实证生效仍崩，方案假设证伪），小库隔离不受影响 |
 | docs | doc | debt.cds.replica-set 补录 #16-#18：大库克隆无安全路径熔断台账（含四次崩溃时间线与三条根治候选）、崩溃现场不可追溯、mysql/pg 闸门待推广 |
+| feat | cds | infra 生命周期取证器（债务 #17）：常驻 docker events 监听 oom/die/kill/start，区分 cgroup OOM / 外部 SIGKILL(137 无 oom) / 进程自身退出，事件入服务器日志 + GET /api/infra/:id/lifecycle-events 回看——mongod 四次 unclean shutdown 的凶手下次可直接定性 |
+| perf | cds | mongo 克隆两阶段读写错峰：dump gzip 落盘（宿主临时目录挂载）确认完整后再 restore，消除读写叠加峰值与管道 broken pipe 失败模式，阶段间留回写喘息 |

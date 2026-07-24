@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from '../services/preview-instance.js';
+import { getActiveInfraLifecycleWatcher } from '../services/infra-lifecycle-watcher.js';
 
 export interface InfraDataRouterDeps {
   stateService: StateService;
@@ -237,6 +238,28 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
       error: r.code === 0 ? null : maskSecretValues(r.stderr, plan.secretValues),
     });
   }
+
+  // 生命周期取证（debt.cds.replica-set #17）：oom/die/kill/start 事件回看，
+  // 区分 cgroup OOM / 外部 SIGKILL(exitCode 137 无 oom) / 进程自身退出
+  router.get('/infra/:id/lifecycle-events', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    if (!projectFilter && stateService.getProjectInfraServicesById(req.params.id).length > 1) {
+      res.status(400).json({ error: 'project_required', message: `基础设施 "${req.params.id}" 在多个项目中存在,请用 ?project=<projectId> 指定` });
+      return;
+    }
+    const svc = projectFilter
+      ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
+      : stateService.getInfraService(req.params.id);
+    if (!svc) { res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` }); return; }
+    const mismatch = assertProjectAccess(req, svc.projectId);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body as Record<string, unknown>); return; }
+    const watcher = getActiveInfraLifecycleWatcher();
+    res.json({
+      containerName: svc.containerName,
+      watcherActive: !!watcher,
+      events: watcher?.getEvents(svc.containerName) ?? [],
+    });
+  });
 
   router.post('/infra/:id/query', (req, res) => { void handle(req, res, 'query'); });
   router.get('/infra/:id/schema', (req, res) => { void handle(req, res, 'schema'); });
