@@ -2375,6 +2375,8 @@ export function BranchDetailDrawer({
                   <ReplicaSetPanel
                     branchId={branch.id}
                     previewUrl={branch.previewUrl || previewUrl}
+                    services={branch.services || {}}
+                    infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
                     onToast={onToast}
                   />
                 ) : null}

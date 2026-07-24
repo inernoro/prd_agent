@@ -340,6 +340,93 @@ export class ReplicaSetService {
     return { accepted: true };
   }
 
+  /**
+   * profile 级「复制隔离」（用户拍板的三步心智）：
+   *   第1步 复制：整库克隆一次成隔离库（主库不动）；
+   *   第2步 切换：全体副本重新物化，env 改指隔离库（主实例保持连主库）；
+   *   可回切：revertProfile 把副本切回主库，隔离库转为快照保留。
+   * 异步执行，进度经 rs.isolated 与成员 status 轮询可见。
+   */
+  isolateProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
+    const branch = this.requireBranch(branchId);
+    const rs = branch.replicaSets?.[profileId];
+    if (!rs?.enabled) return { accepted: false, reason: '该服务未启用复制集' };
+    if (rs.isolated) return { accepted: false, reason: '已处于隔离状态' };
+    const members = rs.members.filter((m) => m.status === 'running');
+    if (members.length === 0) return { accepted: false, reason: '没有运行中的副本可切换' };
+    const baseProfile = this.requireProfile(branch, profileId);
+    const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
+    if (!target) return { accepted: false, reason: `无法定位数据库：${reason}` };
+    const used = [
+      ...(branch.replicaDbSnapshots ?? []).map((s) => s.memberId),
+    ].map((mid) => /^guard-(\d+)$/.exec(mid)?.[1]).filter(Boolean).map(Number);
+    const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
+    for (const m of members) {
+      this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第1步 复制：正在克隆隔离库…' });
+    }
+    void (async () => {
+      try {
+        const cloned = await cloneReplicaDb({ target, memberId: guardId, profileId, now: this.opts.now });
+        const live = this.requireBranch(branchId);
+        live.replicaDbSnapshots = [...(live.replicaDbSnapshots || []), cloned.snapshot];
+        const liveRs = live.replicaSets![profileId];
+        liveRs.isolated = { dbName: cloned.snapshot.dbName, snapshotId: cloned.snapshot.id, isolatedAt: this.now() };
+        this.opts.state.save();
+        for (const m of members) {
+          this.patchMember(branchId, profileId, m.id, { statusMessage: '第2步 切换：重启副本改连隔离库…' });
+          if (m.containerName) {
+            await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
+          }
+          const version = this.opts.versions.get(m.versionId);
+          if (!version) {
+            this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `部署版本已不存在: ${m.versionId}` });
+            continue;
+          }
+          await this.materializeMember(branchId, profileId, m.id, version, baseProfile, {
+            envOverride: cloned.envOverride,
+            dbName: cloned.snapshot.dbName,
+          });
+        }
+        this.opts.logger?.info?.(`[replica-set] 复制隔离完成 ${branchId}/${profileId} → ${cloned.snapshot.dbName}`);
+      } catch (err) {
+        for (const m of members) {
+          this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `复制隔离失败：${(err as Error).message}` });
+        }
+      }
+    })();
+    return { accepted: true };
+  }
+
+  /** 回切主库：副本重物化回共享库；隔离库不删，作为快照留在台账。 */
+  revertProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
+    const branch = this.requireBranch(branchId);
+    const rs = branch.replicaSets?.[profileId];
+    if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
+    const baseProfile = this.requireProfile(branch, profileId);
+    const members = rs.members.filter((m) => m.status === 'running' || m.status === 'error');
+    delete rs.isolated;
+    rs.updatedAt = this.now();
+    this.opts.state.save();
+    void (async () => {
+      for (const m of members) {
+        this.patchMember(branchId, profileId, m.id, {
+          status: 'provisioning', statusMessage: '回切主库：重启副本恢复原连接…', dbMode: 'shared', isolatedDbName: undefined,
+        });
+        if (m.containerName) {
+          await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-revert' }).catch(() => undefined);
+        }
+        const version = this.opts.versions.get(m.versionId);
+        if (!version) {
+          this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `部署版本已不存在: ${m.versionId}` });
+          continue;
+        }
+        await this.materializeMember(branchId, profileId, m.id, version, baseProfile);
+      }
+      this.opts.logger?.info?.(`[replica-set] 已回切主库 ${branchId}/${profileId}（隔离库保留为快照）`);
+    })();
+    return { accepted: true };
+  }
+
   /** 分支删除/停止路径的级联收割：清掉该分支全部成员容器。 */
   async teardownForBranch(branchId: string): Promise<void> {
     const branch = this.opts.state.getBranch(branchId);
@@ -370,6 +457,7 @@ export class ReplicaSetService {
     memberId: string,
     version: DeploymentVersion,
     baseProfile: BuildProfile,
+    dbOverride?: { envOverride: Record<string, string>; dbName: string },
   ): Promise<void> {
     const branch = this.requireBranch(branchId);
     const snapshot = version.profiles.find((p) => p.profileId === profileId)!;
@@ -428,9 +516,15 @@ export class ReplicaSetService {
     // 一键隔离数据库（MVP-2）：先克隆当前库 → 成员 env 指向隔离库 → 才启动容器。
     // memberProfile.dbScope 钉成 shared：库名已是折算后的运行时全名（含 per-branch
     // 后缀），不能让 runService 内部再叠一次分支后缀。
+    // profile 级复制隔离（isolateProfile）：库已克隆好，直接套用 env 覆写
+    if (dbOverride) {
+      memberProfile.env = { ...(memberProfile.env || {}), ...dbOverride.envOverride };
+      memberProfile.dbScope = 'shared';
+      this.patchMember(branchId, profileId, memberId, { dbMode: 'isolated', isolatedDbName: dbOverride.dbName });
+    }
     const currentMember = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
       .find((m) => m.id === memberId);
-    if (currentMember?.dbMode === 'isolated') {
+    if (!dbOverride && currentMember?.dbMode === 'isolated') {
       const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
       if (!target) {
         this.patchMember(branchId, profileId, memberId, { status: 'error', statusMessage: `无法隔离数据库：${reason}` });

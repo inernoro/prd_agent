@@ -620,6 +620,16 @@ export interface ProfileReplicaSet {
   /** 主容器权重 0-100（与成员权重同一口径） */
   primaryWeight: number;
   members: ReplicaMember[];
+  /**
+   * profile 级「复制隔离」状态（2026-07-24 用户拍板的三步心智）：
+   * 复制（克隆一次隔离库）→ 切换（全体副本重物化改连隔离库）→ 可回切。
+   * absent = 副本连主库（普通态）。回切后本字段清除，快照留在台账。
+   */
+  isolated?: {
+    dbName: string;
+    snapshotId: string;
+    isolatedAt: string;
+  };
   createdAt: string;
   updatedAt: string;
 }

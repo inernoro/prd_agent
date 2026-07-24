@@ -93,6 +93,23 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     res.json({ count, host, path, tally, hits });
   });
 
+  // profile 级复制隔离：复制一次 → 全体副本切隔离库；回切主库快照保留
+  router.post('/branches/:branchId/replica-sets/:profileId/isolate', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const result = deps.replicaSetService.isolateProfile(req.params.branchId, req.params.profileId);
+    if (!result.accepted) { res.status(409).json({ error: result.reason }); return; }
+    res.status(202).json({ accepted: true });
+  });
+
+  router.post('/branches/:branchId/replica-sets/:profileId/revert-db', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const result = deps.replicaSetService.revertProfile(req.params.branchId, req.params.profileId);
+    if (!result.accepted) { res.status(409).json({ error: result.reason }); return; }
+    res.status(202).json({ accepted: true });
+  });
+
   // 隔离库快照删除（保留语义的唯一出口：显式删除才 drop 数据库）
   router.delete('/branches/:branchId/replica-db-snapshots/:snapshotId', async (req, res) => {
     const access = guard(req, req.params.branchId);

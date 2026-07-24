@@ -14,3 +14,7 @@
 | polish | cds | 复制集面板布局收紧：成员行信息与操作紧邻成组左对齐，废除左右两端拉开 |
 | feat | cds | 数据库保护罩：数据库芯片锁按钮一键克隆隔离副本（异步 + 进度轮询 + 芯片环绕动画），副本入数据快照台账保留 |
 | fix | cds | 验收 P1 双修：分流实测 path 由后端按服务 pathPrefixes/api-convention 推导（此前写死 / 打在前端容器永远 100% 主版本）；芯片「+」数量菜单 createPortal 挂 body（此前被芯片行 overflow 裁剪不可见） |
+| feat | cds | 复制集面板全量重设计：方案A 行式视图（每服务一行：服务名/实例块/流量条/加号，次要操作收进「管理」展开）+ 方案B 流量舞台拓扑（点阵网格、入口-实例层-数据层自上而下、贝塞尔曲线连线、基础设施虚线边） |
+| feat | cds | 复制隔离数据库（profile 级）：连接线上「复制隔离」按钮两步动画（第1步克隆入保护罩框、主库不动；第2步副本整体切至隔离库），旧连线灰色留影加断开标记，「回切主库」可逆且快照保留 |
+| feat | cds | 后端 isolateProfile/revertProfile API（POST /replica-sets/:profileId/isolate 与 /revert-db）：guard-N 命名单次克隆 + 逐成员重物化换库，ProfileReplicaSet.isolated 台账 |
+| polish | cds | 新增副本走灰卡渐显可撤回；「退回普通模式」更名「关闭复制集」；分流实测升级串流模式（逐请求服务端往返）+ 实时日志 + 终局环形仪表盘 |
