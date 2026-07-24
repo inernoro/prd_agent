@@ -36,10 +36,12 @@ DEFAULT_ASR_TRANSFORMER = "doubao-asr"
 GATEWAY_BOUNDARY_ERROR_PREFIXES = (
     "GATEWAY_KEY_",
     "GATEWAY_LEGACY_KEY_",
+    "MULTIPART_",
 )
 GATEWAY_BOUNDARY_ERROR_CODES = {
     "GATEWAY_APP_CALLER_MISMATCH",
     "GATEWAY_APP_CALLER_REQUIRED",
+    "GATEWAY_REQUEST_REJECTED",
     "GATEWAY_SOURCE_SYSTEM_MISMATCH",
 }
 DEFAULT_VIDEO_TRANSFORMER = "volcengine-video"
@@ -486,7 +488,7 @@ def _gateway_log_error_text(log: dict[str, Any]) -> str:
 def _gateway_boundary_rejection_code(error_text: str) -> str | None:
     """Return a pre-provider gateway identity rejection code, if present."""
 
-    for code in re.findall(r"\bGATEWAY_[A-Z0-9_]+\b", error_text.upper()):
+    for code in re.findall(r"\b(?:GATEWAY|MULTIPART)_[A-Z0-9_]+\b", error_text.upper()):
         if code in GATEWAY_BOUNDARY_ERROR_CODES or code.startswith(GATEWAY_BOUNDARY_ERROR_PREFIXES):
             return code
     return None
@@ -1168,6 +1170,16 @@ def _self_test_report() -> dict[str, Any]:
                 "Error": '{"error":{"code":"GATEWAY_KEY_SCOPE_DENIED","message":"scope denied"}}',
             },
             {
+                "_id": "fixture-asr-multipart-ref-not-found",
+                "AppCallerCode": "document-store.subtitle::asr",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": "",
+                "Status": "failed",
+                "StatusCode": 404,
+                "Error": "GATEWAY_REQUEST_REJECTED",
+            },
+            {
                 "_id": "fixture-video-model-not-open",
                 "AppCallerCode": "video-agent.videogen::video-gen",
                 "RequestType": "raw",
@@ -1261,6 +1273,23 @@ def _self_test_report() -> dict[str, Any]:
             for item in blockers
         )
     )
+    multipart_log = next(
+        (
+            item
+            for item in ((audit.get("recentGatewayLogs") or {}).get("failed") or [])
+            if str(item.get("id") or "") == "fixture-asr-multipart-ref-not-found"
+        ),
+        None,
+    )
+    multipart_excluded = bool(
+        multipart_log
+        and multipart_log.get("providerRelevant") is False
+        and multipart_log.get("gatewayBoundaryCode") == "GATEWAY_REQUEST_REJECTED"
+        and not any(
+            str(item.get("logId") or "") == "fixture-asr-multipart-ref-not-found"
+            for item in blockers
+        )
+    )
     ok = (
         not missing
         and not missing_pairs
@@ -1268,6 +1297,7 @@ def _self_test_report() -> dict[str, Any]:
         and not unbound_leaked_as_blocker
         and request_type_validation_pass
         and gateway_scope_excluded
+        and multipart_excluded
     )
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1282,6 +1312,7 @@ def _self_test_report() -> dict[str, Any]:
         "unboundPoolLeakedAsBlocker": unbound_leaked_as_blocker,
         "requestTypeValidationPass": request_type_validation_pass,
         "gatewayScopeExcludedFromProviderAudit": gateway_scope_excluded,
+        "multipartExcludedFromProviderAudit": multipart_excluded,
         "sampleAuditVerdict": audit.get("verdict"),
         "sampleAuditExternalBlockers": blockers,
     }
