@@ -34,3 +34,5 @@
 | docs | doc | debt.cds.replica-set 补录 #16-#18：大库克隆无安全路径熔断台账（含四次崩溃时间线与三条根治候选）、崩溃现场不可追溯、mysql/pg 闸门待推广 |
 | feat | cds | infra 生命周期取证器（债务 #17）：常驻 docker events 监听 oom/die/kill/start，区分 cgroup OOM / 外部 SIGKILL(137 无 oom) / 进程自身退出，事件入服务器日志 + GET /api/infra/:id/lifecycle-events 回看——mongod 四次 unclean shutdown 的凶手下次可直接定性 |
 | perf | cds | mongo 克隆两阶段读写错峰：dump gzip 落盘（宿主临时目录挂载）确认完整后再 restore，消除读写叠加峰值与管道 broken pipe 失败模式，阶段间留回写喘息 |
+| feat | cds | mongo 复制隔离改「专用隔离实例」通道（终局方案）：dump 只读共享库落盘 → docker run 独立 mongo 实例（默认 mongo:7.0、内存 1.5G/WT cache 1G 上限）→ restore 写入专用实例；副本经连接串覆写直连新实例——共享 mongod 从此零写入风险（八轮取证：8.0.20 凡大批量写随机 SIGSEGV/139，纯读从未崩），隔离升级为实例级 |
+| feat | cds | 快照台账支持专用实例（dedicatedContainer/dedicatedHostPort）：删除快照 = 整容器移除含数据卷；UI 快照行标注「专用隔离实例」；失败善后无残留库问题 |

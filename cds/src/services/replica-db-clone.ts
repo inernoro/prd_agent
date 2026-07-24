@@ -67,10 +67,15 @@ export interface ReplicaDbTarget {
   engine: ReplicaDbEngine;
   /** env 里实际存在、指向该库的全部 key（CDS_ 前缀与裸名可能并存，全部要覆写） */
   envKeys: string[];
+  /** 连接串 env key（mongo 专用隔离实例通道需要把副本改指新实例） */
+  connEnvKeys: string[];
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
 }
+
+/** Mongo 连接串 env key 家族（.NET 双下划线 / 通用 URI 风格） */
+const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|URL)$/i;
 
 /**
  * 解析某服务的数据库目标：库名 env key、运行时真实库名、承载它的 infra 容器。
@@ -117,7 +122,11 @@ export function resolveReplicaDbTarget(
   const dependsOn = new Set(profile.dependsOn || []);
   const infra = infraCandidates.find((svc) => dependsOn.has(svc.id)) || infraCandidates[0];
 
-  return { target: { engine, envKeys, sourceDb, infra } };
+  const connEnvKeys = engine === 'mongo'
+    ? Object.keys(runtimeEnv).filter((key) => MONGO_CONN_ENV_PATTERN.test(key))
+    : [];
+
+  return { target: { engine, envKeys, connEnvKeys, sourceDb, infra } };
 }
 
 function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine): boolean {
@@ -164,21 +173,20 @@ export async function cloneReplicaDb(opts: {
   const port = target.infra.containerPort
     || (target.engine === 'mysql' ? 3306 : target.engine === 'postgres' ? 5432 : 27017);
 
-  /**
-   * 复验 R3-P0：克隆此前经 docker exec 在数据库容器 **同 cgroup** 内跑 dump+restore，
-   * 内存压力可把生产 mongod OOM 打崩（实测共享主库 unclean shutdown）。改为独立
-   * 辅助容器：`docker run --rm` 同镜像（自带 client 工具），共享 DB 容器网络命名空间
-   * （127.0.0.1:<port> 直连），并施加内存/CPU 硬上限——压力大时被杀的是辅助容器，
-   * 不是数据库本体。dump/restore 再加单并发限流，进一步压低对主库的冲击。
-   */
-  // 两阶段克隆的落盘目录（挂进辅助容器 /rsclone；结束后 finally 清理）
-  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
-  fs.mkdirSync(scratchDir, { recursive: true });
+  // mongo 走「专用隔离实例」通道（八轮验收终局取证：共享 mongod 8.0.20 在本宿主
+  // 上凡大批量写入随机 SIGSEGV[docker events die exitCode=139]，纯读从未崩——
+  // 写压必须彻底移出共享实例）
+  if (target.engine === 'mongo') {
+    return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, now: opts.now, onOutput: opts.onOutput });
+  }
+
+  // ── mysql / postgres：共享实例内克隆（写入量小、历轮验收无崩溃记录，维持原路径）──
+  // 复验 R3-P0：独立限额辅助容器（同镜像自带 client 工具、共享 DB 网络命名空间），
+  // 压力大时被杀的是辅助容器，不是数据库本体。
   const helper = (extraEnv: string[], script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${c}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
-    '-v', `${scratchDir}:/rsclone`,
     '--entrypoint', 'sh',
     ...extraEnv,
     image,
@@ -186,7 +194,6 @@ export async function cloneReplicaDb(opts: {
   ];
 
   let argv: string[];
-  let stdin = '';
   const secrets: string[] = [];
 
   if (target.engine === 'mysql') {
@@ -197,7 +204,7 @@ export async function cloneReplicaDb(opts: {
     argv = helper(['-e', `MYSQL_PWD=${pw}`],
       `set -e; mysql ${conn} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
       `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} | mysql ${conn} ${dbName}`);
-  } else if (target.engine === 'postgres') {
+  } else {
     const user = env.POSTGRES_USER || 'postgres';
     const pw = env.POSTGRES_PASSWORD || '';
     secrets.push(pw);
@@ -205,74 +212,14 @@ export async function cloneReplicaDb(opts: {
     argv = helper(['-e', `PGPASSWORD=${pw}`],
       `set -e; psql ${conn} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
       `pg_dump ${conn} ${target.sourceDb} | psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName}`);
-  } else {
-    const user = env.MONGO_INITDB_ROOT_USERNAME || '';
-    const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
-    secrets.push(pw);
-    const conn = `--host 127.0.0.1 --port ${port}`;
-    const auth = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
-    // 复验 R7：两阶段读写错峰——dump 先落盘（gzip 压缩），确认完整后再 restore。
-    // 复验 R7 取证定罪后（docker events die exitCode=139 = SIGSEGV）：历轮崩溃点
-    // 全部落在「restore 数据完成、批量并行建索引」的瞬间（46.7-47.5 万文档 ≈ 全库
-    // 数据阶段末尾），2.3G 的 apirequestlogs 要一次性并行建 8 个索引。对症：
-    // restore 加 --noIndexRestore，索引改为第 3 阶段逐个串行前台重建（每次一个 +
-    // 300ms 间歇），避开 mongod 8.0.x 在批量索引构建下的段错误路径。
-    fs.writeFileSync(path.join(scratchDir, 'build-indexes.js'), buildMongoIndexScript(target.sourceDb, dbName));
-    argv = helper(user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [],
-      `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
-      `echo '── 阶段1/3: mongodump 落盘 ──'; ` +
-      `mongodump ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1; ` +
-      `sleep 5; echo '── 阶段2/3: mongorestore 回灌（不建索引）──'; ` +
-      `mongorestore ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1 --noIndexRestore; ` +
-      `sleep 5; echo '── 阶段3/3: 逐索引串行重建 ──'; ` +
-      `mongosh ${conn} ${auth} --quiet /rsclone/build-indexes.js`);
   }
 
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
-
-  // 复验 R4-P0：辅助容器只保住了客户端——被宿主 OOM 杀掉的是 mongod 本体
-  // （mongo 容器无内存上限，WT cache 默认吃半机内存，restore 写入+建索引把
-  // mongod RSS 顶爆）。克隆期把 WT cache 运行时收紧到 2G（可逆；mongod 若
-  // 重启，runtime 参数自动回落配置默认，无永久副作用）。
-  // 复验 R5：保护建不起来必须中止克隆（fail-closed）——静默跳过 = 裸奔打崩主库。
-  // 复验 R6：源库超过安全上限直接拒绝——保护全生效仍四次打崩 mongod，
-  // 大库整库克隆在共享宿主上没有安全路径，等专用克隆通道。
-  let restoreCache: (() => Promise<void>) | null = null;
-  if (target.engine === 'mongo') {
-    const maxMb = replicaCloneMaxMb();
-    const sizeRead = await mongoAdminEval(c, port, env,
-      `print(Number(db.getSiblingDB('${target.sourceDb}').stats().dataSize))`);
-    const dataBytes = parseMongoNumber(sizeRead.stdout);
-    if (sizeRead.code !== 0 || !Number.isFinite(dataBytes)) {
-      throw new Error('无法读取源库数据量，已中止克隆（fail-closed，保护共享主库）');
-    }
-    if (dataBytes > maxMb * 1024 ** 2) {
-      throw new Error(
-        `源库 ${target.sourceDb} 数据量 ${(dataBytes / 1024 ** 3).toFixed(2)}G 超过安全克隆上限 ${maxMb}MB，已拒绝克隆——` +
-        '共享宿主上的大库整库克隆已多次实测压垮 mongod（debt.cds.replica-set #16）。' +
-        '小库可正常隔离；确需大库克隆请调高 CDS_REPLICA_CLONE_MAX_MB 并自担主库风险，或等待专用克隆通道',
-      );
-    }
-    const clamp = await clampMongoWtCache(c, port, env, opts.onOutput);
-    if (!clamp.ok) {
-      throw new Error(`克隆保护未能生效，已中止克隆以保护共享主库（${clamp.reason}）`);
-    }
-    restoreCache = clamp.restore;
-  }
-
-  let result: Awaited<ReturnType<typeof runDockerExec>>;
-  try {
-    result = await runDockerExec(argv, stdin, 1_200_000, 64 * 1024);
-  } finally {
-    if (restoreCache) await restoreCache().catch(() => undefined);
-    try { fs.rmSync(scratchDir, { recursive: true, force: true }); } catch { /* noop */ }
-  }
+  const result = await runDockerExec(argv, '', 600_000, 64 * 1024);
   if (result.code !== 0) {
-    // 失败原因保留头尾双段（复验 R3-P2：进度日志刷满缓冲把真正的致命错误挤掉）
+    // 失败原因保留头尾双段（复验 R3-P2）；失败残留延迟重试清理（复验 R3-P1/R4）
     const raw = `${result.stderr || result.stdout}`.trim();
     const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
-    // 失败残留清理（复验 R3-P1）。R4 补延迟重试：失败最常见的场景恰是「主库
-    // 正在崩溃恢复」，立刻 DROP 必失败——间隔 20s 重试给 mongod 恢复窗口。
     let residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
@@ -309,37 +256,154 @@ export async function cloneReplicaDb(opts: {
 }
 
 /**
- * 逐索引串行重建脚本（mongosh 文件执行）。--noIndexRestore 之后按源库索引定义
- * 一次一个前台创建，每个之间 300ms 间歇——避开批量并行索引构建的 SIGSEGV 路径。
- * 库名均已过 DB_NAME_SAFE 白名单，可安全内插。
+ * mongo 专用隔离实例克隆通道（八轮验收终局方案，2026-07-24）。
+ *
+ * 取证结论：共享 mongod 8.0.20 在本宿主上凡「大批量写入」随机段错误
+ * （生命周期取证器 die exitCode=139；WT cache 收紧、辅助容器隔离、单并发限流、
+ * 索引串行重建全部无效——纯读 dump 从未触发）。因此写压彻底移出共享实例：
+ *
+ *   阶段1  mongodump 只读共享库 → gzip 落盘（唯一触碰共享库的操作，已证安全）
+ *   阶段2  docker run 专用 mongo 实例（默认 mongo:7.0——早于 8.0.4 引入的
+ *          TCMalloc rseq 变更；独立容器、内存 1.5G 上限、WT cache 1G）
+ *   阶段3  mongorestore 写入专用实例（写崩也只崩专用实例，共享库零风险）
+ *
+ * 成员 env 覆写连接串 + 库名，直连专用实例——隔离升级为「实例级」，与用户
+ * 「复制出去、剥离主库、随时可回」的心智完全一致。快照删除 = 移除专用容器。
+ * 专用实例镜像可经 CDS_REPLICA_ISO_MONGO_IMAGE 覆盖。
  */
-function buildMongoIndexScript(sourceDb: string, targetDb: string): string {
-  return `
-const src = db.getSiblingDB('${sourceDb}');
-const dst = db.getSiblingDB('${targetDb}');
-let built = 0;
-src.getCollectionInfos({ type: 'collection' }).forEach((ci) => {
-  src.getCollection(ci.name).getIndexes().forEach((ix) => {
-    if (ix.name === '_id_') return;
-    const spec = Object.assign({}, ix);
-    delete spec.v;
-    delete spec.ns;
-    delete spec.background;
-    const r = dst.runCommand({ createIndexes: ci.name, indexes: [spec] });
-    if (r.ok !== 1) {
-      throw new Error('createIndex failed ' + ci.name + '/' + ix.name + ': ' + JSON.stringify(r));
+async function cloneMongoViaDedicatedInstance(opts: {
+  target: ReplicaDbTarget;
+  memberId: string;
+  profileId: string;
+  dbName: string;
+  now?: () => Date;
+  onOutput?: (line: string) => void;
+}): Promise<CloneResult> {
+  const { target, memberId, profileId, dbName, onOutput } = opts;
+  const c = target.infra.containerName;
+  const env = target.infra.env || {};
+  const image = target.infra.dockerImage;
+  const port = target.infra.containerPort || 27017;
+  const user = env.MONGO_INITDB_ROOT_USERNAME || '';
+  const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
+  const secrets = [pw].filter(Boolean);
+
+  // fail-closed：成员必须能经连接串 env 指向专用实例，否则隔离只是幻觉
+  if (!target.connEnvKeys?.length) {
+    throw new Error('该服务的环境变量里没有 Mongo 连接串 key（MongoDB__ConnectionString / MONGO_URI 家族），无法把副本指向专用隔离实例，已中止');
+  }
+
+  // 源库大小闸门（现在保护的是宿主 CPU/磁盘与克隆时长；共享库本体已零写入风险）
+  const maxMb = replicaCloneMaxMb();
+  const sizeRead = await mongoAdminEval(c, port, env,
+    `print(Number(db.getSiblingDB('${target.sourceDb}').stats().dataSize))`);
+  const dataBytes = parseMongoNumber(sizeRead.stdout);
+  if (sizeRead.code !== 0 || !Number.isFinite(dataBytes)) {
+    throw new Error('无法读取源库数据量，已中止克隆（fail-closed）');
+  }
+  if (dataBytes > maxMb * 1024 ** 2) {
+    throw new Error(
+      `源库 ${target.sourceDb} 数据量 ${(dataBytes / 1024 ** 3).toFixed(2)}G 超过克隆上限 ${maxMb}MB（可经 CDS_REPLICA_CLONE_MAX_MB 调整）`,
+    );
+  }
+
+  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
+  const isoName = `cds-rsdb-${dbName}`;
+  const isoImage = process.env.CDS_REPLICA_ISO_MONGO_IMAGE || 'mongo:7.0';
+  const authFlags = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
+  const authEnv = user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [];
+  const toolsHelper = (network: string, script: string): string[] => [
+    'run', '--rm', '-i', '--pull', 'never',
+    '--network', `container:${network}`,
+    '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
+    '-v', `${scratchDir}:/rsclone`,
+    '--entrypoint', 'sh',
+    ...authEnv,
+    image,
+    '-c', script,
+  ];
+
+  try {
+    fs.mkdirSync(scratchDir, { recursive: true });
+    onOutput?.(`── 一键隔离数据库: ${target.sourceDb} → 专用隔离实例 ${isoName}（${isoImage}）──`);
+    // 幂等：清掉可能的同名残留（上次失败/重试）
+    await runDockerExec(['rm', '-f', isoName], '', 60_000, 8 * 1024);
+
+    onOutput?.('── 阶段1/3: mongodump 只读落盘（共享库只读，零写入）──');
+    const dump = await runDockerExec(toolsHelper(c,
+      `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
+      `mongodump --host 127.0.0.1 --port ${port} ${authFlags} --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1`,
+    ), '', 600_000, 64 * 1024);
+    if (dump.code !== 0) throw cloneStageError('mongo dump', dump, secrets);
+
+    onOutput?.(`── 阶段2/3: 启动专用隔离实例（${isoImage}，内存上限 1.5G / WT cache 1G）──`);
+    const runIso = await runDockerExec([
+      'run', '-d', '--name', isoName,
+      '--label', 'cds.type=rsdb',
+      '--restart', 'unless-stopped',
+      '-p', '27017',
+      '--memory', '1536m', '--memory-swap', '1536m',
+      isoImage, 'mongod', '--wiredTigerCacheSizeGB', '1',
+    ], '', 300_000, 16 * 1024);
+    if (runIso.code !== 0) throw cloneStageError('启动专用实例', runIso, secrets);
+    let ready = false;
+    for (let i = 0; i < 45; i += 1) {
+      const ping = await runDockerExec(
+        ['exec', isoName, 'mongosh', '--quiet', '--eval', 'print(db.runCommand({ping:1}).ok)'],
+        '', 20_000, 4 * 1024,
+      );
+      if (ping.code === 0 && /1\s*$/.test((ping.stdout || '').trim())) { ready = true; break; }
+      await new Promise((r) => setTimeout(r, 2_000));
     }
-    built += 1;
-    sleep(300);
-  });
-});
-print('serial-indexes-built: ' + built);
-`;
+    if (!ready) throw new Error('专用隔离实例未在 90s 内就绪');
+    const portRead = await runDockerExec(['port', isoName, '27017/tcp'], '', 20_000, 4 * 1024);
+    const portMatch = /:(\d+)\s*$/m.exec((portRead.stdout || '').trim());
+    if (portRead.code !== 0 || !portMatch) {
+      throw new Error(`无法确定专用实例宿主端口: ${(portRead.stdout || portRead.stderr).trim().slice(0, 200)}`);
+    }
+    const isoHostPort = Number(portMatch[1]);
+
+    onOutput?.('── 阶段3/3: mongorestore 写入专用实例（写压不触碰共享库）──');
+    const restore = await runDockerExec(toolsHelper(isoName,
+      `set -e; mongorestore --host 127.0.0.1 --port 27017 --archive=/rsclone/dump.archive.gz --gzip ` +
+      `--nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`,
+    ), '', 900_000, 64 * 1024);
+    if (restore.code !== 0) throw cloneStageError('mongo restore', restore, secrets);
+    onOutput?.(`── 隔离库 ${dbName} 就绪 @ 专用实例 ${isoName}（宿主端口 ${isoHostPort}）──`);
+
+    const envOverride: Record<string, string> = {};
+    for (const key of target.envKeys) envOverride[key] = dbName;
+    // 连接串覆写：保留 ${CDS_HOST} 模板，随容器启动的既有模板解析链路落成宿主地址
+    for (const key of target.connEnvKeys) envOverride[key] = 'mongodb://${CDS_HOST}:' + isoHostPort;
+    return {
+      envOverride,
+      snapshot: {
+        id: `rsdb_${memberId}`,
+        profileId,
+        memberId,
+        engine: 'mongo',
+        sourceDb: target.sourceDb,
+        dbName,
+        infraContainer: c,
+        dedicatedContainer: isoName,
+        dedicatedHostPort: isoHostPort,
+        clonedAt: (opts.now?.() ?? new Date()).toISOString(),
+      },
+    };
+  } catch (err) {
+    // 失败善后：专用实例整容器移除（含匿名卷）——不存在「半成品残留库」问题
+    await runDockerExec(['rm', '-f', '-v', isoName], '', 60_000, 8 * 1024).catch(() => undefined);
+    throw err;
+  } finally {
+    try { fs.rmSync(scratchDir, { recursive: true, force: true }); } catch { /* noop */ }
+  }
 }
 
-export type MongoCacheClampResult =
-  | { ok: true; restore: (() => Promise<void>) | null }
-  | { ok: false; reason: string };
+function cloneStageError(stage: string, r: { code: number; stderr: string; stdout: string }, secrets: string[]): Error {
+  const raw = `${r.stderr || r.stdout}`.trim();
+  const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
+  return new Error(`数据库克隆失败（${stage}）: ${detail || `exit ${r.code}`}`);
+}
 
 /** mongod admin eval 通道（root 凭据经 URI，脚本经 --eval，输出 --quiet） */
 function mongoAdminEval(
@@ -356,68 +420,19 @@ function mongoAdminEval(
   return runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
 }
 
-/** mongosh 数值输出解析：脚本端必须 Number() 强转，这里再兜底提取行尾数字。 */
+/** mongosh 数值输出解析：脚本端必须 Number() 强转（int64 会打成 Long('…')），这里再兜底提取行尾数字。 */
 function parseMongoNumber(stdout: string): number {
   const m = /(\d+)\s*$/.exec((stdout || '').trim());
   return m ? Number(m[1]) : NaN;
 }
 
 /**
- * 整库克隆安全上限（复验 R6 熔断闸门）：共享宿主上对 prdagent（2.69G）的
- * mongodump|mongorestore 已实测四次打崩生产 mongod（客户端隔离 + WT cache
- * 收紧到 2G 全部生效仍崩）。在专用克隆通道落地前，源库超限一律拒绝——
- * 拒绝是明确失败，裸奔是生产事故。上限可经 CDS_REPLICA_CLONE_MAX_MB 调整。
+ * 整库克隆大小上限（MB）。mongo 已走专用隔离实例（共享库零写入风险），
+ * 上限保护的是宿主 CPU/磁盘与克隆时长；默认 3072，可经 CDS_REPLICA_CLONE_MAX_MB 调整。
  */
 export function replicaCloneMaxMb(): number {
   const raw = Number(process.env.CDS_REPLICA_CLONE_MAX_MB);
-  // 默认 3072：R7 受控实验窗口（取证器 + 两阶段 + WT cache 收紧全套护栏在位，
-  // 对 prdagent 2.63G 做一次带取证的真实克隆）。实验定性后按证据回调终值。
   return Number.isFinite(raw) && raw > 0 ? Math.max(64, raw) : 3072;
-}
-
-/**
- * 克隆期临时收紧 mongod WiredTiger cache（复验 R4-P0 根治手段）。
- * 读当前 cache 上限，>2G 则运行时 setParameter 收到 2G，返回恢复函数。
- * 运行时参数不落盘：mongod 崩溃重启后自动回配置默认，不会把收紧值固化。
- *
- * 复验 R5 双教训：
- *   1. mongosh 对 int64 输出 `Long('50086281216')`，裸 Number() 解析成 NaN——
- *      读值必须在脚本里 Number() 强转 + 解析端正则提数字兜底；
- *   2. 保护失败禁止静默跳过（此前返回 null 后克隆裸奔，第三次打崩 mongod）——
- *      改为结构化返回，调用方 fail-closed。
- */
-async function clampMongoWtCache(
-  containerName: string,
-  port: number,
-  env: Record<string, string>,
-  onOutput?: (line: string) => void,
-): Promise<MongoCacheClampResult> {
-  const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
-  const evalIn = (script: string) => mongoAdminEval(containerName, port, env, script);
-  const fail = (stage: string, r: { code: number; stderr: string; stdout: string }): MongoCacheClampResult => ({
-    ok: false,
-    reason: `${stage}失败（exit ${r.code}）: ${maskSecretValues(`${r.stderr || r.stdout}`.trim().slice(-300), [pw].filter(Boolean))}`,
-  });
-  const read = await evalIn("print(Number(db.serverStatus().wiredTiger.cache['maximum bytes configured']))");
-  if (read.code !== 0) return fail('读取 WT cache 上限', read);
-  const origBytes = parseMongoNumber(read.stdout);
-  if (!Number.isFinite(origBytes) || origBytes <= 0) {
-    return { ok: false, reason: `WT cache 上限输出无法解析: ${(read.stdout || '').trim().slice(-120)}` };
-  }
-  const CLAMP_BYTES = 2 * 1024 ** 3;
-  if (origBytes <= CLAMP_BYTES) return { ok: true, restore: null };
-  const setCache = (mb: number) =>
-    evalIn(`print(JSON.stringify(db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: 'cache_size=${mb}M'})))`);
-  const applied = await setCache(2048);
-  if (applied.code !== 0 || !(applied.stdout || '').includes('"ok":1')) return fail('收紧 WT cache', applied);
-  onOutput?.(`── 克隆保护：mongod WT cache 临时收紧至 2G（原 ${(origBytes / 1024 ** 3).toFixed(1)}G，克隆结束恢复）──`);
-  const origMb = Math.max(256, Math.round(origBytes / 1024 ** 2));
-  return {
-    ok: true,
-    restore: async () => {
-      await setCache(origMb);
-    },
-  };
 }
 
 /** 删除隔离库（快照台账的手动清理动作）。 */
@@ -425,6 +440,17 @@ export async function dropReplicaDb(snapshot: ReplicaDbSnapshot, infraEnv: Recor
   const dbName = snapshot.dbName;
   if (!DB_NAME_SAFE.test(dbName) || !dbName.includes('_rs_')) {
     throw new Error(`拒绝删除非隔离库命名的数据库: ${dbName}`);
+  }
+  // 专用隔离实例：删除 = 整容器移除（含匿名数据卷），不触碰共享库
+  if (snapshot.dedicatedContainer) {
+    if (!snapshot.dedicatedContainer.startsWith('cds-rsdb-')) {
+      throw new Error(`拒绝删除非隔离实例命名的容器: ${snapshot.dedicatedContainer}`);
+    }
+    const rm = await runDockerExec(['rm', '-f', '-v', snapshot.dedicatedContainer], '', 120_000, 16 * 1024);
+    if (rm.code !== 0 && !/No such container/i.test(rm.stderr || '')) {
+      throw new Error(`删除专用隔离实例失败: ${(rm.stderr || rm.stdout).trim().slice(-300)}`);
+    }
+    return;
   }
   const c = snapshot.infraContainer;
   let argv: string[];

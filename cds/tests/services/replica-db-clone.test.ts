@@ -100,6 +100,18 @@ describe('resolveReplicaDbTarget', () => {
     expect(target!.envKeys).toEqual(['MongoDB__DatabaseName']);
   });
 
+  it('识别 Mongo 连接串 env key（专用隔离实例通道的改指前提）', () => {
+    state.setCustomEnv({
+      MongoDB__DatabaseName: 'prdagent',
+      MongoDB__ConnectionString: 'mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}',
+      MONGO_URI: 'mongodb://x:1',
+      Redis__ConnectionString: 'redis:1',
+    }, 'proj');
+    addInfra('mongo', 'mongo:7', {});
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target!.connEnvKeys.sort()).toEqual(['MONGO_URI', 'MongoDB__ConnectionString']);
+  });
+
   it('同引擎但值不同的 key 不被一起覆写（init 库不等于应用库）', () => {
     state.setCustomEnv({ MongoDB__DatabaseName: 'prdagent', MONGO_INITDB_DATABASE: 'admin_init' }, 'proj');
     addInfra('mongo', 'mongo:7', {});

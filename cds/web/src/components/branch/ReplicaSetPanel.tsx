@@ -39,6 +39,8 @@ export interface ReplicaDbSnapshotView {
   engine: 'mongo' | 'mysql' | 'postgres';
   sourceDb: string;
   dbName: string;
+  /** 有值 = 隔离库在专用独立实例容器里（删除快照即移除该实例） */
+  dedicatedContainer?: string;
   clonedAt: string;
 }
 
@@ -336,7 +338,7 @@ export function ReplicaSetPanel({
               <div key={s.id} className="flex flex-wrap items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-xs">
                 <span className="min-w-0">
                   <span className="block font-mono font-semibold">{s.dbName}</span>
-                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.engine} · 来源 {s.sourceDb} · {new Date(s.clonedAt).toLocaleString()}</span>
+                  <span className="mt-0.5 block text-[11px] text-muted-foreground">{s.engine} · 来源 {s.sourceDb}{s.dedicatedContainer ? ' · 专用隔离实例' : ''} · {new Date(s.clonedAt).toLocaleString()}</span>
                 </span>
                 <ConfirmAction
                   title="删除隔离库"

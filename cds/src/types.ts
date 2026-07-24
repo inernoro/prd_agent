@@ -604,6 +604,10 @@ export interface ReplicaDbSnapshot {
   dbName: string;
   /** 执行克隆的 infra 容器名（drop 时复用） */
   infraContainer: string;
+  /** mongo 专用隔离实例容器名（存在 = 隔离库在独立实例里，删除快照即移除该容器） */
+  dedicatedContainer?: string;
+  /** 专用隔离实例的宿主端口（成员连接串覆写用） */
+  dedicatedHostPort?: number;
   clonedAt: string;
 }
 
