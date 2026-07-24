@@ -10,3 +10,9 @@
 | 4 | open | 成员物化的启动日志只保留内存尾部 40 行进 statusMessage，无独立日志入口 | 成员启动失败时排障信息有限（可用容器名走 docker logs） | 复制集页签接 container-logs 按 containerName 查询 |
 | 5 | open | 成员直达子域未接 HTTPS 证书边界校验之外的墓碑/等待页 | 成员 provisioning 期间访问直达链会落 forwarder 等待页兜底，体验可接受但无成员级文案 | forwarder 等待页识别成员路由，给「成员启动中」文案 |
 | 6 | done(2026-07-23) | remote executor 分支（executorId 指向远端）未支持复制集 | addMember 已对远端执行器分支返回 409 明确拒绝（isRemoteBranch 经 registry 判定） | 后续如需远端支持，成员物化改走 /exec 通道 |
+| 7 | open | 灰卡渐显动画固定 2.4s，先于真实就绪结束（独立验收 R1 P3-1） | 创建 30s+ 时卡片提前恢复全彩，仅靠文字/脉冲块提示仍在创建 | 动画时长与 provisioning 状态联动（就绪才去灰），或改持续脉冲直至 running |
+| 8 | open | 分流实测「实时日志」实为服务端完成后的逐条回放（R1 P3-2） | 探测进行中仅首行提示，非逐请求实时推送 | probe 端点改 SSE 流式逐请求推送 |
+| 9 | open | 存量成员未迁移 res-N 命名规范（R1 P3-3） | 旧随机命名成员（rsXXXX）与新 res-N 并存，追踪性打折 | 一次性迁移脚本或成员重建时自动换名 |
+| 10 | open | 成员直达域名响应缺 X-CDS-Replica 标记头（R1 P3-4） | 直达访问无法从响应头确认落点（主入口有头） | forwarder 成员直达路由也注入标记头 |
+| 11 | open | 流量舞台一次仅渲染一个服务（R1 P3-5） | 多服务复制集拓扑需回行式逐行看 | 舞台支持多 profile 分区或服务切换器 |
+| 12 | open | 副本健康失真已修展示层（TCP 实测 + 红色不可达告警），但 forwarder 分流不摘除坏实例（R1 P1-2 残留） | 不可达副本仍按权重接真实流量，需人工下线或调 0 权重 | forwarder 被动健康：连续 ECONNREFUSED 临时摘除 + 恢复探测回池 |
