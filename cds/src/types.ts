@@ -611,6 +611,47 @@ export interface ReplicaDbSnapshot {
   clonedAt: string;
 }
 
+/** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
+export type ReplicaPlanStepKind =
+  | 'add-replica'      // params: versionId?（缺省=当前版本）, dbMode?
+  | 'remove-member'    // params: memberId
+  | 'set-weight'       // params: memberId('primary'=主), weight
+  | 'isolate-db'       // profile 级复制隔离
+  | 'revert-db'        // 回切主库
+  | 'dissolve';        // 关闭复制集
+
+export interface ReplicaPlanStep {
+  id: string;
+  kind: ReplicaPlanStepKind;
+  profileId: string;
+  params?: {
+    memberId?: string;
+    versionId?: string;
+    weight?: number;
+    dbMode?: 'shared' | 'isolated';
+  };
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled' | 'rolled-back';
+  error?: string;
+  /** 执行产物（add-replica 生成的成员 id / set-weight 的原权重），回滚用 */
+  resultMemberId?: string;
+  prevWeight?: number;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+/** 一次「保存并执行」的完整记录（含失败与回滚日志 = 问题记录） */
+export interface ReplicaPlan {
+  id: string;
+  branchId: string;
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'rolled-back';
+  /** 失败策略：stop=停止剩余；rollback=停止并逆序回滚已完成步骤 */
+  onFailure: 'stop' | 'rollback';
+  steps: ReplicaPlanStep[];
+  rollbackLog?: string[];
+  createdAt: string;
+  endedAt?: string;
+}
+
 /**
  * 单个服务（profile）的复制集配置。挂在 BranchEntry.replicaSets[profileId]。
  *
@@ -757,6 +798,8 @@ export interface BranchEntry {
    * 手动删除才 drop。详见 ReplicaDbSnapshot。
    */
   replicaDbSnapshots?: ReplicaDbSnapshot[];
+  /** 复制集执行计划记录（活跃 + 历史，保留最近 20 条；含失败/回滚日志 = 问题记录） */
+  replicaPlans?: ReplicaPlan[];
   /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *

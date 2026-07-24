@@ -130,6 +130,52 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     res.json({ count, host, path, tally, hits });
   });
 
+  // ── 执行计划（草稿-保存模型）：保存即串行执行；执行中可调序/跳过/取消 ──
+  router.get('/branches/:branchId/replica-plans', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      res.json({ plans: deps.replicaSetService.listPlans(req.params.branchId) });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.post('/branches/:branchId/replica-plans', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      const plan = deps.replicaSetService.startPlan(req.params.branchId, {
+        onFailure: req.body?.onFailure === 'rollback' ? 'rollback' : 'stop',
+        steps: Array.isArray(req.body?.steps) ? req.body.steps : [],
+      });
+      res.status(202).json({ plan });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.patch('/branches/:branchId/replica-plans/:planId', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      const order = Array.isArray(req.body?.order) ? req.body.order.map(String) : [];
+      res.json({ plan: deps.replicaSetService.reorderPlan(req.params.branchId, req.params.planId, order) });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.post('/branches/:branchId/replica-plans/:planId/steps/:stepId/skip', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      res.json({ plan: deps.replicaSetService.skipStep(req.params.branchId, req.params.planId, req.params.stepId) });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.post('/branches/:branchId/replica-plans/:planId/cancel', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      res.json({ plan: deps.replicaSetService.cancelPlan(req.params.branchId, req.params.planId) });
+    } catch (err) { respondError(res, err); }
+  });
+
   // profile 级复制隔离：复制一次 → 全体副本切隔离库；回切主库快照保留
   router.post('/branches/:branchId/replica-sets/:profileId/isolate', (req, res) => {
     const access = guard(req, req.params.branchId);

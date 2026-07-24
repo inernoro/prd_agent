@@ -19,6 +19,9 @@ import type {
   ProfileReplicaSet,
   ReplicaDbSnapshot,
   ReplicaMember,
+  ReplicaPlan,
+  ReplicaPlanStep,
+  ReplicaPlanStepKind,
   ServiceState,
 } from '../types.js';
 import type { StateService } from './state.js';
@@ -651,6 +654,265 @@ export class ReplicaSetService {
     Object.assign(member, patch);
     if (branch?.replicaSets?.[profileId]) branch.replicaSets[profileId].updatedAt = this.now();
     this.opts.state.save();
+  }
+
+  /* ── 执行计划引擎（草稿-保存模型，2026-07-24 用户拍板）──
+   * 用户在舞台上把操作排成有序步骤，「保存」后本引擎串行执行：
+   * 每步等到真实终态才走下一步；执行中允许重排/跳过 pending 步骤、取消剩余；
+   * 失败按策略 stop（停止剩余）或 rollback（逆序回滚已完成步骤）；
+   * 全程落 branch.replicaPlans 记录（含错误与回滚日志），保留最近 20 条。 */
+
+  startPlan(branchId: string, input: {
+    onFailure: 'stop' | 'rollback';
+    steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>;
+  }): ReplicaPlan {
+    const branch = this.requireBranch(branchId);
+    if ((branch.replicaPlans || []).some((p) => p.status === 'running')) {
+      throw new ReplicaSetError(409, '已有执行中的变更计划，请等它结束或取消后再保存新计划');
+    }
+    if (!input.steps.length) throw new ReplicaSetError(400, '计划为空');
+    if (input.steps.length > 20) throw new ReplicaSetError(400, '单个计划最多 20 步');
+    const kinds: ReplicaPlanStepKind[] = ['add-replica', 'remove-member', 'set-weight', 'isolate-db', 'revert-db', 'dissolve'];
+    for (const s of input.steps) {
+      if (!kinds.includes(s.kind)) throw new ReplicaSetError(400, `未知步骤类型: ${s.kind}`);
+      if (!s.profileId) throw new ReplicaSetError(400, '步骤缺少 profileId');
+    }
+    const plan: ReplicaPlan = {
+      id: `rsplan_${this.now().replace(/[^0-9]/g, '').slice(0, 14)}_${Math.random().toString(36).slice(2, 7)}`,
+      branchId,
+      status: 'running',
+      onFailure: input.onFailure === 'rollback' ? 'rollback' : 'stop',
+      steps: input.steps.map((s, i) => ({
+        id: `step_${i + 1}`, kind: s.kind, profileId: s.profileId, params: s.params, status: 'pending' as const,
+      })),
+      createdAt: this.now(),
+    };
+    branch.replicaPlans = [plan, ...(branch.replicaPlans || [])].slice(0, 20);
+    this.opts.state.save();
+    void this.runPlan(branchId, plan.id);
+    return plan;
+  }
+
+  listPlans(branchId: string): ReplicaPlan[] {
+    return this.requireBranch(branchId).replicaPlans || [];
+  }
+
+  /** 执行中重排剩余步骤：orderedPendingIds 是全部 pending 步骤 id 的新顺序 */
+  reorderPlan(branchId: string, planId: string, orderedPendingIds: string[]): ReplicaPlan {
+    const plan = this.requirePlan(branchId, planId);
+    if (plan.status !== 'running') throw new ReplicaSetError(409, '计划已结束，无法调序');
+    const pending = plan.steps.filter((s) => s.status === 'pending');
+    const set = new Set(pending.map((s) => s.id));
+    if (orderedPendingIds.length !== pending.length || orderedPendingIds.some((id) => !set.has(id))) {
+      throw new ReplicaSetError(400, '调序清单必须恰好覆盖全部待执行步骤');
+    }
+    const byId = new Map(plan.steps.map((s) => [s.id, s]));
+    const nonPending = plan.steps.filter((s) => s.status !== 'pending');
+    plan.steps = [...nonPending, ...orderedPendingIds.map((id) => byId.get(id)!)];
+    this.opts.state.save();
+    return plan;
+  }
+
+  skipStep(branchId: string, planId: string, stepId: string): ReplicaPlan {
+    const plan = this.requirePlan(branchId, planId);
+    const step = plan.steps.find((s) => s.id === stepId);
+    if (!step) throw new ReplicaSetError(404, `步骤不存在: ${stepId}`);
+    if (step.status !== 'pending') throw new ReplicaSetError(409, '只有待执行的步骤可以跳过');
+    step.status = 'skipped';
+    step.endedAt = this.now();
+    this.opts.state.save();
+    return plan;
+  }
+
+  /** 取消剩余 pending 步骤；当前 running 步骤不中断（容器操作不可安全打断），跑完即收尾 */
+  cancelPlan(branchId: string, planId: string): ReplicaPlan {
+    const plan = this.requirePlan(branchId, planId);
+    if (plan.status !== 'running') throw new ReplicaSetError(409, '计划已结束');
+    for (const s of plan.steps) {
+      if (s.status === 'pending') { s.status = 'cancelled'; s.endedAt = this.now(); }
+    }
+    this.opts.state.save();
+    return plan;
+  }
+
+  private requirePlan(branchId: string, planId: string): ReplicaPlan {
+    const plan = (this.requireBranch(branchId).replicaPlans || []).find((p) => p.id === planId);
+    if (!plan) throw new ReplicaSetError(404, `计划不存在: ${planId}`);
+    return plan;
+  }
+
+  private savePlan(): void { this.opts.state.save(); }
+
+  private async runPlan(branchId: string, planId: string): Promise<void> {
+    const log = (m: string) => this.opts.logger?.info?.(`[replica-plan] ${branchId}/${planId} ${m}`);
+    try {
+      for (;;) {
+        const plan = this.requirePlan(branchId, planId);
+        const next = plan.steps.find((s) => s.status === 'pending');
+        if (!next) break;
+        next.status = 'running';
+        next.startedAt = this.now();
+        this.savePlan();
+        log(`执行 ${next.id} ${next.kind}(${next.profileId})`);
+        try {
+          await this.executeStep(branchId, next);
+          next.status = 'done';
+          next.endedAt = this.now();
+          this.savePlan();
+        } catch (err) {
+          next.status = 'error';
+          next.error = (err as Error).message.slice(0, 600);
+          next.endedAt = this.now();
+          for (const s of plan.steps) {
+            if (s.status === 'pending') { s.status = 'cancelled'; s.endedAt = this.now(); }
+          }
+          this.savePlan();
+          log(`步骤失败: ${next.error}`);
+          if (plan.onFailure === 'rollback') {
+            await this.rollbackPlan(branchId, planId);
+            const p2 = this.requirePlan(branchId, planId);
+            p2.status = 'rolled-back';
+            p2.endedAt = this.now();
+          } else {
+            plan.status = 'error';
+            plan.endedAt = this.now();
+          }
+          this.savePlan();
+          return;
+        }
+      }
+      const plan = this.requirePlan(branchId, planId);
+      plan.status = plan.steps.some((s) => s.status === 'cancelled') ? 'cancelled' : 'done';
+      plan.endedAt = this.now();
+      this.savePlan();
+      log(`计划结束: ${plan.status}`);
+    } catch (err) {
+      // 引擎级异常（分支被删等）：尽力标记
+      try {
+        const plan = this.requirePlan(branchId, planId);
+        plan.status = 'error';
+        plan.endedAt = this.now();
+        this.savePlan();
+      } catch { /* branch gone */ }
+      this.opts.logger?.warn?.(`[replica-plan] 引擎异常 ${branchId}/${planId}: ${(err as Error).message}`);
+    }
+  }
+
+  private async executeStep(branchId: string, step: ReplicaPlanStep): Promise<void> {
+    const { profileId } = step;
+    if (step.kind === 'add-replica') {
+      if (!this.requireBranch(branchId).replicaSets?.[profileId]?.enabled) this.enable(branchId, profileId);
+      const member = this.addMember(branchId, profileId, {
+        versionId: step.params?.versionId || undefined,
+        dbMode: step.params?.dbMode === 'isolated' ? 'isolated' : 'shared',
+      });
+      step.resultMemberId = member.id;
+      this.savePlan();
+      await this.waitFor(branchId, step.params?.dbMode === 'isolated' ? 900_000 : 300_000, () => {
+        const m = this.findMember(branchId, profileId, member.id);
+        if (!m) throw new Error('成员在等待期间消失');
+        if (m.status === 'error') throw new Error(m.statusMessage || '成员启动失败');
+        return m.status === 'running';
+      });
+      return;
+    }
+    if (step.kind === 'remove-member') {
+      const memberId = step.params?.memberId;
+      if (!memberId) throw new Error('缺少 memberId');
+      await this.removeMember(branchId, profileId, memberId);
+      return;
+    }
+    if (step.kind === 'set-weight') {
+      const memberId = step.params?.memberId;
+      const weight = step.params?.weight;
+      if (!memberId || typeof weight !== 'number') throw new Error('缺少 memberId / weight');
+      const rs = this.requireBranch(branchId).replicaSets?.[profileId];
+      if (!rs) throw new Error('该服务未启用复制集');
+      step.prevWeight = memberId === 'primary' ? rs.primaryWeight : this.findMember(branchId, profileId, memberId)?.weight;
+      this.savePlan();
+      this.updateMember(branchId, profileId, memberId, { weight });
+      return;
+    }
+    if (step.kind === 'isolate-db') {
+      const before = (this.requireBranch(branchId).replicaSets?.[profileId]?.members || [])
+        .filter((m) => m.status === 'running').map((m) => m.id);
+      const r = this.isolateProfile(branchId, profileId);
+      if (!r.accepted) throw new Error(r.reason || '隔离未被接受');
+      await this.waitFor(branchId, 1_500_000, () => {
+        const rs = this.requireBranch(branchId).replicaSets?.[profileId];
+        const errored = rs?.members.find((m) => m.status === 'error');
+        if (errored) throw new Error(errored.statusMessage || '隔离失败');
+        return !!rs?.isolated && before.every((id) => this.findMember(branchId, profileId, id)?.status === 'running');
+      });
+      return;
+    }
+    if (step.kind === 'revert-db') {
+      const r = this.revertProfile(branchId, profileId);
+      if (!r.accepted) throw new Error(r.reason || '回切未被接受');
+      await this.waitFor(branchId, 600_000, () => {
+        const rs = this.requireBranch(branchId).replicaSets?.[profileId];
+        const errored = rs?.members.find((m) => m.status === 'error');
+        if (errored) throw new Error(errored.statusMessage || '回切失败');
+        return !rs?.isolated && (rs?.members || []).every((m) => m.status !== 'provisioning');
+      });
+      return;
+    }
+    // dissolve
+    await this.dissolve(branchId, profileId);
+  }
+
+  /** 逆序回滚已完成步骤（不可回滚的步骤记日志跳过） */
+  private async rollbackPlan(branchId: string, planId: string): Promise<void> {
+    const plan = this.requirePlan(branchId, planId);
+    plan.rollbackLog = plan.rollbackLog || [];
+    const done = plan.steps.filter((s) => s.status === 'done').reverse();
+    for (const s of done) {
+      try {
+        if (s.kind === 'add-replica' && s.resultMemberId) {
+          await this.removeMember(branchId, s.profileId, s.resultMemberId).catch(() => undefined);
+          plan.rollbackLog.push(`回滚 ${s.id}: 已下线副本 ${s.resultMemberId}`);
+          s.status = 'rolled-back';
+        } else if (s.kind === 'set-weight' && typeof s.prevWeight === 'number' && s.params?.memberId) {
+          const rs = this.requireBranch(branchId).replicaSets?.[s.profileId];
+          if (rs && (s.params.memberId === 'primary' || this.findMember(branchId, s.profileId, s.params.memberId))) {
+            this.updateMember(branchId, s.profileId, s.params.memberId, { weight: s.prevWeight });
+            plan.rollbackLog.push(`回滚 ${s.id}: 权重恢复为 ${s.prevWeight}`);
+            s.status = 'rolled-back';
+          }
+        } else if (s.kind === 'isolate-db') {
+          const r = this.revertProfile(branchId, s.profileId);
+          if (r.accepted) {
+            await this.waitFor(branchId, 600_000, () => {
+              const rs = this.requireBranch(branchId).replicaSets?.[s.profileId];
+              return !rs?.isolated && (rs?.members || []).every((m) => m.status !== 'provisioning');
+            }).catch(() => undefined);
+            plan.rollbackLog.push(`回滚 ${s.id}: 已回切主库（隔离库转快照保留）`);
+            s.status = 'rolled-back';
+          } else {
+            plan.rollbackLog.push(`回滚 ${s.id} 失败: ${r.reason}`);
+          }
+        } else {
+          plan.rollbackLog.push(`步骤 ${s.id}(${s.kind}) 不可自动回滚，保持现状`);
+        }
+      } catch (err) {
+        plan.rollbackLog.push(`回滚 ${s.id} 异常: ${(err as Error).message.slice(0, 200)}`);
+      }
+      this.savePlan();
+    }
+  }
+
+  private findMember(branchId: string, profileId: string, memberId: string): ReplicaMember | undefined {
+    return this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+  }
+
+  /** 3s 轮询直到条件满足；条件函数抛错 = 步骤失败；超时抛错 */
+  private async waitFor(branchId: string, timeoutMs: number, check: () => boolean): Promise<void> {
+    const deadline = Date.now() + timeoutMs;
+    for (;;) {
+      if (check()) return;
+      if (Date.now() > deadline) throw new Error(`等待终态超时（${Math.round(timeoutMs / 1000)}s）`);
+      await new Promise((r) => setTimeout(r, 3_000));
+    }
   }
 
   private async removeMemberContainer(member: ReplicaMember): Promise<void> {
