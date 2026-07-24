@@ -470,14 +470,14 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className={`flex min-w-0 items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''}`}
+        className={`flex w-max min-w-0 items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''} ${expanded ? '' : 'h-9'}`}
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
       >
         <button
           type="button"
           onClick={visual.onClick}
-          className={`flex min-w-0 items-center gap-2 px-3 py-2 text-sm transition-colors ${visual.textClass} hover:bg-black/5 dark:hover:bg-white/5`}
+          className={`flex min-w-0 items-center gap-2 text-sm transition-colors ${expanded ? 'px-3 py-2' : 'h-9 w-9 justify-center'} ${visual.textClass} hover:bg-black/5 dark:hover:bg-white/5`}
           aria-label={visual.title}
           title={visual.title}
         >

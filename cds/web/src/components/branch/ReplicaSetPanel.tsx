@@ -8,6 +8,7 @@
  *   - 分流实测是只读诊断，保持即时执行（不进草稿）。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -240,6 +241,20 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
         onSave={savePlan}
         onCall={call}
       />
+
+      {/* 悬浮执行按钮：舞台高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态 */}
+      {(draft.length > 0 && !activePlan) || activePlan ? createPortal(
+        <button type="button" disabled={busy || !!activePlan}
+          onClick={() => { if (!activePlan) savePlan(); }}
+          className={`fixed bottom-6 right-6 z-[120] inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold shadow-2xl transition-colors ${activePlan
+            ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400'
+            : 'border-primary bg-primary text-primary-foreground hover:opacity-90'}`}
+          title={activePlan ? '计划执行中，步骤实况见下方变更清单' : '保存并按序执行变更清单'}>
+          {activePlan ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
+          {activePlan ? `执行中 ${activePlan.steps.filter((s) => s.status === 'done').length}/${activePlan.steps.length}` : `保存执行（${draft.length} 步）`}
+        </button>,
+        document.body,
+      ) : null}
 
       {snapshots.length > 0 ? (
         <section className="cds-surface-raised cds-hairline px-5 py-4">
@@ -665,10 +680,16 @@ function ReplicaStage({ branchId, profileId, profileIds, onSelectProfile, rs, ca
           );
         })}
         {isoState === 'idle' && !draftIsolate ? (
-          <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 dark:text-emerald-400"
-            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}>
-            <span className="text-[18px] leading-none">&#9676;</span>隔离区 · 空
-          </div>
+          <button type="button"
+            className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
+            style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}
+            title="点击加入变更清单：整库克隆进专用隔离实例，副本切换隔离库（可回切）。没有副本时可在同一计划里先加副本再隔离"
+            onClick={() => {
+              if (members.length + draftAdds.length === 0) onToast?.('隔离作用于副本——已可先点「+副本」，同一计划内先加副本再隔离');
+              onDraft({ kind: 'isolate-db', profileId, label: `${profileId} · 复制隔离（克隆 → 副本切换，可回切）` });
+            }}>
+            <Copy className="h-4 w-4" />复制隔离到此
+          </button>
         ) : isoState === 'idle' && draftIsolate ? (
           <div className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-amber-500/60 bg-amber-500/10 text-xs font-semibold text-amber-600 dark:text-amber-400"
             style={{ left: isoX, top: dbY, width: dbCW, height: 92 }}>
