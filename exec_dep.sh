@@ -1319,7 +1319,11 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
   if [ "$maintenance_release" = "1" ]; then
-    args="--base $gate_base --min-total 0 --min-per-app 0"
+    # 维护发布已经通过 maintenance baseline 审计继承了完整 http-full
+    # shadow 证据。当前 serving API 要求 shadow-comparisons 必须显式带
+    # appCaller，因此不能再发起旧版的全局无 appCaller 查询。这里只跳过
+    # 已继承的 global cells；健康、commit、部署后 smoke 与公网门禁仍照常执行。
+    args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"
   else
     args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
   fi

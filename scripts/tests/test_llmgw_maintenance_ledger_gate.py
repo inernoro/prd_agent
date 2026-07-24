@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import ast
 import importlib.util
 import json
 import tempfile
@@ -91,6 +92,47 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
                 allow_skipped_config_authority=True,
             )
 
+    def test_audited_maintenance_release_allows_exact_scoped_shadow_skip_shape(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 0,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_gate(Path(raw), payload)
+            LEDGER._require_release_gate_for_commit(
+                path,
+                "maintenance gate",
+                COMMIT,
+                require_config_authority=True,
+                allow_skipped_runtime_gates=True,
+                allow_skipped_config_authority=True,
+                allow_skipped_shadow_checks=True,
+            )
+
+    def test_audited_maintenance_release_rejects_empty_shadow_without_exact_skip_shape(self) -> None:
+        payload = gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME)
+        payload["shadowChecks"] = []
+        payload["thresholds"] = {
+            "skipGlobalCells": True,
+            "minTotal": 1,
+            "minPerApp": 0,
+        }
+        with tempfile.TemporaryDirectory() as raw:
+            path = self.write_gate(Path(raw), payload)
+            with self.assertRaises(SystemExit):
+                LEDGER._require_release_gate_for_commit(
+                    path,
+                    "maintenance gate",
+                    COMMIT,
+                    require_config_authority=True,
+                    allow_skipped_runtime_gates=True,
+                    allow_skipped_config_authority=True,
+                    allow_skipped_shadow_checks=True,
+                )
+
     def test_non_maintenance_release_rejects_skipped_config_authority(self) -> None:
         with tempfile.TemporaryDirectory() as raw:
             path = self.write_gate(Path(raw), gate_payload(SKIPPED_CONFIG, SKIPPED_RUNTIME))
@@ -175,6 +217,51 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
             'if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then',
             source,
         )
+
+    def test_maintenance_release_skips_only_inherited_global_shadow_cells(self) -> None:
+        source = EXEC_DEP_PATH.read_text(encoding="utf-8")
+        self.assertIn(
+            'args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"',
+            source,
+        )
+        self.assertIn(
+            'args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} '
+            '--min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"',
+            source,
+        )
+
+    def test_all_release_gate_validation_paths_propagate_maintenance_shadow_skip(self) -> None:
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        required_functions = {
+            "_entry_evidence_failures",
+            "append",
+            "stage_report",
+        }
+        calls_by_function: dict[str, list[ast.Call]] = {}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                child
+                for child in ast.walk(node)
+                if isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "_require_release_gate_for_commit"
+            ]
+            if calls:
+                calls_by_function[node.name] = calls
+
+        self.assertTrue(required_functions.issubset(calls_by_function))
+        for function_name in required_functions:
+            for call in calls_by_function[function_name]:
+                keywords = {keyword.arg for keyword in call.keywords}
+                self.assertIn(
+                    "allow_skipped_shadow_checks",
+                    keywords,
+                    f"{function_name} 未传递维护发布 shadow skip 契约",
+                )
 
 
 if __name__ == "__main__":
