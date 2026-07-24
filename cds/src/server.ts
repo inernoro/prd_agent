@@ -3922,6 +3922,9 @@ export function createServer(deps: ServerDeps): express.Express {
     ),
     logger: console,
   });
+  // 启动收敛：CDS 自更新/重启会打断执行中的复制集计划——开机把僵尸 running
+  // 计划标记为中断，杜绝「更新 CDS 导致的不一致」（用户点名的安全防线）
+  replicaSetService.reconcileInterruptedPlans();
   app.use('/api', createReplicaSetsRouter({
     stateService: deps.stateService,
     replicaSetService,

@@ -662,6 +662,32 @@ export class ReplicaSetService {
    * 失败按策略 stop（停止剩余）或 rollback（逆序回滚已完成步骤）；
    * 全程落 branch.replicaPlans 记录（含错误与回滚日志），保留最近 20 条。 */
 
+  /**
+   * 启动收敛（用户点名的「更新 CDS 导致不一致」防线）：CDS 自更新/崩溃重启会
+   * 打断执行中的计划——runner 是进程内异步循环，重启后不会复活。开机扫描所有
+   * 分支的 running 计划：running 步骤标 error（明示被重启打断）、pending 标
+   * cancelled、计划标 error——绝不留「看起来在执行、实际没人跑」的僵尸态；
+   * 用户在执行记录里能看到确切原因并自行重试（幂等：步骤都可重新入队）。
+   */
+  reconcileInterruptedPlans(): number {
+    let fixed = 0;
+    for (const branch of this.opts.state.getAllBranches()) {
+      for (const plan of branch.replicaPlans || []) {
+        if (plan.status !== 'running') continue;
+        for (const s of plan.steps) {
+          if (s.status === 'running') { s.status = 'error'; s.error = 'CDS 服务重启，步骤被打断——请核对现场后重新保存计划'; s.endedAt = this.now(); }
+          else if (s.status === 'pending') { s.status = 'cancelled'; s.endedAt = this.now(); }
+        }
+        plan.status = 'error';
+        plan.endedAt = this.now();
+        fixed += 1;
+        this.opts.logger?.warn?.(`[replica-plan] 启动收敛：${branch.id}/${plan.id} 因 CDS 重启标记为中断`);
+      }
+    }
+    if (fixed > 0) this.opts.state.save();
+    return fixed;
+  }
+
   startPlan(branchId: string, input: {
     onFailure: 'stop' | 'rollback';
     steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>;
