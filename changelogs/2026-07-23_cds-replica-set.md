@@ -36,3 +36,5 @@
 | perf | cds | mongo 克隆两阶段读写错峰：dump gzip 落盘（宿主临时目录挂载）确认完整后再 restore，消除读写叠加峰值与管道 broken pipe 失败模式，阶段间留回写喘息 |
 | feat | cds | mongo 复制隔离改「专用隔离实例」通道（终局方案）：dump 只读共享库落盘 → docker run 独立 mongo 实例（默认 mongo:7.0、内存 1.5G/WT cache 1G 上限）→ restore 写入专用实例；副本经连接串覆写直连新实例——共享 mongod 从此零写入风险（八轮取证：8.0.20 凡大批量写随机 SIGSEGV/139，纯读从未崩），隔离升级为实例级 |
 | feat | cds | 快照台账支持专用实例（dedicatedContainer/dedicatedHostPort）：删除快照 = 整容器移除含数据卷；UI 快照行标注「专用隔离实例」；失败善后无残留库问题 |
+| fix | cds | 终验 R9-P3 健壮性双修：正被活跃隔离引用的快照拒绝删除（409 提示先回切）；末位成员下线联动清除悬挂的 isolated 标志 |
+| docs | doc | debt.cds.replica-set 收口：#16 大库克隆熔断解除（专用隔离实例根治）、#17 崩溃取证器落地，新增 #19 分支删除后 rsdb 容器清理路径 |

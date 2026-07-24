@@ -274,6 +274,9 @@ export class ReplicaSetService {
     if (!member) throw new ReplicaSetError(404, `成员不存在: ${memberId}`);
     await this.removeMemberContainer(member);
     rs.members = rs.members.filter((m) => m.id !== memberId);
+    // 终验 R9-P3：末位成员下线后不许留悬挂的隔离标志（members=0 但 isolated=true
+    // 会让 UI/快照删除守卫误判仍在活跃隔离）。快照本身保留不动。
+    if (rs.members.length === 0 && rs.isolated) delete rs.isolated;
     rs.updatedAt = this.now();
     this.opts.state.save();
   }
@@ -286,6 +289,14 @@ export class ReplicaSetService {
     const branch = this.requireBranch(branchId);
     const snapshot = (branch.replicaDbSnapshots || []).find((s) => s.id === snapshotId);
     if (!snapshot) throw new ReplicaSetError(404, `隔离库快照不存在: ${snapshotId}`);
+    // 终验 R9-P3：正被活跃隔离引用的快照不许删（删了副本会连着已 drop 的库跑）
+    for (const rs of Object.values(branch.replicaSets || {})) {
+      const activelyUsed = rs.isolated?.snapshotId === snapshotId
+        || rs.members.some((m) => m.isolatedDbName === snapshot.dbName && (m.status === 'running' || m.status === 'provisioning'));
+      if (activelyUsed) {
+        throw new ReplicaSetError(409, `隔离库 ${snapshot.dbName} 正被 ${rs.profileId} 的副本使用中，请先「回切主库」再删除快照`);
+      }
+    }
     const infra = this.opts.state.getInfraServicesForProject(branch.projectId)
       .find((svc) => svc.containerName === snapshot.infraContainer);
     await dropReplicaDb(snapshot, infra?.env || {});
