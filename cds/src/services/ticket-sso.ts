@@ -32,7 +32,9 @@ function cleanAbsoluteHttpsUrl(value: unknown): string {
   if (typeof value !== 'string') return '';
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return '';
+    const isLocalHttp = url.protocol === 'http:'
+      && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+    if (url.protocol !== 'https:' && !isLocalHttp) return '';
     url.hash = '';
     return url.toString();
   } catch {
@@ -92,20 +94,22 @@ export function publicTicketSsoConfig(config: CdsSsoConfig): PublicTicketSsoConf
 
 export class TicketSsoStateStore {
   private readonly states = new Map<string, {
-    redirect: string;
+    redirect: string | null;
     callbackUrl: string;
     createdAt: number;
   }>();
 
-  issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string } {
+  issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string | null } {
     this.gc();
     const state = randomBytes(32).toString('base64url');
-    const safeRedirect = cleanInternalRedirect(redirect);
+    const safeRedirect = redirect === undefined || redirect === null || redirect === ''
+      ? null
+      : cleanInternalRedirect(redirect);
     this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: Date.now() });
     return { state, redirect: safeRedirect };
   }
 
-  consume(state: unknown): { redirect: string; callbackUrl: string } | null {
+  consume(state: unknown): { redirect: string | null; callbackUrl: string } | null {
     this.gc();
     if (typeof state !== 'string') return null;
     const entry = this.states.get(state);

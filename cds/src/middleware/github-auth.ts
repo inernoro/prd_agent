@@ -110,7 +110,11 @@ export function createGithubAuthMiddleware(deps: {
       };
     }).cdsSsoIdentity;
     if (ssoIdentity) {
-      (req as any).cdsUser = {
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const request = req as any;
+      request._cdsCookieAuth = true;
+      request.cdsUser = {
         id: `sso:${ssoIdentity.subject}`,
         githubId: -1,
         githubLogin: ssoIdentity.username,
@@ -120,12 +124,25 @@ export function createGithubAuthMiddleware(deps: {
         name: ssoIdentity.displayName,
         avatarUrl: null,
         orgs: [],
-        orgsCheckedAt: new Date().toISOString(),
-        isSystemOwner: true,
+        orgsCheckedAt: now,
+        // Ticket SSO proves a human identity, not a CDS ownership role.
+        // Owner-only routes remain closed until an explicit role mapping exists.
+        isSystemOwner: false,
         status: 'active',
-        lastLoginAt: new Date().toISOString(),
-        createdAt: new Date().toISOString(),
-        updatedAt: new Date().toISOString(),
+        lastLoginAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      request.cdsSession = request.cdsSession || {
+        id: `sso:${ssoIdentity.subject}`,
+        token: '',
+        userId: `sso:${ssoIdentity.subject}`,
+        createdAt: now,
+        expiresAt,
+        lastSeenAt: now,
+        orgsCheckedAt: now,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        ipAddress: req.ip || null,
       };
       next();
       return;

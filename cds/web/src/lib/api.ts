@@ -443,7 +443,7 @@ export interface CdsUserActivity {
 }
 
 export interface CdsAuthPublicStatus {
-  mode: 'disabled' | 'basic' | 'github';
+  mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
   loginMethods: {
     github: boolean;

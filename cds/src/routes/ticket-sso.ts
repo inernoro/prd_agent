@@ -159,6 +159,7 @@ export function createTicketSsoConfigRouter(deps: {
   getConfig: () => CdsSsoConfig;
   saveConfig: (config: CdsSsoConfig) => void;
   normalizeConfig: (input: Partial<CdsSsoConfig>) => CdsSsoConfig;
+  canWriteConfig: (req: Request) => boolean;
 }): Router {
   const router = Router();
 
@@ -172,6 +173,13 @@ export function createTicketSsoConfigRouter(deps: {
   });
 
   router.put('/auth/sso/config', (req: Request, res: Response) => {
+    if (!deps.canWriteConfig(req)) {
+      res.status(403).json({
+        error: 'human_owner_required',
+        message: 'SSO 属于系统级登录配置，只允许已验证的系统所有者修改。',
+      });
+      return;
+    }
     const current = deps.getConfig();
     const next = deps.normalizeConfig({
       ...current,

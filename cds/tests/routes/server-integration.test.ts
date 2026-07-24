@@ -5,7 +5,16 @@ import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from
 // 未带凭据的请求 401、10 个用例假红(2026-07-21 排查:main 基线即红,曾被
 // 误判为分支回归)。套件级摘除 + 恢复;需要 auth 的用例(public-status)自行
 // 显式 set/restore,不受影响。
-const AUTH_ENV_KEYS = ['CDS_USERNAME', 'CDS_PASSWORD'] as const;
+const AUTH_ENV_KEYS = [
+  'CDS_AUTH_MODE',
+  'CDS_USERNAME',
+  'CDS_PASSWORD',
+  'CDS_SSO_ENABLED',
+  'CDS_SSO_AUTHORIZATION_URL',
+  'CDS_SSO_TOKEN_URL',
+  'CDS_SSO_CLIENT_ID',
+  'CDS_SSO_CLIENT_SECRET',
+] as const;
 const savedAuthEnv = new Map<string, string | undefined>();
 beforeAll(() => {
   for (const key of AUTH_ENV_KEYS) {
@@ -436,6 +445,45 @@ describe('Server route ordering (regression)', () => {
       else process.env.CDS_USERNAME = prevUser;
       if (prevPass === undefined) delete process.env.CDS_PASSWORD;
       else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
+  it('real createServer gates protected routes when SSO is the only login method', async () => {
+    try {
+      process.env.CDS_SSO_ENABLED = '1';
+      process.env.CDS_SSO_AUTHORIZATION_URL = 'https://map.example/api/console-sso/authorize';
+      process.env.CDS_SSO_TOKEN_URL = 'https://map.example/api/console-sso/token';
+      process.env.CDS_SSO_CLIENT_ID = 'cds-console';
+      process.env.CDS_SSO_CLIENT_SECRET = 'secret-value';
+
+      const app = buildRealServerWithEvents([]);
+      server = await startServer(app);
+
+      const publicStatus = await request(server, '/api/auth/public-status');
+      expect(publicStatus.status).toBe(200);
+      expect(JSON.parse(publicStatus.body)).toMatchObject({
+        mode: 'sso',
+        enabled: true,
+        loginMethods: {
+          github: false,
+          local: false,
+          sso: true,
+        },
+      });
+
+      const protectedApi = await request(server, '/api/server-events');
+      expect(protectedApi.status).toBe(401);
+      expect(JSON.parse(protectedApi.body).error).toBe('unauthorized');
+
+      const start = await request(server, '/api/auth/sso/start');
+      expect(start.status).toBe(302);
+      expect(String(start.headers.location)).toContain('https://map.example/api/console-sso/authorize');
+    } finally {
+      delete process.env.CDS_SSO_ENABLED;
+      delete process.env.CDS_SSO_AUTHORIZATION_URL;
+      delete process.env.CDS_SSO_TOKEN_URL;
+      delete process.env.CDS_SSO_CLIENT_ID;
+      delete process.env.CDS_SSO_CLIENT_SECRET;
     }
   });
 

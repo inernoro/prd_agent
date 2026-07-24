@@ -1,3 +1,5 @@
+import { releaseCenterHref } from './releaseCenter';
+
 export type AgentMissionScope = 'system' | 'project';
 
 export type AgentMissionCategoryId =
@@ -109,6 +111,10 @@ export interface CdsAgentCapabilityDefinition {
 
 function projectPath(prefix: string, projectId?: string): string {
   return `${prefix}/${encodeURIComponent(projectId || '<project-id>')}`;
+}
+
+function projectQueryPath(prefix: string, projectId?: string): string {
+  return `${prefix}?project=${encodeURIComponent(projectId || '<project-id>')}`;
 }
 
 export const AGENT_MISSION_CATEGORY_DEFINITIONS: readonly AgentMissionCategoryDefinition[] = [
@@ -635,7 +641,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     steps: ['确认目标环境、提交和不可变构建产物', '检查域名、证书、变量和回滚点', '获得明确授权后执行发布', '从公网入口验证页面和核心接口'],
     checks: ['不把预览部署当正式发布', '复用可追溯构建产物', '发布写操作必须明确授权'],
     completion: ['最终公开入口可访问', '版本与目标提交一致', '回滚路径可用'],
-    pagePath: () => '/release-center',
+    pagePath: (projectId) => releaseCenterHref(projectId || '<project-id>'),
   },
   rollback: {
     id: 'rollback',
@@ -680,7 +686,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     steps: ['确认验收目标、版本和入口', '按真实用户路径执行步骤', '收集结果、日志和截图证据', '创建报告并返回可访问入口'],
     checks: ['保留目标、步骤、结果和证据', '不伪造未执行的验收结论', '敏感信息进入报告前先脱敏'],
     completion: ['报告包含完整证据链', '结论与实际结果一致', '报告入口可访问'],
-    pagePath: () => '/reports',
+    pagePath: (projectId) => projectQueryPath('/reports', projectId),
   },
   general: {
     id: 'general',

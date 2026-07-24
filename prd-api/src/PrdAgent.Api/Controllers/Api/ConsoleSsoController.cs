@@ -33,30 +33,53 @@ public sealed class ConsoleSsoController : ControllerBase
     }
 
     [HttpGet("authorize")]
-    [Authorize]
-    public async Task<IActionResult> Authorize(
+    [AllowAnonymous]
+    public IActionResult AuthorizePage(
         [FromQuery(Name = "client_id")] string? clientId,
         [FromQuery(Name = "redirect_uri")] string? redirectUri,
-        [FromQuery] string? state,
+        [FromQuery] string? state)
+    {
+        var target = QueryHelpers.AddQueryString(
+            "/console-sso/authorize",
+            new Dictionary<string, string?>
+            {
+                ["client_id"] = clientId,
+                ["redirect_uri"] = redirectUri,
+                ["state"] = state,
+            });
+        return Redirect(target);
+    }
+
+    [HttpPost("authorize")]
+    [Authorize]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status200OK)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status400BadRequest)]
+    [ProducesResponseType(typeof(ApiResponse<object>), StatusCodes.Status403Forbidden)]
+    public async Task<IActionResult> Authorize(
+        [FromBody] ConsoleSsoAuthorizeRequest request,
         CancellationToken ct)
     {
         var config = await ReadConfigAsync(ct);
         if (!config.Enabled)
         {
-            return StatusCode(StatusCodes.Status503ServiceUnavailable, "SSO 提供方尚未启用");
+            return StatusCode(
+                StatusCodes.Status503ServiceUnavailable,
+                ApiResponse<object>.Fail("SSO_PROVIDER_DISABLED", "SSO 提供方尚未启用"));
         }
-        if (!FixedEquals(clientId, config.ClientId)
-            || !TryValidateRedirect(redirectUri, config.AllowedRedirectOrigins, out var callback)
-            || string.IsNullOrWhiteSpace(state)
-            || state.Length is < 32 or > 256)
+        if (!FixedEquals(request.ClientId, config.ClientId)
+            || !TryValidateRedirect(request.RedirectUri, config.AllowedRedirectOrigins, out var callback)
+            || string.IsNullOrWhiteSpace(request.State)
+            || request.State.Length is < 32 or > 256)
         {
-            return BadRequest("SSO 授权请求无效");
+            return BadRequest(ApiResponse<object>.Fail("SSO_AUTHORIZE_INVALID", "SSO 授权请求无效"));
         }
 
         var identity = await ResolveAdminIdentityAsync(ct);
         if (identity is null)
         {
-            return StatusCode(StatusCodes.Status403Forbidden, "只有管理员可以进入外部控制台");
+            return StatusCode(
+                StatusCodes.Status403Forbidden,
+                ApiResponse<object>.Fail("SSO_ADMIN_REQUIRED", "只有管理员可以进入外部控制台"));
         }
 
         var now = DateTime.UtcNow;
@@ -79,8 +102,8 @@ public sealed class ConsoleSsoController : ControllerBase
             { "ConsumedAt", BsonNull.Value },
         }, cancellationToken: ct);
 
-        var target = $"{callback}#code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(state)}";
-        return Redirect(target);
+        var target = $"{callback}#code={Uri.EscapeDataString(code)}&state={Uri.EscapeDataString(request.State)}";
+        return Ok(ApiResponse<object>.Ok(new { redirectUrl = target }));
     }
 
     [HttpPost("token")]
@@ -173,11 +196,24 @@ public sealed class ConsoleSsoController : ControllerBase
             settings?.ConsoleSsoAllowedRedirectOrigins,
             _configuration["ConsoleSso:AllowedRedirectOrigins"],
             _configuration["CONSOLE_SSO_ALLOWED_REDIRECT_ORIGINS"]);
+        var allowedOrigins = ParseOrigins(origins);
         return new ProviderConfig(
-            enabled && !string.IsNullOrWhiteSpace(clientId) && !string.IsNullOrWhiteSpace(clientSecret),
+            IsProviderEnabled(enabled, clientId, clientSecret, allowedOrigins),
             clientId ?? "",
             clientSecret ?? "",
-            ParseOrigins(origins));
+            allowedOrigins);
+    }
+
+    private static bool IsProviderEnabled(
+        bool enabled,
+        string? clientId,
+        string? clientSecret,
+        IReadOnlyList<string> allowedOrigins)
+    {
+        return enabled
+            && !string.IsNullOrWhiteSpace(clientId)
+            && !string.IsNullOrWhiteSpace(clientSecret)
+            && allowedOrigins.Count > 0;
     }
 
     private static bool TryValidateRedirect(string? raw, IReadOnlyList<string> allowedOrigins, out string callback)
@@ -240,6 +276,18 @@ public sealed class ConsoleSsoController : ControllerBase
         string ClientId,
         string ClientSecret,
         IReadOnlyList<string> AllowedRedirectOrigins);
+}
+
+public sealed class ConsoleSsoAuthorizeRequest
+{
+    [System.Text.Json.Serialization.JsonPropertyName("client_id")]
+    public string ClientId { get; set; } = "";
+
+    [System.Text.Json.Serialization.JsonPropertyName("redirect_uri")]
+    public string RedirectUri { get; set; } = "";
+
+    [System.Text.Json.Serialization.JsonPropertyName("state")]
+    public string State { get; set; } = "";
 }
 
 public sealed class ConsoleSsoTokenRequest

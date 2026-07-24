@@ -48,26 +48,30 @@ async function request(
   headers: Record<string, string> = {},
 ): Promise<ResponseLite> {
   return new Promise((resolve, reject) => {
-    const addr = server.address() as { port: number };
-    const req = http.request({
-      hostname: '127.0.0.1',
-      port: addr.port,
-      path: urlPath,
-      method,
-      headers,
-    }, (res) => {
-      let raw = '';
-      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
-      res.on('end', () => {
-        try {
-          resolve({ status: res.statusCode!, body: JSON.parse(raw), headers: res.headers });
-        } catch {
-          resolve({ status: res.statusCode!, body: raw, headers: res.headers });
-        }
+    const send = () => {
+      const addr = server.address() as { port: number };
+      const req = http.request({
+        hostname: '127.0.0.1',
+        port: addr.port,
+        path: urlPath,
+        method,
+        headers,
+      }, (res) => {
+        let raw = '';
+        res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+        res.on('end', () => {
+          try {
+            resolve({ status: res.statusCode!, body: JSON.parse(raw), headers: res.headers });
+          } catch {
+            resolve({ status: res.statusCode!, body: raw, headers: res.headers });
+          }
+        });
       });
-    });
-    req.on('error', reject);
-    req.end();
+      req.on('error', reject);
+      req.end();
+    };
+    if (server.listening) send();
+    else server.once('listening', send);
   });
 }
 
@@ -75,7 +79,7 @@ describe('Auth routes (P2)', () => {
   let server: http.Server;
   let authService: AuthService;
 
-  beforeEach(() => {
+  beforeEach(async () => {
     const store = new MemoryAuthStore();
     const github = new GitHubOAuthClient({
       clientId: 'cid',
@@ -95,7 +99,14 @@ describe('Auth routes (P2)', () => {
       publicBaseUrl: 'http://localhost:9900',
       cookieSecure: false,
     }));
-    server = app.listen(0);
+    server = http.createServer(app);
+    await new Promise<void>((resolve, reject) => {
+      server.once('error', reject);
+      server.listen(0, '127.0.0.1', () => {
+        server.off('error', reject);
+        resolve();
+      });
+    });
   });
 
   afterEach(async () => {
@@ -168,6 +179,48 @@ describe('Auth routes (P2)', () => {
       expect(me.status).toBe(200);
       expect(me.body.user.githubLogin).toBe('alice');
       expect(me.body.user.isSystemOwner).toBe(true);
+    });
+
+    it('recognizes an SSO identity without a GitHub session cookie', async () => {
+      const app = express();
+      app.use((req, _res, next) => {
+        (req as any).cdsSsoIdentity = {
+          subject: 'map:user-1',
+          username: 'operator',
+          displayName: 'Operator',
+          email: 'operator@example.com',
+        };
+        (req as any).cdsSession = {
+          createdAt: '2026-07-24T00:00:00.000Z',
+          expiresAt: '2026-07-24T12:00:00.000Z',
+        };
+        next();
+      });
+      app.use('/api', createAuthRouter({
+        authService,
+        publicBaseUrl: 'http://localhost:9900',
+        cookieSecure: false,
+      }));
+      const ssoServer = http.createServer(app);
+      await new Promise<void>((resolve, reject) => {
+        ssoServer.once('error', reject);
+        ssoServer.listen(0, '127.0.0.1', () => {
+          ssoServer.off('error', reject);
+          resolve();
+        });
+      });
+      try {
+        const me = await request(ssoServer, 'GET', '/api/me');
+        expect(me.status).toBe(200);
+        expect(me.body.user).toMatchObject({
+          id: 'sso:map:user-1',
+          username: 'operator',
+          authProvider: 'sso',
+          isSystemOwner: false,
+        });
+      } finally {
+        await new Promise<void>((resolve) => ssoServer.close(() => resolve()));
+      }
     });
   });
 

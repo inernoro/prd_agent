@@ -24,6 +24,7 @@ function loginHref(mode?: string): string {
 function authModeLabel(mode?: string): string {
   if (mode === 'github') return 'GitHub OAuth';
   if (mode === 'basic') return '账号密码';
+  if (mode === 'sso') return 'SSO';
   if (mode === 'disabled') return '未启用';
   return mode || 'unknown';
 }
@@ -86,7 +87,7 @@ export function AuthTab(): JSX.Element {
     setLogoutError('');
     try {
       await apiRequest(state.data.logoutEndpoint, { method: 'POST' });
-      window.location.href = loginHref(state.data.mode);
+      window.location.href = state.data.postLogoutRedirect || loginHref(state.data.mode);
     } catch (err) {
       setLogoutState('error');
       setLogoutError(err instanceof ApiError ? err.message : String(err));

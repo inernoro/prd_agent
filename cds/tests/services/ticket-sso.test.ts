@@ -50,6 +50,30 @@ describe('ticket SSO', () => {
     expect(store.consume(issued.state)).toBeNull();
   });
 
+  it('preserves a missing redirect so exchange can use the configured default', () => {
+    const store = new TicketSsoStateStore();
+    const issued = store.issue(undefined, 'https://cds.example/auth/sso');
+    expect(issued.redirect).toBeNull();
+    expect(store.consume(issued.state)?.redirect).toBeNull();
+  });
+
+  it('accepts only HTTPS URLs or local HTTP development URLs', () => {
+    expect(normalizeTicketSsoConfig({
+      authorizationUrl: 'http://localhost:5500/authorize',
+      tokenUrl: 'http://127.0.0.1:5000/token',
+    })).toMatchObject({
+      authorizationUrl: 'http://localhost:5500/authorize',
+      tokenUrl: 'http://127.0.0.1:5000/token',
+    });
+    expect(normalizeTicketSsoConfig({
+      authorizationUrl: 'ftp://localhost/authorize',
+      tokenUrl: 'javascript://localhost/token',
+    })).toMatchObject({
+      authorizationUrl: '',
+      tokenUrl: '',
+    });
+  });
+
   it('creates opaque sessions and deletes them on logout', () => {
     const sessions = new TicketSsoSessionStore();
     const identity = { subject: 'map:1', username: 'admin', displayName: 'Admin' };

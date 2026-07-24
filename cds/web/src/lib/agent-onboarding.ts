@@ -137,7 +137,7 @@ export function chooseAgentProjectId(
       );
       if (queryProject) return queryProject.id;
     }
-    const match = context.pagePath.match(/^\/(?:branches|settings)\/([^/?#]+)/);
+    const match = context.pagePath.match(/^\/(?:branches|settings|agent-requests)\/([^/?#]+)/);
     if (match) {
       const projectId = decodeURIComponent(match[1]);
       const currentProject = projects.find((project) => project.id === projectId || project.slug === projectId);
@@ -153,6 +153,23 @@ export function chooseAgentProjectId(
     if (cdsSelf) return cdsSelf.id;
   }
   return projects[0].id;
+}
+
+export function resolveAgentMissionContextForTarget(
+  missionId: AgentPageContextId,
+  sourceContext: AgentPageContext,
+  projects: AgentProjectIdentity[],
+  effectiveProjectId: string,
+): AgentPageContext {
+  const sourceProjectId = chooseAgentProjectId(projects, sourceContext);
+  const canReuseSourceContext = missionId === sourceContext.id
+    && (
+      getAgentMissionScope(missionId) === 'system'
+      || Boolean(effectiveProjectId && effectiveProjectId === sourceProjectId)
+    );
+  return canReuseSourceContext
+    ? sourceContext
+    : createAgentMissionContext(missionId, effectiveProjectId);
 }
 
 function missionPromptLines(context?: AgentPageContext): string[] {

@@ -14,3 +14,9 @@
 | feat | cds | 建立覆盖全部接口模块族的 Agent 能力目录并补齐完整五技能包协作更新 |
 | security | cds | 增加凭据来源脱敏检查、提示注入防护、操作锁与环境变量元数据读取 |
 | fix | cds | 修复接入 Agent 弹窗在移动端的页签横向裁切 |
+| security | cds | 修复 SSO-only 鉴权绕过、全局配置越权与 SSO 身份错误获得所有者权限的问题 |
+| fix | cds | 修复 SSO 会话识别、退出跳转、默认返回页和回调地址协议校验 |
+| fix | cds | 修复 Agent 跨项目任务上下文、项目深链和项目列表刷新问题 |
+| fix | prd-api | 增加 Bearer 感知的控制台 SSO 授权承接流程并校验允许的回调来源 |
+| fix | prd-admin | 新增控制台 SSO 授权承接页面 |
+| test | prd-api | 固定模型供应限流测试时钟，消除跨分钟边界导致的 CI 假失败 |

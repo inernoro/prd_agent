@@ -500,7 +500,12 @@ export function TicketSsoPage(): JSX.Element {
     void exchangeTicketSso(callback)
       .then((result) => {
         if (!alive) return;
-        navigate(result.redirect || '/project-list', { replace: true, viewTransition: true });
+        const target = result.redirect || '/project-list';
+        if (/\.html(?:$|[?#])/i.test(target)) {
+          window.location.assign(target);
+          return;
+        }
+        navigate(target, { replace: true, viewTransition: true });
       })
       .catch(() => {
         if (alive) setError('SSO 授权未完成，一次性链接可能已使用或已过期。');

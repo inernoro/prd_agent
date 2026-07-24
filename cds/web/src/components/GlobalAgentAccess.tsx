@@ -5,7 +5,6 @@ import { useLocation } from 'react-router-dom';
 import { SkillDownloadDialog, type AgentProjectOption } from '@/components/SkillDownloadDialog';
 import {
   OPEN_AGENT_ACCESS_EVENT,
-  requestAgentAccess,
   resolveAgentPageContext,
   type AgentPageContextId,
 } from '@/lib/agent-onboarding';
@@ -57,8 +56,9 @@ export function GlobalAgentAccess(): JSX.Element {
   }, []);
 
   useEffect(() => {
-    if (!open || projects !== null) return undefined;
+    if (!open) return undefined;
     const ctrl = new AbortController();
+    setProjects(null);
     apiRequest<AgentProjectsResponse>('/api/projects', { signal: ctrl.signal })
       .then((data) => {
         setProjects((data.projects || []).map((project) => ({
@@ -75,7 +75,7 @@ export function GlobalAgentAccess(): JSX.Element {
         setProjects([]);
       });
     return () => ctrl.abort();
-  }, [open, projects]);
+  }, [open]);
 
   return (
     <>
@@ -83,7 +83,10 @@ export function GlobalAgentAccess(): JSX.Element {
         <button
           type="button"
           className="cds-agent-access-floating"
-          onClick={() => requestAgentAccess(context.id)}
+          onClick={() => {
+            setRequestedContextId(context.id);
+            setOpen(true);
+          }}
           data-agent-action="connect"
           data-agent-context={context.id}
           data-agent-page={context.pagePath}

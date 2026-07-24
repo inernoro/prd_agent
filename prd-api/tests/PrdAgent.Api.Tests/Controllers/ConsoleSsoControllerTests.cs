@@ -1,4 +1,6 @@
 using System.Reflection;
+using Microsoft.AspNetCore.Authorization;
+using Microsoft.AspNetCore.Mvc;
 using PrdAgent.Api.Controllers.Api;
 using Xunit;
 
@@ -30,6 +32,37 @@ public sealed class ConsoleSsoControllerTests
         Assert.True(Invoke<bool>("FixedEquals", "client-secret", "client-secret"));
         Assert.False(Invoke<bool>("FixedEquals", "client-secret", "client-secret-2"));
         Assert.False(Invoke<bool>("FixedEquals", "client-secret", null));
+    }
+
+    [Fact]
+    public void Authorization_ShouldUseAnonymousPageAndBearerProtectedPost()
+    {
+        var pageMethod = typeof(ConsoleSsoController).GetMethod(nameof(ConsoleSsoController.AuthorizePage));
+        var authorizeMethod = typeof(ConsoleSsoController).GetMethod(nameof(ConsoleSsoController.Authorize));
+
+        Assert.NotNull(pageMethod);
+        Assert.NotNull(authorizeMethod);
+        Assert.NotNull(pageMethod.GetCustomAttribute<HttpGetAttribute>());
+        Assert.NotNull(pageMethod.GetCustomAttribute<AllowAnonymousAttribute>());
+        Assert.NotNull(authorizeMethod.GetCustomAttribute<HttpPostAttribute>());
+        Assert.NotNull(authorizeMethod.GetCustomAttribute<AuthorizeAttribute>());
+    }
+
+    [Fact]
+    public void Provider_ShouldRemainDisabledWithoutAnyAllowedRedirectOrigin()
+    {
+        Assert.False(Invoke<bool>(
+            "IsProviderEnabled",
+            true,
+            "cds-console",
+            "client-secret",
+            Array.Empty<string>()));
+        Assert.True(Invoke<bool>(
+            "IsProviderEnabled",
+            true,
+            "cds-console",
+            "client-secret",
+            new[] { "https://cds.miduo.org" }));
     }
 
     private static T Invoke<T>(string name, params object?[] args)

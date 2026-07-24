@@ -108,7 +108,7 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
     expect(agentDialogSource).toContain('grid grid-cols-3');
     expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
-    expect(agentDialogSource).toContain('createAgentMissionContext(missionId, effectiveProjectId)');
+    expect(agentDialogSource).toContain('resolveAgentMissionContextForTarget(');
     expect(agentDialogSource).toContain('连接已有项目');
     expect(agentDialogSource).toContain('创建一个新项目');
     expect(agentDialogSource).toContain('<select');
@@ -134,6 +134,8 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentMissionRegistrySource).toContain("'code-review'");
     expect(agentOnboardingSource).toContain('二、静默检查认证');
     expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
+    expect(globalAgentAccessSource).toContain('if (!open) return undefined');
+    expect(globalAgentAccessSource).toContain('setProjects(null)');
     expect(styles).toContain('.cds-agent-mission-strip');
     expect(styles).toContain('.cds-agent-mission-categories');
     expect(styles).toContain('.cds-agent-mission-card');
@@ -154,7 +156,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(serverSource).toContain("app.get('/api/auth/status', (req, res)");
     expect(serverSource).toContain("authMode === 'github' && sessionUser");
     expect(serverSource).toContain('avatarUrl: sessionUser.avatarUrl ?? null');
+    expect(serverSource).toContain("postLogoutRedirect: ssoIdentity ? '/login' : null");
     expect(shellSource).toContain('user?: ShellUser | null');
+    expect(shellSource).toContain('authStatus.postLogoutRedirect || shellLoginHref(authStatus.mode)');
   });
 
   it('将更新、导入和授权统一放在右下角消息栈', () => {

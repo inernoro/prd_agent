@@ -16,9 +16,11 @@ export interface MeResponse {
 }
 
 export interface AuthStatusResponse {
-  mode?: 'disabled' | 'basic' | 'github' | string;
+  mode?: 'disabled' | 'basic' | 'github' | 'sso' | string;
   enabled?: boolean;
+  activeProvider?: 'local' | 'github' | 'sso' | string | null;
   logoutEndpoint?: string | null;
+  postLogoutRedirect?: string | null;
   user?: {
     username?: string;
     githubLogin?: string;

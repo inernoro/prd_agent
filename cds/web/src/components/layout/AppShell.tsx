@@ -116,7 +116,9 @@ export interface AppShellProps {
 type ShellAuthStatus = {
   enabled?: boolean;
   mode?: string;
+  activeProvider?: string | null;
   logoutEndpoint?: string | null;
+  postLogoutRedirect?: string | null;
   user?: ShellUser | null;
 };
 
@@ -315,7 +317,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         headers: { Accept: 'application/json' },
       });
       if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      window.location.href = shellLoginHref(authStatus.mode);
+      window.location.href = authStatus.postLogoutRedirect || shellLoginHref(authStatus.mode);
     } catch {
       setLogoutState('error');
       window.setTimeout(() => setLogoutState('idle'), 3000);

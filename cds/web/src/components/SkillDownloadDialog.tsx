@@ -14,6 +14,7 @@ import {
   createAgentMissionContext,
   getAgentMissionScope,
   PROJECT_SKILL_PATHS,
+  resolveAgentMissionContextForTarget,
   type AgentPageContext,
   type AgentPageContextId,
   type CdsConnectTarget,
@@ -79,9 +80,12 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     : mapSelection.kind === 'project'
       ? mapSelection.projectId
       : '';
-  const selectedContext = missionId === sourceContext.id
-    ? sourceContext
-    : createAgentMissionContext(missionId, effectiveProjectId);
+  const selectedContext = resolveAgentMissionContextForTarget(
+    missionId,
+    sourceContext,
+    projects,
+    effectiveProjectId,
+  );
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
   const target: CdsConnectTarget = mapSelection.kind === 'new'
     ? { kind: 'new' }

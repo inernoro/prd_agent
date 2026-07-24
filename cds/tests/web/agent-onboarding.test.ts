@@ -15,6 +15,7 @@ import {
   getAgentMissionScope,
   PROJECT_SKILL_PATHS,
   resolveAgentPageContext,
+  resolveAgentMissionContextForTarget,
 } from '../../web/src/lib/agent-onboarding.js';
 
 describe('CDS Agent 接入口令', () => {
@@ -101,6 +102,8 @@ describe('CDS Agent 接入口令', () => {
     expect(createAgentMissionContext('github').pagePath).toBe('/cds-settings#github');
     expect(createAgentMissionContext('branches', 'project/a').pagePath).toBe('/branches/project%2Fa');
     expect(createAgentMissionContext('project-settings', 'project/a').pagePath).toBe('/settings/project%2Fa');
+    expect(createAgentMissionContext('release', 'project/a').pagePath).toContain('project=project%2Fa');
+    expect(createAgentMissionContext('reports', 'project/a').pagePath).toBe('/reports?project=project%2Fa');
     expect(getAgentMissionScope('auth')).toBe('system');
     expect(getAgentMissionScope('branches')).toBe('project');
   });
@@ -235,11 +238,37 @@ describe('CDS Agent 接入口令', () => {
     const authContext = resolveAgentPageContext({ pathname: '/cds-settings', hash: '#auth' });
     const branchContext = resolveAgentPageContext({ pathname: '/branches/other' });
     const reportContext = resolveAgentPageContext({ pathname: '/reports', search: '?project=other' });
+    const requestsContext = resolveAgentPageContext({ pathname: '/agent-requests/other' });
+    const legacyBranchContext = resolveAgentPageContext({
+      pathname: '/branch-list',
+      search: '?project=other',
+    });
 
     expect(chooseAgentProjectId(projects, authContext)).toBe('cds-self');
     expect(chooseAgentProjectId(projects, branchContext)).toBe('other');
     expect(chooseAgentProjectId(projects, reportContext)).toBe('other');
+    expect(chooseAgentProjectId(projects, requestsContext)).toBe('other');
+    expect(chooseAgentProjectId(projects, legacyBranchContext)).toBe('other');
     expect(chooseAgentProjectId(projects)).toBe('prd-agent');
+  });
+
+  it('切换项目地图后重新生成当前任务上下文', () => {
+    const projects = [
+      { id: 'proj-a', name: '项目 A', slug: 'proj-a' },
+      { id: 'proj-b', name: '项目 B', slug: 'proj-b' },
+    ];
+    const sourceContext = resolveAgentPageContext({ pathname: '/branches/proj-a' });
+
+    const selectedContext = resolveAgentMissionContextForTarget(
+      sourceContext.id,
+      sourceContext,
+      projects,
+      'proj-b',
+    );
+
+    expect(selectedContext.id).toBe('branches');
+    expect(selectedContext.pagePath).toBe('/branches/proj-b');
+    expect(selectedContext.pagePath).not.toBe(sourceContext.pagePath);
   });
 
   it('列出三个 Agent 的项目级技能目录', () => {
