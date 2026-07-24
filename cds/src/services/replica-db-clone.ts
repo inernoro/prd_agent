@@ -335,7 +335,9 @@ function parseMongoNumber(stdout: string): number {
  */
 export function replicaCloneMaxMb(): number {
   const raw = Number(process.env.CDS_REPLICA_CLONE_MAX_MB);
-  return Number.isFinite(raw) && raw > 0 ? Math.max(64, raw) : 512;
+  // 默认 3072：R7 受控实验窗口（取证器 + 两阶段 + WT cache 收紧全套护栏在位，
+  // 对 prdagent 2.63G 做一次带取证的真实克隆）。实验定性后按证据回调终值。
+  return Number.isFinite(raw) && raw > 0 ? Math.max(64, raw) : 3072;
 }
 
 /**
