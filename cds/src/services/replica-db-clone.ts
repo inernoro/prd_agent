@@ -216,9 +216,14 @@ export async function cloneReplicaDb(opts: {
   // （mongo 容器无内存上限，WT cache 默认吃半机内存，restore 写入+建索引把
   // mongod RSS 顶爆）。克隆期把 WT cache 运行时收紧到 2G（可逆；mongod 若
   // 重启，runtime 参数自动回落配置默认，无永久副作用）。
+  // 复验 R5：保护建不起来必须中止克隆（fail-closed）——静默跳过 = 裸奔打崩主库。
   let restoreCache: (() => Promise<void>) | null = null;
   if (target.engine === 'mongo') {
-    restoreCache = await clampMongoWtCache(c, port, env, opts.onOutput);
+    const clamp = await clampMongoWtCache(c, port, env, opts.onOutput);
+    if (!clamp.ok) {
+      throw new Error(`克隆保护未能生效，已中止克隆以保护共享主库（${clamp.reason}）`);
+    }
+    restoreCache = clamp.restore;
   }
 
   let result: Awaited<ReturnType<typeof runDockerExec>>;
@@ -268,18 +273,27 @@ export async function cloneReplicaDb(opts: {
   };
 }
 
+export type MongoCacheClampResult =
+  | { ok: true; restore: (() => Promise<void>) | null }
+  | { ok: false; reason: string };
+
 /**
  * 克隆期临时收紧 mongod WiredTiger cache（复验 R4-P0 根治手段）。
- * 读当前 cache 上限，>2G 则运行时 setParameter 收到 2G，返回恢复函数；
- * 读不到 / 已 ≤2G / 设置失败一律返回 null（不阻断克隆，只是失去保护）。
+ * 读当前 cache 上限，>2G 则运行时 setParameter 收到 2G，返回恢复函数。
  * 运行时参数不落盘：mongod 崩溃重启后自动回配置默认，不会把收紧值固化。
+ *
+ * 复验 R5 双教训：
+ *   1. mongosh 对 int64 输出 `Long('50086281216')`，裸 Number() 解析成 NaN——
+ *      读值必须在脚本里 Number() 强转 + 解析端正则提数字兜底；
+ *   2. 保护失败禁止静默跳过（此前返回 null 后克隆裸奔，第三次打崩 mongod）——
+ *      改为结构化返回，调用方 fail-closed。
  */
 async function clampMongoWtCache(
   containerName: string,
   port: number,
   env: Record<string, string>,
   onOutput?: (line: string) => void,
-): Promise<(() => Promise<void>) | null> {
+): Promise<MongoCacheClampResult> {
   const user = env.MONGO_INITDB_ROOT_USERNAME || '';
   const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
   const uri = user
@@ -287,18 +301,30 @@ async function clampMongoWtCache(
     : `mongodb://localhost:${port}/admin`;
   const evalIn = (script: string) =>
     runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
-  const read = await evalIn("print(db.serverStatus().wiredTiger.cache['maximum bytes configured'])");
-  const origBytes = Number((read.stdout || '').trim().split('\n').pop());
+  const fail = (stage: string, r: { code: number; stderr: string; stdout: string }): MongoCacheClampResult => ({
+    ok: false,
+    reason: `${stage}失败（exit ${r.code}）: ${maskSecretValues(`${r.stderr || r.stdout}`.trim().slice(-300), [pw].filter(Boolean))}`,
+  });
+  const read = await evalIn("print(Number(db.serverStatus().wiredTiger.cache['maximum bytes configured']))");
+  if (read.code !== 0) return fail('读取 WT cache 上限', read);
+  const numMatch = /(\d{6,})\s*$/.exec((read.stdout || '').trim());
+  const origBytes = numMatch ? Number(numMatch[1]) : NaN;
+  if (!Number.isFinite(origBytes) || origBytes <= 0) {
+    return { ok: false, reason: `WT cache 上限输出无法解析: ${(read.stdout || '').trim().slice(-120)}` };
+  }
   const CLAMP_BYTES = 2 * 1024 ** 3;
-  if (read.code !== 0 || !Number.isFinite(origBytes) || origBytes <= CLAMP_BYTES) return null;
+  if (origBytes <= CLAMP_BYTES) return { ok: true, restore: null };
   const setCache = (mb: number) =>
-    evalIn(`db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: 'cache_size=${mb}M'})`);
+    evalIn(`print(JSON.stringify(db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: 'cache_size=${mb}M'})))`);
   const applied = await setCache(2048);
-  if (applied.code !== 0) return null;
+  if (applied.code !== 0 || !(applied.stdout || '').includes('"ok":1')) return fail('收紧 WT cache', applied);
   onOutput?.(`── 克隆保护：mongod WT cache 临时收紧至 2G（原 ${(origBytes / 1024 ** 3).toFixed(1)}G，克隆结束恢复）──`);
   const origMb = Math.max(256, Math.round(origBytes / 1024 ** 2));
-  return async () => {
-    await setCache(origMb);
+  return {
+    ok: true,
+    restore: async () => {
+      await setCache(origMb);
+    },
   };
 }
 

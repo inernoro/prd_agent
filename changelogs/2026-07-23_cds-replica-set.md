@@ -28,3 +28,5 @@
 | fix | cds | 复验 R3-P3：流量舞台多服务时提供切换器，「+副本」不再默认打到字母序首个服务 |
 | fix | cds | 复验 R4-P0：克隆期临时收紧 mongod WT cache 至 2G（运行时 setParameter，克隆结束恢复、mongod 重启自动回默认）——辅助容器只保住客户端，被宿主 OOM 杀的是无内存上限的 mongod 本体 |
 | fix | cds | 复验 R4-P1：失败残留清理加 20s x5 延迟重试——失败最常见场景是主库崩溃恢复中，立刻 DROP 必失败 |
+| fix | cds | 复验 R5-P0：WT cache 收紧此前从未生效——mongosh 对 int64 输出 Long('...') 致 Number 解析 NaN、保护静默跳过后克隆裸奔；读值改脚本内 Number 强转 + 正则提数兜底，并改 fail-closed：保护建不起来直接中止克隆，禁止裸奔打主库 |
+| fix | cds | 复验 R5-P1：profile 级隔离克隆透传 onOutput——克隆保护/进度写进成员 statusMessage（UI 可见）+ 服务端日志，「受保护克隆」与「未受保护」从此可区分 |

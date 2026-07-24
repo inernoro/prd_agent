@@ -366,7 +366,17 @@ export class ReplicaSetService {
     }
     void (async () => {
       try {
-        const cloned = await cloneReplicaDb({ target, memberId: guardId, profileId, now: this.opts.now });
+        const cloned = await cloneReplicaDb({
+          target, memberId: guardId, profileId, now: this.opts.now,
+          // 复验 R5-P1：克隆保护/进度必须有用户可见 sink——透传到成员 statusMessage
+          //（保持「第1步」前缀，UI 的隔离阶段判定依赖它）+ 服务端日志
+          onOutput: (line) => {
+            this.opts.logger?.info?.(`[replica-set] ${branchId}/${profileId} ${line}`);
+            for (const m of members) {
+              this.patchMember(branchId, profileId, m.id, { statusMessage: `第1步 复制：${line.slice(0, 200)}` });
+            }
+          },
+        });
         const live = this.requireBranch(branchId);
         live.replicaDbSnapshots = [...(live.replicaDbSnapshots || []), cloned.snapshot];
         const liveRs = live.replicaSets![profileId];
