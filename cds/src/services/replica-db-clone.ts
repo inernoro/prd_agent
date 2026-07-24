@@ -211,22 +211,41 @@ export async function cloneReplicaDb(opts: {
   }
 
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
-  const result = await runDockerExec(argv, stdin, 600_000, 64 * 1024);
+
+  // 复验 R4-P0：辅助容器只保住了客户端——被宿主 OOM 杀掉的是 mongod 本体
+  // （mongo 容器无内存上限，WT cache 默认吃半机内存，restore 写入+建索引把
+  // mongod RSS 顶爆）。克隆期把 WT cache 运行时收紧到 2G（可逆；mongod 若
+  // 重启，runtime 参数自动回落配置默认，无永久副作用）。
+  let restoreCache: (() => Promise<void>) | null = null;
+  if (target.engine === 'mongo') {
+    restoreCache = await clampMongoWtCache(c, port, env, opts.onOutput);
+  }
+
+  let result: Awaited<ReturnType<typeof runDockerExec>>;
+  try {
+    result = await runDockerExec(argv, stdin, 600_000, 64 * 1024);
+  } finally {
+    if (restoreCache) await restoreCache().catch(() => undefined);
+  }
   if (result.code !== 0) {
     // 失败原因保留头尾双段（复验 R3-P2：进度日志刷满缓冲把真正的致命错误挤掉）
     const raw = `${result.stderr || result.stdout}`.trim();
     const detail = maskSecretValues(raw.length > 900 ? `${raw.slice(0, 300)}\n…\n${raw.slice(-500)}` : raw, secrets);
-    // 失败残留清理（复验 R3-P1：半成品克隆库脱管，台账不可见、官方删除通道触达不了）
-    let residue = '';
-    try {
-      await dropReplicaDb({
-        id: `rsdb_${memberId}`, profileId, memberId,
-        engine: target.engine, sourceDb: target.sourceDb, dbName, infraContainer: c,
-        clonedAt: (opts.now?.() ?? new Date()).toISOString(),
-      }, env);
-      residue = '（半成品克隆库已自动清理）';
-    } catch {
-      residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
+    // 失败残留清理（复验 R3-P1）。R4 补延迟重试：失败最常见的场景恰是「主库
+    // 正在崩溃恢复」，立刻 DROP 必失败——间隔 20s 重试给 mongod 恢复窗口。
+    let residue = `（警告：半成品克隆库 ${dbName} 未能自动清理，请到数据库工作台手动 DROP）`;
+    for (let attempt = 1; attempt <= 5; attempt += 1) {
+      try {
+        await dropReplicaDb({
+          id: `rsdb_${memberId}`, profileId, memberId,
+          engine: target.engine, sourceDb: target.sourceDb, dbName, infraContainer: c,
+          clonedAt: (opts.now?.() ?? new Date()).toISOString(),
+        }, env);
+        residue = '（半成品克隆库已自动清理）';
+        break;
+      } catch {
+        if (attempt < 5) await new Promise((r) => setTimeout(r, 20_000));
+      }
     }
     throw new Error(`数据库克隆失败（${target.engine}）: ${detail || `exit ${result.code}`}${residue}`);
   }
@@ -246,6 +265,40 @@ export async function cloneReplicaDb(opts: {
       infraContainer: c,
       clonedAt: (opts.now?.() ?? new Date()).toISOString(),
     },
+  };
+}
+
+/**
+ * 克隆期临时收紧 mongod WiredTiger cache（复验 R4-P0 根治手段）。
+ * 读当前 cache 上限，>2G 则运行时 setParameter 收到 2G，返回恢复函数；
+ * 读不到 / 已 ≤2G / 设置失败一律返回 null（不阻断克隆，只是失去保护）。
+ * 运行时参数不落盘：mongod 崩溃重启后自动回配置默认，不会把收紧值固化。
+ */
+async function clampMongoWtCache(
+  containerName: string,
+  port: number,
+  env: Record<string, string>,
+  onOutput?: (line: string) => void,
+): Promise<(() => Promise<void>) | null> {
+  const user = env.MONGO_INITDB_ROOT_USERNAME || '';
+  const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
+  const uri = user
+    ? `mongodb://${user}:${pw}@localhost:${port}/admin?authSource=admin`
+    : `mongodb://localhost:${port}/admin`;
+  const evalIn = (script: string) =>
+    runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
+  const read = await evalIn("print(db.serverStatus().wiredTiger.cache['maximum bytes configured'])");
+  const origBytes = Number((read.stdout || '').trim().split('\n').pop());
+  const CLAMP_BYTES = 2 * 1024 ** 3;
+  if (read.code !== 0 || !Number.isFinite(origBytes) || origBytes <= CLAMP_BYTES) return null;
+  const setCache = (mb: number) =>
+    evalIn(`db.adminCommand({setParameter: 1, wiredTigerEngineRuntimeConfig: 'cache_size=${mb}M'})`);
+  const applied = await setCache(2048);
+  if (applied.code !== 0) return null;
+  onOutput?.(`── 克隆保护：mongod WT cache 临时收紧至 2G（原 ${(origBytes / 1024 ** 3).toFixed(1)}G，克隆结束恢复）──`);
+  const origMb = Math.max(256, Math.round(origBytes / 1024 ** 2));
+  return async () => {
+    await setCache(origMb);
   };
 }
 

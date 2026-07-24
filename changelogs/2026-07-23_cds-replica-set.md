@@ -26,3 +26,5 @@
 | fix | cds | 复验 R3-P0：整库克隆改独立限额辅助容器（docker run 同镜像 + 内存/CPU 硬上限 + 共享 DB 网络命名空间 + dump/restore 单并发限流）——此前 dump 管道在数据库容器同 cgroup 内跑，内存压力实测把共享生产 mongod 打崩 |
 | fix | cds | 复验 R3-P1/P2：克隆失败自动 DROP 半成品残留库（清不掉则明示手动路径）；runDockerExec stderr 改头尾双段保留，进度日志不再把致命错误挤出缓冲 |
 | fix | cds | 复验 R3-P3：流量舞台多服务时提供切换器，「+副本」不再默认打到字母序首个服务 |
+| fix | cds | 复验 R4-P0：克隆期临时收紧 mongod WT cache 至 2G（运行时 setParameter，克隆结束恢复、mongod 重启自动回默认）——辅助容器只保住客户端，被宿主 OOM 杀的是无内存上限的 mongod 本体 |
+| fix | cds | 复验 R4-P1：失败残留清理加 20s x5 延迟重试——失败最常见场景是主库崩溃恢复中，立刻 DROP 必失败 |
