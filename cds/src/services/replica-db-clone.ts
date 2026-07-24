@@ -217,8 +217,24 @@ export async function cloneReplicaDb(opts: {
   // mongod RSS 顶爆）。克隆期把 WT cache 运行时收紧到 2G（可逆；mongod 若
   // 重启，runtime 参数自动回落配置默认，无永久副作用）。
   // 复验 R5：保护建不起来必须中止克隆（fail-closed）——静默跳过 = 裸奔打崩主库。
+  // 复验 R6：源库超过安全上限直接拒绝——保护全生效仍四次打崩 mongod，
+  // 大库整库克隆在共享宿主上没有安全路径，等专用克隆通道。
   let restoreCache: (() => Promise<void>) | null = null;
   if (target.engine === 'mongo') {
+    const maxMb = replicaCloneMaxMb();
+    const sizeRead = await mongoAdminEval(c, port, env,
+      `print(Number(db.getSiblingDB('${target.sourceDb}').stats().dataSize))`);
+    const dataBytes = parseMongoNumber(sizeRead.stdout);
+    if (sizeRead.code !== 0 || !Number.isFinite(dataBytes)) {
+      throw new Error('无法读取源库数据量，已中止克隆（fail-closed，保护共享主库）');
+    }
+    if (dataBytes > maxMb * 1024 ** 2) {
+      throw new Error(
+        `源库 ${target.sourceDb} 数据量 ${(dataBytes / 1024 ** 3).toFixed(2)}G 超过安全克隆上限 ${maxMb}MB，已拒绝克隆——` +
+        '共享宿主上的大库整库克隆已多次实测压垮 mongod（debt.cds.replica-set #16）。' +
+        '小库可正常隔离；确需大库克隆请调高 CDS_REPLICA_CLONE_MAX_MB 并自担主库风险，或等待专用克隆通道',
+      );
+    }
     const clamp = await clampMongoWtCache(c, port, env, opts.onOutput);
     if (!clamp.ok) {
       throw new Error(`克隆保护未能生效，已中止克隆以保护共享主库（${clamp.reason}）`);
@@ -277,6 +293,38 @@ export type MongoCacheClampResult =
   | { ok: true; restore: (() => Promise<void>) | null }
   | { ok: false; reason: string };
 
+/** mongod admin eval 通道（root 凭据经 URI，脚本经 --eval，输出 --quiet） */
+function mongoAdminEval(
+  containerName: string,
+  port: number,
+  env: Record<string, string>,
+  script: string,
+): ReturnType<typeof runDockerExec> {
+  const user = env.MONGO_INITDB_ROOT_USERNAME || '';
+  const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
+  const uri = user
+    ? `mongodb://${user}:${pw}@localhost:${port}/admin?authSource=admin`
+    : `mongodb://localhost:${port}/admin`;
+  return runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
+}
+
+/** mongosh 数值输出解析：脚本端必须 Number() 强转，这里再兜底提取行尾数字。 */
+function parseMongoNumber(stdout: string): number {
+  const m = /(\d+)\s*$/.exec((stdout || '').trim());
+  return m ? Number(m[1]) : NaN;
+}
+
+/**
+ * 整库克隆安全上限（复验 R6 熔断闸门）：共享宿主上对 prdagent（2.69G）的
+ * mongodump|mongorestore 已实测四次打崩生产 mongod（客户端隔离 + WT cache
+ * 收紧到 2G 全部生效仍崩）。在专用克隆通道落地前，源库超限一律拒绝——
+ * 拒绝是明确失败，裸奔是生产事故。上限可经 CDS_REPLICA_CLONE_MAX_MB 调整。
+ */
+export function replicaCloneMaxMb(): number {
+  const raw = Number(process.env.CDS_REPLICA_CLONE_MAX_MB);
+  return Number.isFinite(raw) && raw > 0 ? Math.max(64, raw) : 512;
+}
+
 /**
  * 克隆期临时收紧 mongod WiredTiger cache（复验 R4-P0 根治手段）。
  * 读当前 cache 上限，>2G 则运行时 setParameter 收到 2G，返回恢复函数。
@@ -294,21 +342,15 @@ async function clampMongoWtCache(
   env: Record<string, string>,
   onOutput?: (line: string) => void,
 ): Promise<MongoCacheClampResult> {
-  const user = env.MONGO_INITDB_ROOT_USERNAME || '';
   const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
-  const uri = user
-    ? `mongodb://${user}:${pw}@localhost:${port}/admin?authSource=admin`
-    : `mongodb://localhost:${port}/admin`;
-  const evalIn = (script: string) =>
-    runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
+  const evalIn = (script: string) => mongoAdminEval(containerName, port, env, script);
   const fail = (stage: string, r: { code: number; stderr: string; stdout: string }): MongoCacheClampResult => ({
     ok: false,
     reason: `${stage}失败（exit ${r.code}）: ${maskSecretValues(`${r.stderr || r.stdout}`.trim().slice(-300), [pw].filter(Boolean))}`,
   });
   const read = await evalIn("print(Number(db.serverStatus().wiredTiger.cache['maximum bytes configured']))");
   if (read.code !== 0) return fail('读取 WT cache 上限', read);
-  const numMatch = /(\d{6,})\s*$/.exec((read.stdout || '').trim());
-  const origBytes = numMatch ? Number(numMatch[1]) : NaN;
+  const origBytes = parseMongoNumber(read.stdout);
   if (!Number.isFinite(origBytes) || origBytes <= 0) {
     return { ok: false, reason: `WT cache 上限输出无法解析: ${(read.stdout || '').trim().slice(-120)}` };
   }

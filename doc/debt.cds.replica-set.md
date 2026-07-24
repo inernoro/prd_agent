@@ -18,4 +18,7 @@
 | 12 | open | 副本健康失真已修展示层（TCP 实测 + 红色不可达告警），但 forwarder 分流不摘除坏实例（R1 P1-2 残留） | 不可达副本仍按权重接真实流量，需人工下线或调 0 权重 | forwarder 被动健康：连续 ECONNREFUSED 临时摘除 + 恢复探测回池 |
 | 13 | open | 隔离过渡期入口探测 servedBy 短暂变 untagged（复制集路由暂退，R4 P3） | 隔离/失败期间主实例落点在探测里不可辨识 | 过渡期保持 primary 单路由并带标记头 |
 | 14 | open | 克隆错误文案头段仍是进度日志，真实原因在尾段（R4 P3，已不再被挤掉） | 可读性一般，需读到尾段 | 错误摘要优先提取匹配 error/failed 的行 |
-| 15 | open | 共享 infra 容器无内存上限，mongod WT cache 默认吃半机内存（R4-P0 环境根因；克隆路径已用运行时 cache 收紧规避） | 任何大写入负载（不限克隆）都可能把 mongod 顶到宿主 OOM | CDS infra 供给时默认加内存上限 + 匹配的 --wiredTigerCacheSizeGB；需评估存量容器重建影响（cross-project-isolation 通道 4） |
+| 15 | open | 共享 infra 容器无内存上限，mongod WT cache 默认吃半机内存（R4-P0 环境根因） | 任何大写入负载（不限克隆）都可能把 mongod 顶到宿主 OOM | CDS infra 供给时默认加内存上限 + 匹配的 --wiredTigerCacheSizeGB；需评估存量容器重建影响（cross-project-isolation 通道 4） |
+| 16 | open(熔断) | **大库整库克隆在共享宿主上无安全路径**：对 prdagent（2.69G）的 mongodump 管道克隆六轮验收四次打崩生产 mongod——R3 同 cgroup 裸奔、R4 辅助容器隔离客户端后仍崩、R5 WT cache 收紧因解析 bug 未生效、R6 收紧全窗口实测生效（2G）仍崩。「限内存即安全」的假设被证伪，根因疑为宿主内存常年吃紧下 restore 写压直接触发宿主 OOM 或 mongod 内部异常（平台日志通道 tail 500 行不足以取证，见 #17） | 复制隔离/保护罩对大库不可用 | 已落安全闸门：源库 dataSize 超 `CDS_REPLICA_CLONE_MAX_MB`（默认 512MB）拒绝克隆并明示原因，小库不受影响。根治候选（需用户拍板）：a) 宿主扩内存/清理容器后重评；b) 专用克隆通道（dump 落文件 + 限速分批 restore / 快照级复制）；c) 给 mongod 容器加 cgroup 内存限额 + 匹配 WT cache（接受重建）。fail-closed 分支（保护建立失败中止克隆）尚无实证运行记录 |
+| 17 | open | 崩溃现场不可追溯：`GET /api/infra/:id/logs` tail 上限 500 行，mongod 重启后的清理日志秒级刷满窗口，OOM 与否无法从平台通道取证（R6-P2） | 类似事故只能靠外部监护脚本抓时间线 | 崩溃前日志留存 / 暴露 docker inspect OOMKilled 标志通道 |
+| 18 | open | mysql / postgres 克隆路径无源库大小闸门（mongo 已加，R6） | 大 mysql/pg 库克隆理论上同风险（未实测） | 同款 dataSize 预检推广到双引擎 |

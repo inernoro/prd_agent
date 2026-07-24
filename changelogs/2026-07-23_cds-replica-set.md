@@ -30,3 +30,5 @@
 | fix | cds | 复验 R4-P1：失败残留清理加 20s x5 延迟重试——失败最常见场景是主库崩溃恢复中，立刻 DROP 必失败 |
 | fix | cds | 复验 R5-P0：WT cache 收紧此前从未生效——mongosh 对 int64 输出 Long('...') 致 Number 解析 NaN、保护静默跳过后克隆裸奔；读值改脚本内 Number 强转 + 正则提数兜底，并改 fail-closed：保护建不起来直接中止克隆，禁止裸奔打主库 |
 | fix | cds | 复验 R5-P1：profile 级隔离克隆透传 onOutput——克隆保护/进度写进成员 statusMessage（UI 可见）+ 服务端日志，「受保护克隆」与「未受保护」从此可区分 |
+| security | cds | 复验 R6 熔断闸门：mongo 整库克隆前预检源库 dataSize，超 CDS_REPLICA_CLONE_MAX_MB（默认 512MB）拒绝并明示原因——大库克隆在共享宿主上六轮验收四次打崩生产 mongod（WT cache 收紧实证生效仍崩，方案假设证伪），小库隔离不受影响 |
+| docs | doc | debt.cds.replica-set 补录 #16-#18：大库克隆无安全路径熔断台账（含四次崩溃时间线与三条根治候选）、崩溃现场不可追溯、mysql/pg 闸门待推广 |
