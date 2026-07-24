@@ -425,6 +425,46 @@ export function ProviderDetailsPage() {
   );
 }
 
+function observedAppCaller(item: LlmLogListItem, requestedCode: string): GatewayAppCaller {
+  const requestType = item.requestType?.trim() || requestedCode.split('::').pop() || 'unknown';
+  return {
+    id: `observed:${requestedCode}`,
+    teamId: item.teamId || null,
+    appCallerCode: item.appCallerCode?.replace(/^G-/, '') || requestedCode,
+    requestType,
+    sourceSystem: item.sourceSystem || '未标注',
+    clientCode: item.clientCode || '未标注',
+    environment: item.environment || '未标注',
+    purpose: 'runtime',
+    ingressProtocol: item.ingressProtocol || '未标注',
+    observedIngressProtocols: item.ingressProtocol ? [item.ingressProtocol] : [],
+    title: item.appCallerCodeDisplayName || item.appCallerTitle || null,
+    status: 'observed',
+    modelPoolId: item.modelPoolId || null,
+    modelPolicy: item.modelPolicy || null,
+    parameterPolicy: null,
+    lastObservedModelPoolId: item.modelPoolId || null,
+    lastObservedModelPolicy: item.modelPolicy || null,
+    lastObservedParameterPolicy: null,
+    lastObservedRequestId: item.requestId || item.id,
+    lastObservedSessionId: item.sessionId || null,
+    lastObservedRunId: item.runId || null,
+    owner: null,
+    monthlyBudgetUsd: null,
+    budgetReservationUsd: null,
+    rateLimitPerMinute: null,
+    notes: null,
+    totalSeen: 1,
+    firstSeenAt: item.startedAt,
+    lastSeenAt: item.startedAt,
+    createdAt: null,
+    rotatesKeyId: null,
+    rotatedByKeyId: null,
+    rotationState: 'observed',
+    updatedAt: item.startedAt,
+  };
+}
+
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
   const requestedCode = (params.get('code') || '').replace(/^G-/, '');
@@ -432,6 +472,7 @@ export function AppCallerDetailsPage() {
   const [app, setApp] = useState<GatewayAppCaller | null>(null);
   const [pool, setPool] = useState<ModelPool | null>(null);
   const [recent, setRecent] = useState<LlmLogListItem[]>([]);
+  const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -453,10 +494,14 @@ export function AppCallerDetailsPage() {
       const matched = appResult.data.items.find((item) => (
         item.id === requestedId
         || item.appCallerCode.replace(/^G-/, '') === requestedCode
-      )) ?? appResult.data.items[0] ?? null;
-      setApp(matched);
-      setPool(poolResult.data.items.find((item) => item.id === matched?.modelPoolId) ?? null);
-      if (logResult?.success) setRecent(logResult.data.items);
+      )) ?? null;
+      const recentItems = logResult?.success ? logResult.data.items : [];
+      const observed = recentItems.find((item) => item.appCallerCode?.replace(/^G-/, '') === requestedCode) ?? recentItems[0] ?? null;
+      const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
+      setRegistered(Boolean(matched));
+      setApp(resolved);
+      setPool(poolResult.data.items.find((item) => item.id === resolved?.modelPoolId) ?? null);
+      setRecent(recentItems);
       setLoading(false);
     });
     return () => {
@@ -475,23 +520,25 @@ export function AppCallerDetailsPage() {
       title={app.title || displayCode}
       identifier={displayCode}
       subtitle={`${app.sourceSystem || '未知来源'} · ${app.requestType || '未标注类型'}`}
-      description={app.notes || 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'}
+      description={app.notes || (registered
+        ? 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'
+        : '该 App 已出现在请求日志中，但当前租户注册表尚无对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
       icon={<AppEntityIcon size="lg" />}
       status={[
-        { label: app.status === 'active' ? '已启用' : app.status || '状态未知', tone: app.status === 'active' ? 'good' : 'warning' },
+        { label: registered ? (app.status === 'active' ? '已启用' : app.status || '状态未知') : '仅日志观测', tone: registered && app.status === 'active' ? 'good' : 'warning' },
         { label: app.modelPolicy || 'auto', tone: 'neutral' },
         { label: app.owner ? `负责人 ${app.owner}` : '未指定负责人', tone: app.owner ? 'good' : 'warning' },
       ]}
       metrics={[
-        { label: '累计请求', value: fmtCompact(app.totalSeen), hint: '注册表累计观察', icon: <Route size={17} /> },
-        { label: '月预算', value: app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}`, hint: '租户治理边界内', icon: <CircleDollarSign size={17} /> },
-        { label: '每分钟请求', value: app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute, hint: 'App 级速率限制', icon: <Gauge size={17} /> },
+        { label: registered ? '累计请求' : '近 30 天请求', value: fmtCompact(registered ? app.totalSeen : recent.length), hint: registered ? '注册表累计观察' : '来自当前日志范围', icon: <Route size={17} /> },
+        { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}`, hint: '租户治理边界内', icon: <CircleDollarSign size={17} /> },
+        { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute, hint: 'App 级速率限制', icon: <Gauge size={17} /> },
         { label: '最近调用', value: app.lastSeenAt ? fmtDate(app.lastSeenAt) : '暂无', hint: '最后一次观察时间', icon: <Clock3 size={17} /> },
       ]}
       backHref="/logs"
       backLabel="返回请求记录"
       primaryHref={`/app-callers?search=${encodeURIComponent(app.appCallerCode)}&focus=${encodeURIComponent(app.appCallerCode)}`}
-      primaryLabel="打开治理配置"
+      primaryLabel={registered ? '打开治理配置' : '打开 App 注册表'}
       sections={[
         {
           id: 'identity',
@@ -523,9 +570,9 @@ export function AppCallerDetailsPage() {
           id: 'governance',
           title: 'Governance',
           content: <Facts items={[
-            { label: '月预算', value: app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
-            { label: '单次预占', value: app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
-            { label: '每分钟请求', value: app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
+            { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
+            { label: '单次预占', value: !registered ? '未登记' : app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
+            { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
             { label: '负责人', value: app.owner || '未指定' },
             { label: '首次观察', value: app.firstSeenAt ? fmtDate(app.firstSeenAt) : '未记录' },
             { label: '最近更新', value: app.updatedAt ? fmtDate(app.updatedAt) : '未记录' },

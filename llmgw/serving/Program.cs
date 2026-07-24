@@ -80,7 +80,10 @@ builder.Services.AddSingleton<ILLMRequestContextAccessor, LLMRequestContextAcces
 builder.Services.AddSingleton(sp =>
     new LlmRequestLogBackground(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,
-        sp.GetRequiredService<ILogger<LlmRequestLogBackground>>()));
+        sp.GetRequiredService<ILogger<LlmRequestLogBackground>>(),
+        sp.GetRequiredService<IAssetStorage>(),
+        sp.GetRequiredService<IHttpClientFactory>(),
+        sp.GetRequiredService<ISafeOutboundUrlValidator>()));
 builder.Services.AddSingleton<ILlmRequestLogWriter>(sp =>
     new LlmRequestLogWriter(
         sp.GetRequiredService<LlmGatewayDataContext>().Context,

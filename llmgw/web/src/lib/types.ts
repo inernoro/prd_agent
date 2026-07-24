@@ -141,6 +141,11 @@ export type LlmLogDetail = {
   toolCallCount?: number | null;
   inputTokens?: number | null;
   outputTokens?: number | null;
+  imageSuccessCount?: number | null;
+  outputImages: LogImage[];
+  outputImageCaptureStatus?: string | null;
+  outputImageCaptureError?: string | null;
+  outputImageCapturedAt?: string | null;
   inputPricePerMillion?: number | null;
   outputPricePerMillion?: number | null;
   pricePerCall?: number | null;
@@ -184,6 +189,15 @@ export type LlmLogDetail = {
   finishReason?: string | null;
   isStreaming?: boolean | null;
   error?: string | null;
+};
+
+export type LogImage = {
+  url: string;
+  originalUrl?: string | null;
+  label?: string | null;
+  sha256?: string | null;
+  mimeType?: string | null;
+  sizeBytes?: number | null;
 };
 
 export type RouterTrace = {

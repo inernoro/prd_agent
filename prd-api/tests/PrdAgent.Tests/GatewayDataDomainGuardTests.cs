@@ -3445,6 +3445,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var entityDetails = ReadRepoFile("llmgw/web/src/pages/EntityDetailsPages.tsx");
         var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
@@ -3462,21 +3463,46 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("width: 'min(820px, 100vw)'", drawer);
         Assert.DoesNotContain("width: 'min(820px, 96vw)'", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("setSelectedLogId(matched.id)", logs);
+        Assert.Contains("openLogDetail(matched.id)", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
         Assert.Contains("响应内容", drawer);
         Assert.Contains("原始数据", drawer);
-        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", drawer);
-        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
+        Assert.Contains("const displayName = detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim()", drawer);
+        Assert.Contains("const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim()", logs);
+        Assert.Contains("<ImageResponseGallery detail={detail}", drawer);
+        Assert.Contains("detail.imageSuccessCount", drawer);
+        Assert.Contains("s/image", drawer);
+        Assert.Contains("query.set('transaction', id)", logs);
+        Assert.Contains("onPrevious=", logs);
+        Assert.Contains("onNext=", logs);
+        Assert.DoesNotContain("return '1 prompt'", logs);
+        Assert.DoesNotContain("image/min", logs);
+        Assert.Contains("display: inline-flex;", theme);
+        Assert.Contains("width: fit-content;", theme);
+        Assert.DoesNotContain(".lg-log-entity-hover-root {\n  display: block;", theme);
         Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
         Assert.Contains("font-size: 14px;", theme);
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
-        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*450", theme);
+        Assert.Contains("--log-text-entity: #fcfcfe", theme);
+        Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
+        Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);
+        Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
+        Assert.Contains("仅日志观测", entityDetails);
+        Assert.Contains("不补造预算或速率配置", entityDetails);
+
+        var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
+        Assert.Contains("CreateClient(\"SafeOutbound\")", imageBackground);
+        Assert.Contains("EnsureSafeHttpUrlAsync", imageBackground);
+        Assert.Contains("ResponseHeadersRead", imageBackground);
+        Assert.Contains("Content-Type 不是 image/*", imageBackground);
+        Assert.Contains("MaxStoredImageBytes", imageBackground);
+        Assert.DoesNotContain("Url = image.SourceUrl", imageBackground);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
