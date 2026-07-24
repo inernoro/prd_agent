@@ -16,3 +16,6 @@
 | 10 | open | 成员直达域名响应缺 X-CDS-Replica 标记头（R1 P3-4） | 直达访问无法从响应头确认落点（主入口有头） | forwarder 成员直达路由也注入标记头 |
 | 11 | open | 流量舞台一次仅渲染一个服务（R1 P3-5） | 多服务复制集拓扑需回行式逐行看 | 舞台支持多 profile 分区或服务切换器 |
 | 12 | open | 副本健康失真已修展示层（TCP 实测 + 红色不可达告警），但 forwarder 分流不摘除坏实例（R1 P1-2 残留） | 不可达副本仍按权重接真实流量，需人工下线或调 0 权重 | forwarder 被动健康：连续 ECONNREFUSED 临时摘除 + 恢复探测回池 |
+| 13 | open | 隔离过渡期入口探测 servedBy 短暂变 untagged（复制集路由暂退，R4 P3） | 隔离/失败期间主实例落点在探测里不可辨识 | 过渡期保持 primary 单路由并带标记头 |
+| 14 | open | 克隆错误文案头段仍是进度日志，真实原因在尾段（R4 P3，已不再被挤掉） | 可读性一般，需读到尾段 | 错误摘要优先提取匹配 error/failed 的行 |
+| 15 | open | 共享 infra 容器无内存上限，mongod WT cache 默认吃半机内存（R4-P0 环境根因；克隆路径已用运行时 cache 收紧规避） | 任何大写入负载（不限克隆）都可能把 mongod 顶到宿主 OOM | CDS infra 供给时默认加内存上限 + 匹配的 --wiredTigerCacheSizeGB；需评估存量容器重建影响（cross-project-isolation 通道 4） |
