@@ -173,6 +173,7 @@ export async function cloneReplicaDb(opts: {
    */
   // 两阶段克隆的落盘目录（挂进辅助容器 /rsclone；结束后 finally 清理）
   const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
+  fs.mkdirSync(scratchDir, { recursive: true });
   const helper = (extraEnv: string[], script: string): string[] => [
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${c}`,
@@ -210,15 +211,21 @@ export async function cloneReplicaDb(opts: {
     secrets.push(pw);
     const conn = `--host 127.0.0.1 --port ${port}`;
     const auth = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
-    // 复验 R7：两阶段读写错峰——dump 先落盘（gzip 压缩），确认完整后再 restore，
-    // 消除「dump 读压 + restore 写压同时打在 mongod 上」的叠加峰值与管道 broken pipe
-    // 失败模式；阶段间 sleep 5s 让脏页回写喘息。归档文件挂宿主临时目录，克隆结束清理。
+    // 复验 R7：两阶段读写错峰——dump 先落盘（gzip 压缩），确认完整后再 restore。
+    // 复验 R7 取证定罪后（docker events die exitCode=139 = SIGSEGV）：历轮崩溃点
+    // 全部落在「restore 数据完成、批量并行建索引」的瞬间（46.7-47.5 万文档 ≈ 全库
+    // 数据阶段末尾），2.3G 的 apirequestlogs 要一次性并行建 8 个索引。对症：
+    // restore 加 --noIndexRestore，索引改为第 3 阶段逐个串行前台重建（每次一个 +
+    // 300ms 间歇），避开 mongod 8.0.x 在批量索引构建下的段错误路径。
+    fs.writeFileSync(path.join(scratchDir, 'build-indexes.js'), buildMongoIndexScript(target.sourceDb, dbName));
     argv = helper(user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [],
       `set -e; command -v mongodump >/dev/null 2>&1 || { echo 'mongo 镜像缺少 mongodump（database tools），无法克隆'; exit 41; }; ` +
-      `echo '── 阶段1/2: mongodump 落盘 ──'; ` +
+      `echo '── 阶段1/3: mongodump 落盘 ──'; ` +
       `mongodump ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip -d ${target.sourceDb} --numParallelCollections=1; ` +
-      `sleep 5; echo '── 阶段2/2: mongorestore 回灌 ──'; ` +
-      `mongorestore ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`);
+      `sleep 5; echo '── 阶段2/3: mongorestore 回灌（不建索引）──'; ` +
+      `mongorestore ${conn} ${auth} --archive=/rsclone/dump.archive.gz --gzip --nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1 --noIndexRestore; ` +
+      `sleep 5; echo '── 阶段3/3: 逐索引串行重建 ──'; ` +
+      `mongosh ${conn} ${auth} --quiet /rsclone/build-indexes.js`);
   }
 
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
@@ -255,8 +262,7 @@ export async function cloneReplicaDb(opts: {
 
   let result: Awaited<ReturnType<typeof runDockerExec>>;
   try {
-    fs.mkdirSync(scratchDir, { recursive: true });
-    result = await runDockerExec(argv, stdin, 600_000, 64 * 1024);
+    result = await runDockerExec(argv, stdin, 1_200_000, 64 * 1024);
   } finally {
     if (restoreCache) await restoreCache().catch(() => undefined);
     try { fs.rmSync(scratchDir, { recursive: true, force: true }); } catch { /* noop */ }
@@ -300,6 +306,35 @@ export async function cloneReplicaDb(opts: {
       clonedAt: (opts.now?.() ?? new Date()).toISOString(),
     },
   };
+}
+
+/**
+ * 逐索引串行重建脚本（mongosh 文件执行）。--noIndexRestore 之后按源库索引定义
+ * 一次一个前台创建，每个之间 300ms 间歇——避开批量并行索引构建的 SIGSEGV 路径。
+ * 库名均已过 DB_NAME_SAFE 白名单，可安全内插。
+ */
+function buildMongoIndexScript(sourceDb: string, targetDb: string): string {
+  return `
+const src = db.getSiblingDB('${sourceDb}');
+const dst = db.getSiblingDB('${targetDb}');
+let built = 0;
+src.getCollectionInfos({ type: 'collection' }).forEach((ci) => {
+  src.getCollection(ci.name).getIndexes().forEach((ix) => {
+    if (ix.name === '_id_') return;
+    const spec = Object.assign({}, ix);
+    delete spec.v;
+    delete spec.ns;
+    delete spec.background;
+    const r = dst.runCommand({ createIndexes: ci.name, indexes: [spec] });
+    if (r.ok !== 1) {
+      throw new Error('createIndex failed ' + ci.name + '/' + ix.name + ': ' + JSON.stringify(r));
+    }
+    built += 1;
+    sleep(300);
+  });
+});
+print('serial-indexes-built: ' + built);
+`;
 }
 
 export type MongoCacheClampResult =
