@@ -954,6 +954,7 @@ def _entry_evidence_failures(entry: dict) -> list[str]:
                 require_config_authority=stage == "http-full",
                 allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
                 allow_skipped_config_authority=bool(maintenance_baseline_commit),
+                allow_skipped_shadow_checks=bool(maintenance_baseline_commit),
             )
         except SystemExit as exc:
             failures.append(str(exc))
@@ -1412,6 +1413,7 @@ def stage_report(args: argparse.Namespace) -> int:
                     require_config_authority=args.stage == "http-full",
                     allow_skipped_runtime_gates=bool(maintenance_baseline_commit),
                     allow_skipped_config_authority=bool(maintenance_baseline_commit),
+                    allow_skipped_shadow_checks=bool(maintenance_baseline_commit),
                 )
             elif label == "prodPreflightJson":
                 _require_prod_preflight_for_commit(path, label, args.commit, args.stage)

@@ -1,5 +1,6 @@
 #!/usr/bin/env python3
 
+import ast
 import importlib.util
 import json
 import tempfile
@@ -228,6 +229,39 @@ class MaintenanceLedgerGateTests(unittest.TestCase):
             '--min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"',
             source,
         )
+
+    def test_all_release_gate_validation_paths_propagate_maintenance_shadow_skip(self) -> None:
+        source = MODULE_PATH.read_text(encoding="utf-8")
+        tree = ast.parse(source)
+        required_functions = {
+            "_entry_evidence_failures",
+            "append",
+            "stage_report",
+        }
+        calls_by_function: dict[str, list[ast.Call]] = {}
+
+        for node in ast.walk(tree):
+            if not isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef)):
+                continue
+            calls = [
+                child
+                for child in ast.walk(node)
+                if isinstance(child, ast.Call)
+                and isinstance(child.func, ast.Name)
+                and child.func.id == "_require_release_gate_for_commit"
+            ]
+            if calls:
+                calls_by_function[node.name] = calls
+
+        self.assertTrue(required_functions.issubset(calls_by_function))
+        for function_name in required_functions:
+            for call in calls_by_function[function_name]:
+                keywords = {keyword.arg for keyword in call.keywords}
+                self.assertIn(
+                    "allow_skipped_shadow_checks",
+                    keywords,
+                    f"{function_name} 未传递维护发布 shadow skip 契约",
+                )
 
 
 if __name__ == "__main__":
