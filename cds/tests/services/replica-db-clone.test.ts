@@ -12,7 +12,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { StateService } from '../../src/services/state.js';
-import { resolveReplicaDbTarget } from '../../src/services/replica-db-clone.js';
+import { isolatedDbNameFor, resolveReplicaDbTarget } from '../../src/services/replica-db-clone.js';
 import type { BranchEntry, BuildProfile, InfraService } from '../../src/types.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 
@@ -122,6 +122,18 @@ describe('resolveReplicaDbTarget', () => {
     const b = resolveReplicaDbTarget(state, branch(), profile());
     expect(b.target?.engine).toBe('postgres');
     expect(b.target?.sourceDb).toBe('ledger');
+  });
+
+  it('隔离库名生成必须自证通过白名单（复验 R2-P1-1：guard-N/res-N 连字符归一）', () => {
+    const SAFE = /^[a-z0-9_]+$/;
+    // isolateProfile / startDbGuard 的真实生成格式是 guard-<N>；addMember 的是 res-<N>
+    expect(isolatedDbNameFor('prdagent', 'guard-1')).toBe('prdagent_rs_guard_1');
+    expect(isolatedDbNameFor('prdagent', 'res-2')).toBe('prdagent_rs_res_2');
+    for (const memberId of ['guard-1', 'guard-12', 'res-1', 'res-3', 'rsfa7a2b']) {
+      const name = isolatedDbNameFor('prdagent', memberId);
+      expect(SAFE.test(name), `${memberId} → ${name} 必须通过 DB_NAME_SAFE`).toBe(true);
+      expect(name).toContain('_rs_'); // dropReplicaDb 的删除守卫要求
+    }
   });
 
   it('dependsOn 优先选中显式声明的 infra 实例', () => {

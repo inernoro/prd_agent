@@ -172,6 +172,21 @@ export function ReplicaSetPanel({
     return () => clearInterval(timer);
   }, [state, load]);
 
+  // 成员转入 error 时立即 toast 失败原因（复验 R2-P2-1：失败不许静默）
+  const toastedErrorsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (state.status !== 'ok') return;
+    for (const [profileId, rs] of Object.entries(state.data.replicaSets)) {
+      for (const m of rs.members) {
+        const key = `${profileId}:${m.id}:${m.statusMessage ?? ''}`;
+        if (m.status === 'error' && !toastedErrorsRef.current.has(key)) {
+          toastedErrorsRef.current.add(key);
+          onToast?.(`${profileId} 的副本 ${m.id} 失败：${m.statusMessage || '未知原因'}`);
+        }
+      }
+    }
+  }, [state, onToast]);
+
   const run = useCallback(async (key: string, fn: () => Promise<void>, doneMessage?: string) => {
     setBusy(key);
     try {
@@ -364,6 +379,7 @@ function ServiceRow({
   const members = rs?.enabled ? rs.members : [];
   const running = members.filter((m) => m.status === 'running');
   const unreachable = running.filter((m) => m.reachable === false);
+  const errored = members.filter((m) => m.status === 'error');
   const tw = (rs?.primaryWeight ?? 100) + running.reduce((s, m) => s + m.weight, 0);
   const availableRows = candidates.filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
   const [probe, setProbe] = useState<ProbeResult | 'running' | null>(null);
@@ -423,6 +439,12 @@ function ServiceRow({
           <span className="text-muted-foreground">— 建议在「管理」里下线该副本，或将权重调为 0</span>
         </div>
       ) : null}
+      {errored.map((m) => (
+        <div key={m.id} className="flex flex-wrap items-center gap-2 px-5 pb-2.5 text-[11px] text-destructive">
+          <span className="font-semibold">{m.id} 失败：{m.statusMessage || '未知原因'}</span>
+          <span className="text-muted-foreground">— 可在「管理」里下线后重试</span>
+        </div>
+      ))}
 
       {open ? (
         <div className="grid gap-2.5 border-t border-dashed border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/50 px-5 py-3.5">
@@ -630,10 +652,12 @@ function ReplicaStage({ profileId, rs, service, infra, previewUrl, memberLimit, 
       name: m.id,
       w: m.status === 'running' ? m.weight : 0,
       boot: m.status === 'provisioning',
-      danger: m.status === 'running' && m.reachable === false,
+      danger: m.status === 'error' || (m.status === 'running' && m.reachable === false),
       sub: m.status === 'provisioning'
         ? (m.statusMessage || '创建中 · 可撤回')
-        : m.reachable === false ? '不可达 · 端口拒绝连接，建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
+        : m.status === 'error'
+          ? `失败：${m.statusMessage || '未知原因'}`
+          : m.reachable === false ? '不可达 · 端口拒绝连接，建议下线' : `副本 · ${m.commitSha?.slice(0, 7) ?? ''}`,
       port: m.hostPort,
     })));
   const slots = insts.length + (members.length < memberLimit ? 1 : 0);

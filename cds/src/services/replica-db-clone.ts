@@ -122,6 +122,16 @@ function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine
   return kind === engine;
 }
 
+/**
+ * 隔离库名生成：`<源库>_rs_<成员id>`，成员 id 里 SQL 标识符不允许的字符（如
+ * `guard-1` / `res-1` 的连字符）归一为下划线——生成名必须自证通过 DB_NAME_SAFE。
+ * （复验 R2-P1-1：guard-N 直拼进库名被自家白名单拒绝，隔离 100% 失败于第 1 步。）
+ */
+export function isolatedDbNameFor(sourceDb: string, memberId: string): string {
+  const safeMember = memberId.toLowerCase().replace(/[^a-z0-9_]/g, '_');
+  return `${sourceDb}_rs_${safeMember}`.toLowerCase();
+}
+
 export interface CloneResult {
   /** 成员 env 覆写：全部库名 key → 隔离库名 */
   envOverride: Record<string, string>;
@@ -140,7 +150,7 @@ export async function cloneReplicaDb(opts: {
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
   const { target, memberId, profileId } = opts;
-  const dbName = `${target.sourceDb}_rs_${memberId}`.toLowerCase();
+  const dbName = isolatedDbNameFor(target.sourceDb, memberId);
   if (!DB_NAME_SAFE.test(dbName)) throw new Error(`隔离库名不合法: ${dbName}`);
   if (dbName.length > 60) {
     throw new Error(`隔离库名超长（${dbName.length} > 60，mysql/postgres 标识符上限），源库名过长时暂不支持隔离`);
