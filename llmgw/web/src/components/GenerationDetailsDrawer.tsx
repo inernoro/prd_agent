@@ -2,15 +2,17 @@
 // 移植自 prd-admin GenerationDetailsDrawer，主题 token，缺字段统一「—」。
 
 import { useEffect, useState } from 'react';
+import type { ReactNode } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowLeft, ArrowUpRight, Copy, X } from 'lucide-react';
+import { ArrowLeft, ArrowUpRight, ChevronLeft, ChevronRight, Clock3, Coins, Copy, Gauge, Image as ImageIcon, RotateCcw, Timer, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { getLogDetail } from '@/lib/api';
 import type { LlmLogDetail } from '@/lib/types';
 import { SectionLoader } from './ui';
+import { AppEntityIcon, ModelEntityIcon, ProviderEntityIcon } from './LogEntityIcon';
 import { DASH, computeTokPerSec, fmtCost, fmtMs, deriveLifecycle, getProtocolMeta } from '@/lib/logsHelpers';
 
-function MetricCard({ title, value, note }: { title: string; value: string; note?: string }) {
+function MetricCard({ title, value, note, icon }: { title: string; value: string; note?: string; icon: ReactNode }) {
   return (
     <div
       style={{
@@ -22,7 +24,7 @@ function MetricCard({ title, value, note }: { title: string; value: string; note
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ fontSize: 13, color: 'var(--text-muted)' }}>{title}</div>
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)' }}>{icon}{title}</div>
       <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
       {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
@@ -88,6 +90,66 @@ function CodeBlock({ body, empty = '暂无数据' }: { body?: string | null; emp
     >
       {body || empty}
     </pre>
+  );
+}
+
+function formatBytes(bytes?: number | null): string {
+  if (bytes == null || !Number.isFinite(bytes)) return DASH;
+  if (bytes < 1024) return `${bytes} B`;
+  if (bytes < 1024 * 1024) return `${Math.round(bytes / 102.4) / 10} KB`;
+  return `${Math.round(bytes / 1024 / 102.4) / 10} MB`;
+}
+
+function generationSpeed(detail: LlmLogDetail): string {
+  if (detail.imageSuccessCount && detail.durationMs && detail.durationMs > 0) {
+    const secondsPerImage = Math.round((detail.durationMs / detail.imageSuccessCount) / 100) / 10;
+    return `${secondsPerImage}s/image`;
+  }
+  const tps = computeTokPerSec(detail.outputTokens, detail.durationMs);
+  if (tps != null) return `${tps} tok/s`;
+  return DASH;
+}
+
+function ImageResponseGallery({ detail }: { detail: LlmLogDetail }) {
+  const images = detail.outputImages ?? [];
+  if (images.length === 0) {
+    if (!detail.outputImageCaptureStatus) return null;
+    const message = detail.outputImageCaptureStatus === 'pending'
+      ? '图片已返回，正在异步保存预览，不影响本次响应。'
+      : detail.outputImageCaptureStatus === 'failed'
+        ? `图片预览保存失败：${detail.outputImageCaptureError || '未提供原因'}`
+        : detail.outputImageCaptureStatus === 'queue_full'
+          ? '图片预览存储队列繁忙，原始响应已正常返回。'
+          : null;
+    return message ? <div className="lg-generation-image-status">{message}</div> : null;
+  }
+
+  return (
+    <section className="lg-generation-images" aria-label={`响应图片，共 ${images.length} 张`}>
+      <div className="lg-generation-images-heading">
+        <span><ImageIcon size={15} aria-hidden="true" />响应图片</span>
+        <strong>{images.length} {images.length === 1 ? 'image' : 'images'}</strong>
+      </div>
+      <div className="lg-generation-image-grid">
+        {images.map((image, index) => (
+          <a
+            key={image.sha256 || image.url || index}
+            href={image.originalUrl || image.url}
+            target="_blank"
+            rel="noreferrer"
+            className="lg-generation-image"
+            title={`打开第 ${index + 1} 张原图`}
+          >
+            <img src={image.url} alt={image.label || `响应图片 ${index + 1}`} loading="lazy" referrerPolicy="no-referrer" />
+            <span>
+              <strong>{image.label || `生成结果 ${index + 1}`}</strong>
+              <small>{[image.mimeType, formatBytes(image.sizeBytes)].filter((value) => value && value !== DASH).join(' · ') || '已存储'}</small>
+            </span>
+          </a>
+        ))}
+      </div>
+      <p>图片由后台异步保存；原始接口响应仍按上游协议返回 Base64 或 URL，不等待日志存储。</p>
+    </section>
   );
 }
 
@@ -174,6 +236,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
         error: detail.error,
         reason: detail.resolutionReason,
       }];
+  const maxDuration = Math.max(1, ...attempts.map((attempt) => attempt.durationMs ?? 0));
   return (
     <section>
       <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
@@ -201,6 +264,12 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
               <span className="lg-provider-response-main">
                 <span className="lg-provider-response-provider">{provider}</span>
                 <span className="lg-provider-response-model">{attempt.model || DASH}</span>
+                <span className="lg-provider-response-track" aria-hidden="true">
+                  <span
+                    className={warning ? 'is-warning' : ''}
+                    style={{ width: `${Math.max(5, ((attempt.durationMs ?? 0) / maxDuration) * 100)}%` }}
+                  />
+                </span>
                 {pool ? <span className="lg-provider-response-pool">模型池：{pool}</span> : null}
                 {attempt.error || attempt.reason ? (
                   <span className="lg-provider-response-reason" style={{ color: warning ? 'var(--warn)' : 'var(--text-muted)' }}>
@@ -253,9 +322,11 @@ function transportLabel(transport?: string | null): string {
 }
 
 function generationAppName(detail: LlmLogDetail): string {
+  const displayName = detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim();
+  if (displayName) return displayName;
   const code = detail.appCallerCode?.trim();
   if (code) return code.startsWith('G-') ? code : `G-${code}`;
-  return detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim() || DASH;
+  return DASH;
 }
 
 function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg: string }[] {
@@ -278,10 +349,14 @@ function fidelityChips(detail: LlmLogDetail): { label: string; color: string; bg
 export function GenerationDetailsDrawer({
   logId,
   onClose,
+  onPrevious,
+  onNext,
   presentation = 'drawer',
 }: {
   logId: string;
   onClose: () => void;
+  onPrevious?: () => void;
+  onNext?: () => void;
   presentation?: 'drawer' | 'page';
 }) {
   const isPage = presentation === 'page';
@@ -321,12 +396,13 @@ export function GenerationDetailsDrawer({
     if (isPage) return;
     const onKey = (e: KeyboardEvent) => {
       if (e.key === 'Escape') onClose();
+      if (e.key === 'ArrowLeft' && onPrevious) onPrevious();
+      if (e.key === 'ArrowRight' && onNext) onNext();
     };
     window.addEventListener('keydown', onKey);
     return () => window.removeEventListener('keydown', onKey);
-  }, [isPage, onClose]);
+  }, [isPage, onClose, onNext, onPrevious]);
 
-  const tps = detail ? computeTokPerSec(detail.outputTokens, detail.durationMs) : null;
   const streaming = detail?.isStreaming == null ? DASH : detail.isStreaming ? '是' : '否';
   const promptBody = detail ? [detail.questionText, detail.systemPromptText].filter(Boolean).join('\n\n---\n\n') || null : null;
   const responseBody = detail
@@ -371,7 +447,7 @@ export function GenerationDetailsDrawer({
           top: 0,
           right: 0,
           height: '100vh',
-          width: 'min(820px, 96vw)',
+          width: 'min(820px, 100vw)',
           display: 'flex',
           flexDirection: 'column',
           background: 'var(--bg-page)',
@@ -396,14 +472,15 @@ export function GenerationDetailsDrawer({
               <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h2>
             )}
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}>{detail.logicalModelPublicId || detail.model || DASH}</span>
-              <span style={{ padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}>{detail.platformName || detail.provider || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}><ModelEntityIcon model={detail.logicalModelPublicId || detail.model} />{detail.logicalModelPublicId || detail.model || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><ProviderEntityIcon provider={detail.platformName || detail.provider} />{detail.platformName || detail.provider || DASH}</span>
+              {detail.appCallerCode ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><AppEntityIcon app={generationAppName(detail)} sourceSystem={detail.sourceSystem} />{generationAppName(detail)}</span> : null}
               <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
             </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
           <div className="lg-generation-header-actions">
             {!isPage ? <Link to={`/logs/${encodeURIComponent(logId)}`} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
-            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 36, minWidth: 36, height: 36, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
+            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
               {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
             </button>
           </div>
@@ -487,9 +564,9 @@ export function GenerationDetailsDrawer({
               {viewTab === 'overview' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <div className="lg-generation-metrics" style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 7 }}>
-                    <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} />
-                    <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} />
-                    <MetricCard title="生成速度" value={tps == null ? DASH : `${tps} tok/s`} />
+                    <MetricCard title="上游耗时" value={fmtMs(detail.durationMs)} icon={<Clock3 size={15} aria-hidden="true" />} />
+                    <MetricCard title="首字节" value={detail.firstByteAt ? fmtMs(Date.parse(detail.firstByteAt) - Date.parse(detail.startedAt)) : DASH} icon={<Timer size={15} aria-hidden="true" />} />
+                    <MetricCard title="生成速度" value={generationSpeed(detail)} note={detail.imageSuccessCount ? '图片为平均每张生成耗时' : undefined} icon={<Gauge size={15} aria-hidden="true" />} />
                     <MetricCard
                       title="费用"
                       value={detail.providerReportedCost == null
@@ -498,12 +575,25 @@ export function GenerationDetailsDrawer({
                       note={detail.providerReportedCost != null
                         ? `Provider 实际${detail.reconciliationStatus ? ` · ${detail.reconciliationStatus}` : ''}`
                         : detail.estimatedCost == null ? '未知：缺 token 或价格快照' : 'Gateway 估算 · 等待 Provider 对账'}
+                      icon={<Coins size={15} aria-hidden="true" />}
                     />
-                    <MetricCard title="Token" value={`${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`} note="输入 → 输出" />
+                    <MetricCard
+                      title={detail.imageSuccessCount ? '用量' : 'Token'}
+                      value={detail.imageSuccessCount
+                        ? `${detail.imageSuccessCount} ${detail.imageSuccessCount === 1 ? 'image' : 'images'}`
+                        : `${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`}
+                      note={detail.imageSuccessCount
+                        ? (detail.inputTokens != null || detail.outputTokens != null
+                          ? `Token ${detail.inputTokens ?? DASH} → ${detail.outputTokens ?? DASH}`
+                          : '上游未返回 Token')
+                        : '输入 → 输出'}
+                      icon={detail.imageSuccessCount ? <ImageIcon size={15} aria-hidden="true" /> : <Coins size={15} aria-hidden="true" />}
+                    />
                     <MetricCard
                       title="回退"
                       value={detail.isFallback ? '是' : '否'}
                       note={detail.isFallback ? detail.fallbackReason ?? undefined : undefined}
+                      icon={<RotateCcw size={15} aria-hidden="true" />}
                     />
                   </div>
                   <section>
@@ -555,7 +645,15 @@ export function GenerationDetailsDrawer({
                       ))}
                     </div>
                     {bodyTab === 'request' ? <CodeBlock body={promptBody || prettyJson(detail.requestBodyRedacted)} empty="未记录请求内容" /> : null}
-                    {bodyTab === 'response' ? <CodeBlock body={responseBody} empty="未记录响应内容" /> : null}
+                    {bodyTab === 'response' ? (
+                      <>
+                        <ImageResponseGallery detail={detail} />
+                        <CodeBlock
+                          body={responseBody}
+                          empty={detail.outputImageCaptureStatus === 'pending' ? '图片已返回，预览正在异步保存' : '未记录响应内容'}
+                        />
+                      </>
+                    ) : null}
                     {bodyTab === 'raw' ? <CodeBlock body={rawBody} empty="未记录原始数据" /> : null}
                   </div>
                   {detail.responseToolCalls ? (
@@ -621,6 +719,13 @@ export function GenerationDetailsDrawer({
             </div>
           )}
         </div>
+        {!isPage ? (
+          <div className="lg-generation-record-nav" aria-label="前后请求导航">
+            <button type="button" disabled={!onPrevious} onClick={onPrevious} aria-label="上一条请求"><ChevronLeft size={17} />上一条</button>
+            <span className="tabular">{detail?.requestId || logId}</span>
+            <button type="button" disabled={!onNext} onClick={onNext} aria-label="下一条请求">下一条<ChevronRight size={17} /></button>
+          </div>
+        ) : null}
       </div>
     </div>
   );

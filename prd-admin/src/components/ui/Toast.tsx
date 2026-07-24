@@ -90,16 +90,16 @@ function ToastItem({ toast }: { toast: ToastModel }) {
       <Icon size={20} style={{ color: color.icon, flexShrink: 0, marginTop: 2 }} />
 
       <div className="flex-1 min-w-0">
-        <div className="font-semibold text-[13px] text-white mb-1">{toast.title}</div>
+        <div className="font-semibold text-[13px] text-token-primary mb-1">{toast.title}</div>
         {toast.message && (
-          <div className="text-[12px] text-white/70 whitespace-pre-wrap">{toast.message}</div>
+          <div className="text-[12px] text-token-secondary whitespace-pre-wrap">{toast.message}</div>
         )}
       </div>
 
       {toast.action && (
         <button
           onClick={handleActionClick}
-          className="flex-shrink-0 px-2.5 h-7 rounded-lg text-[12px] font-medium hover:bg-white/10 transition-colors"
+          className="flex-shrink-0 px-2.5 h-7 rounded-lg text-[12px] font-medium hover-bg-soft transition-colors"
           style={{ color: color.icon, border: `1px solid ${color.border}` }}
         >
           {toast.action.label}
@@ -108,10 +108,10 @@ function ToastItem({ toast }: { toast: ToastModel }) {
 
       <button
         onClick={handleClose}
-        className="flex-shrink-0 p-1 rounded-lg hover:bg-white/10 transition-colors"
+        className="flex-shrink-0 p-1 rounded-lg hover-bg-soft transition-colors"
         aria-label="关闭"
       >
-        <X size={14} style={{ color: 'rgba(255,255,255,0.6)' }} />
+        <X size={14} style={{ color: 'var(--text-secondary)' }} />
       </button>
     </div>
   );

@@ -650,7 +650,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
                         size={12}
                         fill={favorited ? '#FBBF24' : 'none'}
                         style={{
-                          color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                          color: favorited ? '#FBBF24' : 'var(--text-muted)',
                           filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
                         }}
                       />
@@ -679,7 +679,7 @@ export function ToolCard({ item, source = 'mine', displayMode = 'standard' }: To
                   size={12}
                   fill={favorited ? '#FBBF24' : 'none'}
                   style={{
-                    color: favorited ? '#FBBF24' : 'rgba(255, 255, 255, 0.25)',
+                    color: favorited ? '#FBBF24' : 'var(--text-muted)',
                     filter: favorited ? 'drop-shadow(0 0 4px rgba(251, 191, 36, 0.5))' : 'none',
                   }}
                 />

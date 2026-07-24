@@ -33,7 +33,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
   return (
     <div
       data-testid="next-step-bar"
-      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-white/8 bg-white/2"
+      className="shrink-0 flex items-center gap-2 px-3 py-1.5 border-b border-token-subtle bg-token-nested"
       style={{ minHeight: 34 }}
     >
       <span className="text-[10px] text-[var(--text-tertiary)] shrink-0">下一步</span>
@@ -45,7 +45,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
           type="button"
           onClick={() => onSeedPatch(s.seed)}
           title={`填入输入框：${s.seed}`}
-          className="text-[10px] text-[var(--text-secondary)] bg-white/4 border border-white/8 rounded-md px-2 py-0.5 hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-[var(--text-primary)] transition-colors shrink-0"
+          className="text-[10px] text-[var(--text-secondary)] bg-token-nested border border-token-subtle rounded-md px-2 py-0.5 hover:bg-purple-500/10 hover:border-purple-500/30 hover:text-[var(--text-primary)] transition-colors shrink-0"
         >
           {s.label}
         </button>
@@ -56,7 +56,7 @@ export function NextStepBar(props: NextStepBarProps): JSX.Element {
         <button
           type="button"
           onClick={onDownload}
-          className="flex items-center gap-1 text-[10px] text-[var(--text-secondary)] bg-white/5 border border-white/8 rounded-md px-2 py-1 hover:bg-white/10 hover:text-[var(--text-primary)] transition-colors"
+          className="flex items-center gap-1 text-[10px] text-[var(--text-secondary)] bg-token-nested border border-token-subtle rounded-md px-2 py-1 hover-bg-soft hover:text-[var(--text-primary)] transition-colors"
         >
           <Download size={12} />
           下载 HTML

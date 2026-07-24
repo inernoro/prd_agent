@@ -83,6 +83,19 @@ admin/api 的编译耗时是 **CPU 固有成本**，I/O/并行旋钮榨不动；
 - **state 膨胀源两处堵住**：容器日志黑匣子加 per-branch 双闸（10 条/2MB）+ 启动孤儿裁剪；JSON 存储 save 从每次同步 stringify+fsync 改为去抖合并异步落盘（commit `d9fb5dc`）——间接减轻本台账「前端缓慢」与 `debt.cds.state-json.md` 的 save 阻塞痛点。
 - **报告 IO 异步化 + export-skill 异步打包**：请求路径不再同步阻塞事件循环（commit `d9fb5dc`）。
 
+## 2026-07-21 批次补记（接口持续排队 3.7s→40s+ 根因之一 + 一批高频路径优化，见 `changelogs/2026-07-21_cds-release-dialog-perf-fixes.md`）
+
+- **部署卡死看门狗阻塞事件循环**：`execSync(git diff)` 幂等判断改为前置 + 按不可变 sha 记忆化，stale 分支不再每 5 分钟重复同步阻塞事件循环（本台账「接口持续排队」两个高置信根因之一，另一个未在本批次修复，见下方遗留）。
+- **项目列表轮询改自调度循环**：裸 `setInterval` 改为等上一轮返回再排下一轮（天然 in-flight 去重）+ 页面隐藏暂停 + 回前台立即刷新；消除每轮重复请求两次 `/api/pending-imports`；资源用量弹窗 5s 轮询同改。
+- **forwarder 剥离 hop-by-hop 头**：修复 `/api/branches/stream` 约 2.7 分钟 `ERR_HTTP2_PROTOCOL_ERROR` 断流——`Connection`/`Keep-Alive`/`Transfer-Encoding` 等 hop-by-hop 头不再透传到 HTTP/2 客户端连接（master SSE 的 `Connection: close` 用于防 nginx upstream 池复用死 socket，保留不受影响）。
+- **http 请求日志治理**：成功 GET 读请求（轮询/控制面/静态）按 1:10 采样落库（非 GET/错误/SSE/部署/容器操作全保留，在途请求实时面板不受影响）；写链加 500 条有界背压，Mongo 慢时丢弃非错误记录而非无界积压。
+- **mongo-split 增量快照重构**：`save()` 支持脏范围 hint，同 tick 全带 hint 时只克隆被点名的 kind/实体，不再对整个 state 做 `structuredClone`；持久化改按实体 id 缓存上次落库的 stableJson 字符串，diff 只 stringify 当前侧，消灭 `persistedCache` 整份 state 的第二次 `structuredClone`（每周期约 4 遍全量序列化）。部署 run 事件 append/心跳、发布日志、服务部署日志等高频写路径带上实体级/global 脏 hint；写失败恢复加固：在途写失败时排队中的 partial 就地升级为全量快照，杜绝 flush 谎报成功而失败变更缺失的窗口。
+- **分支失败归因补全**：`detectContainerFatalCause` 新增 Flyway 迁移失败/exit 137/139/signal 9（代码侧）与 OOM（配置侧）模式，就绪探测日志取样窗口 80 行扩到 400 行；Spring/Flyway 应用崩溃不再被误标成「就绪探测超时」甩锅 CDS。
+- **站内信陈旧通知清理**：通知面板打开时对引用的项目探活，项目已删除（404）的通知自动移除；项目元信息降级期间不再新发携带死链的通知。
+- **回归测试**：新增已告警分支跳过 `diffRuntimePaths`（锁定幂等前置的性能语义）、Flyway/exit-137/OOM 归因回归测试、server-integration 套件对沙箱环境免疫（摘除 `CDS_USERNAME`/`CDS_PASSWORD` 避免开发机/Agent 沙箱配置远端凭据时 basic auth 误开导致 10 个用例假红）。
+- **UX 侧同批（非纯 perf，但同一改动集）**：发布弹窗重构为分阶段向导（选站点 → 发布前检查 → 发布），发布开始后前序配置/预检收起成一行摘要、实时发布状态占满弹窗；发布脚本收进「查看脚本」折叠框 + 自身横向滚动；主操作固定 sticky footer 按阶段只显示一颗主按钮；CDS 系统设置「用户管理/用户痕迹」tab 按运行时认证模式门控（按 `/api/auth/public-status` 探测结果隐藏 basic/disabled 模式下必 404 的 tab）。
+- **遗留**：接口持续排队的「两个高置信根因」本批次只修了其一（看门狗 execSync 幂等前置），另一个根因未在本 changelog 中说明，需下次专项排查时确认并补记。
+
 ## 逐步解决路线
 
 0. [x] 全局构建并发闸（2026-06-22）：消除多构建互相饿 CPU 的争抢膨胀（353→636/754s），排队可观测。`cds/src/services/build-gate.ts`

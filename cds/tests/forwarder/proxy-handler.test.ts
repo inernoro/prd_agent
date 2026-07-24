@@ -977,6 +977,38 @@ describe('ProxyHandler — 故障与降级', () => {
     expect(r.body.toLowerCase()).toContain('waiting');
   }, 10000);
 
+  it('图片生成和编辑允许超过普通 30 秒代理窗口，但普通请求仍按原超时收口', async () => {
+    const u = await startUpstream((_req, res) => {
+      setTimeout(() => {
+        res.writeHead(200, { 'content-type': 'application/json' });
+        res.end('{"ok":true}');
+      }, 650);
+    });
+    upstreams.push(u);
+    const route: RouteRecord = { _id: '1', host: 'demo.miduo.org', upstreamPort: u.port, weight: 100 };
+    const f = await startForwarder(() => route);
+    forwarders.push(f);
+
+    const generation = await clientReq(f.port, {
+      method: 'POST',
+      path: '/v1/images/generations',
+    });
+    expect(generation.status).toBe(200);
+    expect(generation.body).toBe('{"ok":true}');
+
+    const edit = await clientReq(f.port, {
+      method: 'POST',
+      path: '/v1/images/edits?mode=test',
+    });
+    expect(edit.status).toBe(200);
+
+    const ordinary = await clientReq(f.port, {
+      method: 'POST',
+      path: '/v1/chat/completions',
+    });
+    expect(ordinary.status).toBe(504);
+  }, 10000);
+
   it('[C-5.1] upstream 中途 reset → 给客户端 502 + 错误响应', async () => {
     const u = await startUpstream((_req, _res) => {
       // 立刻销毁连接,客户端拿到 ECONNRESET

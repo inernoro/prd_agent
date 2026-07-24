@@ -42,7 +42,7 @@ function statusColor(status?: string) {
     case 'failed': return { bg: 'rgba(239,68,68,0.1)', border: 'rgba(239,68,68,0.3)' };
     case 'waiting_approval': return { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' };
     case 'paused': return { bg: 'rgba(245,158,11,0.1)', border: 'rgba(245,158,11,0.3)' };
-    default: return { bg: 'rgba(255,255,255,0.04)', border: 'rgba(255,255,255,0.12)' };
+    default: return { bg: 'rgba(255,255,255,0.04)', border: 'var(--border-subtle)' };
   }
 }
 
@@ -71,17 +71,10 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="target"
           position={Position.Top}
           id={slot.slotId}
-          className="nodrag capsule-handle capsule-handle--input"
-          style={{
-            left: data.inputSlots.length === 1
+          className="nodrag capsule-handle capsule-handle--input bg-token-nested"
+          style={{ left: data.inputSlots.length === 1
               ? '50%'
-              : `${((i + 1) / (data.inputSlots.length + 1)) * 100}%`,
-            width: 14,
-            height: 14,
-            background: 'rgba(255,255,255,0.15)',
-            border: '2.5px solid rgba(255,255,255,0.35)',
-            borderRadius: '50%',
-          }}
+              : `${((i + 1) / (data.inputSlots.length + 1)) * 100}%`, width: 14, height: 14, border: '2.5px solid var(--border-subtle)', borderRadius: '50%' }}
           title={`${slot.name} (${slot.dataType})`}
         />
       ))}
@@ -90,13 +83,8 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="target"
           position={Position.Top}
           id="default-in"
-          className="nodrag capsule-handle capsule-handle--input"
-          style={{
-            width: 14, height: 14,
-            background: 'rgba(255,255,255,0.08)',
-            border: '2.5px solid rgba(255,255,255,0.2)',
-            borderRadius: '50%',
-          }}
+          className="nodrag capsule-handle capsule-handle--input bg-token-nested"
+          style={{ width: 14, height: 14, border: '2.5px solid var(--border-subtle)', borderRadius: '50%' }}
         />
       )}
 
@@ -186,10 +174,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           {!data.execStatus || data.execStatus === 'idle' || data.execStatus === 'pending' ? (
             <div className="flex items-center gap-1.5">
               {data.inputSlots.length > 0 && (
-                <span className="text-[9px] px-1.5 py-0.5 rounded" style={{
-                  background: 'rgba(255,255,255,0.05)',
-                  color: 'var(--text-muted, #888)',
-                }}>
+                <span className="text-[9px] px-1.5 py-0.5 rounded bg-token-nested" style={{ color: 'var(--text-muted, #888)' }}>
                   {data.inputSlots.length} 入
                 </span>
               )}
@@ -224,7 +209,7 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
 
         {/* 运行态脉冲条 */}
         {data.execStatus === 'running' && (
-          <div className="capsule-progress-bar mt-2 h-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.06)' }}>
+          <div className="capsule-progress-bar mt-2 h-1 rounded-full overflow-hidden bg-token-nested" >
             <div
               className="h-full rounded-full"
               style={{ width: '60%', background: 'rgba(59,130,246,0.5)', transition: 'width 0.5s ease' }}
@@ -259,13 +244,8 @@ function CapsuleNodeInner({ data, selected }: CapsuleNodeType) {
           type="source"
           position={Position.Bottom}
           id="default-out"
-          className="nodrag capsule-handle capsule-handle--output"
-          style={{
-            width: 14, height: 14,
-            background: 'rgba(255,255,255,0.08)',
-            border: '2.5px solid rgba(255,255,255,0.2)',
-            borderRadius: '50%',
-          }}
+          className="nodrag capsule-handle capsule-handle--output bg-token-nested"
+          style={{ width: 14, height: 14, border: '2.5px solid var(--border-subtle)', borderRadius: '50%' }}
         />
       )}
     </div>

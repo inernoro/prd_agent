@@ -254,7 +254,7 @@ function StatRow({ label, value, sub, icon: Icon, accent, info }: { label: strin
 function ProgressBar({ value, max, color }: { value: number; max: number; color: string }) {
   const pct = max > 0 ? Math.min(100, (value / max) * 100) : 0;
   return (
-    <div className="h-1.5 rounded-full w-full" style={{ background: 'rgba(255,255,255,0.04)' }}>
+    <div className="h-1.5 rounded-full w-full bg-token-nested" >
       <div
         className="h-full rounded-full transition-all duration-500"
         style={{ width: `${pct}%`, background: color, opacity: 0.7 }}
@@ -267,7 +267,7 @@ function LoadingSkeleton({ rows = 3 }: { rows?: number }) {
   return (
     <div className="space-y-3 animate-pulse">
       {Array.from({ length: rows }, (_, i) => (
-        <div key={i} className="h-4 rounded-lg" style={{ background: 'rgba(255,255,255,0.04)', width: `${70 + Math.random() * 30}%` }} />
+        <div key={i} className="h-4 rounded-lg bg-token-nested" style={{ width: `${70 + Math.random() * 30}%` }} />
       ))}
     </div>
   );
@@ -466,7 +466,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
   };
 
   const SortIcon = ({ col }: { col: string }) => {
-    if (sortKey !== col) return <ArrowUpDown size={10} style={{ opacity: 0.3 }} />;
+    if (sortKey !== col) return <ArrowUpDown size={10} className="opacity-30" />;
     return sortDir === 'desc' ? <ChevronDown size={10} /> : <ChevronUp size={10} />;
   };
 
@@ -581,7 +581,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                         <span className="tabular-nums font-bold text-[12px]" style={{ color: isTop3 ? D.primary : D.text1 }}>
                           {Math.round(user.totalScore)}
                         </span>
-                        <div className="w-full h-2 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                        <div className="w-full h-2 rounded-full overflow-hidden bg-token-nested" >
                           <div className="h-full rounded-full" style={{
                             width: `${Math.min((user.totalScore / maxScore) * 100, 100)}%`,
                             background: D.primary,
@@ -611,8 +611,8 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                                 {numberEl}
                               </Tooltip>
                             ) : numberEl}
-                            <div className="w-full h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
-                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'rgba(255,255,255,0.12)' }} />
+                            <div className="w-full h-1.5 rounded-full overflow-hidden bg-token-nested" >
+                              <div className="h-full rounded-full" style={{ width: `${pct}%`, background: meta?.barColor ?? 'var(--nested-block-bg)' }} />
                             </div>
                           </div>
                         </td>
@@ -656,7 +656,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                 </span>
               </div>
               {sortedEntries.length === 0 ? (
-                <div className="flex items-center justify-center py-6 rounded-lg" style={{ background: 'rgba(255,255,255,0.02)' }}>
+                <div className="flex items-center justify-center py-6 rounded-lg bg-token-nested" >
                   <span className="text-[12px]" style={{ color: D.text3 }}>本周期暂无数据</span>
                 </div>
               ) : (
@@ -684,7 +684,7 @@ function TeamInsightsTab({ leaderboard, loading }: { leaderboard: ExecutiveLeade
                           <span className="text-[11px] font-bold tabular-nums" style={{ color: D.text1 }}>
                             {u.val.toLocaleString()}
                           </span>
-                          <div className="w-full h-3 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.04)' }}>
+                          <div className="w-full h-3 rounded-full overflow-hidden bg-token-nested" >
                             <div className="h-full rounded-full transition-all" style={{
                               width: `${pct}%`,
                               background: meta.barColor,
@@ -945,7 +945,7 @@ function IntegrationsTab() {
                 <div className="text-sm font-semibold" style={{ color: D.text1 }}>{int.source}</div>
                 <div className="text-[10px] font-medium" style={{ color: D.text3 }}>规划中</div>
               </div>
-              <div className="w-2 h-2 rounded-full" style={{ background: 'rgba(255,255,255,0.12)' }} />
+              <div className="w-2 h-2 rounded-full bg-token-nested"  />
             </div>
             <div className="text-[11px] leading-relaxed" style={{ color: D.text2 }}>{int.desc}</div>
           </DashCard>
@@ -1075,7 +1075,7 @@ export default function ExecutiveDashboardPage() {
             <button
               onClick={() => fetchAll(days, true)}
               disabled={refreshing}
-              className="p-1.5 rounded-lg transition-all hover:bg-white/5"
+              className="p-1.5 rounded-lg transition-all hover-bg-soft"
               style={{ color: refreshing ? D.primary : D.text3 }}
               title="刷新数据"
             >

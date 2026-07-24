@@ -125,7 +125,7 @@ export function OverviewShell() {
       topSlot={
         <button
           onClick={() => navigate('/')}
-          className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white mb-2"
+          className="flex items-center gap-1.5 text-[11px] text-token-muted hover-text-primary mb-2"
         >
           <ArrowLeft size={13} /> 返回首页
         </button>
@@ -151,9 +151,9 @@ export function OverviewShell() {
       )}
       {active === 'features' && (
         <div className="flex h-full min-h-0 flex-col">
-          <div className="shrink-0 border-b border-white/10 px-6 py-3">
-            <h2 className="text-base font-semibold text-white">功能</h2>
-            <p className="mt-0.5 text-xs text-white/40">按产品查看功能目录；功能清单归属正式版本。管理员可先选择产品与正式版本，再导入目录结构或新建功能。</p>
+          <div className="shrink-0 border-b border-token-subtle px-6 py-3">
+            <h2 className="text-base font-semibold text-token-primary">功能</h2>
+            <p className="mt-0.5 text-xs text-token-muted">按产品查看功能目录；功能清单归属正式版本。管理员可先选择产品与正式版本，再导入目录结构或新建功能。</p>
           </div>
           <div className="min-h-0 flex-1">
             <OverviewFeaturesPanel products={products} isAdmin={isAdmin} />
@@ -182,9 +182,9 @@ export function OverviewShell() {
       )}
       {active === 'graph' && (
         <div className="h-full min-h-0 flex flex-col">
-          <div className="shrink-0 px-6 py-3 border-b border-white/10">
-            <h2 className="text-base font-semibold text-white">图谱</h2>
-            <p className="text-xs text-white/40 mt-0.5">跨全部产品的完整关系图（产品/版本/需求/功能/缺陷/客户 + 全部关系，点对象看详情、点产品可下钻）</p>
+          <div className="shrink-0 px-6 py-3 border-b border-token-subtle">
+            <h2 className="text-base font-semibold text-token-primary">图谱</h2>
+            <p className="text-xs text-token-muted mt-0.5">跨全部产品的完整关系图（产品/版本/需求/功能/缺陷/客户 + 全部关系，点对象看详情、点产品可下钻）</p>
           </div>
           <div className="flex-1 min-h-0">
             <ProductGraphCanvas overview />
@@ -207,8 +207,8 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
       .map(([k, v]) => ({ name: ITEM_GRADE_LABEL[k as keyof typeof ITEM_GRADE_LABEL] ?? k, value: v }));
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data, label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
+      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data, label: { color: 'var(--text-secondary)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
       color: CHART_COLORS,
     };
   }, [stats]);
@@ -219,8 +219,8 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
     return {
       tooltip: { trigger: 'axis' },
       grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
-      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'var(--text-secondary)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'var(--text-muted)' }, splitLine: { lineStyle: { color: 'var(--text-muted)' } } },
       series: [{ type: 'bar', data: entries.map(([, v]) => v), itemStyle: { color: '#F87171', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 32 }],
     };
   }, [stats]);
@@ -232,14 +232,14 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
       .map(([k, v]) => ({ name: VERSION_LIFECYCLE_LABEL[k as keyof typeof VERSION_LIFECYCLE_LABEL] ?? k, value: v }));
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, data }],
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
+      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'var(--text-secondary)', fontSize: 11 }, data }],
       color: CHART_COLORS,
     };
   }, [stats]);
 
   if (loading) return <MapSectionLoader text="正在加载仪表盘…" />;
-  if (!stats) return <div className="text-white/40 text-sm text-center py-10">暂无数据</div>;
+  if (!stats) return <div className="text-token-muted text-sm text-center py-10">暂无数据</div>;
 
   const kpis: { label: string; value: number; color: string; section: Section }[] = [
     { label: '产品', value: stats.counts.products, color: '#22D3EE', section: 'products' },
@@ -259,10 +259,10 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
             key={k.label}
             onClick={() => onGoto(k.section)}
             style={{ animationDelay: `${Math.min(i, 14) * 45}ms` }}
-            className="pa-card text-left rounded-xl border border-white/10 bg-white/[0.02] hover:bg-white/[0.05] p-4"
+            className="pa-card text-left rounded-xl border border-token-subtle bg-token-nested hover-bg-soft p-4"
           >
             <div className="text-2xl font-semibold" style={{ color: k.color }}>{k.value}</div>
-            <div className="text-xs text-white/50 mt-1">{k.label}</div>
+            <div className="text-xs text-token-secondary mt-1">{k.label}</div>
           </button>
         ))}
       </div>
@@ -281,10 +281,10 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
       </div>
 
       {/* 最近活动 */}
-      <div className="pa-row rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <div className="text-sm font-medium text-white/70 mb-3">最近活动</div>
+      <div className="pa-row rounded-xl border border-token-subtle bg-token-nested p-4">
+        <div className="text-sm font-medium text-token-secondary mb-3">最近活动</div>
         {stats.recent.length === 0 ? (
-          <div className="text-xs text-white/40 py-4 text-center">暂无活动</div>
+          <div className="text-xs text-token-muted py-4 text-center">暂无活动</div>
         ) : (
           <div className="flex flex-col gap-1">
             {stats.recent.map((r) => (
@@ -295,14 +295,14 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
                   else if (r.type === 'feature') navigate(`/product-agent/p/${r.productId}/feature/${r.id}`);
                   else navigate(`/product-agent/p/${r.productId}`);
                 }}
-                className="text-left flex items-center gap-3 px-2 py-1.5 rounded-lg hover:bg-white/5"
+                className="text-left flex items-center gap-3 px-2 py-1.5 rounded-lg hover-bg-soft"
               >
-                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: typeColor(r.type) }}>
+                <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: 'var(--nested-block-bg)', color: typeColor(r.type) }}>
                   {typeLabel(r.type)}
                 </span>
-                <span className="text-sm text-white/80 truncate flex-1">{r.title}</span>
-                <span className="text-[11px] text-white/35 shrink-0">{r.productName}</span>
-                <span className="text-[11px] text-white/30 shrink-0">{relTime(r.at)}</span>
+                <span className="text-sm text-token-primary truncate flex-1">{r.title}</span>
+                <span className="text-[11px] text-token-muted shrink-0">{r.productName}</span>
+                <span className="text-[11px] text-token-muted shrink-0">{relTime(r.at)}</span>
               </button>
             ))}
           </div>
@@ -314,14 +314,14 @@ function DashboardSection({ stats, loading, onGoto }: { stats: OverviewStats | n
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="text-sm font-medium text-white/70 mb-2">{title}</div>
+    <div className="pa-card rounded-xl border border-token-subtle bg-token-nested p-4">
+      <div className="text-sm font-medium text-token-secondary mb-2">{title}</div>
       {children}
     </div>
   );
 }
 function EmptyChart({ text }: { text: string }) {
-  return <div className="h-[240px] flex items-center justify-center text-xs text-white/35">{text}</div>;
+  return <div className="h-[240px] flex items-center justify-center text-xs text-token-muted">{text}</div>;
 }
 
 // ════════════════════════ 跨产品数据表 ════════════════════════
@@ -345,15 +345,15 @@ function TableToolbar({
 }) {
   return (
     <div className="flex items-center gap-2 mb-3 flex-wrap">
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-        <Search size={14} className="text-white/40" />
-        <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题 / 编号" className="bg-transparent text-sm text-white outline-none w-44" />
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
+        <Search size={14} className="text-token-muted" />
+        <input value={keyword} onChange={(e) => setKeyword(e.target.value)} placeholder="搜索标题 / 编号" className="bg-transparent text-sm text-token-primary outline-none w-44" />
       </div>
       {filters && setFilterValue && (
         <>
           <button
             onClick={() => setFilterValue('')}
-            className={`px-2.5 py-1 rounded-md text-xs border ${!filterValue ? 'bg-white/10 text-white border-white/20' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+            className={`px-2.5 py-1 rounded-md text-xs border ${!filterValue ? 'bg-token-nested text-token-primary border-token-subtle' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
           >
             {filterLabel ?? '全部'}
           </button>
@@ -361,7 +361,7 @@ function TableToolbar({
             <button
               key={f.value}
               onClick={() => setFilterValue(f.value)}
-              className={`px-2.5 py-1 rounded-md text-xs border ${filterValue === f.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+              className={`px-2.5 py-1 rounded-md text-xs border ${filterValue === f.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
             >
               {f.label}
             </button>
@@ -378,7 +378,7 @@ function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) =>
   return (
     <button
       onClick={() => setMine(!mine)}
-      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+      className={`px-2.5 py-1 rounded-md text-xs border ${mine ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
     >
       我负责的
     </button>
@@ -386,10 +386,10 @@ function MineToggle({ mine, setMine }: { mine: boolean; setMine: (v: boolean) =>
 }
 
 const GRADE_BADGE = (g: string) => (
-  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
+  <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[g as keyof typeof ITEM_GRADE_LABEL] ?? g}</span>
 );
 const SEVERITY_BADGE = (label: string) => (
-  <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{label}</span>
+  <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{label}</span>
 );
 function AdminImportButton({ onClick }: { onClick: () => void }) {
   return (
@@ -510,7 +510,7 @@ function RequirementsTable({
       </div>
       <SelectionActionBar mode="entity" entityType="requirement" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">
+        <div className="text-center text-token-muted text-sm py-12">
           {trackedOnly ? '还没有追踪的需求。打开详情页标题右侧星标即可追踪。' : mine ? '没有指派给你的需求' : rows.length === 0 ? '没有需求' : '没有符合筛选条件的需求'}
         </div>
       ) : (
@@ -520,15 +520,15 @@ function RequirementsTable({
           selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/requirement/${r.id}`)}
           columns={[
-            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.requirementNo}</span> },
-            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-white/90" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
+            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-token-muted text-xs font-mono">{r.requirementNo}</span> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title} className="text-token-primary" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-token-secondary text-xs" /> },
             { key: 'grade', header: '分级', defaultWidth: 72, resizable: false, render: (r) => GRADE_BADGE(r.grade) },
-            { key: 'state', header: '状态', defaultWidth: 96, render: (r) => <TruncateCell text={(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'} maxChars={12} className="text-white/55 text-xs" /> },
-            { key: 'assignee', header: '处理人', defaultWidth: 96, render: (r) => <TruncateCell text={r.assigneeName || '-'} maxChars={10} className="text-white/55 text-xs" /> },
-            { key: 'versions', header: '版本', defaultWidth: 64, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.versionCount}</span> },
-            { key: 'customers', header: '客户', defaultWidth: 64, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.customerCount}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
+            { key: 'state', header: '状态', defaultWidth: 96, render: (r) => <TruncateCell text={(r.stateLabel ?? resolveRequirementStateLabel(r.currentState)) || '-'} maxChars={12} className="text-token-secondary text-xs" /> },
+            { key: 'assignee', header: '处理人', defaultWidth: 96, render: (r) => <TruncateCell text={r.assigneeName || '-'} maxChars={10} className="text-token-secondary text-xs" /> },
+            { key: 'versions', header: '版本', defaultWidth: 64, resizable: false, render: (r) => <span className="text-token-secondary text-xs">{r.versionCount}</span> },
+            { key: 'customers', header: '客户', defaultWidth: 64, resizable: false, render: (r) => <span className="text-token-secondary text-xs">{r.customerCount}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-token-muted text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -556,12 +556,12 @@ function OverviewFeaturesPanel({
   }, [products]);
 
   if (products.length === 0) {
-    return <div className="text-center text-white/40 text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
+    return <div className="text-center text-token-muted text-sm py-12">还没有可查看的产品，请先在「产品」中创建。</div>;
   }
 
   if (!productId) {
     return (
-      <div className="flex h-full min-h-0 items-center justify-center text-sm text-white/40">
+      <div className="flex h-full min-h-0 items-center justify-center text-sm text-token-muted">
         正在加载产品列表…
       </div>
     );
@@ -674,7 +674,7 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
       </div>
       <SelectionActionBar mode="entity" entityType="defect" selection={selection} onDone={reload} onExport={exportSelected} />
       {filtered.length === 0 ? (
-        <div className="text-center text-white/40 text-sm py-12">
+        <div className="text-center text-token-muted text-sm py-12">
           {trackedOnly ? '还没有追踪的缺陷。打开详情页标题右侧星标即可追踪。' : rows.length === 0 ? '没有追溯到产品的缺陷' : '没有符合筛选条件的缺陷'}
         </div>
       ) : (
@@ -684,13 +684,13 @@ function DefectsTable({ isAdmin, products }: { isAdmin: boolean; products: Produ
           selection={tableSelection}
           onRowClick={(r) => navigate(`/product-agent/p/${r.productId}/defect/${r.id}`)}
           columns={[
-            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-white/40 text-xs font-mono">{r.defectNo}</span> },
-            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-white/90" /> },
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-white/55 text-xs" /> },
-            { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{defectStatusLabel(r.status)}</span> },
+            { key: 'id', header: 'ID', defaultWidth: 88, render: (r) => <span className="text-token-muted text-xs font-mono">{r.defectNo}</span> },
+            { key: 'title', header: formatListSectionTitle('标题', filtered.length), defaultWidth: 360, render: (r) => <TruncateCell text={r.title || '(无标题)'} className="text-token-primary" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={r.productName} maxChars={16} className="text-token-secondary text-xs" /> },
+            { key: 'status', header: '状态', defaultWidth: 88, render: (r) => <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{defectStatusLabel(r.status)}</span> },
             { key: 'severity', header: '严重程度', defaultWidth: 88, render: (r) => SEVERITY_BADGE(defectSeverityTierLabel(r)) },
-            { key: 'trace', header: '追溯', defaultWidth: 72, resizable: false, render: (r) => <span className="text-white/55 text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
-            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-white/35 text-xs">{relTime(r.updatedAt)}</span> },
+            { key: 'trace', header: '追溯', defaultWidth: 72, resizable: false, render: (r) => <span className="text-token-secondary text-xs">{r.tracedRequirementId ? '需求' : r.tracedVersionId ? '版本' : '产品'}</span> },
+            { key: 'updated', header: '更新', defaultWidth: 80, resizable: false, render: (r) => <span className="text-token-muted text-xs">{relTime(r.updatedAt)}</span> },
           ]}
         />
       )}
@@ -739,15 +739,15 @@ function overviewAnnouncementCell(row: OverviewReleaseRow) {
       </a>
     );
   }
-  if (row.status === 'announcement_pending') return <span className="text-xs text-white/35">待填写</span>;
-  return <span className="text-white/35">-</span>;
+  if (row.status === 'announcement_pending') return <span className="text-xs text-token-muted">待填写</span>;
+  return <span className="text-token-muted">-</span>;
 }
 
 function VersionOverviewSection({ isAdmin, products }: { isAdmin: boolean; products: Product[] }) {
   const [tab, setTab] = useState<'release' | 'initiation'>('release');
   return (
     <div>
-      <div className="mb-3 flex border-b border-white/10">
+      <div className="mb-3 flex border-b border-token-subtle">
         <OverviewSubTab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</OverviewSubTab>
         <OverviewSubTab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</OverviewSubTab>
       </div>
@@ -762,7 +762,7 @@ function OverviewSubTab({ active, children, onClick }: { active: boolean; childr
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
+      className={`border-b-2 px-4 py-2 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}
     >
       {children}
     </button>
@@ -811,26 +811,26 @@ function ReleaseOverviewTable({ isAdmin, products }: { isAdmin: boolean; product
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有正式版本</div> : (
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有正式版本</div> : (
         <OverviewDataTable
           tableKey="releases"
           rows={rows}
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/release/${row.id}`)}
           columns={[
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
             { key: 'vcode', header: '正式版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-cyan-200/90">{r.vCode}</span> },
-            { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-white/55">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
-            { key: 'projectType', header: '项目类别', defaultWidth: 96, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType)}</span> },
-            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
-            { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
-            { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-white/55" /> },
-            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
-            { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
-            { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-white/55" /> },
-            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-white/55" /> },
+            { key: 'tcode', header: '内部版本号', defaultWidth: 108, render: (r) => <span className="font-mono text-xs text-token-secondary">{r.tCode ?? (r.isTemporaryOptimization ? '临时优化需求' : '-')}</span> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 96, render: (r) => <span className="text-xs text-token-secondary">{overviewProjectTypeLabel(r.projectType)}</span> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
+            { key: 'owner', header: '产品负责人（申领人）', defaultWidth: 120, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
+            { key: 'team', header: '项目组成员', defaultWidth: 140, render: (r) => <TruncateCell text={r.teamMemberNames.length > 0 ? r.teamMemberNames.join('、') : '-'} maxChars={18} className="text-xs text-token-secondary" /> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
+            { key: 'releaseAt', header: '上线日期', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.plannedReleaseAt)}</span> },
+            { key: 'brand', header: '当前开放品牌', defaultWidth: 112, render: (r) => <TruncateCell text={r.openBrandScope || '上线全域开放'} maxChars={14} className="text-xs text-token-secondary" /> },
+            { key: 'requirements', header: '需求来源', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementTitles.length > 0 ? r.requirementTitles.join('、') : '-'} maxChars={20} className="text-xs text-token-secondary" /> },
             { key: 'announcement', header: '上线公告地址', defaultWidth: 104, render: (r) => overviewAnnouncementCell(r) },
             { key: 'status', header: '状态', defaultWidth: 120, render: (r) => <OverviewVersionStatus status={r.status} /> },
           ]}
@@ -889,29 +889,29 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
         extra={isAdmin ? <AdminImportButton onClick={() => setShowImport(true)} /> : undefined}
       />
       <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
-      {rows.length === 0 ? <div className="py-12 text-center text-sm text-white/40">没有内部版本</div> : (
+      {rows.length === 0 ? <div className="py-12 text-center text-sm text-token-muted">没有内部版本</div> : (
         <OverviewDataTable
           tableKey="initiations"
           rows={rows}
           selection={tableSelection}
           onRowClick={(row) => navigate(`/product-agent/p/${row.productId}/initiation/${row.id}`)}
           columns={[
-            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-white/55" /> },
-            { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-white/55">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
+            { key: 'product', header: '产品', defaultWidth: 112, render: (r) => <TruncateCell text={resolveVersionProductLabel(r, r.productName)} maxChars={14} className="text-xs text-token-secondary" /> },
+            { key: 'projectType', header: '项目类别', defaultWidth: 108, render: (r) => <span className="text-xs text-token-secondary">{overviewProjectTypeLabel(r.projectType, r.customerSource)}</span> },
             { key: 'tcode', header: '立项号', defaultWidth: 96, render: (r) => <span className="font-mono text-cyan-200/90">{r.tCode ?? '-'}</span> },
-            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
-            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-white/85" /> },
-            { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-white/55" /> },
-            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-white/55" /> },
-            { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-white/70" /> },
-            { key: 'draft1', header: '第一稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.firstDraftMeetingAt)}</span> },
-            { key: 'draft2', header: '第二稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.secondDraftMeetingAt)}</span> },
-            { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
-            { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-white/45">{formatVersionBasicDate(r.projectAt)}</span> },
-            { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-white/55">{formatVersionBasicBool(r.needUiDesign)}</span> },
-            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-white/35">-</span> },
-            { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-white/55">{r.developmentStatus || '待开发'}</span> },
-            { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-white/45" /> },
+            { key: 'scale', header: '版本类别', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{VERSION_SCALE_LABEL[r.versionType as keyof typeof VERSION_SCALE_LABEL] ?? r.versionType}</span> },
+            { key: 'plan', header: '产品立项方案名称', defaultWidth: 180, render: (r) => <TruncateCell text={r.planName} className="text-token-primary" /> },
+            { key: 'reqDesc', header: '项目需求描述', defaultWidth: 160, render: (r) => <TruncateCell text={r.requirementDescription ?? '-'} maxChars={20} className="text-xs text-token-secondary" /> },
+            { key: 'department', header: '所属部门', defaultWidth: 96, render: (r) => <TruncateCell text={r.departmentName ?? '-'} maxChars={12} className="text-xs text-token-secondary" /> },
+            { key: 'owner', header: '产品负责人', defaultWidth: 104, render: (r) => <TruncateCell text={r.ownerName ?? '-'} maxChars={10} className="text-xs text-token-secondary" /> },
+            { key: 'draft1', header: '第一稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.firstDraftMeetingAt)}</span> },
+            { key: 'draft2', header: '第二稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.secondDraftMeetingAt)}</span> },
+            { key: 'draft3', header: '第三稿会议', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.thirdDraftMeetingAt)}</span> },
+            { key: 'projectAt', header: '立项时间', defaultWidth: 96, render: (r) => <span className="text-xs text-token-muted">{formatVersionBasicDate(r.projectAt)}</span> },
+            { key: 'ui', header: '需UI设计', defaultWidth: 80, render: (r) => <span className="text-xs text-token-secondary">{formatVersionBasicBool(r.needUiDesign)}</span> },
+            { key: 'planUrl', header: '方案地址', defaultWidth: 88, render: (r) => r.planUrl ? <a href={r.planUrl} target="_blank" rel="noreferrer" className="text-xs text-cyan-300 hover:underline" onClick={(e) => e.stopPropagation()}>查看方案</a> : <span className="text-token-muted">-</span> },
+            { key: 'devStatus', header: '开发状态', defaultWidth: 88, render: (r) => <span className="text-xs text-token-secondary">{r.developmentStatus || '待开发'}</span> },
+            { key: 'remark', header: '备注', defaultWidth: 120, render: (r) => <TruncateCell text={r.remark ?? '-'} maxChars={16} className="text-xs text-token-muted" /> },
             {
               key: 'review',
               header: 'Agent评审',
@@ -919,12 +919,12 @@ function InitiationOverviewTable({ isAdmin, products }: { isAdmin: boolean; prod
               resizable: false,
               render: (r) => {
                 const scoreText = formatInitiationReviewScore(r);
-                if (scoreText === '-') return <span className="text-white/35">-</span>;
+                if (scoreText === '-') return <span className="text-token-muted">-</span>;
                 return (
                   <span className={
                     r.reviewPassed === true ? 'text-emerald-300 text-xs'
                       : r.reviewPassed === false ? 'text-rose-300 text-xs'
-                        : 'text-white/70 text-xs'
+                        : 'text-token-secondary text-xs'
                   }>{scoreText}</span>
                 );
               },

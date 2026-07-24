@@ -45,6 +45,16 @@ const MOBILE_FAB_PATH = path.resolve(TEST_DIR, '../../components/mobile/MobileFa
 const APP_STORE_TOKENS_PATH = path.resolve(TEST_DIR, '../appStoreTokens.ts');
 const AGENT_LAUNCHER_PATH = path.resolve(TEST_DIR, '../../pages/AgentLauncherPage.tsx');
 const HOME_LAUNCHER_STYLES_PATH = path.resolve(TEST_DIR, '../../styles/home-launcher.css');
+const ADAPTIVE_SHARED_CONTROL_PATHS = [
+  '../../components/FeatureModuleSearchSelect.tsx',
+  '../../components/ItemMultiSearchSelect.tsx',
+  '../../components/ItemSearchSelect.tsx',
+  '../../components/MentionTextarea.tsx',
+  '../../components/UserMultiSearchSelect.tsx',
+  '../../components/UserSearchSelect.tsx',
+  '../../components/notifications/NotificationSubscriptionsPanel.tsx',
+  '../../pages/channels/components/TaskDetailDrawer.tsx',
+] as const;
 
 function readSourceTree(directory: string): string {
   return fs.readdirSync(directory, { withFileTypes: true })
@@ -215,6 +225,37 @@ describe('主题系统契约', () => {
     expect(tokenValue(lightBlock, 'selection-text')).toBe('#8F3F2B');
     expect(documentStore).not.toContain('focus-visible:ring-blue-400/60');
     expect(docBrowser).not.toContain('group-hover/resize:bg-[rgba(59,130,246');
+  });
+
+  it('知识库卡片的迷你目录在明暗主题下都使用可见的嵌套面和分隔线', () => {
+    const tokens = fs.readFileSync(TOKENS_PATH, 'utf8');
+    const themeBlocks = [
+      tokens.slice(0, tokens.indexOf('[data-theme="light"]')),
+      tokens.slice(tokens.indexOf('[data-theme="light"]'), tokens.indexOf('/* 固定暗色可视化表面')),
+    ];
+    const documentStore = fs.readFileSync(DOCUMENT_STORE_PATH, 'utf8');
+
+    for (const block of themeBlocks) {
+      expect(parseCssColor(tokenValue(block, 'border-subtle')).a).toBeGreaterThanOrEqual(0.1);
+      expect(parseCssColor(tokenValue(block, 'nested-block-border')).a).toBeGreaterThanOrEqual(0.08);
+    }
+    expect(documentStore).toContain('className="surface-inset rounded-[9px] overflow-hidden"');
+    expect(documentStore).toContain("'border-t border-token-subtle'");
+    expect(documentStore).toContain('hover:bg-[var(--bg-card-hover)]');
+    expect(documentStore).not.toMatch(/\bhover:bg-white(?:\/|\b)/);
+    expect(documentStore).not.toMatch(/(?:border(?:Color)?|background)\s*:\s*['"`]rgba\(\s*255\s*,\s*255\s*,\s*255/);
+    expect(documentStore).not.toContain("background: 'rgba(255,255,255,0.025)'");
+    expect(documentStore).not.toContain("borderTop: idx === 0 ? 'none' : '1px solid rgba(255,255,255,0.05)'");
+  });
+
+  it('跨页面共享的搜索、通知和任务控件不绕过自适应主题 token', () => {
+    for (const relativePath of ADAPTIVE_SHARED_CONTROL_PATHS) {
+      const source = fs.readFileSync(path.resolve(TEST_DIR, relativePath), 'utf8');
+
+      expect(source, relativePath).not.toMatch(/rgba\(\s*255\s*,\s*255\s*,\s*255/);
+      expect(source, relativePath).not.toMatch(/\b(?:border|bg)-white(?:\/|\b)|\bhover:bg-white(?:\/|\b)/);
+      expect(source, relativePath).not.toMatch(/#[01][0-9a-f]{5}\b/i);
+    }
   });
 
   it('更新中心和文档目录只消费共享阴影与选择态契约', () => {
@@ -423,6 +464,8 @@ describe('主题系统契约', () => {
 
     expect(reportScript).toContain('FULL_DARK_SURFACE_FILES.has(relativePath)');
     expect(reportScript).toContain('counts.fixedThemeSurface - counts.declaredDarkScope');
+    expect(reportScript).toContain('counts.adaptiveBorderRisk + counts.adaptiveSurfaceRisk + counts.adaptiveHoverRisk');
+    expect(reportScript).toContain('Actionable adaptive theme findings');
     expect(reportScript).not.toContain('counts.declaredDarkScope > 0\n    ? counts.dynamicTextColor');
   });
 
@@ -493,7 +536,7 @@ describe('主题系统契约', () => {
     const gate = fs.readFileSync(MOBILE_COMPAT_GATE_PATH, 'utf8');
 
     expect(gate).toContain("color: 'var(--semantic-warning-text)'");
-    expect(gate).toContain('className="surface-tone-dark w-full max-w-md rounded-2xl p-5"');
+    expect(gate).toContain('className="surface-tone-dark w-full max-w-md rounded-2xl p-5 border border-token-subtle"');
     expect(gate).toContain('data-surface-tone="dark"');
     expect(gate).not.toContain("color: 'rgba(255, 236, 179");
   });

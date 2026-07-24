@@ -327,7 +327,7 @@ function CompactCard({ item, onClick }: { item: ToolboxItem; onClick: () => void
         </div>
         <div
           className="text-[11px] truncate mt-0.5"
-          style={{ color: 'var(--text-muted, rgba(255,255,255,0.4))' }}
+          style={{ color: 'var(--text-muted, var(--text-muted))' }}
         >
           {item.description}
         </div>
@@ -463,7 +463,7 @@ function SectionHeader({ eyebrow, title, subtitle, count, accent = 'var(--sectio
           {subtitle && (
             <span
               className="text-[11.5px] truncate"
-              style={{ color: 'var(--text-muted, rgba(255,255,255,0.45))' }}
+              style={{ color: 'var(--text-muted, var(--text-muted))' }}
             >
               {subtitle}
             </span>
@@ -811,7 +811,7 @@ export default function AgentLauncherPage() {
             /* ── Search results ── */
             filtered.length === 0 ? (
               <div className="flex flex-col items-center justify-center h-40 gap-2">
-                <Search size={24} style={{ color: 'var(--text-muted, rgba(255,255,255,0.2))' }} />
+                <Search size={24} style={{ color: 'var(--text-muted, var(--text-muted))' }} />
                 <span className="text-sm" style={{ color: 'var(--text-muted)' }}>
                   没有找到匹配的智能体
                 </span>

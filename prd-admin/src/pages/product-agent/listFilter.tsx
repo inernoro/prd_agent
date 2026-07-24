@@ -12,7 +12,7 @@ import { Search, SlidersHorizontal, X } from 'lucide-react';
 
 /** 与 ProductsSection 搜索框同宽（跨产品列表工具栏 SSOT） */
 export const OVERVIEW_LIST_SEARCH_BOX =
-  'flex flex-1 min-w-[280px] max-w-xl items-center gap-2 rounded-lg border border-white/10 bg-white/5 px-3 h-8 transition-colors focus-within:border-cyan-500/40 focus-within:bg-white/[0.07]';
+  'flex flex-1 min-w-[280px] max-w-xl items-center gap-2 rounded-lg border border-token-subtle bg-token-nested px-3 h-8 transition-colors focus-within:border-cyan-500/40 focus-within:bg-token-nested';
 
 export interface FilterFieldDef<T> {
   key: string;
@@ -181,7 +181,7 @@ function FilterBar<T>({
 
   const visibleFields = fields.filter((f) => visible.includes(f.key));
   const selectCls =
-    'h-8 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 px-2 outline-none focus:border-cyan-500/40 max-w-[220px]';
+    'h-8 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary px-2 outline-none focus:border-cyan-500/40 max-w-[220px]';
   const toggle = (k: string) =>
     setVisible((prev) => (prev.includes(k) ? prev.filter((x) => x !== k) : [...prev, k]));
 
@@ -191,22 +191,22 @@ function FilterBar<T>({
     <div className={`flex min-w-0 flex-1 items-center gap-2 ${wideSearch ? 'flex-nowrap' : 'flex-wrap'}`}>
       {wideSearch ? (
         <div className={searchBoxClassName}>
-          <Search size={14} className="shrink-0 text-white/35" />
+          <Search size={14} className="shrink-0 text-token-muted" />
           <input
             value={kw}
             onChange={(e) => setKw(e.target.value)}
             placeholder={keywordPlaceholder ?? '搜索…'}
-            className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/35"
+            className="min-w-0 flex-1 bg-transparent text-xs text-token-primary outline-none placeholder-token-muted"
           />
         </div>
       ) : (
         <div className="relative">
-          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-white/35 pointer-events-none" />
+          <Search size={13} className="absolute left-2 top-1/2 -translate-y-1/2 text-token-muted pointer-events-none" />
           <input
             value={kw}
             onChange={(e) => setKw(e.target.value)}
             placeholder={keywordPlaceholder ?? '搜索…'}
-            className="h-8 w-44 rounded-lg bg-white/5 border border-white/10 text-xs text-white/80 pl-7 pr-2 outline-none focus:border-cyan-500/40"
+            className="h-8 w-44 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary pl-7 pr-2 outline-none focus:border-cyan-500/40"
           />
         </div>
       )}
@@ -233,7 +233,7 @@ function FilterBar<T>({
       {activeCount > 0 && (
         <button
           onClick={reset}
-          className="h-8 flex items-center gap-1 px-2 rounded-lg text-xs text-white/45 hover:text-white/80 hover:bg-white/5"
+          className="h-8 flex items-center gap-1 px-2 rounded-lg text-xs text-token-muted hover-text-primary hover-bg-soft"
           title="清空筛选"
         >
           <X size={12} /> 清空({activeCount})
@@ -243,7 +243,7 @@ function FilterBar<T>({
         <div ref={gearRef} className="relative">
           <button
             onClick={() => setGearOpen((v) => !v)}
-            className="h-8 flex items-center gap-1 px-2 rounded-lg border border-white/10 text-xs text-white/55 hover:text-white hover:bg-white/5"
+            className="h-8 flex items-center gap-1 px-2 rounded-lg border border-token-subtle text-xs text-token-secondary hover-text-primary hover-bg-soft"
             title="筛选设置：选择显示哪些筛选项"
           >
             <SlidersHorizontal size={13} /> 筛选设置
@@ -251,15 +251,15 @@ function FilterBar<T>({
           {gearOpen && gearPos && createPortal(
             <div
               data-filter-gear-pop
-              className="fixed z-[10000] w-52 rounded-lg border border-white/10 bg-[#16171c] p-2 shadow-2xl"
+              className="fixed z-[10000] w-52 rounded-lg border border-token-subtle bg-[#16171c] p-2 shadow-2xl"
               style={{ top: gearPos.top, right: gearPos.right, overscrollBehavior: 'contain' }}
             >
-              <div className="text-[11px] text-white/40 px-1 pb-1">显示哪些筛选项</div>
+              <div className="text-[11px] text-token-muted px-1 pb-1">显示哪些筛选项</div>
               <div className="max-h-72 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {fields.map((f) => (
                   <label
                     key={f.key}
-                    className="flex items-center gap-2 px-1 py-1 rounded hover:bg-white/5 cursor-pointer text-xs text-white/75"
+                    className="flex items-center gap-2 px-1 py-1 rounded hover-bg-soft cursor-pointer text-xs text-token-secondary"
                   >
                     <input
                       type="checkbox"
@@ -277,7 +277,7 @@ function FilterBar<T>({
         </div>
       )}
       {showResultCount && (
-        <span className="text-[11px] text-white/30 ml-auto shrink-0">
+        <span className="text-[11px] text-token-muted ml-auto shrink-0">
           {resultCount}/{total}
         </span>
       )}

@@ -663,7 +663,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={stateFilter}
             onChange={(e) => setStateFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none"
           >
             <option value="">全部状态</option>
             {stateOptions.map((s) => (
@@ -678,7 +678,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={productFilter}
             onChange={(e) => setProductFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none max-w-[160px]"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none max-w-[160px]"
           >
             <option value="">全部产品</option>
             {productOptions.map((p) => (
@@ -693,7 +693,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           <select
             value={versionFilter}
             onChange={(e) => setVersionFilter(e.target.value)}
-            className="px-2 py-1 rounded-md text-[11px] bg-white/5 border border-white/10 text-white/70 outline-none"
+            className="px-2 py-1 rounded-md text-[11px] bg-token-nested border border-token-subtle text-white/70 outline-none"
           >
             <option value="">全部版本</option>
             {versionOptions.map((v) => (
@@ -704,7 +704,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           </select>
         )}
         {/* 搜索 */}
-        <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-white/5 border border-white/10">
+        <div className="flex items-center gap-1 px-2 py-1 rounded-md bg-token-nested border border-token-subtle">
           <Search size={12} className="text-white/40" />
           <input
             value={keyword}
@@ -720,21 +720,21 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
             setTraceAnchor(null);
           }}
           className={`flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border ${
-            mode === 'trace' ? 'border-amber-400/60 text-amber-300 bg-amber-400/10' : 'border-white/10 text-white/50 hover:bg-white/5'
+            mode === 'trace' ? 'border-amber-400/60 text-amber-300 bg-amber-400/10' : 'border-token-subtle text-white/50 hover-bg-soft'
           }`}
           title="追溯模式下，点击节点沿关系路径高亮"
         >
           <GitFork size={12} /> 追溯模式
         </button>
         {/* 视图切换：卡片 / 圆点 */}
-        <div className="flex rounded-md border border-white/10 overflow-hidden">
-          <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>卡片</button>
-          <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`}>圆点</button>
+        <div className="flex rounded-md border border-token-subtle overflow-hidden">
+          <button onClick={() => setView('card')} className={`px-2 py-1 text-[11px] ${view === 'card' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`}>卡片</button>
+          <button onClick={() => setView('dot')} className={`px-2 py-1 text-[11px] ${view === 'dot' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`}>圆点</button>
         </div>
         {/* 布局切换：整理（按类型分列）/ 离散（力导向有机散布） */}
-        <div className="flex rounded-md border border-white/10 overflow-hidden">
-          <button onClick={() => setLayout('tidy')} className={`px-2 py-1 text-[11px] ${layout === 'tidy' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`} title="按类型分列排好">整理</button>
-          <button onClick={() => setLayout('scatter')} className={`px-2 py-1 text-[11px] ${layout === 'scatter' ? 'bg-white/10 text-white' : 'text-white/45 hover:bg-white/5'}`} title="力导向有机散布（参考 Obsidian）">离散</button>
+        <div className="flex rounded-md border border-token-subtle overflow-hidden">
+          <button onClick={() => setLayout('tidy')} className={`px-2 py-1 text-[11px] ${layout === 'tidy' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`} title="按类型分列排好">整理</button>
+          <button onClick={() => setLayout('scatter')} className={`px-2 py-1 text-[11px] ${layout === 'scatter' ? 'bg-token-nested text-white' : 'text-white/45 hover-bg-soft'}`} title="力导向有机散布（参考 Obsidian）">离散</button>
         </div>
         {/* 追溯中提示 */}
         {traceAnchor && (
@@ -791,7 +791,7 @@ function ProductGraphInner({ productId, overview, focusNodeId }: { productId?: s
           />
           <Controls showInteractive={false} />
         </ReactFlow>
-        <div className="absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-white/10 rounded-md px-2 py-1">
+        <div className="absolute bottom-3 left-3 text-[10px] text-white/35 bg-black/40 border border-token-subtle rounded-md px-2 py-1">
           {mode === 'trace' ? '点击节点：高亮其关系路径' : '点击节点：查看详情'}
         </div>
 
@@ -937,8 +937,8 @@ function NodeDrawer({
   }, [node.id, productId, type, rawId]);
 
   return (
-    <div className="absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-white/10 flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
-      <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
+    <div className="absolute top-0 right-0 h-full w-80 max-w-[80%] bg-[#16181d] border-l border-token-subtle flex flex-col shadow-2xl" style={{ zIndex: 20 }}>
+      <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
         <span className="flex items-center gap-2 text-sm font-semibold" style={{ color: meta?.color ?? '#fff' }}>
           <span className="w-2.5 h-2.5 rounded-sm" style={{ background: meta?.color ?? '#888' }} />
           {meta?.label ?? '节点'}详情
@@ -976,7 +976,7 @@ function NodeDrawer({
               {analysis.typing && !analysis.isStreaming && (
                 <button
                   onClick={copyAnalysis}
-                  className="ml-auto flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-white/50 hover:text-white/90"
+                  className="ml-auto flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-token-nested border border-token-subtle text-white/50 hover:text-white/90"
                   title="复制分析内容"
                 >
                   {analysisCopied ? <Check size={11} /> : <Copy size={11} />} {analysisCopied ? '已复制' : '复制'}
@@ -1000,7 +1000,7 @@ function NodeDrawer({
           <MapSectionLoader text="正在加载…" />
         ) : (
           <>
-            <div className="flex flex-col gap-2 text-xs rounded-lg border border-white/10 bg-white/[0.02] p-3">
+            <div className="flex flex-col gap-2 text-xs rounded-lg border border-token-subtle bg-white/[0.02] p-3">
               {rows.length === 0 ? (
                 <div className="text-white/35 text-center py-2">无更多字段</div>
               ) : (
@@ -1023,7 +1023,7 @@ function NodeDrawer({
                   </button>
                 )}
               </div>
-              <div className="text-sm text-white/80 whitespace-pre-wrap rounded-lg border border-white/10 bg-white/[0.02] p-3 min-h-[60px]">
+              <div className="text-sm text-white/80 whitespace-pre-wrap rounded-lg border border-token-subtle bg-white/[0.02] p-3 min-h-[60px]">
                 {canOpen ? (
                   summaryBusy ? (
                     <span className="text-white/40 flex items-center gap-1.5"><MapSpinner size={12} /> AI 摘要中…</span>

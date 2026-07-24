@@ -164,7 +164,7 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
 
   const totalOf = (stateKey: string) => items.filter((it) => colKeyOf(it) === stateKey).length;
 
-  if (!workflow) return <div className="text-sm text-white/40 py-10 text-center">该对象类型还没有可用的工作流，去「应用 → 应用配置」配置。</div>;
+  if (!workflow) return <div className="text-sm text-token-muted py-10 text-center">该对象类型还没有可用的工作流，去「应用 → 应用配置」配置。</div>;
   if (loading) return <MapSectionLoader text="正在加载看板…" />;
 
   const showLane = swimlane !== 'none';
@@ -172,10 +172,10 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
   return (
     <div className="flex flex-col gap-2 h-full min-h-0">
       <div className="shrink-0 flex items-center gap-2">
-        <span className="text-[11px] text-white/40">泳道</span>
-        <div className="flex rounded-lg border border-white/10 overflow-hidden">
+        <span className="text-[11px] text-token-muted">泳道</span>
+        <div className="flex rounded-lg border border-token-subtle overflow-hidden">
           {(['none', 'assignee', ...(showGrade ? (['grade'] as const) : [])] as const).map((m) => (
-            <button key={m} onClick={() => setSwimlane(m)} className={`px-2.5 py-1 text-xs ${swimlane === m ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}>
+            <button key={m} onClick={() => setSwimlane(m)} className={`px-2.5 py-1 text-xs ${swimlane === m ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}>
               {m === 'none' ? '无' : m === 'assignee' ? '按处理人' : '按分级'}
             </button>
           ))}
@@ -192,14 +192,14 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
               const total = totalOf(s.key);
               const over = s.wipLimit != null && s.wipLimit > 0 && total > s.wipLimit;
               return (
-                <div key={s.key} className="shrink-0 w-72 flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03]">
+                <div key={s.key} className="shrink-0 w-72 flex items-center gap-2 px-3 py-2 rounded-lg border border-token-subtle bg-token-nested">
                   <span className="w-2 h-2 rounded-full" style={{ background: s.color ?? '#9ca3af' }} />
-                  <span className="text-sm text-white/80">{s.label}</span>
-                  <span className={`text-[11px] ${over ? 'text-red-300 font-semibold' : 'text-white/40'}`}>
+                  <span className="text-sm text-token-primary">{s.label}</span>
+                  <span className={`text-[11px] ${over ? 'text-red-300 font-semibold' : 'text-token-muted'}`}>
                     {total}{s.wipLimit ? ` / ${s.wipLimit}` : ''}
                   </span>
                   {over && <AlertTriangle size={12} className="text-red-300" />}
-                  {s.slaHours ? <span className="ml-auto text-[10px] text-white/30">SLA {s.slaHours}h</span> : null}
+                  {s.slaHours ? <span className="ml-auto text-[10px] text-token-muted">SLA {s.slaHours}h</span> : null}
                 </div>
               );
             })}
@@ -210,8 +210,8 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
             <div key={lane.key} className="flex gap-3 mb-2">
               {showLane && (
                 <div className="w-24 shrink-0 pt-2 pr-1 text-right">
-                  <div className="text-xs text-white/70 truncate" title={lane.label}>{lane.label}</div>
-                  <div className="text-[10px] text-white/35">{lane.items.length}</div>
+                  <div className="text-xs text-token-secondary truncate" title={lane.label}>{lane.label}</div>
+                  <div className="text-[10px] text-token-muted">{lane.items.length}</div>
                 </div>
               )}
               {states.map((s) => {
@@ -221,10 +221,10 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                     key={s.key}
                     onDragOver={(e) => e.preventDefault()}
                     onDrop={() => drop(s.key)}
-                    className="shrink-0 w-72 min-h-[80px] rounded-xl border border-white/8 bg-white/[0.01] p-2 flex flex-col gap-2"
+                    className="shrink-0 w-72 min-h-[80px] rounded-xl border border-token-subtle bg-token-nested p-2 flex flex-col gap-2"
                   >
                     {colItems.length === 0 ? (
-                      <div className="text-[11px] text-white/20 text-center py-4">—</div>
+                      <div className="text-[11px] text-token-muted text-center py-4">—</div>
                     ) : (
                       colItems.map((it) => {
                         const sla = slaInfo(it.stateEnteredAt, slaOf(it.currentState));
@@ -234,18 +234,18 @@ export function KanbanBoard({ productId, entityType }: { productId: string; enti
                             draggable
                             onDragStart={() => setDragId(it.id)}
                             onClick={() => navigate(`/product-agent/p/${productId}/${entityType}/${it.id}`)}
-                            className="pa-row cursor-grab active:cursor-grabbing rounded-lg border border-white/10 bg-white/[0.03] p-2.5 flex flex-col gap-1.5"
+                            className="pa-row cursor-grab active:cursor-grabbing rounded-lg border border-token-subtle bg-token-nested p-2.5 flex flex-col gap-1.5"
                           >
-                            <div className="text-sm text-white/90 line-clamp-2">{it.title}</div>
+                            <div className="text-sm text-token-primary line-clamp-2">{it.title}</div>
                             <div className="flex items-center gap-2 flex-wrap">
                               {showGrade && (
-                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
+                                <span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[it.grade as keyof typeof ITEM_GRADE_LABEL] ?? it.grade}</span>
                               )}
                               {it.assigneeId && swimlane !== 'assignee' && (
-                                <span className="text-[10px] text-white/50 inline-flex items-center gap-0.5"><User size={10} /> {nameOf(it.assigneeId)}</span>
+                                <span className="text-[10px] text-token-secondary inline-flex items-center gap-0.5"><User size={10} /> {nameOf(it.assigneeId)}</span>
                               )}
                               {sla && (
-                                <span className={`ml-auto text-[10px] inline-flex items-center gap-0.5 ${sla.overdue ? 'text-red-300' : 'text-white/35'}`}>
+                                <span className={`ml-auto text-[10px] inline-flex items-center gap-0.5 ${sla.overdue ? 'text-red-300' : 'text-token-muted'}`}>
                                   {sla.overdue ? <AlertTriangle size={10} /> : <Clock size={10} />} {sla.label}
                                 </span>
                               )}

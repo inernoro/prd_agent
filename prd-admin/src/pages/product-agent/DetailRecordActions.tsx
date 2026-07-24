@@ -91,7 +91,7 @@ export function DetailRecordActions({
         className={`flex h-8 w-8 items-center justify-center rounded-lg border transition-colors ${
           tracked
             ? 'border-amber-500/40 bg-amber-500/15 text-amber-300'
-            : 'border-white/10 bg-white/5 text-white/45 hover:border-amber-500/30 hover:text-amber-200'
+            : 'border-token-subtle bg-token-nested text-token-muted hover:border-amber-500/30 hover:text-amber-200'
         }`}
       >
         <Star size={15} className={tracked ? 'fill-current' : ''} />
@@ -100,12 +100,12 @@ export function DetailRecordActions({
         type="button"
         title="复制"
         onClick={() => setMenuOpen((open) => !open)}
-        className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/45 hover:border-cyan-500/35 hover:text-cyan-200"
+        className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle bg-token-nested text-token-muted hover:border-cyan-500/35 hover:text-cyan-200"
       >
         <Copy size={15} />
       </button>
       {menuOpen && (
-        <div className="absolute right-0 top-full z-30 mt-1 min-w-[168px] rounded-lg border border-white/12 bg-[#181a22] py-1 shadow-xl">
+        <div className="absolute right-0 top-full z-30 mt-1 min-w-[168px] rounded-lg border border-token-subtle bg-[#181a22] py-1 shadow-xl">
           {menuItems.map((item) => (
             <button
               key={item.label}
@@ -114,7 +114,7 @@ export function DetailRecordActions({
                 item.run();
                 setMenuOpen(false);
               }}
-              className="block w-full px-3 py-2 text-left text-xs text-white/75 hover:bg-white/5 hover:text-white"
+              className="block w-full px-3 py-2 text-left text-xs text-token-secondary hover-bg-soft hover:text-token-primary"
             >
               {item.label}
             </button>

@@ -86,7 +86,7 @@ export function SkillShareDialog() {
           <button
             type="button"
             onClick={() => { if (!sharing) close(); }}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] transition-colors hover:bg-white/8"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] transition-colors hover-bg-soft"
             style={{ color: 'var(--text-muted)' }}
             title="关闭 (Esc)"
           >
@@ -96,7 +96,7 @@ export function SkillShareDialog() {
 
         {/* Body */}
         <div className="flex flex-col gap-3 px-5 py-4">
-          <p className="text-[12px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>
+          <p className="text-[12px]" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
             生成一个公开链接，任何人无需登录即可在线浏览并下载该技能压缩包。
           </p>
           <label className="flex flex-col gap-1.5">
@@ -106,12 +106,8 @@ export function SkillShareDialog() {
             <select
               value={days}
               onChange={(e) => setDays(Number(e.target.value))}
-              className="h-9 rounded-[8px] px-3 text-[13px]"
-              style={{
-                background: 'var(--bg-input, rgba(255,255,255,0.04))',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-              }}
+              className="h-9 rounded-[8px] px-3 text-[13px] bg-token-nested"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
             >
               {EXPIRY_OPTIONS.map((o) => (
                 <option key={o.days} value={o.days}>{o.label}</option>

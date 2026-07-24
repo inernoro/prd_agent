@@ -122,10 +122,10 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
     [initiations, releases, tab],
   );
   useEffect(() => { setStatusFilter(''); }, [tab]);
-  if (loading) return <div className="py-16 text-center text-sm text-white/40">正在加载版本流程...</div>;
+  if (loading) return <div className="py-16 text-center text-sm text-token-muted">正在加载版本流程...</div>;
 
   return <div className="flex flex-col gap-5">
-    <div className="flex border-b border-white/10">
+    <div className="flex border-b border-token-subtle">
       <Tab active={tab === 'release'} onClick={() => setTab('release')}>正式版本</Tab>
       <Tab active={tab === 'initiation'} onClick={() => setTab('initiation')}>内部版本</Tab>
     </div>
@@ -137,8 +137,8 @@ export function VersionWorkflowTab({ productId }: { productId: string }) {
         <div className="flex flex-wrap items-center gap-2">
           <Primary onClick={() => navigate(`/product-agent/p/${productId}/release/new`)} disabled={approved.length === 0}><Plus size={14} />申领正式版本号</Primary>
           <button onClick={() => navigate(`/product-agent/p/${productId}/release/new?temporary=1`)} className="rounded-lg border border-amber-400/30 bg-amber-400/10 px-3 py-2 text-xs text-amber-200">临时优化需求</button>
-          <span className="group relative"><HelpCircle size={15} className="cursor-help text-white/35" />
-            <span className="invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-white/10 bg-[#181a20] p-3 text-xs leading-5 text-white/65 shadow-xl group-hover:visible">
+          <span className="group relative"><HelpCircle size={15} className="cursor-help text-token-muted" />
+            <span className="invisible absolute right-0 top-6 z-20 w-72 rounded-lg border border-token-subtle bg-[#181a20] p-3 text-xs leading-5 text-token-secondary shadow-xl group-hover:visible">
               月度常规计划外、紧急且工作量较小的优化。产品工作量原则上不超过 3 天，研发不超过 5 天；无需 T 号，按小版本自动审批。
             </span>
           </span>
@@ -461,14 +461,14 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
     {step === 2 && <div className="space-y-4">
       {!reviewRunning && (
         <label className="flex min-h-40 cursor-pointer flex-col items-center justify-center rounded-xl border border-dashed border-cyan-400/35 bg-cyan-400/5 text-center">
-          <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-white/75">{file ? file.name : '拖动或点击上传方案文件'}</span>
-          <span className="mt-1 text-xs text-white/35">PDF、Word、Markdown、TXT、Excel、PPT</span>
+          <Upload className="mb-3 text-cyan-300" size={28} /><span className="text-sm text-token-secondary">{file ? file.name : '拖动或点击上传方案文件'}</span>
+          <span className="mt-1 text-xs text-token-muted">PDF、Word、Markdown、TXT、Excel、PPT</span>
           <input type="file" className="hidden" onChange={(e) => setFile(e.target.files?.[0] ?? null)} />
         </label>
       )}
       {reviewRunning && file && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.03] px-3 py-2 text-sm text-white/70">
-          方案文件：<span className="text-white/90">{file.name}</span>
+        <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-secondary">
+          方案文件：<span className="text-token-primary">{file.name}</span>
         </div>
       )}
       {reviewRunning && (
@@ -505,7 +505,7 @@ export function InitiationWizard({ productId, requirements, members, onClose, on
         <Info>提交后流转给主负责人，负责人同意后生成 T 立项号。</Info>
       </>}
     </div>}
-    {message && <div className="mt-4 rounded-lg bg-white/5 px-3 py-2 text-xs text-white/60">{message}</div>}
+    {message && <div className="mt-4 rounded-lg bg-token-nested px-3 py-2 text-xs text-token-secondary">{message}</div>}
     <div className="mt-6 flex items-center justify-between gap-2">
       <div>
         {step > 1 && (
@@ -556,7 +556,7 @@ function InitiationTable({ productId, productName, items, members, currentUserId
           const showFillMeeting = isOwner && isMeetingResultPending(item);
           const reviewScoreText = formatInitiationReviewScore(item);
           return (
-        <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 cursor-pointer hover:bg-white/[0.03]')} onClick={() => openDetail(item.id)}>
+        <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle cursor-pointer hover-bg-soft')} onClick={() => openDetail(item.id)}>
           <ListTableSelectionCell selection={tableSelection} id={item.id} />
           <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td>{item.projectType === 'custom' ? `定制项目${item.customerSource ? ` · ${item.customerSource}` : ''}` : '非定制项目'}</Td>
@@ -576,12 +576,12 @@ function InitiationTable({ productId, productName, items, members, currentUserId
       <Td>{item.developmentStatus || '待开发'}</Td><Td>{item.remark || '-'}</Td>
       <Td>
         {reviewScoreText === '-' ? (
-          <span className="text-white/35">-</span>
+          <span className="text-token-muted">-</span>
         ) : (
           <span className={
             item.reviewPassed === true ? 'text-emerald-300'
               : item.reviewPassed === false ? 'text-rose-300'
-                : 'text-white/70'
+                : 'text-token-secondary'
           }>{reviewScoreText}</span>
         )}
       </Td>
@@ -641,7 +641,7 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
   return <>
     <SelectionActionBar mode="export" selection={selection} onExport={exportSelected} />
     <Table headers={['产品', '正式版本号', '内部版本号', '项目类别', '版本类别', '产品立项方案名称', '所属部门', '产品负责人（申领人）', '项目组成员', '方案地址', '上线日期', '当前开放品牌', '需求来源', '上线公告地址', '状态']} selection={tableSelection}>
-    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-white/5 align-top cursor-pointer hover:bg-white/[0.03]')} onClick={() => openRelease(item.id)}>
+    {items.map((item) => <tr key={item.id} className={listSelectionRowClass('border-t border-token-subtle align-top cursor-pointer hover-bg-soft')} onClick={() => openRelease(item.id)}>
       <ListTableSelectionCell selection={tableSelection} id={item.id} />
       <Td>{resolveVersionProductLabel(item, productName)}</Td>
       <Td mono><button type="button" onClick={(e) => { e.stopPropagation(); openRelease(item.id); }} className="text-cyan-300 hover:underline">{item.vCode}</button></Td>
@@ -656,7 +656,7 @@ function ReleaseTable({ productId, productName, items, requirements, members, on
       <Td>{formatDate(item.plannedReleaseAt)}</Td>
       <Td>{item.openBrandScope || '上线全域开放'}</Td><Td>{item.requirementIds.map((id) => reqNames.get(id) ?? id).join('、') || '-'}</Td>
       <Td onClick={(e) => e.stopPropagation()}>{item.status === 'announcement_pending' ? !readOnly && editing === item.id ? <div className="flex min-w-64 gap-1"><Input value={url} onChange={(e) => setUrl(e.target.value)} placeholder="粘贴公告地址" /><button onClick={async () => { const r = await completeRelease(item.id, url); if (r.success) { setEditing(null); setUrl(''); await onChanged(); } }} className="rounded bg-cyan-400 px-2 text-slate-950">完成</button></div>
-        : readOnly ? <span className="text-white/35">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-white/50">填写地址</button></div>
+        : readOnly ? <span className="text-token-muted">待申请人填写</span> : <div className="flex gap-2"><a href="https://sso.baklib.com/" target="_blank" rel="noreferrer" className="text-cyan-300">去发布公告</a><button onClick={() => setEditing(item.id)} className="text-token-secondary">填写地址</button></div>
         : item.announcementUrl ? <a className="text-cyan-300" href={item.announcementUrl} target="_blank" rel="noreferrer">查看公告</a> : '-'}</Td>
       <Td><Status value={item.status} /></Td>
     </tr>)}{items.length === 0 && <Empty cols={15}>暂无上线记录</Empty>}
@@ -701,15 +701,15 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   trackedOnly?: boolean;
   onTrackedOnlyChange?: (value: boolean) => void;
 }) {
-  const filterClassName = 'h-8 rounded-lg border border-white/10 bg-[#111318] px-3 text-xs text-white/75 outline-none focus:border-cyan-400/50';
+  const filterClassName = 'h-8 rounded-lg border border-token-subtle bg-[#111318] px-3 text-xs text-token-secondary outline-none focus:border-cyan-400/50';
   return <div className="flex flex-wrap items-center gap-2">
     <div className={OVERVIEW_LIST_SEARCH_BOX}>
-      <Search size={14} className="shrink-0 text-white/35" />
+      <Search size={14} className="shrink-0 text-token-muted" />
       <input
         value={query}
         onChange={(event) => onQueryChange(event.target.value)}
         placeholder="搜索版本号、方案名称等"
-        className="min-w-0 flex-1 bg-transparent text-xs text-white/80 outline-none placeholder:text-white/35"
+        className="min-w-0 flex-1 bg-transparent text-xs text-token-primary outline-none placeholder-token-muted"
       />
     </div>
     {onOwnerChange
@@ -738,18 +738,18 @@ function RecordToolbar({ query, onQueryChange, scope, onScopeChange, ownerId, on
   </div>;
 }
 
-function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-white/30'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-white/15'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-white/10'}`} />}</div>)}</div>; }
+function Stepper({ step }: { step: number }) { return <div className="mb-6 flex">{['基础信息', 'Agent 评审', '立项决策'].map((label, i) => <div key={label} className="flex flex-1 items-center last:flex-none"><div className={`flex items-center gap-2 text-xs ${step >= i + 1 ? 'text-cyan-300' : 'text-token-muted'}`}><span className={`flex h-7 w-7 items-center justify-center rounded-full border ${step > i + 1 ? 'border-cyan-400 bg-cyan-400 text-slate-950' : step === i + 1 ? 'border-cyan-400' : 'border-token-subtle'}`}>{step > i + 1 ? <CheckCircle2 size={15} /> : i + 1}</span>{label}</div>{i < 2 && <div className={`mx-3 h-px flex-1 ${step > i + 1 ? 'bg-cyan-400' : 'bg-token-nested'}`} />}</div>)}</div>; }
 function Modal({ title, onClose, width, children }: { title: string; onClose: () => void; width: string; children: React.ReactNode }) {
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/70 p-4 backdrop-blur-sm" onClick={onClose}>
       <div
-        className={`flex w-full ${width} flex-col rounded-2xl border border-white/10 bg-[#15171c]`}
+        className={`flex w-full ${width} flex-col rounded-2xl border border-token-subtle bg-[#15171c]`}
         style={{ height: 'min(90vh, 760px)', maxHeight: '90vh' }}
         onClick={(event) => event.stopPropagation()}
       >
-        <div className="flex shrink-0 justify-between border-b border-white/10 px-6 py-4">
-          <h3 className="text-base font-semibold text-white/90">{title}</h3>
-          <button onClick={onClose} className="text-white/40 hover:text-white" aria-label="关闭">
+        <div className="flex shrink-0 justify-between border-b border-token-subtle px-6 py-4">
+          <h3 className="text-base font-semibold text-token-primary">{title}</h3>
+          <button onClick={onClose} className="text-token-muted hover-text-primary" aria-label="关闭">
             <X size={18} />
           </button>
         </div>
@@ -761,9 +761,9 @@ function Modal({ title, onClose, width, children }: { title: string; onClose: ()
     document.body,
   );
 }
-function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-white/50">{label}</span>{children}</label>; }
-function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />; }
-function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className="w-full rounded-lg border border-white/10 bg-[#111318] px-3 py-2 text-sm text-white outline-none">{props.children}</select>; }
+function Field({ label, full, children }: { label: string; full?: boolean; children: React.ReactNode }) { return <label className={full ? 'md:col-span-2' : ''}><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>; }
+function Input(props: React.InputHTMLAttributes<HTMLInputElement>) { return <input {...props} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />; }
+function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) { return <select {...props} className="w-full rounded-lg border border-token-subtle bg-[#111318] px-3 py-2 text-sm text-token-primary outline-none">{props.children}</select>; }
 function RequirementChecks({ requirements, selected, onChange }: {
   requirements: Requirement[]; selected: string[]; onChange: (ids: string[]) => void;
 }) {
@@ -781,25 +781,25 @@ function RequirementChecks({ requirements, selected, onChange }: {
     onChange(selected.includes(id) ? selected.filter((selectedId) => selectedId !== id) : [...selected, id]);
   };
 
-  return <div className="overflow-hidden rounded-lg border border-white/10 bg-black/15">
-    <div className="border-b border-white/10 p-2">
+  return <div className="overflow-hidden rounded-lg border border-token-subtle bg-token-nested">
+    <div className="border-b border-token-subtle p-2">
       <div className="relative">
-        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+        <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
         <input
           type="search"
           value={query}
           onChange={(event) => setQuery(event.target.value)}
           placeholder="搜索需求 ID 或标题"
-          className="w-full rounded-md border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50"
+          className="w-full rounded-md border border-token-subtle bg-token-nested py-2 pl-9 pr-3 text-xs text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50"
         />
       </div>
-      <div className="mt-1.5 px-1 text-[11px] text-white/35">
+      <div className="mt-1.5 px-1 text-[11px] text-token-muted">
         已选择 {selected.length} 条，共 {requirements.length} 条
       </div>
     </div>
     <div className="max-h-48 overflow-auto p-2">
-      {filtered.length === 0 ? <div className="p-3 text-center text-xs text-white/30">未找到匹配的需求</div> : filtered.map((requirement) =>
-        <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover:bg-white/5">
+      {filtered.length === 0 ? <div className="p-3 text-center text-xs text-token-muted">未找到匹配的需求</div> : filtered.map((requirement) =>
+        <label key={requirement.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover-bg-soft">
           <input
             type="checkbox"
             className="mt-0.5 accent-cyan-400"
@@ -808,29 +808,29 @@ function RequirementChecks({ requirements, selected, onChange }: {
           />
           <span className="min-w-0">
             <span className="block font-mono text-cyan-200/80">{requirement.requirementNo}</span>
-            <span className="mt-0.5 block break-words text-white/70">{requirement.title}</span>
+            <span className="mt-0.5 block break-words text-token-secondary">{requirement.title}</span>
           </span>
         </label>)}
     </div>
   </div>;
 }
 function Primary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>; }
-function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65">{props.children}</button>; }
-function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40'}`}>{children}</button>; }
+function Secondary(props: React.ButtonHTMLAttributes<HTMLButtonElement>) { return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary">{props.children}</button>; }
+function Tab({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) { return <button onClick={onClick} className={`border-b-2 px-4 py-3 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted'}`}>{children}</button>; }
 function Table({ headers, children, selection }: {
   headers: string[];
   children: ReactNode;
   selection?: TableSelectionProps;
 }) {
   return (
-    <div className="overflow-x-auto rounded-xl border border-white/10">
+    <div className="overflow-x-auto rounded-xl border border-token-subtle">
       <table className="w-full min-w-[900px] text-left text-xs">
         {selection ? (
           <colgroup>
             <col style={{ width: LIST_SELECTION_COL_WIDTH }} />
           </colgroup>
         ) : null}
-        <thead className="bg-white/[0.035] text-white/40">
+        <thead className="bg-token-nested text-token-muted">
           <tr className={LIST_HEADER_HOVER_GROUP}>
             {selection ? (
               <ListSelectionHeaderCell
@@ -848,9 +848,9 @@ function Table({ headers, children, selection }: {
   );
 }
 function Td({ children, mono, onClick, className }: { children: React.ReactNode; mono?: boolean; onClick?: React.MouseEventHandler<HTMLTableCellElement>; className?: string }) {
-  return <td className={`max-w-64 px-3 py-3 text-white/65 ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
+  return <td className={`max-w-64 px-3 py-3 text-token-secondary ${mono ? 'font-mono text-cyan-200' : ''} ${className ?? ''}`} onClick={onClick}>{children}</td>;
 }
-function Empty({ cols, children }: { cols: number; children: React.ReactNode }) { return <tr><td colSpan={cols} className="px-3 py-12 text-center text-white/30">{children}</td></tr>; }
+function Empty({ cols, children }: { cols: number; children: React.ReactNode }) { return <tr><td colSpan={cols} className="px-3 py-12 text-center text-token-muted">{children}</td></tr>; }
 function Status({ value }: { value: string }) { const good = value === 'approved' || value === 'released'; return <span className={`rounded-full border px-2 py-0.5 ${good ? 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' : 'border-amber-400/20 bg-amber-400/10 text-amber-200'}`}>{STATUS_LABEL[value] ?? value}</span>; }
-function Info({ children }: { children: React.ReactNode }) { return <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs leading-5 text-white/55">{children}</div>; }
-function Score({ score, passed }: { score: number; passed: boolean }) { return <div className={`rounded-xl border p-5 text-center ${passed ? 'border-emerald-400/25 bg-emerald-400/10' : 'border-red-400/25 bg-red-400/10'}`}><div className={`text-4xl font-semibold ${passed ? 'text-emerald-300' : 'text-red-300'}`}>{score}</div><div className="mt-1 text-sm text-white/65">{passed ? '评审通过' : '评审未通过'}</div></div>; }
+function Info({ children }: { children: React.ReactNode }) { return <div className="rounded-lg border border-token-subtle bg-token-nested p-3 text-xs leading-5 text-token-secondary">{children}</div>; }
+function Score({ score, passed }: { score: number; passed: boolean }) { return <div className={`rounded-xl border p-5 text-center ${passed ? 'border-emerald-400/25 bg-emerald-400/10' : 'border-red-400/25 bg-red-400/10'}`}><div className={`text-4xl font-semibold ${passed ? 'text-emerald-300' : 'text-red-300'}`}>{score}</div><div className="mt-1 text-sm text-token-secondary">{passed ? '评审通过' : '评审未通过'}</div></div>; }

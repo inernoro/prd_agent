@@ -1230,10 +1230,10 @@ export default function ChangelogPage() {
               <Sparkles size={22} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
             </div>}
             <div className="min-w-0">
-              <h1 className={`${isMobile ? 'text-base truncate' : 'text-xl'} font-semibold`} style={{ color: 'var(--text-primary)' }}>
+              <h1 className={`${isMobile ? 'text-base truncate' : 'text-xl'} font-semibold text-token-primary`}>
                 更新中心
               </h1>
-              {!isMobile && <p className="text-[12px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+              {!isMobile && <p className="text-[12px] mt-0.5 text-token-muted">
                 代码级周报 · 数据来自仓库 changelogs/ 与 CHANGELOG.md，每个 PR 都会更新
               </p>}
               <div className={`${isMobile ? 'flex-nowrap overflow-hidden' : 'flex-wrap'} flex items-center gap-2 mt-1.5 text-[10px] min-w-0`}>
@@ -1250,18 +1250,13 @@ export default function ChangelogPage() {
                   </span>
                 )}
                 {!isMobile && fetchedAtRelative && (
-                  <span style={{ color: 'var(--text-muted)' }} title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
+                  <span className="text-token-muted" title={fetchedAt ? new Date(fetchedAt).toLocaleString() : undefined}>
                     更新于 {fetchedAtRelative}
                   </span>
                 )}
                 {/* 更新规则：终身缓存 + 固定周期自动刷新（红框区诉求） */}
                 {!isMobile && <span
-                  className="px-1.5 py-0.5 rounded inline-flex items-center gap-1"
-                  style={{
-                    background: 'var(--nested-block-bg)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid var(--nested-block-border)',
-                  }}
+                  className="px-1.5 py-0.5 rounded inline-flex items-center gap-1 bg-token-nested text-token-muted border border-token-nested"
                   title="数据终身缓存在服务器，打开即读存量、绝不空白；服务器每隔固定周期自动刷新，有更新自动推送到本页，无需手动刷新。"
                 >
                   <RefreshCw size={9} />
@@ -1291,12 +1286,7 @@ export default function ChangelogPage() {
             type="button"
             onClick={handleRefresh}
             disabled={loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes}
-            className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50"
-            style={{
-              border: '1px solid var(--nested-block-border)',
-              color: 'var(--text-secondary)',
-              background: 'var(--nested-block-bg)',
-            }}
+            className="h-9 px-3 rounded-lg inline-flex items-center gap-1.5 text-[12px] transition-colors disabled:opacity-50 border border-token-nested text-token-secondary bg-token-nested"
             title="刷新（绕过服务端缓存并重新拉取）"
           >
             {(loadingReleases || loadingCurrent || loadingGitHubLogs || loadingGitHubPendingReview || loadingGitHubHotfixes) ? <MapSpinner size={14} /> : <RefreshCw size={14} />}
@@ -1307,25 +1297,20 @@ export default function ChangelogPage() {
         {/* 筛选器 */}
         {availableTypes.length > 0 && (
           <div data-tour-id="changelog-filter" className="flex flex-wrap items-center gap-2 pt-1">
-            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium" style={{ color: 'var(--text-secondary)' }}>
+            <div className="inline-flex items-center gap-1.5 text-[13px] font-medium text-token-secondary">
               <Filter size={14} />
               筛选
             </div>
-            
+
             <div className="flex flex-wrap ml-1" style={{ gap: '12px 10px', paddingTop: '6px' }}>
               {typeChipButtons}
             </div>
-            
+
             {typeFilter && (
               <button
                 type="button"
                 onClick={() => setTypeFilter(null)}
-                className="clg-neutral-button h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all cursor-pointer"
-                style={{
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--nested-block-border)',
-                  color: 'var(--text-secondary)',
-                }}
+                className="clg-neutral-button h-8 px-3 rounded-lg text-[13px] inline-flex items-center gap-1.5 ml-2 transition-all cursor-pointer bg-token-nested border border-token-nested text-token-secondary"
               >
                 <X size={13} />
                 清除筛选
@@ -1333,8 +1318,7 @@ export default function ChangelogPage() {
             )}
 
             {!isMobile && <span
-              className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1"
-              style={{ color: 'var(--text-muted)', opacity: 0.75 }}
+              className="ml-auto inline-flex items-center gap-1 text-[11px] self-end pb-1 text-token-muted opacity-75"
               title="角标统计最近 30 天的条目数，越久没有新增热度自然衰减；火焰徽章 = 近 30 天最热类型"
             >
               <Flame size={10} style={{ color: '#fb923c' }} />
@@ -1380,7 +1364,7 @@ export default function ChangelogPage() {
           <div className={`${isMobile ? 'contents' : 'flex items-center gap-4 flex-wrap'}`}>
             {!isMobile && (
               <div className="flex items-center justify-between gap-3">
-                <h2 className="text-[18px] font-semibold tracking-wide" style={{ color: 'var(--text-primary)' }}>
+                <h2 className="text-[18px] font-semibold tracking-wide text-token-primary">
                 更新记录
                 </h2>
               </div>
@@ -1506,7 +1490,7 @@ export default function ChangelogPage() {
             >
               共 <AnimatedNumber value={activeTotal} /> {historySubtab === 'github_logs' ? '次提交' : historySubtab === 'github_pending_review' ? '个 PR' : '条'}
             </span>}
-            {!isMobile && <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+            {!isMobile && <span className="text-[11px] text-token-muted">
               {historySubtab === 'releases' && '来自 admin 生产发布流水'}
               {historySubtab === 'fragments' && '来自已合并但未上生产的 changelogs/*.md 碎片'}
               {historySubtab === 'github_logs' && (
@@ -1582,18 +1566,17 @@ export default function ChangelogPage() {
                   <Wand2 size={12} />
                   AI 总结 · {activeSummaryLabel}
                 </div>
-                <div className="text-[18px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                <div className="text-[18px] font-semibold text-token-primary">
                   {activeSummary?.title ?? `正在总结 ${activeSummaryLabel}`}
                 </div>
-                <div className="text-[13px] mt-1 leading-relaxed" style={{ color: 'var(--text-secondary)' }}>
+                <div className="text-[13px] mt-1 leading-relaxed text-token-secondary">
                   {activeSummaryStatus === 'loading'
                     ? '正在通过网关生成摘要（非本地规则拼装）。'
                     : activeSummary?.headline}
                 </div>
               </div>
               <div
-                className="inline-flex items-center gap-2 text-[12px]"
-                style={{ color: 'var(--text-muted)' }}
+                className="inline-flex items-center gap-2 text-[12px] text-token-muted"
               >
                 <Brain size={13} />
                 {activeSummaryStatus === 'loading' && (
@@ -1639,12 +1622,7 @@ export default function ChangelogPage() {
                   {activeSummary.stats.map((stat) => (
                     <span
                       key={stat}
-                      className="px-2.5 py-1 rounded-full text-[11px] font-medium"
-                      style={{
-                        background: 'var(--nested-block-bg)',
-                        border: '1px solid var(--nested-block-border)',
-                        color: 'var(--text-secondary)',
-                      }}
+                      className="px-2.5 py-1 rounded-full text-[11px] font-medium bg-token-nested border border-token-nested text-token-secondary"
                     >
                       {stat}
                     </span>
@@ -1654,12 +1632,7 @@ export default function ChangelogPage() {
                   {activeSummary.bullets.map((bullet, index) => (
                     <div
                       key={`${activeSummary.title}-${index}`}
-                      className="rounded-xl px-3 py-2 text-[13px] leading-relaxed"
-                      style={{
-                        background: 'var(--nested-block-bg)',
-                        border: '1px solid var(--nested-block-border)',
-                        color: 'var(--text-secondary)',
-                      }}
+                      className="rounded-xl px-3 py-2 text-[13px] leading-relaxed bg-token-nested border border-token-nested text-token-secondary"
                     >
                       {bullet}
                     </div>
@@ -1719,7 +1692,7 @@ export default function ChangelogPage() {
                           <Calendar size={13} />
                           {group.date}
                         </div>
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[11px] text-token-muted">
                           · {group.rows.length} 条
                         </span>
                         {group.versionEvents.map((version) => (
@@ -1807,11 +1780,7 @@ export default function ChangelogPage() {
                 {fragmentGroups.slice(0, fragmentList.visibleCount).map((group) => (
                     <div
                       key={group.date}
-                      className="rounded-xl px-4 py-3"
-                      style={{
-                        background: 'var(--nested-block-bg)',
-                        border: '1px solid var(--nested-block-border)',
-                      }}
+                      className="rounded-xl px-4 py-3 bg-token-nested border border-token-nested"
                     >
                       <div className="flex items-center gap-2 mb-3 flex-wrap">
                         <div
@@ -1828,7 +1797,7 @@ export default function ChangelogPage() {
                           <Calendar size={13} />
                           {group.date}
                         </div>
-                        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                        <span className="text-[11px] text-token-muted">
                           · {group.rows.length} 条
                         </span>
                       </div>
@@ -1892,11 +1861,7 @@ export default function ChangelogPage() {
                 {githubLogWeekGroups.map((group) => (
                   <div
                     key={group.weekStart}
-                    className="rounded-xl px-4 py-3"
-                    style={{
-                      background: 'var(--nested-block-bg)',
-                      border: '1px solid var(--nested-block-border)',
-                    }}
+                    className="rounded-xl px-4 py-3 bg-token-nested border border-token-nested"
                   >
                     <div className="flex items-center gap-2 mb-3 flex-wrap">
                       <div
@@ -1913,7 +1878,7 @@ export default function ChangelogPage() {
                         <Calendar size={13} />
                         {group.label}
                       </div>
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[11px] text-token-muted">
                         · {group.logs.length} 条提交
                       </span>
                     </div>
@@ -1977,11 +1942,7 @@ export default function ChangelogPage() {
 
             {githubPendingReviewRows.length > 0 && (
               <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--nested-block-border)',
-                }}
+                className="rounded-xl px-4 py-3 bg-token-nested border border-token-nested"
               >
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <div
@@ -1998,7 +1959,7 @@ export default function ChangelogPage() {
                     <GitPullRequest size={13} />
                     Open PR
                   </div>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[11px] text-token-muted">
                     · {githubPendingReviewRows.length} 个待审核提交
                   </span>
                 </div>
@@ -2046,7 +2007,7 @@ export default function ChangelogPage() {
               >
                 <Flame size={26} className="mx-auto mb-2" style={{ color: '#fb923c', opacity: 0.6 }} />
                 <div className="text-[13px]">暂无热修复记录</div>
-                <div className="text-[11px] mt-1" style={{ opacity: 0.8 }}>
+                <div className="text-[11px] mt-1 opacity-80">
                   当有人修复了缺陷提交人上报的缺陷（缺陷分享 / AI 自动修复）后，这里会列出对应的提交与缺陷。
                 </div>
               </div>
@@ -2054,11 +2015,7 @@ export default function ChangelogPage() {
 
             {githubHotfixRows.length > 0 && (
               <div
-                className="rounded-xl px-4 py-3"
-                style={{
-                  background: 'var(--nested-block-bg)',
-                  border: '1px solid var(--nested-block-border)',
-                }}
+                className="rounded-xl px-4 py-3 bg-token-nested border border-token-nested"
               >
                 <div className="flex items-center gap-2 mb-3 flex-wrap">
                   <div
@@ -2074,7 +2031,7 @@ export default function ChangelogPage() {
                     <Flame size={13} />
                     热修复
                   </div>
-                  <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[11px] text-token-muted">
                     · {githubHotfixRows.length} 条缺陷修复
                   </span>
                 </div>
@@ -2160,20 +2117,15 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         initial={{ opacity: 0, y: 8 }}
         animate={{ opacity: 1, y: 0 }}
         transition={{ duration: 0.24, ease: [0.25, 0.46, 0.45, 0.94] }}
-        className="surface-row rounded-2xl px-3.5 py-3"
-        style={{
-          background: 'var(--nested-block-bg)',
-          border: '1px solid var(--nested-block-border)',
-        }}
+        className="surface-row rounded-2xl px-3.5 py-3 bg-token-nested border border-token-nested"
       >
         <div
-          className="text-[14px] leading-snug font-medium line-clamp-2"
-          style={{ color: 'var(--text-secondary)' }}
+          className="text-[14px] leading-snug font-medium line-clamp-2 text-token-secondary"
           title={entry.description}
         >
           {entry.description}
         </div>
-        <div className="mt-2 flex items-center gap-2 text-[11px] min-w-0" style={{ color: 'var(--text-muted)' }}>
+        <div className="mt-2 flex items-center gap-2 text-[11px] min-w-0 text-token-muted">
           {isFresh && (
             <span
               className="shrink-0 font-semibold tracking-wider"
@@ -2205,11 +2157,7 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
       initial={{ opacity: 0, y: 10, scale: 0.995 }}
       animate={{ opacity: 1, y: 0, scale: 1 }}
       transition={{ duration: 0.28, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="surface-row rounded-lg px-3.5 py-2.5 flex items-center gap-3"
-      style={{
-        background: 'var(--nested-block-bg)',
-        border: '1px solid var(--nested-block-border)',
-      }}
+      className="surface-row rounded-lg px-3.5 py-2.5 flex items-center gap-3 bg-token-nested border border-token-nested"
     >
       {isFresh && (
         <span
@@ -2251,8 +2199,7 @@ function EntryRow({ entry, newCutoff }: { entry: FlatEntry; newCutoff: number | 
         {entry.module}
       </div>
       <div
-        className="text-[13px] leading-relaxed flex-1 truncate"
-        style={{ color: 'var(--text-secondary)', minWidth: 0 }}
+        className="text-[13px] leading-relaxed flex-1 truncate text-token-secondary min-w-0"
         title={entry.description}
       >
         {entry.description}
@@ -2357,15 +2304,14 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
           className="surface-popover absolute right-0 top-[32px] z-40 w-[420px] max-w-[calc(100vw-48px)] rounded-lg p-3"
         >
           <div className="surface-panel-header flex items-center justify-between gap-3 pb-2">
-            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+            <div className="inline-flex items-center gap-1.5 text-[12px] font-semibold text-token-primary">
               {hasMine ? <UserCheck size={13} /> : <Bug size={13} />}
               {hasMine ? '我的关联缺陷' : '关联缺陷'}
             </div>
             <button
               type="button"
               onClick={() => setOpen(false)}
-              className="clg-neutral-button h-6 w-6 inline-flex items-center justify-center rounded-md"
-              style={{ color: 'var(--text-secondary)' }}
+              className="clg-neutral-button h-6 w-6 inline-flex items-center justify-center rounded-md text-token-secondary"
               title="关闭"
             >
               <X size={13} />
@@ -2415,23 +2361,21 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                   </div>
                 </div>
                 {defect.reporterName && (
-                  <div className="mt-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                  <div className="mt-1 text-[11px] text-token-muted">
                     提交人：{defect.reporterName}
                   </div>
                 )}
                 <div className="mt-2 flex flex-wrap items-center gap-2">
                   <a
                     href={buildDefectDetailUrl(defect)}
-                    className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                    style={{ color: 'var(--text-secondary)' }}
+                    className="inline-flex items-center gap-1 text-[12px] hover:underline text-token-secondary"
                   >
                     <Eye size={11} />
                     查看缺陷
                   </a>
                   {defect.commitSha && (
                     <span
-                      className="inline-flex items-center gap-1 text-[12px]"
-                      style={{ color: 'var(--text-muted)' }}
+                      className="inline-flex items-center gap-1 text-[12px] text-token-muted"
                     >
                       <GitCommit size={11} />
                       {defect.commitSha.slice(0, 7)}
@@ -2442,8 +2386,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.pullRequestUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline text-token-secondary"
                     >
                       <Github size={11} />
                       {defect.pullRequestNumber ? `PR #${defect.pullRequestNumber}` : 'PR'}
@@ -2454,8 +2397,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.previewUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline text-token-secondary"
                     >
                       <Eye size={11} />
                       验收地址
@@ -2466,8 +2408,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.visualReportUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline text-token-secondary"
                     >
                       <FileCheck2 size={11} />
                       验收报告
@@ -2478,8 +2419,7 @@ function LinkedDefectsPopover({ defects }: { defects: GitHubLinkedDefect[] }) {
                       href={defect.knowledgeBaseUrl}
                       target="_blank"
                       rel="noreferrer"
-                      className="inline-flex items-center gap-1 text-[12px] hover:underline"
-                      style={{ color: 'var(--text-secondary)' }}
+                      className="inline-flex items-center gap-1 text-[12px] hover:underline text-token-secondary"
                     >
                       <FileText size={11} />
                       知识库
@@ -2552,12 +2492,7 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
         {item.shortSha}
       </div>
       <div
-        className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px]"
-        style={{
-          color: 'var(--text-secondary)',
-          background: 'var(--nested-block-bg)',
-          border: '1px solid var(--nested-block-border)',
-        }}
+        className="shrink-0 inline-flex items-center gap-1.5 h-[26px] px-2 rounded-md text-[12px] text-token-secondary bg-token-nested border border-token-nested"
       >
         {item.authorAvatarUrl ? (
           <img
@@ -2581,7 +2516,7 @@ function GitHubPendingReviewRow({ item, index }: { item: GitHubPendingReviewEntr
         {item.authorName}
       </div>
       <div className="min-w-0 flex-1">
-        <div className="text-[13px] leading-relaxed truncate" style={{ color: 'var(--text-secondary)' }}>
+        <div className="text-[13px] leading-relaxed truncate text-token-secondary">
           {item.title}
         </div>
         <div
@@ -2712,7 +2647,7 @@ function GitHubLogRow({ log, index, isLiveNew }: { log: GitHubLogEntry; index: n
           </span>
         ))}
       </div>
-      <div className="text-[13px] leading-relaxed flex-1 truncate" style={{ color: 'var(--text-secondary)', minWidth: 0 }}>
+      <div className="text-[13px] leading-relaxed flex-1 truncate text-token-secondary min-w-0">
         {log.message}
       </div>
       <div
@@ -2748,11 +2683,7 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
       animate={{ opacity: 1, y: 0, scale: 1 }}
       exit={{ opacity: 0, y: -8, scale: 0.99 }}
       transition={{ duration: 0.28, delay: Math.min(index, 8) * 0.025, ease: [0.25, 0.46, 0.45, 0.94] }}
-      className="surface-row rounded-lg px-3.5 py-3 flex flex-col gap-2"
-      style={{
-        background: 'var(--nested-block-bg)',
-        border: '1px solid var(--nested-block-border)',
-      }}
+      className="surface-row rounded-lg px-3.5 py-3 flex flex-col gap-2 bg-token-nested border border-token-nested"
     >
       {/* 主行：热修复标记 + 缺陷编号（可点）+ 标题 + 发布状态 + 时间 */}
       <div className="flex items-center gap-2 flex-wrap min-w-0">
@@ -2783,8 +2714,7 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
         </Link>
         <Link
           to={defectUrl}
-          className="text-[13px] leading-relaxed flex-1 truncate hover:underline"
-          style={{ color: 'var(--text-secondary)', minWidth: 0 }}
+          className="text-[13px] leading-relaxed flex-1 truncate hover:underline text-token-secondary min-w-0"
           title={item.defectTitle || '未命名缺陷'}
         >
           {item.defectTitle || '未命名缺陷'}
@@ -2809,7 +2739,7 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
       </div>
 
       {/* 次行：提交人 + 修复 commit / PR + 验收链接 */}
-      <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap text-[12px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="flex items-center gap-x-3 gap-y-1.5 flex-wrap text-[12px] text-token-muted">
         {item.reporterName && (
           <span className="inline-flex items-center gap-1.5">
             <img
@@ -2847,25 +2777,25 @@ function HotfixRow({ item, index }: { item: GitHubHotfixEntry; index: number }) 
           )
         )}
         {item.pullRequestUrl && (
-          <a href={item.pullRequestUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }} title="查看 GitHub PR">
+          <a href={item.pullRequestUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline text-token-secondary" title="查看 GitHub PR">
             <Github size={11} />
             {item.pullRequestNumber ? `PR #${item.pullRequestNumber}` : 'PR'}
           </a>
         )}
         {item.previewUrl && (
-          <a href={item.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+          <a href={item.previewUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline text-token-secondary">
             <Eye size={11} />
             验收地址
           </a>
         )}
         {item.visualReportUrl && (
-          <a href={item.visualReportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+          <a href={item.visualReportUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline text-token-secondary">
             <FileCheck2 size={11} />
             验收报告
           </a>
         )}
         {item.knowledgeBaseUrl && (
-          <a href={item.knowledgeBaseUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline" style={{ color: 'var(--text-secondary)' }}>
+          <a href={item.knowledgeBaseUrl} target="_blank" rel="noreferrer" className="inline-flex items-center gap-1 hover:underline text-token-secondary">
             <FileText size={11} />
             知识库
           </a>

@@ -344,7 +344,7 @@ function PromptExpandModal({
             </Button>
             <button
               onClick={onClose}
-              className="p-1.5 rounded-lg transition-colors hover:bg-white/10 text-token-muted"
+              className="p-1.5 rounded-lg transition-colors hover-bg-soft text-token-muted"
             >
               <Minimize2 size={16} />
             </button>
@@ -516,7 +516,7 @@ function TestChatPanel({
               className={cn(
                 'max-w-[85%] p-3 rounded-xl text-[12px] leading-relaxed whitespace-pre-wrap',
                 msg.role === 'user'
-                  ? 'rounded-tr-sm text-white'
+                  ? 'rounded-tr-sm text-token-primary'
                   : 'surface-inset rounded-tl-sm text-token-secondary'
               )}
               style={msg.role === 'user'
@@ -554,7 +554,7 @@ function TestChatPanel({
         <div className="flex items-center gap-2">
           <button
             onClick={handleReset}
-            className="p-2 rounded-lg transition-colors hover:bg-white/10 flex-shrink-0 text-token-muted"
+            className="p-2 rounded-lg transition-colors hover-bg-soft flex-shrink-0 text-token-muted"
             title="清空对话"
           >
             <RotateCcw size={14} />
@@ -570,14 +570,14 @@ function TestChatPanel({
               className="flex-1 bg-transparent text-token-primary text-[12px] outline-none"
             />
             {streaming ? (
-              <button onClick={handleStop} className="p-1 rounded-lg hover:bg-white/10 text-token-error">
+              <button onClick={handleStop} className="p-1 rounded-lg hover-bg-soft text-token-error">
                 <Square size={14} />
               </button>
             ) : (
               <button
                 onClick={() => handleSend()}
                 disabled={!input.trim()}
-                className={cn('p-1 rounded-lg hover:bg-white/10 transition-colors', input.trim() ? 'text-token-accent' : 'text-token-muted-faint')}
+                className={cn('p-1 rounded-lg hover-bg-soft transition-colors', input.trim() ? 'text-token-accent' : 'text-token-muted-faint')}
               >
                 <Send size={14} />
               </button>
@@ -1001,7 +1001,7 @@ export function QuickCreateWizard() {
               onClick={() => handleSelectTemplate(template)}
               className="relative p-5 rounded-2xl text-left group overflow-hidden"
               style={{
-                background: `linear-gradient(160deg, hsla(${hue}, 50%, 50%, 0.06) 0%, rgba(255,255,255,0.015) 60%)`,
+                background: `linear-gradient(160deg, hsla(${hue}, 50%, 50%, 0.06) 0%, var(--nested-block-bg) 60%)`,
                 border: `1px solid hsla(${hue}, 40%, 55%, 0.1)`,
                 animation: `wizardSlideUp 0.45s cubic-bezier(0.16, 1, 0.3, 1) ${idx * 0.06}s both`,
                 transition: 'border-color 0.3s, box-shadow 0.3s, transform 0.25s cubic-bezier(0.16, 1, 0.3, 1)',
@@ -1203,7 +1203,7 @@ export function QuickCreateWizard() {
                 </Button>
                 <button
                   onClick={() => setShowExpandEditor(true)}
-                  className="p-1.5 rounded-lg transition-colors hover:bg-white/10 text-token-muted-faint"
+                  className="p-1.5 rounded-lg transition-colors hover-bg-soft text-token-muted-faint"
                   title="全屏编辑"
                 >
                   <Maximize2 size={14} />
@@ -1240,14 +1240,14 @@ export function QuickCreateWizard() {
                     style={{
                       background: isSelected
                         ? `linear-gradient(135deg, hsla(${hue}, 70%, 60%, 0.25) 0%, hsla(${hue}, 70%, 40%, 0.12) 100%)`
-                        : 'rgba(255, 255, 255, 0.03)',
+                        : 'var(--nested-block-bg)',
                       border: isSelected
                         ? `1.5px solid hsla(${hue}, 60%, 60%, 0.5)`
-                        : '1px solid rgba(255, 255, 255, 0.06)',
+                        : '1px solid var(--border-subtle)',
                       boxShadow: isSelected ? `0 2px 8px -2px hsla(${hue}, 70%, 50%, 0.3)` : 'none',
                     }}
                   >
-                    <Icon size={16} style={{ color: isSelected ? `hsla(${hue}, 70%, 70%, 1)` : 'rgba(255, 255, 255, 0.4)' }} />
+                    <Icon size={16} style={{ color: isSelected ? `hsla(${hue}, 70%, 70%, 1)` : 'var(--text-muted)' }} />
                   </button>
                 );
               })}
@@ -1293,7 +1293,7 @@ export function QuickCreateWizard() {
                 style={{
                   background: isWorkflowEnabled
                     ? 'linear-gradient(90deg, rgb(168, 85, 247), rgb(139, 92, 246))'
-                    : 'rgba(255, 255, 255, 0.1)',
+                    : 'var(--nested-block-bg)',
                 }}
               >
                 <div
@@ -1331,7 +1331,7 @@ export function QuickCreateWizard() {
               value={form.temperature}
               onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) })}
               className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-              style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255,255,255,0.1) ${form.temperature * 100}%)` }}
+              style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, var(--nested-block-bg) ${form.temperature * 100}%)` }}
             />
             <div className="text-token-muted-faint flex justify-between text-[10px] mt-1">
               <span>精确</span>
@@ -1381,7 +1381,7 @@ export function QuickCreateWizard() {
                 <span className="text-[13px] font-semibold text-token-primary">AI 润色结果</span>
                 {polishing && <MapSpinner size={13} color="rgb(192, 132, 252)" />}
               </div>
-              <button onClick={handleCancelPolish} className="p-1.5 rounded-lg hover:bg-white/10 text-token-muted">
+              <button onClick={handleCancelPolish} className="p-1.5 rounded-lg hover-bg-soft text-token-muted">
                 <X size={16} />
               </button>
             </div>
@@ -1431,7 +1431,7 @@ export function QuickCreateWizard() {
         <Surface variant="inset" className="rounded-xl overflow-hidden">
           <button
             onClick={() => setShowPromptEdit(!showPromptEdit)}
-            className="w-full px-3 py-2.5 flex items-center justify-between transition-colors hover:bg-white/[0.02]"
+            className="w-full px-3 py-2.5 flex items-center justify-between transition-colors hover-bg-soft"
           >
             <div className="flex items-center gap-2">
               <PenLine size={13} className="text-token-accent" />
@@ -1449,7 +1449,7 @@ export function QuickCreateWizard() {
                   {polishing ? <MapSpinner size={10} /> : <Sparkles size={10} />}
                   润色
                 </Button>
-                <button onClick={() => setShowExpandEditor(true)} className="p-1 rounded hover:bg-white/10 text-token-muted" title="全屏编辑">
+                <button onClick={() => setShowExpandEditor(true)} className="p-1 rounded hover-bg-soft text-token-muted" title="全屏编辑">
                   <Maximize2 size={12} />
                 </button>
               </div>
@@ -1523,7 +1523,7 @@ export function QuickCreateWizard() {
               style={{
                 background: isWorkflowEnabled
                   ? 'linear-gradient(90deg, rgb(168, 85, 247), rgb(139, 92, 246))'
-                  : 'rgba(255, 255, 255, 0.1)',
+                  : 'var(--nested-block-bg)',
               }}
             >
               <div
@@ -1586,7 +1586,7 @@ export function QuickCreateWizard() {
                   )}
                   <button
                     onClick={() => removeKnowledgeFile(file.id)}
-                    className="p-0.5 rounded hover:bg-white/10 transition-colors flex-shrink-0"
+                    className="p-0.5 rounded hover-bg-soft transition-colors flex-shrink-0"
                     aria-label="移除文件"
                   >
                     <X size={10} className="text-token-muted" />
@@ -1628,7 +1628,7 @@ export function QuickCreateWizard() {
             value={form.temperature}
             onChange={(e) => setForm({ ...form, temperature: parseFloat(e.target.value) })}
             className="w-full h-1.5 rounded-full appearance-none cursor-pointer"
-            style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, rgba(255,255,255,0.1) ${form.temperature * 100}%)` }}
+            style={{ background: `linear-gradient(90deg, rgb(59, 130, 246) ${form.temperature * 100}%, var(--nested-block-bg) ${form.temperature * 100}%)` }}
           />
           <div className="text-token-muted flex justify-between text-[10px] mt-1">
             <span>精确</span>

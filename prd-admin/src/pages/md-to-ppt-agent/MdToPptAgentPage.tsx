@@ -820,11 +820,11 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
     <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/45" onClick={onClose}>
       <div
         data-testid="kb-picker-modal"
-        className="rounded-xl border border-white/10 bg-[var(--bg-elevated)] shadow-2xl flex flex-col"
+        className="rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-2xl flex flex-col"
         style={{ width: 'min(860px, 92vw)', height: '76vh', maxHeight: '76vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
           <span className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
             <BookOpen size={13} className="text-blue-400" />
             引用知识库
@@ -839,7 +839,7 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
         <div className="flex flex-1" style={{ minHeight: 0 }}>
           {/* 左列：知识库列表 */}
           <div
-            className="w-52 shrink-0 border-r border-white/8"
+            className="w-52 shrink-0 border-r border-token-subtle"
             style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
           >
             {storesLoading && <div className="flex justify-center py-6"><MapSpinner size={14} /></div>}
@@ -848,8 +848,8 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
                 key={st.id}
                 onClick={() => void openStore(st)}
                 className={[
-                  'w-full flex items-start gap-2 px-3 py-2.5 text-left border-b border-white/4',
-                  selectedStore?.id === st.id ? 'bg-blue-500/12' : 'hover:bg-white/4',
+                  'w-full flex items-start gap-2 px-3 py-2.5 text-left border-b border-token-subtle',
+                  selectedStore?.id === st.id ? 'bg-blue-500/12' : 'hover-bg-soft',
                 ].join(' ')}
               >
                 <BookOpen size={12} className={selectedStore?.id === st.id ? 'shrink-0 mt-0.5 text-blue-400' : 'shrink-0 mt-0.5 text-[var(--text-tertiary)]'} />
@@ -881,7 +881,7 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
                   <button
                     key={entry.id}
                     onClick={() => void openPreview(entry)}
-                    className="w-full flex items-center gap-3 px-4 py-2.5 hover:bg-white/4 border-b border-white/4 text-left"
+                    className="w-full flex items-center gap-3 px-4 py-2.5 hover-bg-soft border-b border-token-subtle text-left"
                   >
                     <FileText size={12} className="shrink-0 text-[var(--text-tertiary)]" />
                     <div className="min-w-0">
@@ -897,7 +897,7 @@ function KbPicker({ onClose, onSelect }: KbPickerProps) {
 
             {selectedStore && previewEntry && (
               <>
-                <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-white/6">
+                <div className="shrink-0 flex items-center gap-2 px-4 py-2 border-b border-token-subtle">
                   <button
                     onClick={() => { setPreviewEntry(null); setPreviewContent(null); }}
                     className="flex items-center gap-1 text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)]"
@@ -963,7 +963,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
         {(msg.outline ?? []).map((slide, i) => (
           <div
             key={i}
-            className="rounded-md bg-white/4 border border-white/6 px-2.5 py-1.5"
+            className="rounded-md bg-token-nested border border-token-subtle px-2.5 py-1.5"
           >
             <div className="text-[11px] font-semibold text-[var(--text-primary)] mb-0.5">
               {i + 1}. {slide.title}
@@ -988,7 +988,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
             value={adjustText}
             onChange={(e) => setAdjustText(e.target.value)}
             placeholder="调整说明，如：把第3页改成竞品分析"
-            className="flex-1 text-xs bg-white/5 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/10 rounded-md px-2 py-1.5 outline-none focus:border-purple-500/40"
+            className="flex-1 text-xs bg-token-nested text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-token-subtle rounded-md px-2 py-1.5 outline-none focus:border-purple-500/40"
             onKeyDown={(e) => {
               if (e.key === 'Enter' && adjustText.trim()) {
                 onAdjust(msg, adjustText.trim());
@@ -1006,7 +1006,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
                 setShowAdjust(false);
               }
             }}
-            className="px-2 py-1 rounded-md bg-white/6 text-[10px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-40"
+            className="px-2 py-1 rounded-md bg-token-nested text-[10px] text-[var(--text-secondary)] hover-bg-soft disabled:opacity-40"
           >
             调整
           </button>
@@ -1025,7 +1025,7 @@ function OutlineBubble({ msg, onConfirm, onAdjust, disabled }: OutlineBubbleProp
         <button
           onClick={() => setShowAdjust((v) => !v)}
           disabled={disabled}
-          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs bg-white/5 text-[var(--text-secondary)] hover:bg-white/8 border border-white/8 disabled:opacity-40"
+          className="flex items-center gap-1 px-2.5 py-1.5 rounded-md text-xs bg-token-nested text-[var(--text-secondary)] hover-bg-soft border border-token-subtle disabled:opacity-40"
         >
           调整大纲
         </button>
@@ -2621,7 +2621,7 @@ export function MdToPptAgentPage() {
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="hidden md:flex shrink-0 items-center justify-between px-4 py-2.5 border-b border-white/8">
+      <div className="hidden md:flex shrink-0 items-center justify-between px-4 py-2.5 border-b border-token-subtle">
         <div className="flex items-center gap-2">
           <div className="w-6 h-6 rounded-md bg-purple-500/15 flex items-center justify-center">
             <FileText size={13} className="text-purple-400" />
@@ -2671,7 +2671,7 @@ export function MdToPptAgentPage() {
             disabled={isStreaming}
             title="历史生成：查看并载入以前生成的 PPT 继续精修"
             data-testid="history-button"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5 disabled:opacity-40"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover-bg-soft disabled:opacity-40"
           >
             <History size={12} />
             历史
@@ -2680,7 +2680,7 @@ export function MdToPptAgentPage() {
           <button
             onClick={handleReset}
             title="清空当前结果，重新开始一个新 PPT"
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover-bg-soft"
           >
             <RotateCcw size={12} />
             新建
@@ -2742,20 +2742,20 @@ export function MdToPptAgentPage() {
           </span>
         </div>
         <div className="shrink-0 flex flex-wrap items-center gap-1.5 text-[10px]">
-          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">HTML 片段校验</span>
-          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">模板风格锁定</span>
-          <span className="rounded border border-current/20 bg-black/10 px-2 py-0.5">创意方向可控</span>
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">HTML 片段校验</span>
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">模板风格锁定</span>
+          <span className="rounded border border-current/20 bg-token-nested px-2 py-0.5">创意方向可控</span>
           {!runtimeIsGateway && (
             <>
               <button
                 onClick={() => navigate('/infra-services')}
-                className="px-2 py-0.5 rounded border border-current/25 hover:bg-white/10"
+                className="px-2 py-0.5 rounded border border-current/25 hover-bg-soft"
               >
                 基础设施服务
               </button>
               <button
                 onClick={runConnectionCheck}
-                className="px-2 py-0.5 rounded border border-current/20 opacity-80 hover:bg-white/10"
+                className="px-2 py-0.5 rounded border border-current/20 opacity-80 hover-bg-soft"
               >
                 重新检测
               </button>
@@ -2777,8 +2777,8 @@ export function MdToPptAgentPage() {
                 <span className="h-1.5 w-1.5 rounded-full bg-emerald-300" />
                 {runtimeRouteLabel}
               </div>
-              <h1 className="mt-3 text-2xl font-semibold leading-tight text-white">MD 转 PPT</h1>
-              <p className="mt-1 text-xs leading-relaxed text-white/48">
+              <h1 className="mt-3 text-2xl font-semibold leading-tight text-token-primary">MD 转 PPT</h1>
+              <p className="mt-1 text-xs leading-relaxed text-token-muted">
                 写想法、引知识库、加附件，先出大纲，再生成可编辑演示稿。
               </p>
             </div>
@@ -2796,14 +2796,14 @@ export function MdToPptAgentPage() {
               <button
                 onClick={openHistory}
                 disabled={isStreaming}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary disabled:opacity-40"
                 title="历史"
               >
                 <History size={15} />
               </button>
               <button
                 onClick={handleReset}
-                className="flex h-8 w-8 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65"
+                className="flex h-8 w-8 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary"
                 title="新建"
               >
                 <RotateCcw size={14} />
@@ -2829,20 +2829,20 @@ export function MdToPptAgentPage() {
                     setInput(mode.prompt);
                     mobileInputRef.current?.focus();
                   }}
-                  className="w-[126px] rounded-lg border border-white/10 bg-white/[0.045] px-3 py-2 text-left hover:border-purple-300/35 hover:bg-purple-400/10"
+                  className="w-[126px] rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-left hover:border-purple-300/35 hover:bg-purple-400/10"
                 >
-                  <div className="text-sm font-semibold text-white/90">{mode.label}</div>
-                  <div className="mt-1 text-[11px] text-white/42">{mode.desc}</div>
+                  <div className="text-sm font-semibold text-token-primary">{mode.label}</div>
+                  <div className="mt-1 text-[11px] text-token-muted">{mode.desc}</div>
                 </button>
               ))}
             </div>
           </div>
 
-          <div className="rounded-lg border border-white/12 bg-[var(--panel-solid)] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
+          <div className="rounded-lg border border-token-subtle bg-[var(--panel-solid)] p-3 shadow-[0_18px_60px_rgba(0,0,0,.28)] focus-within:border-purple-300/55">
             {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
               <div className="mb-2 flex flex-wrap gap-1.5">
                 {pendingAttachments.map((a, i) => (
-                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-white/10 bg-white/6 px-2 py-1 text-[10px] text-white/65">
+                  <span key={i} className="inline-flex max-w-full items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2 py-1 text-[10px] text-token-secondary">
                     <Upload size={10} />
                     <span className="max-w-[180px] truncate">{a.name}</span>
                     <button onClick={() => removeAttachment(i)}><X size={10} /></button>
@@ -2870,14 +2870,14 @@ export function MdToPptAgentPage() {
               disabled={isProcessing}
               rows={7}
               placeholder="描述你的创意，或先引用知识库。比如：把这份产品资料做成 8 页发布会 PPT，视觉要高级，内容要能直接讲。"
-              className="min-h-[172px] w-full resize-none bg-transparent text-[15px] leading-7 text-white outline-none placeholder:text-white/32 disabled:opacity-50"
+              className="min-h-[172px] w-full resize-none bg-transparent text-[15px] leading-7 text-token-primary outline-none placeholder:text-token-muted disabled:opacity-50"
               style={{ overscrollBehavior: 'contain' }}
             />
-            <div className="mt-2 flex items-center gap-2 border-t border-white/8 pt-3">
+            <div className="mt-2 flex items-center gap-2 border-t border-token-subtle pt-3">
               <button
                 onClick={() => fileInputRef.current?.click()}
                 disabled={isProcessing}
-                className="flex h-10 w-10 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/65 disabled:opacity-40"
+                className="flex h-10 w-10 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary disabled:opacity-40"
                 title="添加文件"
               >
                 <Plus size={18} />
@@ -2885,7 +2885,7 @@ export function MdToPptAgentPage() {
               <button
                 onClick={() => setShowKbPicker(true)}
                 disabled={isProcessing}
-                className="flex h-10 items-center gap-2 rounded-md border border-white/10 bg-white/5 px-3 text-sm font-medium text-white/72 disabled:opacity-40"
+                className="flex h-10 items-center gap-2 rounded-md border border-token-subtle bg-token-nested px-3 text-sm font-medium text-token-secondary disabled:opacity-40"
               >
                 <BookOpen size={15} />
                 知识库
@@ -2900,7 +2900,7 @@ export function MdToPptAgentPage() {
                     }
                   }}
                   disabled={isProcessing}
-                  className="min-w-0 flex h-10 flex-1 items-center justify-center gap-1.5 rounded-md border border-white/10 bg-white/5 px-2 text-[11px] font-mono text-white/58 disabled:opacity-40"
+                  className="min-w-0 flex h-10 flex-1 items-center justify-center gap-1.5 rounded-md border border-token-subtle bg-token-nested px-2 text-[11px] font-mono text-token-secondary disabled:opacity-40"
                 >
                   <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-emerald-300" />
                   <span className="truncate">{(effectiveProfile?.model ?? '默认模型').split('/').pop()}</span>
@@ -2918,8 +2918,8 @@ export function MdToPptAgentPage() {
           </div>
 
           {showModelPicker && profiles.length > 0 && (
-            <div className="rounded-lg border border-white/10 bg-[var(--bg-elevated)] p-2">
-              <div className="px-1 pb-2 text-[11px] font-semibold text-white/48">选择后续生成模型</div>
+            <div className="rounded-lg border border-token-subtle bg-[var(--bg-elevated)] p-2">
+              <div className="px-1 pb-2 text-[11px] font-semibold text-token-muted">选择后续生成模型</div>
               <div className="max-h-[240px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 {profiles.map((p) => {
                   const active = effectiveProfile?.id === p.id;
@@ -2933,13 +2933,13 @@ export function MdToPptAgentPage() {
                       }}
                       className={[
                         'flex w-full items-center gap-2 rounded-md px-2 py-2 text-left',
-                        active ? 'bg-purple-400/12 text-purple-100' : 'text-white/65',
+                        active ? 'bg-purple-400/12 text-purple-100' : 'text-token-secondary',
                       ].join(' ')}
                     >
-                      <span className={['h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-purple-300' : 'bg-white/25'].join(' ')} />
+                      <span className={['h-1.5 w-1.5 shrink-0 rounded-full', active ? 'bg-purple-300' : 'bg-token-nested'].join(' ')} />
                       <span className="min-w-0 flex-1">
                         <span className="block truncate text-[12px] font-mono">{p.model}</span>
-                        <span className="block truncate text-[10px] text-white/36">{p.name}{p.isEffectiveDefault ? ' · 默认' : ''}</span>
+                        <span className="block truncate text-[10px] text-token-muted">{p.name}{p.isEffectiveDefault ? ' · 默认' : ''}</span>
                       </span>
                       {active && <Check size={13} />}
                     </button>
@@ -2951,7 +2951,7 @@ export function MdToPptAgentPage() {
 
           {messages.length === 0 && !generatedHtml && (
             <div className="space-y-2">
-              <div className="text-xs font-semibold text-white/54">创意起点</div>
+              <div className="text-xs font-semibold text-token-secondary">创意起点</div>
               {QUICK_STARTS.map((q) => (
                 <button
                   key={q.label}
@@ -2959,23 +2959,23 @@ export function MdToPptAgentPage() {
                     setInput(q.text);
                     mobileInputRef.current?.focus();
                   }}
-                  className="w-full rounded-lg border border-white/10 bg-white/[0.035] px-3 py-2.5 text-left"
+                  className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-left"
                 >
-                  <div className="text-sm font-semibold text-white/86">{q.label}</div>
-                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-white/42">{q.text}</div>
+                  <div className="text-sm font-semibold text-token-primary">{q.label}</div>
+                  <div className="mt-1 line-clamp-2 text-xs leading-relaxed text-token-muted">{q.text}</div>
                 </button>
               ))}
             </div>
           )}
 
           {(messages.length > 0 || generatedHtml || isStreaming) && (
-            <div className="rounded-lg border border-white/10 bg-white/[0.035] p-3">
+            <div className="rounded-lg border border-token-subtle bg-token-nested p-3">
               <div className="flex items-center justify-between gap-2">
                 <div>
-                  <div className="text-sm font-semibold text-white/86">
+                  <div className="text-sm font-semibold text-token-primary">
                     {generatedHtml ? '演示稿已生成' : isStreaming ? '正在生成' : '对话进行中'}
                   </div>
-                  <div className="mt-1 text-xs text-white/42">
+                  <div className="mt-1 text-xs text-token-muted">
                     {isStreaming ? `已运行 ${elapsedSec}s，页面会持续更新` : generatedHtml ? '可继续精修、下载或发布为网页' : '继续输入即可调整方向'}
                   </div>
                 </div>
@@ -2996,7 +2996,7 @@ export function MdToPptAgentPage() {
                     </span>
                   </div>
                   {visibleProgressTotal > 0 && (
-                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-white/8">
+                    <div className="mt-2 h-1 overflow-hidden rounded-full bg-token-nested">
                       <div
                         className="h-full rounded-full bg-purple-300 transition-all duration-500"
                         style={{ width: `${Math.max(visibleDoneCount > 0 ? 8 : 3, Math.min(96, (visibleDoneCount / visibleProgressTotal) * 100))}%` }}
@@ -3006,13 +3006,13 @@ export function MdToPptAgentPage() {
                   {runningPageIndexes.length > 0 && (
                     <div className="mt-2 flex flex-wrap gap-1">
                       {runningPageIndexes.slice(0, 8).map((index) => (
-                        <span key={index} className="rounded border border-white/10 bg-white/5 px-1.5 py-0.5 text-[10px] text-white/52">
+                        <span key={index} className="rounded border border-token-subtle bg-token-nested px-1.5 py-0.5 text-[10px] text-token-secondary">
                           第 {index + 1} 页生成中
                         </span>
                       ))}
                     </div>
                   )}
-                  <div className="mt-2 text-[10px] leading-relaxed text-white/38">
+                  <div className="mt-2 text-[10px] leading-relaxed text-token-muted">
                     8 页会按 4 路并行生成；首批页面返回前，主要耗时在模型生成单页 HTML 和片段校验。
                   </div>
                 </div>
@@ -3027,7 +3027,7 @@ export function MdToPptAgentPage() {
 
         {/* ─── Left: Chat panel（宽度可拖拽，右缘手柄） ───────────────────── */}
         <div
-          className="shrink-0 flex flex-col border-r border-white/8"
+          className="shrink-0 flex flex-col border-r border-token-subtle"
           style={{ minHeight: 0, width: chatWidth, position: 'relative' }}
         >
           <div
@@ -3067,7 +3067,7 @@ export function MdToPptAgentPage() {
                         setInput(q.text);
                         inputRef.current?.focus();
                       }}
-                      className="text-left px-2.5 py-2 rounded-lg bg-white/4 border border-white/8 hover:bg-purple-500/10 hover:border-purple-500/25 transition-colors"
+                      className="text-left px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle hover:bg-purple-500/10 hover:border-purple-500/25 transition-colors"
                     >
                       <div className="text-[11px] font-medium text-[var(--text-secondary)]">
                         {q.label}
@@ -3098,7 +3098,7 @@ export function MdToPptAgentPage() {
                     'rounded-xl px-3 py-2 text-xs leading-relaxed max-w-[90%]',
                     msg.role === 'user'
                       ? 'bg-purple-500/15 text-[var(--text-primary)] border border-purple-500/20'
-                      : 'bg-white/5 text-[var(--text-secondary)] border border-white/8',
+                      : 'bg-token-nested text-[var(--text-secondary)] border border-token-subtle',
                   ].join(' ')}
                 >
                   {/* User message content */}
@@ -3155,7 +3155,7 @@ export function MdToPptAgentPage() {
                             </div>
                             <div className="mt-1 flex flex-wrap gap-1">
                               {runningPageIndexes.slice(0, 6).map((index) => (
-                                <span key={index} className="rounded bg-white/5 px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]">
+                                <span key={index} className="rounded bg-token-nested px-1.5 py-0.5 text-[9px] text-[var(--text-tertiary)]">
                                   第 {index + 1} 页生成中
                                 </span>
                               ))}
@@ -3209,7 +3209,7 @@ export function MdToPptAgentPage() {
                         <button
                           onClick={handleReset}
                           disabled={isProcessing}
-                          className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                          className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2 py-1 text-[11px] text-[var(--text-secondary)] hover-bg-soft disabled:opacity-50"
                         >
                           新建一份
                         </button>
@@ -3235,7 +3235,7 @@ export function MdToPptAgentPage() {
                             <button
                               onClick={redrawCurrentPage}
                               disabled={isProcessing || editMode || !slidePos}
-                              className="inline-flex items-center gap-1 rounded-md border border-white/10 bg-white/5 px-2 py-1 text-[11px] text-[var(--text-secondary)] hover:bg-white/10 disabled:opacity-50"
+                              className="inline-flex items-center gap-1 rounded-md border border-token-subtle bg-token-nested px-2 py-1 text-[11px] text-[var(--text-secondary)] hover-bg-soft disabled:opacity-50"
                             >
                               <Sparkles size={11} />
                               重绘当前页
@@ -3255,12 +3255,12 @@ export function MdToPptAgentPage() {
                 输入区是一张完整卡片——附件 chips 在卡内顶部、textarea 无边框透明、
                 底部工具行（+ 菜单 / 快捷键提示 / 实底发送主按钮），focus-within 高亮整卡。
                 移动端额外让出底部导航和系统安全区，避免主操作被遮挡。 */}
-          <div className="shrink-0 border-t border-white/8 px-3 pt-3 pb-[calc(86px+env(safe-area-inset-bottom))] md:pb-[34px]">
+          <div className="shrink-0 border-t border-token-subtle px-3 pt-3 pb-[calc(86px+env(safe-area-inset-bottom))] md:pb-[34px]">
             <div
               data-testid="composer-shell"
               /* 禁止在这层加 transform（如 -translate-y）：transform 会创建新 stacking context，
                  让卡内 z-10 的 + 菜单被 fixed z-[5] 的关闭蒙层盖住，菜单项永远点不到 */
-              className="flex flex-col gap-2 rounded-2xl border border-white/12 bg-white/4 px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-white/7 focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)]"
+              className="flex flex-col gap-2 rounded-2xl border border-token-subtle bg-token-nested px-3.5 pt-3 pb-2.5 transition-all duration-300 focus-within:border-purple-400/80 focus-within:bg-token-nested focus-within:ring-2 focus-within:ring-purple-500/35 focus-within:shadow-[0_8px_32px_rgba(168,85,247,.22)]"
             >
               {/* Pending attachments & KB refs（卡内顶部） */}
               {(pendingAttachments.length > 0 || pendingKbRefs.length > 0) && (
@@ -3268,7 +3268,7 @@ export function MdToPptAgentPage() {
                   {pendingAttachments.map((a, i) => (
                     <div
                       key={i}
-                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-white/6 text-[10px] text-[var(--text-secondary)] border border-white/8"
+                      className="flex items-center gap-1 px-2 py-0.5 rounded-full bg-token-nested text-[10px] text-[var(--text-secondary)] border border-token-subtle"
                     >
                       <Upload size={9} />
                       <span className="truncate max-w-[120px]">{a.name}</span>
@@ -3320,22 +3320,22 @@ export function MdToPptAgentPage() {
               />
 
               {/* 底部工具行 */}
-              <div className="flex items-center gap-2 pt-1.5 border-t border-white/6">
+              <div className="flex items-center gap-2 pt-1.5 border-t border-token-subtle">
                 {/* "+" menu */}
                 <div className="relative shrink-0">
                   <button
                     onClick={() => setShowPlusMenu((v) => !v)}
                     disabled={isProcessing}
                     title="添加文件 / 引用知识库"
-                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-white/5 text-[var(--text-tertiary)] hover:bg-white/8 hover:text-[var(--text-secondary)] border border-white/8 disabled:opacity-40"
+                    className="flex items-center justify-center w-7 h-7 rounded-lg bg-token-nested text-[var(--text-tertiary)] hover-bg-soft hover:text-[var(--text-secondary)] border border-token-subtle disabled:opacity-40"
                   >
                     <Plus size={13} />
                   </button>
 
                   {showPlusMenu && (
-                    <div className="absolute bottom-full left-0 mb-1 w-40 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10">
+                    <div className="absolute bottom-full left-0 mb-1 w-40 rounded-lg border border-token-subtle bg-[var(--bg-elevated)] shadow-xl z-10">
                       <button
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5"
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover-bg-soft"
                         onClick={() => {
                           setShowPlusMenu(false);
                           fileInputRef.current?.click();
@@ -3345,7 +3345,7 @@ export function MdToPptAgentPage() {
                         添加文件
                       </button>
                       <button
-                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover:bg-white/5 border-t border-white/6"
+                        className="w-full flex items-center gap-2 px-3 py-2.5 text-xs text-[var(--text-secondary)] hover-bg-soft border-t border-token-subtle"
                         onClick={() => {
                           setShowPlusMenu(false);
                           setShowKbPicker(true);
@@ -3372,7 +3372,7 @@ export function MdToPptAgentPage() {
                       disabled={isProcessing}
                       data-testid="model-picker-chip"
                       title={'当前模型：' + (effectiveProfile?.model ?? '默认') + '（点击切换，影响后续生成/精修）'}
-                      className="flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/8 border border-white/8 disabled:opacity-40 max-w-[170px]"
+                      className="flex items-center gap-1 h-7 px-2 rounded-lg text-[10px] font-mono bg-token-nested text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover-bg-soft border border-token-subtle disabled:opacity-40 max-w-[170px]"
                     >
                       <span className="w-1.5 h-1.5 rounded-full bg-emerald-400/80 shrink-0" />
                       {/* 只显示短名（去掉 vendor 前缀），全名在 title；避免长 ID 挤压底部工具行 */}
@@ -3392,9 +3392,9 @@ export function MdToPptAgentPage() {
                     {showModelPicker && (
                       <div
                         data-testid="model-picker-pop"
-                        className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-white/10 bg-[var(--bg-elevated)] shadow-xl z-10 overflow-hidden"
+                        className="absolute bottom-full left-0 mb-1 w-64 rounded-lg border border-token-subtle bg-[var(--bg-elevated)] shadow-xl z-10 overflow-hidden"
                       >
-                        <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] border-b border-white/6">
+                        <div className="px-3 py-2 text-[10px] text-[var(--text-tertiary)] border-b border-token-subtle">
                           切换生成模型（来自「基础设施 → 配置」的运行配置）
                         </div>
                         <div style={{ maxHeight: 200, overflowY: 'auto', overscrollBehavior: 'contain' }}>
@@ -3410,7 +3410,7 @@ export function MdToPptAgentPage() {
                                   if (outlineDraft) prewarmMdToPpt(p.id);
                                 }}
                                 className={[
-                                  'w-full flex items-center gap-2 px-3 py-2 text-left hover:bg-white/5',
+                                  'w-full flex items-center gap-2 px-3 py-2 text-left hover-bg-soft',
                                   active ? 'bg-purple-500/10' : '',
                                 ].join(' ')}
                               >
@@ -3429,7 +3429,7 @@ export function MdToPptAgentPage() {
                         </div>
 
                         {/* 模型池直选：池里配过的 baseUrl/key 直接用，点选即物化为配置并选中 */}
-                        <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] border-t border-white/6 flex items-center justify-between gap-2">
+                        <div className="px-3 py-1.5 text-[10px] text-[var(--text-tertiary)] border-t border-token-subtle flex items-center justify-between gap-2">
                           <span>从模型池直选（自动复用平台 baseUrl/key）</span>
                           <a href="/infra-services?tab=config" className="shrink-0 text-sky-300/80 hover:text-sky-200">高级配置</a>
                         </div>
@@ -3439,7 +3439,7 @@ export function MdToPptAgentPage() {
                             onChange={(e) => setPoolQuery(e.target.value)}
                             placeholder="搜索模型 / 平台..."
                             data-testid="pool-search"
-                            className="w-full h-7 px-2 rounded-md text-[11px] bg-white/4 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/8 outline-none focus:border-purple-400/50"
+                            className="w-full h-7 px-2 rounded-md text-[11px] bg-token-nested text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-token-subtle outline-none focus:border-purple-400/50"
                           />
                         </div>
                         <div style={{ maxHeight: 180, overflowY: 'auto', overscrollBehavior: 'contain' }} data-testid="pool-list">
@@ -3470,7 +3470,7 @@ export function MdToPptAgentPage() {
                                   setShowModelPicker(false);
                                   if (outlineDraft) prewarmMdToPpt(created.id);
                                 }}
-                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover:bg-white/5 disabled:opacity-50 disabled:cursor-not-allowed"
+                                className="w-full flex items-center gap-2 px-3 py-1.5 text-left hover-bg-soft disabled:opacity-50 disabled:cursor-not-allowed"
                               >
                                 <div className="min-w-0 flex-1">
                                   <div className="text-[11px] font-mono truncate text-[var(--text-secondary)]">{m.model}</div>
@@ -3559,7 +3559,7 @@ export function MdToPptAgentPage() {
                           'group text-left rounded-xl border overflow-hidden transition-all',
                           active
                             ? 'border-purple-400/70 ring-2 ring-purple-500/30'
-                            : 'border-white/10 hover:border-white/25',
+                            : 'border-token-subtle hover:border-token-subtle',
                         ].join(' ')}
                       >
                         <div className="relative px-4 pt-3.5 pb-3 overflow-hidden" style={{ height: 112, ...pv.style }}>
@@ -3584,7 +3584,7 @@ export function MdToPptAgentPage() {
                             </div>
                           </div>
                         </div>
-                        <div className="px-3 py-2 bg-white/4">
+                        <div className="px-3 py-2 bg-token-nested">
                           <div className="flex items-center justify-between">
                             <span className={['text-[12px] font-semibold', active ? 'text-purple-200' : 'text-[var(--text-primary)]'].join(' ')}>
                               {opt.label}
@@ -3612,7 +3612,7 @@ export function MdToPptAgentPage() {
                           'group relative rounded-xl border overflow-hidden transition-all',
                           active
                             ? 'border-purple-400/70 ring-2 ring-purple-500/30'
-                            : 'border-white/10 hover:border-white/25',
+                            : 'border-token-subtle hover:border-token-subtle',
                         ].join(' ')}
                       >
                         <button onClick={() => selectCustomTemplate(t)} className="block w-full text-left">
@@ -3623,7 +3623,7 @@ export function MdToPptAgentPage() {
                             </div>
                             <div className="mt-1.5 h-1.5 w-3/4 rounded" style={{ background: t.accentColor, opacity: 0.25 }} />
                           </div>
-                          <div className="flex items-center justify-between px-3 py-2 bg-white/4">
+                          <div className="flex items-center justify-between px-3 py-2 bg-token-nested">
                             <span className={['text-[12px] font-medium truncate', active ? 'text-purple-200' : 'text-[var(--text-secondary)]'].join(' ')}>
                               {t.name}
                             </span>
@@ -3646,7 +3646,7 @@ export function MdToPptAgentPage() {
                     onClick={() => templateFileRef.current?.click()}
                     disabled={templateBusy}
                     data-testid="gallery-upload-template"
-                    className="rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] flex flex-col items-center justify-center gap-2 transition-colors disabled:opacity-50"
+                    className="rounded-xl border border-dashed border-token-subtle hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] flex flex-col items-center justify-center gap-2 transition-colors disabled:opacity-50"
                     style={{ minHeight: 150 }}
                   >
                     {templateBusy ? <MapSpinner size={18} /> : <ImagePlus size={18} />}
@@ -3668,7 +3668,7 @@ export function MdToPptAgentPage() {
           {artifactPhase === 'idle' && !generatedHtml && outlineDraft && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }} data-testid="outline-editor">
               {/* 头部：摘要 + 页数 + 确认 */}
-              <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
+              <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
                 <div className="min-w-0 flex-1">
                   <p className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-2">
                     大纲编辑器
@@ -3730,7 +3730,7 @@ export function MdToPptAgentPage() {
                                 value={typeof ans === 'string' ? ans : ''}
                                 onChange={(e) => setAns(e.target.value)}
                                 placeholder="输入你的回答..."
-                                className="w-full text-[11px] bg-white/5 text-[var(--text-primary)] border border-white/10 rounded-md px-2 py-1.5 outline-none focus:border-blue-500/40"
+                                className="w-full text-[11px] bg-token-nested text-[var(--text-primary)] border border-token-subtle rounded-md px-2 py-1.5 outline-none focus:border-blue-500/40"
                               />
                             ) : (
                               <div className="flex flex-wrap gap-1.5">
@@ -3753,7 +3753,7 @@ export function MdToPptAgentPage() {
                                         'px-2.5 py-1 rounded-full text-[11px] border transition-colors',
                                         selected
                                           ? 'bg-blue-500/25 border-blue-400/50 text-blue-200 font-medium'
-                                          : 'bg-white/4 border-white/10 text-[var(--text-secondary)] hover:bg-white/8',
+                                          : 'bg-token-nested border-token-subtle text-[var(--text-secondary)] hover-bg-soft',
                                       ].join(' ')}
                                     >
                                       {opt}
@@ -3787,7 +3787,7 @@ export function MdToPptAgentPage() {
                       </button>
                       <button
                         onClick={() => setOutlineDraft((d) => (d ? { ...d, clarifySent: true } : d))}
-                        className="px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover:bg-white/5"
+                        className="px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] hover-bg-soft"
                       >
                         跳过
                       </button>
@@ -3837,7 +3837,7 @@ export function MdToPptAgentPage() {
                       'transition-all duration-700',
                       flashCards.has(i)
                         ? 'border-purple-400/70 bg-purple-500/12 shadow-[0_0_18px_rgba(168,85,247,.25)]'
-                        : 'border-white/10 bg-white/3',
+                        : 'border-token-subtle bg-token-nested',
                     ].join(' ')}
                     style={{ aspectRatio: '1 / 1', minHeight: 0 }}
                     data-testid={'outline-card-' + i}
@@ -3872,7 +3872,7 @@ export function MdToPptAgentPage() {
                           return { ...d, outline, totalPages: outline.length };
                         })}
                         title="删除本页"
-                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-red-400 hover:bg-white/6 flex items-center justify-center"
+                        className="w-6 h-6 rounded-md text-[var(--text-tertiary)] hover:text-red-400 hover-bg-soft flex items-center justify-center"
                       >
                         <Trash2 size={12} />
                       </button>
@@ -3898,7 +3898,7 @@ export function MdToPptAgentPage() {
                       }
                       rows={Math.max(3, slide.bullets.length)}
                       placeholder="每行一条要点"
-                      className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-white/6 focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
+                      className="w-full flex-1 resize-none text-[11px] leading-relaxed bg-transparent text-[var(--text-secondary)] placeholder-[var(--text-tertiary)] border border-token-subtle focus:border-purple-500/30 rounded-md px-2 py-1.5 outline-none"
                       style={{ outline: 'none', boxShadow: 'none', minHeight: 64 }}
                     />
                     {/* 设计意图行（来自流式大纲，可改）：版式/视觉装置/排字，定稿后直接喂给页面生成器 */}
@@ -3927,17 +3927,17 @@ export function MdToPptAgentPage() {
                     (_, k) => (
                       <div
                         key={'skeleton-' + k}
-                        className="rounded-xl border border-dashed border-white/10 bg-white/2 px-3.5 py-3 flex flex-col gap-2 animate-pulse"
+                        className="rounded-xl border border-dashed border-token-subtle bg-token-nested px-3.5 py-3 flex flex-col gap-2 animate-pulse"
                         style={{ aspectRatio: '3 / 4', minHeight: 0 }}
                         aria-hidden
                       >
                         <div className="flex items-center gap-2">
-                          <div className="w-6 h-6 rounded-md bg-white/8" />
-                          <div className="h-2.5 w-2/3 rounded bg-white/8" />
+                          <div className="w-6 h-6 rounded-md bg-token-nested" />
+                          <div className="h-2.5 w-2/3 rounded bg-token-nested" />
                         </div>
-                        <div className="h-2 w-full rounded bg-white/5" />
-                        <div className="h-2 w-5/6 rounded bg-white/5" />
-                        <div className="h-2 w-4/6 rounded bg-white/5" />
+                        <div className="h-2 w-full rounded bg-token-nested" />
+                        <div className="h-2 w-5/6 rounded bg-token-nested" />
+                        <div className="h-2 w-4/6 rounded bg-token-nested" />
                       </div>
                     )
                   )}
@@ -3950,7 +3950,7 @@ export function MdToPptAgentPage() {
                     return { ...d, outline, totalPages: outline.length };
                   })}
                   data-testid="outline-add-page"
-                  className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-white/15 hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] text-[11px]"
+                  className="flex flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed border-token-subtle hover:border-purple-400/50 text-[var(--text-tertiary)] hover:text-[var(--text-secondary)] text-[11px]"
                   style={{ aspectRatio: '3 / 4', minHeight: 0 }}
                 >
                   <Plus size={12} />
@@ -3977,7 +3977,7 @@ export function MdToPptAgentPage() {
                     disabled={isProcessing}
                     placeholder="让 AI 调整大纲，如：第3页拆成两页讲 / 整体更面向高管..."
                     data-testid="outline-ai-input"
-                    className="flex-1 text-[11px] bg-white/4 text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-white/10 rounded-lg px-2.5 py-1.5 outline-none focus:border-purple-500/40 disabled:opacity-50"
+                    className="flex-1 text-[11px] bg-token-nested text-[var(--text-primary)] placeholder-[var(--text-tertiary)] border border-token-subtle rounded-lg px-2.5 py-1.5 outline-none focus:border-purple-500/40 disabled:opacity-50"
                     style={{ outline: 'none', boxShadow: 'none' }}
                   />
                   <button
@@ -3989,7 +3989,7 @@ export function MdToPptAgentPage() {
                       requestOutlineAdjust(t);
                     }}
                     disabled={!outlineAiText.trim() || isProcessing}
-                    className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-white/6 text-[var(--text-secondary)] hover:bg-white/10 border border-white/10 disabled:opacity-40"
+                    className="shrink-0 px-2.5 py-1.5 rounded-lg text-[11px] font-medium bg-token-nested text-[var(--text-secondary)] hover-bg-soft border border-token-subtle disabled:opacity-40"
                   >
                     AI 调整
                   </button>
@@ -4017,16 +4017,16 @@ export function MdToPptAgentPage() {
                 {Array.from({ length: 8 }, (_, i) => (
                   <div
                     key={i}
-                    className="rounded-xl border border-white/8 bg-white/3 px-3.5 py-3 flex flex-col gap-2 animate-pulse"
+                    className="rounded-xl border border-token-subtle bg-token-nested px-3.5 py-3 flex flex-col gap-2 animate-pulse"
                     style={{ aspectRatio: '3 / 4', minHeight: 0, animationDelay: `${i * 180}ms` }}
                   >
                     <div className="flex items-center gap-2">
                       <div className="w-6 h-6 rounded-md bg-purple-500/15" />
-                      <div className="h-3 rounded bg-white/10" style={{ width: `${55 + ((i * 17) % 30)}%` }} />
+                      <div className="h-3 rounded bg-token-nested" style={{ width: `${55 + ((i * 17) % 30)}%` }} />
                     </div>
-                    <div className="h-2 rounded bg-white/6 w-full" />
-                    <div className="h-2 rounded bg-white/6" style={{ width: `${60 + ((i * 23) % 30)}%` }} />
-                    <div className="h-2 rounded bg-white/6" style={{ width: `${45 + ((i * 13) % 35)}%` }} />
+                    <div className="h-2 rounded bg-token-nested w-full" />
+                    <div className="h-2 rounded bg-token-nested" style={{ width: `${60 + ((i * 23) % 30)}%` }} />
+                    <div className="h-2 rounded bg-token-nested" style={{ width: `${45 + ((i * 13) % 35)}%` }} />
                   </div>
                 ))}
               </div>
@@ -4096,7 +4096,7 @@ export function MdToPptAgentPage() {
 
                 {/* 总进度条 */}
                 {totalSlots > 0 && (
-                  <div className="shrink-0 w-full rounded-full bg-white/6 overflow-hidden" style={{ height: 3 }}>
+                  <div className="shrink-0 w-full rounded-full bg-token-nested overflow-hidden" style={{ height: 3 }}>
                     <div
                       className="h-full rounded-full bg-purple-400/80 transition-all duration-700"
                       style={{ width: `${Math.max(pct, streamPreview.length > 0 ? 4 : 0)}%` }}
@@ -4113,7 +4113,7 @@ export function MdToPptAgentPage() {
                   ].map((label) => (
                     <span
                       key={label}
-                      className="px-2 py-0.5 rounded border border-white/8 bg-white/[0.03] text-[10px] text-[var(--text-tertiary)]"
+                      className="px-2 py-0.5 rounded border border-token-subtle bg-token-nested text-[10px] text-[var(--text-tertiary)]"
                     >
                       {label}
                     </span>
@@ -4127,7 +4127,7 @@ export function MdToPptAgentPage() {
 
                 {/* 主视觉：实况渲染的真实幻灯页（无脚本静态铺版，新页完成才更新，不闪烁） */}
                 <div
-                  className="flex-1 rounded-lg border border-white/8 overflow-hidden"
+                  className="flex-1 rounded-lg border border-token-subtle overflow-hidden"
                   style={{ minHeight: 0, position: 'relative', background: 'rgba(0,0,0,.25)' }}
                 >
                   {effLiveDoc ? (
@@ -4143,12 +4143,12 @@ export function MdToPptAgentPage() {
                         {liveSlideSel != null && (
                           <button
                             onClick={() => setLiveSlideSel(null)}
-                            className="px-2 py-0.5 rounded text-[10px] bg-black/60 text-purple-200 border border-purple-400/40 hover:bg-black/75"
+                            className="px-2 py-0.5 rounded text-[10px] bg-token-nested text-purple-200 border border-purple-400/40 hover-bg-soft"
                           >
                             回到最新
                           </button>
                         )}
-                        <span className="px-2 py-0.5 rounded text-[10px] bg-black/60 text-white/75 tabular-nums">
+                        <span className="px-2 py-0.5 rounded text-[10px] bg-token-nested text-token-secondary tabular-nums">
                           实况 · 第 {effLiveIdx + 1} 页{liveSlideSel == null ? '（跟随最新）' : ''}
                         </span>
                       </div>
@@ -4157,24 +4157,24 @@ export function MdToPptAgentPage() {
                     /* 第一页出来之前：骨架幻灯 + 代码流尾巴 / Agent 环境准备 */
                     <div className="absolute inset-0 flex flex-col items-center justify-center gap-5 px-8">
                       <div className="w-full flex flex-col gap-3 animate-pulse" style={{ maxWidth: 460 }} aria-hidden>
-                        <div className="h-2.5 w-20 rounded bg-white/8" />
-                        <div className="h-7 w-3/4 rounded bg-white/10" />
-                        <div className="h-2.5 w-full rounded bg-white/6" />
-                        <div className="h-2.5 w-5/6 rounded bg-white/6" />
+                        <div className="h-2.5 w-20 rounded bg-token-nested" />
+                        <div className="h-7 w-3/4 rounded bg-token-nested" />
+                        <div className="h-2.5 w-full rounded bg-token-nested" />
+                        <div className="h-2.5 w-5/6 rounded bg-token-nested" />
                         <div className="grid grid-cols-3 gap-3 mt-1.5">
-                          <div className="h-14 rounded-lg bg-white/6" />
-                          <div className="h-14 rounded-lg bg-white/6" />
-                          <div className="h-14 rounded-lg bg-white/6" />
+                          <div className="h-14 rounded-lg bg-token-nested" />
+                          <div className="h-14 rounded-lg bg-token-nested" />
+                          <div className="h-14 rounded-lg bg-token-nested" />
                         </div>
                       </div>
 
                       {streamPreview.length > 0 && (
                         <div
                           data-testid="stream-preview"
-                          className="w-full rounded-lg bg-white/3 border border-white/8 overflow-hidden"
+                          className="w-full rounded-lg bg-token-nested border border-token-subtle overflow-hidden"
                           style={{ maxWidth: 460 }}
                         >
-                          <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-white/5 flex items-center gap-1.5">
+                          <div className="px-3 py-1.5 text-[9px] text-[var(--text-tertiary)] font-semibold border-b border-token-subtle flex items-center gap-1.5">
                             <span className="w-1.5 h-1.5 rounded-full bg-purple-400 animate-pulse" />
                             AI 正在逐字输出 HTML（先写整体样式，第一页马上出现）
                           </div>
@@ -4219,8 +4219,8 @@ export function MdToPptAgentPage() {
                             isDone
                               ? 'bg-purple-500/12 border-purple-500/35 cursor-pointer hover:border-purple-400/70 hover:-translate-y-1 hover:shadow-[0_8px_20px_rgba(168,85,247,.25)]'
                               : isCurrent
-                                ? 'bg-white/6 border-purple-500/40 animate-pulse'
-                                : 'bg-transparent border-dashed border-white/10',
+                                ? 'bg-token-nested border-purple-500/40 animate-pulse'
+                                : 'bg-transparent border-dashed border-token-subtle',
                             isViewing ? 'ring-2 ring-purple-400/70' : '',
                           ].join(' ')}
                           style={{ width: 150, height: 106 }}
@@ -4245,9 +4245,9 @@ export function MdToPptAgentPage() {
                               />
                             ) : (
                               <div className="absolute inset-0 flex flex-col justify-center gap-1.5 px-3" aria-hidden>
-                                <div className={['h-1.5 w-2/3 rounded', isCurrent ? 'bg-purple-400/30' : 'bg-white/6'].join(' ')} />
-                                <div className={['h-1 w-full rounded', isCurrent ? 'bg-purple-400/20' : 'bg-white/5'].join(' ')} />
-                                <div className={['h-1 w-4/5 rounded', isCurrent ? 'bg-purple-400/20' : 'bg-white/5'].join(' ')} />
+                                <div className={['h-1.5 w-2/3 rounded', isCurrent ? 'bg-purple-400/30' : 'bg-token-nested'].join(' ')} />
+                                <div className={['h-1 w-full rounded', isCurrent ? 'bg-purple-400/20' : 'bg-token-nested'].join(' ')} />
+                                <div className={['h-1 w-4/5 rounded', isCurrent ? 'bg-purple-400/20' : 'bg-token-nested'].join(' ')} />
                               </div>
                             )}
                           </div>
@@ -4277,12 +4277,12 @@ export function MdToPptAgentPage() {
             || (artifactPhase === 'patching' && patchingSlide != null)) && generatedHtml && (
             <div className="flex-1 flex flex-col" style={{ minHeight: 0 }}>
               {/* Toolbar */}
-              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-white/8 flex-wrap">
+              <div className="shrink-0 flex items-center justify-between gap-2 px-3 py-2 border-b border-token-subtle flex-wrap">
                 <div className="flex items-center gap-1.5">
                   <button
                     onClick={() => deckNav('prev')}
                     title="上一页"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <ChevronLeft size={14} />
                   </button>
@@ -4295,12 +4295,12 @@ export function MdToPptAgentPage() {
                   <button
                     onClick={() => deckNav('next')}
                     title="下一页"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <ChevronRight size={14} />
                   </button>
 
-                  <div className="relative ml-2 pl-2.5 border-l border-white/10" data-testid="theme-menu">
+                  <div className="relative ml-2 pl-2.5 border-l border-token-subtle" data-testid="theme-menu">
                     <button
                       onClick={() => setStylePanelOpen((v) => !v)}
                       disabled={isStreaming}
@@ -4309,7 +4309,7 @@ export function MdToPptAgentPage() {
                         'flex items-center gap-1.5 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
                         stylePanelOpen
                           ? 'bg-purple-500/20 text-purple-200 border-purple-400/35'
-                          : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                          : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
                       ].join(' ')}
                     >
                       <Wand2 size={11} />
@@ -4319,7 +4319,7 @@ export function MdToPptAgentPage() {
                     {stylePanelOpen && !isStreaming && (
                       <div
                         data-testid="theme-panel"
-                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-white/10 bg-[var(--panel-solid)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
+                        className="absolute left-2 top-[calc(100%+8px)] z-30 w-[360px] rounded-xl border border-token-subtle bg-[var(--panel-solid)] p-3 shadow-[0_18px_50px_rgba(0,0,0,.45)]"
                       >
                         <div className="flex items-center justify-between gap-2">
                           <div>
@@ -4328,7 +4328,7 @@ export function MdToPptAgentPage() {
                           </div>
                           <button
                             onClick={() => setStylePanelOpen(false)}
-                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover:bg-white/6 hover:text-[var(--text-primary)]"
+                            className="flex h-6 w-6 items-center justify-center rounded-md text-[var(--text-tertiary)] hover-bg-soft hover:text-[var(--text-primary)]"
                             title="关闭"
                           >
                             <X size={12} />
@@ -4349,7 +4349,7 @@ export function MdToPptAgentPage() {
                                   'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
                                   active
                                     ? 'border-purple-400/50 bg-purple-500/14'
-                                    : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                    : 'border-token-subtle bg-token-nested hover-bg-soft/[0.06]',
                                 ].join(' ')}
                               >
                                 <div className="flex items-center gap-2">
@@ -4367,7 +4367,7 @@ export function MdToPptAgentPage() {
 
                         {customTemplates.length > 0 && (
                           <>
-                            <div className="mt-3 border-t border-white/8 pt-3 text-[10px] font-semibold text-[var(--text-tertiary)]">自定义模板</div>
+                            <div className="mt-3 border-t border-token-subtle pt-3 text-[10px] font-semibold text-[var(--text-tertiary)]">自定义模板</div>
                             <div className="mt-2 grid grid-cols-2 gap-2">
                               {customTemplates.slice(0, 6).map((t) => {
                                 const active = templateId === t.id;
@@ -4382,7 +4382,7 @@ export function MdToPptAgentPage() {
                                       'min-w-0 rounded-lg border px-2.5 py-2 text-left transition-colors',
                                       active
                                         ? 'border-purple-400/50 bg-purple-500/14'
-                                        : 'border-white/8 bg-white/[0.03] hover:bg-white/[0.06]',
+                                        : 'border-token-subtle bg-token-nested hover-bg-soft/[0.06]',
                                     ].join(' ')}
                                   >
                                     <div className="flex items-center gap-2">
@@ -4409,7 +4409,7 @@ export function MdToPptAgentPage() {
                     <span
                       data-testid="model-chip"
                       title="本次生成使用的模型与运行路径"
-                      className="px-2 py-1 rounded-md text-[10px] font-mono bg-white/4 text-[var(--text-tertiary)] border border-white/8 max-w-[200px] truncate"
+                      className="px-2 py-1 rounded-md text-[10px] font-mono bg-token-nested text-[var(--text-tertiary)] border border-token-subtle max-w-[200px] truncate"
                     >
                       {modelInfo.model} · {modelInfo.platform}
                     </span>
@@ -4422,7 +4422,7 @@ export function MdToPptAgentPage() {
                       'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
                       feedbackMode
                         ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
-                        : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                        : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
                     ].join(' ')}
                   >
                     <BoxSelect size={11} />
@@ -4436,7 +4436,7 @@ export function MdToPptAgentPage() {
                       'flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border disabled:opacity-40',
                       editMode
                         ? 'bg-purple-500/25 text-purple-200 border-purple-500/40 font-semibold'
-                        : 'bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10',
+                        : 'bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle',
                     ].join(' ')}
                   >
                     {editMode ? <Check size={11} /> : <Pencil size={11} />}
@@ -4447,7 +4447,7 @@ export function MdToPptAgentPage() {
                     disabled={isStreaming || editMode || !slidePos}
                     data-testid="redraw-page-button"
                     title="对当前页整页重绘：修复溢出、挤压、排版问题，内容保持不变，其余页不动"
-                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-white/5 text-[var(--text-secondary)] hover:bg-white/10 border-white/10 disabled:opacity-40"
+                    className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] border bg-token-nested text-[var(--text-secondary)] hover-bg-soft border-token-subtle disabled:opacity-40"
                   >
                     <Sparkles size={11} />
                     重绘本页
@@ -4455,14 +4455,14 @@ export function MdToPptAgentPage() {
                   <button
                     onClick={handleDownload}
                     title="下载独立 HTML（含当前主题样式，双击即可演示）"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <Download size={13} />
                   </button>
                   <button
                     onClick={handleFullscreen}
                     title="全屏演示"
-                    className="flex items-center justify-center w-7 h-7 rounded-md bg-white/5 hover:bg-white/10 border border-white/10 text-[var(--text-secondary)]"
+                    className="flex items-center justify-center w-7 h-7 rounded-md bg-token-nested hover-bg-soft border border-token-subtle text-[var(--text-secondary)]"
                   >
                     <Maximize2 size={13} />
                   </button>
@@ -4504,7 +4504,7 @@ export function MdToPptAgentPage() {
                   </button>
                   <button
                     onClick={() => setPendingTemplateSwitch(null)}
-                    className="shrink-0 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover:bg-white/5"
+                    className="shrink-0 px-2 py-1 rounded-md text-[11px] text-[var(--text-tertiary)] hover:text-[var(--text-primary)] hover-bg-soft"
                   >
                     取消
                   </button>
@@ -4530,7 +4530,7 @@ export function MdToPptAgentPage() {
                     reveal.js init 不会因 storage 访问抛错导致整页空白。
                     生成 HTML 中的 <script> 无法访问主应用的 token/cookie/storage。
                     翻页/页码/编辑/页位恢复/圈选反查全部走 postMessage 通道（见 controlScript/editorScript）。 */}
-              <div ref={previewWrapRef} className="flex-1 flex flex-col bg-black" style={{ minHeight: 0, position: 'relative' }}>
+              <div ref={previewWrapRef} className="flex-1 flex flex-col bg-token-nested" style={{ minHeight: 0, position: 'relative' }}>
                 <iframe
                   ref={iframeRef}
                   className="flex-1 w-full border-0"
@@ -4569,11 +4569,11 @@ export function MdToPptAgentPage() {
         <div className="fixed inset-0 z-[200] flex items-center justify-center bg-black/40" onClick={() => setShowHistory(false)}>
           <div
             data-testid="history-modal"
-            className="w-[560px] rounded-xl border border-white/10 bg-[var(--bg-elevated)] shadow-xl"
+            className="w-[560px] rounded-xl border border-token-subtle bg-[var(--bg-elevated)] shadow-xl"
             style={{ maxHeight: '72vh', display: 'flex', flexDirection: 'column' }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
+            <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
               <span className="text-sm font-semibold text-[var(--text-primary)] flex items-center gap-1.5">
                 <History size={13} className="text-purple-400" />
                 历史生成
@@ -4597,7 +4597,7 @@ export function MdToPptAgentPage() {
                   onClick={() => void loadHistoryRun(r)}
                   disabled={!r.hasHtml || historyOpeningId != null}
                   title={r.hasHtml ? '载入这份 PPT 继续精修/编辑/发布' : '该次运行没有产物（' + r.status + '）'}
-                  className="w-full flex items-center gap-3 px-4 py-3 hover:bg-white/4 border-b border-white/5 text-left disabled:opacity-45"
+                  className="w-full flex items-center gap-3 px-4 py-3 hover-bg-soft border-b border-token-subtle text-left disabled:opacity-45"
                 >
                   {historyOpeningId === r.id ? (
                     <MapSpinner size={13} />
@@ -4617,7 +4617,7 @@ export function MdToPptAgentPage() {
                       'text-[9px] px-1.5 py-0.5 rounded inline-block',
                       r.status === 'done' ? 'bg-green-500/10 text-green-400'
                         : r.status === 'error' ? 'bg-red-500/10 text-red-400'
-                          : 'bg-white/8 text-[var(--text-tertiary)]',
+                          : 'bg-token-nested text-[var(--text-tertiary)]',
                     ].join(' ')}>
                       {r.status === 'done' ? '已完成' : r.status === 'error' ? '失败' : '生成中'}
                     </div>
@@ -4635,29 +4635,29 @@ export function MdToPptAgentPage() {
       {/* 演示模式（自定义全屏）：主 deck + 底部子页缩略条（诉求 9）。Esc / 关闭按钮退出。 */}
       {presentMode && generatedHtml && (
         <div className="fixed inset-0 z-[300] flex flex-col bg-black" data-testid="present-overlay">
-          <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-black/80 border-b border-white/10">
-            <span className="text-[12px] text-white/70 tabular-nums">
+          <div className="shrink-0 flex items-center justify-between px-4 py-2 bg-token-nested border-b border-token-subtle">
+            <span className="text-[12px] text-token-secondary tabular-nums">
               第 {presentIdx + 1} / {deckThumbDocs.length || (slidePos?.total ?? 1)} 页
             </span>
             <div className="flex items-center gap-2">
               <button
                 onClick={() => presentGoto(presentIdx - 1)}
                 disabled={presentIdx <= 0}
-                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15 disabled:opacity-30"
+                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
               >上一页</button>
               <button
                 onClick={() => presentGoto(presentIdx + 1)}
                 disabled={presentIdx >= deckThumbDocs.length - 1}
-                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15 disabled:opacity-30"
+                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft disabled:opacity-30"
               >下一页</button>
               <button
                 onClick={() => setPresentMode(false)}
                 data-testid="present-close"
-                className="px-2 py-1 rounded-md bg-white/8 text-white/80 text-xs hover:bg-white/15"
+                className="px-2 py-1 rounded-md bg-token-nested text-token-primary text-xs hover-bg-soft"
               >退出全屏 (Esc)</button>
             </div>
           </div>
-          <div className="flex-1 min-h-0 bg-black">
+          <div className="flex-1 min-h-0 bg-token-nested">
             <iframe
               ref={presentIframeRef}
               srcDoc={prepareIframeHtml(generatedHtml)}
@@ -4675,7 +4675,7 @@ export function MdToPptAgentPage() {
           {deckThumbDocs.length > 0 && (
             <div
               data-testid="present-thumb-rail"
-              className="shrink-0 flex gap-2 px-3 py-2 bg-black/85 border-t border-white/10 overflow-x-auto"
+              className="shrink-0 flex gap-2 px-3 py-2 bg-token-nested border-t border-token-subtle overflow-x-auto"
               style={{ overscrollBehavior: 'contain' }}
             >
               {deckThumbDocs.map((doc, i) => (
@@ -4685,13 +4685,13 @@ export function MdToPptAgentPage() {
                   title={`第 ${i + 1} 页`}
                   className={[
                     'relative shrink-0 rounded-md overflow-hidden border transition-all',
-                    i === presentIdx ? 'border-purple-400 ring-2 ring-purple-400/60' : 'border-white/15 hover:border-white/40',
+                    i === presentIdx ? 'border-purple-400 ring-2 ring-purple-400/60' : 'border-token-subtle hover:border-token-subtle',
                   ].join(' ')}
                   style={{ width: 132, height: 74 }}
                 >
                   {/* 渲染微光占位：10 张 iframe 逐张渐进渲染（约 1 张/秒），
                         未画出前显示呼吸占位而不是黑块 */}
-                  <span className="absolute inset-0 animate-pulse bg-white/6" aria-hidden style={{ zIndex: 0 }} />
+                  <span className="absolute inset-0 animate-pulse bg-token-nested" aria-hidden style={{ zIndex: 0 }} />
                   <iframe
                     srcDoc={doc}
                     sandbox=""

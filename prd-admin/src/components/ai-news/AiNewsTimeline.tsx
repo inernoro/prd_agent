@@ -81,8 +81,8 @@ function SourceAvatar({ url, meta, size = 40 }: { url: string; meta: LabelMeta; 
       height={size}
       loading="lazy"
       onError={() => setFailed(true)}
-      className="shrink-0 rounded-lg object-cover"
-      style={{ width: size, height: size, background: 'rgba(255,255,255,0.06)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}
+      className="shrink-0 rounded-lg object-cover bg-token-nested border border-token-subtle"
+      style={{ width: size, height: size }}
     />
   );
 }
@@ -277,7 +277,7 @@ export function AiNewsTimeline() {
   const sourceHeader = (it: AiNewsItem, meta: LabelMeta) => (
     <div className="flex items-center gap-2 min-w-0">
       <SourceAvatar url={it.url} meta={meta} size={26} />
-      <span className="text-[12px] font-semibold truncate max-w-[180px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.82))' }}>
+      <span className="text-[12px] font-semibold truncate max-w-[180px]" style={{ color: 'var(--text-secondary, var(--text-primary))' }}>
         {it.source || hostOf(it.url)}
       </span>
       {it.siteName && it.siteName !== it.source && (
@@ -316,8 +316,8 @@ export function AiNewsTimeline() {
         {signals.map((s) => (
           <span
             key={s}
-            className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded"
-            style={{ background: 'rgba(255,255,255,0.05)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}
+            className="inline-flex items-center text-[10px] px-1.5 py-0.5 rounded bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-muted)' }}
           >
             {s}
           </span>
@@ -336,7 +336,7 @@ export function AiNewsTimeline() {
       return (
         <div
           className="ainews-commentary mt-2 pl-3 text-[13px] leading-relaxed line-clamp-2"
-          style={{ borderLeft: '2px solid var(--border-subtle, rgba(255,255,255,0.16))', color: 'var(--text-secondary, rgba(255,255,255,0.72))' }}
+          style={{ borderLeft: '2px solid var(--border-subtle)', color: 'var(--text-secondary, var(--text-secondary))' }}
         >
           {ex}
         </div>
@@ -349,7 +349,7 @@ export function AiNewsTimeline() {
           style={{ borderLeft: `2px solid ${meta.color}` }}
         >
           <span className="text-[11px] font-semibold shrink-0 tracking-wide" style={{ color: meta.color }}>AI解读</span>
-          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.72))' }}>{cm}</span>
+          <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>{cm}</span>
         </div>
       );
     }
@@ -358,7 +358,7 @@ export function AiNewsTimeline() {
     return (
       <div
         className="mt-2 pl-3"
-        style={{ borderLeft: '2px solid var(--border-subtle, rgba(255,255,255,0.12))' }}
+        style={{ borderLeft: '2px solid var(--border-subtle)' }}
       >
         <span className="ainews-shimmer text-[13px]" style={{ color: 'var(--text-muted)' }}>加载摘要…</span>
       </div>
@@ -376,7 +376,7 @@ export function AiNewsTimeline() {
         className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
         style={{
           background: on ? 'rgba(34,211,238,0.14)' : 'transparent',
-          border: `1px solid ${on ? 'rgba(34,211,238,0.34)' : 'var(--border-subtle, rgba(255,255,255,0.08))'}`,
+          border: `1px solid ${on ? 'rgba(34,211,238,0.34)' : 'var(--border-subtle)'}`,
           color: on ? '#67e8f9' : 'var(--text-muted)',
         }}
       >
@@ -428,8 +428,8 @@ export function AiNewsTimeline() {
             onClick={() => void load(false)}
             disabled={refreshing}
             aria-label="刷新资讯"
-            className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.08))' }}
+            className="w-8 h-8 rounded-lg inline-flex items-center justify-center transition-colors bg-token-nested border border-token-subtle"
+
           >
             <RefreshCw size={14} className={refreshing ? 'ainews-spinning' : ''} style={{ color: 'var(--text-muted)' }} />
           </button>
@@ -460,7 +460,7 @@ export function AiNewsTimeline() {
                 style={{
                   color: on ? (chip.color ?? 'var(--text-primary)') : 'var(--text-muted)',
                   background: on ? `${accent}1f` : 'transparent',
-                  border: `1px solid ${on ? `${accent}59` : 'var(--border-subtle, rgba(255,255,255,0.08))'}`,
+                  border: `1px solid ${on ? `${accent}59` : 'var(--border-subtle)'}`,
                 }}
               >
                 {Icon && <Icon size={12} style={{ color: on ? accent : 'var(--text-muted)' }} />}
@@ -507,11 +507,11 @@ export function AiNewsTimeline() {
               <section key={`${g.bucket}-${gi}`} className="flex flex-col gap-3">
                 {/* 分组标题 */}
                 <div className="flex items-center gap-2.5">
-                  <span className="text-[12px] font-semibold shrink-0" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.75))' }}>
+                  <span className="text-[12px] font-semibold shrink-0" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
                     {BUCKET_LABEL[g.bucket]}
                   </span>
                   <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>{g.items.length}</span>
-                  <span className="flex-1 h-px" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.08))' }} />
+                  <span className="flex-1 h-px bg-token-nested"  />
                 </div>
 
                 {view === 'timeline' ? (
@@ -539,8 +539,8 @@ export function AiNewsTimeline() {
                           {/* 列2：时间脊 + 节点（独立一列，绝不与时间重叠） */}
                           <div className="shrink-0 relative" style={{ width: 14 }}>
                             <span
-                              className="absolute top-0 bottom-0"
-                              style={{ left: 6, width: 1, background: 'var(--border-subtle, rgba(255,255,255,0.1))' }}
+                              className="absolute top-0 bottom-0 bg-token-nested"
+                              style={{ left: 6, width: 1 }}
                             />
                             <span
                               className="absolute rounded-full"
@@ -550,7 +550,7 @@ export function AiNewsTimeline() {
                           {/* 列3：流动内容 */}
                           <div
                             className="flex-1 min-w-0 pl-3 py-4 pr-2"
-                            style={{ borderBottom: isLast ? 'none' : '1px solid var(--border-subtle, rgba(255,255,255,0.06))' }}
+                            style={{ borderBottom: isLast ? 'none' : '1px solid var(--border-subtle)' }}
                           >
                             {sourceHeader(it, meta)}
                             <div
@@ -655,10 +655,10 @@ export function AiNewsTimeline() {
                       style={{ background: on ? `${c.meta.color}14` : 'transparent' }}
                     >
                       <Icon size={13} style={{ color: c.meta.color }} className="shrink-0" />
-                      <span className="text-[12px] shrink-0 w-16 text-left truncate" style={{ color: on ? c.meta.color : 'var(--text-secondary, rgba(255,255,255,0.8))' }}>
+                      <span className="text-[12px] shrink-0 w-16 text-left truncate" style={{ color: on ? c.meta.color : 'var(--text-secondary, var(--text-primary))' }}>
                         {c.meta.label}
                       </span>
-                      <span className="flex-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.08))' }}>
+                      <span className="flex-1 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                         <span className="block h-full rounded-full" style={{ width: `${pct}%`, background: c.meta.color, opacity: on ? 1 : 0.65 }} />
                       </span>
                       <span className="text-[11px] shrink-0 w-7 text-right font-mono" style={{ color: 'var(--text-muted)' }}>{c.count}</span>

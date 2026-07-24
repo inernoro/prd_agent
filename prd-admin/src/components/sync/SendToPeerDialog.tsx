@@ -215,7 +215,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
               {selected.size > 0 ? `把 ${selected.size} 个知识库${DIRECTION_VERB[direction]}到「${nodeName}」` : '一次选多个知识库，同步到另一个 MAP 节点'}
             </div>
           </div>
-          <button onClick={safeClose} className="rounded-lg p-2 transition hover:bg-white/10" aria-label="关闭"><X size={17} /></button>
+          <button onClick={safeClose} className="rounded-lg p-2 transition hover-bg-soft" aria-label="关闭"><X size={17} /></button>
         </div>
 
         {/* tab 切换 */}
@@ -313,7 +313,7 @@ export function SendToPeerDialog({ resourceType, presetItemIds, onClose, onDone 
           <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5" style={{ overscrollBehavior: 'contain' }}>
             <div className="mb-3 flex items-center justify-between">
               <div className="text-[11.5px]" style={{ color: 'var(--text-muted)' }}>所有知识库的同步记录，进行中的可停止</div>
-              <button onClick={() => loadRuns()} className="rounded-lg p-1.5 hover:bg-white/10" title="刷新"><RefreshCw size={14} /></button>
+              <button onClick={() => loadRuns()} className="rounded-lg p-1.5 hover-bg-soft" title="刷新"><RefreshCw size={14} /></button>
             </div>
             {historyLoading && runs.length === 0 ? <MapSectionLoader text="正在加载…" /> : runs.length === 0 ? (
               <EmptyBlock icon={<History size={20} />} title="暂无同步记录" desc="发起一次批量同步后，这里会出现记录" />

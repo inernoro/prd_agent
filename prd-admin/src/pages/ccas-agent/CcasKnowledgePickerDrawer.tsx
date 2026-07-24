@@ -228,33 +228,33 @@ export function CcasKnowledgePickerDrawer({
       onClick={onClose}
     >
       <div
-        className="rounded-xl border border-white/10 bg-[#0f1014] flex flex-col shadow-2xl"
+        className="rounded-xl border border-token-subtle bg-[#0f1014] flex flex-col shadow-2xl"
         style={{ width: '90vw', maxWidth: 980, height: '85vh', maxHeight: '85vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <header className="shrink-0 px-5 py-3 border-b border-white/10 flex items-center justify-between gap-3">
+        <header className="shrink-0 px-5 py-3 border-b border-token-subtle flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <BookOpen className="w-4 h-4 text-amber-300" />
-            <h2 className="text-sm font-semibold text-white">引用知识库</h2>
-            <span className="text-[11px] text-white/40">
+            <h2 className="text-sm font-semibold text-token-primary">引用知识库</h2>
+            <span className="text-[11px] text-token-muted">
               已选 {pendingSelected.size} 个来源
             </span>
           </div>
-          <button onClick={onClose} className="p-1 rounded hover:bg-white/10 text-white/60">
+          <button onClick={onClose} className="p-1 rounded hover-bg-soft text-token-secondary">
             <X className="w-4 h-4" />
           </button>
         </header>
 
         {/* 搜索 + 提示 */}
-        <div className="shrink-0 px-5 py-2 border-b border-white/10 flex items-center gap-2">
+        <div className="shrink-0 px-5 py-2 border-b border-token-subtle flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/40" />
+            <Search className="absolute left-2 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-token-muted" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
               placeholder="搜索条目标题、摘要、正文（已展开的空间会自动过滤）"
-              className="w-full pl-7 pr-2 py-1.5 rounded-md bg-black/30 border border-white/15 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/50"
+              className="w-full pl-7 pr-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-400/50"
             />
           </div>
           <Button variant="ghost" onClick={loadStores} className="!h-8 !px-2 !text-[11px]">
@@ -273,9 +273,9 @@ export function CcasKnowledgePickerDrawer({
 
         {/* 提示 */}
         {associationModeLabel && (
-          <div className="shrink-0 px-5 py-1.5 text-[11px] text-amber-300/70 bg-amber-500/5 border-b border-white/10">
-            提示：在知识库的空间或条目上加 <code className="px-1 rounded bg-black/40">ccas-agent</code> 或
-            <code className="px-1 rounded bg-black/40 ml-1">{associationModeLabel}</code> tag，会优先排在前面。
+          <div className="shrink-0 px-5 py-1.5 text-[11px] text-amber-300/70 bg-amber-500/5 border-b border-token-subtle">
+            提示：在知识库的空间或条目上加 <code className="px-1 rounded bg-token-nested">ccas-agent</code> 或
+            <code className="px-1 rounded bg-token-nested ml-1">{associationModeLabel}</code> tag，会优先排在前面。
           </div>
         )}
 
@@ -285,15 +285,15 @@ export function CcasKnowledgePickerDrawer({
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {storesLoading && stores.length === 0 ? (
-            <div className="text-center text-sm text-white/40 py-12">加载中…</div>
+            <div className="text-center text-sm text-token-muted py-12">加载中…</div>
           ) : storesError ? (
             <div className="text-center text-sm text-red-300/80 py-12 flex items-center justify-center gap-1.5">
               <AlertCircle className="w-4 h-4" /> {storesError}
             </div>
           ) : stores.length === 0 ? (
             <div className="text-center py-12">
-              <div className="text-sm text-white/50 mb-2">暂无任何知识库空间</div>
-              <div className="text-xs text-white/35">
+              <div className="text-sm text-token-secondary mb-2">暂无任何知识库空间</div>
+              <div className="text-xs text-token-muted">
                 请先到「左侧导航 → 知识库」创建一个空间，上传 .md/.docx/.pdf 文档，或者订阅 GitHub 仓库
               </div>
             </div>
@@ -305,25 +305,25 @@ export function CcasKnowledgePickerDrawer({
                 return (
                   <section
                     key={store.id}
-                    className="rounded-lg border border-white/10 bg-white/5 overflow-hidden"
+                    className="rounded-lg border border-token-subtle bg-token-nested overflow-hidden"
                   >
                     <header
-                      className="px-3 py-2 flex items-center gap-2 cursor-pointer hover:bg-white/5 select-none"
+                      className="px-3 py-2 flex items-center gap-2 cursor-pointer hover-bg-soft select-none"
                       onClick={() => toggleStoreExpanded(store.id)}
                     >
                       {isExpanded ? (
-                        <ChevronDown className="w-3.5 h-3.5 text-white/60" />
+                        <ChevronDown className="w-3.5 h-3.5 text-token-secondary" />
                       ) : (
-                        <ChevronRight className="w-3.5 h-3.5 text-white/60" />
+                        <ChevronRight className="w-3.5 h-3.5 text-token-secondary" />
                       )}
                       <Folder className="w-3.5 h-3.5 text-amber-300/70 shrink-0" />
                       <div className="flex-1 min-w-0">
-                        <div className="text-sm text-white truncate">{store.name}</div>
+                        <div className="text-sm text-token-primary truncate">{store.name}</div>
                         {store.description && (
-                          <div className="text-[11px] text-white/40 truncate">{store.description}</div>
+                          <div className="text-[11px] text-token-muted truncate">{store.description}</div>
                         )}
                       </div>
-                      <div className="flex items-center gap-1.5 text-[10px] text-white/45">
+                      <div className="flex items-center gap-1.5 text-[10px] text-token-muted">
                         <button
                           type="button"
                           onClick={(e) => {
@@ -333,7 +333,7 @@ export function CcasKnowledgePickerDrawer({
                           className={`inline-flex items-center gap-1 px-1.5 py-0.5 rounded border transition ${
                             pendingSelected.has(storeSelectionKey(store.id))
                               ? 'bg-amber-500/15 border-amber-400/40 text-amber-200'
-                              : 'bg-white/5 border-white/10 text-white/55 hover:text-white/80'
+                              : 'bg-token-nested border-token-subtle text-token-secondary hover-text-primary'
                           }`}
                           title="选择整个知识库，后端会展开该空间内所有可读文档并按上下文预算注入"
                         >
@@ -355,17 +355,17 @@ export function CcasKnowledgePickerDrawer({
                     </header>
 
                     {isExpanded && (
-                      <div className="border-t border-white/5 bg-black/20">
+                      <div className="border-t border-token-subtle bg-token-nested">
                         {entriesState?.loading ? (
-                          <div className="px-3 py-3 text-center text-xs text-white/40">加载条目中…</div>
+                          <div className="px-3 py-3 text-center text-xs text-token-muted">加载条目中…</div>
                         ) : entriesState?.error ? (
                           <div className="px-3 py-3 text-center text-xs text-red-300/70">
                             {entriesState.error}
                           </div>
                         ) : !entriesState?.items.length ? (
-                          <div className="px-3 py-3 text-center text-xs text-white/35">该空间暂无可引用文档</div>
+                          <div className="px-3 py-3 text-center text-xs text-token-muted">该空间暂无可引用文档</div>
                         ) : (
-                          <ul className="divide-y divide-white/5">
+                          <ul className="divide-y divide-token-subtle">
                             {entriesState.items.map((entry) => {
                               const checked = pendingSelected.has(storeSelectionKey(store.id)) || pendingSelected.has(entrySelectionKey(entry.id));
                               return (
@@ -373,30 +373,30 @@ export function CcasKnowledgePickerDrawer({
                                   key={entry.id}
                                   onClick={() => toggleEntry(store, entry)}
                                   className={`px-3 py-1.5 flex items-start gap-2 cursor-pointer transition ${
-                                    checked ? 'bg-amber-500/8 hover:bg-amber-500/12' : 'hover:bg-white/5'
+                                    checked ? 'bg-amber-500/8 hover:bg-amber-500/12' : 'hover-bg-soft'
                                   }`}
                                 >
                                   <div className="pt-0.5">
                                     {checked ? (
                                       <CheckCircle2 className="w-3.5 h-3.5 text-amber-400" />
                                     ) : (
-                                      <Square className="w-3.5 h-3.5 text-white/40" />
+                                      <Square className="w-3.5 h-3.5 text-token-muted" />
                                     )}
                                   </div>
-                                  <FileText className="w-3.5 h-3.5 text-white/40 shrink-0 mt-0.5" />
+                                  <FileText className="w-3.5 h-3.5 text-token-muted shrink-0 mt-0.5" />
                                   <div className="flex-1 min-w-0">
-                                    <div className="text-xs text-white truncate" title={entry.title}>
+                                    <div className="text-xs text-token-primary truncate" title={entry.title}>
                                       {entry.title}
                                     </div>
                                     {entry.summary && (
-                                      <div className="text-[11px] text-white/40 truncate">{entry.summary}</div>
+                                      <div className="text-[11px] text-token-muted truncate">{entry.summary}</div>
                                     )}
                                     {entry.tags && entry.tags.length > 0 && (
                                       <div className="flex flex-wrap gap-1 mt-0.5">
                                         {entry.tags.slice(0, 5).map((t) => (
                                           <span
                                             key={t}
-                                            className="text-[10px] px-1 rounded bg-white/5 text-white/55"
+                                            className="text-[10px] px-1 rounded bg-token-nested text-token-secondary"
                                           >
                                             {t}
                                           </span>
@@ -404,7 +404,7 @@ export function CcasKnowledgePickerDrawer({
                                       </div>
                                     )}
                                   </div>
-                                  <div className="text-[10px] text-white/35 shrink-0 pt-0.5">
+                                  <div className="text-[10px] text-token-muted shrink-0 pt-0.5">
                                     ~{Math.round(((entry.fileSize ?? 4000) / 2) / 1000)}k 字
                                   </div>
                                 </li>
@@ -422,20 +422,20 @@ export function CcasKnowledgePickerDrawer({
         </div>
 
         {/* 预算条 + 操作 */}
-        <footer className="shrink-0 px-5 py-3 border-t border-white/10 flex flex-col gap-2">
-          <div className="flex items-center justify-between text-[11px] text-white/55">
+        <footer className="shrink-0 px-5 py-3 border-t border-token-subtle flex flex-col gap-2">
+          <div className="flex items-center justify-between text-[11px] text-token-secondary">
             <span>
-              已选 <span className="text-white">{pendingSelected.size}</span> 个来源 · 约{' '}
-              <span className={overBudget ? 'text-orange-400' : 'text-white'}>{totalChars.toLocaleString()}</span>{' '}
-              字符 ≈ <span className="text-white/70">{Math.round(totalChars / CHARS_PER_TOKEN).toLocaleString()}</span>{' '}
+              已选 <span className="text-token-primary">{pendingSelected.size}</span> 个来源 · 约{' '}
+              <span className={overBudget ? 'text-orange-400' : 'text-token-primary'}>{totalChars.toLocaleString()}</span>{' '}
+              字符 ≈ <span className="text-token-secondary">{Math.round(totalChars / CHARS_PER_TOKEN).toLocaleString()}</span>{' '}
               tokens / 上下文预算{' '}
-              <span className="text-white/70">{TOTAL_BUDGET_CHARS.toLocaleString()}</span> 字符
+              <span className="text-token-secondary">{TOTAL_BUDGET_CHARS.toLocaleString()}</span> 字符
             </span>
             {overBudget && (
               <span className="text-[10px] text-orange-300/85">超出预算的部分会按选中顺序裁剪</span>
             )}
           </div>
-          <div className="h-1.5 rounded-full bg-white/5 overflow-hidden">
+          <div className="h-1.5 rounded-full bg-token-nested overflow-hidden">
             <div
               className={`h-full transition-all ${overBudget ? 'bg-orange-400/70' : 'bg-amber-400/70'}`}
               style={{ width: `${Math.min(100, (totalCharsCapped / TOTAL_BUDGET_CHARS) * 100)}%` }}

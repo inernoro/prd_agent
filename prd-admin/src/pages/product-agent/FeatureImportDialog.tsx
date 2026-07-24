@@ -109,29 +109,29 @@ export function FeatureImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4" onClick={onClose}>
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-white/15 bg-[#111319] shadow-2xl"
+        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
-            <div className="text-base font-semibold text-white">导入功能目录结构</div>
-            <div className="mt-1 text-xs text-white/45">
+            <div className="text-base font-semibold text-token-primary">导入功能目录结构</div>
+            <div className="mt-1 text-xs text-token-muted">
               功能清单须归属某一正式版本。用「目录路径」列描述无限层级树；缺省上级会自动补齐；同版本下同路径重复导入会更新。
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">
             <X size={17} />
           </button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
           <div className="mb-4">
-            <div className="mb-1.5 text-xs font-medium text-white/70">
+            <div className="mb-1.5 text-xs font-medium text-token-secondary">
               归属正式版本 <span className="text-rose-300/80">*</span>
             </div>
             {releasesLoading ? (
-              <div className="flex h-8 items-center text-xs text-white/40">
+              <div className="flex h-8 items-center text-xs text-token-muted">
                 <MapSpinner size={14} /> <span className="ml-2">正在加载正式版本…</span>
               </div>
             ) : releases.length === 0 ? (
@@ -152,7 +152,7 @@ export function FeatureImportDialog({
               </div>
             )}
             {selectedRelease && (
-              <div className="mt-1.5 text-[11px] text-white/40">
+              <div className="mt-1.5 text-[11px] text-token-muted">
                 {selectedRelease.planName}
                 {selectedRelease.status === 'released' ? ' · 已上线' : ' · 待公告'}
               </div>
@@ -163,7 +163,7 @@ export function FeatureImportDialog({
             <a
               href={TEMPLATE_CSV}
               download
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-secondary hover-bg-soft"
             >
               <Download size={14} /> 下载 CSV 模板
             </a>
@@ -172,7 +172,7 @@ export function FeatureImportDialog({
               className={`inline-flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-xs ${
                 officialReleaseId
                   ? 'cursor-pointer border-cyan-500/35 bg-cyan-500/15 text-cyan-100 hover:bg-cyan-500/25'
-                  : 'cursor-not-allowed border-white/10 bg-white/5 text-white/30'
+                  : 'cursor-not-allowed border-token-subtle bg-token-nested text-token-muted'
               }`}
             >
               {parsing ? <MapSpinner size={14} /> : <Upload size={14} />} 选择 CSV / Excel
@@ -191,13 +191,13 @@ export function FeatureImportDialog({
             />
           </div>
 
-          <div className="mb-4 rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs leading-5 text-white/55">
-            <div className="mb-1 font-medium text-white/70">Excel 列结构（首行表头）</div>
+          <div className="mb-4 rounded-lg border border-token-subtle bg-token-nested p-3 text-xs leading-5 text-token-secondary">
+            <div className="mb-1 font-medium text-token-secondary">Excel 列结构（首行表头）</div>
             <div className="font-mono text-[11px] text-cyan-200/80">
               目录路径, 功能名称, 等级, 功能类型, 所属模块, 描述, 外部ID, 关键规则, 验收标准
             </div>
             <ul className="mt-2 list-disc pl-4 space-y-0.5">
-              <li>目录路径：必填，层级用 <code className="text-white/60">/</code> 分隔，层级深度不限</li>
+              <li>目录路径：必填，层级用 <code className="text-token-secondary">/</code> 分隔，层级深度不限</li>
               <li>功能名称：可空，默认取路径最后一段</li>
               <li>正式版本：在上方下拉框选择，不需写入 Excel</li>
               <li>功能类型：basic / core / value_added（或中文：基础功能、核心功能、增值功能）</li>
@@ -205,15 +205,15 @@ export function FeatureImportDialog({
           </div>
 
           {fileName && (
-            <div className="mb-2 flex items-center gap-2 text-xs text-white/45">
+            <div className="mb-2 flex items-center gap-2 text-xs text-token-muted">
               <FileSpreadsheet size={14} /> {fileName} · {rows.length} 条
             </div>
           )}
 
           {rows.length > 0 && (
-            <div className="overflow-x-auto rounded-lg border border-white/10">
+            <div className="overflow-x-auto rounded-lg border border-token-subtle">
               <table className="w-full min-w-[640px] text-left text-xs">
-                <thead className="bg-white/[0.04] text-white/45">
+                <thead className="bg-token-nested text-token-muted">
                   <tr>
                     <th className="px-3 py-2 font-medium">目录路径</th>
                     <th className="px-3 py-2 font-medium">功能名称</th>
@@ -223,24 +223,24 @@ export function FeatureImportDialog({
                 </thead>
                 <tbody>
                   {rows.slice(0, 30).map((row, i) => (
-                    <tr key={`${row.path}-${i}`} className="border-t border-white/5">
+                    <tr key={`${row.path}-${i}`} className="border-t border-token-subtle">
                       <td className="px-3 py-2 font-mono text-cyan-200/75">{row.path}</td>
-                      <td className="px-3 py-2 text-white/75">{row.title ?? '—'}</td>
-                      <td className="px-3 py-2 text-white/55">{row.grade ?? '—'}</td>
-                      <td className="px-3 py-2 text-white/55">{row.moduleName ?? '—'}</td>
+                      <td className="px-3 py-2 text-token-secondary">{row.title ?? '—'}</td>
+                      <td className="px-3 py-2 text-token-secondary">{row.grade ?? '—'}</td>
+                      <td className="px-3 py-2 text-token-secondary">{row.moduleName ?? '—'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {rows.length > 30 && <div className="px-3 py-2 text-[11px] text-white/35">仅预览前 30 条，共 {rows.length} 条</div>}
+              {rows.length > 30 && <div className="px-3 py-2 text-[11px] text-token-muted">仅预览前 30 条，共 {rows.length} 条</div>}
             </div>
           )}
 
-          {message && <div className="mt-3 text-xs text-white/50">{message}</div>}
+          {message && <div className="mt-3 text-xs text-token-secondary">{message}</div>}
         </div>
 
-        <div className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-5 py-4">
-          <button onClick={onClose} className="rounded-lg border border-white/10 px-3 py-2 text-xs text-white/65 hover:bg-white/5">取消</button>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-token-subtle px-5 py-4">
+          <button onClick={onClose} className="rounded-lg border border-token-subtle px-3 py-2 text-xs text-token-secondary hover-bg-soft">取消</button>
           <button
             onClick={() => void commit()}
             disabled={busy || rows.length === 0 || !officialReleaseId}

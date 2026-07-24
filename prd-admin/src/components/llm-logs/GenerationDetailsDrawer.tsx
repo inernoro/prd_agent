@@ -20,8 +20,8 @@ function hasCosPlaceholder(...texts: (string | null | undefined)[]): boolean {
 function MetricCard({ title, value, note }: { title: string; value: string; note?: string }) {
   return (
     <div
-      className="shrink-0 rounded-[12px] px-3 py-2 min-w-[150px]"
-      style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-card, rgba(255,255,255,0.03))' }}
+      className="shrink-0 rounded-[12px] px-3 py-2 min-w-[150px] bg-token-nested"
+      style={{ border: '1px solid var(--border-subtle)' }}
     >
       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{title}</div>
       <div className="mt-0.5 text-[15px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{value}</div>
@@ -126,7 +126,7 @@ function ImageSection({ title, images, note }: { title: string; images: { url: s
             style={{ border: '1px solid var(--border-subtle)', width: 96, height: 96 }}
             title={img.label || '点击在新标签查看大图'}
           >
-            <img src={img.url} alt={img.label || 'image'} loading="lazy" className="w-full h-full object-cover" style={{ background: 'var(--bg-base, rgba(255,255,255,0.04))' }} />
+            <img src={img.url} alt={img.label || 'image'} loading="lazy" className="w-full h-full object-cover bg-token-nested"  />
           </a>
         ))}
       </div>
@@ -312,7 +312,7 @@ export function GenerationDetailsDrawer({ logId, onClose }: { logId: string; onC
                     <span style={{ color: 'var(--text-secondary)' }}>{detail.provider || DASH}</span>
                     <span style={{ color: 'var(--text-muted)' }}>{fmtMs(detail.durationMs)}</span>
                   </div>
-                  <div className="mt-1 h-1.5 rounded-full overflow-hidden" style={{ background: 'var(--bg-base, rgba(255,255,255,0.06))' }}>
+                  <div className="mt-1 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                     <div className="h-full rounded-full" style={{ width: '100%', background: 'rgba(56,189,248,0.7)' }} />
                   </div>
                   <div className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>无逐次上游分解（仅最终响应耗时）</div>

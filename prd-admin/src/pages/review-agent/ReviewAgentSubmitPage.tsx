@@ -84,15 +84,15 @@ export function ReviewAgentSubmitPage() {
           <ClipboardCheck className="w-5 h-5 text-indigo-400" />
         </div>
         <div>
-          <h1 className="text-xl font-semibold text-white">提交方案评审</h1>
-          <p className="text-sm text-white/50 mt-0.5">上传 .md 格式的产品方案，AI 将从 7 个维度评审打分</p>
+          <h1 className="text-xl font-semibold text-token-primary">提交方案评审</h1>
+          <p className="text-sm text-token-secondary mt-0.5">上传 .md 格式的产品方案，AI 将从 7 个维度评审打分</p>
         </div>
       </div>
 
       <div className="space-y-6">
         {/* 方案标题 */}
         <div>
-          <label className="block text-sm font-medium text-white/70 mb-2">
+          <label className="block text-sm font-medium text-token-secondary mb-2">
             方案标题 <span className="text-red-400">*</span>
           </label>
           <input
@@ -100,39 +100,39 @@ export function ReviewAgentSubmitPage() {
             value={title}
             onChange={e => setTitle(e.target.value)}
             placeholder="输入方案标题（如：用户反馈模块 v2.0）"
-            className="w-full bg-white/5 border border-white/10 rounded-lg px-4 py-3 text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 focus:bg-white/8 transition-colors"
+            className="w-full bg-token-nested border border-token-subtle rounded-lg px-4 py-3 text-token-primary placeholder-white/30 focus:outline-none focus:border-indigo-500/50 focus:bg-token-nested transition-colors"
             disabled={isLoading}
           />
         </div>
 
         {/* 文件上传 */}
         <div>
-          <label className="block text-sm font-medium text-white/70 mb-2">
+          <label className="block text-sm font-medium text-token-secondary mb-2">
             方案文件 (.md) <span className="text-red-400">*</span>
           </label>
           {file ? (
-            <div className="flex items-center gap-3 bg-white/5 border border-indigo-500/30 rounded-lg px-4 py-3">
+            <div className="flex items-center gap-3 bg-token-nested border border-indigo-500/30 rounded-lg px-4 py-3">
               <FileText className="w-5 h-5 text-indigo-400 flex-shrink-0" />
               <div className="flex-1 min-w-0">
-                <p className="text-sm text-white truncate">{file.name}</p>
-                <p className="text-xs text-white/40 mt-0.5">{(file.size / 1024).toFixed(1)} KB</p>
+                <p className="text-sm text-token-primary truncate">{file.name}</p>
+                <p className="text-xs text-token-muted mt-0.5">{(file.size / 1024).toFixed(1)} KB</p>
               </div>
               {!isLoading && (
-                <button onClick={() => setFile(null)} className="text-white/40 hover:text-white/70 transition-colors">
+                <button onClick={() => setFile(null)} className="text-token-muted hover-text-primary transition-colors">
                   <X className="w-4 h-4" />
                 </button>
               )}
             </div>
           ) : (
             <div
-              className="border-2 border-dashed border-white/10 rounded-lg p-8 text-center hover:border-indigo-500/40 hover:bg-white/3 transition-colors cursor-pointer"
+              className="border-2 border-dashed border-token-subtle rounded-lg p-8 text-center hover:border-indigo-500/40 hover-bg-soft transition-colors cursor-pointer"
               onClick={() => fileInputRef.current?.click()}
               onDragOver={e => e.preventDefault()}
               onDrop={handleDrop}
             >
-              <Upload className="w-8 h-8 text-white/30 mx-auto mb-3" />
-              <p className="text-sm text-white/50">拖拽文件到此处，或点击选择</p>
-              <p className="text-xs text-white/30 mt-1">支持 .md 格式，文件大小不超过 20MB</p>
+              <Upload className="w-8 h-8 text-token-muted mx-auto mb-3" />
+              <p className="text-sm text-token-secondary">拖拽文件到此处，或点击选择</p>
+              <p className="text-xs text-token-muted mt-1">支持 .md 格式，文件大小不超过 20MB</p>
             </div>
           )}
           <input
@@ -153,9 +153,9 @@ export function ReviewAgentSubmitPage() {
         )}
 
         {/* 评审维度说明 */}
-        <div className="bg-white/3 border border-white/8 rounded-lg p-4">
-          <p className="text-xs font-medium text-white/40 uppercase tracking-wider mb-3">AI 将从以下 7 个维度评审（共 100 分，≥80 分通过）</p>
-          <div className="grid grid-cols-2 gap-2 text-xs text-white/50">
+        <div className="bg-token-nested border border-token-subtle rounded-lg p-4">
+          <p className="text-xs font-medium text-token-muted uppercase tracking-wider mb-3">AI 将从以下 7 个维度评审（共 100 分，≥80 分通过）</p>
+          <div className="grid grid-cols-2 gap-2 text-xs text-token-secondary">
             <span>• 文档规范完整性（20分）</span>
             <span>• 内在自洽性（20分）</span>
             <span>• 问题陈述质量（15分）</span>
@@ -171,7 +171,7 @@ export function ReviewAgentSubmitPage() {
           <button
             onClick={() => navigate('/review-agent')}
             disabled={isLoading}
-            className="flex-1 bg-white/5 hover:bg-white/10 disabled:opacity-50 border border-white/10 rounded-lg py-3 text-sm text-white/70 transition-colors"
+            className="flex-1 bg-token-nested hover-bg-soft disabled:opacity-50 border border-token-subtle rounded-lg py-3 text-sm text-token-secondary transition-colors"
           >
             取消
           </button>
@@ -182,7 +182,7 @@ export function ReviewAgentSubmitPage() {
           >
             {isLoading ? (
               <>
-                <div className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
+                <div className="w-4 h-4 border-2 border-token-subtle border-t-token-subtle rounded-full animate-spin" />
                 {loadingText}
               </>
             ) : (

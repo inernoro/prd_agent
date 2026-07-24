@@ -63,7 +63,7 @@ const triggerTypeIcon: Record<string, React.ReactNode> = {
 };
 const inputCls =
   'w-full px-3 py-2 rounded-[12px] text-sm outline-none transition-colors'
-  + ' hover:border-white/20 focus:ring-2 focus:ring-white/10';
+  + ' hover:border-token-subtle focus:ring-2 focus:ring-white/10';
 const inputStyle: React.CSSProperties = {
   background: 'var(--bg-input)',
   border: '1px solid var(--border-default)',
@@ -92,14 +92,14 @@ function HookUrlDisplay({ hookId, onRegenerate }: { hookId: string; onRegenerate
       <div className="flex flex-wrap items-center gap-2">
         <button
           onClick={() => { navigator.clipboard.writeText(url); toast.success('已复制地址'); }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover-bg-soft"
           style={{ color: 'rgba(34,197,94,0.8)', border: '1px solid rgba(34,197,94,0.15)' }}
         >
           <Copy size={12} /> 复制地址
         </button>
         <button
           onClick={() => { navigator.clipboard.writeText(curlCmd); toast.success('已复制 curl'); }}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover-bg-soft"
           style={{ color: 'rgba(168,85,247,0.8)', border: '1px solid rgba(168,85,247,0.15)' }}
         >
           <Terminal size={12} /> 复制 curl
@@ -107,7 +107,7 @@ function HookUrlDisplay({ hookId, onRegenerate }: { hookId: string; onRegenerate
         <div className="flex-1" />
         <button
           onClick={onRegenerate}
-          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover:bg-white/8"
+          className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs transition-colors hover-bg-soft"
           style={{ color: 'var(--text-muted)' }}
         >
           <RefreshCw size={12} /> 重新生成
@@ -144,7 +144,7 @@ function UserMultiSelect({ allUsers, selectedIds, onChange }: {
   return (
     <div ref={ref} className="relative">
       <button type="button" onClick={() => setOpen(!open)}
-        className="relative w-full pr-9 h-9 rounded-[12px] text-sm outline-none transition-colors flex items-center px-3 hover:border-white/20"
+        className="relative w-full pr-9 h-9 rounded-[12px] text-sm outline-none transition-colors flex items-center px-3 hover:border-token-subtle"
         style={inputStyle}
       >
         <span className="truncate">
@@ -517,7 +517,7 @@ export default function AutomationRulesPage() {
               <div ref={newMenuRef} className="relative">
                 <button
                   onClick={() => setShowNewMenu(!showNewMenu)}
-                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors hover:bg-white/8"
+                  className="flex items-center gap-1 px-2 py-1 rounded-lg text-xs font-medium transition-colors hover-bg-soft"
                   style={{ color: 'rgba(59,130,246,0.9)' }}
                 >
                   <Plus size={14} /> 新建
@@ -698,7 +698,7 @@ export default function AutomationRulesPage() {
                       <div className="mt-2 p-2.5 rounded-[10px] text-xs" style={{ background: 'rgba(168,85,247,0.05)', border: '1px solid rgba(168,85,247,0.1)' }}>
                         <div className="font-medium mb-1" style={{ color: 'rgba(168,85,247,0.9)' }}>示例</div>
                         <div style={{ color: 'var(--text-muted)' }}>
-                          POST <code className="px-1 py-0.5 rounded bg-white/5">{`{"username":"张三","repo":"my-project"}`}</code>
+                          POST <code className="px-1 py-0.5 rounded bg-token-nested">{`{"username":"张三","repo":"my-project"}`}</code>
                         </div>
                         <div className="mt-0.5" style={{ color: 'rgba(34,197,94,0.8)' }}>
                           渲染 → 用户 张三 推送到 my-project
@@ -782,11 +782,7 @@ export default function AutomationRulesPage() {
       {triggerRuleId && (
         <div className="fixed inset-0 z-50 flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.5)' }}
           onClick={(e) => { if (e.target === e.currentTarget) setTriggerRuleId(null); }}>
-          <div className="w-[400px] max-w-[calc(100vw-2rem)] rounded-[16px] p-5 space-y-3" style={{
-            ...glassPopoverCompact,
-            background: 'rgba(25,25,30,0.95)', border: '1px solid rgba(255,255,255,0.1)',
-            boxShadow: '0 20px 60px rgba(0,0,0,0.5)',
-          }}>
+          <div className="w-[400px] max-w-[calc(100vw-2rem)] rounded-[16px] p-5 space-y-3 border border-token-subtle" style={{ ...glassPopoverCompact, background: 'rgba(25,25,30,0.95)', boxShadow: '0 20px 60px rgba(0,0,0,0.5)' }}>
             <div className="text-sm font-semibold">手动触发</div>
             <input value={triggerTitle} onChange={(e) => setTriggerTitle(e.target.value)}
               placeholder="标题（可选）" className={inputCls} style={inputStyle} />

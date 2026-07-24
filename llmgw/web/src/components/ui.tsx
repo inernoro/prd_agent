@@ -127,7 +127,7 @@ export function TabBar<K extends string>({
   onChange: (k: K) => void;
 }) {
   return (
-    <div style={{ display: 'flex', gap: 2, borderBottom: '1px solid var(--border-subtle)', flexShrink: 0 }}>
+    <div style={{ display: 'flex', gap: 2, overflowX: 'auto', borderBottom: '1px solid var(--border-subtle)', flexShrink: 0, scrollbarWidth: 'none' }}>
       {items.map((it) => {
         const active = it.key === activeKey;
         return (
@@ -137,12 +137,14 @@ export function TabBar<K extends string>({
             style={{
               background: 'transparent',
               border: 'none',
-              padding: '9px 10px',
-              fontSize: 12,
+              minHeight: 44,
+              padding: '10px 14px',
+              fontSize: 14,
               fontWeight: active ? 600 : 500,
-              color: active ? 'var(--text-primary)' : 'var(--text-muted)',
-              borderBottom: active ? '1px solid var(--text-primary)' : '1px solid transparent',
+              color: active ? 'var(--accent)' : 'var(--text-secondary)',
+              borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',
               marginBottom: -1,
+              whiteSpace: 'nowrap',
             }}
           >
             {it.label}

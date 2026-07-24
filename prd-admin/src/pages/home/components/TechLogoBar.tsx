@@ -14,7 +14,7 @@ export function TechLogoBar() {
     <div className="w-full max-w-5xl mx-auto">
       {/* Eyebrow label */}
       <div
-        className="text-center text-[10px] uppercase text-white/35 mb-5"
+        className="text-center text-[10px] uppercase text-token-muted mb-5"
         style={{
           fontFamily: 'var(--font-terminal)',
           letterSpacing: '0.28em',
@@ -31,15 +31,15 @@ export function TechLogoBar() {
         {t.hero.techItems.map((item, i) => (
           <span
             key={item}
-            className="relative text-[13px] text-white/45 hover:text-white/90 transition-colors cursor-default"
+            className="relative text-[13px] text-token-muted hover:text-token-primary transition-colors cursor-default"
             style={{ letterSpacing: '-0.005em' }}
           >
             {item}
             {/* 用 ::after 做分隔点，CSS 里直接写会污染全局，改用 JS 判断 */}
             {i < t.hero.techItems.length - 1 && (
               <span
-                className="hidden md:inline-block absolute -right-5 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full"
-                style={{ background: 'rgba(255, 255, 255, 0.12)' }}
+                className="hidden md:inline-block absolute -right-5 top-1/2 -translate-y-1/2 w-1 h-1 rounded-full bg-token-nested"
+
               />
             )}
           </span>

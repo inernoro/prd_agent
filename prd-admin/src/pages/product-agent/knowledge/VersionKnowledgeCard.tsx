@@ -43,9 +43,9 @@ export function VersionKnowledgeCard({ productId, versionId }: { productId: stri
   return (
     <>
       {loading ? (
-        <div className="flex items-center gap-2 text-[11px] text-white/35 py-1"><MapSpinner size={12} /> 正在调取本版本知识…</div>
+        <div className="flex items-center gap-2 text-[11px] text-token-muted py-1"><MapSpinner size={12} /> 正在调取本版本知识…</div>
       ) : items.length === 0 ? (
-        <div className="text-[11px] text-white/40">
+        <div className="text-[11px] text-token-muted">
           还没有知识关联到本版本。点「关联知识」从产品知识库挑选（知识统一存产品库，版本里只调取）。
         </div>
       ) : (
@@ -57,13 +57,13 @@ export function VersionKnowledgeCard({ productId, versionId }: { productId: stri
               <button
                 key={e.id}
                 onClick={() => navigate(`/product-agent/p/${productId}/knowledge/${e.id}`)}
-                className="text-left flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5"
+                className="text-left flex items-center gap-2 px-2 py-1.5 rounded-lg hover-bg-soft"
                 title="打开知识详情"
               >
                 <Icon size={13} className="shrink-0" style={{ color: kind.color }} />
-                <span className="text-sm text-white/80 truncate flex-1">{e.title}</span>
+                <span className="text-sm text-token-primary truncate flex-1">{e.title}</span>
                 {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/80 shrink-0">{e.category}</span>}
-                <span className="text-[10px] text-white/30 shrink-0">{fmtTime(e.updatedAt)}</span>
+                <span className="text-[10px] text-token-muted shrink-0">{fmtTime(e.updatedAt)}</span>
               </button>
             );
           })}
@@ -144,29 +144,29 @@ function KnowledgePickerDialog({ storeId, versionId, onClose, onSaved }: {
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col"
+        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width: 520, maxWidth: '92vw', height: '70vh', maxHeight: '70vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
+          <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2">
             <BookOpen size={14} className="text-cyan-400" /> 关联知识到本版本
           </h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>
         </div>
         <div className="px-4 pt-3 shrink-0">
           <input
             value={kw}
             onChange={(e) => setKw(e.target.value)}
             placeholder="搜索产品知识库…"
-            className="w-full px-3 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25"
+            className="w-full px-3 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted"
           />
         </div>
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
           {loading ? (
             <div className="flex items-center justify-center py-10"><MapSpinner size={18} /></div>
           ) : shown.length === 0 ? (
-            <div className="text-xs text-white/35 text-center py-8">
+            <div className="text-xs text-token-muted text-center py-8">
               {docs.length === 0 ? '产品知识库还没有文档。先去「知识库」tab 新建或上传，再回来关联。' : '没有匹配的文档'}
             </div>
           ) : (
@@ -174,18 +174,18 @@ function KnowledgePickerDialog({ storeId, versionId, onClose, onSaved }: {
               const kind = fileKindOf(d.contentType);
               const Icon = kind.icon;
               return (
-                <label key={d.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-white/[0.03] border border-white/5 cursor-pointer hover:bg-white/[0.06]">
+                <label key={d.id} className="flex items-center gap-2.5 px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle cursor-pointer hover-bg-soft">
                   <input type="checkbox" checked={selected.has(d.id)} onChange={() => toggle(d.id)} className="accent-cyan-500" />
                   <Icon size={13} className="shrink-0" style={{ color: kind.color }} />
-                  <span className="text-sm text-white/85 flex-1 truncate">{d.title}</span>
+                  <span className="text-sm text-token-primary flex-1 truncate">{d.title}</span>
                   {d.category && <span className="text-[10px] text-cyan-300/70 shrink-0">{d.category}</span>}
                 </label>
               );
             })
           )}
         </div>
-        <div className="flex justify-end gap-2 px-4 py-3 border-t border-white/10 shrink-0">
-          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">取消</button>
+        <div className="flex justify-end gap-2 px-4 py-3 border-t border-token-subtle shrink-0">
+          <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">取消</button>
           <button
             onClick={() => void save()}
             disabled={saving || loading}

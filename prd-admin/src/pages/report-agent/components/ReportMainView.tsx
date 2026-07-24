@@ -287,7 +287,7 @@ export function ReportMainView() {
                     style={{
                       color: seg.active ? 'var(--text-primary)' : 'var(--text-muted)',
                       background: seg.active
-                        ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
+                        ? (isLight ? 'var(--bg-card)' : 'var(--nested-block-bg)')
                         : 'transparent',
                       boxShadow: seg.active && isLight ? 'var(--shadow-card-active)' : 'none',
                     }}
@@ -340,7 +340,7 @@ export function ReportMainView() {
                       style={{
                         color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                         background: active
-                          ? (isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.08)')
+                          ? (isLight ? 'var(--bg-card)' : 'var(--nested-block-bg)')
                           : 'transparent',
                         boxShadow: active && isLight ? 'var(--shadow-card-active)' : 'none',
                       }}
@@ -926,7 +926,7 @@ function TimelineReportItem({
     <article
       className="rounded-xl flex flex-col gap-3 p-4 transition-all duration-150 cursor-pointer hover:translate-y-[-1px]"
       style={{
-        background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'rgba(255, 255, 255, 0.03)',
+        background: isLight ? 'rgba(15, 23, 42, 0.025)' : 'var(--nested-block-bg)',
         border: isLight ? '1px solid var(--hairline)' : '1px solid var(--border-primary)',
         borderLeft: `3px solid ${colors.border}`,
       }}

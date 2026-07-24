@@ -52,7 +52,7 @@ export function PermissionCell({
       case 'none':
       default:
         return {
-          color: 'rgba(255, 255, 255, 0.25)',
+          color: 'var(--text-muted)',
           bg: 'transparent',
           label: '无权限',
         };
@@ -92,7 +92,7 @@ export function PermissionCell({
     return {
       ...baseStyle,
       background: bg || 'transparent',
-      border: '1px solid rgba(255, 255, 255, 0.04)',
+      border: '1px solid var(--border-subtle)',
       boxShadow: 'none',
       transform: 'scale(1)',
     };

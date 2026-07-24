@@ -176,7 +176,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
 
   if (!app) return null;
 
-  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <Dialog
@@ -264,7 +264,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
               </pre>
             </div>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 额度预警配置 */}
             <section className="space-y-3">
@@ -344,7 +344,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
               )}
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 站内信通知 */}
             <section className="space-y-3">
@@ -415,7 +415,7 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
             {/* 投递日志 */}
             {logs.length > 0 && (
               <>
-                <div className="border-t border-white/10" />
+                <div className="border-t border-token-subtle" />
                 <section className="space-y-2">
                   <div className="flex items-center justify-between">
                     <h3 className="text-xs font-medium text-muted-foreground uppercase tracking-wider">投递记录</h3>
@@ -425,8 +425,8 @@ export function WebhookConfigDialog({ open, onClose, app }: WebhookConfigDialogP
                     {logs.map((log) => (
                       <div
                         key={log.id}
-                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs"
-                        style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                        className="flex items-center justify-between px-2.5 py-1.5 rounded-lg text-xs bg-token-nested"
+
                       >
                         <div className="flex items-center gap-2">
                           {log.success ? (

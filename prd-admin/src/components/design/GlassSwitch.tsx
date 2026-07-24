@@ -28,7 +28,7 @@ export interface GlassSwitchProps {
 
 /**
  * GlassSwitch - 液态玻璃切换组
- * 
+ *
  * 具有滑动指示器动效的切换按钮组，支持：
  * - 多种尺寸
  * - 自定义强调色
@@ -102,8 +102,8 @@ export function GlassSwitch({
 
     return {
       ...baseStyle,
-      background: 'linear-gradient(180deg, rgba(255, 255, 255, 0.15) 0%, rgba(255, 255, 255, 0.08) 100%)',
-      border: '1px solid rgba(255, 255, 255, 0.2)',
+      background: 'linear-gradient(180deg, var(--nested-block-bg) 0%, var(--nested-block-bg) 100%)',
+      border: '1px solid var(--border-subtle)',
       boxShadow: `
         0 2px 8px -1px rgba(0, 0, 0, 0.25),
         0 1px 2px 0 rgba(0, 0, 0, 0.15),

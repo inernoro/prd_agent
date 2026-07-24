@@ -144,14 +144,8 @@ export function PermissionMatrix({
           <tr>
             {/* 空白角落 */}
             <th
-              className="sticky left-0 z-20 p-3 text-left"
-              style={{
-                background: 'var(--bg-card)',
-                width: 168,
-                minWidth: 168,
-                maxWidth: 168,
-                borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-              }}
+              className="sticky left-0 z-20 p-3 text-left border-b border-b-token-subtle"
+              style={{ background: 'var(--bg-card)', width: 168, minWidth: 168, maxWidth: 168 }}
             >
               <span
                 className="text-[11px] font-medium px-2 py-1 rounded-md"
@@ -168,18 +162,13 @@ export function PermissionMatrix({
             {roles.map((role) => (
               <th
                 key={role.key}
-                className="p-2.5 text-center font-medium whitespace-nowrap"
-                style={{
-                  background:
+                className="p-2.5 text-center font-medium whitespace-nowrap border-b border-b-token-subtle"
+                style={{ background:
                     highlightRoleKey === role.key
                       ? 'rgba(99, 102, 241, 0.12)'
                       : role.isBuiltIn
-                        ? 'var(--bg-card, rgba(255, 255, 255, 0.03))'
-                        : 'transparent',
-                  color: highlightRoleKey === role.key ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)',
-                  minWidth: 88,
-                  borderBottom: '1px solid rgba(255, 255, 255, 0.05)',
-                }}
+                        ? 'var(--bg-card)'
+                        : 'transparent', color: highlightRoleKey === role.key ? 'rgba(99, 102, 241, 0.95)' : 'var(--text-primary)', minWidth: 88 }}
               >
                 <div className="flex flex-col items-center gap-1">
                   <div
@@ -223,15 +212,8 @@ export function PermissionMatrix({
               >
                 {/* 菜单行头 - 可点击查看权限详情 */}
                 <td
-                  className="sticky left-0 z-10 px-3 py-2 transition-all duration-250 ease-out"
-                  style={{
-                    background: hoveredRow === menu.appKey ? 'rgba(38, 38, 44, 0.98)' : 'var(--bg-card)',
-                    borderBottom: '1px solid rgba(255, 255, 255, 0.03)',
-                    borderRight: hoveredRow === menu.appKey ? '2px solid rgba(99, 102, 241, 0.35)' : '1px solid transparent',
-                    width: 168,
-                    minWidth: 168,
-                    maxWidth: 168,
-                  }}
+                  className="sticky left-0 z-10 px-3 py-2 transition-all duration-250 ease-out border-b border-b-token-subtle"
+                  style={{ background: hoveredRow === menu.appKey ? 'rgba(38, 38, 44, 0.98)' : 'var(--bg-card)', borderRight: hoveredRow === menu.appKey ? '2px solid rgba(99, 102, 241, 0.35)' : '1px solid transparent', width: 168, minWidth: 168, maxWidth: 168 }}
                 >
                   <button
                     type="button"
@@ -259,7 +241,7 @@ export function PermissionMatrix({
                     <span
                       className="transition-all duration-250 ease-out text-[13px] truncate"
                       style={{
-                        color: hoveredRow === menu.appKey ? 'rgba(255, 255, 255, 1)' : 'var(--text-secondary)',
+                        color: hoveredRow === menu.appKey ? 'var(--text-primary)' : 'var(--text-secondary)',
                         fontWeight: hoveredRow === menu.appKey ? 500 : 400,
                         letterSpacing: hoveredRow === menu.appKey ? '0.01em' : '0',
                       }}
@@ -279,15 +261,12 @@ export function PermissionMatrix({
                   return (
                     <td
                       key={`${role.key}-${menu.appKey}`}
-                      className="p-1 text-center transition-colors duration-150"
-                      style={{
-                        background: isHighlighted
+                      className="p-1 text-center transition-colors duration-150 border-b border-b-token-subtle"
+                      style={{ background: isHighlighted
                           ? 'rgba(99, 102, 241, 0.08)'
                           : isRowHovered
                             ? 'var(--nested-block-bg)'
-                            : 'transparent',
-                        borderBottom: '1px solid rgba(255, 255, 255, 0.04)',
-                      }}
+                            : 'transparent' }}
                     >
                       <PermissionCell
                         status={status}
@@ -310,12 +289,8 @@ export function PermissionMatrix({
 
       {/* 底部图例 */}
       <div
-        className="shrink-0 flex items-center gap-6 px-5 py-3 text-xs rounded-b-2xl"
-        style={{
-          color: 'var(--text-muted)',
-          background: 'linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.25) 100%)',
-          borderTop: '1px solid rgba(255, 255, 255, 0.04)',
-        }}
+        className="shrink-0 flex items-center gap-6 px-5 py-3 text-xs rounded-b-2xl border-t border-t-token-subtle"
+        style={{ color: 'var(--text-muted)', background: 'linear-gradient(180deg, rgba(0, 0, 0, 0.15) 0%, rgba(0, 0, 0, 0.25) 100%)' }}
       >
         <span className="flex items-center gap-2">
           <span

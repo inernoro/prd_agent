@@ -238,11 +238,8 @@ export default function DefectAgentPage() {
       {isMobile ? (
         <div className="shrink-0 px-1 pb-0.5">
           <div
-            className="mx-auto grid h-8 w-full max-w-[240px] grid-cols-2 rounded-full p-0.5"
-            style={{
-              background: 'rgba(255,255,255,0.07)',
-              border: '1px solid rgba(255,255,255,0.10)',
-            }}
+            className="mx-auto grid h-8 w-full max-w-[240px] grid-cols-2 rounded-full p-0.5 bg-token-nested border border-token-subtle"
+
           >
             {tabItems.map((item) => {
               const active = item.key === filter;
@@ -253,7 +250,7 @@ export default function DefectAgentPage() {
                   onClick={() => setFilter(item.key as 'submitted' | 'assigned')}
                   className="h-7 rounded-full text-[13px] font-semibold transition-colors"
                   style={{
-                    background: active ? 'rgba(255,255,255,0.16)' : 'transparent',
+                    background: active ? 'var(--nested-block-bg)' : 'transparent',
                     color: active ? 'var(--text-primary)' : 'var(--text-muted)',
                     boxShadow: active ? '0 1px 4px rgba(0,0,0,0.22)' : 'none',
                   }}
@@ -342,7 +339,7 @@ export default function DefectAgentPage() {
               type="button"
               data-tour-id="defect-create"
               onClick={() => setShowSubmitPanel(true)}
-              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[13px] font-semibold text-white"
+              className="inline-flex h-8 shrink-0 items-center justify-center gap-1.5 rounded-full px-3 text-[13px] font-semibold text-token-primary"
               style={{
                 background: 'var(--accent-gold)',
                 color: '#1a1a1a',

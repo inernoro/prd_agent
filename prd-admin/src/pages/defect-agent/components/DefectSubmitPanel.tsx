@@ -392,7 +392,7 @@ export function DefectSubmitPanel() {
           </div>
           <button
             onClick={() => setShowSubmitPanel(false)}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors text-token-muted"
+            className="p-2 rounded-lg hover-bg-soft transition-colors text-token-muted"
           >
             <X size={18} />
           </button>

@@ -39,16 +39,16 @@ export function ProductAdminOverviewPanel() {
   if (loading) return <MapSectionLoader text="正在加载产品管理员…" />;
 
   return (
-    <div className="overflow-hidden rounded-xl border border-white/10">
-      <div className="border-b border-white/10 px-4 py-3">
-        <div className="text-sm font-medium text-white/75">产品管理员</div>
-        <div className="mt-1 text-xs leading-5 text-white/40">
+    <div className="overflow-hidden rounded-xl border border-token-subtle">
+      <div className="border-b border-token-subtle px-4 py-3">
+        <div className="text-sm font-medium text-token-secondary">产品管理员</div>
+        <div className="mt-1 text-xs leading-5 text-token-muted">
           各产品负责人与产品管理员一览；在单产品页「团队」tab 指派或撤销。
         </div>
-        {message && <div className="mt-2 text-xs text-white/50">{message}</div>}
+        {message && <div className="mt-2 text-xs text-token-secondary">{message}</div>}
       </div>
       <table className="w-full text-left text-sm">
-        <thead className="bg-white/[0.03] text-xs text-white/45">
+        <thead className="bg-token-nested text-xs text-token-muted">
           <tr>
             <th className="px-4 py-2.5 font-medium">产品</th>
             <th className="px-4 py-2.5 font-medium">管理员</th>
@@ -56,9 +56,9 @@ export function ProductAdminOverviewPanel() {
         </thead>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.productId} className="border-t border-white/5">
-              <td className="px-4 py-3 text-white/80">{row.productName}</td>
-              <td className="px-4 py-3 text-xs text-white/55">{row.admins.length > 0 ? row.admins.join('；') : '未配置'}</td>
+            <tr key={row.productId} className="border-t border-token-subtle">
+              <td className="px-4 py-3 text-token-primary">{row.productName}</td>
+              <td className="px-4 py-3 text-xs text-token-secondary">{row.admins.length > 0 ? row.admins.join('；') : '未配置'}</td>
             </tr>
           ))}
         </tbody>

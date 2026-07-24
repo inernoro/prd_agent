@@ -58,7 +58,7 @@ function AddressLink({ label, url }: { label: string; url?: string }) {
       href={url}
       target="_blank"
       rel="noreferrer"
-      className="fea-link inline-flex items-center gap-1 rounded-lg border border-white/10 bg-white/[0.04] px-2 py-1 text-[11px] text-sky-200/85 hover:bg-white/[0.08]"
+      className="fea-link inline-flex items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2 py-1 text-[11px] text-sky-200/85 hover-bg-soft"
       title={url}
     >
       {label}
@@ -88,26 +88,26 @@ function ProjectTableBody({
 }) {
   if (projects.length === 0) {
     return (
-      <div className="px-4 py-8 text-sm text-white/45 text-center">
+      <div className="px-4 py-8 text-sm text-token-muted text-center">
         没有匹配的前端项目。换个项目名、仓库名或技术栈试试。
       </div>
     );
   }
 
   return (
-    <div className="divide-y divide-white/10">
+    <div className="divide-y divide-token-subtle">
       {projects.map((project) => {
         const primaryUrl = getPrimaryUrl(project);
         return (
-          <article key={`${project.name}-${primaryUrl ?? project.tech}`} className="px-4 py-3 hover:bg-white/[0.025] transition-colors duration-200">
+          <article key={`${project.name}-${primaryUrl ?? project.tech}`} className="px-4 py-3 hover-bg-soft transition-colors duration-200">
             <div className="flex flex-col gap-2 xl:flex-row xl:items-start xl:justify-between">
               <div className="min-w-0">
                 <div className="flex flex-wrap items-center gap-2">
-                  <h3 className="text-sm font-medium text-white">{project.name}</h3>
-                  <span className="rounded-full border border-white/10 bg-white/[0.04] px-2 py-0.5 text-[10px] text-white/55">
+                  <h3 className="text-sm font-medium text-token-primary">{project.name}</h3>
+                  <span className="rounded-full border border-token-subtle bg-token-nested px-2 py-0.5 text-[10px] text-token-secondary">
                     {FRONT_END_PROJECT_KIND_LABEL[project.kind]}
                   </span>
-                  <span className="text-[11px] text-white/45">{project.tech}</span>
+                  <span className="text-[11px] text-token-muted">{project.tech}</span>
                 </div>
                 <div className="mt-2 flex flex-wrap gap-1.5">
                   <AddressLink label="Coding" url={project.codingUrl} />
@@ -118,7 +118,7 @@ function ProjectTableBody({
                   <AddressLink label="访问" url={project.localUrl} />
                 </div>
                 {(project.branches || project.release || project.notes) && (
-                  <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-white/45">
+                  <p className="mt-2 line-clamp-2 text-[11px] leading-5 text-token-muted">
                     {[project.branches, project.release, project.notes].filter(Boolean).join('；')}
                   </p>
                 )}
@@ -126,7 +126,7 @@ function ProjectTableBody({
               <button
                 type="button"
                 onClick={() => onCopy(project)}
-                className="fea-btn h-8 shrink-0 rounded-lg border border-white/10 bg-white/5 px-2.5 text-[11px] text-white/65 hover:bg-white/10 inline-flex items-center gap-1.5"
+                className="fea-btn h-8 shrink-0 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-[11px] text-token-secondary hover-bg-soft inline-flex items-center gap-1.5"
               >
                 <Clipboard className="w-3.5 h-3.5" />
                 复制地址
@@ -154,7 +154,7 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
             <FolderSearch className="w-4 h-4 text-violet-200" />
           </div>
           <div className="min-w-0">
-            <h3 className="text-sm font-semibold text-white">前端项目表</h3>
+            <h3 className="text-sm font-semibold text-token-primary">前端项目表</h3>
             <p className="text-[11px] text-violet-100/55 mt-0.5">{FRONT_END_PROJECTS.length} 个仓库地址</p>
           </div>
         </div>
@@ -162,9 +162,9 @@ export function FrontEndProjectRailCard({ onOpen }: { onOpen: () => void }) {
       </div>
       <div className="mt-3 space-y-1.5">
         {preview.map((p) => (
-          <div key={p.name} className="text-[11px] text-white/50 truncate pl-0.5">
-            <span className="text-white/70">{p.name}</span>
-            <span className="text-white/30 mx-1">·</span>
+          <div key={p.name} className="text-[11px] text-token-secondary truncate pl-0.5">
+            <span className="text-token-secondary">{p.name}</span>
+            <span className="text-token-muted mx-1">·</span>
             <span>{FRONT_END_PROJECT_KIND_LABEL[p.kind]}</span>
           </div>
         ))}
@@ -202,42 +202,42 @@ export function FrontEndProjectTableModal({ open, onClose }: { open: boolean; on
         role="dialog"
         aria-modal="true"
         aria-label="前端项目表"
-        className="fea-modal-panel w-full max-w-4xl rounded-2xl border border-white/10 bg-[#0b0d12] shadow-2xl flex flex-col"
+        className="fea-modal-panel w-full max-w-4xl rounded-2xl border border-token-subtle bg-[#0b0d12] shadow-2xl flex flex-col"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+        <div className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
           <div className="min-w-0 flex items-center gap-3">
             <div className="w-9 h-9 rounded-xl border border-sky-400/25 bg-sky-500/10 flex items-center justify-center">
               <FolderSearch className="w-4 h-4 text-sky-200" />
             </div>
             <div className="min-w-0">
-              <h2 className="text-base font-semibold text-white">前端项目表</h2>
-              <p className="text-[11px] text-white/45">内置 {total} 个项目，支持按名称、仓库、技术栈搜索</p>
+              <h2 className="text-base font-semibold text-token-primary">前端项目表</h2>
+              <p className="text-[11px] text-token-muted">内置 {total} 个项目，支持按名称、仓库、技术栈搜索</p>
             </div>
           </div>
           <button
             type="button"
             onClick={onClose}
-            className="fea-btn h-8 w-8 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 inline-flex items-center justify-center text-white/60"
+            className="fea-btn h-8 w-8 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft inline-flex items-center justify-center text-token-secondary"
             aria-label="关闭"
           >
             <X className="w-4 h-4" />
           </button>
         </div>
 
-        <div className="shrink-0 px-5 py-3 border-b border-white/10">
+        <div className="shrink-0 px-5 py-3 border-b border-token-subtle">
           <div className="relative">
-            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-white/35" />
+            <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-3.5 h-3.5 text-token-muted" />
             <input
               value={query}
               onChange={(e) => setQuery(e.target.value)}
               placeholder="搜：会员 / dcrm / SVN / uniapp / 构建地址"
-              className="w-full h-9 rounded-xl border border-white/10 bg-black/20 pl-8 pr-3 text-xs text-white placeholder:text-white/25 outline-none focus:border-sky-300/35 transition-colors duration-200"
+              className="w-full h-9 rounded-xl border border-token-subtle bg-token-nested pl-8 pr-3 text-xs text-token-primary placeholder-token-muted outline-none focus:border-sky-300/35 transition-colors duration-200"
               autoFocus
             />
           </div>
-          <p className="mt-2 text-[11px] text-white/35">匹配 {filteredProjects.length} 条</p>
+          <p className="mt-2 text-[11px] text-token-muted">匹配 {filteredProjects.length} 条</p>
         </div>
 
         <div

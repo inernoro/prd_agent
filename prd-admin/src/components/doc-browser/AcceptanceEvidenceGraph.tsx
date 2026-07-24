@@ -135,7 +135,7 @@ function ClaimNode({ data }: NodeProps) {
     <div
       style={{
         width: CLAIM_W, background: 'var(--bg-card, #1E1F20)', borderRadius: 12,
-        border: d.sel ? `2px solid ${s.color}` : `1px solid var(--border-subtle, rgba(255,255,255,0.14))`,
+        border: d.sel ? `2px solid ${s.color}` : `1px solid var(--border-subtle)`,
         borderLeft: `4px solid ${s.border}`,
         boxShadow: d.sel ? `0 0 0 3px ${s.color}44, 0 8px 26px rgba(0,0,0,0.45)` : '0 6px 22px rgba(0,0,0,0.35)',
         padding: '10px 12px', opacity: d.dim ? 0.22 : 1, transition: 'opacity .18s, box-shadow .18s', cursor: 'pointer',
@@ -163,7 +163,7 @@ function EvidenceNode({ data }: NodeProps) {
   return (
     <div style={{
       width: EV_W, background: 'var(--bg-card, #1E1F20)',
-      border: d.sel ? '2px solid rgba(129,140,248,0.95)' : '1px solid var(--border-subtle, rgba(255,255,255,0.14))',
+      border: d.sel ? '2px solid rgba(129,140,248,0.95)' : '1px solid var(--border-subtle)',
       borderRadius: 12, overflow: 'hidden',
       boxShadow: d.sel ? '0 0 0 3px rgba(129,140,248,0.4), 0 8px 28px rgba(0,0,0,0.5)' : '0 8px 28px rgba(0,0,0,0.4)',
       opacity: d.dim ? 0.22 : 1, transition: 'opacity .18s, box-shadow .18s', cursor: 'pointer',
@@ -284,7 +284,7 @@ function GraphInner({ claims, evidence, onEnlarge, onlyUnfinished }: { claims: C
         <Controls position="top-left" showInteractive={false} />
       </ReactFlow>
       {info ? (
-        <div style={{ position: 'absolute', left: 12, right: 12, bottom: 12, maxWidth: 600, background: 'var(--bg-elevated, #282A2C)', border: '1px solid var(--border-subtle, rgba(255,255,255,0.18))', borderRadius: 12, padding: '11px 13px', boxShadow: '0 12px 32px rgba(0,0,0,0.55)', zIndex: 5 }}>
+        <div className="border border-token-subtle" style={{ position: 'absolute', left: 12, right: 12, bottom: 12, maxWidth: 600, background: 'var(--bg-elevated, #282A2C)', borderRadius: 12, padding: '11px 13px', boxShadow: '0 12px 32px rgba(0,0,0,0.55)', zIndex: 5 }}>
           <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
             <span style={{ fontSize: 13, fontWeight: 700, color: 'var(--text-primary)' }}>{info.head}</span>
             <button onClick={() => setSelId(null)} style={{ fontSize: 11, color: 'var(--text-muted)', background: 'transparent', border: 'none', cursor: 'pointer', flexShrink: 0 }}>取消选中</button>
@@ -341,7 +341,7 @@ export function AcceptanceEvidenceGraph({ content, title, onClose }: { content: 
 
   const modal = (
     <div className="fixed inset-0 z-[10000] flex items-center justify-center" style={{ background: 'rgba(0,0,0,0.6)' }} onClick={handleBackdrop} onKeyDown={(e) => { if (e.key === 'Escape') onClose(); }}>
-      <div className="flex flex-col rounded-xl border" style={{ width: '95vw', maxWidth: 1320, height: '90vh', maxHeight: '90vh', background: 'var(--bg-primary, #131314)', borderColor: 'var(--border-subtle, rgba(255,255,255,0.12))' }} onClick={(e) => e.stopPropagation()}>
+      <div className="flex flex-col rounded-xl border border-token-subtle" style={{ width: '95vw', maxWidth: 1320, height: '90vh', maxHeight: '90vh', background: 'var(--bg-primary, #131314)' }} onClick={(e) => e.stopPropagation()}>
         <div className="shrink-0 flex items-center justify-between gap-3 px-4 py-3 border-b" style={{ borderColor: 'var(--border-faint)' }}>
           <div className="flex items-center gap-2 min-w-0">
             <Workflow size={16} style={{ color: 'rgba(129,140,248,0.95)' }} />
@@ -392,7 +392,7 @@ export function AcceptanceEvidenceGraph({ content, title, onClose }: { content: 
 
       {enlarged && (
         <div className="fixed inset-0 z-[10010] flex flex-col items-center justify-center" style={{ background: 'rgba(0,0,0,0.88)' }} onClick={(e) => { e.stopPropagation(); setEnlarged(null); }}>
-          <div className="text-[12px] mb-3 px-3 py-1 rounded-full" style={{ color: '#fff', background: 'rgba(255,255,255,0.1)' }}>{enlarged.caption} · 点击任意处关闭</div>
+          <div className="text-[12px] mb-3 px-3 py-1 rounded-full bg-token-nested" style={{ color: '#fff' }}>{enlarged.caption} · 点击任意处关闭</div>
           <img src={enlarged.src} alt={enlarged.caption} style={{ maxWidth: '94vw', maxHeight: '84vh', objectFit: 'contain', borderRadius: 10, boxShadow: '0 12px 48px rgba(0,0,0,0.6)' }} />
         </div>
       )}

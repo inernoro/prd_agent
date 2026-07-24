@@ -300,7 +300,7 @@ export function ConnectAiDialog({ onClose }: Props) {
                             : 'border-current opacity-40',
                         )}
                       >
-                        {checked && <Check size={11} strokeWidth={3} className="text-white" />}
+                        {checked && <Check size={11} strokeWidth={3} className="text-token-primary" />}
                       </span>
                       <span className="flex items-center gap-2 text-[13px] font-semibold text-token-primary">
                         {opt.title}

@@ -19,13 +19,15 @@ type EntityPreviewDrawerProps = {
   buttonLabel: string;
   title: string;
   kicker: string;
+  icon?: ReactNode;
   summary: ReactNode;
   sections: EntityPreviewSection[];
   status?: Array<{ label: string; tone?: 'neutral' | 'good' | 'warning' }>;
+  initiallyOpen?: boolean;
 };
 
-export function EntityPreviewDrawer({ buttonLabel, title, kicker, summary, sections, status = [] }: EntityPreviewDrawerProps) {
-  const [open, setOpen] = useState(false);
+export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary, sections, status = [], initiallyOpen = false }: EntityPreviewDrawerProps) {
+  const [open, setOpen] = useState(initiallyOpen);
   const titleId = useId();
   const triggerButtonRef = useRef<HTMLButtonElement>(null);
   const closeButtonRef = useRef<HTMLButtonElement>(null);
@@ -87,9 +89,12 @@ export function EntityPreviewDrawer({ buttonLabel, title, kicker, summary, secti
             style={{ ...drawerStyle, height: '100dvh', maxHeight: '100dvh' }}
           >
             <header style={headerStyle}>
-              <div style={{ minWidth: 0 }}>
-                <div style={kickerStyle}>{kicker}</div>
-                <h2 id={titleId} style={titleStyle}>{title}</h2>
+              <div style={{ minWidth: 0, display: 'flex', alignItems: 'center', gap: 12 }}>
+                {icon ? <span style={headerIconStyle}>{icon}</span> : null}
+                <div style={{ minWidth: 0 }}>
+                  <div style={kickerStyle}>{kicker}</div>
+                  <h2 id={titleId} style={titleStyle}>{title}</h2>
+                </div>
               </div>
               <button ref={closeButtonRef} type="button" aria-label="关闭" onClick={() => setOpen(false)} style={closeStyle}>
                 <X size={17} />
@@ -170,7 +175,7 @@ const backdropStyle: React.CSSProperties = {
   position: 'absolute',
   inset: 0,
   border: 0,
-  background: 'rgba(4, 8, 15, 0.64)',
+  background: 'var(--drawer-backdrop)',
   cursor: 'default',
 };
 
@@ -179,7 +184,7 @@ const drawerStyle: React.CSSProperties = {
   zIndex: 1,
   display: 'flex',
   flexDirection: 'column',
-  width: 'min(520px, 100vw)',
+  width: 'min(820px, 100vw)',
   minWidth: 0,
   overflow: 'hidden',
   background: 'var(--bg-surface)',
@@ -212,11 +217,23 @@ const titleStyle: React.CSSProperties = {
   overflowWrap: 'anywhere',
 };
 
+const headerIconStyle: React.CSSProperties = {
+  width: 40,
+  height: 40,
+  flexShrink: 0,
+  display: 'grid',
+  placeItems: 'center',
+  border: '1px solid color-mix(in srgb, var(--accent) 38%, var(--border-subtle))',
+  borderRadius: 'var(--radius)',
+  background: 'var(--accent-soft)',
+  color: 'var(--accent)',
+};
+
 const closeStyle: React.CSSProperties = {
   display: 'grid',
   placeItems: 'center',
-  width: 32,
-  height: 32,
+  width: 44,
+  height: 44,
   flexShrink: 0,
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
@@ -259,7 +276,7 @@ const sectionDescriptionStyle: React.CSSProperties = {
 
 const fieldListStyle: React.CSSProperties = {
   display: 'grid',
-  gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))',
   gap: 8,
   margin: '9px 0 0',
 };

@@ -190,7 +190,7 @@ export function SelectionAiPopover({
         </span>
         <button
           onClick={onClose}
-          className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
+          className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors"
           style={{ color: 'var(--text-muted)' }}
           title="关闭"
         >
@@ -231,8 +231,8 @@ export function SelectionAiPopover({
               title={a.description}
               className="h-6 px-2.5 rounded-full text-[11px] font-semibold cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed transition-colors"
               style={{
-                background: active ? 'rgba(168,85,247,0.28)' : 'rgba(255,255,255,0.05)',
-                border: `1px solid ${active ? 'rgba(168,85,247,0.55)' : 'rgba(255,255,255,0.1)'}`,
+                background: active ? 'rgba(168,85,247,0.28)' : 'var(--nested-block-bg)',
+                border: `1px solid ${active ? 'rgba(168,85,247,0.55)' : 'var(--border-subtle)'}`,
                 color: active ? 'rgba(232,210,255,0.98)' : 'var(--text-secondary)',
               }}
             >
@@ -253,8 +253,8 @@ export function SelectionAiPopover({
           }}
           disabled={busy}
           placeholder="或输入自定义指令，如：改成表格 / 翻译成英文…"
-          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none"
-          style={{ background: 'rgba(255,255,255,0.045)', border: '1px solid rgba(255,255,255,0.09)', color: 'var(--text-primary)' }}
+          className="flex-1 h-7 px-2.5 rounded-[8px] text-[12px] outline-none bg-token-nested border border-token-subtle"
+          style={{ color: 'var(--text-primary)' }}
         />
         <button
           onClick={() => customInstruction.trim() && run('custom', customInstruction.trim())}
@@ -271,17 +271,8 @@ export function SelectionAiPopover({
       {(phase !== 'pick') && (
         <div
           ref={outputBoxRef}
-          className="rounded-[8px] px-2.5 py-2 text-[12px] mb-2 overflow-y-auto"
-          style={{
-            flex: 1,
-            minHeight: 60,
-            maxHeight: 200,
-            background: 'rgba(255,255,255,0.04)',
-            border: '1px solid rgba(255,255,255,0.09)',
-            color: 'var(--text-primary)',
-            lineHeight: 1.6,
-            overscrollBehavior: 'contain',
-          }}
+          className="rounded-[8px] px-2.5 py-2 text-[12px] mb-2 overflow-y-auto bg-token-nested border border-token-subtle"
+          style={{ flex: 1, minHeight: 60, maxHeight: 200, color: 'var(--text-primary)', lineHeight: 1.6, overscrollBehavior: 'contain' }}
         >
           {phase === 'error' ? (
             <span style={{ color: 'rgba(248,113,113,0.9)' }}>{errorMsg}</span>
@@ -295,7 +286,7 @@ export function SelectionAiPopover({
                   className="mb-1.5 pb-1.5 text-[11px]"
                   style={{
                     color: 'var(--text-muted)',
-                    borderBottom: '1px dashed rgba(255,255,255,0.1)',
+                    borderBottom: '1px dashed var(--border-subtle)',
                     whiteSpace: 'pre-wrap',
                     wordBreak: 'break-word',
                   }}
@@ -332,8 +323,8 @@ export function SelectionAiPopover({
             onClick={() => handleApply('insert-after')}
             disabled={!!applying}
             title="保留原文，把 AI 结果插到选中段落之后"
-            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
+            className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1.5 cursor-pointer disabled:opacity-40 disabled:cursor-not-allowed bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-secondary)' }}
           >
             {applying === 'insert-after' ? <MapSpinner size={11} /> : <ListPlus size={11} />}
             插到原文后
@@ -359,16 +350,16 @@ export function SelectionAiPopover({
                 toast.error('复制失败');
               }
             }}
-            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
+            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-secondary)' }}
             title="复制结果"
           >
             <Copy size={11} />
           </button>
           <button
             onClick={() => activeAction && run(activeAction, activeAction === 'custom' ? customInstruction.trim() : undefined)}
-            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer"
-            style={{ background: 'rgba(255,255,255,0.05)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-secondary)' }}
+            className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-secondary)' }}
             title="重新生成"
           >
             <RotateCcw size={11} />

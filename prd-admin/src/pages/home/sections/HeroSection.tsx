@@ -157,7 +157,7 @@ export function HeroSection({ className, onGetStarted, onWatchDemo }: HeroSectio
             >
               {t.hero.status}
             </span>
-            <span className="w-px h-3.5 bg-white/15" />
+            <span className="w-px h-3.5 bg-token-nested" />
             <span
               className="text-[14px] text-slate-200"
               style={{

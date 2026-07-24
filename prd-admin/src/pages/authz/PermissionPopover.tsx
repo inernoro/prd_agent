@@ -114,7 +114,7 @@ export function PermissionPopover({
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            className="p-1.5 rounded-lg hover-bg-soft transition-colors"
           >
             <X size={16} style={{ color: 'var(--text-muted)' }} />
           </button>
@@ -131,7 +131,7 @@ export function PermissionPopover({
               {permDefs.map((perm) => (
                 <label
                   key={perm.key}
-                  className="flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-colors hover:bg-white/4"
+                  className="flex items-start gap-3 p-2 rounded-xl cursor-pointer transition-colors hover-bg-soft"
                   style={{
                     background: checkedPerms.has(perm.key) ? 'rgba(99, 102, 241, 0.08)' : 'transparent',
                     opacity: isBuiltIn ? 0.7 : 1,
@@ -175,7 +175,7 @@ export function PermissionPopover({
                 <button
                   type="button"
                   onClick={handleSelectAll}
-                  className="text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
+                  className="text-xs px-2 py-1 rounded hover-bg-soft transition-colors"
                   style={{ color: 'var(--text-secondary)' }}
                 >
                   全选
@@ -183,7 +183,7 @@ export function PermissionPopover({
                 <button
                   type="button"
                   onClick={handleClearAll}
-                  className="text-xs px-2 py-1 rounded hover:bg-white/5 transition-colors"
+                  className="text-xs px-2 py-1 rounded hover-bg-soft transition-colors"
                   style={{ color: 'var(--text-secondary)' }}
                 >
                   清空

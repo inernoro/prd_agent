@@ -57,7 +57,7 @@ export function SectionHeader({
 
       <Reveal delay={150} blur={8} duration={3000}>
         <h2
-          className="text-white font-medium"
+          className="text-token-primary font-medium"
           style={{
             fontFamily: 'var(--font-display)',
             fontSize: 'clamp(2.125rem, 5vw, 3.75rem)',
@@ -73,7 +73,7 @@ export function SectionHeader({
       {subtitle && (
         <Reveal delay={400} offset={14} duration={2000}>
           <p
-            className="mt-7 text-white/58 mx-auto text-[15px] leading-[1.7]"
+            className="mt-7 text-token-secondary mx-auto text-[15px] leading-[1.7]"
             style={{ maxWidth: subtitleMaxWidth }}
           >
             {subtitle}

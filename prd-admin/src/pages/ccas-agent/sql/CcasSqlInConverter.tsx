@@ -58,18 +58,18 @@ export function CcasSqlInConverter() {
       className="flex-1 min-h-0 flex flex-col gap-4"
       style={{ overflowY: 'auto', overscrollBehavior: 'contain', paddingRight: 4 }}
     >
-      <p className="text-xs text-white/55 leading-relaxed flex items-start gap-1.5">
+      <p className="text-xs text-token-secondary leading-relaxed flex items-start gap-1.5">
         <HelpCircle className="w-3.5 h-3.5 mt-0.5 shrink-0 text-amber-300/70" />
         <span>
-          将每行一条的数据转为 <code className="px-1 py-0.5 rounded bg-black/35 text-amber-200">IN</code> 子句可用的括号列表，空行自动忽略，单引号会按 SQL 标准转义为两个单引号。
+          将每行一条的数据转为 <code className="px-1 py-0.5 rounded bg-token-nested text-amber-200">IN</code> 子句可用的括号列表，空行自动忽略，单引号会按 SQL 标准转义为两个单引号。
         </span>
       </p>
 
       <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs text-white/65">
+          <div className="flex items-center justify-between text-xs text-token-secondary">
             <span>输入原始数据（每行一个值）</span>
-            <span className="text-white/40">有效行：{validRows}</span>
+            <span className="text-token-muted">有效行：{validRows}</span>
           </div>
           <textarea
             value={input}
@@ -77,17 +77,17 @@ export function CcasSqlInConverter() {
             spellCheck={false}
             rows={14}
             placeholder={SAMPLE_PLACEHOLDER}
-            className="rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-sm text-white/90 font-mono leading-relaxed placeholder:text-white/30 focus:outline-none focus:border-amber-300/40 transition"
+            className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary font-mono leading-relaxed placeholder:text-token-muted focus:outline-none focus:border-amber-300/40 transition"
             style={{ resize: 'vertical', minHeight: 280 }}
           />
         </div>
 
         <div className="flex flex-col gap-2">
-          <div className="flex items-center justify-between text-xs text-white/65">
+          <div className="flex items-center justify-between text-xs text-token-secondary">
             <span>
-              SQL IN 格式：<code className="px-1 py-0.5 rounded bg-black/35 text-amber-200">WHERE col IN (...)</code>
+              SQL IN 格式：<code className="px-1 py-0.5 rounded bg-token-nested text-amber-200">WHERE col IN (...)</code>
             </span>
-            <span className="text-white/40">项目数：{itemCount}</span>
+            <span className="text-token-muted">项目数：{itemCount}</span>
           </div>
           <textarea
             value={output}
@@ -95,7 +95,7 @@ export function CcasSqlInConverter() {
             spellCheck={false}
             rows={14}
             placeholder="转换结果会显示在这里"
-            className="rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-sm text-emerald-200/90 font-mono leading-relaxed placeholder:text-white/30 focus:outline-none focus:border-amber-300/40 transition"
+            className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-emerald-200/90 font-mono leading-relaxed placeholder:text-token-muted focus:outline-none focus:border-amber-300/40 transition"
             style={{ resize: 'vertical', minHeight: 280 }}
           />
         </div>
