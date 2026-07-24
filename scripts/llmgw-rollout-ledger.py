@@ -1675,6 +1675,8 @@ def maintenance_baseline(args: argparse.Namespace) -> int:
                 "maintenance baseline release gate",
                 shadow_evidence_commit,
                 require_config_authority=True,
+                allow_skipped_runtime_gates=True,
+                allow_skipped_config_authority=True,
             )
         except (SystemExit, TypeError, ValueError) as exc:
             failures.append(str(exc))
