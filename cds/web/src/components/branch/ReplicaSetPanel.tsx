@@ -773,10 +773,13 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   strokeDasharray="5 5" opacity={hasReplicas ? 0.75 : 0.4} markerEnd="url(#rsArr)" />
               );
             })}
-            {/* 服务 → 服务（调用链，来自 env 引用 / depends_on） */}
-            {svcEdges.map((e) => {
+            {/* 服务 → 服务（调用链，来自 env 引用 / depends_on）。
+                标签沿边错落分布（t 按序递进）：多条边汇入同一目标时不再叠字。 */}
+            {svcEdges.map((e, idx) => {
               const a = pos.get(e.from)!, b = pos.get(e.to)!;
-              const midX = (a.cx + b.cx) / 2, midY = (a.y + 96 + b.y) / 2 + 6;
+              const t = 0.56 + (idx % 3) * 0.14;
+              const labelX = a.cx + (b.cx - a.cx) * t;
+              const labelY = (a.y + 96) + (b.y - (a.y + 96)) * t + 3;
               const label = e.envKeys.length > 0
                 ? `${e.envKeys[0].length > 22 ? `${e.envKeys[0].slice(0, 21)}…` : e.envKeys[0]}${e.envKeys.length > 1 ? ` +${e.envKeys.length - 1}` : ''}`
                 : 'depends_on';
@@ -785,7 +788,9 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   <path d={edgeD(a.cx, a.y + 96, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity="0.55" markerEnd="url(#rsArr)">
                     <title>{`${e.from} 调用 ${e.to}\n${e.envKeys.length ? `环境变量引用：${e.envKeys.join('、')}` : ''}${e.dependsOn ? `${e.envKeys.length ? '\n' : ''}depends_on 声明` : ''}`}</title>
                   </path>
-                  <text x={midX} y={midY} textAnchor="middle" fontSize="9" fill="hsl(var(--muted-foreground))" className="font-mono">
+                  <rect x={labelX - 4 - label.length * 2.8} y={labelY - 9} width={label.length * 5.6 + 8} height={13} rx={3}
+                    fill="hsl(var(--surface-sunken))" opacity="0.92" />
+                  <text x={labelX} y={labelY} textAnchor="middle" fontSize="9" fill="hsl(var(--muted-foreground))" className="font-mono">
                     {label}
                     <title>{e.envKeys.join('、') || 'depends_on'}</title>
                   </text>
