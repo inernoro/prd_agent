@@ -3076,6 +3076,34 @@ export class StateService {
     this.state.tabTitleEnabled = enabled;
   }
 
+  // ── Human SSO provider ──
+
+  getSsoConfig(): import('../types.js').CdsSsoConfig | null {
+    const stored = this.state.ssoConfig;
+    if (!stored) return null;
+    let clientSecret = '';
+    if (stored.clientSecret) {
+      try {
+        clientSecret = unsealToken(stored.clientSecret);
+      } catch {
+        clientSecret = '';
+      }
+    }
+    return { ...stored, clientSecret };
+  }
+
+  setSsoConfig(config: import('../types.js').CdsSsoConfig): void {
+    const existing = this.state.ssoConfig;
+    const incomingSecret = typeof config.clientSecret === 'string' ? config.clientSecret.trim() : '';
+    this.state.ssoConfig = {
+      ...config,
+      clientSecret: incomingSecret
+        ? sealToken(incomingSecret)
+        : existing?.clientSecret,
+    };
+    this.save(HINT_GLOBAL);
+  }
+
   // ── Preview mode ──
 
   getPreviewMode(): 'simple' | 'port' | 'multi' {

@@ -59,7 +59,7 @@
 | GET | `/api/branches?project=<id>` | `cdscli branch list --project` |
 | POST | `/api/branches` | `cdscli branch create --project --branch`（CLI 用 `--project`，body 字段是 `projectId`，CLI 抹平此 friction） |
 | PATCH | `/api/branches/:id` | — |
-| DELETE | `/api/branches/:id` | `cdscli branch delete` |
+| DELETE | `/api/branches/:id` | —（当前 CLI 未封装，删除前必须由人类确认精确 branchId） |
 | POST | `/api/branches/:id/pull` | — |
 | POST | `/api/branches/:id/deploy` | `cdscli branch deploy` (SSE) |
 | POST | `/api/branches/:id/deploy/:profileId` | 单 profile 重部 |
@@ -141,3 +141,15 @@ body: `{"branch": "claude/xxx"}`（可选，不传则当前分支 pull）。
 | `Cookie: cds_token=xxx` | 浏览器登录后 | 兜底，不推荐 AI 用 |
 
 详细认证决策树见 [auth.md](auth.md)。
+
+## Agent 能力边界
+
+本文件不是“所有 REST 都允许 Agent 直接调用”的白名单。Web 能力注册表会把接口模块分为：
+
+- `direct`：可以按项目作用域和风险合同直接使用。
+- `guided`：Agent 只能先做只读预检，写操作需要页面明确批准。
+- `protocol-only`：OAuth、Webhook、Bridge、Peer 等专用协议，不包装成普通命令。
+- `internal-only`：Executor、调度节点等内部控制面，不向项目 Agent 暴露。
+
+CLI 未封装的能力不得编造命令。需要 fallback 时先确认认证类型、项目作用域、风险等级、
+是否仅人类可操作以及验证与回滚方式；无法确认就停在只读状态。

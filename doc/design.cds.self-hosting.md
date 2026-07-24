@@ -71,6 +71,8 @@ SSOT:`cds/src/services/preview-instance.ts`。
 
 仍然存在、需运维动作的：cds-self 项目环境变量必须配 `CDS_PREVIEW_USERNAME` + `CDS_PREVIEW_PASSWORD`（子实例接共享 infra 网、公网可达，无认证不可接受）。auth mode 自动归一化——有专用密码即 basic、无即 disabled，无需也不要配 CDS_AUTH_MODE（继承值一律不信任）。
 
+2026-07-23 起，子实例可额外配置 `CDS_PREVIEW_SSO_*` 一键登录。清洗器会先保存这组子实例专用值，删除所有继承的父级密钥，再只把专用值重映射为 `CDS_SSO_*`。SSO 是密码门禁之外的第二种入口，不替代密码兜底。CDS 只认识通用的一次性票据提供方配置（授权地址、换票地址、client id/secret、显示名称），不包含 MAP 或其他身份平台的产品判断。身份入口在数据库保存授权码哈希和消费状态，使用唯一索引保证单次消费，并以 TTL 索引回收过期票据；可执行索引定义维护在 `scripts/mongodb-indexes.js`。
+
 ### 3.5 前端可感知
 
 - 公开端点 `GET /api/instance-mode` → `{ previewInstance: boolean }`(登录前后都可读,兼做就绪探针);
@@ -81,7 +83,8 @@ SSOT:`cds/src/services/preview-instance.ts`。
 1. 生产 CDS → 项目列表 → 新建项目,clone `https://github.com/inernoro/prd_agent.git`(第二个项目,与主项目并存);
 2. 项目设置 → 一键导入 → 粘贴 `cds/cds-compose.selfhost.yml` 全文;
 3. (必做)项目环境变量配置 `CDS_PREVIEW_USERNAME` + `CDS_PREVIEW_PASSWORD`（为子实例单独生成、勿复用父实例密码），给公网可达的子 CDS 上一道门；auth mode 自动归一化，无需配 CDS_AUTH_MODE；
-4. 在 cds-self 项目里创建目标 CDS 分支 → 部署 → 预览域名打开子 CDS dashboard 验收。
+4. (可选)配置 `CDS_PREVIEW_SSO_*`，授权地址统一指向组织的主身份入口，登录完成后默认落 `/project-list`；
+5. 在 cds-self 项目里创建目标 CDS 分支 → 部署 → 预览域名打开子 CDS dashboard 验收。
 
 ## 五、后续路线(本设计不实现,列出防丢)
 

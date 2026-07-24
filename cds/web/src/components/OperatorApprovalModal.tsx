@@ -102,17 +102,36 @@ export function OperatorApprovalModal(): JSX.Element | null {
 
   return (
     <Dialog open={!!pending} onOpenChange={(open) => { if (!open) setPending(null); }}>
-      <DialogContent className="max-w-lg">
+      <DialogContent
+        className="max-w-2xl overflow-hidden"
+        style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}
+      >
         <DialogHeader>
           <DialogTitle className="flex items-center gap-2">
-            <Bot className="h-5 w-5" />
-            AI 智能体请求执行运维操作
+            <ShieldCheck className="h-5 w-5 text-amber-600 dark:text-amber-300" />
+            需要你的明确授权
           </DialogTitle>
           <DialogDescription>
-            发起者:<code className="font-mono">{pending.requestedBy}</code>
-            {pending.requestedFromIp ? <> · IP <code className="font-mono">{pending.requestedFromIp}</code></> : null}
+            AI 智能体正在等待你决定是否执行运维操作
           </DialogDescription>
         </DialogHeader>
+
+        <div className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4">
+          <div className="flex items-start gap-3">
+            <div className="flex h-10 w-10 shrink-0 items-center justify-center rounded-full bg-amber-500/15">
+              <Bot className="h-5 w-5 text-amber-700 dark:text-amber-300" />
+            </div>
+            <div className="min-w-0 text-sm">
+              <div className="font-semibold text-foreground">
+                {pending.requestedBy} 请求执行“{pending.opName}”
+              </div>
+              <div className="mt-1 text-xs leading-5 text-muted-foreground">
+                发起者：<code className="font-mono">{pending.requestedBy}</code>
+            {pending.requestedFromIp ? <> · IP <code className="font-mono">{pending.requestedFromIp}</code></> : null}
+              </div>
+            </div>
+          </div>
+        </div>
 
         <div className="space-y-3">
           <div className="cds-surface-sunken cds-hairline rounded-md p-3">

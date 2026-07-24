@@ -6,6 +6,10 @@ const source = fs.readFileSync(
   path.resolve(process.cwd(), '../cds/web/src/pages/BranchListPage.tsx'),
   'utf8',
 );
+const styles = fs.readFileSync(
+  path.resolve(process.cwd(), '../cds/web/src/index.css'),
+  'utf8',
+);
 
 describe('BranchListPage preview contract', () => {
   it('does not let the branch-card preview button silently deploy stopped branches', () => {
@@ -15,6 +19,33 @@ describe('BranchListPage preview contract', () => {
     expect(source).toContain('onPreview: (branch: BranchSummary) => void cardCallbacksRef.current.openPreview(branch, false)');
     expect(source).toContain('预览不会自动部署，请手动点击部署');
     expect(source).not.toContain('openPreview(branch, true)');
+  });
+
+  it('keeps preview visually primary and quick start visually secondary', () => {
+    expect(source).toContain("className={isAiOperated ? '' : 'w-32'}");
+    expect(source).toContain("previewLabel={isAiOperated ? undefined : '预览'}");
+    expect(source).toContain('className="cursor-pointer border-[hsl(var(--hairline-strong))] bg-transparent text-muted-foreground shadow-none hover:bg-muted/40 hover:text-foreground"');
+  });
+
+  it('keeps commit history separate from the current commit summary', () => {
+    expect(source).toContain('bottom-[calc(100%+8px)]');
+    expect(source).toContain('grid-cols-[64px_minmax(0,1fr)] gap-3');
+    expect(source).toContain('block truncate font-mono text-muted-foreground');
+  });
+
+  it('uses a single shiny branch-title signal for active AI operation cards', () => {
+    expect(source).toContain("import { ShinyText } from '@/components/effects/ShinyText'");
+    expect(source).toContain('<ShinyText');
+    expect(source).toContain('text={branch.branch}');
+    expect(source).toContain('delay={1.4}');
+    expect(source).toContain('cds-ai-active-rail');
+    expect(source).not.toContain('cds-ai-active-card ring-1');
+    expect(source).not.toContain("isAiActive ? 'cds-ai-kinetic-icon");
+    expect(source).not.toContain('cds-ai-kinetic-dot');
+    expect(styles).toContain('@keyframes cds-ai-rail-breathe');
+    expect(styles).toContain("[data-theme='light'] .cds-ai-active-card");
+    expect(styles).not.toContain('@keyframes cds-ai-trace');
+    expect(styles).not.toContain('--cds-ai-angle');
   });
 
   it('exposes an optional config-source (派生) selector wired into the create-branch POST body', () => {

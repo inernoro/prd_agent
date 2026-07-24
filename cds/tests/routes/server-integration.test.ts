@@ -373,6 +373,12 @@ describe('Server route ordering (regression)', () => {
         loginMethods: {
           github: false,
           local: true,
+          sso: false,
+        },
+        sso: {
+          enabled: false,
+          providerId: 'ticket-sso',
+          label: '使用 SSO 登录',
         },
       });
 
