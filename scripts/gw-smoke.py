@@ -65,6 +65,8 @@ def _selected_sample_codes():
         model_types = DEFAULT_LOW_COST_MODEL_TYPES
     selected = []
     for app_caller, model_type in DEFAULT_SAMPLE_CODES:
+        if model_type.lower() == "chat":
+            app_caller = SMOKE_APP_CALLER
         if model_types and model_type.lower() not in model_types:
             continue
         if app_callers and app_caller.lower() not in app_callers:
@@ -333,6 +335,10 @@ def main():
         rows.append(("sample-scope", False, "GW_SMOKE_MODEL_TYPES/GW_SMOKE_APP_CALLERS selected no cases"))
 
     has_chat = any(mtype == "chat" for _, mtype in sample_codes)
+    chat_app_caller = next(
+        (app_caller for app_caller, model_type in sample_codes if model_type == "chat"),
+        SMOKE_APP_CALLER,
+    )
 
     # 2) pools（每类抽样入口）
     for accode, mtype in sample_codes:
@@ -360,7 +366,7 @@ def main():
     # 4) send 兼容入口：MAP 旧客户端仍用 /send，只抽 chat 一类避免 D 层冒烟成本膨胀。
     if has_chat:
         send_body = {
-            "AppCallerCode": "report-agent.generate::chat",
+            "AppCallerCode": chat_app_caller,
             "ModelType": "chat",
             "Stream": False,
             "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
@@ -378,7 +384,7 @@ def main():
     # 5) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
     if has_chat:
         stream_body = {
-            "AppCallerCode": "report-agent.generate::chat",
+            "AppCallerCode": chat_app_caller,
             "ModelType": "chat",
             "Stream": True,
             "TimeoutSeconds": SMOKE_REQUEST_TIMEOUT,
@@ -410,7 +416,7 @@ def main():
     # 6) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
     if has_chat:
         client_stream_body = {
-            "AppCallerCode": "report-agent.generate::chat",
+            "AppCallerCode": chat_app_caller,
             "ModelType": "chat",
             "MaxTokens": SMOKE_MAX_TOKENS,
             "Temperature": 0.2,
