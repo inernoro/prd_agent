@@ -6564,6 +6564,43 @@ a:focus-visible {
   }
 }
 
+@media (max-width: 720px) {
+  .lg-log-table-settings-trigger {
+    width: 44px;
+    height: 44px;
+  }
+
+  .lg-log-table-settings-popover > header {
+    min-height: 56px;
+  }
+
+  .lg-log-table-settings-popover > header button,
+  .lg-log-table-settings-tabs button {
+    min-width: 44px;
+    min-height: 44px;
+    justify-content: center;
+  }
+
+  .lg-log-column-item {
+    grid-template-columns: 18px minmax(0, 1fr) 88px;
+    min-height: 52px;
+    padding: 0 4px;
+  }
+
+  .lg-log-column-toggle {
+    min-height: 44px;
+  }
+
+  .lg-log-column-order {
+    opacity: 1;
+  }
+
+  .lg-log-column-order button {
+    width: 44px;
+    height: 44px;
+  }
+}
+
 @media (prefers-reduced-motion: reduce) {
   .lg-console-sidebar,
   .lg-pulse,
