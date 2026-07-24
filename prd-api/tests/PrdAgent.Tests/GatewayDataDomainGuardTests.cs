@@ -1420,7 +1420,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_JSON=\"$maintenance_baseline_json\"", stage);
         Assert.Contains("LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit", deploy);
         Assert.Contains("LLM Gateway maintenance release: audited baseline accepted", deploy);
-        Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0\"", deploy);
+        Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells\"", deploy);
         Assert.Contains("[ \"$maintenance_release\" != \"1\" ]", deploy);
         Assert.Contains("{ [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ]; }", deploy);
         Assert.Contains("config-authority inherited from audited full-http maintenance baseline", deploy);
