@@ -68,13 +68,13 @@ export function ProductSettingsHub() {
 
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-white/10 px-6 py-4">
-        <h2 className="text-base font-semibold text-white">设置</h2>
-        <p className="mt-0.5 text-xs text-white/40">{activeCat.desc}</p>
+      <div className="shrink-0 border-b border-token-subtle px-6 py-4">
+        <h2 className="text-base font-semibold text-token-primary">设置</h2>
+        <p className="mt-0.5 text-xs text-token-muted">{activeCat.desc}</p>
       </div>
       <div className="flex min-h-0 flex-1">
         {/* 左侧分类导航 */}
-        <nav className="w-44 shrink-0 overflow-y-auto border-r border-white/10 px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
+        <nav className="w-44 shrink-0 overflow-y-auto border-r border-token-subtle px-2 py-3" style={{ overscrollBehavior: 'contain' }}>
           {CATS.map((c) => {
             const Icon = c.icon;
             const on = c.key === cat;
@@ -82,7 +82,7 @@ export function ProductSettingsHub() {
               <button
                 key={c.key}
                 onClick={() => setCat(c.key)}
-                className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/55 hover:bg-white/5 hover:text-white'}`}
+                className={`mb-1 flex w-full items-center gap-2 rounded-lg px-3 py-2 text-sm ${on ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft hover-text-primary'}`}
               >
                 <Icon size={15} className="shrink-0" />
                 {c.label}
@@ -109,14 +109,14 @@ export function ProductSettingsHub() {
 function PermissionPanel() {
   return (
     <div className="flex flex-col gap-5">
-      <div className="rounded-xl border border-dashed border-white/15 bg-white/[0.02] p-4">
-        <div className="text-sm font-medium text-white/75">按角色分配页面权限</div>
-        <div className="mt-1 text-xs leading-5 text-white/40">
+      <div className="rounded-xl border border-dashed border-token-subtle bg-token-nested p-4">
+        <div className="text-sm font-medium text-token-primary">按角色分配页面权限</div>
+        <div className="mt-1 text-xs leading-5 text-token-muted">
           根据用户角色分配产品管理内部各页面（概览 / 产品 / 需求 / 功能 / 缺陷 / 客户 / 设置等）的访问权限。该细粒度授权矩阵建设中，将在后续版本上线；当前页面访问沿用 product-agent.use / manage / admin 三级权限。
         </div>
       </div>
       <div>
-        <div className="mb-2 text-sm font-medium text-white/75">历史数据导入权限</div>
+        <div className="mb-2 text-sm font-medium text-token-primary">历史数据导入权限</div>
         <ApplicationAdminManager />
       </div>
     </div>
@@ -199,11 +199,11 @@ function EntitySettingsPanel({
         <SubTabBar tabs={subtabs} active={sub} onChange={(k) => setSub(k as EntitySubTab)} />
         {needsScope && (
           <>
-            <div className="h-6 w-px bg-white/10" />
+            <div className="h-6 w-px bg-token-nested" />
             <select
               value={productScope}
               onChange={(e) => setProductScope(e.target.value)}
-              className="rounded-md border border-white/10 bg-white/5 px-2 py-1.5 text-xs text-white/70 outline-none"
+              className="rounded-md border border-token-subtle bg-token-nested px-2 py-1.5 text-xs text-token-secondary outline-none"
             >
               <option value="">全局默认（所有产品共用）</option>
               {products.map((p) => (
@@ -264,29 +264,29 @@ function GradeCatalogManager({
 
   return (
     <div className="flex max-w-3xl flex-col gap-3">
-      <div className="text-xs text-white/50">
+      <div className="text-xs text-token-secondary">
         配置「{dimLabel}」可选项，供新建 / 编辑时选择。内置项可改名称、颜色与定义，但不可删除；自定义项在无占用时可删除。
       </div>
 
-      <div className="divide-y divide-white/5 rounded-xl border border-white/10">
+      <div className="divide-y divide-token-subtle rounded-xl border border-token-subtle">
         {loading && options.length === 0 && (
-          <div className="px-4 py-6 text-center text-sm text-white/40">正在加载{dimLabel}…</div>
+          <div className="px-4 py-6 text-center text-sm text-token-muted">正在加载{dimLabel}…</div>
         )}
         {options.map((o) => (
           <GradeOptionRow key={o.id} option={o} onChanged={reload} />
         ))}
         {!loading && options.length === 0 && (
-          <div className="px-4 py-6 text-center text-sm text-white/40">还没有{dimLabel}选项，在下方添加。</div>
+          <div className="px-4 py-6 text-center text-sm text-token-muted">还没有{dimLabel}选项，在下方添加。</div>
         )}
       </div>
 
-      <div className="flex flex-col gap-2 rounded-xl border border-dashed border-white/15 px-3 py-3">
+      <div className="flex flex-col gap-2 rounded-xl border border-dashed border-token-subtle px-3 py-3">
         <div className="flex items-center gap-2">
           <input
             type="color"
             value={draftColor}
             onChange={(e) => setDraftColor(e.target.value)}
-            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-white/10 bg-transparent"
+            className="h-7 w-7 shrink-0 cursor-pointer rounded border border-token-subtle bg-transparent"
             title="选择颜色"
           />
           <input
@@ -294,7 +294,7 @@ function GradeCatalogManager({
             onChange={(e) => setDraftName(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') void add(); }}
             placeholder={`新增${dimLabel}名称，如「紧急」`}
-            className="flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40"
+            className="flex-1 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40"
           />
           <button
             onClick={add}
@@ -308,7 +308,7 @@ function GradeCatalogManager({
           value={draftDefinition}
           onChange={(e) => setDraftDefinition(e.target.value)}
           placeholder="定义（可选）：说明该等级的判定标准"
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white/80 outline-none focus:border-cyan-500/40"
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40"
         />
       </div>
       {msg && <div className="text-xs text-red-300/80">{msg}</div>}
@@ -363,23 +363,23 @@ function GradeOptionRow({ option, onChanged }: { option: ProductGradeOption; onC
         type="color"
         value={color}
         onChange={(e) => setColor(e.target.value)}
-        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-white/10 bg-transparent"
+        className="h-7 w-7 shrink-0 cursor-pointer rounded border border-token-subtle bg-transparent"
         title="选择颜色"
       />
       <input
         value={name}
         onChange={(e) => setName(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') void save(); }}
-        className="w-32 shrink-0 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40"
+        className="w-32 shrink-0 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40"
       />
       <input
         value={definition}
         onChange={(e) => setDefinition(e.target.value)}
         placeholder="定义（可选）"
-        className="min-w-0 flex-1 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/80 outline-none focus:border-cyan-500/40"
+        className="min-w-0 flex-1 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-primary outline-none focus:border-cyan-500/40"
       />
       {option.isBuiltin && (
-        <span className="shrink-0 rounded border border-white/10 px-1.5 py-0.5 text-[10px] text-white/40">内置</span>
+        <span className="shrink-0 rounded border border-token-subtle px-1.5 py-0.5 text-[10px] text-token-muted">内置</span>
       )}
       {err && <span className="max-w-[140px] shrink-0 truncate text-[11px] text-red-300/80" title={err}>{err}</span>}
       <button
@@ -419,15 +419,15 @@ function ConsultKnowledgePanel() {
 
   return (
     <div className="flex flex-col gap-3">
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
-        <div className="text-sm font-medium text-white/75">营销问策专属知识库</div>
-        <div className="mt-1 text-xs leading-5 text-white/45">
+      <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
+        <div className="text-sm font-medium text-token-primary">营销问策专属知识库</div>
+        <div className="mt-1 text-xs leading-5 text-token-muted">
           「营销问策」生成评估时以本知识库内容（全域粉销 / 营销四力模型 4FM）作为专业依据。系统已内置 3 份默认资料，可在下方查看，并随时「添加资料」扩充——新增内容即时纳入后续问策上下文。
         </div>
       </div>
 
       <div className="flex items-center justify-between">
-        <span className="text-xs text-white/50">资料列表{entries.length > 0 ? `（${entries.length}）` : ''}</span>
+        <span className="text-xs text-token-secondary">资料列表{entries.length > 0 ? `（${entries.length}）` : ''}</span>
         <button onClick={() => setAdding(true)} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
           <Plus size={14} /> 添加资料
         </button>
@@ -436,17 +436,17 @@ function ConsultKnowledgePanel() {
       {loading ? (
         <MapSectionLoader text="正在加载知识库…" />
       ) : entries.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-10 text-center text-sm text-white/40">还没有资料。点「添加资料」录入第一份问策参考。</div>
+        <div className="rounded-xl border border-dashed border-token-subtle py-10 text-center text-sm text-token-muted">还没有资料。点「添加资料」录入第一份问策参考。</div>
       ) : (
-        <div className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
+        <div className="divide-y divide-token-subtle overflow-hidden rounded-xl border border-token-subtle">
           {entries.map((e) => (
-            <button key={e.id} onClick={() => setViewingId(e.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover:bg-white/[0.03]">
+            <button key={e.id} onClick={() => setViewingId(e.id)} className="flex w-full items-center gap-3 px-4 py-3 text-left hover-bg-soft">
               <FileText size={15} className="shrink-0 text-cyan-300/70" />
               <div className="min-w-0 flex-1">
-                <div className="truncate text-sm text-white/90">{e.title}</div>
-                {e.summary && <div className="truncate text-xs text-white/40">{e.summary}</div>}
+                <div className="truncate text-sm text-token-primary">{e.title}</div>
+                {e.summary && <div className="truncate text-xs text-token-muted">{e.summary}</div>}
               </div>
-              <span className="shrink-0 text-[11px] text-white/35">{fmtKbMeta(e)}</span>
+              <span className="shrink-0 text-[11px] text-token-muted-faint">{fmtKbMeta(e)}</span>
             </button>
           ))}
         </div>
@@ -479,13 +479,13 @@ function KbEntryViewModal({ entryId, onClose }: { entryId: string; onClose: () =
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ height: '86vh', maxHeight: '86vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-3">
-          <h3 className="truncate text-sm font-semibold text-white">{data?.title ?? '加载中…'}</h3>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+      <div className="flex w-full max-w-3xl flex-col rounded-xl border border-token-subtle bg-token-card" style={{ height: '86vh', maxHeight: '86vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-3">
+          <h3 className="truncate text-sm font-semibold text-token-primary">{data?.title ?? '加载中…'}</h3>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={18} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-6 py-4" style={{ overscrollBehavior: 'contain' }}>
-          {loading ? <MapSectionLoader text="正在加载…" /> : data ? <MarkdownViewer content={data.content} /> : <div className="text-sm text-white/40">内容为空</div>}
+          {loading ? <MapSectionLoader text="正在加载…" /> : data ? <MarkdownViewer content={data.content} /> : <div className="text-sm text-token-muted">内容为空</div>}
         </div>
       </div>
     </div>,
@@ -509,19 +509,19 @@ function KbAddModal({ onClose, onAdded }: { onClose: () => void; onAdded: () => 
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/60 p-4" onClick={onClose}>
-      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-3">
-          <h3 className="text-sm font-semibold text-white">添加问策资料</h3>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-token-subtle bg-token-card" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-3">
+          <h3 className="text-sm font-semibold text-token-primary">添加问策资料</h3>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={18} /></button>
         </div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
           <input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="资料标题，如：某行业全域粉销打法"
-            className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" />
+            className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted" />
           <textarea value={content} onChange={(e) => setContent(e.target.value)} rows={16} placeholder="资料正文（支持 Markdown）。将作为营销问策评估的参考依据。"
-            className="resize-y rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" style={{ minHeight: 280 }} />
+            className="resize-y rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted" style={{ minHeight: 280 }} />
         </div>
-        <div className="flex shrink-0 justify-end gap-2 border-t border-white/10 px-5 py-3">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button>
+        <div className="flex shrink-0 justify-end gap-2 border-t border-token-subtle px-5 py-3">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button>
           <button onClick={save} disabled={saving || !title.trim() || !content.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
           </button>
@@ -549,7 +549,7 @@ function SubTabBar({
         <button
           key={t.key}
           onClick={() => onChange(t.key)}
-          className={`rounded-md border px-2.5 py-1 text-xs ${active === t.key ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/50 hover:bg-white/5'}`}
+          className={`rounded-md border px-2.5 py-1 text-xs ${active === t.key ? 'border-cyan-500/40 bg-cyan-500/15 text-cyan-200' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}
         >
           {t.label}
         </button>

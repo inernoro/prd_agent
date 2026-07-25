@@ -1,6 +1,7 @@
 import { resolveAvatarUrl } from '@/lib/avatar';
 import { getRoleMeta } from '@/lib/roleConfig';
-import { getUsers } from '@/services';
+import { searchDirectoryUsers } from '@/services';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 import type { AdminUser } from '@/types/admin';
 import { Check, ChevronDown, Search, X } from 'lucide-react';
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -51,7 +52,8 @@ export function UserMultiSearchSelect({
   const [pos, setPos] = useState<{ top: number; left: number; width: number; maxHeight: number } | null>(null);
 
   const [internalUsers, setInternalUsers] = useState<AdminUser[]>([]);
-  const [fetched, setFetched] = useState(false);
+  const [searching, setSearching] = useState(false);
+  const [searchFailed, setSearchFailed] = useState(false);
 
   const allUsers = externalUsers ?? internalUsers;
 
@@ -62,15 +64,37 @@ export function UserMultiSearchSelect({
   );
 
   useEffect(() => {
-    if (externalUsers || fetched) return;
+    if (externalUsers) return;
     if (!open) return;
-    setFetched(true);
-    void getUsers({ page: 1, pageSize: 200 }).then((res) => {
-      if (res.success) {
-        setInternalUsers(res.data.items.filter((u) => u.status === 'Active'));
-      }
-    });
-  }, [externalUsers, fetched, open]);
+    let cancelled = false;
+    const keyword = filter.trim();
+    setSearching(true);
+    setSearchFailed(false);
+    const timer = window.setTimeout(() => {
+      void searchDirectoryUsers(keyword, 50).then((res) => {
+        if (cancelled) return;
+        if (!res.success) {
+          setSearchFailed(true);
+          setSearching(false);
+          return;
+        }
+        setInternalUsers(res.data.items.map((user) => ({
+          userId: user.userId,
+          username: user.username,
+          displayName: user.displayName,
+          avatarFileName: user.avatarFileName,
+          role: '' as AdminUser['role'],
+          status: 'Active' as AdminUser['status'],
+          createdAt: '',
+        })));
+        setSearching(false);
+      });
+    }, keyword ? 200 : 0);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [externalUsers, open, filter]);
 
   const selectedUsers = useMemo(
     () => value.map((id) => allUsers.find((u) => u.userId === id)).filter(Boolean) as AdminUser[],
@@ -179,15 +203,24 @@ export function UserMultiSearchSelect({
           width: pos.width,
           maxHeight: pos.maxHeight,
           zIndex: 9999,
-          background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
-          border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
-          boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
+          background: 'var(--panel-solid)',
+          border: '1px solid var(--border-subtle)',
+          boxShadow: 'var(--shadow-glass-panel)',
           backdropFilter: 'blur(40px) saturate(180%)',
           WebkitBackdropFilter: 'blur(40px) saturate(180%)',
         }}
       >
         <div className="overflow-auto flex-1 py-1" style={{ minHeight: 0 }}>
-          {filtered.length === 0 ? (
+          {searching ? (
+            <div className="px-3 py-6 flex items-center justify-center gap-2 text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              <MapSpinner size={14} />
+              正在加载可用用户
+            </div>
+          ) : searchFailed ? (
+            <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+              用户列表加载失败，请重新打开后重试
+            </div>
+          ) : filtered.length === 0 ? (
             <div className="px-3 py-6 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
               {q ? `未找到匹配「${filter}」的用户` : '暂无可用用户'}
             </div>
@@ -206,14 +239,14 @@ export function UserMultiSearchSelect({
               return (
                 <div
                   key={uid}
-                  className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+                  className="hover-bg-soft flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors"
                   style={isSelected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
                   onClick={() => toggleUser(uid)}
                 >
                   <div
                     className="w-4 h-4 rounded shrink-0 flex items-center justify-center transition-colors"
                     style={{
-                      border: isSelected ? '1.5px solid var(--accent-gold, #d4af37)' : '1.5px solid rgba(255,255,255,0.2)',
+                      border: isSelected ? '1.5px solid var(--accent-gold)' : '1.5px solid var(--border-default)',
                       background: isSelected ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.15)' : 'transparent',
                     }}
                   >
@@ -225,13 +258,15 @@ export function UserMultiSearchSelect({
                       <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
                         {u.displayName}
                       </span>
-                      <span
-                        className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
-                        style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
-                      >
-                        <RoleIcon size={9} />
-                        {rm.label}
-                      </span>
+                      {u.role && (
+                        <span
+                          className="shrink-0 inline-flex items-center gap-0.5 text-[9px] font-bold px-1 py-px rounded-[3px] leading-tight"
+                          style={{ background: rm.bg, border: `1px solid ${rm.border}`, color: rm.color }}
+                        >
+                          <RoleIcon size={9} />
+                          {rm.label}
+                        </span>
+                      )}
                     </div>
                     <div className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
                       @{u.username}
@@ -244,8 +279,8 @@ export function UserMultiSearchSelect({
         </div>
 
         <div
-          className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between"
-          style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}
+          className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between border-t border-token-subtle"
+          style={{ color: 'var(--text-muted)' }}
         >
           <span>{q ? `${filtered.length} / ${availableUsers.length} 人匹配` : `共 ${availableUsers.length} 人`}</span>
           {value.length > 0 && <span style={{ color: 'var(--accent-gold)' }}>已选 {value.length} 人</span>}
@@ -261,7 +296,7 @@ export function UserMultiSearchSelect({
         className={`flex items-center gap-2 w-full ${triggerMinHeight} ${isCompact ? 'rounded-[12px]' : 'rounded-[10px]'} px-2.5 py-1.5 text-[13px] flex-wrap`}
         style={{
           background: 'var(--bg-input)',
-          border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
+          border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-subtle)',
           color: 'var(--text-primary)',
           ...style,
         }}
@@ -270,12 +305,7 @@ export function UserMultiSearchSelect({
         {selectedUsers.map((u) => (
           <span
             key={u.userId}
-            className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium"
-            style={{
-              background: 'rgba(255,255,255,0.08)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              color: 'var(--text-primary)',
-            }}
+            className="surface-inset inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium text-token-primary"
           >
             {u.displayName}
             <X

@@ -92,7 +92,7 @@ export function SignatureCinema({ className, src, poster, caption }: SignatureCi
 
         {/* 16:9 电影窗口 */}
         <div
-          className="relative w-full overflow-hidden rounded-[28px] border border-white/10 bg-black"
+          className="relative w-full overflow-hidden rounded-[28px] border border-token-subtle bg-black"
           style={{
             aspectRatio: '16 / 9',
             boxShadow:
@@ -170,7 +170,7 @@ function PosterFallback({ poster, comingSoon }: { poster?: string; comingSoon: s
       {/* 中心播放占位 */}
       <div className="relative z-10 flex flex-col items-center gap-5">
         <div
-          className="w-20 h-20 md:w-24 md:h-24 rounded-full border border-white/25 backdrop-blur-md flex items-center justify-center bg-white/[0.04]"
+          className="w-20 h-20 md:w-24 md:h-24 rounded-full border border-token-subtle backdrop-blur-md flex items-center justify-center bg-white/[0.04]"
           style={{
             boxShadow:
               '0 0 60px rgba(0, 240, 255, 0.25), inset 0 0 40px rgba(124, 58, 237, 0.12)',

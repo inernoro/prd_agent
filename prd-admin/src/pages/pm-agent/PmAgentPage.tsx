@@ -89,7 +89,7 @@ export function PmAgentPage() {
         <div className="mb-2">
           <button
             onClick={() => navigate('/')}
-            className="flex items-center gap-1.5 text-[11px] text-white/40 hover:text-white"
+            className="flex items-center gap-1.5 text-[11px] text-token-muted hover:text-token-primary"
           >
             <ArrowLeft size={13} /> 返回首页
           </button>
@@ -103,7 +103,7 @@ export function PmAgentPage() {
       {active === 'home' ? (
         // 首页：AI 助手主区（70%）+ 右栏待办/便捷操作（30%），撑满高度各自滚动
         <div className="flex-1 min-h-0 flex pa-accent-blue">
-          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-white/10" style={{ width: '70%' }}>
+          <div className="h-full min-h-0 min-w-0 flex flex-col border-r border-token-subtle" style={{ width: '70%' }}>
             <PmAssistantPanel prefill={prefill} />
           </div>
           <aside className="h-full min-h-0 min-w-0 flex flex-col gap-4 p-4" style={{ width: '30%' }}>

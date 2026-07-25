@@ -127,8 +127,8 @@ export function SummaryPanel({ itemId, cached }: Props) {
             <ScrollText size={18} className="text-sky-300" />
           </div>
           <div className="flex-1">
-            <div className="text-sm font-semibold text-white">AI 变更摘要</div>
-            <div className="text-xs text-white/50 mt-0.5 leading-relaxed">
+            <div className="text-sm font-semibold text-token-primary">AI 变更摘要</div>
+            <div className="text-xs text-token-secondary mt-0.5 leading-relaxed">
               让 AI 用 30 秒帮你读完这个 PR：一句话说明意图、关键改动要点、主要影响面、审查建议。
             </div>
             <button
@@ -158,7 +158,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
         </div>
         {thinking && <ThinkingBlock text={thinking} done={!!preview} />}
         {preview && (
-          <div className="rounded-lg border border-white/10 bg-black/30 p-3 max-h-72 overflow-auto text-[13px] text-white/85">
+          <div className="rounded-lg border border-token-subtle bg-token-nested p-3 max-h-72 overflow-auto text-[13px] text-token-primary">
             <StreamingText
               text={preview}
               streaming={isRunning}
@@ -170,7 +170,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
         <button
           type="button"
           onClick={() => sse.abort()}
-          className="text-xs text-white/50 hover:text-white/80 transition"
+          className="text-xs text-token-secondary hover-text-primary transition"
         >
           中止
         </button>
@@ -192,7 +192,7 @@ export function SummaryPanel({ itemId, cached }: Props) {
         <button
           type="button"
           onClick={handleStart}
-          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 transition"
+          className="flex items-center gap-2 px-3 py-1.5 rounded-lg bg-token-nested text-token-primary text-xs hover-bg-soft transition"
         >
           <RefreshCw size={12} />
           重新生成
@@ -233,7 +233,7 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           <ScrollText size={18} className="text-sky-300" />
         </div>
         <div className="flex-1 min-w-0">
-          <div className="flex items-center gap-2 text-xs text-white/50">
+          <div className="flex items-center gap-2 text-xs text-token-secondary">
             <Wand2 size={12} />
             <span>AI 变更摘要</span>
             {report.durationMs > 0 && (
@@ -245,7 +245,7 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
             )}
           </div>
           {(sections.oneLiner || report.headline) && (
-            <div className="mt-1.5 text-sm text-white font-medium leading-snug">
+            <div className="mt-1.5 text-sm text-token-primary font-medium leading-snug">
               <PrMarkdown variant="inline">
                 {sections.oneLiner || report.headline || ''}
               </PrMarkdown>
@@ -256,7 +256,7 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
           type="button"
           onClick={onRerun}
           title="重新生成"
-          className="shrink-0 p-2 rounded-lg bg-white/5 text-white/60 hover:bg-white/10 hover:text-white transition"
+          className="shrink-0 p-2 rounded-lg bg-token-nested text-token-secondary hover-bg-soft hover-text-primary transition"
         >
           <RefreshCw size={14} />
         </button>
@@ -276,10 +276,10 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
             <span>关键改动</span>
             <span className="text-[10px] opacity-60">· {sections.keyChanges.length}</span>
           </div>
-          <ul className="space-y-1.5 text-xs text-white/80">
+          <ul className="space-y-1.5 text-xs text-token-primary">
             {sections.keyChanges.map((it, i) => (
               <li key={i} className="leading-relaxed flex gap-1.5">
-                <span className="text-white/30">•</span>
+                <span className="text-token-muted">•</span>
                 <div className="flex-1 min-w-0">
                   <PrMarkdown variant="inline">{it}</PrMarkdown>
                 </div>
@@ -291,12 +291,12 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
 
       {/* 主要影响 */}
       {sections.impact && (
-        <div className="rounded-lg border border-white/10 bg-white/[0.02] p-3">
-          <div className="flex items-center gap-1.5 text-xs font-semibold text-white/70 mb-1.5">
+        <div className="rounded-lg border border-token-subtle bg-token-nested p-3">
+          <div className="flex items-center gap-1.5 text-xs font-semibold text-token-secondary mb-1.5">
             <Layers size={14} />
             <span>主要影响</span>
           </div>
-          <div className="text-xs text-white/80 leading-relaxed">
+          <div className="text-xs text-token-primary leading-relaxed">
             <PrMarkdown>{sections.impact}</PrMarkdown>
           </div>
         </div>
@@ -309,7 +309,7 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
             <Telescope size={14} />
             <span>审查建议</span>
           </div>
-          <div className="text-xs text-white/85 leading-relaxed">
+          <div className="text-xs text-token-primary leading-relaxed">
             <PrMarkdown>{sections.reviewAdvice}</PrMarkdown>
           </div>
         </div>
@@ -317,10 +317,10 @@ function SummaryResult({ report, onRerun, error }: ResultProps) {
 
       {/* 原始 markdown 折叠 */}
       <details className="text-xs">
-        <summary className="text-white/40 hover:text-white/60 cursor-pointer select-none">
+        <summary className="text-token-muted hover-text-primary cursor-pointer select-none">
           查看原始 Markdown
         </summary>
-        <pre className="mt-2 bg-black/30 border border-white/5 rounded p-3 text-[11px] text-white/70 whitespace-pre-wrap break-words font-mono max-h-72 overflow-auto">
+        <pre className="mt-2 bg-token-nested border border-token-subtle rounded p-3 text-[11px] text-token-secondary whitespace-pre-wrap break-words font-mono max-h-72 overflow-auto">
           {report.markdown}
         </pre>
       </details>
@@ -378,7 +378,7 @@ interface ModelBadgeProps {
 function ModelBadge({ model }: ModelBadgeProps) {
   if (!model.model) return null;
   return (
-    <div className="flex items-center gap-1.5 text-[11px] text-white/40 font-mono">
+    <div className="flex items-center gap-1.5 text-[11px] text-token-muted font-mono">
       <CircleDot size={10} className="text-sky-400" />
       <span>{model.model}</span>
       {model.platform && <span className="opacity-60">· {model.platform}</span>}

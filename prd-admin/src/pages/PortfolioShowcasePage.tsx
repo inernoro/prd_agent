@@ -93,7 +93,8 @@ function MasonryCard({
       {/* Card — natural aspect ratio for waterfall layout */}
       <div
         ref={boxRef}
-        className="relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        className="surface-tone-dark relative w-full overflow-hidden rounded-xl transition-all duration-300 group-hover:shadow-xl group-hover:shadow-black/30 group-hover:scale-[1.02]"
+        data-surface-tone="dark"
         style={{
           aspectRatio: getAspectRatio(item),
           background: hasCover ? '#0a0a0f' : 'rgba(255,255,255,0.03)',
@@ -153,19 +154,19 @@ function MasonryCard({
 
           {/* Bottom: date + stats */}
           <div className="flex items-center gap-2">
-            <span className="text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+            <span className="text-[10px] drop-shadow" style={{ color: 'var(--text-on-media-muted)' }}>
               {new Date(item.createdAt).toLocaleDateString()}
             </span>
             <div className="flex-1" />
             {item.viewCount > 0 && (
-              <span className="flex items-center gap-0.5 text-[10px] drop-shadow" style={{ color: 'rgba(255,255,255,0.5)' }}>
+              <span className="flex items-center gap-0.5 text-[10px] drop-shadow" style={{ color: 'var(--text-on-media-muted)' }}>
                 <Eye size={10} />
                 {item.viewCount >= 10000 ? `${(item.viewCount / 10000).toFixed(1)}万` : item.viewCount}
               </span>
             )}
             <div
               className="flex items-center gap-0.5"
-              style={{ color: liked ? '#F43F5E' : 'rgba(255,255,255,0.45)' }}
+              style={{ color: liked ? '#F43F5E' : 'var(--text-on-media-muted)' }}
               onClick={(e) => e.stopPropagation()}
             >
               <HeartLikeButton
@@ -316,7 +317,7 @@ export default function PortfolioShowcasePage() {
   const heroScale = 1 + scrollY * 0.0003;
 
   return (
-    <div className="fixed inset-0 flex flex-col" style={{ background: '#0a0a0f' }}>
+    <div className="fixed inset-0 flex flex-col surface-tone-dark" data-surface-tone="dark" style={{ background: '#0a0a0f' }}>
       {/* Decorative aurora glow behind the whole page (so it isn't dead-black below the hero) */}
       <div
         className="absolute inset-0 overflow-hidden pointer-events-none"
@@ -495,7 +496,7 @@ export default function PortfolioShowcasePage() {
               className="mt-3 text-center max-w-md"
               style={{
                 fontSize: isMobile ? 13 : 15,
-                color: 'rgba(255,255,255,0.45)',
+                color: 'var(--text-on-media-muted)',
                 lineHeight: 1.6,
               }}
             >
@@ -507,13 +508,13 @@ export default function PortfolioShowcasePage() {
               <div className="flex items-center gap-6 mt-6">
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#818CF8', boxShadow: '0 0 6px #818CF8' }} />
-                  <span className="text-[12px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  <span className="text-[12px]" style={{ color: 'var(--text-on-media-muted)' }}>
                     {total} 件作品
                   </span>
                 </div>
                 <div className="flex items-center gap-2">
                   <div className="w-1.5 h-1.5 rounded-full" style={{ background: '#34D399', boxShadow: '0 0 6px #34D399' }} />
-                  <span className="text-[12px]" style={{ color: 'rgba(255,255,255,0.5)' }}>
+                  <span className="text-[12px]" style={{ color: 'var(--text-on-media-muted)' }}>
                     持续更新中
                   </span>
                 </div>
@@ -565,7 +566,7 @@ export default function PortfolioShowcasePage() {
             </div>
 
             {/* Sort indicator */}
-            <div data-tour-id="showcase-sort" className="flex items-center gap-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+            <div data-tour-id="showcase-sort" className="flex items-center gap-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.62)' }}>
               <Flame size={12} />
               <span>最受欢迎</span>
             </div>
@@ -642,7 +643,7 @@ export default function PortfolioShowcasePage() {
               )}
               {!hasMore && items.length > 0 && (
                 <div className="flex justify-center py-8">
-                  <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  <span className="text-[11px]" style={{ color: 'rgba(255,255,255,0.62)' }}>
                     已展示全部作品
                   </span>
                 </div>
@@ -663,7 +664,7 @@ export default function PortfolioShowcasePage() {
                 >
                   <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
                 </div>
-                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.62)' }}>
                   没有符合条件的作品
                 </p>
                 <button
@@ -690,7 +691,7 @@ export default function PortfolioShowcasePage() {
                 >
                   <Sparkles size={32} style={{ color: 'rgba(129,140,248,0.4)' }} />
                 </div>
-                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                <p className="text-[15px]" style={{ color: 'rgba(255,255,255,0.62)' }}>
                   暂无作品，创作第一件作品吧
                 </p>
                 <button

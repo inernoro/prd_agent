@@ -42,14 +42,8 @@ export default function VisualAgentWorkspaceEditorPage() {
       {isMobile && mobileCanvasMode ? (
         <button
           type="button"
-          className="absolute left-3 z-40 h-10 w-10 inline-flex items-center justify-center rounded-full active:opacity-70"
-          style={{
-            bottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)',
-            background: 'rgba(30,30,36,0.9)',
-            color: 'rgba(255,255,255,0.85)',
-            border: '1px solid rgba(255,255,255,0.15)',
-            boxShadow: '0 4px 16px rgba(0,0,0,0.4)',
-          }}
+          className="absolute left-3 z-40 h-10 w-10 inline-flex items-center justify-center rounded-full active:opacity-70 border border-token-subtle"
+          style={{ bottom: 'calc(env(safe-area-inset-bottom, 0px) + 76px)', background: 'rgba(30,30,36,0.9)', color: 'rgba(255,255,255,0.85)', boxShadow: '0 4px 16px rgba(0,0,0,0.4)' }}
           onClick={() => setMobileCanvasMode(false)}
           aria-label="返回生成流"
         >

@@ -128,7 +128,7 @@ export function MentionTextarea({
     <div className={`relative ${className}`}>
       {showDropdown && (
         <div
-          className="absolute left-0 bottom-full z-20 mb-1 w-full max-w-sm overflow-hidden rounded-lg border border-white/15 bg-[#181a20] py-1 shadow-xl"
+          className="surface-popover absolute left-0 bottom-full z-20 mb-1 w-full max-w-sm overflow-hidden rounded-lg py-1"
           role="listbox"
         >
           {matches.map((user, index) => (
@@ -140,18 +140,18 @@ export function MentionTextarea({
               onMouseDown={(event) => event.preventDefault()}
               onClick={() => pickMention(user)}
               className={`flex w-full items-center gap-2.5 px-3 py-2 text-left text-sm transition-colors ${
-                index === activeIndex ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/85 hover:bg-white/5'
+                index === activeIndex ? 'surface-action-accent' : 'hover-bg-soft text-token-primary'
               }`}
             >
               <img
                 src={resolveAvatarUrl({ avatarFileName: user.avatarFileName, username: user.username })}
                 alt=""
-                className="h-7 w-7 shrink-0 rounded-full border border-white/10 object-cover"
+                className="h-7 w-7 shrink-0 rounded-full border border-token-subtle object-cover"
               />
               <div className="min-w-0 flex-1">
                 <div className="truncate">{user.displayName || user.username}</div>
                 {user.username && user.username !== user.displayName && (
-                  <div className="truncate text-[11px] text-white/40">{user.username}</div>
+                  <div className="truncate text-[11px] text-token-muted">{user.username}</div>
                 )}
               </div>
               <span className="shrink-0 text-xs text-cyan-300/80">@{user.displayName || user.username}</span>
@@ -168,7 +168,7 @@ export function MentionTextarea({
         onClick={(event) => syncMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
         onKeyUp={(event) => syncMentionQuery(event.currentTarget.value, event.currentTarget.selectionStart ?? 0)}
         placeholder={placeholder}
-        className="w-full resize-y rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white/90 outline-none placeholder:text-white/30 focus:border-cyan-500/40 disabled:opacity-50"
+        className="prd-field w-full resize-y rounded-lg px-3 py-2 text-sm outline-none disabled:opacity-50"
         style={{ minHeight, lineHeight: 1.6 }}
       />
     </div>

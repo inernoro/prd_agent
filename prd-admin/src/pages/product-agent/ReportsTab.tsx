@@ -40,7 +40,7 @@ export function ReportsTab({ productId }: { productId: string }) {
     const o = data.overall;
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
       series: [{
         type: 'pie', radius: ['45%', '70%'], center: ['50%', '44%'],
         data: [
@@ -48,7 +48,7 @@ export function ReportsTab({ productId }: { productId: string }) {
           { name: '进行中', value: o.doing, itemStyle: { color: C.doing } },
           { name: '待办', value: o.todo, itemStyle: { color: C.todo } },
         ],
-        label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 },
+        label: { color: 'var(--text-secondary)', fontSize: 11 },
         itemStyle: { borderColor: '#0f1014', borderWidth: 2 },
       }],
     };
@@ -59,10 +59,10 @@ export function ReportsTab({ productId }: { productId: string }) {
     const w = data.velocity;
     return {
       tooltip: { trigger: 'axis' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
       grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
-      xAxis: { type: 'category', data: w.map((x) => x.week), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      xAxis: { type: 'category', data: w.map((x) => x.week), axisLabel: { color: 'var(--text-secondary)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'var(--text-muted)' }, splitLine: { lineStyle: { color: 'var(--text-muted)' } } },
       series: [
         { name: '需求完成', type: 'bar', stack: 'v', data: w.map((x) => x.requirements), itemStyle: { color: C.req }, barMaxWidth: 28 },
         { name: '功能完成', type: 'bar', stack: 'v', data: w.map((x) => x.features), itemStyle: { color: C.feat }, barMaxWidth: 28 },
@@ -79,8 +79,8 @@ export function ReportsTab({ productId }: { productId: string }) {
     if (entries.length === 0) return null;
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data: entries, label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
+      series: [{ type: 'pie', radius: ['40%', '68%'], center: ['50%', '44%'], data: entries, label: { color: 'var(--text-secondary)', fontSize: 11 }, itemStyle: { borderColor: '#0f1014', borderWidth: 2 } }],
       color: CHART_COLORS,
     };
   }, [data]);
@@ -92,8 +92,8 @@ export function ReportsTab({ productId }: { productId: string }) {
     return {
       tooltip: { trigger: 'axis' },
       grid: { left: 8, right: 16, top: 16, bottom: 8, containLabel: true },
-      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      xAxis: { type: 'category', data: entries.map(([k]) => k), axisLabel: { color: 'var(--text-secondary)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'var(--text-muted)' }, splitLine: { lineStyle: { color: 'var(--text-muted)' } } },
       series: [{ type: 'bar', data: entries.map(([, v]) => v), itemStyle: { color: '#F87171', borderRadius: [4, 4, 0, 0] }, barMaxWidth: 32 }],
     };
   }, [data]);
@@ -107,8 +107,8 @@ export function ReportsTab({ productId }: { productId: string }) {
     if (entries.length === 0) return null;
     return {
       tooltip: { trigger: 'item' },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
-      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'rgba(255,255,255,0.7)', fontSize: 11 }, data: entries }],
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
+      series: [{ type: 'funnel', left: '10%', right: '10%', top: 10, bottom: 30, minSize: '14%', label: { color: 'var(--text-secondary)', fontSize: 11 }, data: entries }],
       color: CHART_COLORS,
     };
   }, [data]);
@@ -118,10 +118,10 @@ export function ReportsTab({ productId }: { productId: string }) {
     const rows = data.releaseProgress;
     return {
       tooltip: { trigger: 'axis', axisPointer: { type: 'shadow' } },
-      legend: { bottom: 0, textStyle: { color: 'rgba(255,255,255,0.5)', fontSize: 11 } },
+      legend: { bottom: 0, textStyle: { color: 'var(--text-secondary)', fontSize: 11 } },
       grid: { left: 8, right: 16, top: 16, bottom: 36, containLabel: true },
-      xAxis: { type: 'category', data: rows.map((r) => r.versionName), axisLabel: { color: 'rgba(255,255,255,0.5)', fontSize: 10 } },
-      yAxis: { type: 'value', axisLabel: { color: 'rgba(255,255,255,0.4)' }, splitLine: { lineStyle: { color: 'rgba(255,255,255,0.06)' } } },
+      xAxis: { type: 'category', data: rows.map((r) => r.versionName), axisLabel: { color: 'var(--text-secondary)', fontSize: 10 } },
+      yAxis: { type: 'value', axisLabel: { color: 'var(--text-muted)' }, splitLine: { lineStyle: { color: 'var(--text-muted)' } } },
       series: [
         { name: '已完成', type: 'bar', stack: 'x', data: rows.map((r) => r.done), itemStyle: { color: C.done } },
         { name: '进行中', type: 'bar', stack: 'x', data: rows.map((r) => r.doing), itemStyle: { color: C.doing } },
@@ -131,7 +131,7 @@ export function ReportsTab({ productId }: { productId: string }) {
   }, [data]);
 
   if (loading) return <MapSectionLoader text="正在生成报表…" />;
-  if (!data) return <div className="text-sm text-white/40 py-10 text-center">加载失败</div>;
+  if (!data) return <div className="text-sm text-token-muted py-10 text-center">加载失败</div>;
 
   const o = data.overall;
   const pct = o.total > 0 ? Math.round((o.done / o.total) * 100) : 0;
@@ -184,22 +184,22 @@ export function ReportsTab({ productId }: { productId: string }) {
 
 function Kpi({ label, value, color }: { label: string; value: number | string; color?: string }) {
   return (
-    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-3.5">
-      <div className="text-2xl font-semibold leading-none" style={{ color: color ?? 'rgba(255,255,255,0.92)' }}>{value}</div>
-      <div className="text-[11px] text-white/45 mt-1.5">{label}</div>
+    <div className="pa-card rounded-xl border border-token-subtle bg-token-nested p-3.5">
+      <div className="text-2xl font-semibold leading-none" style={{ color: color ?? 'var(--text-primary)' }}>{value}</div>
+      <div className="text-[11px] text-token-muted mt-1.5">{label}</div>
     </div>
   );
 }
 
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
-    <div className="pa-card rounded-xl border border-white/10 bg-white/[0.02] p-4">
-      <div className="text-xs font-semibold text-white/60 mb-3">{title}</div>
+    <div className="pa-card rounded-xl border border-token-subtle bg-token-nested p-4">
+      <div className="text-xs font-semibold text-token-secondary mb-3">{title}</div>
       {children}
     </div>
   );
 }
 
 function EmptyChart({ text }: { text: string }) {
-  return <div className="h-[260px] flex items-center justify-center text-xs text-white/35 text-center px-6">{text}</div>;
+  return <div className="h-[260px] flex items-center justify-center text-xs text-token-muted text-center px-6">{text}</div>;
 }

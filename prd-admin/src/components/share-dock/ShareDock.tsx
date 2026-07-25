@@ -325,12 +325,7 @@ export function ShareDock({
       >
         <button
           onClick={toggleCollapsed}
-          className={[
-            'flex flex-col items-center gap-2 rounded-l-2xl border border-r-0 border-white/15',
-            'bg-black/40 backdrop-blur-xl px-2 py-3 shadow-2xl shadow-black/40',
-            'text-white/75 hover:text-white hover:bg-black/50 transition-all',
-            dragging ? 'ring-2 ring-sky-300/70 bg-black/55' : '',
-          ].join(' ')}
+          className={`share-dock__collapsed flex flex-col items-center gap-2 rounded-l-2xl px-2 py-3 transition-all ${dragging ? 'share-dock__collapsed--active' : ''}`}
           aria-label="展开投放面板"
         >
           <ChevronsLeft size={14} />
@@ -341,7 +336,7 @@ export function ShareDock({
             {title}
           </span>
           {badgeCount > 0 && (
-            <span className="inline-flex min-w-[18px] items-center justify-center rounded-full bg-sky-500/40 px-1 py-0.5 text-[9px] font-semibold text-sky-50">
+            <span className="share-dock__badge inline-flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[9px] font-semibold">
               {badgeCount}
             </span>
           )}
@@ -359,10 +354,8 @@ export function ShareDock({
     >
       <div
         className={[
-          'w-full overflow-hidden rounded-2xl border border-white/12',
-          // 底色加实（/85），不再太透；保留 blur 让悬浮在内容上时仍有层次
-          'bg-[#16181c]/90 backdrop-blur-xl shadow-2xl shadow-black/50 transition-all duration-200',
-          dragging ? 'scale-[1.03] border-white/30 shadow-[0_0_32px_rgba(56,189,248,0.3)]' : '',
+          'share-dock__panel w-full overflow-hidden rounded-2xl transition-all duration-200',
+          dragging ? 'share-dock__panel--active scale-[1.03]' : '',
           movingDock ? 'opacity-85' : '',
         ].join(' ')}
       >
@@ -370,24 +363,24 @@ export function ShareDock({
         <div
           onPointerDown={onHandlePointerDown}
           className={[
-            'flex items-center justify-between gap-1 border-b border-white/10 bg-white/5 px-2 py-2 text-[11px]',
+            'share-dock__header flex items-center justify-between gap-1 px-2 py-2 text-[11px]',
             movingDock ? 'cursor-grabbing' : 'cursor-grab',
           ].join(' ')}
         >
-          <span className="flex min-w-0 items-center gap-1.5 text-white/80">
-            <GripVertical size={12} className="shrink-0 text-white/40" />
+          <span className="flex min-w-0 items-center gap-1.5 text-token-secondary">
+            <GripVertical size={12} className="shrink-0 text-token-muted" />
             <span className="truncate font-medium tracking-wide">{title}</span>
           </span>
           <div className="flex items-center gap-1">
             {badgeCount > 0 && (
-              <span className="inline-flex min-w-[20px] items-center justify-center rounded-full bg-sky-500/30 px-1.5 py-0.5 text-[10px] font-semibold text-sky-100">
+              <span className="share-dock__badge inline-flex min-w-[20px] items-center justify-center rounded-full px-1.5 py-0.5 text-[10px] font-semibold">
                 {badgeCount}
               </span>
             )}
             <button
               data-no-drag
               onClick={toggleCollapsed}
-              className="rounded p-0.5 text-white/60 hover:bg-white/10 hover:text-white"
+              className="rounded p-0.5 text-token-muted hover-bg-soft hover:text-token-primary"
               aria-label="收起投放面板"
               title="收起"
             >
@@ -421,14 +414,11 @@ export function ShareDock({
               tabIndex={uploadState === 'idle' ? 0 : undefined}
               aria-label={uploadState === 'idle' ? '点击或拖文件到此上传' : undefined}
               className={[
-                'flex w-full flex-col items-center justify-center gap-1.5 rounded-xl border border-dashed p-2.5 text-center transition-all',
+                'share-dock__dropzone flex w-full flex-col items-center justify-center gap-1.5 rounded-xl p-2.5 text-center transition-all',
                 uploadState === 'idle' ? 'cursor-pointer' : 'cursor-default',
-                fileOver
-                  ? 'border-sky-300/80 bg-sky-500/15 text-sky-50'
-                  : (uploadState === 'done' || uploadState === 'choosing')
-                    ? 'border-emerald-300/50 bg-emerald-500/10 text-emerald-50'
-                    : 'border-white/15 bg-white/[0.03] text-white/70 hover:bg-white/[0.06]',
               ].join(' ')}
+              data-state={uploadState}
+              data-file-over={fileOver ? 'true' : 'false'}
               // 1:1 方形并在面板内水平居中：maxWidth 限定方形尺寸（外层 flex justify-center 负责居中）；
               // 内容多时（done 态）可自然超过正方形高度
               style={{ width: '100%', maxWidth: 188, aspectRatio: '1 / 1' }}
@@ -479,45 +469,45 @@ export function ShareDock({
                 </>
               ) : uploadState === 'choosing' ? (
                 <>
-                  <div className="flex items-center gap-1.5 text-emerald-200">
+                  <div className="flex items-center gap-1.5" style={{ color: 'var(--semantic-success-text)' }}>
                     <Check size={18} />
                     <span className="text-[12.5px] font-semibold">{pendingShare?.title ?? '上传成功'}</span>
                   </div>
-                  <div className="text-[10.5px] text-white/55">选择分享方式</div>
+                  <div className="text-[10.5px] text-token-muted">选择分享方式</div>
                   <div className="flex w-full flex-col gap-1.5">
                     <button
                       data-no-drag
                       onClick={(e) => { e.stopPropagation(); chooseShare('none'); }}
-                      className="flex items-center justify-center gap-1.5 rounded-lg border border-sky-300/40 bg-sky-500/15 px-2 py-1.5 text-[12px] font-medium text-sky-50 transition-colors hover:bg-sky-500/25"
+                      className="share-dock__choice share-dock__choice--info flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] font-medium transition-colors"
                     >
                       <Link2 size={13} /> 无密码分享
                     </button>
                     <button
                       data-no-drag
                       onClick={(e) => { e.stopPropagation(); chooseShare('password'); }}
-                      className="flex items-center justify-center gap-1.5 rounded-lg border border-amber-300/40 bg-amber-500/15 px-2 py-1.5 text-[12px] font-medium text-amber-50 transition-colors hover:bg-amber-500/25"
+                      className="share-dock__choice share-dock__choice--warning flex items-center justify-center gap-1.5 rounded-lg px-2 py-1.5 text-[12px] font-medium transition-colors"
                     >
                       <Lock size={13} /> 有密码分享
                     </button>
                   </div>
-                  {shareError && <div className="text-[10px] text-rose-300">{shareError}</div>}
+                  {shareError && <div className="text-[10px]" style={{ color: 'var(--semantic-danger-text)' }}>{shareError}</div>}
                   <button
                     data-no-drag
                     onClick={(e) => { e.stopPropagation(); resetUpload(); }}
-                    className="mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/55 hover:bg-white/10 hover:text-white"
+                    className="mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-token-muted hover-bg-soft hover:text-token-primary"
                   >
                     <RotateCcw size={12} /> 再传一个
                   </button>
                 </>
               ) : uploadState === 'done' && uploadResult ? (
                 <>
-                  <div className="flex items-center gap-1.5 text-emerald-200">
+                  <div className="flex items-center gap-1.5" style={{ color: 'var(--semantic-success-text)' }}>
                     <Check size={18} />
                     <span className="text-[12.5px] font-semibold">{uploadResult.title ?? '上传成功'}</span>
                   </div>
                   {uploadResult.shareUrl && (
                     <>
-                      <div className="text-[10px] text-emerald-100/70">分享链接已复制到剪贴板</div>
+                      <div className="text-[10px]" style={{ color: 'var(--semantic-success-text)' }}>分享链接已复制到剪贴板</div>
                       <div className="flex w-full items-center gap-1">
                         <input
                           data-no-drag
@@ -525,29 +515,29 @@ export function ShareDock({
                           readOnly
                           value={uploadResult.shareUrl}
                           onClick={(e) => (e.target as HTMLInputElement).select()}
-                          className="min-w-0 flex-1 truncate rounded-md border border-white/15 bg-black/30 px-2 py-1 text-[11px] text-white/90 outline-none"
+                          className="share-dock__result-input min-w-0 flex-1 truncate rounded-md px-2 py-1 text-[11px] outline-none"
                         />
                         <button
                           data-no-drag
                           onClick={(e) => { e.stopPropagation(); copyResult(); }}
-                          className="shrink-0 rounded-md border border-white/15 bg-white/5 p-1.5 text-white/80 hover:bg-white/10 hover:text-white"
+                          className="surface-action shrink-0 rounded-md p-1.5 text-token-secondary hover:text-token-primary"
                           title="复制链接"
                           aria-label="复制分享链接"
                         >
-                          {resultCopied ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} />}
+                          {resultCopied ? <Check size={13} style={{ color: 'var(--semantic-success-text)' }} /> : <Copy size={13} />}
                         </button>
                       </div>
                     </>
                   )}
                   {uploadResult.password && (
-                    <div className="text-[10.5px] text-white/70">
-                      访问密码 <code className="font-mono font-semibold text-white">{uploadResult.password}</code>
+                    <div className="text-[10.5px] text-token-secondary">
+                      访问密码 <code className="font-mono font-semibold text-token-primary">{uploadResult.password}</code>
                     </div>
                   )}
                   <button
                     data-no-drag
                     onClick={(e) => { e.stopPropagation(); resetUpload(); }}
-                    className="mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-white/60 hover:bg-white/10 hover:text-white"
+                    className="mt-0.5 inline-flex items-center gap-1 rounded-md px-2 py-1 text-[11px] text-token-muted hover-bg-soft hover:text-token-primary"
                   >
                     <RotateCcw size={12} /> 再传一个
                   </button>
@@ -558,11 +548,11 @@ export function ShareDock({
                   <div className="text-[12px] font-medium leading-tight">
                     {dropzone.hint ?? '拖文件到此上传'}
                   </div>
-                  <div className="text-[10px] leading-tight text-white/50">
+                  <div className="text-[10px] leading-tight text-token-muted">
                     点击选择，或拖文件到此
                   </div>
                   {dropzone.accept && dropzone.accept.length > 0 && (
-                    <div className="text-[9.5px] leading-tight text-white/40">
+                    <div className="text-[9.5px] leading-tight text-token-muted">
                       {dropzone.accept.join(' / ')}
                     </div>
                   )}
@@ -611,7 +601,7 @@ export function ShareDock({
                       {icon}
                       <span className="text-sm font-medium">{label}</span>
                     </div>
-                    <div className="dock-slot__hint mt-0.5 text-[10.5px] leading-snug text-white/55">
+                    <div className="dock-slot__hint mt-0.5 text-[10.5px] leading-snug">
                       {hint}
                     </div>
                   </>
@@ -623,19 +613,19 @@ export function ShareDock({
 
         {/* 底部链接 */}
         {footerText && (
-          <div className="border-t border-white/10 bg-black/20 px-3 py-2 text-[10.5px]">
+          <div className="share-dock__footer px-3 py-2 text-[10.5px]">
             {footerHref ? (
               <a
                 data-no-drag
                 href={footerHref}
                 target="_blank"
                 rel="noopener noreferrer"
-                className="inline-flex items-center gap-1.5 text-white/70 transition-colors hover:text-white"
+                className="inline-flex items-center gap-1.5 text-token-secondary transition-colors hover:text-token-primary"
               >
                 {footerText}
               </a>
             ) : (
-              <span className="text-white/40">{footerText}</span>
+              <span className="text-token-muted">{footerText}</span>
             )}
           </div>
         )}

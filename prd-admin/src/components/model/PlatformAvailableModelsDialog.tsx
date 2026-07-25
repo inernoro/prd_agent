@@ -102,12 +102,8 @@ function PresetTagIcons({
           <span
             key={t}
             title={meta.title}
-            className="inline-flex items-center justify-center h-[22px] w-[22px] rounded-[9px]"
-            style={{
-              border: '1px solid rgba(255,255,255,0.12)',
-              background: 'rgba(255,255,255,0.04)',
-              color: meta.tone,
-            }}
+            className="inline-flex items-center justify-center h-[22px] w-[22px] rounded-[9px] border border-token-subtle bg-token-nested"
+            style={{ color: meta.tone }}
           >
             {meta.icon}
           </span>
@@ -301,7 +297,7 @@ export function PlatformAvailableModelsDialog({
 
   const inputStyle: React.CSSProperties = {
     background: 'var(--bg-input)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-subtle)',
     color: 'var(--text-primary)',
   };
 
@@ -416,16 +412,16 @@ export function PlatformAvailableModelsDialog({
                       }}
                     >
                       <summary
-                        className="px-4 py-3 flex items-center justify-between cursor-pointer select-none"
-                        style={{ background: 'rgba(255,255,255,0.03)' }}
+                        className="px-4 py-3 flex items-center justify-between cursor-pointer select-none bg-token-nested"
+
                       >
                         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>{g}</div>
                         <div className="flex items-center gap-2">
                           <Badge variant="subtle">{ms.length}</Badge>
                           <button
                             type="button"
-                            className="inline-flex items-center justify-center h-[26px] w-[26px] rounded-[10px] hover:bg-white/6"
-                            style={{ border: '1px solid rgba(255,255,255,0.10)', color: 'var(--text-primary)' }}
+                            className="inline-flex items-center justify-center h-[26px] w-[26px] rounded-[10px] hover-bg-soft border border-token-subtle"
+                            style={{ color: 'var(--text-primary)' }}
                             title="批量添加该组"
                             onClick={(e) => {
                               e.preventDefault(); // 避免触发 summary toggle
@@ -437,7 +433,7 @@ export function PlatformAvailableModelsDialog({
                           </button>
                         </div>
                       </summary>
-                      <div className="divide-y divide-white/30">
+                      <div className="divide-y divide-token-subtle">
                         {ms.map((m) => {
                           const exist = isSelected(m);
                           // 统一展示：默认只显示平台侧模型 ID（modelName）

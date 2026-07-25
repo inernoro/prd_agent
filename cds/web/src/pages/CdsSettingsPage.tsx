@@ -24,6 +24,7 @@ import {
 import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell';
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
+import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
@@ -133,6 +134,11 @@ const tabGroups: TabGroup[] = [
 
 const tabs: TabItem[] = tabGroups.flatMap((group) => group.items);
 
+// 这两个 tab 由 auth-local 路由(仅在 authMode==='github' 时挂载)支撑。
+// basic / disabled 模式下后端根本没注册 /api/auth/users、/api/auth/activity,
+// 无条件渲染会直接 404。按运行时 authMode 门控,非 github 模式一律隐藏。
+const AUTH_GATED_TABS = new Set<TabValue>(['users', 'activity']);
+
 function getInitialTab(): TabValue {
   const hash = window.location.hash.replace(/^#/, '');
   // 2026-05-04:默认从 'overview' 改 'maintenance' — 用户进设置页 90%
@@ -157,6 +163,34 @@ function SettingsTabFallback(): JSX.Element {
 export function CdsSettingsPage(): JSX.Element {
   const [activeTab, setActiveTab] = useState<TabValue>(() => getInitialTab());
   const [toast, setToast] = useState('');
+  // null = 认证模式探测中;非 github 时隐藏用户管理/用户痕迹 tab(其后端未挂载)。
+  const [authMode, setAuthMode] = useState<CdsAuthPublicStatus['mode'] | null>(null);
+  const authTabsVisible = authMode === 'github';
+
+  useEffect(() => {
+    let alive = true;
+    // /api/auth/public-status 在所有认证模式下都挂载(server.ts:1802,早于 github-only 块),
+    // 是判定当前模式的权威且安全入口。探测失败按最保守处理:隐藏 auth 相关 tab。
+    fetchAuthPublicStatus()
+      .then((status) => { if (alive) setAuthMode(status.mode); })
+      .catch(() => { if (alive) setAuthMode('disabled'); });
+    return () => { alive = false; };
+  }, []);
+
+  // 认证模式确定后,若当前停在被隐藏的 tab(如 #hash 直链到 users),回退到默认 tab,
+  // 避免右侧内容区空白 + 触发 404。
+  useEffect(() => {
+    if (authMode && authMode !== 'github' && AUTH_GATED_TABS.has(activeTab)) {
+      setActiveTab('maintenance');
+    }
+  }, [authMode, activeTab]);
+
+  const visibleTabGroups = tabGroups
+    .map((group) => ({
+      ...group,
+      items: group.items.filter((tab) => authTabsVisible || !AUTH_GATED_TABS.has(tab.value)),
+    }))
+    .filter((group) => group.items.length > 0);
 
   useEffect(() => {
     window.history.replaceState(null, '', `#${activeTab}`);
@@ -197,7 +231,7 @@ export function CdsSettingsPage(): JSX.Element {
               aria-label="CDS 系统设置分区"
               className="cds-settings-nav cds-surface-raised cds-hairline p-2 lg:sticky lg:top-0 lg:self-start"
             >
-              {tabGroups.map((group, groupIdx) => (
+              {visibleTabGroups.map((group, groupIdx) => (
                 <div key={group.label} className={`cds-settings-nav-group ${groupIdx === 0 ? '' : 'mt-2'}`}>
                   <div className="cds-settings-nav-group-label px-2 pb-1.5 pt-1 text-[11px] font-semibold uppercase tracking-wider text-muted-foreground/80">
                     {group.label}
@@ -224,10 +258,10 @@ export function CdsSettingsPage(): JSX.Element {
                   {activeTab === 'auth' ? <AuthTab /> : null}
                 </TabsContent>
                 <TabsContent value="users">
-                  {activeTab === 'users' ? <UsersTab onToast={setToast} /> : null}
+                  {activeTab === 'users' && authTabsVisible ? <UsersTab onToast={setToast} /> : null}
                 </TabsContent>
                 <TabsContent value="activity">
-                  {activeTab === 'activity' ? <ActivityTab /> : null}
+                  {activeTab === 'activity' && authTabsVisible ? <ActivityTab /> : null}
                 </TabsContent>
                 <TabsContent value="access-keys">
                   {activeTab === 'access-keys' ? <AccessKeysTab onToast={setToast} /> : null}

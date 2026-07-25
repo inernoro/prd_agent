@@ -41,6 +41,39 @@ class TutorialMaintenanceTests(unittest.TestCase):
         self.assertEqual("drift", report["status"])
         self.assertEqual("P1", report["findings"][0]["severity"])
 
+    def test_log_entity_details_maps_to_model_provider_app_tutorials(self) -> None:
+        report = analyze(
+            REPO_ROOT,
+            self.mapping,
+            self.manifest,
+            [
+                "llmgw/web/src/pages/EntityDetailsPages.tsx",
+                "llmgw/tutorial/chapters/13-first-request.md",
+            ],
+            self.now,
+        )
+
+        self.assertEqual("healthy", report["status"])
+        self.assertEqual([], report["findings"])
+        self.assertEqual("log-entity-details", report["affectedTutorials"][0]["surface"])
+        self.assertTrue(report["affectedTutorials"][0]["tutorialChanged"])
+        self.assertEqual(
+            [
+                "chapter-06",
+                "chapter-07",
+                "chapter-09",
+                "chapter-13",
+                "chapter-14",
+                "chapter-18",
+                "chapter-21",
+                "practical-image-01",
+                "practical-image-02",
+                "practical-image-03",
+                "practical-image-04",
+            ],
+            report["affectedTutorials"][0]["tutorialSourceIds"],
+        )
+
 
 if __name__ == "__main__":
     unittest.main()

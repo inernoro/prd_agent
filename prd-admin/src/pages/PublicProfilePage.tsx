@@ -110,7 +110,7 @@ export default function PublicProfilePage() {
 
   if (loading) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0a0b0f] text-white/70">
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0b0f] text-token-secondary">
         <div className="flex items-center gap-2 text-sm">
           <Loader2 size={16} className="animate-spin" />
           <span>正在加载公开页…</span>
@@ -121,14 +121,14 @@ export default function PublicProfilePage() {
 
   if (error || !data) {
     return (
-      <div className="flex min-h-screen items-center justify-center bg-[#0a0b0f] text-white/70">
+      <div className="flex min-h-screen items-center justify-center bg-[#0a0b0f] text-token-secondary">
         <div className="flex flex-col items-center gap-3 text-center">
-          <UserX size={48} strokeWidth={1.5} className="text-white/30" />
-          <div className="text-lg font-medium text-white/85">用户不存在</div>
-          <div className="text-sm text-white/50">{error || '找不到这个用户'}</div>
+          <UserX size={48} strokeWidth={1.5} className="text-token-muted" />
+          <div className="text-lg font-medium text-token-primary">用户不存在</div>
+          <div className="text-sm text-token-secondary">{error || '找不到这个用户'}</div>
           <a
             href="/"
-            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-white/15 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:text-white hover:bg-white/10"
+            className="mt-2 inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-secondary hover-text-primary hover-bg-soft"
           >
             回到首页
           </a>
@@ -154,7 +154,7 @@ export default function PublicProfilePage() {
   };
 
   return (
-    <div className="relative min-h-screen text-white" style={{ background: theme.base }}>
+    <div className="relative min-h-screen text-token-primary" style={{ background: theme.base }}>
       {/* 全页环境光：让主题色延伸到整个页面而不只是头部 */}
       <div
         className="pointer-events-none fixed inset-0 -z-0"
@@ -162,14 +162,14 @@ export default function PublicProfilePage() {
         aria-hidden
       />
       <div className="relative z-[1]">
-      <div className="relative overflow-hidden border-b border-white/10">
+      <div className="relative overflow-hidden border-b border-token-subtle">
         <div className="absolute inset-0" style={{ background: theme.banner, opacity: 0.9 }} />
         <div className="relative mx-auto flex max-w-5xl items-start gap-5 px-6 py-10">
-          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500/30 to-violet-500/20 text-2xl font-bold text-white/90 ring-1 ring-white/15">
+          <div className="flex h-20 w-20 shrink-0 items-center justify-center rounded-2xl bg-gradient-to-br from-sky-500/30 to-violet-500/20 text-2xl font-bold text-token-primary ring-1 ring-white/15">
             {user.displayName?.[0]?.toUpperCase() || user.username[0]?.toUpperCase() || '?'}
           </div>
           <div className="min-w-0 flex-1">
-            <div className="flex items-center gap-2 text-sm text-white/60">
+            <div className="flex items-center gap-2 text-sm text-token-secondary">
               <Globe size={14} />
               <span>公开主页</span>
               {isSelf && (
@@ -181,19 +181,19 @@ export default function PublicProfilePage() {
             <h1 className="mt-1 truncate text-2xl font-semibold tracking-tight">
               {user.displayName}
             </h1>
-            <div className="mt-1 text-sm text-white/50">@{user.username}</div>
+            <div className="mt-1 text-sm text-token-secondary">@{user.username}</div>
             {user.bio && (
-              <p className="mt-3 max-w-2xl whitespace-pre-line text-[13px] leading-relaxed text-white/75">
+              <p className="mt-3 max-w-2xl whitespace-pre-line text-[13px] leading-relaxed text-token-secondary">
                 {user.bio}
               </p>
             )}
-            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-white/50">
+            <div className="mt-3 flex flex-wrap items-center gap-3 text-xs text-token-secondary">
               <span className="inline-flex items-center gap-1">
                 <Inbox size={12} />
                 共 {totalPublic} 个公开资源
               </span>
               {visibleTabs.length > 0 && (
-                <span className="inline-flex items-center gap-1 text-white/40">
+                <span className="inline-flex items-center gap-1 text-token-muted">
                   · 分布在 {visibleTabs.length} 个领域
                 </span>
               )}
@@ -226,7 +226,7 @@ export default function PublicProfilePage() {
 
       {visibleTabs.length > 0 && (
         <div
-          className="sticky top-0 z-10 border-b border-white/10 backdrop-blur-xl"
+          className="sticky top-0 z-10 border-b border-token-subtle backdrop-blur-xl"
           style={{ background: `${theme.base}bf` }}
         >
           <div className="mx-auto flex max-w-5xl items-center gap-1 overflow-x-auto px-4 py-2 text-[13px]">
@@ -241,8 +241,8 @@ export default function PublicProfilePage() {
                   className={[
                     'group inline-flex shrink-0 items-center gap-1.5 rounded-lg px-3 py-1.5 transition-all',
                     isActive
-                      ? 'bg-white/10 text-white shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)]'
-                      : 'text-white/55 hover:bg-white/5 hover:text-white/85',
+                      ? 'bg-token-nested text-token-primary shadow-[inset_0_0_0_1px_rgba(255,255,255,0.15)]'
+                      : 'text-token-secondary hover-bg-soft hover-text-primary',
                   ].join(' ')}
                 >
                   <Icon size={14} />
@@ -250,7 +250,7 @@ export default function PublicProfilePage() {
                   <span
                     className={[
                       'inline-flex min-w-[18px] items-center justify-center rounded-full px-1 py-0.5 text-[10px] font-semibold',
-                      isActive ? 'bg-sky-500/35 text-sky-50' : 'bg-white/10 text-white/60',
+                      isActive ? 'bg-sky-500/35 text-sky-50' : 'bg-token-nested text-token-secondary',
                     ].join(' ')}
                   >
                     {count}
@@ -311,7 +311,7 @@ export default function PublicProfilePage() {
         )}
       </div>
 
-      <div className="mx-auto max-w-5xl px-6 py-6 text-center text-[10px] text-white/30">
+      <div className="mx-auto max-w-5xl px-6 py-6 text-center text-[10px] text-token-muted">
         由 PRD Agent · 拖资源到投放面板「公开」槽位即可发布到此页
       </div>
       </div>
@@ -321,10 +321,10 @@ export default function PublicProfilePage() {
 
 function EmptyState() {
   return (
-    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-white/10 bg-white/[0.02] py-20 text-center text-white/50">
-      <Inbox size={48} strokeWidth={1.5} className="text-white/20" />
-      <div className="text-base font-medium text-white/70">还没有公开资源</div>
-      <div className="text-xs text-white/40">用户尚未公开任何内容</div>
+    <div className="flex flex-col items-center justify-center gap-3 rounded-2xl border border-dashed border-token-subtle bg-token-nested py-20 text-center text-token-secondary">
+      <Inbox size={48} strokeWidth={1.5} className="text-token-muted" />
+      <div className="text-base font-medium text-token-secondary">还没有公开资源</div>
+      <div className="text-xs text-token-muted">用户尚未公开任何内容</div>
     </div>
   );
 }
@@ -334,18 +334,18 @@ function TagsList({ tags, max = 3 }: { tags: string[]; max?: number }) {
   return (
     <div className="mt-1 flex flex-wrap gap-1">
       {tags.slice(0, max).map((t) => (
-        <span key={t} className="rounded-full bg-white/5 px-1.5 py-0.5 text-[9px] text-white/50">
+        <span key={t} className="rounded-full bg-token-nested px-1.5 py-0.5 text-[9px] text-token-secondary">
           {t}
         </span>
       ))}
-      {tags.length > max && <span className="text-[9px] text-white/30">+{tags.length - max}</span>}
+      {tags.length > max && <span className="text-[9px] text-token-muted">+{tags.length - max}</span>}
     </div>
   );
 }
 
 function Meta({ children }: { children: React.ReactNode }) {
   return (
-    <div className="mt-auto flex items-center gap-3 pt-2 text-[10px] text-white/40">{children}</div>
+    <div className="mt-auto flex items-center gap-3 pt-2 text-[10px] text-token-muted">{children}</div>
   );
 }
 
@@ -371,7 +371,7 @@ function SitesGrid({
           href={s.siteUrl}
           target="_blank"
           rel="noopener noreferrer"
-          className="group flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] transition-all hover:border-white/25 hover:bg-white/[0.06] hover:shadow-[0_0_24px_rgba(56,189,248,0.15)]"
+          className="group flex flex-col overflow-hidden rounded-2xl border border-token-subtle bg-token-nested transition-all hover-border-token hover-bg-soft hover:shadow-[0_0_24px_rgba(56,189,248,0.15)]"
         >
           <div className="relative overflow-hidden" style={{ aspectRatio: '16 / 9', background: '#0f1014' }}>
             {s.coverImageUrl ? (
@@ -385,7 +385,7 @@ function SitesGrid({
             ) : (
               <SitePreview url={s.siteUrl} className="h-full w-full" />
             )}
-            <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] text-white/90 opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
+            <div className="absolute bottom-2 right-2 inline-flex items-center gap-1 rounded-full bg-black/60 px-2 py-1 text-[10px] text-token-primary opacity-0 backdrop-blur-sm transition-opacity group-hover:opacity-100">
               <ExternalLink size={10} /> 访问
             </div>
             {isSelf && (
@@ -395,9 +395,9 @@ function SitesGrid({
             )}
           </div>
           <div className="flex flex-1 flex-col gap-1 p-3">
-            <h3 className="truncate text-sm font-medium text-white/90">{s.title}</h3>
+            <h3 className="truncate text-sm font-medium text-token-primary">{s.title}</h3>
             {s.description && (
-              <p className="line-clamp-2 text-[11px] text-white/55">{s.description}</p>
+              <p className="line-clamp-2 text-[11px] text-token-secondary">{s.description}</p>
             )}
             <Meta>
               <span className="inline-flex items-center gap-0.5">
@@ -450,7 +450,7 @@ function SkillsGrid({
       {items.map((s) => (
         <div
           key={s.id}
-          className="group relative flex flex-col overflow-hidden rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="group relative flex flex-col overflow-hidden rounded-2xl border border-token-subtle bg-token-nested p-4 transition-all hover-border-token hover-bg-soft"
         >
           {isSelf && (
             <div className="absolute right-2 top-2">
@@ -467,12 +467,12 @@ function SkillsGrid({
               {s.icon || '✨'}
             </div>
             <div className="min-w-0 flex-1">
-              <h3 className="truncate text-sm font-medium text-white/90">{s.title}</h3>
-              <div className="truncate text-[10px] text-white/40">{s.category}</div>
+              <h3 className="truncate text-sm font-medium text-token-primary">{s.title}</h3>
+              <div className="truncate text-[10px] text-token-muted">{s.category}</div>
             </div>
           </div>
           {s.description && (
-            <p className="line-clamp-3 flex-1 text-[11px] text-white/60">{s.description}</p>
+            <p className="line-clamp-3 flex-1 text-[11px] text-token-secondary">{s.description}</p>
           )}
           <TagsList tags={s.tags} />
           <Meta>
@@ -513,7 +513,7 @@ function DocumentsGrid({
             title={d.name}
             coverUrl={d.coverImageUrl}
             aspect="16/10"
-            noCoverDecoration={<FileText size={48} className="text-white/15" />}
+            noCoverDecoration={<FileText size={48} className="text-token-muted" />}
             topOverlay={
               isSelf ? (
                 <RetractButton
@@ -526,10 +526,10 @@ function DocumentsGrid({
             }
             bottomOverlay={
               <>
-                <div className="flex items-center gap-2 text-[10px] text-white/60 drop-shadow">
+                <div className="flex items-center gap-2 text-[10px] text-token-secondary drop-shadow">
                   <FileText size={11} className="text-emerald-300/80" />
                   <span>文档空间</span>
-                  <span className="text-white/45">· {d.documentCount} 篇</span>
+                  <span className="text-token-muted">· {d.documentCount} 篇</span>
                 </div>
                 <h3
                   className="line-clamp-2 text-[15px] font-bold leading-snug drop-shadow-lg"
@@ -538,12 +538,12 @@ function DocumentsGrid({
                   {d.name || '未命名'}
                 </h3>
                 {d.primaryEntry && (
-                  <p className="line-clamp-2 text-[11px] leading-relaxed text-white/70 drop-shadow">
+                  <p className="line-clamp-2 text-[11px] leading-relaxed text-token-secondary drop-shadow">
                     <span className="text-emerald-200/90">{d.primaryEntry.title}</span>
                     {d.primaryEntry.summary ? ` · ${d.primaryEntry.summary}` : ''}
                   </p>
                 )}
-                <div className="flex items-center gap-3 text-[10px] text-white/55 drop-shadow">
+                <div className="flex items-center gap-3 text-[10px] text-token-secondary drop-shadow">
                   <span className="inline-flex items-center gap-0.5">
                     <Eye size={10} />
                     {d.viewCount}
@@ -578,7 +578,7 @@ function PromptsGrid({
             noCoverDecoration={
               <span
                 className="select-none font-serif leading-none"
-                style={{ fontSize: 120, color: 'rgba(255,255,255,0.06)' }}
+                style={{ fontSize: 120, color: 'var(--text-muted)' }}
               >
                 &ldquo;
               </span>
@@ -595,7 +595,7 @@ function PromptsGrid({
             }
             bottomOverlay={
               <>
-                <div className="flex items-center gap-2 text-[10px] text-white/60 drop-shadow">
+                <div className="flex items-center gap-2 text-[10px] text-token-secondary drop-shadow">
                   <Feather size={11} className="text-amber-300/80" />
                   <span>文学提示词</span>
                   {p.scenarioType && (
@@ -611,11 +611,11 @@ function PromptsGrid({
                   {p.title || '未命名'}
                 </h3>
                 {p.preview && (
-                  <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-white/70 drop-shadow">
+                  <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-token-secondary drop-shadow">
                     {p.preview}
                   </p>
                 )}
-                <div className="flex items-center gap-2 text-[10px] text-white/55 drop-shadow">
+                <div className="flex items-center gap-2 text-[10px] text-token-secondary drop-shadow">
                   <span>被 fork {p.forkCount} 次</span>
                 </div>
               </>
@@ -646,7 +646,7 @@ function WorkspacesGrid({
             coverUrl={w.coverUrl}
             coverWidth={w.coverWidth}
             coverHeight={w.coverHeight}
-            noCoverDecoration={<ImageIcon size={48} className="text-white/15" />}
+            noCoverDecoration={<ImageIcon size={48} className="text-token-muted" />}
             topOverlay={
               isSelf ? (
                 <RetractButton
@@ -679,7 +679,7 @@ function EmergencesGrid({
       {items.map((e) => (
         <div
           key={e.id}
-          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="relative flex flex-col gap-2 rounded-2xl border border-token-subtle bg-token-nested p-4 transition-all hover-border-token hover-bg-soft"
         >
           {isSelf && (
             <div className="absolute right-2 top-2">
@@ -693,10 +693,10 @@ function EmergencesGrid({
           )}
           <div className="flex items-start gap-2 pr-20">
             <Zap size={16} className="mt-0.5 shrink-0 text-indigo-300/80" />
-            <h3 className="line-clamp-2 text-sm font-medium text-white/90">{e.title}</h3>
+            <h3 className="line-clamp-2 text-sm font-medium text-token-primary">{e.title}</h3>
           </div>
           {e.description && (
-            <p className="line-clamp-2 text-[11px] text-white/55">{e.description}</p>
+            <p className="line-clamp-2 text-[11px] text-token-secondary">{e.description}</p>
           )}
           {e.seedPreview && (
             <div className="rounded-md border border-indigo-400/10 bg-indigo-500/[0.04] p-2">
@@ -704,12 +704,12 @@ function EmergencesGrid({
                 <Zap size={10} />
                 <span>种子</span>
               </div>
-              <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-white/55">
+              <p className="line-clamp-3 whitespace-pre-wrap text-[11px] leading-relaxed text-token-secondary">
                 {e.seedPreview}
               </p>
             </div>
           )}
-          <div className="mt-auto flex items-center gap-3 text-[10px] text-white/40">
+          <div className="mt-auto flex items-center gap-3 text-[10px] text-token-muted">
             <span>{e.nodeCount} 个节点</span>
           </div>
         </div>
@@ -732,7 +732,7 @@ function WorkflowsGrid({
       {items.map((w) => (
         <div
           key={w.id}
-          className="relative flex flex-col gap-2 rounded-2xl border border-white/10 bg-white/[0.03] p-4 transition-all hover:border-white/25 hover:bg-white/[0.06]"
+          className="relative flex flex-col gap-2 rounded-2xl border border-token-subtle bg-token-nested p-4 transition-all hover-border-token hover-bg-soft"
         >
           {isSelf && (
             <div className="absolute right-2 top-2">
@@ -754,10 +754,10 @@ function WorkflowsGrid({
             ) : (
               <WorkflowIcon size={16} className="mt-0.5 shrink-0 text-cyan-300/80" />
             )}
-            <h3 className="line-clamp-2 text-sm font-medium text-white/90">{w.name}</h3>
+            <h3 className="line-clamp-2 text-sm font-medium text-token-primary">{w.name}</h3>
           </div>
           {w.description && (
-            <p className="line-clamp-2 text-[11px] text-white/55">{w.description}</p>
+            <p className="line-clamp-2 text-[11px] text-token-secondary">{w.description}</p>
           )}
           {w.nodeTypes && w.nodeTypes.length > 0 && (
             <div className="flex flex-wrap items-center gap-1 rounded-md border border-cyan-400/10 bg-cyan-500/[0.04] px-2 py-1.5">
@@ -772,7 +772,7 @@ function WorkflowsGrid({
                 </span>
               ))}
               {typeof w.nodeCount === 'number' && w.nodeCount > w.nodeTypes.length && (
-                <span className="text-[9px] text-white/35">
+                <span className="text-[9px] text-token-muted">
                   +{w.nodeCount - w.nodeTypes.length} 节点
                 </span>
               )}

@@ -1526,24 +1526,42 @@ public static class GatewayHttpEndpoints
         http.Response.Headers["X-Request-Id"] = requestId;
         http.Response.Headers["X-Gateway-Upstream-Called"] = "false";
         http.Response.StatusCode = StatusCodes.Status200OK;
-        http.Response.ContentType = "application/json";
+        http.Response.ContentType = IsQuickstartDryRunSsePath(path)
+            ? "text/event-stream"
+            : "application/json";
         await http.Response.WriteAsync(BuildQuickstartDryRunSuccess(path, requestId, jsonOpts));
         return true;
     }
 
     private static bool IsQuickstartDryRunPath(string path)
         => path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase)
            || path.Equals("/v1/messages", StringComparison.OrdinalIgnoreCase)
            || path.StartsWith("/v1beta/models/", StringComparison.OrdinalIgnoreCase)
               && path.EndsWith(":generateContent", StringComparison.OrdinalIgnoreCase);
 
+    private static bool IsQuickstartDryRunSsePath(string path)
+        => path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+           || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase);
+
     private static string? ResolveQuickstartDryRunRequestType(string path, JsonObject body)
     {
-        if (path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase))
+        if (path.Equals("/gw/v1/invoke", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/send", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase))
         {
             var requestType = ReadString(body, "ModelType") ?? ReadString(body, "modelType");
             return requestType is "chat" or "vision" && (body["RequestBody"] ?? body["requestBody"]) is JsonObject
+                ? requestType
+                : null;
+        }
+        if (path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase))
+        {
+            var requestType = ReadString(body, "ModelType") ?? ReadString(body, "modelType");
+            return requestType is "chat" or "vision" && (body["Messages"] ?? body["messages"]) is JsonArray
                 ? requestType
                 : null;
         }
@@ -1602,6 +1620,25 @@ public static class GatewayHttpEndpoints
     private static string BuildQuickstartDryRunSuccess(string path, string requestId, JsonSerializerOptions jsonOpts)
     {
         var gateway = new { requestId, dryRun = true, upstreamCalled = false };
+        if (IsQuickstartDryRunSsePath(path))
+        {
+            var content = JsonSerializer.Serialize(new
+            {
+                Type = "content",
+                Content = "Gateway dry-run passed",
+                Resolution = new { ActualModel = "dry-run" },
+                UpstreamCalled = false,
+            }, jsonOpts);
+            var done = JsonSerializer.Serialize(new
+            {
+                Type = "done",
+                Content = "",
+                FinishReason = "stop",
+                Resolution = new { ActualModel = "dry-run" },
+                UpstreamCalled = false,
+            }, jsonOpts);
+            return $"data: {content}\n\ndata: {done}\n\n";
+        }
         if (path.Equals("/v1/chat/completions", StringComparison.OrdinalIgnoreCase))
         {
             return JsonSerializer.Serialize(new
@@ -1645,6 +1682,7 @@ public static class GatewayHttpEndpoints
             mode = "dry-run",
             upstreamCalled = false,
             content = "Gateway dry-run passed",
+            resolution = new { actualModel = "dry-run" },
         }, jsonOpts);
     }
 

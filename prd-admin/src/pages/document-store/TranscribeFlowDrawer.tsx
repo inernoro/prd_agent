@@ -720,7 +720,7 @@ export function TranscribeFlowDrawer({
             ) : outputEntryId && onEditNote && !inPlace && (
               <button
                 onClick={() => { onEditNote(outputEntryId); onClose(); }}
-                className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors hover:bg-white/8"
+                className="cursor-pointer rounded-[7px] px-2 py-0.5 text-[11px] font-semibold transition-colors hover-bg-soft"
                 style={{ color: 'var(--accent-primary, rgba(96,165,250,0.95))' }}>
                 编辑笔记
               </button>
@@ -752,7 +752,7 @@ export function TranscribeFlowDrawer({
               <button
                 type="button"
                 onClick={() => { setRawDraft(rawTranscript); setEditingRaw(true); }}
-                className="min-h-11 w-full cursor-text whitespace-pre-wrap rounded-[8px] px-2 py-2 text-left text-[13px] leading-relaxed text-token-primary hover:bg-white/4"
+                className="min-h-11 w-full cursor-text whitespace-pre-wrap rounded-[8px] px-2 py-2 text-left text-[13px] leading-relaxed text-token-primary hover-bg-soft"
                 title="点击修改原文">
                 {rawTranscript}
               </button>
@@ -781,7 +781,7 @@ export function TranscribeFlowDrawer({
       <button
         onClick={onClose}
         aria-label="关闭录音转录"
-        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover:bg-white/6">
+        className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft">
         <X size={15} />
       </button>
     </div>

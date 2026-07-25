@@ -336,8 +336,8 @@ export function FrontEndAgentPage() {
           <div className="fea-panel-header shrink-0 px-4 py-3 border-b flex items-center gap-2">
             <ActiveIcon className="w-4 h-4 text-indigo-300/75" />
             <div className="min-w-0">
-              <h2 className="text-sm font-medium text-white truncate">{activeTask.title}</h2>
-              <p className="text-[11px] text-white/45">{activeTask.description}</p>
+              <h2 className="text-sm font-medium text-token-primary truncate">{activeTask.title}</h2>
+              <p className="text-[11px] text-token-muted">{activeTask.description}</p>
             </div>
           </div>
 
@@ -407,7 +407,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={() => fileInputRef.current?.click()}
-                className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/70 inline-flex items-center gap-1.5"
+                className="fea-btn h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-secondary inline-flex items-center gap-1.5"
               >
                 <FileText className="w-3.5 h-3.5" />
                 上传文本
@@ -415,7 +415,7 @@ export function FrontEndAgentPage() {
               <button
                 type="button"
                 onClick={handleReset}
-                className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 text-xs text-white/55 inline-flex items-center gap-1.5"
+                className="fea-btn h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft text-xs text-token-secondary inline-flex items-center gap-1.5"
               >
                 <RefreshCw className="w-3.5 h-3.5" />
                 清空
@@ -454,8 +454,8 @@ export function FrontEndAgentPage() {
         <section className="fea-panel min-h-0 rounded-2xl border flex flex-col overflow-hidden fea-fade-up">
           <div className="fea-panel-header shrink-0 px-4 py-3 border-b flex items-center justify-between gap-3">
             <div className="min-w-0">
-              <h2 className="text-sm font-medium text-white">输出结果</h2>
-              <p className="text-[11px] text-white/45 truncate">
+              <h2 className="text-sm font-medium text-token-primary">输出结果</h2>
+              <p className="text-[11px] text-token-muted truncate">
                 {isStreaming ? '流式生成中' : output.trim() ? '可复制完整结果' : '等待生成'}
               </p>
             </div>
@@ -463,7 +463,7 @@ export function FrontEndAgentPage() {
               type="button"
               onClick={handleCopy}
               disabled={!output.trim()}
-              className="fea-btn h-8 px-3 rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 disabled:opacity-40 text-xs text-white/65 inline-flex items-center gap-1.5"
+              className="fea-btn h-8 px-3 rounded-lg border border-token-subtle bg-token-nested hover-bg-soft disabled:opacity-40 text-xs text-token-secondary inline-flex items-center gap-1.5"
             >
               <Clipboard className="w-3.5 h-3.5" />
               复制
@@ -479,8 +479,8 @@ export function FrontEndAgentPage() {
             ) : output.trim() ? (
               <div className="space-y-4">
                 {thinking.trim() && isStreaming && (
-                  <details className="rounded-xl border border-white/10 bg-white/[0.035] p-3 text-xs text-white/50">
-                    <summary className="cursor-pointer text-white/65">模型思考过程</summary>
+                  <details className="rounded-xl border border-token-subtle bg-token-card p-3 text-xs text-token-secondary">
+                    <summary className="cursor-pointer text-token-secondary">模型思考过程</summary>
                     <pre className="mt-2 whitespace-pre-wrap font-mono leading-5">{thinking}</pre>
                   </details>
                 )}
@@ -488,18 +488,18 @@ export function FrontEndAgentPage() {
                   text={output}
                   streaming={isStreaming}
                   mode="blur"
-                  className="font-mono text-sm leading-7 text-white/80 whitespace-pre-wrap break-words"
+                  className="font-mono text-sm leading-7 text-token-primary whitespace-pre-wrap break-words"
                 />
               </div>
             ) : isStreaming ? (
-              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-white/55">
+              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-token-secondary">
                 <MapSpinner size={30} />
                 <p className="mt-4 text-sm">{phaseMsg || 'AI 正在处理...'}</p>
               </div>
             ) : (
-              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center text-white/45 px-4">
-                <Code2 className="w-10 h-10 mb-3 text-white/20" />
-                <p className="text-sm text-white/65">选择任务类型并输入材料</p>
+              <div className="h-full min-h-[240px] flex flex-col items-center justify-center text-center text-token-muted px-4">
+                <Code2 className="w-10 h-10 mb-3 text-token-muted" />
+                <p className="text-sm text-token-secondary">选择任务类型并输入材料</p>
                 <p className="mt-2 text-xs max-w-sm">建议提供接口 JSON、代码片段、报错日志或截图现象，结果会更具体。</p>
               </div>
             )}

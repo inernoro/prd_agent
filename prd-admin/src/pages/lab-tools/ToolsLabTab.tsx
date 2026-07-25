@@ -82,12 +82,8 @@ export default function ToolsLabTab() {
             type="text"
             value={username}
             onChange={(e) => setUsername(e.target.value)}
-            className="flex-1 h-8 px-3 rounded-md text-sm"
-            style={{
-              background: 'rgba(255,255,255,0.06)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              color: 'var(--text-primary)',
-            }}
+            className="flex-1 h-8 px-3 rounded-md text-sm bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-primary)' }}
             placeholder="admin"
           />
           <Button

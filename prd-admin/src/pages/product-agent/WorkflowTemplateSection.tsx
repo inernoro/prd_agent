@@ -51,7 +51,7 @@ export function WorkflowTemplateSection() {
             key={e.value}
             type="button"
             onClick={() => setActiveTab(e.value)}
-            className={`px-2.5 py-1 rounded-md text-xs border ${activeTab === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+            className={`px-2.5 py-1 rounded-md text-xs border ${activeTab === e.value ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
           >
             {e.label}
           </button>
@@ -59,17 +59,17 @@ export function WorkflowTemplateSection() {
         <button
           type="button"
           onClick={() => setActiveTab('admins')}
-          className={`px-2.5 py-1 rounded-md text-xs border ${isAdminsTab ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-white/50 border-white/10 hover:bg-white/5'}`}
+          className={`px-2.5 py-1 rounded-md text-xs border ${isAdminsTab ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/40' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}
         >
           产品管理员
         </button>
         {!isAdminsTab && (
           <>
-            <div className="w-px h-6 bg-white/10" />
+            <div className="w-px h-6 bg-token-nested" />
             <select
               value={productScope}
               onChange={(e) => setProductScope(e.target.value)}
-              className="px-2 py-1.5 rounded-md text-xs bg-white/5 border border-white/10 text-white/70 outline-none"
+              className="px-2 py-1.5 rounded-md text-xs bg-token-nested border border-token-subtle text-token-secondary outline-none"
             >
               <option value="">全局默认（所有产品共用）</option>
               {products.map((p) => (
@@ -217,14 +217,14 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
 
   return (
     <div className="flex flex-col gap-4">
-      <p className="text-xs text-white/45 leading-relaxed">
+      <p className="text-xs text-token-muted leading-relaxed">
         工作流流转设置用于配置各状态间的先后流转关系。在矩阵中勾选即可启用流转；点击
         <Settings2 size={12} className="inline mx-0.5 -mt-px" />
         可设置授权角色与必填字段。
       </p>
 
       <div className="flex items-center gap-3 flex-wrap">
-        <h3 className="text-sm font-medium text-white/85">流转设置</h3>
+        <h3 className="text-sm font-medium text-token-primary">流转设置</h3>
         <button
           type="button"
           onClick={() => void save()}
@@ -234,25 +234,25 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
           {saving ? <MapSpinner size={14} /> : <Save size={14} />}
           更新
         </button>
-        {msg && <span className="text-xs text-white/50">{msg}</span>}
+        {msg && <span className="text-xs text-token-secondary">{msg}</span>}
       </div>
 
       {sortedStates.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-white/15 py-10 text-center text-sm text-white/40">
+        <div className="rounded-lg border border-dashed border-token-subtle py-10 text-center text-sm text-token-muted">
           还没有状态，请先展开下方「状态定义」添加状态。
         </div>
       ) : (
-        <div className="rounded-lg border border-white/10 bg-white/[0.02] overflow-x-auto">
+        <div className="rounded-lg border border-token-subtle bg-token-nested overflow-x-auto">
           <table className="w-full min-w-[640px] border-collapse text-xs">
             <thead>
-              <tr className="border-b border-white/10 bg-white/[0.03]">
-                <th className="sticky left-0 z-10 bg-[#16181d] px-3 py-2.5 text-left font-medium text-white/50 w-[148px] border-r border-white/10">
+              <tr className="border-b border-token-subtle bg-token-nested">
+                <th className="sticky left-0 z-10 bg-[#16181d] px-3 py-2.5 text-left font-medium text-token-secondary w-[148px] border-r border-token-subtle">
                   从 \ 到
                 </th>
                 {sortedStates.map((col) => (
                   <th
                     key={col.key}
-                    className="px-2 py-2.5 text-center font-medium text-white/70 min-w-[88px]"
+                    className="px-2 py-2.5 text-center font-medium text-token-secondary min-w-[88px]"
                     title={col.key}
                   >
                     <span className="inline-flex items-center gap-1.5 justify-center">
@@ -268,8 +268,8 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
             </thead>
             <tbody>
               {sortedStates.map((from) => (
-                <tr key={from.key} className="border-b border-white/5 last:border-0">
-                  <td className="sticky left-0 z-10 bg-[#14161b] px-3 py-2 text-white/55 border-r border-white/10 whitespace-nowrap">
+                <tr key={from.key} className="border-b border-token-subtle last:border-0">
+                  <td className="sticky left-0 z-10 bg-[#14161b] px-3 py-2 text-token-secondary border-r border-token-subtle whitespace-nowrap">
                     从【{from.label || from.key}】可流转到
                   </td>
                   {sortedStates.map((to) => {
@@ -279,7 +279,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                     return (
                       <td key={to.key} className="px-2 py-2 text-center align-middle">
                         {isSelf ? (
-                          <span className="inline-block w-4 h-4 rounded bg-white/[0.04]" title="不可自流转" />
+                          <span className="inline-block w-4 h-4 rounded bg-token-nested" title="不可自流转" />
                         ) : (
                           <div className="inline-flex items-center justify-center gap-1">
                             <input
@@ -311,26 +311,26 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
         </div>
       )}
 
-      <p className="text-[11px] text-white/35 flex items-center gap-1">
+      <p className="text-[11px] text-token-muted flex items-center gap-1">
         注：点击
         <Settings2 size={12} className="text-cyan-400/70" />
         图标，可以设置流转的附加字段及授权用户。
       </p>
 
-      <div className="rounded-lg border border-white/10 bg-white/[0.02]">
+      <div className="rounded-lg border border-token-subtle bg-token-nested">
         <button
           type="button"
           onClick={() => setStatesOpen((o) => !o)}
-          className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-white/70 hover:bg-white/[0.03]"
+          className="w-full flex items-center gap-2 px-3 py-2.5 text-sm text-token-secondary hover-bg-soft"
         >
           {statesOpen ? <ChevronDown size={16} /> : <ChevronRight size={16} />}
           状态定义
-          <span className="text-xs text-white/35">（{sortedStates.length} 个状态）</span>
+          <span className="text-xs text-token-muted">（{sortedStates.length} 个状态）</span>
         </button>
         {statesOpen && (
-          <div className="px-3 pb-3 pt-2 border-t border-white/5">
+          <div className="px-3 pb-3 pt-2 border-t border-token-subtle">
             {sortedStates.length === 0 ? (
-              <p className="text-xs text-white/35 py-2 text-center">还没有状态，点击下方添加。</p>
+              <p className="text-xs text-token-muted py-2 text-center">还没有状态，点击下方添加。</p>
             ) : (
               <div className="overflow-x-auto">
                 <table className="w-full min-w-[520px] table-fixed border-collapse text-xs">
@@ -343,7 +343,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                     <col style={{ width: 44 }} />
                   </colgroup>
                   <thead>
-                    <tr className="text-[11px] text-white/40 border-b border-white/8">
+                    <tr className="text-[11px] text-token-muted border-b border-token-subtle">
                       <th className="pb-2 font-medium text-left">颜色</th>
                       <th className="pb-2 font-medium text-left">状态名称</th>
                       <th className="pb-2 font-medium text-left">状态说明</th>
@@ -357,14 +357,14 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                       const idx = states.findIndex((x) => x.key === s.key);
                       const row = idx >= 0 ? idx : i;
                       return (
-                        <tr key={s.key} className="border-b border-white/5 last:border-0">
+                        <tr key={s.key} className="border-b border-token-subtle last:border-0">
                           <td className="py-1.5 pr-2 align-middle">
                             <input
                               type="color"
                               value={s.color ?? '#60A5FA'}
                               onChange={(e) => updateState(row, { color: e.target.value })}
                               title="状态颜色"
-                              className="w-8 h-8 rounded bg-transparent border border-white/10 cursor-pointer"
+                              className="w-8 h-8 rounded bg-transparent border border-token-subtle cursor-pointer"
                             />
                           </td>
                           <td className="py-1.5 pr-2 align-middle">
@@ -372,7 +372,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                               value={s.label}
                               onChange={(e) => updateState(row, { label: e.target.value })}
                               placeholder="如：待评审"
-                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
                             />
                           </td>
                           <td className="py-1.5 pr-2 align-middle">
@@ -380,7 +380,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                               value={s.description ?? ''}
                               onChange={(e) => updateState(row, { description: e.target.value })}
                               placeholder="简要说明该状态含义"
-                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-white/5 border border-white/10 text-sm text-white/80 outline-none focus:border-cyan-500/40"
+                              className="w-full min-w-0 px-2 py-1.5 rounded-md bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
                             />
                           </td>
                           <td className="py-1.5 align-middle text-center">
@@ -406,7 +406,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
                               type="button"
                               onClick={() => void confirmRemoveState(row)}
                               title="删除状态"
-                              className="text-white/30 hover:text-red-300 p-1"
+                              className="text-token-muted hover:text-red-300 p-1"
                             >
                               <Trash2 size={14} />
                             </button>
@@ -421,7 +421,7 @@ export function WorkflowEditor({ entityType, productId }: { entityType: ProductE
             <button
               type="button"
               onClick={addState}
-              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 text-sm"
+              className="mt-2 flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-token-subtle text-token-secondary hover-text-primary hover-bg-soft text-sm"
             >
               <Plus size={14} /> 添加状态
             </button>

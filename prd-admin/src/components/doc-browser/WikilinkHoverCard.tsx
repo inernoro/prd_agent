@@ -94,7 +94,7 @@ export function WikilinkHoverCard() {
       >
         <div style={{ color: 'rgba(255,156,77,0.95)', fontSize: 11, marginBottom: 6 }}>文档不存在</div>
         <div style={{ fontWeight: 600, marginBottom: 4 }}>「{hover.title}」</div>
-        <div style={{ color: 'rgba(255,255,255,0.55)', fontSize: 12, lineHeight: 1.6 }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
           这个标题在当前知识库找不到对应文档。点击不会跳转。
         </div>
       </div>
@@ -139,7 +139,7 @@ export function WikilinkHoverCard() {
         <div
           style={{
             fontSize: 12,
-            color: 'rgba(255,255,255,0.6)',
+            color: 'var(--text-secondary)',
             lineHeight: 1.55,
             display: '-webkit-box',
             WebkitLineClamp: 3,
@@ -150,7 +150,7 @@ export function WikilinkHoverCard() {
           {cached.summary}
         </div>
       )}
-      <div style={{ marginTop: 8, fontSize: 11, color: 'rgba(255,255,255,0.4)' }}>点击跳转 · 鼠标移开关闭</div>
+      <div style={{ marginTop: 8, fontSize: 11, color: 'var(--text-muted)' }}>点击跳转 · 鼠标移开关闭</div>
     </div>
   );
 }

@@ -24,7 +24,7 @@ function fmtTime(iso?: string | null) {
 }
 
 function AttemptBadge({ passed }: { passed?: boolean | null }) {
-  if (passed == null) return <span className="text-white/40">待定</span>;
+  if (passed == null) return <span className="text-token-muted">待定</span>;
   return passed
     ? <span className="text-emerald-300">通过</span>
     : <span className="text-rose-300">未通过</span>;
@@ -33,17 +33,17 @@ function AttemptBadge({ passed }: { passed?: boolean | null }) {
 function ReviewAttemptsSection({ attempts }: { attempts: InitiationReviewAttempt[] }) {
   const sorted = [...attempts].sort((a, b) => a.attemptNo - b.attemptNo);
   if (sorted.length === 0) {
-    return <p className="text-sm text-white/35">尚未执行 Agent 评审</p>;
+    return <p className="text-sm text-token-muted">尚未执行 Agent 评审</p>;
   }
   return (
     <div className="space-y-2">
       {sorted.map((a) => (
-        <div key={a.id} className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 text-sm">
+        <div key={a.id} className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-sm">
           <div className="flex flex-wrap items-center justify-between gap-2">
-            <span className="font-medium text-white/80">第 {a.attemptNo} 次评审</span>
+            <span className="font-medium text-token-primary">第 {a.attemptNo} 次评审</span>
             <AttemptBadge passed={a.reviewPassed} />
           </div>
-          <div className="mt-1 grid gap-1 text-xs text-white/45 sm:grid-cols-2">
+          <div className="mt-1 grid gap-1 text-xs text-token-muted sm:grid-cols-2">
             <span>方案文件：{a.planFileName || '—'}</span>
             <span>得分：{a.reviewScore != null ? `${a.reviewScore}/100` : '—'}</span>
             <span>开始：{fmtTime(a.startedAt)}</span>
@@ -59,10 +59,10 @@ function DimensionList({ scores }: { scores: ReviewDimensionScore[] }) {
   if (scores.length === 0) return null;
   return (
     <div className="mt-3 space-y-2">
-      <p className="text-xs font-medium text-white/45">分项评分（最近一次）</p>
+      <p className="text-xs font-medium text-token-muted">分项评分（最近一次）</p>
       {scores.map((dim) => (
-        <div key={dim.key} className="flex items-center justify-between rounded-lg border border-white/8 bg-white/[0.03] px-3 py-2 text-sm">
-          <span className="text-white/75">{dim.name}</span>
+        <div key={dim.key} className="flex items-center justify-between rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm">
+          <span className="text-token-secondary">{dim.name}</span>
           <span className="tabular-nums text-cyan-200">{dim.score}/{dim.maxScore}</span>
         </div>
       ))}
@@ -110,24 +110,24 @@ export function InitiationMeetingRoundsEditor({
 
   return (
     <div className="space-y-4">
-      <p className="text-xs text-white/40">
+      <p className="text-xs text-token-muted">
         预计评审会：{fmtTime(initiation.expectedMeetingAt)}
         {initiation.meetingDraftCount ? ` · 共 ${initiation.meetingDraftCount} 稿` : ''}
       </p>
       {rounds.map((r) => (
-        <div key={r.round} className="rounded-lg border border-white/10 bg-white/[0.02] p-3 space-y-2">
-          <div className="text-sm font-medium text-white/80">{meetingDraftLabel(r.round)}</div>
-          <label className="block text-xs text-white/45">
+        <div key={r.round} className="rounded-lg border border-token-subtle bg-token-nested p-3 space-y-2">
+          <div className="text-sm font-medium text-token-primary">{meetingDraftLabel(r.round)}</div>
+          <label className="block text-xs text-token-muted">
             会议时间
             <input
               type="datetime-local"
               disabled={!editable}
               value={toDatetimeLocalValue(r.heldAt)}
               onChange={(e) => updateRound(r.round, { heldAt: fromDatetimeLocalValue(e.target.value) ?? null })}
-              className="mt-1 w-full max-w-xs rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-sm text-white outline-none focus:border-cyan-400/50 disabled:opacity-50"
+              className="mt-1 w-full max-w-xs rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-400/50 disabled:opacity-50"
             />
           </label>
-          <label className="block text-xs text-white/45">
+          <label className="block text-xs text-token-muted">
             是否通过
             <select
               disabled={!editable}
@@ -136,14 +136,14 @@ export function InitiationMeetingRoundsEditor({
                 const v = e.target.value;
                 updateRound(r.round, { passed: v === '' ? null : v === 'yes' });
               }}
-              className="mt-1 w-full max-w-xs rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-sm text-white outline-none focus:border-cyan-400/50 disabled:opacity-50"
+              className="mt-1 w-full max-w-xs rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-400/50 disabled:opacity-50"
             >
               <option value="">待回填</option>
               <option value="yes">通过</option>
               <option value="no">未通过</option>
             </select>
           </label>
-          <label className="block text-xs text-white/45">
+          <label className="block text-xs text-token-muted">
             会议记录
             <textarea
               disabled={!editable}
@@ -151,7 +151,7 @@ export function InitiationMeetingRoundsEditor({
               onChange={(e) => updateRound(r.round, { notes: e.target.value })}
               rows={2}
               placeholder="纪要、决议、待办等（选填）"
-              className="mt-1 w-full rounded-lg border border-white/10 bg-black/20 px-2.5 py-1.5 text-sm text-white outline-none focus:border-cyan-400/50 disabled:opacity-50"
+              className="mt-1 w-full rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-400/50 disabled:opacity-50"
             />
           </label>
         </div>
@@ -213,7 +213,7 @@ export function InitiationWorkflowPanel({
     <div className="flex flex-col gap-4">
       <WorkflowDetailCard title="Agent 评审">
         {loadingReview && (
-          <div className="mb-2 flex items-center gap-2 text-xs text-white/40">
+          <div className="mb-2 flex items-center gap-2 text-xs text-token-muted">
             <Loader2 size={14} className="animate-spin" /> 正在加载评审详情…
           </div>
         )}
@@ -234,7 +234,7 @@ export function InitiationWorkflowPanel({
             onSaved={onInitiationChange}
           />
         ) : (
-          <p className="text-sm text-white/35">
+          <p className="text-sm text-token-muted">
             立项决策时选择「不需要开评审会」，无线下会议稿次需回填。
             {initiation.primaryOwnerId ? ' 已走负责人审批流程。' : ''}
           </p>

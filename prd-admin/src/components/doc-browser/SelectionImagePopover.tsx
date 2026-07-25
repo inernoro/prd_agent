@@ -62,7 +62,7 @@ export function SelectionImagePopover({
         </span>
         <button
           onClick={onClose}
-          className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors"
+          className="w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors"
           style={{ color: 'var(--text-muted)' }}
           title="关闭"
         >

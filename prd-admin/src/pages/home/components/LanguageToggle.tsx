@@ -12,7 +12,7 @@ export function LanguageToggle() {
 
   return (
     <div
-      className="inline-flex items-center p-[3px] rounded-full border border-white/15 bg-white/[0.04] backdrop-blur-md"
+      className="inline-flex items-center p-[3px] rounded-full border border-token-subtle bg-token-nested backdrop-blur-md"
       role="group"
       aria-label="Language"
     >
@@ -37,7 +37,7 @@ function ToggleButton({
       type="button"
       className="relative px-3 py-1 rounded-full text-[11.5px] font-medium transition-all duration-200"
       style={{
-        color: active ? '#fff' : 'rgba(255, 255, 255, 0.5)',
+        color: active ? '#fff' : 'var(--text-secondary)',
         background: active
           ? 'linear-gradient(135deg, rgba(168, 85, 247, 0.3), rgba(124, 58, 237, 0.15))'
           : 'transparent',

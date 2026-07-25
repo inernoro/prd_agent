@@ -290,7 +290,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
       <button
         key={value ?? '__all__'}
         onClick={() => setActiveCat(value)}
-        className={`px-2 py-0.5 rounded-md text-[11px] border ${on ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-white/45 border-white/10 hover:bg-white/5'}`}
+        className={`px-2 py-0.5 rounded-md text-[11px] border ${on ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-muted border-token-subtle hover-bg-soft'}`}
       >
         {label} <span className="opacity-60">{docCount(value)}</span>
       </button>
@@ -310,7 +310,7 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
             <button
               key={c}
               onClick={() => handleCreateInCategory(c)}
-              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] text-white/50 border border-dashed border-white/15 hover:bg-white/5 hover:text-cyan-300"
+              className="flex items-center gap-0.5 px-1.5 py-0.5 rounded text-[11px] text-token-secondary border border-dashed border-token-subtle hover-bg-soft hover:text-cyan-300"
               title={`快速新建 ${c} 文档`}
             >
               <FileText size={11} /> {c}
@@ -320,9 +320,9 @@ export function DocumentStoreBrowser({ storeId, canWrite, enableCategories, cate
       )}
       {canWrite && (
         <div className="flex flex-wrap items-center gap-1.5 pt-0.5">
-          <button onClick={promptCreateFolder} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><FolderPlus size={12} /> 新建文件夹</button>
-          <button onClick={() => setManagePanel('category')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><Layers size={12} /> 分类管理</button>
-          <button onClick={() => setManagePanel('tag')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/5"><Tags size={12} /> 标签管理</button>
+          <button onClick={promptCreateFolder} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-secondary border border-token-subtle hover-bg-soft"><FolderPlus size={12} /> 新建文件夹</button>
+          <button onClick={() => setManagePanel('category')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-secondary border border-token-subtle hover-bg-soft"><Layers size={12} /> 分类管理</button>
+          <button onClick={() => setManagePanel('tag')} className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] text-token-secondary border border-token-subtle hover-bg-soft"><Tags size={12} /> 标签管理</button>
         </div>
       )}
     </div>
@@ -432,15 +432,15 @@ function ListManagerDialog({
   const [editValue, setEditValue] = useState('');
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+      <div className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 440, maxWidth: '92vw', maxHeight: '80vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
+          <h2 className="text-sm font-semibold text-token-primary">{title}</h2>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>
         </div>
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
-          {items.length === 0 && <div className="text-[12px] text-white/35 text-center py-6">暂无{title.replace('管理', '')}</div>}
+          {items.length === 0 && <div className="text-[12px] text-token-muted text-center py-6">暂无{title.replace('管理', '')}</div>}
           {items.map((it) => (
-            <div key={it.name} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-white/[0.03] border border-white/5">
+            <div key={it.name} className="flex items-center gap-2 px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
               {editing === it.name ? (
                 <>
                   <input
@@ -448,30 +448,30 @@ function ListManagerDialog({
                     value={editValue}
                     onChange={(e) => setEditValue(e.target.value)}
                     onKeyDown={(e) => { if (e.key === 'Enter') { void onRename(it.name, editValue).then(() => setEditing(null)); } if (e.key === 'Escape') setEditing(null); }}
-                    className="flex-1 bg-white/5 border border-white/10 rounded px-2 py-1 text-sm text-white outline-none focus:border-cyan-500/40"
+                    className="flex-1 bg-token-nested border border-token-subtle rounded px-2 py-1 text-sm text-token-primary outline-none focus:border-cyan-500/40"
                   />
                   <button onClick={() => void onRename(it.name, editValue).then(() => setEditing(null))} className="text-[12px] text-cyan-300 hover:text-cyan-200 px-1.5">保存</button>
-                  <button onClick={() => setEditing(null)} className="text-[12px] text-white/40 hover:text-white px-1">取消</button>
+                  <button onClick={() => setEditing(null)} className="text-[12px] text-token-muted hover-text-primary px-1">取消</button>
                 </>
               ) : (
                 <>
-                  <span className="flex-1 text-sm text-white/85 truncate">{it.name}</span>
-                  <span className="text-[11px] text-white/35 shrink-0">{it.count} {countLabel}</span>
-                  <button onClick={() => { setEditing(it.name); setEditValue(it.name); }} className="text-white/40 hover:text-cyan-300 shrink-0" title="改名"><Pencil size={13} /></button>
-                  <button onClick={() => void onDelete(it.name)} className="text-white/40 hover:text-red-300 shrink-0" title="删除"><Trash2 size={13} /></button>
+                  <span className="flex-1 text-sm text-token-primary truncate">{it.name}</span>
+                  <span className="text-[11px] text-token-muted shrink-0">{it.count} {countLabel}</span>
+                  <button onClick={() => { setEditing(it.name); setEditValue(it.name); }} className="text-token-muted hover:text-cyan-300 shrink-0" title="改名"><Pencil size={13} /></button>
+                  <button onClick={() => void onDelete(it.name)} className="text-token-muted hover:text-red-300 shrink-0" title="删除"><Trash2 size={13} /></button>
                 </>
               )}
             </div>
           ))}
         </div>
         {onAdd && (
-          <div className="flex items-center gap-2 px-3 py-3 border-t border-white/10 shrink-0">
+          <div className="flex items-center gap-2 px-3 py-3 border-t border-token-subtle shrink-0">
             <input
               value={adding}
               onChange={(e) => setAdding(e.target.value)}
               onKeyDown={(e) => { if (e.key === 'Enter' && adding.trim()) { void onAdd(adding.trim()).then(() => setAdding('')); } }}
               placeholder={addPlaceholder}
-              className="flex-1 bg-white/5 border border-white/10 rounded-lg px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25"
+              className="flex-1 bg-token-nested border border-token-subtle rounded-lg px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted"
             />
             <button
               onClick={() => { if (adding.trim()) void onAdd(adding.trim()).then(() => setAdding('')); }}

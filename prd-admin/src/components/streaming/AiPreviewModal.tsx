@@ -97,19 +97,12 @@ export function AiPreviewModal({
       onClick={onCancel}
     >
       <div
-        className="flex flex-col rounded-xl border"
+        className="flex flex-col rounded-xl border border-token-subtle"
         onClick={(e) => e.stopPropagation()}
-        style={{
-          height: '80vh',
-          maxHeight: '80vh',
-          width: 'min(720px, 92vw)',
-          background: 'var(--bg-card, #1E1F20)',
-          borderColor: 'var(--border-subtle, rgba(255,255,255,0.1))',
-          color: 'var(--text-primary, #fff)',
-        }}
+        style={{ height: '80vh', maxHeight: '80vh', width: 'min(720px, 92vw)', background: 'var(--bg-card, #1E1F20)', color: 'var(--text-primary, #fff)' }}
       >
         {/* Header */}
-        <div className="shrink-0 flex items-start gap-3 px-5 py-4 border-b" style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.1))' }}>
+        <div className="shrink-0 flex items-start gap-3 px-5 py-4 border-b border-token-subtle" >
           <div className="flex-1 min-w-0">
             <div className="text-[15px] font-semibold flex items-center gap-2">
               {title}
@@ -134,7 +127,7 @@ export function AiPreviewModal({
           <button
             type="button"
             onClick={onCancel}
-            className="shrink-0 p-1 rounded hover:bg-white/5"
+            className="shrink-0 p-1 rounded hover-bg-soft"
             aria-label="关闭"
           >
             <X size={16} />
@@ -152,7 +145,7 @@ export function AiPreviewModal({
               <button
                 type="button"
                 onClick={() => setThinkingOpen((v) => !v)}
-                className="w-full flex items-center gap-2 px-3 py-2 text-[11px] hover:bg-white/[0.03] transition"
+                className="w-full flex items-center gap-2 px-3 py-2 text-[11px] hover-bg-soft/[0.03] transition"
                 style={{ color: 'rgba(196,138,255,0.85)' }}
               >
                 {thinkingOpen ? <ChevronDown size={12} /> : <ChevronRight size={12} />}
@@ -206,7 +199,7 @@ export function AiPreviewModal({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t" style={{ borderColor: 'var(--border-subtle, rgba(255,255,255,0.1))' }}>
+        <div className="shrink-0 flex items-center justify-end gap-2 px-5 py-3 border-t border-token-subtle" >
           <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
           <Button variant="ghost" size="sm" onClick={onRegenerate} disabled={streaming}>
             <RotateCw size={13} className="mr-1" />重新生成

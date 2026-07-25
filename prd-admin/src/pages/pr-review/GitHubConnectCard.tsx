@@ -30,7 +30,7 @@ export function GitHubConnectCard() {
 
   if (authLoading && !authStatus) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 flex items-center gap-3 text-white/60">
+      <div className="rounded-xl border border-token-subtle bg-token-nested p-5 flex items-center gap-3 text-token-secondary">
         <MapSpinner size={18} />
         检查 GitHub 连接状态...
       </div>
@@ -47,13 +47,13 @@ export function GitHubConnectCard() {
           <div className="font-semibold mb-1">尚未配置 GitHub OAuth App</div>
           <div className="text-amber-200/80 leading-relaxed">
             管理员需要先在 GitHub 创建 OAuth App，勾选{' '}
-            <code className="px-1 rounded bg-black/40">Enable Device Flow</code>，然后在宿主机（运行
+            <code className="px-1 rounded bg-token-nested">Enable Device Flow</code>，然后在宿主机（运行
             docker compose 的机器）设置环境变量{' '}
-            <code className="px-1 rounded bg-black/40">GitHubOAuth__ClientId</code>
-            （和可选 <code className="px-1 rounded bg-black/40">GitHubOAuth__ClientSecret</code>），
-            推荐写入项目根目录的 <code className="px-1 rounded bg-black/40">.env</code> 文件，
-            docker compose 会自动加载；或写入 <code className="px-1 rounded bg-black/40">.bashrc</code>
-            后重开终端，再执行 <code className="px-1 rounded bg-black/40">./exec_dep.sh</code>
+            <code className="px-1 rounded bg-token-nested">GitHubOAuth__ClientId</code>
+            （和可选 <code className="px-1 rounded bg-token-nested">GitHubOAuth__ClientSecret</code>），
+            推荐写入项目根目录的 <code className="px-1 rounded bg-token-nested">.env</code> 文件，
+            docker compose 会自动加载；或写入 <code className="px-1 rounded bg-token-nested">.bashrc</code>
+            后重开终端，再执行 <code className="px-1 rounded bg-token-nested">./exec_dep.sh</code>
             重启 api 容器使之生效。Device Flow 不需要 Callback URL，本地/CDS/生产共用一套配置。
           </div>
         </div>
@@ -68,16 +68,16 @@ export function GitHubConnectCard() {
           <img
             src={authStatus.avatarUrl}
             alt={authStatus.login}
-            className="w-10 h-10 rounded-full border border-white/20"
+            className="w-10 h-10 rounded-full border border-token-subtle"
           />
         ) : (
           <Github size={32} className="text-emerald-300" />
         )}
         <div className="flex-1 min-w-0">
-          <div className="text-sm text-white/60">已连接 GitHub 账号</div>
-          <div className="text-base font-semibold text-white truncate">{authStatus.login}</div>
+          <div className="text-sm text-token-secondary">已连接 GitHub 账号</div>
+          <div className="text-base font-semibold text-token-primary truncate">{authStatus.login}</div>
           {authStatus.scopes && (
-            <div className="text-xs text-white/40 mt-0.5">scopes: {authStatus.scopes}</div>
+            <div className="text-xs text-token-muted mt-0.5">scopes: {authStatus.scopes}</div>
           )}
         </div>
         <button
@@ -87,7 +87,7 @@ export function GitHubConnectCard() {
               void disconnectGitHub();
             }
           }}
-          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-white/70 hover:text-white hover:bg-white/10 transition"
+          className="flex items-center gap-2 px-3 py-2 rounded-lg text-sm text-token-secondary hover-text-primary hover-bg-soft transition"
         >
           <LogOut size={16} />
           断开
@@ -103,20 +103,20 @@ export function GitHubConnectCard() {
 
   // 初始：未连接，未开始 flow
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.03] p-5 flex items-center gap-4">
-      <div className="w-12 h-12 rounded-xl bg-white/10 flex items-center justify-center">
-        <Github size={24} className="text-white" />
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-5 flex items-center gap-4">
+      <div className="w-12 h-12 rounded-xl bg-token-nested flex items-center justify-center">
+        <Github size={24} className="text-token-primary" />
       </div>
       <div className="flex-1 min-w-0">
-        <div className="text-base font-semibold text-white">连接 GitHub 账号</div>
-        <div className="text-sm text-white/60 mt-0.5">
+        <div className="text-base font-semibold text-token-primary">连接 GitHub 账号</div>
+        <div className="text-sm text-token-secondary mt-0.5">
           授权后即可审查任意有访问权限的仓库 PR
         </div>
       </div>
       <button
         type="button"
         onClick={() => void startConnect()}
-        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-semibold hover:bg-white/90 transition"
+        className="flex items-center gap-2 px-4 py-2 rounded-lg bg-white text-black text-sm font-semibold hover-bg-soft transition"
       >
         <Github size={16} />
         连接 GitHub
@@ -173,10 +173,10 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
             <Github size={22} className="text-violet-300" />
           )}
           <div>
-            <div className="text-base font-semibold text-white">
+            <div className="text-base font-semibold text-token-primary">
               {isPolling ? '等待你在 GitHub 上授权...' : '授权中断'}
             </div>
-            <div className="text-xs text-white/50 mt-0.5">
+            <div className="text-xs text-token-secondary mt-0.5">
               GitHub Device Flow · 无需 callback URL
             </div>
           </div>
@@ -184,7 +184,7 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
         <button
           type="button"
           onClick={onCancel}
-          className="p-1.5 rounded hover:bg-white/10 text-white/50 hover:text-white transition"
+          className="p-1.5 rounded hover-bg-soft text-token-secondary hover-text-primary transition"
           aria-label="取消授权"
         >
           <X size={16} />
@@ -192,16 +192,16 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       </div>
 
       {/* User code */}
-      <div className="rounded-lg border border-white/10 bg-black/30 p-4">
-        <div className="text-xs text-white/50 mb-2">授权码（GitHub 页面需要输入）</div>
+      <div className="rounded-lg border border-token-subtle bg-token-nested p-4">
+        <div className="text-xs text-token-secondary mb-2">授权码（GitHub 页面需要输入）</div>
         <div className="flex items-center gap-3">
-          <div className="flex-1 font-mono text-2xl font-bold text-white tracking-[0.2em] text-center py-2 bg-white/5 rounded-lg">
+          <div className="flex-1 font-mono text-2xl font-bold text-token-primary tracking-[0.2em] text-center py-2 bg-token-nested rounded-lg">
             {deviceFlow.userCode}
           </div>
           <button
             type="button"
             onClick={() => void copyCode()}
-            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-white/10 text-white text-xs hover:bg-white/15 transition shrink-0"
+            className="flex items-center gap-1.5 px-3 py-2 rounded-lg bg-token-nested text-token-primary text-xs hover-bg-soft transition shrink-0"
           >
             {copied ? <CheckCircle2 size={14} className="text-emerald-300" /> : <Copy size={14} />}
             {copied ? '已复制' : '复制'}
@@ -213,7 +213,7 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       <button
         type="button"
         onClick={openVerification}
-        className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-white text-black font-semibold text-sm hover:bg-white/90 transition"
+        className="w-full flex items-center justify-center gap-2 px-4 py-3 rounded-lg bg-white text-black font-semibold text-sm hover-bg-soft transition"
       >
         <ExternalLink size={16} />
         打开 GitHub 授权页
@@ -222,11 +222,11 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       {/* 倒计时 + 进度条 */}
       {isPolling && (
         <div>
-          <div className="flex items-center justify-between text-xs text-white/50 mb-1.5">
+          <div className="flex items-center justify-between text-xs text-token-secondary mb-1.5">
             <span>剩余 {minutes}:{seconds.toString().padStart(2, '0')}</span>
             <span>每 {deviceFlow.intervalSeconds} 秒自动检测</span>
           </div>
-          <div className="h-1.5 bg-white/10 rounded-full overflow-hidden">
+          <div className="h-1.5 bg-token-nested rounded-full overflow-hidden">
             <div
               className="h-full bg-violet-400 transition-all duration-1000"
               style={{ width: `${progressPct}%` }}
@@ -253,7 +253,7 @@ function DeviceFlowProgress({ deviceFlow, onCancel }: DeviceFlowProgressProps) {
       )}
 
       {/* 引导文案 */}
-      <div className="text-xs text-white/40 leading-relaxed">
+      <div className="text-xs text-token-muted leading-relaxed">
         步骤：① 点击"打开 GitHub 授权页" → ② 确认页面上显示的授权码 → ③ 点 Authorize
         完成后本页面会自动进入已连接状态，无需手动刷新。
       </div>

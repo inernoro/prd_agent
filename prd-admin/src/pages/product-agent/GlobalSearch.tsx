@@ -48,26 +48,26 @@ export function GlobalSearch() {
 
   return (
     <div className="relative w-full max-w-md">
-      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-        <Search size={14} className="text-white/40 shrink-0" />
+      <div className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
+        <Search size={14} className="text-token-muted shrink-0" />
         <input
           value={kw}
           onChange={(e) => { setKw(e.target.value); setOpen(true); }}
           onFocus={() => setOpen(true)}
           placeholder="搜索产品 / 需求 / 功能 / 客户 / 缺陷"
-          className="bg-transparent text-sm text-white outline-none flex-1 min-w-0"
+          className="bg-transparent text-sm text-token-primary outline-none flex-1 min-w-0"
         />
-        {loading ? <MapSpinner size={13} /> : kw ? <X size={13} className="text-white/40 hover:text-white cursor-pointer shrink-0" onClick={() => { setKw(''); setRes(EMPTY); }} /> : null}
+        {loading ? <MapSpinner size={13} /> : kw ? <X size={13} className="text-token-muted hover-text-primary cursor-pointer shrink-0" onClick={() => { setKw(''); setRes(EMPTY); }} /> : null}
       </div>
 
       {open && kw.trim() && (
         <>
           <div className="fixed inset-0 z-20" onClick={() => setOpen(false)} />
-          <div className="absolute left-0 right-0 top-10 z-30 max-h-[60vh] overflow-y-auto rounded-xl border border-white/10 bg-[#1b1d22] shadow-2xl p-1.5" style={{ overscrollBehavior: 'contain' }}>
+          <div className="absolute left-0 right-0 top-10 z-30 max-h-[60vh] overflow-y-auto rounded-xl border border-token-subtle bg-[#1b1d22] shadow-2xl p-1.5" style={{ overscrollBehavior: 'contain' }}>
             {loading && total === 0 ? (
-              <div className="text-[11px] text-white/40 text-center py-4">搜索中…</div>
+              <div className="text-[11px] text-token-muted text-center py-4">搜索中…</div>
             ) : total === 0 ? (
-              <div className="text-[11px] text-white/30 text-center py-4">没有匹配的结果</div>
+              <div className="text-[11px] text-token-muted text-center py-4">没有匹配的结果</div>
             ) : (
               <>
                 <Group icon={Boxes} label="产品" items={res.products.map((p) => ({ key: p.id, no: p.no, text: p.name, onClick: () => go(`/product-agent/p/${p.id}`) }))} />
@@ -88,13 +88,13 @@ function Group({ icon: Icon, label, items }: { icon: typeof Boxes; label: string
   if (items.length === 0) return null;
   return (
     <div className="mb-1 last:mb-0">
-      <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-white/40">
+      <div className="flex items-center gap-1.5 px-2 py-1 text-[10px] text-token-muted">
         <Icon size={11} /> {label} · {items.length}
       </div>
       {items.map((it) => (
-        <button key={it.key} onClick={it.onClick} className="w-full text-left px-2.5 py-1.5 rounded-md hover:bg-white/5 flex items-center gap-2">
-          {it.no && <span className="text-[10px] font-mono text-white/35 shrink-0">{it.no}</span>}
-          <span className="text-sm text-white/85 truncate">{it.text}</span>
+        <button key={it.key} onClick={it.onClick} className="w-full text-left px-2.5 py-1.5 rounded-md hover-bg-soft flex items-center gap-2">
+          {it.no && <span className="text-[10px] font-mono text-token-muted shrink-0">{it.no}</span>}
+          <span className="text-sm text-token-primary truncate">{it.text}</span>
         </button>
       ))}
     </div>

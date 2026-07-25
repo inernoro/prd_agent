@@ -132,28 +132,28 @@ export function VersionWorkflowImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-white/15 bg-[#111319] shadow-2xl"
+        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
-            <div className="text-base font-semibold text-white">导入历史{KIND_LABEL[kind]}</div>
-            <div className="mt-1 text-xs text-white/45">
+            <div className="text-base font-semibold text-token-primary">导入历史{KIND_LABEL[kind]}</div>
+            <div className="mt-1 text-xs text-token-muted">
               Excel「应用」列映射到系统「产品」；匹配不到的行直接跳过，不会写入任何产品。
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">
             <X size={17} />
           </button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4" style={{ overscrollBehavior: 'contain' }}>
           <button
             onClick={() => inputRef.current?.click()}
-            className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]"
+            className="w-full rounded-xl border border-dashed border-token-subtle p-8 text-center hover-bg-soft"
           >
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 Excel 或 CSV 文件</div>
-            <div className="mt-1 text-xs text-white/35">
+            <div className="text-sm text-token-secondary">选择 Excel 或 CSV 文件</div>
+            <div className="mt-1 text-xs text-token-muted">
               {kind === 'release'
                 ? '需含「应用」「正式版本号 / V 号」与「产品立项方案名称」列'
                 : '需含「应用」「T 立项号 / 立项号」或「产品立项方案名称」列'}
@@ -169,11 +169,11 @@ export function VersionWorkflowImportDialog({
               if (file) void readFile(file);
             }}
           />
-          {fileName && <div className="mt-3 text-xs text-white/40">{fileName}</div>}
+          {fileName && <div className="mt-3 text-xs text-token-muted">{fileName}</div>}
           {rows.length > 0 && (
-            <div className="mt-4 overflow-auto rounded-lg border border-white/10">
+            <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45">
+                <thead className="bg-[#1a1c22] text-token-muted">
                   <tr>
                     <th className="px-3 py-2">行号</th>
                     <th className="px-3 py-2">应用</th>
@@ -184,31 +184,31 @@ export function VersionWorkflowImportDialog({
                 </thead>
                 <tbody>
                   {previewRows.map(({ row, appLabel, productName, matched }, index) => (
-                    <tr key={`${row.code ?? row.planName}-${index}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-white/35">{row.sourceRow}</td>
-                      <td className="px-3 py-2 text-white/75">{appLabel}</td>
-                      <td className={`px-3 py-2 ${matched ? 'text-emerald-200/90' : 'text-white/35'}`}>{productName}</td>
-                      <td className="px-3 py-2 font-mono text-white/75">{row.code || '-'}</td>
-                      <td className="px-3 py-2 text-white/75">{row.planName}</td>
+                    <tr key={`${row.code ?? row.planName}-${index}`} className="border-t border-token-subtle">
+                      <td className="px-3 py-2 text-token-muted">{row.sourceRow}</td>
+                      <td className="px-3 py-2 text-token-secondary">{appLabel}</td>
+                      <td className={`px-3 py-2 ${matched ? 'text-emerald-200/90' : 'text-token-muted'}`}>{productName}</td>
+                      <td className="px-3 py-2 font-mono text-token-secondary">{row.code || '-'}</td>
+                      <td className="px-3 py-2 text-token-secondary">{row.planName}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
               {skippedCount > 0 && (
-                <div className="border-t border-white/10 px-3 py-2 text-xs text-white/45">
+                <div className="border-t border-token-subtle px-3 py-2 text-xs text-token-muted">
                   共 {importableRows.length} 条可尝试导入，其中 {matchedCount} 条能匹配产品，{skippedCount} 条将跳过。
                 </div>
               )}
             </div>
           )}
-          {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
+          {message && <div className="mt-3 text-xs text-token-secondary">{message}</div>}
         </div>
-        <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
-          <div className="text-xs text-white/35">
+        <div className="flex shrink-0 items-center justify-between border-t border-token-subtle px-5 py-4">
+          <div className="text-xs text-token-muted">
             {matchedCount > 0 ? `将写入 ${matchedCount} 条（按「应用」匹配产品）` : '尚无匹配产品的行'}
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">
+            <button onClick={onClose} className="rounded-lg border border-token-subtle px-3.5 py-2 text-sm text-token-secondary hover-bg-soft hover-text-primary">
               取消
             </button>
             <button

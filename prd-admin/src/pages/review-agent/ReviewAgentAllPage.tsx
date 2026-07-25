@@ -106,7 +106,7 @@ export function ReviewAgentAllPage() {
           {/* 返回按钮 */}
           <button
             onClick={goBack}
-            className="flex items-center gap-1.5 text-sm text-white/40 hover:text-white/70 mb-5 transition-colors"
+            className="flex items-center gap-1.5 text-sm text-token-muted hover-text-primary mb-5 transition-colors"
           >
             <ArrowLeft className="w-4 h-4" />
             返回
@@ -117,15 +117,15 @@ export function ReviewAgentAllPage() {
               <ClipboardList className="w-4 h-4 text-indigo-400" />
             </div>
             <div>
-              <h1 className="text-lg font-semibold text-white">全部评审提交</h1>
-              <p className="text-xs text-white/40 mt-0.5">
+              <h1 className="text-lg font-semibold text-token-primary">全部评审提交</h1>
+              <p className="text-xs text-token-muted mt-0.5">
                 {view === 'list' ? `共 ${total} 条提交记录` : '按自然月维度查看排行'}
               </p>
             </div>
           </div>
 
           {/* 视图切换器 */}
-          <div className="flex gap-1 mb-5 border-b border-white/8 pb-3">
+          <div className="flex gap-1 mb-5 border-b border-token-subtle pb-3">
             {VIEW_TABS.map(tab => (
               <button
                 key={tab.key}
@@ -133,7 +133,7 @@ export function ReviewAgentAllPage() {
                 className={`flex items-center gap-1.5 text-xs px-3 py-1.5 rounded-lg border transition-colors ${
                   view === tab.key
                     ? 'bg-indigo-600 border-indigo-600 text-white'
-                    : 'bg-white/5 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20'
+                    : 'bg-token-nested border-token-subtle text-token-secondary hover-text-primary hover-border-token'
                 }`}
               >
                 {tab.icon}
@@ -148,13 +148,13 @@ export function ReviewAgentAllPage() {
             <>
               {/* 搜索框 */}
               <div className="relative mb-3">
-                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-white/30" />
+                <Search className="absolute left-3 top-1/2 -translate-y-1/2 w-4 h-4 text-token-muted" />
                 <input
                   type="text"
                   value={search}
                   onChange={e => setSearch(e.target.value)}
                   placeholder="搜索方案标题或提交人..."
-                  className="w-full bg-white/5 border border-white/10 rounded-lg pl-9 pr-4 py-2.5 text-sm text-white placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
+                  className="w-full bg-token-nested border border-token-subtle rounded-lg pl-9 pr-4 py-2.5 text-sm text-token-primary placeholder-white/30 focus:outline-none focus:border-indigo-500/50 transition-colors"
                 />
               </div>
 
@@ -167,7 +167,7 @@ export function ReviewAgentAllPage() {
                     className={`text-xs px-3 py-1.5 rounded-lg border transition-colors ${
                       statusFilter === tab.key
                         ? 'bg-indigo-600 border-indigo-600 text-white'
-                        : 'bg-white/5 border-white/10 text-white/50 hover:text-white/80 hover:border-white/20'
+                        : 'bg-token-nested border-token-subtle text-token-secondary hover-text-primary hover-border-token'
                     }`}
                   >
                     {tab.label}
@@ -184,7 +184,7 @@ export function ReviewAgentAllPage() {
                       className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                         !selectedSubmitterId
                           ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                          : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/70'
+                          : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
                       }`}
                     >
                       全部
@@ -196,7 +196,7 @@ export function ReviewAgentAllPage() {
                         className={`text-xs px-2.5 py-1 rounded-full border transition-colors ${
                           selectedSubmitterId === s.id
                             ? 'bg-indigo-500/20 border-indigo-500/40 text-indigo-300'
-                            : 'bg-white/5 border-white/10 text-white/50 hover:border-white/20 hover:text-white/70'
+                            : 'bg-token-nested border-token-subtle text-token-secondary hover-border-token hover-text-primary'
                         }`}
                       >
                         {s.name}
@@ -205,7 +205,7 @@ export function ReviewAgentAllPage() {
                     {hasMoreTags && (
                       <button
                         onClick={() => setTagsExpanded(v => !v)}
-                        className="text-xs px-2.5 py-1 rounded-full border border-white/10 text-white/30 hover:text-white/60 transition-colors flex items-center gap-0.5"
+                        className="text-xs px-2.5 py-1 rounded-full border border-token-subtle text-token-muted hover-text-primary transition-colors flex items-center gap-0.5"
                       >
                         {tagsExpanded ? <ChevronUp className="w-3 h-3" /> : <ChevronDown className="w-3 h-3" />}
                         {tagsExpanded ? '收起' : `+${submitters.length - TAG_COLLAPSED_COUNT} 人`}
@@ -219,7 +219,7 @@ export function ReviewAgentAllPage() {
               {loading ? (
                 <MapSectionLoader />
               ) : filtered.length === 0 ? (
-                <div className="text-center py-16 text-white/30 text-sm">暂无提交记录</div>
+                <div className="text-center py-16 text-token-muted text-sm">暂无提交记录</div>
               ) : (
                 <div className="space-y-2">
                   {filtered.map(item => {
@@ -228,13 +228,13 @@ export function ReviewAgentAllPage() {
                       <button
                         key={item.id}
                         onClick={() => navigate(`/review-agent/submissions/${item.id}`)}
-                        className="w-full flex items-center gap-4 bg-white/3 hover:bg-white/5 border border-white/8 rounded-lg px-5 py-4 text-left transition-colors"
+                        className="w-full flex items-center gap-4 bg-token-nested hover-bg-soft border border-token-subtle rounded-lg px-5 py-4 text-left transition-colors"
                       >
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-2 mb-1">
-                            <span className="text-sm font-medium text-white truncate">{item.title}</span>
+                            <span className="text-sm font-medium text-token-primary truncate">{item.title}</span>
                           </div>
-                          <div className="flex items-center gap-3 text-xs text-white/40">
+                          <div className="flex items-center gap-3 text-xs text-token-muted">
                             <span>{item.submitterName}</span>
                             <span>·</span>
                             <span>{item.fileName}</span>
@@ -274,17 +274,17 @@ export function ReviewAgentAllPage() {
                   <button
                     disabled={page <= 1}
                     onClick={() => setPage(p => p - 1)}
-                    className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+                    className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
                   >
-                    <ChevronLeft className="w-4 h-4 text-white/70" />
+                    <ChevronLeft className="w-4 h-4 text-token-secondary" />
                   </button>
-                  <span className="text-sm text-white/50">第 {page} / {totalPages} 页</span>
+                  <span className="text-sm text-token-secondary">第 {page} / {totalPages} 页</span>
                   <button
                     disabled={page >= totalPages}
                     onClick={() => setPage(p => p + 1)}
-                    className="p-2 rounded-lg bg-white/5 border border-white/10 disabled:opacity-30 hover:bg-white/10 transition-colors"
+                    className="p-2 rounded-lg bg-token-nested border border-token-subtle disabled:opacity-30 hover-bg-soft transition-colors"
                   >
-                    <ChevronRight className="w-4 h-4 text-white/70" />
+                    <ChevronRight className="w-4 h-4 text-token-secondary" />
                   </button>
                 </div>
               )}

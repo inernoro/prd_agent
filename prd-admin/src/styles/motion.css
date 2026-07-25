@@ -191,7 +191,7 @@
 
 .llm-json-scanBox.llm-json-scanBox--failed {
   border-color: rgba(239, 68, 68, 0.32) !important;
-  background: linear-gradient(180deg, rgba(239, 68, 68, 0.06) 0%, rgba(0,0,0,0.22) 42%) !important;
+  background: linear-gradient(180deg, rgba(239, 68, 68, 0.06) 0%, var(--nested-block-bg) 42%) !important;
 }
 
 .llm-json-scanBox.llm-json-scanBox--failed .prd-md {
@@ -200,7 +200,7 @@
 
 .llm-json-scanBox.llm-json-scanBox--passed {
   border-color: rgba(34, 197, 94, 0.30) !important;
-  background: linear-gradient(180deg, rgba(34, 197, 94, 0.05) 0%, rgba(0,0,0,0.22) 44%) !important;
+  background: linear-gradient(180deg, rgba(34, 197, 94, 0.05) 0%, var(--nested-block-bg) 44%) !important;
 }
 
 .llm-json-scanBox.llm-json-scanBox--passed .prd-md {
@@ -226,7 +226,7 @@
 .defect-md a:hover { opacity: 0.8; }
 .defect-md img { max-width: 100%; height: auto; border-radius: 8px; }
 .defect-md code { background: rgba(255,255,255,0.06); border-radius: 4px; padding: 1px 4px; font-size: 0.9em; overflow-wrap: anywhere; }
-.defect-md pre { background: rgba(0,0,0,0.25); border: 1px solid rgba(255,255,255,0.08); border-radius: 8px; padding: 10px; overflow: auto; margin: 0.5em 0; max-width: 100%; }
+.defect-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-subtle); border-radius: 8px; padding: 10px; overflow: auto; margin: 0.5em 0; max-width: 100%; }
 .defect-md pre code { background: transparent; border: 0; padding: 0; overflow-wrap: normal; word-break: normal; }
 .defect-md blockquote { border-left: 3px solid rgba(255,255,255,0.15); padding-left: 12px; margin: 0.5em 0; color: var(--text-muted); }
 .defect-md h1, .defect-md h2, .defect-md h3, .defect-md h4 { color: var(--text-primary); margin: 0.6em 0 0.3em; }

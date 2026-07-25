@@ -88,8 +88,8 @@ export default function LearningCenterPage() {
           <div className="flex flex-col gap-5 pb-6">
             {/* 掌握度 + 等级总览 */}
             <div
-              className="rounded-2xl p-5 flex items-center gap-5 flex-wrap"
-              style={{ background: 'var(--bg-card, #1E1F20)', border: '1px solid rgba(255,255,255,0.08)' }}
+              className="rounded-2xl p-5 flex items-center gap-5 flex-wrap border border-token-subtle"
+              style={{ background: 'var(--bg-card, #1E1F20)' }}
             >
               <MasteryRing pct={pct} complete={complete} />
               <div className="min-w-0 flex-1" style={{ minWidth: 220 }}>
@@ -106,8 +106,8 @@ export default function LearningCenterPage() {
 
               {/* 等级 / 经验:完成越多经验越多 */}
               <div
-                className="flex flex-col gap-2"
-                style={{ minWidth: 200, paddingLeft: 16, borderLeft: '1px solid rgba(255,255,255,0.08)' }}
+                className="flex flex-col gap-2 border-l border-l-token-subtle"
+                style={{ minWidth: 200, paddingLeft: 16 }}
               >
                 <div className="flex items-baseline gap-2">
                   <span
@@ -123,7 +123,7 @@ export default function LearningCenterPage() {
                   <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>{levelName}</span>
                   <span className="text-[11px] font-mono" style={{ color: 'var(--text-muted)' }}>经验 {xp}</span>
                 </div>
-                <div style={{ height: 8, borderRadius: 999, background: 'rgba(255,255,255,0.08)', overflow: 'hidden' }}>
+                <div className="bg-token-nested" style={{ height: 8, borderRadius: 999, overflow: 'hidden' }}>
                   <div
                     style={{
                       width: `${levelPct}%`, height: '100%', borderRadius: 999,
@@ -220,12 +220,8 @@ function TutorialCard({ item, onStart }: { item: TutorialProgressItem; onStart: 
   const diff = difficultyMeta(item.difficulty);
   return (
     <div
-      className="rounded-xl p-4 flex flex-col gap-2.5"
-      style={{
-        background: 'var(--bg-card, #1E1F20)',
-        border: '1px solid rgba(255,255,255,0.08)',
-        borderLeft: `3px solid ${item.learned ? 'rgba(52,211,153,0.85)' : 'rgba(167,139,250,0.95)'}`,
-      }}
+      className="rounded-xl p-4 flex flex-col gap-2.5 border border-token-subtle"
+      style={{ background: 'var(--bg-card, #1E1F20)', borderLeft: `3px solid ${item.learned ? 'rgba(52,211,153,0.85)' : 'rgba(167,139,250,0.95)'}` }}
     >
       <div className="flex items-start gap-2">
         <span className="text-[13.5px] font-semibold flex-1 min-w-0" style={{ color: 'var(--text-primary)', lineHeight: 1.4 }}>

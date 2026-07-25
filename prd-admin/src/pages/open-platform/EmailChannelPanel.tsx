@@ -230,16 +230,16 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
   if (loading) return <div className="h-full flex items-center justify-center"><MapSectionLoader /></div>;
 
   const emailDomain = settings?.imapUsername?.split('@')[1] || null;
-  const inputCls = "w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         <div className="grid grid-cols-12">
           {/* ============ 左栏：服务器配置 + 工作流 ============ */}
-          <div className="col-span-7 border-r border-white/10">
+          <div className="col-span-7 border-r border-token-subtle">
             {/* 服务器配置区 */}
-            <div className="p-5 space-y-5 border-b border-white/10">
+            <div className="p-5 space-y-5 border-b border-token-subtle">
               {/* IMAP */}
               <section>
                 <div className="flex items-center gap-2 mb-3">
@@ -278,7 +278,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                 </div>
               </section>
 
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
 
               {/* SMTP */}
               <section>
@@ -318,7 +318,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                 </div>
               </section>
 
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
 
               {/* 轮询设置 */}
               <section>
@@ -330,12 +330,12 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                   <div className="flex items-center gap-2">
                     <span className="text-xs text-muted-foreground">检查间隔</span>
                     <input type="number" value={form.pollIntervalMinutes} onChange={e => set('pollIntervalMinutes', +e.target.value || 5)}
-                      min={1} max={60} className="w-14 px-2 py-1 rounded bg-white/5 border border-white/10 text-sm text-center" />
+                      min={1} max={60} className="w-14 px-2 py-1 rounded bg-token-nested border border-token-subtle text-sm text-center" />
                     <span className="text-xs text-muted-foreground">分钟</span>
                   </div>
                   <button onClick={() => set('isEnabled', !form.isEnabled)}
                     className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                      form.isEnabled ? 'bg-green-500/20 border border-green-500/40 text-green-400' : 'bg-white/5 border border-white/10 hover:bg-white/10'
+                      form.isEnabled ? 'bg-green-500/20 border border-green-500/40 text-green-400' : 'bg-token-nested border border-token-subtle hover-bg-soft'
                     }`}>
                     <div className={`w-2 h-2 rounded-full ${form.isEnabled ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
                     {form.isEnabled ? '运行中' : '已停止'}
@@ -384,14 +384,14 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                         <Switch checked={wf.isActive} onCheckedChange={() => handleToggleWorkflow(wf.id)} ariaLabel="切换状态" />
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
-                            <button className="p-1 rounded hover:bg-white/10 text-muted-foreground"><MoreVertical size={14} /></button>
+                            <button className="p-1 rounded hover-bg-soft text-muted-foreground"><MoreVertical size={14} /></button>
                           </DropdownMenu.Trigger>
                           <DropdownMenu.Portal>
                             <DropdownMenu.Content align="end" sideOffset={4} className="z-50 rounded-lg p-1 min-w-[100px]"
                               style={{ ...glassDropdown }}>
-                              <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                              <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                                 onSelect={() => setEditingWorkflow(wf)}><Pencil size={12} />编辑</DropdownMenu.Item>
-                              <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                              <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft text-red-400"
                                 onSelect={() => handleDeleteWorkflow(wf.id, wf.displayName)}><Trash2 size={12} />删除</DropdownMenu.Item>
                             </DropdownMenu.Content>
                           </DropdownMenu.Portal>
@@ -407,21 +407,21 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
           {/* ============ 右栏：快速配置 + 状态 + 发件人白名单 ============ */}
           <div className="col-span-5">
             {/* 快速配置 + 状态区 */}
-            <div className="p-5 space-y-5 border-b border-white/10">
+            <div className="p-5 space-y-5 border-b border-token-subtle">
               {/* 快速配置 */}
               <section>
                 <div className="text-xs text-muted-foreground mb-2">快速填充</div>
                 <div className="flex flex-wrap gap-1.5">
                   {EMAIL_PROVIDERS.map(p => (
                     <button key={p.name} onClick={() => apply(p)}
-                      className="px-2.5 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 text-xs transition-all">
+                      className="px-2.5 py-1 rounded bg-token-nested hover-bg-soft border border-token-subtle text-xs transition-all">
                       {p.name}
                     </button>
                   ))}
                 </div>
               </section>
 
-              <div className="border-t border-white/10" />
+              <div className="border-t border-token-subtle" />
 
               {/* 测试结果 */}
               {testResult && (
@@ -430,7 +430,7 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                     {testResult.success ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
                     {testResult.message}
                   </div>
-                  <div className="border-t border-white/10" />
+                  <div className="border-t border-token-subtle" />
                 </>
               )}
 
@@ -443,15 +443,15 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                   </Badge>
                 </div>
                 <div className="grid grid-cols-3 gap-2 mb-3">
-                  <div className="text-center p-2 rounded bg-white/5">
+                  <div className="text-center p-2 rounded bg-token-nested">
                     <div className="text-lg font-semibold">{stats?.todayTaskCount ?? 0}</div>
                     <div className="text-[10px] text-muted-foreground">今日任务</div>
                   </div>
-                  <div className="text-center p-2 rounded bg-white/5">
+                  <div className="text-center p-2 rounded bg-token-nested">
                     <div className="text-lg font-semibold text-green-400">{stats?.successRate ?? 0}%</div>
                     <div className="text-[10px] text-muted-foreground">成功率</div>
                   </div>
-                  <div className="text-center p-2 rounded bg-white/5">
+                  <div className="text-center p-2 rounded bg-token-nested">
                     <div className="text-lg font-semibold">{stats?.processingCount ?? 0}</div>
                     <div className="text-[10px] text-muted-foreground">处理中</div>
                   </div>
@@ -501,14 +501,14 @@ export default function EmailChannelPanel({ onActionsReady }: EmailChannelPanelP
                       </div>
                       <DropdownMenu.Root>
                         <DropdownMenu.Trigger asChild>
-                          <button className="p-1 rounded hover:bg-white/10 text-muted-foreground"><MoreVertical size={14} /></button>
+                          <button className="p-1 rounded hover-bg-soft text-muted-foreground"><MoreVertical size={14} /></button>
                         </DropdownMenu.Trigger>
                         <DropdownMenu.Portal>
                           <DropdownMenu.Content align="end" sideOffset={4} className="z-50 rounded-lg p-1 min-w-[100px]"
                             style={{ ...glassDropdown }}>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                            <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                               onSelect={() => setEditingMapping(m)}><Pencil size={12} />编辑</DropdownMenu.Item>
-                            <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                            <DropdownMenu.Item className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft text-red-400"
                               onSelect={() => handleDeleteMapping(m.id, m.channelIdentifier)}><Trash2 size={12} />删除</DropdownMenu.Item>
                           </DropdownMenu.Content>
                         </DropdownMenu.Portal>
@@ -594,12 +594,12 @@ function WorkflowDialog({ open, onClose, onSubmit, mode, workflow, emailDomain, 
           <div>
             <label className="block text-sm font-medium mb-1">邮箱前缀 *</label>
             <input type="text" value={addressPrefix} onChange={(e) => setAddressPrefix(e.target.value.toLowerCase().replace(/[^a-z0-9-]/g, ''))}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none" placeholder="todo" disabled={mode === 'edit'} />
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none" placeholder="todo" disabled={mode === 'edit'} />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">名称 *</label>
             <input type="text" value={displayName} onChange={(e) => setDisplayName(e.target.value)}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none" placeholder="待办事项" />
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none" placeholder="待办事项" />
           </div>
           <div>
             <label className="block text-sm font-medium mb-1">绑定应用</label>
@@ -611,7 +611,7 @@ function WorkflowDialog({ open, onClose, onSubmit, mode, workflow, emailDomain, 
           <div>
             <label className="block text-sm font-medium mb-1">描述</label>
             <textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={2}
-              className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none resize-none" placeholder="可选" />
+              className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none resize-none" placeholder="可选" />
           </div>
           <div className="flex justify-end gap-2 pt-2">
             <Button variant="secondary" onClick={onClose}>取消</Button>
@@ -675,7 +675,7 @@ function MappingDialog({ open, onClose, onSubmit, mode, mapping }: {
             <div>
               <label className="block text-sm font-medium mb-1">邮箱地址 *</label>
               <input type="email" value={channelIdentifier} onChange={(e) => setChannelIdentifier(e.target.value)}
-                className="w-full px-3 py-2 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none" placeholder="user@example.com" />
+                className="w-full px-3 py-2 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none" placeholder="user@example.com" />
             </div>
           )}
           <div>

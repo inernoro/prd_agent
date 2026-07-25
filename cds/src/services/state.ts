@@ -4,7 +4,7 @@ import fs from 'node:fs';
 import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
-import type { StateBackingStore } from '../infra/state-store/backing-store.js';
+import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
 import { JsonStateBackingStore, MAX_STATE_BACKUPS as JSON_MAX_BACKUPS } from '../infra/state-store/json-backing-store.js';
 import { sealToken, unsealToken, isSealedSecret } from '../infra/secret-seal.js';
 import { pruneWebhookDeliveries, WEBHOOK_DELIVERY_GLOBAL_MAX } from './webhook-delivery-retention.js';
@@ -37,6 +37,14 @@ const PORT_ALLOC_STRIDE = 17;
 /** Max rolling backups of state.json kept on disk. Re-exported from the backing store so existing callers keep working. */
 const MAX_STATE_BACKUPS = JSON_MAX_BACKUPS;
 const SYSTEM_PROJECT_ID = '__system__';
+
+/**
+ * save() 脏范围 hint：global = projects/branches/deploymentRuns/
+ * deploymentVersions/selfUpdateHistory/webhookDeliveries/activityLogs 之外的
+ * 所有 root 字段（releaseRuns / serviceDeployments / scheduledJobs 等都属于它）。
+ * 只在「本方法确定只改了 global rest」的 mutator 上使用。
+ */
+const HINT_GLOBAL: StateSaveHint[] = [{ kind: 'global' }];
 
 /** 按「最新优先」裁剪一条分支的黑匣子列表：条数 ≤ MAX_ARCHIVES_PER_BRANCH 且累计字节 ≤ MAX_ARCHIVE_BYTES_PER_BRANCH。 */
 function trimArchiveList(list: ContainerLogArchiveEntry[]): ContainerLogArchiveEntry[] {
@@ -783,12 +791,16 @@ export class StateService {
    *
    * See doc/design.cds.resilience.md §5.
    */
-  save(): void {
+  save(hints?: StateSaveHint[]): void {
     // P3: delegate physical persistence to the backing store. The atomic
     // write + .bak.* rotation semantics that used to live inline now live
     // in JsonStateBackingStore.save(); swapping to MongoStateBackingStore
     // in P3 Part 2 keeps this code path untouched.
-    this.backingStore.save(this.state);
+    //
+    // hints（2026-07-21 增量快照）：mutator 确定本次只改了哪块 state 时传入，
+    // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
+    // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
+    this.backingStore.save(this.state, hints);
 
     // Notify listeners (this is *not* part of the backing store contract
     // because listeners are a StateService concern — they run after
@@ -857,7 +869,7 @@ export class StateService {
     this.state.scheduledJobRuns = this.state.scheduledJobRuns
       .sort((a, b) => Date.parse(b.queuedAt) - Date.parse(a.queuedAt))
       .slice(0, 1000);
-    this.save();
+    this.save(HINT_GLOBAL);
     return run;
   }
 
@@ -1207,7 +1219,11 @@ export class StateService {
     this.state.deploymentRuns[run.id] = run;
     branch.lastDeploymentRunId = run.id;
     this.pruneDeploymentRuns(run.projectId);
-    this.save();
+    // prune 只会删同 kind 的其他 run —— 删除检测靠 id 集，单实体 hint 足够覆盖。
+    this.save([
+      { kind: 'deploymentRuns', id: run.id },
+      { kind: 'branches', id: run.branchId },
+    ]);
     return run;
   }
 
@@ -1223,11 +1239,16 @@ export class StateService {
       .sort((a, b) => b.startedAt.localeCompare(a.startedAt));
   }
 
+  /**
+   * 部署 run 的事件 append / 状态迁移 / 心跳都走这里（DeploymentRunService），
+   * 是 mongo-split 存储层最高频的写路径。契约：mutate 回调**只允许**改这个
+   * run 自身 —— save 带的实体级 hint 依赖这一点做增量持久化。
+   */
   updateDeploymentRun(id: string, mutate: (run: DeploymentRun) => void): DeploymentRun {
     const run = this.state.deploymentRuns?.[id];
     if (!run) throw new Error(`DeploymentRun not found: ${id}`);
     mutate(run);
-    this.save();
+    this.save([{ kind: 'deploymentRuns', id }]);
     return run;
   }
 
@@ -1259,7 +1280,8 @@ export class StateService {
     }
     this.state.deploymentVersions[version.id] = version;
     this.pruneDeploymentVersions(version.projectId);
-    this.save();
+    // prune 的删除靠 id 集检测，单实体 hint 足够覆盖。
+    this.save([{ kind: 'deploymentVersions', id: version.id }]);
     return version;
   }
 
@@ -1942,7 +1964,7 @@ export class StateService {
   addServiceDeployment(deployment: ServiceDeployment): void {
     if (!this.state.serviceDeployments) this.state.serviceDeployments = {};
     this.state.serviceDeployments[deployment.id] = deployment;
-    this.save();
+    this.save(HINT_GLOBAL);
   }
 
   /**
@@ -1963,7 +1985,7 @@ export class StateService {
       phase: entry.phase,
     });
     dep.seq = (dep.seq || 0) + 1;
-    this.save();
+    this.save(HINT_GLOBAL);
     return dep;
   }
 
@@ -1973,7 +1995,7 @@ export class StateService {
     if (!dep) throw new Error(`ServiceDeployment not found: ${id}`);
     const merged = { ...dep, ...fields, id, logs: dep.logs };
     this.state.serviceDeployments[id] = merged;
-    this.save();
+    this.save(HINT_GLOBAL);
     return merged;
   }
 
@@ -2073,7 +2095,7 @@ export class StateService {
       agentIdentity: run.agentIdentity ?? context?.identity,
     };
     this.state.releaseRuns[run.releaseId] = enriched;
-    this.save();
+    this.save(HINT_GLOBAL);
     return enriched;
   }
 
@@ -2084,7 +2106,7 @@ export class StateService {
     const current = this.state.releaseRuns[id];
     const merged = { ...current, ...fields, releaseId: id, logs: current.logs };
     this.state.releaseRuns[id] = merged;
-    this.save();
+    this.save(HINT_GLOBAL);
     return merged;
   }
 
@@ -2105,7 +2127,9 @@ export class StateService {
       phase: entry.phase,
     });
     run.seq = nextSeq;
-    this.save();
+    // 发布日志逐行 append 是高频路径：releaseRuns 属 global rest，hint 让
+    // mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
+    this.save(HINT_GLOBAL);
     return run;
   }
 
@@ -3253,7 +3277,7 @@ export class StateService {
     while (list.length > StateService.AGENT_REQUEST_HISTORY_MAX) list.shift();
     this.state.agentRequestHistory = list;
     try {
-      this.save();
+      this.save(HINT_GLOBAL);
     } catch (err) {
       console.warn('[state] recordAgentRequest save failed:', (err as Error).message);
     }

@@ -51,6 +51,8 @@ import { shouldPruneDeletedBranchStartupResidue } from './services/startup-recon
 import { isPreviewInstance, PreviewInstanceShellExecutor } from './services/preview-instance.js';
 import { seedPreviewInstanceDemoData } from './services/preview-instance-seed.js';
 import { sweepOrphanCdsContainers, isOrphanReaperEnabled, computeCdsInstanceId } from './services/orphan-container-reaper.js';
+import { CheckRunRunner } from './services/check-run-runner.js';
+import { GitHubAppClient } from './services/github-app-client.js';
 
 (globalThis as unknown as { __CDS_PROCESS_STARTED_AT?: string }).__CDS_PROCESS_STARTED_AT = new Date().toISOString();
 import type { ServerEventLogSink, ServerEventSeverity } from './services/server-event-log-store.js';
@@ -260,6 +262,13 @@ function startStaleDeployDispatchReconciler(
   // stuck reconciler on executors too）。故不再对 executor 提前返回；webhook 派发部分用 mode 守卫。
   const isMaster = config.mode !== 'executor';
   let running = false;
+  // diffRuntimePaths 结果记忆化：ciTargetSha..githubCommitSha 是不可变提交对，
+  // 同一对的 git diff 结果永不变化。旧写法每个 5 分钟 tick 对每条分歧分支重跑
+  // execSync(git diff)（同步阻塞整个事件循环），多条 stale 分支叠加即一次冻结
+  // 数十秒的悬崖（2026-07-21 性能事故：/api/projects 排队 40s+）。命中缓存零成本；
+  // 只缓存成功计算的结果，git 失败（保守返回 false）不缓存以便下轮重试。
+  const runtimeDiffCache = new Map<string, boolean>();
+  const RUNTIME_DIFF_CACHE_MAX = 512;
   const run = () => {
     if (running) return;
     running = true;
@@ -318,16 +327,31 @@ function startStaleDeployDispatchReconciler(
         filterZombieProfiles: isMaster,
         diffRuntimePaths: (b) => {
           // ciTargetSha..githubCommitSha 这段提交是否含运行时改动（非纯文档）。
+          const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
+          const cacheKey = `${b.worktreePath}:${range}`;
+          const cached = runtimeDiffCache.get(cacheKey);
+          if (cached !== undefined) return cached;
           try {
-            const range = `${b.ciTargetSha}..${b.githubCommitSha}`;
-            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null || true`, {
+            // 不加 `|| true`:worktree 暂缺 / sha 未 fetch 等 git 失败必须以非零退出
+            // 抛进 catch 走「不缓存」路径。旧写法 `|| true` 会把失败洗成空输出成功,
+            // 被下面缓存成 false 后告警永久压制到进程重启(Codex P2, PR #1213)。
+            const out = execSync(`git -C ${JSON.stringify(b.worktreePath)} diff --name-only ${range} 2>/dev/null`, {
               encoding: 'utf-8',
             }).trim();
-            if (!out) return false;
-            const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
-            return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+            const result = out
+              ? (() => {
+                  const impact = analyzeChangeImpact(out.split('\n').filter(Boolean));
+                  return impact.needsRestart || impact.hotReloadablePaths.length > 0;
+                })()
+              : false;
+            if (runtimeDiffCache.size >= RUNTIME_DIFF_CACHE_MAX) {
+              const oldest = runtimeDiffCache.keys().next().value;
+              if (oldest !== undefined) runtimeDiffCache.delete(oldest);
+            }
+            runtimeDiffCache.set(cacheKey, result);
+            return result;
           } catch {
-            // 取不到 diff 证据 → 保守不告警（无根不喊）。
+            // 取不到 diff 证据 → 保守不告警（无根不喊）。不缓存，等下轮重试。
             return false;
           }
         },
@@ -3568,6 +3592,22 @@ const CI_WAIT_TIMEOUT_MS = (() => {
   const raw = Number(process.env.CDS_CI_WAIT_TIMEOUT_MS);
   return Number.isFinite(raw) && raw > 0 ? raw : 15 * 60 * 1000;
 })();
+// 2026-07-23: CI 等待超时也要写回 GitHub。极速版分支 push 后 CDS 只是在等项目
+// 自己的 CI 编镜像，从未进入部署路由（ensureOpen 不会跑），此前超时只写 CDS 内部
+// 的 ciImageError——GitHub 上该 commit 连 "CDS Deploy" 条目都没有，用户在 PR 上
+// 看到的是彻底静默。这里独立构造一个 CheckRunRunner（与 server.ts 内部实例互不
+// 干扰，GitHubAppClient 仅是 token 缓存的无状态封装），超时时补一个红灯。
+const ciWaitCheckRunRunner = config.githubApp
+  ? new CheckRunRunner({
+      stateService,
+      githubApp: new GitHubAppClient({
+        appId: config.githubApp.appId,
+        privateKey: config.githubApp.privateKey,
+        appSlug: config.githubApp.appSlug,
+      }),
+      config,
+    })
+  : undefined;
 function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
   const check = (): void => {
     try {
@@ -3628,6 +3668,25 @@ function startCiWaitWatchdog(): ReturnType<typeof setInterval> {
           },
         });
         console.warn(`[ci-wait-watchdog] ${b.id}: ${reason}`);
+        // 把 CI 等待超时写成 GitHub 红灯（fire-and-forget）。conclusion 用
+        // failure 而非 neutral：对 push 者而言这个 commit 的预览确实没起来。
+        //
+        // sha 锚定说明（Codex P2 权衡，PR #1235）：红灯**始终挂分支 HEAD**
+        // （entry.githubCommitSha），与 ensureOpen 及整个 check-run 生命周期同
+        // 口径。docs-only push 后 HEAD 与等待中的构建目标 ciTargetSha 可能不同
+        // ——但 GitHub PR Checks 面板只展示 HEAD commit 的检查，把红灯挂到旧的
+        // ciTargetSha 上等于让 PR 面板重新静默（本 PR 要治的病）；且分支预览在
+        // HEAD 上确实没起来，红灯语义成立。两个 sha 不同时在摘要里显式标注归属。
+        const ciWaitHeadShort = (b.githubCommitSha || '').slice(0, 7);
+        const ciWaitTargetShort = (b.ciTargetSha || '').slice(0, 7);
+        const ciWaitShaNote = ciWaitTargetShort && ciWaitHeadShort && ciWaitTargetShort !== ciWaitHeadShort
+          ? `\n\n本红灯挂在分支 HEAD ${ciWaitHeadShort}（GitHub PR Checks 面板只展示 HEAD 的检查）；等待超时的构建目标是代码 commit ${ciWaitTargetShort}，HEAD 为其后的 docs-only push。`
+          : '';
+        void ciWaitCheckRunRunner?.concludeWithoutDeploy(b, {
+          conclusion: 'failure',
+          title: 'CI image wait timed out',
+          summary: reason + ciWaitShaNote,
+        }).catch(() => { /* best-effort */ });
       }
     } catch { /* 自检不致命 */ }
   };

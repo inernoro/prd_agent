@@ -81,7 +81,7 @@ export function TranscriptKaraoke({
             </span>
             <button
               onClick={() => setInteractiveOpen(true)}
-              className="flex min-h-11 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+              className="flex min-h-11 items-center gap-1.5 rounded-[8px] px-3 text-[11px] font-semibold text-token-secondary transition-colors motion-reduce:transition-none hover-bg-soft"
             >
               <AudioLines size={14} />
               交互式播放

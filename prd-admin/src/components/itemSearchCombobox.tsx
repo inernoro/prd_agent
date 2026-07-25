@@ -38,7 +38,7 @@ export function matchItemSearchOption(option: ItemSearchOption, q: string) {
 export const itemComboboxPanelStyle: React.CSSProperties = {
   zIndex: 9999,
   background: 'var(--glass-bg-end, rgba(22, 22, 28, 0.98))',
-  border: '1px solid var(--glass-border, rgba(255, 255, 255, 0.14))',
+  border: '1px solid var(--border-subtle)',
   boxShadow: '0 18px 60px rgba(0,0,0,0.6), 0 0 0 1px rgba(255, 255, 255, 0.06) inset',
   backdropFilter: 'blur(40px) saturate(180%)',
   WebkitBackdropFilter: 'blur(40px) saturate(180%)',
@@ -47,7 +47,7 @@ export const itemComboboxPanelStyle: React.CSSProperties = {
 export function itemComboboxTriggerStyle(open: boolean, extra?: React.CSSProperties): React.CSSProperties {
   return {
     background: 'var(--bg-input)',
-    border: open ? '1px solid var(--accent-gold)' : '1px solid rgba(255,255,255,0.12)',
+    border: open ? '1px solid var(--accent-gold)' : '1px solid var(--border-subtle)',
     color: 'var(--text-primary)',
     ...extra,
   };
@@ -138,8 +138,8 @@ export function ItemComboboxChip({ label, title, locked, onRemove }: { label: st
     <span
       className="inline-flex items-center gap-1 px-2 py-0.5 rounded-full text-[11px] font-medium max-w-[160px]"
       style={{
-        background: locked ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.12)' : 'rgba(255,255,255,0.08)',
-        border: locked ? '1px solid rgba(var(--accent-gold-rgb, 212,175,55), 0.25)' : '1px solid rgba(255,255,255,0.12)',
+        background: locked ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.12)' : 'var(--nested-block-bg)',
+        border: locked ? '1px solid rgba(var(--accent-gold-rgb, 212,175,55), 0.25)' : '1px solid var(--border-subtle)',
         color: 'var(--text-primary)',
       }}
       title={title ?? label}
@@ -184,7 +184,7 @@ export function ItemComboboxSearchRow(props: {
 
 export function ItemComboboxPanelFooter({ left, right }: { left: ReactNode; right?: ReactNode }) {
   return (
-    <div className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between" style={{ color: 'var(--text-muted)', borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+    <div className="px-3 py-1.5 text-[10px] shrink-0 flex items-center justify-between border-t border-t-token-subtle" style={{ color: 'var(--text-muted)' }}>
       <span>{left}</span>
       {right}
     </div>
@@ -194,13 +194,13 @@ export function ItemComboboxPanelFooter({ left, right }: { left: ReactNode; righ
 export function ItemComboboxOptionRow({ selected, multiple, label, onSelect }: { selected: boolean; multiple?: boolean; label: string; onSelect: () => void }) {
   return (
     <div
-      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover:bg-white/8"
+      className="flex items-center gap-3 px-3 py-2.5 cursor-pointer transition-colors hover-bg-soft"
       style={selected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
       onMouseDown={(e) => e.preventDefault()}
       onClick={onSelect}
     >
       {multiple ? (
-        <div className="w-4 h-4 rounded shrink-0 flex items-center justify-center" style={{ border: selected ? '1.5px solid var(--accent-gold, #d4af37)' : '1.5px solid rgba(255,255,255,0.2)', background: selected ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.15)' : 'transparent' }}>
+        <div className="w-4 h-4 rounded shrink-0 flex items-center justify-center" style={{ border: selected ? '1.5px solid var(--accent-gold, #d4af37)' : '1.5px solid var(--border-subtle)', background: selected ? 'rgba(var(--accent-gold-rgb, 212,175,55), 0.15)' : 'transparent' }}>
           {selected && <Check size={10} style={{ color: 'var(--accent-gold)' }} />}
         </div>
       ) : null}

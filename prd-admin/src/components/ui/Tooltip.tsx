@@ -37,8 +37,8 @@ export function Tooltip({
 
   return (
     <TooltipPrimitive.Provider delayDuration={delayDuration}>
-      <TooltipPrimitive.Root 
-        open={openOnClick ? open : undefined} 
+      <TooltipPrimitive.Root
+        open={openOnClick ? open : undefined}
         onOpenChange={openOnClick ? setOpen : undefined}
       >
         <TooltipPrimitive.Trigger asChild>
@@ -54,7 +54,7 @@ export function Tooltip({
             className="rounded-[12px] px-3 py-2 text-xs"
             style={{
               ...glassTooltip,
-              color: 'rgba(255,255,255,0.95)',
+              color: 'var(--text-primary)',
               maxWidth: 240,
               userSelect: 'none',
               zIndex: 9999,

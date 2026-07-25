@@ -105,7 +105,7 @@ export function FrontEndScreenshotInput({
 
   return (
     <label className="block">
-      <span className="text-xs font-medium text-white/70">截图现象 / 设计稿差异描述</span>
+      <span className="text-xs font-medium text-token-secondary">截图现象 / 设计稿差异描述</span>
       <p className="mt-1 text-[11px] text-violet-200/55">
         支持 Ctrl+V 直接粘贴截图，也可上传图片；可叠加文字说明差异点。
       </p>
@@ -114,7 +114,7 @@ export function FrontEndScreenshotInput({
         onChange={(e) => onNotesChange(e.target.value)}
         onPaste={handlePaste}
         placeholder={placeholder}
-        className="mt-2 w-full min-h-[100px] rounded-xl border border-white/10 bg-black/20 px-3 py-2 text-sm text-white placeholder:text-white/25 outline-none focus:border-violet-300/35 transition-colors duration-200"
+        className="mt-2 w-full min-h-[100px] rounded-xl border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary placeholder:text-token-muted outline-none focus:border-violet-300/35 transition-colors duration-200"
       />
 
       {screenshots.length > 0 && (
@@ -122,7 +122,7 @@ export function FrontEndScreenshotInput({
           {screenshots.map((shot) => (
             <div
               key={shot.id}
-              className="relative rounded-xl border border-violet-400/20 bg-black/25 overflow-hidden group"
+              className="relative rounded-xl border border-violet-400/20 bg-token-nested overflow-hidden group"
             >
               <img
                 src={shot.dataUrl}
@@ -130,12 +130,12 @@ export function FrontEndScreenshotInput({
                 className="w-full h-28 object-cover object-top"
               />
               <div className="absolute inset-x-0 bottom-0 px-2 py-1 bg-gradient-to-t from-black/80 to-transparent">
-                <p className="text-[10px] text-white/70 truncate">{shot.name}</p>
+                <p className="text-[10px] text-token-secondary truncate">{shot.name}</p>
               </div>
               <button
                 type="button"
                 onClick={() => removeScreenshot(shot.id)}
-                className="fea-btn absolute top-1.5 right-1.5 h-6 w-6 rounded-md border border-white/15 bg-black/55 text-white/70 opacity-0 group-hover:opacity-100 hover:bg-black/75 inline-flex items-center justify-center transition-opacity duration-200"
+                className="fea-btn absolute top-1.5 right-1.5 h-6 w-6 rounded-md border border-token-subtle bg-black/55 text-white/70 opacity-0 group-hover:opacity-100 hover:bg-black/75 inline-flex items-center justify-center transition-opacity duration-200"
                 aria-label="移除截图"
               >
                 <X className="w-3.5 h-3.5" />

@@ -53,7 +53,7 @@ export function ItemSearchSelect({
         {clearOptionLabel && !q && (
           <>
             <ItemComboboxOptionRow selected={!value} label={clearOptionLabel} onSelect={() => { onChange(''); closePanel(); }} />
-            {filtered.length > 0 && <div className="mx-3 my-0.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }} />}
+            {filtered.length > 0 && <div className="mx-3 my-0.5 border-b border-token-subtle" />}
           </>
         )}
         {filtered.length === 0 ? (

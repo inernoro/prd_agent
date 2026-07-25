@@ -77,10 +77,10 @@ export function TipCard({
       : {
           background: targeted
             ? `linear-gradient(135deg, ${accent.replace(/,\s*0?\.\d+\)/, ', 0.14)')}, rgba(168,85,247,0.08))`
-            : 'linear-gradient(135deg, rgba(255,255,255,0.035), rgba(255,255,255,0.015))',
+            : 'linear-gradient(135deg, var(--nested-block-bg), var(--nested-block-bg))',
           border: targeted
             ? `1px solid ${accent.replace(/,\s*0?\.\d+\)/, ', 0.45)')}`
-            : '1px solid rgba(255,255,255,0.06)',
+            : '1px solid var(--border-subtle)',
           borderRadius: 14,
           padding: '13px 14px',
           position: 'relative',
@@ -114,7 +114,7 @@ export function TipCard({
               style={{
                 border: 'none',
                 background: 'transparent',
-                color: 'rgba(255,255,255,0.35)',
+                color: 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: 3,
                 display: 'inline-flex',
@@ -132,7 +132,7 @@ export function TipCard({
               style={{
                 border: 'none',
                 background: 'transparent',
-                color: 'rgba(255,255,255,0.35)',
+                color: 'var(--text-muted)',
                 cursor: 'pointer',
                 padding: 3,
                 display: 'inline-flex',
@@ -205,7 +205,7 @@ export function TipCard({
         <div
           style={{
             fontSize: 12,
-            color: 'rgba(255,255,255,0.66)',
+            color: 'var(--text-secondary)',
             lineHeight: 1.6,
             marginBottom: ctaText ? 10 : 0,
             whiteSpace: typeof body === 'string' ? 'pre-wrap' : undefined,

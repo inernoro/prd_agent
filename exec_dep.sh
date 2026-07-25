@@ -1269,7 +1269,7 @@ run_llmgw_release_gate_if_needed() {
   scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
 
   provider_audit_required=0
-  if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then
+  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$canary_stage" = "video-asr" ]; then
     provider_audit_required=1
   fi
   if [ "$provider_audit_required" = "1" ]; then
@@ -1290,6 +1290,8 @@ run_llmgw_release_gate_if_needed() {
     echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
     # shellcheck disable=SC2086
     python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
+  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline"
   fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
@@ -1317,7 +1319,11 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
   if [ "$maintenance_release" = "1" ]; then
-    args="--base $gate_base --min-total 0 --min-per-app 0"
+    # 维护发布已经通过 maintenance baseline 审计继承了完整 http-full
+    # shadow 证据。当前 serving API 要求 shadow-comparisons 必须显式带
+    # appCaller，因此不能再发起旧版的全局无 appCaller 查询。这里只跳过
+    # 已继承的 global cells；健康、commit、部署后 smoke 与公网门禁仍照常执行。
+    args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"
   else
     args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
   fi

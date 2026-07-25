@@ -174,7 +174,7 @@ export function InteractiveTranscriptDialog({
             {onRestyle && (
               <button
                 onClick={() => { onClose(); onRestyle(); }}
-                className="flex min-h-11 items-center gap-1.5 rounded-[10px] px-3 text-[12px] text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+                className="flex min-h-11 items-center gap-1.5 rounded-[10px] px-3 text-[12px] text-token-secondary transition-colors motion-reduce:transition-none hover-bg-soft"
                 title="使用系统中的其他整理方式重新生成"
               >
                 <RefreshCw size={14} />
@@ -184,7 +184,7 @@ export function InteractiveTranscriptDialog({
             <button
               ref={closeRef}
               onClick={onClose}
-              className="flex h-11 w-11 items-center justify-center rounded-[10px] text-token-secondary transition-colors motion-reduce:transition-none hover:bg-white/6"
+              className="flex h-11 w-11 items-center justify-center rounded-[10px] text-token-secondary transition-colors motion-reduce:transition-none hover-bg-soft"
               title="关闭交互式播放"
               aria-label="关闭交互式播放"
             >
@@ -285,8 +285,8 @@ export function InteractiveTranscriptDialog({
                       key={`${index}-${module.title}`}
                       className="w-full rounded-[14px] p-4 text-left transition-all duration-200 motion-reduce:transition-none"
                       style={{
-                        background: active ? 'rgba(59,130,246,0.10)' : 'var(--bg-nested)',
-                        border: active ? '1px solid rgba(96,165,250,0.30)' : '1px solid var(--border-faint)',
+                        background: active ? 'var(--selection-bg)' : 'var(--bg-nested)',
+                        border: active ? '1px solid var(--selection-border)' : '1px solid var(--border-faint)',
                         opacity: active ? 1 : 0.55,
                         transform: active ? 'scale(1.01)' : 'scale(1)',
                       }}

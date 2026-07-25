@@ -198,9 +198,9 @@ export function CcasQaTab({ meta: _meta }: Props) {
   const totalRefChars = referenceSelected.reduce((s, x) => s + x.approxChars, 0);
 
   return (
-    <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/20">
+    <div className="flex-1 min-h-0 flex flex-col rounded-lg border border-token-subtle bg-token-nested">
       {/* 顶部状态栏 */}
-      <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center gap-2 text-[11px] text-white/55">
+      <div className="shrink-0 px-4 py-2 border-b border-token-subtle flex items-center gap-2 text-[11px] text-token-secondary">
         <Sparkles className="w-3.5 h-3.5 text-amber-300/70" />
         <span>智能客服（基于知识库的严格 RAG）</span>
         <span className="opacity-40">·</span>
@@ -220,7 +220,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
 
       {/* 已挂载知识库条目折叠面板 */}
       {referenceSelected.length > 0 && (
-        <div className="shrink-0 px-4 py-2 border-b border-white/10 bg-amber-500/[0.04]">
+        <div className="shrink-0 px-4 py-2 border-b border-token-subtle bg-amber-500/[0.04]">
           <button
             type="button"
             onClick={() => setShowRefList((v) => !v)}
@@ -244,11 +244,11 @@ export function CcasQaTab({ meta: _meta }: Props) {
                     <span className="opacity-40 mx-1">/</span>
                     {s.kind === 'store' ? `整库：${s.title}` : s.title}
                   </span>
-                  <span className="text-white/45 shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
+                  <span className="text-token-muted shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
                   <button
                     type="button"
                     onClick={() => setReferenceSelected((arr) => arr.filter((x) => referenceKey(x) !== referenceKey(s)))}
-                    className="text-white/35 hover:text-white/70"
+                    className="text-token-muted hover-text-primary"
                     disabled={isStreaming}
                   >
                     <X className="w-3 h-3" />
@@ -278,8 +278,8 @@ export function CcasQaTab({ meta: _meta }: Props) {
       </div>
 
       {/* Composer */}
-      <div className="shrink-0 border-t border-white/10 bg-black/30 px-4 py-3">
-        <div className="rounded-xl border border-white/15 bg-black/40 focus-within:border-amber-400/50 transition">
+      <div className="shrink-0 border-t border-token-subtle bg-token-nested px-4 py-3">
+        <div className="rounded-xl border border-token-subtle bg-token-nested focus-within:border-amber-400/50 transition">
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
@@ -290,15 +290,15 @@ export function CcasQaTab({ meta: _meta }: Props) {
                 ? '请先点下方「引用知识库」挂载参考资料，再输入问题…（Cmd/Ctrl+Enter 发送）'
                 : '基于已挂载的知识库提问…（Cmd/Ctrl+Enter 发送）'
             }
-            className="w-full bg-transparent border-0 px-3 py-2.5 text-sm text-white placeholder:text-white/30 focus:outline-none resize-none"
+            className="w-full bg-transparent border-0 px-3 py-2.5 text-sm text-token-primary placeholder-token-muted focus:outline-none resize-none"
             disabled={isStreaming}
           />
-          <div className="flex items-center gap-2 px-2 py-2 border-t border-white/10">
+          <div className="flex items-center gap-2 px-2 py-2 border-t border-token-subtle">
             <button
               type="button"
               onClick={() => setPickerOpen(true)}
               disabled={isStreaming}
-              className="h-7 px-2 rounded-md border border-white/15 bg-white/5 hover:bg-white/10 text-[11px] text-white/80 inline-flex items-center gap-1 disabled:opacity-50"
+              className="h-7 px-2 rounded-md border border-token-subtle bg-token-nested hover-bg-soft text-[11px] text-token-primary inline-flex items-center gap-1 disabled:opacity-50"
               title="从知识库挑选参考条目"
             >
               <BookOpen className="w-3 h-3" />
@@ -312,7 +312,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
               className={`h-7 px-2 rounded-md border text-[11px] inline-flex items-center gap-1 transition disabled:opacity-50 ${
                 webSearch
                   ? 'border-emerald-400/40 bg-emerald-500/15 text-emerald-200'
-                  : 'border-white/15 bg-white/5 text-white/65 hover:bg-white/10'
+                  : 'border-token-subtle bg-token-nested text-token-secondary hover-bg-soft'
               }`}
               title={
                 webSearch
@@ -326,7 +326,7 @@ export function CcasQaTab({ meta: _meta }: Props) {
 
             <div className="flex-1" />
 
-            <span className="text-[10px] text-white/35">
+            <span className="text-[10px] text-token-muted">
               {webSearch ? '允许引用模型公开知识' : '严格知识库模式'}
             </span>
 
@@ -382,11 +382,11 @@ function Welcome({
       <div className="w-12 h-12 rounded-full bg-amber-500/10 border border-amber-400/25 flex items-center justify-center mb-4">
         <Sparkles className="w-6 h-6 text-amber-300" />
       </div>
-      <h2 className="text-lg font-semibold text-white mb-1.5">CCAS 智能客服</h2>
-      <p className="text-sm text-white/55 mb-1">
+      <h2 className="text-lg font-semibold text-token-primary mb-1.5">CCAS 智能客服</h2>
+      <p className="text-sm text-token-secondary mb-1">
         基于<span className="text-amber-300/85">米多内部知识库</span>的严格 RAG 问答。
       </p>
-      <p className="text-[12px] text-white/40 mb-6 leading-relaxed">
+      <p className="text-[12px] text-token-muted mb-6 leading-relaxed">
         默认只回答知识库覆盖到的内容；若想让 AI 在知识库不足时补充模型公开知识，请打开下方「联网」开关（不接入实时网页爬虫）。
       </p>
 
@@ -396,7 +396,7 @@ function Welcome({
             <BookOpen className="w-3.5 h-3.5" />
             <span className="font-medium">先挂载知识库</span>
           </div>
-          <p className="text-white/55">
+          <p className="text-token-secondary">
             请到「左侧导航 → 知识库」上传或选择资料，回到此处点击下方「引用知识库」挂载到对话上下文。
           </p>
           <Button onClick={onPickRef} variant="primary" className="!h-7 !px-3 !text-[11px] mt-2">
@@ -411,10 +411,10 @@ function Welcome({
             key={p.label}
             type="button"
             onClick={() => onPick(p.q)}
-            className="text-left rounded-lg border border-white/10 bg-white/5 hover:bg-white/10 hover:border-white/20 transition px-3 py-2.5"
+            className="text-left rounded-lg border border-token-subtle bg-token-nested hover-bg-soft hover-border-token transition px-3 py-2.5"
           >
-            <div className="text-[12px] text-white/85">{p.label}</div>
-            <div className="text-[10px] text-white/40 mt-0.5 truncate">{p.q}</div>
+            <div className="text-[12px] text-token-primary">{p.label}</div>
+            <div className="text-[10px] text-token-muted mt-0.5 truncate">{p.q}</div>
           </button>
         ))}
       </div>
@@ -430,7 +430,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
         className={`max-w-[85%] rounded-2xl px-4 py-2.5 ${
           isUser
             ? 'bg-amber-500/15 border border-amber-400/25 text-white/95'
-            : 'bg-white/[0.04] border border-white/10 text-white/90'
+            : 'bg-token-nested border border-token-subtle text-token-primary'
         }`}
       >
         {isUser ? (
@@ -444,7 +444,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             ) : msg.content ? (
               <MarkdownContent content={msg.content} variant="compact" />
             ) : (
-              <div className="text-sm text-white/45 inline-flex items-center gap-1.5">
+              <div className="text-sm text-token-muted inline-flex items-center gap-1.5">
                 <Loader2 className="w-3.5 h-3.5 animate-spin" />
                 正在思考…
               </div>
@@ -458,13 +458,13 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             )}
 
             {!msg.streaming && msg.references && msg.references.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-white/10">
-                <div className="text-[10px] text-white/40 mb-1">引用脚注（与回答中 [N] 对应）</div>
-                <ol className="text-[11px] text-white/70 space-y-0.5 list-decimal list-inside">
+              <div className="mt-3 pt-2 border-t border-token-subtle">
+                <div className="text-[10px] text-token-muted mb-1">引用脚注（与回答中 [N] 对应）</div>
+                <ol className="text-[11px] text-token-secondary space-y-0.5 list-decimal list-inside">
                   {msg.references.map((r) => (
                     <li key={r.entryId}>
-                      <span className="text-white/85">{r.title}</span>
-                      <span className="text-white/35 ml-1">~{Math.round(r.chars / 1000)}k 字</span>
+                      <span className="text-token-primary">{r.title}</span>
+                      <span className="text-token-muted ml-1">~{Math.round(r.chars / 1000)}k 字</span>
                     </li>
                   ))}
                 </ol>
@@ -472,7 +472,7 @@ function MessageBubble({ msg }: { msg: ChatMessage }) {
             )}
 
             {!msg.streaming && (msg.model?.name || msg.webSearchOn) && (
-              <div className="mt-1.5 text-[10px] text-white/35 font-mono flex items-center gap-2">
+              <div className="mt-1.5 text-[10px] text-token-muted font-mono flex items-center gap-2">
                 {msg.model?.name && (
                   <span>
                     ● {msg.model.name}

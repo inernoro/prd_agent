@@ -97,8 +97,8 @@ export function InlineCommentMargin({
         onClick={() => { if (!dim) onActivate(g.key, g.comments[0].selectedText); }}
         className="relative rounded-[11px] p-3 pl-3.5 transition-all cursor-pointer"
         style={{
-          background: isActive ? withAlpha(col, 0.1) : isHover ? 'rgba(255,255,255,0.045)' : 'rgba(255,255,255,0.03)',
-          border: `1px solid ${isActive ? withAlpha(col, 0.5) : 'rgba(255,255,255,0.06)'}`,
+          background: isActive ? withAlpha(col, 0.1) : isHover ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
+          border: `1px solid ${isActive ? withAlpha(col, 0.5) : 'var(--border-subtle)'}`,
           boxShadow: isActive ? `0 10px 26px -12px ${withAlpha(col, 0.5)}` : 'none',
           opacity: dim ? 0.7 : 1,
         }}
@@ -136,13 +136,13 @@ export function InlineCommentMargin({
         onMouseEnter={() => onHoverKey(g.key)}
         onMouseLeave={() => onHoverKey(null)}
         onClick={() => onActivate(g.key, first.selectedText)}
-        className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 cursor-pointer transition-colors"
-        style={{ background: hoveredKey === g.key ? 'rgba(255,255,255,0.05)' : 'rgba(255,255,255,0.025)', border: '1px solid rgba(255,255,255,0.06)' }}
+        className="flex items-center gap-2 rounded-[10px] px-2.5 py-2 cursor-pointer transition-colors border border-token-subtle"
+        style={{ background: hoveredKey === g.key ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)' }}
         title={first.selectedText}
       >
         <div style={{ width: 3, alignSelf: 'stretch', borderRadius: 3, background: col, flex: 'none' }} />
         <CommentAvatar name={first.authorDisplayName} avatar={first.authorAvatar} size={20} />
-        <span className="flex-1 min-w-0 truncate text-[11px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.7))' }}>{first.content}</span>
+        <span className="flex-1 min-w-0 truncate text-[11px]" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>{first.content}</span>
         {g.comments.length > 1 && <span className="text-[10px] font-bold flex-none" style={{ color: 'var(--text-muted)' }}>{g.comments.length}</span>}
       </div>
     );
@@ -154,17 +154,17 @@ export function InlineCommentMargin({
       style={{
         width,
         height: variant === 'sheet' ? '100%' : undefined,
-        borderLeft: variant === 'side' ? '1px solid rgba(255,255,255,0.05)' : undefined,
-        background: variant === 'sheet' ? 'rgba(24,24,30,0.96)' : 'rgba(255,255,255,0.012)',
+        borderLeft: variant === 'side' ? '1px solid var(--border-subtle)' : undefined,
+        background: variant === 'sheet' ? 'rgba(24,24,30,0.96)' : 'var(--nested-block-bg)',
       }}
     >
-      <div className="flex items-center justify-between px-3.5 py-3 flex-none" style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}>
+      <div className="flex items-center justify-between px-3.5 py-3 flex-none border-b border-b-token-subtle" >
         <div className="flex items-center gap-1.5 text-[11px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
           <MessageSquareText size={13} style={{ color: 'rgba(216,180,254,0.95)' }} />
           本页批注 · {total}
         </div>
         {onClose && (
-          <button onClick={onClose} className="w-6 h-6 rounded-[7px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors flex-none" style={{ color: 'var(--text-muted)' }} title="收起批注栏，显示章节导航">
+          <button onClick={onClose} className="w-6 h-6 rounded-[7px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors flex-none" style={{ color: 'var(--text-muted)' }} title="收起批注栏，显示章节导航">
             <PanelRightClose size={14} />
           </button>
         )}
@@ -173,9 +173,9 @@ export function InlineCommentMargin({
       <div ref={listRef} className="flex-1 min-h-0 overflow-y-auto p-3 space-y-3" style={{ overscrollBehavior: 'contain' }}>
         {total === 0 ? (
           <div className="px-3 py-10 text-center">
-            <MessageSquareText size={20} className="mx-auto mb-2" style={{ color: 'rgba(255,255,255,0.18)' }} />
+            <MessageSquareText size={20} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
             <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>还没有批注</p>
-            <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>在正文里选中一段文字即可批注</p>
+            <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>在正文里选中一段文字即可批注</p>
           </div>
         ) : (
           <>
@@ -194,7 +194,7 @@ export function InlineCommentMargin({
             )}
 
             {orphaned.length > 0 && (
-              <div className="pt-2 mt-1" style={{ borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
+              <div className="pt-2 mt-1" style={{ borderTop: '1px dashed var(--border-subtle)' }}>
                 <div className="flex items-center gap-1.5 mb-2 mt-2">
                   <AlertTriangle size={11} style={{ color: 'rgba(245,158,11,0.9)' }} />
                   <span className="text-[10px] font-semibold" style={{ color: 'rgba(245,158,11,0.9)' }}>

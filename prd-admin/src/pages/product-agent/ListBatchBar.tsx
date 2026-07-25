@@ -76,7 +76,7 @@ export function ListBatchBar({
             <button
               type="button"
               onClick={onExport}
-              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white/60 border border-white/10 hover:bg-white/5"
+              className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-token-secondary border border-token-subtle hover-bg-soft"
             >
               <Download size={12} /> {exportLabel}
             </button>
@@ -123,18 +123,18 @@ function GenericListBatchBar({
       {busy && <MapSpinner size={14} />}
       {onExport && (
         <>
-          <div className="w-px h-5 bg-white/15" />
+          <div className="w-px h-5 bg-token-card" />
           <button
             type="button"
             disabled={busy}
             onClick={onExport}
-            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white/70 border border-white/10 hover:bg-white/10 disabled:opacity-50"
+            className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-token-secondary border border-token-subtle hover-bg-soft disabled:opacity-50"
           >
             <Download size={12} /> {exportLabel}
           </button>
         </>
       )}
-      <div className="w-px h-5 bg-white/15" />
+      <div className="w-px h-5 bg-token-card" />
       <button
         type="button"
         disabled={busy}
@@ -146,7 +146,7 @@ function GenericListBatchBar({
       <button
         type="button"
         onClick={onClear}
-        className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white/50 hover:text-white hover:bg-white/5"
+        className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-xs text-token-secondary hover-text-primary hover-bg-soft"
       >
         <X size={12} /> 取消
       </button>
@@ -177,13 +177,13 @@ export function ExportOnlyBatchBar({
       <button
         type="button"
         onClick={onExport}
-        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white/70 border border-white/10 hover:bg-white/10"
+        className="flex items-center gap-1 px-2 py-1 rounded-md text-xs text-token-secondary border border-token-subtle hover-bg-soft"
       >
         <Download size={12} /> {exportLabel}
       </button>
       {onDelete && (
         <>
-          <div className="w-px h-5 bg-white/15" />
+          <div className="w-px h-5 bg-token-card" />
           <button
             type="button"
             onClick={() => void onDelete()}
@@ -196,7 +196,7 @@ export function ExportOnlyBatchBar({
       <button
         type="button"
         onClick={onClear}
-        className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-xs text-white/50 hover:text-white hover:bg-white/5"
+        className="ml-auto flex items-center gap-1 px-2 py-1 rounded-md text-xs text-token-secondary hover-text-primary hover-bg-soft"
       >
         <X size={12} /> 取消
       </button>

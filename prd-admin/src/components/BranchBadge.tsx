@@ -126,13 +126,7 @@ export function BranchBadge() {
       <span style={{ maxWidth: isMobile ? 'calc(100vw - 130px)' : 200, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
         {branch}
       </span>
-      <span style={{
-        fontSize: 10,
-        padding: '1px 5px',
-        borderRadius: 4,
-        background: 'rgba(255,255,255,0.15)',
-        marginLeft: 2,
-      }}>
+      <span className="bg-token-nested" style={{ fontSize: 10, padding: '1px 5px', borderRadius: 4, marginLeft: 2 }}>
         {deployMode ? '制品' : '源码'}
       </span>
       <button

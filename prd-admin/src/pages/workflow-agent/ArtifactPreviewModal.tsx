@@ -236,7 +236,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                 onClick={() => setViewMode(viewMode === 'preview' ? 'raw' : 'preview')}
                 className={cn(
                   'p-1.5 rounded-lg transition-colors',
-                  viewMode === 'preview' ? 'bg-token-nested text-token-secondary' : 'text-token-muted hover:bg-white/10'
+                  viewMode === 'preview' ? 'bg-token-nested text-token-secondary' : 'text-token-muted hover-bg-soft'
                 )}
                 title={viewMode === 'preview'
                   ? (hasTableView ? '切换为源码' : '查看源码')
@@ -252,7 +252,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             {/* 复制 */}
             <button
               onClick={handleCopy}
-              className={cn('p-1.5 rounded-lg transition-colors hover:bg-white/10', copied ? 'text-token-success' : 'text-token-muted')}
+              className={cn('p-1.5 rounded-lg transition-colors hover-bg-soft', copied ? 'text-token-success' : 'text-token-muted')}
               title="复制内容"
             >
               {copied ? <Check className="w-4 h-4" /> : <Copy className="w-4 h-4" />}
@@ -262,7 +262,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
               <div className="relative">
                 <button
                   onClick={() => setDownloadMenuOpen(!downloadMenuOpen)}
-                  className="text-token-muted p-1.5 rounded-lg transition-colors flex items-center gap-0.5 hover:bg-white/10"
+                  className="text-token-muted p-1.5 rounded-lg transition-colors flex items-center gap-0.5 hover-bg-soft"
                   title="下载文件"
                 >
                   <Download className="w-4 h-4" />
@@ -280,7 +280,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                         <button
                           key={item.label}
                           onClick={() => { item.onClick(); setDownloadMenuOpen(false); }}
-                          className="w-full px-3 py-1.5 text-left flex items-center justify-between transition-colors hover:bg-white/5"
+                          className="w-full px-3 py-1.5 text-left flex items-center justify-between transition-colors hover-bg-soft"
                         >
                           <span className="text-token-primary text-[12px]">{item.label}</span>
                           <span className="text-token-muted text-[10px]">{item.desc}</span>
@@ -293,7 +293,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             ) : (
               <button
                 onClick={handleDownloadDefault}
-                className="text-token-muted p-1.5 rounded-lg transition-colors hover:bg-white/10"
+                className="text-token-muted p-1.5 rounded-lg transition-colors hover-bg-soft"
                 title="下载文件"
               >
                 <Download className="w-4 h-4" />
@@ -302,7 +302,7 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
             {/* 关闭 */}
             <button
               onClick={onClose}
-              className="text-token-muted p-1.5 rounded-lg transition-colors hover:bg-white/10"
+              className="text-token-muted p-1.5 rounded-lg transition-colors hover-bg-soft"
             >
               <X className="w-4 h-4" />
             </button>
@@ -381,8 +381,8 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                   <iframe
                     srcDoc={content}
                     sandbox=""
-                    className="w-full h-full rounded-xl"
-                    style={{ border: '1px solid rgba(255,255,255,0.08)', background: 'transparent' }}
+                    className="w-full h-full rounded-xl border border-token-subtle"
+                    style={{ background: 'transparent' }}
                     title={artifact.name}
                   />
                 </div>
@@ -393,8 +393,8 @@ export function ArtifactPreviewModal({ artifact, onClose }: ArtifactPreviewModal
                 <iframe
                   srcDoc={content}
                   sandbox=""
-                  className="w-full rounded-xl"
-                  style={{ height: '360px', border: '1px solid rgba(255,255,255,0.08)', background: 'transparent' }}
+                  className="w-full rounded-xl border border-token-subtle"
+                  style={{ height: '360px', background: 'transparent' }}
                   title={`${artifact.name} preview`}
                 />
               )}

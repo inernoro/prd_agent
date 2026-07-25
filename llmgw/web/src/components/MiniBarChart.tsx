@@ -1,45 +1,50 @@
 // 极简柱状图（纯 DOM，不引 echarts；保持 mini-app 依赖最小）。
+import { useState } from 'react';
 import type { TimeseriesPoint } from '@/lib/types';
 
 export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; height?: number }) {
+  const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const max = Math.max(1, ...data.map((d) => d.count));
+  const labelStep = Math.max(1, Math.ceil(Math.max(0, data.length - 1) / 5));
+  const lastIndex = data.length - 1;
+  const activePoint = activeIndex == null ? null : data[activeIndex];
   return (
-    <div style={{ height, display: 'flex', alignItems: 'flex-end', gap: 3, padding: '8px 4px 22px', position: 'relative' }}>
-      {data.length === 0 ? (
-        <div
-          style={{
-            position: 'absolute',
-            inset: 0,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: 'var(--text-muted)',
-            fontSize: 12,
-          }}
-        >
-          暂无数据
+    <div className="lg-mini-bar-chart" style={{ height }} onPointerLeave={() => setActiveIndex(null)}>
+      {activePoint ? (
+        <div className="lg-mini-bar-tooltip" role="status">
+          <strong>{activePoint.date}</strong>
+          <span><i aria-hidden="true" />请求 {activePoint.count}</span>
         </div>
+      ) : null}
+      {data.length === 0 ? (
+        <div className="lg-mini-bar-empty">暂无数据</div>
       ) : (
         data.map((d, i) => {
-          const h = Math.max(2, (d.count / max) * (height - 34));
+          const ratio = Math.max(0.04, d.count / max);
+          const showLabel = i === lastIndex
+            || (i % labelStep === 0 && lastIndex - i >= Math.max(2, Math.ceil(labelStep * 0.65)));
           return (
-            <div
-              key={i}
-              title={`${d.date} · ${d.count} 次`}
-              style={{ flex: 1, display: 'flex', flexDirection: 'column', alignItems: 'center', gap: 4, minWidth: 0 }}
+            <button
+              key={`${d.date}-${i}`}
+              className={`lg-mini-bar-item${activeIndex === i ? ' is-active' : ''}`}
+              type="button"
+              aria-label={`${d.date}，请求 ${d.count}`}
+              onPointerEnter={() => setActiveIndex(i)}
+              onFocus={() => setActiveIndex(i)}
+              onBlur={() => setActiveIndex(null)}
+              onClick={() => setActiveIndex(i)}
             >
-              <div
-                style={{
-                  width: '100%',
-                  maxWidth: 22,
-                  height: h,
-                  background: 'var(--accent)',
-                  opacity: 0.85,
-                  borderRadius: '3px 3px 0 0',
-                }}
+              <span
+                className="lg-mini-bar-value"
+                style={{ height: `${ratio * 100}%` }}
               />
-              <span style={{ fontSize: 9, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{d.date.slice(5)}</span>
-            </div>
+              <small
+                aria-hidden={!showLabel}
+                style={{ visibility: showLabel ? 'visible' : 'hidden' }}
+              >
+                {d.date.slice(5)}
+              </small>
+            </button>
           );
         })
       )}

@@ -344,8 +344,8 @@ export function ToolRunner() {
                     ].map(([label, value]) => (
                       <div
                         key={label}
-                        className="min-h-[54px] rounded-md px-3 py-2"
-                        style={{ background: 'rgba(0,0,0,0.16)', border: '1px solid rgba(255,255,255,0.08)' }}
+                        className="min-h-[54px] rounded-md px-3 py-2 border border-token-subtle"
+                        style={{ background: 'var(--nested-block-bg)' }}
                       >
                         <div className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>{label}</div>
                         <div className="mt-1 break-all text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>{value}</div>
@@ -408,8 +408,8 @@ export function ToolRunner() {
                       {recentEvents.map((event) => (
                         <div
                           key={event.seq}
-                          className="rounded-md px-3 py-2"
-                          style={{ background: 'rgba(0,0,0,0.12)', border: '1px solid rgba(255,255,255,0.07)' }}
+                          className="rounded-md px-3 py-2 border border-token-subtle"
+                          style={{ background: 'rgba(0,0,0,0.12)' }}
                         >
                           <div className="flex items-start justify-between gap-3">
                             <div className="min-w-0 text-xs leading-relaxed" style={{ color: 'var(--text-primary)' }}>{eventTitle(event)}</div>

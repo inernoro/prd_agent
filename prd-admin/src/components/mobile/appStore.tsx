@@ -563,7 +563,7 @@ function FeaturedSlide({ item, isActive, aspect = '3 / 4' }: { item: FeaturedIte
             style={{
               fontSize: 14,
               fontWeight: 400,
-              color: 'rgba(255,255,255,0.82)',
+              color: 'var(--text-primary)',
               textShadow: '0 1px 4px rgba(0,0,0,0.5)',
               marginTop: 2,
             }}
@@ -594,7 +594,7 @@ function FeaturedSlide({ item, isActive, aspect = '3 / 4' }: { item: FeaturedIte
           </div>
           <div
             className="truncate"
-            style={{ ...AS_TYPE.itemSubtitle, color: 'rgba(255,255,255,0.78)' }}
+            style={{ ...AS_TYPE.itemSubtitle, color: 'var(--text-secondary)' }}
           >
             {item.footer.tagline}
           </div>

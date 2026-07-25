@@ -85,7 +85,7 @@ export function UpdateCenterNewsTeaser() {
         </span>
         <span
           className="text-[12px] truncate"
-          style={{ color: 'rgba(255,255,255,0.94)', textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
+          style={{ color: 'var(--text-primary)', textShadow: '0 1px 3px rgba(0,0,0,0.95)' }}
         >
           {current.title}
         </span>

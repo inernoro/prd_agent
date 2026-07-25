@@ -206,10 +206,10 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               style={{ background: '#000' }}
             />
           ) : isActive ? (
-            <div className="flex flex-col items-center gap-4 text-white/80 px-6 text-center">
+            <div className="flex flex-col items-center gap-4 text-token-primary px-6 text-center">
               <MapSpinner size={32} />
               <div className="text-base font-medium">{progressText}</div>
-              <div className="w-64 h-1.5 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.08)' }}>
+              <div className="w-64 h-1.5 rounded-full overflow-hidden bg-token-nested" >
                 <div
                   className="h-full transition-all duration-500"
                   style={{
@@ -218,16 +218,16 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
                   }}
                 />
               </div>
-              <div className="text-xs text-white/40">
+              <div className="text-xs text-token-muted">
                 任务 ID：{currentRun?.id.slice(0, 12)}…
                 {currentRun?.directVideoJobId && <> · 上游任务：{currentRun.directVideoJobId.slice(0, 10)}…</>}
               </div>
             </div>
           ) : isFailed ? (
-            <div className="flex flex-col items-center gap-3 text-white/70 px-6 text-center max-w-[640px]">
+            <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center max-w-[640px]">
               <AlertCircle size={32} className="text-rose-400" />
               <div className="text-base font-medium">生成失败</div>
-              <div className="text-xs text-white/50 whitespace-pre-wrap">
+              <div className="text-xs text-token-secondary whitespace-pre-wrap">
                 {currentRun?.errorMessage || '未知错误'}
               </div>
               {currentRun?.errorCode === 'OPENROUTER_NOT_CONFIGURED' && (
@@ -237,9 +237,9 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
               )}
             </div>
           ) : (
-            <div className="flex flex-col items-center gap-3 text-white/50 px-6 text-center">
+            <div className="flex flex-col items-center gap-3 text-token-secondary px-6 text-center">
               <Wand2 size={36} />
-              <div className="text-base font-medium text-white/80">AI 视频直出</div>
+              <div className="text-base font-medium text-token-primary">AI 视频直出</div>
               <div className="text-xs max-w-[420px]">
                 描述你想要的画面，Seedance / Wan / Veo / Sora 等视频大模型会在几分钟内生成 MP4 片段。
               </div>
@@ -247,7 +247,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           )}
 
           {/* 角标 */}
-          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] text-white/40 font-mono px-2 py-1 rounded-md" style={{ background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(8px)' }}>
+          <div className="absolute top-3 left-3 flex items-center gap-1.5 text-[10px] text-token-muted font-mono px-2 py-1 rounded-md" style={{ background: 'rgba(0,0,0,0.3)', backdropFilter: 'blur(8px)' }}>
             <span className="w-1.5 h-1.5 rounded-full" style={{ background: isActive ? '#ec4899' : (isCompleted ? '#22c55e' : '#64748b') }} />
             {isActive ? '生成中' : isCompleted ? '已完成' : isFailed ? '失败' : '待机'}
           </div>
@@ -458,7 +458,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
           </div>
 
           {/* 费用 + 提示 */}
-          <div className="text-[11px] text-white/40 flex items-center gap-3 flex-wrap">
+          <div className="text-[11px] text-token-muted flex items-center gap-3 flex-wrap">
             <span className="inline-flex items-center gap-1"><Clock size={11} /> 视频生成通常需要 1-3 分钟，离开页面也会继续执行</span>
             {currentRun?.directVideoCost != null && (
               <span>本次费用：${currentRun.directVideoCost.toFixed(3)}</span>
@@ -501,7 +501,7 @@ export const VideoGenDirectPanel: React.FC<VideoGenDirectPanelProps> = ({ extern
 
         {/* 完成后的播放器信息 */}
         {isCompleted && currentRun?.videoAssetUrl && (
-          <div className="text-[11px] text-white/40 text-center flex items-center justify-center gap-2">
+          <div className="text-[11px] text-token-muted text-center flex items-center justify-center gap-2">
             <Play size={12} /> 视频已保存到项目资产，可继续下载或复用
           </div>
         )}

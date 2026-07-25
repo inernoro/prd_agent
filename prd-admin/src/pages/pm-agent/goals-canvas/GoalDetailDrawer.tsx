@@ -438,7 +438,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
                   const st = TASK_STATUS_REGISTRY[t.status];
                   return (
                     <button key={t.id} onClick={() => { onNavigateTask?.(t.id); onClose(); }} disabled={!onNavigateTask}
-                      className="flex items-center gap-2 text-[12px] text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5"
+                      className="flex items-center gap-2 text-[12px] text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover-bg-soft"
                       style={{ color: 'var(--text-secondary)' }} title={onNavigateTask ? '点击跳转到任务' : t.title}>
                       <span className="w-1.5 h-1.5 rounded-full shrink-0" style={{ background: st.color }} />
                       <span className="truncate flex-1">{t.title}</span>
@@ -454,7 +454,7 @@ export function GoalDetailDrawer({ projectId, goal, allGoals, businessGoal, crea
                   <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>暂无周报关联本目标。在「周报」里勾选关联目标。</div>
                 ) : mentionReports.map((w) => (
                   <button key={w.id} onClick={() => { onNavigateWeekly?.(w.id); onClose(); }} disabled={!onNavigateWeekly}
-                    className="text-[12px] truncate text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover:bg-white/5"
+                    className="text-[12px] truncate text-left rounded px-1 -mx-1 disabled:cursor-default enabled:hover-bg-soft"
                     style={{ color: 'var(--text-secondary)' }} title={onNavigateWeekly ? '点击跳转到周报' : w.title}>· {w.title}</button>
                 ))}
               </div>

@@ -309,26 +309,19 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
       onClick={onClose}
     >
       <div
-        className="rounded-[14px] flex flex-col w-full"
-        style={{
-          height: '80vh',
-          maxHeight: '80vh',
-          maxWidth: '880px',
-          background: 'var(--bg-elevated)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
-        }}
+        className="rounded-[14px] flex flex-col w-full border border-token-subtle"
+        style={{ height: '80vh', maxHeight: '80vh', maxWidth: '880px', background: 'var(--bg-elevated)', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
-          className="shrink-0 flex items-center justify-between px-5 h-[52px]"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+          className="shrink-0 flex items-center justify-between px-5 h-[52px] border-b border-b-token-subtle"
+
         >
-          <span className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+          <span className="text-[15px] font-semibold text-token-primary">
             团队空间管理
           </span>
-          <button type="button" onClick={onClose} style={{ color: 'var(--text-muted)' }}>
+          <button type="button" onClick={onClose} className="text-token-muted">
             <X size={18} />
           </button>
         </div>
@@ -336,14 +329,14 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
         <div className="flex-1 min-h-0 flex">
           {/* 左：团队列表 */}
           <div
-            className="w-[240px] shrink-0 flex flex-col"
-            style={{ borderRight: '1px solid rgba(255,255,255,0.08)' }}
+            className="w-[240px] shrink-0 flex flex-col border-r border-r-token-subtle"
+
           >
             <div className="flex-1 min-h-0 overflow-auto py-2" style={{ overscrollBehavior: 'contain' }}>
               {loadingTeams ? (
                 <MapSectionLoader text="加载团队空间…" />
               ) : teams.length === 0 ? (
-                <div className="px-4 py-6 text-[12px] text-center" style={{ color: 'var(--text-muted)' }}>
+                <div className="px-4 py-6 text-[12px] text-center text-token-muted">
                   还没有团队空间，新建或加入
                 </div>
               ) : (
@@ -351,15 +344,15 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                   <button
                     key={t.team.id}
                     type="button"
-                    className="w-full text-left px-4 py-2.5 text-[13px] flex items-center justify-between hover:bg-white/5"
+                    className="w-full text-left px-4 py-2.5 text-[13px] flex items-center justify-between hover-bg-soft"
                     style={{
                       color: 'var(--text-primary)',
-                      background: t.team.id === selectedId ? 'rgba(255,255,255,0.06)' : 'transparent',
+                      background: t.team.id === selectedId ? 'var(--nested-block-bg)' : 'transparent',
                     }}
                     onClick={() => setSelectedId(t.team.id)}
                   >
                     <span className="truncate">{t.team.name}</span>
-                    <span className="text-[11px] shrink-0 ml-2" style={{ color: 'var(--text-muted)' }}>
+                    <span className="text-[11px] shrink-0 ml-2 text-token-muted">
                       {t.memberCount}
                     </span>
                   </button>
@@ -368,7 +361,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
             </div>
 
             {/* 新建 */}
-            <div className="shrink-0 p-3" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="shrink-0 p-3 border-t border-t-token-subtle" >
               {creating ? (
                 <div className="space-y-1.5">
                   <input
@@ -376,15 +369,15 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                     value={newTeamName}
                     onChange={(e) => setNewTeamName(e.target.value)}
                     placeholder="团队空间名称"
-                    className="w-full h-8 px-2 rounded-[8px] text-[13px] outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    className="w-full h-8 px-2 rounded-[8px] text-[13px] outline-none border border-token-subtle"
+                    style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                     onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
                   />
                   <div className="flex gap-1.5">
                     <button type="button" className="flex-1 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>
                       创建
                     </button>
-                    <button type="button" className="px-2 h-8 rounded-[8px] text-[12px]" style={{ color: 'var(--text-muted)' }} onClick={() => setCreating(false)}>
+                    <button type="button" className="px-2 h-8 rounded-[8px] text-[12px] text-token-muted" onClick={() => setCreating(false)}>
                       取消
                     </button>
                   </div>
@@ -392,8 +385,8 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
               ) : (
                 <button
                   type="button"
-                  className="w-full h-8 rounded-[8px] text-[12px] flex items-center justify-center gap-1.5"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  className="w-full h-8 rounded-[8px] text-[12px] flex items-center justify-center gap-1.5 border border-token-subtle"
+                  style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                   onClick={() => setCreating(true)}
                 >
                   <Plus size={13} /> 新建团队空间
@@ -405,7 +398,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
           {/* 右：团队详情 */}
           <div className="flex-1 min-h-0 flex flex-col">
             {!selectedId || !team ? (
-              <div className="flex-1 flex items-center justify-center text-[13px]" style={{ color: 'var(--text-muted)' }}>
+              <div className="flex-1 flex items-center justify-center text-[13px] text-token-muted">
                 选择左侧团队空间查看详情
               </div>
             ) : loadingDetail ? (
@@ -413,13 +406,13 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
             ) : (
               <>
                 {/* Tabs */}
-                <div className="shrink-0 flex items-center gap-1 px-4 h-[44px]" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+                <div className="shrink-0 flex items-center gap-1 px-4 h-[44px] border-b border-b-token-subtle" >
                   {(['members', 'invite', 'activity'] as Tab[]).map((tk) => (
                     <button
                       key={tk}
                       type="button"
                       className="px-3 h-8 rounded-[8px] text-[13px]"
-                      style={tab === tk ? { background: 'rgba(255,255,255,0.08)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}
+                      style={tab === tk ? { background: 'var(--nested-block-bg)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}
                       onClick={() => setTab(tk)}
                     >
                       {tk === 'members' ? '成员' : tk === 'invite' ? '添加成员' : '活动日志'}
@@ -427,7 +420,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                   ))}
                   <div className="ml-auto flex items-center gap-1">
                     {canLeave && (
-                      <button type="button" className="px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }} onClick={handleLeave}>
+                      <button type="button" className="px-2.5 h-8 rounded-[8px] text-[12px] flex items-center gap-1 text-token-muted" onClick={handleLeave}>
                         <LogOut size={12} /> 退出
                       </button>
                     )}
@@ -446,7 +439,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                         <div key={m.userId} className="flex items-center gap-3 py-1.5">
                           <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-8 h-8 rounded-full" />
                           <div className="flex-1 min-w-0">
-                            <div className="text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>
+                            <div className="text-[13px] truncate text-token-primary">
                               {m.userName ?? m.userId}
                               {m.userId === team.ownerUserId && (
                                 <span className="ml-1.5 text-[10px] px-1 py-px rounded" style={{ background: 'rgba(212,175,55,0.15)', color: 'var(--accent-gold)' }}>创建者</span>
@@ -479,17 +472,16 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                                   key={label}
                                   onDoubleClick={() => { if (isAdmin) setLabelEdit({ userId: m.userId, oldLabel: label, value: label }); }}
                                   title={isAdmin ? '双击重命名标签' : undefined}
-                                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full"
-                                  style={{ background: 'rgba(255,255,255,0.06)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)', cursor: isAdmin ? 'default' : undefined }}
+                                  className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full bg-token-nested border border-token-subtle"
+                                  style={{ color: 'var(--text-muted)', cursor: isAdmin ? 'default' : undefined }}
                                 >
                                   {label}
                                   {isAdmin && (
                                     <button
                                       type="button"
                                       title="移除标签"
-                                      className="cursor-pointer p-1 -m-1 opacity-70 hover:opacity-100"
+                                      className="cursor-pointer p-1 -m-1 opacity-70 hover:opacity-100 text-token-muted"
                                       onClick={() => void handleRemoveLabel(m, label)}
-                                      style={{ color: 'var(--text-muted)' }}
                                     >
                                       <X size={10} />
                                     </button>
@@ -523,7 +515,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                                     type="button"
                                     title="添加角色标签（如「前端组」），分组权限可按标签批量授权"
                                     className="inline-flex items-center gap-0.5 text-[10px] px-1.5 py-px rounded-full"
-                                    style={{ border: '1px dashed rgba(255,255,255,0.2)', color: 'var(--text-muted)' }}
+                                    style={{ border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}
                                     onClick={() => setLabelInput({ userId: m.userId, value: '' })}
                                   >
                                     <Plus size={9} /> 标签
@@ -537,8 +529,8 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                               value={webHostingRoles[m.userId] ?? 'editor'}
                               onChange={(e) => handleWebHostingRoleChange(m.userId, e.target.value as WebHostingRole)}
                               title="网页托管权限"
-                              className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
-                              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                              className="h-7 px-2 rounded-[6px] text-[12px] outline-none border border-token-subtle"
+                              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                             >
                               {WEB_HOSTING_ROLE_OPTIONS.map((r) => (
                                 <option key={r} value={r}>
@@ -548,9 +540,9 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                             </select>
                           ) : (
                             <span
-                              className="text-[11px] px-1.5 py-0.5 rounded"
+                              className="text-[11px] px-1.5 py-0.5 rounded bg-token-nested"
                               title={WEB_HOSTING_ROLE_HINT[webHostingRoles[m.userId] ?? (m.userId === team.ownerUserId ? 'owner' : 'editor')]}
-                              style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}
+                              style={{ color: 'var(--text-muted)' }}
                             >
                               网页·{WEB_HOSTING_ROLE_LABEL[webHostingRoles[m.userId] ?? (m.userId === team.ownerUserId ? 'owner' : 'editor')]}
                             </span>
@@ -560,19 +552,19 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                               value={m.role}
                               onChange={(e) => handleRoleChange(m.userId, e.target.value as TeamRole)}
                               title="管理权限"
-                              className="h-7 px-2 rounded-[6px] text-[12px] outline-none"
-                              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                              className="h-7 px-2 rounded-[6px] text-[12px] outline-none border border-token-subtle"
+                              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                             >
                               <option value="member">成员</option>
                               <option value="admin">管理员</option>
                             </select>
                           ) : (
-                            <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                            <span className="text-[12px] text-token-muted">
                               {m.role === 'admin' ? '管理员' : '成员'}
                             </span>
                           )}
                           {isAdmin && m.userId !== team.ownerUserId && (
-                            <button type="button" onClick={() => handleRemoveMember(m.userId)} style={{ color: 'var(--text-muted)' }}>
+                            <button type="button" onClick={() => handleRemoveMember(m.userId)} className="text-token-muted">
                               <Trash2 size={14} />
                             </button>
                           )}
@@ -584,43 +576,43 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                   {tab === 'invite' && (
                     <div className="space-y-3">
                       {!isAdmin ? (
-                        <div className="text-[13px] py-8 text-center" style={{ color: 'var(--text-muted)' }}>
+                        <div className="text-[13px] py-8 text-center text-token-muted">
                           只有管理员可以添加成员
                         </div>
                       ) : (
                         <>
                           {/* 搜索框 */}
                           <div className="relative">
-                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                            <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
                             <input
                               value={inviteQuery}
                               onChange={(e) => setInviteQuery(e.target.value)}
                               placeholder="搜索用户昵称 / 用户名"
-                              className="w-full h-9 pl-8 pr-3 rounded-[8px] text-[13px] outline-none"
-                              style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                              className="w-full h-9 pl-8 pr-3 rounded-[8px] text-[13px] outline-none border border-token-subtle"
+                              style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                             />
                           </div>
 
                           {/* 搜索结果（多选） */}
                           {inviteResults.length > 0 && (
-                            <div className="rounded-[8px] py-1" style={{ background: 'var(--bg-base)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                            <div className="rounded-[8px] py-1 border border-token-subtle" style={{ background: 'var(--bg-base)' }}>
                               {inviteResults.map((u) => {
                                 const selected = pendingIds.has(u.userId);
                                 return (
                                   <button
                                     key={u.userId}
                                     type="button"
-                                    className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
+                                    className="w-full flex items-center gap-2 px-3 py-2 hover-bg-soft text-left"
                                     onClick={() => togglePending(u)}
                                   >
                                     <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-6 h-6 rounded-full shrink-0" />
-                                    <span className="text-[13px] flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</span>
-                                    <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>@{u.username}</span>
+                                    <span className="text-[13px] flex-1 truncate text-token-primary">{u.displayName}</span>
+                                    <span className="text-[11px] text-token-muted">@{u.username}</span>
                                     <div
                                       className="w-5 h-5 rounded-[4px] flex items-center justify-center shrink-0"
                                       style={selected
                                         ? { background: 'var(--accent-gold, #d4af37)' }
-                                        : { border: '1px solid rgba(255,255,255,0.2)', background: 'transparent' }}
+                                        : { border: '1px solid var(--border-subtle)', background: 'transparent' }}
                                     >
                                       {selected && <Check size={12} color="#1a1a1a" />}
                                     </div>
@@ -633,7 +625,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                           {/* 已选用户 */}
                           {pendingIds.size > 0 && (
                             <div className="space-y-1">
-                              <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>已选 {pendingIds.size} 人</div>
+                              <div className="text-[11px] text-token-muted">已选 {pendingIds.size} 人</div>
                               <div className="flex flex-wrap gap-1.5">
                                 {[...pendingCards.values()].map((u) => (
                                   <div
@@ -643,7 +635,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                                   >
                                     <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-4 h-4 rounded-full" />
                                     <span>{u.displayName}</span>
-                                    <button type="button" className="ml-0.5" onClick={() => togglePending(u)} style={{ color: 'var(--text-muted)' }}>
+                                    <button type="button" className="ml-0.5 text-token-muted" onClick={() => togglePending(u)}>
                                       <X size={12} />
                                     </button>
                                   </div>
@@ -659,7 +651,7 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                             className="flex items-center gap-1.5 h-9 px-4 rounded-[8px] text-[13px]"
                             style={pendingIds.size > 0
                               ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a', cursor: 'pointer' }
-                              : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+                              : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
                             onClick={handleConfirmInvite}
                           >
                             <UserPlus size={14} />
@@ -673,16 +665,16 @@ export function TeamManagerPanel({ onClose, initialTab, initialTeamId }: {
                   {tab === 'activity' && (
                     <div className="space-y-2.5">
                       {activity.length === 0 ? (
-                        <div className="text-[13px] text-center py-8" style={{ color: 'var(--text-muted)' }}>暂无活动记录</div>
+                        <div className="text-[13px] text-center py-8 text-token-muted">暂无活动记录</div>
                       ) : (
                         activity.map((a) => (
                           <div key={a.id} className="flex items-start gap-2.5">
                             <UserAvatar src={resolveAvatarUrl({ avatarFileName: a.actorAvatarFileName })} className="w-6 h-6 rounded-full mt-0.5" />
-                            <div className="flex-1 min-w-0 text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                            <div className="flex-1 min-w-0 text-[13px] text-token-primary">
                               <span className="font-medium">{a.actorName}</span>
-                              <span style={{ color: 'var(--text-muted)' }}> {ACTION_LABEL[a.action] ?? a.action}</span>
+                              <span className="text-token-muted"> {ACTION_LABEL[a.action] ?? a.action}</span>
                               {a.targetTitle && <span> 「{a.targetTitle}」</span>}
-                              <span className="block text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>
+                              <span className="block text-[11px] mt-0.5 text-token-muted">
                                 {new Date(a.createdAt).toLocaleString()}
                               </span>
                             </div>

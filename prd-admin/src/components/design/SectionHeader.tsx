@@ -43,16 +43,16 @@ export interface SectionHeaderProps {
 
 const sizeClasses: Record<SectionHeaderSize, { title: string; subtitle: string }> = {
   sm: {
-    title: 'text-2xl sm:text-3xl font-bold text-white/95 mb-2',
-    subtitle: 'text-base text-white/55',
+    title: 'text-2xl sm:text-3xl font-bold text-token-primary mb-2',
+    subtitle: 'text-base text-token-secondary',
   },
   md: {
-    title: 'text-3xl sm:text-4xl md:text-5xl font-bold text-white/95 mb-4',
-    subtitle: 'text-lg text-white/55 max-w-2xl',
+    title: 'text-3xl sm:text-4xl md:text-5xl font-bold text-token-primary mb-4',
+    subtitle: 'text-lg text-token-secondary max-w-2xl',
   },
   lg: {
-    title: 'text-4xl sm:text-5xl md:text-6xl font-bold text-white/95 mb-4',
-    subtitle: 'text-xl text-white/55 max-w-3xl',
+    title: 'text-4xl sm:text-5xl md:text-6xl font-bold text-token-primary mb-4',
+    subtitle: 'text-xl text-token-secondary max-w-3xl',
   },
 };
 

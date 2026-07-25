@@ -49,7 +49,7 @@ export function AuthzPermissionColumn({
           {perms.map((p) => (
             <label
               key={p.key}
-              className="flex items-center gap-3 px-3 py-2 rounded-xl hover:bg-white/4 cursor-pointer transition-colors"
+              className="flex items-center gap-3 px-3 py-2 rounded-xl hover-bg-soft cursor-pointer transition-colors"
               style={{ background: checkedPermissions.has(p.key) ? 'rgba(99, 102, 241, 0.08)' : 'transparent' }}
             >
               <input
@@ -80,7 +80,7 @@ export function AuthzPermissionColumn({
   return (
     <div className="flex flex-col h-full min-h-0">
       {/* Header */}
-      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-white/5">
+      <div className="flex items-center justify-between gap-2 px-3 py-2 border-b border-token-subtle">
         <div className="flex items-center gap-2">
           <span style={{ color: 'var(--text-secondary)' }}>
             {isBuiltIn ? <ShieldCheck size={14} /> : <Shield size={14} />}

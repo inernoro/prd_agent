@@ -109,7 +109,10 @@ cds/nginx/www/
 .agent-workspace/
 
 # Local Codex/agent skill mirrors (machine-specific, generated locally)
-.agents/skills/
+.agents/skills/*
+# 项目级主题风险治理技能由仓库维护，供不同宿主的开发代理复用
+!.agents/skills/reduce-adaptive-theme-risk/
+!.agents/skills/reduce-adaptive-theme-risk/**
 # skills-CLI 安装的第三方技能在 .claude/skills 下生成的 symlink（指向 .agents，本地产物）
 # 真实可复现记录在 skills-lock.json；新容器跑 `npx skills update` 恢复
 .claude/skills/ux-heuristics

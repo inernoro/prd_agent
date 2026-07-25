@@ -36,8 +36,8 @@ function CodeBlockShell({ text, children }: { text: string; children: ReactNode 
       <button
         type="button"
         onClick={copy}
-        className="absolute top-2 right-2 inline-flex items-center gap-1 px-1.5 py-1 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer"
-        style={{ zIndex: 1, background: 'rgba(255,255,255,0.08)', border: '1px solid rgba(255,255,255,0.14)', color: 'rgba(255,255,255,0.75)', fontSize: 10 }}
+        className="absolute top-2 right-2 inline-flex items-center gap-1 px-1.5 py-1 rounded-md opacity-0 group-hover:opacity-100 focus:opacity-100 transition-opacity cursor-pointer bg-token-nested border border-token-subtle"
+        style={{ zIndex: 1, color: 'var(--text-secondary)', fontSize: 10 }}
         title="复制代码"
         aria-label="复制代码"
       >
@@ -220,7 +220,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
           h4: mkHeading('h4'),
           h5: mkHeading('h5'),
           h6: mkHeading('h6'),
-          p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>{children}</p>,
+          p: ({ children }) => <p className="my-3.5 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>{children}</p>,
           a: ({ href, children }) => {
             // 双链 [[xxx]] → #wikilink/ hash 锚（preprocessWikilinks 转出）。
             // 必须放在通用 # 锚点分支之前，否则会被当成 in-page anchor 处理。
@@ -310,15 +310,15 @@ function MarkdownViewerBase({ content }: { content: string }) {
               <table className="w-full text-[12px]">{children}</table>
             </div>
           ),
-          th: ({ children }) => <th className="px-3 py-2 text-left font-semibold" style={{ background: 'rgba(255,255,255,0.03)', borderBottom: '1px solid rgba(255,255,255,0.06)', color: 'var(--text-primary)' }}>{children}</th>,
-          td: ({ children }) => <td className="px-3 py-1.5" style={{ borderBottom: '1px solid rgba(255,255,255,0.03)', color: 'var(--text-secondary)' }}>{children}</td>,
+          th: ({ children }) => <th className="px-3 py-2 text-left font-semibold bg-token-nested border-b border-b-token-subtle" style={{ color: 'var(--text-primary)' }}>{children}</th>,
+          td: ({ children }) => <td className="px-3 py-1.5 border-b border-b-token-subtle" style={{ color: 'var(--text-secondary)' }}>{children}</td>,
           code: ({ className, children, ...props }) => {
             const match = /language-(\w+)/.exec(className || '');
             const text = String(children ?? '').replace(/\n$/, '');
             // 块级判断：有 language- 类名 或 内容包含换行（兼容未指定语言的 fenced code block）
             const isBlock = !!match || text.includes('\n');
             if (!isBlock) {
-              return <code className="px-1.5 py-0.5 rounded text-[12px]" style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
+              return <code className="px-1.5 py-0.5 rounded text-[12px] bg-token-nested" style={{ color: 'rgba(248,113,113,0.9)' }} {...props}>{children}</code>;
             }
             // 块级且指定了语言 → Mermaid 图表交给 MermaidDiagram 渲染，其余走 Prism 高亮
             if (match) {
@@ -337,7 +337,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
                     PreTag="div"
                     customStyle={{
                       margin: 0, borderRadius: '10px', fontSize: '12px',
-                      background: 'rgba(0,0,0,0.3)', border: '1px solid rgba(255,255,255,0.04)',
+                      background: 'rgba(0,0,0,0.3)', border: '1px solid var(--border-subtle)',
                     }}
                   >
                     {text}
@@ -349,19 +349,7 @@ function MarkdownViewerBase({ content }: { content: string }) {
             return (
               <CodeBlockShell text={text}>
               <pre
-                style={{
-                  margin: 0,
-                  padding: '14px 16px',
-                  borderRadius: '10px',
-                  fontSize: '12px',
-                  lineHeight: 1.6,
-                  background: 'rgba(0,0,0,0.3)',
-                  border: '1px solid rgba(255,255,255,0.04)',
-                  color: 'rgba(255,255,255,0.85)',
-                  fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace",
-                  whiteSpace: 'pre',
-                  overflowX: 'auto',
-                }}
+                className="border border-token-subtle" style={{ margin: 0, padding: '14px 16px', borderRadius: '10px', fontSize: '12px', lineHeight: 1.6, background: 'rgba(0,0,0,0.3)', color: 'rgba(255,255,255,0.85)', fontFamily: "ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace", whiteSpace: 'pre', overflowX: 'auto' }}
               >
                 {text}
               </pre>
@@ -377,12 +365,8 @@ function MarkdownViewerBase({ content }: { content: string }) {
               <img
                 src={src}
                 alt={alt || ''}
-                className="max-w-full rounded-lg my-3"
-                style={{
-                  maxHeight: '400px',
-                  border: '1px solid rgba(255,255,255,0.06)',
-                  cursor: myIdx >= 0 ? 'zoom-in' : 'default',
-                }}
+                className="max-w-full rounded-lg my-3 border border-token-subtle"
+                style={{ maxHeight: '400px', cursor: myIdx >= 0 ? 'zoom-in' : 'default' }}
                 onClick={() => {
                   if (myIdx >= 0) setLightboxIdx(myIdx);
                 }}

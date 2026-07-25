@@ -1162,11 +1162,7 @@ function CanvasInner({
               color="rgba(255,255,255,0.04)"
             />
             <MiniMap
-              style={{
-                background: 'rgba(0,0,0,0.3)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                borderRadius: 10,
-              }}
+              className="border border-token-subtle" style={{ background: 'rgba(0,0,0,0.3)', borderRadius: 10 }}
               maskColor="rgba(0,0,0,0.5)"
               nodeColor={(n) => `hsla(${(n.data as unknown as CapsuleNodeData)?.accentHue ?? 210}, 50%, 50%, 0.4)`}
             />
@@ -1946,11 +1942,7 @@ function NodeEditPanel({
                 {nodeExecution.logs && (
                   <div className="space-y-1">
                     <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>日志</div>
-                    <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto" style={{
-                      background: 'rgba(255,255,255,0.03)',
-                      color: 'var(--text-secondary, #aaa)',
-                      fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-                    }}>
+                    <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto bg-token-nested" style={{ color: 'var(--text-secondary, #aaa)', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>
                       {nodeExecution.logs.length > 800 ? nodeExecution.logs.slice(0, 800) + '\n... (已截断)' : nodeExecution.logs}
                     </pre>
                   </div>
@@ -2030,11 +2022,7 @@ function TestRunResultPanel({ result }: { result: CapsuleTestRunResult }) {
       {result.logs && (
         <div className="space-y-1">
           <div className="text-[10px] font-medium" style={{ color: 'var(--text-muted, #888)' }}>日志</div>
-          <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto" style={{
-            background: 'rgba(255,255,255,0.03)',
-            color: 'var(--text-secondary, #aaa)',
-            fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace',
-          }}>
+          <pre className="text-[10px] p-2 rounded-lg overflow-x-auto max-h-48 overflow-y-auto bg-token-nested" style={{ color: 'var(--text-secondary, #aaa)', fontFamily: 'ui-monospace, SFMono-Regular, Consolas, monospace' }}>
             {result.logs.length > 800 ? result.logs.slice(0, 800) + '\n... (已截断)' : result.logs}
           </pre>
         </div>

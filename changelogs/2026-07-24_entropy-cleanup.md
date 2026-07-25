@@ -1,0 +1,1 @@
+| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 处理 5 条 changelog（验收报告顶部缺口统计口径修复/CDS 热重启等待页轮询与叙事动画重做/CDS 预览地址真实来源与安全隐藏/CDS 项目级 Agent Key 项目列表隔离/上一轮熵减自身记录），均无匹配的 design 文档章节需要追加（预览地址行为已由 CLAUDE.md §11 覆盖；其余为窄范围 bug fix/安全修复，无对应 design 文档），仅登记 manifest，manifest 累计 482 条 |

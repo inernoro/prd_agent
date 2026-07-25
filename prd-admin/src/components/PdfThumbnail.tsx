@@ -77,16 +77,7 @@ export function PdfThumbnail({
           PDF
         </span>
         <div
-          style={{
-            position: 'absolute',
-            top: 0,
-            right: 0,
-            width: 14,
-            height: 14,
-            background: 'rgba(255,255,255,0.18)',
-            borderBottomLeftRadius: 6,
-            borderTopRightRadius: 8,
-          }}
+          className="bg-token-nested" style={{ position: 'absolute', top: 0, right: 0, width: 14, height: 14, borderBottomLeftRadius: 6, borderTopRightRadius: 8 }}
         />
       </div>
       {sizeMb && (

@@ -28,6 +28,18 @@ const AGENT_CARD_PRESENTATION: Readonly<Record<string, AgentCardPresentation>> =
   'cds-agent': { task: '运行远程任务' },
   'tech-doc-format-agent': { task: '校验技术文档' },
   'emergence-agent': { task: '发现交叉价值' },
+  'tapd-bug-agent': { task: '规范提交缺陷' },
+  'marketplace-openapi': { task: '授权技能接口' },
+  'shortcuts-agent': { task: '执行快捷操作' },
+  'my-shares': { task: '统管分享链接' },
+  'learning-center': { task: '推进学习进度' },
+  'share-link-tester': { task: '校验分享链路' },
+  'transcript-agent': { task: '编辑音频转录' },
+  'short-video-parser': { task: '拆解短视频素材' },
+  'code-reviewer': { task: '审查代码质量' },
+  translator: { task: '完成多语言翻译' },
+  summarizer: { task: '提炼长文要点' },
+  'data-analyst': { task: '解析数据洞察' },
 };
 
 export function hasAgentCardArtwork(agentKey?: string): boolean {

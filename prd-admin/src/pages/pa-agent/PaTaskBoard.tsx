@@ -136,7 +136,7 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
                       ? { background: 'rgba(239,68,68,0.13)', color: '#fca5a5', border: '1px solid rgba(239,68,68,0.3)' }
                       : deadline.tone === 'soon'
                       ? { background: 'rgba(245,158,11,0.13)', color: '#fcd34d', border: '1px solid rgba(245,158,11,0.3)' }
-                      : { background: 'rgba(255,255,255,0.04)', color: 'var(--text-muted)', border: '1px solid rgba(255,255,255,0.08)' }
+                      : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' }
                   }
                 >
                   <CalendarDays size={9} />
@@ -145,12 +145,8 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
               )}
               {task.subTasks.length > 0 && (
                 <span
-                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] tabular-nums"
-                  style={{
-                    background: 'rgba(255,255,255,0.04)',
-                    color: 'var(--text-muted)',
-                    border: '1px solid rgba(255,255,255,0.06)',
-                  }}
+                  className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] tabular-nums bg-token-nested border border-token-subtle"
+                  style={{ color: 'var(--text-muted)' }}
                   title={`${doneCount}/${task.subTasks.length} 子步骤已完成`}
                 >
                   <ListTree size={9} />
@@ -198,8 +194,8 @@ function TaskCard({ task, qConfig, onToggleSubTask, onMarkDone, onDelete }: Task
       {task.subTasks.length > 0 && (
         <div className="mt-2.5 pl-1.5">
           <div
-            className="h-1 rounded-full overflow-hidden"
-            style={{ background: 'rgba(255,255,255,0.05)' }}
+            className="h-1 rounded-full overflow-hidden bg-token-nested"
+
           >
             <div
               className="h-full rounded-full transition-all duration-500 ease-out"
@@ -391,11 +387,8 @@ export function PaTaskBoard({ onOpenReview }: PaTaskBoardProps = {}) {
                   </div>
                   {qTasks.length > 0 && (
                     <span
-                      className="shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium tabular-nums"
-                      style={{
-                        background: 'rgba(255,255,255,0.2)',
-                        color: q.pillText,
-                      }}
+                      className="shrink-0 text-xs px-1.5 py-0.5 rounded-full font-medium tabular-nums bg-token-nested"
+                      style={{ color: q.pillText }}
                     >
                       {qTasks.length}
                     </span>

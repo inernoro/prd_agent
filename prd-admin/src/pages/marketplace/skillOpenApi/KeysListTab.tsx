@@ -1,6 +1,7 @@
 import { useEffect, useState } from 'react';
 import { Copy, Download, KeyRound, Plus, RefreshCw, Trash2, XCircle } from 'lucide-react';
 import { MapSpinner } from '@/components/ui/VideoLoader';
+import { systemDialog } from '@/lib/systemDialog';
 import { toast } from '@/lib/toast';
 import {
   deleteAgentApiKey,
@@ -77,8 +78,14 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
   };
 
   const handleRevoke = async (key: AgentApiKeyDto) => {
-    if (!window.confirm(`确定撤销 "${key.name}"？撤销后立即失效且不可恢复，所有使用该 Key 的 AI 将无法继续访问。`))
-      return;
+    const confirmed = await systemDialog.confirm({
+      title: '确认撤销 Key',
+      message: `确定撤销「${key.name}」？撤销后立即失效且不可恢复，所有使用该 Key 的 AI 将无法继续访问。`,
+      tone: 'danger',
+      confirmText: '撤销 Key',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
     setBusyId(key.id);
     try {
       const res = await revokeAgentApiKey({ id: key.id });
@@ -94,7 +101,14 @@ export function KeysListTab({ keys, loading, allowedScopes, onRefresh, openCreat
   };
 
   const handleDelete = async (key: AgentApiKeyDto) => {
-    if (!window.confirm(`确定彻底删除 "${key.name}"？该操作无法撤回。`)) return;
+    const confirmed = await systemDialog.confirm({
+      title: '确认删除 Key',
+      message: `确定彻底删除「${key.name}」？该操作无法撤回。`,
+      tone: 'danger',
+      confirmText: '彻底删除',
+      cancelText: '取消',
+    });
+    if (!confirmed) return;
     setBusyId(key.id);
     try {
       const res = await deleteAgentApiKey({ id: key.id });

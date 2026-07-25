@@ -28,25 +28,14 @@ export function Card({
       className={cn(
         'relative rounded-[20px] p-6 transition-all duration-200 overflow-hidden',
         className
-      )}
-      style={{
-        ...glassPanel,
-        // 叠加装饰渐变
-        background: `${variant === 'gold' ? goldGlow : defaultSheen}, ${glassPanel.background}`,
-        // 方向性边框：顶部/左侧更亮，模拟光照
-        borderTop: variant === 'gold'
+      , "border-r border-r-token-subtle border-b border-b-token-subtle")}
+      style={{ ...glassPanel, background: `${variant === 'gold' ? goldGlow : defaultSheen}, ${glassPanel.background}`, borderTop: variant === 'gold'
           ? '1px solid rgba(99, 102, 241, 0.25)'
-          : '1px solid var(--glass-border, rgba(255, 255, 255, 0.12))',
-        borderLeft: variant === 'gold'
+          : '1px solid var(--border-subtle)', borderLeft: variant === 'gold'
           ? '1px solid rgba(99, 102, 241, 0.15)'
-          : '1px solid var(--glass-border, rgba(255, 255, 255, 0.08))',
-        borderRight: '1px solid var(--border-faint, rgba(255, 255, 255, 0.04))',
-        borderBottom: '1px solid var(--border-faint, rgba(255, 255, 255, 0.02))',
-        // 投影 + 内发光
-        boxShadow: variant === 'gold'
+          : '1px solid var(--border-subtle)', boxShadow: variant === 'gold'
           ? '0 20px 40px -12px rgba(0, 0, 0, 0.5), 0 0 0 1px rgba(99, 102, 241, 0.05) inset, 0 1px 0 rgba(255, 255, 255, 0.05) inset'
-          : '0 16px 32px -8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 1px 0 rgba(255, 255, 255, 0.04) inset',
-      }}
+          : '0 16px 32px -8px rgba(0, 0, 0, 0.4), 0 0 0 1px rgba(255, 255, 255, 0.03) inset, 0 1px 0 rgba(255, 255, 255, 0.04) inset' }}
     >
       {children}
     </div>

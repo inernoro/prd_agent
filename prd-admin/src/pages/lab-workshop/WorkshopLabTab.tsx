@@ -514,7 +514,7 @@ export default function WorkshopLabTab() {
                     }}
                   >
                     {hasPendingChip && (
-                      <div className="absolute inset-x-1.5 top-1.5 bottom-[22px] rounded flex items-center justify-center text-white text-base font-semibold" style={{ background: 'rgba(156, 163, 175, 0.3)' }}>
+                      <div className="absolute inset-x-1.5 top-1.5 bottom-[22px] rounded flex items-center justify-center text-token-primary text-base font-semibold" style={{ background: 'rgba(156, 163, 175, 0.3)' }}>
                         ✓
                       </div>
                     )}

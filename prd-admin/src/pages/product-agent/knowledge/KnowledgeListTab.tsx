@@ -175,7 +175,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
     await reload();
   };
 
-  const selectCls = 'px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70 outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]';
+  const selectCls = 'px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]';
 
   return (
     <div className="flex-1 min-h-0 flex flex-col gap-3">
@@ -185,15 +185,15 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
       {/* 工具栏：搜索 + 筛选 + 新建/上传 */}
       <div className="shrink-0 flex items-center gap-2 flex-wrap" data-tour-id="knowledge-toolbar">
         <div className={FOCUS_BOX}>
-          <Search size={14} className="text-white/40" />
+          <Search size={14} className="text-token-muted" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') applySearch(); }}
             placeholder="搜索标题 / 全文，回车确认"
-            className="no-focus-ring bg-transparent text-sm text-white outline-none w-52"
+            className="no-focus-ring bg-transparent text-sm text-token-primary outline-none w-52"
           />
-          {keyword && <button onClick={clearFilters} className="text-white/30 hover:text-white"><X size={13} /></button>}
+          {keyword && <button onClick={clearFilters} className="text-token-muted hover-text-primary"><X size={13} /></button>}
         </div>
         <select value={category} onChange={(e) => { setCategory(e.target.value); resetToFirstPage(); }} className={selectCls}>
           <option value="">全部分类</option>
@@ -209,14 +209,14 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
           {versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}
         </select>
         {hasFilter && (
-          <button onClick={clearFilters} className="text-[11px] text-white/40 hover:text-white underline underline-offset-2">清除筛选</button>
+          <button onClick={clearFilters} className="text-[11px] text-token-muted hover-text-primary underline underline-offset-2">清除筛选</button>
         )}
         <div className="ml-auto flex items-center gap-2">
           {uploading && <MapSpinner size={14} />}
           <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm" data-tour-id="knowledge-create">
             <Plus size={14} /> 新建文档
           </button>
-          <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/70 border border-white/10 hover:bg-white/5 text-sm disabled:opacity-50" data-tour-id="knowledge-upload">
+          <button onClick={() => fileInputRef.current?.click()} disabled={uploading} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-token-secondary border border-token-subtle hover-bg-soft text-sm disabled:opacity-50" data-tour-id="knowledge-upload">
             <Upload size={14} /> 上传文件
           </button>
         </div>
@@ -237,14 +237,14 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
           <MapSectionLoader text="正在加载知识…" />
         ) : items.length === 0 ? (
           <div className="flex-1 flex flex-col items-center justify-center text-center py-16 gap-2">
-            <div className="text-sm text-white/55">{hasFilter ? '没有匹配的知识' : '还没有知识文档'}</div>
-            <div className="text-xs text-white/35">
+            <div className="text-sm text-token-secondary">{hasFilter ? '没有匹配的知识' : '还没有知识文档'}</div>
+            <div className="text-xs text-token-muted">
               {hasFilter ? '换个筛选条件，或清除筛选看全部' : '新建一篇空白文档，或上传文件（md / html / pdf / Office 等）'}
             </div>
             {!hasFilter && (
               <div className="flex items-center gap-2 mt-2">
                 <button onClick={() => void handleCreate()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm"><Plus size={14} /> 新建文档</button>
-                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-white/70 border border-white/10 hover:bg-white/5 text-sm"><Upload size={14} /> 上传文件</button>
+                <button onClick={() => fileInputRef.current?.click()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-token-secondary border border-token-subtle hover-bg-soft text-sm"><Upload size={14} /> 上传文件</button>
               </div>
             )}
           </div>
@@ -259,7 +259,7 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                 id={e.id}
                 selection={selection}
                 onClick={() => goDetail(e.id)}
-                className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-white/10 bg-white/[0.02]"
+                className="pa-row group cursor-pointer flex items-center gap-3 px-3 py-2.5 rounded-lg border border-token-subtle bg-token-nested"
                 trailing={
                   <div className="shrink-0 flex items-center gap-1 opacity-0 group-hover:opacity-100 transition-opacity" onClick={(ev) => ev.stopPropagation()}>
                     <RowBtn title="查看详情" onClick={() => goDetail(e.id)}><Eye size={13} /></RowBtn>
@@ -285,12 +285,12 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                           if (ev.key === 'Escape') setRenamingId(null);
                         }}
                         onBlur={() => void submitRename(e)}
-                        className="no-focus-ring text-sm bg-white/10 border border-cyan-500/40 rounded px-1.5 py-0.5 text-white outline-none min-w-0 flex-1"
+                        className="no-focus-ring text-sm bg-token-nested border border-cyan-500/40 rounded px-1.5 py-0.5 text-token-primary outline-none min-w-0 flex-1"
                       />
                     ) : (
                       <span
                         onClick={(ev) => { ev.stopPropagation(); setRenamingId(e.id); setRenameValue(e.title); }}
-                        className="text-sm text-white/90 truncate cursor-text hover:text-cyan-200"
+                        className="text-sm text-token-primary truncate cursor-text hover:text-cyan-200"
                         title="点击重命名"
                       >
                         {e.title}
@@ -298,16 +298,16 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
                     )}
                     {e.category && <span className="text-[10px] px-1.5 py-0.5 rounded bg-cyan-500/10 text-cyan-300/90 border border-cyan-500/20 shrink-0">{e.category}</span>}
                     {(e.tags ?? []).slice(0, 3).map((t) => (
-                      <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-white/8 text-white/55 shrink-0">{t}</span>
+                      <span key={t} className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary shrink-0">{t}</span>
                     ))}
                     {vIds.slice(0, 3).map((id) => (
                       <span key={id} className="text-[10px] px-1.5 py-0.5 rounded bg-purple-500/10 text-purple-300/90 border border-purple-500/20 shrink-0 inline-flex items-center gap-0.5">
                         <GitBranch size={9} /> {versionName.get(id) ?? '已删版本'}
                       </span>
                     ))}
-                    {vIds.length > 3 && <span className="text-[10px] text-white/35 shrink-0">+{vIds.length - 3}</span>}
+                    {vIds.length > 3 && <span className="text-[10px] text-token-muted shrink-0">+{vIds.length - 3}</span>}
                   </div>
-                  <div className="text-[11px] text-white/35 mt-0.5 truncate">
+                  <div className="text-[11px] text-token-muted mt-0.5 truncate">
                     {kind.label} · {fmtSize(e.fileSize)} · {e.updatedByName || e.createdBy} 更新于 {fmtTime(e.updatedAt)}
                   </div>
                 </div>
@@ -319,14 +319,14 @@ export function KnowledgeListTab({ storeId, productId, store, versions, allEntri
 
       {/* 分页 */}
       {total > PAGE_SIZE && (
-        <div className="shrink-0 flex items-center justify-between text-xs text-white/40">
+        <div className="shrink-0 flex items-center justify-between text-xs text-token-muted">
           <span>共 {total} 篇</span>
           <div className="flex items-center gap-2">
-            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="flex items-center gap-0.5 px-2 py-1 rounded-md border border-white/10 hover:bg-white/5 disabled:opacity-30">
+            <button disabled={page <= 1} onClick={() => setPage((p) => p - 1)} className="flex items-center gap-0.5 px-2 py-1 rounded-md border border-token-subtle hover-bg-soft disabled:opacity-30">
               <ChevronLeft size={13} /> 上一页
             </button>
-            <span className="text-white/55">{page} / {totalPages}</span>
-            <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="flex items-center gap-0.5 px-2 py-1 rounded-md border border-white/10 hover:bg-white/5 disabled:opacity-30">
+            <span className="text-token-secondary">{page} / {totalPages}</span>
+            <button disabled={page >= totalPages} onClick={() => setPage((p) => p + 1)} className="flex items-center gap-0.5 px-2 py-1 rounded-md border border-token-subtle hover-bg-soft disabled:opacity-30">
               下一页 <ChevronRight size={13} />
             </button>
           </div>
@@ -366,20 +366,20 @@ function MoveToFolderDialog({ entry, folders, onClose, onMove }: {
 }) {
   const current = entry.parentId ?? null;
   const optionCls = (on: boolean) =>
-    `w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-white/75 border-white/5 bg-white/[0.03] hover:bg-white/[0.06]'}`;
+    `w-full text-left flex items-center gap-2.5 px-3 py-2 rounded-lg border text-sm ${on ? 'bg-cyan-500/15 text-cyan-200 border-cyan-500/30' : 'text-token-secondary border-token-subtle bg-token-nested hover-bg-soft'}`;
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/50" onClick={onClose}>
-      <div className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col" style={{ width: 400, maxWidth: '92vw', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-          <h2 className="text-sm font-semibold text-white flex items-center gap-2"><FolderInput size={14} className="text-cyan-400" /> 移动到文件夹</h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={16} /></button>
+      <div className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col" style={{ width: 400, maxWidth: '92vw', maxHeight: '70vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
+          <h2 className="text-sm font-semibold text-token-primary flex items-center gap-2"><FolderInput size={14} className="text-cyan-400" /> 移动到文件夹</h2>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={16} /></button>
         </div>
-        <div className="px-4 pt-2 text-xs text-white/40 shrink-0 truncate">「{entry.title}」</div>
+        <div className="px-4 pt-2 text-xs text-token-muted shrink-0 truncate">「{entry.title}」</div>
         <div className="flex-1 overflow-y-auto p-3 flex flex-col gap-1.5" style={{ minHeight: 0, overscrollBehavior: 'contain' }}>
           <button onClick={() => void onMove(null)} className={optionCls(current === null)}>
-            <FolderOpen size={14} className="text-white/40" /> 根目录（不归入文件夹）
+            <FolderOpen size={14} className="text-token-muted" /> 根目录（不归入文件夹）
           </button>
-          {folders.length === 0 && <div className="text-[11px] text-white/30 px-1 py-2">还没有文件夹，去「文件夹管理」tab 创建。</div>}
+          {folders.length === 0 && <div className="text-[11px] text-token-muted px-1 py-2">还没有文件夹，去「文件夹管理」tab 创建。</div>}
           {folders.map((f) => (
             <button key={f.id} onClick={() => void onMove(f.id)} className={optionCls(current === f.id)}>
               <FolderOpen size={14} className="text-amber-300/80" /> {f.title}
@@ -397,7 +397,7 @@ function RowBtn({ title, danger, onClick, children }: { title: string; danger?: 
     <button
       title={title}
       onClick={onClick}
-      className={`p-1.5 rounded-md ${danger ? 'text-red-300/60 hover:text-red-300 hover:bg-red-500/10' : 'text-white/45 hover:text-white hover:bg-white/10'}`}
+      className={`p-1.5 rounded-md ${danger ? 'text-red-300/60 hover:text-red-300 hover:bg-red-500/10' : 'text-token-muted hover-text-primary hover-bg-soft'}`}
     >
       {children}
     </button>

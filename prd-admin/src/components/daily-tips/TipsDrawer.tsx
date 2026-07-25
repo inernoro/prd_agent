@@ -505,13 +505,7 @@ export function TipsDrawer() {
         }}
       >
         <div
-          style={{
-            padding: '12px 14px',
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'space-between',
-            borderBottom: '1px solid rgba(255,255,255,0.08)',
-          }}
+          className="border-b border-b-token-subtle" style={{ padding: '12px 14px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
         >
           <div
             style={{
@@ -692,17 +686,7 @@ export function TipsDrawer() {
               return (
                 <div
                   key={t.id}
-                  style={{
-                    position: 'relative',
-                    borderRadius: 12,
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    borderLeft: `3px solid ${accent}`,
-                    background: 'rgba(255,255,255,0.03)',
-                    padding: '10px 12px',
-                    display: 'flex',
-                    flexDirection: 'column',
-                    gap: 6,
-                  }}
+                  className="border border-token-subtle bg-token-nested" style={{ position: 'relative', borderRadius: 12, borderLeft: `3px solid ${accent}`, padding: '10px 12px', display: 'flex', flexDirection: 'column', gap: 6 }}
                 >
                   <div style={{ display: 'flex', alignItems: 'flex-start', gap: 8 }}>
                     <span style={{ color: accent, marginTop: 1, flexShrink: 0, display: 'inline-flex' }}>

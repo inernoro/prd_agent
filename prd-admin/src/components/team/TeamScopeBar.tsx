@@ -213,10 +213,10 @@ export function TeamScopeBar({
 
   const pillBase = 'px-3 h-8 rounded-[8px] text-[13px] font-medium transition-colors flex items-center gap-1.5';
   const actionBtn = 'h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1 shrink-0 whitespace-nowrap transition-colors';
-  const actionStyle = { background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' };
+  const actionStyle = { background: 'transparent', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' };
   const popStyle = {
     background: 'var(--bg-elevated)',
-    border: '1px solid rgba(255,255,255,0.12)',
+    border: '1px solid var(--border-subtle)',
     boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
   };
 
@@ -229,8 +229,8 @@ export function TeamScopeBar({
         {/* 我的 / 团队空间 双 pill（外部 tab 接管作用域切换时由 hideScopeToggle 隐藏） */}
         {!hideScopeToggle && (
           <div
-            className="flex items-center gap-1 p-1 rounded-[10px]"
-            style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}
+            className="flex items-center gap-1 p-1 rounded-[10px] border border-token-subtle"
+            style={{ background: 'var(--bg-input)' }}
           >
             <button
               type="button"
@@ -267,7 +267,7 @@ export function TeamScopeBar({
               className="h-7 px-2.5 rounded-full text-[12px] shrink-0 transition-colors"
               style={value.teamId === null
                 ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-                : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
               onClick={() => applyTeam(null)}
             >
               全部
@@ -279,7 +279,7 @@ export function TeamScopeBar({
                 className="h-7 px-2.5 rounded-full text-[12px] shrink-0 flex items-center gap-1 transition-colors"
                 style={value.teamId === t.team.id
                   ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-                  : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' }}
+                  : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                 onClick={() => applyTeam(t.team.id)}
               >
                 <Users size={11} /> {t.team.name} <span className="opacity-60">{t.memberCount}</span>
@@ -328,15 +328,15 @@ export function TeamScopeBar({
         {panel === 'members' && (
           <div className="absolute left-0 top-[40px] z-[130] w-[320px] rounded-[12px] p-2" style={popStyle}>
             <div className="flex items-center justify-between px-2 py-1.5">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>成员（{members.length}）</span>
-              <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
+              <span className="text-[12px] font-medium text-token-primary">成员（{members.length}）</span>
+              <button type="button" onClick={() => setPanel(null)} className="text-token-muted"><X size={14} /></button>
             </div>
             <div className="max-h-[280px] overflow-auto" style={{ overscrollBehavior: 'contain' }}>
               {members.map((m) => (
                 <div key={m.userId} className="flex items-center gap-2 px-2 py-1.5">
                   <UserAvatar src={resolveAvatarUrl({ avatarFileName: m.avatarFileName })} className="w-6 h-6 rounded-full" />
-                  <span className="text-[13px] truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.userName ?? m.userId}</span>
-                  <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)' }}>
+                  <span className="text-[13px] truncate flex-1 text-token-primary">{m.userName ?? m.userId}</span>
+                  <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0 bg-token-nested" style={{ color: 'var(--text-muted)' }}>
                     {WEB_HOSTING_ROLE_LABEL[webRoles[m.userId] ?? 'editor']}
                   </span>
                 </div>
@@ -345,8 +345,8 @@ export function TeamScopeBar({
             {isAdmin && (
               <button
                 type="button"
-                className="mt-1 w-full h-8 rounded-[8px] text-[12px] flex items-center justify-center gap-1.5"
-                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="mt-1 w-full h-8 rounded-[8px] text-[12px] flex items-center justify-center gap-1.5 border border-token-subtle"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 onClick={() => { setPanel(null); setManagerOpen(true); }}
               >
                 <Settings size={12} /> 管理成员与角色
@@ -358,38 +358,38 @@ export function TeamScopeBar({
         {panel === 'invite' && (
           <div className="absolute left-0 top-[40px] z-[130] w-[340px] rounded-[12px] p-3 space-y-2" style={popStyle}>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>添加成员</span>
-              <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
+              <span className="text-[12px] font-medium text-token-primary">添加成员</span>
+              <button type="button" onClick={() => setPanel(null)} className="text-token-muted"><X size={14} /></button>
             </div>
             {!isAdmin ? (
-              <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>只有管理员可以添加成员</p>
+              <p className="text-[12px] text-token-muted">只有管理员可以添加成员</p>
             ) : (
               <>
                 <div className="relative">
-                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                  <Search size={13} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
                   <input
                     autoFocus
                     value={inviteQuery}
                     onChange={(e) => setInviteQuery(e.target.value)}
                     placeholder="搜索用户昵称 / 用户名"
-                    className="w-full h-8 pl-8 pr-3 rounded-[8px] text-[13px] outline-none"
-                    style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                    className="w-full h-8 pl-8 pr-3 rounded-[8px] text-[13px] outline-none border border-token-subtle"
+                    style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                   />
                 </div>
                 {inviteResults.length > 0 && (
-                  <div className="rounded-[8px] py-1 max-h-[220px] overflow-auto" style={{ background: 'var(--bg-base)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                  <div className="rounded-[8px] py-1 max-h-[220px] overflow-auto border border-token-subtle" style={{ background: 'var(--bg-base)' }}>
                     {inviteResults.map((u) => (
                       <button
                         key={u.userId}
                         type="button"
                         disabled={inviteAdding === u.userId}
-                        className="w-full flex items-center gap-2 px-3 py-2 hover:bg-white/5 text-left"
+                        className="w-full flex items-center gap-2 px-3 py-2 hover-bg-soft text-left"
                         onClick={() => handleAddMember(u)}
                       >
                         <UserAvatar src={resolveAvatarUrl({ avatarFileName: u.avatarFileName })} className="w-6 h-6 rounded-full shrink-0" />
-                        <span className="text-[13px] flex-1 truncate" style={{ color: 'var(--text-primary)' }}>{u.displayName}</span>
-                        <span className="text-[11px] shrink-0" style={{ color: 'var(--text-muted)' }}>@{u.username}</span>
-                        <span className="shrink-0 text-[11px]" style={{ color: 'var(--accent-gold)' }}>
+                        <span className="text-[13px] flex-1 truncate text-token-primary">{u.displayName}</span>
+                        <span className="text-[11px] shrink-0 text-token-muted">@{u.username}</span>
+                        <span className="shrink-0 text-[11px] text-token-accent">
                           {inviteAdding === u.userId ? '添加中…' : '+ 添加'}
                         </span>
                       </button>
@@ -397,7 +397,7 @@ export function TeamScopeBar({
                   </div>
                 )}
                 {inviteQuery.trim() && inviteResults.length === 0 && (
-                  <p className="text-[12px]" style={{ color: 'var(--text-muted)' }}>未找到匹配用户</p>
+                  <p className="text-[12px] text-token-muted">未找到匹配用户</p>
                 )}
               </>
             )}
@@ -407,20 +407,20 @@ export function TeamScopeBar({
         {panel === 'activity' && (
           <div className="absolute left-0 top-[40px] z-[130] w-[360px] rounded-[12px] p-2" style={popStyle}>
             <div className="flex items-center justify-between px-2 py-1.5">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>活动日志</span>
-              <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
+              <span className="text-[12px] font-medium text-token-primary">活动日志</span>
+              <button type="button" onClick={() => setPanel(null)} className="text-token-muted"><X size={14} /></button>
             </div>
             <div className="max-h-[300px] overflow-auto space-y-2 px-2 pb-1" style={{ overscrollBehavior: 'contain' }}>
               {activity.length === 0 ? (
-                <div className="text-[12px] text-center py-6" style={{ color: 'var(--text-muted)' }}>暂无活动</div>
+                <div className="text-[12px] text-center py-6 text-token-muted">暂无活动</div>
               ) : activity.map((a) => (
                 <div key={a.id} className="flex items-start gap-2">
                   <UserAvatar src={resolveAvatarUrl({ avatarFileName: a.actorAvatarFileName })} className="w-5 h-5 rounded-full mt-0.5" />
-                  <div className="flex-1 min-w-0 text-[12px]" style={{ color: 'var(--text-primary)' }}>
+                  <div className="flex-1 min-w-0 text-[12px] text-token-primary">
                     <span className="font-medium">{a.actorName}</span>
-                    <span style={{ color: 'var(--text-muted)' }}> {ACTION_LABEL[a.action] ?? a.action}</span>
+                    <span className="text-token-muted"> {ACTION_LABEL[a.action] ?? a.action}</span>
                     {a.targetTitle && <span>「{a.targetTitle}」</span>}
-                    <span className="block text-[10px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{new Date(a.createdAt).toLocaleString()}</span>
+                    <span className="block text-[10px] mt-0.5 text-token-muted">{new Date(a.createdAt).toLocaleString()}</span>
                   </div>
                 </div>
               ))}
@@ -431,8 +431,8 @@ export function TeamScopeBar({
         {panel === 'create' && (
           <div className="absolute left-0 top-[40px] z-[130] w-[320px] rounded-[12px] p-3 space-y-3" style={popStyle}>
             <div className="flex items-center justify-between">
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-primary)' }}>新建 / 加入团队空间</span>
-              <button type="button" onClick={() => setPanel(null)} style={{ color: 'var(--text-muted)' }}><X size={14} /></button>
+              <span className="text-[12px] font-medium text-token-primary">新建 / 加入团队空间</span>
+              <button type="button" onClick={() => setPanel(null)} className="text-token-muted"><X size={14} /></button>
             </div>
             <div className="flex gap-1.5">
               <input
@@ -440,8 +440,8 @@ export function TeamScopeBar({
                 value={newName}
                 onChange={(e) => setNewName(e.target.value)}
                 placeholder="团队空间名称"
-                className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="flex-1 h-8 px-2 rounded-[8px] text-[13px] outline-none border border-token-subtle"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 onKeyDown={(e) => e.key === 'Enter' && handleCreate()}
               />
               <button type="button" className="px-3 h-8 rounded-[8px] text-[12px] flex items-center gap-1" style={{ background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }} onClick={handleCreate}>
@@ -453,11 +453,11 @@ export function TeamScopeBar({
                 value={joinCode}
                 onChange={(e) => setJoinCode(e.target.value)}
                 placeholder="或输入邀请码加入"
-                className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none"
-                style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none border border-token-subtle"
+                style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 onKeyDown={(e) => e.key === 'Enter' && handleJoin()}
               />
-              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }} onClick={handleJoin}>
+              <button type="button" className="px-3 h-8 rounded-[8px] text-[12px] border border-token-subtle" style={{ background: 'var(--bg-input)', color: 'var(--text-muted)' }} onClick={handleJoin}>
                 加入
               </button>
             </div>

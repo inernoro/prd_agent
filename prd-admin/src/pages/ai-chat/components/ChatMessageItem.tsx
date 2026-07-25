@@ -144,8 +144,8 @@ function MessageMetadataInline({
           className="inline-flex items-center gap-1 px-1.5 rounded-full shrink-0"
           style={{
             height: 22,
-            border: '1px solid rgba(255,255,255,0.1)',
-            background: 'rgba(255,255,255,0.04)',
+            border: '1px solid var(--border-subtle)',
+            background: 'var(--nested-block-bg)',
             color: 'var(--text-secondary)',
             fontSize: 10,
             fontWeight: 600,
@@ -289,7 +289,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         >
           {genError.prompt ? (
             <div className="px-2.5 pt-2 pb-1.5 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(239,68,68,0.15)' }}>
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'rgba(255,255,255,0.5)' }} title={genError.prompt}>
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-2" style={{ color: 'var(--text-secondary)' }} title={genError.prompt}>
                 <MessageContentRenderer
                   content={genError.prompt}
                   canvasItems={canvas}
@@ -298,11 +298,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               </div>
               <button
                 type="button"
-                className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover:bg-white/10"
+                className="shrink-0 px-2 py-0.5 rounded text-[10px] font-medium transition-colors hover-bg-soft"
                 style={{
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  background: 'rgba(255,255,255,0.05)',
-                  color: 'rgba(255,255,255,0.7)',
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--nested-block-bg)',
+                  color: 'var(--text-secondary)',
                 }}
                 title="重试生成"
                 onClick={() => handleRetry(genError.prompt, genError.imageRefShas)}
@@ -316,7 +316,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
               <button
                 type="button"
                 className="shrink-0 rounded-[6px] overflow-hidden"
-                style={{ width: 48, height: 48, border: '1px solid rgba(255,255,255,0.12)', background: 'rgba(0,0,0,0.2)' }}
+                style={{ width: 48, height: 48, border: '1px solid var(--border-subtle)', background: 'rgba(0,0,0,0.2)' }}
                 onClick={() => onPreview(genError.refSrc!, '参照图')}
                 title="点击预览参照图"
               >
@@ -331,7 +331,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             </div>
           </div>
         </div>
-        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}>
+        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
           {timestamp}
         </span>
       </div>
@@ -383,11 +383,11 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       <div className="flex flex-col items-start gap-0.5">
         <div
           className="group relative max-w-[85%] rounded-[10px] overflow-hidden"
-          style={{ border: '1px solid rgba(255,255,255,0.10)', background: 'rgba(44, 44, 50, 0.78)' }}
+          style={{ border: '1px solid var(--border-subtle)', background: 'rgba(44, 44, 50, 0.78)' }}
         >
           {(genDone.prompt || genDone.refSrc) ? (
-            <div className="px-2.5 pb-2 pt-1 flex items-center gap-2" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
-              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'rgba(255,255,255,0.5)' }} title={genDone.prompt}>
+            <div className="px-2.5 pb-2 pt-1 flex items-center gap-2 border-b border-b-token-subtle" >
+              <div className="text-[11px] min-w-0 flex-1 line-clamp-1" style={{ color: 'var(--text-secondary)' }} title={genDone.prompt}>
                 <MessageContentRenderer
                   content={genDone.prompt || ''}
                   canvasItems={canvas}
@@ -398,9 +398,9 @@ export const ChatMessageItem = memo(function ChatMessageItem({
                 type="button"
                 className="shrink-0 px-2 py-0.5 text-[10px] rounded-md transition-all hover:brightness-110"
                 style={{
-                  border: '1px solid rgba(255,255,255,0.15)',
-                  background: 'rgba(255,255,255,0.05)',
-                  color: 'rgba(255,255,255,0.7)',
+                  border: '1px solid var(--border-subtle)',
+                  background: 'var(--nested-block-bg)',
+                  color: 'var(--text-secondary)',
                 }}
                 title="使用相同提示词重新生成"
                 onClick={() => handleRetry(genDone.prompt, genDone.imageRefShas)}
@@ -426,12 +426,12 @@ export const ChatMessageItem = memo(function ChatMessageItem({
 
           {/* Metadata */}
           {(msgSize || msgModel) ? (
-            <div className="px-2.5 pt-2 pb-1.5 flex" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+            <div className="px-2.5 pt-2 pb-1.5 flex border-t border-t-token-subtle" >
               <MessageMetadataInline size={msgSize} model={msgModel} realModel={realModel} sizeToAspectMap={sizeToAspectMap} />
             </div>
           ) : null}
         </div>
-        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}>
+        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
           {timestamp}
         </span>
       </div>
@@ -453,7 +453,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
             {legacyMsg}
           </div>
         </div>
-        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}>
+        <span className="text-[9px] tabular-nums select-none pl-1" style={{ color: 'var(--text-muted, var(--text-muted))' }}>
           {timestamp}
         </span>
       </div>
@@ -479,7 +479,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
         className="group relative max-w-[85%] rounded-[10px] px-2.5 py-1.5 text-[12px] leading-[16px]"
         style={{
           background: isUser ? 'rgba(62, 55, 42, 0.92)' : 'rgba(42, 43, 50, 0.92)',
-          border: '1px solid rgba(255,255,255,0.14)',
+          border: '1px solid var(--border-subtle)',
           boxShadow: '0 10px 24px rgba(0,0,0,0.24), inset 0 1px 0 rgba(255,255,255,0.06)',
           backdropFilter: 'blur(14px) saturate(150%)',
           WebkitBackdropFilter: 'blur(14px) saturate(150%)',
@@ -528,7 +528,7 @@ export const ChatMessageItem = memo(function ChatMessageItem({
       ) : null}
       <span
         className={`inline-flex items-center gap-1.5 text-[9px] tabular-nums select-none ${isUser ? 'pr-1' : 'pl-1'}`}
-        style={{ color: 'var(--text-muted, rgba(255,255,255,0.38))' }}
+        style={{ color: 'var(--text-muted, var(--text-muted))' }}
       >
         {isUser ? (
           // 明显的按钮态（用户反馈 9px 纯文本「复制」认不出是按钮）：图标 +

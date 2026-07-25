@@ -121,7 +121,7 @@ export function PageTransitionLoader({
           width: 280,
           height: 160,
           borderRadius: '50%',
-          background: 'radial-gradient(closest-side, rgba(255,255,255,0.10), transparent 70%)',
+          background: 'radial-gradient(closest-side, var(--nested-block-bg), transparent 70%)',
           animation: 'map-glow 1.8s ease-in-out infinite',
         }}
       />

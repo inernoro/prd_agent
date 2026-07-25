@@ -1,7 +1,7 @@
 import { useEffect, useState, type FormEvent, type ReactNode } from 'react';
 import {
   Activity, BookOpen, Boxes, Building2, ChevronDown, CircleDollarSign, Cpu, FileClock, Layers3,
-  ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
+  Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
   ShieldCheck, Shuffle, Sun, Tags, X,
 } from 'lucide-react';
 import { NavLink, Outlet, useNavigate } from 'react-router-dom';
@@ -51,6 +51,7 @@ export function ConsoleLayout() {
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
   const [mobileOpen, setMobileOpen] = useState(false);
+  const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
   const [tenants, setTenants] = useState<AvailableTenant[]>([]);
   const [switching, setSwitching] = useState(false);
@@ -74,6 +75,7 @@ export function ConsoleLayout() {
     if (!query) return;
     navigate(`/logs?requestId=${encodeURIComponent(query)}`);
     setMobileOpen(false);
+    setMobileSearchOpen(false);
   }
 
   async function changeTenant(tenantId: string) {
@@ -93,6 +95,39 @@ export function ConsoleLayout() {
     setTheme(next);
   }
 
+  function renderTenantSwitcher(className: string) {
+    return (
+      <details className={`lg-tenant-switcher ${className}`}>
+        <summary aria-label="切换组织" aria-busy={switching}>
+          <Building2 size={14} />
+          <span><small>组织</small><strong>{tenant?.name ?? tenants.find((item) => item.current)?.name ?? '当前组织'}</strong></span>
+          <ChevronDown size={13} />
+        </summary>
+        <div className="lg-tenant-popover">
+          <header><strong>组织</strong><span>隔离成员、密钥、路由、预算与日志</span></header>
+          <div role="menu" aria-label="可用组织">
+            {(tenants.length > 0 ? tenants : [{
+              id: tenant?.id ?? '',
+              name: tenant?.name ?? '当前组织',
+              slug: '',
+              role: tenant?.role ?? 'member',
+              current: true,
+            }]).map((item) => {
+              const selected = item.id === tenant?.id || item.current;
+              return (
+                <button key={item.id || item.name} type="button" role="menuitemradio" aria-checked={selected} disabled={switching} onClick={() => void changeTenant(item.id)}>
+                  <span><strong>{item.name}</strong><small>{item.role}</small></span>
+                  {selected ? <Check size={15} /> : null}
+                </button>
+              );
+            })}
+          </div>
+          <NavLink to="/organization" onClick={() => setMobileOpen(false)}><Building2 size={14} /><span>管理团队与成员</span></NavLink>
+        </div>
+      </details>
+    );
+  }
+
   return (
     <div className="lg-console-shell">
       <header className="lg-console-header">
@@ -102,14 +137,7 @@ export function ConsoleLayout() {
           <span>LLM Gateway</span>
         </div>
 
-        <label className="lg-tenant-switcher">
-          <Building2 size={14} />
-          <select aria-label="切换租户" value={tenant?.id ?? tenants.find((item) => item.current)?.id ?? ''} disabled={switching} onChange={(event) => void changeTenant(event.target.value)}>
-            {tenants.length === 0 ? <option value={tenant?.id ?? ''}>{tenant?.name ?? '当前租户'}</option> : null}
-            {tenants.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-          </select>
-          <ChevronDown size={13} />
-        </label>
+        {renderTenantSwitcher('lg-desktop-tenant-switcher')}
 
         {canSearchRequests ? <form className="lg-global-search" role="search" onSubmit={submitSearch}>
           <Search size={15} />
@@ -119,6 +147,17 @@ export function ConsoleLayout() {
         </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>当前角色仅查看用量</span></div>}
 
         <div className="lg-header-actions">
+          {canSearchRequests ? (
+            <button
+              className="lg-mobile-search-button"
+              type="button"
+              aria-label={mobileSearchOpen ? '关闭请求搜索' : '搜索请求'}
+              aria-expanded={mobileSearchOpen}
+              onClick={() => setMobileSearchOpen((open) => !open)}
+            >
+              {mobileSearchOpen ? <X size={18} /> : <Search size={18} />}
+            </button>
+          ) : null}
           <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
           <details className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
@@ -134,12 +173,26 @@ export function ConsoleLayout() {
             </div>
           </details>
         </div>
+        {canSearchRequests && mobileSearchOpen ? (
+          <form className="lg-mobile-search-panel" role="search" onSubmit={submitSearch}>
+            <Search size={17} />
+            <input
+              aria-label="按 requestId 搜索"
+              value={search}
+              onChange={(event) => setSearch(event.target.value)}
+              placeholder="输入 requestId"
+              autoFocus
+            />
+            <button type="submit">查找</button>
+          </form>
+        ) : null}
       </header>
 
       <div className="lg-console-body">
         {mobileOpen ? <button className="lg-sidebar-backdrop" type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)} /> : null}
         <aside className={`lg-console-sidebar${mobileOpen ? ' is-open' : ''}`} aria-label="主导航">
           <div className="lg-sidebar-mobile-heading"><span>导航</span><button type="button" aria-label="关闭导航" onClick={() => setMobileOpen(false)}><X size={18} /></button></div>
+          {renderTenantSwitcher('lg-mobile-tenant-switcher')}
           <nav>
             {navGroups.map((group) => (
               <div className="lg-nav-group" key={group.label}>

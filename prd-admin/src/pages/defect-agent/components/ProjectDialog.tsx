@@ -146,14 +146,14 @@ export function ProjectDialog({ onClose }: ProjectDialogProps) {
         <div className="flex items-center gap-1">
           <button
             onClick={() => startEdit(project)}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg hover-bg-soft transition-colors"
             title="编辑"
           >
             <Pencil size={14} className="text-token-muted" />
           </button>
           <button
             onClick={() => handleArchive(project)}
-            className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-2 rounded-lg hover-bg-soft transition-colors"
             title="归档"
           >
             <Archive size={14} className="text-token-warning" />

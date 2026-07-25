@@ -82,7 +82,7 @@ export function SkillDetailModal({
           <button
             type="button"
             onClick={onClose}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] transition-colors hover:bg-white/8"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] transition-colors hover-bg-soft"
             style={{ color: 'var(--text-muted)' }}
             title="关闭 (Esc)"
           >

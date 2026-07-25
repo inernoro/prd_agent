@@ -22,21 +22,57 @@
 
 **图 069 从左侧导航点击“请求记录”，不用猜页面地址**
 
-![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/bcffe7fff162cb6ee18877fa2443fbb7c03672c554934b984e3efde4a02de3f1.png)
+![图 069 从左侧导航点击“请求记录”，不用猜页面地址](https://cds.miduo.org/api/reports/assets/33d053d5fd2df3ad9c30472774463e9bdc148d24ea765e0bf5776e179f2b93f0.png)
 
-2. 粘贴完整 requestId 后，唯一匹配会自动打开详情。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。
+2. 粘贴完整 requestId 后，唯一匹配会在当前列表右侧打开“请求详情”抽屉，不会把列表上下文丢掉。在“概览”中确认 Provider 为 `gateway-dry-run`、模型为 `not-called` 或页面等义文案。这条记录只能证明地址、key、团队、appCaller 和协议形状。需要复制独立链接时，再点击抽屉右上角“独立页面”。
 
-**图 070 Logs 用一条紧凑工具栏定位请求，不把趋势报表挡在日志表格前面**
+**图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题**
 
-![图 070 Logs 用一条紧凑工具栏定位请求，不把趋势报表挡在日志表格前面](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
-3. 再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。先在“概览”核对时间、状态、协议、App `G-tutorial.gateway-book::chat`、模型、Provider、token、速度和总耗时；密钥这里只显示前缀或遮盖信息。
+3. 关闭抽屉，再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。列表应连续显示时间、请求 ID、模型、Provider、App、输入、输出、费用、用途、速度、结束原因、客户端用户和状态；模型、Provider 和 App 前应有可辨识图标，列宽不应靠一列吞掉中间空白。点击表头最右侧的“表格设置”，可以显隐列、上下调整顺序，并在紧凑、均衡、舒适三档密度间切换；这些选择只保存在当前浏览器，不改服务端日志。
+
+   文本请求的输入、输出和速度使用上游实际返回的 token 与 token/s。图片生成优先显示成功图片数，速度显示平均每张生成耗时；如果上游同时返回 `prompt_tokens`、`completion_tokens` 和 `usage.cost`，详情继续保留这些实际值。上游没有返回输入 token 时保持 `—`，不能为了让页面更满而补造 `1 prompt`。费用优先显示上游逐请求返回值，其次使用模型价格快照估算；两者都没有时明确显示“未计价”，不能把未知写成 0。旧日志如果在元数据采集上线前产生，仍可能保持未知，不能用页面补造历史 token。
+
+   App 主文字使用可读的应用显示名，`appCallerCode` 作为悬浮信息卡中的稳定标识；“客户端用户”只表示业务传入的最终用户标识，对应 OpenRouter 的 external user，不得拿 App 名称填充。把鼠标分别停在模型、Provider 和 App 的图标或名称上：名称应出现点状下划线，随后显示一张包含图标、名称、身份摘要和进入按钮的悬浮信息卡。鼠标移到同一单元格右侧空白处时，下划线和卡片必须消失，不能把整列当成热区。点击带下划线的名称或卡片按钮，会分别进入模型、Provider 或 App 的独立详情页；从详情页可以继续查看真实上游、连接摘要、路由治理和最近请求，再点击“返回请求记录”回到当前工作流。触屏设备不依赖悬浮卡，直接点击名称进入详情页。点击日志行的其他区域仍打开请求详情抽屉，实体链接不能同时触发行抽屉。
+
+**图 109 表格设置可显隐列、调整顺序和切换密度，并始终保持在当前视口内**
+
+![图 109 表格设置可显隐列、调整顺序和切换密度，并始终保持在当前视口内](https://cds.miduo.org/api/reports/assets/eb876acd167499d34fd87de15c1e3e5c5993ec318746b461d9ce79a5226fd71d.png)
+
+**图 110 App 悬浮信息卡提供身份摘要和独立详情页入口**
+
+![图 110 App 悬浮信息卡提供身份摘要和独立详情页入口](https://cds.miduo.org/api/reports/assets/18989f235c76016c8c5b074d75a322412d09e33c16f176f331b0cb63962fe9ab.png)
+
+**图 111 模型名称悬浮后出现下划线、模型摘要和“查看模型”按钮**
+
+![图 111 模型名称悬浮后出现下划线、模型摘要和“查看模型”按钮](https://cds.miduo.org/api/reports/assets/b32bea3690e2c1daf4ae3e0fe63b2074000e0ee1e1eeb44ee8721926542982c1.png)
+
+**图 112 模型独立详情页集中展示真实 Provider、能力、路由和最近活动**
+
+![图 112 模型独立详情页集中展示真实 Provider、能力、路由和最近活动](https://cds.miduo.org/api/reports/assets/86ba6dfde76ed6625ac78c49922feb465aec92795acbe502cea1f623f7013a87.png)
+
+**图 113 Provider 名称悬浮后出现连接摘要和“查看 Provider”按钮**
+
+![图 113 Provider 名称悬浮后出现连接摘要和“查看 Provider”按钮](https://cds.miduo.org/api/reports/assets/a9f3a88b9780b4179764c8850ce40daf0206799b530621642f8d66496d62dc24.png)
+
+**图 114 Provider 独立详情页分区展示连接、模型和最近活动**
+
+![图 114 Provider 独立详情页分区展示连接、模型和最近活动](https://cds.miduo.org/api/reports/assets/88b5f4e9a8f611259a3b37231bebd3bc9e7abd018cf82fa49b50ebe834817f57.png)
+
+**图 115 App 独立详情页分区展示身份、路由、治理和最近活动**
+
+![图 115 App 独立详情页分区展示身份、路由、治理和最近活动](https://cds.miduo.org/api/reports/assets/e38e4a3e27ae158758766fa4a44da5efaa44ae25b3da11bee11ac6b4a7d5e58d.png)
+
+**图 116 触控设备直接点击模型名称后进入单列详情页**
+
+![图 116 触控设备直接点击模型名称后进入单列详情页](https://cds.miduo.org/api/reports/assets/c68d77303acb1ab2e9f785f4fcd33b8149310ca772ac323f4c018b8a1f686a51.png)
 
 **图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试**
 
-![图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试](https://cds.miduo.org/api/reports/assets/461587f1666bbdd38fab1b2c96bbefbd1aa81576478f15d41497dc978070f199.jpg)
+![图 105 详情概览先回答本次请求用了什么模型、哪个 Provider 和发生了几次上游尝试](https://cds.miduo.org/api/reports/assets/1498b2a4358d79ea1f455e0bc01711a41fec61aa44475f8911332b16cd782182.png)
 
-4. 切到“请求与响应”，核对 Request ID、Generation ID、Key 前缀、流式状态和请求内容。需要交给同事排查时只复制 requestId；不要复制整页原始数据，也不要把可能包含业务内容的请求正文贴到公开群。
+4. 切到“请求与响应”，核对 Request ID、Generation ID、Key 前缀、流式状态和请求内容。图片生成记录的“响应内容”应先显示可打开的安全缩略图、图片数量、媒体类型和文件大小；Base64 只属于客户端原始协议响应，日志正文必须脱敏。Base64 或临时 URL 图片由后台异步保存，URL 抓取必须经过公网地址校验、禁止跳转和体积限制，状态从 pending 变成 stored，不得延迟用户收到上游响应，也不得让管理员浏览器直连第三方临时地址。需要交给同事排查时只复制 requestId；不要复制整页原始数据，也不要把可能包含业务内容的请求正文贴到公开群。
 
 **图 106 请求与响应页签保留定位字段，同时把业务正文放在可控的查看区**
 
@@ -60,11 +96,11 @@
 
 ![图 108 审计页签把估算、实际、价格快照、汇率和身份时间分开说明](https://cds.miduo.org/api/reports/assets/38435bbbfdecaed01838c587b2b1aecf52a33bf2a6c4b7c94706d75997c0b013.jpg)
 
-8. 关闭详情。如果记录本身带 session，再切页面上方的“会话”页签，或展开“更多筛选”使用“会话 ID”；这个“会话”是请求记录页面的同级视图，不是详情抽屉的第五个页签。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
+8. 关闭右侧请求详情抽屉；如果已经从模型、Provider 或 App 进入独立详情页，则点击“返回请求记录”。如果记录本身带 session，再切页面上方的“会话”页签，或展开“更多筛选”使用“会话 ID”；这个“会话”是请求记录页面的同级视图，不是请求详情的第五个页签。没有 session 时明确写“本请求无会话 ID”，不要按相近时间强行合并。
 
 **图 073 请求、上游调用和会话三个页面级页签均来自真实数据源**
 
-![图 073 请求、上游调用和会话三个页面级页签均来自真实数据源](https://cds.miduo.org/api/reports/assets/2c0565db3416c7b60a2bd11f212b1fa2a201a3df4b0a5d0e0c657b1046907709.jpg)
+![图 073 请求、上游调用和会话三个页面级页签均来自真实数据源](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
 9. 需要再次定位时，从“请求与响应”复制 requestId，而不是复制整页可能含业务内容的详情。
 
@@ -74,7 +110,7 @@
 
 ## 看到什么算成功
 
-两条 requestId 提交后各自定位一条当前租户记录并自动打开详情：dry-run 明确显示未调用模型，非 dry-run 记录能用概览、请求与响应、路由、审计四页签说明 key、appCaller、模型池、Provider、策略和费用证据。请求、上游调用、会话三个列表视图不含占位数据；没有 session 时不虚构会话，敏感明文也没有泄露。
+两条 requestId 提交后各自定位一条当前租户记录并打开右侧请求详情；URL 带当前 transaction，可前后切换并通过浏览器历史恢复。列表行打开请求详情抽屉，模型、Provider 和 App 名称都有点状下划线、内容宽度的悬浮信息卡热区和可点击的独立详情页。三个详情页均读取真实配置与最近请求，不根据名称杜撰信息；返回请求记录后仍能继续排查。表格设置能显隐列、调整顺序、切换密度并在刷新后保留。dry-run 明确显示未调用模型，非 dry-run 记录能用概览、请求与响应、路由、审计四页签说明 key、appCaller、模型池、Provider、策略和费用证据。图片记录能显示真实图片数、平均每张耗时和异步保存后的缩略图；缺 token 或价格时保持未知。请求、上游调用、会话三个列表视图不含占位数据；没有 session 时不虚构会话，敏感明文也没有泄露。
 
 ## 失败怎么办
 

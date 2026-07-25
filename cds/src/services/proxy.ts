@@ -8,6 +8,7 @@ import { buildWidgetScript } from '../widget-script.js';
 import { computePreviewSlug, previewProjectSlugCandidates } from './preview-slug.js';
 import { classifyDeployRuntime } from './deploy-runtime.js';
 import { computeWaitTiming } from './wait-timing.js';
+import { GEM_STORY_CSS, buildGemStorySvg, serverGemMineralForStatus } from '../loading-pages/gem.js';
 import { resolveEffectiveProfile } from './container.js';
 import { ROUTABLE_SERVICE_STATUSES } from './forwarder-route-publisher.js';
 import type { DeployDurationMode } from '../types.js';
@@ -989,9 +990,14 @@ export class ProxyService {
       // 1) 有 restart 历史样本 → elapsed/median 真实进度（与「已等待/预计还需」同源）；
       // 2) 无样本 → 从本轮重启起点起的时间曲线，保证进度条始终在动。
       if (timing?.estimateMedianMs != null && timing.estimateSamples > 0) {
-        const timePercent = timing.overdue
+        // 连续映射 elapsed/median → [35, 96],而不是 max(35, frac*100) 的下限钳制:
+        // 钳制版在 frac < 0.35 期间恒等于 35,叠加前端「单调不回退」守卫后,重启
+        // 前 1/3 时间进度条完全静止(2026-07-22 用户反馈「进来就是 35% 纹丝不动」)。
+        // 35 + frac*61 从第一秒起就在动,且与等待页脚本 tickPct 的同名公式对齐。
+        const frac = timing.elapsedMs / timing.estimateMedianMs;
+        const timePercent = timing.overdue || frac >= 1
           ? 96
-          : Math.max(35, Math.min(96, (timing.elapsedMs / timing.estimateMedianMs) * 100));
+          : Math.min(96, 35 + frac * 61);
         return {
           percent: Math.round(timePercent),
           confidence: 'high',
@@ -1694,6 +1700,11 @@ void main(){
         ? `CDS 正在等待服务 ${safeWaitingProfile} 完成启动，稳定后会自动切换到真实页面。`
         : 'CDS 正在同步当前分支的运行状态，服务稳定后会自动打开。';
 
+    // 宝石六芒(组装-碎裂叙事)= 系统核心叙事,等待页前景必须有它(2026-07-22 定稿)。
+    // 矿色按系统状态设定 v2:构建=琥珀 amber,启动/重启=银河 galaxy,其余=品牌 iris。
+    const gemMineral = ciWaiting ? 'iris' : serverGemMineralForStatus(branchStatus);
+    const gemSvg = buildGemStorySvg(gemMineral, 64);
+
     const html = `<!DOCTYPE html>
 <html lang="zh-CN"><head>
 <meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1">
@@ -1745,6 +1756,8 @@ a.chip.link:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255
 .note{display:inline-flex;align-items:center;gap:8px;letter-spacing:.12em;text-transform:uppercase;font-family:"JetBrains Mono","SFMono-Regular",Menlo,monospace;font-size:11px;color:rgba(255,255,255,.48)}
 .note::before{content:"";width:7px;height:7px;border-radius:50%;background:var(--sync);box-shadow:0 0 16px rgba(34,197,94,.72);animation:svc-pulse 1.55s ease-in-out infinite}
 .magic-rings-bg.is-static{background:radial-gradient(circle at 50% 50%,rgba(255,255,255,.22),transparent 12%,rgba(174,180,189,.16) 24%,transparent 42%),#120f17;animation:fallback-pulse 3.45s ease-in-out infinite}
+.gem-row{margin-bottom:20px}
+${GEM_STORY_CSS}
 @keyframes pulse{0%,100%{transform:scale(.96);opacity:.74}50%{transform:scale(1.04);opacity:1}}
 @keyframes svc-pulse{0%,100%{transform:scale(.78);opacity:.58;filter:saturate(.9)}50%{transform:scale(1.28);opacity:1;filter:saturate(1.4)}}
 @keyframes svc-glint{0%,32%{transform:translateX(0) skewX(-18deg);opacity:0}48%{opacity:1}72%,100%{transform:translateX(420%) skewX(-18deg);opacity:0}}
@@ -1758,6 +1771,7 @@ a.chip.link:hover{border-color:rgba(255,255,255,.32);background:rgba(255,255,255
 <canvas class="magic-rings-bg" id="magic-rings" aria-hidden="true"></canvas>
 <main class="shell">
   <section class="content">
+    <div class="gem-row" aria-hidden="true">${gemSvg}</div>
     <div class="eyebrow">CDS Waiting Room</div>
     <h1><span class="${shouldAutoRefresh ? 'shiny-text' : ''}" data-role="heading">${heading}</span></h1>
     <p class="subtitle" data-role="subheading">${subheading}</p>
@@ -1969,6 +1983,7 @@ ${shouldAutoRefresh ? `;(function(){
       if(elapsed<0)elapsed=0;
       var frac=elapsed/timingState.medianMs;
       if(timingState.overdue||frac>=1)target=Math.max(pct.display,96);
+      else if(timingState.mode==='restart')target=Math.min(96,35+frac*61); // 与服务端热重启公式对齐:35 起步、首秒即动
       else target=Math.max(1,Math.min(96,frac*100));
     }else{
       target=pct.server;                                        // 无历史样本：只展示状态估算，不编造时间

@@ -1,4 +1,5 @@
 using System.IdentityModel.Tokens.Jwt;
+using System.Net;
 using System.Security.Claims;
 using Microsoft.AspNetCore.Http;
 using MongoDB.Bson;
@@ -73,6 +74,57 @@ public sealed class GatewayConsoleTenantAccessTests
             error.ShouldBeNull();
         else
             error.ShouldNotBeNull().ShouldContain(expectedError);
+    }
+
+    [Theory]
+    [InlineData("0.0.0.0")]
+    [InlineData("10.0.0.1")]
+    [InlineData("100.64.0.1")]
+    [InlineData("127.0.0.1")]
+    [InlineData("169.254.169.254")]
+    [InlineData("172.16.0.1")]
+    [InlineData("192.0.0.1")]
+    [InlineData("192.0.2.1")]
+    [InlineData("192.88.99.1")]
+    [InlineData("192.168.0.1")]
+    [InlineData("198.18.0.1")]
+    [InlineData("198.51.100.1")]
+    [InlineData("203.0.113.1")]
+    [InlineData("224.0.0.1")]
+    [InlineData("64:ff9b::1")]
+    [InlineData("64:ff9b:1::1")]
+    [InlineData("100::1")]
+    [InlineData("100:0:0:1::1")]
+    [InlineData("2001::1")]
+    [InlineData("2001:db8::1")]
+    [InlineData("2002::1")]
+    [InlineData("3fff::1")]
+    [InlineData("5f00::1")]
+    [InlineData("fc00::1")]
+    [InlineData("fe80::1")]
+    [InlineData("ff00::1")]
+    public void ExternalExchangeAddress_RejectsPrivateAndSpecialUseRanges(string rawAddress)
+    {
+        GatewayConfigurationProvisioning.IsSafeExternalExchangeAddress(IPAddress.Parse(rawAddress)).ShouldBeFalse();
+    }
+
+    [Theory]
+    [InlineData("8.8.8.8")]
+    [InlineData("1.1.1.1")]
+    [InlineData("192.0.0.9")]
+    [InlineData("192.0.0.10")]
+    [InlineData("192.31.196.1")]
+    [InlineData("192.52.193.1")]
+    [InlineData("192.175.48.1")]
+    [InlineData("2001:1::1")]
+    [InlineData("2001:3::1")]
+    [InlineData("2001:4:112::1")]
+    [InlineData("2001:20::1")]
+    [InlineData("2001:30::1")]
+    [InlineData("2606:4700:4700::1111")]
+    public void ExternalExchangeAddress_AllowsPublicAddresses(string rawAddress)
+    {
+        GatewayConfigurationProvisioning.IsSafeExternalExchangeAddress(IPAddress.Parse(rawAddress)).ShouldBeTrue();
     }
 
     [Fact]
@@ -213,6 +265,83 @@ public sealed class GatewayConsoleTenantAccessTests
         (await users.Find(x => x.Id == owner.Id).SingleAsync()).TenantIds.ShouldBe(["home"]);
         (await tenants.Find(x => x.Id == "tenant-stable").SingleAsync()).ActiveOwnerMembershipIds.ShouldBe(["stable-owner"]);
         (await operations.CountDocumentsAsync(x => x.Status == "repaired")).ShouldBe(2);
+        var reclaimedMemberOperation = await operations.Find(x => x.Id == "op-member").SingleAsync();
+        reclaimedMemberOperation.RepairGeneration.ShouldBe(2);
+        reclaimedMemberOperation.RepairToken.ShouldNotBe("crashed-repairer");
+    }
+
+    [Fact]
+    public async Task Repairer_StaleGenerationCannotApplyBusinessWritesAfterTakeover()
+    {
+        var database = await TryCreateDatabaseAsync();
+        if (database is null) return;
+        await using var scope = database;
+        var users = scope.Database.GetCollection<LlmGwUser>("llmgw_console_users");
+        var tenants = scope.Database.GetCollection<LlmGwTenant>("llmgw_tenants");
+        var memberships = scope.Database.GetCollection<LlmGwMembership>("llmgw_memberships");
+        var operations = scope.Database.GetCollection<GatewayRecoveryOperation>("llmgw_recovery_operations");
+        var member = new LlmGwMembership
+        {
+            Id = "member-protected-by-new-generation",
+            TenantId = "tenant-a",
+            UserId = "user-a",
+            Role = LlmGwTenantRoles.Owner,
+        };
+        await users.InsertOneAsync(new LlmGwUser
+        {
+            Id = member.UserId,
+            Username = member.UserId,
+            TenantIds = [member.TenantId],
+        });
+        await tenants.InsertOneAsync(new LlmGwTenant
+        {
+            Id = member.TenantId,
+            Name = "Tenant A",
+            OwnerAuthorityInitialized = true,
+            ActiveOwnerMembershipIds = [member.Id],
+            OwnerFenceGeneration = 2,
+        });
+        await memberships.InsertOneAsync(member);
+        await operations.InsertOneAsync(new GatewayRecoveryOperation
+        {
+            Id = "op-member-stale",
+            Kind = GatewayRecoveryKinds.MemberCreate,
+            Status = "repairing",
+            TenantId = member.TenantId,
+            UserId = member.UserId,
+            MembershipId = member.Id,
+            RepairToken = "new-repairer",
+            RepairGeneration = 2,
+            LeaseExpiresAt = DateTime.UtcNow.AddMinutes(2),
+        });
+        var staleClaim = new GatewayRecoveryOperation
+        {
+            Id = "op-member-stale",
+            Kind = GatewayRecoveryKinds.MemberCreate,
+            Status = "repairing",
+            TenantId = member.TenantId,
+            UserId = member.UserId,
+            MembershipId = member.Id,
+            RepairToken = "old-repairer",
+            RepairGeneration = 1,
+            LeaseExpiresAt = DateTime.UtcNow.AddMinutes(-1),
+        };
+
+        var repairClaimed = typeof(GatewayRecoveryOperations).GetMethod(
+            "RepairClaimedAsync",
+            System.Reflection.BindingFlags.Static | System.Reflection.BindingFlags.NonPublic);
+        repairClaimed.ShouldNotBeNull();
+        var repairTask = repairClaimed.Invoke(
+            null,
+            [scope.Database, staleClaim, "old-repairer"]) as Task<string>;
+        Assert.NotNull(repairTask);
+        var detail = await repairTask!;
+
+        detail.ShouldBe("repair-lease-lost");
+        (await memberships.CountDocumentsAsync(x => x.Id == member.Id)).ShouldBe(1);
+        (await users.CountDocumentsAsync(x => x.Id == member.UserId)).ShouldBe(1);
+        (await tenants.Find(x => x.Id == member.TenantId).SingleAsync())
+            .ActiveOwnerMembershipIds.ShouldBe([member.Id]);
     }
 
     [Fact]

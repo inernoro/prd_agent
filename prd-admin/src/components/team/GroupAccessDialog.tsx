@@ -92,7 +92,7 @@ export function GroupAccessDialog({
 
   const segBtn = (on: boolean) => (on
     ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)', border: '1px solid rgba(212,175,55,0.4)' }
-    : { background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.1)', color: 'var(--text-muted)' });
+    : { background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' });
 
   const modal = (
     <div
@@ -101,18 +101,12 @@ export function GroupAccessDialog({
       onClick={onClose}
     >
       <div
-        className="rounded-[14px] flex flex-col w-full"
-        style={{
-          maxHeight: '76vh',
-          maxWidth: '560px',
-          background: 'var(--bg-elevated)',
-          border: '1px solid rgba(255,255,255,0.12)',
-          boxShadow: '0 24px 80px rgba(0,0,0,0.6)',
-        }}
+        className="rounded-[14px] flex flex-col w-full border border-token-subtle"
+        style={{ maxHeight: '76vh', maxWidth: '560px', background: 'var(--bg-elevated)', boxShadow: '0 24px 80px rgba(0,0,0,0.6)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="shrink-0 flex items-center justify-between px-5 h-[52px]" style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="shrink-0 flex items-center justify-between px-5 h-[52px] border-b border-b-token-subtle" >
           <span className="text-[15px] font-semibold flex items-center gap-2" style={{ color: 'var(--text-primary)' }}>
             <Lock size={15} /> 「{group.name}」访问权限
           </span>
@@ -149,13 +143,13 @@ export function GroupAccessDialog({
               <div className="text-[12px]" style={{ color: 'var(--text-muted)' }}>授权规则（按成员或角色标签）</div>
 
               {rules.length === 0 ? (
-                <div className="text-[12px] py-3 text-center rounded-[8px]" style={{ background: 'var(--bg-input)', border: '1px dashed rgba(255,255,255,0.12)', color: 'var(--text-muted)' }}>
+                <div className="text-[12px] py-3 text-center rounded-[8px]" style={{ background: 'var(--bg-input)', border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}>
                   还没有授权规则，下方添加成员或标签
                 </div>
               ) : (
                 <div className="space-y-1">
                   {rules.map((r, i) => (
-                    <div key={`${r.subjectType}-${r.subjectId}`} className="flex items-center gap-2 h-9 px-2.5 rounded-[8px]" style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.08)' }}>
+                    <div key={`${r.subjectType}-${r.subjectId}`} className="flex items-center gap-2 h-9 px-2.5 rounded-[8px] border border-token-subtle" style={{ background: 'var(--bg-input)' }}>
                       {r.subjectType === 'user' ? (
                         <>
                           <UserAvatar
@@ -176,8 +170,8 @@ export function GroupAccessDialog({
                       <select
                         value={r.role}
                         onChange={(e) => setRules(rules.map((x, xi) => (xi === i ? { ...x, role: e.target.value as WebPageGroupRole } : x)))}
-                        className="h-6 px-1.5 rounded-[6px] text-[11px] outline-none"
-                        style={{ background: 'var(--bg-elevated)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                        className="h-6 px-1.5 rounded-[6px] text-[11px] outline-none border border-token-subtle"
+                        style={{ background: 'var(--bg-elevated)', color: 'var(--text-primary)' }}
                       >
                         <option value="viewer">可看</option>
                         <option value="editor">可编辑</option>
@@ -192,7 +186,7 @@ export function GroupAccessDialog({
 
               {/* 添加规则 */}
               <div className="flex items-center gap-1.5">
-                <div className="flex rounded-[8px] overflow-hidden shrink-0" style={{ border: '1px solid rgba(255,255,255,0.12)' }}>
+                <div className="flex rounded-[8px] overflow-hidden shrink-0 border border-token-subtle" >
                   <button type="button" title="按具体成员授权" className="h-8 px-2 text-[11px] flex items-center gap-1" style={subjectType === 'user' ? { background: 'rgba(212,175,55,0.18)', color: 'var(--accent-gold, #d4af37)' } : { background: 'var(--bg-input)', color: 'var(--text-muted)' }} onClick={() => { setSubjectType('user'); setSubjectId(''); }}>
                     <UserIcon size={11} /> 成员
                   </button>
@@ -203,8 +197,8 @@ export function GroupAccessDialog({
                 <select
                   value={subjectId}
                   onChange={(e) => setSubjectId(e.target.value)}
-                  className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none min-w-0"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  className="flex-1 h-8 px-2 rounded-[8px] text-[12px] outline-none min-w-0 border border-token-subtle"
+                  style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 >
                   <option value="">{subjectType === 'user' ? '选择成员…' : labelDict.length > 0 ? '选择标签…' : '暂无标签（先到成员管理给成员打标签）'}</option>
                   {subjectType === 'user'
@@ -214,8 +208,8 @@ export function GroupAccessDialog({
                 <select
                   value={role}
                   onChange={(e) => setRole(e.target.value as WebPageGroupRole)}
-                  className="h-8 px-2 rounded-[8px] text-[12px] outline-none shrink-0"
-                  style={{ background: 'var(--bg-input)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                  className="h-8 px-2 rounded-[8px] text-[12px] outline-none shrink-0 border border-token-subtle"
+                  style={{ background: 'var(--bg-input)', color: 'var(--text-primary)' }}
                 >
                   <option value="viewer">可看</option>
                   <option value="editor">可编辑</option>
@@ -226,7 +220,7 @@ export function GroupAccessDialog({
                   className="h-8 px-2.5 rounded-[8px] text-[12px] flex items-center gap-1 shrink-0"
                   style={subjectId
                     ? { background: 'var(--accent-gold, #d4af37)', color: '#1a1a1a' }
-                    : { background: 'rgba(255,255,255,0.06)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
+                    : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', cursor: 'not-allowed' }}
                   onClick={addRule}
                 >
                   <Plus size={12} /> 添加
@@ -237,7 +231,7 @@ export function GroupAccessDialog({
         </div>
 
         {/* Footer */}
-        <div className="shrink-0 flex items-center justify-end gap-2 px-5 h-[56px]" style={{ borderTop: '1px solid rgba(255,255,255,0.08)' }}>
+        <div className="shrink-0 flex items-center justify-end gap-2 px-5 h-[56px] border-t border-t-token-subtle" >
           <button type="button" className="h-8 px-3 rounded-[8px] text-[12px]" style={{ color: 'var(--text-muted)' }} onClick={onClose}>
             取消
           </button>

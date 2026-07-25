@@ -53,7 +53,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
       <button
         type="button"
         onClick={() => setOpen(true)}
-        className="inline-flex items-center gap-1.5 rounded-lg border border-white/20 bg-white/5 px-3 py-1.5 text-xs text-white/75 backdrop-blur-sm transition-all hover:border-white/35 hover:bg-white/10 hover:text-white"
+        className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-secondary backdrop-blur-sm transition-all hover-border-token hover-bg-soft hover-text-primary"
         title="装修我的公开页（仅自己可见入口）"
       >
         <Pencil size={12} />
@@ -64,16 +64,16 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
   }
 
   return (
-    <div className="rounded-2xl border border-white/15 bg-[#0f1014]/90 p-4 backdrop-blur-xl">
+    <div className="rounded-2xl border border-token-subtle bg-[#0f1014]/90 p-4 backdrop-blur-xl">
       <div className="mb-3 flex items-center justify-between">
-        <div className="flex items-center gap-2 text-[13px] font-medium text-white/85">
+        <div className="flex items-center gap-2 text-[13px] font-medium text-token-primary">
           <Palette size={14} />
           <span>装修我的公开页</span>
         </div>
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded-md p-1 text-white/55 transition-colors hover:bg-white/10 hover:text-white"
+          className="rounded-md p-1 text-token-secondary transition-colors hover-bg-soft hover-text-primary"
           aria-label="关闭"
         >
           <X size={14} />
@@ -81,7 +81,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
       </div>
 
       <div className="mb-4">
-        <label className="mb-1.5 block text-[11px] uppercase tracking-wide text-white/50">
+        <label className="mb-1.5 block text-[11px] uppercase tracking-wide text-token-secondary">
           自我介绍（最多 500 字）
         </label>
         <textarea
@@ -89,15 +89,15 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
           onChange={(e) => setBio(e.target.value.slice(0, 500))}
           placeholder="写一句让访客更了解你的话——你的领域、你擅长什么、你在做什么"
           rows={3}
-          className="w-full resize-none rounded-lg border border-white/10 bg-black/30 px-3 py-2 text-[13px] text-white/90 outline-none transition-colors placeholder:text-white/30 focus:border-white/25"
+          className="w-full resize-none rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-[13px] text-token-primary outline-none transition-colors placeholder-token-muted focus:border-[var(--border-focus)]"
         />
-        <div className="mt-1 flex justify-end text-[10px] text-white/40">
+        <div className="mt-1 flex justify-end text-[10px] text-token-muted">
           {bio.length} / 500
         </div>
       </div>
 
       <div className="mb-4">
-        <label className="mb-1.5 block text-[11px] uppercase tracking-wide text-white/50">
+        <label className="mb-1.5 block text-[11px] uppercase tracking-wide text-token-secondary">
           背景主题
         </label>
         <div className="grid grid-cols-4 gap-2">
@@ -122,7 +122,7 @@ export function OwnerDecorator({ initialBio, initialBackground, onSaved }: Owner
         <button
           type="button"
           onClick={() => setOpen(false)}
-          className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-1.5 text-[12px] text-white/65 transition-colors hover:bg-white/5 hover:text-white/90"
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-[12px] text-token-secondary transition-colors hover-bg-soft hover-text-primary"
           disabled={saving}
         >
           取消
@@ -158,7 +158,7 @@ function BackgroundSwatch({
         'relative overflow-hidden rounded-lg border transition-all',
         active
           ? 'border-sky-400/70 ring-2 ring-sky-400/30'
-          : 'border-white/10 hover:border-white/25',
+          : 'border-token-subtle hover-border-token',
       ].join(' ')}
       title={theme.label}
       style={{ aspectRatio: '4 / 3', background: theme.base }}
@@ -167,7 +167,7 @@ function BackgroundSwatch({
         className="absolute inset-0 opacity-80"
         style={{ background: theme.banner }}
       />
-      <div className="absolute bottom-1 left-1.5 right-1.5 truncate text-left text-[10px] text-white/80 drop-shadow">
+      <div className="absolute bottom-1 left-1.5 right-1.5 truncate text-left text-[10px] text-token-primary drop-shadow">
         {theme.label}
       </div>
       {active && (

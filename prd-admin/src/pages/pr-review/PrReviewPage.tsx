@@ -116,14 +116,14 @@ export function PrReviewPage() {
   }, [authStatus?.connected, itemsLoadedOnce, searchParams, setSearchParams, items, addItem]);
 
   return (
-    <div className="min-h-full bg-[#0d0b16] text-white">
+    <div className="min-h-full bg-[#0d0b16] text-token-primary">
       <div className="max-w-6xl mx-auto px-6 py-8">
         {/* Header */}
         <div data-tour-id="pr-review-page-title" className="flex items-center gap-4 mb-6">
           <button
             type="button"
             onClick={goBack}
-            className="p-2 rounded-lg bg-white/5 text-white/70 hover:bg-white/10 transition"
+            className="p-2 rounded-lg bg-token-nested text-token-secondary hover-bg-soft transition"
             aria-label="返回"
           >
             <ArrowLeft size={18} />
@@ -134,7 +134,7 @@ export function PrReviewPage() {
             </div>
             <div>
               <div className="text-xl font-bold">PR 审查智能体</div>
-              <div className="text-xs text-white/50">
+              <div className="text-xs text-token-secondary">
                 用你自己的 GitHub 账号审查任意有权访问的 PR
               </div>
             </div>
@@ -152,7 +152,7 @@ export function PrReviewPage() {
             <button
               type="button"
               onClick={() => setAutoStartNotice(null)}
-              className="p-1 rounded hover:bg-white/10"
+              className="p-1 rounded hover-bg-soft"
               aria-label="关闭"
             >
               <X size={14} />
@@ -167,7 +167,7 @@ export function PrReviewPage() {
             <button
               type="button"
               onClick={clearError}
-              className="p-1 rounded hover:bg-white/10 text-red-200"
+              className="p-1 rounded hover-bg-soft text-red-200"
               aria-label="关闭"
             >
               <X size={14} />

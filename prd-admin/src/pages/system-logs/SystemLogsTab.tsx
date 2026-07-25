@@ -30,7 +30,7 @@ import { useSearchParams } from 'react-router-dom';
 
 function codeBoxStyle(): React.CSSProperties {
   return {
-    background: 'rgba(0,0,0,0.28)',
+    background: 'var(--nested-block-bg)',
     border: '1px solid var(--border-subtle)',
     borderRadius: 14,
     padding: 12,
@@ -541,7 +541,7 @@ export default function SystemLogsTab() {
                   key={it.id}
                   type="button"
                   onClick={() => void loadDetail(it.id)}
-                  className={`text-left rounded-[12px] px-3 py-2 transition-all hover:bg-white/10 ${
+                  className={`text-left rounded-[12px] px-3 py-2 transition-all hover-bg-soft ${
                     fadingOutIds.has(it.id) ? 'animate-fade-out' : ''
                   }`}
                   style={{
@@ -591,7 +591,7 @@ export default function SystemLogsTab() {
                 key={it.id}
                 type="button"
                 onClick={() => void loadDetail(it.id)}
-                className="text-left rounded-[14px] px-3 py-2 transition-colors hover:bg-white/5"
+                className="text-left rounded-[14px] px-3 py-2 transition-colors hover-bg-soft"
                 style={{ border: '1px solid var(--border-subtle)' }}
               >
                 <div className="flex items-center justify-between gap-3">

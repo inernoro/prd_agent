@@ -89,13 +89,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
   const [modelTypeFilter, setModelTypeFilter] = useState('all');
   // 模型池统计数据 (key: appCallerCode:platformId:modelId) - 按应用+模型组合统计
   const [poolModelStats, setPoolModelStats] = useState<Record<string, LlmModelStatsItem | null>>({});
-  
+
   // 后端解析的默认模型信息（key: appCallerCode::modelType）
   const [resolvedModels, setResolvedModels] = useState<Record<string, ResolvedModelInfo | null>>({});
-  
+
   // 加载状态
   const [isLoading, setIsLoading] = useState(true);
-  
+
   // 树形结构状态
   const [, setAppGroups] = useState<AppGroup[]>([]);
   const [expandedApps, setExpandedApps] = useState<Set<string>>(new Set());
@@ -222,11 +222,11 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       } catch {
         setPlatforms([]);
       }
-      
+
       // 模型池应用
       const grouped = groupAppCallers(apps);
       setAppGroups(grouped);
-      
+
       // 默认展开第一个应用
       if (grouped.length > 0 && expandedApps.size === 0) {
         setExpandedApps(new Set([grouped[0].app]));
@@ -241,12 +241,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         recoverySuccessThreshold: config.recoverySuccessThreshold,
         statsWindowMinutes: config.statsWindowMinutes,
       });
-      
+
       // 设置默认选中的应用，并加载其监控数据
       if (apps.length > 0 && !selectedAppId) {
         const firstAppId = apps[0].id;
         setSelectedAppId(firstAppId);
-        
+
         // 初次加载时，等待监控数据加载完成后再结束 loading 状态
         const firstApp = apps[0];
         if (firstApp) {
@@ -267,7 +267,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           );
           setMonitoringData(data);
         }
-        
+
         // 加载后端解析的默认模型信息（跳过 appCode 为空的条目，避免后端 400）
         const resolveItems: { appCallerCode: string; modelType: string }[] = [];
         for (const caller of apps) {
@@ -322,28 +322,28 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       })
     );
     setMonitoringData(data);
-    
+
     // 加载默认模型解析结果（针对未绑定专属模型池的功能）
     loadResolvedModels();
-    
+
     // 加载模型池中模型的统计数据（按 appCallerCode + model 组合）
     loadPoolModelStats(app, data);
   };
-  
+
   // 加载模型池中模型的统计数据（按 appCallerCode + model 组合）
   const loadPoolModelStats = async (app: LLMAppCaller, monitoringData: Record<string, ModelGroupMonitoringData>) => {
     // 收集所有需要统计的 (appCallerCode, platformId, modelId) 组合
     const items: { appCallerCode: string; platformId: string; modelId: string }[] = [];
-    
+
     for (const req of app.modelRequirements) {
       if (req.modelGroupIds && req.modelGroupIds.length > 0) {
         for (const groupId of req.modelGroupIds) {
           const monitoring = monitoringData[groupId];
           const group = modelGroups.find(g => g.id === groupId);
-          const models = monitoring?.models && monitoring.models.length > 0 
-            ? monitoring.models 
+          const models = monitoring?.models && monitoring.models.length > 0
+            ? monitoring.models
             : (group?.models || []);
-          
+
           for (const model of models) {
             items.push({
               appCallerCode: app.appCode || '',
@@ -354,12 +354,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         }
       }
     }
-    
+
     if (items.length === 0) {
       setPoolModelStats({});
       return;
     }
-    
+
     try {
       const res = await getBatchModelStats({ days: 7, items });
       if (res.success && res.data?.items) {
@@ -369,12 +369,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       console.error('Failed to load pool model stats:', e);
     }
   };
-  
+
   // 加载后端解析的默认模型信息
   const loadResolvedModels = async () => {
     // 收集所有未绑定专属模型池的 appCallerCode::modelType 组合
     const items: { appCallerCode: string; modelType: string }[] = [];
-    
+
     for (const caller of appCallers) {
       if (!caller.appCode) continue;
       for (const req of caller.modelRequirements) {
@@ -387,12 +387,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
         }
       }
     }
-    
+
     if (items.length === 0) {
       setResolvedModels({});
       return;
     }
-    
+
     try {
       const res = await resolveModels(items);
       if (res.success && res.data) {
@@ -652,7 +652,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       }
 
       const result = await response.json();
-      
+
       if (result.success && result.data) {
         setInitResult(result.data);
         await loadData();
@@ -860,7 +860,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
   // 按应用聚合
   const groupedApps = groupAppCallers(appCallers);
-  
+
   // ????????
   const filteredAppGroups = useMemo(() => {
     const normalizedSearch = searchTerm.trim().toLowerCase();
@@ -907,12 +907,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
     }
   }, [filteredAppGroups, selectedAppId]);
 
-  const selectedAppGroup = selectedAppId 
+  const selectedAppGroup = selectedAppId
     ? groupedApps.find(g => g.features.some(f => f.items.some(i => i.id === selectedAppId)))
     : null;
-  
+
   // 获取选中应用的所有功能项（扁平化）
-  const selectedAppFeatures = selectedAppGroup 
+  const selectedAppFeatures = selectedAppGroup
     ? selectedAppGroup.features.flatMap(f => f.items)
     : [];
 
@@ -949,20 +949,15 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
       <div className="grid gap-4 flex-1 min-h-0 lg:grid-cols-[320px_1fr]">
         {/* 左侧：应用列表 */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
-          <div className="p-3 border-b border-white/10 space-y-2">
+          <div className="p-3 border-b border-token-subtle space-y-2">
             <div className="relative">
-              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+              <Search size={16} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
               <input
                 type="text"
                 placeholder="搜索应用..."
                 value={searchTerm}
                 onChange={(e) => setSearchTerm(e.target.value)}
-                className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px]"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                }}
+                className="w-full h-9 pl-9 pr-3 rounded-[11px] outline-none text-[13px] bg-token-input border border-token-subtle text-token-primary"
               />
             </div>
             <ModelTypeFilterBar
@@ -974,16 +969,16 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
           <div className="flex-1 overflow-auto">
             {isLoading ? (
-              <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="p-8 text-center text-token-muted">
                 <MapSectionLoader text="加载中..." />
               </div>
             ) : filteredAppGroups.length === 0 ? (
-              <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="p-8 text-center text-token-muted">
                 <Activity size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">暂无应用</div>
               </div>
             ) : (
-              <div className="divide-y divide-white/10">
+              <div className="divide-y divide-token-subtle">
                 {filteredAppGroups.map((appGroup) => {
                   // 检查这个应用组中是否有被选中的项
                   const isSelected = appGroup.features.some(f => f.items.some(i => i.id === selectedAppId));
@@ -1015,18 +1010,18 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                         </div>
                         <div className="min-w-0 flex-1">
                           <div className="flex items-center gap-2">
-                            <div className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                            <div className="text-[13px] font-semibold truncate text-token-primary">
                               {appGroup.appName}
                             </div>
                             <Badge variant="subtle" size="sm">
                               {totalItems}
                             </Badge>
                           </div>
-                          <div className="mt-0.5 text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+                          <div className="mt-0.5 text-[11px] truncate text-token-muted">
                             {appGroup.app}
                           </div>
                         </div>
-                        {isSelected && <ChevronRight size={16} style={{ color: 'var(--text-muted)' }} />}
+                        {isSelected && <ChevronRight size={16} className="text-token-muted" />}
                       </div>
                     </div>
                   );
@@ -1045,36 +1040,36 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                 <MapSectionLoader text="加载中..." />
               </div>
             ) : !selectedAppGroup ? (
-              <div className="h-full flex items-center justify-center text-sm" style={{ color: 'var(--text-muted)' }}>
+              <div className="h-full flex items-center justify-center text-sm text-token-muted">
                 请选择一个应用
               </div>
             ) : (
               <div className="h-full flex items-center justify-between gap-4">
                 {/* 左侧：应用名称和标识 */}
                 <div className="flex items-center gap-3 min-w-0">
-                  <h3 className="text-base font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  <h3 className="text-base font-semibold truncate text-token-primary">
                     {selectedAppGroup.appName}
                   </h3>
                   <Badge variant="subtle" size="sm" className="shrink-0">
                     {selectedAppFeatures.length} 个功能
                   </Badge>
-                  <span className="text-[13px] truncate hidden sm:block" style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-[13px] truncate hidden sm:block text-token-muted">
                     {selectedAppGroup.app}
                   </span>
                 </div>
                 {/* 右侧：统计数据 */}
                 <div className="flex items-center gap-4 text-[12px] shrink-0">
-                  <span style={{ color: 'var(--text-muted)' }}>
-                    总调用: <span style={{ color: 'var(--text-secondary)' }}>
+                  <span className="text-token-muted">
+                    总调用: <span className="text-token-secondary">
                       {selectedAppFeatures.reduce((sum, f) => sum + f.stats.totalCalls, 0).toLocaleString()}
                     </span>
                   </span>
-                  <span style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-token-muted">
                     成功: <span style={{ color: 'rgba(34,197,94,0.95)' }}>
                       {selectedAppFeatures.reduce((sum, f) => sum + f.stats.successCalls, 0).toLocaleString()}
                     </span>
                   </span>
-                  <span style={{ color: 'var(--text-muted)' }}>
+                  <span className="text-token-muted">
                     失败: <span style={{ color: 'rgba(239,68,68,0.95)' }}>
                       {selectedAppFeatures.reduce((sum, f) => sum + f.stats.failedCalls, 0).toLocaleString()}
                     </span>
@@ -1087,13 +1082,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           {/* 下栏：功能列表（占满剩余空间） */}
           {isLoading ? (
             <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
-              <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-center text-token-muted">
                 <MapSectionLoader text="加载中..." />
               </div>
             </GlassCard>
           ) : !selectedAppGroup ? (
             <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
-              <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-center text-token-muted">
                 <Activity size={48} className="mx-auto mb-4 opacity-40" />
                 <div className="text-sm">请选择一个应用</div>
               </div>
@@ -1102,13 +1097,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
             <GlassCard animated glow className="min-h-0 overflow-auto p-0">
                 {selectedAppFeatures.length === 0 ? (
                   <div className="flex-1 flex items-center justify-center py-12">
-                    <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-center text-token-muted">
                       <Zap size={48} className="mx-auto mb-4 opacity-40" />
                       <div className="text-sm">暂无功能配置</div>
                     </div>
                   </div>
                 ) : (
-                  <div className="divide-y divide-white/[0.06]">
+                  <div className="divide-y divide-token-subtle/[0.06]">
                     {selectedAppFeatures.map((featureItem, idx: number) => {
                       const app = appCallers.find(a => a.id === featureItem.id);
                       if (!app) return null;
@@ -1128,7 +1123,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                       // 判断是否使用默认模型池（未绑定专属模型池）
                       const isDefaultGroup = boundGroups.length === 0;
-                      
+
                       // 从后端解析结果获取默认模型信息
                       const resolveKey = app.appCode || '';
                       const resolvedModel = isDefaultGroup ? resolvedModels[resolveKey] : null;
@@ -1224,7 +1219,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                               <div className="flex items-center justify-between gap-3">
                                 <div className="min-w-0 flex-1">
                                   <div className="flex items-center gap-2 flex-wrap">
-                                    <span className="text-[14px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                                    <span className="text-[14px] font-semibold text-token-primary">
                                       {featureDescription}
                                     </span>
                                     <span
@@ -1238,7 +1233,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       <ModeBadgeIcon size={10} />
                                       {modeBadge.label}
                                     </span>
-                                    <span className="inline-flex items-center gap-1 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                    <span className="inline-flex items-center gap-1 text-[11px] text-token-muted">
                                       <AppCallerCodeIcon size={11} className="opacity-60" />
                                       {featureItem.appCallerCode}
                                     </span>
@@ -1269,7 +1264,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                       <span style={{ color: 'rgba(251, 191, 36, 0.9)' }}>
                                                         模型池降级
                                                       </span>
-                                                      <span style={{ color: 'var(--text-muted)' }}>
+                                                      <span className="text-token-muted">
                                                         配置: {configuredPool.poolName || '(未知)'}
                                                       </span>
                                                       {configuredPool.models?.map((m, i) => (
@@ -1293,7 +1288,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               {/* 实际使用的模型 */}
                                               <div
                                                 className="group flex items-center gap-2 py-1.5 px-2 rounded-lg transition-colors"
-                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}
+                                                style={{ background: isFallback ? 'rgba(34, 197, 94, 0.05)' : 'var(--bg-card)' }}
                                                 onMouseEnter={(e) => {
                                                   e.currentTarget.style.background = isFallback ? 'rgba(34, 197, 94, 0.1)' : 'var(--bg-input-hover)';
                                                 }}
@@ -1303,27 +1298,26 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                 title={isFallback ? `降级回退：${resolvedModel.fallbackReason || ''}` : resolvedModel.source === 'legacy' ? '使用传统配置的单模型' : resolvedModel.modelGroupName ? `使用默认模型池：${resolvedModel.modelGroupName}` : '使用默认模型池'}
                                               >
                                               {/* 序号 */}
-                                              <span className="text-[10px] font-medium w-5 text-center shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                              <span className="text-[10px] font-medium w-5 text-center shrink-0 text-token-muted">
                                                 1
                                               </span>
                                               {/* 平台 */}
                                               <span
-                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0"
-                                                style={{ background: 'var(--bg-card-hover)', color: 'var(--text-muted)' }}
+                                                className="inline-flex items-center gap-1 px-1.5 py-0.5 rounded text-[10px] shrink-0 bg-token-card-hover text-token-muted"
                                               >
                                                 <Server size={10} />
                                                 {resolvedModel.platformName}
                                               </span>
                                               {/* 模型名 */}
                                               <div className="flex items-center gap-1 min-w-0 flex-1">
-                                                <Box size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-                                                <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                                <Box size={12} className="shrink-0 text-token-muted" />
+                                                <span className="text-[13px] font-medium truncate text-token-primary">
                                                   {resolvedModel.modelId}
                                                 </span>
                                               </div>
                                               {/* 调用统计（基于 appCallerCode + model 组合） */}
                                               {defaultStats ? (
-                                                <div className="flex items-center gap-2 text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                <div className="flex items-center gap-2 text-[10px] shrink-0 text-token-muted">
                                                   <span title="近7天请求次数（该功能+此模型）">
                                                     {defaultStats.requestCount.toLocaleString()}次
                                                   </span>
@@ -1344,7 +1338,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   )}
                                                 </div>
                                               ) : (
-                                                <span className="text-[10px] shrink-0" style={{ color: 'var(--text-muted)' }}>
+                                                <span className="text-[10px] shrink-0 text-token-muted">
                                                   暂无统计
                                                 </span>
                                               )}
@@ -1410,7 +1404,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       <>
                                         {/* 模型池名字已下沉到下方卡片网格，这里只保留汇总 + 折叠按钮 */}
                                         {totalModelsCount > 0 && (
-                                          <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
+                                          <span className="text-[10px] text-token-muted">
                                             {boundGroups.length} 个模型池 · {totalModelsCount} 个模型
                                           </span>
                                         )}
@@ -1421,13 +1415,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                               e.stopPropagation();
                                               toggleCollapse();
                                             }}
-                                            className="inline-flex items-center justify-center w-5 h-5 rounded hover:bg-white/10 transition-colors"
+                                            className="inline-flex items-center justify-center w-5 h-5 rounded hover-bg-soft transition-colors"
                                             title={isCollapsed ? '展开模型列表' : '折叠模型列表'}
                                           >
                                             {isCollapsed ? (
-                                              <ChevronRight size={14} style={{ color: 'var(--text-muted)' }} />
+                                              <ChevronRight size={14} className="text-token-muted" />
                                             ) : (
-                                              <ChevronDown size={14} style={{ color: 'var(--text-muted)' }} />
+                                              <ChevronDown size={14} className="text-token-muted" />
                                             )}
                                           </button>
                                         )}
@@ -1517,7 +1511,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                       ? { background: 'rgba(239, 68, 68, 0.05)', border: '1px dashed rgba(239, 68, 68, 0.45)' }
                                       : isPoolDegraded
                                         ? { background: 'rgba(251, 191, 36, 0.05)', border: '1px dashed rgba(251, 191, 36, 0.4)' }
-                                        : { background: 'rgba(255,255,255,0.025)', border: '1px solid rgba(59, 130, 246, 0.18)' };
+                                        : { background: 'var(--nested-block-bg)', border: '1px solid rgba(59, 130, 246, 0.18)' };
                                     const headerAccent = allUnavailable
                                       ? 'rgba(239, 68, 68, 0.95)'
                                       : isPoolDegraded
@@ -1561,8 +1555,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
 
                                         {/* 卡片体：模型列表（永远展示，0 模型时显示占位） */}
                                         <div
-                                          className="px-2 pb-2 pt-1.5 space-y-1"
-                                          style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
+                                          className="px-2 pb-2 pt-1.5 space-y-1 border-t border-t-token-subtle"
+
                                         >
                                             {poolModels.length > 0 ? (
                                               poolModels.map((model: any) => {
@@ -1600,7 +1594,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                   >
                                                     {/* Row 1: 模型名占满行 + 异常徽章（仅非 Healthy） + hover 操作 */}
                                                     <div className="flex items-center gap-1.5">
-                                                      <Box size={12} className="shrink-0" style={{ color: 'var(--text-muted)' }} />
+                                                      <Box size={12} className="shrink-0 text-token-muted" />
                                                       <span
                                                         className="text-[12px] font-medium flex-1 min-w-0 break-words"
                                                         style={{
@@ -1658,8 +1652,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                     {/* Row 2: 平台 + 统计（仅有内容时显示，省略"暂无统计"占位） */}
                                                     {hasFooter && (
                                                       <div
-                                                        className="flex items-center gap-1.5 mt-0.5 ml-[18px] text-[10px] flex-wrap"
-                                                        style={{ color: 'var(--text-muted)' }}
+                                                        className="flex items-center gap-1.5 mt-0.5 ml-[18px] text-[10px] flex-wrap text-token-muted"
                                                       >
                                                         <span>{platformName}</span>
                                                         {stats && (
@@ -1694,7 +1687,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                                                 );
                                               })
                                             ) : (
-                                              <div className="py-2 text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                                              <div className="py-2 text-[11px] text-token-muted">
                                                 模型池中暂无模型，点击右上角"添加"配置
                                               </div>
                                             )}
@@ -1730,7 +1723,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           content={
             <div className="space-y-4">
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   模型类型
                 </label>
                 <ModelTypePicker
@@ -1740,7 +1733,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   用途说明
                 </label>
                 <input
@@ -1748,27 +1741,21 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   value={requirementForm.purpose}
                   onChange={(e) => setRequirementForm({ ...requirementForm, purpose: e.target.value })}
                   placeholder="例如：用户对话、意图识别、图片生成等"
-                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                 />
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   绑定模型池（可选，可多选）
                 </label>
                 <div
-                  className="rounded-[12px] p-2 max-h-[200px] overflow-auto"
-                  style={{ border: '1px solid var(--border-default)', background: 'var(--bg-input)' }}
+                  className="rounded-[12px] p-2 max-h-[200px] overflow-auto border border-token-default bg-token-input"
                 >
                   {modelGroups.filter(g => g.modelType === requirementForm.modelType).map((group) => (
                     <label
                       key={group.id}
-                      className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover:bg-white/5"
+                      className="flex items-center gap-2 px-2 py-1.5 rounded cursor-pointer hover-bg-soft"
                     >
                       <input
                         type="checkbox"
@@ -1782,13 +1769,13 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                         }}
                         className="h-4 w-4 rounded"
                       />
-                      <span className="text-[13px]" style={{ color: 'var(--text-primary)' }}>
+                      <span className="text-[13px] text-token-primary">
                         {group.name} {group.code ? `(${group.code})` : ''}
                       </span>
                     </label>
                   ))}
                   {modelGroups.filter(g => g.modelType === requirementForm.modelType).length === 0 && (
-                    <div className="text-[12px] py-2 text-center" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[12px] py-2 text-center text-token-muted">
                       暂无该类型的模型池
                     </div>
                   )}
@@ -1803,7 +1790,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setRequirementForm({ ...requirementForm, isRequired: e.target.checked })}
                   className="h-4 w-4 rounded"
                 />
-                <label htmlFor="isRequired" className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                <label htmlFor="isRequired" className="text-[13px] text-token-secondary">
                   必需（失败时不降级到其他类型）
                 </label>
               </div>
@@ -1831,7 +1818,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
           content={
             <div className="space-y-4">
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   模型池名称
                 </label>
                 <input
@@ -1839,17 +1826,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   value={groupForm.name}
                   onChange={(e) => setGroupForm({ ...groupForm, name: e.target.value })}
                   placeholder="例如：主对话模型池、快速意图模型池"
-                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                 />
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   模型池代码
                 </label>
                 <input
@@ -1869,7 +1851,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   模型类型
                 </label>
                 <ModelTypePicker
@@ -1880,7 +1862,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   描述
                 </label>
                 <textarea
@@ -1888,12 +1870,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setGroupForm({ ...groupForm, description: e.target.value })}
                   placeholder="模型池用途说明..."
                   rows={3}
-                  className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full px-3 py-2 rounded-[12px] outline-none text-[13px] resize-none bg-token-input border border-token-default text-token-primary"
                 />
               </div>
 
@@ -1936,7 +1913,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
             <div className="space-y-4">
               <div className="grid grid-cols-2 gap-4">
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     降权失败阈值
                   </label>
                   <input
@@ -1946,17 +1923,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       setConfigForm({ ...configForm, consecutiveFailuresToDegrade: parseInt(e.target.value) || 1 })
                     }
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     不可用失败阈值
                   </label>
                   <input
@@ -1966,17 +1938,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       setConfigForm({ ...configForm, consecutiveFailuresToUnavailable: parseInt(e.target.value) || 3 })
                     }
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     健康检查间隔（分钟）
                   </label>
                   <input
@@ -1986,17 +1953,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       setConfigForm({ ...configForm, healthCheckIntervalMinutes: parseInt(e.target.value) || 5 })
                     }
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     健康检查超时（秒）
                   </label>
                   <input
@@ -2006,17 +1968,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       setConfigForm({ ...configForm, healthCheckTimeoutSeconds: parseInt(e.target.value) || 10 })
                     }
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     恢复成功阈值
                   </label>
                   <input
@@ -2026,17 +1983,12 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                       setConfigForm({ ...configForm, recoverySuccessThreshold: parseInt(e.target.value) || 2 })
                     }
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
 
                 <div>
-                  <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                     统计窗口（分钟）
                   </label>
                   <input
@@ -2044,30 +1996,20 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     value={configForm.statsWindowMinutes}
                     onChange={(e) => setConfigForm({ ...configForm, statsWindowMinutes: parseInt(e.target.value) || 60 })}
                     min={1}
-                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                    style={{
-                      background: 'var(--bg-input)',
-                      border: '1px solid var(--border-default)',
-                      color: 'var(--text-primary)',
-                    }}
+                    className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
               </div>
 
               <div>
-                <label className="block text-[12px] font-semibold mb-2" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-2 text-token-secondary">
                   健康检查提示词
                 </label>
                 <input
                   type="text"
                   value={configForm.healthCheckPrompt}
                   onChange={(e) => setConfigForm({ ...configForm, healthCheckPrompt: e.target.value })}
-                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-default)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-10 px-3 rounded-[12px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                 />
               </div>
 
@@ -2079,7 +2021,7 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   onChange={(e) => setConfigForm({ ...configForm, autoRecoveryEnabled: e.target.checked })}
                   className="h-4 w-4 rounded"
                 />
-                <label htmlFor="autoRecovery" className="text-[13px]" style={{ color: 'var(--text-secondary)' }}>
+                <label htmlFor="autoRecovery" className="text-[13px] text-token-secondary">
                   启用自动恢复
                 </label>
               </div>
@@ -2122,8 +2064,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   </div>
                 )}
                 {initResult.unchanged.length > 0 && (
-                  <div className="rounded-lg px-3 py-2" style={{ background: 'var(--bg-input)' }}>
-                    <div className="text-[18px] font-semibold" style={{ color: 'var(--text-secondary)' }}>{initResult.unchanged.length}</div>
+                  <div className="rounded-lg px-3 py-2 bg-token-input">
+                    <div className="text-[18px] font-semibold text-token-secondary">{initResult.unchanged.length}</div>
                     <div className="text-[11px]" style={{ color: 'var(--text-tertiary)' }}>无变化</div>
                   </div>
                 )}
@@ -2150,8 +2092,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                   <div className="mt-2 space-y-2 max-h-[40vh] overflow-auto">
                     {initResult.created.length > 0 && (
                       <div>
-                        <div className="font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>新增应用</div>
-                        <div className="rounded-lg p-2 space-y-0.5" style={{ background: 'var(--bg-input)' }}>
+                        <div className="font-semibold mb-1 text-token-secondary">新增应用</div>
+                        <div className="rounded-lg p-2 space-y-0.5 bg-token-input">
                           {initResult.created.map((code: string) => (
                             <div key={code} className="font-mono px-1.5 py-0.5">{code}</div>
                           ))}
@@ -2160,8 +2102,8 @@ export function ModelAppGroupPage({ onActionsReady }: { onActionsReady?: (action
                     )}
                     {initResult.orphanDeleted.length > 0 && (
                       <div>
-                        <div className="font-semibold mb-1" style={{ color: 'var(--text-secondary)' }}>清理的孤儿应用</div>
-                        <div className="rounded-lg p-2 space-y-0.5" style={{ background: 'var(--bg-input)' }}>
+                        <div className="font-semibold mb-1 text-token-secondary">清理的孤儿应用</div>
+                        <div className="rounded-lg p-2 space-y-0.5 bg-token-input">
                           {initResult.orphanDeleted.map((code: string) => (
                             <div key={code} className="font-mono px-1.5 py-0.5">{code}</div>
                           ))}

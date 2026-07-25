@@ -8,6 +8,8 @@
 
 用户只是登录身份，成员关系才把用户、租户、角色和团队连在一起。Owner 负责租户，Admin 管理配置，Developer 只管理所属团队的 appCaller 与限定密钥，Viewer 查看请求与用量，Billing 只看预算与用量。团队边界让某个接入方出问题时可以单独停用，不影响其他团队。
 
+这里的“团队”目前是组织内的权限范围：它收窄成员、appCaller 和接入密钥。它还不是另一套独立账单账户，也不会复制一套 Provider、路由或日志。类似 OpenRouter 的 Workspace 会进一步隔离 API keys、路由默认值、BYOK、Guardrails、Observability 和预算；LLM Gateway 现阶段把这些能力放在租户或 appCaller 层，因此不要把一个团队误写成完整 Workspace。
+
 ## 开始前检查
 
 - 当前租户显示“教程咖啡店”，当前角色是 Owner 或 Admin。

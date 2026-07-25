@@ -76,6 +76,7 @@ export function AppCallersPage() {
   const canWrite = canUseCapability(tenant?.role, 'appCallerWrite');
   const canManagePromptPolicy = canUseCapability(tenant?.role, 'configWrite');
   const [searchParams] = useSearchParams();
+  const focusedAppCallerCode = (searchParams.get('focus') || '').replace(/^G-/, '');
   const [data, setData] = useState<GatewayAppCallersData | null>(null);
   const [pools, setPools] = useState<ModelPool[]>([]);
   const [error, setError] = useState<string | null>(null);
@@ -142,6 +143,12 @@ export function AppCallersPage() {
       alive = false;
     };
   }, [page, search, status, sourceSystem, ingressProtocol, requestType, drift, modelPoolId]);
+
+  useEffect(() => {
+    if (!focusedAppCallerCode || !data?.items.length) return;
+    const focused = data.items.find((item) => item.appCallerCode === focusedAppCallerCode);
+    if (focused) setExpandedId(focused.id);
+  }, [data?.items, focusedAppCallerCode]);
 
   useEffect(() => {
     let alive = true;
@@ -545,9 +552,9 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       {links.map((link) => (
-        <a
+        <Link
           key={link.label}
-          href={link.href}
+          to={link.href}
           style={{
             color: 'var(--accent)',
             fontSize: 13,
@@ -561,7 +568,7 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
           title={link.value ?? ''}
         >
           {link.label}: {link.value}
-        </a>
+        </Link>
       ))}
     </div>
   );

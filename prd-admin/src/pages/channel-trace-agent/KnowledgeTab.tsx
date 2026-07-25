@@ -116,9 +116,9 @@ export function KnowledgeTab() {
   return (
     <div className="h-full min-h-0 flex">
       {/* 左：业务知识问答 */}
-      <div className="flex-1 min-w-0 flex flex-col border-r border-white/10">
+      <div className="flex-1 min-w-0 flex flex-col border-r border-token-subtle">
         <div className="shrink-0 px-6 pt-5 pb-3">
-          <div className="text-sm font-medium text-white/85 mb-2 inline-flex items-center gap-1.5">
+          <div className="text-sm font-medium text-token-primary mb-2 inline-flex items-center gap-1.5">
             <BookOpen className="w-4 h-4 text-emerald-400" />
             业务知识问答
           </div>
@@ -131,15 +131,15 @@ export function KnowledgeTab() {
               }}
               rows={2}
               placeholder="例如：防窜货的「窜货判定」是怎么定义的？上码和关联各是什么环节？（Ctrl/⌘+Enter 发送）"
-              className="flex-1 resize-none rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="flex-1 resize-none rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
             <button
               onClick={() => setShowPaste((v) => !v)}
               title="粘贴防窜后台页面 HTML / 文本作为上下文（比截图省 token、字段更全）"
-              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover:bg-white/10 ${
+              className={`shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg border text-sm hover-bg-soft ${
                 showPaste || contextText.trim()
                   ? 'bg-emerald-500/15 border-emerald-500/30 text-emerald-300'
-                  : 'bg-white/5 border-white/10 text-white/75'
+                  : 'bg-token-nested border-token-subtle text-token-primary'
               }`}
             >
               <ClipboardPaste className="w-4 h-4" />
@@ -148,7 +148,7 @@ export function KnowledgeTab() {
               onClick={() => askFileInputRef.current?.click()}
               disabled={askUploading || askFiles.length >= 8}
               title="上传防窜后台页面截图 / 文档，让 AI 识别页面与操作"
-              className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white/75 hover:bg-white/10 disabled:opacity-40"
+              className="shrink-0 inline-flex items-center gap-1 px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft disabled:opacity-40"
             >
               {askUploading ? <Loader2 className="w-4 h-4 animate-spin" /> : <Paperclip className="w-4 h-4" />}
             </button>
@@ -176,14 +176,14 @@ export function KnowledgeTab() {
                 onChange={(e) => setContextText(e.target.value)}
                 rows={3}
                 placeholder="粘贴防窜后台页面的 HTML 或文本（如选中页面右键「检查」复制元素，或直接复制页面文字）。提交问题时一并作为上下文。"
-                className="w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-xs text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40 font-mono"
+                className="w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-xs text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40 font-mono"
               />
               {contextText.trim() && (
-                <div className="text-[11px] text-white/40 mt-1">
+                <div className="text-[11px] text-token-muted mt-1">
                   已附带粘贴内容（{contextText.trim().length} 字），提交时会去标签转纯文本。
                   <button
                     onClick={() => setContextText('')}
-                    className="ml-2 text-white/40 hover:text-rose-400"
+                    className="ml-2 text-token-muted hover:text-rose-400"
                   >
                     清空
                   </button>
@@ -196,13 +196,13 @@ export function KnowledgeTab() {
               {askFiles.map((f, i) => (
                 <span
                   key={f.attachmentId}
-                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-white/5 border border-white/10 text-white/70"
+                  className="inline-flex items-center gap-1 text-[11px] px-2 py-0.5 rounded bg-token-nested border border-token-subtle text-token-secondary"
                 >
                   {f.isImage ? <ImageIcon className="w-3 h-3" /> : <Paperclip className="w-3 h-3" />}
                   <span className="max-w-[140px] truncate">{f.fileName}</span>
                   <button
                     onClick={() => setAskFiles((prev) => prev.filter((_, idx) => idx !== i))}
-                    className="text-white/40 hover:text-rose-400"
+                    className="text-token-muted hover:text-rose-400"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -211,7 +211,7 @@ export function KnowledgeTab() {
             </div>
           )}
           {model?.model && (
-            <div className="text-[11px] text-white/40 font-mono mt-2">
+            <div className="text-[11px] text-token-muted font-mono mt-2">
               ● {model.model}
               {model.platform ? ` · ${model.platform}` : ''}
             </div>
@@ -223,13 +223,13 @@ export function KnowledgeTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {isStreaming && !typing && (
-            <div className="flex items-center gap-2 text-sm text-white/50 py-4">
+            <div className="flex items-center gap-2 text-sm text-token-secondary py-4">
               <Loader2 className="w-4 h-4 animate-spin" />
               {phaseMessage || 'AI 正在思考…'}
             </div>
           )}
           {typing ? (
-            <div className="rounded-xl bg-white/3 border border-white/10 px-4 py-3 min-w-0 break-words">
+            <div className="rounded-xl bg-token-nested border border-token-subtle px-4 py-3 min-w-0 break-words">
               <StreamingText
                 text={typing}
                 streaming={isStreaming}
@@ -239,7 +239,7 @@ export function KnowledgeTab() {
             </div>
           ) : (
             !isStreaming && (
-              <div className="text-sm text-white/35 py-10 text-center">
+              <div className="text-sm text-token-muted-faint py-10 text-center">
                 输入问题，AI 会基于右侧防窜物流业务知识库为你解答。
               </div>
             )
@@ -254,7 +254,7 @@ export function KnowledgeTab() {
       <div className="w-[380px] shrink-0 flex flex-col">
         <div className="shrink-0 px-4 pt-5 pb-3 flex items-center gap-2">
           <div className="relative flex-1">
-            <Search className="w-3.5 h-3.5 text-white/30 absolute left-2.5 top-1/2 -translate-y-1/2" />
+            <Search className="w-3.5 h-3.5 text-token-muted-faint absolute left-2.5 top-1/2 -translate-y-1/2" />
             <input
               value={keyword}
               onChange={(e) => setKeyword(e.target.value)}
@@ -262,13 +262,13 @@ export function KnowledgeTab() {
                 if (e.key === 'Enter') void load(keyword);
               }}
               placeholder="搜索知识"
-              className="w-full rounded-lg bg-white/5 border border-white/10 pl-8 pr-3 py-1.5 text-sm text-white/85 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="w-full rounded-lg bg-token-nested border border-token-subtle pl-8 pr-3 py-1.5 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <button
             onClick={() => setImportPwOpen(true)}
             disabled={importing}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10 disabled:opacity-40"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft disabled:opacity-40"
             title="导入文件形成知识（需口令）"
           >
             {importing ? <Loader2 className="w-3.5 h-3.5 animate-spin" /> : <Upload className="w-3.5 h-3.5" />}
@@ -279,7 +279,7 @@ export function KnowledgeTab() {
               setEditing(null);
               setEditorOpen(true);
             }}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft"
           >
             <Plus className="w-3.5 h-3.5" />
             新增
@@ -297,21 +297,21 @@ export function KnowledgeTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {loading ? (
-            <div className="text-sm text-white/40 py-6 text-center">加载中…</div>
+            <div className="text-sm text-token-muted py-6 text-center">加载中…</div>
           ) : items.length === 0 ? (
-            <div className="text-sm text-white/35 py-10 text-center">
+            <div className="text-sm text-token-muted-faint py-10 text-center">
               暂无知识，点击「新增」沉淀第一条防窜物流业务知识。
             </div>
           ) : (
             items.map((it) => (
               <div
                 key={it.id}
-                className="rounded-lg bg-white/3 border border-white/10 px-3 py-2.5 group"
+                className="rounded-lg bg-token-nested border border-token-subtle px-3 py-2.5 group"
               >
                 <div className="flex items-start gap-2">
                   <div className="flex-1 min-w-0">
-                    <div className="text-sm text-white/90 font-medium truncate">{it.title}</div>
-                    <div className="text-xs text-white/45 mt-1 line-clamp-2 whitespace-pre-wrap">
+                    <div className="text-sm text-token-primary font-medium truncate">{it.title}</div>
+                    <div className="text-xs text-token-muted mt-1 line-clamp-2 whitespace-pre-wrap">
                       {it.content}
                     </div>
                     {it.tags.length > 0 && (
@@ -333,14 +333,14 @@ export function KnowledgeTab() {
                         setEditing(it);
                         setEditorOpen(true);
                       }}
-                      className="p-1 rounded text-white/40 hover:text-white/80 hover:bg-white/10"
+                      className="p-1 rounded text-token-muted hover-text-primary hover-bg-soft"
                       title="编辑"
                     >
                       <Pencil className="w-3.5 h-3.5" />
                     </button>
                     <button
                       onClick={() => onDelete(it.id)}
-                      className="p-1 rounded text-white/40 hover:text-rose-400 hover:bg-white/10"
+                      className="p-1 rounded text-token-muted hover:text-rose-400 hover-bg-soft"
                       title="删除"
                     >
                       <Trash2 className="w-3.5 h-3.5" />
@@ -430,50 +430,50 @@ function KnowledgeEditorModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#0f1014] flex flex-col"
+        className="w-full max-w-2xl rounded-xl border border-token-subtle bg-token-card flex flex-col"
         style={{ maxHeight: '85vh' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-white/10">
-          <div className="text-sm font-medium text-white/90">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-token-subtle">
+          <div className="text-sm font-medium text-token-primary">
             {initial ? '编辑业务知识' : '新增业务知识'}
           </div>
-          <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white/80">
+          <button onClick={onClose} className="p-1 rounded text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 px-5 py-4 space-y-3" style={{ minHeight: 0, overflowY: 'auto' }}>
           <div>
-            <label className="text-xs text-white/55">标题</label>
+            <label className="text-xs text-token-secondary">标题</label>
             <input
               value={title}
               onChange={(e) => setTitle(e.target.value)}
-              className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div>
-            <label className="text-xs text-white/55">正文（支持 Markdown）</label>
+            <label className="text-xs text-token-secondary">正文（支持 Markdown）</label>
             <textarea
               value={content}
               onChange={(e) => setContent(e.target.value)}
               rows={12}
-              className="mt-1 w-full resize-y rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full resize-y rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary font-mono leading-relaxed focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div>
-            <label className="text-xs text-white/55">标签（逗号分隔）</label>
+            <label className="text-xs text-token-secondary">标签（逗号分隔）</label>
             <input
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="上码, 关联, 窜货判定"
-              className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           {error && <div className="text-xs text-rose-400">{error}</div>}
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-white/10">
+        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-token-subtle">
           <button
             onClick={onClose}
-            className="px-3.5 py-1.5 rounded-lg text-sm text-white/70 hover:bg-white/5"
+            className="px-3.5 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft"
           >
             取消
           </button>

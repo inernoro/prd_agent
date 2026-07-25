@@ -59,10 +59,10 @@ function fmtDate(s?: string | null): string {
 
 function Card({ title, action, children }: { title?: string; action?: React.ReactNode; children: React.ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden">
+    <div className="rounded-xl border border-token-subtle bg-token-nested overflow-hidden">
       {title ? (
-        <div className="flex items-center justify-between px-4 py-2.5 border-b border-white/5">
-          <span className="text-xs font-medium text-white/55">{title}</span>
+        <div className="flex items-center justify-between px-4 py-2.5 border-b border-token-subtle">
+          <span className="text-xs font-medium text-token-secondary">{title}</span>
           {action}
         </div>
       ) : null}
@@ -72,7 +72,7 @@ function Card({ title, action, children }: { title?: string; action?: React.Reac
 }
 
 function FieldLabel({ children }: { children: React.ReactNode }) {
-  return <span className="text-[11px] text-white/45">{children}</span>;
+  return <span className="text-[11px] text-token-muted">{children}</span>;
 }
 
 function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId: string; nodeId: string; title: string; onClose: () => void }) {
@@ -85,16 +85,16 @@ function TraceRelationDrawer({ productId, nodeId, title, onClose }: { productId:
   }, [onClose]);
   return createPortal(
     <div className="fixed inset-0 z-[100] flex">
-      <div className="flex-1 bg-black/40" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
+      <div className="flex-1 bg-token-nested" style={{ opacity: shown ? 1 : 0, transition: 'opacity .25s ease' }} onClick={onClose} />
       <div
-        className="h-full bg-[#0f1014] border-l border-white/10 flex flex-col shadow-2xl"
+        className="h-full bg-[#0f1014] border-l border-token-subtle flex flex-col shadow-2xl"
         style={{ width: '70%', transform: shown ? 'translateX(0)' : 'translateX(100%)', transition: 'transform .25s ease' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/8">
-          <span className="flex items-center gap-2 text-sm font-semibold text-white">
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
+          <span className="flex items-center gap-2 text-sm font-semibold text-token-primary">
             <Share2 size={15} className="text-cyan-400" /> 追溯关系路径 · {title}
           </span>
-          <button type="button" onClick={onClose} className="text-white/40 hover:text-white" title="关闭"><X size={16} /></button>
+          <button type="button" onClick={onClose} className="text-token-muted hover-text-primary" title="关闭"><X size={16} /></button>
         </div>
         <div className="flex-1 min-h-0">
           <ProductGraphCanvas productId={productId} focusNodeId={nodeId} />
@@ -126,8 +126,8 @@ function readEntityField(defect: TracedDefect, source: TapdDefectSidebarField['e
   }
 }
 
-const inputCls = 'w-full px-2.5 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40';
-const readonlyCls = 'text-sm text-white/75 px-2.5 py-2 rounded-lg bg-white/[0.03] border border-white/5';
+const inputCls = 'w-full px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40';
+const readonlyCls = 'text-sm text-token-secondary px-2.5 py-2 rounded-lg bg-token-nested border border-token-subtle';
 
 export function ProductDefectDetail({
   productId,
@@ -207,7 +207,7 @@ export function ProductDefectDetail({
   }, [defect, title, description, severityLevel, assigneeId, featureId, versionId, classification, derivedStructured]);
 
   if (!defect) {
-    return <div className="text-white/40 text-sm text-center py-10">缺陷不存在</div>;
+    return <div className="text-token-muted text-sm text-center py-10">缺陷不存在</div>;
   }
 
   const setTapdField = (key: string, value: string) => {
@@ -260,7 +260,7 @@ export function ProductDefectDetail({
             ))}
           </select>
           {severityLevel ? (
-            <p className="text-[11px] text-white/40 leading-snug">{DEFECT_SEVERITY_LEVEL_HINT[severityLevel]}</p>
+            <p className="text-[11px] text-token-muted leading-snug">{DEFECT_SEVERITY_LEVEL_HINT[severityLevel]}</p>
           ) : null}
         </div>
       );
@@ -269,11 +269,11 @@ export function ProductDefectDetail({
       const isNonProduct = classification === NON_PRODUCT_DEFECT_CLASSIFICATION;
       return (
         <div className="flex flex-col gap-2">
-          <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-token-secondary cursor-pointer">
             <input type="radio" name="defect-division" checked={!isNonProduct} onChange={() => setClassification(PRODUCT_DEFECT_CLASSIFICATION)} className="accent-cyan-500" />
             缺陷（产品缺陷）
           </label>
-          <label className="flex items-center gap-2 text-sm text-white/70 cursor-pointer">
+          <label className="flex items-center gap-2 text-sm text-token-secondary cursor-pointer">
             <input type="radio" name="defect-division" checked={isNonProduct} onChange={() => setClassification(NON_PRODUCT_DEFECT_CLASSIFICATION)} className="accent-cyan-500" />
             非产品缺陷
           </label>
@@ -310,7 +310,7 @@ export function ProductDefectDetail({
             value={title}
             onChange={(e) => setTitle(e.target.value)}
             placeholder="缺陷标题"
-            className="min-w-0 flex-1 text-xl font-semibold text-white bg-transparent border-none outline-none placeholder:text-white/25"
+            className="min-w-0 flex-1 text-xl font-semibold text-token-primary bg-transparent border-none outline-none placeholder-token-muted"
           />
           <DetailRecordActions
             kind="defect"
@@ -324,7 +324,7 @@ export function ProductDefectDetail({
           <button type="button" onClick={convert} disabled={converting} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm text-cyan-200 bg-cyan-500/15 border border-cyan-500/40 hover:bg-cyan-500/25 disabled:opacity-50">
             {converting ? <MapSpinner size={14} /> : <GitBranch size={14} />} 转为需求
           </button>
-          <button type="button" onClick={() => setShowTrace(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-white/10 text-white/70 hover:bg-white/5 text-sm">
+          <button type="button" onClick={() => setShowTrace(true)} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg border border-token-subtle text-token-secondary hover-bg-soft text-sm">
             <Share2 size={14} /> 追溯
           </button>
           <button type="button" onClick={() => void save()} disabled={!dirty || saving || !title.trim()} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-sm font-medium bg-cyan-500 text-slate-950 hover:bg-cyan-400 disabled:opacity-40">
@@ -347,8 +347,8 @@ export function ProductDefectDetail({
             <Card title={`截图 (${imageAttachments.length})`}>
               <div className="flex gap-2 overflow-x-auto pb-1">
                 {imageAttachments.map((att) => (
-                  <a key={att.id ?? att.url} href={att.url ?? '#'} target="_blank" rel="noopener noreferrer" className="shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden border border-white/10">
-                    {att.url ? <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" /> : <ImageIcon className="m-auto text-white/30" />}
+                  <a key={att.id ?? att.url} href={att.url ?? '#'} target="_blank" rel="noopener noreferrer" className="shrink-0 w-[100px] h-[70px] rounded-lg overflow-hidden border border-token-subtle">
+                    {att.url ? <img src={att.url} alt={att.fileName} className="w-full h-full object-cover" /> : <ImageIcon className="m-auto text-token-muted" />}
                   </a>
                 ))}
               </div>
@@ -359,7 +359,7 @@ export function ProductDefectDetail({
             <Card title={`附件 (${otherAttachments.length})`}>
               <div className="flex flex-wrap gap-2">
                 {otherAttachments.map((att) => (
-                  <a key={att.id ?? att.url} href={att.url ?? '#'} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-white/70 border border-white/10 hover:bg-white/5">
+                  <a key={att.id ?? att.url} href={att.url ?? '#'} target="_blank" rel="noopener noreferrer" className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-lg text-xs text-token-secondary border border-token-subtle hover-bg-soft">
                     <Paperclip size={12} /> {att.fileName}
                   </a>
                 ))}
@@ -367,15 +367,15 @@ export function ProductDefectDetail({
             </Card>
           ) : null}
 
-          {defect.resolution ? <Card title="解决说明"><div className="text-sm text-white/70 whitespace-pre-wrap">{defect.resolution}</div></Card> : null}
+          {defect.resolution ? <Card title="解决说明"><div className="text-sm text-token-secondary whitespace-pre-wrap">{defect.resolution}</div></Card> : null}
           {defect.rejectReason ? <Card title="拒绝原因"><div className="text-sm text-red-200/80 whitespace-pre-wrap">{defect.rejectReason}</div></Card> : null}
 
           <Card title="关联">
             <div className="flex flex-col gap-2 text-sm">
               {featureId ? <button type="button" onClick={() => gotoFeature(featureId)} className="text-left text-cyan-300 hover:underline">功能：{featureName.get(featureId) ?? featureId}</button> : null}
               {defect.tracedRequirementId ? <button type="button" onClick={() => gotoRequirement(defect.tracedRequirementId!)} className="text-left text-cyan-300 hover:underline">需求：{requirementName.get(defect.tracedRequirementId) ?? defect.tracedRequirementId}</button> : null}
-              {versionId ? <div className="text-white/70">版本：{versionName.get(versionId) ?? versionId}</div> : null}
-              <div className="pt-2 border-t border-white/5 grid grid-cols-1 sm:grid-cols-2 gap-2">
+              {versionId ? <div className="text-token-secondary">版本：{versionName.get(versionId) ?? versionId}</div> : null}
+              <div className="pt-2 border-t border-token-subtle grid grid-cols-1 sm:grid-cols-2 gap-2">
                 <div className="flex flex-col gap-1"><FieldLabel>关联功能</FieldLabel><select className={inputCls} value={featureId} onChange={(e) => setFeatureId(e.target.value)}><option value="">不关联</option>{features.map((f) => <option key={f.id} value={f.id}>{f.title}</option>)}</select></div>
                 <div className="flex flex-col gap-1"><FieldLabel>关联版本</FieldLabel><select className={inputCls} value={versionId} onChange={(e) => setVersionId(e.target.value)}><option value="">不关联</option>{versions.map((v) => <option key={v.id} value={v.id}>{v.versionName}</option>)}</select></div>
               </div>
@@ -386,8 +386,8 @@ export function ProductDefectDetail({
             title="评论与动态"
             action={(
               <div className="flex gap-1">
-                <button type="button" onClick={() => setCommentTab('comment')} className={`px-2 py-0.5 rounded text-[11px] ${commentTab === 'comment' ? 'bg-white/10 text-white/80' : 'text-white/40'}`}>评论</button>
-                <button type="button" onClick={() => setCommentTab('change')} className={`px-2 py-0.5 rounded text-[11px] ${commentTab === 'change' ? 'bg-white/10 text-white/80' : 'text-white/40'}`}>变更历史</button>
+                <button type="button" onClick={() => setCommentTab('comment')} className={`px-2 py-0.5 rounded text-[11px] ${commentTab === 'comment' ? 'bg-token-nested text-token-primary' : 'text-token-muted'}`}>评论</button>
+                <button type="button" onClick={() => setCommentTab('change')} className={`px-2 py-0.5 rounded text-[11px] ${commentTab === 'change' ? 'bg-token-nested text-token-primary' : 'text-token-muted'}`}>变更历史</button>
               </div>
             )}
           >
@@ -409,7 +409,7 @@ export function ProductDefectDetail({
           </Card>
           {defect.productSourceSystem ? (
             <Card title="来源">
-              <div className="text-[11px] text-white/45 space-y-1">
+              <div className="text-[11px] text-token-muted space-y-1">
                 <div>系统：{defect.productSourceSystem}</div>
                 {defect.productExternalId ? <div className="font-mono break-all">ID：{defect.productExternalId}</div> : null}
               </div>

@@ -55,7 +55,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 );
               }
               return (
-                <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'rgba(255,255,255,0.1)' }} {...props}>
+                <code className="px-1 py-0.5 rounded text-xs" style={{ background: 'var(--nested-block-bg)' }} {...props}>
                   {children}
                 </code>
               );
@@ -70,7 +70,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 <div
                   className={`relative group/code ${isReading ? 'my-6' : 'my-2'}`}
                   style={isReading ? {
-                    border: '1px solid rgba(255,255,255,0.06)',
+                    border: '1px solid var(--border-subtle)',
                     borderRadius: '10px',
                     overflow: 'hidden',
                     boxShadow: '0 4px 14px rgba(0,0,0,0.18)',
@@ -79,9 +79,9 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                   <div
                     className={`flex items-center justify-between ${isReading ? 'px-3.5 py-2 text-[11px]' : 'px-3 py-1 rounded-t-lg text-[10px]'}`}
                     style={isReading ? {
-                      background: 'rgba(255,255,255,0.035)',
+                      background: 'var(--nested-block-bg)',
                       color: 'var(--text-muted)',
-                      borderBottom: '1px solid rgba(255,255,255,0.05)',
+                      borderBottom: '1px solid var(--border-subtle)',
                     } : { background: 'rgba(0,0,0,0.5)', color: 'var(--text-muted)' }}
                   >
                     <span style={isReading ? { fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace', letterSpacing: '0.02em' } : undefined}>
@@ -89,7 +89,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                     </span>
                     <button
                       onClick={() => navigator.clipboard.writeText(codeStr)}
-                      className="opacity-0 group-hover/code:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded hover:bg-white/10 transition-all"
+                      className="opacity-0 group-hover/code:opacity-100 flex items-center gap-1 px-1.5 py-0.5 rounded hover-bg-soft transition-all"
                     >
                       <Copy size={isReading ? 11 : 10} /> 复制
                     </button>
@@ -161,12 +161,8 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
           h1({ children }) {
             return isReading ? (
               <h1
-                className="text-[22px] font-semibold tracking-tight mt-9 mb-5 pb-3 first:mt-0"
-                style={{
-                  color: 'var(--text-primary)',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
-                  letterSpacing: '-0.005em',
-                }}
+                className="text-[22px] font-semibold tracking-tight mt-9 mb-5 pb-3 first:mt-0 border-b border-b-token-subtle"
+                style={{ color: 'var(--text-primary)', letterSpacing: '-0.005em' }}
               >
                 {children}
               </h1>
@@ -221,7 +217,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                   maxWidth: '100%',
                   height: 'auto',
                   display: 'block',
-                  border: '1px solid rgba(255,255,255,0.08)',
+                  border: '1px solid var(--border-subtle)',
                 }}
               />
             );
@@ -232,11 +228,11 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
                 className="my-8 border-0"
                 style={{
                   height: '1px',
-                  background: 'linear-gradient(90deg, transparent 0%, rgba(255,255,255,0.14) 50%, transparent 100%)',
+                  background: 'linear-gradient(90deg, transparent 0%, var(--nested-block-bg) 50%, transparent 100%)',
                 }}
               />
             ) : (
-              <hr className="my-3" style={{ borderColor: 'rgba(255,255,255,0.08)' }} />
+              <hr className="my-3 border-token-subtle"  />
             );
           },
           a({ children, href }) {
@@ -276,8 +272,8 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
               </blockquote>
             ) : (
               <blockquote
-                className="border-l-2 pl-3 my-2"
-                style={{ borderColor: 'rgba(255,255,255,0.2)', color: 'var(--text-secondary)' }}
+                className="border-l-2 pl-3 my-2 border-token-subtle"
+                style={{ color: 'var(--text-secondary)' }}
               >
                 {children}
               </blockquote>
@@ -287,7 +283,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
             return isReading ? (
               <div
                 className="overflow-x-auto my-5 rounded-lg"
-                style={{ border: '1px solid rgba(255,255,255,0.08)' }}
+                style={{ border: '1px solid var(--border-subtle)' }}
               >
                 <table
                   className="text-[13px] w-full border-collapse"
@@ -298,7 +294,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
               </div>
             ) : (
               <div className="overflow-x-auto my-2">
-                <table className="text-xs border-collapse w-full" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+                <table className="text-xs border-collapse w-full border-token-subtle" >
                   {children}
                 </table>
               </div>
@@ -306,7 +302,7 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
           },
           thead({ children }) {
             return isReading ? (
-              <thead style={{ background: 'rgba(255,255,255,0.035)' }}>{children}</thead>
+              <thead style={{ background: 'var(--nested-block-bg)' }}>{children}</thead>
             ) : (
               <thead>{children}</thead>
             );
@@ -321,19 +317,15 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
           th({ children }) {
             return isReading ? (
               <th
-                className="px-3.5 py-2.5 text-left text-[11.5px] font-semibold uppercase"
-                style={{
-                  color: 'var(--text-secondary)',
-                  letterSpacing: '0.04em',
-                  borderBottom: '1px solid rgba(255,255,255,0.08)',
-                }}
+                className="px-3.5 py-2.5 text-left text-[11.5px] font-semibold uppercase border-b border-b-token-subtle"
+                style={{ color: 'var(--text-secondary)', letterSpacing: '0.04em' }}
               >
                 {children}
               </th>
             ) : (
               <th
-                className="border px-2 py-1 text-left font-semibold"
-                style={{ borderColor: 'rgba(255,255,255,0.1)', background: 'rgba(255,255,255,0.05)' }}
+                className="border px-2 py-1 text-left font-semibold border-token-subtle"
+                style={{ background: 'var(--nested-block-bg)' }}
               >
                 {children}
               </th>
@@ -342,13 +334,13 @@ export const MarkdownContent = memo(function MarkdownContent({ content, classNam
           td({ children }) {
             return isReading ? (
               <td
-                className="px-3.5 py-2.5"
-                style={{ borderTop: '1px solid rgba(255,255,255,0.05)' }}
+                className="px-3.5 py-2.5 border-t border-t-token-subtle"
+
               >
                 {children}
               </td>
             ) : (
-              <td className="border px-2 py-1" style={{ borderColor: 'rgba(255,255,255,0.1)' }}>
+              <td className="border px-2 py-1 border-token-subtle" >
                 {children}
               </td>
             );

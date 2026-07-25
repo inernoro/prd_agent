@@ -77,9 +77,6 @@ function formatCount(n: number): string {
   return n.toLocaleString();
 }
 
-const GREEN = '#34d399';
-const VIOLET = '#a78bfa';
-
 export function ExperienceRibbon({
   mapData,
   insights,
@@ -97,9 +94,9 @@ export function ExperienceRibbon({
       {steps.map((s, i) => {
         const dotStyle =
           s.state === 'done'
-            ? { background: 'rgba(52,211,153,0.16)', color: GREEN, border: `1px solid rgba(52,211,153,0.4)` }
+            ? { background: 'var(--semantic-success-soft)', color: 'var(--semantic-success-text)', border: '1px solid var(--semantic-success-border)' }
             : s.state === 'cur'
-              ? { background: 'rgba(167,139,250,0.18)', color: VIOLET, border: `1px solid rgba(167,139,250,0.5)`, animation: 'voc-ribbon-pulse 1.4s ease-in-out infinite' }
+              ? { background: 'var(--semantic-purple-soft)', color: 'var(--semantic-purple-text)', border: '1px solid var(--semantic-purple-border)', animation: 'voc-ribbon-pulse 1.4s ease-in-out infinite' }
               : { background: 'var(--nested-block-bg)', color: 'var(--text-muted)', border: '1px solid var(--border-subtle)' };
         return (
           // 窄屏：每阶段定宽 + 横向滚动（不挤压、文字不重叠）；sm 起 flex-1 等分恢复桌面布局

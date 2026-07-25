@@ -259,7 +259,7 @@ export default function SpeechAgentEditorPage() {
     return (
       <div className="h-full flex flex-col items-center justify-center text-center px-6">
         <AlertTriangle size={32} className="text-amber-300 mb-3" />
-        <p className="text-white/75">演讲不存在或已被删除</p>
+        <p className="text-token-primary">演讲不存在或已被删除</p>
         <button
           onClick={() => navigate('/speech-agent')}
           className="mt-4 px-4 py-2 rounded-lg bg-violet-500/90 hover:bg-violet-400 text-white text-sm"
@@ -277,32 +277,32 @@ export default function SpeechAgentEditorPage() {
 
   return (
     <div className="h-full min-h-0 flex flex-col">
-      <header className="shrink-0 px-5 py-3 border-b border-white/10 flex items-center gap-3">
+      <header className="shrink-0 px-5 py-3 border-b border-token-subtle flex items-center gap-3">
         <button
           type="button"
           onClick={goBack}
-          className="p-1.5 rounded-md hover:bg-white/10 text-white/70"
+          className="p-1.5 rounded-md hover-bg-soft text-token-secondary"
           aria-label="返回"
         >
           <ChevronLeft size={18} />
         </button>
         <div className="flex-1 min-w-0">
-          <h1 className="text-sm font-medium text-white/90 truncate">{deck.title}</h1>
-          <p className="text-xs text-white/45 truncate">
+          <h1 className="text-sm font-medium text-token-primary truncate">{deck.title}</h1>
+          <p className="text-xs text-token-muted truncate">
             {deck.audience} · {deck.style} · 深度 {deck.depth} · {nodes.length} 节点
           </p>
         </div>
         {model && (
-          <div className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-md bg-white/[0.04] border border-white/10">
+          <div className="hidden md:flex items-center gap-1.5 px-2 py-1 rounded-md bg-token-nested border border-token-subtle">
             <span className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
-            <span className="text-[11px] font-mono text-white/55">{model}{platform ? ` · ${platform}` : ''}</span>
+            <span className="text-[11px] font-mono text-token-secondary">{model}{platform ? ` · ${platform}` : ''}</span>
           </div>
         )}
         <button
           type="button"
           onClick={handleStart}
           disabled={isGenerating}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/90 hover:bg-violet-400 disabled:bg-white/10 disabled:text-white/40 text-white text-xs font-medium"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-violet-500/90 hover:bg-violet-400 disabled:opacity-40 text-white text-xs font-medium"
         >
           {isGenerating ? (
             <Loader2 size={13} className="animate-spin" />
@@ -317,7 +317,7 @@ export default function SpeechAgentEditorPage() {
           type="button"
           onClick={() => navigate(`/speech-agent/${deckId}/play`)}
           disabled={nodes.length === 0}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/[0.06] hover:bg-white/[0.12] disabled:opacity-40 text-white/85 text-xs font-medium border border-white/10"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-xs font-medium border border-token-subtle"
           aria-label="播放演讲"
         >
           <Play size={13} />
@@ -327,7 +327,7 @@ export default function SpeechAgentEditorPage() {
           type="button"
           onClick={handlePublish}
           disabled={nodes.length === 0 || publishing || isGenerating}
-          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/90 hover:bg-emerald-400 disabled:bg-white/10 disabled:text-white/40 text-white text-xs font-medium"
+          className="inline-flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-emerald-500/90 hover:bg-emerald-400 disabled:opacity-40 text-white text-xs font-medium"
           aria-label="发布为可分享 HTML 站点"
         >
           {publishing ? <Loader2 size={13} className="animate-spin" /> : <Share2 size={13} />}
@@ -347,15 +347,15 @@ export default function SpeechAgentEditorPage() {
             <button
               type="button"
               onClick={() => setShareInfo(null)}
-              className="ml-auto text-white/55 hover:text-white/90 text-xs"
+              className="ml-auto text-token-secondary hover-text-primary text-xs"
             >
               关闭
             </button>
           </div>
-          <div className="text-xs text-white/65 leading-relaxed">
+          <div className="text-xs text-token-secondary leading-relaxed">
             演讲已渲染为静态 HTML 并发布到网页托管。任何人凭分享链可直接观看。
           </div>
-          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-black/30 border border-white/10">
+          <div className="flex items-center gap-2 px-3 py-2 rounded-lg bg-token-nested border border-token-subtle">
             <code className="flex-1 text-xs text-emerald-200 truncate font-mono">{shareInfo.url}</code>
             <button
               type="button"
@@ -364,7 +364,7 @@ export default function SpeechAgentEditorPage() {
                 setShareCopied(true);
                 setTimeout(() => setShareCopied(false), 2000);
               }}
-              className="shrink-0 p-1.5 rounded-md hover:bg-white/10 text-white/75"
+              className="shrink-0 p-1.5 rounded-md hover-bg-soft text-token-primary"
               aria-label="复制分享链"
             >
               {shareCopied ? <Check size={13} className="text-emerald-300" /> : <Copy size={13} />}
@@ -382,12 +382,12 @@ export default function SpeechAgentEditorPage() {
       )}
 
       {isGenerating && (
-        <div className="shrink-0 px-5 py-2 border-b border-white/10 bg-violet-500/[0.06] flex items-center gap-2">
+        <div className="shrink-0 px-5 py-2 border-b border-token-subtle bg-violet-500/[0.06] flex items-center gap-2">
           <Loader2 size={12} className="animate-spin text-violet-300" />
           <span className="text-xs text-violet-100/85">
             {stream.phaseMessage || 'AI 正在拆解演讲结构…'}
           </span>
-          <span className="ml-auto text-[10px] text-white/40 font-mono">
+          <span className="ml-auto text-[10px] text-token-muted font-mono">
             {thinking.length > 0 && `推理 ${thinking.length} 字`}
             {typing.length > 0 && ` · 输出 ${typing.length} 字`}
             {nodes.length > 0 && ` · 已落 ${nodes.length} 节点`}
@@ -400,7 +400,7 @@ export default function SpeechAgentEditorPage() {
         //   ① deck.status === 'failed'(LLM 最终失败,已落库)
         //   ② concurrencyRejected(并发拒绝,status 仍是 generating)
         //   ③ SSE 网络/解析错(临时错,status 可能还是 draft/generating)
-        <div className="shrink-0 px-5 py-2 border-b border-white/10 bg-rose-500/[0.08] flex items-center gap-2">
+        <div className="shrink-0 px-5 py-2 border-b border-token-subtle bg-rose-500/[0.08] flex items-center gap-2">
           <AlertTriangle size={12} className="text-rose-300" />
           <span className="text-xs text-rose-100">
             {deck.status === 'failed' ? '生成失败:' : '提示:'}{deck.errorMessage}
@@ -418,9 +418,9 @@ export default function SpeechAgentEditorPage() {
                     <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-violet-300/80">
                       <Brain size={13} className="text-violet-300" />
                       模型思考过程
-                      <span className="ml-auto font-mono text-white/40">{thinking.length} 字</span>
+                      <span className="ml-auto font-mono text-token-muted">{thinking.length} 字</span>
                     </div>
-                    <div className="text-[13px] text-white/65 leading-relaxed font-mono whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                    <div className="text-[13px] text-token-secondary leading-relaxed font-mono whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                       <StreamingText
                         text={thinking}
                         streaming={true}
@@ -435,9 +435,9 @@ export default function SpeechAgentEditorPage() {
                     <div className="flex items-center gap-2 mb-3 text-[11px] uppercase tracking-wider text-emerald-300/80">
                       <Sparkles size={13} className="text-emerald-300" />
                       正在生成大纲 JSON
-                      <span className="ml-auto font-mono text-white/40">{typing.length} 字</span>
+                      <span className="ml-auto font-mono text-token-muted">{typing.length} 字</span>
                     </div>
-                    <div className="text-[13px] text-white/85 leading-relaxed font-mono whitespace-pre-wrap max-h-[320px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                    <div className="text-[13px] text-token-primary leading-relaxed font-mono whitespace-pre-wrap max-h-[320px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                       <StreamingText
                         text={typing}
                         streaming={true}
@@ -458,25 +458,25 @@ export default function SpeechAgentEditorPage() {
           />
         </div>
 
-        <aside className="shrink-0 w-[320px] border-l border-white/10 bg-white/[0.02] flex flex-col">
+        <aside className="shrink-0 w-[320px] border-l border-token-subtle bg-token-nested flex flex-col">
           {selectedNode ? (
             <>
-              <div className="px-4 py-3 border-b border-white/10">
-                <div className="text-[11px] uppercase tracking-wider text-white/40">节点编辑</div>
-                <div className="text-xs text-white/55 mt-0.5">
+              <div className="px-4 py-3 border-b border-token-subtle">
+                <div className="text-[11px] uppercase tracking-wider text-token-muted">节点编辑</div>
+                <div className="text-xs text-token-secondary mt-0.5">
                   Level {selectedNode.depth} · 第 {selectedNode.order + 1} 位
                 </div>
               </div>
               <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-3" style={{ overscrollBehavior: 'contain' }}>
                 {/* AI 工具栏 */}
-                <div className="rounded-lg border border-white/10 bg-white/[0.03] p-2 flex flex-col gap-2">
-                  <div className="text-[10px] uppercase tracking-wider text-white/40 px-1">AI 工具</div>
+                <div className="rounded-lg border border-token-subtle bg-token-nested p-2 flex flex-col gap-2">
+                  <div className="text-[10px] uppercase tracking-wider text-token-muted px-1">AI 工具</div>
                   <div className="grid grid-cols-3 gap-1.5">
                     <button
                       type="button"
                       onClick={handleGenImage}
                       disabled={!!aiNodeBusy}
-                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                       title="生成 AI 配图"
                     >
                       {aiNodeBusy?.action === 'image' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ImageIcon size={14} className="text-amber-300" />}
@@ -486,7 +486,7 @@ export default function SpeechAgentEditorPage() {
                       type="button"
                       onClick={handleGenNotes}
                       disabled={!!aiNodeBusy}
-                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                      className="inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                       title="生成口播稿"
                     >
                       {aiNodeBusy?.action === 'notes' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <ScrollText size={14} className="text-emerald-300" />}
@@ -497,14 +497,14 @@ export default function SpeechAgentEditorPage() {
                         type="button"
                         onClick={() => setRewriteStyleOpen((v) => !v)}
                         disabled={!!aiNodeBusy}
-                        className="w-full inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-white/[0.04] hover:bg-white/[0.08] disabled:opacity-40 text-white/75 text-[10px]"
+                        className="w-full inline-flex flex-col items-center gap-1 px-2 py-2 rounded-md bg-token-nested hover-bg-soft disabled:opacity-40 text-token-primary text-[10px]"
                         title="按风格 AI 重写"
                       >
                         {aiNodeBusy?.action === 'rewrite' && aiNodeBusy?.nodeId === selectedNode.id ? <Loader2 size={14} className="animate-spin" /> : <Wand2 size={14} className="text-violet-300" />}
                         AI 重写
                       </button>
                       {rewriteStyleOpen && (
-                        <div className="absolute right-0 top-full mt-1 z-30 min-w-[140px] rounded-lg border border-white/15 bg-[#13121a] shadow-2xl py-1">
+                        <div className="absolute right-0 top-full mt-1 z-30 min-w-[140px] rounded-lg border border-token-subtle bg-token-card shadow-2xl py-1">
                           {[
                             { id: 'concise', label: '精简' },
                             { id: 'story', label: '故事化' },
@@ -517,7 +517,7 @@ export default function SpeechAgentEditorPage() {
                               key={s.id}
                               type="button"
                               onClick={() => handleRewrite(s.id)}
-                              className="w-full px-3 py-1.5 text-left text-xs text-white/85 hover:bg-white/[0.08]"
+                              className="w-full px-3 py-1.5 text-left text-xs text-token-primary hover-bg-soft"
                             >
                               {s.label}
                             </button>
@@ -529,29 +529,29 @@ export default function SpeechAgentEditorPage() {
                 </div>
 
                 <div>
-                  <label className="block text-xs text-white/60 mb-1.5">标题</label>
+                  <label className="block text-xs text-token-secondary mb-1.5">标题</label>
                   <input
                     type="text"
                     value={draftTitle}
                     onChange={(e) => setDraftTitle(e.target.value)}
-                    className="w-full px-2.5 py-1.5 rounded-md bg-white/[0.04] border border-white/10 text-sm text-white/90 focus:outline-none focus:border-violet-400/60"
+                    className="w-full px-2.5 py-1.5 rounded-md bg-token-nested border border-token-subtle text-sm text-token-primary focus:outline-none focus:border-violet-400/60"
                   />
                 </div>
                 <div>
-                  <label className="block text-xs text-white/60 mb-1.5">要点（每行一条）</label>
+                  <label className="block text-xs text-token-secondary mb-1.5">要点（每行一条）</label>
                   <textarea
                     value={draftBullets}
                     onChange={(e) => setDraftBullets(e.target.value)}
                     rows={6}
-                    className="w-full px-2.5 py-2 rounded-md bg-white/[0.04] border border-white/10 text-sm text-white/85 focus:outline-none focus:border-violet-400/60 leading-relaxed"
+                    className="w-full px-2.5 py-2 rounded-md bg-token-nested border border-token-subtle text-sm text-token-primary focus:outline-none focus:border-violet-400/60 leading-relaxed"
                   />
                 </div>
 
                 {/* 节点配图预览 */}
                 {selectedNode.imageUrl && (
                   <div>
-                    <label className="block text-xs text-white/60 mb-1.5">节点配图</label>
-                    <div className="rounded-lg overflow-hidden border border-white/10 bg-white/[0.02]">
+                    <label className="block text-xs text-token-secondary mb-1.5">节点配图</label>
+                    <div className="rounded-lg overflow-hidden border border-token-subtle bg-token-nested">
                       <img src={selectedNode.imageUrl} alt={selectedNode.title} className="w-full h-auto object-cover" />
                     </div>
                   </div>
@@ -560,14 +560,14 @@ export default function SpeechAgentEditorPage() {
                 {/* 演讲备注 */}
                 {selectedNode.speakerNotes && (
                   <div>
-                    <label className="block text-xs text-white/60 mb-1.5">口播稿（演讲备注）</label>
-                    <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5 text-[13px] text-white/85 leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
+                    <label className="block text-xs text-token-secondary mb-1.5">口播稿（演讲备注）</label>
+                    <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-[13px] text-token-primary leading-relaxed whitespace-pre-wrap max-h-[200px] overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                       {selectedNode.speakerNotes}
                     </div>
                   </div>
                 )}
               </div>
-              <div className="shrink-0 px-4 py-3 border-t border-white/10 flex items-center justify-end gap-2">
+              <div className="shrink-0 px-4 py-3 border-t border-token-subtle flex items-center justify-end gap-2">
                 <button
                   onClick={handleSaveNode}
                   disabled={saving}
@@ -579,7 +579,7 @@ export default function SpeechAgentEditorPage() {
               </div>
             </>
           ) : (
-            <div className="flex-1 flex items-center justify-center text-center px-6 text-xs text-white/45 leading-relaxed">
+            <div className="flex-1 flex items-center justify-center text-center px-6 text-xs text-token-muted leading-relaxed">
               点击左侧任一节点查看 / 编辑要点与备注。
             </div>
           )}

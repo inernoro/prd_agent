@@ -259,8 +259,8 @@ export function CcasPrdTab({ meta }: Props) {
     <div className="flex-1 min-h-0 grid grid-cols-1 lg:grid-cols-2 gap-4 overflow-hidden">
       {/* 左：表单 + 控制 */}
       <div className="flex flex-col gap-3 min-h-0 overflow-y-auto pr-1" style={{ overscrollBehavior: 'contain' }}>
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <h2 className="text-sm font-medium text-white mb-3">1. 选择文档模板</h2>
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
+          <h2 className="text-sm font-medium text-token-primary mb-3">1. 选择文档模板</h2>
           <div className="grid grid-cols-1 gap-2">
             {meta.templates.map((t) => (
               <label
@@ -268,7 +268,7 @@ export function CcasPrdTab({ meta }: Props) {
                 className={`block cursor-pointer rounded-md border px-3 py-2 transition ${
                   templateKey === t.key
                     ? 'border-amber-400/60 bg-amber-500/10'
-                    : 'border-white/10 bg-white/5 hover:bg-white/10'
+                    : 'border-token-subtle bg-token-nested hover-bg-soft'
                 }`}
               >
                 <input
@@ -279,27 +279,27 @@ export function CcasPrdTab({ meta }: Props) {
                   onChange={() => setTemplateKey(t.key)}
                   className="hidden"
                 />
-                <div className="text-sm text-white">{t.label}</div>
-                <div className="text-xs text-white/55 mt-0.5">{t.description}</div>
+                <div className="text-sm text-token-primary">{t.label}</div>
+                <div className="text-xs text-token-secondary mt-0.5">{t.description}</div>
               </label>
             ))}
           </div>
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
-          <h2 className="text-sm font-medium text-white mb-3">2. 填写产品/项目描述</h2>
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
+          <h2 className="text-sm font-medium text-token-primary mb-3">2. 填写产品/项目描述</h2>
           <textarea
             value={input}
             onChange={(e) => setInput(e.target.value)}
             placeholder="例：产品母体「品牌商后台基础」T6.12.0；本次新增「赋码采集关联系统」模块；产线设备：裹包机、龙门架、工业相机×4、工控机、共享屏幕、箱码垛工位；关联模式：瓶箱垛；目标：实现 NC 剔除 + 实时关联校验…"
             rows={8}
-            className="w-full rounded-md bg-black/30 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60"
+            className="w-full rounded-md bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-400/60"
           />
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
           <div className="flex items-center justify-between mb-3">
-            <h2 className="text-sm font-medium text-white">
+            <h2 className="text-sm font-medium text-token-primary">
               3. 已有 Markdown（可选，AI 会在此基础上补全/优化）
             </h2>
             <Button
@@ -323,15 +323,15 @@ export function CcasPrdTab({ meta }: Props) {
             onChange={(e) => setExistingMarkdown(e.target.value)}
             placeholder="把已有 PRD/设计文档粘贴在这里，或点上方「上传 .md/.txt」直接读入。AI 会保留关键信息、补全缺失章节、优化表达。"
             rows={6}
-            className="w-full rounded-md bg-black/30 border border-white/15 px-3 py-2 text-sm text-white placeholder:text-white/30 focus:outline-none focus:border-amber-400/60 font-mono"
+            className="w-full rounded-md bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-amber-400/60 font-mono"
           />
           {existingMarkdown && (
-            <div className="mt-1 text-[10px] text-white/40 flex items-center justify-between">
+            <div className="mt-1 text-[10px] text-token-muted flex items-center justify-between">
               <span>已读入 {existingMarkdown.length.toLocaleString()} 字符</span>
               <button
                 type="button"
                 onClick={() => setExistingMarkdown('')}
-                className="text-white/45 hover:text-white/70"
+                className="text-token-muted hover-text-primary"
               >
                 清空
               </button>
@@ -339,9 +339,9 @@ export function CcasPrdTab({ meta }: Props) {
           )}
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4">
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4">
           <div className="flex items-center justify-between mb-2">
-            <h2 className="text-sm font-medium text-white flex items-center gap-1.5">
+            <h2 className="text-sm font-medium text-token-primary flex items-center gap-1.5">
               <BookOpen className="w-4 h-4 text-amber-300" />
               4. 引用知识库（可选）
             </h2>
@@ -349,7 +349,7 @@ export function CcasPrdTab({ meta }: Props) {
               {referenceSelected.length > 0 ? `已选 ${referenceSelected.length} 个来源 · 编辑` : '选择知识库'}
             </Button>
           </div>
-          <p className="text-[11px] text-white/45 mb-2">
+          <p className="text-[11px] text-token-muted mb-2">
             从「左侧导航 → 知识库」中选择整个知识库或单篇资料，AI 生成时会作为事实依据注入。
             多知识库会按模型上下文预算自动裁剪。
           </p>
@@ -365,11 +365,11 @@ export function CcasPrdTab({ meta }: Props) {
                     <span className="opacity-40 mx-1">/</span>
                     {s.kind === 'store' ? `整库：${s.title}` : s.title}
                   </span>
-                  <span className="text-white/45 shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
+                  <span className="text-token-muted shrink-0">~{Math.round(s.approxChars / 1000)}k 字</span>
                   <button
                     type="button"
                     onClick={() => setReferenceSelected((arr) => arr.filter((x) => referenceKey(x) !== referenceKey(s)))}
-                    className="text-white/35 hover:text-white/70"
+                    className="text-token-muted hover-text-primary"
                   >
                     <X className="w-3 h-3" />
                   </button>
@@ -378,7 +378,7 @@ export function CcasPrdTab({ meta }: Props) {
             </div>
           )}
           {referenceInfo && (referenceInfo.requested > 0) && (
-            <div className="mt-2 text-[10px] text-white/45">
+            <div className="mt-2 text-[10px] text-token-muted">
               本次生成已实际注入 <span className="text-amber-300/85">{referenceInfo.included}</span>{' '}
               条文档 · 共 {referenceInfo.totalChars.toLocaleString()} 字符
               {referenceInfo.skipped.length > 0 && (
@@ -388,8 +388,8 @@ export function CcasPrdTab({ meta }: Props) {
           )}
         </section>
 
-        <section className="rounded-lg border border-white/10 bg-white/5 p-4 flex flex-col gap-2">
-          <h2 className="text-sm font-medium text-white">5. 生成</h2>
+        <section className="rounded-lg border border-token-subtle bg-token-nested p-4 flex flex-col gap-2">
+          <h2 className="text-sm font-medium text-token-primary">5. 生成</h2>
           <div className="flex flex-wrap gap-2">
             <Button
               onClick={() => streamPart('A')}
@@ -430,7 +430,7 @@ export function CcasPrdTab({ meta }: Props) {
             </Button>
           </div>
           {(phaseMsg || model.name) && (
-            <div className="mt-1 text-[11px] text-white/45 flex items-center gap-2">
+            <div className="mt-1 text-[11px] text-token-muted flex items-center gap-2">
               {phaseMsg && <span>{phaseMsg}</span>}
               {model.name && (
                 <span className="font-mono opacity-70">
@@ -451,16 +451,16 @@ export function CcasPrdTab({ meta }: Props) {
       {/* 右：输出 + 改稿 */}
       <div className="flex flex-col gap-3 min-h-0">
         <div className="shrink-0 flex items-center justify-between gap-2 px-0.5">
-          <div className="text-[11px] text-white/45">
+          <div className="text-[11px] text-token-muted">
             {canRevise ? '初稿生成后可使用底部改稿助手多轮调整' : '生成 Part A 后解锁改稿'}
           </div>
           {partA.trim() && (
-            <div className="flex rounded-md border border-white/10 overflow-hidden text-[10px]">
+            <div className="flex rounded-md border border-token-subtle overflow-hidden text-[10px]">
               <button
                 type="button"
                 onClick={() => setPreviewMode('split')}
                 className={`px-2 py-1 inline-flex items-center gap-1 ${
-                  previewMode === 'split' ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5'
+                  previewMode === 'split' ? 'bg-token-card text-token-primary' : 'text-token-secondary hover-bg-soft'
                 }`}
               >
                 <LayoutList className="w-3 h-3" />
@@ -470,7 +470,7 @@ export function CcasPrdTab({ meta }: Props) {
                 type="button"
                 onClick={() => setPreviewMode('merged')}
                 className={`px-2 py-1 inline-flex items-center gap-1 ${
-                  previewMode === 'merged' ? 'bg-white/15 text-white' : 'text-white/50 hover:bg-white/5'
+                  previewMode === 'merged' ? 'bg-token-card text-token-primary' : 'text-token-secondary hover-bg-soft'
                 }`}
               >
                 <FileStack className="w-3 h-3" />
@@ -481,50 +481,50 @@ export function CcasPrdTab({ meta }: Props) {
         </div>
 
         {previewMode === 'merged' ? (
-          <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
-            <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
-              <h2 className="text-sm font-medium text-white">整篇文档</h2>
-              <div className="text-[11px] text-white/45">
+          <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-token-subtle bg-token-nested">
+            <div className="shrink-0 px-4 py-2 border-b border-token-subtle flex items-center justify-between">
+              <h2 className="text-sm font-medium text-token-primary">整篇文档</h2>
+              <div className="text-[11px] text-token-muted">
                 {mergedMarkdown.length.toLocaleString()} 字
               </div>
             </div>
             <div
-              className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+              className="flex-1 px-4 py-3 text-sm text-token-primary font-mono leading-relaxed whitespace-pre-wrap"
               style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
             >
-              {mergedMarkdown || <span className="text-white/30">点击左侧生成 Part A 开始</span>}
+              {mergedMarkdown || <span className="text-token-muted">点击左侧生成 Part A 开始</span>}
             </div>
           </section>
         ) : (
           <>
-            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
-              <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
-                <h2 className="text-sm font-medium text-white">Part A · 价值层</h2>
-                <div className="text-[11px] text-white/45">
+            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-token-subtle bg-token-nested">
+              <div className="shrink-0 px-4 py-2 border-b border-token-subtle flex items-center justify-between">
+                <h2 className="text-sm font-medium text-token-primary">Part A · 价值层</h2>
+                <div className="text-[11px] text-token-muted">
                   {phase === 'A-streaming' && '生成中…'}
                   {phase === 'A-done' && '完成'}
                 </div>
               </div>
               <div
-                className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+                className="flex-1 px-4 py-3 text-sm text-token-primary font-mono leading-relaxed whitespace-pre-wrap"
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
-                {partA || <span className="text-white/30">点击左侧"生成 Part A"开始</span>}
+                {partA || <span className="text-token-muted">点击左侧"生成 Part A"开始</span>}
               </div>
             </section>
-            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-white/10 bg-black/30">
-              <div className="shrink-0 px-4 py-2 border-b border-white/10 flex items-center justify-between">
-                <h2 className="text-sm font-medium text-white">Part B · 设计层 / 全局规范层</h2>
-                <div className="text-[11px] text-white/45">
+            <section className="flex-1 min-h-0 flex flex-col rounded-lg border border-token-subtle bg-token-nested">
+              <div className="shrink-0 px-4 py-2 border-b border-token-subtle flex items-center justify-between">
+                <h2 className="text-sm font-medium text-token-primary">Part B · 设计层 / 全局规范层</h2>
+                <div className="text-[11px] text-token-muted">
                   {phase === 'B-streaming' && '生成中…'}
                   {phase === 'B-done' && '完成'}
                 </div>
               </div>
               <div
-                className="flex-1 px-4 py-3 text-sm text-white/85 font-mono leading-relaxed whitespace-pre-wrap"
+                className="flex-1 px-4 py-3 text-sm text-token-primary font-mono leading-relaxed whitespace-pre-wrap"
                 style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
               >
-                {partB || <span className="text-white/30">Part A 完成并确认后生成</span>}
+                {partB || <span className="text-token-muted">Part A 完成并确认后生成</span>}
               </div>
             </section>
           </>

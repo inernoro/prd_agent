@@ -71,7 +71,7 @@ export function MenuPermissionDialog({ open, onOpenChange, menuAppKey }: MenuPer
           <button
             type="button"
             onClick={() => onOpenChange(false)}
-            className="p-1.5 rounded-lg hover:bg-white/5 transition-colors"
+            className="p-1.5 rounded-lg hover-bg-soft transition-colors"
           >
             <X size={16} style={{ color: 'var(--text-muted)' }} />
           </button>

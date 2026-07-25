@@ -139,7 +139,7 @@ export function WhitelistEditDialog({
     }
   };
 
-  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <Dialog
@@ -321,7 +321,7 @@ export function WhitelistEditDialog({
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+          <div className="flex justify-end gap-2 pt-4 border-t border-token-subtle">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit}>{mode === 'create' ? '创建' : '保存'}</Button>
           </div>

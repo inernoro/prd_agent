@@ -66,6 +66,7 @@ public class CdsReportImportService
         // 故过滤/换源导入一律全量扫描，靠正文 contentHash 去重保证幂等，且**不回写**共享水位。
         var isDefaultScopeImport =
             string.IsNullOrWhiteSpace(opts.ProjectId)
+            && string.IsNullOrWhiteSpace(opts.ReportId)
             && (string.IsNullOrWhiteSpace(store.PeerSyncNodeBaseUrl)
                 || string.Equals(store.PeerSyncNodeBaseUrl.TrimEnd('/'), baseUrl, StringComparison.OrdinalIgnoreCase));
         var useIncrementalCursor = isDefaultScopeImport && !opts.Full;
@@ -75,6 +76,8 @@ public class CdsReportImportService
         var query = new List<string>();
         if (!string.IsNullOrWhiteSpace(opts.ProjectId))
             query.Add("projectId=" + Uri.EscapeDataString(opts.ProjectId!));
+        if (!string.IsNullOrWhiteSpace(opts.ReportId))
+            query.Add("reportId=" + Uri.EscapeDataString(opts.ReportId!));
         if (useIncrementalCursor && store.PeerSyncLastAt.HasValue)
             query.Add("updatedSince=" + Uri.EscapeDataString(store.PeerSyncLastAt.Value.ToUniversalTime().ToString("o")));
         if (query.Count > 0) listUrl += "?" + string.Join("&", query);
@@ -286,6 +289,16 @@ public class CdsReportImportService
         InfraConnection? conn;
         if (!string.IsNullOrWhiteSpace(opts.ConnectionId))
             conn = await _infra.GetRawAsync(opts.ConnectionId!, ct);
+        else if (!string.IsNullOrWhiteSpace(opts.SourceBaseUrl))
+        {
+            var normalizedSource = opts.SourceBaseUrl.TrimEnd('/');
+            var candidates = await _db.InfraConnections
+                .Find(c => c.Partner == "cds" && c.Status == "active")
+                .SortByDescending(c => c.UpdatedAt)
+                .ToListAsync(ct);
+            conn = candidates.FirstOrDefault(c =>
+                string.Equals(c.PartnerBaseUrl?.TrimEnd('/'), normalizedSource, StringComparison.OrdinalIgnoreCase));
+        }
         else
             conn = await _db.InfraConnections
                 .Find(c => c.Partner == "cds" && c.Status == "active")
@@ -414,8 +427,12 @@ public class CdsReportImportOptions
     public string? CdsBaseUrl { get; set; }
     /// <summary>显式全局 key（X-AI-Access-Key）。</summary>
     public string? CdsAccessKey { get; set; }
+    /// <summary>已授权 CDS 连接的来源地址；只用于匹配系统互联记录，不会作为任意请求地址使用。</summary>
+    public string? SourceBaseUrl { get; set; }
     /// <summary>只拉某 CDS 项目的报告；不填拉全部（含全局）。</summary>
     public string? ProjectId { get; set; }
+    /// <summary>只拉某一份 CDS 报告；用于验收中心右键一键保存。</summary>
+    public string? ReportId { get; set; }
     /// <summary>目标知识库 Id；不填则 find-or-create「CDS 验收报告」。</summary>
     public string? StoreId { get; set; }
     /// <summary>忽略增量水位，全量重拉。</summary>

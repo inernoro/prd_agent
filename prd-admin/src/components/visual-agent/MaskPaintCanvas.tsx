@@ -266,7 +266,7 @@ export function MaskPaintCanvas({
         {/* 笔刷大小 */}
         <div className="flex items-center gap-1.5">
           <button
-            className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
+            className="w-6 h-6 flex items-center justify-center rounded hover-bg-soft transition-colors"
             style={{ color: 'rgba(255,255,255,0.6)' }}
             onClick={decreaseBrush}
           >
@@ -282,7 +282,7 @@ export function MaskPaintCanvas({
             }}
           />
           <button
-            className="w-6 h-6 flex items-center justify-center rounded hover:bg-white/10 transition-colors"
+            className="w-6 h-6 flex items-center justify-center rounded hover-bg-soft transition-colors"
             style={{ color: 'rgba(255,255,255,0.6)' }}
             onClick={increaseBrush}
           >
@@ -298,7 +298,7 @@ export function MaskPaintCanvas({
 
         {/* 清空 */}
         <button
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:bg-white/10"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover-bg-soft"
           style={{ color: 'rgba(255,255,255,0.6)' }}
           onClick={handleClear}
         >
@@ -325,7 +325,7 @@ export function MaskPaintCanvas({
 
         {/* 取消 */}
         <button
-          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover:bg-white/10"
+          className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs font-medium transition-all hover-bg-soft"
           style={{ color: 'rgba(255,255,255,0.5)' }}
           onClick={onCancel}
         >

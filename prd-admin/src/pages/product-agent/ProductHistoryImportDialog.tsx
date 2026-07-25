@@ -224,31 +224,31 @@ export function ProductHistoryImportDialog({
 
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
-      <div className="flex w-full max-w-4xl flex-col rounded-xl border border-white/15 bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+      <div className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl" style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}>
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
-            <div className="text-base font-semibold text-white">导入历史{TYPE_LABEL[type]}</div>
-            <div className="mt-1 text-xs text-white/45">
+            <div className="text-base font-semibold text-token-primary">导入历史{TYPE_LABEL[type]}</div>
+            <div className="mt-1 text-xs text-token-muted">
               {isCrossProduct
                 ? '按文件「应用」或「产品/所属产品」列匹配系统产品；未匹配行跳过，不手动选归属产品。'
                 : '可重复导入；有外部 ID 时更新原记录，无 ID 时系统自动分配纯数字编号。'}
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭"><X size={17} /></button>
+          <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭"><X size={17} /></button>
         </div>
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-4">
           {needsProductPicker && (
             <label className="mb-4 block">
-              <span className="mb-1.5 block text-xs text-white/50">归属产品</span>
-              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none">
+              <span className="mb-1.5 block text-xs text-token-secondary">归属产品</span>
+              <select value={productId} onChange={(event) => setProductId(event.target.value)} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none">
                 {products.map((product) => <option key={product.id} value={product.id}>{product.name}</option>)}
               </select>
             </label>
           )}
-          <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025]">
+          <button onClick={() => inputRef.current?.click()} className="w-full rounded-xl border border-dashed border-token-subtle p-8 text-center hover-bg-soft">
             <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-            <div className="text-sm text-white/70">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
-            <div className="mt-1 text-xs text-white/35">{type === 'defect' ? 'TAPD「优先级」→ 系统「严重程度」；其它列无值则留空' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
+            <div className="text-sm text-token-secondary">选择 {type === 'requirement' ? 'CSV 或 RTF' : type === 'defect' ? 'TAPD 导出 CSV / Excel / RTF' : 'CSV'} 文件</div>
+            <div className="mt-1 text-xs text-token-muted">{type === 'defect' ? 'TAPD「优先级」→ 系统「严重程度」；其它列无值则留空' : '需求 RTF 支持多选；CSV 首行需为字段名'}</div>
           </button>
           <input
             ref={inputRef}
@@ -258,11 +258,11 @@ export function ProductHistoryImportDialog({
             className="hidden"
             onChange={(event) => void readFiles(Array.from(event.target.files ?? []))}
           />
-          {fileNames.length > 0 && <div className="mt-3 text-xs text-white/40">{fileNames.join('、')}</div>}
+          {fileNames.length > 0 && <div className="mt-3 text-xs text-token-muted">{fileNames.join('、')}</div>}
           {rows.length > 0 && (
-            <div className="mt-4 overflow-auto rounded-lg border border-white/10">
+            <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
+                <thead className="bg-[#1a1c22] text-token-muted"><tr><th className="px-3 py-2">标题</th><th className="px-3 py-2">ID</th>{isCrossProduct && <th className="px-3 py-2">归属产品</th>}<th className="px-3 py-2">{type === 'defect' ? '严重程度' : '等级'}</th><th className="px-3 py-2">状态</th>{type === 'defect' && <th className="px-3 py-2">处理人</th>}</tr></thead>
                 <tbody>{rows.slice(0, 30).map((row, index) => {
                   const routeLabel = row.sourceFields?.['应用']
                     || row.sourceFields?.['所属产品']
@@ -271,29 +271,29 @@ export function ProductHistoryImportDialog({
                     || row.sourceFields?.['产品线']
                     || (row.title?.match(/^【([^】]+)】/)?.[1] ?? '');
                   return (
-                    <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-white/75">{row.title}</td>
-                      <td className="px-3 py-2 text-white/45">{row.externalId || '-'}</td>
-                      {isCrossProduct && <td className="px-3 py-2 text-white/45">{routeLabel || '—'}</td>}
-                      <td className="px-3 py-2 text-white/45">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD优先级:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td>
-                      <td className="px-3 py-2 text-white/45">{row.status || '-'}</td>
-                      {type === 'defect' && <td className="px-3 py-2 text-white/45">{row.handlerNames?.join('、') || '-'}</td>}
+                    <tr key={`${row.externalId ?? row.title}-${index}`} className="border-t border-token-subtle">
+                      <td className="px-3 py-2 text-token-secondary">{row.title}</td>
+                      <td className="px-3 py-2 text-token-muted">{row.externalId || '-'}</td>
+                      {isCrossProduct && <td className="px-3 py-2 text-token-muted">{routeLabel || '—'}</td>}
+                      <td className="px-3 py-2 text-token-muted">{type === 'defect' ? (row.severity ? `${row.severity}（TAPD优先级:${row.tapdSeverityRaw || '—'}）` : (row.tapdSeverityRaw || '—')) : (row.grade || '-')}</td>
+                      <td className="px-3 py-2 text-token-muted">{row.status || '-'}</td>
+                      {type === 'defect' && <td className="px-3 py-2 text-token-muted">{row.handlerNames?.join('、') || '-'}</td>}
                     </tr>
                   );
                 })}</tbody>
               </table>
             </div>
           )}
-          {message && <div className="mt-3 text-xs text-white/55">{message}</div>}
+          {message && <div className="mt-3 text-xs text-token-secondary">{message}</div>}
         </div>
-        <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
-          <div className="text-xs text-white/35">
+        <div className="flex shrink-0 items-center justify-between border-t border-token-subtle px-5 py-4">
+          <div className="text-xs text-token-muted">
             {isCrossProduct
               ? '按文件「应用/产品/所属产品」列自动路由到系统产品'
               : selectedProduct ? `将写入：${selectedProduct.name}` : '请选择产品'}
           </div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">取消</button>
+            <button onClick={onClose} className="rounded-lg border border-token-subtle px-3.5 py-2 text-sm text-token-secondary hover-bg-soft hover-text-primary">取消</button>
             <button onClick={() => void commit()} disabled={busy || (needsProductPicker && !productId) || rows.length === 0} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/35 bg-cyan-500/20 px-4 py-2 text-sm text-cyan-100 hover:bg-cyan-500/30 disabled:opacity-40">
               {busy ? <MapSpinner size={14} /> : <Upload size={14} />} 确认导入 {rows.length} 条
             </button>

@@ -20,7 +20,7 @@ import { StateService } from '../../src/services/state.js';
 import { createReportsRouter } from '../../src/routes/reports.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
-interface Res { status: number; body: any; headers: http.IncomingHttpHeaders; }
+interface Res { status: number; body: any; rawBody: Buffer; headers: http.IncomingHttpHeaders; }
 
 async function call(
   server: http.Server,
@@ -40,12 +40,14 @@ async function call(
     const req = http.request(
       { hostname: '127.0.0.1', port: addr.port, path: urlPath, method, headers },
       (res) => {
-        let raw = '';
-        res.on('data', (c: Buffer) => (raw += c.toString()));
+        const chunks: Buffer[] = [];
+        res.on('data', (c: Buffer) => chunks.push(c));
         res.on('end', () => {
+          const rawBody = Buffer.concat(chunks);
+          const raw = rawBody.toString('utf8');
           let body: any = raw;
           try { body = JSON.parse(raw); } catch { /* keep raw */ }
-          resolve({ status: res.statusCode!, body, headers: res.headers });
+          resolve({ status: res.statusCode!, body, rawBody, headers: res.headers });
         });
       },
     );
@@ -131,6 +133,31 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(res.status).toBe(200);
     const ids = (res.body.reports as Array<{ id: string }>).map((r) => r.id);
     expect(ids).toEqual(expect.arrayContaining([reportA.id, reportB.id]));
+  });
+
+  it('reportId list filter returns only the selected report', async () => {
+    const res = await call(server, 'GET', `/api/reports?reportId=${reportA.id}`);
+    expect(res.status).toBe(200);
+    expect((res.body.reports as Array<{ id: string }>).map((report) => report.id)).toEqual([reportA.id]);
+  });
+
+  it('downloads an offline ZIP containing body, metadata and referenced assets', async () => {
+    const assetName = `${'a'.repeat(64)}.png`;
+    service.writeReportAsset(assetName, Buffer.from([1, 2, 3, 4]));
+    const report = service.createAcceptanceReport({
+      title: 'Offline package',
+      format: 'html',
+      content: `<img src="http://cds.example/api/reports/assets/${assetName}">`,
+      projectId: 'proj-a',
+    });
+    const res = await call(server, 'GET', `/api/reports/${report.id}/download`, { projectKey: 'proj-a' });
+    expect(res.status).toBe(200);
+    expect(res.headers['content-type']).toBe('application/zip');
+    expect(res.headers['content-disposition']).toContain('attachment');
+    expect(res.rawBody.readUInt32LE(0)).toBe(0x04034b50);
+    expect(res.rawBody.includes(Buffer.from('report.html'))).toBe(true);
+    expect(res.rawBody.includes(Buffer.from('metadata.json'))).toBe(true);
+    expect(res.rawBody.includes(Buffer.from(`assets/${assetName}`))).toBe(true);
   });
 
   it('project-a key cannot delete another project report (403, report survives)', async () => {

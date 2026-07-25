@@ -338,7 +338,7 @@ export default function AssetsManagePage() {
         let iconKey = String(bRes.data.loginIconKey || 'login_icon');
         if (iconKey.includes('.')) iconKey = iconKey.substring(0, iconKey.lastIndexOf('.'));
         setBrandingIconKey(iconKey);
-        
+
         let bgKey = String(bRes.data.loginBackgroundKey || 'bg');
         if (bgKey.includes('.')) bgKey = bgKey.substring(0, bgKey.lastIndexOf('.'));
         setBrandingBgKey(bgKey);
@@ -443,13 +443,13 @@ export default function AssetsManagePage() {
       const name = String(brandingName || '').trim();
       const subtitle = String(brandingSubtitle || '').trim();
       const winTitle = String(brandingWindowTitle || '').trim();
-      
+
       let key = String(brandingIconKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
       if (key.includes('.')) key = key.substring(0, key.lastIndexOf('.'));
-      
+
       let bgKey = String(brandingBgKey || '').trim().toLowerCase().replace(/^\/+/, '').replace(/\\/g, '').replace(/\//g, '');
       if (bgKey.includes('.')) bgKey = bgKey.substring(0, bgKey.lastIndexOf('.'));
-      
+
       const res = await updateDesktopBrandingSettings({
         desktopName: name || 'PRD Agent',
         desktopSubtitle: subtitle || '智能PRD解读助手',
@@ -544,7 +544,7 @@ export default function AssetsManagePage() {
     if (key.includes('.')) {
       key = key.substring(0, key.lastIndexOf('.'));
     }
-    
+
     const norm = normalizeDesktopKey(key);
     if (!norm.ok) {
       setErr(norm.error || 'key 不合法');
@@ -572,7 +572,7 @@ export default function AssetsManagePage() {
     if (key.includes('.')) {
       key = key.substring(0, key.lastIndexOf('.'));
     }
-    
+
     const norm = normalizeDesktopKey(key);
     if (!norm.ok) {
       setErr(norm.error || 'key 不合法');
@@ -1117,19 +1117,19 @@ function AssetRowBlock(props: {
       {columns.map((c) => {
         const skin = c === '__base__' ? null : c;
         const skinKey = c === '__base__' ? '' : c;
-        
+
         const mRow = matrixData.find(m => m.key === row.key);
         const cell = mRow?.cells?.[skinKey];
         const url = cell?.url || '';
         const isFallback = cell?.isFallback ?? false;
-        
+
         const id = `${row.key}@@${c}`;
         const isBroken = !url || Boolean(broken?.[id]);
         const isUploading = uploadingId === `${row.key}@@${skin || '__base__'}`;
-        
+
         const fileName = url ? url.split('/').pop()?.split('?')[0] || row.key : row.key;
-        const isVideo = fileName.toLowerCase().endsWith('.mp4') || 
-                       fileName.toLowerCase().endsWith('.webm') || 
+        const isVideo = fileName.toLowerCase().endsWith('.mp4') ||
+                       fileName.toLowerCase().endsWith('.webm') ||
                        fileName.toLowerCase().endsWith('.mov');
 
         return (
@@ -1298,7 +1298,7 @@ function HomepageAssetsSection({
                 {selectedQuickLinks.map((card, index) => (
                   <div
                     key={card.id}
-                    className="group rounded-[12px] border border-white/10 bg-white/[0.045] px-3 py-2.5"
+                    className="group rounded-[12px] border border-token-subtle bg-token-nested px-3 py-2.5"
                   >
                     <div className="flex items-start gap-3">
                       <span
@@ -1320,11 +1320,11 @@ function HomepageAssetsSection({
                         <span className="mt-0.5 block line-clamp-1 text-[11px] text-token-muted">{card.hint}</span>
                       </span>
                     </div>
-                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-white/10 pt-2">
+                    <div className="mt-2 flex items-center justify-between gap-2 border-t border-token-subtle pt-2">
                       <button
                         type="button"
                         onClick={() => toggleQuickLink(card.id)}
-                        className="rounded-[8px] px-2 py-1 text-[11px] text-token-muted transition-colors hover:bg-white/10 hover:text-token-primary"
+                        className="rounded-[8px] px-2 py-1 text-[11px] text-token-muted transition-colors hover-bg-soft hover:text-token-primary"
                       >
                         移除
                       </button>
@@ -1335,7 +1335,7 @@ function HomepageAssetsSection({
                           disabled={index === 0}
                           className={cn(
                             'inline-flex h-7 w-8 items-center justify-center rounded-[8px] transition-colors',
-                            index === 0 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                            index === 0 ? 'cursor-not-allowed opacity-35' : 'hover-bg-soft'
                           )}
                           aria-label={`${card.label} 上移`}
                         >
@@ -1347,7 +1347,7 @@ function HomepageAssetsSection({
                           disabled={index === selectedQuickLinks.length - 1}
                           className={cn(
                             'inline-flex h-7 w-8 items-center justify-center rounded-[8px] transition-colors',
-                            index === selectedQuickLinks.length - 1 ? 'cursor-not-allowed opacity-35' : 'hover:bg-white/10'
+                            index === selectedQuickLinks.length - 1 ? 'cursor-not-allowed opacity-35' : 'hover-bg-soft'
                           )}
                           aria-label={`${card.label} 下移`}
                         >
@@ -1359,7 +1359,7 @@ function HomepageAssetsSection({
                 ))}
               </div>
             ) : (
-              <div className="rounded-[12px] border border-dashed border-white/15 px-4 py-8 text-center text-[12px] text-token-muted">
+              <div className="rounded-[12px] border border-dashed border-token-subtle px-4 py-8 text-center text-[12px] text-token-muted">
                 尚未选择入口。请在下方入口池中添加。
               </div>
             )}
@@ -1418,7 +1418,7 @@ function HomepageAssetsSection({
                   className="grid h-8 w-8 shrink-0 place-items-center rounded-[10px]"
                   style={{
                     color: active ? 'var(--accent-gold)' : 'var(--text-muted)',
-                    background: active ? 'rgba(245, 158, 11, 0.14)' : 'rgba(255,255,255,0.05)',
+                    background: active ? 'rgba(245, 158, 11, 0.14)' : 'var(--nested-block-bg)',
                   }}
                 >
                   {quickLinkIconMap[card.id] ?? <Home size={14} />}

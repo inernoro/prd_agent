@@ -161,12 +161,8 @@ const PREVIEW_HEIGHT = '100px';
  */
 const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) => (
   <div
-    className="overflow-auto border rounded-[6px]"
-    style={{
-      borderColor: 'var(--border-subtle)',
-      background: 'rgba(255,255,255,0.02)',
-      height: PREVIEW_HEIGHT,
-    }}
+    className="overflow-auto border rounded-[6px] bg-token-nested"
+    style={{ borderColor: 'var(--border-subtle)', height: PREVIEW_HEIGHT }}
   >
     <style>{`
       .marketplace-prompt-md { font-size: 11px; line-height: 1.4; color: var(--text-secondary); padding: 6px 8px; }
@@ -178,7 +174,7 @@ const PromptPreviewRenderer: React.FC<{ item: MarketplacePrompt }> = ({ item }) 
       .marketplace-prompt-md ul,.marketplace-prompt-md ol { margin: 2px 0; padding-left: 14px; }
       .marketplace-prompt-md li { margin: 1px 0; }
       .marketplace-prompt-md code { font-family: ui-monospace, monospace; font-size: 10px; background: rgba(255,255,255,0.06); border: 1px solid rgba(255,255,255,0.10); padding: 0 3px; border-radius: 3px; }
-      .marketplace-prompt-md pre { background: rgba(0,0,0,0.28); border: 1px solid rgba(255,255,255,0.10); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
+      .marketplace-prompt-md pre { background: var(--nested-block-bg); border: 1px solid var(--border-subtle); border-radius: 4px; padding: 4px 6px; overflow: auto; margin: 2px 0; }
       .marketplace-prompt-md pre code { background: transparent; border: 0; padding: 0; }
     `}</style>
     <div className="marketplace-prompt-md">
@@ -201,11 +197,8 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
   <div className="grid gap-2" style={{ gridTemplateColumns: 'minmax(0, 1fr) 100px', height: PREVIEW_HEIGHT }}>
     {/* 左侧：提示词预览 */}
     <div
-      className="overflow-auto border rounded-[6px] p-2"
-      style={{
-        borderColor: 'var(--border-subtle)',
-        background: 'rgba(255,255,255,0.02)',
-      }}
+      className="overflow-auto border rounded-[6px] p-2 bg-token-nested"
+      style={{ borderColor: 'var(--border-subtle)' }}
     >
       <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
         {item.prompt || '（无提示词）'}
@@ -213,11 +206,8 @@ const RefImagePreviewRenderer: React.FC<{ item: MarketplaceRefImage }> = ({ item
     </div>
     {/* 右侧：图片预览（简单边框，非透明图无需象棋格） */}
     <div
-      className="flex items-center justify-center overflow-hidden rounded-[6px]"
-      style={{
-        background: 'rgba(255,255,255,0.02)',
-        border: '1px solid rgba(255,255,255,0.08)',
-      }}
+      className="flex items-center justify-center overflow-hidden rounded-[6px] bg-token-nested border border-token-subtle"
+
     >
       {item.imageUrl ? (
         <img src={item.imageUrl} alt={item.name} className="block w-full h-full object-cover" />
@@ -256,8 +246,8 @@ const WatermarkPreviewRenderer: React.FC<{ item: MarketplaceWatermark }> = ({ it
       style={{
         background: item.previewUrl
           ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-          : 'rgba(255,255,255,0.02)',
-        border: item.previewUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+          : 'var(--nested-block-bg)',
+        border: item.previewUrl ? 'none' : '1px solid var(--border-subtle)',
       }}
     >
       {item.previewUrl ? (
@@ -333,24 +323,15 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
 
   return (
     <div
-      className="relative overflow-hidden rounded-[6px] flex"
-      style={{
-        height: PREVIEW_HEIGHT,
-        background: 'rgba(255, 255, 255, 0.02)',
-        border: '1px solid rgba(56, 189, 248, 0.22)',
-      }}
+      className="relative overflow-hidden rounded-[6px] flex bg-token-nested"
+      style={{ height: PREVIEW_HEIGHT, border: '1px solid rgba(56, 189, 248, 0.22)' }}
     >
       {/* 左：封面图 / 兜底 emoji */}
       <div
-        className="relative flex items-center justify-center overflow-hidden flex-shrink-0"
-        style={{
-          width: 96,
-          height: '100%',
-          background: hasCover
+        className="relative flex items-center justify-center overflow-hidden flex-shrink-0 border-r border-r-token-subtle"
+        style={{ width: 96, height: '100%', background: hasCover
             ? `#0b1220 url(${item.coverImageUrl}) center/cover no-repeat`
-            : 'linear-gradient(135deg, rgba(37, 99, 235, 0.24) 0%, rgba(14, 165, 233, 0.18) 50%, rgba(6, 182, 212, 0.18) 100%)',
-          borderRight: '1px solid rgba(255, 255, 255, 0.06)',
-        }}
+            : 'linear-gradient(135deg, rgba(37, 99, 235, 0.24) 0%, rgba(14, 165, 233, 0.18) 50%, rgba(6, 182, 212, 0.18) 100%)' }}
       >
         {!hasCover && (
           <>
@@ -435,7 +416,7 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
               type="button"
               onClick={(e) => stopAndOpen(e, item.previewUrl)}
               title={item.previewUrl!}
-              className="inline-flex items-center gap-1 px-1.5 rounded-[4px] text-[10px] transition-colors hover:bg-white/5 min-w-0"
+              className="inline-flex items-center gap-1 px-1.5 rounded-[4px] text-[10px] transition-colors hover-bg-soft min-w-0"
               style={{
                 height: 18,
                 color: 'rgba(125, 211, 252, 0.92)',
@@ -461,8 +442,8 @@ const SkillPreviewRenderer: React.FC<{ item: MarketplaceSkill }> = ({ item }) =>
             className="flex items-center gap-1 px-1.5 rounded-full text-[10px] transition-all flex-shrink-0"
             style={{
               height: 18,
-              background: favorited ? 'rgba(244, 63, 94, 0.22)' : 'rgba(255, 255, 255, 0.05)',
-              border: `1px solid ${favorited ? 'rgba(244, 63, 94, 0.5)' : 'rgba(255, 255, 255, 0.12)'}`,
+              background: favorited ? 'rgba(244, 63, 94, 0.22)' : 'var(--nested-block-bg)',
+              border: `1px solid ${favorited ? 'rgba(244, 63, 94, 0.5)' : 'var(--border-subtle)'}`,
               color: favorited ? 'rgba(251, 113, 133, 0.98)' : 'rgba(226, 232, 240, 0.9)',
               cursor: pending ? 'wait' : 'pointer',
             }}

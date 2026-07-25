@@ -78,8 +78,8 @@ export function MarketplaceWatermarkCard({ config, ctx, onFork }: MarketplaceWat
               style={{
                 background: config.previewUrl
                   ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                  : 'rgba(255,255,255,0.02)',
-                border: config.previewUrl ? 'none' : '1px solid rgba(255,255,255,0.08)',
+                  : 'var(--nested-block-bg)',
+                border: config.previewUrl ? 'none' : '1px solid var(--border-subtle)',
               }}
             >
               {config.previewUrl ? (

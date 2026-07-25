@@ -14,8 +14,8 @@
  *   - 整库分享（entryId 为空）：文件树 + 全部文档只读浏览
  *   - 单篇分享（entryId 非空）：只展示那一篇
  */
-import { useEffect, useState, useCallback, useMemo, type ReactNode } from 'react';
-import { useNavigate, useParams, useSearchParams } from 'react-router-dom';
+import { useEffect, useState, useCallback, useMemo, type MouseEventHandler, type ReactNode } from 'react';
+import { useLocation, useNavigate, useParams, useSearchParams } from 'react-router-dom';
 import { ArrowLeft, ArrowRight, ShieldCheck, BookOpen, AlertCircle, Eye, FileText, Orbit, Network } from 'lucide-react';
 import { useAuthStore } from '@/stores/authStore';
 import { DocBrowser } from '@/components/doc-browser/DocBrowser';
@@ -32,7 +32,10 @@ import {
 } from '@/services';
 import type { DocStoreShareView, DocumentEntry } from '@/services/contracts/documentStore';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { ThemeModeToggle } from '@/components/ui/ThemeModeToggle';
 import { setWikilinkEntries } from '@/lib/wikilinkCache';
+import { applyDocumentThemeMode, transitionThemeMode } from '@/lib/themeTransition';
+import { useMobileThemeStore } from '@/stores/mobileThemeStore';
 import {
   parseLibraryShareViewMode,
   resolveShareKnowledgeBaseReturnPath,
@@ -46,13 +49,15 @@ import {
   type LibraryShareViewMode,
 } from './libraryShareViewMode';
 
-const PAGE_BG = '#0a0a0a';
 const SANS = '-apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
 
 export function LibraryShareViewPage() {
   const { token } = useParams<{ token: string }>();
   const navigate = useNavigate();
+  const location = useLocation();
   const isAuthenticated = useAuthStore((s) => s.isAuthenticated);
+  const themeMode = useMobileThemeStore((s) => s.mode);
+  const setThemeMode = useMobileThemeStore((s) => s.setMode);
   const [searchParams, setSearchParams] = useSearchParams();
   // URL ?entry={id} 优先级最高：归档脚本/外部链接可指定一打开就高亮某篇
   const entryFromUrl = searchParams.get('entry');
@@ -66,6 +71,24 @@ export function LibraryShareViewPage() {
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(undefined);
   const [galaxyLabelMode, setGalaxyLabelMode] = useState<GalaxyLabelMode>('content');
   const [canOpenStore, setCanOpenStore] = useState(false);
+
+  useEffect(() => {
+    applyDocumentThemeMode(themeMode, location.pathname);
+  }, [location.pathname, themeMode]);
+
+  useEffect(
+    () => () => document.documentElement.removeAttribute('data-theme'),
+    [],
+  );
+
+  const toggleTheme = useCallback<MouseEventHandler<HTMLButtonElement>>((event) => {
+    transitionThemeMode({
+      mode: themeMode === 'light' ? 'dark' : 'light',
+      pathname: location.pathname,
+      origin: event,
+      commit: setThemeMode,
+    });
+  }, [location.pathname, setThemeMode, themeMode]);
 
   const shareSortMode = useMemo(
     () => resolveLibraryShareSortMode(
@@ -201,7 +224,7 @@ export function LibraryShareViewPage() {
 
   if (loading) {
     return (
-      <div style={{ height: '100vh', background: PAGE_BG, display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+      <div style={{ height: '100vh', background: 'var(--bg-primary)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
         <MapSectionLoader text="正在打开分享..." />
       </div>
     );
@@ -209,7 +232,7 @@ export function LibraryShareViewPage() {
 
   if (error || !view) {
     return (
-      <div style={{ height: '100vh', background: PAGE_BG, fontFamily: SANS, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
+      <div style={{ height: '100vh', background: 'var(--bg-primary)', fontFamily: SANS, display: 'flex', flexDirection: 'column', alignItems: 'center', justifyContent: 'center', gap: 18 }}>
         <div style={{
           width: 64, height: 64, borderRadius: '50%',
           background: 'rgba(239, 68, 68, 0.15)',
@@ -217,15 +240,15 @@ export function LibraryShareViewPage() {
         }}>
           <AlertCircle size={30} color="rgba(239, 68, 68, 0.9)" />
         </div>
-        <p style={{ color: 'rgba(255,255,255,0.6)', fontSize: 15, margin: 0 }}>
+        <p style={{ color: 'var(--text-muted)', fontSize: 15, margin: 0 }}>
           {error ?? '分享链接不存在或已撤销'}
         </p>
         <button
           onClick={() => navigate('/library')}
           style={{
             display: 'flex', alignItems: 'center', gap: 6,
-            padding: '8px 16px', borderRadius: 8, border: '1px solid rgba(255,255,255,0.12)',
-            background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
+            padding: '8px 16px', borderRadius: 8, border: '1px solid var(--border-subtle)',
+            background: 'var(--bg-secondary)', color: 'var(--text-primary)',
             fontSize: 13, cursor: 'pointer',
           }}
         >
@@ -254,17 +277,17 @@ export function LibraryShareViewPage() {
       : '登录后进入我的知识库列表';
 
   return (
-    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: PAGE_BG, fontFamily: SANS }}>
-      {/* 顶栏：深色玻璃 */}
+    <div style={{ height: '100vh', display: 'flex', flexDirection: 'column', background: 'var(--bg-primary)', color: 'var(--text-primary)', fontFamily: SANS }}>
+      {/* 顶栏：跟随全局主题偏好 */}
       <div style={{
         padding: '10px 16px',
         display: 'flex',
         alignItems: 'center',
         gap: 16,
-        background: 'rgba(17, 17, 17, 0.85)',
+        background: 'var(--panel-solid)',
         backdropFilter: 'blur(12px)',
         WebkitBackdropFilter: 'blur(12px)',
-        borderBottom: '1px solid rgba(255,255,255,0.06)',
+        borderBottom: '1px solid var(--border-faint)',
         flexShrink: 0,
       }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 0 }}>
@@ -275,7 +298,7 @@ export function LibraryShareViewPage() {
             </span>
           )}
           <span style={{
-            color: '#fff', fontSize: 14, fontWeight: 500,
+            color: 'var(--text-primary)', fontSize: 14, fontWeight: 500,
             whiteSpace: 'nowrap', overflow: 'hidden', textOverflow: 'ellipsis', minWidth: 0,
           }}>
             {view.createdByName ? `分享给你的「${title}」` : title}
@@ -285,29 +308,32 @@ export function LibraryShareViewPage() {
             style={{
               alignItems: 'center', gap: 4, flexShrink: 0,
               padding: '2px 8px', borderRadius: 999,
-              background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.45)',
+              background: 'var(--bg-secondary)', color: 'var(--text-muted)',
               fontSize: 11, fontWeight: 600,
             }}
           >
             {isSingleDoc ? <><FileText size={11} /> 单篇</> : <><BookOpen size={11} /> 知识库</>}
           </span>
         </div>
-        {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
-        <button
-          onClick={() => navigate(knowledgeBaseReturnPath)}
-          className="transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
-          style={{
-            marginLeft: 'auto', flexShrink: 0,
-            display: 'inline-flex', alignItems: 'center', gap: 6,
-            minHeight: 36, padding: '6px 12px', borderRadius: 9,
-            border: '1px solid rgba(255,255,255,0.12)',
-            background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)',
-            fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
-          }}
-          title={knowledgeBaseReturnTitle}
-        >
-          <ArrowLeft size={14} /> {knowledgeBaseReturnLabel}
-        </button>
+        <div style={{ marginLeft: 'auto', flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8 }}>
+          <ThemeModeToggle mode={themeMode} onToggle={toggleTheme} />
+          {/* 只有服务端 GetStore 权限探针通过才进入当前知识库；分享 token 接收者安全回退列表。 */}
+          <button
+            onClick={() => navigate(knowledgeBaseReturnPath)}
+            className="transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-blue-400/60"
+            style={{
+              flexShrink: 0,
+              display: 'inline-flex', alignItems: 'center', gap: 6,
+              minHeight: 36, padding: '6px 12px', borderRadius: 9,
+              border: '1px solid var(--border-subtle)',
+              background: 'var(--bg-secondary)', color: 'var(--text-primary)',
+              fontSize: 13, cursor: 'pointer', whiteSpace: 'nowrap',
+            }}
+            title={knowledgeBaseReturnTitle}
+          >
+            <ArrowLeft size={14} /> {knowledgeBaseReturnLabel}
+          </button>
+        </div>
       </div>
 
       {/* 简介条：低饱和度 */}
@@ -315,15 +341,15 @@ export function LibraryShareViewPage() {
         <div style={{
           padding: '8px 16px',
           display: 'flex', alignItems: 'center', gap: 14, flexWrap: 'wrap',
-          background: 'rgba(255,255,255,0.012)',
-          borderBottom: '1px solid rgba(255,255,255,0.05)',
+          background: 'var(--bg-nested)',
+          borderBottom: '1px solid var(--border-faint)',
           flexShrink: 0,
           fontSize: 12,
-          color: 'rgba(255,255,255,0.4)',
+          color: 'var(--text-muted)',
         }}>
           <BookOpen size={12} style={{ flexShrink: 0 }} />
           {desc && (
-            <span style={{ color: 'rgba(255,255,255,0.55)', maxWidth: 640, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <span style={{ color: 'var(--text-secondary)', maxWidth: 640, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {desc}
             </span>
           )}
@@ -344,8 +370,8 @@ export function LibraryShareViewPage() {
             gap: 10,
             padding: '7px 16px',
             overflowX: 'auto',
-            background: 'rgba(255,255,255,0.012)',
-            borderBottom: '1px solid rgba(255,255,255,0.05)',
+            background: 'var(--bg-nested)',
+            borderBottom: '1px solid var(--border-faint)',
           }}
         >
           <span className="hidden shrink-0 text-[11px] font-medium text-token-muted sm:inline">查看方式</span>

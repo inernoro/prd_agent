@@ -759,11 +759,11 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                     ] as const).map((item) => (
                       <button
                         key={item.key}
-                        className="block w-full text-left px-4 py-2 text-[12px] hover:bg-white/10 transition-colors"
+                        className="block w-full text-left px-4 py-2 text-[12px] hover-bg-soft transition-colors"
                         style={{
                           color: severityColors[item.key] || 'var(--text-primary)',
                           border: 'none',
-                          background: defect.severity === item.key ? 'rgba(255,255,255,0.08)' : 'transparent',
+                          background: defect.severity === item.key ? 'var(--nested-block-bg)' : 'transparent',
                           cursor: 'pointer',
                         }}
                         onClick={async () => {
@@ -786,8 +786,8 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                 )}
               </div>
               <span
-                className="h-5 w-px"
-                style={{ background: 'rgba(255,255,255,0.1)' }}
+                className="h-5 w-px bg-token-nested"
+
               />
               {/* 提交人 */}
               <div
@@ -796,7 +796,7 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                   background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: userId && defect.reporterId === userId
-                    ? '1px solid rgba(255, 255, 255, 0.5)'
+                    ? '1px solid var(--border-subtle)'
                     : '1px solid var(--border-subtle)',
                 }}
                 title={defect.reporterName || '未知'}
@@ -820,7 +820,7 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
                   background: 'var(--bg-input-hover)',
                   color: 'var(--text-muted)',
                   border: userId && defect.assigneeId === userId
-                    ? '1px solid rgba(255, 255, 255, 0.5)'
+                    ? '1px solid var(--border-subtle)'
                     : '1px solid var(--border-subtle)',
                 }}
                 title={defect.assigneeName || '未指派'}
@@ -849,8 +849,8 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
               {canDelete && !confirmingDelete && (
                 <>
                   <span
-                    className="h-5 w-px"
-                    style={{ background: 'rgba(255,255,255,0.1)' }}
+                    className="h-5 w-px bg-token-nested"
+
                   />
                   <Button
                     variant="secondary"
@@ -866,8 +866,8 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
               {canDelete && confirmingDelete && (
                 <>
                   <span
-                    className="h-5 w-px"
-                    style={{ background: 'rgba(255,255,255,0.1)' }}
+                    className="h-5 w-px bg-token-nested"
+
                   />
                   <Button
                     variant="secondary"
@@ -1210,7 +1210,7 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
           <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
           <div className="absolute top-4 right-4 flex items-center gap-2">
             <button
-              className="p-2 rounded-lg hover:bg-white/10 transition-colors"
+              className="p-2 rounded-lg hover-bg-soft transition-colors"
               title="复制图片"
               onClick={async (e) => {
                 e.stopPropagation();
@@ -1229,7 +1229,7 @@ export function DefectDetailPanel({ onClose }: DefectDetailPanelProps) {
             >
               <Copy size={20} style={{ color: '#fff' }} />
             </button>
-            <DialogPrimitive.Close className="p-2 rounded-lg hover:bg-white/10 transition-colors">
+            <DialogPrimitive.Close className="p-2 rounded-lg hover-bg-soft transition-colors">
               <X size={24} style={{ color: '#fff' }} />
             </DialogPrimitive.Close>
           </div>

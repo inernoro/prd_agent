@@ -131,25 +131,7 @@ export function ReaderPanel({
   return (
     // 悬浮玻璃卡：四周留白 + 全圆角，比贴边硬面板更圆润通透
     <div
-      style={{
-        position: 'absolute',
-        top: 12,
-        right: 12,
-        bottom: 12,
-        width: `min(${Math.round(width)}px, 94vw)`,
-        // 玻璃质感但保证可读：底色足够实（0.92），blur 只做轻微通透，正文不被背景星点干扰
-        background: 'rgba(17,18,26,0.92)',
-        backdropFilter: 'blur(20px) saturate(130%)',
-        WebkitBackdropFilter: 'blur(20px) saturate(130%)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        borderRadius: 18,
-        boxShadow: '0 18px 60px rgba(0,0,0,0.6)',
-        zIndex: 20,
-        display: 'flex',
-        flexDirection: 'column',
-        minHeight: 0,
-        overflow: 'hidden',
-      }}
+      className="border border-token-subtle" style={{ position: 'absolute', top: 12, right: 12, bottom: 12, width: `min(${Math.round(width)}px, 94vw)`, background: 'rgba(17,18,26,0.92)', backdropFilter: 'blur(20px) saturate(130%)', WebkitBackdropFilter: 'blur(20px) saturate(130%)', borderRadius: 18, boxShadow: '0 18px 60px rgba(0,0,0,0.6)', zIndex: 20, display: 'flex', flexDirection: 'column', minHeight: 0, overflow: 'hidden' }}
     >
       {/* 左缘拖拽手柄：改阅读面板宽度（投影偏移随之同步，聚焦星保持左半居中）。 */}
       <div
@@ -166,18 +148,10 @@ export function ReaderPanel({
           touchAction: 'none',
         }}
       >
-        <div style={{ position: 'absolute', left: 3, top: '50%', transform: 'translateY(-50%)', width: 3, height: 42, borderRadius: 3, background: 'rgba(255,255,255,0.22)' }} />
+        <div className="bg-token-nested" style={{ position: 'absolute', left: 3, top: '50%', transform: 'translateY(-50%)', width: 3, height: 42, borderRadius: 3 }} />
       </div>
       <div
-        style={{
-          display: 'flex',
-          alignItems: 'flex-start',
-          justifyContent: 'space-between',
-          gap: 12,
-          padding: '16px 20px 14px',
-          borderBottom: '1px solid rgba(255,255,255,0.07)',
-          flexShrink: 0,
-        }}
+        className="border-b border-b-token-subtle" style={{ display: 'flex', alignItems: 'flex-start', justifyContent: 'space-between', gap: 12, padding: '16px 20px 14px', flexShrink: 0 }}
       >
         <div style={{ minWidth: 0 }}>
           {crumbLine && (
@@ -192,19 +166,7 @@ export function ReaderPanel({
         <button
           onClick={onClose}
           aria-label="关闭"
-          style={{
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 9,
-            width: 30,
-            height: 30,
-            display: 'flex',
-            alignItems: 'center',
-            justifyContent: 'center',
-            color: '#c8c8d0',
-            cursor: 'pointer',
-            flexShrink: 0,
-          }}
+          className="bg-token-nested border border-token-subtle" style={{ borderRadius: 9, width: 30, height: 30, display: 'flex', alignItems: 'center', justifyContent: 'center', color: '#c8c8d0', cursor: 'pointer', flexShrink: 0 }}
         >
           <X size={15} />
         </button>

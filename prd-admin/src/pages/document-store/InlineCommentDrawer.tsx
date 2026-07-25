@@ -158,17 +158,12 @@ export function InlineCommentDrawer({
     <div className="fixed inset-0 z-50 flex justify-end"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[460px] max-w-[92vw] h-full flex flex-col"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="w-[460px] max-w-[92vw] h-full flex flex-col border-l border-l-token-subtle"
+        style={{ background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)', backdropFilter: 'blur(40px) saturate(180%)', boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)' }}>
 
         {/* 头部 */}
-        <div className="flex items-center justify-between px-5 py-4"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-b-token-subtle"
+          >
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
               style={{ background: 'rgba(168,85,247,0.1)', border: '1px solid rgba(168,85,247,0.2)' }}>
@@ -184,7 +179,7 @@ export function InlineCommentDrawer({
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200 flex-shrink-0"
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors duration-200 flex-shrink-0"
             style={{ color: 'var(--text-muted)' }}>
             <X size={15} />
           </button>
@@ -192,8 +187,8 @@ export function InlineCommentDrawer({
 
         {/* 创建区（仅 owner 可见） */}
         {canCreate && (
-          <div className="px-5 pt-4 pb-3"
-            style={{ borderBottom: '1px solid rgba(255,255,255,0.04)' }}>
+          <div className="px-5 pt-4 pb-3 border-b border-b-token-subtle"
+            >
             {pendingSelection ? (
               <>
                 <div className="flex items-center justify-between mb-2">
@@ -216,12 +211,8 @@ export function InlineCommentDrawer({
                 </div>
               </>
             ) : (
-              <div className="px-3 py-2.5 rounded-[8px] text-[11px] mb-2"
-                style={{
-                  background: 'rgba(255,255,255,0.02)',
-                  border: '1px dashed rgba(255,255,255,0.08)',
-                  color: 'var(--text-muted)',
-                }}>
+              <div className="px-3 py-2.5 rounded-[8px] text-[11px] mb-2 bg-token-nested"
+                style={{ border: '1px dashed var(--border-subtle)', color: 'var(--text-muted)' }}>
                 在正文里选中一段文字可对该处评论；也可直接在下方写对整篇文档的评论
               </div>
             )}
@@ -237,12 +228,8 @@ export function InlineCommentDrawer({
               }}
               placeholder="写下你的批注…（⌘/Ctrl + Enter 发送）"
               rows={3}
-              className="w-full px-3 py-2 rounded-[8px] text-[12px] outline-none resize-none"
-              style={{
-                background: 'rgba(255,255,255,0.04)',
-                border: '1px solid rgba(255,255,255,0.08)',
-                color: 'var(--text-primary)',
-              }}
+              className="w-full px-3 py-2 rounded-[8px] text-[12px] outline-none resize-none bg-token-nested border border-token-subtle"
+              style={{ color: 'var(--text-primary)' }}
             />
             <div className="flex items-center justify-between mt-2">
               <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
@@ -274,12 +261,12 @@ export function InlineCommentDrawer({
           <div className="flex-1 overflow-y-auto">
             {comments.length === 0 ? (
               <div className="px-5 py-10 text-center">
-                <MessageSquareText size={22} className="mx-auto mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
+                <MessageSquareText size={22} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
                 <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   还没有评论
                 </p>
                 {!canCreate && (
-                  <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
                     只有知识库所有者可以添加评论
                   </p>
                 )}
@@ -297,7 +284,7 @@ export function InlineCommentDrawer({
                 ))}
                 {orphanedComments.length > 0 && (
                   <div className="mt-5 pt-4"
-                    style={{ borderTop: '1px dashed rgba(255,255,255,0.08)' }}>
+                    style={{ borderTop: '1px dashed var(--border-subtle)' }}>
                     <div className="flex items-center gap-1.5 mb-3">
                       <AlertTriangle size={11} style={{ color: 'rgba(245,158,11,0.9)' }} />
                       <span className="text-[11px] font-semibold" style={{ color: 'rgba(245,158,11,0.9)' }}>
@@ -343,8 +330,8 @@ function CommentCard({
   return (
     <div className="p-3 rounded-[10px]"
       style={{
-        background: orphaned ? 'rgba(245,158,11,0.04)' : 'rgba(255,255,255,0.03)',
-        border: orphaned ? '1px solid rgba(245,158,11,0.15)' : '1px solid rgba(255,255,255,0.06)',
+        background: orphaned ? 'rgba(245,158,11,0.04)' : 'var(--nested-block-bg)',
+        border: orphaned ? '1px solid rgba(245,158,11,0.15)' : '1px solid var(--border-subtle)',
       }}>
       {/* 引用块（被评论的原文）；全文评论无锚点，显示标签而非空引用 */}
       {comment.isWholeDocument || !comment.selectedText ? (
@@ -386,7 +373,7 @@ function CommentCard({
             </span>
           </div>
           <p className="text-[12px] whitespace-pre-wrap break-words"
-            style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>
+            style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
             {comment.content}
           </p>
         </div>

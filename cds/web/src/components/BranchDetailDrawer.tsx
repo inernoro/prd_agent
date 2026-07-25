@@ -319,7 +319,7 @@ export interface BranchDeploymentItem {
   branchId: string;
   branchName: string;
   commitSha?: string;
-  kind: 'preview' | 'deploy' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
+  kind: 'preview' | 'deploy' | 'restart' | 'pull' | 'stop' | 'create' | 'favorite' | 'reset' | 'delete' | 'rebuild';
   status: 'running' | 'success' | 'error';
   message: string;
   log: string[];
@@ -534,6 +534,7 @@ function deploymentKindLabel(kind: BranchDeploymentItem['kind']): string {
   return ({
     preview: '预览部署',
     deploy: '部署',
+    restart: '启动',
     pull: '拉取',
     stop: '停止',
     create: '创建分支',

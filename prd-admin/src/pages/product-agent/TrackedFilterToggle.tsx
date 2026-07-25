@@ -24,7 +24,7 @@ export function TrackedFilterToggle({
       className={`flex h-8 items-center gap-1 px-2.5 rounded-md text-xs border transition-colors ${
         active
           ? 'bg-amber-500/15 text-amber-200 border-amber-500/35'
-          : 'text-white/50 border-white/10 hover:bg-white/5 hover:text-amber-200/90'
+          : 'text-token-secondary border-token-subtle hover-bg-soft hover:text-amber-200/90'
       }`}
       title={active ? '显示全部记录' : '仅显示已追踪记录'}
     >

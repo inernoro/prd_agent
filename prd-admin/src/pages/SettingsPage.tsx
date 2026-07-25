@@ -98,7 +98,7 @@ function NavOrderSettings() {
             fontWeight: 500,
             border: 'none',
             cursor: 'pointer',
-            background: activeScope === key ? 'rgba(255,255,255,0.1)' : 'transparent',
+            background: activeScope === key ? 'var(--nested-block-bg)' : 'transparent',
             color: activeScope === key ? 'var(--text-primary)' : 'var(--text-muted)',
             transition: 'background 120ms, color 120ms',
           }}

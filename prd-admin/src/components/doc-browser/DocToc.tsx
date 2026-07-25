@@ -145,9 +145,9 @@ export function DocToc({
       >
         <div
           className="absolute top-0 left-0 h-full w-1 transition-colors duration-150"
-          style={{ background: resizing ? 'rgba(59,130,246,0.4)' : 'transparent' }}
+          style={{ background: resizing ? 'rgba(var(--accent-primary-rgb), 0.4)' : 'transparent' }}
         />
-        <div className="absolute top-0 left-0 h-full w-1 group-hover/tocresize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+        <div className="absolute top-0 left-0 h-full w-1 group-hover/tocresize:bg-[var(--border-focus)] transition-colors duration-150" />
       </div>
       <div
         className="flex items-center gap-1.5 px-4 py-3"

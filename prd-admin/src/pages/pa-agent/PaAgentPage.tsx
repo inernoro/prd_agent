@@ -144,7 +144,7 @@ function SessionItem({ session, active, onSelect, onDelete, onRename }: SessionI
         >
           <button
             onClick={startEdit}
-            className="p-1 rounded-lg hover:bg-white/10 transition-colors"
+            className="p-1 rounded-lg hover-bg-soft transition-colors"
             style={{ color: 'var(--text-muted)' }}
             title="重命名"
           >
@@ -383,7 +383,7 @@ export function PaAgentPage() {
             <div
               className="w-6 h-6 rounded-lg flex items-center justify-center"
               style={{
-                background: 'linear-gradient(135deg, rgba(255,255,255,0.95), rgba(238,242,248,0.9))',
+                background: 'linear-gradient(135deg, var(--nested-block-bg), rgba(238,242,248,0.9))',
                 boxShadow: '0 1px 4px rgba(66,133,244,0.15)',
               }}
             >

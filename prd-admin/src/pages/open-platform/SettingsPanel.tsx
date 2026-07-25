@@ -124,14 +124,14 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
     { done: settings?.isEnabled, label: '启用' },
   ];
 
-  const inputCls = "w-full px-2.5 py-1.5 rounded bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full flex flex-col">
         <div className="flex-1 grid grid-cols-12">
           {/* 左栏：配置 */}
-          <div className="col-span-7 p-5 space-y-5 border-r border-white/10">
+          <div className="col-span-7 p-5 space-y-5 border-r border-token-subtle">
             {/* IMAP */}
             <section>
               <div className="flex items-center gap-2 mb-3">
@@ -170,7 +170,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               </div>
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* SMTP */}
             <section>
@@ -210,7 +210,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               </div>
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 轮询设置 */}
             <section>
@@ -222,12 +222,12 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
                 <div className="flex items-center gap-2">
                   <span className="text-xs text-muted-foreground">检查间隔</span>
                   <input type="number" value={form.pollIntervalMinutes} onChange={e => set('pollIntervalMinutes', +e.target.value || 5)}
-                    min={1} max={60} className="w-14 px-2 py-1 rounded bg-white/5 border border-white/10 text-sm text-center" />
+                    min={1} max={60} className="w-14 px-2 py-1 rounded bg-token-nested border border-token-subtle text-sm text-center" />
                   <span className="text-xs text-muted-foreground">分钟</span>
                 </div>
                 <button onClick={() => set('isEnabled', !form.isEnabled)}
                   className={`px-3 py-1.5 rounded-md text-sm font-medium transition-all flex items-center gap-2 ${
-                    form.isEnabled ? 'bg-green-500/20 border border-green-500/40 text-green-400' : 'bg-white/5 border border-white/10 hover:bg-white/10'
+                    form.isEnabled ? 'bg-green-500/20 border border-green-500/40 text-green-400' : 'bg-token-nested border border-token-subtle hover-bg-soft'
                   }`}>
                   <div className={`w-2 h-2 rounded-full ${form.isEnabled ? 'bg-green-400 animate-pulse' : 'bg-gray-500'}`} />
                   {form.isEnabled ? '运行中' : '已停止'}
@@ -249,14 +249,14 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               <div className="flex flex-wrap gap-1.5">
                 {EMAIL_PROVIDERS.map(p => (
                   <button key={p.name} onClick={() => apply(p)}
-                    className="px-2.5 py-1 rounded bg-white/5 hover:bg-white/10 border border-white/10 text-xs transition-all">
+                    className="px-2.5 py-1 rounded bg-token-nested hover-bg-soft border border-token-subtle text-xs transition-all">
                     {p.name}
                   </button>
                 ))}
               </div>
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 配置进度 */}
             <section>
@@ -267,14 +267,14 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               <div className="flex gap-1">
                 {steps.map((s, i) => (
                   <div key={i} className="flex-1">
-                    <div className={`h-1 rounded-full ${s.done ? 'bg-green-500' : 'bg-white/10'}`} />
+                    <div className={`h-1 rounded-full ${s.done ? 'bg-green-500' : 'bg-token-nested'}`} />
                     <div className={`text-[10px] mt-1 text-center ${s.done ? 'text-green-400' : 'text-muted-foreground'}`}>{s.label}</div>
                   </div>
                 ))}
               </div>
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 测试结果 */}
             {testResult && (
@@ -283,7 +283,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
                   {testResult.success ? <CheckCircle size={12} /> : <AlertTriangle size={12} />}
                   {testResult.message}
                 </div>
-                <div className="border-t border-white/10" />
+                <div className="border-t border-token-subtle" />
               </>
             )}
 
@@ -296,15 +296,15 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
                 </Badge>
               </div>
               <div className="grid grid-cols-3 gap-2 mb-3">
-                <div className="text-center p-2 rounded bg-white/5">
+                <div className="text-center p-2 rounded bg-token-nested">
                   <div className="text-lg font-semibold">{stats?.todayTaskCount ?? 0}</div>
                   <div className="text-[10px] text-muted-foreground">今日任务</div>
                 </div>
-                <div className="text-center p-2 rounded bg-white/5">
+                <div className="text-center p-2 rounded bg-token-nested">
                   <div className="text-lg font-semibold text-green-400">{stats?.successRate ?? 0}%</div>
                   <div className="text-[10px] text-muted-foreground">成功率</div>
                 </div>
-                <div className="text-center p-2 rounded bg-white/5">
+                <div className="text-center p-2 rounded bg-token-nested">
                   <div className="text-lg font-semibold">{stats?.processingCount ?? 0}</div>
                   <div className="text-[10px] text-muted-foreground">处理中</div>
                 </div>
@@ -319,7 +319,7 @@ export default function SettingsPanel({ onActionsReady }: SettingsPanelProps) {
               </div>
             </section>
 
-            <div className="border-t border-white/10" />
+            <div className="border-t border-token-subtle" />
 
             {/* 功能说明 */}
             <section>

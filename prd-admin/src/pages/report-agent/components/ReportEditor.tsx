@@ -1375,7 +1375,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         // 进行中走克制 slate(浅) / muted blue(暗) — 完成才是事件,在 100% 时上 sage 绿
                         background: progress === 100
                           ? (isLight ? 'var(--status-done)' : 'rgba(34, 197, 94, 0.7)')
-                          : (isLight ? 'rgba(15, 23, 42, 0.32)' : 'rgba(255, 255, 255, 0.20)'),
+                          : (isLight ? 'rgba(15, 23, 42, 0.32)' : 'var(--nested-block-bg)'),
                       }}
                     />
                   </div>
@@ -1512,7 +1512,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                       className="group flex items-baseline gap-2 px-2 py-1.5 rounded-md text-left transition-colors"
                       style={{
                         background: isActive
-                          ? (isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.05)')
+                          ? (isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--nested-block-bg)')
                           : 'transparent',
                         color: isActive ? 'var(--text-primary)' : 'var(--text-muted)',
                       }}
@@ -1569,7 +1569,7 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                 className="relative rounded-2xl overflow-hidden scroll-mt-3"
                 style={{
                   // 提高卡片与主背景对比：暗色稍微亮一档，浅色保持纯白
-                  background: isLight ? 'var(--bg-card)' : 'rgba(255, 255, 255, 0.035)',
+                  background: isLight ? 'var(--bg-card)' : 'var(--nested-block-bg)',
                   border: `1px solid ${isLight ? 'var(--hairline)' : 'rgba(148, 163, 184, 0.16)'}`,
                   boxShadow: isLight
                     ? '0 1px 2px rgba(15, 23, 42, 0.04), 0 4px 16px -10px rgba(15, 23, 42, 0.08)'
@@ -1593,8 +1593,8 @@ export function ReportEditor({ reportId, weekYear, weekNumber, onClose }: Props)
                         fontWeight: 600,
                         letterSpacing: '0.05em',
                         color: isLight ? 'rgba(15, 23, 42, 0.65)' : 'rgba(229, 231, 235, 0.7)',
-                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'rgba(255, 255, 255, 0.06)',
-                        border: `1px solid ${isLight ? 'rgba(15, 23, 42, 0.06)' : 'rgba(255, 255, 255, 0.04)'}`,
+                        background: isLight ? 'rgba(15, 23, 42, 0.05)' : 'var(--nested-block-bg)',
+                        border: `1px solid ${isLight ? 'rgba(15, 23, 42, 0.06)' : 'var(--border-subtle)'}`,
                       }}
                     >
                       {String(sIdx + 1).padStart(2, '0')}

@@ -108,6 +108,13 @@ const TENANT_KEY = 'llmgw.tenant';
 const MCP_KEY = 'llmgw.mustChangePwd';
 const mapSsoExchanges = new Map<string, Promise<ApiResponse<LoginResult>>>();
 
+export type SessionSnapshot = {
+  token: string;
+  user: { username?: string; displayName?: string; identityProvider?: string } | null;
+  tenant: import('./types').TenantSession | null;
+  mustChangePassword: boolean;
+};
+
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBase()).replace(/\/$/, '');
 
 export function getToken(): string | null {
@@ -170,6 +177,27 @@ export function clearSession() {
   sessionStorage.removeItem(USER_KEY);
   sessionStorage.removeItem(TENANT_KEY);
   sessionStorage.removeItem(MCP_KEY);
+}
+
+export function exportSessionSnapshot(): SessionSnapshot | null {
+  const token = getToken();
+  if (!token) return null;
+  return {
+    token,
+    user: getStoredUser(),
+    tenant: getStoredTenant(),
+    mustChangePassword: mustChangePassword(),
+  };
+}
+
+export function importSessionSnapshot(snapshot: SessionSnapshot) {
+  sessionStorage.setItem(TOKEN_KEY, snapshot.token);
+  if (snapshot.user) sessionStorage.setItem(USER_KEY, JSON.stringify(snapshot.user));
+  else sessionStorage.removeItem(USER_KEY);
+  if (snapshot.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(snapshot.tenant));
+  else sessionStorage.removeItem(TENANT_KEY);
+  if (snapshot.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
+  else sessionStorage.removeItem(MCP_KEY);
 }
 
 export function isAuthed(): boolean {

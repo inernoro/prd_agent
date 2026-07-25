@@ -142,7 +142,7 @@ export function PosterCarousel({
         type="button"
         onClick={() => setMinimized(false)}
         aria-label="展开海报"
-        className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left rounded-xl px-1 py-1 hover:bg-white/5 transition-colors"
+        className="flex items-center gap-2 flex-1 min-w-0 cursor-pointer text-left rounded-xl px-1 py-1 hover-bg-soft transition-colors"
       >
         <div
           className="shrink-0 rounded-lg overflow-hidden flex items-center justify-center"
@@ -259,7 +259,7 @@ export function PosterCarousel({
             onClick={() => setPageIndex((i) => Math.max(0, i - 1))}
             disabled={pageIndex === 0}
             aria-label="上一页"
-            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed enabled:hover:bg-white/10"
+            className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all disabled:opacity-30 disabled:cursor-not-allowed enabled:hover-bg-soft"
             style={{
               background: 'rgba(255,255,255,0.05)',
               border: '1px solid rgba(255,255,255,0.1)',
@@ -295,7 +295,7 @@ export function PosterCarousel({
             <button
               type="button"
               onClick={handleCta}
-              className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium transition-all hover:bg-white/20"
+              className="shrink-0 inline-flex items-center gap-1.5 px-4 h-9 rounded-full text-[13px] font-medium transition-all hover-bg-soft"
               style={{
                 background: 'rgba(255,255,255,0.12)',
                 color: '#fff',
@@ -310,7 +310,7 @@ export function PosterCarousel({
               type="button"
               onClick={() => setPageIndex((i) => Math.min(totalPages - 1, i + 1))}
               aria-label="下一页"
-              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all hover:bg-white/10"
+              className="shrink-0 w-9 h-9 rounded-full flex items-center justify-center transition-all hover-bg-soft"
               style={{
                 background: 'rgba(255,255,255,0.05)',
                 border: '1px solid rgba(255,255,255,0.1)',
@@ -712,7 +712,7 @@ export function PosterRichTextPageView({
           type="button"
           onClick={() => setHasPlayed(false)}
           aria-label="返回详情"
-          className="absolute top-5 left-5 z-30 inline-flex items-center gap-1.5 px-3 h-9 rounded-full text-[12px] font-medium transition-all hover:bg-white/15"
+          className="absolute top-5 left-5 z-30 inline-flex items-center gap-1.5 px-3 h-9 rounded-full text-[12px] font-medium transition-all hover-bg-soft"
           style={{
             background: 'rgba(0,0,0,0.5)',
             backdropFilter: 'blur(12px)',

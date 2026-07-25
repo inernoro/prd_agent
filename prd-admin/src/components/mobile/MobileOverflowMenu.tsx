@@ -56,7 +56,7 @@ export function MobileOverflowMenu({
         style={
           className
             ? undefined
-            : { background: 'transparent', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-muted)' }
+            : { background: 'transparent', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }
         }
         title={title}
         aria-label={title}

@@ -202,21 +202,14 @@ export function ShareAnalyticsDrawer({
       onClick={onClose}
     >
       <div
-        className="w-full max-w-5xl rounded-2xl border flex flex-col"
-        style={{
-          height: '85vh',
-          maxHeight: '85vh',
-          background: 'var(--bg-elevated)',
-          borderColor: 'var(--border-subtle, rgba(127,127,127,0.18))',
-          color: 'var(--text-primary)',
-          boxShadow: '0 24px 64px rgba(0,0,0,0.35)',
-        }}
+        className="w-full max-w-5xl rounded-2xl border flex flex-col border-token-subtle"
+        style={{ height: '85vh', maxHeight: '85vh', background: 'var(--bg-elevated)', color: 'var(--text-primary)', boxShadow: '0 24px 64px rgba(0,0,0,0.35)' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
         <div
-          className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b"
-          style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
+          className="shrink-0 flex items-center justify-between gap-3 px-5 py-4 border-b border-token-subtle"
+
         >
           <div className="flex items-center gap-2 min-w-0 flex-1">
             <BarChart3 size={18} style={{ color: 'var(--text-secondary)' }} />
@@ -250,7 +243,7 @@ export function ShareAnalyticsDrawer({
           <button
             type="button"
             onClick={onClose}
-            className="shrink-0 rounded-lg p-1.5 transition-colors hover:bg-black/10"
+            className="shrink-0 rounded-lg p-1.5 transition-colors hover-bg-soft"
             style={{ color: 'var(--text-secondary)' }}
             aria-label="关闭"
           >
@@ -313,8 +306,8 @@ export function ShareAnalyticsDrawer({
               </div>
 
               <div
-                className="inline-flex w-fit rounded-lg p-0.5"
-                style={{ background: 'var(--bg-sunken)', border: '1px solid var(--border-subtle, rgba(127,127,127,0.12))' }}
+                className="inline-flex w-fit rounded-lg p-0.5 border border-token-subtle"
+                style={{ background: 'var(--bg-sunken)' }}
               >
                 <TabButton active={activeTab === 'recent'} icon={<Clock size={12} />} onClick={() => setActiveTab('recent')}>
                   最近访问
@@ -360,11 +353,8 @@ export function ShareAnalyticsDrawer({
 function StatCard({ icon, label, value, sub }: { icon: React.ReactNode; label: string; value: number; sub?: string }) {
   return (
     <div
-      className="flex flex-col gap-1 rounded-lg px-3 py-2.5 border"
-      style={{
-        background: 'var(--bg-sunken)',
-        borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))',
-      }}
+      className="flex flex-col gap-1 rounded-lg px-3 py-2.5 border border-token-subtle"
+      style={{ background: 'var(--bg-sunken)' }}
     >
       <div className="flex items-center gap-1.5 text-xs" style={{ color: 'var(--text-secondary)' }}>
         {icon}
@@ -411,11 +401,8 @@ function TabButton({
 function ChartCard({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div
-      className="rounded-lg border p-3"
-      style={{
-        background: 'var(--bg-sunken)',
-        borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))',
-      }}
+      className="rounded-lg border p-3 border-token-subtle"
+      style={{ background: 'var(--bg-sunken)' }}
     >
       <div className="mb-2 text-xs font-semibold" style={{ color: 'var(--text-secondary)' }}>
         {title}
@@ -443,16 +430,10 @@ function RecentVisitsTable({ entries, fmtTime }: { entries: ShareAnalyticsTimeli
   }
 
   return (
-    <div className="flex flex-col rounded-lg overflow-hidden border" style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}>
+    <div className="flex flex-col rounded-lg overflow-hidden border border-token-subtle" >
       <div
-        className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-        style={{
-          gridTemplateColumns: '100px minmax(0,1fr) 140px 150px',
-          gap: 12,
-          background: 'var(--bg-elevated)',
-          color: 'var(--text-muted)',
-          borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
-        }}
+        className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-b border-b-token-subtle"
+        style={{ gridTemplateColumns: '100px minmax(0,1fr) 140px 150px', gap: 12, background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
       >
         <span>时间</span>
         <span>分享链接</span>
@@ -462,13 +443,8 @@ function RecentVisitsTable({ entries, fmtTime }: { entries: ShareAnalyticsTimeli
       {entries.map((entry, idx) => (
         <div
           key={`${entry.shareToken}-${entry.viewedAt}-${idx}`}
-          className="grid items-center px-3 py-1.5 text-xs border-b last:border-b-0"
-          style={{
-            gridTemplateColumns: '100px minmax(0,1fr) 140px 150px',
-            gap: 12,
-            background: 'var(--bg-sunken)',
-            borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
-          }}
+          className="grid items-center px-3 py-1.5 text-xs border-b last:border-b-0 border-token-subtle"
+          style={{ gridTemplateColumns: '100px minmax(0,1fr) 140px 150px', gap: 12, background: 'var(--bg-sunken)' }}
         >
           <span className="tabular-nums" style={{ color: 'var(--text-secondary)' }}>
             {fmtTime(entry.viewedAt)}
@@ -569,18 +545,12 @@ function TopLinksTable({
         Top 链接 (按 PV 排序)
       </div>
       <div
-        className="flex flex-col rounded-lg overflow-hidden border"
-        style={{ borderColor: 'var(--border-subtle, rgba(127,127,127,0.12))' }}
+        className="flex flex-col rounded-lg overflow-hidden border border-token-subtle"
+
       >
         <div
-          className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider"
-          style={{
-            gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px',
-            gap: 12,
-            background: 'var(--bg-elevated)',
-            color: 'var(--text-muted)',
-            borderBottom: '1px solid var(--border-subtle, rgba(127,127,127,0.12))',
-          }}
+          className="grid items-center px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider border-b border-b-token-subtle"
+          style={{ gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px', gap: 12, background: 'var(--bg-elevated)', color: 'var(--text-muted)' }}
         >
           <span>链接标题</span>
           <span>可见性</span>
@@ -592,13 +562,8 @@ function TopLinksTable({
         {links.map((link) => (
           <div
             key={link.shareId}
-            className="grid items-center px-3 py-2 text-xs border-b last:border-b-0"
-            style={{
-              gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px',
-              gap: 12,
-              background: 'var(--bg-sunken)',
-              borderColor: 'var(--border-subtle, rgba(127,127,127,0.08))',
-            }}
+            className="grid items-center px-3 py-2 text-xs border-b last:border-b-0 border-token-subtle"
+            style={{ gridTemplateColumns: 'minmax(0,1fr) 88px 96px 64px 76px 96px', gap: 12, background: 'var(--bg-sunken)' }}
           >
             <a
               href={link.shareUrl || `/s/wp/${link.token}`}

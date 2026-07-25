@@ -158,8 +158,8 @@ function ConsultBanner() {
         <Sparkles size={20} className="text-cyan-300" />
       </div>
       <div className="min-w-0">
-        <div className="text-base font-semibold text-white">营销问策智能体</div>
-        <div className="mt-0.5 text-xs leading-5 text-white/55">
+        <div className="text-base font-semibold text-token-primary">营销问策智能体</div>
+        <div className="mt-0.5 text-xs leading-5 text-token-secondary">
           基于<span className="text-cyan-200/90">米多四力模型（4FM：产品力 · 渠道力 · 场景力 · 传播力）</span>与<span className="text-cyan-200/90">全域粉销</span>理念，为商户/客户做专业营销评估，并一键生成可分享的可视化报告。
         </div>
       </div>
@@ -183,18 +183,18 @@ function ConsultListView({
   fTemplate: string; setFTemplate: (v: string) => void;
   openingId: string | null; onOpen: (id: string) => void; onNew: () => void;
 }) {
-  const selCls = 'rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5 text-xs text-white/70 outline-none focus:border-cyan-500/40';
+  const selCls = 'rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5 text-xs text-token-secondary outline-none focus:border-cyan-500/40';
   return (
     <div className="flex flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <div className="flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-2.5 py-1.5">
-          <Search size={14} className="text-white/40" />
+        <div className="flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-2.5 py-1.5">
+          <Search size={14} className="text-token-muted" />
           <input
             value={kw}
             onChange={(e) => setKw(e.target.value)}
             onKeyDown={(e) => { if (e.key === 'Enter') onSearch(); }}
             placeholder="搜索标题 / 客户"
-            className="w-44 bg-transparent text-sm text-white outline-none"
+            className="w-44 bg-transparent text-sm text-token-primary outline-none"
           />
         </div>
         <select value={fCustomer} onChange={(e) => setFCustomer(e.target.value)} className={selCls}>
@@ -217,14 +217,14 @@ function ConsultListView({
       {loading ? (
         <MapSectionLoader text="正在加载问策…" />
       ) : reports.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">
+        <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">
           没有问策记录。点右上角「问策」开始第一份营销评估。
         </div>
       ) : (
         <>
-          <div className="overflow-hidden rounded-xl border border-white/10">
+          <div className="overflow-hidden rounded-xl border border-token-subtle">
             <table className="w-full text-left text-sm">
-              <thead className="bg-white/[0.03] text-xs text-white/45">
+              <thead className="bg-token-nested text-xs text-token-muted">
                 <tr>
                   <th className="px-4 py-2.5 font-medium">标题</th>
                   <th className="px-4 py-2.5 font-medium">客户</th>
@@ -236,23 +236,23 @@ function ConsultListView({
               </thead>
               <tbody>
                 {reports.map((r) => (
-                  <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-t border-white/5 hover:bg-white/[0.03]">
+                  <tr key={r.id} onClick={() => onOpen(r.id)} className="cursor-pointer border-t border-token-subtle hover-bg-soft">
                     <td className="px-4 py-3">
-                      <span className="flex items-center gap-1.5 text-white/90">
-                        <FileText size={13} className="shrink-0 text-white/35" />
+                      <span className="flex items-center gap-1.5 text-token-primary">
+                        <FileText size={13} className="shrink-0 text-token-muted-faint" />
                         <span className="truncate">{r.title}</span>
                         {openingId === r.id && <MapSpinner size={12} />}
                       </span>
                     </td>
-                    <td className="px-4 py-3 text-xs text-white/60">{r.customerName || <span className="text-white/35">自由问策</span>}</td>
-                    <td className="px-4 py-3">{r.verdict ? <span className={`rounded-full border px-2 py-0.5 text-[11px] ${VERDICT_META[r.verdict].cls}`}>{VERDICT_META[r.verdict].label}</span> : <span className="text-white/30">-</span>}</td>
-                    <td className="px-4 py-3 text-xs text-white/55">{templateLabel(r.template)}</td>
-                    <td className="px-4 py-3 text-xs text-white/45">{fmtTime(r.createdAt)}</td>
+                    <td className="px-4 py-3 text-xs text-token-secondary">{r.customerName || <span className="text-token-muted-faint">自由问策</span>}</td>
+                    <td className="px-4 py-3">{r.verdict ? <span className={`rounded-full border px-2 py-0.5 text-[11px] ${VERDICT_META[r.verdict].cls}`}>{VERDICT_META[r.verdict].label}</span> : <span className="text-token-muted-faint">-</span>}</td>
+                    <td className="px-4 py-3 text-xs text-token-secondary">{templateLabel(r.template)}</td>
+                    <td className="px-4 py-3 text-xs text-token-muted">{fmtTime(r.createdAt)}</td>
                     <td className="px-4 py-3">
-                      <span className="flex items-center gap-2 text-white/45">
+                      <span className="flex items-center gap-2 text-token-muted">
                         {r.shared && <span className="flex items-center gap-1 text-emerald-300/80"><Share2 size={12} /></span>}
                         {r.hostedSiteUrl && <span className="flex items-center gap-1 text-cyan-300/80"><Globe size={12} /></span>}
-                        {!r.shared && !r.hostedSiteUrl && <span className="text-white/25">-</span>}
+                        {!r.shared && !r.hostedSiteUrl && <span className="text-token-muted-faint">-</span>}
                       </span>
                     </td>
                   </tr>
@@ -260,12 +260,12 @@ function ConsultListView({
               </tbody>
             </table>
           </div>
-          <div className="flex items-center justify-between text-xs text-white/45">
+          <div className="flex items-center justify-between text-xs text-token-muted">
             <span>共 {total} 条</span>
             <div className="flex items-center gap-2">
-              <button disabled={page <= 1} onClick={() => onPage(page - 1)} className="flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 disabled:opacity-30 hover:bg-white/5"><ChevronLeft size={13} /> 上一页</button>
+              <button disabled={page <= 1} onClick={() => onPage(page - 1)} className="flex items-center gap-1 rounded-md border border-token-subtle px-2 py-1 disabled:opacity-30 hover-bg-soft"><ChevronLeft size={13} /> 上一页</button>
               <span>{page} / {totalPages}</span>
-              <button disabled={page >= totalPages} onClick={() => onPage(page + 1)} className="flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 disabled:opacity-30 hover:bg-white/5">下一页 <ChevronRight size={13} /></button>
+              <button disabled={page >= totalPages} onClick={() => onPage(page + 1)} className="flex items-center gap-1 rounded-md border border-token-subtle px-2 py-1 disabled:opacity-30 hover-bg-soft">下一页 <ChevronRight size={13} /></button>
             </div>
           </div>
         </>
@@ -337,39 +337,39 @@ function ComposeView({
 
   return (
     <div className="flex flex-col gap-3">
-      <button onClick={onCancel} className="flex items-center gap-1 self-start text-xs text-white/45 hover:text-white"><ArrowLeft size={13} /> 返回问策列表</button>
-      <div className="flex max-w-3xl flex-col gap-3 rounded-xl border border-white/10 bg-white/[0.02] p-4">
+      <button onClick={onCancel} className="flex items-center gap-1 self-start text-xs text-token-muted hover-text-primary"><ArrowLeft size={13} /> 返回问策列表</button>
+      <div className="flex max-w-3xl flex-col gap-3 rounded-xl border border-token-subtle bg-token-nested p-4">
         <div className="flex items-center gap-2">
-          <span className="text-sm font-medium text-white/80">新的营销问策</span>
-          {model && <span className="ml-1 flex items-center gap-1 font-mono text-[11px] text-white/40"><Cpu size={11} />{model}</span>}
+          <span className="text-sm font-medium text-token-primary">新的营销问策</span>
+          {model && <span className="ml-1 flex items-center gap-1 font-mono text-[11px] text-token-muted"><Cpu size={11} />{model}</span>}
         </div>
         <textarea
           value={input} onChange={(e) => setInput(e.target.value)} rows={5} disabled={streaming}
           placeholder="输入客户情况：经营阶段、所在行业/区域、近期动作、遇到的问题、想解决的营销诉求等。也可在下方选择一个已有客户做「一键问策」（自动带入其全部信息与动态跟进）。"
-          className="resize-none rounded-lg border border-white/10 bg-white/5 px-3 py-2.5 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25 disabled:opacity-50"
+          className="resize-none rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted disabled:opacity-50"
         />
         <div className="flex flex-wrap items-center gap-2">
-          <span className="text-xs text-white/45">一键问策已有客户（可选）：</span>
+          <span className="text-xs text-token-muted">一键问策已有客户（可选）：</span>
           <select value={pickCustomerId} onChange={(e) => setPickCustomerId(e.target.value)} disabled={streaming}
-            className="min-w-[180px] rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40 disabled:opacity-50">
+            className="min-w-[180px] rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40 disabled:opacity-50">
             <option value="">不绑定客户（用上方自由文本）</option>
             {customers.map((c) => <option key={c.id} value={c.id}>{c.name}{c.merchantNo ? `（${c.merchantNo}）` : ''}</option>)}
           </select>
         </div>
         <input value={note} onChange={(e) => setNote(e.target.value)} disabled={streaming}
           placeholder="（可选）补充要求：如更侧重渠道力 / 给管理层看 / 语气更正式"
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25 disabled:opacity-50" />
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted disabled:opacity-50" />
         <div>
-          <div className="mb-1.5 text-xs text-white/50">报告模版</div>
+          <div className="mb-1.5 text-xs text-token-secondary">报告模版</div>
           <TemplatePicker value={template} onChange={setTemplate} disabled={streaming} />
         </div>
         {streaming ? (
-          <div className="flex flex-col gap-2 rounded-lg border border-white/10 bg-black/20 p-3">
+          <div className="flex flex-col gap-2 rounded-lg border border-token-subtle bg-token-nested p-3">
             <div className="flex items-center gap-2 text-xs text-cyan-300"><MapSpinner size={14} /> {stageMsg}</div>
-            {thinking && <div className="max-h-40 overflow-y-auto rounded-md bg-white/[0.03] px-2.5 py-1.5 text-xs text-white/45"><StreamingText text={thinking} streaming mode="blur" /></div>}
-            {content && <div className="rounded-md bg-white/[0.03] px-2.5 py-1.5 font-mono text-xs text-white/60"><StreamingText text={content} streaming mode="blur" /></div>}
+            {thinking && <div className="max-h-40 overflow-y-auto rounded-md bg-token-nested px-2.5 py-1.5 text-xs text-token-muted"><StreamingText text={thinking} streaming mode="blur" /></div>}
+            {content && <div className="rounded-md bg-token-nested px-2.5 py-1.5 font-mono text-xs text-token-secondary"><StreamingText text={content} streaming mode="blur" /></div>}
             <div className="flex justify-end">
-              <button onClick={() => { abortRef.current?.abort(); setPhase('idle'); }} className="flex items-center gap-1.5 rounded-lg border border-white/15 px-3 py-1.5 text-sm text-white/60 hover:bg-white/5"><Square size={13} /> 停止</button>
+              <button onClick={() => { abortRef.current?.abort(); setPhase('idle'); }} className="flex items-center gap-1.5 rounded-lg border border-token-subtle px-3 py-1.5 text-sm text-token-secondary hover-bg-soft"><Square size={13} /> 停止</button>
             </div>
           </div>
         ) : (
@@ -402,7 +402,7 @@ function ConsultDetailView({
   return (
     <div className="flex flex-col gap-3">
       <div className="flex items-center gap-3">
-        <button onClick={onBack} className="flex items-center gap-1 text-xs text-white/45 hover:text-white"><ArrowLeft size={13} /> 返回问策列表</button>
+        <button onClick={onBack} className="flex items-center gap-1 text-xs text-token-muted hover-text-primary"><ArrowLeft size={13} /> 返回问策列表</button>
         <button onClick={onNew} className="ml-auto flex items-center gap-1.5 rounded-md border border-cyan-500/30 bg-cyan-500/15 px-3 py-1.5 text-xs text-cyan-200 hover:bg-cyan-500/25"><Plus size={13} /> 新问策</button>
       </div>
       <div className="flex gap-4">
@@ -411,14 +411,14 @@ function ConsultDetailView({
         </div>
         {hasCustomer && (
           <div className="w-56 shrink-0">
-            <div className="mb-2 text-xs font-medium text-white/55">同一客户的问策（{sameCustomer.length}）</div>
-            <div className="divide-y divide-white/5 overflow-hidden rounded-xl border border-white/10">
+            <div className="mb-2 text-xs font-medium text-token-secondary">同一客户的问策（{sameCustomer.length}）</div>
+            <div className="divide-y divide-token-subtle overflow-hidden rounded-xl border border-token-subtle">
               {others.length === 0 ? (
-                <div className="px-3 py-4 text-center text-[11px] text-white/35">该客户暂无其他问策</div>
+                <div className="px-3 py-4 text-center text-[11px] text-token-muted-faint">该客户暂无其他问策</div>
               ) : others.map((s) => (
-                <button key={s.id} onClick={() => onOpen(s.id)} className="flex w-full flex-col gap-1 px-3 py-2 text-left hover:bg-white/[0.03]">
-                  <span className="truncate text-[12px] text-white/80">{s.title}</span>
-                  <span className="flex items-center gap-1.5 text-[10px] text-white/40">
+                <button key={s.id} onClick={() => onOpen(s.id)} className="flex w-full flex-col gap-1 px-3 py-2 text-left hover-bg-soft">
+                  <span className="truncate text-[12px] text-token-primary">{s.title}</span>
+                  <span className="flex items-center gap-1.5 text-[10px] text-token-muted">
                     {fmtTime(s.createdAt)}
                     {s.verdict && <span className={`rounded-full border px-1 py-px ${VERDICT_META[s.verdict].cls}`}>{VERDICT_META[s.verdict].label}</span>}
                   </span>
@@ -439,7 +439,7 @@ function TemplatePicker({ value, onChange, disabled }: { value: MarketingTemplat
         const on = t.key === value;
         return (
           <button key={t.key} onClick={() => onChange(t.key)} disabled={disabled} title={t.desc}
-            className={`rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50 ${on ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/55 hover:bg-white/5'}`}>
+            className={`rounded-lg border px-3 py-1.5 text-xs disabled:opacity-50 ${on ? 'border-cyan-500/50 bg-cyan-500/15 text-cyan-200' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}>
             {t.label}
           </button>
         );
@@ -496,9 +496,9 @@ function ConsultReportView({ report, onChanged }: { report: MarketingConsultRepo
   };
 
   const toolbar = (
-    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-white/10 px-3 py-2.5">
-      <span className="max-w-[260px] truncate text-sm font-semibold text-white">{r.title}</span>
-      {r.model && <span className="font-mono text-[11px] text-white/40">{r.model}</span>}
+    <div className="flex shrink-0 flex-wrap items-center gap-1.5 border-b border-token-subtle px-3 py-2.5">
+      <span className="max-w-[260px] truncate text-sm font-semibold text-token-primary">{r.title}</span>
+      {r.model && <span className="font-mono text-[11px] text-token-muted">{r.model}</span>}
       <div className="ml-auto flex flex-wrap items-center gap-1.5">
         {r.canRestyle && <ToolBtn onClick={() => setPickerOpen((v) => !v)} disabled={restyling}>{restyling ? <MapSpinner size={12} /> : <Palette size={12} />} 模版：{templateLabel(r.template)}</ToolBtn>}
         {r.shared ? (
@@ -520,22 +520,22 @@ function ConsultReportView({ report, onChanged }: { report: MarketingConsultRepo
     </div>
   );
   const stylePickerBar = pickerOpen && r.canRestyle && (
-    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-white/10 bg-black/20 px-3 py-2.5">
-      <span className="text-[11px] text-white/45">切换模版（即时重渲染，不重新调用 AI）：</span>
+    <div className="flex shrink-0 flex-wrap items-center gap-3 border-b border-token-subtle bg-token-nested px-3 py-2.5">
+      <span className="text-[11px] text-token-muted">切换模版（即时重渲染，不重新调用 AI）：</span>
       <TemplatePicker value={r.template} onChange={restyle} disabled={restyling} />
     </div>
   );
 
   if (fullscreen) {
     return createPortal(
-      <div className="fixed inset-0 z-[10000] flex flex-col bg-[#16181d]">
+      <div className="fixed inset-0 z-[10000] flex flex-col bg-token-card">
         {toolbar}{stylePickerBar}
         <div className="min-h-0 flex-1 bg-[#f3f4f6]"><iframe title={r.title} srcDoc={r.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} /></div>
       </div>, document.body,
     );
   }
   return (
-    <div className="flex flex-col overflow-hidden rounded-xl border border-white/10 bg-[#16181d]">
+    <div className="flex flex-col overflow-hidden rounded-xl border border-token-subtle bg-token-card">
       {toolbar}{stylePickerBar}
       <div className="bg-[#f3f4f6]" style={{ height: '72vh' }}><iframe title={r.title} srcDoc={r.html || ''} sandbox="" style={{ width: '100%', height: '100%', border: 0, display: 'block' }} /></div>
     </div>
@@ -544,7 +544,7 @@ function ConsultReportView({ report, onChanged }: { report: MarketingConsultRepo
 
 function ToolBtn({ children, onClick, disabled }: { children: React.ReactNode; onClick: () => void; disabled?: boolean }) {
   return (
-    <button onClick={onClick} disabled={disabled} className="flex items-center gap-1 rounded-md border border-white/10 px-2 py-1 text-[11px] text-white/60 hover:bg-white/5 disabled:opacity-40">
+    <button onClick={onClick} disabled={disabled} className="flex items-center gap-1 rounded-md border border-token-subtle px-2 py-1 text-[11px] text-token-secondary hover-bg-soft disabled:opacity-40">
       {children}
     </button>
   );

@@ -1329,9 +1329,18 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
     { re: /NoClassDefFoundError|ClassNotFoundException/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Java 类未找到' },
     { re: /Cannot find module|MODULE_NOT_FOUND|Cannot find package/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · 模块未找到' },
     { re: /ModuleNotFoundError|ImportError\b/i, side: 'code', category: 'missing-deps', label: '依赖缺失 · Python 模块未找到' },
+    // Flyway 迁移失败是 Spring 应用最常见的启动死因之一(2026-07-21 用户实例:
+    // imp-api-mdimp 因 failed migration 起不来,却被摘要成「就绪探测超时」甩锅 CDS)。
+    // 必须排在通用 Spring 模式**之前**:这类日志几乎总是同时含 Application run
+    // failed / UnsatisfiedDependencyException,按序匹配时更具体的根因要先赢(Codex P2)。
+    { re: /FlywayMigrateException|failed migration to version|FlywayValidateException/i, side: 'code', category: 'crashed', label: '应用启动失败 · Flyway 数据库迁移失败' },
     { re: /BeanCreationException|UnsatisfiedDependencyException|Application run failed/i, side: 'code', category: 'crashed', label: '应用启动失败 · Spring 初始化错误' },
     { re: /\bpanic:/i, side: 'code', category: 'crashed', label: '进程崩溃 · panic' },
     { re: /Unhandled exception|未经处理的异常|Traceback \(most recent call last\)/i, side: 'code', category: 'crashed', label: '进程崩溃 · 未处理异常' },
+    { re: /OOMKilled|Out of memory|cannot allocate memory/i, side: 'config', category: 'oom', label: '内存超限 · 进程被 OOM 终止' },
+    // 与 /failure-diagnosis 的模式表(本文件 EXIT_CODE 段)对齐:137/139/134 或
+    // signal 9/11/6 = 进程被强制终止/崩溃,属应用侧,不许落「探测超时」兜底。
+    { re: /exit(?:\s*code|ed with code)?\s*[:=]?\s*(?:137|139|134)\b|signal[:= ]\s*(?:9|11|6)\b/i, side: 'code', category: 'crashed', label: '进程被强制终止 · 退出码 137/139/134' },
     { re: /address already in use|EADDRINUSE|port is already allocated/i, side: 'config', category: 'port-conflict', label: '端口被占用' },
   ];
   for (const p of PATTERNS) {
@@ -1346,7 +1355,9 @@ export function detectContainerFatalCause(logText: string): ContainerFatalCause 
 
 /**
  * 就绪探测超时时,优先去容器日志里找真实根因。找到就把根因点名到 errorMessage,
- * 找不到才降级到通用文案。最多拉 80 行,拉取失败静默降级。
+ * 找不到才降级到通用文案。拉 400 行:Spring/Flyway 启动栈动辄上百行,80 行尾窗
+ * 会把 UnsatisfiedDependencyException 等根因信号挤出去,导致明明是代码侧崩溃
+ * 却落「探测超时」兜底文案(2026-07-21 用户实例)。拉取失败静默降级。
  */
 async function buildReadinessTimeoutMessage(
   containerService: ContainerService,
@@ -1354,7 +1365,7 @@ async function buildReadinessTimeoutMessage(
 ): Promise<string> {
   const fallback = '就绪探测超时：容器已启动但端口未在超时时间内响应';
   try {
-    const logs = await containerService.getLogs(containerName, 80);
+    const logs = await containerService.getLogs(containerName, 400);
     const cause = detectContainerFatalCause(logs);
     if (cause) {
       const sideLabel = cause.side === 'code' ? '代码侧' : cause.side === 'config' ? '配置侧' : 'CDS 侧';
@@ -3140,6 +3151,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -3929,6 +3944,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -4317,6 +4336,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -4613,10 +4636,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
 
-    // 每个分支带上预览地址(SSOT slug + previewHost),前端在 running 时显示"应用已上线 · 打开预览"。
-    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '').replace(/^https?:\/\//, '').replace(/\/+$/, '');
-    for (const b of branchesWithSubject as Array<{ previewSlug?: string; previewUrl?: string }>) {
-      b.previewUrl = previewHost && b.previewSlug ? `https://${b.previewSlug}.${previewHost}` : '';
+    // 每个分支直接下发 CDS 在公开 previewDomain 上实际发布的全部逻辑入口：
+    // 既包含分支主入口，也包含可路由 profile 通过 cds.subdomain 发布的命名入口。
+    // rootDomains 可能包含隐藏、备用或内部路由域名，不能枚举到 Agent 面向的
+    // previewUrl(s) 中。仅在旧配置缺少 previewDomain 时兼容取首个 rootDomain。
+    // CLI / Agent 只能消费 previewUrl(s)，不得再根据其他字段猜域名。
+    const previewHost = (config.previewDomain || config.rootDomains?.[0] || '')
+      .replace(/^https?:\/\//, '')
+      .replace(/\/+$/, '')
+      .trim();
+    for (const b of branchesWithSubject as Array<BranchEntry & {
+      previewSlug?: string;
+      previewUrl?: string;
+      previewUrls?: string[];
+    }>) {
+      const mainUrls = b.previewSlug && previewHost
+        ? [`https://${b.previewSlug}.${previewHost}`]
+        : [];
+      const namedServiceUrls = previewHost
+        ? computeBranchGatewayUrls(b, previewHost).map((entry) => entry.url)
+        : [];
+      b.previewUrls = Array.from(new Set([...mainUrls, ...namedServiceUrls]));
+      b.previewUrl = b.previewUrls[0] || '';
     }
     const profilesByProject = new Map<string, BuildProfile[]>();
     const infraByProject = new Map<string, InfraService[]>();
@@ -4632,7 +4673,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     // 并发解析每个分支的资源（原本 48 个 await 串行 ~一个一个排队，是单请求耗时大头）。
     await Promise.all(
-      (branchesWithSubject as Array<BranchEntry & { previewUrl?: string; resources?: unknown[] }>).map(
+      (branchesWithSubject as Array<BranchEntry & {
+        previewUrl?: string;
+        previewUrls?: string[];
+        resources?: unknown[];
+      }>).map(
         async (b) => {
           const branchProjectId = b.projectId || 'default';
           b.resources = buildUnifiedBranchResources({
@@ -11825,6 +11870,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // const __prevStatus 是块级作用域，catch 看不到）。
     const __deployEntryStatus = entry.status;
 
+    // 2026-07-23: 本轮部署打开的 check-run id（try 外声明，供 superseded catch
+    // 分支收尾用）。被取代的部署此前直接 return，check run 永远停在 in_progress。
+    let openedCheckRunId: number | undefined;
+
     // 构建排队可视化（2026-07-09）：把 build-gate 的排队状态挂到 entry.buildQueue，
     // 分支卡显示「排队中 · 前面还有 N 个」并把排队时间从耗时对比中剔除。
     // 声明在 try 外，finally 兜底 dispose（部署 throw 也不许留下「排队中」残影）。
@@ -11894,7 +11943,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 不再重复推导。若三者都没解析出来,check-run / 极速版 tag 推导是 no-op。
       // Open an in-progress check run — best effort, errors logged not
       // thrown (so GitHub connectivity issues don't block the deploy).
-      await checkRunRunner.ensureOpen(entry);
+      // 用 ensureOpen 的**返回值**记住本轮的 check-run id。禁止在 await 之后
+      // 重读 state 上的可变指针：并发的取代方部署可能已把 githubCheckRunId
+      // 盖成它自己的，重读会把别人的 id 记成自己的、并在 superseded 收尾时
+      // 误杀对方的 check run（Codex P2，PR #1235）。
+      openedCheckRunId = await checkRunRunner.ensureOpen(entry);
 
       // 期望清单收敛上移到 pull 之前（Codex P2「Move local orphan cleanup before fallible deploy steps」）：
       // 「服务从期望清单移除」（额外服务被清 / 项目 profile 被删）的容器拆除不依赖最新代码。原先只在
@@ -12997,6 +13050,33 @@ export function createBranchRouter(deps: RouterDeps): Router {
         opLog.finishedAt = new Date().toISOString();
         stateService.appendLog(id, opLog);
         stateService.save();
+        // 2026-07-23: 被取代的部署此前直接 return，本轮打开的 check run 永远停在
+        // in_progress（GitHub 上黄灯转圈、既不报错也不成功）。按**本轮记下的显式
+        // id** 收尾为 cancelled——不能依赖 entry.githubCheckRunId 等值判断：新部署
+        // 的 ensureOpen 可能已抢先把它盖成新 id，旧 run 就成了无状态指针的孤儿，
+        // reconcileStale 也够不到（state 里只剩新 id）（Codex P2，PR #1235）。
+        // finalize 内部的 CAS 保证不会误清新部署盖上的 id。best-effort，失败只
+        // 记事件不冒泡。
+        try {
+          const latestEntry = stateService.getBranch(id);
+          if (openedCheckRunId && latestEntry) {
+            await checkRunRunner.finalize(latestEntry, {
+              conclusion: 'cancelled',
+              summary: `部署被更高优先级操作取代: ${errMsg}`,
+              checkRunId: openedCheckRunId,
+              runId: deploymentRun?.id,
+            });
+          }
+        } catch (finalizeErr) {
+          const m = (finalizeErr as Error)?.message || String(finalizeErr);
+          logEvent({
+            step: 'check-run-finalize',
+            status: 'warning',
+            title: `被取代部署的 check run 收尾失败: ${m.slice(0, 120)}`,
+            log: m,
+            timestamp: new Date().toISOString(),
+          });
+        }
         sendSSE(res, 'error', { message: errMsg, operationStatus: 'cancelled' });
         return;
       }
@@ -13784,6 +13864,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
@@ -14572,10 +14656,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // SSOT for BOTH the GET and PUT /subdomain-aliases responses — gatewayUrls are branch-derived (not
   // alias-derived), so PUT must return them too or the panel drops the 网关入口 block after saving
   // aliases until a full reload (Bugbot "Alias save clears gateway URLs").
-  const computeBranchGatewayUrls = (
+  function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> => {
+  ): Array<{ subdomain: string; name: string; url: string }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
     const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
@@ -14619,7 +14703,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
     }
     return gatewayUrls;
-  };
+  }
 
   const findPreviewHostCollisions = (
     candidateDomains: string[],
@@ -18889,6 +18973,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   skills/cds/                — 统一技能（主入口 + CLI + reference）
   //   skills/cds-deploy-pipeline/ — 部署流水线技能
   //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //   skills/preview-url/        — 真实预览地址技能（必装）
   // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
   // 旧入参 `?legacy=1` 保留：仍能仅导出 cds-project-scan（向后兼容）。
@@ -18916,7 +19001,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan'];
+        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan', 'preview-url'];
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {
@@ -18938,12 +19023,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）。
-覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 故障诊断。
+包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）、preview-url（真实预览地址）。
+覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的三个目录复制到当前项目的 Agent Skills 目录：
+解压后，将 \`skills/\` 下的四个目录复制到当前项目的 Agent Skills 目录；缺少 \`preview-url\` 即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|
@@ -18976,7 +19061,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | \`cdscli deploy\` | 推代码 + 部署 + 等待 + 冒烟（一条命令）|
 | \`cdscli help-me-check <branchId>\` | 出 bug 了？这条命令抓状态+日志+env+history+根因分析 |
 | \`cdscli smoke <branchId>\` | 分层冒烟（L1 根路径 / L2 API / L3 认证 API）|
+| \`cdscli --human preview-url\` | 从 CDS API 读取当前分支的全部真实预览入口，禁止本地推算 |
 | \`cdscli --help\` | 完整命令树 |
+
+完成 connect 后必须立即调用 \`preview-url\` 技能验证。CDS 有多个入口时应全部列出；API 无记录时应失败，不得根据分支名或 host 自行拼接。
 
 ## 详细文档
 
@@ -18989,6 +19077,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | \`skills/cds/reference/smoke.md\` | 分层冒烟策略 |
 | \`skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
 | \`skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+| \`skills/preview-url/SKILL.md\` | 获取当前分支实际发布的一个或多个预览地址 |
 
 ## 升级
 
@@ -20666,6 +20755,10 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
+      // Connection: close 是刻意的(见 cds-events.ts 同款注释):阻止 nginx/forwarder
+      // 把 SSE socket 收进 upstream keepalive 池(防复用已 FIN 的 socket → RST)。
+      // 它是 hop-by-hop 头,只作用于「master → 下一跳」;forwarder 已在响应侧剥掉
+      // (proxy-handler.ts),不会再透传到 HTTP/2 客户端连接。
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });

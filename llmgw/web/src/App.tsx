@@ -9,6 +9,7 @@ import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
 import { OverviewPage } from '@/pages/HomePage';
 import { GovernancePage } from '@/pages/OverviewPage';
 import { LogsPage } from '@/pages/LogsPage';
+import { LogDetailPage } from '@/pages/LogDetailPage';
 import { ModelPoolsPage } from '@/pages/ModelPoolsPage';
 import { AppCallersPage } from '@/pages/AppCallersPage';
 import { PlatformsPage } from '@/pages/PlatformsPage';
@@ -24,14 +25,20 @@ import { PromptPolicyPage } from '@/pages/PromptPolicyPage';
 import { SettingsPage } from '@/pages/SettingsPage';
 import { UsagePage } from '@/pages/UsagePage';
 import { LearningCenterPage } from '@/pages/LearningCenterPage';
+import { AppCallerDetailsPage, ModelDetailsPage, ProviderDetailsPage } from '@/pages/EntityDetailsPages';
 import { Card } from '@/components/ui';
 import { canAccessPage, isTenantRole, roleLabel, type ConsolePage } from '@/lib/access';
 import { getRouterBasename } from '@/lib/runtimeBase';
 
 // 受保护路由守卫：未登录跳登录页；已登录但挂着「强制改密」标记则跳改密页（服务端策略门同样拦截，双保险）。
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { authed, mustChangePassword, tenant, logout } = useAuth();
+  const { authed, initializing, mustChangePassword, tenant, logout } = useAuth();
   const location = useLocation();
+  if (initializing) return (
+    <div role="status" aria-live="polite" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-canvas)', color: 'var(--text-secondary)' }}>
+      正在恢复安全会话
+    </div>
+  );
   if (!authed) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (mustChangePassword) return <Navigate to="/change-password" replace />;
   if (!isTenantRole(tenant?.role)) return (
@@ -94,11 +101,15 @@ export function App() {
           >
             <Route path="/" element={<RequirePageAccess page="home"><OverviewPage /></RequirePageAccess>} />
             <Route path="/logs" element={<RequirePageAccess page="logs"><LogsPage /></RequirePageAccess>} />
+            <Route path="/logs/:id" element={<RequirePageAccess page="logs"><LogDetailPage /></RequirePageAccess>} />
             <Route path="/app-callers" element={<RequirePageAccess page="appCallers"><AppCallersPage /></RequirePageAccess>} />
+            <Route path="/app-callers/view" element={<RequirePageAccess page="appCallers"><AppCallerDetailsPage /></RequirePageAccess>} />
             <Route path="/app-callers/:id/prompt-policy" element={<RequirePageAccess page="promptPolicy"><PromptPolicyPage /></RequirePageAccess>} />
             <Route path="/pools" element={<RequirePageAccess page="routeConfig"><ModelPoolsPage /></RequirePageAccess>} />
             <Route path="/platforms" element={<RequirePageAccess page="routeConfig"><PlatformsPage /></RequirePageAccess>} />
+            <Route path="/platforms/view" element={<RequirePageAccess page="routeConfig"><ProviderDetailsPage /></RequirePageAccess>} />
             <Route path="/models" element={<RequirePageAccess page="routeConfig"><ModelsPage /></RequirePageAccess>} />
+            <Route path="/models/view" element={<RequirePageAccess page="routeConfig"><ModelDetailsPage /></RequirePageAccess>} />
             <Route path="/logical-models" element={<RequirePageAccess page="routeConfig"><LogicalModelsPage /></RequirePageAccess>} />
             <Route path="/exchanges" element={<RequirePageAccess page="routeConfig"><ExchangesPage /></RequirePageAccess>} />
             <Route path="/audits" element={<RequirePageAccess page="audits"><AuditsPage /></RequirePageAccess>} />

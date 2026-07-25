@@ -83,7 +83,7 @@ function ContextMenuPortal({ items, x, y, onClose }: ContextMenuProps) {
               'transition-colors duration-100',
               item.disabled
                 ? 'opacity-40 cursor-not-allowed'
-                : 'hover:bg-white/8 cursor-pointer',
+                : 'hover-bg-soft cursor-pointer',
               item.danger ? 'text-token-error hover:bg-red-500/15' : 'text-token-primary',
             ].join(' ')}
             onClick={(e) => {

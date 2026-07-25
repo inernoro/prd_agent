@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Bell, Database, ExternalLink, Settings, TerminalSquare, Trash2, X } from 'lucide-react';
+import { apiRequest, ApiError } from '@/lib/api';
 
 type NoticeTone = 'info' | 'warning' | 'danger';
 
@@ -86,6 +87,46 @@ export function SiteNoticeInbox(): JSX.Element {
 
   const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
+
+  // 陈旧通知清理(2026-07-21):通知持久化在 localStorage 且携带创建时刻的项目 id,
+  // 项目删除/重建后旧通知仍留存,用户点「查看推荐方式」落到 /settings/<旧id> 即 404。
+  // 面板打开时对通知引用的项目逐个探活,确认 404(project_not_found)的通知自动移除;
+  // 网络错误/5xx 不动(可能是瞬时故障,不能误删)。每个 id 每次会话只探一次。
+  const checkedProjectIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!open) return;
+    const idsToCheck = [...new Set(
+      notices
+        .filter((item) => !item.dismissedAt && item.projectId)
+        .map((item) => item.projectId as string),
+    )].filter((id) => !checkedProjectIdsRef.current.has(id));
+    if (idsToCheck.length === 0) return;
+    let cancelled = false;
+    void Promise.all(idsToCheck.map(async (id) => {
+      try {
+        await apiRequest(`/api/projects/${encodeURIComponent(id)}`);
+        checkedProjectIdsRef.current.add(id);
+        return null;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          checkedProjectIdsRef.current.add(id);
+          return id;
+        }
+        return null; // 瞬时错误不判死,下次打开重探
+      }
+    })).then((results) => {
+      if (cancelled) return;
+      const goneIds = new Set(results.filter((id): id is string => !!id));
+      if (goneIds.size === 0) return;
+      setNotices((current) => {
+        const next = current.filter((item) => !(item.projectId && goneIds.has(item.projectId)));
+        if (next.length === current.length) return current;
+        storeNotices(next);
+        return next;
+      });
+    });
+    return () => { cancelled = true; };
+  }, [open, notices]);
 
   const markAllRead = (): void => {
     const now = new Date().toISOString();

@@ -122,7 +122,7 @@ export function OverviewDataTable<T extends { id: string }>({
   const tableMinWidth = widths.reduce((sum, width) => sum + width, 0) + (selection ? selectColWidth : 0);
 
   return (
-    <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-white/10">
+    <div className="w-full min-w-0 overflow-x-auto rounded-xl border border-token-subtle">
       <table className="table-fixed text-sm" style={{ minWidth: tableMinWidth, width: '100%' }}>
         <colgroup>
           {selection ? <col style={{ width: selectColWidth }} /> : null}
@@ -131,7 +131,7 @@ export function OverviewDataTable<T extends { id: string }>({
           ))}
         </colgroup>
         <thead>
-          <tr className={`bg-white/[0.03] text-white/45 text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
+          <tr className={`bg-token-nested text-white/45 text-[11px] ${LIST_HEADER_HOVER_GROUP}`}>
             {selection ? (
               <ListSelectionHeaderCell
                 allSelected={selection.allSelected}
@@ -173,7 +173,7 @@ export function OverviewDataTable<T extends { id: string }>({
               key={row.id}
               onClick={() => onRowClick?.(row)}
               className={listSelectionRowClass(
-                `border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`,
+                `border-t border-token-subtle ${onRowClick ? 'cursor-pointer hover-bg-soft/[0.03]' : ''}`,
               )}
             >
               {selection ? (

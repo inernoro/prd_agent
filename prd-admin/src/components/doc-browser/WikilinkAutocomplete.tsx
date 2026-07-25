@@ -221,30 +221,23 @@ export function WikilinkAutocomplete({ textareaRef, value, storeId, onInsert }: 
       onMouseDown={(e) => e.preventDefault()}
     >
       <div
-        style={{
-          padding: '8px 12px',
-          fontSize: 11,
-          color: 'rgba(255,255,255,0.55)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          display: 'flex',
-          justifyContent: 'space-between',
-        }}
+        className="border-b border-b-token-subtle" style={{ padding: '8px 12px', fontSize: 11, color: 'var(--text-secondary)', display: 'flex', justifyContent: 'space-between' }}
       >
         <span>
           {trigger?.kind === 'at' ? '@' : '[['} <strong style={{ color: '#fff' }}>{trigger?.query || '(空)'}</strong> · 找到 {items.length} 条
         </span>
-        <span style={{ color: 'rgba(255,255,255,0.35)' }}>↑↓ 选 · Enter 确认 · Esc 关</span>
+        <span style={{ color: 'var(--text-muted)' }}>↑↓ 选 · Enter 确认 · Esc 关</span>
       </div>
       {loading && items.length === 0 && (
-        <div style={{ padding: '12px', color: 'rgba(255,255,255,0.5)' }}>正在搜索…</div>
+        <div style={{ padding: '12px', color: 'var(--text-secondary)' }}>正在搜索…</div>
       )}
       {!loading && items.length === 0 && (
         <div style={{ padding: '16px 12px' }}>
-          <div style={{ color: 'rgba(255,255,255,0.7)', marginBottom: 8, fontSize: 12 }}>
+          <div style={{ color: 'var(--text-secondary)', marginBottom: 8, fontSize: 12 }}>
             没找到「{trigger?.query}」匹配的文档
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>
-            继续打 <code style={{ background: 'rgba(255,255,255,0.08)', padding: '1px 5px', borderRadius: 3 }}>{trigger?.kind === 'at' ? '空格取消' : ']]'}</code> 当作普通文本；或换关键字
+          <div style={{ color: 'var(--text-muted)', fontSize: 11 }}>
+            继续打 <code className="bg-token-nested" style={{ padding: '1px 5px', borderRadius: 3 }}>{trigger?.kind === 'at' ? '空格取消' : ']]'}</code> 当作普通文本；或换关键字
           </div>
         </div>
       )}
@@ -260,12 +253,12 @@ export function WikilinkAutocomplete({ textareaRef, value, storeId, onInsert }: 
             padding: '10px 12px',
             cursor: 'pointer',
             background: idx === selectedIdx ? 'rgba(124,156,255,0.18)' : 'transparent',
-            borderBottom: idx < items.length - 1 ? '1px solid rgba(255,255,255,0.05)' : 'none',
+            borderBottom: idx < items.length - 1 ? '1px solid var(--border-subtle)' : 'none',
           }}
         >
           <div style={{ fontWeight: 500, color: '#fff', marginBottom: 2 }}>{it.title}</div>
           {it.summary && (
-            <div style={{ fontSize: 11, color: 'rgba(255,255,255,0.5)', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
+            <div style={{ fontSize: 11, color: 'var(--text-secondary)', display: '-webkit-box', WebkitLineClamp: 1, WebkitBoxOrient: 'vertical', overflow: 'hidden' }}>
               {it.summary}
             </div>
           )}

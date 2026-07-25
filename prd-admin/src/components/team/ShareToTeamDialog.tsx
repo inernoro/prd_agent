@@ -53,11 +53,8 @@ export function ShareToTeamDialog({
               {teams.map((t) => (
                 <label
                   key={t.team.id}
-                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer"
-                  style={{
-                    background: picked.has(t.team.id) ? 'rgba(212,175,55,0.1)' : 'var(--bg-input)',
-                    border: '1px solid rgba(255,255,255,0.1)',
-                  }}
+                  className="flex items-center gap-2.5 px-3 py-2 rounded-lg cursor-pointer border border-token-subtle"
+                  style={{ background: picked.has(t.team.id) ? 'rgba(212,175,55,0.1)' : 'var(--bg-input)' }}
                 >
                   <input type="checkbox" checked={picked.has(t.team.id)} onChange={() => toggle(t.team.id)} />
                   <span className="text-sm flex-1" style={{ color: 'var(--text-primary)' }}>

@@ -13,9 +13,9 @@ const ITEM_WIDTH = 64;
 
 /** Colored ring for the top-3 creators: gold / silver / bronze */
 const RANK_RING: Record<number, { ring: string; glow: string; label: string }> = {
-  0: { ring: 'linear-gradient(135deg, #FDE68A 0%, #F59E0B 100%)', glow: 'rgba(245,158,11,0.55)', label: '#FBBF24' },
-  1: { ring: 'linear-gradient(135deg, #E5E7EB 0%, #94A3B8 100%)', glow: 'rgba(148,163,184,0.5)', label: '#CBD5E1' },
-  2: { ring: 'linear-gradient(135deg, #E0A472 0%, #B26B33 100%)', glow: 'rgba(178,107,51,0.5)', label: '#D8975A' },
+  0: { ring: 'linear-gradient(135deg, #FDE68A 0%, #B45309 100%)', glow: 'color-mix(in srgb, var(--semantic-warning-text) 30%, transparent)', label: 'var(--semantic-warning-text)' },
+  1: { ring: 'linear-gradient(135deg, #E5E7EB 0%, #64748B 100%)', glow: 'color-mix(in srgb, var(--semantic-neutral-text) 24%, transparent)', label: 'var(--semantic-neutral-text)' },
+  2: { ring: 'linear-gradient(135deg, #E0A472 0%, #9A4F22 100%)', glow: 'color-mix(in srgb, var(--semantic-orange-text) 26%, transparent)', label: 'var(--semantic-orange-text)' },
 };
 
 /**
@@ -30,11 +30,11 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
           <div key={i} className="flex flex-col items-center gap-1.5 shrink-0" style={{ width: ITEM_WIDTH }}>
             <div
               className="w-11 h-11 rounded-full animate-pulse"
-              style={{ background: 'rgba(255,255,255,0.05)' }}
+              style={{ background: 'var(--bg-card)' }}
             />
             <div
               className="h-2 rounded animate-pulse"
-              style={{ width: 40, background: 'rgba(255,255,255,0.04)' }}
+              style={{ width: 40, background: 'var(--bg-input)' }}
             />
           </div>
         ))}
@@ -63,19 +63,19 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
           className="w-11 h-11 rounded-full flex items-center justify-center transition-all duration-200"
           style={{
             background: allActive
-              ? 'linear-gradient(135deg, rgba(99,102,241,0.35) 0%, rgba(168,85,247,0.3) 100%)'
-              : 'rgba(255,255,255,0.06)',
+              ? 'var(--selection-bg)'
+              : 'var(--bg-card)',
             border: allActive
-              ? '2px solid rgba(129,140,248,0.7)'
-              : '2px solid rgba(255,255,255,0.08)',
-            boxShadow: allActive ? '0 0 14px rgba(129,140,248,0.35)' : 'none',
+              ? '2px solid var(--selection-border)'
+              : '2px solid var(--border-subtle)',
+            boxShadow: allActive ? 'var(--shadow-card-active)' : 'none',
           }}
         >
-          <Users size={17} style={{ color: allActive ? '#C7D2FE' : 'rgba(255,255,255,0.5)' }} />
+          <Users size={17} style={{ color: allActive ? 'var(--selection-text)' : 'var(--text-muted)' }} />
         </div>
         <span
           className="text-[11px] truncate w-full text-center"
-          style={{ color: allActive ? '#A5B4FC' : 'rgba(255,255,255,0.45)' }}
+          style={{ color: allActive ? 'var(--selection-text)' : 'var(--text-secondary)', fontWeight: allActive ? 600 : 500 }}
         >
           全部
         </span>
@@ -100,12 +100,12 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
               style={{
                 padding: rank ? 2.5 : 2,
                 background: active
-                  ? 'linear-gradient(135deg, #818CF8 0%, #A78BFA 100%)'
+                  ? 'var(--accent-primary)'
                   : rank
                     ? rank.ring
-                    : 'rgba(255,255,255,0.08)',
+                    : 'var(--border-default)',
                 boxShadow: active
-                  ? '0 0 14px rgba(129,140,248,0.4)'
+                  ? 'var(--shadow-card-active)'
                   : rank
                     ? `0 0 12px ${rank.glow}`
                     : 'none',
@@ -115,7 +115,7 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
                 src={avatarUrl}
                 alt={c.ownerUserName}
                 className="w-full h-full rounded-full object-cover"
-                style={{ background: '#0a0a0f' }}
+                style={{ background: 'var(--bg-input)' }}
                 loading="lazy"
                 onError={(e) => {
                   (e.target as HTMLImageElement).src = DEFAULT_AVATAR_FALLBACK;
@@ -124,7 +124,7 @@ export function CreatorFilterRow({ creators, selectedUserId, onSelect, loading }
             </div>
             <span
               className="text-[11px] truncate w-full text-center"
-              style={{ color: active ? '#A5B4FC' : rank ? rank.label : 'rgba(255,255,255,0.5)' }}
+              style={{ color: active ? 'var(--selection-text)' : rank ? rank.label : 'var(--text-secondary)', fontWeight: active || rank ? 600 : 500 }}
             >
               {c.ownerUserName}
             </span>

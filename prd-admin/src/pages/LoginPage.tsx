@@ -496,7 +496,7 @@ function HudChip({ label, sublabel }: { label: string; sublabel?: string }) {
       </span>
       {sublabel && (
         <>
-          <span className="w-px h-3.5 bg-white/15" />
+          <span className="w-px h-3.5 bg-token-nested" />
           <span
             className="text-[14px] text-slate-200"
             style={{
@@ -567,7 +567,7 @@ function Field({ label, value, onChange, onEnter, type = 'text', placeholder, au
         {label}
       </span>
       <div
-        className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
+        className="relative flex items-center rounded-xl transition-colors focus-within:border-token-subtle"
         style={{
           background: 'var(--login-field-bg)',
           border: '1px solid var(--login-border)',
@@ -626,7 +626,7 @@ function PrimaryPill({
     >
       {loading ? (
         <span
-          className="inline-block h-3.5 w-3.5 rounded-full border-2 border-white/40 border-t-white animate-spin"
+          className="inline-block h-3.5 w-3.5 rounded-full border-2 border-token-subtle border-t-token-subtle animate-spin"
           aria-hidden
         />
       ) : (
@@ -837,7 +837,7 @@ function LoginCard({
                   )}
                 </span>
                 <div
-                  className="relative flex items-center rounded-xl transition-colors focus-within:border-white/35"
+                  className="relative flex items-center rounded-xl transition-colors focus-within:border-token-subtle"
                   style={{
                     background: 'var(--login-field-bg)',
                     border: '1px solid var(--login-border)',
@@ -875,7 +875,7 @@ function LoginCard({
                     tabIndex={-1}
                     aria-label={showPassword ? '隐藏密码' : '显示密码'}
                     title={showPassword ? '隐藏密码' : '显示密码'}
-                    className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover:bg-white/5 transition-colors"
+                    className="mr-2 flex h-9 w-9 items-center justify-center rounded-lg text-white/55 hover:text-white/85 hover-bg-soft transition-colors"
                   >
                     {showPassword ? <EyeOff className="w-4 h-4" /> : <Eye className="w-4 h-4" />}
                   </button>
@@ -920,9 +920,9 @@ function LoginCard({
                 className="flex items-center gap-3 text-[11px] uppercase text-white/40"
                 style={{ fontFamily: 'var(--font-terminal)', letterSpacing: '0.16em' }}
               >
-                <span className="h-px flex-1 bg-white/10" />
+                <span className="h-px flex-1 bg-token-nested" />
                 <span>SSO</span>
-                <span className="h-px flex-1 bg-white/10" />
+                <span className="h-px flex-1 bg-token-nested" />
               </div>
               {ssoOptions.map((option) => {
                 const disabled = !option.baseUrl || !option.appCode || !option.redirectUri || !normalizeAbsoluteHttpUrl(option.baseUrl, true) || ssoLoading;
@@ -933,7 +933,7 @@ function LoginCard({
                     onClick={disabled ? undefined : (event) => handleSsoClick(event, option)}
                     aria-disabled={disabled}
                     title={disabled ? '未配置登录地址' : option.label}
-                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-white/12 bg-white/[0.04] px-4 text-[13.5px] font-medium text-white/82 transition-all hover:border-white/24 hover:bg-white/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
+                    className="inline-flex h-11 items-center justify-center gap-2 rounded-full border border-token-subtle bg-token-nested px-4 text-[13.5px] font-medium text-white/82 transition-all hover:border-token-subtle hover-bg-soft/[0.07] aria-disabled:pointer-events-none aria-disabled:opacity-45"
                     style={{ fontFamily: 'var(--font-display)' }}
                   >
                     <Lock className="h-4 w-4" />

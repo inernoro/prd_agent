@@ -103,7 +103,7 @@ export function ProductAssigneePicker({
         </div>
       )}
       {appAdminText && (
-        <div className="text-[10px] text-white/35">应用管理员：{appAdminText}</div>
+        <div className="text-[10px] text-token-muted">应用管理员：{appAdminText}</div>
       )}
       <UserSearchSelect
         value={value}

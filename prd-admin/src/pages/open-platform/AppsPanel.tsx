@@ -298,7 +298,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
     <div className="h-full overflow-hidden p-1">
       <GlassCard animated glow className="h-full flex flex-col">
         {/* ============ 顶部统计栏 ============ */}
-        <div className="p-4 border-b border-white/10 flex-shrink-0" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle flex-shrink-0 bg-token-nested" >
           <div className="flex items-center justify-between mb-4">
             <div className="flex items-center gap-3">
               <Key size={18} className="text-muted-foreground" />
@@ -356,14 +356,14 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
         {/* ============ 主体区域 ============ */}
         <div className="flex-1 min-h-0 grid grid-cols-12">
           {/* 左栏：应用列表 */}
-          <div className="col-span-8 border-r border-white/10 flex flex-col">
+          <div className="col-span-8 border-r border-token-subtle flex flex-col">
             {/* 列表标题栏 */}
-            <div className="flex items-center justify-between p-4 border-b border-white/10 flex-shrink-0">
+            <div className="flex items-center justify-between p-4 border-b border-token-subtle flex-shrink-0">
               <div className="flex items-center gap-3">
                 {apps.length > 0 && (
                   <button
                     onClick={toggleSelectAll}
-                    className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground"
+                    className="p-1 rounded hover-bg-soft text-muted-foreground hover:text-foreground"
                   >
                     {selectedIds.size === apps.length ? <CheckSquare size={16} /> : <Square size={16} />}
                   </button>
@@ -412,7 +412,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                       {/* 选择框 */}
                       <button
                         onClick={() => toggleSelect(app.id)}
-                        className="p-0.5 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground flex-shrink-0"
+                        className="p-0.5 rounded hover-bg-soft text-muted-foreground hover:text-foreground flex-shrink-0"
                       >
                         {selectedIds.has(app.id) ? <CheckSquare size={16} className="text-blue-400" /> : <Square size={16} />}
                       </button>
@@ -457,7 +457,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                         />
                         <DropdownMenu.Root>
                           <DropdownMenu.Trigger asChild>
-                            <button className="p-1 rounded hover:bg-white/10 text-muted-foreground hover:text-foreground">
+                            <button className="p-1 rounded hover-bg-soft text-muted-foreground hover:text-foreground">
                               <MoreVertical size={14} />
                             </button>
                           </DropdownMenu.Trigger>
@@ -471,32 +471,32 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
                               }}
                             >
                               <DropdownMenu.Item
-                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                                 onSelect={() => handleEdit(app)}
                               >
                                 <Pencil size={12} /> 编辑
                               </DropdownMenu.Item>
                               <DropdownMenu.Item
-                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                                 onSelect={showCurlCommand}
                               >
                                 <Code size={12} /> curl 命令
                               </DropdownMenu.Item>
                               <DropdownMenu.Item
-                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                                 onSelect={() => handleRegenerateKey(app.id, app.appName)}
                               >
                                 <RefreshCw size={12} /> 重新生成密钥
                               </DropdownMenu.Item>
                               <DropdownMenu.Item
-                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10"
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft"
                                 onSelect={() => { setWebhookApp(app); setWebhookDialogOpen(true); }}
                               >
                                 <Webhook size={12} /> Webhook 配置
                               </DropdownMenu.Item>
-                              <DropdownMenu.Separator className="my-1 h-px bg-white/10" />
+                              <DropdownMenu.Separator className="my-1 h-px bg-token-nested" />
                               <DropdownMenu.Item
-                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover:bg-white/10 text-red-400"
+                                className="flex items-center gap-2 px-2 py-1.5 text-xs rounded cursor-pointer outline-none hover-bg-soft text-red-400"
                                 onSelect={() => handleDelete(app.id, app.appName)}
                               >
                                 <Trash2 size={12} /> 删除
@@ -511,7 +511,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               </div>
 
               {total > pageSize && (
-                <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+                <div className="flex justify-between items-center pt-4 mt-4 border-t border-token-subtle">
                   <div className="text-sm text-muted-foreground">共 {total} 条</div>
                   <div className="flex gap-2">
                     <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>
@@ -565,7 +565,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               <h4 className="text-xs text-muted-foreground uppercase tracking-wider">快速操作</h4>
               <button
                 onClick={showCurlCommand}
-                className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2"
+                className="w-full p-2.5 rounded-lg text-left text-sm hover-bg-soft transition-colors flex items-center gap-2"
                 style={{ border: '1px solid var(--nested-block-border)' }}
               >
                 <Code size={14} className="text-muted-foreground" />
@@ -573,7 +573,7 @@ export default function AppsPanel({ onActionsReady }: AppsPanelProps) {
               </button>
               <a
                 href="#"
-                className="w-full p-2.5 rounded-lg text-left text-sm hover:bg-white/5 transition-colors flex items-center gap-2 block"
+                className="w-full p-2.5 rounded-lg text-left text-sm hover-bg-soft transition-colors flex items-center gap-2 block"
                 style={{ border: '1px solid var(--nested-block-border)' }}
               >
                 <ExternalLink size={14} className="text-muted-foreground" />
@@ -667,7 +667,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
     setBoundGroupId('');
   };
 
-  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <Dialog
@@ -776,7 +776,7 @@ function CreateAppDialog({ open, onClose, onCreate }: { open: boolean; onClose: 
           </div>
 
           {/* 操作按钮 */}
-          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+          <div className="flex justify-end gap-2 pt-4 border-t border-token-subtle">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit}>创建</Button>
           </div>
@@ -825,7 +825,7 @@ function EditAppDialog({ open, onClose, onUpdate, app }: { open: boolean; onClos
     onUpdate({ appName: appName.trim(), description: description.trim() || undefined, boundUserId, boundGroupId });
   };
 
-  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 focus:border-blue-500/50 focus:outline-none text-sm";
+  const inputCls = "w-full px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle focus:border-blue-500/50 focus:outline-none text-sm";
 
   return (
     <Dialog
@@ -866,7 +866,7 @@ function EditAppDialog({ open, onClose, onUpdate, app }: { open: boolean; onClos
             </div>
           </div>
 
-          <div className="flex justify-end gap-2 pt-4 border-t border-white/10">
+          <div className="flex justify-end gap-2 pt-4 border-t border-token-subtle">
             <Button variant="secondary" onClick={onClose}>取消</Button>
             <Button onClick={handleSubmit}>保存</Button>
           </div>
@@ -912,7 +912,7 @@ function ApiKeyDialog({ open, onClose, apiKey }: { open: boolean; onClose: () =>
             </Button>
           </div>
 
-          <div className="flex justify-end pt-4 border-t border-white/10">
+          <div className="flex justify-end pt-4 border-t border-token-subtle">
             <Button onClick={onClose}>我已保存</Button>
           </div>
         </div>
@@ -962,7 +962,7 @@ function CurlCommandDialog({ open, onClose, curlCommand }: { open: boolean; onCl
             <code>{curlCommand}</code>
           </pre>
 
-          <div className="flex justify-end pt-4 border-t border-white/10">
+          <div className="flex justify-end pt-4 border-t border-token-subtle">
             <Button onClick={onClose}>关闭</Button>
           </div>
         </div>

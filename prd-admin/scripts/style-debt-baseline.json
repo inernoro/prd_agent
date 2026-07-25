@@ -1,0 +1,91 @@
+{
+  "metricVersion": 3,
+  "establishedAt": "2026-07-23T00:00:00.000Z",
+  "updatedAt": "2026-07-23T09:25:53.849Z",
+  "programBaseline": {
+    "score": 73853,
+    "undeclaredThemeRisk": 3291,
+    "adaptiveBorderRisk": 1914,
+    "adaptiveSurfaceRisk": 1138,
+    "adaptiveHoverRisk": 856,
+    "adaptiveThemeRisk": 3908
+  },
+  "currentCeiling": {
+    "score": 67696,
+    "undeclaredThemeRisk": 549,
+    "adaptiveBorderRisk": 216,
+    "adaptiveSurfaceRisk": 128,
+    "adaptiveHoverRisk": 0,
+    "adaptiveThemeRisk": 344,
+    "actionableThemeRisk": 0,
+    "ordinaryUiRisk": 0,
+    "unclassifiedThemeRisk": 0
+  },
+  "milestoneTarget": {
+    "score": 73000,
+    "undeclaredThemeRisk": 3000,
+    "adaptiveThemeRisk": 3500
+  },
+  "nextTarget": {
+    "score": 67000,
+    "undeclaredThemeRisk": 500,
+    "adaptiveThemeRisk": 300,
+    "actionableThemeRisk": 0,
+    "ordinaryUiRisk": 0,
+    "unclassifiedThemeRisk": 0
+  },
+  "enforcedMetrics": [
+    "undeclaredThemeRisk",
+    "adaptiveBorderRisk",
+    "adaptiveSurfaceRisk",
+    "adaptiveHoverRisk",
+    "adaptiveThemeRisk",
+    "actionableThemeRisk",
+    "ordinaryUiRisk",
+    "unclassifiedThemeRisk"
+  ],
+  "history": [
+    {
+      "date": "2026-07-23",
+      "metricVersion": 1,
+      "score": 73853,
+      "adaptiveThemeRisk": 4764,
+      "note": "首次系统扫描；悬浮态同时计入普通表面，保留为历史口径。"
+    },
+    {
+      "date": "2026-07-23",
+      "metricVersion": 2,
+      "score": 72971,
+      "undeclaredThemeRisk": 2526,
+      "adaptiveThemeRisk": 3158,
+      "note": "去除悬浮态重复计数并完成首批普通管理界面迁移，三项里程碑均达成。"
+    },
+    {
+      "date": "2026-07-23",
+      "metricVersion": 2,
+      "score": 71850,
+      "undeclaredThemeRisk": 1658,
+      "adaptiveThemeRisk": 2346,
+      "note": "完成共享外壳、开放平台、产品工作流、评审、CCAS、邮件与知识库普通界面的第二批语义化迁移，72,000 / 2,200 / 2,800 三项目标全部达成。"
+    },
+    {
+      "date": "2026-07-23",
+      "metricVersion": 2,
+      "score": 69318,
+      "undeclaredThemeRisk": 1186,
+      "adaptiveThemeRisk": 1697,
+      "note": "普通管理页与共享组件完成第三批迁移，并引入只处理静态主题变量样式的安全迁移器；评分公式保持不变，70,000 / 1,200 / 1,800 三项目标全部达成。"
+    },
+    {
+      "date": "2026-07-23",
+      "metricVersion": 3,
+      "score": 67696,
+      "undeclaredThemeRisk": 549,
+      "adaptiveThemeRisk": 344,
+      "actionableThemeRisk": 0,
+      "ordinaryUiRisk": 0,
+      "unclassifiedThemeRisk": 0,
+      "note": "保留 metric v2 原始维护债务口径，新增可行动主题风险、普通界面风险与刻意视觉债务分层；普通界面和未分类风险归零，视觉例外进入逐文件清单与棘轮。"
+    }
+  ]
+}

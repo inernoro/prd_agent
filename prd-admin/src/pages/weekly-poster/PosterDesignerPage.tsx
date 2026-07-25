@@ -655,7 +655,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                   type="button"
                   onClick={() => void refreshList(poster?.id)}
                   aria-label="刷新列表"
-                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
+                  className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-secondary hover-bg-soft"
                 >
                   <RefreshCw size={14} className={loadingList ? 'animate-spin' : ''} />
                 </button>
@@ -859,7 +859,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         <button
                           type="button"
                           onClick={() => setPreviewScale((prev) => clamp(prev - 6, 52, 120))}
-                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
+                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover-bg-soft"
                         >
                           <Minus size={14} />
                         </button>
@@ -867,7 +867,7 @@ export default function PosterDesignerPage({ embedded = false }: PosterDesignerP
                         <button
                           type="button"
                           onClick={() => setPreviewScale((prev) => clamp(prev + 6, 52, 120))}
-                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover:bg-white/10"
+                          className="w-7 h-7 rounded-lg inline-flex items-center justify-center text-token-secondary hover-bg-soft"
                         >
                           <Plus size={14} />
                         </button>
@@ -1919,7 +1919,7 @@ function RightEditPanel({
         <button
           type="button"
           onClick={regenerateImage}
-          className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-token-secondary hover:bg-white/10"
+          className="h-8 rounded-lg px-2.5 inline-flex items-center justify-center gap-1 text-[11px] font-medium text-token-secondary hover-bg-soft"
           style={{ border: '1px solid rgba(255,255,255,0.1)' }}
         >
           <Sparkles size={12} />
@@ -2232,7 +2232,7 @@ function MediaSlotPanel({
               type="button"
               onClick={onGenerate}
               disabled={busy}
-              className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary disabled:opacity-50 hover:bg-white/10"
+              className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary disabled:opacity-50 hover-bg-soft"
               style={{ border: '1px solid rgba(255,255,255,0.1)' }}
             >
               <Sparkles size={12} /> AI
@@ -2241,7 +2241,7 @@ function MediaSlotPanel({
           <button
             type="button"
             onClick={onUpload}
-            className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary hover:bg-white/10"
+            className="h-8 px-2.5 rounded-lg inline-flex items-center gap-1 text-[11px] text-token-secondary hover-bg-soft"
             style={{ border: '1px solid rgba(255,255,255,0.1)' }}
           >
             <Upload size={12} /> 上传
@@ -2251,7 +2251,7 @@ function MediaSlotPanel({
               type="button"
               onClick={onClear}
               aria-label={`清空${label}`}
-              className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-muted hover:bg-white/10"
+              className="w-8 h-8 rounded-lg inline-flex items-center justify-center text-token-muted hover-bg-soft"
             >
               <X size={13} />
             </button>
@@ -2534,7 +2534,7 @@ function CreatePosterModal({
             onClick={onClose}
             disabled={busy}
             aria-label="关闭"
-            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-token-secondary hover:bg-white/10 disabled:opacity-30"
+            className="w-8 h-8 rounded-md inline-flex items-center justify-center text-token-secondary hover-bg-soft disabled:opacity-30"
           >
             <X size={16} />
           </button>

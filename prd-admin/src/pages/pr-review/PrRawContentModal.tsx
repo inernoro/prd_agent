@@ -65,19 +65,19 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="relative w-full max-w-4xl mx-4 rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
+        className="relative w-full max-w-4xl mx-4 rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col overflow-hidden"
         style={{ height: '90vh', maxHeight: '90vh' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* Header */}
-        <div className="flex items-center gap-3 px-5 py-4 border-b border-white/10 shrink-0">
+        <div className="flex items-center gap-3 px-5 py-4 border-b border-token-subtle shrink-0">
           <FileText size={18} className="text-sky-300" />
           <div className="flex-1 min-w-0">
-            <div className="text-sm font-semibold text-white truncate">
+            <div className="text-sm font-semibold text-token-primary truncate">
               {data?.title ?? 'PR 原文'}
             </div>
             {data && (
-              <div className="mt-0.5 text-[11px] text-white/50 font-mono truncate">
+              <div className="mt-0.5 text-[11px] text-token-secondary font-mono truncate">
                 +{data.additions} / -{data.deletions} · {data.changedFiles} files · {data.headSha.slice(0, 7)}
               </div>
             )}
@@ -87,7 +87,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
               href={data.htmlUrl}
               target="_blank"
               rel="noopener noreferrer"
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 hover:text-white text-xs transition"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary hover-text-primary text-xs transition"
             >
               <ExternalLink size={12} />
               GitHub
@@ -96,7 +96,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
           <button
             type="button"
             onClick={onClose}
-            className="p-2 rounded-lg text-white/60 hover:text-white hover:bg-white/10 transition"
+            className="p-2 rounded-lg text-token-secondary hover-text-primary hover-bg-soft transition"
           >
             <X size={16} />
           </button>
@@ -125,11 +125,11 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
               <section>
                 <SectionTitle>PR 描述</SectionTitle>
                 {data.body && data.body.trim() ? (
-                  <div className="text-[13px] leading-relaxed text-white/85 bg-black/30 rounded-lg p-4 border border-white/5">
+                  <div className="text-[13px] leading-relaxed text-token-primary bg-token-nested rounded-lg p-4 border border-token-subtle">
                     <PrMarkdown>{data.body}</PrMarkdown>
                   </div>
                 ) : (
-                  <div className="text-xs text-white/40 italic p-4 rounded-lg bg-black/20 border border-white/5">
+                  <div className="text-xs text-token-muted italic p-4 rounded-lg bg-token-nested border border-token-subtle">
                     （作者没有填写 PR 描述）
                   </div>
                 )}
@@ -142,15 +142,15 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
                     <span className="flex items-center gap-1.5">
                       <Link2 size={12} />
                       关联 Issue #{data.linkedIssueNumber}
-                      {data.linkedIssueTitle && <span className="text-white/60">· {data.linkedIssueTitle}</span>}
+                      {data.linkedIssueTitle && <span className="text-token-secondary">· {data.linkedIssueTitle}</span>}
                     </span>
                   </SectionTitle>
                   {data.linkedIssueBody && data.linkedIssueBody.trim() ? (
-                    <div className="text-[13px] leading-relaxed text-white/85 bg-black/30 rounded-lg p-4 border border-white/5">
+                    <div className="text-[13px] leading-relaxed text-token-primary bg-token-nested rounded-lg p-4 border border-token-subtle">
                       <PrMarkdown>{data.linkedIssueBody}</PrMarkdown>
                     </div>
                   ) : (
-                    <div className="text-xs text-white/40 italic p-4 rounded-lg bg-black/20 border border-white/5">
+                    <div className="text-xs text-token-muted italic p-4 rounded-lg bg-token-nested border border-token-subtle">
                       （关联 issue 没有描述或未拉取）
                     </div>
                   )}
@@ -161,7 +161,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
               <section>
                 <SectionTitle>变更文件 ({data.files.length})</SectionTitle>
                 {data.files.length === 0 ? (
-                  <div className="text-xs text-white/40 italic p-4 rounded-lg bg-black/20 border border-white/5">
+                  <div className="text-xs text-token-muted italic p-4 rounded-lg bg-token-nested border border-token-subtle">
                     （没有变更文件）
                   </div>
                 ) : (
@@ -185,7 +185,7 @@ export function PrRawContentModal({ itemId, onClose }: Props) {
 
 function SectionTitle({ children }: { children: React.ReactNode }) {
   return (
-    <h3 className="text-[11px] font-semibold uppercase tracking-wider text-white/50 mb-2">
+    <h3 className="text-[11px] font-semibold uppercase tracking-wider text-token-secondary mb-2">
       {children}
     </h3>
   );
@@ -210,30 +210,30 @@ function FileEntry({ file }: { file: PrReviewRawFileDto }) {
   const statusColor = fileStatusColor(file.status);
 
   return (
-    <div className="rounded-lg border border-white/10 bg-black/20 overflow-hidden">
+    <div className="rounded-lg border border-token-subtle bg-token-nested overflow-hidden">
       <button
         type="button"
         onClick={() => setOpen((v) => !v)}
-        className="w-full flex items-center gap-3 px-3 py-2 hover:bg-white/5 transition text-left"
+        className="w-full flex items-center gap-3 px-3 py-2 hover-bg-soft transition text-left"
       >
         <span className={`shrink-0 px-1.5 py-0.5 rounded border text-[10px] uppercase font-mono ${statusColor}`}>
           {file.status}
         </span>
-        <span className="flex-1 min-w-0 truncate text-[12px] font-mono text-white/85">
+        <span className="flex-1 min-w-0 truncate text-[12px] font-mono text-token-primary">
           {file.filename}
         </span>
-        <span className="shrink-0 text-[11px] font-mono text-white/50">
+        <span className="shrink-0 text-[11px] font-mono text-token-secondary">
           <span className="text-emerald-300">+{file.additions}</span>
           {' '}
           <span className="text-red-300">-{file.deletions}</span>
         </span>
       </button>
       {open && (
-        <div className="border-t border-white/5">
+        <div className="border-t border-token-subtle">
           {file.patch ? (
-            <pre className="text-[11px] leading-relaxed font-mono whitespace-pre overflow-x-auto p-3 bg-black/40 max-h-96">
+            <pre className="text-[11px] leading-relaxed font-mono whitespace-pre overflow-x-auto p-3 bg-token-nested max-h-96">
               {file.patch.split('\n').map((line, i) => {
-                let cls = 'text-white/70';
+                let cls = 'text-token-secondary';
                 if (line.startsWith('+') && !line.startsWith('+++')) cls = 'text-emerald-300';
                 else if (line.startsWith('-') && !line.startsWith('---')) cls = 'text-red-300';
                 else if (line.startsWith('@@')) cls = 'text-sky-300';
@@ -245,7 +245,7 @@ function FileEntry({ file }: { file: PrReviewRawFileDto }) {
               })}
             </pre>
           ) : (
-            <div className="text-[11px] text-white/40 italic p-3">
+            <div className="text-[11px] text-token-muted italic p-3">
               （无 diff 内容，可能是二进制文件、文件过大被截断，或未拉取）
             </div>
           )}

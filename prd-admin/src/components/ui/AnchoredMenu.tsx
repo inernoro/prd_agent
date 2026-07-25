@@ -131,18 +131,8 @@ export function AnchoredMenu({
   return createPortal(
     <div
       ref={menuRef}
-      className={`fixed z-[9999] rounded-[10px] py-1 ${className}`}
-      style={{
-        top: pos?.top ?? -9999,
-        left: pos?.left ?? -9999,
-        minWidth,
-        // 首帧（未测量出真实尺寸前）先隐藏，避免左上角闪一下
-        visibility: pos ? 'visible' : 'hidden',
-        background: 'var(--bg-elevated)',
-        border: '1px solid rgba(255,255,255,0.12)',
-        boxShadow: '0 12px 40px rgba(0,0,0,0.4)',
-        ...style,
-      }}
+      className={`fixed z-[9999] rounded-[10px] py-1 ${className} border border-token-subtle`}
+      style={{ top: pos?.top ?? -9999, left: pos?.left ?? -9999, minWidth, visibility: pos ? 'visible' : 'hidden', background: 'var(--bg-elevated)', boxShadow: '0 12px 40px rgba(0,0,0,0.4)', ...style }}
       // portal 的 React 事件仍按组件树冒泡：挡住 mousedown/click，避免落到下层卡片的
       // onClick（导航）或触发其它点外关闭逻辑
       onMouseDown={(e) => e.stopPropagation()}

@@ -35,6 +35,7 @@ import { createHash } from 'node:crypto';
 import type { StateService } from '../services/state.js';
 import type { GitHubAppClient } from '../services/github-app-client.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import { buildZip } from '../utils/zip.js';
 
 /**
  * Project-scoped agent key (cdsp_) stamped on the request by the auth gate.
@@ -101,6 +102,7 @@ function publicBaseFromReq(req: Request): string {
 /** Hard cap on report body size (paste + upload). 10MB of UTF-8 text. */
 const MAX_CONTENT_BYTES = 10 * 1024 * 1024;
 const MAX_ASSET_BYTES = 20 * 1024 * 1024;
+const REPORT_ASSET_URL_RE = /(?:https?:\/\/[^\s"')]+)?\/api\/reports\/assets\/([a-f0-9]{64}\.(?:png|jpe?g|gif|webp|svg))/gi;
 
 const UPLOADABLE_IMAGE_TYPES: Record<string, { ext: string; valid: (data: Buffer) => boolean }> = {
   'image/png': {
@@ -640,6 +642,7 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
       : undefined;
     const reports = stateService
       .listAcceptanceReports(projectId ?? null, folderFilter, updatedSince)
+      .filter((report) => typeof req.query.reportId !== 'string' || !req.query.reportId || report.id === req.query.reportId)
       // 响应附带 projectSlug，便于跨系统（MAP）按项目归类展示，免二次查项目表。
       .map((r) => ({ ...r, projectSlug: r.projectId ? stateService.getProject(r.projectId)?.slug ?? null : null }));
     res.json({ reports });
@@ -693,6 +696,47 @@ export function createReportsRouter(deps: ReportsRouterDeps): Router {
         return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
       }
       return sendReportContent(res, meta.format, content);
+    } catch (err) {
+      return res.status(500).json({ error: 'internal', message: (err as Error).message });
+    }
+  });
+
+  // GET /api/reports/:id/download — 下载可离线查看的 ZIP（正文 + 元数据 + 引用截图）。
+  router.get('/reports/:id/download', async (req: Request, res: Response) => {
+    try {
+      const meta = stateService.getAcceptanceReport(req.params.id);
+      if (!meta) return res.status(404).json({ error: 'not_found', message: '报告不存在' });
+      const mismatch = reportAccessDenied(req, meta.projectId);
+      if (mismatch) return res.status(mismatch.status).json(mismatch.body);
+      const content = await stateService.readAcceptanceReportContentAsync(meta.id);
+      if (content === undefined) {
+        return res.status(404).json({ error: 'content_missing', message: '报告内容文件已丢失' });
+      }
+
+      const assetNames = new Set<string>();
+      for (const match of content.matchAll(REPORT_ASSET_URL_RE)) assetNames.add(match[1].toLowerCase());
+      const offlineContent = content.replace(REPORT_ASSET_URL_RE, (_whole, name: string) => `assets/${name.toLowerCase()}`);
+      const modifiedAt = new Date(meta.updatedAt || meta.createdAt);
+      const entries: Array<{ name: string; data: Buffer | string; modifiedAt?: Date }> = [
+        { name: `report.${meta.format}`, data: offlineContent, modifiedAt },
+        { name: 'metadata.json', data: `${JSON.stringify(meta, null, 2)}\n`, modifiedAt },
+      ];
+      for (const name of assetNames) {
+        const resolved = stateService.resolveReportAssetFile(name);
+        if (!resolved) continue;
+        entries.push({ name: `assets/${name}`, data: await fs.promises.readFile(resolved.filePath), modifiedAt });
+      }
+
+      const archive = buildZip(entries);
+      const safeTitle = meta.title.replace(/[\\/:*?"<>|\u0000-\u001f]/g, '-').replace(/\s+/g, ' ').trim().slice(0, 80)
+        || `report-${meta.id.slice(0, 8)}`;
+      const asciiName = `report-${meta.id.slice(0, 8)}.zip`;
+      const encodedName = encodeURIComponent(`${safeTitle}.zip`).replace(/[!'()*]/g, (char) => `%${char.charCodeAt(0).toString(16).toUpperCase()}`);
+      res.setHeader('Content-Type', 'application/zip');
+      res.setHeader('Content-Length', String(archive.length));
+      res.setHeader('Content-Disposition', `attachment; filename="${asciiName}"; filename*=UTF-8''${encodedName}`);
+      res.setHeader('Cache-Control', 'no-store');
+      return res.send(archive);
     } catch (err) {
       return res.status(500).json({ error: 'internal', message: (err as Error).message });
     }

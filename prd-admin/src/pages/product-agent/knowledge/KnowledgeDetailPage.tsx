@@ -274,21 +274,21 @@ export function KnowledgeDetailPage() {
   const effectiveContentType = effectiveMarkdown ? 'text/markdown' : entry?.contentType;
 
   return (
-    <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
+    <div className="h-screen min-h-0 flex flex-col bg-token-card">
       <input ref={replaceInputRef} type="file" className="hidden" onChange={(e) => void onReplacePick(e)} />
 
       {/* 顶栏 */}
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
-        <button onClick={back} className="flex items-center justify-center w-8 h-8 rounded-lg border border-white/10 text-white/60 hover:text-white hover:bg-white/5 shrink-0" title="返回知识库">
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
+        <button onClick={back} className="flex items-center justify-center w-8 h-8 rounded-lg border border-token-subtle text-token-secondary hover-text-primary hover-bg-soft shrink-0" title="返回知识库">
           <ArrowLeft size={16} />
         </button>
         <FileKindBadge contentType={effectiveContentType} />
-        <span className="text-sm text-white/45 truncate">{entry?.title}</span>
+        <span className="text-sm text-token-muted truncate">{entry?.title}</span>
         <div className="ml-auto flex items-center gap-1.5 shrink-0">
           {busy && <MapSpinner size={14} />}
           {editing ? (
             <>
-              <button onClick={() => setEditing(false)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5 border border-white/10"><X size={13} /> 取消</button>
+              <button onClick={() => setEditing(false)} className="flex items-center gap-1 px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft border border-token-subtle"><X size={13} /> 取消</button>
               <button onClick={() => void handleSave()} disabled={saving} className="flex items-center gap-1.5 px-3.5 py-1.5 rounded-lg bg-cyan-500/20 text-cyan-200 border border-cyan-500/40 text-sm hover:bg-cyan-500/30 disabled:opacity-50">
                 {saving ? <MapSpinner size={13} /> : <Save size={13} />} 保存
               </button>
@@ -297,9 +297,9 @@ export function KnowledgeDetailPage() {
             <>
               {/* HTML 预览/代码切换 */}
               {fullHtml && (
-                <div className="flex items-center rounded-lg border border-white/10 overflow-hidden mr-1">
-                  <button onClick={() => setCodeMode(false)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${!codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}><Eye size={13} /> 预览</button>
-                  <button onClick={() => setCodeMode(true)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}><CodeIcon size={13} /> 代码</button>
+                <div className="flex items-center rounded-lg border border-token-subtle overflow-hidden mr-1">
+                  <button onClick={() => setCodeMode(false)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${!codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}><Eye size={13} /> 预览</button>
+                  <button onClick={() => setCodeMode(true)} className={`flex items-center gap-1 px-2.5 py-1.5 text-xs ${codeMode ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}><CodeIcon size={13} /> 代码</button>
                 </div>
               )}
               {editable && <TopBtn onClick={startEdit} icon={Pencil} label="编辑" />}
@@ -328,7 +328,7 @@ export function KnowledgeDetailPage() {
           {loading ? (
             <MapSectionLoader text="正在加载知识…" />
           ) : !entry ? (
-            <div className="text-sm text-white/40 text-center py-20">知识不存在或已被删除</div>
+            <div className="text-sm text-token-muted text-center py-20">知识不存在或已被删除</div>
           ) : editing ? (
             <div className="mx-auto py-6 px-6" style={{ maxWidth: 1400 }}>
               <KnowledgeEditor mode={editMode} onModeChange={handleEditModeChange} value={draft} onChange={setDraft} />
@@ -336,34 +336,34 @@ export function KnowledgeDetailPage() {
           ) : (
             <div className="mx-auto py-8 px-6" style={{ maxWidth: 1400 }}>
               {/* 标题 + 元信息 */}
-              <div className="mb-6 pb-5 border-b border-white/8">
+              <div className="mb-6 pb-5 border-b border-token-subtle">
                 <h1
                   onClick={() => void handleRenameTitle()}
-                  className="text-2xl font-semibold text-white/95 leading-snug cursor-pointer hover:text-cyan-100"
+                  className="text-2xl font-semibold text-token-primary leading-snug cursor-pointer hover:text-cyan-100"
                   title="点击修改标题"
                 >
                   {entry.title}
                 </h1>
                 <div className="flex items-center gap-2 flex-wrap mt-3">
-                  <span className="inline-flex items-center gap-1 text-[11px] text-white/40"><Layers size={11} /></span>
+                  <span className="inline-flex items-center gap-1 text-[11px] text-token-muted"><Layers size={11} /></span>
                   <select
                     value={entry.category ?? ''}
                     onChange={(e) => void handleSetCategory(e.target.value)}
-                    className="no-focus-ring px-2 py-1 rounded-md bg-white/5 border border-white/10 text-[11px] text-cyan-300/90 outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
+                    className="no-focus-ring px-2 py-1 rounded-md bg-token-nested border border-token-subtle text-[11px] text-cyan-300/90 outline-none focus:border-cyan-500/40"
                   >
                     <option value="">未分类</option>
                     {categories.map((c) => <option key={c} value={c}>{c}</option>)}
                   </select>
-                  <button onClick={() => void handleEditTags()} className="inline-flex items-center gap-1 text-[11px] text-white/40 hover:text-white" title="编辑标签">
+                  <button onClick={() => void handleEditTags()} className="inline-flex items-center gap-1 text-[11px] text-token-muted hover-text-primary" title="编辑标签">
                     <Tags size={11} />
                   </button>
                   {(entry.tags ?? []).map((t) => (
-                    <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-white/8 text-white/60">{t}</span>
+                    <span key={t} className="text-[11px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{t}</span>
                   ))}
-                  {(entry.tags ?? []).length === 0 && <button onClick={() => void handleEditTags()} className="text-[11px] text-white/30 hover:text-white/60">+ 加标签</button>}
-                  <span className="text-white/15">|</span>
+                  {(entry.tags ?? []).length === 0 && <button onClick={() => void handleEditTags()} className="text-[11px] text-token-muted-faint hover-text-primary">+ 加标签</button>}
+                  <span className="text-token-muted-faint">|</span>
                   {vIds.length === 0 ? (
-                    <button onClick={() => setLinkOpen(true)} className="inline-flex items-center gap-1 text-[11px] text-white/30 hover:text-purple-300">
+                    <button onClick={() => setLinkOpen(true)} className="inline-flex items-center gap-1 text-[11px] text-token-muted-faint hover:text-purple-300">
                       <GitBranch size={11} /> 关联版本
                     </button>
                   ) : (
@@ -374,13 +374,13 @@ export function KnowledgeDetailPage() {
                     ))
                   )}
                 </div>
-                <div className="flex items-center gap-2 text-[11px] text-white/30 mt-3">
+                <div className="flex items-center gap-2 text-[11px] text-token-muted-faint mt-3">
                   {/* 文本类知识允许手动纠错格式（Markdown ↔ 富文本），历史误标一键修正 */}
                   {(editable || effectiveMarkdown) && !fullHtml ? (
                     <select
                       value={effectiveMarkdown ? 'text/markdown' : 'text/html'}
                       onChange={(e) => void handleSetFormat(e.target.value)}
-                      className="no-focus-ring px-1.5 py-0.5 rounded bg-white/5 border border-white/10 text-[11px] text-white/50 outline-none focus:border-cyan-500/40 [&>option]:bg-[#16181d]"
+                      className="no-focus-ring px-1.5 py-0.5 rounded bg-token-nested border border-token-subtle text-[11px] text-token-secondary outline-none focus:border-cyan-500/40"
                       title="文档格式（渲染与编辑方式）"
                     >
                       <option value="text/markdown">Markdown</option>
@@ -412,14 +412,14 @@ export function KnowledgeDetailPage() {
                           key={optionKind}
                           onClick={() => void handleCreativePublish(optionKind)}
                           disabled={publishingKind != null || loading}
-                          className="group inline-flex min-w-[112px] items-center gap-2 rounded-lg border border-white/10 bg-white/[0.04] px-3 py-2 text-left hover:border-cyan-400/35 hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-55"
+                          className="group inline-flex min-w-[112px] items-center gap-2 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-left hover:border-cyan-400/35 hover:bg-cyan-400/10 disabled:cursor-not-allowed disabled:opacity-55"
                         >
                           <span className="flex h-8 w-8 shrink-0 items-center justify-center rounded-md bg-cyan-400/10 text-cyan-200">
                             {active ? <MapSpinner size={14} /> : <Icon size={14} />}
                           </span>
                           <span className="min-w-0">
-                            <span className="block text-xs font-semibold text-white/90">{active ? '发布中' : label}</span>
-                            <span className="block truncate text-[10px] text-white/42">{desc}</span>
+                            <span className="block text-xs font-semibold text-token-primary">{active ? '发布中' : label}</span>
+                            <span className="block truncate text-[10px] text-token-secondary">{desc}</span>
                           </span>
                         </button>
                       );
@@ -485,7 +485,7 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
   // 若被标为 markdown 但正文其实是 HTML（历史混存），按 HTML 渲染避免吐裸标签；编辑时会转成干净 md。
   if (hasText && markdown) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+      <div className="rounded-xl border border-token-subtle bg-token-nested px-7 py-6">
         {contentLooksHtml(content) ? (
           <div className="knowledge-rich text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
         ) : (
@@ -496,7 +496,7 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
   }
   if (hasText && html) {
     if (codeMode) {
-      return <pre className="rounded-xl border border-white/10 bg-white/[0.02] p-4 text-[12.5px] leading-relaxed text-white/80 overflow-x-auto whitespace-pre-wrap break-words" style={{ fontFamily: 'monospace' }}>{content}</pre>;
+      return <pre className="rounded-xl border border-token-subtle bg-token-nested p-4 text-[12.5px] leading-relaxed text-token-primary overflow-x-auto whitespace-pre-wrap break-words" style={{ fontFamily: 'monospace' }}>{content}</pre>;
     }
     // 完整 HTML 文档（含 doctype/html/head/style）→ 沙箱 iframe 按真实网页渲染，保留自带样式与布局。
     // sandbox 不带 allow-same-origin：脚本跑在不透明源，拿不到父页 token/DOM，安全隔离。
@@ -506,36 +506,36 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
           srcDoc={content!}
           title={entry.title}
           sandbox="allow-scripts allow-popups"
-          className="w-full rounded-xl border border-white/10"
+          className="w-full rounded-xl border border-token-subtle"
           style={{ height: '78vh', background: '#fff' }}
         />
       );
     }
     // 富文本片段 → 内联渲染，融入当前主题；与编辑器同 class（knowledge-rich），所见即所得
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+      <div className="rounded-xl border border-token-subtle bg-token-nested px-7 py-6">
         <div className="knowledge-rich text-[14.5px]" style={{ lineHeight: 1.85 }} dangerouslySetInnerHTML={{ __html: sanitizeHtml(content!) }} />
       </div>
     );
   }
   if (hasText) {
     return (
-      <div className="rounded-xl border border-white/10 bg-white/[0.02] px-7 py-6">
+      <div className="rounded-xl border border-token-subtle bg-token-nested px-7 py-6">
         <MarkdownContent content={content!} variant="reading" />
       </div>
     );
   }
   if (entry.contentType.startsWith('image/') && fileUrl) {
-    return <img src={fileUrl} alt={entry.title} className="max-w-full rounded-xl border border-white/10" />;
+    return <img src={fileUrl} alt={entry.title} className="max-w-full rounded-xl border border-token-subtle" />;
   }
   if (entry.contentType.includes('pdf') && fileUrl) {
-    return <iframe src={fileUrl} title={entry.title} className="w-full rounded-xl border border-white/10" style={{ height: '78vh' }} />;
+    return <iframe src={fileUrl} title={entry.title} className="w-full rounded-xl border border-token-subtle" style={{ height: '78vh' }} />;
   }
   if (fileUrl) {
     return (
       <div className="flex flex-col items-center gap-3 py-16 text-center">
         <KindIcon size={36} style={{ color: kindColor }} className="opacity-60" />
-        <div className="text-sm text-white/55">该文件类型暂不支持在线预览</div>
+        <div className="text-sm text-token-secondary">该文件类型暂不支持在线预览</div>
         <a href={fileUrl} target="_blank" rel="noreferrer" className="px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm">
           下载 / 新窗口打开
         </a>
@@ -544,7 +544,7 @@ function DocBody({ entry, content, fileUrl, html, markdown, codeMode, editable, 
   }
   return (
     <div className="flex flex-col items-center gap-3 py-16 text-center">
-      <div className="text-sm text-white/45">这篇知识还没有内容</div>
+      <div className="text-sm text-token-muted">这篇知识还没有内容</div>
       {editable && (
         <button onClick={onStartEdit} className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-cyan-500/15 text-cyan-300 border border-cyan-500/30 hover:bg-cyan-500/25 text-sm">
           <Pencil size={13} /> 开始编写
@@ -632,10 +632,10 @@ function FolderNav({ entries, currentId, onOpen, onRename, onMove, onReorder }: 
   });
 
   return (
-    <div className="shrink-0 w-64 border-r border-white/8 overflow-y-auto py-3 px-2 flex flex-col gap-0.5" style={{ overscrollBehavior: 'contain' }}>
+    <div className="shrink-0 w-64 border-r border-token-subtle overflow-y-auto py-3 px-2 flex flex-col gap-0.5" style={{ overscrollBehavior: 'contain' }}>
       {folders.length > 0 && (
         <>
-          <div className="px-2 pb-1 text-[11px] text-white/35">文件夹 · 拖文件进入 / 拖动排序</div>
+          <div className="px-2 pb-1 text-[11px] text-token-muted-faint">文件夹 · 拖文件进入 / 拖动排序</div>
           {folders.map((f) => {
             const kids = byFolder(f.id);
             return (
@@ -645,17 +645,17 @@ function FolderNav({ entries, currentId, onOpen, onRename, onMove, onReorder }: 
                   {kids.map((d) => (
                     <NavItem key={d.id} entry={d} active={d.id === currentId} highlight={overId === d.id} onOpen={onOpen} onRename={onRename} {...dragProps(d)} />
                   ))}
-                  {kids.length === 0 && <div className="px-2 py-1 text-[11px] text-white/25">空文件夹，把文件拖进来</div>}
+                  {kids.length === 0 && <div className="px-2 py-1 text-[11px] text-token-muted-faint">空文件夹，把文件拖进来</div>}
                 </div>
               </div>
             );
           })}
-          <div className="my-1 border-t border-white/8" />
+          <div className="my-1 border-t border-token-subtle" />
         </>
       )}
 
       <div
-        className={`px-2 pb-1 text-[11px] rounded ${overId === '__root__' ? 'text-cyan-300 bg-cyan-500/10' : 'text-white/35'}`}
+        className={`px-2 pb-1 text-[11px] rounded ${overId === '__root__' ? 'text-cyan-300 bg-cyan-500/10' : 'text-token-muted-faint'}`}
         onDragOver={(ev) => { ev.preventDefault(); setOverId('__root__'); }}
         onDragLeave={() => setOverId((v) => (v === '__root__' ? null : v))}
         onDrop={(ev) => { ev.preventDefault(); handleDropOnRoot(); }}
@@ -697,7 +697,7 @@ function FolderRow({ folder, count, highlight, onRename, ...drag }: {
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') setEditing(false); }}
         onBlur={submit}
-        className="no-focus-ring w-full text-sm bg-white/10 border border-cyan-500/40 rounded-md px-2 py-1 text-white outline-none"
+        className="no-focus-ring w-full text-sm bg-token-nested border border-cyan-500/40 rounded-md px-2 py-1 text-token-primary outline-none"
       />
     );
   }
@@ -705,12 +705,12 @@ function FolderRow({ folder, count, highlight, onRename, ...drag }: {
     <div
       {...drag}
       onDoubleClick={() => { setVal(folder.title); setEditing(true); }}
-      className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-grab active:cursor-grabbing select-none ${highlight ? 'bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-500/40' : 'text-white/80 hover:bg-white/5'}`}
+      className={`flex items-center gap-2 px-2 py-1.5 rounded-md text-sm cursor-grab active:cursor-grabbing select-none ${highlight ? 'bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-500/40' : 'text-token-primary hover-bg-soft'}`}
       title={`${folder.title}（双击改名，可拖动排序）`}
     >
       <FolderOpen size={15} className="shrink-0 text-amber-300/80" />
       <span className="truncate font-medium">{folder.title}</span>
-      <span className="ml-auto text-[11px] text-white/30 shrink-0">{count}</span>
+      <span className="ml-auto text-[11px] text-token-muted-faint shrink-0">{count}</span>
     </div>
   );
 }
@@ -740,7 +740,7 @@ function NavItem({ entry, active, highlight, onOpen, onRename, ...drag }: {
         onChange={(e) => setVal(e.target.value)}
         onKeyDown={(e) => { if (e.key === 'Enter') { e.preventDefault(); submit(); } if (e.key === 'Escape') setEditing(false); }}
         onBlur={submit}
-        className="no-focus-ring w-full text-sm bg-white/10 border border-cyan-500/40 rounded-md px-2 py-1 text-white outline-none"
+        className="no-focus-ring w-full text-sm bg-token-nested border border-cyan-500/40 rounded-md px-2 py-1 text-token-primary outline-none"
       />
     );
   }
@@ -752,7 +752,7 @@ function NavItem({ entry, active, highlight, onOpen, onRename, ...drag }: {
       onDoubleClick={() => { setVal(entry.title); setEditing(true); }}
       className={`w-full text-left flex items-center gap-2 px-2 py-1.5 rounded-md text-sm truncate select-none ${
         highlight ? 'bg-cyan-500/15 text-cyan-200 ring-1 ring-cyan-500/40'
-        : active ? 'bg-cyan-500/15 text-cyan-100' : 'text-white/70 hover:bg-white/5'
+        : active ? 'bg-cyan-500/15 text-cyan-100' : 'text-token-secondary hover-bg-soft'
       }`}
       title={`${entry.title}（双击改名，可拖动排序/移入文件夹）`}
     >
@@ -764,7 +764,7 @@ function NavItem({ entry, active, highlight, onOpen, onRename, ...drag }: {
 
 function TopBtn({ onClick, icon: Icon, label }: { onClick: () => void; icon: typeof Pencil; label: string }) {
   return (
-    <button onClick={onClick} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-white/60 hover:text-white hover:bg-white/5 border border-white/10">
+    <button onClick={onClick} className="flex items-center gap-1 px-2.5 py-1.5 rounded-lg text-sm text-token-secondary hover-text-primary hover-bg-soft border border-token-subtle">
       <Icon size={13} /> {label}
     </button>
   );

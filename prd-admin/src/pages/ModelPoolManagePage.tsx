@@ -520,21 +520,16 @@ export function ModelPoolManagePage() {
 
         {/* ══ 左侧：模型池列表 ══ */}
         <GlassCard animated glow className="flex flex-col min-h-0 p-0 overflow-hidden">
-          <div className="p-3 border-b border-white/10 space-y-2">
+          <div className="p-3 border-b border-token-subtle space-y-2">
             <div className="flex items-center gap-2">
               <div className="relative flex-1">
-                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={14} className="absolute left-2.5 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
                   type="text"
                   placeholder="搜索..."
                   value={searchTerm}
                   onChange={(e) => setSearchTerm(e.target.value)}
-                  className="w-full h-8 pl-8 pr-3 rounded-lg outline-none text-[12px]"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--border-subtle)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full h-8 pl-8 pr-3 rounded-lg outline-none text-[12px] bg-token-input border border-token-subtle text-token-primary"
                 />
               </div>
               <Button variant="primary" size="sm" onClick={handleAddPool} title="新建模型池">
@@ -551,12 +546,12 @@ export function ModelPoolManagePage() {
 
           <div className="flex-1 overflow-auto">
             {loading ? (
-              <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="p-8 text-center text-token-muted">
                 <Database size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">加载中...</div>
               </div>
             ) : filteredPools.length === 0 ? (
-              <div className="p-8 text-center" style={{ color: 'var(--text-muted)' }}>
+              <div className="p-8 text-center text-token-muted">
                 <Database size={32} className="mx-auto mb-2 opacity-40" />
                 <div className="text-sm">暂无模型池</div>
               </div>
@@ -567,7 +562,7 @@ export function ModelPoolManagePage() {
                   return (
                     <div key={group.type}>
                       {/* 类型分组标题 */}
-                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 sticky top-0 z-[1]" style={{ color: 'var(--text-muted)', background: 'var(--bg-input)' }}>
+                      <div className="px-3 py-1.5 text-[10px] font-semibold uppercase tracking-wider flex items-center gap-1.5 sticky top-0 z-[1] text-token-muted bg-token-input">
                         <GroupIcon size={11} />
                         {group.label}
                         <span className="opacity-60">{group.pools.length}</span>
@@ -599,7 +594,7 @@ export function ModelPoolManagePage() {
                               </div>
                               <div className="min-w-0 flex-1">
                                 <div className="flex items-center gap-1.5">
-                                  <span className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                                  <span className="text-[12px] font-medium truncate text-token-primary">
                                     {pool.name}
                                   </span>
                                   {pool.isDefaultForType && (
@@ -608,7 +603,7 @@ export function ModelPoolManagePage() {
                                     </span>
                                   )}
                                 </div>
-                                <div className="text-[10px] mt-px flex items-center gap-1.5" style={{ color: 'var(--text-muted)' }}>
+                                <div className="text-[10px] mt-px flex items-center gap-1.5 text-token-muted">
                                   {modelCount > 0 ? (
                                     <>
                                       <span className="w-1 h-1 rounded-full inline-block" style={{ background: healthyCnt === modelCount ? 'rgba(34,197,94,0.95)' : 'rgba(251,191,36,0.95)' }} />
@@ -644,7 +639,7 @@ export function ModelPoolManagePage() {
         {/* ══ 右侧：单面板详情 ══ */}
         {!selectedPool ? (
           <GlassCard animated glow className="flex items-center justify-center overflow-hidden">
-            <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+            <div className="text-center text-token-muted">
               <Database size={40} className="mx-auto mb-3 opacity-30" />
               <div className="text-[13px]">选择一个模型池</div>
             </div>
@@ -661,7 +656,7 @@ export function ModelPoolManagePage() {
               {/* ── 头部：名称 + 操作 ── */}
               <div className="sticky top-0 z-[1] px-5 py-3 flex items-center justify-between gap-3 border-b" style={{ borderColor: 'var(--nested-block-border)', background: 'var(--bg-card)' }}>
                 <div className="flex items-center gap-2.5 min-w-0">
-                  <h3 className="text-[15px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+                  <h3 className="text-[15px] font-semibold truncate text-token-primary">
                     {selectedPool.name}
                   </h3>
                   {selectedPool.isDefaultForType && (
@@ -678,18 +673,18 @@ export function ModelPoolManagePage() {
                   </Button>
                   {/* 次操作：复制 / 编辑 / 删除（保持小图标） */}
                   <Tooltip content="复制">
-                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleCopyPool(selectedPool)}>
-                      <Copy size={15} style={{ color: 'var(--text-muted)' }} />
+                    <button className="p-1.5 rounded-lg hover-bg-soft transition-colors" onClick={() => handleCopyPool(selectedPool)}>
+                      <Copy size={15} className="text-token-muted" />
                     </button>
                   </Tooltip>
                   <Tooltip content="编辑">
-                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleEditPool(selectedPool)}>
-                      <Edit size={15} style={{ color: 'var(--text-muted)' }} />
+                    <button className="p-1.5 rounded-lg hover-bg-soft transition-colors" onClick={() => handleEditPool(selectedPool)}>
+                      <Edit size={15} className="text-token-muted" />
                     </button>
                   </Tooltip>
                   <Tooltip content="删除">
-                    <button className="p-1.5 rounded-lg hover:bg-white/10 transition-colors" onClick={() => handleDeletePool(selectedPool)}>
-                      <Trash2 size={15} style={{ color: 'var(--text-muted)' }} />
+                    <button className="p-1.5 rounded-lg hover-bg-soft transition-colors" onClick={() => handleDeletePool(selectedPool)}>
+                      <Trash2 size={15} className="text-token-muted" />
                     </button>
                   </Tooltip>
                 </div>
@@ -697,45 +692,45 @@ export function ModelPoolManagePage() {
 
               {/* ── 属性标签行 ── */}
               <div className="px-5 py-2.5 flex items-center gap-3 flex-wrap text-[11px] border-b" style={{ borderColor: 'var(--nested-block-border)' }}>
-                <span className="inline-flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+                <span className="inline-flex items-center gap-1 text-token-muted">
                   <TypeIcon size={12} />
                   {getModelTypeDisplayName(selectedPool.modelType || 'chat')}
                 </span>
                 {selectedPool.code && (
-                  <span className="font-mono" style={{ color: 'var(--text-muted)' }}>{selectedPool.code}</span>
+                  <span className="font-mono text-token-muted">{selectedPool.code}</span>
                 )}
-                <span style={{ color: 'var(--text-muted)' }}>优先级 {selectedPool.priority ?? 50}</span>
+                <span className="text-token-muted">优先级 {selectedPool.priority ?? 50}</span>
                 {selectedPool.description && (
                   <>
                     <span style={{ color: 'var(--border-default)' }}>|</span>
-                    <span style={{ color: 'var(--text-muted)' }}>{selectedPool.description}</span>
+                    <span className="text-token-muted">{selectedPool.description}</span>
                   </>
                 )}
               </div>
 
               {/* ── 统计瓦片 ── */}
               <div className="px-5 py-3 grid grid-cols-4 gap-3">
-                <div className="rounded-lg px-3 py-2 text-center" style={{ background: 'var(--bg-input)' }}>
-                  <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'var(--text-primary)' }}>{modelCount}</div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>模型</div>
+                <div className="rounded-lg px-3 py-2 text-center bg-token-input">
+                  <div className="text-[18px] font-semibold tabular-nums text-token-primary">{modelCount}</div>
+                  <div className="text-[10px] text-token-muted">模型</div>
                 </div>
                 <div className="rounded-lg px-3 py-2 text-center" style={{ background: 'rgba(34,197,94,0.06)' }}>
                   <div className="text-[18px] font-semibold tabular-nums" style={{ color: 'rgba(34,197,94,0.95)' }}>{healthyCnt}</div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>健康</div>
+                  <div className="text-[10px] text-token-muted">健康</div>
                 </div>
                 <div className="rounded-lg px-3 py-2 text-center" style={{ background: degradedCnt > 0 ? 'rgba(251,191,36,0.06)' : 'var(--bg-input)' }}>
                   <div className="text-[18px] font-semibold tabular-nums" style={{ color: degradedCnt > 0 ? 'rgba(251,191,36,0.95)' : 'var(--text-muted)' }}>{degradedCnt}</div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>降权</div>
+                  <div className="text-[10px] text-token-muted">降权</div>
                 </div>
                 <div className="rounded-lg px-3 py-2 text-center" style={{ background: unavailableCnt > 0 ? 'rgba(239,68,68,0.06)' : 'var(--bg-input)' }}>
                   <div className="text-[18px] font-semibold tabular-nums" style={{ color: unavailableCnt > 0 ? 'rgba(239,68,68,0.95)' : 'var(--text-muted)' }}>{unavailableCnt}</div>
-                  <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>不可用</div>
+                  <div className="text-[10px] text-token-muted">不可用</div>
                 </div>
               </div>
 
               {(!selectedPool.models || selectedPool.models.length === 0) ? (
                 <div className="flex items-center justify-center py-12">
-                  <div className="text-center" style={{ color: 'var(--text-muted)' }}>
+                  <div className="text-center text-token-muted">
                     <div className="text-sm">暂无模型</div>
                     <div className="mt-2">
                       <Button variant="secondary" size="sm" onClick={() => handleEditPool(selectedPool)}>
@@ -749,7 +744,7 @@ export function ModelPoolManagePage() {
                 <>
                   {/* ── 模型列表 ── */}
                   <div className="px-5 pb-3">
-                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[11px] font-semibold mb-2 text-token-muted">
                       模型列表
                     </div>
                     <div className="space-y-1">
@@ -803,7 +798,7 @@ export function ModelPoolManagePage() {
                                       handleRemoveModelFromPool(selectedPool, model);
                                     }}
                                   >
-                                    <Trash2 size={12} style={{ color: 'var(--text-muted)' }} />
+                                    <Trash2 size={12} className="text-token-muted" />
                                   </button>
                                 </Tooltip>
                               </div>
@@ -816,7 +811,7 @@ export function ModelPoolManagePage() {
 
                   {/* ── 调度策略可视化 ── */}
                   <div className="px-5 pb-4">
-                    <div className="text-[11px] font-semibold mb-2" style={{ color: 'var(--text-muted)' }}>
+                    <div className="text-[11px] font-semibold mb-2 text-token-muted">
                       调度预览
                     </div>
                     <div className="rounded-xl surface-inset">
@@ -846,7 +841,7 @@ export function ModelPoolManagePage() {
               {/* ── 第一行：名称 / 代码 ── */}
               <div className={`grid gap-3 ${isMobile ? 'grid-cols-1' : 'grid-cols-2'}`}>
                 <div>
-                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5 text-token-secondary">
                     模型池名称
                   </label>
                   <input
@@ -854,12 +849,11 @@ export function ModelPoolManagePage() {
                     value={poolForm.name}
                     onChange={(e) => setPoolForm({ ...poolForm, name: e.target.value })}
                     placeholder="例如：主对话模型池"
-                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
                 <div>
-                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5 text-token-secondary">
                     模型池代码
                   </label>
                   <input
@@ -867,15 +861,14 @@ export function ModelPoolManagePage() {
                     value={poolForm.code}
                     onChange={(e) => setPoolForm({ ...poolForm, code: e.target.value })}
                     placeholder="例如：main-chat-pool"
-                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px]"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] bg-token-input border border-token-default text-token-primary"
                   />
                 </div>
               </div>
 
               {/* ── 模型类型面板 ── */}
               <div>
-                <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-1.5 text-token-secondary">
                   模型类型
                 </label>
                 <ModelTypePicker
@@ -887,7 +880,7 @@ export function ModelPoolManagePage() {
               {/* ── 第二行：优先级 / 调度策略 icons / 设为默认 ── */}
               <div className={`flex gap-3 ${isMobile ? 'flex-col' : 'items-end'}`}>
                 <div className={isMobile ? 'w-full' : 'w-[80px] shrink-0'}>
-                  <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="block text-[12px] font-semibold mb-1.5 text-token-secondary">
                     优先级
                   </label>
                   <input
@@ -897,8 +890,7 @@ export function ModelPoolManagePage() {
                     placeholder="50"
                     min={1}
                     max={100}
-                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] text-center"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                    className="w-full h-9 px-3 rounded-[10px] outline-none text-[13px] text-center bg-token-input border border-token-default text-token-primary"
                     title="数字越小优先级越高"
                   />
                 </div>
@@ -915,7 +907,7 @@ export function ModelPoolManagePage() {
                     onChange={(e) => setPoolForm({ ...poolForm, isDefaultForType: e.target.checked })}
                     className="h-4 w-4 rounded"
                   />
-                  <label htmlFor="isDefaultForType" className="text-[12px] whitespace-nowrap" style={{ color: 'var(--text-secondary)' }}>
+                  <label htmlFor="isDefaultForType" className="text-[12px] whitespace-nowrap text-token-secondary">
                     设为备用
                   </label>
                 </div>
@@ -923,7 +915,7 @@ export function ModelPoolManagePage() {
 
               {/* ── 第三行：描述 ── */}
               <div>
-                <label className="block text-[12px] font-semibold mb-1.5" style={{ color: 'var(--text-secondary)' }}>
+                <label className="block text-[12px] font-semibold mb-1.5 text-token-secondary">
                   描述
                 </label>
                 <textarea
@@ -931,15 +923,14 @@ export function ModelPoolManagePage() {
                   onChange={(e) => setPoolForm({ ...poolForm, description: e.target.value })}
                   placeholder="模型池用途说明..."
                   rows={2}
-                  className="w-full px-3 py-2 rounded-[10px] outline-none text-[13px] resize-none"
-                  style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                  className="w-full px-3 py-2 rounded-[10px] outline-none text-[13px] resize-none bg-token-input border border-token-default text-token-primary"
                 />
               </div>
 
               {/* ── 第四行：统一的「调度与模型」区域 ── */}
               <div>
                 <div className="flex items-center justify-between mb-2">
-                  <label className="text-[12px] font-semibold" style={{ color: 'var(--text-secondary)' }}>
+                  <label className="text-[12px] font-semibold text-token-secondary">
                     调度与模型 ({poolForm.models.length})
                   </label>
                   <Button variant="secondary" size="xs" onClick={() => setModelPickerOpen(true)}>
@@ -952,7 +943,7 @@ export function ModelPoolManagePage() {
                   className="rounded-[12px] overflow-hidden surface-inset"
                 >
                   {poolForm.models.length === 0 ? (
-                    <div className="py-10 text-center text-[12px]" style={{ color: 'var(--text-muted)' }}>
+                    <div className="py-10 text-center text-[12px] text-token-muted">
                       暂无模型，点击"添加模型"按钮选择
                     </div>
                   ) : (
@@ -1011,14 +1002,13 @@ export function ModelPoolManagePage() {
                 {usageDialog.apps.map((app) => (
                   <div
                     key={app.appId}
-                    className="flex items-center gap-2.5 rounded-lg px-3 py-2"
-                    style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)' }}
+                    className="flex items-center gap-2.5 rounded-lg px-3 py-2 bg-token-input border border-token-subtle"
                   >
                     <div className="min-w-0 flex-1">
-                      <div className="text-[12px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                      <div className="text-[12px] font-medium truncate text-token-primary">
                         {app.displayName}
                       </div>
-                      <div className="text-[10px] font-mono truncate mt-px" style={{ color: 'var(--text-muted)' }}>
+                      <div className="text-[10px] font-mono truncate mt-px text-token-muted">
                         {app.appCode}
                       </div>
                     </div>
@@ -1027,8 +1017,7 @@ export function ModelPoolManagePage() {
                         {app.modelTypes.map((t) => (
                           <span
                             key={t}
-                            className="text-[9px] px-1.5 py-0.5 rounded"
-                            style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}
+                            className="text-[9px] px-1.5 py-0.5 rounded bg-token-input-hover text-token-muted"
                           >
                             {getModelTypeDisplayName(t)}
                           </span>
@@ -1037,8 +1026,7 @@ export function ModelPoolManagePage() {
                     )}
                     <Tooltip content="解绑此应用">
                       <button
-                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] hover:bg-white/10 transition-colors disabled:opacity-40"
-                        style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-secondary)' }}
+                        className="shrink-0 inline-flex items-center gap-1 px-2 py-1 rounded-md text-[11px] hover-bg-soft transition-colors disabled:opacity-40 border border-token-subtle text-token-secondary"
                         disabled={usageBusy}
                         onClick={() => handleUnbindOne(app.appId)}
                       >
@@ -1164,7 +1152,7 @@ function InlineDispatchPreview({
           <Icon size={13} style={{ color }} />
         </div>
         <span className="text-[12px] font-semibold" style={{ color }}>{meta.label}</span>
-        <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{meta.desc}</span>
+        <span className="text-[11px] text-token-muted">{meta.desc}</span>
       </div>
 
       {/* ── FailFast / Sequential: 线性流 ── */}
@@ -1216,28 +1204,27 @@ function InlineDispatchPreview({
                     }}
                   >
                     {platformNameById.get(m.platformId) && (
-                      <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
+                      <span className="text-[9px] px-1 py-0.5 rounded shrink-0 bg-token-input-hover text-token-muted">
                         {platformNameById.get(m.platformId)}
                       </span>
                     )}
-                    <span className="text-[11px] font-mono truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
+                    <span className="text-[11px] font-mono truncate flex-1 text-token-primary">{m.modelId}</span>
                     {editable ? (
                       <div className="flex items-center gap-1 shrink-0">
                         <input
                           type="number"
                           value={Number(m.priority ?? 0)}
                           onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
-                          className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
-                          style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                          className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center bg-token-input border border-token-default text-token-primary"
                           title="优先级（越小越优先）"
                           onClick={(e) => e.stopPropagation()}
                         />
                         <button
-                          className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                          className="p-0.5 rounded-md hover-bg-soft transition-colors"
                           onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
                           title="移除"
                         >
-                          <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                          <Trash2 size={11} className="text-token-muted" />
                         </button>
                       </div>
                     ) : (
@@ -1260,7 +1247,7 @@ function InlineDispatchPreview({
             })}
           </div>
           {strategyType === PoolStrategyType.Sequential && sorted.length > 1 && (
-            <div className="mt-2 ml-5 text-[10px] flex items-center gap-1" style={{ color: 'var(--text-muted)' }}>
+            <div className="mt-2 ml-5 text-[10px] flex items-center gap-1 text-token-muted">
               <ChevronRight size={9} />
               失败自动顺延到下一个端点
             </div>
@@ -1319,11 +1306,11 @@ function InlineDispatchPreview({
                   }}
                 >
                   {platformNameById.get(m.platformId) && (
-                    <span className="text-[9px] px-1 py-0.5 rounded" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
+                    <span className="text-[9px] px-1 py-0.5 rounded bg-token-input-hover text-token-muted">
                       {platformNameById.get(m.platformId)}
                     </span>
                   )}
-                  <span className="font-mono text-[10px] truncate max-w-full text-center" style={{ color: 'var(--text-primary)' }}>
+                  <span className="font-mono text-[10px] truncate max-w-full text-center text-token-primary">
                     {m.modelId}
                   </span>
                   {editable ? (
@@ -1332,17 +1319,16 @@ function InlineDispatchPreview({
                         type="number"
                         value={Number(m.priority ?? 0)}
                         onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
-                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
-                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center bg-token-input border border-token-default text-token-primary"
                         title="优先级（越小越优先）"
                         onClick={(e) => e.stopPropagation()}
                       />
                       <button
-                        className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                        className="p-0.5 rounded-md hover-bg-soft transition-colors"
                         onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
                         title="移除"
                       >
-                        <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                        <Trash2 size={11} className="text-token-muted" />
                       </button>
                     </div>
                   ) : isWinner ? (
@@ -1350,7 +1336,7 @@ function InlineDispatchPreview({
                       <Check size={9} /> 最快返回
                     </span>
                   ) : isActive ? (
-                    <span className="text-[9px]" style={{ color: 'var(--text-muted)' }}>竞争中...</span>
+                    <span className="text-[9px] text-token-muted">竞争中...</span>
                   ) : null}
                 </div>
               );
@@ -1395,32 +1381,31 @@ function InlineDispatchPreview({
                     {isCurrent ? (
                       <ArrowRight size={9} style={{ color }} />
                     ) : (
-                      <span className="text-[9px] tabular-nums" style={{ color: 'var(--text-muted)' }}>{i + 1}</span>
+                      <span className="text-[9px] tabular-nums text-token-muted">{i + 1}</span>
                     )}
                   </div>
                   {platformNameById.get(m.platformId) && (
-                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0" style={{ background: 'var(--bg-input-hover)', color: 'var(--text-muted)' }}>
+                    <span className="text-[9px] px-1 py-0.5 rounded shrink-0 bg-token-input-hover text-token-muted">
                       {platformNameById.get(m.platformId)}
                     </span>
                   )}
-                  <span className="font-mono text-[11px] truncate flex-1" style={{ color: 'var(--text-primary)' }}>{m.modelId}</span>
+                  <span className="font-mono text-[11px] truncate flex-1 text-token-primary">{m.modelId}</span>
                   {editable ? (
                     <div className="flex items-center gap-1 shrink-0">
                       <input
                         type="number"
                         value={Number(m.priority ?? 0)}
                         onChange={(e) => onUpdatePriority?.(m.platformId, m.modelId, parseInt(e.target.value) || 0)}
-                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center"
-                        style={{ background: 'var(--bg-input)', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+                        className="h-6 w-12 px-1 rounded-md outline-none text-[10px] text-center bg-token-input border border-token-default text-token-primary"
                         title="优先级（越小越优先）"
                         onClick={(e) => e.stopPropagation()}
                       />
                       <button
-                        className="p-0.5 rounded-md hover:bg-white/10 transition-colors"
+                        className="p-0.5 rounded-md hover-bg-soft transition-colors"
                         onClick={(e) => { e.stopPropagation(); onRemoveModel?.(m.platformId, m.modelId); }}
                         title="移除"
                       >
-                        <Trash2 size={11} style={{ color: 'var(--text-muted)' }} />
+                        <Trash2 size={11} className="text-token-muted" />
                       </button>
                     </div>
                   ) : isCurrent ? (
@@ -1432,7 +1417,7 @@ function InlineDispatchPreview({
               );
             })}
           </div>
-          <div className="mt-2 text-center text-[10px]" style={{ color: 'var(--text-muted)' }}>
+          <div className="mt-2 text-center text-[10px] text-token-muted">
             请求按顺序均匀分配到 {sorted.length} 个端点
           </div>
         </div>

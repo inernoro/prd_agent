@@ -1,3 +1,4 @@
+using System.Net;
 using MongoDB.Bson;
 using PrdAgent.LlmGw.ModelPools;
 using PrdAgent.LlmGw.Models;
@@ -547,6 +548,92 @@ public static class GatewayConfigurationProvisioning
         return uri.Scheme is "http" or "https"
             ? null
             : "WSS 仅支持豆包流式语音识别；其他 Exchange 必须使用 HTTP 或 HTTPS";
+    }
+
+    public static bool IsSafeExternalExchangeAddress(IPAddress address)
+    {
+        if (address.IsIPv4MappedToIPv6)
+            address = address.MapToIPv4();
+
+        if (IPAddress.IsLoopback(address))
+            return false;
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var bytes = address.GetAddressBytes();
+            if (bytes.Length != 4) return false;
+            var b0 = bytes[0];
+            var b1 = bytes[1];
+            var b2 = bytes[2];
+            var b3 = bytes[3];
+            if (b0 == 192 && b1 == 0 && b2 == 0 && b3 is 9 or 10)
+                return true;
+            return !(b0 == 0
+                     || b0 == 10
+                     || b0 == 127
+                     || (b0 == 100 && b1 is >= 64 and <= 127)
+                     || (b0 == 169 && b1 == 254)
+                     || (b0 == 172 && b1 is >= 16 and <= 31)
+                     || (b0 == 192 && b1 == 0 && b2 == 0)
+                     || (b0 == 192 && b1 == 0 && b2 == 2)
+                     || (b0 == 192 && b1 == 88 && b2 == 99)
+                     || (b0 == 192 && b1 == 168)
+                     || (b0 == 198 && b1 is 18 or 19)
+                     || (b0 == 198 && b1 == 51 && b2 == 100)
+                     || (b0 == 203 && b1 == 0 && b2 == 113)
+                     || b0 >= 224);
+        }
+
+        if (address.AddressFamily == System.Net.Sockets.AddressFamily.InterNetworkV6)
+        {
+            var bytes = address.GetAddressBytes();
+            return !(address.Equals(IPAddress.IPv6Any)
+                     || address.Equals(IPAddress.IPv6Loopback)
+                     || address.Equals(IPAddress.IPv6None)
+                     || address.IsIPv6LinkLocal
+                     || address.IsIPv6SiteLocal
+                     || HasAddressPrefix(bytes, [0x00, 0x64, 0xff, 0x9b, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 96)
+                     || HasAddressPrefix(bytes, [0x00, 0x64, 0xff, 0x9b, 0x00, 0x01], 48)
+                     || HasAddressPrefix(bytes, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00], 64)
+                     || HasAddressPrefix(bytes, [0x01, 0x00, 0x00, 0x00, 0x00, 0x00, 0x00, 0x01], 64)
+                     || (HasAddressPrefix(bytes, [0x20, 0x01, 0x00], 23) && !IsGloballyReachableIetfProtocolAssignment(bytes))
+                     || HasAddressPrefix(bytes, [0x20, 0x01, 0x0d, 0xb8], 32)
+                     || HasAddressPrefix(bytes, [0x20, 0x02], 16)
+                     || HasAddressPrefix(bytes, [0x3f, 0xff, 0x00], 20)
+                     || HasAddressPrefix(bytes, [0x5f, 0x00], 16)
+                     || bytes[0] == 0xff
+                     || (bytes[0] & 0xfe) == 0xfc);
+        }
+
+        return false;
+    }
+
+    private static bool IsGloballyReachableIetfProtocolAssignment(byte[] address)
+    {
+        var isProtocolAnycast = HasAddressPrefix(address, [0x20, 0x01, 0x00, 0x01, 0x00, 0x00, 0x00, 0x00], 64)
+                                && address[8] == 0 && address[9] == 0 && address[10] == 0
+                                && address[11] == 0 && address[12] == 0 && address[13] == 0 && address[14] == 0
+                                && address[15] is >= 1 and <= 3;
+        return isProtocolAnycast
+               || HasAddressPrefix(address, [0x20, 0x01, 0x00, 0x03], 32)
+               || HasAddressPrefix(address, [0x20, 0x01, 0x00, 0x04, 0x01, 0x12], 48)
+               || HasAddressPrefix(address, [0x20, 0x01, 0x00, 0x20], 28)
+               || HasAddressPrefix(address, [0x20, 0x01, 0x00, 0x30], 28);
+    }
+
+    private static bool HasAddressPrefix(byte[] address, byte[] prefix, int prefixLength)
+    {
+        var wholeBytes = prefixLength / 8;
+        var remainingBits = prefixLength % 8;
+        if (address.Length * 8 < prefixLength || prefix.Length < wholeBytes + (remainingBits > 0 ? 1 : 0))
+            return false;
+        for (var index = 0; index < wholeBytes; index++)
+        {
+            if (address[index] != prefix[index]) return false;
+        }
+        if (remainingBits == 0) return true;
+        var mask = (byte)(0xff << (8 - remainingBits));
+        return (address[wholeBytes] & mask) == (prefix[wholeBytes] & mask);
     }
 
     private static bool ContainsSensitiveQueryParameter(Uri uri)

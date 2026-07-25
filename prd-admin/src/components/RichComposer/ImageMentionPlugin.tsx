@@ -123,7 +123,7 @@ export function ImageMentionPlugin({
 
         const anchor = selection.anchor;
         const anchorNode = anchor.getNode();
-        
+
         if (!(anchorNode instanceof TextNode)) {
           setMenuOpen(false);
           return;
@@ -246,29 +246,10 @@ export function ImageMentionPlugin({
   return createPortal(
     <div
       ref={menuRef}
-      style={{
-        position: 'fixed',
-        left: menuPosition.x,
-        top: menuPosition.y,
-        zIndex: 9999,
-        background: 'var(--bg-elevated, #1a1a2e)',
-        border: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-        borderRadius: 12,
-        boxShadow: '0 12px 40px rgba(0,0,0,0.5)',
-        padding: 4,
-        minWidth: 200,
-        maxHeight: 240,
-        overflowY: 'auto',
-      }}
+      className="border border-token-subtle" style={{ position: 'fixed', left: menuPosition.x, top: menuPosition.y, zIndex: 9999, background: 'var(--bg-elevated, #1a1a2e)', borderRadius: 12, boxShadow: '0 12px 40px rgba(0,0,0,0.5)', padding: 4, minWidth: 200, maxHeight: 240, overflowY: 'auto' }}
     >
       <div
-        style={{
-          padding: '4px 8px',
-          fontSize: 10,
-          color: 'var(--text-muted, rgba(255,255,255,0.5))',
-          borderBottom: '1px solid var(--border-subtle, rgba(255,255,255,0.1))',
-          marginBottom: 4,
-        }}
+        className="border-b border-b-token-subtle" style={{ padding: '4px 8px', fontSize: 10, color: 'var(--text-muted, var(--text-secondary))', marginBottom: 4 }}
       >
         选择图片引用（{filteredOptions.length}）
       </div>
@@ -311,19 +292,13 @@ export function ImageMentionPlugin({
           <img
             src={opt.src}
             alt=""
-            style={{
-              width: 24,
-              height: 24,
-              borderRadius: 4,
-              objectFit: 'cover',
-              border: '1px solid rgba(255,255,255,0.15)',
-            }}
+            className="border border-token-subtle" style={{ width: 24, height: 24, borderRadius: 4, objectFit: 'cover' }}
           />
           <span
             style={{
               flex: 1,
               fontSize: 12,
-              color: 'var(--text-primary, rgba(255,255,255,0.9))',
+              color: 'var(--text-primary, var(--text-primary))',
               overflow: 'hidden',
               textOverflow: 'ellipsis',
               whiteSpace: 'nowrap',

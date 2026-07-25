@@ -235,7 +235,7 @@ function ThinkingBlock({ thinking, color, streaming }: { thinking: string; color
   return (
     <div className="mb-3">
       <button
-        className="flex items-center gap-1.5 text-[12px] py-1 px-1 rounded hover:bg-white/5 transition-colors"
+        className="flex items-center gap-1.5 text-[12px] py-1 px-1 rounded hover-bg-soft transition-colors"
         style={{ color: 'var(--text-muted)' }}
         onClick={() => setExpanded(!expanded)}
       >
@@ -1342,7 +1342,7 @@ export function ArenaPage() {
                     className={cn(
                       'w-full text-left px-3 py-2.5 rounded-[10px] mb-0.5',
                       'transition-colors duration-150 group',
-                      activeBattleId === item.id ? 'bg-white/10' : 'hover:bg-white/5'
+                      activeBattleId === item.id ? 'bg-token-nested' : 'hover-bg-soft'
                     )}
                   >
                     <div className="flex items-start gap-2">
@@ -1389,7 +1389,7 @@ export function ArenaPage() {
         >
           <div className="flex items-center gap-3">
             <button
-              className="lg:hidden p-1.5 rounded-lg hover:bg-white/5"
+              className="lg:hidden p-1.5 rounded-lg hover-bg-soft"
               onClick={() => setSidebarCollapsed(!sidebarCollapsed)}
             >
               <Swords className="w-4 h-4 text-white/85" />
@@ -1451,7 +1451,7 @@ export function ArenaPage() {
                 className={cn(
                   'flex items-center gap-2 h-9 px-3 rounded-[10px] text-[13px] transition-colors',
                   'disabled:opacity-50 disabled:cursor-not-allowed',
-                  'hover:bg-white/5'
+                  'hover-bg-soft'
                 )}
                 style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-primary)' }}
               >
@@ -1496,8 +1496,8 @@ export function ArenaPage() {
                           onClick={() => { setSelectedGroupKey(g.key); setGroupDropdownOpen(false); }}
                           className={cn(
                             'w-full text-left px-3 py-2 text-[13px] transition-colors',
-                            'hover:bg-white/5',
-                            g.key === selectedGroupKey && 'bg-white/8'
+                            'hover-bg-soft',
+                            g.key === selectedGroupKey && 'bg-token-nested'
                           )}
                           style={{ color: 'var(--text-primary)' }}
                         >
@@ -1508,7 +1508,7 @@ export function ArenaPage() {
                       <div className="mx-2 my-1" style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }} />
                       <button
                         onClick={enterManageMode}
-                        className="w-full text-left px-3 py-2 text-[12px] transition-colors hover:bg-white/5 flex items-center gap-1.5"
+                        className="w-full text-left px-3 py-2 text-[12px] transition-colors hover-bg-soft flex items-center gap-1.5"
                         style={{ color: 'var(--text-muted)' }}
                       >
                         <Settings className="w-3.5 h-3.5" />
@@ -1533,7 +1533,7 @@ export function ArenaPage() {
                     <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>管理阵容</span>
                     <button
                       onClick={openCreateGroup}
-                      className="h-7 px-2 rounded-md text-[11px] flex items-center gap-1 hover:bg-white/5 transition-colors"
+                      className="h-7 px-2 rounded-md text-[11px] flex items-center gap-1 hover-bg-soft transition-colors"
                       style={{ color: 'rgba(99,102,241,0.9)' }}
                     >
                       <Plus className="w-3 h-3" />
@@ -1571,7 +1571,7 @@ export function ArenaPage() {
                             <div className="flex items-center gap-1 flex-shrink-0">
                               <button
                                 onClick={() => openEditGroup(ag)}
-                                className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
+                                className="p-1.5 rounded-md hover-bg-soft transition-colors"
                                 title="重命名分组"
                               >
                                 <Edit3 className="w-3.5 h-3.5" style={{ color: 'var(--text-muted)' }} />
@@ -1582,7 +1582,7 @@ export function ArenaPage() {
                                 onConfirm={() => handleDeleteGroup(ag.id!)}
                               >
                                 <button
-                                  className="p-1.5 rounded-md hover:bg-white/8 transition-colors"
+                                  className="p-1.5 rounded-md hover-bg-soft transition-colors"
                                   title="删除分组"
                                 >
                                   <Trash2 className="w-3.5 h-3.5" style={{ color: 'rgba(239,68,68,0.7)' }} />
@@ -1609,7 +1609,7 @@ export function ArenaPage() {
                                   <div className="flex items-center gap-0.5 flex-shrink-0">
                                     <button
                                       onClick={() => handleToggleSlot(slot.id)}
-                                      className="p-1 rounded hover:bg-white/8 transition-colors"
+                                      className="p-1 rounded hover-bg-soft transition-colors"
                                       title={slot.enabled === false ? '启用' : '禁用'}
                                     >
                                       <Power className="w-3 h-3" style={{ color: slot.enabled === false ? 'var(--text-muted)' : '#10b981' }} />
@@ -1618,7 +1618,7 @@ export function ArenaPage() {
                                       title={`删除模型「${slot.displayName || slot.modelId}」？`}
                                       onConfirm={() => handleDeleteSlot(slot.id)}
                                     >
-                                      <button className="p-1 rounded hover:bg-white/8 transition-colors" title="删除">
+                                      <button className="p-1 rounded hover-bg-soft transition-colors" title="删除">
                                         <Trash2 className="w-3 h-3" style={{ color: 'rgba(239,68,68,0.6)' }} />
                                       </button>
                                     </ConfirmTip>
@@ -1628,7 +1628,7 @@ export function ArenaPage() {
                               {/* Add model button — inside slot list for clarity */}
                               <button
                                 onClick={() => openAddSlots(ag.key)}
-                                className="w-full flex items-center justify-center gap-1.5 mt-1 py-1.5 rounded-md text-[11px] transition-colors hover:bg-white/5"
+                                className="w-full flex items-center justify-center gap-1.5 mt-1 py-1.5 rounded-md text-[11px] transition-colors hover-bg-soft"
                                 style={{ color: 'rgba(99,102,241,0.8)', border: '1px dashed rgba(99,102,241,0.25)' }}
                               >
                                 <Plus className="w-3 h-3" />
@@ -1866,7 +1866,7 @@ export function ArenaPage() {
                           className={cn(
                             'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
                             'disabled:opacity-30 disabled:cursor-not-allowed',
-                            'hover:bg-white/8 hover:text-white/85'
+                            'hover-bg-soft hover:text-white/85'
                           )}
                           title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                         >
@@ -1959,7 +1959,7 @@ export function ArenaPage() {
                 {allDone && !isStreaming && (
                   <button
                     onClick={handleRetry}
-                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover:bg-white/8 flex-shrink-0 text-white/65"
+                    className="flex items-center gap-1.5 px-3 h-7 rounded-full text-[11px] transition-colors hover-bg-soft flex-shrink-0 text-white/65"
                     style={{
                       border: '1px solid rgba(255, 255, 255, 0.16)',
                       fontFamily: 'var(--font-terminal)',
@@ -2178,7 +2178,7 @@ export function ArenaPage() {
                             <div className="flex items-center gap-1">
                               <button
                                 onClick={() => handleCopyPanel(panel)}
-                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover-bg-soft"
                                 style={{ color: 'var(--text-muted)' }}
                                 title="复制内容"
                               >
@@ -2189,7 +2189,7 @@ export function ArenaPage() {
                               </button>
                               <button
                                 onClick={() => handleDownloadPanel(panel)}
-                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover:bg-white/8"
+                                className="flex items-center gap-1 px-2 py-1 rounded-md text-[11px] transition-colors hover-bg-soft"
                                 style={{ color: 'var(--text-muted)' }}
                                 title="下载 Markdown"
                               >
@@ -2348,7 +2348,7 @@ export function ArenaPage() {
                       className={cn(
                         'flex items-center justify-center w-8 h-8 rounded-lg transition-colors text-white/55',
                         'disabled:opacity-30 disabled:cursor-not-allowed',
-                        'hover:bg-white/8 hover:text-white/85'
+                        'hover-bg-soft hover:text-white/85'
                       )}
                       title={`添加附件 (${attachments.length}/${MAX_ATTACHMENTS})`}
                     >

@@ -248,7 +248,7 @@ export function SyncManagerPanel() {
                         <span className="truncate max-w-[180px]">{link.remoteStoreName ?? link.remoteStoreId}</span>
                       </div>
                       <div className="flex items-center gap-2 mt-1 text-[11px] text-token-muted">
-                        <span className="px-1.5 py-0.5 rounded-[6px] bg-white/6">
+                        <span className="px-1.5 py-0.5 rounded-[6px] bg-token-nested">
                           {link.linkType === 'remote' ? '跨环境' : '本地'}
                         </span>
                         {link.linkType === 'remote' && link.remoteBaseUrl && (
@@ -276,7 +276,7 @@ export function SyncManagerPanel() {
                           key={d.key}
                           onClick={() => handleDirection(link, d.key)}
                           className={`inline-flex items-center gap-1 px-2 py-1 rounded-[8px] text-[12px] transition-colors duration-150 ${
-                            active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover:bg-white/6'
+                            active ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'
                           }`}
                           title={namedDirLabel(d.key, link)}
                         >
@@ -360,7 +360,7 @@ function StartLinkDialog({ stores, onClose, onDone }: {
             <span className="text-[15px] font-semibold text-token-primary">配对同环境两个库</span>
           </div>
           <button onClick={() => !busy && onClose()} disabled={busy}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6 disabled:opacity-40">
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover-bg-soft disabled:opacity-40">
             <X size={15} />
           </button>
         </div>
@@ -391,7 +391,7 @@ function StartLinkDialog({ stores, onClose, onDone }: {
               return (
                 <button key={d.key} onClick={() => setDirection(d.key)} disabled={busy}
                   className={`flex-1 inline-flex items-center justify-center gap-1 h-9 rounded-[10px] text-[12px] transition-colors disabled:opacity-60 ${
-                    direction === d.key ? 'surface-action-accent text-token-primary' : 'text-token-muted hover:bg-white/6'}`}>
+                    direction === d.key ? 'surface-action-accent text-token-primary' : 'text-token-muted hover-bg-soft'}`}>
                   <Icon size={12} />{d.label}
                 </button>
               );

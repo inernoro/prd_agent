@@ -127,8 +127,8 @@ function ReportItemRow({ item, reportId, onUpdate }: { item: DefectFixReportItem
 
   return (
     <div
-      className="rounded-lg p-3 space-y-2"
-      style={{ background: 'rgba(255,255,255,0.03)', border: '1px solid rgba(255,255,255,0.06)' }}
+      className="rounded-lg p-3 space-y-2 bg-token-nested border border-token-subtle"
+
     >
       <div className="flex items-center justify-between">
         <div className="flex items-center gap-2 min-w-0">
@@ -138,7 +138,7 @@ function ReportItemRow({ item, reportId, onUpdate }: { item: DefectFixReportItem
         <div className="flex items-center gap-2 flex-shrink-0">
           {/* Confidence score bar */}
           <div className="flex items-center gap-1.5">
-            <div className="w-16 h-1.5 rounded-full" style={{ background: 'rgba(255,255,255,0.08)' }}>
+            <div className="w-16 h-1.5 rounded-full bg-token-nested" >
               <div className="h-full rounded-full" style={{ width: `${item.confidenceScore}%`, background: scoreColor }} />
             </div>
             <span className="text-xs font-medium" style={{ color: scoreColor }}>{item.confidenceScore}%</span>
@@ -192,12 +192,8 @@ function ReportItemRow({ item, reportId, onUpdate }: { item: DefectFixReportItem
                 placeholder="审核备注（可选）"
                 value={reviewNote}
                 onChange={(e) => setReviewNote(e.target.value)}
-                className="w-full h-8 rounded-lg px-3 text-sm"
-                style={{
-                  background: 'rgba(255,255,255,0.06)',
-                  border: '1px solid rgba(255,255,255,0.12)',
-                  color: 'var(--text-primary)',
-                }}
+                className="w-full h-8 rounded-lg px-3 text-sm bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
               />
               <div className="flex items-center justify-between">
                 <label className="flex items-center gap-1.5 text-xs cursor-pointer" style={{ color: 'var(--text-muted)' }}>

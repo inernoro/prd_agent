@@ -67,7 +67,7 @@ export function Dialog({
 
   const closeHoverCls = isLight
     ? 'hover:bg-[rgba(15,23,42,0.05)]'
-    : 'hover:bg-white/5';
+    : 'hover-bg-soft';
 
   return (
     <DialogPrimitive.Root open={open} onOpenChange={onOpenChange}>

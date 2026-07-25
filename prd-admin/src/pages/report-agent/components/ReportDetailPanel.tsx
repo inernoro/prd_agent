@@ -192,7 +192,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                   <div key={idx} className="mb-5">
                     <div className="flex items-center gap-2.5 mb-3">
                       <div
-                        className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-white flex-shrink-0"
+                        className="w-6 h-6 rounded-md flex items-center justify-center text-[11px] font-bold text-token-primary flex-shrink-0"
                         style={{
                           background: isLight ? accentColor.replace('0.9', '1') : accentColor,
                           boxShadow: isLight

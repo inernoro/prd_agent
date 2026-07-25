@@ -70,7 +70,7 @@ const topBtnStyle: React.CSSProperties = {
   alignItems: 'center',
   gap: 5,
   background: 'rgba(45,45,55,0.85)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  border: '1px solid var(--border-subtle)',
   borderRadius: 6,
   padding: '5px 9px',
   color: '#cfcfd6',
@@ -874,16 +874,8 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
     <div className="h-full flex-1 flex flex-col" style={{ background: '#16161d', color: '#cfcfcf', minHeight: 0 }}>
       {/* ── 实体顶栏（对齐知识星球顶栏 token,不再让控件浮在画布上看不清） ── */}
       <div
-        className="shrink-0"
-        style={{
-          display: 'flex',
-          alignItems: 'center',
-          gap: 8,
-          padding: '8px 12px',
-          background: 'rgba(18,18,26,0.92)',
-          borderBottom: '1px solid rgba(255,255,255,0.08)',
-          zIndex: 15,
-        }}
+        className="shrink-0 border-b border-b-token-subtle"
+        style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 12px', background: 'rgba(18,18,26,0.92)', zIndex: 15 }}
       >
         <button
           type="button"
@@ -906,20 +898,11 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
         <span style={{ flexShrink: 0, fontSize: 11, color: '#8a8a96', whiteSpace: 'nowrap' }}>
           {nodes.length} 节点 · {edges.length} 引用
         </span>
-        <span style={{ width: 1, height: 16, background: 'rgba(255,255,255,0.12)', flexShrink: 0 }} />
+        <span className="bg-token-nested" style={{ width: 1, height: 16, flexShrink: 0 }} />
 
         {/* 搜索（结构名 + 正文标题双字段过滤,直接作用于画布） */}
         <div
-          style={{
-            flexShrink: 0,
-            display: 'flex',
-            alignItems: 'center',
-            gap: 6,
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.12)',
-            borderRadius: 8,
-            padding: '4px 8px',
-          }}
+          className="bg-token-nested border border-token-subtle" style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 6, borderRadius: 8, padding: '4px 8px' }}
         >
           <Search size={13} style={{ color: '#8a8c9a', flexShrink: 0 }} />
           <input
@@ -1022,15 +1005,7 @@ export function UniverseGraphPage({ storeIdOverride, storeNameOverride, loadGrap
               setStoreId(e.target.value);
               navigate(`/document-store/${e.target.value}/universe`);
             }}
-            style={{
-              flexShrink: 0,
-              background: 'rgba(45,45,55,0.85)',
-              border: '1px solid rgba(255,255,255,0.12)',
-              borderRadius: 6,
-              padding: '5px 8px',
-              color: '#cfcfd6',
-              fontSize: 12,
-            }}
+            className="border border-token-subtle" style={{ flexShrink: 0, background: 'rgba(45,45,55,0.85)', borderRadius: 6, padding: '5px 8px', color: '#cfcfd6', fontSize: 12 }}
           >
             {stores.map((s) => (
               <option key={s.id} value={s.id}>{s.name}</option>

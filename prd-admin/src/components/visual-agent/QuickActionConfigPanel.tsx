@@ -301,7 +301,7 @@ export function QuickActionConfigPanel({
               </div>
               <button
                 type="button"
-                className="shrink-0 p-1.5 rounded-[6px] transition-colors hover:bg-white/8"
+                className="shrink-0 p-1.5 rounded-[6px] transition-colors hover-bg-soft"
                 style={{ color: 'var(--text-secondary)' }}
                 title="编辑"
                 onClick={() => handleOpenEdit(action)}
@@ -310,7 +310,7 @@ export function QuickActionConfigPanel({
               </button>
               <button
                 type="button"
-                className="shrink-0 p-1.5 rounded-[6px] transition-colors hover:bg-white/8"
+                className="shrink-0 p-1.5 rounded-[6px] transition-colors hover-bg-soft"
                 style={{ color: 'rgba(239, 68, 68, 0.7)' }}
                 title="删除"
                 onClick={() => handleRemove(action.id)}

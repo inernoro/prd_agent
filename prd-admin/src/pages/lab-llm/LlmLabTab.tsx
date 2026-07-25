@@ -1736,7 +1736,7 @@ export default function LlmLabTab() {
       for (const m of imageGenModels) {
         for (const { size, aspectId, tier } of allSizes) {
           if (fullSizeAbortRef.current?.signal.aborted) break;
-          
+
           const key = `full_${m.modelId}_${aspectId}_${tier}_${Date.now()}`;
           const newItem: ImageViewItem = {
             key,
@@ -1749,13 +1749,13 @@ export default function LlmLabTab() {
             sourceDisplayName: m.displayName,
             size,
           };
-          
+
           setFullSizeItems((prev) => ({ ...prev, [key]: newItem }));
 
           try {
             const res = await generateImageGen({ prompt, n: 1, size, modelId: m.modelId });
             if (!res.success) throw new Error(res.error?.message || '生成失败');
-            
+
             const asset = (res.data as any)?.asset;
             const url = asset?.url || (res.data as any)?.url || '';
             const updated: ImageViewItem = { ...newItem, status: 'done', url };
@@ -2717,7 +2717,7 @@ export default function LlmLabTab() {
             </div>
             <button
               type="button"
-              className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+              className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
               onClick={openCreateExperiment}
               disabled={experimentsLoading}
             >
@@ -2821,7 +2821,7 @@ export default function LlmLabTab() {
                     >
                       <button
                         type="button"
-                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                         title="将该集合模型加入当前实验"
                       >
                         <Tag size={14} />
@@ -2922,7 +2922,7 @@ export default function LlmLabTab() {
                                   </span>
                                   <button
                                     type="button"
-                                    className="surface-action inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] text-token-muted transition-colors hover:bg-white/6"
+                                    className="surface-action inline-flex h-7 w-7 shrink-0 items-center justify-center rounded-[10px] text-token-muted transition-colors hover-bg-soft"
                                     title="从实验中移除该模型"
                                     onClick={(e) => {
                                       e.stopPropagation();
@@ -3024,7 +3024,7 @@ export default function LlmLabTab() {
                         <DropdownMenu.Trigger asChild>
                           <button
                             type="button"
-                            className="surface-action inline-flex h-[28px] shrink-0 items-center gap-2 rounded-[10px] px-2 text-token-primary transition-colors hover:bg-white/6"
+                            className="surface-action inline-flex h-[28px] shrink-0 items-center gap-2 rounded-[10px] px-2 text-token-primary transition-colors hover-bg-soft"
                             aria-label="选择图片比例"
                             title="选择图片比例"
                           >
@@ -3032,7 +3032,7 @@ export default function LlmLabTab() {
                               className="surface-inset flex h-4 w-4 shrink-0 items-center justify-center rounded-[6px]"
                             >
                               <span
-                                className="rounded-[4px] border-2 border-white/20 bg-token-nested"
+                                className="rounded-[4px] border-2 border-token-subtle bg-token-nested"
                                 style={{
                                   width: Math.max(6, Math.round(currentAspectOpt.iconW * 0.55)),
                                   height: Math.max(6, Math.round(currentAspectOpt.iconH * 0.55)),
@@ -3058,7 +3058,7 @@ export default function LlmLabTab() {
                               return (
                                 <DropdownMenu.Item
                                   key={opt.id}
-                                  className="flex cursor-pointer items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-sm text-token-primary outline-none hover:bg-white/5"
+                                  className="flex cursor-pointer items-center justify-between gap-3 rounded-[10px] px-2 py-2 text-sm text-token-primary outline-none hover-bg-soft"
                                   onSelect={() => setImgSize(opt.size)}
                                 >
                                   <div className="flex items-center gap-2 min-w-0">
@@ -3066,7 +3066,7 @@ export default function LlmLabTab() {
                                       className="surface-inset flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-[8px]"
                                     >
                                       <span
-                                        className="rounded-[5px] border-2 border-white/20 bg-token-nested"
+                                        className="rounded-[5px] border-2 border-token-subtle bg-token-nested"
                                         style={{
                                           width: Math.max(6, Math.round(opt.iconW * scale)),
                                           height: Math.max(6, Math.round(opt.iconH * scale)),
@@ -3291,7 +3291,7 @@ export default function LlmLabTab() {
                       {visionImages.length < 10 && (
                         <button
                           type="button"
-                          className="surface-inset flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-[10px] border-dashed text-token-muted transition-colors hover:bg-white/6"
+                          className="surface-inset flex h-16 w-16 flex-col items-center justify-center gap-1 rounded-[10px] border-dashed text-token-muted transition-colors hover-bg-soft"
                           onClick={() => visionFileInputRef.current?.click()}
                           title="点击上传图片"
                         >
@@ -3770,7 +3770,7 @@ export default function LlmLabTab() {
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
-                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover-bg-soft"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               void copyToClipboard(text);
@@ -3783,7 +3783,7 @@ export default function LlmLabTab() {
                           </button>
                           <button
                             type="button"
-                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover-bg-soft"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
@@ -3906,7 +3906,7 @@ export default function LlmLabTab() {
                         <div className="flex items-center gap-1 shrink-0">
                           <button
                             type="button"
-                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover-bg-soft"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               void copyToClipboard(text);
@@ -3919,7 +3919,7 @@ export default function LlmLabTab() {
                           </button>
                           <button
                             type="button"
-                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover:bg-white/6"
+                            className="surface-action inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold text-token-secondary transition-colors hover-bg-soft"
                             onClick={() => {
                               const text = it.rawText || it.preview || (it.status === 'running' ? '（等待输出）' : '（无输出）');
                               setPreviewDialog({ open: true, title: it.displayName || '输出预览', text });
@@ -4049,7 +4049,7 @@ export default function LlmLabTab() {
                             ].join(' ')}
                             style={{
                               border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid var(--border-default)',
-                              background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                              background: 'var(--bg-card)',
                               height: '100%',
                             }}
                             onClick={() => {
@@ -4104,7 +4104,7 @@ export default function LlmLabTab() {
                             {canSelect ? (
                               <button
                                 type="button"
-                                className="absolute right-2 top-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center transition-colors hover:bg-white/6"
+                                className="absolute right-2 top-2 h-8 w-8 rounded-[10px] inline-flex items-center justify-center transition-colors hover-bg-soft"
                                 style={{
                                   border: selected ? '2px solid rgba(250,204,21,0.95)' : '1px solid var(--border-default)',
                                   background: selected ? 'rgba(250,204,21,0.12)' : 'var(--nested-block-bg)',
@@ -4138,8 +4138,8 @@ export default function LlmLabTab() {
                                 className={[
                                   'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                   'transition-all duration-150',
-                                  'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                  'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                  'hover-bg-soft hover-border-token hover:-translate-y-px',
                                 ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -4162,8 +4162,8 @@ export default function LlmLabTab() {
                                 className={[
                                   'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                   'transition-all duration-150',
-                                  'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                  'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                  'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                  'hover-bg-soft hover-border-token hover:-translate-y-px',
                                 ].join(' ')}
                                 onClick={(e) => {
                                   e.stopPropagation();
@@ -4179,7 +4179,7 @@ export default function LlmLabTab() {
                             </div>
 
                             <div
-                              className="absolute left-2 top-2 rounded-[10px] border border-white/15 bg-black/40 px-2 py-1 text-[11px] font-semibold text-white/90 shadow-sm backdrop-blur-sm"
+                              className="absolute left-2 top-2 rounded-[10px] border border-token-subtle bg-black/40 px-2 py-1 text-[11px] font-semibold text-token-primary shadow-sm backdrop-blur-sm"
                             >
                               {`模型 #${Number(it.sourceModelIndex ?? 0) + 1} · #${Number(it.variantIndex ?? 0) + 1}`}
                             </div>
@@ -4424,12 +4424,8 @@ export default function LlmLabTab() {
                               </div>
                             </div>
                             <div
-                              className="rounded-[12px] overflow-hidden relative"
-                              style={{
-                                border: '1px solid var(--border-default)',
-                                background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                                height: imageThumbHeight,
-                              }}
+                              className="rounded-[12px] overflow-hidden relative bg-token-nested"
+                              style={{ border: '1px solid var(--border-default)', height: imageThumbHeight }}
                               onClick={() => {
                                 if (!(it.status === 'done' && src)) return;
                                 setImagePreviewDialog({ open: true, title: '图片预览', src });
@@ -4472,8 +4468,8 @@ export default function LlmLabTab() {
                                   className={[
                                     'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                     'transition-all duration-150',
-                                    'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                    'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                    'hover-bg-soft hover-border-token hover:-translate-y-px',
                                   ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -4496,8 +4492,8 @@ export default function LlmLabTab() {
                                   className={[
                                     'inline-flex items-center gap-1 rounded-[10px] px-2 py-1 text-[11px] font-semibold',
                                     'transition-all duration-150',
-                                    'border border-white/15 text-white/90 bg-black/35 backdrop-blur-sm shadow-sm',
-                                    'hover:bg-black/55 hover:border-white/30 hover:-translate-y-px',
+                                    'border border-token-subtle text-token-primary bg-black/35 backdrop-blur-sm shadow-sm',
+                                    'hover-bg-soft hover-border-token hover:-translate-y-px',
                                   ].join(' ')}
                                   onClick={(e) => {
                                     e.stopPropagation();
@@ -4875,14 +4871,14 @@ export default function LlmLabTab() {
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => setCreateExperimentOpen(false)}
               >
                 取消
               </button>
               <button
                 type="button"
-                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={confirmCreateExperiment}
                 disabled={!createExperimentName.trim()}
               >
@@ -4906,7 +4902,7 @@ export default function LlmLabTab() {
               </div>
               <button
                 type="button"
-                className="surface-action-accent inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="surface-action-accent inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={load}
                 disabled={experimentsLoading}
               >
@@ -4924,7 +4920,7 @@ export default function LlmLabTab() {
                   {experiments.map((e) => (
                     <div
                       key={e.id}
-                      className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-token-primary hover:bg-white/4"
+                      className="flex items-center justify-between gap-3 rounded-[12px] px-3 py-2 text-token-primary hover-bg-soft"
                     >
                       <button
                         type="button"
@@ -4942,7 +4938,7 @@ export default function LlmLabTab() {
 
                       <button
                         type="button"
-                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                        className="surface-action inline-flex h-[30px] shrink-0 items-center justify-center gap-2 rounded-[10px] px-3 text-[12px] font-semibold text-token-primary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                         onClick={async (evt) => {
                           evt.stopPropagation();
                           const ok = await systemDialog.confirm({
@@ -4969,14 +4965,14 @@ export default function LlmLabTab() {
             <div className="flex items-center justify-end gap-2">
               <button
                 type="button"
-                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="surface-action inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold text-token-primary transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={() => setLoadExperimentOpen(false)}
               >
                 取消
               </button>
               <button
                 type="button"
-                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover:bg-white/8 disabled:cursor-not-allowed disabled:opacity-60"
+                className="surface-action-accent inline-flex h-10 items-center justify-center gap-2 rounded-[12px] px-4 text-[13px] font-semibold transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-60"
                 onClick={confirmLoadExperiment}
                 disabled={!loadExperimentId}
               >

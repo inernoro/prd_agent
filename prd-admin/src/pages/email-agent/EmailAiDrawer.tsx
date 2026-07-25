@@ -152,28 +152,28 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
   const drawer = (
     <div className="fixed inset-0 z-[100] flex justify-end" style={{ background: 'rgba(0,0,0,0.55)' }} onClick={onClose}>
       <aside
-        className="h-full border-l border-white/10 bg-[#0f1014] shadow-2xl flex flex-col"
+        className="h-full border-l border-token-subtle bg-[#0f1014] shadow-2xl flex flex-col"
         style={{ width: 'min(94vw, 620px)', maxHeight: '100vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <header className="shrink-0 px-5 py-4 border-b border-white/10 flex items-center justify-between gap-3">
+        <header className="shrink-0 px-5 py-4 border-b border-token-subtle flex items-center justify-between gap-3">
           <div className="flex items-center gap-2">
             <Sparkles className="w-4 h-4 text-indigo-300" />
-            <h2 className="text-base font-semibold text-white">AI 邮件助手</h2>
+            <h2 className="text-base font-semibold text-token-primary">AI 邮件助手</h2>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover:bg-white/10 text-white/55">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-lg hover-bg-soft text-token-secondary">
             <X className="w-4 h-4" />
           </button>
         </header>
 
         {/* 模式切换 */}
         <div className="shrink-0 px-5 pt-4">
-          <div className="inline-flex rounded-lg border border-white/12 bg-white/5 p-0.5">
+          <div className="inline-flex rounded-lg border border-token-subtle bg-token-nested p-0.5">
             <button
               type="button"
               onClick={() => setMode('draft')}
               className={`h-8 px-3 rounded-[7px] text-xs inline-flex items-center gap-1.5 transition ${
-                mode === 'draft' ? 'bg-indigo-500/25 text-white' : 'text-white/60 hover:text-white/85'
+                mode === 'draft' ? 'bg-indigo-500/25 text-white' : 'text-token-secondary hover-text-primary'
               }`}
             >
               <Wand2 className="w-3.5 h-3.5" /> 一句话起草
@@ -182,7 +182,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
               type="button"
               onClick={() => setMode('polish')}
               className={`h-8 px-3 rounded-[7px] text-xs inline-flex items-center gap-1.5 transition ${
-                mode === 'polish' ? 'bg-indigo-500/25 text-white' : 'text-white/60 hover:text-white/85'
+                mode === 'polish' ? 'bg-indigo-500/25 text-white' : 'text-token-secondary hover-text-primary'
               }`}
             >
               <PenLine className="w-3.5 h-3.5" /> 润色现有内容
@@ -197,17 +197,17 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
           {mode === 'draft' ? (
             <>
               <div>
-                <label className="block text-xs text-white/60 mb-1.5">场景描述</label>
+                <label className="block text-xs text-token-secondary mb-1.5">场景描述</label>
                 <textarea
                   value={scenario}
                   onChange={(e) => setScenario(e.target.value)}
                   placeholder="例：向主管申请下周三请一天年假，抄送人事，语气正式一点"
                   rows={4}
-                  className="w-full rounded-lg border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-indigo-400/40 resize-y"
+                  className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary placeholder-token-muted outline-none focus:border-indigo-400/40 resize-y"
                 />
               </div>
               <div>
-                <label className="block text-xs text-white/60 mb-1.5">语气偏好（可选）</label>
+                <label className="block text-xs text-token-secondary mb-1.5">语气偏好（可选）</label>
                 <div className="flex flex-wrap gap-1.5">
                   {TONES.map((t) => (
                     <button
@@ -217,7 +217,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
                       className={`h-7 px-2.5 rounded-full text-xs border transition ${
                         tone === t
                           ? 'border-indigo-400/50 bg-indigo-500/20 text-white'
-                          : 'border-white/12 bg-white/5 text-white/60 hover:text-white/85'
+                          : 'border-token-subtle bg-token-nested text-token-secondary hover-text-primary'
                       }`}
                     >
                       {t}
@@ -226,7 +226,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
                 </div>
               </div>
               {baseTemplate && (
-                <p className="text-[11px] text-white/40">
+                <p className="text-[11px] text-token-muted">
                   将参考模板「{baseTemplate.title}」的写法生成。
                 </p>
               )}
@@ -234,22 +234,22 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
           ) : (
             <>
               <div>
-                <label className="block text-xs text-white/60 mb-1.5">待润色内容</label>
+                <label className="block text-xs text-token-secondary mb-1.5">待润色内容</label>
                 <textarea
                   value={content}
                   onChange={(e) => setContent(e.target.value)}
                   placeholder="粘贴或填写要润色的邮件正文"
                   rows={6}
-                  className="w-full rounded-lg border border-white/12 bg-white/[0.04] px-3 py-2 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-indigo-400/40 resize-y"
+                  className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary placeholder-token-muted outline-none focus:border-indigo-400/40 resize-y"
                 />
               </div>
               <div>
-                <label className="block text-xs text-white/60 mb-1.5">润色指令（可选）</label>
+                <label className="block text-xs text-token-secondary mb-1.5">润色指令（可选）</label>
                 <input
                   value={instruction}
                   onChange={(e) => setInstruction(e.target.value)}
                   placeholder="例：更简洁 / 更委婉 / 突出紧急"
-                  className="w-full h-9 rounded-lg border border-white/12 bg-white/[0.04] px-3 text-sm text-white/90 placeholder:text-white/30 outline-none focus:border-indigo-400/40"
+                  className="w-full h-9 rounded-lg border border-token-subtle bg-token-nested px-3 text-sm text-token-primary placeholder-token-muted outline-none focus:border-indigo-400/40"
                 />
               </div>
             </>
@@ -266,7 +266,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
               </Button>
             )}
             {streaming && (
-              <span className="text-[11px] text-white/45 inline-flex items-center gap-1.5">
+              <span className="text-[11px] text-token-muted inline-flex items-center gap-1.5">
                 <Loader2 className="w-3 h-3 animate-spin" /> {phaseMsg || '生成中…'}
               </span>
             )}
@@ -274,22 +274,22 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
 
           {/* 输出区 */}
           {(output || streaming) && (
-            <div className="rounded-xl border border-white/10 bg-white/[0.03] overflow-hidden">
-              <div className="px-3 py-2 border-b border-white/10 flex items-center justify-between gap-2">
+            <div className="rounded-xl border border-token-subtle bg-token-nested overflow-hidden">
+              <div className="px-3 py-2 border-b border-token-subtle flex items-center justify-between gap-2">
                 {model?.name ? (
-                  <span className="text-[11px] text-white/40 font-mono truncate">
+                  <span className="text-[11px] text-token-muted font-mono truncate">
                     ● {model.name}
                     {model.platform ? ` · ${model.platform}` : ''}
                   </span>
                 ) : (
-                  <span className="text-[11px] text-white/30">生成结果</span>
+                  <span className="text-[11px] text-token-muted">生成结果</span>
                 )}
                 <div className="flex items-center gap-1.5">
                   <button
                     type="button"
                     onClick={doCopy}
                     disabled={!output}
-                    className="h-7 px-2 rounded-md text-[11px] text-white/70 hover:bg-white/10 inline-flex items-center gap-1 disabled:opacity-40"
+                    className="h-7 px-2 rounded-md text-[11px] text-token-secondary hover-bg-soft inline-flex items-center gap-1 disabled:opacity-40"
                   >
                     {copied ? <Check className="w-3 h-3 text-emerald-300" /> : <Copy className="w-3 h-3" />} 复制
                   </button>
@@ -308,7 +308,7 @@ export function EmailAiDrawer({ open, onClose, initialMode = 'draft', initialCon
                   )}
                 </div>
               </div>
-              <pre className="px-3 py-3 text-sm text-white/85 whitespace-pre-wrap break-words font-sans leading-relaxed">
+              <pre className="px-3 py-3 text-sm text-token-primary whitespace-pre-wrap break-words font-sans leading-relaxed">
                 {output}
                 {streaming && <span className="inline-block w-1.5 h-4 bg-indigo-300/70 align-text-bottom animate-pulse ml-0.5" />}
               </pre>

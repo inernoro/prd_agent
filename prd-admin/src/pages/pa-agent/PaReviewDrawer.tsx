@@ -137,20 +137,14 @@ export function PaReviewDrawer({ open, onClose }: Props) {
       onClick={onClose}
     >
       <div
-        className="flex flex-col shadow-2xl"
-        style={{
-          width: 'min(560px, 100vw)',
-          height: '100vh',
-          maxHeight: '100vh',
-          background: '#0f1014',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-        }}
+        className="flex flex-col shadow-2xl border-l border-l-token-subtle"
+        style={{ width: 'min(560px, 100vw)', height: '100vh', maxHeight: '100vh', background: '#0f1014' }}
         onClick={e => e.stopPropagation()}
       >
         {/* Header */}
         <div
-          className="shrink-0 flex items-center justify-between px-5 py-3"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.08)' }}
+          className="shrink-0 flex items-center justify-between px-5 py-3 border-b border-b-token-subtle"
+
         >
           <div className="flex items-center gap-2">
             <div
@@ -181,8 +175,8 @@ export function PaReviewDrawer({ open, onClose }: Props) {
 
         {/* Controls */}
         <div
-          className="shrink-0 px-5 py-3 space-y-2"
-          style={{ borderBottom: '1px solid rgba(255,255,255,0.05)' }}
+          className="shrink-0 px-5 py-3 space-y-2 border-b border-b-token-subtle"
+
         >
           <div className="flex flex-wrap gap-2">
             {RANGE_OPTIONS.map(opt => (
@@ -196,9 +190,9 @@ export function PaReviewDrawer({ open, onClose }: Props) {
                 style={{
                   background: range === opt.value
                     ? 'linear-gradient(135deg,#f59e0b,#ef4444)'
-                    : 'rgba(255,255,255,0.03)',
+                    : 'var(--nested-block-bg)',
                   color: range === opt.value ? '#fff' : 'var(--text-secondary)',
-                  border: `1px solid ${range === opt.value ? 'transparent' : 'rgba(255,255,255,0.08)'}`,
+                  border: `1px solid ${range === opt.value ? 'transparent' : 'var(--border-subtle)'}`,
                   fontWeight: range === opt.value ? 600 : 400,
                 }}
               >
@@ -215,8 +209,8 @@ export function PaReviewDrawer({ open, onClose }: Props) {
                 value={startDate}
                 onChange={e => setStartDate(e.target.value)}
                 disabled={running}
-                className="flex-1 text-xs px-2 py-1.5 rounded-lg bg-transparent outline-none"
-                style={{ color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}
+                className="flex-1 text-xs px-2 py-1.5 rounded-lg bg-transparent outline-none border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
               />
               <ChevronDown size={11} style={{ color: 'var(--text-muted)' }} />
               <input
@@ -224,8 +218,8 @@ export function PaReviewDrawer({ open, onClose }: Props) {
                 value={endDate}
                 onChange={e => setEndDate(e.target.value)}
                 disabled={running}
-                className="flex-1 text-xs px-2 py-1.5 rounded-lg bg-transparent outline-none"
-                style={{ color: 'var(--text-primary)', border: '1px solid rgba(255,255,255,0.1)' }}
+                className="flex-1 text-xs px-2 py-1.5 rounded-lg bg-transparent outline-none border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
               />
             </div>
           )}

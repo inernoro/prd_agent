@@ -114,7 +114,7 @@ export function RichTextMarkdownContent({
                         borderColor: 'var(--border-primary)',
                         background: isLight
                           ? 'transparent'
-                          : 'linear-gradient(180deg, rgba(255,255,255,0.03), rgba(255,255,255,0.015))',
+                          : 'linear-gradient(180deg, var(--nested-block-bg), var(--nested-block-bg))',
                         boxShadow: isLight
                           ? 'var(--shadow-card-hover)'
                           : '0 8px 20px rgba(0,0,0,0.18)',
@@ -123,18 +123,15 @@ export function RichTextMarkdownContent({
                       <img
                         src={imageSrc}
                         alt={alt || '周报图片'}
-                        className="block h-auto w-auto max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.01]"
-                        style={{
-                          maxHeight: `min(${imageMaxHeight}px, 42vh)`,
-                          background: 'rgba(255,255,255,0.01)',
-                        }}
+                        className="block h-auto w-auto max-w-full object-contain transition-transform duration-200 group-hover:scale-[1.01] bg-token-nested"
+                        style={{ maxHeight: `min(${imageMaxHeight}px, 42vh)` }}
                       />
                       <div
                         className="absolute inset-x-0 bottom-0 px-3 py-1.5 text-[11px] opacity-0 transition-opacity duration-200 group-hover:opacity-100"
                         style={{
-                          color: isLight ? 'rgba(15,23,42,0.92)' : 'rgba(255,255,255,0.92)',
+                          color: isLight ? 'rgba(15,23,42,0.92)' : 'var(--text-primary)',
                           background: isLight
-                            ? 'linear-gradient(180deg, rgba(255,255,255,0), rgba(255,255,255,0.85))'
+                            ? 'linear-gradient(180deg, rgba(255,255,255,0), var(--nested-block-bg))'
                             : 'linear-gradient(180deg, rgba(0,0,0,0), rgba(0,0,0,0.55))',
                         }}
                       >

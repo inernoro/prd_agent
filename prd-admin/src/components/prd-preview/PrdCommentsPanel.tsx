@@ -235,7 +235,7 @@ export default function PrdCommentsPanel({ documentId, groupId, headingId, headi
             type="button"
             onClick={submit}
             disabled={!canSubmit}
-            className="px-3 py-1.5 text-xs rounded-md text-white disabled:opacity-50 disabled:cursor-not-allowed"
+            className="px-3 py-1.5 text-xs rounded-md text-token-primary disabled:opacity-50 disabled:cursor-not-allowed"
             style={{ background: canSubmit ? 'rgba(99, 102, 241, 0.8)' : 'rgba(99, 102, 241, 0.4)' }}
           >
             发送

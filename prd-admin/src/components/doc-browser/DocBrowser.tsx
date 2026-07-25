@@ -65,11 +65,11 @@ function TagColorSwatchPicker({
           />
         );
       })}
-      <span style={{ width: 1, height: 14, background: 'rgba(255,255,255,0.15)', margin: '0 2px' }} />
+      <span style={{ width: 1, height: 14, background: 'var(--border-subtle)', margin: '0 2px' }} />
       <button
         onClick={() => onPick(undefined)}
         title="重置为默认（哈希自动色）"
-        className="text-[10px] text-token-muted cursor-pointer hover:text-token-secondary"
+        className="text-[10px] text-token-muted cursor-pointer hover-text-secondary"
       >
         默认
       </button>
@@ -601,8 +601,8 @@ function isAcceptanceEntry(entry: DocBrowserEntry): boolean {
 function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEntry; isPrimary: boolean; isPinned: boolean; isOpen?: boolean }) {
   if (entry.isFolder) {
     return isOpen
-      ? <FolderOpen size={14} style={{ color: 'rgba(234,179,8,0.7)' }} />
-      : <FolderClosed size={14} style={{ color: 'rgba(234,179,8,0.6)' }} />;
+      ? <FolderOpen size={14} style={{ color: 'var(--semantic-warning-text)' }} />
+      : <FolderClosed size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
   }
   if (isAcceptanceEntry(entry)) {
     return (
@@ -611,14 +611,14 @@ function EntryIcon({ entry, isPrimary, isPinned, isOpen }: { entry: DocBrowserEn
       </ClipboardCheck>
     );
   }
-  if (isPrimary) return <Star size={14} style={{ color: 'rgba(234,179,8,0.85)' }} />;
-  if (isPinned) return <Pin size={14} style={{ color: 'rgba(59,130,246,0.7)' }} />;
+  if (isPrimary) return <Star size={14} style={{ color: 'var(--semantic-warning-text)' }} />;
+  if (isPinned) return <Pin size={14} style={{ color: 'var(--selection-text)' }} />;
   if (entry.sourceType === 'github_directory') return <Github size={14} style={{ color: 'rgba(130,80,223,0.7)' }} />;
   // 订阅源：用 Rss 图标本身的颜色表达同步状态（替代此前会独占一行徽章行的状态小圆点）。
   // 健康=中性灰（不啰嗦），出错=红，暂停=琥珀，同步中=蓝；让异常状态在文档树里直接可见。
   if (entry.sourceType === 'subscription') {
     const color = entry.syncStatus === 'error' ? 'rgba(248,113,113,0.95)'
-      : entry.isPaused ? 'rgba(234,179,8,0.95)'
+      : entry.isPaused ? 'var(--semantic-warning-text)'
       : entry.syncStatus === 'syncing' ? 'rgba(96,165,250,0.95)'
       : 'var(--text-muted)';
     const title = entry.syncStatus === 'error' ? '订阅同步出错'
@@ -701,7 +701,7 @@ function TranscribeHeroCard({
           <button
             onClick={() => onStart()}
             className="flex flex-shrink-0 cursor-pointer items-center gap-1.5 rounded-[9px] px-3.5 py-1.5 text-[12px] font-semibold transition-colors"
-            style={{ background: 'rgba(59,130,246,0.9)', color: '#fff' }}>
+            style={{ background: 'var(--button-primary-bg)', color: 'var(--button-primary-fg)', boxShadow: 'var(--button-primary-shadow)' }}>
             转成文字
           </button>
         )}
@@ -737,7 +737,7 @@ function TranscribeHeroCard({
           {noteEntryId && onRestyle && (
             <button
               onClick={onRestyle}
-              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover:bg-white/8"
+              className="flex cursor-pointer items-center gap-1 rounded-full px-2.5 py-1 text-[11.5px] font-medium transition-colors hover-bg-soft"
               style={{
                 background: 'var(--bg-elevated)',
                 color: 'var(--text-secondary)',
@@ -832,7 +832,7 @@ function ContextMenu({
     <div ref={menuRef} className="surface-popover fixed z-[10000] min-w-[170px] rounded-[10px] py-1" style={{ left: x, top: y }}>
       {showOpenInNewWindow && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => {
             // 当前页 URL 上换 ?entry={id}，方便对方/自己分享/记忆条目锚点
             const u = new URL(window.location.href);
@@ -846,7 +846,7 @@ function ContextMenu({
       )}
       {showCopyEntryLink && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => {
             const u = new URL(window.location.href);
             u.searchParams.set('entry', entry.id);
@@ -862,7 +862,7 @@ function ContextMenu({
       )}
       {showTranscribe && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover-bg-soft"
           onClick={() => { onTranscribe!(entry.id); onClose(); }}>
           <AudioLines size={12} />
           转录并生成摘要
@@ -870,7 +870,7 @@ function ContextMenu({
       )}
       {showSubtitle && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover-bg-soft"
           onClick={() => { onGenerateSubtitle!(entry.id); onClose(); }}>
           <Sparkles size={12} />
           生成字幕
@@ -878,7 +878,7 @@ function ContextMenu({
       )}
       {showReprocess && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover-bg-soft"
           onClick={() => { onReprocess!(entry.id); onClose(); }}>
           <Wand2 size={12} />
           智能体
@@ -886,7 +886,7 @@ function ContextMenu({
       )}
       {showShare && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-accent transition-colors hover-bg-soft"
           onClick={() => { onShareEntry!(entry.id); onClose(); }}>
           <Share2 size={12} />
           分享
@@ -897,7 +897,7 @@ function ContextMenu({
       )}
       {onRename && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => { onRename(entry); onClose(); }}>
           <Pencil size={12} />
           重命名
@@ -909,14 +909,14 @@ function ContextMenu({
           <div className="flex flex-wrap gap-1">
             <button
               onClick={() => { onSetCategory(entry.id, null); onClose(); }}
-              className={`px-1.5 py-0.5 rounded text-[11px] border ${!entry.category ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+              className={`px-1.5 py-0.5 rounded text-[11px] border ${!entry.category ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}>
               无分类
             </button>
             {categories.map((c) => (
               <button
                 key={c}
                 onClick={() => { onSetCategory(entry.id, c); onClose(); }}
-                className={`px-1.5 py-0.5 rounded text-[11px] border ${entry.category === c ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover:bg-white/6'}`}>
+                className={`px-1.5 py-0.5 rounded text-[11px] border ${entry.category === c ? 'bg-cyan-500/15 text-cyan-300 border-cyan-500/30' : 'text-token-secondary border-token-subtle hover-bg-soft'}`}>
                 {c}
               </button>
             ))}
@@ -925,7 +925,7 @@ function ContextMenu({
       )}
       {!entry.isFolder && onTogglePin && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => { onTogglePin(entry.id, !isPinned); onClose(); }}>
           {isPinned ? <PinOff size={12} /> : <Pin size={12} />}
           {isPinned ? '取消置顶' : '置顶文档'}
@@ -933,7 +933,7 @@ function ContextMenu({
       )}
       {!entry.isFolder && onEditTags && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => { onEditTags(entry); onClose(); }}>
           <Tags size={12} />
           打标签
@@ -941,7 +941,7 @@ function ContextMenu({
       )}
       {!entry.isFolder && onSetPrimary && !isPrimary && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => { onSetPrimary(entry.id); onClose(); }}>
           <Star size={12} />
           设为主文档
@@ -952,7 +952,7 @@ function ContextMenu({
         && entry.sourceType !== 'github_directory'
         && onReplaceFile && (
         <button
-          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover:bg-white/6"
+          className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-secondary transition-colors hover-bg-soft"
           onClick={() => { onReplaceFile(entry.id); onClose(); }}>
           <Replace size={12} />
           替换文件
@@ -962,7 +962,7 @@ function ContextMenu({
         <>
           <div className="my-1 border-t border-token-subtle" />
           <button
-            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-error transition-colors hover:bg-white/6"
+            className="flex w-full cursor-pointer items-center gap-2 px-3 py-1.5 text-left text-[12px] text-token-error transition-colors hover-bg-soft"
             onClick={() => { onDelete(entry.id); onClose(); }}>
             <Trash2 size={12} />
             删除
@@ -1051,7 +1051,7 @@ function EntryTagEditor({
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover-bg-soft">
             <X size={15} />
           </button>
         </div>
@@ -1163,7 +1163,7 @@ function EntryRenameDialog({
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover-bg-soft">
             <X size={15} />
           </button>
         </div>
@@ -1187,7 +1187,7 @@ function EntryRenameDialog({
 
         <div className="flex items-center justify-end gap-2">
           <button onClick={onClose}
-            className="h-8 px-4 rounded-[8px] text-[12px] text-token-secondary transition-colors duration-200 hover:bg-white/6">
+            className="h-8 px-4 rounded-[8px] text-[12px] text-token-secondary transition-colors duration-200 hover-bg-soft">
             取消
           </button>
           <button
@@ -1392,7 +1392,7 @@ function TreeNode({
           background: dragOver
             ? 'var(--accent-soft, rgba(99,102,241,0.14))'
             : (isSelected && !isFolder
-                ? 'var(--accent-soft, rgba(99,102,241,0.10))'
+                ? 'var(--selection-bg)'
                 : undefined),
           outline: dragOver ? '1px dashed var(--accent-primary, var(--accent-gold))' : 'none',
           // 排序放置指示线：目标行顶/底一条 2px 主题色插入线（Notion/语雀式拖拽换位反馈）
@@ -1400,7 +1400,7 @@ function TreeNode({
             ? 'inset 0 2px 0 0 var(--accent-primary, #818cf8)'
             : reorderHint === 'after'
               ? 'inset 0 -2px 0 0 var(--accent-primary, #818cf8)'
-              : undefined,
+              : (isSelected && !isFolder ? 'inset 0 0 0 1px var(--selection-border)' : undefined),
           // 文件夹「章节分组」标题：上方单条细分隔线 + 克制留白，更接近文档站目录观感
           ...(isFolder
             ? {
@@ -1427,15 +1427,14 @@ function TreeNode({
               className={`${reserveSelectSpace ? 'flex-shrink-0' : 'absolute'} inline-flex items-center justify-center cursor-pointer transition-opacity ${reserveSelectSpace ? 'opacity-100' : 'opacity-0 group-hover:opacity-100'}`}
               style={{
                 width: 15, height: 15, borderRadius: 4,
-                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong, rgba(255,255,255,0.28))'}`,
-                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'rgba(18,18,24,0.96)',
+                border: `1.5px solid ${isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--border-strong)'}`,
+                background: isChecked ? 'var(--accent-primary, #818cf8)' : 'var(--selection-checkbox-bg)',
                 ...(!reserveSelectSpace
                   ? {
                       left: `${10 + depth * 14}px`,
-                      top: '50%',
-                      transform: 'translateY(-50%)',
+                      top: 8,
                       zIndex: 2,
-                      boxShadow: '0 0 0 2px rgba(18,18,24,0.72)',
+                      boxShadow: '0 0 0 2px var(--selection-checkbox-ring)',
                     }
                   : {}),
               }}
@@ -1474,7 +1473,7 @@ function TreeNode({
           ) : (
           <span className={`${isFolder ? 'flex-1 ' : ''}truncate min-w-0`}
             style={{
-              color: isFolder ? 'var(--text-muted)' : 'var(--text-primary)',
+              color: isFolder ? 'var(--text-muted)' : (isSelected ? 'var(--selection-text)' : 'var(--text-primary)'),
               fontWeight: isFolder ? 600 : (isSelected ? 700 : 600),
               fontSize: isFolder ? '10.5px' : '13px',
               letterSpacing: isFolder ? '0.06em' : '-0.01em',
@@ -1529,7 +1528,7 @@ function TreeNode({
           <span
             onClick={onShareEntry ? (e) => { e.stopPropagation(); onShareEntry(entry.id); } : undefined}
             className="flex-shrink-0 cursor-pointer"
-            style={{ color: 'rgba(234,179,8,0.85)' }}
+            style={{ color: 'var(--semantic-warning-text)' }}
             title="已分享 · 点击查看或复制链接"
           >
             <Share2 size={11} />
@@ -1593,7 +1592,7 @@ function TreeNode({
 
         {/* README 保留为文字徽章；置顶状态已由行首 Pin 图标表达，避免重复。 */}
         {!isFolder && isPrimary && (
-          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'rgba(234,179,8,0.85)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
+          <span className="flex-shrink-0" title="主文档（README）" style={{ color: 'var(--semantic-warning-text)', fontSize: 9, fontWeight: 700, letterSpacing: '0.04em' }}>
             README
           </span>
         )}
@@ -3005,7 +3004,7 @@ export function DocBrowser({
               </button>
               {showSettingsMenu && (
                 <div className="surface-popover absolute right-0 top-[26px] z-50 min-w-[180px] rounded-[10px] p-2">
-                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover:bg-white/6">
+                  <label className="flex cursor-pointer items-center gap-2 rounded-[6px] px-2 py-1.5 text-[12px] text-token-secondary transition-colors hover-bg-soft">
                     <input
                       type="checkbox"
                       checked={showUpdatedTime}
@@ -3098,7 +3097,7 @@ export function DocBrowser({
                         style={{
                           height: 20,
                           lineHeight: '20px',
-                          color: active ? '#fff' : c.text,
+                          color: active ? 'white' : c.text,
                           background: active ? c.dot : c.bg,
                           border: `1px solid ${active ? c.dot : c.border}`,
                           letterSpacing: '0.01em',
@@ -3122,11 +3121,11 @@ export function DocBrowser({
                 placeholder="文件夹名称..."
                 autoFocus
                 className="flex-1 h-7 px-2.5 rounded-[8px] text-[11px] outline-none"
-                style={{ background: 'rgba(234,179,8,0.06)', border: '1px solid rgba(234,179,8,0.15)', color: 'var(--text-primary)' }}
+                style={{ background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               />
               <button onClick={handleCreateFolder}
                 className="h-7 px-2.5 rounded-[8px] text-[10px] font-semibold cursor-pointer"
-                style={{ background: 'rgba(234,179,8,0.1)', color: 'rgba(234,179,8,0.9)', border: '1px solid rgba(234,179,8,0.15)' }}>
+                style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                 创建
               </button>
             </div>
@@ -3143,7 +3142,7 @@ export function DocBrowser({
               {search ? (
                 <>
                   <div className="h-10 w-10 rounded-full flex items-center justify-center"
-                    style={{ background: 'rgba(255,255,255,0.04)' }}>
+                    style={{ background: 'var(--bg-card)' }}>
                     <Search size={18} style={{ color: 'var(--text-muted)' }} />
                   </div>
                   <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
@@ -3183,8 +3182,8 @@ export function DocBrowser({
                       )}
                       {onCreateDocument && (
                         <button onClick={onCreateDocument}
-                          className="text-[10.5px] px-2.5 py-1 rounded-[8px] cursor-pointer text-token-muted hover:text-token-primary"
-                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.06)' }}>
+                          className="text-[10.5px] px-2.5 py-1 rounded-[8px] cursor-pointer text-token-muted hover-text-primary"
+                          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)' }}>
                           新建文档
                         </button>
                       )}
@@ -3305,10 +3304,10 @@ export function DocBrowser({
               className="absolute top-0 left-0 h-full transition-all duration-150"
               style={{
                 width: resizing ? '2px' : '1px',
-                background: resizing ? 'rgba(59,130,246,0.6)' : 'transparent',
+                background: resizing ? 'rgba(var(--accent-primary-rgb), 0.6)' : 'transparent',
               }}
             />
-            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[rgba(59,130,246,0.3)] transition-colors duration-150" />
+            <div className="absolute top-0 left-0 h-full w-1 group-hover/resize:bg-[var(--border-focus)] transition-colors duration-150" />
           </div>
         )}
       </div>
@@ -3329,10 +3328,10 @@ export function DocBrowser({
           title="拖拽调整列表宽度"
         >
           <div
-            className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 rounded-full transition-all duration-150 group-hover/resize:bg-[rgba(59,130,246,0.35)]"
+            className="absolute top-0 bottom-0 left-1/2 -translate-x-1/2 rounded-full transition-all duration-150 group-hover/resize:bg-[var(--border-focus)]"
             style={{
               width: resizing ? 3 : 2,
-              background: resizing ? 'rgba(59,130,246,0.6)' : 'var(--border-faint)',
+              background: resizing ? 'rgba(var(--accent-primary-rgb), 0.6)' : 'var(--border-faint)',
             }}
           />
         </div>
@@ -3351,7 +3350,7 @@ export function DocBrowser({
             <div
               className={`flex items-center gap-2 py-2.5 ${isMobile ? 'px-3 flex-nowrap overflow-x-auto' : 'px-5 flex-wrap'}`}
               style={{
-                borderBottom: '1px solid rgba(255,255,255,0.04)',
+                borderBottom: '1px solid var(--border-subtle)',
                 scrollbarWidth: isMobile ? 'none' : undefined,
               }}
             >
@@ -3397,13 +3396,13 @@ export function DocBrowser({
               })()}
               {selectedEntryId === primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'rgba(234,179,8,0.08)', color: 'rgba(234,179,8,0.8)', border: '1px solid rgba(234,179,8,0.12)' }}>
+                  style={{ background: 'var(--semantic-warning-soft)', color: 'var(--semantic-warning-text)', border: '1px solid var(--semantic-warning-border)' }}>
                   README
                 </span>
               )}
               {pinnedSet.has(selectedEntryId) && selectedEntryId !== primaryEntryId && (
                 <span className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                  style={{ background: 'rgba(59,130,246,0.08)', color: 'rgba(59,130,246,0.8)', border: '1px solid rgba(59,130,246,0.12)' }}>
+                  style={{ background: 'var(--selection-bg)', color: 'var(--selection-text)', border: '1px solid var(--selection-border)' }}>
                   置顶
                 </span>
               )}
@@ -3413,16 +3412,15 @@ export function DocBrowser({
                 const tagLimit = isMobile ? 1 : 4;
                 return (
                   <>
-                    {sel.tags!.slice(0, tagLimit).map(tag => (
-                      <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
-                        style={{
-                          background: 'rgba(168,85,247,0.08)',
-                          color: 'rgba(216,180,254,0.92)',
-                          border: '1px solid rgba(168,85,247,0.16)',
-                        }}>
-                        #{tag}
-                      </span>
-                    ))}
+                    {sel.tags!.slice(0, tagLimit).map(tag => {
+                      const c = getTagColor(tag, tagColorMap);
+                      return (
+                        <span key={tag} className="text-[10px] px-2 py-0.5 rounded-full flex-shrink-0"
+                          style={{ background: c.bg, color: c.text, border: `1px solid ${c.border}` }}>
+                          #{tag}
+                        </span>
+                      );
+                    })}
                     {sel.tags!.length > tagLimit && (
                       <span className="text-[10px] flex-shrink-0" style={{ color: 'var(--text-muted)' }}>
                         +{sel.tags!.length - tagLimit}
@@ -3487,9 +3485,9 @@ export function DocBrowser({
                         onClick={() => onOpenSubscription(sel.id)}
                         className="h-6 px-2 rounded-[8px] text-[10px] font-semibold flex items-center gap-1 cursor-pointer transition-colors flex-shrink-0"
                         style={{
-                          background: 'rgba(59,130,246,0.08)',
-                          border: '1px solid rgba(59,130,246,0.18)',
-                          color: 'rgba(96,165,250,0.95)',
+                          background: 'var(--selection-bg)',
+                          border: '1px solid var(--selection-border)',
+                          color: 'var(--selection-text)',
                         }}
                         title={githubSha ? `GitHub 版本 ${githubSha.slice(0, 7)}（点击查看同步详情）` : '查看订阅同步详情'}
                       >
@@ -3544,9 +3542,9 @@ export function DocBrowser({
                         onClick={() => onReprocess!(sel.id)}
                         className={`rounded-[8px] text-[10px] font-semibold flex items-center justify-center gap-1 cursor-pointer transition-colors flex-shrink-0 ${isMobile ? 'h-8 w-8 px-0' : 'h-6 px-2'}`}
                         style={{
-                          background: 'rgba(59,130,246,0.08)',
-                          border: '1px solid rgba(59,130,246,0.18)',
-                          color: 'rgba(96,165,250,0.95)',
+                          background: 'var(--selection-bg)',
+                          border: '1px solid var(--selection-border)',
+                          color: 'var(--selection-text)',
                         }}
                         title="用智能体加工文档"
                       >
@@ -3606,9 +3604,9 @@ export function DocBrowser({
                   onClick={toggleRightPanel}
                   className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
                   style={{
-                    background: rightPanelCollapsed ? 'rgba(255,255,255,0.04)' : 'rgba(59,130,246,0.1)',
-                    border: '1px solid rgba(255,255,255,0.08)',
-                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'rgba(96,165,250,0.95)',
+                    background: rightPanelCollapsed ? 'var(--nested-block-bg)' : 'var(--selection-bg)',
+                    border: `1px solid ${rightPanelCollapsed ? 'var(--nested-block-border)' : 'var(--selection-border)'}`,
+                    color: rightPanelCollapsed ? 'var(--text-muted)' : 'var(--selection-text)',
                   }}
                   title={rightPanelCollapsed ? '显示本页章节 / 批注栏' : '收起本页章节 / 批注栏'}>
                   <PanelRight size={11} /> {rightPanelCollapsed ? '章节' : '收起'}
@@ -3619,7 +3617,7 @@ export function DocBrowser({
                 <button
                   onClick={toggleReaderFullscreen}
                   className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+                  style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                   title={readerFullscreen ? '退出全屏（ESC）' : '全屏阅读（ESC 退出）'}>
                   {readerFullscreen ? <Minimize2 size={13} /> : <Maximize2 size={13} />}
                 </button>
@@ -3636,7 +3634,7 @@ export function DocBrowser({
                       <button
                         onClick={() => setVersionHistoryOpen(true)}
                         className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                        style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}
+                        style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}
                         title="历史版本 — 查看并恢复">
                         <History size={13} />
                       </button>
@@ -3673,7 +3671,7 @@ export function DocBrowser({
                         <button
                           onClick={() => setEditMode(false)}
                           className="h-7 px-2.5 rounded-[8px] text-[11px] font-semibold flex items-center gap-1 cursor-pointer"
-                          style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.08)', color: 'var(--text-muted)' }}>
+                          style={{ background: 'var(--bg-card)', border: '1px solid var(--border-subtle)', color: 'var(--text-muted)' }}>
                           <X size={11} /> 取消
                         </button>
                       </>
@@ -3681,7 +3679,7 @@ export function DocBrowser({
                       <button
                         onClick={() => { setEditContent(preview?.text ?? ''); setEditMode(true); }}
                         className="h-7 w-7 rounded-[8px] flex items-center justify-center cursor-pointer flex-shrink-0"
-                        style={{ background: 'rgba(59,130,246,0.08)', border: '1px solid rgba(59,130,246,0.15)', color: 'rgba(59,130,246,0.9)' }}
+                        style={{ background: 'var(--selection-bg)', border: '1px solid var(--selection-border)', color: 'var(--selection-text)' }}
                         title="编辑文档">
                         <Pencil size={13} />
                       </button>
@@ -3712,7 +3710,7 @@ export function DocBrowser({
                 return (
                   <div
                     className="shrink-0 flex items-start gap-2 mx-6 mt-3 px-3 py-2 rounded-[8px] text-[11.5px] leading-relaxed"
-                    style={{ background: 'rgba(234,179,8,0.10)', border: '1px solid rgba(234,179,8,0.28)', color: 'rgba(234,179,8,0.95)' }}>
+                    style={{ background: 'var(--semantic-warning-soft)', border: '1px solid var(--semantic-warning-border)', color: 'var(--semantic-warning-text)' }}>
                     <AlertTriangle size={14} className="shrink-0 mt-0.5" />
                     <span>
                       此文档{src}，<b>手动修改（含插入配图）可能在下次同步时被远端内容覆盖</b>。
@@ -3737,7 +3735,7 @@ export function DocBrowser({
                   return (
                     <button
                       onClick={() => handleSelectEntry(srcId)}
-                      className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover:bg-white/8"
+                      className="mb-3 flex max-w-full cursor-pointer items-center gap-1.5 rounded-full px-3 py-1.5 text-[11.5px] font-semibold transition-colors hover-bg-soft"
                       style={{
                         background: 'rgba(168,85,247,0.08)',
                         border: '1px solid rgba(168,85,247,0.22)',
@@ -3797,8 +3795,8 @@ export function DocBrowser({
                       spellCheck={false}
                       className="w-full h-full min-h-[400px] resize-none outline-none text-[13px] font-mono leading-relaxed"
                       style={{
-                        background: 'rgba(0,0,0,0.2)',
-                        border: '1px solid rgba(255,255,255,0.08)',
+                        background: 'var(--bg-input)',
+                        border: '1px solid var(--border-subtle)',
                         borderRadius: '8px',
                         padding: '12px 16px',
                         color: 'var(--text-primary)',
@@ -3985,7 +3983,7 @@ export function DocBrowser({
                           className="fixed inset-x-0 bottom-0 z-[151] overflow-hidden rounded-t-[22px]"
                           style={{
                             height: 'min(76dvh, 620px)',
-                            border: '1px solid rgba(255,255,255,0.10)',
+                            border: '1px solid var(--border-subtle)',
                             borderBottom: 0,
                             boxShadow: '0 -24px 64px rgba(0,0,0,0.42)',
                           }}
@@ -4048,11 +4046,11 @@ export function DocBrowser({
               />
             ) : (
               <div className="text-center">
-                <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'rgba(255,255,255,0.10)' }} />
+                <BookOpen size={34} className="mx-auto mb-3" style={{ color: 'var(--text-muted)' }} />
                 <p className="text-[13px] mb-1" style={{ color: 'var(--text-muted)' }}>
                   选择左侧文件查看内容
                 </p>
-                <p className="text-[11px]" style={{ color: 'rgba(255,255,255,0.25)' }}>
+                <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                   右键文件可置顶或设为主文档
                 </p>
               </div>
@@ -4340,10 +4338,10 @@ function SelectionActionPopover({
     >
       {actions.map((a, i) => (
         <Fragment key={a.key}>
-          {i > 0 && <span className="w-px h-4 mx-0.5" style={{ background: 'rgba(255,255,255,0.12)' }} />}
+          {i > 0 && <span className="w-px h-4 mx-0.5" style={{ background: 'var(--border-subtle)' }} />}
           <button
             onClick={a.onClick}
-            className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover:bg-white/8 transition-colors"
+            className="h-6.5 px-2 rounded-[8px] flex items-center gap-1.5 cursor-pointer hover-bg-soft transition-colors"
             style={{ color: 'rgba(216,180,254,0.95)' }}
           >
             {a.icon}

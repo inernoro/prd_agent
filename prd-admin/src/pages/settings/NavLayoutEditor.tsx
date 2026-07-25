@@ -520,7 +520,7 @@ function DividerChip({
       className="group relative flex h-12 w-[34px] shrink-0 cursor-grab items-center justify-center active:cursor-grabbing"
       title="分隔横杆（拖动移动 / 点 × 删除）"
     >
-      <div className="h-0.5 w-6 rounded-sm bg-white/20" />
+      <div className="h-0.5 w-6 rounded-sm bg-token-nested" />
       <button
         type="button"
         onClick={(e) => {

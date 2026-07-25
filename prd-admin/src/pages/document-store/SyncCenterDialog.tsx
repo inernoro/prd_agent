@@ -369,7 +369,7 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
               {relationSummary(direction, autoOn, nodeName)}
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-2 transition hover:bg-white/10" aria-label="关闭"><X size={17} /></button>
+          <button onClick={onClose} className="rounded-lg p-2 transition hover-bg-soft" aria-label="关闭"><X size={17} /></button>
         </div>
 
         <div className="min-h-0 flex-1 overflow-y-auto px-5 py-5" style={{ overscrollBehavior: 'contain' }}>
@@ -508,14 +508,14 @@ export function SyncCenterDialog({ storeId, storeName, resourceType = 'document-
               {/* 底部折叠入口：最近记录 / 高级对齐 */}
               <div className="mt-4 flex gap-2 border-t pt-4" style={{ borderColor: 'rgba(148,163,184,0.14)' }}>
                 <button onClick={() => setShowRecords(v => !v)}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] transition hover:bg-white/5"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] transition hover-bg-soft"
                   style={{ borderColor: showRecords ? 'rgba(45,212,191,0.30)' : 'rgba(148,163,184,0.16)', background: 'rgba(2,6,23,0.2)', color: showRecords ? 'rgb(94,234,212)' : 'var(--text-secondary)' }}>
                   <History size={13} /> 最近记录
                   {counts.all > 0 && <span className="rounded-full px-1.5 text-[10px]" style={{ background: 'rgba(148,163,184,0.16)', color: problemRuns.length > 0 ? 'rgb(252,165,165)' : 'var(--text-muted)' }}>{problemRuns.length > 0 ? `${problemRuns.length} 失败` : counts.all}</span>}
                   {showRecords ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
                 </button>
                 <button onClick={() => setShowAdvanced(v => !v)} disabled={nodes.length === 0}
-                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] transition hover:bg-white/5 disabled:opacity-50"
+                  className="flex flex-1 items-center justify-center gap-1.5 rounded-lg border px-3 py-2 text-[12px] transition hover-bg-soft disabled:opacity-50"
                   style={{ borderColor: showAdvanced ? 'rgba(45,212,191,0.30)' : 'rgba(148,163,184,0.16)', background: 'rgba(2,6,23,0.2)', color: showAdvanced ? 'rgb(94,234,212)' : 'var(--text-secondary)' }}>
                   <SlidersHorizontal size={13} /> 高级对齐
                   {showAdvanced ? <ChevronDown size={13} /> : <ChevronRight size={13} />}
@@ -733,7 +733,7 @@ export function RunCard({ run, forceExpanded = false, onCancel }: { run: PeerSyn
             <button
               type="button"
               onClick={() => setExpanded(v => !v)}
-              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition hover:bg-white/10"
+              className="flex h-6 w-6 shrink-0 items-center justify-center rounded-md transition hover-bg-soft"
               aria-label={expanded ? '收起同步详情' : '展开同步详情'}
               title={expanded ? '收起详情' : '查看失败原因和同步进度'}
             >

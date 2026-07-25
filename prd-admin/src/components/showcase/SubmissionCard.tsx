@@ -53,24 +53,16 @@ export function SubmissionCard({ item, onLikeToggle, onClick, isAdmin, onAdminWi
       <div className="relative w-full overflow-hidden rounded-2xl transition-all duration-300 group-hover:shadow-lg group-hover:shadow-black/20">
         {!imgLoaded && !imgError && (
           <div
-            className="w-full animate-pulse rounded-2xl"
-            style={{
-              aspectRatio: item.coverWidth && item.coverHeight
+            className="w-full animate-pulse rounded-2xl bg-token-nested"
+            style={{ aspectRatio: item.coverWidth && item.coverHeight
                 ? `${item.coverWidth}/${item.coverHeight}`
-                : '3/4',
-              background: 'rgba(255,255,255,0.04)',
-              minHeight: 160,
-            }}
+                : '3/4', minHeight: 160 }}
           />
         )}
         {imgError && (
           <div
-            className="w-full flex items-center justify-center rounded-2xl"
-            style={{
-              aspectRatio: '3/4',
-              background: 'rgba(255,255,255,0.03)',
-              minHeight: 160,
-            }}
+            className="w-full flex items-center justify-center rounded-2xl bg-token-nested"
+            style={{ aspectRatio: '3/4', minHeight: 160 }}
           >
             <ImageOff size={28} style={{ color: 'var(--text-muted, rgba(255,255,255,0.12))' }} />
           </div>
@@ -108,13 +100,8 @@ export function SubmissionCard({ item, onLikeToggle, onClick, isAdmin, onAdminWi
         {isAdmin && (
           <button
             type="button"
-            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10 flex items-center justify-center w-7 h-7 rounded-full"
-            style={{
-              background: 'rgba(239, 68, 68, 0.85)',
-              backdropFilter: 'blur(8px)',
-              color: '#fff',
-              border: '1px solid rgba(255,255,255,0.2)',
-            }}
+            className="absolute top-2 right-2 opacity-0 group-hover:opacity-100 transition-opacity duration-200 z-10 flex items-center justify-center w-7 h-7 rounded-full border border-token-subtle"
+            style={{ background: 'rgba(239, 68, 68, 0.85)', backdropFilter: 'blur(8px)', color: '#fff' }}
             title="管理员撤稿"
             onClick={(e) => {
               e.stopPropagation();
@@ -147,11 +134,8 @@ export function SubmissionCard({ item, onLikeToggle, onClick, isAdmin, onAdminWi
         <div className="flex items-center gap-2.5 shrink-0">
           {item.viewCount > 0 && (
             <span
-              className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full"
-              style={{
-                color: 'rgba(255,255,255,0.65)',
-                background: 'rgba(255,255,255,0.08)',
-              }}
+              className="flex items-center gap-1 text-[11px] px-1.5 py-0.5 rounded-full bg-token-nested"
+              style={{ color: 'rgba(255,255,255,0.65)' }}
             >
               <Eye size={11} />
               {item.viewCount >= 10000

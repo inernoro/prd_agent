@@ -136,11 +136,11 @@ export function FeatureModuleSearchSelect({
       style={{ position: 'fixed', top: pos.top, bottom: pos.bottom, left: pos.left, width: pos.width, maxHeight: pos.maxHeight, ...itemComboboxPanelStyle }}
     >
       {!isSearching && flatOptions.length > 0 && (
-        <div className="px-2.5 py-2 shrink-0 border-b border-white/8" style={{ minHeight: 0 }}>
-          <div className="flex flex-wrap items-center gap-1 text-[11px] text-white/45">
+        <div className="px-2.5 py-2 shrink-0 border-b border-token-subtle" style={{ minHeight: 0 }}>
+          <div className="flex flex-wrap items-center gap-1 text-[11px] text-token-muted">
             <button
               type="button"
-              className={`rounded px-1.5 py-0.5 hover:bg-white/8 ${browseParentId === null ? 'text-cyan-200/90' : ''}`}
+              className={`hover-bg-soft rounded px-1.5 py-0.5 ${browseParentId === null ? 'text-semantic-info' : ''}`}
               onMouseDown={(e) => e.preventDefault()}
               onClick={() => setBrowseParentId(null)}
             >
@@ -148,10 +148,10 @@ export function FeatureModuleSearchSelect({
             </button>
             {breadcrumb.map((item) => (
               <span key={item.featureId} className="flex items-center gap-1">
-                <ChevronRight size={12} className="text-white/25" />
+                <ChevronRight size={12} className="text-token-muted opacity-50" />
                 <button
                   type="button"
-                  className={`rounded px-1.5 py-0.5 hover:bg-white/8 truncate max-w-[120px] ${browseParentId === item.featureId ? 'text-cyan-200/90' : ''}`}
+                  className={`hover-bg-soft rounded px-1.5 py-0.5 truncate max-w-[120px] ${browseParentId === item.featureId ? 'text-semantic-info' : ''}`}
                   title={item.path}
                   onMouseDown={(e) => e.preventDefault()}
                   onClick={() => setBrowseParentId(item.featureId)}
@@ -198,7 +198,7 @@ export function FeatureModuleSearchSelect({
             {canCreate && (
               <button
                 type="button"
-                className="w-full px-3 py-2.5 text-left text-[12px] text-cyan-200/90 hover:bg-white/8"
+                className="hover-bg-soft w-full px-3 py-2.5 text-left text-[12px] text-semantic-info"
                 onMouseDown={(e) => e.preventDefault()}
                 onClick={() => apply(filter.trim())}
               >
@@ -304,7 +304,7 @@ function CatalogRow({
 }) {
   return (
     <div
-      className="flex items-center gap-2 px-2 py-1.5 hover:bg-white/8"
+      className="hover-bg-soft flex items-center gap-2 px-2 py-1.5"
       style={selected ? { background: 'rgba(var(--accent-gold-rgb, 212,175,55), 0.08)' } : undefined}
     >
       <button
@@ -317,18 +317,18 @@ function CatalogRow({
         }}
       >
         {option.hasChildren ? (
-          <FolderTree size={14} className="shrink-0 text-white/35" />
+          <FolderTree size={14} className="shrink-0 text-token-muted" />
         ) : (
           <span className="w-3.5 shrink-0" />
         )}
         <span className="min-w-0 flex-1">
-          <span className="block text-[13px] text-white/90 truncate">{option.title}</span>
+          <span className="block text-[13px] text-token-primary truncate">{option.title}</span>
           {mode === 'search' && (
-            <span className="block text-[10px] text-white/40 truncate mt-0.5">{option.path}</span>
+            <span className="block text-[10px] text-token-muted truncate mt-0.5">{option.path}</span>
           )}
         </span>
         {mode === 'browse' && option.hasChildren && (
-          <ChevronRight size={14} className="shrink-0 text-white/30" />
+          <ChevronRight size={14} className="shrink-0 text-token-muted" />
         )}
       </button>
       {(mode === 'browse' && option.hasChildren) || mode === 'search' ? (

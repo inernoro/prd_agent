@@ -333,8 +333,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 style={{
                   padding: '10px 40px 10px 16px',
                   borderRadius: 10,
-                  border: `1px solid ${wrongPassword ? 'rgba(239, 68, 68, 0.5)' : 'rgba(255,255,255,0.12)'}`,
-                  background: 'rgba(255,255,255,0.06)',
+                  border: `1px solid ${wrongPassword ? 'rgba(239, 68, 68, 0.5)' : 'var(--border-subtle)'}`,
+                  background: 'var(--nested-block-bg)',
                   color: '#fff',
                   fontSize: 14,
                   outline: 'none',
@@ -440,17 +440,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
         }}
       >
         {/* Top bar —— 全屏演示时隐藏，让 PPT 占满整屏 */}
-        <div style={{
-          padding: '8px 16px',
-          display: isFullscreen ? 'none' : 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          background: 'rgba(17, 17, 17, 0.85)',
-          backdropFilter: 'blur(12px)',
-          WebkitBackdropFilter: 'blur(12px)',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-          flexShrink: 0,
-        }}>
+        <div className="border-b border-b-token-subtle" style={{ padding: '8px 16px', display: isFullscreen ? 'none' : 'flex', alignItems: 'center', justifyContent: 'space-between', background: 'rgba(17, 17, 17, 0.85)', backdropFilter: 'blur(12px)', WebkitBackdropFilter: 'blur(12px)', flexShrink: 0 }}>
           <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
             <ShieldCheck size={14} color="rgba(34, 197, 94, 0.8)" />
             {/* 不再展示「{用户} 分享给你的」前缀，直接显示站点标题 */}
@@ -462,7 +452,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             {!site.pdfAssetUrl && (
               <button
                 onClick={togglePresentFullscreen}
-                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'rgba(255,255,255,0.08)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
+                style={{ display: 'flex', alignItems: 'center', gap: 4, padding: '4px 10px', borderRadius: 6, border: 'none', background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.85)', fontSize: 13, cursor: 'pointer' }}
                 title="全屏演示（Esc 退出）"
               >
                 {isFullscreen ? <Minimize size={12} /> : <Maximize size={12} />}
@@ -563,17 +553,9 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
             />
             {/* 右侧抽屉 */}
             <aside
-              style={{
-                position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61,
-                width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column',
-                background: '#0f1014', borderLeft: '1px solid rgba(255,255,255,0.1)',
-                boxShadow: '-12px 0 40px rgba(0,0,0,0.5)',
-              }}
+              className="border-l border-l-token-subtle" style={{ position: 'fixed', top: 0, right: 0, bottom: 0, zIndex: 61, width: 'min(420px, 92vw)', display: 'flex', flexDirection: 'column', background: '#0f1014', boxShadow: '-12px 0 40px rgba(0,0,0,0.5)' }}
             >
-              <div style={{
-                display: 'flex', alignItems: 'center', justifyContent: 'space-between',
-                padding: '12px 16px', borderBottom: '1px solid rgba(255,255,255,0.08)', flexShrink: 0,
-              }}>
+              <div className="border-b border-b-token-subtle" style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', padding: '12px 16px', flexShrink: 0 }}>
                 <span style={{ color: '#fff', fontSize: 14, fontWeight: 600 }}>评论</span>
                 <button
                   onClick={() => setShowComments(false)}
@@ -581,7 +563,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                   style={{
                     display: 'flex', alignItems: 'center', justifyContent: 'center',
                     width: 28, height: 28, borderRadius: 8, border: 'none', cursor: 'pointer',
-                    background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.7)',
+                    background: 'var(--nested-block-bg)', color: 'rgba(255,255,255,0.7)',
                   }}
                 >
                   <X size={16} />
@@ -660,8 +642,8 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
                 gap: 14,
                 padding: 16,
                 borderRadius: 14,
-                background: 'rgba(255,255,255,0.05)',
-                border: '1px solid rgba(255,255,255,0.08)',
+                background: 'var(--nested-block-bg)',
+                border: '1px solid var(--border-subtle)',
                 textDecoration: 'none',
                 backdropFilter: 'blur(24px)',
                 WebkitBackdropFilter: 'blur(24px)',
@@ -679,7 +661,7 @@ export default function ShareViewPage({ tokenOverride }: ShareViewPageProps = {}
               {site.coverImageUrl ? (
                 <img src={site.coverImageUrl} alt="" style={{ width: 56, height: 42, objectFit: 'cover', borderRadius: 8 }} />
               ) : (
-                <div style={{ width: 56, height: 42, borderRadius: 8, background: 'rgba(255,255,255,0.06)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
+                <div style={{ width: 56, height: 42, borderRadius: 8, background: 'var(--nested-block-bg)', display: 'flex', alignItems: 'center', justifyContent: 'center' }}>
                   <FileCode2 size={20} color="rgba(255,255,255,0.3)" />
                 </div>
               )}
@@ -736,13 +718,13 @@ const styles: Record<string, React.CSSProperties> = {
     background: 'rgba(14, 15, 20, 0.92)',
     backdropFilter: 'blur(40px) saturate(130%)',
     WebkitBackdropFilter: 'blur(40px) saturate(130%)',
-    border: '1px solid rgba(255, 255, 255, 0.08)',
+    border: '1px solid var(--border-subtle)',
     boxShadow: '0 8px 32px -4px rgba(0, 0, 0, 0.4), 0 1px 0 0 rgba(255, 255, 255, 0.06) inset',
   },
   spinner: {
     width: 32,
     height: 32,
-    border: '3px solid rgba(255,255,255,0.1)',
+    border: '3px solid var(--border-subtle)',
     borderTop: '3px solid rgba(59, 130, 246, 0.8)',
     borderRadius: '50%',
     animation: 'share-spin 0.8s linear infinite',
@@ -751,7 +733,7 @@ const styles: Record<string, React.CSSProperties> = {
   miniSpinner: {
     width: 12,
     height: 12,
-    border: '2px solid rgba(255,255,255,0.1)',
+    border: '2px solid var(--border-subtle)',
     borderTop: '2px solid currentColor',
     borderRadius: '50%',
     animation: 'share-spin 0.8s linear infinite',

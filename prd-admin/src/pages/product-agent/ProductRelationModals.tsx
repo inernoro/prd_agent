@@ -29,13 +29,13 @@ function ModalShell({ title, onClose, children, width = 560 }: { title: string; 
   return createPortal(
     <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/50" onClick={onClose}>
       <div
-        className="rounded-xl border border-white/10 bg-[#16181d] flex flex-col"
+        className="rounded-xl border border-token-subtle bg-[#16181d] flex flex-col"
         style={{ width, maxWidth: '92vw', height: '78vh', maxHeight: '78vh' }}
         onClick={(e) => e.stopPropagation()}
       >
-        <div className="flex items-center justify-between px-4 py-3 border-b border-white/10 shrink-0">
-          <h2 className="text-sm font-semibold text-white">{title}</h2>
-          <button onClick={onClose} className="text-white/40 hover:text-white">
+        <div className="flex items-center justify-between px-4 py-3 border-b border-token-subtle shrink-0">
+          <h2 className="text-sm font-semibold text-token-primary">{title}</h2>
+          <button onClick={onClose} className="text-token-muted hover-text-primary">
             <X size={16} />
           </button>
         </div>
@@ -64,17 +64,17 @@ function CheckboxList<T extends { id: string }>({
   sub?: (t: T) => string;
   empty: string;
 }) {
-  if (items.length === 0) return <div className="text-xs text-white/40 py-4 text-center">{empty}</div>;
+  if (items.length === 0) return <div className="text-xs text-token-muted py-4 text-center">{empty}</div>;
   return (
     <div className="flex flex-col gap-1">
       {items.map((t) => (
         <label
           key={t.id}
-          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover:bg-white/5 cursor-pointer"
+          className="flex items-center gap-2 px-2 py-1.5 rounded-lg hover-bg-soft cursor-pointer"
         >
           <input type="checkbox" checked={selected.has(t.id)} onChange={() => toggle(t.id)} className="accent-cyan-500" />
-          <span className="text-sm text-white/80 truncate flex-1">{label(t)}</span>
-          {sub && <span className="text-[10px] text-white/40 shrink-0">{sub(t)}</span>}
+          <span className="text-sm text-token-primary truncate flex-1">{label(t)}</span>
+          {sub && <span className="text-[10px] text-token-muted shrink-0">{sub(t)}</span>}
         </label>
       ))}
     </div>
@@ -84,7 +84,7 @@ function CheckboxList<T extends { id: string }>({
 function Section({ title, children }: { title: string; children: React.ReactNode }) {
   return (
     <div className="mb-4">
-      <div className="text-xs font-medium text-white/50 mb-1.5">{title}</div>
+      <div className="text-xs font-medium text-token-secondary mb-1.5">{title}</div>
       {children}
     </div>
   );
@@ -183,13 +183,13 @@ export function RequirementRelationModal({
               </button>
             </div>
             {traced.length === 0 ? (
-              <div className="text-xs text-white/40 py-2 text-center">还没有缺陷追溯到本需求。</div>
+              <div className="text-xs text-token-muted py-2 text-center">还没有缺陷追溯到本需求。</div>
             ) : (
               <div className="flex flex-col gap-1">
                 {traced.map((d) => (
-                  <div key={d.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-white/10 bg-white/[0.02]">
-                    <span className="text-sm text-white/80 truncate">
-                      <span className="text-[10px] text-white/40 mr-1">{d.defectNo}</span>
+                  <div key={d.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-token-subtle bg-token-nested">
+                    <span className="text-sm text-token-primary truncate">
+                      <span className="text-[10px] text-token-muted mr-1">{d.defectNo}</span>
                       {d.title || '(无标题)'}
                     </span>
                     <button
@@ -197,7 +197,7 @@ export function RequirementRelationModal({
                         await untraceDefect(d.id);
                         await reloadTraced();
                       }}
-                      className="text-white/30 hover:text-red-300 shrink-0"
+                      className="text-token-muted hover:text-red-300 shrink-0"
                       title="解除追溯"
                     >
                       <Unlink size={13} />
@@ -207,8 +207,8 @@ export function RequirementRelationModal({
               </div>
             )}
           </Section>
-          <div className="flex justify-end gap-2 pt-2 border-t border-white/10">
-            <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 hover:bg-white/5">
+          <div className="flex justify-end gap-2 pt-2 border-t border-token-subtle">
+            <button onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">
               取消
             </button>
             <button
@@ -271,28 +271,28 @@ export function DefectLinkerModal({
   return (
     <ModalShell title="关联缺陷（追溯到本需求）" onClose={onClose} width={480}>
       <div className="flex items-center gap-2 mb-3">
-        <div className="flex items-center gap-1.5 flex-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10">
-          <Search size={14} className="text-white/40" />
+        <div className="flex items-center gap-1.5 flex-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle">
+          <Search size={14} className="text-token-muted" />
           <input
             value={keyword}
             onChange={(e) => setKeyword(e.target.value)}
             placeholder="按标题 / 编号搜索我可见的缺陷"
-            className="bg-transparent text-sm text-white outline-none flex-1"
+            className="bg-transparent text-sm text-token-primary outline-none flex-1"
           />
         </div>
       </div>
       {loading ? (
         <MapSectionLoader text="正在加载…" />
       ) : items.length === 0 ? (
-        <div className="text-xs text-white/40 py-6 text-center">
+        <div className="text-xs text-token-muted py-6 text-center">
           没有可关联的缺陷（仅显示你可见、且尚未追溯到任何产品的缺陷）。
         </div>
       ) : (
         <div className="flex flex-col gap-1">
           {items.map((d) => (
-            <div key={d.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-white/10 bg-white/[0.02]">
-              <span className="text-sm text-white/80 truncate">
-                <span className="text-[10px] text-white/40 mr-1">{d.defectNo}</span>
+            <div key={d.id} className="flex items-center justify-between gap-2 px-2 py-1.5 rounded-lg border border-token-subtle bg-token-nested">
+              <span className="text-sm text-token-primary truncate">
+                <span className="text-[10px] text-token-muted mr-1">{d.defectNo}</span>
                 {d.title || '(无标题)'}
               </span>
               <button

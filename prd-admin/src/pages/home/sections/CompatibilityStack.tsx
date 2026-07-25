@@ -107,7 +107,7 @@ export function CompatibilityStack() {
               type="button"
               disabled={gatewayOpening}
               onClick={() => void openGateway()}
-              className="inline-flex items-center gap-2 rounded-full border border-white/15 bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-white/30 hover:bg-white/[0.08] hover:text-white"
+              className="inline-flex items-center gap-2 rounded-full border border-token-subtle bg-white/[0.04] px-5 py-2.5 text-[13px] font-medium text-white/85 transition-colors hover:border-token-subtle hover-bg-soft/[0.08] hover:text-white"
             >
               {t.compat.action}
               {gatewayOpening ? <MapSpinner size={14} /> : <ExternalLink className="h-3.5 w-3.5" />}
@@ -122,7 +122,7 @@ export function CompatibilityStack() {
 function ProviderTile({ name, region }: { name: string; region: string }) {
   return (
     <div
-      className="group relative px-4 py-5 rounded-xl border border-white/[0.06] bg-white/[0.015] transition-all duration-300 hover:bg-white/[0.04] hover:border-white/15 cursor-default"
+      className="group relative px-4 py-5 rounded-xl border border-token-subtle/[0.06] bg-white/[0.015] transition-all duration-300 hover-bg-soft/[0.04] hover:border-token-subtle cursor-default"
     >
       <div
         className="text-[13.5px] text-white/60 group-hover:text-white/95 transition-colors font-medium"

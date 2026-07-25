@@ -472,7 +472,7 @@ curl -L "${skillUrl}" -o /tmp/findmapskills.zip \\
                     checked ? 'surface-action-primary' : 'surface-action'
                   }`}
                 >
-                  {checked && <Check size={10} className="text-white" strokeWidth={3} />}
+                  {checked && <Check size={10} className="text-token-primary" strokeWidth={3} />}
                 </div>
                 <div className="mb-1.5 text-token-secondary" aria-hidden>
                   <ScopeIcon size={18} />

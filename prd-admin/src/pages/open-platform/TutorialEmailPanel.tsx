@@ -47,7 +47,7 @@ export default function TutorialEmailPanel({ onActionsReady }: TutorialEmailPane
             onClick={() => setViewMode(t.key)}
             className="flex items-center gap-1 px-2.5 py-1 text-xs rounded-md transition-colors"
             style={{
-              background: viewMode === t.key ? 'var(--bg-card, rgba(255, 255, 255, 0.03))' : 'transparent',
+              background: viewMode === t.key ? 'var(--bg-card)' : 'transparent',
               color: viewMode === t.key ? 'var(--text-primary)' : 'var(--text-muted)',
               border: viewMode === t.key ? '1px solid var(--border-default)' : '1px solid transparent',
             }}
@@ -375,8 +375,8 @@ function ComposeView() {
           {messages.length === 0 ? (
             <div className="h-full flex items-center justify-center">
               <div className="text-center space-y-4 px-4">
-                <div className="w-12 h-12 rounded-xl mx-auto flex items-center justify-center"
-                  style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+                <div className="w-12 h-12 rounded-xl mx-auto flex items-center justify-center bg-token-nested"
+                  >
                   <Sparkles size={24} style={{ color: 'var(--color-warning)', opacity: 0.7 }} />
                 </div>
                 <div>
@@ -397,12 +397,8 @@ function ComposeView() {
                     <button
                       key={hint}
                       onClick={() => { setInput(hint); textareaRef.current?.focus(); }}
-                      className="block w-full text-left px-3 py-2 text-xs rounded-lg transition-colors"
-                      style={{
-                        background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
-                        color: 'var(--text-secondary)',
-                        border: '1px solid var(--border-default)',
-                      }}
+                      className="block w-full text-left px-3 py-2 text-xs rounded-lg transition-colors bg-token-nested"
+                      style={{ color: 'var(--text-secondary)', border: '1px solid var(--border-default)' }}
                     >
                       {hint}
                     </button>
@@ -427,7 +423,7 @@ function ComposeView() {
                             borderBottomRightRadius: 4,
                           }
                         : {
-                            background: 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                            background: 'var(--bg-card)',
                             color: 'var(--text-primary)',
                             borderBottomLeftRadius: 4,
                           }
@@ -447,8 +443,8 @@ function ComposeView() {
               ))}
               {generating && (
                 <div className="flex justify-start">
-                  <div className="px-3 py-2 rounded-xl text-sm flex items-center gap-2"
-                    style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
+                  <div className="px-3 py-2 rounded-xl text-sm flex items-center gap-2 bg-token-nested"
+                    style={{ color: 'var(--text-muted)', borderBottomLeftRadius: 4 }}>
                     <MapSpinner size={14} />
                     AI 正在生成邮件...
                   </div>
@@ -676,8 +672,8 @@ function RecordsView() {
           <select
             value={statusFilter}
             onChange={(e) => setStatusFilter(e.target.value)}
-            className="px-2 py-1 text-xs rounded-md"
-            style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
+            className="px-2 py-1 text-xs rounded-md bg-token-nested"
+            style={{ border: '1px solid var(--border-default)', color: 'var(--text-primary)' }}
           >
             <option value="">全部状态</option>
             <option value="active">进行中</option>
@@ -736,8 +732,8 @@ function RecordsView() {
                   {enr.status === 'active' && (
                     <button
                       onClick={() => handleUnsubscribe(enr.id)}
-                      className="text-xs px-2 py-1 rounded-md"
-                      style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
+                      className="text-xs px-2 py-1 rounded-md bg-token-nested"
+                      style={{ color: 'var(--text-muted)', border: '1px solid var(--border-default)' }}
                     >
                       退订
                     </button>

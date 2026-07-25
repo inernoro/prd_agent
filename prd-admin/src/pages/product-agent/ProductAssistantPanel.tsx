@@ -181,16 +181,16 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
   return (
     <div className="h-full min-h-0 flex flex-col">
       {/* 头部 */}
-      <div className="shrink-0 flex items-center gap-2 px-5 py-3.5 border-b border-white/10">
+      <div className="shrink-0 flex items-center gap-2 px-5 py-3.5 border-b border-token-subtle">
         <Sparkles size={16} className="text-cyan-300" />
         <div className="flex flex-col min-w-0">
-          <span className="text-sm font-semibold text-white/90">AI助手</span>
-          <span className="text-[11px] text-white/40 truncate">基于「{productName}」全量数据 + 知识库问答</span>
+          <span className="text-sm font-semibold text-token-primary">AI助手</span>
+          <span className="text-[11px] text-token-muted truncate">基于「{productName}」全量数据 + 知识库问答</span>
         </div>
         {history.length > 0 && (
           <button
             onClick={clearAll}
-            className="ml-auto flex items-center gap-1 text-[11px] text-white/45 hover:text-white/80 px-1.5 py-1 rounded hover:bg-white/5"
+            className="ml-auto flex items-center gap-1 text-[11px] text-token-muted hover-text-primary px-1.5 py-1 rounded hover-bg-soft"
             title="清除全部对话"
           >
             <Trash2 size={13} /> 清除
@@ -209,8 +209,8 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             <div className="w-12 h-12 rounded-2xl flex items-center justify-center bg-cyan-500/10 border border-cyan-500/25">
               <Sparkles size={22} className="text-cyan-300" />
             </div>
-            <div className="text-sm text-white/70 font-medium">问点什么吧</div>
-            <div className="text-[12px] text-white/40 leading-relaxed max-w-md">
+            <div className="text-sm text-token-secondary font-medium">问点什么吧</div>
+            <div className="text-[12px] text-token-muted leading-relaxed max-w-md">
               我能基于本产品的需求 / 功能 / 缺陷 / 版本 / 客户与知识库回答你的问题，也能直接替你创建对象。
               若需求由某客户提出但该客户尚未建档，我会先向你确认是否新建客户档案，确认后再创建需求。
               试试下方的快捷分析，或者说：「帮我创建一个 P2 需求：由客户可口可乐提出……」
@@ -230,7 +230,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             <UserRow text={pendingQ} avatar={myAvatar} files={pendingFiles} />
             <AiRow streaming>
               {connecting ? (
-                <span className="inline-flex items-center gap-2 text-white/50 text-[12px]">
+                <span className="inline-flex items-center gap-2 text-token-secondary text-[12px]">
                   <MapSpinner size={14} /> {sse.phaseMessage || '思考中…'}
                 </span>
               ) : (
@@ -259,8 +259,8 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
       {/* 输入区（参考 Codex 桌面端：大输入框 + 底部操作行，语音/发送在框内右下） */}
       <div className="shrink-0 px-5 py-3">
         <div
-          className={`rounded-xl border bg-white/5 flex flex-col transition-colors ${
-            speech.listening ? 'border-red-400/50' : 'border-white/10 focus-within:border-cyan-500/40'
+          className={`rounded-xl border bg-token-nested flex flex-col transition-colors ${
+            speech.listening ? 'border-red-400/50' : 'border-token-subtle focus-within:border-cyan-500/40'
           }`}
         >
           {files.length > 0 && (
@@ -279,7 +279,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
             }}
             rows={3}
             placeholder={speech.listening ? '正在聆听，直接说出你的问题…' : '输入问题，Enter 发送，Shift+Enter 换行…'}
-            className="no-focus-ring w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] text-white/90 outline-none placeholder:text-white/30"
+            className="no-focus-ring w-full resize-none bg-transparent px-3.5 pt-3 text-[13px] text-token-primary outline-none placeholder-token-muted"
             style={{ minHeight: 84, maxHeight: 200, overflowY: 'auto' }}
           />
           <div className="flex items-center gap-1.5 px-2.5 pb-2.5">
@@ -302,7 +302,7 @@ export function ProductAssistantPanel({ productId, productName }: { productId: s
                   className={`flex items-center justify-center w-8 h-8 rounded-lg border text-sm transition-colors ${
                     speech.listening
                       ? 'bg-red-500/20 text-red-300 border-red-400/40 hover:bg-red-500/30'
-                      : 'bg-white/5 text-white/55 border-white/10 hover:text-white hover:bg-white/10'
+                      : 'bg-token-nested text-token-secondary border-token-subtle hover-text-primary hover-bg-soft'
                   }`}
                   title={speech.listening ? '停止语音输入' : '语音输入（说话转文字）'}
                 >
@@ -357,13 +357,13 @@ function ActionResults({ items, productId }: { items: AssistantActionResult[]; p
           <button
             key={i}
             onClick={open}
-            className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-white/10 bg-white/[0.03] hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
+            className="group flex items-center gap-2 px-3 py-2 rounded-lg border border-token-subtle bg-token-nested hover:bg-cyan-500/10 hover:border-cyan-500/30 text-left"
           >
             <span className="text-[10px] px-1.5 py-0.5 rounded shrink-0" style={{ color: meta.color, background: `${meta.color}1a` }}>
               已创建{meta.label}
             </span>
-            {r.no ? <span className="text-[11px] font-mono text-white/40 shrink-0">{r.no}</span> : null}
-            <span className="text-[12px] text-white/85 truncate flex-1">{r.title}</span>
+            {r.no ? <span className="text-[11px] font-mono text-token-muted shrink-0">{r.no}</span> : null}
+            <span className="text-[12px] text-token-primary truncate flex-1">{r.title}</span>
             <span className="flex items-center gap-1 text-[11px] text-cyan-300/70 opacity-0 group-hover:opacity-100 transition-opacity shrink-0">
               查看 <ExternalLink size={11} />
             </span>
@@ -410,12 +410,12 @@ function AiRow({ text, streaming, children }: { text?: string; streaming?: boole
       <div className="w-7 h-7 rounded-full shrink-0 flex items-center justify-center bg-cyan-500/15 border border-cyan-500/30 mt-0.5">
         <Sparkles size={14} className="text-cyan-300" />
       </div>
-      <div className="group relative max-w-[85%] text-[13px] text-white/85 bg-white/[0.04] border border-white/10 rounded-2xl rounded-tl-sm px-3 py-2 leading-relaxed whitespace-pre-wrap">
+      <div className="group relative max-w-[85%] text-[13px] text-token-primary bg-token-nested border border-token-subtle rounded-2xl rounded-tl-sm px-3 py-2 leading-relaxed whitespace-pre-wrap">
         {children ?? text}
         {!streaming && text && (
           <button
             onClick={copy}
-            className="absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-white/10 text-white/50 hover:text-white/90 opacity-0 group-hover:opacity-100 transition-opacity"
+            className="absolute -bottom-2.5 right-1 flex items-center gap-0.5 text-[10px] px-1.5 py-0.5 rounded bg-[#1a1c22] border border-token-subtle text-token-secondary hover-text-primary opacity-0 group-hover:opacity-100 transition-opacity"
             title="复制内容"
           >
             {copied ? <Check size={11} /> : <Copy size={11} />} {copied ? '已复制' : '复制'}

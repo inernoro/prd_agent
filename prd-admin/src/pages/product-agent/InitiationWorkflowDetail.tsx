@@ -129,15 +129,15 @@ export function InitiationWorkflowDetail({
   if (loading) return <MapSectionLoader text="正在加载立项详情…" />;
 
   if (!initiation) {
-    return <div className="text-sm text-white/35">未找到立项记录</div>;
+    return <div className="text-sm text-token-muted">未找到立项记录</div>;
   }
 
   return (
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-white/90">{displayTitle}</h1>
-          <p className="mt-1 text-xs text-white/40">
+          <h1 className="text-lg font-semibold text-token-primary">{displayTitle}</h1>
+          <p className="mt-1 text-xs text-token-muted">
             {initiation.planName} · {SCALE_LABEL[initiation.versionType]} · {STATUS_LABEL[initiation.status] ?? initiation.status}
             {initiation.sourceType === 'import' ? ' · 历史导入' : ''}
           </p>
@@ -169,7 +169,7 @@ export function InitiationWorkflowDetail({
         )}
       </div>
 
-      <div className="flex border-b border-white/10">
+      <div className="flex border-b border-token-subtle">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>
         <TabButton active={tab === 'requirements'} onClick={() => setTab('requirements')}>
           需求
@@ -254,11 +254,11 @@ export function InitiationWorkflowDetail({
         />
       )}
 
-      <div className="flex justify-end border-t border-white/10 pt-4">
+      <div className="flex justify-end border-t border-token-subtle pt-4">
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65 hover:bg-white/10"
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft"
         >
           返回
         </button>
@@ -272,7 +272,7 @@ function TabButton({ active, children, onClick }: { active: boolean; children: R
     <button
       type="button"
       onClick={onClick}
-      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}
+      className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover:text-token-secondary'}`}
     >
       {children}
     </button>

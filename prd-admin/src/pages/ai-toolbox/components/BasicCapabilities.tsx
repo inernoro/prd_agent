@@ -397,7 +397,7 @@ export function BasicCapabilities() {
                   {messages.length > 0 && (
                     <button
                       onClick={clearChat}
-                      className="p-2 rounded-lg transition-colors hover:bg-white/5"
+                      className="p-2 rounded-lg transition-colors hover-bg-soft"
                       title="清空对话"
                     >
                       <RotateCcw size={14} className="text-token-muted" />
@@ -483,7 +483,7 @@ export function BasicCapabilities() {
                         <div
                           className={cn(
                             'inline-block px-3 py-2 rounded-xl text-[13px] leading-relaxed',
-                            msg.role === 'user' ? 'text-left text-white' : 'surface-inset text-token-primary'
+                            msg.role === 'user' ? 'text-left text-token-primary' : 'surface-inset text-token-primary'
                           )}
                           style={msg.role === 'user' ? {
                             background: 'linear-gradient(135deg, var(--accent-primary) 0%, var(--accent-secondary, var(--accent-primary)) 100%)',
@@ -497,7 +497,7 @@ export function BasicCapabilities() {
                         {msg.role === 'assistant' && msg.status === 'done' && (
                           <div className="flex items-center gap-2 mt-1.5">
                             <button
-                              className="p-1 rounded hover:bg-white/5 transition-colors"
+                              className="p-1 rounded hover-bg-soft transition-colors"
                               title="复制"
                             >
                               <Copy size={12} className="text-token-muted-faint" />
@@ -540,7 +540,7 @@ export function BasicCapabilities() {
                         <span className="max-w-[120px] truncate">{att.name}</span>
                         <button
                           onClick={() => removeAttachment(i)}
-                          className="p-0.5 rounded hover:bg-white/10 transition-colors"
+                          className="p-0.5 rounded hover-bg-soft transition-colors"
                         >
                           <X size={10} />
                         </button>
@@ -563,7 +563,7 @@ export function BasicCapabilities() {
                         />
                         <button
                           onClick={() => imageInputRef.current?.click()}
-                          className="p-2 rounded-lg transition-colors hover:bg-white/5 text-token-muted"
+                          className="p-2 rounded-lg transition-colors hover-bg-soft text-token-muted"
                           title="上传图片"
                         >
                           <ImageIcon size={16} />
@@ -580,7 +580,7 @@ export function BasicCapabilities() {
                         />
                         <button
                           onClick={() => fileInputRef.current?.click()}
-                          className="p-2 rounded-lg transition-colors hover:bg-white/5 text-token-muted"
+                          className="p-2 rounded-lg transition-colors hover-bg-soft text-token-muted"
                           title="上传文件"
                         >
                           <Paperclip size={16} />

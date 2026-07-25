@@ -101,17 +101,17 @@ export function ProductImportDialog({
   return createPortal(
     <div className="fixed inset-0 z-[120] flex items-center justify-center bg-black/65 p-4">
       <div
-        className="flex w-full max-w-4xl flex-col rounded-xl border border-white/15 bg-[#111319] shadow-2xl"
+        className="flex w-full max-w-4xl flex-col rounded-xl border border-token-subtle bg-[#111319] shadow-2xl"
         style={{ maxHeight: 'min(820px, calc(100vh - 32px))' }}
       >
-        <div className="flex shrink-0 items-center justify-between border-b border-white/10 px-5 py-4">
+        <div className="flex shrink-0 items-center justify-between border-b border-token-subtle px-5 py-4">
           <div>
-            <div className="text-base font-semibold text-white">导入产品</div>
-            <div className="mt-1 text-xs text-white/45">
+            <div className="text-base font-semibold text-token-primary">导入产品</div>
+            <div className="mt-1 text-xs text-token-muted">
               支持 CSV / Excel；写入真实数据库，导入后可像普通产品一样修改或删除。同名产品自动跳过。
             </div>
           </div>
-          <button onClick={onClose} className="rounded-lg p-1.5 text-white/45 hover:bg-white/10 hover:text-white" title="关闭">
+          <button onClick={onClose} className="rounded-lg p-1.5 text-token-muted hover-bg-soft hover-text-primary" title="关闭">
             <X size={17} />
           </button>
         </div>
@@ -129,43 +129,43 @@ export function ProductImportDialog({
             <a
               href={TEMPLATE_XLSX}
               download
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/70 hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-secondary hover-bg-soft"
             >
               <Download size={14} /> 下载 Excel 模板
             </a>
             <a
               href={TEMPLATE_CSV}
               download
-              className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-xs text-white/55 hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-xs text-token-secondary hover-bg-soft"
             >
               <Download size={14} /> 下载 CSV 模板
             </a>
           </div>
 
           <label className="mb-4 block">
-            <span className="mb-1.5 block text-xs text-white/50">默认产品类型（行内未填时使用，填类型名称如「应用」或类型 Id）</span>
+            <span className="mb-1.5 block text-xs text-token-secondary">默认产品类型（行内未填时使用，填类型名称如「应用」或类型 Id）</span>
             <input
               value={defaultGrade}
               onChange={(event) => setDefaultGrade(event.target.value)}
               placeholder="应用"
-              className="w-full rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40"
+              className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40"
             />
           </label>
 
           <label
             htmlFor={inputId}
-            className={`block w-full cursor-pointer rounded-xl border border-dashed border-white/20 p-8 text-center hover:bg-white/[0.025] ${parsing ? 'pointer-events-none opacity-60' : ''}`}
+            className={`block w-full cursor-pointer rounded-xl border border-dashed border-token-subtle p-8 text-center hover-bg-soft ${parsing ? 'pointer-events-none opacity-60' : ''}`}
           >
             {parsing ? (
               <div className="flex flex-col items-center gap-2">
                 <MapSpinner size={22} />
-                <div className="text-sm text-white/60">正在解析文件…</div>
+                <div className="text-sm text-token-secondary">正在解析文件…</div>
               </div>
             ) : (
               <>
                 <FileSpreadsheet className="mx-auto mb-2 text-emerald-300" />
-                <div className="text-sm text-white/70">点击选择 CSV 或 Excel 文件</div>
-                <div className="mt-1 text-xs text-white/35">首行：产品名称、产品类型、产品描述、产品标识</div>
+                <div className="text-sm text-token-secondary">点击选择 CSV 或 Excel 文件</div>
+                <div className="mt-1 text-xs text-token-muted">首行：产品名称、产品类型、产品描述、产品标识</div>
               </>
             )}
           </label>
@@ -181,12 +181,12 @@ export function ProductImportDialog({
             }}
           />
 
-          {fileName && <div className="mt-3 text-xs text-white/40">当前文件：{fileName}</div>}
+          {fileName && <div className="mt-3 text-xs text-token-muted">当前文件：{fileName}</div>}
 
           {rows.length > 0 && (
-            <div className="mt-4 overflow-auto rounded-lg border border-white/10">
+            <div className="mt-4 overflow-auto rounded-lg border border-token-subtle">
               <table className="min-w-full text-left text-xs">
-                <thead className="bg-[#1a1c22] text-white/45">
+                <thead className="bg-[#1a1c22] text-token-muted">
                   <tr>
                     <th className="px-3 py-2">产品名称</th>
                     <th className="px-3 py-2">产品类型</th>
@@ -196,16 +196,16 @@ export function ProductImportDialog({
                 </thead>
                 <tbody>
                   {rows.slice(0, 30).map((row, index) => (
-                    <tr key={`${row.name}-${index}`} className="border-t border-white/5">
-                      <td className="px-3 py-2 text-white/75">{row.name}</td>
-                      <td className="px-3 py-2 text-white/45">{row.grade || defaultGrade || '-'}</td>
-                      <td className="px-3 py-2 text-white/45">{row.description || '-'}</td>
-                      <td className="px-3 py-2 text-white/45">{row.code || '-'}</td>
+                    <tr key={`${row.name}-${index}`} className="border-t border-token-subtle">
+                      <td className="px-3 py-2 text-token-secondary">{row.name}</td>
+                      <td className="px-3 py-2 text-token-muted">{row.grade || defaultGrade || '-'}</td>
+                      <td className="px-3 py-2 text-token-muted">{row.description || '-'}</td>
+                      <td className="px-3 py-2 text-token-muted">{row.code || '-'}</td>
                     </tr>
                   ))}
                 </tbody>
               </table>
-              {rows.length > 30 && <div className="px-3 py-2 text-[11px] text-white/35">仅预览前 30 条，共 {rows.length} 条</div>}
+              {rows.length > 30 && <div className="px-3 py-2 text-[11px] text-token-muted">仅预览前 30 条，共 {rows.length} 条</div>}
             </div>
           )}
 
@@ -214,10 +214,10 @@ export function ProductImportDialog({
           )}
         </div>
 
-        <div className="flex shrink-0 items-center justify-between border-t border-white/10 px-5 py-4">
-          <div className="text-xs text-white/35">仅应用管理员可导入</div>
+        <div className="flex shrink-0 items-center justify-between border-t border-token-subtle px-5 py-4">
+          <div className="text-xs text-token-muted">仅应用管理员可导入</div>
           <div className="flex gap-2">
-            <button onClick={onClose} className="rounded-lg border border-white/10 px-3.5 py-2 text-sm text-white/60 hover:bg-white/5 hover:text-white">
+            <button onClick={onClose} className="rounded-lg border border-token-subtle px-3.5 py-2 text-sm text-token-secondary hover-bg-soft hover-text-primary">
               取消
             </button>
             <button

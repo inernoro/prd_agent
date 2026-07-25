@@ -87,7 +87,7 @@ function ConfirmBubble({
       </button>
       <button
         type="button"
-        className="px-1.5 py-0.5 rounded text-[11px] transition-colors hover:bg-white/10"
+        className="px-1.5 py-0.5 rounded text-[11px] transition-colors hover-bg-soft"
         style={{ color: 'rgba(255,255,255,0.45)' }}
         onClick={onCancel}
       >
@@ -127,7 +127,7 @@ export function ImageQuickActionBar({
           <div key={action.id} className="relative">
             <button
               type="button"
-              className="inline-flex items-center gap-1.5 px-2 h-[28px] rounded-[7px] text-[12px] font-medium whitespace-nowrap transition-colors hover:bg-white/10"
+              className="inline-flex items-center gap-1.5 px-2 h-[28px] rounded-[7px] text-[12px] font-medium whitespace-nowrap transition-colors hover-bg-soft"
               style={{
                 color: isPending
                   ? 'rgba(59,130,246,0.95)'
@@ -181,7 +181,7 @@ export function ImageQuickActionBar({
       {onInpaint ? (
         <button
           type="button"
-          className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover:bg-white/10"
+          className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover-bg-soft"
           style={{ color: 'rgba(255, 255, 255, 0.72)' }}
           title="局部重绘"
           onClick={onInpaint}
@@ -193,7 +193,7 @@ export function ImageQuickActionBar({
       {/* 下载按钮 */}
       <button
         type="button"
-        className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover:bg-white/10"
+        className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover-bg-soft"
         style={{ color: 'rgba(255, 255, 255, 0.72)' }}
         title="下载图片"
         onClick={onDownload}
@@ -205,7 +205,7 @@ export function ImageQuickActionBar({
       {onOpenConfig ? (
         <button
           type="button"
-          className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover:bg-white/10"
+          className="inline-flex items-center justify-center w-[28px] h-[28px] rounded-[7px] transition-colors hover-bg-soft"
           style={{ color: 'rgba(255, 255, 255, 0.72)' }}
           title="管理快捷指令"
           onClick={onOpenConfig}

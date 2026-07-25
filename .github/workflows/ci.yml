@@ -34,6 +34,8 @@ jobs:
           filters: |
             server:
               - 'prd-api/**'
+              # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
+              - 'llmgw/web/**'
               - 'llmgw/serving/**'
               - '.github/workflows/ci.yml'
             admin:

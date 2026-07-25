@@ -29,7 +29,7 @@ export function RtmMatrix({ productId }: { productId: string }) {
   }, [reload]);
 
   if (loading) return <MapSectionLoader text="正在生成追溯矩阵…" />;
-  if (!data) return <div className="text-sm text-white/40 py-10 text-center">加载失败</div>;
+  if (!data) return <div className="text-sm text-token-muted py-10 text-center">加载失败</div>;
 
   const go = (kind: string, id: string) => navigate(`/product-agent/p/${productId}/${kind}/${id}`);
 
@@ -44,13 +44,13 @@ export function RtmMatrix({ productId }: { productId: string }) {
       </div>
 
       {/* 矩阵表 */}
-      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-white/10" style={{ overscrollBehavior: 'contain' }}>
+      <div className="flex-1 min-h-0 overflow-auto rounded-xl border border-token-subtle" style={{ overscrollBehavior: 'contain' }}>
         {data.rows.length === 0 ? (
-          <div className="text-center text-white/40 text-sm py-16">还没有需求。先去「需求」新建，矩阵会自动串联版本/功能/客户/缺陷。</div>
+          <div className="text-center text-token-muted text-sm py-16">还没有需求。先去「需求」新建，矩阵会自动串联版本/功能/客户/缺陷。</div>
         ) : (
           <table className="w-full text-sm border-collapse">
             <thead className="sticky top-0 z-10 bg-[#16181d]">
-              <tr className="text-left text-[11px] text-white/45">
+              <tr className="text-left text-[11px] text-token-muted">
                 <th className="px-3 py-2 font-medium">需求</th>
                 <th className="px-3 py-2 font-medium">分级</th>
                 <th className="px-3 py-2 font-medium">状态</th>
@@ -64,15 +64,15 @@ export function RtmMatrix({ productId }: { productId: string }) {
               {data.rows.map((r) => {
                 const noFeature = r.features.length === 0;
                 return (
-                  <tr key={r.id} className="border-t border-white/5 hover:bg-white/[0.03] align-top">
+                  <tr key={r.id} className="border-t border-token-subtle hover-bg-soft align-top">
                     <td className="px-3 py-2.5" style={noFeature ? { boxShadow: 'inset 3px 0 0 #ef4444' } : undefined}>
                       <button onClick={() => go('requirement', r.id)} className="text-left">
-                        <div className="text-white/90 hover:text-cyan-300 line-clamp-2 max-w-[220px]">{r.title}</div>
-                        <div className="text-[10px] text-white/35 font-mono mt-0.5">{r.requirementNo}{noFeature && <span className="text-red-300/80 ml-1.5">未实现</span>}</div>
+                        <div className="text-token-primary hover:text-cyan-300 line-clamp-2 max-w-[220px]">{r.title}</div>
+                        <div className="text-[10px] text-token-muted font-mono mt-0.5">{r.requirementNo}{noFeature && <span className="text-red-300/80 ml-1.5">未实现</span>}</div>
                       </button>
                     </td>
-                    <td className="px-3 py-2.5"><span className="text-[10px] px-1.5 py-0.5 rounded bg-white/10 text-white/70">{ITEM_GRADE_LABEL[r.grade as keyof typeof ITEM_GRADE_LABEL] ?? r.grade}</span></td>
-                    <td className="px-3 py-2.5 text-white/55 text-xs">{resolveRequirementStateLabel(r.currentState) || '-'}</td>
+                    <td className="px-3 py-2.5"><span className="text-[10px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">{ITEM_GRADE_LABEL[r.grade as keyof typeof ITEM_GRADE_LABEL] ?? r.grade}</span></td>
+                    <td className="px-3 py-2.5 text-token-secondary text-xs">{resolveRequirementStateLabel(r.currentState) || '-'}</td>
                     <td className="px-3 py-2.5"><CellChips items={r.versions.map((v) => ({ key: v.id, label: v.name }))} empty="未规划" /></td>
                     <td className="px-3 py-2.5"><CellChips items={r.features.map((f) => ({ key: f.id, label: f.title, onClick: () => go('feature', f.id) }))} empty="未实现" emptyWarn /></td>
                     <td className="px-3 py-2.5"><CellChips items={r.customers.map((c) => ({ key: c.id, label: c.name }))} empty="—" /></td>
@@ -93,7 +93,7 @@ export function RtmMatrix({ productId }: { productId: string }) {
           </div>
           <div className="flex flex-wrap gap-1.5">
             {data.orphanFeatures.map((f) => (
-              <button key={f.id} onClick={() => go('feature', f.id)} className="text-[11px] px-2 py-1 rounded bg-white/8 text-white/75 border border-white/10 hover:bg-white/15 inline-flex items-center gap-1">
+              <button key={f.id} onClick={() => go('feature', f.id)} className="text-[11px] px-2 py-1 rounded bg-token-nested text-token-secondary border border-token-subtle hover-bg-soft inline-flex items-center gap-1">
                 <Puzzle size={11} /> {f.title}
               </button>
             ))}
@@ -106,22 +106,22 @@ export function RtmMatrix({ productId }: { productId: string }) {
 
 function Stat({ label, value, warn }: { label: string; value: number; warn?: boolean }) {
   return (
-    <div className={`pa-card rounded-lg border px-3 py-2 ${warn ? 'border-red-500/30 bg-red-500/[0.06]' : 'border-white/10 bg-white/[0.02]'}`}>
-      <div className={`text-lg font-semibold leading-none ${warn ? 'text-red-300' : 'text-white/90'}`}>{value}</div>
-      <div className="text-[10px] text-white/45 mt-1">{label}</div>
+    <div className={`pa-card rounded-lg border px-3 py-2 ${warn ? 'border-red-500/30 bg-red-500/[0.06]' : 'border-token-subtle bg-token-nested'}`}>
+      <div className={`text-lg font-semibold leading-none ${warn ? 'text-red-300' : 'text-token-primary'}`}>{value}</div>
+      <div className="text-[10px] text-token-muted mt-1">{label}</div>
     </div>
   );
 }
 
 function CellChips({ items, empty, emptyWarn }: { items: { key: string; label: string; onClick?: () => void }[]; empty: string; emptyWarn?: boolean }) {
-  if (items.length === 0) return <span className={`text-[11px] ${emptyWarn ? 'text-red-300/70' : 'text-white/30'}`}>{empty}</span>;
+  if (items.length === 0) return <span className={`text-[11px] ${emptyWarn ? 'text-red-300/70' : 'text-token-muted'}`}>{empty}</span>;
   return (
     <div className="flex flex-wrap gap-1 max-w-[260px]">
       {items.map((it) => (
         <span
           key={it.key}
           onClick={it.onClick ? (e) => { e.stopPropagation(); it.onClick!(); } : undefined}
-          className={`text-[11px] px-1.5 py-0.5 rounded bg-white/8 text-white/70 border border-white/10 truncate max-w-[120px] ${it.onClick ? 'cursor-pointer hover:bg-cyan-500/15 hover:text-cyan-200' : ''}`}
+          className={`text-[11px] px-1.5 py-0.5 rounded bg-token-nested text-token-secondary border border-token-subtle truncate max-w-[120px] ${it.onClick ? 'cursor-pointer hover:bg-cyan-500/15 hover:text-cyan-200' : ''}`}
           title={it.label}
         >
           {it.label}

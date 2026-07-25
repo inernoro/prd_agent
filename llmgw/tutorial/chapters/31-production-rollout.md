@@ -38,7 +38,7 @@
 
 ![图 067 点击测试固定使用安全 dry-run，结果必须带 requestId 且未访问上游](https://cds.miduo.org/api/reports/assets/27a28b5293ff82a1ad6e82c6bd75abc592a3e7e6e6e4ecf89592f7318d8db2f1.png)
 
-4. 在请求记录按新 ServiceKeyId 定位这唯一一次 canary，确认 appCaller、实际模型、Provider、耗时、费用状态和 PromptPolicy 证据。OpenRouter App 展示应为 `G-tutorial.gateway-book::chat`。
+4. 在请求记录按新 ServiceKeyId 定位这唯一一次 canary，确认 appCaller、实际模型、Provider、耗时、费用状态和 PromptPolicy 证据。App 主文字应为 appCaller 的可读显示名，悬浮信息卡中保留 `G-tutorial.gateway-book::chat` 作为稳定 code；“客户端用户”仍只显示最终用户标识，不能用 App 名称代替。
 
 **图 075 请求详情用 requestId 串起路由、策略、费用和上游尝试**
 

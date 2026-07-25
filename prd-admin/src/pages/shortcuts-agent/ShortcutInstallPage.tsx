@@ -186,7 +186,7 @@ export default function ShortcutInstallPage() {
           <AlertTriangle size={44} style={{ color: '#ff9500', marginBottom: 14 }} />
           <h1 style={{ fontSize: 19, fontWeight: 700, marginBottom: 10 }}>{view.title}</h1>
           <p style={{
-            fontSize: 14, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6,
+            fontSize: 14, color: 'var(--text-secondary)', lineHeight: 1.6,
             marginBottom: view.canRetry ? 20 : 0,
           }}>
             {view.hint}
@@ -216,7 +216,7 @@ export default function ShortcutInstallPage() {
         {/* Header */}
         <div style={{ fontSize: 56, marginBottom: 12 }}>{data.icon || '⚡'}</div>
         <h1 style={{ fontSize: 22, fontWeight: 700, marginBottom: 4 }}>{data.name}</h1>
-        <div style={{ color: 'rgba(255,255,255,0.5)', fontSize: 13, marginBottom: 24 }}>
+        <div style={{ color: 'var(--text-secondary)', fontSize: 13, marginBottom: 24 }}>
           PrdAgent 快捷指令
         </div>
 
@@ -228,7 +228,7 @@ export default function ShortcutInstallPage() {
             background: 'rgba(255,149,0,0.1)', border: '1px solid rgba(255,149,0,0.22)',
           }}>
             <Info size={16} style={{ color: '#ff9500', flexShrink: 0, marginTop: 1 }} />
-            <span style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.72)', lineHeight: 1.55 }}>
+            <span style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.55 }}>
               这条快捷指令还没配「一键安装模板」，需要手动添加一次（约 1 分钟）。
               照下面步骤做完，再用底部「连接自检」确认即可——不是你的问题，跟着做一定能成。
             </span>
@@ -306,8 +306,8 @@ export default function ShortcutInstallPage() {
                   ...btnStyle,
                   textDecoration: 'none',
                   // 复制成功或「尝试过复制」（含被拦截后手动复制）即解锁，避免自动复制失败时卡死
-                  background: step >= 1 || copyTried ? '#007aff' : 'rgba(255,255,255,0.12)',
-                  color: step >= 1 || copyTried ? '#fff' : 'rgba(255,255,255,0.4)',
+                  background: step >= 1 || copyTried ? '#007aff' : 'var(--nested-block-bg)',
+                  color: step >= 1 || copyTried ? '#fff' : 'var(--text-muted)',
                   pointerEvents: step >= 1 || copyTried ? 'auto' : 'none',
                 }}
               >
@@ -316,7 +316,7 @@ export default function ShortcutInstallPage() {
             )}
 
             {step < 1 && !copyTried && (
-              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.35)', marginTop: 6 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 6 }}>
                 请先复制配置
               </p>
             )}
@@ -336,7 +336,7 @@ export default function ShortcutInstallPage() {
               <StepItem n={3}>
                 任意 App 分享内容时选择「{data.name}」
               </StepItem>
-              <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.4)', marginTop: 8, lineHeight: 1.5 }}>
+              <p style={{ fontSize: 12, color: 'var(--text-muted)', marginTop: 8, lineHeight: 1.5 }}>
                 如改用 iCloud 模板，请先复制“iCloud 模板配置”。只复制 Token 无法完成配置。
               </p>
             </>
@@ -378,16 +378,13 @@ export default function ShortcutInstallPage() {
         </div>
 
         {/* ── Token / API 信息 ── */}
-        <div style={{
-          marginTop: 20, paddingTop: 16,
-          borderTop: '1px solid rgba(255,255,255,0.08)',
-        }}>
+        <div className="border-t border-t-token-subtle" style={{ marginTop: 20, paddingTop: 16 }}>
           <InfoRow label="Token" value={token} mono />
           <InfoRow label="收藏接口" value={`${data.serverUrl}/api/shortcuts/collect`} />
           {(hasICloud || canDownloadSigned) && (
             <>
               <InfoRow label="完整配置" value={buildInstallConfig(token, data.serverUrl, data.name)} mono />
-              <p style={{ fontSize: 11, color: 'rgba(255,255,255,0.4)', lineHeight: 1.5, margin: '2px 2px 0' }}>
+              <p style={{ fontSize: 11, color: 'var(--text-muted)', lineHeight: 1.5, margin: '2px 2px 0' }}>
                 iCloud 模板首次运行会从剪贴板读取「完整配置」。若自动复制被浏览器拦截，请长按上方这整段手动复制后再打开模板。
               </p>
             </>
@@ -402,11 +399,7 @@ export default function ShortcutInstallPage() {
         <HelpFaq />
 
         {/* ── 功能 ── */}
-        <div style={{
-          marginTop: 16, paddingTop: 14,
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          fontSize: 12, color: 'rgba(255,255,255,0.4)',
-        }}>
+        <div className="border-t border-t-token-subtle" style={{ marginTop: 16, paddingTop: 14, fontSize: 12, color: 'var(--text-muted)' }}>
           分享菜单一键收藏 &nbsp;&nbsp; 系统通知反馈 &nbsp;&nbsp; 自动版本检查
         </div>
       </div>
@@ -421,15 +414,15 @@ function StepItem({ n, done, children }: { n: number; done?: boolean; children: 
     <div style={{
       display: 'flex', gap: 10, alignItems: 'flex-start',
       padding: '8px 0', fontSize: 14, lineHeight: 1.5,
-      color: done ? 'rgba(255,255,255,0.4)' : 'rgba(255,255,255,0.8)',
+      color: done ? 'var(--text-muted)' : 'var(--text-primary)',
       textDecoration: done ? 'line-through' : 'none',
     }}>
       <span style={{
         width: 22, height: 22, borderRadius: '50%', flexShrink: 0,
         display: 'flex', alignItems: 'center', justifyContent: 'center',
         fontSize: 12, fontWeight: 700,
-        background: done ? '#34c759' : 'rgba(255,255,255,0.12)',
-        color: done ? '#fff' : 'rgba(255,255,255,0.6)',
+        background: done ? '#34c759' : 'var(--nested-block-bg)',
+        color: done ? '#fff' : 'var(--text-secondary)',
       }}>
         {done ? '✓' : n}
       </span>
@@ -452,17 +445,13 @@ function InfoRow({ label, value, mono }: {
     }
   };
   return (
-    <div style={{
-      display: 'flex', alignItems: 'center', gap: 8,
-      padding: '8px 10px', marginBottom: 6, borderRadius: 10,
-      background: 'rgba(255,255,255,0.05)',
-    }}>
-      <span style={{ fontSize: 11, color: 'rgba(255,255,255,0.35)', width: 50, flexShrink: 0 }}>
+    <div className="bg-token-nested" style={{ display: 'flex', alignItems: 'center', gap: 8, padding: '8px 10px', marginBottom: 6, borderRadius: 10 }}>
+      <span style={{ fontSize: 11, color: 'var(--text-muted)', width: 50, flexShrink: 0 }}>
         {label}
       </span>
       <span style={{
         flex: 1, fontSize: 11, wordBreak: 'break-all',
-        color: mono ? 'rgba(255,255,255,0.7)' : '#007aff',
+        color: mono ? 'var(--text-secondary)' : '#007aff',
         fontFamily: mono ? 'monospace' : 'inherit',
       }}>
         {value}
@@ -472,8 +461,8 @@ function InfoRow({ label, value, mono }: {
         style={{
           padding: '4px 10px', borderRadius: 6, fontSize: 11, border: 'none',
           cursor: 'pointer', flexShrink: 0,
-          background: copied ? 'rgba(52,199,89,0.2)' : 'rgba(255,255,255,0.1)',
-          color: copied ? '#34c759' : 'rgba(255,255,255,0.6)',
+          background: copied ? 'rgba(52,199,89,0.2)' : 'var(--nested-block-bg)',
+          color: copied ? '#34c759' : 'var(--text-secondary)',
         }}
       >
         {copied ? '已复制' : '复制'}
@@ -545,11 +534,11 @@ function VerifyConnection({ token, shortcutName }: { token: string; shortcutName
     }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 6 }}>
         <ShieldCheck size={15} style={{ color: '#0a84ff', flexShrink: 0 }} />
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.85)' }}>
+        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>
           装完了？点这里验证密钥
         </span>
       </div>
-      <p style={{ fontSize: 12, color: 'rgba(255,255,255,0.5)', lineHeight: 1.5, marginBottom: 10 }}>
+      <p style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.5, marginBottom: 10 }}>
         点一下确认这条快捷指令的密钥仍然有效、能被服务器接受——安装后最常见的失败就是密钥失效。
       </p>
 
@@ -597,7 +586,7 @@ function ResultLine({ tone, children }: { tone: 'ok' | 'bad'; children: React.Re
   return (
     <div style={{
       display: 'flex', alignItems: 'flex-start', gap: 8, marginTop: 10,
-      fontSize: 12.5, lineHeight: 1.5, color: 'rgba(255,255,255,0.7)',
+      fontSize: 12.5, lineHeight: 1.5, color: 'var(--text-secondary)',
     }}>
       <Icon size={15} style={{ color, flexShrink: 0, marginTop: 1 }} />
       <span>{children}</span>
@@ -634,10 +623,10 @@ function HelpFaq() {
         style={{
           display: 'flex', alignItems: 'center', gap: 8, width: '100%',
           padding: '10px 0', background: 'none', border: 'none', cursor: 'pointer',
-          color: 'rgba(255,255,255,0.6)', fontSize: 13, fontWeight: 600,
+          color: 'var(--text-secondary)', fontSize: 13, fontWeight: 600,
         }}
       >
-        <HelpCircle size={15} style={{ color: 'rgba(255,255,255,0.6)' }} />
+        <HelpCircle size={15} style={{ color: 'var(--text-secondary)' }} />
         <span style={{ flex: 1, textAlign: 'left' }}>遇到问题？点我看常见排查</span>
         {open ? <ChevronUp size={15} /> : <ChevronDown size={15} />}
       </button>
@@ -645,10 +634,10 @@ function HelpFaq() {
         <div style={{ display: 'flex', flexDirection: 'column', gap: 12, padding: '4px 2px 6px' }}>
           {FAQ_ITEMS.map((item, i) => (
             <div key={i}>
-              <div style={{ fontSize: 13, fontWeight: 600, color: 'rgba(255,255,255,0.8)', marginBottom: 3 }}>
+              <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 3 }}>
                 {item.q}
               </div>
-              <div style={{ fontSize: 12.5, color: 'rgba(255,255,255,0.55)', lineHeight: 1.6 }}>
+              <div style={{ fontSize: 12.5, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
                 {item.a}
               </div>
             </div>
@@ -673,7 +662,7 @@ const containerStyle: React.CSSProperties = {
 };
 
 const cardStyle: React.CSSProperties = {
-  background: 'rgba(255,255,255,0.08)',
+  background: 'var(--nested-block-bg)',
   backdropFilter: 'blur(20px)',
   WebkitBackdropFilter: 'blur(20px)',
   borderRadius: 24,
@@ -681,7 +670,7 @@ const cardStyle: React.CSSProperties = {
   maxWidth: 400,
   width: '100%',
   textAlign: 'center',
-  border: '1px solid rgba(255,255,255,0.12)',
+  border: '1px solid var(--border-subtle)',
   boxShadow: '0 8px 32px rgba(0,0,0,0.3)',
 };
 
@@ -701,6 +690,6 @@ const btnStyle: React.CSSProperties = {
 
 const secondaryBtnStyle: React.CSSProperties = {
   ...btnStyle,
-  background: 'rgba(255,255,255,0.1)',
-  color: 'rgba(255,255,255,0.72)',
+  background: 'var(--nested-block-bg)',
+  color: 'var(--text-secondary)',
 };

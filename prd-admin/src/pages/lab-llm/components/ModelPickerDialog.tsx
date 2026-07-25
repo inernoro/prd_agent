@@ -219,8 +219,8 @@ export function ModelPickerDialog({
           {platformList.map((p) => (
             <div
               key={p.id}
-              className="flex items-center justify-between rounded-[14px] px-3 py-2"
-              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+              className="flex items-center justify-between rounded-[14px] px-3 py-2 bg-token-nested"
+              style={{ border: '1px solid var(--border-subtle)' }}
             >
               <div className="min-w-0">
                 <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -273,8 +273,8 @@ export function ModelPickerDialog({
           <input
             value={labGroupSearch}
             onChange={(e) => setLabGroupSearch(e.target.value)}
-            className="h-9 flex-1 rounded-[12px] px-3 text-sm outline-none"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            className="h-9 flex-1 rounded-[12px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-primary)' }}
             placeholder="搜索分组..."
           />
           <Button
@@ -292,8 +292,8 @@ export function ModelPickerDialog({
           <input
             value={newGroupName}
             onChange={(e) => setNewGroupName(e.target.value)}
-            className="h-9 flex-1 rounded-[12px] px-3 text-sm outline-none"
-            style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+            className="h-9 flex-1 rounded-[12px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+            style={{ color: 'var(--text-primary)' }}
             placeholder="新建分组名称"
           />
           <Button
@@ -336,7 +336,7 @@ export function ModelPickerDialog({
                     className="rounded-[14px] p-2"
                     style={{
                       border: isActive ? '1px solid var(--border-default)' : '1px solid var(--border-subtle)',
-                      background: isActive ? 'rgba(255,255,255,0.04)' : 'rgba(255,255,255,0.02)',
+                      background: isActive ? 'var(--nested-block-bg)' : 'var(--nested-block-bg)',
                     }}
                   >
                     <button
@@ -443,8 +443,8 @@ export function ModelPickerDialog({
               <input
                 value={groupDraftName}
                 onChange={(e) => setGroupDraftName(e.target.value)}
-                className="h-10 w-full rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="h-10 w-full rounded-[14px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
                 placeholder="分组名称"
               />
             </div>
@@ -506,8 +506,8 @@ export function ModelPickerDialog({
                     <button
                       key={keyOf(m)}
                       type="button"
-                      className="px-3 py-1 rounded-[999px] text-xs"
-                      style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}
+                      className="px-3 py-1 rounded-[999px] text-xs bg-token-nested"
+                      style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
                       onClick={() => {
                         const k = keyOf(m);
                         setGroupDraftModels((prev) => prev.filter((x) => keyOf(x) !== k));
@@ -530,7 +530,7 @@ export function ModelPickerDialog({
   );
 
   const bottomPool = (
-    <div className="rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+    <div className="rounded-[16px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
       <div className="flex items-center justify-between gap-3">
         <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
           已选择 {pool.length} 个
@@ -570,8 +570,8 @@ export function ModelPickerDialog({
             <button
               key={keyOf(m)}
               type="button"
-              className="px-3 py-1 rounded-[999px] text-xs"
-              style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}
+              className="px-3 py-1 rounded-[999px] text-xs bg-token-nested"
+              style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}
               onClick={() => {
                 const k = keyOf(m);
                 setPool((prev) => prev.filter((x) => keyOf(x) !== k));
@@ -610,7 +610,7 @@ export function ModelPickerDialog({
       </div>
 
       {/* 中栏 */}
-      <div className="mt-4 flex-1 min-h-0 rounded-[16px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.01)' }}>
+      <div className="mt-4 flex-1 min-h-0 rounded-[16px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
         {tab === 'byPlatform' ? middleByPlatform : middleByLabGroup}
       </div>
 

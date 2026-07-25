@@ -126,7 +126,7 @@ function TimelineEntry({ log }: { log: SubscriptionDetail['logs'][number] }) {
         </p>
       ) : (
         <>
-          <p className="text-[12px]" style={{ color: 'var(--text-secondary, rgba(255,255,255,0.78))' }}>
+          <p className="text-[12px]" style={{ color: 'var(--text-secondary, var(--text-secondary))' }}>
             {log.changeSummary ?? '内容已更新'}
           </p>
           {log.fileChanges && log.fileChanges.length > 0 && (
@@ -241,16 +241,11 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
     <div className="fixed inset-0 z-50 flex justify-end"
       style={{ background: 'rgba(0,0,0,0.5)', backdropFilter: 'blur(8px)' }}
       onClick={(e) => { if (e.target === e.currentTarget) onClose(); }}>
-      <div className="w-[480px] max-w-[92vw] h-full flex flex-col"
-        style={{
-          background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)',
-          borderLeft: '1px solid rgba(255,255,255,0.08)',
-          backdropFilter: 'blur(40px) saturate(180%)',
-          boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)',
-        }}>
+      <div className="w-[480px] max-w-[92vw] h-full flex flex-col border-l border-l-token-subtle"
+        style={{ background: 'linear-gradient(180deg, var(--glass-bg-start) 0%, var(--glass-bg-end) 100%)', backdropFilter: 'blur(40px) saturate(180%)', boxShadow: '-24px 0 48px -12px rgba(0,0,0,0.5)' }}>
 
         {/* 头部 */}
-        <div className="flex items-center justify-between px-5 py-4" style={{ borderBottom: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="flex items-center justify-between px-5 py-4 border-b border-b-token-subtle" >
           <div className="flex items-center gap-2.5 min-w-0">
             <div className="w-8 h-8 rounded-[10px] flex items-center justify-center flex-shrink-0"
               style={{ background: `rgba(${accent},0.1)`, border: `1px solid rgba(${accent},0.18)` }}>
@@ -266,7 +261,7 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
             </div>
           </div>
           <button onClick={onClose}
-            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200 flex-shrink-0"
+            className="w-7 h-7 rounded-[8px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors duration-200 flex-shrink-0"
             style={{ color: 'var(--text-muted)' }}>
             <X size={15} />
           </button>
@@ -284,11 +279,8 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
         ) : (
           <div className="flex-1 overflow-y-auto">
             {/* 状态卡 */}
-            <div className="mx-5 mt-4 p-4 rounded-[12px]"
-              style={{
-                background: 'rgba(255,255,255,0.03)',
-                border: '1px solid rgba(255,255,255,0.06)',
-              }}>
+            <div className="mx-5 mt-4 p-4 rounded-[12px] bg-token-nested border border-token-subtle"
+              >
               <div className="flex items-center justify-between mb-3">
                 <span className="text-[11px] font-semibold" style={{ color: 'var(--text-muted)' }}>当前状态</span>
                 <StatusBadge status={data.entry.syncStatus} paused={data.entry.isPaused} />
@@ -377,8 +369,8 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
                       disabled={acting}
                       className="flex-1 py-1.5 rounded-[8px] text-[11px] font-semibold cursor-pointer transition-all duration-200 disabled:opacity-50"
                       style={{
-                        background: active ? `rgba(${accent},0.1)` : 'rgba(255,255,255,0.02)',
-                        border: active ? `1px solid rgba(${accent},0.25)` : '1px solid rgba(255,255,255,0.06)',
+                        background: active ? `rgba(${accent},0.1)` : 'var(--nested-block-bg)',
+                        border: active ? `1px solid rgba(${accent},0.25)` : '1px solid var(--border-subtle)',
                         color: active ? `rgba(${accent},0.95)` : 'var(--text-muted)',
                       }}>
                       {formatInterval(m)}
@@ -397,24 +389,20 @@ export function SubscriptionDetailDrawer({ entryId, onClose, onChanged }: Subscr
                 </p>
               </div>
               {data.logs.length === 0 ? (
-                <div className="text-center py-8"
-                  style={{
-                    background: 'rgba(255,255,255,0.02)',
-                    border: '1px dashed rgba(255,255,255,0.08)',
-                    borderRadius: '10px',
-                  }}>
-                  <Clock size={20} className="mx-auto mb-2" style={{ color: 'rgba(255,255,255,0.2)' }} />
+                <div className="text-center py-8 bg-token-nested"
+                  style={{ border: '1px dashed var(--border-subtle)', borderRadius: '10px' }}>
+                  <Clock size={20} className="mx-auto mb-2" style={{ color: 'var(--text-muted)' }} />
                   <p className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
                     暂无变化记录
                   </p>
-                  <p className="text-[10px] mt-1" style={{ color: 'rgba(255,255,255,0.3)' }}>
+                  <p className="text-[10px] mt-1" style={{ color: 'var(--text-muted)' }}>
                     内容未发生变化的同步不会落库，避免日志膨胀
                   </p>
                 </div>
               ) : (
                 <ol className="relative pl-2"
                   style={{
-                    borderLeft: '1px dashed rgba(255,255,255,0.08)',
+                    borderLeft: '1px dashed var(--border-subtle)',
                     marginLeft: '5px',
                   }}>
                   {data.logs.map(log => <TimelineEntry key={log.id} log={log} />)}

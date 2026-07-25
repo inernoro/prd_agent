@@ -98,9 +98,9 @@ export function ChecklistTab() {
   return (
     <div className="h-full min-h-0 flex">
       {/* 左：清单列表 */}
-      <div className="w-[320px] shrink-0 flex flex-col border-r border-white/10">
+      <div className="w-[320px] shrink-0 flex flex-col border-r border-token-subtle">
         <div className="shrink-0 px-4 pt-5 pb-3 flex items-center gap-2">
-          <div className="text-sm font-medium text-white/85 inline-flex items-center gap-1.5 flex-1">
+          <div className="text-sm font-medium text-token-primary inline-flex items-center gap-1.5 flex-1">
             <ListChecks className="w-4 h-4 text-emerald-400" />
             排查清单
           </div>
@@ -109,7 +109,7 @@ export function ChecklistTab() {
               setEditing(null);
               setEditorOpen(true);
             }}
-            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-sm text-white/80 hover:bg-white/10"
+            className="shrink-0 inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary hover-bg-soft"
           >
             <Plus className="w-3.5 h-3.5" />
             新建
@@ -120,7 +120,7 @@ export function ChecklistTab() {
           style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}
         >
           {loading ? (
-            <div className="text-sm text-white/40 py-6 text-center">加载中…</div>
+            <div className="text-sm text-token-muted py-6 text-center">加载中…</div>
           ) : (
             <>
               <Section label="内置模板">
@@ -136,7 +136,7 @@ export function ChecklistTab() {
               </Section>
               <Section label="我的清单">
                 {mine.length === 0 ? (
-                  <div className="text-xs text-white/30 px-1 py-2">
+                  <div className="text-xs text-token-muted-faint px-1 py-2">
                     暂无自定义清单。可「新建」或从内置模板「另存为我的清单」。
                   </div>
                 ) : (
@@ -159,25 +159,25 @@ export function ChecklistTab() {
       {/* 右：清单详情 + 勾选运行 */}
       <div className="flex-1 min-w-0 flex flex-col">
         {!selected ? (
-          <div className="flex-1 flex items-center justify-center text-sm text-white/35">
+          <div className="flex-1 flex items-center justify-center text-sm text-token-muted-faint">
             选择左侧清单查看排查步骤，逐项勾选完成排查。
           </div>
         ) : (
           <>
-            <div className="shrink-0 px-6 pt-5 pb-3 border-b border-white/10">
+            <div className="shrink-0 px-6 pt-5 pb-3 border-b border-token-subtle">
               <div className="flex items-start gap-2">
                 <div className="flex-1 min-w-0">
-                  <div className="text-base font-medium text-white/90">{selected.title}</div>
-                  <div className="text-xs text-white/45 mt-1 flex flex-wrap items-center gap-1.5">
+                  <div className="text-base font-medium text-token-primary">{selected.title}</div>
+                  <div className="text-xs text-token-muted mt-1 flex flex-wrap items-center gap-1.5">
                     {selected.scene && (
                       <span className="px-1.5 py-0.5 rounded bg-emerald-500/10 text-emerald-300/80">
                         {selected.scene}
                       </span>
                     )}
                     {selected.isBuiltin ? (
-                      <span className="px-1.5 py-0.5 rounded bg-white/5 text-white/50">内置模板</span>
+                      <span className="px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">内置模板</span>
                     ) : (
-                      <span className="px-1.5 py-0.5 rounded bg-white/5 text-white/50">
+                      <span className="px-1.5 py-0.5 rounded bg-token-nested text-token-secondary">
                         {selected.createdByName}
                       </span>
                     )}
@@ -190,14 +190,14 @@ export function ChecklistTab() {
                   <button
                     onClick={() => resetProgress(selected.id)}
                     title="重置勾选"
-                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70 hover:bg-white/10"
+                    className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary hover-bg-soft"
                   >
                     <RotateCcw className="w-3.5 h-3.5" />
                   </button>
                   {selected.isBuiltin ? (
                     <button
                       onClick={() => void saveAsMine(selected)}
-                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/75 hover:bg-white/10"
+                      className="inline-flex items-center gap-1 px-2.5 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-primary hover-bg-soft"
                     >
                       <Copy className="w-3.5 h-3.5" />
                       另存为我的清单
@@ -209,13 +209,13 @@ export function ChecklistTab() {
                           setEditing(selected);
                           setEditorOpen(true);
                         }}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70 hover:bg-white/10"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary hover-bg-soft"
                       >
                         <Pencil className="w-3.5 h-3.5" />
                       </button>
                       <button
                         onClick={() => void onDelete(selected.id)}
-                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-white/5 border border-white/10 text-xs text-white/70 hover:text-rose-400 hover:bg-white/10"
+                        className="inline-flex items-center gap-1 px-2 py-1.5 rounded-lg bg-token-nested border border-token-subtle text-xs text-token-secondary hover:text-rose-400 hover-bg-soft"
                       >
                         <Trash2 className="w-3.5 h-3.5" />
                       </button>
@@ -237,26 +237,26 @@ export function ChecklistTab() {
                     className={`w-full text-left flex items-start gap-3 rounded-lg border px-3.5 py-3 transition-colors ${
                       isDone
                         ? 'bg-emerald-500/10 border-emerald-500/25'
-                        : 'bg-white/3 border-white/10 hover:bg-white/5'
+                        : 'bg-token-nested border-token-subtle hover-bg-soft'
                     }`}
                   >
                     <span
                       className={`shrink-0 mt-0.5 w-5 h-5 rounded border flex items-center justify-center text-[11px] ${
                         isDone
                           ? 'bg-emerald-500/30 border-emerald-400/50 text-emerald-200'
-                          : 'border-white/20 text-white/40'
+                          : 'border-token-subtle text-token-muted'
                       }`}
                     >
                       {isDone ? '✓' : idx + 1}
                     </span>
                     <span className="flex-1 min-w-0">
                       <span
-                        className={`text-sm ${isDone ? 'text-white/55 line-through' : 'text-white/90'}`}
+                        className={`text-sm ${isDone ? 'text-token-secondary line-through' : 'text-token-primary'}`}
                       >
                         {step.text}
                       </span>
                       {step.hint && (
-                        <span className="block text-xs text-white/45 mt-1 whitespace-pre-wrap">
+                        <span className="block text-xs text-token-muted mt-1 whitespace-pre-wrap">
                           {step.hint}
                         </span>
                       )}
@@ -287,7 +287,7 @@ export function ChecklistTab() {
 function Section({ label, children }: { label: string; children: React.ReactNode }) {
   return (
     <div>
-      <div className="text-[11px] uppercase tracking-wide text-white/30 px-1 mb-1.5">{label}</div>
+      <div className="text-[11px] uppercase tracking-wide text-token-muted-faint px-1 mb-1.5">{label}</div>
       <div className="space-y-1.5">{children}</div>
     </div>
   );
@@ -310,18 +310,18 @@ function ChecklistCard({
       className={`w-full text-left rounded-lg border px-3 py-2.5 transition-colors ${
         active
           ? 'bg-emerald-500/15 border-emerald-500/30'
-          : 'bg-white/3 border-white/10 hover:bg-white/5'
+          : 'bg-token-nested border-token-subtle hover-bg-soft'
       }`}
     >
-      <div className="text-sm text-white/90 font-medium truncate">{item.title}</div>
+      <div className="text-sm text-token-primary font-medium truncate">{item.title}</div>
       <div className="flex items-center gap-2 mt-1.5">
-        <div className="flex-1 h-1 rounded bg-white/10 overflow-hidden">
+        <div className="flex-1 h-1 rounded bg-token-nested overflow-hidden">
           <div
             className="h-full bg-emerald-400/70"
             style={{ width: `${Math.round(progress * 100)}%` }}
           />
         </div>
-        <span className="text-[10px] text-white/40">{item.steps.length} 步</span>
+        <span className="text-[10px] text-token-muted">{item.steps.length} 步</span>
       </div>
     </button>
   );
@@ -399,49 +399,49 @@ function ChecklistEditorModal({
     >
       <div
         onClick={(e) => e.stopPropagation()}
-        className="w-full max-w-2xl rounded-xl border border-white/10 bg-[#0f1014] flex flex-col"
+        className="w-full max-w-2xl rounded-xl border border-token-subtle bg-token-card flex flex-col"
         style={{ maxHeight: '85vh' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-white/10">
-          <div className="text-sm font-medium text-white/90">
+        <div className="shrink-0 flex items-center justify-between px-5 py-3.5 border-b border-token-subtle">
+          <div className="text-sm font-medium text-token-primary">
             {initial ? '编辑排查清单' : '新建排查清单'}
           </div>
-          <button onClick={onClose} className="p-1 rounded text-white/40 hover:text-white/80">
+          <button onClick={onClose} className="p-1 rounded text-token-muted hover-text-primary">
             <X className="w-4 h-4" />
           </button>
         </div>
         <div className="flex-1 px-5 py-4 space-y-3" style={{ minHeight: 0, overflowY: 'auto' }}>
           <div className="flex gap-3">
             <div className="flex-1">
-              <label className="text-xs text-white/55">标题</label>
+              <label className="text-xs text-token-secondary">标题</label>
               <input
                 value={title}
                 onChange={(e) => setTitle(e.target.value)}
-                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 focus:outline-none focus:border-emerald-500/40"
+                className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary focus:outline-none focus:border-emerald-500/40"
               />
             </div>
             <div className="w-40">
-              <label className="text-xs text-white/55">场景</label>
+              <label className="text-xs text-token-secondary">场景</label>
               <input
                 value={scene}
                 onChange={(e) => setScene(e.target.value)}
                 placeholder="如 扫码失败"
-                className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+                className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
               />
             </div>
           </div>
           <div>
-            <label className="text-xs text-white/55">标签（逗号分隔）</label>
+            <label className="text-xs text-token-secondary">标签（逗号分隔）</label>
             <input
               value={tagsInput}
               onChange={(e) => setTagsInput(e.target.value)}
               placeholder="上码, 扫码失败"
-              className="mt-1 w-full rounded-lg bg-white/5 border border-white/10 px-3 py-2 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+              className="mt-1 w-full rounded-lg bg-token-nested border border-token-subtle px-3 py-2 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
             />
           </div>
           <div>
             <div className="flex items-center justify-between">
-              <label className="text-xs text-white/55">排查步骤</label>
+              <label className="text-xs text-token-secondary">排查步骤</label>
               <button
                 onClick={addStep}
                 className="inline-flex items-center gap-1 text-xs text-emerald-300/80 hover:text-emerald-300"
@@ -452,25 +452,25 @@ function ChecklistEditorModal({
             </div>
             <div className="mt-2 space-y-2">
               {steps.map((s, idx) => (
-                <div key={idx} className="flex items-start gap-2 rounded-lg bg-white/3 border border-white/10 p-2">
-                  <GripVertical className="w-3.5 h-3.5 text-white/20 mt-2 shrink-0" />
+                <div key={idx} className="flex items-start gap-2 rounded-lg bg-token-nested border border-token-subtle p-2">
+                  <GripVertical className="w-3.5 h-3.5 text-token-muted-faint mt-2 shrink-0" />
                   <div className="flex-1 space-y-1.5">
                     <input
                       value={s.text}
                       onChange={(e) => updateStep(idx, { text: e.target.value })}
                       placeholder={`第 ${idx + 1} 步：要检查/操作什么`}
-                      className="w-full rounded-md bg-white/5 border border-white/10 px-2.5 py-1.5 text-sm text-white/90 placeholder:text-white/30 focus:outline-none focus:border-emerald-500/40"
+                      className="w-full rounded-md bg-token-nested border border-token-subtle px-2.5 py-1.5 text-sm text-token-primary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
                     />
                     <input
                       value={s.hint ?? ''}
                       onChange={(e) => updateStep(idx, { hint: e.target.value })}
                       placeholder="提示：怎么查 / 在哪查 / 异常长什么样（可选）"
-                      className="w-full rounded-md bg-white/5 border border-white/10 px-2.5 py-1.5 text-xs text-white/70 placeholder:text-white/25 focus:outline-none focus:border-emerald-500/40"
+                      className="w-full rounded-md bg-token-nested border border-token-subtle px-2.5 py-1.5 text-xs text-token-secondary placeholder-token-muted focus:outline-none focus:border-emerald-500/40"
                     />
                   </div>
                   <button
                     onClick={() => removeStep(idx)}
-                    className="shrink-0 p-1 rounded text-white/30 hover:text-rose-400 mt-1"
+                    className="shrink-0 p-1 rounded text-token-muted-faint hover:text-rose-400 mt-1"
                   >
                     <Trash2 className="w-3.5 h-3.5" />
                   </button>
@@ -480,8 +480,8 @@ function ChecklistEditorModal({
           </div>
           {error && <div className="text-xs text-rose-400">{error}</div>}
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-white/10">
-          <button onClick={onClose} className="px-3.5 py-1.5 rounded-lg text-sm text-white/70 hover:bg-white/5">
+        <div className="shrink-0 flex justify-end gap-2 px-5 py-3.5 border-t border-token-subtle">
+          <button onClick={onClose} className="px-3.5 py-1.5 rounded-lg text-sm text-token-secondary hover-bg-soft">
             取消
           </button>
           <button

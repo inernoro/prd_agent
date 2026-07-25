@@ -97,11 +97,11 @@ function StatCard({
           <span style={{ color: colors.icon }}>{icon}</span>
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[11px] font-semibold uppercase tracking-wider truncate" style={{ color: 'var(--text-muted)' }}>{label}</div>
+          <div className="text-[11px] font-semibold uppercase tracking-wider truncate text-token-muted">{label}</div>
           <div className="mt-1 text-xl font-bold tabular-nums tracking-tight" style={{ color: colors.text, letterSpacing: '-0.02em' }}>
-            {loading ? <span className="inline-block w-14 h-6 rounded-[8px] animate-pulse" style={{ background: 'var(--bg-card-hover)' }} /> : value}
+            {loading ? <span className="inline-block w-14 h-6 rounded-[8px] animate-pulse bg-token-card-hover" /> : value}
           </div>
-          {subValue && <div className="mt-0.5 text-[10px]" style={{ color: 'var(--text-muted)' }}>{subValue}</div>}
+          {subValue && <div className="mt-0.5 text-[10px] text-token-muted">{subValue}</div>}
         </div>
       </div>
     </div>
@@ -120,8 +120,8 @@ function DangerActionCard({ title, description, buttonText, onAction, loading, c
           <AlertTriangle size={14} style={{ color: 'rgba(239,68,68,0.8)' }} />
         </div>
         <div className="min-w-0 flex-1">
-          <div className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</div>
-          <div className="mt-0.5 text-[11px] leading-relaxed" style={{ color: 'var(--text-muted)' }}>{description}</div>
+          <div className="text-[13px] font-semibold text-token-primary">{title}</div>
+          <div className="mt-0.5 text-[11px] leading-relaxed text-token-muted">{description}</div>
         </div>
         <div className="shrink-0 ml-2">
           {needsConfirm ? (
@@ -170,22 +170,22 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
           </div>
           <Button variant="secondary" size="xs" onClick={loadData} disabled={loading}>{loading ? <MapSpinner size={13} /> : <RefreshCw size={13} />}刷新</Button>
         </div>
-        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
+        <div className="flex-1 overflow-auto rounded-[12px] bg-token-nested border border-token-nested">
           {loading ? (
             <MapSectionLoader text="加载中..." />
           ) : viewMode === 'table' ? (
             <div className="overflow-auto">
               <table className="w-full text-sm">
                 <thead>
-                  <tr style={{ background: 'var(--nested-block-bg)' }}>
+                  <tr className="bg-token-nested">
                     {data?.fields.map((field) => (
-                      <th key={field} className="px-3 py-2 text-left font-semibold whitespace-nowrap" style={{ color: 'var(--text-secondary)', borderBottom: '1px solid var(--nested-block-border)' }}>{field}</th>
+                      <th key={field} className="px-3 py-2 text-left font-semibold whitespace-nowrap text-token-secondary border-b border-token-nested">{field}</th>
                     ))}
                   </tr>
                 </thead>
                 <tbody>
                   {data?.data.map((row, idx) => (
-                    <tr key={idx} className="hover:bg-white/3 transition-colors">
+                    <tr key={idx} className="hover-bg-soft transition-colors">
                       {data.fields.map((field) => (
                         <td key={field} className="px-3 py-2 whitespace-nowrap max-w-[300px] truncate" style={{ color: 'var(--text-primary)', borderBottom: '1px solid var(--bg-input)' }}>
                           {typeof (row as Record<string, unknown>)[field] === 'object' ? JSON.stringify((row as Record<string, unknown>)[field]) : String((row as Record<string, unknown>)[field] ?? '-')}
@@ -199,13 +199,13 @@ function CollectionDataViewerDialog({ open, onOpenChange, collectionName }: { op
           ) : (
             <div className="p-4 space-y-3 overflow-auto">
               {data?.data.map((row, idx) => (
-                <pre key={idx} className="p-3 rounded-[8px] text-xs overflow-x-auto" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-primary)' }}>{JSON.stringify(row, null, 2)}</pre>
+                <pre key={idx} className="p-3 rounded-[8px] text-xs overflow-x-auto bg-token-nested text-token-primary">{JSON.stringify(row, null, 2)}</pre>
               ))}
             </div>
           )}
         </div>
-        <div className="flex items-center justify-between pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
-          <div className="text-xs" style={{ color: 'var(--text-muted)' }}>第 {page} / {data?.totalPages ?? 1} 页</div>
+        <div className="flex items-center justify-between pt-2 border-t border-token-nested">
+          <div className="text-xs text-token-muted">第 {page} / {data?.totalPages ?? 1} 页</div>
           <div className="flex items-center gap-2">
             <Button variant="secondary" size="xs" disabled={page <= 1} onClick={() => setPage((p) => p - 1)}><ChevronLeft size={14} />上一页</Button>
             <Button variant="secondary" size="xs" disabled={page >= (data?.totalPages ?? 1)} onClick={() => setPage((p) => p + 1)}>下一页<ChevronRight size={14} /></Button>
@@ -249,28 +249,28 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
     <Dialog open={open} onOpenChange={onOpenChange} title={`字段匹配验证：${collectionName}`} description={data?.hasEntity ? `实体类：${data.entityName}` : '无对应实体类'} maxWidth={1200} content={
       <div className="flex flex-col gap-4 min-h-[400px] max-h-[70vh]">
         <div className="grid grid-cols-2 md:grid-cols-4 gap-3">
-          <div className="rounded-[10px] p-3" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>扫描文档</div>
-            <div className="text-lg font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(data?.scannedDocuments ?? 0)}</div>
+          <div className="rounded-[10px] p-3 bg-token-nested border border-token-nested">
+            <div className="text-xs text-token-muted">扫描文档</div>
+            <div className="text-lg font-bold mt-1 text-token-primary">{fmtNum(data?.scannedDocuments ?? 0)}</div>
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(34,197,94,0.06)', border: '1px solid rgba(34,197,94,0.15)' }}>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>有效文档</div>
+            <div className="text-xs text-token-muted">有效文档</div>
             <div className="text-lg font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(data?.validDocuments ?? 0)}</div>
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(239,68,68,0.06)', border: '1px solid rgba(239,68,68,0.15)' }}>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>问题文档</div>
+            <div className="text-xs text-token-muted">问题文档</div>
             <div className="text-lg font-bold mt-1" style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(data?.invalidDocuments ?? 0)}</div>
           </div>
           <div className="rounded-[10px] p-3" style={{ background: 'rgba(59,130,246,0.06)', border: '1px solid rgba(59,130,246,0.15)' }}>
-            <div className="text-xs" style={{ color: 'var(--text-muted)' }}>实体字段数</div>
+            <div className="text-xs text-token-muted">实体字段数</div>
             <div className="text-lg font-bold mt-1" style={{ color: 'rgba(59,130,246,0.95)' }}>{data?.entityFields.length ?? 0}</div>
           </div>
         </div>
-        <div className="flex-1 overflow-auto rounded-[12px]" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
+        <div className="flex-1 overflow-auto rounded-[12px] bg-token-nested border border-token-nested">
           {loading ? (
             <MapSectionLoader text="扫描中..." />
           ) : !data?.hasEntity ? (
-            <div className="flex items-center justify-center h-full" style={{ color: 'var(--text-muted)' }}>该集合没有对应的实体类，无法进行字段匹配验证</div>
+            <div className="flex items-center justify-center h-full text-token-muted">该集合没有对应的实体类，无法进行字段匹配验证</div>
           ) : data.invalidItems.length === 0 ? (
             <div className="flex items-center justify-center h-full" style={{ color: 'rgba(34,197,94,0.9)' }}>所有文档字段匹配正常</div>
           ) : (
@@ -278,7 +278,7 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
               {data.invalidItems.map((item, idx) => (
                 <div key={idx} className="rounded-[10px] p-3" style={{ background: 'rgba(239,68,68,0.04)', border: '1px solid rgba(239,68,68,0.12)' }}>
                   <div className="flex items-center justify-between gap-3 mb-2">
-                    <div className="text-sm font-mono" style={{ color: 'var(--text-primary)' }}>ID: {item.documentId}</div>
+                    <div className="text-sm font-mono text-token-primary">ID: {item.documentId}</div>
                     <ConfirmTip title="确认删除？" description="将删除该文档（不可恢复）" confirmText="删除" onConfirm={() => handleDeleteDocument(item.documentId)} disabled={deleting === item.documentId}>
                       <Button variant="danger" size="xs" disabled={deleting === item.documentId}><Trash2 size={12} />删除</Button>
                     </ConfirmTip>
@@ -286,13 +286,13 @@ function CollectionValidationDialog({ open, onOpenChange, collectionName, onRefr
                   <div className="space-y-1 mb-2">
                     {item.issues.map((issue, i) => (<div key={i} className="text-xs flex items-center gap-2" style={{ color: 'rgba(239,68,68,0.9)' }}><AlertTriangle size={12} />{issue}</div>))}
                   </div>
-                  <pre className="p-2 rounded-[6px] text-xs overflow-x-auto max-h-[150px]" style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}>{JSON.stringify(item.document, null, 2)}</pre>
+                  <pre className="p-2 rounded-[6px] text-xs overflow-x-auto max-h-[150px] bg-token-nested text-token-secondary">{JSON.stringify(item.document, null, 2)}</pre>
                 </div>
               ))}
             </div>
           )}
         </div>
-        <div className="flex items-center justify-end gap-2 pt-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
+        <div className="flex items-center justify-end gap-2 pt-2 border-t border-token-nested">
           <Button variant="secondary" size="sm" onClick={loadData} disabled={loading}>{loading ? <MapSpinner size={14} /> : <RefreshCw size={14} />}重新扫描</Button>
         </div>
       </div>
@@ -315,16 +315,16 @@ function MappingRow({ mapping, onView, onValidate, onDelete, deleting }: { mappi
   const isProtected = protectedCollections.includes(mapping.collectionName.toLowerCase());
 
   return (
-    <div className="grid gap-3 items-center px-3 py-2.5 rounded-[10px] transition-colors hover:bg-white/3" style={{ gridTemplateColumns: '2fr 4fr 6fr', background: getStatusColor(), border: '1px solid var(--bg-card-hover)' }}>
+    <div className="grid gap-3 items-center px-3 py-2.5 rounded-[10px] transition-colors hover-bg-soft" style={{ gridTemplateColumns: '2fr 4fr 6fr', background: getStatusColor(), border: '1px solid var(--bg-card-hover)' }}>
       <div className="min-w-0"><Badge variant={mapping.appOwners.length > 0 ? 'subtle' : 'danger'} size="sm">{appDisplay}</Badge></div>
       <div className="min-w-0">
         <div className="text-sm font-medium truncate" style={{ color: mapping.hasEntity ? 'var(--text-primary)' : 'rgba(239,68,68,0.8)' }}>{entityDisplay}</div>
-        {mapping.entityFullName && <div className="text-[10px] truncate" style={{ color: 'var(--text-muted)' }}>{mapping.entityFullName}</div>}
+        {mapping.entityFullName && <div className="text-[10px] truncate text-token-muted">{mapping.entityFullName}</div>}
       </div>
       <div className="flex items-center justify-between gap-2 min-w-0">
         <div className="min-w-0 flex-1">
           <div className="text-sm font-mono truncate" style={{ color: mapping.existsInDatabase ? 'var(--text-primary)' : 'rgba(239,68,68,0.8)' }}>{collectionDisplay}</div>
-          <div className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{mapping.existsInDatabase ? `${fmtNum(mapping.documentCount)} 条` : '未创建'}</div>
+          <div className="text-[10px] text-token-muted">{mapping.existsInDatabase ? `${fmtNum(mapping.documentCount)} 条` : '未创建'}</div>
         </div>
         <div className="flex items-center gap-1.5 shrink-0">
           <Tooltip content="查看数据" side="top"><Button variant="secondary" size="xs" disabled={!mapping.existsInDatabase || mapping.documentCount === 0} onClick={onView}><Eye size={13} /></Button></Tooltip>
@@ -446,11 +446,11 @@ export default function DataManagePage() {
 
   const UserRow = ({ u }: { u: AdminUserPreviewItem }) => (
     <div className="grid gap-2 rounded-[10px] px-3 py-2.5 surface-row" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr' }}>
-      <div className="min-w-0"><div className="text-sm font-medium truncate" style={{ color: 'var(--text-primary)' }}>{u.username || '-'}</div><div className="text-xs truncate" style={{ color: 'var(--text-muted)' }}>{u.displayName || '-'}</div></div>
-      <div className="min-w-0 text-xs font-mono self-center truncate" style={{ color: 'var(--text-secondary)' }}>{u.userId?.slice(0, 8) || '-'}...</div>
-      <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{getRoleMeta(u.role).label}</div>
-      <div className="text-xs self-center" style={{ color: 'var(--text-secondary)' }}>{u.status}</div>
-      <div className="text-xs self-center" style={{ color: 'var(--text-muted)' }}>{fmtDate(u.createdAt)}</div>
+      <div className="min-w-0"><div className="text-sm font-medium truncate text-token-primary">{u.username || '-'}</div><div className="text-xs truncate text-token-muted">{u.displayName || '-'}</div></div>
+      <div className="min-w-0 text-xs font-mono self-center truncate text-token-secondary">{u.userId?.slice(0, 8) || '-'}...</div>
+      <div className="text-xs self-center text-token-secondary">{getRoleMeta(u.role).label}</div>
+      <div className="text-xs self-center text-token-secondary">{u.status}</div>
+      <div className="text-xs self-center text-token-muted">{fmtDate(u.createdAt)}</div>
     </div>
   );
 
@@ -467,7 +467,7 @@ export default function DataManagePage() {
       {/* 上栏：统计 */}
       <GlassCard variant="gold" glow animated accentHue={234}>
         <div className="flex items-center justify-between gap-3 mb-4">
-          <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>数据统计</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>系统核心配置与业务数据概览</p></div>
+          <div><h2 className="text-[14px] font-bold text-token-primary">数据统计</h2><p className="text-[11px] mt-0.5 text-token-muted">系统核心配置与业务数据概览</p></div>
           <div className="flex items-center gap-2">
             <Badge variant="subtle" size="sm">{mappings ? `${mappings.totalCollections} 集合` : '-'}</Badge>
             <Badge variant="subtle" size="sm">{mappings ? `${mappings.totalEntities} 实体` : '-'}</Badge>
@@ -484,7 +484,7 @@ export default function DataManagePage() {
       {/* 中栏：实体与集合对比 */}
       <GlassCard glow animated accentHue={210}>
         <div className="flex items-center justify-between gap-3 mb-4">
-          <div><h2 className="text-[14px] font-bold" style={{ color: 'var(--text-primary)' }}>实体与集合对比</h2><p className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>MongoDB 集合与 C# 实体类的映射关系</p></div>
+          <div><h2 className="text-[14px] font-bold text-token-primary">实体与集合对比</h2><p className="text-[11px] mt-0.5 text-token-muted">MongoDB 集合与 C# 实体类的映射关系</p></div>
           <div className="flex items-center gap-2">
             {mappings?.unmappedCollections ? <Badge variant="danger" size="sm">{mappings.unmappedCollections} 无实体</Badge> : null}
             {mappings?.unmappedEntities ? <Badge variant="warning" size="sm">{mappings.unmappedEntities} 无数据</Badge> : null}
@@ -518,7 +518,7 @@ export default function DataManagePage() {
             </div>
           )}
           <div className="relative">
-            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+            <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
             <input type="text" value={searchText} onChange={(e) => setSearchText(e.target.value)} placeholder="搜索集合或实体..." className="h-[32px] pl-9 pr-3 rounded-[8px] text-sm outline-none transition-all prd-field w-full sm:w-[200px]" />
           </div>
         </div>
@@ -531,7 +531,7 @@ export default function DataManagePage() {
           {mappingsLoading ? (
             <MapSectionLoader text="扫描中..." />
           ) : filteredMappings.length === 0 ? (
-            <div className="text-center py-8 text-sm" style={{ color: 'var(--text-muted)' }}>无匹配结果</div>
+            <div className="text-center py-8 text-sm text-token-muted">无匹配结果</div>
           ) : (
             filteredMappings.map((mapping) => (
               <MappingRow key={mapping.collectionName} mapping={mapping} onView={() => setViewerCollection(mapping.collectionName)} onValidate={() => setValidationCollection(mapping.collectionName)} onDelete={() => handleDeleteCollection(mapping.collectionName)} deleting={deletingCollection === mapping.collectionName} />
@@ -544,7 +544,7 @@ export default function DataManagePage() {
 
       {/* 下栏：危险操作 */}
       <GlassCard glow animated accentHue={0} padding="lg">
-        <div className="flex items-center gap-2 mb-4"><AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.75)' }} /><h2 className="text-base font-semibold" style={{ color: 'var(--text-primary)' }}>危险操作</h2></div>
+        <div className="flex items-center gap-2 mb-4"><AlertTriangle size={16} style={{ color: 'rgba(239,68,68,0.75)' }} /><h2 className="text-base font-semibold text-token-primary">危险操作</h2></div>
         <div className="grid gap-3 md:grid-cols-2">
           <DangerActionCard title="清理非管理员账号" description="删除所有非管理员用户账号及其关联数据，管理员账号将保留。此操作需要预览确认。" buttonText="预览并删除" onAction={openUsersPurge} loading={loading} />
           <DangerActionCard title="开发期一键重置" description="删除 users/llmplatforms/启用的 llmmodels 之外的所有集合数据，并清理未启用的模型配置。" buttonText="一键删除" onAction={async () => { await doPurge(['devReset']); }} loading={loading} confirmTitle="确认执行开发清库？" confirmDescription="将删除除 users / llmplatforms / 启用 llmmodels 外的所有数据，并清掉相关缓存（不可恢复）。" />
@@ -559,38 +559,38 @@ export default function DataManagePage() {
         <div className="min-h-0 flex flex-col gap-4">
           {usersPurgeStep === 1 ? (<>
             <div className="rounded-[12px] p-4" style={{ background: 'linear-gradient(135deg, var(--bg-input) 0%, rgba(0,0,0,0.08) 100%)', border: '1px solid var(--border-subtle)' }}>
-              {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm" style={{ color: 'var(--text-muted)' }}><MapSpinner size={14} />加载预览中...</div>) : usersPreview ? (
+              {usersPreviewLoading ? (<div className="flex items-center gap-2 text-sm text-token-muted"><MapSpinner size={14} />加载预览中...</div>) : usersPreview ? (
                 <div className="grid grid-cols-2 md:grid-cols-4 gap-4">
-                  <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>总用户</div><div className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.totalUsers)}</div></div>
-                  <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>管理员</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(usersPreview.adminUsers)}</div></div>
-                  <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>将删除</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(usersPreview.willDeleteUsers)}</div></div>
-                  <div><div className="text-xs" style={{ color: 'var(--text-muted)' }}>将保留</div><div className="text-xl font-bold mt-1" style={{ color: 'var(--text-primary)' }}>{fmtNum(usersPreview.willKeepUsers)}</div></div>
+                  <div><div className="text-xs text-token-muted">总用户</div><div className="text-xl font-bold mt-1 text-token-primary">{fmtNum(usersPreview.totalUsers)}</div></div>
+                  <div><div className="text-xs text-token-muted">管理员</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(34,197,94,0.95)' }}>{fmtNum(usersPreview.adminUsers)}</div></div>
+                  <div><div className="text-xs text-token-muted">将删除</div><div className="text-xl font-bold mt-1" style={{ color: 'rgba(239,68,68,0.95)' }}>{fmtNum(usersPreview.willDeleteUsers)}</div></div>
+                  <div><div className="text-xs text-token-muted">将保留</div><div className="text-xl font-bold mt-1 text-token-primary">{fmtNum(usersPreview.willKeepUsers)}</div></div>
                 </div>
-              ) : (<div className="text-sm" style={{ color: 'var(--text-muted)' }}>暂无预览数据</div>)}
+              ) : (<div className="text-sm text-token-muted">暂无预览数据</div>)}
             </div>
-            {usersPreview?.notes?.length ? <div className="text-xs space-y-1" style={{ color: 'var(--text-muted)' }}>{usersPreview.notes.map((t, idx) => <div key={idx}>- {t}</div>)}</div> : null}
+            {usersPreview?.notes?.length ? <div className="text-xs space-y-1 text-token-muted">{usersPreview.notes.map((t, idx) => <div key={idx}>- {t}</div>)}</div> : null}
             <div className="space-y-2">
-              <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(239,68,68,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将删除的用户（示例）</span></div>
-              <div className="rounded-[12px] p-3 max-h-[200px] overflow-y-auto overflow-x-auto" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
+              <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(239,68,68,0.75)' }} /><span className="text-sm font-medium text-token-primary">将删除的用户（示例）</span></div>
+              <div className="rounded-[12px] p-3 max-h-[200px] overflow-y-auto overflow-x-auto bg-token-nested border border-token-nested">
                 <div className="min-w-[500px] space-y-2">
                 <div className="grid gap-2 px-3 py-2 rounded-[8px] text-[10px] font-semibold uppercase tracking-wider" style={{ gridTemplateColumns: '1.2fr 1fr 0.6fr 0.6fr 1fr', color: 'var(--text-muted)', background: 'var(--nested-block-bg)' }}><div>账号</div><div>UserId</div><div>Role</div><div>Status</div><div>CreatedAt</div></div>
-                {usersPreviewLoading ? <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>加载中...</div> : usersPreview?.sampleWillDeleteUsers?.length ? usersPreview.sampleWillDeleteUsers.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无（可能只有管理员账号）</div>}
+                {usersPreviewLoading ? <div className="text-sm py-4 text-center text-token-muted">加载中...</div> : usersPreview?.sampleWillDeleteUsers?.length ? usersPreview.sampleWillDeleteUsers.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center text-token-muted">无（可能只有管理员账号）</div>}
                 </div>
               </div>
             </div>
             <div className="space-y-2">
-              <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(34,197,94,0.75)' }} /><span className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>将保留的管理员（示例）</span></div>
-              <div className="rounded-[12px] p-3 max-h-[150px] overflow-y-auto overflow-x-auto" style={{ background: 'var(--nested-block-bg)', border: '1px solid var(--nested-block-border)' }}>
+              <div className="flex items-center gap-2"><Users size={14} style={{ color: 'rgba(34,197,94,0.75)' }} /><span className="text-sm font-medium text-token-primary">将保留的管理员（示例）</span></div>
+              <div className="rounded-[12px] p-3 max-h-[150px] overflow-y-auto overflow-x-auto bg-token-nested border border-token-nested">
                 <div className="min-w-[500px] space-y-2">
-                {usersPreview?.sampleWillKeepAdmins?.length ? usersPreview.sampleWillKeepAdmins.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center" style={{ color: 'var(--text-muted)' }}>无管理员账号（异常）</div>}
+                {usersPreview?.sampleWillKeepAdmins?.length ? usersPreview.sampleWillKeepAdmins.map((u) => <UserRow key={u.userId} u={u} />) : <div className="text-sm py-4 text-center text-token-muted">无管理员账号（异常）</div>}
                 </div>
               </div>
             </div>
           </>) : (<>
             <div className="rounded-[12px] px-4 py-3 text-sm flex items-center gap-3" style={{ background: 'linear-gradient(135deg, rgba(239,68,68,0.15) 0%, rgba(239,68,68,0.08) 100%)', border: '1px solid rgba(239,68,68,0.30)', color: 'rgba(239,68,68,0.95)' }}><AlertTriangle size={18} />将删除非管理员用户账号，该操作不可恢复。</div>
-            <div className="space-y-3"><div className="text-sm font-medium" style={{ color: 'var(--text-primary)' }}>请输入 <code className="px-1.5 py-0.5 rounded bg-white/5 font-mono">DELETE</code> 以确认</div><input value={usersConfirmText} onChange={(e) => setUsersConfirmText(e.target.value)} placeholder="DELETE" className="w-full h-[44px] rounded-[12px] px-4 text-sm outline-none transition-all prd-field" autoFocus /></div>
+            <div className="space-y-3"><div className="text-sm font-medium text-token-primary">请输入 <code className="px-1.5 py-0.5 rounded bg-token-nested font-mono">DELETE</code> 以确认</div><input value={usersConfirmText} onChange={(e) => setUsersConfirmText(e.target.value)} placeholder="DELETE" className="w-full h-[44px] rounded-[12px] px-4 text-sm outline-none transition-all prd-field" autoFocus /></div>
           </>)}
-          <div className="pt-3 flex items-center justify-end gap-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
+          <div className="pt-3 flex items-center justify-end gap-2 border-t border-token-nested">
             <Button variant="secondary" size="sm" onClick={() => { if (usersPurgeStep === 1) setUsersPurgeOpen(false); else { setUsersPurgeStep(1); setUsersConfirmText(''); } }}>{usersPurgeStep === 1 ? '取消' : '返回预览'}</Button>
             {usersPurgeStep === 1 ? <Button variant="primary" size="sm" disabled={usersPreviewLoading} onClick={() => setUsersPurgeStep(2)}>下一步</Button> : <Button variant="danger" size="sm" disabled={usersConfirmText !== 'DELETE' || loading} onClick={doPurgeUsers}>确认删除</Button>}
           </div>

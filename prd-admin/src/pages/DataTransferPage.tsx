@@ -155,7 +155,7 @@ export default function DataTransferPage() {
               animateBy="letters"
             />
           }
-          icon={<Sparkles size={16} style={{ color: 'var(--accent-gold)' }} />}
+          icon={<Sparkles size={16} className="text-token-accent" />}
         />
         <div className="flex-1 min-h-0 overflow-y-auto">
           <OnboardingView
@@ -183,12 +183,12 @@ export default function DataTransferPage() {
 
 function SkeletonCard() {
   return (
-    <div className="rounded-[12px] p-3.5 animate-pulse" style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}>
+    <div className="rounded-[12px] p-3.5 animate-pulse bg-token-input border border-token-nested">
       <div className="flex items-center gap-3">
-        <div className="w-9 h-9 rounded-full" style={{ background: 'var(--bg-card-hover)' }} />
+        <div className="w-9 h-9 rounded-full bg-token-card-hover" />
         <div className="flex-1 space-y-2">
-          <div className="h-3.5 rounded w-32" style={{ background: 'var(--bg-card-hover)' }} />
-          <div className="h-2.5 rounded w-20" style={{ background: 'var(--bg-card-hover)' }} />
+          <div className="h-3.5 rounded w-32 bg-token-card-hover" />
+          <div className="h-2.5 rounded w-20 bg-token-card-hover" />
         </div>
       </div>
     </div>
@@ -257,9 +257,9 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
               animate={{ scale: 1, rotate: 0 }}
               transition={{ duration: 0.6, delay: 0.2, type: 'spring', stiffness: 200 }}
             >
-              <Send size={28} style={{ color: 'var(--accent-gold)' }} />
+              <Send size={28} className="text-token-accent" />
             </motion.div>
-            <h2 className="text-xl font-bold mb-2" style={{ color: 'var(--text-primary)' }}>
+            <h2 className="text-xl font-bold mb-2 text-token-primary">
               <SplitText
                 text="跨账户数据分享"
                 delay={60}
@@ -270,8 +270,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
               />
             </h2>
             <motion.p
-              className="text-[14px] leading-relaxed max-w-[480px] mx-auto"
-              style={{ color: 'var(--text-secondary)' }}
+              className="text-[14px] leading-relaxed max-w-[480px] mx-auto text-token-secondary"
               initial={{ opacity: 0 }}
               animate={{ opacity: 1 }}
               transition={{ duration: 0.6, delay: 0.5 }}
@@ -323,8 +322,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
       {/* Flow Steps */}
       <div>
         <motion.div
-          className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1"
-          style={{ color: 'var(--text-muted)' }}
+          className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1 text-token-muted"
           initial={{ opacity: 0, x: -10 }}
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.4, delay: 0.5 }}
@@ -350,8 +348,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                 transition={{ duration: 0.4, delay: 0.6 + i * 0.1 }}
               >
                 <div
-                  className="rounded-[12px] p-4 text-center h-full backdrop-blur-xl"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className="rounded-[12px] p-4 text-center h-full backdrop-blur-xl bg-token-nested border border-token-subtle"
                 >
                   <div className="flex items-center justify-center gap-2 mb-2">
                     <span
@@ -360,16 +357,15 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                     >
                       {i + 1}
                     </span>
-                    <Icon size={15} style={{ color: 'var(--accent-gold)' }} />
+                    <Icon size={15} className="text-token-accent" />
                   </div>
-                  <div className="text-[13px] font-medium mb-0.5" style={{ color: 'var(--text-primary)' }}>{step.label}</div>
-                  <div className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{step.desc}</div>
+                  <div className="text-[13px] font-medium mb-0.5 text-token-primary">{step.label}</div>
+                  <div className="text-[11px] text-token-muted">{step.desc}</div>
                 </div>
                 {i < FLOW_STEPS.length - 1 && (
                   <ChevronRight
                     size={14}
-                    className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10"
-                    style={{ color: 'var(--text-muted)', opacity: 0.4 }}
+                    className="absolute right-0 top-1/2 -translate-y-1/2 translate-x-1/2 z-10 text-token-muted opacity-40"
                   />
                 )}
               </motion.div>
@@ -386,7 +382,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 1.0 }}
         >
-          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1 text-token-muted">
             <DecryptedText text="特性" speed={50} maxIterations={8} sequential animateOn="view" className="text-[11px]" />
           </div>
           <div className="space-y-2">
@@ -395,8 +391,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
               return (
                 <motion.div
                   key={i}
-                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl bg-token-nested border border-token-subtle"
                   initial={{ opacity: 0, x: -15 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
@@ -408,8 +403,8 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                     <Icon size={13} style={{ color: 'rgba(99, 102, 241, 0.7)' }} />
                   </div>
                   <div>
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{f.title}</div>
-                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{f.desc}</div>
+                    <div className="text-[13px] font-medium text-token-primary">{f.title}</div>
+                    <div className="text-[11px] mt-0.5 text-token-muted">{f.desc}</div>
                   </div>
                 </motion.div>
               );
@@ -423,7 +418,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
           animate={{ opacity: 1, x: 0 }}
           transition={{ duration: 0.5, delay: 1.0 }}
         >
-          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1" style={{ color: 'var(--text-muted)' }}>
+          <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 px-1 text-token-muted">
             <DecryptedText text="支持的数据类型" speed={50} maxIterations={8} sequential animateOn="view" className="text-[11px]" />
           </div>
           <div className="space-y-2">
@@ -432,8 +427,7 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
               return (
                 <motion.div
                   key={i}
-                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl"
-                  style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.1)' }}
+                  className="rounded-[10px] px-3.5 py-3 flex items-start gap-3 backdrop-blur-xl bg-token-nested border border-token-subtle"
                   initial={{ opacity: 0, x: 15 }}
                   animate={{ opacity: 1, x: 0 }}
                   transition={{ duration: 0.35, delay: 1.1 + i * 0.1 }}
@@ -445,8 +439,8 @@ function OnboardingView({ onStartShare, onViewReceived, onViewSent }: {
                     <Icon size={13} style={{ color: dt.color }} />
                   </div>
                   <div>
-                    <div className="text-[13px] font-medium" style={{ color: 'var(--text-primary)' }}>{dt.label}</div>
-                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{dt.desc}</div>
+                    <div className="text-[13px] font-medium text-token-primary">{dt.label}</div>
+                    <div className="text-[11px] mt-0.5 text-token-muted">{dt.desc}</div>
                   </div>
                 </motion.div>
               );
@@ -468,10 +462,10 @@ function EmptyState({ direction, onStartShare }: { direction: 'sent' | 'received
         style={{ background: 'rgba(99, 102, 241, 0.08)', border: '1px solid rgba(99, 102, 241, 0.15)' }}
       >
         {direction === 'received'
-          ? <Inbox size={20} style={{ color: 'var(--accent-gold)' }} />
-          : <Send size={20} style={{ color: 'var(--accent-gold)' }} />}
+          ? <Inbox size={20} className="text-token-accent" />
+          : <Send size={20} className="text-token-accent" />}
       </div>
-      <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-[13px] text-token-muted">
         {direction === 'received' ? '暂无收到的分享' : '暂无发出的分享'}
       </div>
       {direction === 'sent' && (
@@ -500,7 +494,7 @@ function EmptyDetail() {
       >
         <Package size={24} style={{ color: 'rgba(99, 102, 241, 0.4)' }} />
       </motion.div>
-      <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>
+      <div className="text-[13px] text-token-muted">
         <DecryptedText text="选择一条分享记录查看详情" speed={40} maxIterations={10} sequential animateOn="view" />
       </div>
     </motion.div>
@@ -545,11 +539,11 @@ function TransferCard({
 
         <div className="flex-1 min-w-0">
           <div className="flex items-center gap-1.5 min-w-0">
-            <span className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+            <span className="text-[13px] font-medium truncate text-token-primary">
               {direction === 'received' ? t.senderUserName : (t.receiverUserName ?? t.receiverUserId)}
             </span>
-            <ArrowRight size={12} style={{ color: 'var(--text-muted)' }} className="shrink-0" />
-            <span className="text-[11px] truncate" style={{ color: 'var(--text-muted)' }}>
+            <ArrowRight size={12} className="shrink-0 text-token-muted" />
+            <span className="text-[11px] truncate text-token-muted">
               {direction === 'received' ? '分享给你' : '收到你的分享'}
             </span>
           </div>
@@ -558,8 +552,8 @@ function TransferCard({
             <Badge variant={isExpired ? 'subtle' : status.variant} size="sm" icon={<StatusIcon size={10} />}>
               {isExpired ? '已过期' : status.label}
             </Badge>
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>{t.items.length} 项</span>
-            <span className="text-[10px] ml-auto" style={{ color: 'var(--text-muted)' }}>{relativeTime(t.createdAt)}</span>
+            <span className="text-[10px] text-token-muted">{t.items.length} 项</span>
+            <span className="text-[10px] ml-auto text-token-muted">{relativeTime(t.createdAt)}</span>
           </div>
         </div>
       </div>
@@ -607,7 +601,7 @@ function TransferDetail({
   return (
     <GlassCard accentHue={234} padding="none" className="h-full flex flex-col">
       {/* Header */}
-      <div className="px-5 pt-5 pb-4" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
+      <div className="px-5 pt-5 pb-4 border-b border-token-nested">
         <div className="flex items-start justify-between">
           <div className="flex items-center gap-3">
             <div
@@ -619,15 +613,15 @@ function TransferDetail({
                 : (t.receiverUserName?.[0] ?? 'U')}
             </div>
             <div>
-              <div className="text-[15px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+              <div className="text-[15px] font-semibold text-token-primary">
                 {direction === 'received' ? t.senderUserName : (t.receiverUserName ?? t.receiverUserId)}
               </div>
               <div className="flex items-center gap-2 mt-0.5">
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                <span className="text-[11px] text-token-muted">
                   {direction === 'received' ? '发送给你' : '接收你的分享'}
                 </span>
-                <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>·</span>
-                <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>{fmtDate(t.createdAt)}</span>
+                <span className="text-[10px] text-token-muted">·</span>
+                <span className="text-[11px] text-token-muted">{fmtDate(t.createdAt)}</span>
               </div>
             </div>
           </div>
@@ -641,15 +635,15 @@ function TransferDetail({
             className="mt-3 rounded-[10px] px-3.5 py-2.5 flex items-start gap-2"
             style={{ background: 'rgba(99, 102, 241, 0.05)', border: '1px solid rgba(99, 102, 241, 0.1)' }}
           >
-            <MessageSquare size={14} className="shrink-0 mt-0.5" style={{ color: 'var(--accent-gold)' }} />
-            <span className="text-[13px] leading-relaxed" style={{ color: 'var(--text-secondary)' }}>{t.message}</span>
+            <MessageSquare size={14} className="shrink-0 mt-0.5 text-token-accent" />
+            <span className="text-[13px] leading-relaxed text-token-secondary">{t.message}</span>
           </div>
         )}
       </div>
 
       {/* Items */}
       <div className="flex-1 min-h-0 overflow-y-auto px-5 py-4">
-        <div className="text-[11px] font-semibold uppercase tracking-wider mb-3" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-[11px] font-semibold uppercase tracking-wider mb-3 text-token-muted">
           分享内容 ({t.items.length})
         </div>
 
@@ -661,8 +655,7 @@ function TransferDetail({
             return (
               <div
                 key={i}
-                className="rounded-[10px] px-3.5 py-2.5 flex items-center gap-3 transition-all duration-150"
-                style={{ background: 'var(--bg-input)', border: '1px solid var(--nested-block-border)' }}
+                className="rounded-[10px] px-3.5 py-2.5 flex items-center gap-3 transition-all duration-150 bg-token-input border border-token-nested"
               >
                 <div
                   className="shrink-0 w-8 h-8 rounded-[8px] flex items-center justify-center"
@@ -671,11 +664,11 @@ function TransferDetail({
                   <Icon size={15} style={{ color: si.color }} />
                 </div>
                 <div className="flex-1 min-w-0">
-                  <div className="text-[13px] font-medium truncate" style={{ color: 'var(--text-primary)' }}>
+                  <div className="text-[13px] font-medium truncate text-token-primary">
                     {item.displayName}
                   </div>
                   {item.previewInfo && (
-                    <div className="text-[11px] mt-0.5" style={{ color: 'var(--text-muted)' }}>{item.previewInfo}</div>
+                    <div className="text-[11px] mt-0.5 text-token-muted">{item.previewInfo}</div>
                   )}
                 </div>
                 {item.appKeyDisplayName && (
@@ -705,19 +698,19 @@ function TransferDetail({
             className="mt-4 rounded-[10px] px-3.5 py-3 flex items-center gap-4"
             style={{ background: 'rgba(34, 197, 94, 0.04)', border: '1px solid rgba(34, 197, 94, 0.12)' }}
           >
-            <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>执行结果</div>
+            <div className="text-[11px] font-semibold uppercase tracking-wider text-token-muted">执行结果</div>
             <div className="flex items-center gap-3">
               <span className="text-[12px] font-medium" style={{ color: 'rgba(34, 197, 94, 0.9)' }}>成功 {t.result.successCount}</span>
               {t.result.failedCount > 0 && <span className="text-[12px] font-medium" style={{ color: 'rgba(239, 68, 68, 0.9)' }}>失败 {t.result.failedCount}</span>}
               {t.result.skippedCount > 0 && <span className="text-[12px] font-medium" style={{ color: 'rgba(245, 158, 11, 0.9)' }}>跳过 {t.result.skippedCount}</span>}
-              {t.result.totalAssetsCopied > 0 && <span className="text-[12px]" style={{ color: 'var(--text-muted)' }}>图片 {t.result.totalAssetsCopied}</span>}
+              {t.result.totalAssetsCopied > 0 && <span className="text-[12px] text-token-muted">图片 {t.result.totalAssetsCopied}</span>}
             </div>
           </div>
         )}
 
         <div className="mt-4 flex items-center gap-1.5">
-          <Clock size={12} style={{ color: 'var(--text-muted)' }} />
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <Clock size={12} className="text-token-muted" />
+          <span className="text-[11px] text-token-muted">
             {isExpired ? '已于 ' + fmtDate(t.expiresAt) + ' 过期' : '有效期至 ' + fmtDate(t.expiresAt)}
           </span>
         </div>
@@ -725,7 +718,7 @@ function TransferDetail({
 
       {/* Actions */}
       {t.status === 'pending' && !isExpired && (
-        <div className="px-5 py-4 flex gap-2" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
+        <div className="px-5 py-4 flex gap-2 border-t border-token-nested">
           {direction === 'received' && (
             <>
               <Button onClick={handleAccept} disabled={actionLoading} size="sm">
@@ -862,9 +855,9 @@ function CreateTransferDialog({
       ) : (
         <>
           {/* Recipient + Message */}
-          <div className="space-y-4 pb-4" style={{ borderBottom: '1px solid var(--nested-block-border)' }}>
+          <div className="space-y-4 pb-4 border-b border-token-nested">
             <section className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-token-muted">
                 接收人
               </div>
               <UserSearchSelect
@@ -886,10 +879,10 @@ function CreateTransferDialog({
                   />
                   <div className="flex-1 min-w-0">
                     <div className="flex items-center gap-1.5">
-                      <span className="text-[12px] font-semibold" style={{ color: 'var(--text-primary)' }}>
+                      <span className="text-[12px] font-semibold text-token-primary">
                         {selectedReceiver.displayName}
                       </span>
-                      <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+                      <span className="text-[11px] text-token-muted">
                         @{selectedReceiver.username}
                       </span>
                       {(() => {
@@ -914,17 +907,12 @@ function CreateTransferDialog({
             </section>
 
             <section className="space-y-2">
-              <div className="text-[11px] font-semibold uppercase tracking-wider" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[11px] font-semibold uppercase tracking-wider text-token-muted">
                 附言 <span className="normal-case font-normal">(可选)</span>
               </div>
               <input
                 type="text"
-                className="w-full rounded-[10px] px-3.5 py-2.5 text-[13px] outline-none transition-all duration-200 focus:ring-1"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--nested-block-border)',
-                  color: 'var(--text-primary)',
-                }}
+                className="w-full rounded-[10px] px-3.5 py-2.5 text-[13px] outline-none transition-all duration-200 focus:ring-1 bg-token-input border border-token-nested text-token-primary"
                 placeholder="例如：我要换账号了，数据给你"
                 value={message}
                 onChange={(e) => setMessage(e.target.value)}
@@ -937,15 +925,10 @@ function CreateTransferDialog({
             {/* Search bar */}
             {totalItems > 6 && (
               <div className="relative">
-                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2" style={{ color: 'var(--text-muted)' }} />
+                <Search size={14} className="absolute left-3 top-1/2 -translate-y-1/2 text-token-muted" />
                 <input
                   type="text"
-                  className="w-full rounded-[10px] pl-9 pr-3.5 py-2 text-[13px] outline-none transition-all duration-200 focus:ring-1"
-                  style={{
-                    background: 'var(--bg-input)',
-                    border: '1px solid var(--nested-block-border)',
-                    color: 'var(--text-primary)',
-                  }}
+                  className="w-full rounded-[10px] pl-9 pr-3.5 py-2 text-[13px] outline-none transition-all duration-200 focus:ring-1 bg-token-input border border-token-nested text-token-primary"
                   placeholder="搜索工作区、提示词、参考图..."
                   value={searchQuery}
                   onChange={(e) => setSearchQuery(e.target.value)}
@@ -1038,17 +1021,17 @@ function CreateTransferDialog({
             {/* Search empty state */}
             {q && filteredLiteraryWs.length === 0 && filteredVisualWs.length === 0 && filteredPrompts.length === 0 && filteredRefImages.length === 0 && (
               <div className="text-center py-8">
-                <div className="text-[13px]" style={{ color: 'var(--text-muted)' }}>未找到匹配 "{searchQuery}" 的数据</div>
+                <div className="text-[13px] text-token-muted">未找到匹配 "{searchQuery}" 的数据</div>
               </div>
             )}
           </div>
 
           {/* Footer */}
-          <div className="pt-4 flex items-center justify-between" style={{ borderTop: '1px solid var(--nested-block-border)' }}>
+          <div className="pt-4 flex items-center justify-between border-t border-token-nested">
             <div className="flex items-center gap-1.5">
-              <Layers size={13} style={{ color: 'var(--accent-gold)' }} />
-              <span className="text-[12px] font-medium" style={{ color: 'var(--text-muted)' }}>
-                已选择 <span style={{ color: 'var(--text-primary)' }}>{selectedIds.size}</span> 项
+              <Layers size={13} className="text-token-accent" />
+              <span className="text-[12px] font-medium text-token-muted">
+                已选择 <span className="text-token-primary">{selectedIds.size}</span> 项
               </span>
             </div>
             <Button
@@ -1075,7 +1058,7 @@ function CreateTransferDialog({
             className="w-7 h-7 rounded-[7px] flex items-center justify-center"
             style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
           >
-            <Send size={13} style={{ color: 'var(--accent-gold)' }} />
+            <Send size={13} className="text-token-accent" />
           </div>
           <span>发起数据分享</span>
         </div>
@@ -1212,7 +1195,7 @@ function TransferListDialog({
             className="w-7 h-7 rounded-[7px] flex items-center justify-center"
             style={{ background: 'rgba(99, 102, 241, 0.1)', border: '1px solid rgba(99, 102, 241, 0.2)' }}
           >
-            <Package size={13} style={{ color: 'var(--accent-gold)' }} />
+            <Package size={13} className="text-token-accent" />
           </div>
           <span>分享记录</span>
         </div>
@@ -1255,15 +1238,14 @@ function DataSection({
           >
             <span style={{ color: iconColor }}>{icon}</span>
           </div>
-          <span className="text-[13px] font-semibold" style={{ color: 'var(--text-primary)' }}>{title}</span>
-          <span className="text-[11px]" style={{ color: 'var(--text-muted)' }}>
+          <span className="text-[13px] font-semibold text-token-primary">{title}</span>
+          <span className="text-[11px] text-token-muted">
             {selectedCount > 0 ? `${selectedCount}/${count}` : count}
           </span>
         </div>
         <button
           type="button"
-          className="text-[11px] px-2 py-0.5 rounded-[6px] transition-colors hover:bg-white/6"
-          style={{ color: 'var(--accent-gold)' }}
+          className="text-[11px] px-2 py-0.5 rounded-[6px] transition-colors hover-bg-soft text-token-accent"
           onClick={onToggleAll}
         >
           {selectedCount === count ? '取消全选' : '全选'}
@@ -1293,7 +1275,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
     return a?.url ? (
       <img src={a.url} alt="" className="h-full w-full object-cover" style={style} loading="lazy" referrerPolicy="no-referrer" />
     ) : (
-      <div className="h-full w-full" style={{ ...style, background: 'rgba(255,255,255,0.03)' }} />
+      <div className="h-full w-full" style={{ ...style, background: 'var(--nested-block-bg)' }} />
     );
   };
 
@@ -1324,8 +1306,8 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
       <label
         className="group cursor-pointer block rounded-[12px] overflow-hidden transition-all duration-200"
         style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          background: 'var(--nested-block-bg)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'var(--border-subtle)'}`,
           boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
         }}
       >
@@ -1337,10 +1319,10 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
               className="w-[18px] h-[18px] rounded-[5px] flex items-center justify-center transition-all duration-150"
               style={{
                 background: checked ? 'rgba(99,102,241,0.9)' : 'transparent',
-                border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.2)'}`,
+                border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'var(--border-subtle)'}`,
               }}
             >
-              {checked && <Check size={11} className="text-white" />}
+              {checked && <Check size={11} className="text-token-primary" />}
             </div>
           </div>
 
@@ -1349,10 +1331,10 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
             {/* Header: title + meta */}
             <div className="flex items-center gap-2.5 mb-1.5">
               <PenLine size={14} className="shrink-0" style={{ color: 'rgba(245,158,11,0.7)' }} />
-              <span className="text-[13px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+              <span className="text-[13px] font-semibold truncate text-token-primary">
                 {ws.title || '未命名'}
               </span>
-              <span className="text-[11px] shrink-0 ml-auto" style={{ color: 'var(--text-muted)' }}>
+              <span className="text-[11px] shrink-0 ml-auto text-token-muted">
                 {ws.assetCount} 张图
               </span>
             </div>
@@ -1363,8 +1345,8 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
                 className="text-[11px] leading-[1.6] rounded-[8px] px-2.5 py-2"
                 style={{
                   color: 'var(--text-secondary)',
-                  background: 'rgba(255,255,255,0.03)',
-                  border: '1px solid rgba(255,255,255,0.05)',
+                  background: 'var(--nested-block-bg)',
+                  border: '1px solid var(--border-subtle)',
                   display: '-webkit-box',
                   WebkitLineClamp: 3,
                   WebkitBoxOrient: 'vertical',
@@ -1377,7 +1359,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
 
             {/* Folder */}
             {ws.folderName && (
-              <div className="text-[10px] mt-1.5" style={{ color: 'var(--text-muted)' }}>
+              <div className="text-[10px] mt-1.5 text-token-muted">
                 {ws.folderName}
               </div>
             )}
@@ -1389,7 +1371,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
             target="_blank"
             rel="noopener noreferrer"
             className="shrink-0 w-7 h-7 mt-2.5 mr-2 rounded-[6px] flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity duration-150"
-            style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.5)' }}
+            style={{ background: 'var(--nested-block-bg)', color: 'var(--text-secondary)' }}
             onClick={(e) => e.stopPropagation()}
             title="在新标签页打开"
           >
@@ -1409,8 +1391,8 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
       <div
         className="aspect-[4/3] w-full relative overflow-hidden rounded-[10px] transition-all duration-200"
         style={{
-          background: 'rgba(255,255,255,0.03)',
-          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'rgba(255,255,255,0.08)'}`,
+          background: 'var(--nested-block-bg)',
+          border: `1px solid ${checked ? 'rgba(99,102,241,0.5)' : 'var(--border-subtle)'}`,
           boxShadow: checked ? '0 0 0 1px rgba(99,102,241,0.3), 0 2px 8px rgba(99,102,241,0.1)' : 'none',
         }}
       >
@@ -1422,12 +1404,12 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
             className="w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
             style={{
               background: checked ? 'rgba(99,102,241,0.9)' : 'rgba(0,0,0,0.5)',
-              border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'rgba(255,255,255,0.3)'}`,
+              border: `1.5px solid ${checked ? 'rgba(99,102,241,0.9)' : 'var(--border-subtle)'}`,
               backdropFilter: 'blur(4px)',
               WebkitBackdropFilter: 'blur(4px)',
             }}
           >
-            {checked && <Check size={12} className="text-white" />}
+            {checked && <Check size={12} className="text-token-primary" />}
           </div>
         </div>
 
@@ -1448,7 +1430,7 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
         {!hasCover && (
           <div className="absolute inset-0 flex flex-col items-center justify-center gap-1.5">
             <Layers size={22} style={{ color: 'rgba(99,102,241,0.25)' }} />
-            <span className="text-[10px]" style={{ color: 'var(--text-muted)', opacity: 0.5 }}>暂无图片</span>
+            <span className="text-[10px] text-token-muted opacity-50">暂无图片</span>
           </div>
         )}
 
@@ -1463,10 +1445,10 @@ function WorkspaceCheckItem({ ws, checked, onChange }: { ws: ShareableWorkspace;
 
       {/* Info below cover */}
       <div className="pt-2 px-0.5">
-        <div className="text-[12px] font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
+        <div className="text-[12px] font-semibold truncate text-token-primary">
           {ws.title || '未命名'}
         </div>
-        <div className="text-[10px] flex items-center gap-1.5 mt-0.5" style={{ color: 'var(--text-muted)' }}>
+        <div className="text-[10px] flex items-center gap-1.5 mt-0.5 text-token-muted">
           <span>{ws.assetCount} 张图</span>
           {ws.folderName && <><span>·</span><span className="truncate">{ws.folderName}</span></>}
         </div>
@@ -1501,13 +1483,13 @@ function ConfigCheckItem({
         className="shrink-0 w-5 h-5 rounded-[5px] flex items-center justify-center transition-all duration-150"
         style={{
           background: checked ? 'rgba(99, 102, 241, 0.9)' : 'transparent',
-          border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'rgba(255,255,255,0.2)'}`,
+          border: `1.5px solid ${checked ? 'rgba(99, 102, 241, 0.9)' : 'var(--border-subtle)'}`,
         }}
       >
-        {checked && <Check size={12} className="text-white" />}
+        {checked && <Check size={12} className="text-token-primary" />}
       </div>
       {icon}
-      <span className="flex-1 text-[13px] truncate" style={{ color: 'var(--text-primary)' }}>{label}</span>
+      <span className="flex-1 text-[13px] truncate text-token-primary">{label}</span>
       <Badge variant="subtle" size="sm">{badge}</Badge>
     </label>
   );

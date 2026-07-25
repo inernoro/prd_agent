@@ -430,6 +430,14 @@ export class HttpLogStore {
   private activeRequests = new Map<string, Omit<ActiveHttpRequestRecord, 'ageMs'>>();
   private writesSincePrune = 0;
   private lastPruneAt = 0;
+  // 写放大治理(2026-07-21 性能事故):成功的 GET 读请求按 1:N 采样;写链加
+  // 有界背压——Mongo 变慢时积压无界增长会拖垮内存/GC,超限丢弃非错误记录。
+  private readSampleCounter = 0;
+  private pendingWrites = 0;
+  private droppedWrites = 0;
+  private lastDropWarnAt = 0;
+  private static readonly READ_SAMPLE_RATE = 10;
+  private static readonly MAX_PENDING_WRITES = 500;
   private readonly databaseName: string;
   private readonly collectionName: string;
   private readonly retentionDays: number;
@@ -485,6 +493,19 @@ export class HttpLogStore {
         }
         : undefined,
     };
+    // 有界背压:写链是串行 promise,Mongo 慢时积压会无界增长(内存 + GC 压力,
+    // 又反过来加剧事件循环卡顿)。超限时丢弃非错误记录(4xx/5xx 永远保留),
+    // 观测日志丢样本可接受,拖垮服务不可接受。
+    if (this.pendingWrites >= HttpLogStore.MAX_PENDING_WRITES && record.status < 400) {
+      this.droppedWrites += 1;
+      const now = Date.now();
+      if (now - this.lastDropWarnAt > 60_000) {
+        this.lastDropWarnAt = now;
+        console.warn(`[http-log] write backlog full (${this.pendingWrites}), dropped ${this.droppedWrites} non-error records so far`);
+      }
+      return;
+    }
+    this.pendingWrites += 1;
     this.chain = this.chain
       .catch(() => { /* keep chain alive */ })
       .then(async () => {
@@ -494,6 +515,9 @@ export class HttpLogStore {
       .catch((err) => {
         // Logging must never break request handling.
         console.warn(`[http-log] write failed: ${(err as Error).message}`);
+      })
+      .finally(() => {
+        this.pendingWrites -= 1;
       });
   }
 
@@ -538,6 +562,23 @@ export class HttpLogStore {
     }
     if (method === 'GET' && (path === '/api/http-logs' || path === '/api/server-events')) {
       return false;
+    }
+    // 成功的 GET 读请求(轮询/控制面读取/静态资源)按 1:10 采样(2026-07-21 写放大
+    // 治理):dashboard 每 10s 一轮 × 多端点 × forwarder/master 两层,每请求一条
+    // Mongo 文档的全量落库既是写放大也是背压源。语义敏感的记录全保留:所有
+    // 非 GET(变更)、所有 ≥400(上面已 return true)、SSE / 部署 / 容器操作。
+    // 在途请求注册表(beginActive)不采样,Activity 面板的实时视图不受影响。
+    if (method === 'GET') {
+      const kind = record.requestKind || classifyHttpRequestKind({
+        layer: record.layer,
+        method: record.method,
+        path: record.path,
+        headers: record.request?.headers,
+      });
+      if (kind === 'polling' || kind === 'control-plane' || kind === 'user-traffic') {
+        this.readSampleCounter = (this.readSampleCounter + 1) % HttpLogStore.READ_SAMPLE_RATE;
+        return this.readSampleCounter === 0;
+      }
     }
     return true;
   }

@@ -34,17 +34,17 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
                   ? 'linear-gradient(135deg, rgba(245, 158, 11, 0.25) 0%, rgba(245, 158, 11, 0.15) 100%)'
                   : isCompleted
                   ? 'rgba(34, 197, 94, 0.15)'
-                  : 'rgba(255, 255, 255, 0.05)',
+                  : 'var(--nested-block-bg)',
                 border: isActive
                   ? '1px solid rgba(245, 158, 11, 0.4)'
                   : isCompleted
                   ? '1px solid rgba(34, 197, 94, 0.3)'
-                  : '1px solid rgba(255, 255, 255, 0.1)',
+                  : '1px solid var(--border-subtle)',
                 color: isActive
                   ? 'rgba(245, 158, 11, 0.95)'
                   : isCompleted
                   ? 'rgba(34, 197, 94, 0.9)'
-                  : 'rgba(255, 255, 255, 0.4)',
+                  : 'var(--text-muted)',
                 cursor: isClickable ? 'pointer' : 'default',
                 opacity: disabled ? 0.5 : 1,
               }}
@@ -60,7 +60,7 @@ export function WorkflowProgressBar({ steps, currentStep, onStepClick, disabled,
                 style={{
                   background: isCompleted
                     ? 'rgba(34, 197, 94, 0.4)'
-                    : 'rgba(255, 255, 255, 0.1)',
+                    : 'var(--nested-block-bg)',
                 }}
               />
             )}

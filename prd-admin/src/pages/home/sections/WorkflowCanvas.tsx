@@ -138,7 +138,7 @@ function WorkflowMockup() {
       />
 
       {/* header: filename + Run button */}
-      <div className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+      <div className="flex items-center justify-between px-6 py-4 border-b border-token-subtle/[0.06]">
         <div
           className="flex items-center gap-2 text-[12px] text-white/70"
           style={{ fontFamily: 'var(--font-terminal)' }}

@@ -1,12 +1,14 @@
 // 极简鉴权上下文：JWT 存 sessionStorage，未登录跳登录页；首登强制改密门。
-import { createContext, useContext, useMemo, useState } from 'react';
+import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
   applyChangePasswordResult,
   changePassword as apiChangePassword,
   clearSession,
+  exportSessionSnapshot,
   getStoredUser,
   getStoredTenant,
+  importSessionSnapshot,
   isAuthed,
   login as apiLogin,
   exchangeMapSso,
@@ -17,6 +19,7 @@ import type { ApiResponse, ChangePasswordResult, LoginResult, TenantSession } fr
 
 type AuthState = {
   authed: boolean;
+  initializing: boolean;
   user: { username?: string; displayName?: string; identityProvider?: string } | null;
   tenant: TenantSession | null;
   /** 首登强制改密：为 true 时守卫强制跳 /change-password，改密成功前不放行日志页。 */
@@ -28,16 +31,65 @@ type AuthState = {
 };
 
 const AuthContext = createContext<AuthState | null>(null);
+const AUTH_CHANNEL_NAME = 'llmgw.auth.session.v1';
 
 export function AuthProvider({ children }: { children: ReactNode }) {
   const [authed, setAuthed] = useState<boolean>(() => isAuthed());
+  const [initializing, setInitializing] = useState<boolean>(() => (
+    !isAuthed() && typeof BroadcastChannel !== 'undefined'
+  ));
   const [user, setUser] = useState(() => getStoredUser());
   const [tenant, setTenant] = useState(() => getStoredTenant());
   const [mustChange, setMustChange] = useState<boolean>(() => readMustChangePassword());
 
+  useEffect(() => {
+    if (typeof BroadcastChannel === 'undefined') {
+      setInitializing(false);
+      return undefined;
+    }
+
+    const channel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+    const requestId = crypto.randomUUID();
+    const timer = window.setTimeout(() => setInitializing(false), 700);
+    channel.onmessage = (event: MessageEvent<{
+      type?: string;
+      requestId?: string;
+      snapshot?: ReturnType<typeof exportSessionSnapshot>;
+    }>) => {
+      if (event.data?.type === 'request') {
+        const snapshot = exportSessionSnapshot();
+        if (snapshot) channel.postMessage({ type: 'response', requestId: event.data.requestId, snapshot });
+        return;
+      }
+
+      if (event.data?.type !== 'response'
+        || event.data.requestId !== requestId
+        || !event.data.snapshot
+        || isAuthed())
+        return;
+
+      importSessionSnapshot(event.data.snapshot);
+      setUser(getStoredUser());
+      setTenant(getStoredTenant());
+      setMustChange(readMustChangePassword());
+      setAuthed(true);
+      setInitializing(false);
+      window.clearTimeout(timer);
+    };
+
+    if (!isAuthed()) channel.postMessage({ type: 'request', requestId });
+    else setInitializing(false);
+
+    return () => {
+      window.clearTimeout(timer);
+      channel.close();
+    };
+  }, []);
+
   const value = useMemo<AuthState>(
     () => ({
       authed,
+      initializing,
       user,
       tenant,
       mustChangePassword: mustChange,
@@ -49,6 +101,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setTenant(getStoredTenant());
           setMustChange(readMustChangePassword());
           setAuthed(true);
+          setInitializing(false);
         }
         return res;
       },
@@ -60,6 +113,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setTenant(getStoredTenant());
           setMustChange(readMustChangePassword());
           setAuthed(true);
+          setInitializing(false);
         }
         return res;
       },
@@ -81,7 +135,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setMustChange(false);
       },
     }),
-    [authed, user, tenant, mustChange],
+    [authed, initializing, user, tenant, mustChange],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;

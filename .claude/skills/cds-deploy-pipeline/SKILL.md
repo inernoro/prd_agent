@@ -146,20 +146,11 @@ $CLI branch status <branchId>            # 单分支详情
 
 完整冒烟策略 → [../cds/reference/smoke.md](../cds/reference/smoke.md)
 
-## 预览域名公式（SSOT）
+## 预览地址真实来源
 
-不要凭直觉拼。v3 公式（`cds/src/services/preview-slug.ts:computePreviewSlug`）：
+必须调用 `/preview-url` 技能，只使用 CDS `/api/branches` 返回的 `previewUrl` / `previewUrls`。CDS 有多个实际入口时全部列出。缺凭据、API 失败或分支未发布时应明确失败，禁止根据 v3 公式、`previewSlug`、分支名或 CDS host 自行拼接。
 
-```
-有 prefix:  ${tail}-${prefix}-${projectSlug}.miduo.org
-无 prefix:  ${tail}-${projectSlug}.miduo.org   (中段省略)
-```
-
-- `tail` = 分支名第一个 `/` 之后（slugify：小写 + 非 `[a-z0-9-]` 转 `-`）
-- `prefix` = 第一个 `/` 之前（claude / feat / fix），无 `/` 时无 prefix
-- `projectSlug` = CDS 项目 slug，从 `/api/projects` 取
-
-详见 [../cds/reference/api.md](../cds/reference/api.md)，或调 `/preview-url` 技能。
+详见 [../preview-url/SKILL.md](../preview-url/SKILL.md) 与 [../cds/reference/api.md](../cds/reference/api.md)。
 
 ## 关联技能
 

@@ -23,8 +23,8 @@ export function Badge({
         }
       : variant === 'new'
         ? {
-            background: 'rgba(255,255,255,0.06)',
-            border: '1px solid rgba(255,255,255,0.14)',
+            background: 'var(--nested-block-bg)',
+            border: '1px solid var(--border-subtle)',
             color: 'var(--text-primary)',
           }
         : variant === 'featured'
@@ -52,8 +52,8 @@ export function Badge({
                     color: 'rgba(245,158,11,0.95)',
                   }
                 : {
-                    background: 'rgba(255,255,255,0.04)',
-                    border: '1px solid rgba(255,255,255,0.12)',
+                    background: 'var(--nested-block-bg)',
+                    border: '1px solid var(--border-subtle)',
                     color: 'var(--text-secondary)',
                   };
 

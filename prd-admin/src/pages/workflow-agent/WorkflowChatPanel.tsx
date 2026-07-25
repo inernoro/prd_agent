@@ -258,30 +258,15 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
 
   return (
     <div
-      style={{
-        width: 420,
-        height: '100%',
-        display: 'flex',
-        flexDirection: 'column',
-        borderLeft: '1px solid rgba(255,255,255,0.08)',
-        background: 'rgba(18, 18, 24, 0.94)',
-        backdropFilter: 'blur(20px)',
-        WebkitBackdropFilter: 'blur(20px)',
-      }}
+      className="border-l border-l-token-subtle" style={{ width: 420, height: '100%', display: 'flex', flexDirection: 'column', background: 'rgba(18, 18, 24, 0.94)', backdropFilter: 'blur(20px)', WebkitBackdropFilter: 'blur(20px)' }}
     >
       {/* Header */}
       <div
-        style={{
-          padding: '12px 16px',
-          display: 'flex',
-          alignItems: 'center',
-          justifyContent: 'space-between',
-          borderBottom: '1px solid rgba(255,255,255,0.06)',
-        }}
+        className="border-b border-b-token-subtle" style={{ padding: '12px 16px', display: 'flex', alignItems: 'center', justifyContent: 'space-between' }}
       >
         <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
           <Wand2 size={16} style={{ color: 'rgba(139,92,246,0.9)' }} />
-          <span style={{ fontSize: 14, fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+          <span style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>
             工作流助手
           </span>
         </div>
@@ -291,7 +276,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
             background: 'none',
             border: 'none',
             cursor: 'pointer',
-            color: 'rgba(255,255,255,0.4)',
+            color: 'var(--text-muted)',
             padding: 4,
           }}
         >
@@ -319,7 +304,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
         }}
       >
         {loadingHistory && (
-          <div style={{ textAlign: 'center', color: 'rgba(255,255,255,0.4)', fontSize: 13 }}>
+          <div style={{ textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
             加载对话历史...
           </div>
         )}
@@ -328,7 +313,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
           <div
             style={{
               textAlign: 'center',
-              color: 'rgba(255,255,255,0.35)',
+              color: 'var(--text-muted)',
               fontSize: 13,
               marginTop: 40,
               lineHeight: 1.8,
@@ -368,7 +353,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
               height: 100,
               resize: 'vertical',
               background: 'rgba(0,0,0,0.3)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid var(--border-subtle)',
               borderRadius: 8,
               padding: 10,
               fontSize: 12,
@@ -382,13 +367,7 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
 
       {/* Input Area */}
       <div
-        style={{
-          padding: '8px 16px 12px',
-          borderTop: '1px solid rgba(255,255,255,0.06)',
-          display: 'flex',
-          flexDirection: 'column',
-          gap: 8,
-        }}
+        className="border-t border-t-token-subtle" style={{ padding: '8px 16px 12px', display: 'flex', flexDirection: 'column', gap: 8 }}
       >
         <div style={{ display: 'flex', alignItems: 'flex-end', gap: 8 }}>
           <button
@@ -396,11 +375,11 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
             title="粘贴代码"
             style={{
               background: showCodeInput ? 'rgba(139,92,246,0.2)' : 'none',
-              border: '1px solid rgba(255,255,255,0.1)',
+              border: '1px solid var(--border-subtle)',
               borderRadius: 8,
               padding: '6px 8px',
               cursor: 'pointer',
-              color: showCodeInput ? 'rgba(139,92,246,0.9)' : 'rgba(255,255,255,0.4)',
+              color: showCodeInput ? 'rgba(139,92,246,0.9)' : 'var(--text-muted)',
               flexShrink: 0,
             }}
           >
@@ -416,12 +395,12 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
             style={{
               flex: 1,
               resize: 'none',
-              background: 'rgba(255,255,255,0.05)',
-              border: '1px solid rgba(255,255,255,0.1)',
+              background: 'var(--nested-block-bg)',
+              border: '1px solid var(--border-subtle)',
               borderRadius: 8,
               padding: '8px 12px',
               fontSize: 13,
-              color: 'rgba(255,255,255,0.85)',
+              color: 'var(--text-primary)',
               outline: 'none',
               maxHeight: 100,
               lineHeight: 1.5,
@@ -447,12 +426,12 @@ export function WorkflowChatPanel({ workflowId, onApplyWorkflow, onClose, initia
               onClick={handleSend}
               disabled={!input.trim()}
               style={{
-                background: input.trim() ? 'rgba(139,92,246,0.3)' : 'rgba(255,255,255,0.05)',
+                background: input.trim() ? 'rgba(139,92,246,0.3)' : 'var(--nested-block-bg)',
                 border: '1px solid rgba(139,92,246,0.3)',
                 borderRadius: 8,
                 padding: '6px 8px',
                 cursor: input.trim() ? 'pointer' : 'default',
-                color: input.trim() ? 'rgba(139,92,246,0.9)' : 'rgba(255,255,255,0.2)',
+                color: input.trim() ? 'rgba(139,92,246,0.9)' : 'var(--text-muted)',
                 flexShrink: 0,
               }}
             >
@@ -492,13 +471,13 @@ function ChatMessage({
       {/* Bubble */}
       <div
         style={{
-          background: isUser ? 'rgba(59,130,246,0.1)' : 'rgba(255,255,255,0.04)',
-          border: `1px solid ${isUser ? 'rgba(59,130,246,0.15)' : 'rgba(255,255,255,0.06)'}`,
+          background: isUser ? 'rgba(59,130,246,0.1)' : 'var(--nested-block-bg)',
+          border: `1px solid ${isUser ? 'rgba(59,130,246,0.15)' : 'var(--border-subtle)'}`,
           borderRadius: 10,
           padding: '10px 12px',
           fontSize: 13,
           lineHeight: 1.7,
-          color: 'rgba(255,255,255,0.85)',
+          color: 'var(--text-primary)',
           whiteSpace: 'pre-wrap',
           wordBreak: 'break-word',
         }}
@@ -532,11 +511,11 @@ function ChatMessage({
             ) : (
               <AlertTriangle size={14} style={{ color: 'rgba(234,179,8,0.9)' }} />
             )}
-            <span style={{ fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+            <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
               {message.generatedWorkflowId ? '已自动创建工作流' : '工作流配置已生成'}
             </span>
           </div>
-          <div style={{ color: 'rgba(255,255,255,0.6)', marginBottom: 8 }}>
+          <div style={{ color: 'var(--text-secondary)', marginBottom: 8 }}>
             {message.generated.name && <div>名称: {message.generated.name}</div>}
             <div>{message.generated.nodes?.length ?? 0} 个节点</div>
             {(message.generated.variables?.length ?? 0) > 0 && (
@@ -656,7 +635,7 @@ function ValidationCard({
         ) : (
           <AlertTriangle size={14} style={{ color: 'rgba(234,179,8,0.95)' }} />
         )}
-        <span style={{ fontWeight: 600, color: 'rgba(255,255,255,0.9)' }}>
+        <span style={{ fontWeight: 600, color: 'var(--text-primary)' }}>
           {valid ? '已自动校验 · 结构可执行' : '已自动校验 · 仍有需修正项'}
         </span>
       </div>
@@ -673,11 +652,11 @@ function ValidationCard({
       {/* 自动接线说明 */}
       {hasNotes && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.55)', marginBottom: 3 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-secondary)', marginBottom: 3 }}>
             <GitBranch size={12} />
             <span>自动接线</span>
           </div>
-          <ul style={{ margin: 0, paddingLeft: 18, color: 'rgba(255,255,255,0.6)', lineHeight: 1.6 }}>
+          <ul style={{ margin: 0, paddingLeft: 18, color: 'var(--text-secondary)', lineHeight: 1.6 }}>
             {wireNotes.map((n, i) => (
               <li key={i}>{n}</li>
             ))}
@@ -688,7 +667,7 @@ function ValidationCard({
       {/* 待补齐项（可就地填写 → 一键应用） */}
       {hasMissing && (
         <div>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'rgba(255,255,255,0.7)', marginBottom: 5 }}>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-secondary)', marginBottom: 5 }}>
             <ListChecks size={12} />
             <span style={{ fontWeight: 600 }}>补齐这 {requiredInputs.length} 项即可运行</span>
           </div>
@@ -699,9 +678,9 @@ function ValidationCard({
                 <div key={k} style={{ display: 'flex', flexDirection: 'column', gap: 3 }}>
                   <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
                     {inp.isSecret && <KeyRound size={11} style={{ color: 'rgba(234,179,8,0.9)', flexShrink: 0 }} />}
-                    <span style={{ color: 'rgba(255,255,255,0.85)' }}>{inp.label}</span>
+                    <span style={{ color: 'var(--text-primary)' }}>{inp.label}</span>
                     {inp.nodeName && (
-                      <span style={{ color: 'rgba(255,255,255,0.4)', fontSize: 11 }}>· {inp.nodeName}</span>
+                      <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>· {inp.nodeName}</span>
                     )}
                     {inp.scope === 'variable' && (
                       <span style={{ color: 'rgba(139,92,246,0.8)', fontSize: 11 }}>变量</span>
@@ -738,9 +717,9 @@ function ValidationCard({
                 onClick={handleFillApply}
                 disabled={!canApply}
                 style={{
-                  background: canApply ? 'rgba(139,92,246,0.25)' : 'rgba(255,255,255,0.06)',
-                  border: `1px solid ${canApply ? 'rgba(139,92,246,0.35)' : 'rgba(255,255,255,0.12)'}`,
-                  color: canApply ? 'rgba(196,181,253,0.95)' : 'rgba(255,255,255,0.4)',
+                  background: canApply ? 'rgba(139,92,246,0.25)' : 'var(--nested-block-bg)',
+                  border: `1px solid ${canApply ? 'rgba(139,92,246,0.35)' : 'var(--border-subtle)'}`,
+                  color: canApply ? 'rgba(196,181,253,0.95)' : 'var(--text-muted)',
                 }}
               >
                 {applied ? '已补齐并应用' : !valid ? '请先解决上方结构问题' : allFilled ? '补齐并应用到编辑器' : `请先填写全部 ${requiredInputs.length} 项`}
@@ -752,7 +731,7 @@ function ValidationCard({
               )}
             </div>
           ) : (
-            <div style={{ color: 'rgba(255,255,255,0.45)', fontSize: 11, marginTop: 4 }}>
+            <div style={{ color: 'var(--text-muted)', fontSize: 11, marginTop: 4 }}>
               打开对应节点配置填写；密钥项请填到工作流变量。
             </div>
           )}
@@ -764,8 +743,8 @@ function ValidationCard({
 
 const fillFieldStyle: CSSProperties = {
   width: '100%',
-  background: 'rgba(0,0,0,0.25)',
-  border: '1px solid rgba(255,255,255,0.12)',
+  background: 'var(--nested-block-bg)',
+  border: '1px solid var(--border-subtle)',
   borderRadius: 6,
   padding: '6px 8px',
   fontSize: 12,

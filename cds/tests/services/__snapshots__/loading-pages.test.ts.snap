@@ -1,5 +1,96 @@
 // Vitest Snapshot v1, https://vitest.dev/guide/snapshot.html
 
+exports[`loading-pages SSOT > forwarder 等待页：关键结构锚点不漂移（2026-07-22 起含宝石核心叙事） 1`] = `
+"<!doctype html>
+<html lang="zh-CN"><head>
+<meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
+<title>分支环境正在构建</title>
+<style>
+*{box-sizing:border-box}html,body{min-height:100%}
+body{margin:0;min-height:100vh;overflow:hidden;background:#08070d;color:#f7f5ff;font-family:Inter,-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif}
+.grid{position:fixed;inset:-8%;opacity:.72;background-image:linear-gradient(rgba(255,255,255,.055) 1px,transparent 1px),linear-gradient(90deg,rgba(255,255,255,.055) 1px,transparent 1px);background-size:34px 34px;transform:rotate(-2deg);animation:grid 18s linear infinite}
+.shade{position:fixed;inset:0;background:radial-gradient(880px 640px at 66% 42%,rgba(255,255,255,.12),transparent 55%),linear-gradient(90deg,rgba(8,7,13,.94),rgba(8,7,13,.58) 52%,rgba(8,7,13,.9))}
+.shell{position:relative;z-index:1;min-height:100vh;display:grid;align-items:center;padding:clamp(34px,7vw,92px)}
+.content{max-width:760px;text-shadow:0 20px 80px rgba(0,0,0,.72)}
+.eyebrow{display:inline-flex;align-items:center;gap:10px;margin-bottom:28px;color:rgba(245,242,255,.66);font:600 11px/1 ui-monospace,SFMono-Regular,Menlo,monospace;letter-spacing:.28em;text-transform:uppercase}
+.eyebrow:before{content:"";width:7px;height:7px;border-radius:50%;background:#fff;box-shadow:0 0 18px rgba(255,255,255,.82);animation:pulse 1.7s ease-in-out infinite}
+h1{margin:0 0 22px;font-size:clamp(44px,6vw,86px);line-height:.96;letter-spacing:0;color:rgba(247,245,255,.86);background:linear-gradient(120deg,rgba(247,245,255,.74),#fff,rgba(247,245,255,.72));background-size:220% 100%;-webkit-background-clip:text;background-clip:text;-webkit-text-fill-color:transparent;animation:shine 3.8s linear infinite}
+.desc{max-width:640px;margin:0 0 26px;color:rgba(245,242,255,.62);font-size:clamp(15px,1.45vw,20px);line-height:1.75}
+.status{display:flex;flex-wrap:wrap;gap:12px;margin-bottom:28px}
+.chip{display:inline-flex;align-items:center;gap:8px;border:1px solid rgba(255,255,255,.12);border-radius:999px;background:rgba(255,255,255,.04);backdrop-filter:blur(12px);padding:10px 15px;color:#e5e7eb;font:600 13px/1.35 ui-monospace,SFMono-Regular,Menlo,monospace}
+.chip:before{content:"";width:7px;height:7px;border-radius:50%;background:#dbe4ee;box-shadow:0 0 16px rgba(219,228,238,.72);animation:pulse 1.7s ease-in-out infinite}
+.tip{max-width:660px;border-top:1px solid rgba(245,242,255,.14);padding-top:18px;color:rgba(245,242,255,.54);font-size:13px;line-height:1.7}
+.tip strong{color:rgba(245,242,255,.86)}
+@keyframes grid{to{transform:rotate(-2deg) translate3d(-34px,-34px,0)}}
+@keyframes pulse{0%,100%{transform:scale(.78);opacity:.62}50%{transform:scale(1.22);opacity:1}}
+@keyframes shine{0%{background-position:120% 0}100%{background-position:-120% 0}}
+.gem-row{margin-bottom:22px}
+.cds-gem-story{display:inline-block;overflow:visible;filter:drop-shadow(0 0 14px rgba(99,102,241,.28))}
+.cds-gem-story .cds-gem-story-facet{transform-origin:center;transform-box:fill-box;animation:cds-gem-story var(--cds-gem-dur,2.9s) cubic-bezier(.4,.1,.4,.9) infinite both;animation-delay:calc(var(--gi,0)*.07s)}
+@keyframes cds-gem-story{
+  0%{transform:scale(0);opacity:0}
+  9%{transform:scale(1.1);opacity:1}
+  13%{transform:scale(1);opacity:1}
+  30%{opacity:1}
+  45%{opacity:.68}
+  60%{opacity:1}
+  76%{transform:scale(1);opacity:1}
+  88%{transform:scale(.5) rotate(-10deg);opacity:0}
+  100%{transform:scale(0);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.cds-gem-story .cds-gem-story-facet{animation:none}}
+@media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important}}
+</style></head>
+<body>
+<div class="grid" aria-hidden="true"></div><div class="shade" aria-hidden="true"></div>
+<main class="shell"><section class="content">
+  <div class="gem-row" aria-hidden="true"><svg class="cds-gem-story" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="CDS" style=""><polygon class="cds-gem-story-facet" points="32,32 40.08,18 48.17,32" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:0"/><polygon class="cds-gem-story-facet" points="32,32 48.17,32 40.08,46" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:2"/><polygon class="cds-gem-story-facet" points="32,32 40.08,46 23.92,46" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:4"/><polygon class="cds-gem-story-facet" points="32,32 23.92,46 15.83,32" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:6"/><polygon class="cds-gem-story-facet" points="32,32 15.83,32 23.92,18" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:8"/><polygon class="cds-gem-story-facet" points="32,32 23.92,18 40.08,18" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:10"/><polygon class="cds-gem-story-facet" points="32,4 23.92,18 40.08,18" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:1"/><polygon class="cds-gem-story-facet" points="56.25,18 40.08,18 48.17,32" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:3"/><polygon class="cds-gem-story-facet" points="56.25,46 48.17,32 40.08,46" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:5"/><polygon class="cds-gem-story-facet" points="32,60 40.08,46 23.92,46" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:7"/><polygon class="cds-gem-story-facet" points="7.75,46 23.92,46 15.83,32" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:9"/><polygon class="cds-gem-story-facet" points="7.75,18 15.83,32 23.92,18" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:11"/></svg></div>
+  <div class="eyebrow">CDS Waiting Room</div>
+  <h1>分支环境正在构建</h1>
+  <p class="desc">CDS 正在同步分支、启动容器并等待服务健康检查通过。服务稳定后会自动进入真实页面。</p>
+  <div class="status"><span class="chip">后台同步 · 自动重试</span><span class="chip">持续检测服务恢复</span></div>
+  <p class="tip" id="tip"><strong>CDS 小提示：</strong><span></span></p>
+</section></main>
+<script>
+(function(){
+  var tips=[
+    '预览页只展示用户可理解的状态，forwarder 和 upstream 细节会收敛到统一等待页。',
+    '构建完成不等于服务就绪，CDS 会等待端口和健康检查稳定后再切入真实页面。',
+    '如果分支不可恢复，CDS 会进入启动失败页，并保留最后日志摘要用于诊断。',
+    '容器日志由 CDS 在生命周期关键点归档，避免容器消失后看不到原因。'
+  ];
+  var target=document.querySelector('#tip span');
+  var i=0;
+  function tick(){ if(target) target.textContent=tips[i++%tips.length]; }
+  var originalUrl=window.location.href;
+  var retryTimer=0;
+  function scheduleProbe(delay){
+    window.clearTimeout(retryTimer);
+    retryTimer=window.setTimeout(probe,delay);
+  }
+  function probe(){
+    var probeUrl=new URL(originalUrl);
+    probeUrl.searchParams.set('__cds_wait_probe',String(Date.now()));
+    fetch(probeUrl.toString(),{
+      cache:'no-store',
+      credentials:'same-origin',
+      headers:{Accept:'text/html','X-CDS-Waiting-Probe':'1'}
+    }).then(function(response){
+      if(response.status<500){
+        window.location.reload();
+        return;
+      }
+      scheduleProbe(2000);
+    }).catch(function(){scheduleProbe(2000);});
+  }
+  tick();
+  window.setInterval(tick,4200);
+  scheduleProbe(400);
+}());
+</script>
+</body></html>"
+`;
+
 exports[`loading-pages SSOT > forwarder 等待页：迁移只搬不改（关键结构锚点不漂移） 1`] = `
 "<!doctype html>
 <html lang="zh-CN"><head>
@@ -24,11 +115,27 @@ h1{margin:0 0 22px;font-size:clamp(44px,6vw,86px);line-height:.96;letter-spacing
 @keyframes grid{to{transform:rotate(-2deg) translate3d(-34px,-34px,0)}}
 @keyframes pulse{0%,100%{transform:scale(.78);opacity:.62}50%{transform:scale(1.22);opacity:1}}
 @keyframes shine{0%{background-position:120% 0}100%{background-position:-120% 0}}
+.gem-row{margin-bottom:22px}
+.cds-gem-story{display:inline-block;overflow:visible;filter:drop-shadow(0 0 14px rgba(99,102,241,.28))}
+.cds-gem-story .cds-gem-story-facet{transform-origin:center;transform-box:fill-box;animation:cds-gem-story var(--cds-gem-dur,2.9s) cubic-bezier(.4,.1,.4,.9) infinite both;animation-delay:calc(var(--gi,0)*.07s)}
+@keyframes cds-gem-story{
+  0%{transform:scale(0);opacity:0}
+  9%{transform:scale(1.1);opacity:1}
+  13%{transform:scale(1);opacity:1}
+  30%{opacity:1}
+  45%{opacity:.68}
+  60%{opacity:1}
+  76%{transform:scale(1);opacity:1}
+  88%{transform:scale(.5) rotate(-10deg);opacity:0}
+  100%{transform:scale(0);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.cds-gem-story .cds-gem-story-facet{animation:none}}
 @media (prefers-reduced-motion:reduce){*,*:before,*:after{animation:none!important}}
 </style></head>
 <body>
 <div class="grid" aria-hidden="true"></div><div class="shade" aria-hidden="true"></div>
 <main class="shell"><section class="content">
+  <div class="gem-row" aria-hidden="true"><svg class="cds-gem-story" width="64" height="64" viewBox="0 0 64 64" role="img" aria-label="CDS" style=""><polygon class="cds-gem-story-facet" points="32,32 40.08,18 48.17,32" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:0"/><polygon class="cds-gem-story-facet" points="32,32 48.17,32 40.08,46" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:2"/><polygon class="cds-gem-story-facet" points="32,32 40.08,46 23.92,46" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:4"/><polygon class="cds-gem-story-facet" points="32,32 23.92,46 15.83,32" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:6"/><polygon class="cds-gem-story-facet" points="32,32 15.83,32 23.92,18" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:8"/><polygon class="cds-gem-story-facet" points="32,32 23.92,18 40.08,18" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:10"/><polygon class="cds-gem-story-facet" points="32,4 23.92,18 40.08,18" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:1"/><polygon class="cds-gem-story-facet" points="56.25,18 40.08,18 48.17,32" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:3"/><polygon class="cds-gem-story-facet" points="56.25,46 48.17,32 40.08,46" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:5"/><polygon class="cds-gem-story-facet" points="32,60 40.08,46 23.92,46" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:7"/><polygon class="cds-gem-story-facet" points="7.75,46 23.92,46 15.83,32" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:9"/><polygon class="cds-gem-story-facet" points="7.75,18 15.83,32 23.92,18" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:11"/></svg></div>
   <div class="eyebrow">CDS Waiting Room</div>
   <h1>分支环境正在构建</h1>
   <p class="desc">CDS 正在同步分支、启动容器并等待服务健康检查通过。服务稳定后会自动进入真实页面。</p>
@@ -108,8 +215,7 @@ body{font-family:-apple-system,BlinkMacSystemFont,"Segoe UI",sans-serif;backgrou
 .card{position:relative;z-index:1;max-width:760px;width:100%;overflow:hidden;padding:34px 36px;background:rgba(22,27,34,.92);border:1px solid rgba(139,148,158,.28);border-radius:18px;box-shadow:0 30px 90px rgba(0,0,0,.45),0 0 0 1px rgba(88,166,255,.04)}
 .card::before{content:"";position:absolute;inset:0 0 auto;height:3px;background:linear-gradient(90deg,#22c55e,#58a6ff,#a78bfa)}
 .header{display:flex;align-items:flex-start;gap:16px;margin-bottom:10px}
-.spinner{width:32px;height:32px;border:3px solid rgba(139,148,158,.28);border-top-color:var(--accent);border-radius:50%;animation:spin .8s linear infinite;flex-shrink:0;margin-top:2px}
-@keyframes spin{to{transform:rotate(360deg)}}
+.cds-gem-story{flex-shrink:0;margin-top:2px}
 h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;line-height:1.2}
 .subtitle{font-size:15px;color:var(--text-muted);margin:6px 0 24px;padding-left:48px;line-height:1.7}
 .status-row{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:10px;margin-bottom:22px}
@@ -121,6 +227,20 @@ h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;
 .refresh-bar{margin-top:22px;height:3px;border-radius:99px;background:rgba(139,148,158,.18);overflow:hidden}
 .refresh-bar-fill{height:100%;width:0%;background:linear-gradient(90deg,#22c55e,#58a6ff);border-radius:99px;animation:refill 3s linear forwards}
 @keyframes refill{to{width:100%}}
+.cds-gem-story{display:inline-block;overflow:visible;filter:drop-shadow(0 0 14px rgba(99,102,241,.28))}
+.cds-gem-story .cds-gem-story-facet{transform-origin:center;transform-box:fill-box;animation:cds-gem-story var(--cds-gem-dur,2.9s) cubic-bezier(.4,.1,.4,.9) infinite both;animation-delay:calc(var(--gi,0)*.07s)}
+@keyframes cds-gem-story{
+  0%{transform:scale(0);opacity:0}
+  9%{transform:scale(1.1);opacity:1}
+  13%{transform:scale(1);opacity:1}
+  30%{opacity:1}
+  45%{opacity:.68}
+  60%{opacity:1}
+  76%{transform:scale(1);opacity:1}
+  88%{transform:scale(.5) rotate(-10deg);opacity:0}
+  100%{transform:scale(0);opacity:0}
+}
+@media (prefers-reduced-motion:reduce){.cds-gem-story .cds-gem-story-facet{animation:none}}
 @media(max-width:640px){.card{padding:28px 22px}.status-row{grid-template-columns:1fr}.subtitle{padding-left:0}h1{font-size:24px}}
 @media(prefers-reduced-motion:reduce){*,*::before,*::after{animation:none!important}.refresh-bar-fill{width:100%}}
 </style>
@@ -129,7 +249,7 @@ h1{font-size:28px;font-weight:750;color:var(--text-primary);letter-spacing:.1px;
 <div class="shape-grid-vignette" aria-hidden="true"></div>
 <div class="card">
   <div class="header">
-    <div class="spinner"></div>
+    <svg class="cds-gem-story" width="36" height="36" viewBox="0 0 64 64" role="img" aria-label="CDS" style=""><polygon class="cds-gem-story-facet" points="32,32 40.08,18 48.17,32" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:0"/><polygon class="cds-gem-story-facet" points="32,32 48.17,32 40.08,46" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:2"/><polygon class="cds-gem-story-facet" points="32,32 40.08,46 23.92,46" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:4"/><polygon class="cds-gem-story-facet" points="32,32 23.92,46 15.83,32" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:6"/><polygon class="cds-gem-story-facet" points="32,32 15.83,32 23.92,18" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:8"/><polygon class="cds-gem-story-facet" points="32,32 23.92,18 40.08,18" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:10"/><polygon class="cds-gem-story-facet" points="32,4 23.92,18 40.08,18" fill="#4f46e5" stroke="#4f46e5" stroke-width="0.5" stroke-linejoin="round" style="--gi:1"/><polygon class="cds-gem-story-facet" points="56.25,18 40.08,18 48.17,32" fill="#3b82f6" stroke="#3b82f6" stroke-width="0.5" stroke-linejoin="round" style="--gi:3"/><polygon class="cds-gem-story-facet" points="56.25,46 48.17,32 40.08,46" fill="#38bdf8" stroke="#38bdf8" stroke-width="0.5" stroke-linejoin="round" style="--gi:5"/><polygon class="cds-gem-story-facet" points="32,60 40.08,46 23.92,46" fill="#2e1065" stroke="#2e1065" stroke-width="0.5" stroke-linejoin="round" style="--gi:7"/><polygon class="cds-gem-story-facet" points="7.75,46 23.92,46 15.83,32" fill="#4c1d95" stroke="#4c1d95" stroke-width="0.5" stroke-linejoin="round" style="--gi:9"/><polygon class="cds-gem-story-facet" points="7.75,18 15.83,32 23.92,18" fill="#6d28d9" stroke="#6d28d9" stroke-width="0.5" stroke-linejoin="round" style="--gi:11"/></svg>
     <h1>CDS 自升级中</h1>
   </div>
   <div class="subtitle">控制面正在重启，分支预览几秒后自动恢复</div>

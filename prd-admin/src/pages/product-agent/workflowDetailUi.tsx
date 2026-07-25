@@ -3,10 +3,10 @@ import type { ReactNode } from 'react';
 
 export function WorkflowDetailCard({ title, action, children }: { title?: string; action?: ReactNode; children: ReactNode }) {
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] p-4">
+    <div className="rounded-xl border border-token-subtle bg-token-nested p-4">
       {(title || action) && (
         <div className="mb-3 flex items-center justify-between">
-          {title && <div className="text-xs font-semibold text-white/60">{title}</div>}
+          {title && <div className="text-xs font-semibold text-token-secondary">{title}</div>}
           {action}
         </div>
       )}
@@ -17,7 +17,7 @@ export function WorkflowDetailCard({ title, action, children }: { title?: string
 
 export function WorkflowAttributeTable({ rows }: { rows: { label: string; value: ReactNode }[] }) {
   return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
+    <div className="overflow-x-auto rounded-lg border border-token-subtle">
       <table className="w-full table-fixed text-sm">
         <colgroup>
           <col style={{ width: '22%' }} />
@@ -25,9 +25,9 @@ export function WorkflowAttributeTable({ rows }: { rows: { label: string; value:
         </colgroup>
         <tbody>
           {rows.map((row) => (
-            <tr key={row.label} className="border-t border-white/5 first:border-t-0">
-              <td className="px-4 py-3 text-xs font-medium text-white/45 bg-white/[0.02] align-top">{row.label}</td>
-              <td className="px-4 py-3 text-sm text-white/80 min-w-0 break-words">{row.value}</td>
+            <tr key={row.label} className="border-t border-token-subtle first:border-t-0">
+              <td className="px-4 py-3 text-xs font-medium text-token-muted bg-token-nested align-top">{row.label}</td>
+              <td className="px-4 py-3 text-sm text-token-primary min-w-0 break-words">{row.value}</td>
             </tr>
           ))}
         </tbody>
@@ -47,9 +47,9 @@ export function WorkflowRecordTable({
   emptyText: string;
   onRowClick?: (id: string) => void;
 }) {
-  const cell = 'px-3 py-2.5 text-xs text-white/65 truncate';
+  const cell = 'px-3 py-2.5 text-xs text-token-secondary truncate';
   return (
-    <div className="overflow-x-auto rounded-lg border border-white/10">
+    <div className="overflow-x-auto rounded-lg border border-token-subtle">
       <table className="w-full table-fixed text-left text-sm min-w-[720px]">
         {columns.some((c) => c.width) && (
           <colgroup>
@@ -58,7 +58,7 @@ export function WorkflowRecordTable({
             ))}
           </colgroup>
         )}
-        <thead className="bg-white/[0.03] text-[11px] text-white/45 border-b border-white/10">
+        <thead className="bg-token-nested text-[11px] text-token-muted border-b border-token-subtle">
           <tr>
             {columns.map((c) => (
               <th key={c.header} className={`px-3 py-2.5 font-medium whitespace-nowrap ${c.className ?? ''}`}>{c.header}</th>
@@ -68,7 +68,7 @@ export function WorkflowRecordTable({
         <tbody>
           {rows.length === 0 ? (
             <tr>
-              <td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-white/35">
+              <td colSpan={columns.length} className="px-3 py-10 text-center text-sm text-token-muted">
                 {emptyText}
               </td>
             </tr>
@@ -77,7 +77,7 @@ export function WorkflowRecordTable({
               <tr
                 key={row.id}
                 onClick={() => onRowClick?.(row.id)}
-                className={`border-t border-white/5 ${onRowClick ? 'cursor-pointer hover:bg-white/[0.03]' : ''}`}
+                className={`border-t border-token-subtle ${onRowClick ? 'cursor-pointer hover-bg-soft' : ''}`}
               >
                 {columns.map((c) => (
                   <td key={c.header} className={`${cell} ${c.className ?? ''}`}>{c.render(row)}</td>

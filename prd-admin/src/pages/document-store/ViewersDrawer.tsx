@@ -245,7 +245,7 @@ export function ViewersDrawer(props: ViewersDrawerProps) {
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover:bg-white/6">
+            className="flex h-7 w-7 flex-shrink-0 cursor-pointer items-center justify-center rounded-[8px] text-token-muted transition-colors duration-200 hover-bg-soft">
             <X size={15} />
           </button>
         </div>
@@ -434,7 +434,7 @@ function TopEntries({ items, onOpen }: {
           <li
             key={it.entryId ?? idx}
             onClick={clickable ? () => onOpen!(it.storeId!, it.entryId!) : undefined}
-            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover:bg-white/6 transition-colors' : ''}`}
+            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover-bg-soft transition-colors' : ''}`}
             title={clickable ? '打开该文档' : undefined}
           >
             <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-token-muted">{idx + 1}</span>
@@ -472,7 +472,7 @@ function TopStores({ items, onOpen }: {
           <li
             key={it.storeId ?? idx}
             onClick={clickable ? () => onOpen!(it.storeId!) : undefined}
-            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover:bg-white/6 transition-colors' : ''}`}
+            className={`flex items-center gap-2 rounded-[6px] px-1.5 py-1 ${clickable ? 'cursor-pointer hover-bg-soft transition-colors' : ''}`}
             title={clickable ? '打开该知识库' : undefined}
           >
             <span className="w-4 flex-shrink-0 text-center text-[10px] font-bold tabular-nums text-token-muted">{idx + 1}</span>

@@ -580,7 +580,7 @@ export function DefectCard({ defect }: DefectCardProps) {
               <div
                 className="bg-token-nested text-token-muted inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded mr-2 flex-shrink-0 text-[10px] border"
                 style={{
-                  borderColor: isReporterMe ? 'rgba(255, 255, 255, 0.5)' : 'var(--border-subtle)',
+                  borderColor: isReporterMe ? 'var(--border-subtle)' : 'var(--border-subtle)',
                 }}
                 title={reporterDisplayName}
               >
@@ -597,7 +597,7 @@ export function DefectCard({ defect }: DefectCardProps) {
               <ArrowRight size={10} className="flex-shrink-0 opacity-50" />
               <div
                 className="bg-token-nested text-token-muted inline-flex items-center gap-1.5 px-1.5 py-0.5 rounded flex-shrink-0 text-[10px] border"
-                style={{ borderColor: isAssigneeMe ? 'rgba(255, 255, 255, 0.5)' : 'var(--border-subtle)' }}
+                style={{ borderColor: isAssigneeMe ? 'var(--border-subtle)' : 'var(--border-subtle)' }}
                 title={assigneeDisplayName}
               >
                 <UserAvatar
@@ -633,7 +633,7 @@ export function DefectCard({ defect }: DefectCardProps) {
                   <Button
                     size="xs"
                     variant="secondary"
-                    className="h-6 w-6 p-0 rounded gap-0 hover:bg-white/10 text-token-primary"
+                    className="h-6 w-6 p-0 rounded gap-0 hover-bg-soft text-token-primary"
                     onClick={handleComplete}
                     disabled={completing}
                     title="完成"
@@ -658,7 +658,7 @@ export function DefectCard({ defect }: DefectCardProps) {
             onClick={() => setLightboxImage(null)}
           >
             <DialogPrimitive.Title className="sr-only">图片预览</DialogPrimitive.Title>
-            <DialogPrimitive.Close className="absolute top-4 right-4 p-2 rounded-lg hover:bg-white/10 transition-colors text-white">
+            <DialogPrimitive.Close className="absolute top-4 right-4 p-2 rounded-lg hover-bg-soft transition-colors text-token-primary">
               <X size={24} />
             </DialogPrimitive.Close>
             {lightboxImage && (

@@ -82,7 +82,7 @@ export function buildReleaseBasicInfoRows(
     {
       label: '内部版本号',
       value: (
-        <span className="font-mono text-white/75">
+        <span className="font-mono text-token-secondary">
           {release.tCode?.trim() || (release.isTemporaryOptimization ? '临时优化需求' : DASH)}
         </span>
       ),

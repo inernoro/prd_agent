@@ -398,8 +398,8 @@ export default function DesktopLabTab() {
               <input
                 value={userSearch}
                 onChange={(e) => setUserSearch(e.target.value)}
-                className="h-10 flex-1 rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="h-10 flex-1 rounded-[14px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
                 placeholder="搜索用户名/昵称"
               />
               <Button
@@ -419,8 +419,8 @@ export default function DesktopLabTab() {
                 users.map((u) => (
                   <div
                     key={u.userId}
-                    className="flex items-center justify-between rounded-[14px] px-3 py-2"
-                    style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}
+                    className="flex items-center justify-between rounded-[14px] px-3 py-2 bg-token-nested"
+                    style={{ border: '1px solid var(--border-subtle)' }}
                   >
                     <div className="min-w-0">
                       <div className="text-sm font-semibold truncate" style={{ color: 'var(--text-primary)' }}>
@@ -445,8 +445,8 @@ export default function DesktopLabTab() {
               <Select
                 value={activeActorId}
                 onChange={(e) => setActiveActorId(e.target.value)}
-                className="w-full"
-                style={{ background: 'rgba(255,255,255,0.04)' }}
+                className="w-full bg-token-nested"
+
               >
                 <option value="">请选择</option>
                 {actors.map((a) => (
@@ -472,8 +472,8 @@ export default function DesktopLabTab() {
               <input
                 value={groupName}
                 onChange={(e) => setGroupName(e.target.value)}
-                className="h-10 rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="h-10 rounded-[14px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
                 placeholder="群组名称（可选）"
               />
               <Button onClick={createGroup} disabled={!activeActor}>
@@ -515,8 +515,8 @@ export default function DesktopLabTab() {
             <textarea
               value={prdContent}
               onChange={(e) => setPrdContent(e.target.value)}
-              className="mt-3 h-32 w-full rounded-[14px] px-3 py-2 text-sm outline-none"
-              style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+              className="mt-3 h-32 w-full rounded-[14px] px-3 py-2 text-sm outline-none bg-token-nested border border-token-subtle"
+              style={{ color: 'var(--text-primary)' }}
               placeholder="粘贴 Markdown PRD 内容（不落盘，仅缓存）"
             />
 
@@ -568,8 +568,8 @@ export default function DesktopLabTab() {
               <input
                 value={chatInput}
                 onChange={(e) => setChatInput(e.target.value)}
-                className="h-10 rounded-[14px] px-3 text-sm outline-none"
-                style={{ background: 'rgba(255,255,255,0.04)', border: '1px solid rgba(255,255,255,0.12)', color: 'var(--text-primary)' }}
+                className="h-10 rounded-[14px] px-3 text-sm outline-none bg-token-nested border border-token-subtle"
+                style={{ color: 'var(--text-primary)' }}
                 placeholder="输入一条消息（SSE流式）"
               />
               <Button onClick={sendChat} disabled={!activeActor || !sessionId}>
@@ -578,7 +578,7 @@ export default function DesktopLabTab() {
             </div>
 
             <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+              <div className="rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
                 <div className="text-xs mb-2" style={{ color: 'var(--text-muted)' }}>
                   Chat 输出
                 </div>
@@ -597,7 +597,7 @@ export default function DesktopLabTab() {
                 ) : null}
               </div>
 
-              <div className="rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)' }}>
+              <div className="rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)' }}>
                 <div className="flex items-center justify-between">
                   <div className="text-xs" style={{ color: 'var(--text-muted)' }}>
                     引导（Guide SSE）
@@ -634,10 +634,10 @@ export default function DesktopLabTab() {
             </div>
 
             <div className="mt-3 grid gap-3" style={{ gridTemplateColumns: '1fr 1fr' }}>
-              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
                 {gapsJson || '（暂无）'}
               </pre>
-              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+              <pre className="text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
                 {gapSummaryJson || '（暂无）'}
               </pre>
             </div>
@@ -647,7 +647,7 @@ export default function DesktopLabTab() {
             <div className="text-sm font-semibold" style={{ color: 'var(--text-primary)' }}>
               原始返回（最近一次）
             </div>
-            <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3" style={{ border: '1px solid var(--border-subtle)', background: 'rgba(255,255,255,0.02)', color: 'var(--text-primary)' }}>
+            <pre className="mt-3 text-xs whitespace-pre-wrap wrap-break-word rounded-[14px] p-3 bg-token-nested" style={{ border: '1px solid var(--border-subtle)', color: 'var(--text-primary)' }}>
               {groupInfoJson || '（暂无）'}
             </pre>
           </GlassCard>

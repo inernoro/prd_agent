@@ -58,8 +58,8 @@ export function ResponsiveGrid({
         {Array.from({ length: skeletonCount }, (_, i) => (
           <div
             key={i}
-            className="rounded-xl animate-pulse"
-            style={{ height: skeletonHeight, background: 'rgba(255,255,255,0.04)' }}
+            className="rounded-xl animate-pulse bg-token-nested"
+            style={{ height: skeletonHeight }}
           />
         ))}
       </div>

@@ -256,8 +256,8 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
       tabIndex={0}
       className={[
         'group flex items-center gap-3 px-3 py-2.5 cursor-pointer select-none transition-colors',
-        'hover:bg-white/[0.04]',
-        isSelected ? 'bg-white/[0.06]' : '',
+        'hover-bg-soft/[0.04]',
+        isSelected ? 'bg-token-nested' : '',
       ].join(' ')}
       style={{
         borderBottom: '1px solid var(--border-subtle)',
@@ -367,7 +367,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
           alt={reporterDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
-            border: isReporterMe ? '1px solid rgba(255,255,255,0.5)' : '1px solid var(--border-subtle)',
+            border: isReporterMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
           onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={reporterDisplayName}
@@ -378,7 +378,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
           alt={assigneeDisplayName}
           className="h-4 w-4 rounded-full object-cover"
           style={{
-            border: isAssigneeMe ? '1px solid rgba(255,255,255,0.5)' : '1px solid var(--border-subtle)',
+            border: isAssigneeMe ? '1px solid var(--border-subtle)' : '1px solid var(--border-subtle)',
           }}
           onError={(e) => { e.currentTarget.onerror = null; e.currentTarget.src = resolveNoHeadAvatarUrl(); }}
           title={assigneeDisplayName}
@@ -418,7 +418,7 @@ export function DefectListRow({ defect, isRead }: DefectListRowProps) {
           <Button
             size="xs"
             variant="secondary"
-            className="h-5 w-5 p-0 rounded gap-0 hover:bg-white/10"
+            className="h-5 w-5 p-0 rounded gap-0 hover-bg-soft"
             onClick={handleComplete}
             disabled={completing}
             title="完成"

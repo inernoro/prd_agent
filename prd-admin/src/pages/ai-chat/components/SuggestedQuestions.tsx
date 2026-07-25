@@ -39,12 +39,8 @@ export const SuggestedQuestions = memo(function SuggestedQuestions({
           <button
             key={`${q.text}-${idx}`}
             type="button"
-            className="group flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left transition-all duration-150 hover:brightness-110"
-            style={{
-              background: 'rgba(30, 41, 59, 0.60)',
-              border: '1px solid rgba(255, 255, 255, 0.08)',
-              color: 'var(--text-secondary)',
-            }}
+            className="group flex items-center gap-2.5 rounded-[10px] px-3 py-2.5 text-left transition-all duration-150 hover:brightness-110 border border-token-subtle"
+            style={{ background: 'rgba(30, 41, 59, 0.60)', color: 'var(--text-secondary)' }}
             onClick={() => onSelect(q.text)}
             title={q.text}
           >

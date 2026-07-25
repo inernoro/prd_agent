@@ -25,7 +25,7 @@ export function ThemeModeToggle({ mode, onToggle }: ThemeModeToggleProps) {
       onClick={onToggle}
       aria-label={actionLabel}
       title={actionLabel}
-      className="group/theme relative flex w-14 cursor-pointer flex-col items-center justify-center gap-0 rounded-[14px] py-1.5 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400/70"
+      className="group/theme relative flex w-14 cursor-pointer flex-col items-center justify-center gap-0 rounded-[14px] py-1.5 transition-colors duration-200 focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-[var(--border-focus)]"
       style={{
         color: 'var(--text-secondary)',
         background: 'var(--launcher-control-bg)',

@@ -85,9 +85,9 @@ export function ActivityTimeline({
   return (
     <div className="flex flex-col gap-4">
       {loading ? (
-        <div className="text-[11px] text-white/30 py-2">加载动态…</div>
+        <div className="text-[11px] text-token-muted py-2">加载动态…</div>
       ) : visibleItems.length === 0 ? (
-        <div className="text-[11px] text-white/30">
+        <div className="text-[11px] text-token-muted">
           {filter === 'comment' ? '还没有评论。' : filter === 'system' ? '还没有变更记录。' : '还没有动态。状态流转、指派、评论都会出现在这里。'}
         </div>
       ) : (
@@ -99,7 +99,7 @@ export function ActivityTimeline({
       )}
 
       {/* 评论输入 */}
-      {filter !== 'system' ? <div className="flex flex-col gap-2 pt-1 border-t border-white/5">
+      {filter !== 'system' ? <div className="flex flex-col gap-2 pt-1 border-t border-token-subtle">
         <MentionTextarea
           value={content}
           onChange={setContent}
@@ -111,7 +111,7 @@ export function ActivityTimeline({
         />
         <div className="flex items-center gap-2 flex-wrap">
           {mentionIds.length > 0 && (
-            <span className="text-[11px] text-white/40">
+            <span className="text-[11px] text-token-muted">
               将提醒 {mentionIds.length} 人
             </span>
           )}
@@ -131,13 +131,13 @@ export function ActivityTimeline({
 function ActivityRow({ a }: { a: ProductActivity }) {
   if (a.type === 'comment') {
     return (
-      <div className="pa-row flex flex-col gap-1 rounded-lg border border-white/10 bg-white/[0.02] p-3">
+      <div className="pa-row flex flex-col gap-1 rounded-lg border border-token-subtle bg-token-nested p-3">
         <div className="flex items-center gap-2">
           <MessageSquare size={13} className="text-cyan-300/80" />
-          <span className="text-xs text-white/80">{a.actorName || a.actorId}</span>
-          <span className="text-[10px] text-white/35 ml-auto">{fmt(a.createdAt)}</span>
+          <span className="text-xs text-token-primary">{a.actorName || a.actorId}</span>
+          <span className="text-[10px] text-token-muted ml-auto">{fmt(a.createdAt)}</span>
         </div>
-        <div className="text-sm text-white/85 prose-product pl-5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(a.content ?? '')) }} />
+        <div className="text-sm text-token-primary prose-product pl-5" dangerouslySetInnerHTML={{ __html: sanitizeHtml(enrichContentWithMentions(a.content ?? '')) }} />
       </div>
     );
   }
@@ -145,18 +145,18 @@ function ActivityRow({ a }: { a: ProductActivity }) {
   const meta = SYSTEM_META[a.type] ?? { icon: Sparkles, color: '#9ca3af' };
   const Icon = meta.icon;
   return (
-    <div className="flex items-center gap-2 text-[12px] text-white/55 px-1">
+    <div className="flex items-center gap-2 text-[12px] text-token-secondary px-1">
       <Icon size={13} style={{ color: meta.color }} />
-      <span className="text-white/70">{a.actorName || a.actorId}</span>
+      <span className="text-token-secondary">{a.actorName || a.actorId}</span>
       {a.type === 'transition' && (
         <span className="flex items-center gap-1">
-          将状态 <span className="text-white/45">{a.fromValue}</span> <ArrowRight size={11} /> <span className="text-white/80">{a.toValue}</span>
+          将状态 <span className="text-token-muted">{a.fromValue}</span> <ArrowRight size={11} /> <span className="text-token-primary">{a.toValue}</span>
         </span>
       )}
-      {a.type === 'assign' && <span>指派处理人为 <span className="text-white/80">{a.toValue}</span></span>}
+      {a.type === 'assign' && <span>指派处理人为 <span className="text-token-primary">{a.toValue}</span></span>}
       {a.type === 'convert' && <span>{a.content}</span>}
       {a.type === 'created' && <span>创建了该对象</span>}
-      <span className="text-[10px] text-white/30 ml-auto">{fmt(a.createdAt)}</span>
+      <span className="text-[10px] text-token-muted ml-auto">{fmt(a.createdAt)}</span>
     </div>
   );
 }

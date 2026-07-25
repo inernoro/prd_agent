@@ -158,28 +158,12 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
           {/* Popover */}
           <div
             onClick={(e) => e.stopPropagation()}
-            style={{
-              position: 'fixed',
-              top: popoverPos.top,
-              left: popoverPos.left,
-              width: 360,
-              maxHeight: 'min(520px, calc(100vh - 100px))',
-              minHeight: 0,
-              zIndex: 1100,
-              display: 'flex',
-              flexDirection: 'column',
-              background: 'linear-gradient(180deg, rgba(20, 22, 30, 0.96), rgba(15, 16, 20, 0.96))',
-              border: '1px solid rgba(255, 255, 255, 0.12)',
-              borderRadius: 16,
-              boxShadow: '0 20px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04)',
-              backdropFilter: 'blur(20px)',
-              overflow: 'hidden',
-            }}
+            className="border border-token-subtle" style={{ position: 'fixed', top: popoverPos.top, left: popoverPos.left, width: 360, maxHeight: 'min(520px, calc(100vh - 100px))', minHeight: 0, zIndex: 1100, display: 'flex', flexDirection: 'column', background: 'linear-gradient(180deg, rgba(20, 22, 30, 0.96), rgba(15, 16, 20, 0.96))', borderRadius: 16, boxShadow: '0 20px 60px -20px rgba(0, 0, 0, 0.7), 0 0 0 1px rgba(255, 255, 255, 0.04)', backdropFilter: 'blur(20px)', overflow: 'hidden' }}
           >
             {/* Header */}
             <div
-              className="shrink-0 px-4 py-3 flex items-center justify-between"
-              style={{ borderBottom: '1px solid rgba(255, 255, 255, 0.06)' }}
+              className="shrink-0 px-4 py-3 flex items-center justify-between border-b border-b-token-subtle"
+
             >
               <div className="flex items-center gap-2">
                 <Sparkles size={14} style={{ color: 'var(--accent-gold, #fbbf24)' }} />
@@ -209,13 +193,8 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
 
               {!loadingCurrent && recent.length === 0 && (
                 <div
-                  className="rounded-lg px-3 py-6 text-center text-[11px]"
-                  style={{
-                    color: 'var(--text-muted)',
-                    background: 'rgba(255, 255, 255, 0.02)',
-                    border: '1px dashed rgba(255, 255, 255, 0.08)',
-                    margin: '8px 4px',
-                  }}
+                  className="rounded-lg px-3 py-6 text-center text-[11px] bg-token-nested"
+                  style={{ color: 'var(--text-muted)', border: '1px dashed var(--border-subtle)', margin: '8px 4px' }}
                 >
                   本周还没有新的更新
                 </div>
@@ -229,11 +208,8 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
                     return (
                       <div
                         key={`${entry.date}-${idx}`}
-                        className="rounded-lg px-2.5 py-2 flex items-start gap-2"
-                        style={{
-                          background: 'rgba(255, 255, 255, 0.025)',
-                          border: '1px solid rgba(255, 255, 255, 0.05)',
-                        }}
+                        className="rounded-lg px-2.5 py-2 flex items-start gap-2 bg-token-nested border border-token-subtle"
+
                       >
                         <div
                           className="shrink-0 h-5 w-5 rounded inline-flex items-center justify-center text-[10px] font-bold mt-0.5"
@@ -248,11 +224,8 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
                         <div className="flex-1 min-w-0">
                           <div className="flex items-center gap-1.5 mb-0.5">
                             <span
-                              className="text-[10px] font-mono px-1 rounded"
-                              style={{
-                                color: 'var(--text-muted)',
-                                background: 'rgba(255, 255, 255, 0.04)',
-                              }}
+                              className="text-[10px] font-mono px-1 rounded bg-token-nested"
+                              style={{ color: 'var(--text-muted)' }}
                             >
                               {entry.module}
                             </span>
@@ -285,12 +258,8 @@ export function ChangelogBell({ size = 18, compact = false }: ChangelogBellProps
             <button
               type="button"
               onClick={handleViewAll}
-              className="shrink-0 px-4 py-2.5 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium transition-colors"
-              style={{
-                borderTop: '1px solid rgba(255, 255, 255, 0.06)',
-                color: 'var(--accent-gold, #fbbf24)',
-                background: 'rgba(251, 191, 36, 0.04)',
-              }}
+              className="shrink-0 px-4 py-2.5 inline-flex items-center justify-center gap-1.5 text-[12px] font-medium transition-colors border-t border-t-token-subtle"
+              style={{ color: 'var(--accent-gold, #fbbf24)', background: 'rgba(251, 191, 36, 0.04)' }}
             >
               查看全部更新
               <ArrowRight size={13} />

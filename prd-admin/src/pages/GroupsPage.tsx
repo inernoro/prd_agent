@@ -152,12 +152,8 @@ export function AvatarStack({ members, total, max = 4 }: { members: TopMember[];
           return (
             <div
               key={member.userId}
-              className="w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-medium text-white/90 overflow-hidden"
-              style={{
-                borderColor: 'rgba(255,255,255,0.15)',
-                background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName, i),
-                zIndex: max - i,
-              }}
+              className="w-5 h-5 rounded-full border flex items-center justify-center text-[9px] font-medium text-token-primary overflow-hidden border-token-subtle"
+              style={{ background: avatarUrl ? `url(${avatarUrl}) center/cover` : getGradient(member.displayName, i), zIndex: max - i }}
               title={member.displayName}
             >
               {!avatarUrl && (member.displayName?.[0] || '?').toUpperCase()}
@@ -232,7 +228,7 @@ function RoleBar({ distribution }: { distribution?: RoleDistribution | null }) {
 
   return (
     <div className="flex items-center gap-1">
-      <div className="flex h-1.5 flex-1 rounded-full overflow-hidden" style={{ background: 'rgba(255,255,255,0.1)' }}>
+      <div className="flex h-1.5 flex-1 rounded-full overflow-hidden bg-token-nested" >
         {segments.map((seg) => (
           <div
             key={seg.label}
@@ -547,7 +543,7 @@ export default function GroupsPage() {
                         </button>
                       </div>
                       <button
-                        className="p-1 rounded hover:bg-white/10 transition-colors"
+                        className="p-1 rounded hover-bg-soft transition-colors"
                         onClick={(e) => { e.stopPropagation(); onCopy(g.inviteLink); }}
                         title="复制邀请链接"
                       >
@@ -726,7 +722,7 @@ export default function GroupsPage() {
                     </thead>
                     <tbody>
                       {members.map((m) => (
-                        <tr key={m.userId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                        <tr key={m.userId} className="hover-bg-soft" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                           <td className="px-4 py-3">
                             <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>
                               {m.username}
@@ -815,7 +811,7 @@ export default function GroupsPage() {
                     </thead>
                     <tbody>
                       {gaps.map((g) => (
-                        <tr key={g.gapId} className="hover:bg-white/2" style={{ borderTop: '1px solid var(--border-subtle)' }}>
+                        <tr key={g.gapId} className="hover-bg-soft" style={{ borderTop: '1px solid var(--border-subtle)' }}>
                           <td className="px-4 py-3">
                             <div className="font-semibold" style={{ color: 'var(--text-primary)' }}>{g.question}</div>
                             <div className="text-xs" style={{ color: 'var(--text-muted)' }}>

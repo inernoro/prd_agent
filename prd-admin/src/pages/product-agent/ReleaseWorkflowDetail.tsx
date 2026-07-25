@@ -56,7 +56,7 @@ const CHANGE_BADGE_CLASS: Record<FeatureChangeType, string> = {
   added: 'border-emerald-400/30 bg-emerald-400/10 text-emerald-200',
   modified: 'border-amber-400/30 bg-amber-400/10 text-amber-200',
   deprecated: 'border-red-400/30 bg-red-400/10 text-red-200',
-  unchanged: 'border-white/15 bg-white/5 text-white/45',
+  unchanged: 'border-token-subtle bg-token-nested text-token-muted',
 };
 
 type DetailTab = 'basic' | 'requirements' | 'manifest' | 'defects';
@@ -359,11 +359,11 @@ export function ReleaseWorkflowDetail({
   if (!isNew && !release) {
     return (
       <div className="flex flex-col items-center gap-3 py-16 text-center">
-        <div className="text-sm text-white/50">{loadError || '未找到上线记录'}</div>
+        <div className="text-sm text-token-secondary">{loadError || '未找到上线记录'}</div>
         <button
           type="button"
           onClick={() => navigate(-1)}
-          className="rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65 hover:bg-white/10"
+          className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary hover-bg-soft"
         >
           返回
         </button>
@@ -375,11 +375,11 @@ export function ReleaseWorkflowDetail({
     <div className="flex flex-col gap-4">
       <div className="flex flex-wrap items-start justify-between gap-3">
         <div className="min-w-0">
-          <h1 className="text-lg font-semibold text-white/90">
+          <h1 className="text-lg font-semibold text-token-primary">
             {isNew ? (temporary ? '临时优化需求上线' : '申领正式版本号') : releaseDisplayTitle}
           </h1>
           {!isNew && release && (
-            <p className="mt-1 text-xs text-white/40">
+            <p className="mt-1 text-xs text-token-muted">
               {release.planName} · {SCALE_LABEL[release.versionType]} · {STATUS_LABEL[release.status] ?? release.status}
               {release.sourceType === 'import' ? ' · 历史导入' : ''}
             </p>
@@ -403,7 +403,7 @@ export function ReleaseWorkflowDetail({
         </div>
       </div>
 
-      <div className="flex border-b border-white/10">
+      <div className="flex border-b border-token-subtle">
         <TabButton active={tab === 'basic'} onClick={() => setTab('basic')}>基础信息</TabButton>
         <TabButton active={tab === 'requirements'} onClick={() => setTab('requirements')}>
           需求
@@ -445,14 +445,14 @@ export function ReleaseWorkflowDetail({
             <WorkflowDetailCard title="基础信息">
               <WorkflowAttributeTable rows={releaseBasicRows} />
               {canCompleteRelease && (
-                <div className="mt-4 border-t border-white/10 pt-4">
+                <div className="mt-4 border-t border-token-subtle pt-4">
                   <Field label="上线公告地址 *">
                     <Input value={announcementUrl} onChange={(e) => setAnnouncementUrl(e.target.value)} placeholder="粘贴公告地址" />
                   </Field>
                 </div>
               )}
               {linkedInitiation && (
-                <div className="mt-4 border-t border-white/10 pt-3 text-xs text-white/45">
+                <div className="mt-4 border-t border-token-subtle pt-3 text-xs text-token-muted">
                   来源立项：
                   <button
                     type="button"
@@ -484,7 +484,7 @@ export function ReleaseWorkflowDetail({
                 columns={featureDetailColumns()}
               />
               {canCompleteRelease && (
-                <div className="mt-4 border-t border-white/10 pt-4">
+                <div className="mt-4 border-t border-token-subtle pt-4">
                   <FeatureManifestPanel
                     navigate={navigate}
                     productId={productId}
@@ -515,7 +515,7 @@ export function ReleaseWorkflowDetail({
           )}
         </>
       ) : tab === 'basic' ? (
-        <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+        <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
           {isNew ? (
             <>
               <Field label="产品负责人（申领人）*">
@@ -523,11 +523,11 @@ export function ReleaseWorkflowDetail({
                   <div className="min-w-0 flex-1">
                     {showOwnerPicker
                       ? <UserSearchSelect value={ownerId} onChange={setOwnerId} placeholder="搜索 MAP 账户" />
-                      : <div className="rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white">{currentUser?.displayName ?? ownerId}</div>}
+                      : <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary">{currentUser?.displayName ?? ownerId}</div>}
                   </div>
                   {!readOnly && (
                     <button type="button" onClick={() => setShowOwnerPicker(true)} aria-label="更换产品负责人"
-                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-white/10 bg-white/5 text-white/60 hover:border-cyan-400/40 hover:text-cyan-200">
+                      className="flex h-10 w-10 shrink-0 items-center justify-center rounded-lg border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
                       <Plus size={16} />
                     </button>
                   )}
@@ -561,7 +561,7 @@ export function ReleaseWorkflowDetail({
           ) : null}
         </div>
       ) : tab === 'requirements' ? (
-        <div className="space-y-4 rounded-xl border border-white/10 bg-white/[0.02] p-5">
+        <div className="space-y-4 rounded-xl border border-token-subtle bg-token-nested p-5">
           {isNew ? (
             temporary ? (
               <Field label="选择要上线的需求 *">
@@ -572,9 +572,9 @@ export function ReleaseWorkflowDetail({
                 <RequirementSummary title="立项继承需求（只读）" requirements={inheritedRequirements} emptyText="所选立项暂未关联需求" />
                 <div>
                   <div className="mb-2 flex items-center justify-between">
-                    <span className="text-xs text-white/50">追加需求</span>
+                    <span className="text-xs text-token-secondary">追加需求</span>
                     <button type="button" onClick={() => setShowRequirementPicker((v) => !v)} aria-label="搜索并新增需求"
-                      className="flex h-7 w-7 items-center justify-center rounded-md border border-white/10 bg-white/5 text-white/60 hover:border-cyan-400/40 hover:text-cyan-200">
+                      className="flex h-7 w-7 items-center justify-center rounded-md border border-token-subtle bg-token-nested text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
                       <Plus size={14} />
                     </button>
                   </div>
@@ -585,7 +585,7 @@ export function ReleaseWorkflowDetail({
                           <button type="button" onClick={() => setExtraIds((ids) => ids.filter((id) => id !== r.id))} className="text-cyan-100/55 hover:text-cyan-100"><X size={12} /></button>
                         </span>)}
                     </div>
-                    : <div className="rounded-lg border border-dashed border-white/10 px-3 py-3 text-xs text-white/35">点击右侧 + 搜索并选择需要追加的需求</div>}
+                    : <div className="rounded-lg border border-dashed border-token-subtle px-3 py-3 text-xs text-token-muted-faint">点击右侧 + 搜索并选择需要追加的需求</div>}
                   {showRequirementPicker && (
                     <RequirementChecks requirements={additionalRequirements} selected={extraIds} onChange={setExtraIds} />
                   )}
@@ -613,7 +613,7 @@ export function ReleaseWorkflowDetail({
 
       {message && <div className="rounded-lg border border-red-400/20 bg-red-400/10 px-3 py-2 text-xs text-red-200">{message}</div>}
 
-      <div className="flex justify-end gap-2 border-t border-white/10 pt-4">
+      <div className="flex justify-end gap-2 border-t border-token-subtle pt-4">
         {isRecordDetail ? (
           canCompleteRelease ? (
             <>
@@ -696,28 +696,28 @@ function FeatureManifestPanel({
       )}
       {!readOnly && (
         <div className="flex items-center justify-between gap-2">
-          <span className="text-xs text-white/50">纳入功能</span>
+          <span className="text-xs text-token-secondary">纳入功能</span>
           <button type="button" onClick={() => setShowPicker((v) => !v)}
-            className="flex h-8 items-center gap-1 rounded-lg border border-white/10 bg-white/5 px-2.5 text-xs text-white/65 hover:border-cyan-400/40 hover:text-cyan-200">
+            className="flex h-8 items-center gap-1 rounded-lg border border-token-subtle bg-token-nested px-2.5 text-xs text-token-secondary hover:border-cyan-400/40 hover:text-cyan-200">
             <Plus size={14} /> 添加功能
           </button>
         </div>
       )}
       {showPicker && !readOnly && (
-        <div className="rounded-xl border border-white/10 bg-black/15 p-3">
+        <div className="rounded-xl border border-token-subtle bg-token-nested p-3">
           <div className="relative mb-2">
-            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+            <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-token-muted-faint" />
             <input value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索功能编号或标题"
-              className="w-full rounded-lg border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />
+              className="w-full rounded-lg border border-token-subtle bg-token-nested py-2 pl-9 pr-3 text-xs text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />
           </div>
           <div className="max-h-48 overflow-auto">
             {available.length === 0
-              ? <div className="py-4 text-center text-xs text-white/30">没有可添加的功能</div>
+              ? <div className="py-4 text-center text-xs text-token-muted-faint">没有可添加的功能</div>
               : available.map((f) => (
                   <button key={f.id} type="button" onClick={() => onAdd(f.id)}
-                    className="flex w-full items-start gap-2 rounded px-2 py-2 text-left text-xs hover:bg-white/5">
+                    className="flex w-full items-start gap-2 rounded px-2 py-2 text-left text-xs hover-bg-soft">
                     <span className="font-mono text-cyan-200/80">{f.featureNo}</span>
-                    <span className="text-white/70">{f.title}</span>
+                    <span className="text-token-secondary">{f.title}</span>
                   </button>
                 ))}
           </div>
@@ -726,7 +726,7 @@ function FeatureManifestPanel({
 
       <div className="flex flex-col gap-2">
         {manifest.length === 0 ? (
-          <div className="rounded-xl border border-dashed border-white/10 px-4 py-10 text-center text-sm text-white/35">
+          <div className="rounded-xl border border-dashed border-token-subtle px-4 py-10 text-center text-sm text-token-muted-faint">
             功能清单为空。{previousVCode ? '上一版无记录时' : '首次上线需'}手动添加功能，或先在「功能」库中创建功能条目。
           </div>
         ) : manifest.map((item) => {
@@ -750,7 +750,7 @@ function FeatureManifestPanel({
 
       {removedFromPrevious.length > 0 && (
         <div>
-          <div className="mb-2 text-xs text-white/45">相对上一版移除（{removedFromPrevious.length}）</div>
+          <div className="mb-2 text-xs text-token-muted">相对上一版移除（{removedFromPrevious.length}）</div>
           <div className="flex flex-col gap-2 opacity-80">
             {removedFromPrevious.map((item) => {
               const feature = featureById.get(item.featureId);
@@ -758,8 +758,8 @@ function FeatureManifestPanel({
                 <div key={item.featureId} className="flex items-center gap-2 rounded-lg border border-red-400/20 bg-red-400/5 px-3 py-2.5">
                   <ChangeBadge changeType="deprecated" />
                   <div className="min-w-0 flex-1">
-                    <div className="text-sm text-white/75 truncate">{feature?.title ?? item.featureId}</div>
-                    <div className="text-[11px] font-mono text-white/35">{feature?.featureNo}</div>
+                    <div className="text-sm text-token-primary truncate">{feature?.title ?? item.featureId}</div>
+                    <div className="text-[11px] font-mono text-token-muted-faint">{feature?.featureNo}</div>
                   </div>
                 </div>
               );
@@ -793,26 +793,26 @@ function ManifestRow({
   onRemove: (featureId: string) => void;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-white/[0.02] px-3 py-2.5">
+    <div className="rounded-lg border border-token-subtle bg-token-nested px-3 py-2.5">
       <div className="flex flex-wrap items-start gap-2">
         <ChangeBadge changeType={item.changeType} />
         <div className="min-w-0 flex-1">
           {onOpen ? (
             <button type="button" onClick={onOpen} className="text-left text-sm text-cyan-200/90 truncate hover:underline">{title}</button>
           ) : (
-            <div className="text-sm text-white/85 truncate">{title}</div>
+            <div className="text-sm text-token-primary truncate">{title}</div>
           )}
-          <div className="text-[11px] text-white/35 font-mono mt-0.5">{featureNo} · 实现需求 {requirementCount}</div>
+          <div className="text-[11px] text-token-muted-faint font-mono mt-0.5">{featureNo} · 实现需求 {requirementCount}</div>
         </div>
         {!readOnly && (
           <div className="flex flex-wrap items-center gap-1">
             {(['unchanged', 'modified', 'added', 'deprecated'] as FeatureChangeType[]).map((type) => (
               <button key={type} type="button" onClick={() => onChangeType(item.featureId, type)}
-                className={`rounded px-1.5 py-0.5 text-[10px] border ${item.changeType === type ? CHANGE_BADGE_CLASS[type] : 'border-white/10 text-white/35 hover:bg-white/5'}`}>
+                className={`rounded px-1.5 py-0.5 text-[10px] border ${item.changeType === type ? CHANGE_BADGE_CLASS[type] : 'border-token-subtle text-token-muted-faint hover-bg-soft'}`}>
                 {FEATURE_CHANGE_LABEL[type]}
               </button>
             ))}
-            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-white/35 hover:text-red-300" aria-label="移除">
+            <button type="button" onClick={() => onRemove(item.featureId)} className="ml-1 text-token-muted-faint hover:text-red-300" aria-label="移除">
               <X size={14} />
             </button>
           </div>
@@ -821,9 +821,9 @@ function ManifestRow({
       {!readOnly && item.changeType !== 'unchanged' && (
         <input value={item.changeNote ?? ''} onChange={(e) => onChangeNote(item.featureId, e.target.value)}
           placeholder="变更说明（可选）"
-          className="mt-2 w-full rounded-md border border-white/10 bg-black/20 px-2.5 py-1.5 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/40" />
+          className="mt-2 w-full rounded-md border border-token-subtle bg-token-nested px-2.5 py-1.5 text-xs text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/40" />
       )}
-      {readOnly && item.changeNote && <div className="mt-1.5 text-xs text-white/45">{item.changeNote}</div>}
+      {readOnly && item.changeNote && <div className="mt-1.5 text-xs text-token-muted">{item.changeNote}</div>}
     </div>
   );
 }
@@ -838,29 +838,29 @@ function ChangeBadge({ changeType }: { changeType: FeatureChangeType }) {
 
 function TabButton({ active, children, onClick }: { active: boolean; children: React.ReactNode; onClick: () => void }) {
   return (
-    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-white/40 hover:text-white/60'}`}>
+    <button onClick={onClick} className={`border-b-2 px-4 py-2.5 text-sm ${active ? 'border-cyan-400 text-cyan-200' : 'border-transparent text-token-muted hover-text-primary'}`}>
       {children}
     </button>
   );
 }
 
 function Field({ label, children }: { label: string; children: React.ReactNode }) {
-  return <label><span className="mb-1.5 block text-xs text-white/50">{label}</span>{children}</label>;
+  return <label><span className="mb-1.5 block text-xs text-token-secondary">{label}</span>{children}</label>;
 }
 function Input(props: React.InputHTMLAttributes<HTMLInputElement>) {
-  return <input {...props} className="w-full rounded-lg border border-white/10 bg-black/20 px-3 py-2 text-sm text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />;
+  return <input {...props} className="w-full rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />;
 }
 function Select(props: React.SelectHTMLAttributes<HTMLSelectElement>) {
-  return <select {...props} className="w-full rounded-lg border border-white/10 bg-[#111318] px-3 py-2 text-sm text-white outline-none">{props.children}</select>;
+  return <select {...props} className="w-full rounded-lg border border-token-subtle bg-token-card px-3 py-2 text-sm text-token-primary outline-none">{props.children}</select>;
 }
 function InfoBox({ children }: { children: React.ReactNode }) {
-  return <div className="rounded-lg border border-white/10 bg-white/[0.03] p-3 text-xs leading-5 text-white/55">{children}</div>;
+  return <div className="rounded-lg border border-token-subtle bg-token-nested p-3 text-xs leading-5 text-token-secondary">{children}</div>;
 }
 function PrimaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
   return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg bg-cyan-400 px-3 py-2 text-xs font-medium text-slate-950 disabled:opacity-40">{props.children}</button>;
 }
 function SecondaryButton(props: React.ButtonHTMLAttributes<HTMLButtonElement>) {
-  return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-xs text-white/65 disabled:opacity-40">{props.children}</button>;
+  return <button {...props} className="inline-flex items-center gap-1.5 rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-xs text-token-secondary disabled:opacity-40">{props.children}</button>;
 }
 
 function RequirementChecks({ requirements, selected, onChange }: {
@@ -879,21 +879,21 @@ function RequirementChecks({ requirements, selected, onChange }: {
     onChange(selected.includes(id) ? selected.filter((x) => x !== id) : [...selected, id]);
   };
   return (
-    <div className="overflow-hidden rounded-lg border border-white/10 bg-black/15">
-      <div className="border-b border-white/10 p-2">
+    <div className="overflow-hidden rounded-lg border border-token-subtle bg-token-nested">
+      <div className="border-b border-token-subtle p-2">
         <div className="relative">
-          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-white/30" />
+          <Search size={14} className="pointer-events-none absolute left-3 top-1/2 -translate-y-1/2 text-token-muted-faint" />
           <input type="search" value={query} onChange={(e) => setQuery(e.target.value)} placeholder="搜索需求 ID 或标题"
-            className="w-full rounded-md border border-white/10 bg-black/20 py-2 pl-9 pr-3 text-xs text-white outline-none placeholder:text-white/25 focus:border-cyan-400/50" />
+            className="w-full rounded-md border border-token-subtle bg-token-nested py-2 pl-9 pr-3 text-xs text-token-primary outline-none placeholder-token-muted focus:border-cyan-400/50" />
         </div>
       </div>
       <div className="max-h-48 overflow-auto p-2">
         {filtered.map((r) => (
-          <label key={r.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover:bg-white/5">
+          <label key={r.id} className="flex cursor-pointer items-start gap-2 rounded px-2 py-2 text-xs hover-bg-soft">
             <input type="checkbox" className="mt-0.5 accent-cyan-400" checked={selected.includes(r.id)} onChange={() => toggle(r.id)} />
             <span className="min-w-0">
               <span className="block font-mono text-cyan-200/80">{r.requirementNo}</span>
-              <span className="mt-0.5 block break-words text-white/70">{r.title}</span>
+              <span className="mt-0.5 block break-words text-token-secondary">{r.title}</span>
             </span>
           </label>
         ))}
@@ -906,12 +906,12 @@ function RequirementSummary({ title, requirements, emptyText }: {
   title: string; requirements: Requirement[]; emptyText: string;
 }) {
   return (
-    <div className="rounded-lg border border-white/10 bg-black/15 p-3">
-      <div className="mb-2 text-xs text-white/50">{title}</div>
+    <div className="rounded-lg border border-token-subtle bg-token-nested p-3">
+      <div className="mb-2 text-xs text-token-secondary">{title}</div>
       {requirements.length === 0
-        ? <div className="text-xs text-white/35">{emptyText}</div>
+        ? <div className="text-xs text-token-muted-faint">{emptyText}</div>
         : <div className="space-y-1.5">{requirements.map((r) => (
-            <div key={r.id} className="rounded-md bg-white/[0.04] px-2.5 py-2 text-xs text-white/70">
+            <div key={r.id} className="rounded-md bg-token-nested px-2.5 py-2 text-xs text-token-secondary">
               <span className="mr-2 font-mono text-cyan-200">{r.requirementNo}</span>{r.title}
             </div>))}</div>}
     </div>
@@ -922,11 +922,11 @@ function MemberChecks({ members, selected, onChange }: {
   members: ProductMember[]; selected: string[]; onChange: (ids: string[]) => void;
 }) {
   return (
-    <div className="max-h-40 overflow-auto rounded-lg border border-white/10 bg-black/15 p-2">
+    <div className="max-h-40 overflow-auto rounded-lg border border-token-subtle bg-token-nested p-2">
       {members.length === 0
-        ? <div className="p-2 text-xs text-white/30">暂无可选成员</div>
+        ? <div className="p-2 text-xs text-token-muted-faint">暂无可选成员</div>
         : members.map((m) => (
-            <label key={m.userId} className="flex cursor-pointer gap-2 rounded px-2 py-1.5 text-xs text-white/65 hover:bg-white/5">
+            <label key={m.userId} className="flex cursor-pointer gap-2 rounded px-2 py-1.5 text-xs text-token-secondary hover-bg-soft">
               <input type="checkbox" className="accent-cyan-400" checked={selected.includes(m.userId)}
                 onChange={() => onChange(selected.includes(m.userId) ? selected.filter((id) => id !== m.userId) : [...selected, m.userId])} />
               {m.displayName}
@@ -946,9 +946,9 @@ export function ReleaseDetailShell({
 }) {
   const navigate = useNavigate();
   return (
-    <div className="h-screen min-h-0 flex flex-col bg-[#0f1014]">
-      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-white/8">
-        <button onClick={() => navigate(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-white/10 text-white/60 hover:bg-white/5 hover:text-white" title="返回">
+    <div className="h-screen min-h-0 flex flex-col bg-token-card">
+      <div className="shrink-0 flex items-center gap-3 px-5 py-3 border-b border-token-subtle">
+        <button onClick={() => navigate(-1)} className="flex h-8 w-8 items-center justify-center rounded-lg border border-token-subtle text-token-secondary hover-bg-soft hover-text-primary" title="返回">
           <ArrowLeft size={16} />
         </button>
         <span className="rounded-md border border-emerald-400/30 bg-emerald-400/10 px-2 py-0.5 text-xs text-emerald-200">正式版本</span>

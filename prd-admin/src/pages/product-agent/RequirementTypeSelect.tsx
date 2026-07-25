@@ -1,7 +1,7 @@
 import { useRequirementTypes } from './requirementTypes';
 
 const selectCls =
-  'w-full h-9 rounded-[8px] border border-white/12 bg-[var(--bg-input)] px-2.5 text-[13px] text-white outline-none focus:border-cyan-500/40 no-focus-ring';
+  'w-full h-9 rounded-[8px] border border-token-subtle bg-[var(--bg-input)] px-2.5 text-[13px] text-token-primary outline-none focus:border-cyan-500/40 no-focus-ring';
 
 export function RequirementTypeSelect({
   value,

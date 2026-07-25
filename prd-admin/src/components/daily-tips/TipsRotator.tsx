@@ -151,7 +151,7 @@ export function TipsRotator({ fallback, className, style }: Props) {
         key={current.id}
         style={{
           animation: 'tipFadeIn 400ms ease-out',
-          borderBottom: '1px dashed rgba(255,255,255,0.25)',
+          borderBottom: '1px dashed var(--border-subtle)',
           paddingBottom: 1,
         }}
       >

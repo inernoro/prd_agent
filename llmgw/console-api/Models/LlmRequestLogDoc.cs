@@ -59,6 +59,11 @@ public class LlmRequestLogDoc
 
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ImageSuccessCount { get; set; }
+    public List<LlmLogImageDoc>? OutputImages { get; set; }
+    public string? OutputImageCaptureStatus { get; set; }
+    public string? OutputImageCaptureError { get; set; }
+    public DateTime? OutputImageCapturedAt { get; set; }
     public decimal? EstimatedCost { get; set; }
     public string? EstimatedCostCurrency { get; set; }
     public decimal? EstimatedCostUsd { get; set; }
@@ -82,6 +87,16 @@ public class LlmRequestLogDoc
     public string? ExpectedModel { get; set; }
     public List<LlmProviderAttemptDoc>? ProviderAttempts { get; set; }
     public string? Error { get; set; }
+}
+
+public class LlmLogImageDoc
+{
+    public string Url { get; set; } = string.Empty;
+    public string? OriginalUrl { get; set; }
+    public string? Label { get; set; }
+    public string? Sha256 { get; set; }
+    public string? MimeType { get; set; }
+    public long? SizeBytes { get; set; }
 }
 
 public class LlmProviderAttemptDoc

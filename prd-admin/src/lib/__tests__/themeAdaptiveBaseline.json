@@ -1,0 +1,172 @@
+{
+  "/components/design/GlassCard.tsx": {
+    "border": 2,
+    "surface": 0,
+    "hover": 0
+  },
+  "/components/showcase/LiteraryCard.tsx": {
+    "border": 1,
+    "surface": 0,
+    "hover": 0
+  },
+  "/components/showcase/ShowcaseGallery.tsx": {
+    "border": 2,
+    "surface": 2,
+    "hover": 0
+  },
+  "/components/visual-agent/DrawingBoardDialog.tsx": {
+    "border": 7,
+    "surface": 7,
+    "hover": 0
+  },
+  "/components/visual-agent/ImageQuickActionBar.tsx": {
+    "border": 1,
+    "surface": 1,
+    "hover": 0
+  },
+  "/components/visual-agent/MaskPaintCanvas.tsx": {
+    "border": 2,
+    "surface": 4,
+    "hover": 0
+  },
+  "/components/visual-agent/QuickActionConfigPanel.tsx": {
+    "border": 3,
+    "surface": 2,
+    "hover": 0
+  },
+  "/components/visual-agent/SizePickerPanel.tsx": {
+    "border": 1,
+    "surface": 0,
+    "hover": 0
+  },
+  "/components/visual-creation/VisualCreationMiniPanel.tsx": {
+    "border": 5,
+    "surface": 6,
+    "hover": 0
+  },
+  "/components/weekly-poster/WeeklyPosterModal.tsx": {
+    "border": 19,
+    "surface": 11,
+    "hover": 0
+  },
+  "/lib/glassStyles.ts": {
+    "border": 15,
+    "surface": 0,
+    "hover": 0
+  },
+  "/lib/platformColors.ts": {
+    "border": 1,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/ai-chat/AdvancedVisualAgentTab.tsx": {
+    "border": 11,
+    "surface": 4,
+    "hover": 0
+  },
+  "/pages/arena/ArenaPage.tsx": {
+    "border": 22,
+    "surface": 9,
+    "hover": 0
+  },
+  "/pages/document-store/DocumentGalaxyView.tsx": {
+    "border": 22,
+    "surface": 6,
+    "hover": 0
+  },
+  "/pages/emergence/EmergenceCanvas.tsx": {
+    "border": 2,
+    "surface": 0,
+    "hover": 0
+  },
+  "/pages/emergence/EmergenceNode.tsx": {
+    "border": 3,
+    "surface": 0,
+    "hover": 0
+  },
+  "/pages/home/components/ProductMockup.tsx": {
+    "border": 1,
+    "surface": 9,
+    "hover": 0
+  },
+  "/pages/home/sections/AgentGrid.tsx": {
+    "border": 1,
+    "surface": 0,
+    "hover": 0
+  },
+  "/pages/home/sections/CompatibilityStack.tsx": {
+    "border": 0,
+    "surface": 2,
+    "hover": 0
+  },
+  "/pages/home/sections/FeatureDeepDive.tsx": {
+    "border": 1,
+    "surface": 5,
+    "hover": 0
+  },
+  "/pages/home/sections/FinalCta.tsx": {
+    "border": 1,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/home/sections/HeroSection.tsx": {
+    "border": 1,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/home/sections/HowItWorks.tsx": {
+    "border": 1,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/home/sections/SignatureCinema.tsx": {
+    "border": 0,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/home/sections/ThreePillars.tsx": {
+    "border": 2,
+    "surface": 0,
+    "hover": 0
+  },
+  "/pages/home/sections/WorkflowCanvas.tsx": {
+    "border": 2,
+    "surface": 1,
+    "hover": 0
+  },
+  "/pages/literary-agent/ArticleIllustrationEditorPage.tsx": {
+    "border": 1,
+    "surface": 3,
+    "hover": 0
+  },
+  "/pages/PortfolioShowcasePage.tsx": {
+    "border": 3,
+    "surface": 3,
+    "hover": 0
+  },
+  "/pages/product-agent/ProductGraphCanvas.tsx": {
+    "border": 1,
+    "surface": 3,
+    "hover": 0
+  },
+  "/pages/visual-agent/MobileVisualAgentEditor.tsx": {
+    "border": 8,
+    "surface": 7,
+    "hover": 0
+  },
+  "/pages/visual-storyboard/VisualStoryboardPage.tsx": {
+    "border": 5,
+    "surface": 6,
+    "hover": 0
+  },
+  "/pages/weekly-poster/PosterDesignerPage.tsx": {
+    "border": 43,
+    "surface": 18,
+    "hover": 0
+  },
+  "/pages/workflow-agent/tapdHtmlTemplate.ts": {
+    "border": 0,
+    "surface": 1,
+    "hover": 0
+  }
+}

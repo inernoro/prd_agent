@@ -77,21 +77,21 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
       onClick={onClose}
     >
       <div
-        className="relative flex flex-col rounded-xl border border-white/10 bg-[#0f1014] shadow-2xl"
+        className="relative flex flex-col rounded-xl border border-token-subtle bg-[#0f1014] shadow-2xl"
         style={{ width: '90vw', height: '90vh', maxWidth: '1400px' }}
         onClick={(e) => e.stopPropagation()}
       >
         {/* 头部 */}
-        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-white/10 shrink-0">
+        <div className="flex items-center justify-between gap-3 px-4 py-3 border-b border-token-subtle shrink-0">
           <div className="min-w-0 flex-1">
-            <h3 className="text-sm font-semibold text-white truncate">{site.title}</h3>
-            <p className="text-xs text-white/40 truncate">{site.siteUrl}</p>
+            <h3 className="text-sm font-semibold text-token-primary truncate">{site.title}</h3>
+            <p className="text-xs text-token-muted truncate">{site.siteUrl}</p>
           </div>
           <div className="flex items-center gap-2 shrink-0">
             <button
               onClick={() => setShowComments((v) => !v)}
               className={`flex items-center gap-1.5 px-3 py-1.5 rounded-lg text-xs transition-colors ${
-                showComments ? 'bg-blue-600/80 text-white' : 'bg-white/5 hover:bg-white/10 text-white/70'
+                showComments ? 'bg-blue-600/80 text-white' : 'bg-token-nested hover-bg-soft text-token-secondary'
               }`}
             >
               <MessageSquare className="w-3.5 h-3.5" />
@@ -99,14 +99,14 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
             </button>
             <button
               onClick={handleOpenExternal}
-              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 text-xs transition-colors"
+              className="flex items-center gap-1.5 px-3 py-1.5 rounded-lg bg-token-nested hover-bg-soft text-token-secondary text-xs transition-colors"
             >
               <ExternalLink className="w-3.5 h-3.5" />
               新窗口打开
             </button>
             <button
               onClick={onClose}
-              className="flex items-center justify-center w-8 h-8 rounded-lg bg-white/5 hover:bg-white/10 text-white/70 transition-colors"
+              className="flex items-center justify-center w-8 h-8 rounded-lg bg-token-nested hover-bg-soft text-token-secondary transition-colors"
               title="关闭"
             >
               <X className="w-4 h-4" />
@@ -120,13 +120,13 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           <div className="flex-1 min-w-0 relative bg-[#0f1014]">
             {loading && (
               <div className="absolute inset-0 flex items-center justify-center bg-[#0f1014]">
-                <Loader2 className="w-8 h-8 animate-spin text-white/40" />
+                <Loader2 className="w-8 h-8 animate-spin text-token-muted" />
               </div>
             )}
             {errored && (
               <div className="absolute inset-0 flex flex-col items-center justify-center bg-[#0f1014] gap-3">
                 <FileWarning className="w-12 h-12 text-amber-400/70" />
-                <p className="text-sm text-white/60">站点加载超时或失败</p>
+                <p className="text-sm text-token-secondary">站点加载超时或失败</p>
                 <button
                   onClick={handleOpenExternal}
                   className="px-4 py-2 rounded-lg bg-blue-600 hover:bg-blue-500 text-white text-sm"
@@ -155,19 +155,19 @@ export default function SitePreviewModal({ site, onClose, onCommentsEnabledChang
           {/* 评论面板 */}
           {showComments && (
             <aside
-              className="w-[360px] shrink-0 border-l border-white/10 flex flex-col min-h-0 bg-[#0f1014]"
+              className="w-[360px] shrink-0 border-l border-token-subtle flex flex-col min-h-0 bg-[#0f1014]"
             >
               {/* 允许评论开关：仅 owner/editor 显示（viewer 无权改，显示了点不动反而困惑） */}
               {canToggleComments && (
-              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-white/10 shrink-0">
-                <span className="text-xs text-white/60">允许访客评论</span>
+              <div className="flex items-center justify-between gap-2 px-4 py-3 border-b border-token-subtle shrink-0">
+                <span className="text-xs text-token-secondary">允许访客评论</span>
                 <button
                   onClick={handleToggleCommentsEnabled}
                   disabled={togglingComments}
                   role="switch"
                   aria-checked={commentsEnabled}
                   className={`relative inline-flex h-5 w-9 items-center rounded-full transition-colors disabled:opacity-50 ${
-                    commentsEnabled ? 'bg-blue-600' : 'bg-white/15'
+                    commentsEnabled ? 'bg-blue-600' : 'bg-token-card'
                   }`}
                 >
                   <span

@@ -9,6 +9,9 @@ import path from 'path';
 // 不能默认 5000——那是主 API（prd-api），不提供 /gw/auth/login、/gw/logs 等 console 端点（Codex P2）。
 // 本地直接 dotnet run llmgw/console-api（监听 8090）时，用 LLMGW_PROXY_TARGET=http://localhost:8090 覆盖。
 export default defineConfig({
+  // 正式控制台挂载在 /llmgw/。固定公开 base，确保 CSS 内嵌的字体 URL 也落到
+  // /llmgw/assets，而不是误请求 MAP 主站的 /assets 并得到 404。
+  base: '/llmgw/',
   plugins: [react()],
   resolve: {
     alias: {

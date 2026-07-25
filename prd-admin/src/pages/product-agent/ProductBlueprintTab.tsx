@@ -27,9 +27,9 @@ export function ProductBlueprintTab({ productId, isAdmin }: { productId: string;
   const [sub, setSub] = useState<BlueprintSub>('structure');
   return (
     <div className="flex h-full min-h-0 flex-col">
-      <div className="shrink-0 border-b border-white/10 px-6 py-3">
-        <h2 className="text-base font-semibold text-white">产品蓝图</h2>
-        <p className="mt-0.5 text-xs text-white/40">产品级定义层：先定义产品骨架与功能全景，再推进需求/功能/缺陷。</p>
+      <div className="shrink-0 border-b border-token-subtle px-6 py-3">
+        <h2 className="text-base font-semibold text-token-primary">产品蓝图</h2>
+        <p className="mt-0.5 text-xs text-token-muted">产品级定义层：先定义产品骨架与功能全景，再推进需求/功能/缺陷。</p>
         <div className="mt-3 flex flex-wrap items-center gap-2">
           <SubTab on={sub === 'structure'} onClick={() => setSub('structure')} icon={FolderTree}>产品结构</SubTab>
           <SubTab on={sub === 'features'} onClick={() => setSub('features')} icon={Puzzle}>功能清单</SubTab>
@@ -49,7 +49,7 @@ export function ProductBlueprintTab({ productId, isAdmin }: { productId: string;
 
 function SubTab({ on, onClick, icon: Icon, children }: { on: boolean; onClick: () => void; icon: typeof Puzzle; children: React.ReactNode }) {
   return (
-    <button onClick={onClick} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${on ? 'border-cyan-500/45 bg-cyan-500/15 text-cyan-200' : 'border-white/10 text-white/55 hover:bg-white/5'}`}>
+    <button onClick={onClick} className={`flex items-center gap-1.5 rounded-lg border px-3 py-1.5 text-sm ${on ? 'border-cyan-500/45 bg-cyan-500/15 text-cyan-200' : 'border-token-subtle text-token-secondary hover-bg-soft'}`}>
       <Icon size={14} /> {children}
     </button>
   );
@@ -111,18 +111,18 @@ function StructureTab({ productId, isAdmin }: { productId: string; isAdmin: bool
     const isCollapsed = collapsed.has(node.id);
     return (
       <div key={node.id}>
-        <div className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 hover:bg-white/[0.03]" style={{ paddingLeft: depth * 18 + 8 }}>
+        <div className="group flex items-center gap-1.5 rounded-lg px-2 py-1.5 hover-bg-soft" style={{ paddingLeft: depth * 18 + 8 }}>
           {kids.length > 0 ? (
-            <button onClick={() => toggle(node.id)} className="text-white/40 hover:text-white">{isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</button>
+            <button onClick={() => toggle(node.id)} className="text-token-muted hover-text-primary">{isCollapsed ? <ChevronRight size={14} /> : <ChevronDown size={14} />}</button>
           ) : <span className="inline-block w-[14px]" />}
-          <span className="text-sm text-white/90">{node.name}</span>
-          {node.nodeType && <span className="rounded border border-white/10 px-1.5 py-px text-[10px] text-white/45">{node.nodeType}</span>}
-          {node.description && <span className="truncate text-xs text-white/35">— {node.description}</span>}
+          <span className="text-sm text-token-primary">{node.name}</span>
+          {node.nodeType && <span className="rounded border border-token-subtle px-1.5 py-px text-[10px] text-token-muted">{node.nodeType}</span>}
+          {node.description && <span className="truncate text-xs text-token-muted-faint">— {node.description}</span>}
           {isAdmin && (
             <div className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
-              <button onClick={() => setEditing({ node: null, parentId: node.id })} title="添加子节点" className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-cyan-300"><Plus size={13} /></button>
-              <button onClick={() => setEditing({ node, parentId: node.parentId ?? null })} title="编辑" className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
-              <button onClick={() => remove(node)} title="删除" className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"><Trash2 size={13} /></button>
+              <button onClick={() => setEditing({ node: null, parentId: node.id })} title="添加子节点" className="rounded p-1 text-token-muted hover-bg-soft hover:text-cyan-300"><Plus size={13} /></button>
+              <button onClick={() => setEditing({ node, parentId: node.parentId ?? null })} title="编辑" className="rounded p-1 text-token-muted hover-bg-soft hover-text-primary"><Pencil size={13} /></button>
+              <button onClick={() => remove(node)} title="删除" className="rounded p-1 text-token-muted hover-bg-soft hover:text-red-300"><Trash2 size={13} /></button>
             </div>
           )}
         </div>
@@ -136,7 +136,7 @@ function StructureTab({ productId, isAdmin }: { productId: string; isAdmin: bool
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-white/45">定义产品的功能模块 / 能力骨架，逐层展开。功能清单里可把功能挂到这些节点上。</p>
+        <p className="text-xs text-token-muted">定义产品的功能模块 / 能力骨架，逐层展开。功能清单里可把功能挂到这些节点上。</p>
         {isAdmin && (
           <button onClick={() => setEditing({ node: null, parentId: null })} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30">
             <Plus size={14} /> 根节点
@@ -144,11 +144,11 @@ function StructureTab({ productId, isAdmin }: { productId: string; isAdmin: bool
         )}
       </div>
       {roots.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">
+        <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">
           还没有结构节点。{isAdmin ? '点「根节点」添加第一个模块（如「用户中心」「交易」「数据看板」）。' : '请联系产品管理员搭建产品结构。'}
         </div>
       ) : (
-        <div className="rounded-xl border border-white/10 bg-white/[0.02] p-2">
+        <div className="rounded-xl border border-token-subtle bg-token-nested p-2">
           {roots.map((n) => renderNode(n, 0))}
         </div>
       )}
@@ -175,7 +175,7 @@ function StructureNodeModal({ productId, node, parentId, siblingCount, onClose, 
   const [description, setDescription] = useState(node?.description ?? '');
   const [saving, setSaving] = useState(false);
   const isNew = !node;
-  const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+  const inputCls = 'rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted';
 
   const save = async () => {
     if (!name.trim()) { toast.error('请填写名称'); return; }
@@ -195,18 +195,18 @@ function StructureNodeModal({ productId, node, parentId, siblingCount, onClose, 
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4" onClick={onClose}>
-      <div className="flex w-full max-w-md flex-col rounded-xl border border-white/10 bg-[#16181d]" onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3">
-          <h3 className="text-sm font-semibold text-white">{isNew ? (parentId ? '添加子节点' : '添加根节点') : '编辑节点'}</h3>
-          <button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button>
+      <div className="flex w-full max-w-md flex-col rounded-xl border border-token-subtle bg-token-card" onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-token-subtle px-4 py-3">
+          <h3 className="text-sm font-semibold text-token-primary">{isNew ? (parentId ? '添加子节点' : '添加根节点') : '编辑节点'}</h3>
+          <button onClick={onClose} className="text-token-muted hover-text-primary"><X size={18} /></button>
         </div>
         <div className="flex flex-col gap-3 p-4">
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">名称 *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：用户中心 / 交易 / 数据看板" className={inputCls} autoFocus /></div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">类型（可选）</label><input value={nodeType} onChange={(e) => setNodeType(e.target.value)} placeholder="如：模块 / 能力 / 子系统" className={inputCls} /></div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">说明（可选）</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="该节点的职责 / 边界说明" className={`${inputCls} resize-none`} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">名称 *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="如：用户中心 / 交易 / 数据看板" className={inputCls} autoFocus /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">类型（可选）</label><input value={nodeType} onChange={(e) => setNodeType(e.target.value)} placeholder="如：模块 / 能力 / 子系统" className={inputCls} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">说明（可选）</label><textarea value={description} onChange={(e) => setDescription(e.target.value)} rows={3} placeholder="该节点的职责 / 边界说明" className={`${inputCls} resize-none`} /></div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3">
-          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button>
+        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3">
+          <button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button>
           <button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">
             {saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存
           </button>
@@ -257,15 +257,15 @@ function FeatureInventoryTab({ productId, isAdmin }: { productId: string; isAdmi
   const FeatureRow = ({ f }: { f: Feature }) => (
     <div className="flex items-center gap-3 px-3 py-2">
       <Puzzle size={13} className="shrink-0 text-violet-300/70" />
-      <span className="font-mono text-[11px] text-white/35">{f.featureNo}</span>
-      <span className="min-w-0 flex-1 truncate text-sm text-white/85">{f.title}</span>
+      <span className="font-mono text-[11px] text-token-muted-faint">{f.featureNo}</span>
+      <span className="min-w-0 flex-1 truncate text-sm text-token-primary">{f.title}</span>
       {isAdmin ? (
         <span className="flex items-center gap-1.5">
           {savingId === f.id && <MapSpinner size={12} />}
           <select
             value={f.structureNodeId || ''}
             onChange={(e) => assign(f, e.target.value)}
-            className="max-w-[180px] rounded-md border border-white/10 bg-white/5 px-2 py-1 text-xs text-white/70 outline-none focus:border-cyan-500/40"
+            className="max-w-[180px] rounded-md border border-token-subtle bg-token-nested px-2 py-1 text-xs text-token-secondary outline-none focus:border-cyan-500/40"
             title="归类到结构节点"
           >
             <option value="">未归类</option>
@@ -273,17 +273,17 @@ function FeatureInventoryTab({ productId, isAdmin }: { productId: string; isAdmi
           </select>
         </span>
       ) : (
-        <span className="text-[11px] text-white/35">{f.structureNodeId ? nodeName.get(f.structureNodeId) ?? '—' : '未归类'}</span>
+        <span className="text-[11px] text-token-muted-faint">{f.structureNodeId ? nodeName.get(f.structureNodeId) ?? '—' : '未归类'}</span>
       )}
     </div>
   );
 
   return (
     <div className="flex max-w-3xl flex-col gap-4">
-      <p className="text-xs text-white/45">把已有功能挂到产品结构节点上，形成结构化的全局功能总览。功能本身仍在「功能」页维护（此处只调整归属）。</p>
+      <p className="text-xs text-token-muted">把已有功能挂到产品结构节点上，形成结构化的全局功能总览。功能本身仍在「功能」页维护（此处只调整归属）。</p>
 
       {nodes.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-10 text-center text-sm text-white/40">
+        <div className="rounded-xl border border-dashed border-token-subtle py-10 text-center text-sm text-token-muted">
           还没有产品结构。请先到「产品结构」搭建模块树，再来归类功能。
         </div>
       ) : (
@@ -291,28 +291,28 @@ function FeatureInventoryTab({ productId, isAdmin }: { productId: string; isAdmi
           {flat.map(({ node, depth }) => {
             const fs = byNode.get(node.id) ?? [];
             return (
-              <div key={node.id} className="rounded-xl border border-white/10 bg-white/[0.02]" style={{ marginLeft: depth * 14 }}>
-                <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
+              <div key={node.id} className="rounded-xl border border-token-subtle bg-token-nested" style={{ marginLeft: depth * 14 }}>
+                <div className="flex items-center gap-2 border-b border-token-subtle px-3 py-2">
                   <FolderTree size={13} className="text-cyan-300/70" />
-                  <span className="text-sm font-medium text-white/80">{node.name}</span>
-                  <span className="text-[11px] text-white/35">{fs.length} 个功能</span>
+                  <span className="text-sm font-medium text-token-primary">{node.name}</span>
+                  <span className="text-[11px] text-token-muted-faint">{fs.length} 个功能</span>
                 </div>
-                {fs.length === 0 ? <div className="px-3 py-2 text-xs text-white/30">暂无功能</div> : <div className="divide-y divide-white/5">{fs.map((f) => <FeatureRow key={f.id} f={f} />)}</div>}
+                {fs.length === 0 ? <div className="px-3 py-2 text-xs text-token-muted-faint">暂无功能</div> : <div className="divide-y divide-token-subtle">{fs.map((f) => <FeatureRow key={f.id} f={f} />)}</div>}
               </div>
             );
           })}
         </div>
       )}
 
-      <div className="rounded-xl border border-white/10 bg-white/[0.02]">
-        <div className="flex items-center gap-2 border-b border-white/5 px-3 py-2">
-          <span className="text-sm font-medium text-white/70">未归类功能</span>
-          <span className="text-[11px] text-white/35">{unassigned.length} 个</span>
+      <div className="rounded-xl border border-token-subtle bg-token-nested">
+        <div className="flex items-center gap-2 border-b border-token-subtle px-3 py-2">
+          <span className="text-sm font-medium text-token-secondary">未归类功能</span>
+          <span className="text-[11px] text-token-muted-faint">{unassigned.length} 个</span>
         </div>
         {unassigned.length === 0 ? (
-          <div className="px-3 py-3 text-center text-xs text-white/30">所有功能都已归类。</div>
+          <div className="px-3 py-3 text-center text-xs text-token-muted-faint">所有功能都已归类。</div>
         ) : (
-          <div className="divide-y divide-white/5">{unassigned.map((f) => <FeatureRow key={f.id} f={f} />)}</div>
+          <div className="divide-y divide-token-subtle">{unassigned.map((f) => <FeatureRow key={f.id} f={f} />)}</div>
         )}
       </div>
     </div>
@@ -323,7 +323,7 @@ function FeatureInventoryTab({ productId, isAdmin }: { productId: string; isAdmi
 
 const RULE_STATUS_META: Record<ProductRuleStatus, { label: string; cls: string }> = {
   active: { label: '生效', cls: 'border-emerald-400/25 bg-emerald-400/10 text-emerald-300' },
-  draft: { label: '草稿', cls: 'border-white/15 bg-white/5 text-white/55' },
+  draft: { label: '草稿', cls: 'border-token-subtle bg-token-nested text-token-secondary' },
   deprecated: { label: '废弃', cls: 'border-rose-400/25 bg-rose-400/10 text-rose-300' },
 };
 
@@ -361,30 +361,30 @@ function RulesTab({ productId, isAdmin }: { productId: string; isAdmin: boolean 
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       <div className="flex items-center justify-between">
-        <p className="text-xs text-white/45">定义产品全局、核心的规则（业务规则 / 约定 / 红线）。正文支持 Markdown，可用 [[术语]] 引用字典。</p>
+        <p className="text-xs text-token-muted">定义产品全局、核心的规则（业务规则 / 约定 / 红线）。正文支持 Markdown，可用 [[术语]] 引用字典。</p>
         {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 规则</button>}
       </div>
       {rules.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">还没有产品规则。{isAdmin ? '点「规则」添加第一条。' : '请联系产品管理员维护。'}</div>
+        <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">还没有产品规则。{isAdmin ? '点「规则」添加第一条。' : '请联系产品管理员维护。'}</div>
       ) : (
         groups.map(([cat, rs]) => (
           <div key={cat} className="flex flex-col gap-1.5">
-            <div className="text-xs font-medium text-white/45">{cat}</div>
-            <div className="divide-y divide-white/5 rounded-xl border border-white/10">
+            <div className="text-xs font-medium text-token-muted">{cat}</div>
+            <div className="divide-y divide-token-subtle rounded-xl border border-token-subtle">
               {rs.map((r) => {
                 const open = expanded.has(r.id);
                 return (
                   <div key={r.id} className="px-3 py-2.5">
                     <div className="group flex items-center gap-2">
                       <button onClick={() => toggle(r.id)} className="flex min-w-0 flex-1 items-center gap-2 text-left">
-                        {open ? <ChevronDown size={14} className="shrink-0 text-white/40" /> : <ChevronRight size={14} className="shrink-0 text-white/40" />}
-                        <span className="truncate text-sm text-white/90">{r.title}</span>
+                        {open ? <ChevronDown size={14} className="shrink-0 text-token-muted" /> : <ChevronRight size={14} className="shrink-0 text-token-muted" />}
+                        <span className="truncate text-sm text-token-primary">{r.title}</span>
                         <span className={`shrink-0 rounded-full border px-1.5 py-px text-[10px] ${RULE_STATUS_META[r.status].cls}`}>{RULE_STATUS_META[r.status].label}</span>
                       </button>
                       {isAdmin && (
                         <span className="flex shrink-0 items-center gap-1 opacity-0 group-hover:opacity-100">
-                          <button onClick={() => setEditing(r)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
-                          <button onClick={() => remove(r)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"><Trash2 size={13} /></button>
+                          <button onClick={() => setEditing(r)} className="rounded p-1 text-token-muted hover-bg-soft hover-text-primary"><Pencil size={13} /></button>
+                          <button onClick={() => remove(r)} className="rounded p-1 text-token-muted hover-bg-soft hover:text-red-300"><Trash2 size={13} /></button>
                         </span>
                       )}
                     </div>
@@ -407,7 +407,7 @@ function RuleModal({ productId, rule, siblingCount, onClose, onSaved }: { produc
   const [status, setStatus] = useState<ProductRuleStatus>(rule?.status ?? 'active');
   const [content, setContent] = useState(rule?.content ?? '');
   const [saving, setSaving] = useState(false);
-  const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+  const inputCls = 'rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted';
 
   const save = async () => {
     if (!title.trim()) { toast.error('请填写规则标题'); return; }
@@ -420,21 +420,21 @@ function RuleModal({ productId, rule, siblingCount, onClose, onSaved }: { produc
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4" onClick={onClose}>
-      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><h3 className="text-sm font-semibold text-white">{rule ? '编辑规则' : '添加规则'}</h3><button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button></div>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-token-subtle bg-token-card" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-token-subtle px-4 py-3"><h3 className="text-sm font-semibold text-token-primary">{rule ? '编辑规则' : '添加规则'}</h3><button onClick={onClose} className="text-token-muted hover-text-primary"><X size={18} /></button></div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <div className="flex gap-3">
-            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">标题 *</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="规则标题" className={inputCls} autoFocus /></div>
-            <div className="flex w-32 flex-col gap-1.5"><label className="text-xs text-white/55">状态</label>
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-token-secondary">标题 *</label><input value={title} onChange={(e) => setTitle(e.target.value)} placeholder="规则标题" className={inputCls} autoFocus /></div>
+            <div className="flex w-32 flex-col gap-1.5"><label className="text-xs text-token-secondary">状态</label>
               <select value={status} onChange={(e) => setStatus(e.target.value as ProductRuleStatus)} className={inputCls}>
                 <option value="active">生效</option><option value="draft">草稿</option><option value="deprecated">废弃</option>
               </select>
             </div>
           </div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务规则 / 数据约束 / 命名约定" className={inputCls} /></div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">正文（Markdown，可用 [[术语]] 引用字典）</label><textarea value={content} onChange={(e) => setContent(e.target.value)} rows={12} placeholder="规则内容…" className={`${inputCls} resize-y`} style={{ minHeight: 220 }} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务规则 / 数据约束 / 命名约定" className={inputCls} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">正文（Markdown，可用 [[术语]] 引用字典）</label><textarea value={content} onChange={(e) => setContent(e.target.value)} rows={12} placeholder="规则内容…" className={`${inputCls} resize-y`} style={{ minHeight: 220 }} /></div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button><button onClick={save} disabled={saving || !title.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !title.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
       </div>
     </div>,
     document.body,
@@ -476,24 +476,24 @@ function TermsTab({ productId, isAdmin }: { productId: string; isAdmin: boolean 
   return (
     <div className="flex max-w-3xl flex-col gap-3">
       <div className="flex flex-wrap items-center gap-2">
-        <p className="min-w-0 flex-1 text-xs text-white/45">定义产品核心概念与术语，统一口径。定义支持 Markdown。</p>
-        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索术语" className="w-40 rounded-lg border border-white/10 bg-white/5 px-3 py-1.5 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25" />
+        <p className="min-w-0 flex-1 text-xs text-token-muted">定义产品核心概念与术语，统一口径。定义支持 Markdown。</p>
+        <input value={kw} onChange={(e) => setKw(e.target.value)} placeholder="搜索术语" className="w-40 rounded-lg border border-token-subtle bg-token-nested px-3 py-1.5 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted" />
         {isAdmin && <button onClick={() => setEditing('new')} className="flex shrink-0 items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3 py-1.5 text-sm text-cyan-200 hover:bg-cyan-500/30"><Plus size={14} /> 术语</button>}
       </div>
       {filtered.length === 0 ? (
-        <div className="rounded-xl border border-dashed border-white/15 py-12 text-center text-sm text-white/40">{terms.length === 0 ? (isAdmin ? '还没有术语。点「术语」添加第一个核心概念。' : '还没有术语。') : '没有匹配的术语。'}</div>
+        <div className="rounded-xl border border-dashed border-token-subtle py-12 text-center text-sm text-token-muted">{terms.length === 0 ? (isAdmin ? '还没有术语。点「术语」添加第一个核心概念。' : '还没有术语。') : '没有匹配的术语。'}</div>
       ) : (
         <div className="flex flex-col gap-2">
           {filtered.map((t) => (
-            <div key={t.id} className="group rounded-xl border border-white/10 bg-white/[0.02] p-3">
+            <div key={t.id} className="group rounded-xl border border-token-subtle bg-token-nested p-3">
               <div className="flex items-center gap-2">
-                <span className="text-sm font-semibold text-white">{t.term}</span>
-                {(t.aliases ?? []).length > 0 && <span className="text-xs text-white/40">（{(t.aliases ?? []).join(' / ')}）</span>}
-                {t.category && <span className="rounded border border-white/10 px-1.5 py-px text-[10px] text-white/45">{t.category}</span>}
+                <span className="text-sm font-semibold text-token-primary">{t.term}</span>
+                {(t.aliases ?? []).length > 0 && <span className="text-xs text-token-muted">（{(t.aliases ?? []).join(' / ')}）</span>}
+                {t.category && <span className="rounded border border-token-subtle px-1.5 py-px text-[10px] text-token-muted">{t.category}</span>}
                 {isAdmin && (
                   <span className="ml-auto flex items-center gap-1 opacity-0 group-hover:opacity-100">
-                    <button onClick={() => setEditing(t)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-white"><Pencil size={13} /></button>
-                    <button onClick={() => remove(t)} className="rounded p-1 text-white/40 hover:bg-white/10 hover:text-red-300"><Trash2 size={13} /></button>
+                    <button onClick={() => setEditing(t)} className="rounded p-1 text-token-muted hover-bg-soft hover-text-primary"><Pencil size={13} /></button>
+                    <button onClick={() => remove(t)} className="rounded p-1 text-token-muted hover-bg-soft hover:text-red-300"><Trash2 size={13} /></button>
                   </span>
                 )}
               </div>
@@ -513,7 +513,7 @@ function TermModal({ productId, term, siblingCount, onClose, onSaved }: { produc
   const [category, setCategory] = useState(term?.category ?? '');
   const [definition, setDefinition] = useState(term?.definition ?? '');
   const [saving, setSaving] = useState(false);
-  const inputCls = 'rounded-lg border border-white/10 bg-white/5 px-3 py-2 text-sm text-white outline-none focus:border-cyan-500/40 placeholder:text-white/25';
+  const inputCls = 'rounded-lg border border-token-subtle bg-token-nested px-3 py-2 text-sm text-token-primary outline-none focus:border-cyan-500/40 placeholder-token-muted';
 
   const save = async () => {
     if (!name.trim()) { toast.error('请填写术语'); return; }
@@ -527,17 +527,17 @@ function TermModal({ productId, term, siblingCount, onClose, onSaved }: { produc
 
   return createPortal(
     <div className="fixed inset-0 z-[10000] flex items-center justify-center bg-black/55 p-4" onClick={onClose}>
-      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-white/10 bg-[#16181d]" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
-        <div className="flex items-center justify-between border-b border-white/10 px-4 py-3"><h3 className="text-sm font-semibold text-white">{term ? '编辑术语' : '添加术语'}</h3><button onClick={onClose} className="text-white/40 hover:text-white"><X size={18} /></button></div>
+      <div className="flex w-full max-w-2xl flex-col rounded-xl border border-token-subtle bg-token-card" style={{ maxHeight: '88vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex items-center justify-between border-b border-token-subtle px-4 py-3"><h3 className="text-sm font-semibold text-token-primary">{term ? '编辑术语' : '添加术语'}</h3><button onClick={onClose} className="text-token-muted hover-text-primary"><X size={18} /></button></div>
         <div className="flex min-h-0 flex-1 flex-col gap-3 overflow-y-auto p-4" style={{ overscrollBehavior: 'contain' }}>
           <div className="flex gap-3">
-            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">术语 *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="核心概念名" className={inputCls} autoFocus /></div>
-            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-white/55">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务 / 数据 / 角色" className={inputCls} /></div>
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-token-secondary">术语 *</label><input value={name} onChange={(e) => setName(e.target.value)} placeholder="核心概念名" className={inputCls} autoFocus /></div>
+            <div className="flex flex-1 flex-col gap-1.5"><label className="text-xs text-token-secondary">分类（可选）</label><input value={category} onChange={(e) => setCategory(e.target.value)} placeholder="如：业务 / 数据 / 角色" className={inputCls} /></div>
           </div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">别名（可选，逗号分隔）</label><input value={aliasText} onChange={(e) => setAliasText(e.target.value)} placeholder="如：SKU, 货品" className={inputCls} /></div>
-          <div className="flex flex-col gap-1.5"><label className="text-xs text-white/55">定义（Markdown）</label><textarea value={definition} onChange={(e) => setDefinition(e.target.value)} rows={10} placeholder="该术语的准确定义…" className={`${inputCls} resize-y`} style={{ minHeight: 180 }} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">别名（可选，逗号分隔）</label><input value={aliasText} onChange={(e) => setAliasText(e.target.value)} placeholder="如：SKU, 货品" className={inputCls} /></div>
+          <div className="flex flex-col gap-1.5"><label className="text-xs text-token-secondary">定义（Markdown）</label><textarea value={definition} onChange={(e) => setDefinition(e.target.value)} rows={10} placeholder="该术语的准确定义…" className={`${inputCls} resize-y`} style={{ minHeight: 180 }} /></div>
         </div>
-        <div className="flex justify-end gap-2 border-t border-white/10 px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-white/60 hover:bg-white/5">取消</button><button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
+        <div className="flex justify-end gap-2 border-t border-token-subtle px-4 py-3"><button onClick={onClose} className="rounded-lg px-3 py-1.5 text-sm text-token-secondary hover-bg-soft">取消</button><button onClick={save} disabled={saving || !name.trim()} className="flex items-center gap-1.5 rounded-lg border border-cyan-500/40 bg-cyan-500/20 px-3.5 py-1.5 text-sm text-cyan-200 disabled:opacity-40">{saving ? <MapSpinner size={14} /> : <Save size={14} />} 保存</button></div>
       </div>
     </div>,
     document.body,

@@ -184,15 +184,15 @@ export function KnowledgeEditor({ mode, onModeChange, value, onChange }: Props) 
     for (const f of fs) void insertAttachmentFile(f);
   };
 
-  const btn = 'w-7 h-7 flex items-center justify-center rounded text-white/55 hover:text-white hover:bg-white/10';
+  const btn = 'w-7 h-7 flex items-center justify-center rounded text-token-secondary hover-text-primary hover-bg-soft';
   const isRich = mode === 'rich';
 
   return (
-    <div className="rounded-xl border border-white/10 bg-white/[0.02] overflow-hidden flex flex-col" style={{ minHeight: '64vh' }}>
+    <div className="rounded-xl border border-token-subtle bg-token-nested overflow-hidden flex flex-col" style={{ minHeight: '64vh' }}>
       <input ref={imgInputRef} type="file" accept="image/*" multiple className="hidden" onChange={onPickImages} />
       <input ref={fileInputRef} type="file" multiple className="hidden" onChange={onPickFiles} />
 
-      <div className="shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-white/10 bg-white/[0.02] flex-wrap">
+      <div className="shrink-0 flex items-center gap-0.5 px-2 py-1.5 border-b border-token-subtle bg-token-nested flex-wrap">
         {isRich ? (
           <>
             <ToolBtn cls={btn} title="加粗" onClick={() => exec('bold')}><Bold size={14} /></ToolBtn>
@@ -201,13 +201,13 @@ export function KnowledgeEditor({ mode, onModeChange, value, onChange }: Props) 
             <span className="relative">
               <ToolBtn cls={btn} title="文字颜色" onClick={() => setColorOpen((v) => !v)}><Palette size={14} /></ToolBtn>
               {colorOpen && (
-                <div className="absolute top-8 left-0 z-20 flex items-center gap-1 p-1.5 rounded-lg border border-white/10 bg-[#1b1d22] shadow-xl">
+                <div className="absolute top-8 left-0 z-20 flex items-center gap-1 p-1.5 rounded-lg border border-token-subtle bg-[#1b1d22] shadow-xl">
                   {COLOR_PALETTE.map((c) => (
                     <button
                       key={c}
                       onMouseDown={(e) => e.preventDefault()}
                       onClick={() => { exec('foreColor', c, true); setColorOpen(false); }}
-                      className="w-5 h-5 rounded-full border border-white/20 hover:scale-110 transition-transform"
+                      className="w-5 h-5 rounded-full border border-token-subtle hover:scale-110 transition-transform"
                       style={{ background: c }}
                       title={c}
                     />
@@ -215,21 +215,21 @@ export function KnowledgeEditor({ mode, onModeChange, value, onChange }: Props) 
                   <button
                     onMouseDown={(e) => e.preventDefault()}
                     onClick={() => { exec('foreColor', 'rgba(255,255,255,0.9)', true); setColorOpen(false); }}
-                    className="px-1.5 h-5 rounded text-[10px] text-white/60 border border-white/15 hover:bg-white/10"
+                    className="px-1.5 h-5 rounded text-[10px] text-token-secondary border border-token-subtle hover-bg-soft"
                   >
                     默认
                   </button>
                 </div>
               )}
             </span>
-            <span className="w-px h-4 bg-white/10 mx-0.5" />
+            <span className="w-px h-4 bg-token-nested mx-0.5" />
             <ToolBtn cls={btn} title="标题（再点回正文）" onClick={() => toggleBlock('h2')}><Heading size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="引用（再点回正文）" onClick={() => toggleBlock('blockquote')}><Quote size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="代码块（再点回正文）" onClick={() => toggleBlock('pre')}><Code size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="无序列表" onClick={() => exec('insertUnorderedList')}><List size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="有序列表" onClick={() => exec('insertOrderedList')}><ListOrdered size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="链接" onClick={addLink}><Link2 size={14} /></ToolBtn>
-            <span className="w-px h-4 bg-white/10 mx-0.5" />
+            <span className="w-px h-4 bg-token-nested mx-0.5" />
             <ToolBtn cls={btn} title="插入图片" onClick={() => imgInputRef.current?.click()}><ImageIcon size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="上传附件" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="清除格式" onClick={clearFormatting}><RemoveFormatting size={14} /></ToolBtn>
@@ -239,35 +239,35 @@ export function KnowledgeEditor({ mode, onModeChange, value, onChange }: Props) 
             <ToolBtn cls={btn} title="加粗" onClick={() => mdInsert('**', '**', '加粗文字')}><Bold size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="斜体" onClick={() => mdInsert('*', '*', '斜体文字')}><Italic size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="行内代码" onClick={() => mdInsert('`', '`', 'code')}><Code size={14} /></ToolBtn>
-            <span className="w-px h-4 bg-white/10 mx-0.5" />
+            <span className="w-px h-4 bg-token-nested mx-0.5" />
             <ToolBtn cls={btn} title="标题" onClick={() => mdLinePrefix('## ')}><Heading size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="引用" onClick={() => mdLinePrefix('> ')}><Quote size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="无序列表" onClick={() => mdLinePrefix('- ')}><List size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="有序列表" onClick={() => mdLinePrefix('1. ')}><ListOrdered size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="代码块" onClick={() => mdInsert('\n```\n', '\n```\n', '代码')}><FileCode size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="链接" onClick={addLink}><Link2 size={14} /></ToolBtn>
-            <span className="w-px h-4 bg-white/10 mx-0.5" />
+            <span className="w-px h-4 bg-token-nested mx-0.5" />
             <ToolBtn cls={btn} title="插入图片" onClick={() => imgInputRef.current?.click()}><ImageIcon size={14} /></ToolBtn>
             <ToolBtn cls={btn} title="上传附件" onClick={() => fileInputRef.current?.click()}><Paperclip size={14} /></ToolBtn>
           </>
         )}
 
-        <span className="ml-1 text-[10px] text-white/30">
+        <span className="ml-1 text-[10px] text-token-muted">
           {uploading ? `${uploading}上传中…` : isRich ? '可粘贴/拖拽图片、附件' : 'Markdown 语法 · 可粘贴/拖拽图片、附件'}
         </span>
 
         {/* 模式切换（父组件负责正文转换） */}
-        <div className="ml-auto flex items-center rounded-lg border border-white/10 overflow-hidden">
+        <div className="ml-auto flex items-center rounded-lg border border-token-subtle overflow-hidden">
           <button
             onClick={() => onModeChange('rich')}
-            className={`flex items-center gap-1 px-2 py-1 text-[11px] ${isRich ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}
+            className={`flex items-center gap-1 px-2 py-1 text-[11px] ${isRich ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}
             title="富文本编辑"
           >
             <FileText size={12} /> 富文本
           </button>
           <button
             onClick={() => onModeChange('md')}
-            className={`flex items-center gap-1 px-2 py-1 text-[11px] ${!isRich ? 'bg-cyan-500/15 text-cyan-200' : 'text-white/50 hover:bg-white/5'}`}
+            className={`flex items-center gap-1 px-2 py-1 text-[11px] ${!isRich ? 'bg-cyan-500/15 text-cyan-200' : 'text-token-secondary hover-bg-soft'}`}
             title="Markdown 编辑"
           >
             <FileCode size={12} /> Markdown
@@ -297,7 +297,7 @@ export function KnowledgeEditor({ mode, onModeChange, value, onChange }: Props) 
           onDrop={onDrop}
           spellCheck={false}
           placeholder="用 Markdown 书写知识内容…"
-          className="no-focus-ring flex-1 overflow-y-auto px-7 py-6 text-[13.5px] leading-relaxed text-white/90 font-mono bg-transparent outline-none resize-none"
+          className="no-focus-ring flex-1 overflow-y-auto px-7 py-6 text-[13.5px] leading-relaxed text-token-primary font-mono bg-transparent outline-none resize-none"
           style={{ overscrollBehavior: 'contain' }}
         />
       )}

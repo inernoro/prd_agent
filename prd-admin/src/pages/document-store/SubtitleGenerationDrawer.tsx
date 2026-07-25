@@ -199,7 +199,7 @@ export function SubtitleGenerationDrawer({
             </div>
           </div>
           <button onClick={onClose}
-            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover:bg-white/6">
+            className="flex h-7 w-7 cursor-pointer items-center justify-center rounded-[8px] text-token-muted hover-bg-soft">
             <X size={15} />
           </button>
         </div>
@@ -267,7 +267,7 @@ export function SubtitleGenerationDrawer({
                     animate={{ x: '450%' }}
                     transition={{ duration: 1.2, ease: 'easeInOut' }}
                     style={{
-                      background: 'linear-gradient(90deg, transparent, rgba(255,255,255,0.5), transparent)',
+                      background: 'linear-gradient(90deg, transparent, var(--nested-block-bg), transparent)',
                       mixBlendMode: 'overlay',
                     }} />
                 )}
@@ -324,8 +324,8 @@ export function SubtitleGenerationDrawer({
         {/* Footer
             paddingBottom 加大到 80px 避开屏幕右下角的全局通知/帮助气泡，避免遮挡按钮
         */}
-        <div className="px-5 pt-4 pb-20 flex items-center justify-between gap-2"
-          style={{ borderTop: '1px solid rgba(255,255,255,0.06)' }}>
+        <div className="px-5 pt-4 pb-20 flex items-center justify-between gap-2 border-t border-t-token-subtle"
+          >
           <span className="text-[11px] text-token-muted">
             {status === 'running' || status === 'idle' ? '可关闭抽屉后台继续运行' : ''}
           </span>
@@ -347,7 +347,7 @@ function PhaseTimeline({ phases, currentIndex, failed }: { phases: string[]; cur
   return (
     <div className="relative">
       {/* 连线背景 */}
-      <div className="absolute top-[7px] left-2 right-2 h-px bg-white/8" />
+      <div className="absolute top-[7px] left-2 right-2 h-px bg-token-nested" />
       {/* 已完成连线（紫色到当前位置） */}
       {currentIndex > 0 && (
         <motion.div
@@ -395,7 +395,7 @@ function PhaseTimeline({ phases, currentIndex, failed }: { phases: string[]; cur
               <span
                 className="text-[9px] text-center leading-tight whitespace-nowrap overflow-hidden text-ellipsis"
                 style={{
-                  color: active ? 'rgba(216,180,254,0.95)' : passed ? 'rgba(255,255,255,0.55)' : 'rgba(255,255,255,0.35)',
+                  color: active ? 'rgba(216,180,254,0.95)' : passed ? 'var(--text-secondary)' : 'var(--text-muted)',
                   fontWeight: active ? 600 : 400,
                   maxWidth: isLast ? '4.5em' : '4em',
                 }}
@@ -433,24 +433,24 @@ function DiagnosticBlock({
   const fullJson = useMemo(() => JSON.stringify(diagnostic, null, 2), [diagnostic]);
 
   return (
-    <div className="mt-2 rounded-[8px]"
-      style={{ background: 'rgba(0,0,0,0.18)', border: '1px solid rgba(255,255,255,0.06)' }}>
+    <div className="mt-2 rounded-[8px] border border-token-subtle"
+      style={{ background: 'var(--nested-block-bg)' }}>
       <button
         type="button"
         onClick={onToggle}
         className="w-full flex items-center justify-between px-2.5 py-1.5 text-[11px]"
-        style={{ color: 'rgba(255,255,255,0.7)' }}
+        style={{ color: 'var(--text-secondary)' }}
       >
         <span className="flex items-center gap-1.5 font-semibold">
           <ChevronDown size={11} style={{ transform: expanded ? 'rotate(0deg)' : 'rotate(-90deg)', transition: 'transform 0.2s' }} />
           调试诊断信息（点击{expanded ? '收起' : '展开'}）
         </span>
-        <span className="text-[10px]" style={{ color: 'rgba(255,255,255,0.4)' }}>
+        <span className="text-[10px]" style={{ color: 'var(--text-muted)' }}>
           {diagnostic.stage ?? ''}
         </span>
       </button>
       {expanded && (
-        <div className="px-2.5 pb-2.5 space-y-1.5 text-[11px]" style={{ color: 'rgba(255,255,255,0.85)' }}>
+        <div className="px-2.5 pb-2.5 space-y-1.5 text-[11px]" style={{ color: 'var(--text-primary)' }}>
           {/* 按重要度分组展示关键字段 */}
           <KV label="模型" value={diagnostic.model} />
           <KV label="平台" value={diagnostic.platformName ? `${diagnostic.platformName} (${diagnostic.platformId ?? '?'})` : diagnostic.platformId} />
@@ -476,8 +476,8 @@ function DiagnosticBlock({
 
           {/* 人话翻译 + checklist */}
           {diagnostic.friendlyError && (
-            <div className="mt-2 p-2 rounded text-[11px] whitespace-pre-wrap break-all"
-              style={{ background: 'rgba(255,255,255,0.04)', color: 'rgba(255,255,255,0.85)' }}>
+            <div className="mt-2 p-2 rounded text-[11px] whitespace-pre-wrap break-all bg-token-nested"
+              style={{ color: 'var(--text-primary)' }}>
               {diagnostic.friendlyError}
             </div>
           )}
@@ -496,8 +496,8 @@ function DiagnosticBlock({
               <button
                 type="button"
                 onClick={() => copy(diagnostic.wscatCommand!, 'wscat 命令')}
-                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
-                style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+                className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-token-nested"
+                style={{ color: 'var(--text-primary)' }}
               >
                 <Copy size={10} /> 复制 wscat 命令
               </button>
@@ -505,8 +505,8 @@ function DiagnosticBlock({
             <button
               type="button"
               onClick={() => copy(fullJson, '完整 diagnostic JSON')}
-              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px]"
-              style={{ background: 'rgba(255,255,255,0.06)', color: 'rgba(255,255,255,0.85)' }}
+              className="inline-flex items-center gap-1 px-2 py-0.5 rounded text-[10px] bg-token-nested"
+              style={{ color: 'var(--text-primary)' }}
             >
               <Copy size={10} /> 复制完整诊断 JSON
             </button>
@@ -521,7 +521,7 @@ function KV({ label, value, mono }: { label: string; value?: string | null; mono
   if (!value) return null;
   return (
     <div className="flex gap-2 leading-tight">
-      <span className="shrink-0 w-[88px] text-[10px]" style={{ color: 'rgba(255,255,255,0.5)' }}>{label}</span>
+      <span className="shrink-0 w-[88px] text-[10px]" style={{ color: 'var(--text-secondary)' }}>{label}</span>
       <span className={`flex-1 break-all ${mono ? 'font-mono' : ''}`}>{value}</span>
     </div>
   );

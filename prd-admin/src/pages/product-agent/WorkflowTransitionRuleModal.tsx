@@ -53,31 +53,31 @@ export function WorkflowTransitionRuleModal({
     <div className="fixed inset-0 z-[200] flex items-center justify-center p-4">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} aria-hidden />
       <div
-        className="relative z-10 w-full max-w-lg rounded-xl border border-white/10 bg-[#14161b] shadow-2xl flex flex-col min-h-0"
+        className="relative z-10 w-full max-w-lg rounded-xl border border-token-subtle bg-[#14161b] shadow-2xl flex flex-col min-h-0"
         style={{ maxHeight: 'min(90vh, 640px)' }}
       >
-        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-white/10">
+        <div className="shrink-0 flex items-center justify-between px-4 py-3 border-b border-token-subtle">
           <div>
-            <div className="text-sm font-medium text-white">流转附加设置</div>
-            <div className="text-xs text-white/45 mt-0.5">
+            <div className="text-sm font-medium text-token-primary">流转附加设置</div>
+            <div className="text-xs text-token-muted mt-0.5">
               {fromLabel} → {toLabel}
             </div>
           </div>
-          <button type="button" onClick={onClose} className="p-1.5 rounded-md text-white/50 hover:text-white hover:bg-white/5">
+          <button type="button" onClick={onClose} className="p-1.5 rounded-md text-token-secondary hover-text-primary hover-bg-soft">
             <X size={16} />
           </button>
         </div>
         <div className="flex-1 min-h-0 overflow-y-auto px-4 py-3 flex flex-col gap-4" style={{ overscrollBehavior: 'contain' }}>
           <label className="flex flex-col gap-1.5">
-            <span className="text-xs text-white/50">动作名称</span>
+            <span className="text-xs text-token-secondary">动作名称</span>
             <input
               value={draft.label}
               onChange={(e) => setDraft((d) => ({ ...d, label: e.target.value }))}
-              className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+              className="px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
             />
           </label>
           <div className="flex flex-wrap gap-4">
-            <label className="flex items-center gap-2 text-sm text-white/70">
+            <label className="flex items-center gap-2 text-sm text-token-secondary">
               <input
                 type="checkbox"
                 checked={draft.requireComment}
@@ -86,7 +86,7 @@ export function WorkflowTransitionRuleModal({
               />
               需备注
             </label>
-            <label className="flex items-center gap-2 text-sm text-white/70" title="触发该流转时自动把处理人指派给操作人本人">
+            <label className="flex items-center gap-2 text-sm text-token-secondary" title="触发该流转时自动把处理人指派给操作人本人">
               <input
                 type="checkbox"
                 checked={draft.autoAssignToActor ?? false}
@@ -97,10 +97,10 @@ export function WorkflowTransitionRuleModal({
             </label>
           </div>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-white/50">允许角色（不选表示不限）</span>
+            <span className="text-xs text-token-secondary">允许角色（不选表示不限）</span>
             <div className="flex flex-wrap gap-x-4 gap-y-2">
               {WORKFLOW_ROLE_OPTIONS.map((role) => (
-                <label key={role} className="flex items-center gap-1.5 text-xs text-white/65">
+                <label key={role} className="flex items-center gap-1.5 text-xs text-token-secondary">
                   <input
                     type="checkbox"
                     checked={(draft.allowedRoles ?? []).includes(role)}
@@ -113,23 +113,23 @@ export function WorkflowTransitionRuleModal({
             </div>
           </div>
           <div className="flex flex-col gap-1.5">
-            <span className="text-xs text-white/50">跨对象联动（流转成功后自动执行）</span>
+            <span className="text-xs text-token-secondary">跨对象联动（流转成功后自动执行）</span>
             <select
               value={draft.linkEntityType ?? ''}
               onChange={(e) => setDraft((d) => ({ ...d, linkEntityType: e.target.value || null }))}
-              className="px-3 py-2 rounded-lg bg-white/5 border border-white/10 text-sm text-white outline-none focus:border-cyan-500/40"
+              className="px-3 py-2 rounded-lg bg-token-nested border border-token-subtle text-sm text-token-primary outline-none focus:border-cyan-500/40"
             >
               <option value="">无</option>
               <option value="defect">{WORKFLOW_LINK_ENTITY_LABELS.defect}</option>
               <option value="requirement">{WORKFLOW_LINK_ENTITY_LABELS.requirement}</option>
             </select>
-            <p className="text-[11px] text-white/35">需求流转可联动生成缺陷；缺陷流转可联动转为需求。可在矩阵中按业务配置。</p>
+            <p className="text-[11px] text-token-muted">需求流转可联动生成缺陷；缺陷流转可联动转为需求。可在矩阵中按业务配置。</p>
           </div>
           <div className="flex flex-col gap-2">
-            <span className="text-xs text-white/50">流转前必填字段</span>
+            <span className="text-xs text-token-secondary">流转前必填字段</span>
             <div className="flex flex-wrap gap-x-4 gap-y-2">
               {WORKFLOW_FIELD_OPTIONS.map((fieldKey) => (
-                <label key={fieldKey} className="flex items-center gap-1.5 text-xs text-white/65">
+                <label key={fieldKey} className="flex items-center gap-1.5 text-xs text-token-secondary">
                   <input
                     type="checkbox"
                     checked={(draft.requiredFieldKeys ?? []).includes(fieldKey)}
@@ -141,12 +141,12 @@ export function WorkflowTransitionRuleModal({
               ))}
             </div>
           </div>
-          <p className="text-[11px] text-white/35">
-            内部 key：<span className="font-mono text-white/50">{draft.key}</span>
+          <p className="text-[11px] text-token-muted">
+            内部 key：<span className="font-mono text-token-secondary">{draft.key}</span>
           </p>
         </div>
-        <div className="shrink-0 flex justify-end gap-2 px-4 py-3 border-t border-white/10">
-          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-white/60 border border-white/10 hover:bg-white/5">
+        <div className="shrink-0 flex justify-end gap-2 px-4 py-3 border-t border-token-subtle">
+          <button type="button" onClick={onClose} className="px-3 py-1.5 rounded-lg text-sm text-token-secondary border border-token-subtle hover-bg-soft">
             取消
           </button>
           <button

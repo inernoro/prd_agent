@@ -41,7 +41,7 @@ export function ProductMockup() {
 
       {/* 应用窗口本体 */}
       <div
-        className="relative rounded-2xl overflow-hidden border border-white/10"
+        className="relative rounded-2xl overflow-hidden border border-token-subtle"
         style={{
           background: '#0A0D14',
           boxShadow:
@@ -49,11 +49,11 @@ export function ProductMockup() {
         }}
       >
         {/* 浏览器 chrome */}
-        <div className="flex items-center gap-3 px-4 py-3 border-b border-white/[0.06] bg-[#080A10]">
+        <div className="flex items-center gap-3 px-4 py-3 border-b border-token-subtle/[0.06] bg-[#080A10]">
           <div className="flex gap-1.5">
-            <span className="w-3 h-3 rounded-full bg-white/15" />
-            <span className="w-3 h-3 rounded-full bg-white/15" />
-            <span className="w-3 h-3 rounded-full bg-white/15" />
+            <span className="w-3 h-3 rounded-full bg-token-nested" />
+            <span className="w-3 h-3 rounded-full bg-token-nested" />
+            <span className="w-3 h-3 rounded-full bg-token-nested" />
           </div>
           <div
             className="ml-4 px-3 py-1 rounded-md bg-white/[0.04] text-[11px] text-white/40 font-mono"
@@ -69,7 +69,7 @@ export function ProductMockup() {
         {/* 应用主体 */}
         <div className="flex h-[480px]">
           {/* 左侧 icon 导航 */}
-          <aside className="w-14 border-r border-white/[0.06] py-4 flex flex-col items-center gap-2 bg-[#080A10]">
+          <aside className="w-14 border-r border-token-subtle/[0.06] py-4 flex flex-col items-center gap-2 bg-[#080A10]">
             <NavIcon Icon={MessageSquare} active tint="#a855f7" />
             <NavIcon Icon={ImageIcon} />
             <NavIcon Icon={PenLine} />
@@ -80,9 +80,9 @@ export function ProductMockup() {
           </aside>
 
           {/* 中间对话列表（极简，i18n）*/}
-          <div className="w-56 border-r border-white/[0.06] p-3 hidden md:block">
+          <div className="w-56 border-r border-token-subtle/[0.06] p-3 hidden md:block">
             <button
-              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-white/85 border border-white/10 bg-white/[0.03] mb-3"
+              className="w-full flex items-center gap-2 px-3 py-2 rounded-lg text-[12px] text-white/85 border border-token-subtle bg-white/[0.03] mb-3"
               style={{ fontFamily: 'var(--font-body)' }}
             >
               <Plus className="w-3.5 h-3.5" />
@@ -103,7 +103,7 @@ export function ProductMockup() {
           {/* 主内容区 */}
           <div className="flex-1 flex flex-col min-w-0">
             {/* 顶部标题栏 */}
-            <header className="flex items-center justify-between px-6 py-4 border-b border-white/[0.06]">
+            <header className="flex items-center justify-between px-6 py-4 border-b border-token-subtle/[0.06]">
               <div className="flex items-center gap-3 min-w-0">
                 <div
                   className="w-8 h-8 rounded-lg flex items-center justify-center shrink-0"
@@ -122,7 +122,7 @@ export function ProductMockup() {
                 </div>
               </div>
               <div className="flex gap-2 shrink-0">
-                <button className="px-3 py-1.5 rounded-md text-[11px] text-white/55 border border-white/10 hover:bg-white/[0.04]">
+                <button className="px-3 py-1.5 rounded-md text-[11px] text-white/55 border border-token-subtle hover-bg-soft/[0.04]">
                   {mock.actions.share}
                 </button>
                 <button
@@ -193,15 +193,15 @@ export function ProductMockup() {
             </div>
 
             {/* 输入栏 */}
-            <div className="p-4 border-t border-white/[0.06]">
-              <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.04] border border-white/10">
+            <div className="p-4 border-t border-token-subtle/[0.06]">
+              <div className="flex items-center gap-3 px-4 py-3 rounded-xl bg-white/[0.04] border border-token-subtle">
                 <span
                   className="text-[12px] text-white/35 flex-1 truncate"
                   style={{ fontFamily: 'var(--font-body)' }}
                 >
                   {mock.input}
                 </span>
-                <button className="w-7 h-7 rounded-md text-white/45 hover:bg-white/5 flex items-center justify-center">
+                <button className="w-7 h-7 rounded-md text-white/45 hover-bg-soft flex items-center justify-center">
                   <Paperclip className="w-3.5 h-3.5" />
                 </button>
                 <button
@@ -293,7 +293,7 @@ function MockImage({
 
   return (
     <div
-      className="relative aspect-[16/10] rounded-md overflow-hidden border border-white/[0.06]"
+      className="relative aspect-[16/10] rounded-md overflow-hidden border border-token-subtle/[0.06]"
       style={{ background: gradients[variant - 1] }}
     >
       {/* "图像内容"的几何提示 */}

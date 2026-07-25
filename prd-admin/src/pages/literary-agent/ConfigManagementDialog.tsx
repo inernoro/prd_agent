@@ -622,7 +622,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                             style={{
                               background: config.imageUrl
                                 ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                                : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                                : 'var(--bg-card)',
                               border: config.imageUrl ? 'none' : '1px solid var(--border-subtle)',
                               minHeight: '60px',
                               maxHeight: '80px',
@@ -706,7 +706,7 @@ export const ConfigManagementDialog = forwardRef<ConfigManagementDialogHandle, C
                   style={{
                     background: config.imageUrl
                       ? 'repeating-conic-gradient(#3a3a3a 0% 25%, #2a2a2a 0% 50%) 50% / 12px 12px'
-                      : 'var(--bg-card, rgba(255, 255, 255, 0.03))',
+                      : 'var(--bg-card)',
                     height: '80px',
                   }}
                 >

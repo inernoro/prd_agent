@@ -62,7 +62,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
               >
                 AI 涌现探索器
               </span>
-              <span className="h-px flex-1 max-w-[120px]" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.08))' }} />
+              <span className="h-px flex-1 max-w-[120px] bg-token-nested"  />
             </div>
 
             {/* 主标题 */}
@@ -113,7 +113,7 @@ export function EmergenceIntroPage({ onStart, onCreateFirst, hasTrees }: Props) 
         </section>
 
         {/* 分隔 */}
-        <div className="my-14 h-px w-full" style={{ background: 'var(--border-subtle, rgba(255,255,255,0.07))' }} />
+        <div className="my-14 h-px w-full bg-token-nested"  />
 
         {/* 三步序列 —— surface 卡片，序号走强调渐变 */}
         <div data-tour-id="emergence-steps" className="grid gap-4 sm:grid-cols-3">

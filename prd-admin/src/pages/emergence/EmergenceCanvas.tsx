@@ -777,7 +777,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
       <TabBar
         title={
           <div className="flex items-center gap-2">
-            <button onClick={onBack} className="text-[12px] cursor-pointer hover:bg-white/6 px-2 py-1 rounded-[8px] transition-colors duration-200"
+            <button onClick={onBack} className="text-[12px] cursor-pointer hover-bg-soft px-2 py-1 rounded-[8px] transition-colors duration-200"
               style={{ color: 'var(--text-muted)' }}>
               ← 返回
             </button>
@@ -910,7 +910,7 @@ function EmergenceCanvasInner({ treeId, onBack }: CanvasProps) {
                     }}>
                     <button
                       onClick={() => setGuideDismissed(true)}
-                      className="absolute top-2 right-2 w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover:bg-white/6 transition-colors duration-200"
+                      className="absolute top-2 right-2 w-5 h-5 rounded-[6px] flex items-center justify-center cursor-pointer hover-bg-soft transition-colors duration-200"
                       style={{ color: 'var(--text-muted)' }}>
                       <X size={11} />
                     </button>

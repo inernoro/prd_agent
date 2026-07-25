@@ -95,7 +95,7 @@ export function MobileDrawer({ open, onOpenChange, children, width = 280, side =
           <DialogPrimitive.Title className="sr-only">导航菜单</DialogPrimitive.Title>
           <div className="flex items-center justify-end px-3 pt-2 pb-1">
             <DialogPrimitive.Close
-              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-token-secondary hover:bg-white/5"
+              className="h-11 w-11 inline-flex items-center justify-center rounded-xl text-token-secondary hover-bg-soft"
               aria-label="关闭"
             >
               <X size={18} />

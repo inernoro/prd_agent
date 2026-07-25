@@ -45,7 +45,7 @@ export function ThemeControl() {
             className="px-2.5 py-1 rounded-lg text-[12px] font-medium transition-all duration-150 whitespace-nowrap flex items-center gap-1"
             style={{
               background: selected ? 'var(--report-accent-soft)' : 'transparent',
-              color: selected ? 'var(--report-accent)' : 'var(--text-secondary)',
+              color: selected ? 'var(--report-accent-text)' : 'var(--text-secondary)',
             }}
           >
             <Icon size={12} />

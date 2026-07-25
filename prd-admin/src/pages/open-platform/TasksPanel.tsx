@@ -132,7 +132,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
     <div className="h-full overflow-auto p-1">
       <GlassCard animated glow className="min-h-full">
         {/* 顶部提示栏 */}
-        <div className="p-4 border-b border-white/10" style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))' }}>
+        <div className="p-4 border-b border-token-subtle bg-token-nested" >
           <div className="flex items-center justify-between">
             <div className="flex items-center gap-3">
               <ListTodo size={18} className="text-muted-foreground" />
@@ -153,8 +153,8 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
               </div>
               <div className="grid grid-cols-5 gap-3">
                 <div
-                  className="p-3 rounded-lg text-center"
-                  style={{ background: 'var(--bg-card, rgba(255, 255, 255, 0.03))', border: '1px solid var(--nested-block-border)' }}
+                  className="p-3 rounded-lg text-center bg-token-nested"
+                  style={{ border: '1px solid var(--nested-block-border)' }}
                 >
                   <div className="text-2xl font-bold">{stats.todayTotal}</div>
                   <div className="text-xs text-muted-foreground mt-1">今日任务</div>
@@ -191,7 +191,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
             </section>
           )}
 
-          <div className="border-t border-white/10" />
+          <div className="border-t border-token-subtle" />
 
           {/* 任务列表 */}
           <section>
@@ -310,7 +310,7 @@ export default function TasksPanel({ onActionsReady }: TasksPanelProps) {
             </div>
 
             {total > pageSize && (
-              <div className="flex justify-between items-center pt-4 mt-4 border-t border-white/10">
+              <div className="flex justify-between items-center pt-4 mt-4 border-t border-token-subtle">
                 <div className="text-sm text-muted-foreground">共 {total} 条</div>
                 <div className="flex gap-2">
                   <Button variant="secondary" size="sm" disabled={page === 1} onClick={() => setPage(page - 1)}>上一页</Button>

@@ -128,7 +128,7 @@ export function DocApplyDiffModal({
           </div>
           <button
             onClick={() => { if (!applying) onCancel(); }}
-            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover:bg-white/8 transition-colors disabled:opacity-40"
+            className="flex h-7 w-7 items-center justify-center rounded-[8px] text-token-muted hover-bg-soft transition-colors disabled:opacity-40"
             disabled={applying}
           >
             <X size={16} />
@@ -253,8 +253,8 @@ function DiffView({ lines, docTruncated }: { lines: { type: 'eq' | 'add' | 'del'
         </p>
       )}
       <pre
-        className="text-[11.5px] leading-relaxed font-mono whitespace-pre-wrap break-words rounded-[10px] p-3"
-        style={{ background: 'rgba(0,0,0,0.22)', border: '1px solid rgba(255,255,255,0.06)' }}
+        className="text-[11.5px] leading-relaxed font-mono whitespace-pre-wrap break-words rounded-[10px] p-3 border border-token-subtle"
+        style={{ background: 'var(--nested-block-bg)' }}
       >
         {shown.map((l, i) => {
           const bg = l.type === 'add'
@@ -296,7 +296,7 @@ function BodyView({ body, kind }: { body: string; kind: 'append' | 'new' }) {
           background: kind === 'append' ? 'rgba(34,197,94,0.08)' : 'rgba(0,0,0,0.22)',
           border: kind === 'append'
             ? '1px solid rgba(34,197,94,0.20)'
-            : '1px solid rgba(255,255,255,0.06)',
+            : '1px solid var(--border-subtle)',
           color: 'rgba(255,255,255,0.82)',
         }}
       >
