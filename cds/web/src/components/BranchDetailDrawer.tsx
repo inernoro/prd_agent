@@ -842,8 +842,8 @@ export function BranchDetailDrawer({
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
-  // 部署子页签（2026-07-24）：发布（构建/版本台账）/ 复制集（双画布）
-  const [deploySubTab, setDeploySubTab] = useState<DeploySubTab>('release');
+  // 部署子页签（2026-07-25 用户拍板重排）：复制集（默认）/ 部署（不可变部署版本 + 部署事实账本）
+  const [deploySubTab, setDeploySubTab] = useState<DeploySubTab>('replicaset');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
@@ -2233,7 +2233,7 @@ export function BranchDetailDrawer({
                 {activeTab === 'deployments' ? (
                   // 部署子页签（2026-07-24 用户拍板）：复制集并入部署，不再单独占顶级页签
                   <div className="mb-4 inline-flex overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
-                    {([['release', '发布'], ['replicaset', '复制集']] as Array<[DeploySubTab, string]>).map(([key, label]) => (
+                    {([['replicaset', '复制集'], ['release', '部署']] as Array<[DeploySubTab, string]>).map(([key, label]) => (
                       <button key={key} type="button" onClick={() => setDeploySubTab(key)}
                         className={`px-3 py-1.5 text-xs ${deploySubTab === key ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}>
                         {label}
