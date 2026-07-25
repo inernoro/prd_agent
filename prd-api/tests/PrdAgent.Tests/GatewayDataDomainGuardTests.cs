@@ -3498,6 +3498,14 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
         Assert.Contains("仅日志观测", entityDetails);
         Assert.Contains("不补造预算或速率配置", entityDetails);
+        Assert.Contains("observedProvider(observed, requestedName)", entityDetails);
+        Assert.Contains("非配置实体", entityDetails);
+        Assert.Contains("不补造密钥状态", entityDetails);
+        Assert.Contains("日志观测 · 非配置关系", entityDetails);
+        Assert.Contains("--bg-page: #03080a", theme);
+        Assert.Contains("--text-primary: #fcfcfe", theme);
+        Assert.Matches(@"(?s)\.lg-logs-heading h1\s*\{[^}]*font-weight:\s*700", theme);
+        Assert.Matches(@"(?s)@media[^}]*max-width:\s*680px.*?\.lg-log-table-head > div:first-child,[^}]*left:\s*10px", theme);
 
         var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
         Assert.Contains("CreateClient(\"SafeOutbound\")", imageBackground);
