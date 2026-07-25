@@ -15127,14 +15127,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;
@@ -15303,14 +15318,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-env', async (req, res) => {
     const { id } = req.params;
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;

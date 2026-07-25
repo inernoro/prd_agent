@@ -1,4 +1,4 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -3431,23 +3431,46 @@ export function BranchListPage(): JSX.Element {
               </div>
             ) : (
               <div className="cds-branch-card-grid">
-                {sortedBranches.map((branch) => (
-                  <BranchCard
-                    key={branch.id}
-                    branch={branch}
-                    resources={branchResourcesById.get(branch.id) || EMPTY_RESOURCES}
-                    action={actions[branch.id]}
-                    projectId={projectId}
-                    resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
-                    highlighted={highlightedBranchId === branch.id}
-                    highlightPulse={highlightPulseBranchId === branch.id}
-                    phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
-                    activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
-                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
-                    activeTagFilter={activeTagFilter}
-                    handlers={cardHandlers}
-                  />
-                ))}
+                {sortedBranches.map((branch) => {
+                  // 项目级复制集显形（2026-07-25 用户拍板）：派生卡紧随主卡右侧（网格自然换行），
+                  // 名为 <branch>-replicaset-N；非独立 git 分支，仅是同分支的复制集实例组视图。
+                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ id?: string; status?: string; hostPort?: number }> }> }).replicaSets ?? {};
+                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
+                  const groupCount = rsMode === 'project'
+                    ? Math.max(0, ...Object.values(rsMap).map((r) => (r?.enabled ? (r.members?.length ?? 0) : 0)))
+                    : 0;
+                  const rsPreviewBase = state.status === 'ok'
+                    ? (state.previewMode === 'simple' ? simplePreviewUrl(state.config) : multiPreviewUrl(branch, state.config))
+                    : '';
+                  return (
+                    <Fragment key={branch.id}>
+                      <BranchCard
+                        branch={branch}
+                        resources={branchResourcesById.get(branch.id) || EMPTY_RESOURCES}
+                        action={actions[branch.id]}
+                        projectId={projectId}
+                        resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
+                        highlighted={highlightedBranchId === branch.id}
+                        highlightPulse={highlightPulseBranchId === branch.id}
+                        phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
+                        activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
+                        capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                        activeTagFilter={activeTagFilter}
+                        handlers={cardHandlers}
+                      />
+                      {Array.from({ length: groupCount }, (_, k) => (
+                        <ReplicaGroupCard
+                          key={`${branch.id}-replicaset-${k + 1}`}
+                          branch={branch}
+                          groupIndex={k}
+                          replicaSets={rsMap}
+                          previewBase={rsPreviewBase}
+                          onDetail={() => cardHandlers.onDetail(branch)}
+                        />
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4937,6 +4960,65 @@ interface BranchCardHandlers {
   onRemoveTag: (branch: BranchSummary, tag: string) => void;
 }
 
+/**
+ * 项目级复制集派生卡（2026-07-25 用户拍板）：**非独立 git 分支**——同一分支的
+ * 复制集实例组视图，紧随主分支卡右侧显形（网格自然换行），方便直达/看日志。
+ * 名称固定 <branch>-replicaset-N；操作面收敛为「打开详情 / 预览本组」，
+ * 不提供删除/部署等分支级动作（避免误伤真分支）。
+ */
+function ReplicaGroupCard({ branch, groupIndex, replicaSets, previewBase, onDetail }: {
+  branch: BranchSummary;
+  groupIndex: number;
+  replicaSets: Record<string, { enabled?: boolean; members?: Array<{ id?: string; status?: string; hostPort?: number }> }>;
+  previewBase: string;
+  onDetail: () => void;
+}): JSX.Element {
+  const entries = Object.entries(replicaSets)
+    .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > groupIndex)
+    .sort(([a], [b]) => a.localeCompare(b));
+  const memberId = entries[0]?.[1].members?.[groupIndex]?.id || `res-${groupIndex + 1}`;
+  const previewUrl = previewBase ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${encodeURIComponent(memberId)}` : '';
+  const bad = entries.some(([, rs]) => rs.members?.[groupIndex]?.status === 'error');
+  const projectId = (branch as { projectId?: string }).projectId;
+  return (
+    <div className={`relative flex min-h-[244px] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
+      title={`由 ${branch.branch} 复制出的项目级复制集实例组（非独立 git 分支）：每个容器的第 ${groupIndex + 1} 个副本，入口已按权重负载`}>
+      <div className="flex items-center gap-2 px-5 pt-4">
+        <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
+        <span className="min-w-0 truncate text-base font-semibold">
+          {branch.branch}<span className="text-indigo-500">-replicaset-{groupIndex + 1}</span>
+        </span>
+      </div>
+      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+        {entries.map(([pid, rs]) => {
+          const m = rs.members?.[groupIndex];
+          const color = m?.status === 'error' ? '#ef4444' : profileColor(pid);
+          return (
+            <span key={pid} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs"
+              style={{ borderColor: `${color}66`, color }}
+              title={`${pid} 副本 ${m?.id ?? ''}：${m?.status === 'running' ? '运行中' : m?.status ?? '未创建'}`}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: m?.status === 'running' ? '#10b981' : m?.status === 'provisioning' ? '#f59e0b' : '#ef4444' }} />
+              {profileShortName(pid, projectId)}
+              {m?.hostPort ? <span className="font-mono text-muted-foreground">:{m.hostPort}</span> : null}
+            </span>
+          );
+        })}
+      </div>
+      <div className="px-5 pt-3">
+        <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-3 px-5 pb-4 pt-3">
+        <Button type="button" variant="outline" size="sm" onClick={onDetail}>打开详情</Button>
+        {previewUrl ? (
+          <Button asChild size="sm">
+            <a href={previewUrl} target="_blank" rel="noreferrer"><ExternalLink />预览本组</a>
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 const BranchCard = memo(function BranchCard({
   branch,
   resources,
@@ -5496,26 +5578,39 @@ const BranchCard = memo(function BranchCard({
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
-        {/* 复制集标识（2026-07-24 用户拍板改版）：不再合计成一个「复制集 xN」（会误读），
-            改为每个容器一枚专属色 chip + xN（1 主 + N 副本），颜色与复制集画布一致 */}
+        {/* 复制集标识（2026-07-25 用户拍板三改）：项目级复制集已在右侧显形为独立派生卡，
+            主卡只标「已复制」不再列 xN；容器级仍是每容器专属色 chip + xN。健康态不用红
+            （红色专属出错——有副本 error 才转红）。 */}
         {(() => {
-          const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: unknown[] }> }).replicaSets;
+          const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets;
           const entries = Object.entries(replicaSets ?? {})
             .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
             .sort(([a], [b]) => a.localeCompare(b));
           if (entries.length === 0) return null;
+          const mode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode ?? 'container';
+          if (mode === 'project') {
+            const bad = entries.some(([, rs]) => (rs.members ?? []).some((m) => m.status === 'error'));
+            return (
+              <span className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium ${bad ? 'border-destructive/60 bg-destructive/10 text-destructive' : 'border-indigo-500/50 bg-indigo-500/10 text-indigo-500'}`}
+                title={bad ? '项目级复制集有副本异常，详见右侧复制集卡' : '该分支已做项目级复制：复制集实例组显示在右侧独立卡片'}>
+                <Layers className="h-3.5 w-3.5" />
+                {bad ? '已复制 · 有异常' : '已复制'}
+              </span>
+            );
+          }
           const projectId = (branch as { projectId?: string }).projectId;
           const shown = entries.slice(0, 4);
           return (
             <>
               {shown.map(([pid, rs]) => {
-                const color = profileColor(pid);
+                const bad = (rs.members ?? []).some((m) => m.status === 'error');
+                const color = bad ? '#ef4444' : profileColor(pid);
                 const n = rs.members?.length ?? 0;
                 return (
                   <span key={pid}
                     className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
                     style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
-                    title={`${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`}>
+                    title={bad ? `${pid}：有副本异常，进「运行」页签查看` : `${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`}>
                     <Layers className="h-3.5 w-3.5" />
                     {profileShortName(pid, projectId)} x{n + 1}
                   </span>

@@ -7,7 +7,7 @@
 | 1 | done(2026-07-23) | 一键隔离数据库（dbMode=isolated + 数据克隆） | 已落地：replica-db-clone 三适配（mongodump / mysqldump / pg_dump），克隆完成才启动成员；隔离库保留语义 + 数据快照列表 + 手动删除 drop | 残留边界：克隆是停快照不追增量；pg 源库超大时 pg_dump 耗时（600s 超时上限）；mongo 镜像缺 database-tools 时明确报错不静默 |
 | 2 | open | scheduler / auto-lifecycle 冷却分支时不感知复制集成员 | 分支被调度器休眠时成员容器可能继续运行占资源（显式 stop / delete 路径已级联收割） | scheduler coolFn 复用分支 stop 的成员级联；或复制集化分支视同 color-marked 不驱逐（设计文档既定方向） |
 | 3 | open | promote 在 deploy 派发成功后立即解散复制集，不等 run 终态 | 若版本部署中途失败，成员已被收割，主容器仍是旧版本（入口不受损，但「提升」未达成需人工重试） | promote 改为跟踪 runId 终态后再解散；失败回滚为「保留成员」 |
-| 4 | open | 成员物化的启动日志只保留内存尾部 40 行进 statusMessage，无独立日志入口 | 成员启动失败时排障信息有限（可用容器名走 docker logs） | 复制集页签接 container-logs 按 containerName 查询 |
+| 4 | done(2026-07-25) | ~~成员容器无独立日志入口~~ 已偿还：container-logs 端点接受 memberId（合成 svc 形状复用主容器同一条归档/掩码/事件链路），抽屉「日志 → 容器」chips 行追加全部副本成员容器（靛蓝区分，项目级/容器级同源） | — | — |
 | 5 | open | 成员直达子域未接 HTTPS 证书边界校验之外的墓碑/等待页 | 成员 provisioning 期间访问直达链会落 forwarder 等待页兜底，体验可接受但无成员级文案 | forwarder 等待页识别成员路由，给「成员启动中」文案 |
 | 6 | done(2026-07-23) | remote executor 分支（executorId 指向远端）未支持复制集 | addMember 已对远端执行器分支返回 409 明确拒绝（isRemoteBranch 经 registry 判定） | 后续如需远端支持，成员物化改走 /exec 通道 |
 | 7 | open | 灰卡渐显动画固定 2.4s，先于真实就绪结束（独立验收 R1 P3-1） | 创建 30s+ 时卡片提前恢复全彩，仅靠文字/脉冲块提示仍在创建 | 动画时长与 provisioning 状态联动（就绪才去灰），或改持续脉冲直至 running |

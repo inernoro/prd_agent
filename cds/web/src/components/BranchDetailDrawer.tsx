@@ -1458,10 +1458,12 @@ export function BranchDetailDrawer({
     if (!branchId) return;
     setSelectedServiceId(profileId);
     setServiceLogs({ status: 'loading', profileId });
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：选择键形如 `pid::memberId`
+    const [pid, memberId] = profileId.split('::');
     try {
       const res = await apiRequest<{ logs: string }>(`/api/branches/${encodeURIComponent(branchId)}/container-logs`, {
         method: 'POST',
-        body: { profileId },
+        body: memberId ? { profileId: pid, memberId } : { profileId },
       });
       setServiceLogs({ status: 'ok', profileId, logs: res.logs || '' });
     } catch (err) {
@@ -2359,6 +2361,30 @@ export function BranchDetailDrawer({
                                 <span className="font-mono">:{svc.hostPort || '?'}</span>
                               </button>
                             ))}
+                            {/* 复制集成员容器日志（2026-07-25，debt #4）：被复制的分支囊括所有容器的日志——
+                                项目级/容器级同源（都是 per-profile members），成员 chip 靛蓝区分 */}
+                            {Object.entries((branch?.replicaSets as Record<string, { enabled?: boolean; members?: Array<{ id: string; status?: string; hostPort?: number }> }> | undefined) ?? {})
+                              .flatMap(([pid, rs]) => (rs?.enabled ? (rs.members ?? []) : []).map((m) => ({ pid, m })))
+                              .map(({ pid, m }) => {
+                                const key = `${pid}::${m.id}`;
+                                return (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
+                                      selectedServiceId === key
+                                        ? 'border-indigo-500 bg-indigo-500/10 text-foreground'
+                                        : 'border-indigo-500/40 bg-indigo-500/[.04] text-muted-foreground hover:text-foreground'
+                                    }`}
+                                    title={`复制集副本容器 ${pid} · ${m.id}`}
+                                    onClick={() => openContainerLogs(key)}
+                                  >
+                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-emerald-500' : m.status === 'error' ? 'bg-destructive' : 'bg-amber-500'}`} />
+                                    {pid} · {m.id}
+                                    <span className="font-mono">:{m.hostPort || '?'}</span>
+                                  </button>
+                                );
+                              })}
                           </div>
                           <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
                         </div>
