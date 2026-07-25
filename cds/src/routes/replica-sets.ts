@@ -75,9 +75,11 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       const infraForProject = (deps.stateService.getState().infraServices || [])
         .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
       const graph = buildServiceGraph(profiles, infraForProject);
+      // 存量分支（模式面世前的副本）按容器级报告：与 startPlan 的默认钉住兜底口径一致
+      const totalMembers = Object.values(branch.replicaSets ?? {}).reduce((s, rs) => s + rs.members.length, 0);
       res.json({
         replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT, graph,
-        replicaMode: branch.replicaMode ?? null,
+        replicaMode: branch.replicaMode ?? (totalMembers > 0 ? 'container' : null),
       });
     } catch (err) {
       respondError(res, err);

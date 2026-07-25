@@ -710,6 +710,9 @@ export class ReplicaSetService {
     if ((branch.replicaPlans || []).some((p) => p.status === 'running')) {
       throw new ReplicaSetError(409, '已有执行中的变更计划，请等它结束或取消后再保存新计划');
     }
+    // 存量分支兜底：模式字段面世前创建的副本都是逐容器操作的产物 → 默认钉容器级，
+    // 防止旧分支仍可两级混管（模式二选一对存量同样生效）
+    if (!branch.replicaMode && this.totalMemberCount(branch) > 0) branch.replicaMode = 'container';
     if (input.mode === 'container' || input.mode === 'project') {
       const total = this.totalMemberCount(branch);
       if (branch.replicaMode && branch.replicaMode !== input.mode && total > 0) {
