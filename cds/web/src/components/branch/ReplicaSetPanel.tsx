@@ -361,11 +361,13 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
         onCall={call}
       />
 
-      {/* 悬浮执行按钮：画布高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态 */}
+      {/* 悬浮执行按钮：画布高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态。
+          bottom-24 让出底部通知带（AppShell 居中 commit pill bottom-3 / 各页 toast bottom-5 right-5），
+          不与「GitHub 有 N 个新 commit」等悬浮件重叠（2026-07-25 用户反馈） */}
       {(draft.length > 0 && !activePlan) || activePlan ? createPortal(
         <button type="button" disabled={busy || !!activePlan}
           onClick={() => { if (!activePlan) savePlan(); }}
-          className={`fixed bottom-6 right-6 z-[120] inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold shadow-2xl transition-colors ${activePlan
+          className={`fixed bottom-24 right-6 z-[120] inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold shadow-2xl transition-colors ${activePlan
             ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400'
             : 'border-primary bg-primary text-primary-foreground hover:opacity-90'}`}
           title={activePlan ? '计划执行中，步骤实况见下方变更清单' : '保存并按序执行变更清单'}>
