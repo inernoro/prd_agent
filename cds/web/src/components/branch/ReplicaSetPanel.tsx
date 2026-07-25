@@ -352,9 +352,18 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
               执行中 {activePlan.steps.filter((s) => s.status === 'done').length}/{activePlan.steps.length}
             </span>
           ) : draft.length > 0 ? (
-            <Button type="button" size="sm" disabled={busy} title="保存并按序执行变更清单" onClick={savePlan}>
-              <Play />保存执行（{draft.length} 步）
-            </Button>
+            <>
+              {/* 放弃变更 ≠ 一键还原：前者只扔掉本页未保存的草稿（什么都不执行），
+                  后者是业务动作（关闭全部复制集回普通模式）。2026-07-25 用户点破，分开摆 */}
+              <Button type="button" size="sm" variant="ghost" disabled={busy}
+                title="放弃本页累积的全部草稿，不执行任何操作（线上现状不变）"
+                onClick={() => { setDraft(() => []); onToast?.('已放弃全部未保存的变更，未执行任何操作'); }}>
+                <X />放弃变更
+              </Button>
+              <Button type="button" size="sm" disabled={busy} title="保存并按序执行变更清单" onClick={savePlan}>
+                <Play />保存执行（{draft.length} 步）
+              </Button>
+            </>
           ) : null}
         </span>
       </section>
@@ -953,14 +962,14 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                       style={{ borderColor: `${color}90`, color }}
                       onMouseEnter={(e) => { e.currentTarget.style.background = color; }}
                       onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
-                      title="加一个当前版本副本（进变更清单）"
+                      title="加一个副本：再起一个当前版本的实例，与主实例按权重分流（进变更清单）"
                       onClick={() => onDraft({ kind: 'add-replica', profileId: pid, label: `${pid} · 新增当前版本副本` })}>
                       <Plus className="h-3.5 w-3.5" />
                     </button>
                   ) : null}
                   {canAdd && availOld.length > 0 ? (
                     <button type="button" className={`flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm ${pickFor === pid ? 'border-indigo-500 text-indigo-500' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-indigo-500'}`}
-                      title="加历史版本副本（下方选择版本）" onClick={() => setPickFor(pickFor === pid ? null : pid)}>
+                      title="用旧版本起副本：从历史部署版本里挑一个，与当前版本并排跑（新旧对比 / 灰度回退用；点开在画布下方选版本）" onClick={() => setPickFor(pickFor === pid ? null : pid)}>
                       <Layers className="h-3.5 w-3.5" />
                     </button>
                   ) : null}

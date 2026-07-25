@@ -100,7 +100,12 @@ export class InfraLifecycleWatcher {
       return;
     }
     const name = parsed.Actor?.Attributes?.name || '';
-    if (!name.startsWith('cds-infra-')) return;
+    // 取证范围：基础设施容器（cds-infra-*）+ 复制集成员容器（cds-*-res-N）。
+    // 2026-07-25 用户问「副本为什么会失败」时成员已被还原、死因无从尸检——
+    // 把成员纳入取证后，下次副本死亡会留下 oom/die/exitCode 证据。
+    const isInfra = name.startsWith('cds-infra-');
+    const isReplicaMember = name.startsWith('cds-') && /-res-\d+$/.test(name);
+    if (!isInfra && !isReplicaMember) return;
     const event: InfraLifecycleEvent = {
       ts: parsed.time ? new Date(parsed.time * 1000).toISOString() : new Date().toISOString(),
       containerName: name,
@@ -122,7 +127,7 @@ export class InfraLifecycleWatcher {
         severity: event.event === 'oom' || event.exitCode === '137' ? 'error' : 'warn',
         source: 'infra-lifecycle-watcher',
         action: `infra.lifecycle.${event.event}`,
-        message: `[infra取证] ${name} ${event.event} — ${verdict}`,
+        message: `[${isInfra ? 'infra取证' : '副本取证'}] ${name} ${event.event} — ${verdict}`,
         containerName: name,
         details: event as unknown as Record<string, unknown>,
       });
