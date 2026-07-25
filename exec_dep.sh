@@ -45,8 +45,11 @@ set -eu
 #     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
-#   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层 smoke / protocol canary 使用的 scoped service key；
-#     未设时兼容回退 LLMGW_GATE_KEY。全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke 复用 legacy key。
+#   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层业务 smoke 使用的 scoped service key；
+#     未设时兼容回退 LLMGW_GATE_KEY。
+#   - LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY：四协议 canary 使用的 scoped service key；
+#     sourceSystem 应与 canary 请求的 X-Gateway-Source 一致。未设时兼容回退业务 smoke key。
+#     全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke/canary 复用 legacy key。
 #   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -1458,6 +1461,7 @@ run_llmgw_post_deploy_verification_if_needed() {
   gate_base="${LLMGW_POST_DEPLOY_GATE_BASE:-}"
   gate_key="${LLMGW_POST_DEPLOY_GATE_KEY:-}"
   smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
+  protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
 
   if [ -z "$gate_base" ]; then
@@ -1512,6 +1516,10 @@ run_llmgw_post_deploy_verification_if_needed() {
         echo "ERROR: LLM Gateway post-deploy protocol canary requires immutable --commit/sha tag so --expect-commit can be enforced." >&2
         exit 1
       fi
+      if [ -z "$protocol_canary_key" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY or a compatible smoke key." >&2
+        exit 1
+      fi
       protocol_canary_json="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}"
       protocol_canary_md="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-}"
       protocol_canary_max_runtime_calls="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-${LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}}"
@@ -1535,7 +1543,7 @@ run_llmgw_post_deploy_verification_if_needed() {
       fi
       echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
       # shellcheck disable=SC2086
-      GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py \
+      GW_KEY="$protocol_canary_key" python3 scripts/llmgw-protocol-canary.py \
         --base "$gate_base" \
         --expect-commit "$expect_commit" \
         --execute \
