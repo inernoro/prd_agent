@@ -13,7 +13,6 @@
  *     失败红显 + 可选回滚；执行记录持久可查。分流实测为只读诊断即时执行。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -328,6 +327,36 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
               ? '自上而下调用关系链，容器展开可见内部实例，每容器就地加副本'
               : '三节点：入口 → 项目 → 基础设施；整组副本作为节点长在项目右侧'}
         </span>
+        {/* 右上角执行区（2026-07-25 用户拍板：不再悬浮，杜绝与底部通知带重叠） */}
+        <span className="ml-auto flex items-center gap-2">
+          {totalMembers > 0 && !activePlan ? (
+            <Button type="button" size="sm" variant="outline" disabled={busy}
+              title="一键还原：全部容器回到普通模式（移除全部副本，隔离库转快照保留）——进变更清单，保存后执行"
+              onClick={() => {
+                let n = 0;
+                for (const p of profileIds) {
+                  const rs = replicaSets[p];
+                  if (rs?.enabled && rs.members.length > 0 && !draft.some((d) => d.profileId === p && d.kind === 'dissolve')) {
+                    addDraft({ kind: 'dissolve', profileId: p, label: `${p} · 关闭复制集（一键还原）` });
+                    n += 1;
+                  }
+                }
+                if (n) onToast?.(`一键还原：已加入 ${n} 个容器的关闭复制集草稿，点「保存执行」生效`);
+              }}>
+              <Undo2 />一键还原
+            </Button>
+          ) : null}
+          {activePlan ? (
+            <span className="inline-flex items-center gap-1.5 rounded-md border border-amber-500/50 bg-amber-500/15 px-3 py-1.5 text-xs font-semibold text-amber-600 dark:text-amber-400">
+              <Loader2 className="h-3.5 w-3.5 animate-spin" />
+              执行中 {activePlan.steps.filter((s) => s.status === 'done').length}/{activePlan.steps.length}
+            </span>
+          ) : draft.length > 0 ? (
+            <Button type="button" size="sm" disabled={busy} title="保存并按序执行变更清单" onClick={savePlan}>
+              <Play />保存执行（{draft.length} 步）
+            </Button>
+          ) : null}
+        </span>
       </section>
 
       {viewingLocked ? (
@@ -360,22 +389,6 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
         onSave={savePlan}
         onCall={call}
       />
-
-      {/* 悬浮执行按钮：画布高、清单在下方要滚动——右下角常驻，随时可保存/看到执行态。
-          bottom-24 让出底部通知带（AppShell 居中 commit pill bottom-3 / 各页 toast bottom-5 right-5），
-          不与「GitHub 有 N 个新 commit」等悬浮件重叠（2026-07-25 用户反馈） */}
-      {(draft.length > 0 && !activePlan) || activePlan ? createPortal(
-        <button type="button" disabled={busy || !!activePlan}
-          onClick={() => { if (!activePlan) savePlan(); }}
-          className={`fixed bottom-24 right-6 z-[120] inline-flex items-center gap-2 rounded-full border px-4 py-2.5 text-sm font-semibold shadow-2xl transition-colors ${activePlan
-            ? 'border-amber-500/50 bg-amber-500/15 text-amber-600 dark:text-amber-400'
-            : 'border-primary bg-primary text-primary-foreground hover:opacity-90'}`}
-          title={activePlan ? '计划执行中，步骤实况见下方变更清单' : '保存并按序执行变更清单'}>
-          {activePlan ? <Loader2 className="h-4 w-4 animate-spin" /> : <Play className="h-4 w-4" />}
-          {activePlan ? `执行中 ${activePlan.steps.filter((s) => s.status === 'done').length}/${activePlan.steps.length}` : `保存执行（${draft.length} 步）`}
-        </button>,
-        document.body,
-      ) : null}
 
       {snapshots.length > 0 ? (
         <section className="cds-surface-raised cds-hairline px-5 py-4">
@@ -676,10 +689,10 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
   );
 }
 
-/* ── 容器级画布：调用关系链 + 展开的容器盒（实例收纳在盒内，样式不再互相遮挡）── */
-const BOX_ROW_H = 25;
+/* ── 容器级画布：调用关系链 + 展开的容器盒（Railway 风简洁行；加号挂在盒外右侧）── */
+const BOX_ROW_H = 22;
 function containerBoxHeight(rows: number): number {
-  return 88 + rows * BOX_ROW_H;
+  return 64 + rows * BOX_ROW_H;
 }
 
 function ContainerGraphStage(props: StageSharedProps): JSX.Element {
@@ -711,7 +724,8 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const dbInfra = infra.filter((s) => /mongo|mysql|mariadb|postgres|redis/i.test(s.dockerImage || s.id));
   const geoProbe = dataGeo(w, Math.max(dbInfra.length, 1));
 
-  const gap = 30, layerGap = 66, layerTop = 150;
+  // gap 留出盒外右侧的加号小按钮（Railway 风：加号不进盒内）
+  const gap = 52, layerGap = 66, layerTop = 150;
   const maxRowW = Math.max(0, ...rows.map((l) => l.length * BOX_W + (l.length - 1) * gap));
   const canvasW = Math.max(w, maxRowW + 24, geoProbe.minWidth);
   const geo = dataGeo(canvasW, Math.max(dbInfra.length, 1));
@@ -874,25 +888,25 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
             const danger = rs?.primaryReachable === false || members.some((m) => m.status === 'error');
             const availOld = (candidates[pid] ?? []).filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
             return (
-              <div key={pid} className="absolute overflow-visible rounded-xl border-[1.5px] bg-background text-xs shadow-md"
-                style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : `${color}59` }}>
-                <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
-                  <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white" style={{ background: color }}>{isWebLike(node, pid) ? 'WEB' : 'API'}</span>
-                  <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
-                  {members.length > 0 ? (
-                    <span className="inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-[10px] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
-                      x{1 + members.length}
+              <div key={pid}>
+                <div className="absolute overflow-hidden rounded-xl border-[1.5px] bg-background text-xs shadow-md"
+                  style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : `${color}59` }}>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white" style={{ background: color }}>{isWebLike(node, pid) ? 'WEB' : 'API'}</span>
+                    <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
+                    {members.length > 0 ? (
+                      <span className="inline-flex h-[18px] shrink-0 items-center rounded-full px-1.5 text-[10px] font-bold text-white" style={{ background: color }} title={`1 主 + ${members.length} 副本`}>
+                        x{1 + members.length}
+                      </span>
+                    ) : null}
+                  </div>
+                  <div className={`flex h-[20px] items-center gap-1.5 px-2.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+                    <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />
+                    <span className="min-w-0 flex-1 truncate">
+                      {rs?.primaryReachable === false ? '主实例不可达' : members.some((m) => m.status === 'provisioning') ? '副本创建中…' : members.length > 0 ? '按权重分流' : '单实例'}
                     </span>
-                  ) : null}
-                </div>
-                <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
-                  <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />
-                  <span className="min-w-0 flex-1 truncate">
-                    {rs?.primaryReachable === false ? '主实例不可达' : members.some((m) => m.status === 'provisioning') ? '副本创建中…' : members.length > 0 ? '按权重分流' : '单实例'}
-                  </span>
-                  <span className="shrink-0 font-mono">{services?.[pid]?.hostPort ? `:${services[pid].hostPort}` : node?.containerPort ? `:${node.containerPort}` : ''}</span>
-                </div>
-                <div className="px-2 pb-2">
+                    <span className="shrink-0 font-mono">{services?.[pid]?.hostPort ? `:${services[pid].hostPort}` : node?.containerPort ? `:${node.containerPort}` : ''}</span>
+                  </div>
                   {members.length > 0 ? (
                     <ChipRow key="primary" color="#8b8578" mono="主实例" sub={rs?.primaryReachable === false ? '不可达' : undefined} danger={rs?.primaryReachable === false}
                       weight={weightFor === `${pid}:primary` ? undefined : `${Math.round(((rs?.primaryWeight ?? 100) / tw) * 100)}%`}
@@ -930,38 +944,32 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   {draftAdds.map((d, i) => (
                     <ChipRow key={d.key} color="#9ca3af" mono={`副本(草稿${i + 1})`} sub={d.params?.versionId ? '历史版本 · 待保存' : '当前版本 · 待保存'} ghost />
                   ))}
-                  <div className="mt-1.5 flex items-center gap-1">
-                    {canAdd ? (
-                      <button type="button"
-                        className="flex h-[22px] flex-1 items-center justify-center gap-0.5 rounded border border-dashed px-1 text-[10px] font-semibold transition-colors hover:text-white"
-                        style={{ borderColor: `${color}80`, color }}
-                        onMouseEnter={(e) => { e.currentTarget.style.background = color; }}
-                        onMouseLeave={(e) => { e.currentTarget.style.background = 'transparent'; }}
-                        title="加一个当前版本副本（进变更清单）"
-                        onClick={() => onDraft({ kind: 'add-replica', profileId: pid, label: `${pid} · 新增当前版本副本` })}>
-                        <Plus className="h-3 w-3" />副本
-                      </button>
-                    ) : null}
-                    {canAdd && availOld.length > 0 ? (
-                      <button type="button" className={`rounded border p-0.5 ${pickFor === pid ? 'border-indigo-500 text-indigo-500' : 'border-[hsl(var(--hairline))] bg-background text-muted-foreground hover:text-indigo-500'}`}
-                        title="加历史版本副本（下方选择版本）" onClick={() => setPickFor(pickFor === pid ? null : pid)}>
-                        <Layers className="h-3 w-3" />
-                      </button>
-                    ) : null}
-                    {running.length > 0 ? (
-                      <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-primary"
-                        title="分流实测：真实请求穿过入口统计落点" onClick={() => void runProbe(pid)}>
-                        <RefreshCw className="h-3 w-3" />
-                      </button>
-                    ) : null}
-                    {members.length > 0 ? (
-                      <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive"
-                        title="关闭复制集：移除该容器全部副本（进变更清单）"
-                        onClick={() => onDraft({ kind: 'dissolve', profileId: pid, label: `${pid} · 关闭复制集（移除全部副本）` })}>
-                        <Undo2 className="h-3 w-3" />
-                      </button>
-                    ) : null}
-                  </div>
+                </div>
+                {/* 盒外右侧小按钮（Railway 风，2026-07-25 用户拍板：加号不进盒内） */}
+                <div className="absolute flex flex-col gap-1.5" style={{ left: p.x + BOX_W + 8, top: p.y + 6 }}>
+                  {canAdd ? (
+                    <button type="button"
+                      className="flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm transition-colors hover:text-white"
+                      style={{ borderColor: `${color}90`, color }}
+                      onMouseEnter={(e) => { e.currentTarget.style.background = color; }}
+                      onMouseLeave={(e) => { e.currentTarget.style.background = ''; }}
+                      title="加一个当前版本副本（进变更清单）"
+                      onClick={() => onDraft({ kind: 'add-replica', profileId: pid, label: `${pid} · 新增当前版本副本` })}>
+                      <Plus className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                  {canAdd && availOld.length > 0 ? (
+                    <button type="button" className={`flex h-6 w-6 items-center justify-center rounded-full border bg-background shadow-sm ${pickFor === pid ? 'border-indigo-500 text-indigo-500' : 'border-[hsl(var(--hairline))] text-muted-foreground hover:text-indigo-500'}`}
+                      title="加历史版本副本（下方选择版本）" onClick={() => setPickFor(pickFor === pid ? null : pid)}>
+                      <Layers className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
+                  {running.length > 0 ? (
+                    <button type="button" className="flex h-6 w-6 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground shadow-sm hover:text-primary"
+                      title="分流实测：真实请求穿过入口统计落点" onClick={() => void runProbe(pid)}>
+                      <RefreshCw className="h-3.5 w-3.5" />
+                    </button>
+                  ) : null}
                 </div>
               </div>
             );
@@ -1001,13 +1009,13 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   );
 }
 
-/** 实例小条（容器盒内）：状态点 + 名称 + 权重（可点改）+ 动作 */
+/** 实例行（容器盒内，Railway 风：细分隔线 + 素净行，无边框小盒）：状态点 + 名称 + 权重（可点改）+ 动作 */
 function ChipRow({ color, mono, sub, weight, onWeightClick, weightInput, actions, danger, boot, ghost, dim }: {
   color: string; mono: string; sub?: string; weight?: string; onWeightClick?: () => void; weightInput?: JSX.Element;
   actions?: JSX.Element; danger?: boolean; boot?: boolean; ghost?: boolean; dim?: boolean;
 }): JSX.Element {
   return (
-    <div className={`mt-1 flex h-[21px] items-center gap-1 rounded border px-1.5 text-[10px] ${danger ? 'border-destructive/50 bg-destructive/[.05]' : ghost ? 'border-dashed border-[hsl(var(--muted-foreground))]/50 opacity-70' : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'} ${dim ? 'opacity-50' : ''}`}>
+    <div className={`flex h-[22px] items-center gap-1.5 border-t border-[hsl(var(--hairline))]/70 px-2.5 text-[10px] ${danger ? 'bg-destructive/[.06] text-destructive' : ghost ? 'text-muted-foreground opacity-80' : ''} ${dim ? 'opacity-50' : ''}`}>
       {boot ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : (
         <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : ghost ? '#9ca3af' : color }} />
       )}
