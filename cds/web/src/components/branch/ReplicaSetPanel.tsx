@@ -134,7 +134,8 @@ function dataGeo(w: number, dbCount: number) {
   const dbCW = 168, dbGap = 26;
   const n = Math.max(dbCount, 1);
   const leftFrameW = n * dbCW + (n - 1) * dbGap + 28;
-  const rightFrameW = dbCW + 28;
+  // 右框 = 左框的镜像（2026-07-25 用户拍板：隔离 = 复制整套基础设施元素，不是只复制一个库）
+  const rightFrameW = leftFrameW;
   const frameGap = 44;
   const fx = Math.max(6, (w - leftFrameW - frameGap - rightFrameW) / 2);
   const rightX = fx + leftFrameW + frameGap;
@@ -142,6 +143,8 @@ function dataGeo(w: number, dbCount: number) {
     dbCW, leftFrameW, rightFrameW, fx, rightX,
     isoX: rightX + 14,
     dbX: (i: number): number => fx + 14 + i * (dbCW + dbGap),
+    /** 隔离区内与左框同索引的镜像位 */
+    isoDbX: (i: number): number => rightX + 14 + i * (dbCW + dbGap),
     minWidth: leftFrameW + frameGap + rightFrameW + 24,
   };
 }
@@ -667,12 +670,12 @@ function DataLayerSvg({ geo, fy, fh, iso, draftIsoCount, mainDbX, transferActive
         opacity={iso.state === 'idle' && draftIsoCount === 0 ? 0.45 : 0.9}
         className={iso.state === 'cloning' ? 'animate-[rsants_1.2s_linear_infinite]' : undefined} />
       {previewTransfer ? (
-        // 预期管理：保存前先画出「将来会发生什么」——主库 → 隔离区的黄色预连线
-        <path d={`M ${mainDbX + geo.dbCW} ${dbY + 46} L ${geo.isoX - 6} ${dbY + 46}`} fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeDasharray="4 4" opacity="0.75" markerEnd="url(#rsArrAmber)" />
+        // 预期管理：保存前先画出「将来会发生什么」——主库 → 镜像位副本库的黄色流动预连线
+        <path className="rsflow" d={`M ${mainDbX + geo.dbCW} ${dbY + 46} L ${geo.isoDbX(0) - 8} ${dbY + 46}`} fill="none" stroke="#f59e0b" strokeWidth="1.8" strokeDasharray="4 4" opacity="0.75" markerEnd="url(#rsArrAmber)" />
       ) : null}
       {transferActive ? (
         <g>
-          <path d={`M ${mainDbX + geo.dbCW} ${dbY + 46} L ${geo.isoX} ${dbY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
+          <path className="rsflow" d={`M ${mainDbX + geo.dbCW} ${dbY + 46} L ${geo.isoX} ${dbY + 46}`} fill="none" stroke="#10b981" strokeWidth="2" strokeDasharray="4 4" />
           <g>
             <animateMotion dur="1.4s" repeatCount="indefinite" path={`M ${mainDbX + geo.dbCW} ${dbY + 40} L ${geo.isoX} ${dbY + 40}`} />
             <rect x="-13" y="-9" width="26" height="18" rx="4" fill="hsl(var(--background))" stroke="#10b981" strokeWidth="1.6" />
@@ -691,40 +694,51 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
 }): JSX.Element {
   const locked = iso.state === 'done';
   const previewIso = iso.state === 'idle' && draftIsoCount > 0;
-  const mainDb = dbInfra[mainDbIdx];
+  const infraRow = dbInfra.length ? dbInfra : [{ id: 'db', name: '数据库', dockerImage: '', status: 'running' }];
   return (
     <>
-      {(dbInfra.length ? dbInfra : [{ id: 'db', name: '数据库', dockerImage: '', status: 'running' }]).map((s, i) => {
-        const isMainDb = i === mainDbIdx && !/redis/i.test(s.dockerImage || s.id);
-        const lockThis = isMainDb && (locked || previewIso);
+      {infraRow.map((s, i) => {
+        const isRedis = /redis/i.test(s.dockerImage || s.id);
+        const isMainDb = i === mainDbIdx && !isRedis;
+        // 预期管理：隔离草稿时**整套**原件置灰上锁——用户一眼看到「保存后请求会离开这一排」
+        const lockThis = (isMainDb && locked) || previewIso;
         return (
-          <StageCard key={s.id} x={geo.dbX(i)} y={dbY} w={geo.dbCW} name={s.name || s.id} ico={/redis/i.test(s.dockerImage || s.id) ? 'R' : 'DB'}
-            color={/redis/i.test(s.dockerImage || s.id) ? '#c2372f' : '#10b981'} ok={!lockThis} locked={lockThis}
-            status={isMainDb && previewIso ? '保存后上锁 · 预览' : lockThis ? '已上锁 · 副本请求已转移' : isMainDb && iso.state === 'partial' ? '主库 · 仍有服务在写' : isMainDb ? '主库' : '共享实例'}
+          <StageCard key={s.id} x={geo.dbX(i)} y={dbY} w={geo.dbCW} name={s.name || s.id} ico={isRedis ? 'R' : 'DB'}
+            color={isRedis ? '#c2372f' : '#10b981'} ok={!lockThis} locked={lockThis}
+            status={previewIso ? '保存后上锁 · 预览' : lockThis ? '已上锁 · 副本请求已转移' : isMainDb && iso.state === 'partial' ? '主库 · 仍有服务在写' : isMainDb ? '主库' : '共享实例'}
             foot={`${s.id}-volume`} />
         );
       })}
       {previewIso ? (
-        // 预期管理：隔离区里复制一张与主库同样式的黄色副本库卡——用户看到「保存后这里会多出这个」
-        <StageCard x={geo.isoX} y={dbY} w={geo.dbCW} name={`${mainDb?.name || mainDb?.id || '数据库'} 副本`} ico="DB" color="#f59e0b"
-          draftStyle status={`隔离副本库 · 待保存（${draftIsoCount} 服务切换）`} foot={`${mainDb?.id || 'db'}-isolated`}
-          extra={(
-            <button type="button" className="absolute right-1.5 top-1.5 rounded border border-amber-500/60 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
-              title="撤销复制隔离草稿" onClick={onRemoveIsoDrafts}>
-              <X className="h-3 w-3" />
-            </button>
-          )} />
+        // 预期管理：隔离区镜像复制**整套**基础设施元素（同样式黄色拷贝，一一对位）
+        <>
+          {infraRow.map((s, i) => {
+            const isRedis = /redis/i.test(s.dockerImage || s.id);
+            return (
+              <StageCard key={`iso-${s.id}`} x={geo.isoDbX(i)} y={dbY} w={geo.dbCW} name={s.name || s.id} ico={isRedis ? 'R' : 'DB'}
+                color={isRedis ? '#c2372f' : '#10b981'} draftStyle
+                status={i === mainDbIdx && !isRedis ? `隔离副本库 · 待保存（${draftIsoCount} 服务切换）` : '隔离副本 · 待保存'}
+                foot={`${s.id}-isolated`}
+                extra={(
+                  <button type="button" className="absolute right-1.5 top-1.5 rounded border border-amber-500/60 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
+                    title="撤销复制隔离草稿" onClick={onRemoveIsoDrafts}>
+                    <X className="h-3 w-3" />
+                  </button>
+                )} />
+            );
+          })}
+        </>
       ) : iso.state === 'idle' ? (
         <button type="button"
           className="absolute flex flex-col items-center justify-center gap-0.5 rounded-xl border-2 border-dashed border-emerald-500/50 bg-emerald-500/[.06] text-xs font-semibold text-emerald-600 transition-colors hover:border-emerald-500 hover:bg-emerald-500/15 dark:text-emerald-400"
-          style={{ left: geo.isoX, top: dbY, width: geo.dbCW, height: 92 }}
+          style={{ left: geo.rightX + (geo.rightFrameW - geo.dbCW) / 2, top: dbY, width: geo.dbCW, height: 92 }}
           title={`统一战线（分支级）：把主库整库克隆进专用隔离实例，${isolateTargets.length || '所有有副本的'} 个服务的副本改连隔离库（可回切）。先进变更清单，保存后执行`}
           onClick={onIsolateAll}>
           <Copy className="h-4 w-4" />复制隔离到此
           <span className="text-[10px] font-normal opacity-80">统一战线 · 覆盖 {isolateTargets.length} 个服务</span>
         </button>
       ) : (
-        <StageCard x={geo.isoX} y={dbY} w={geo.dbCW} name="隔离区" ico="DB" color={iso.state === 'partial' ? '#f59e0b' : '#10b981'}
+        <StageCard x={geo.isoDbX(mainDbIdx)} y={dbY} w={geo.dbCW} name="隔离区" ico="DB" color={iso.state === 'partial' ? '#f59e0b' : '#10b981'}
           ok={iso.state === 'done'} boot={iso.state === 'cloning'} danger={iso.state === 'partial'}
           status={iso.state === 'cloning' ? '第1步 复制：拷入数据…'
             : iso.state === 'switching' ? '第2步 切换：副本改连新库…'
@@ -884,7 +898,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               if (!p) return null;
               const hasReplicas = (replicaSets[id]?.members.length ?? 0) > 0;
               return (
-                <path key={`entry-${id}`} d={edgeD(entryX + CW / 2, entryY + 88, p.cx, p.y)} fill="none"
+                <path key={`entry-${id}`} className="rsflow" d={edgeD(entryX + CW / 2, entryY + 88, p.cx, p.y)} fill="none"
                   stroke={hasReplicas ? '#6366f1' : 'hsl(var(--muted-foreground))'} strokeWidth={hasReplicas ? 2 : 1.4}
                   strokeDasharray="5 5" opacity={hasReplicas ? 0.7 : 0.4} markerEnd="url(#rsArr)" />
               );
@@ -899,7 +913,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                 : 'depends_on';
               return (
                 <g key={`svc-${e.from}-${e.to}`}>
-                  <path d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity="0.55" markerEnd="url(#rsArr)">
+                  <path className="rsflow" d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity="0.55" markerEnd="url(#rsArr)">
                     <title>{`${e.from} 调用 ${e.to}\n${e.envKeys.length ? `环境变量引用：${e.envKeys.join('、')}` : ''}${e.dependsOn ? `${e.envKeys.length ? '\n' : ''}depends_on 声明` : ''}`}</title>
                   </path>
                   <rect x={labelX - 4 - label.length * 2.8} y={labelY - 9} width={label.length * 5.6 + 8} height={13} rx={3}
@@ -915,7 +929,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               const a = pos.get(e.from)!;
               const idx = dbInfra.findIndex((s) => s.id === e.to);
               const toIso = !!replicaSets[e.from]?.isolated && /mongo|mysql|mariadb|postgres/i.test(dbInfra[idx]?.dockerImage || e.to);
-              const tx = toIso ? geo.isoX + geo.dbCW / 2 : geo.dbX(idx) + geo.dbCW / 2;
+              const tx = toIso ? geo.isoDbX(mainDbIdx) + geo.dbCW / 2 : geo.dbX(idx) + geo.dbCW / 2;
               return (
                 <path key={`infra-${e.from}-${e.to}`} d={edgeD(a.cx, a.y + a.h, tx, dbY)} fill="none"
                   stroke={toIso ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={toIso ? 1.8 : 1.2}
@@ -929,7 +943,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               const a = pos.get(pid);
               if (!a) return null;
               return (
-                <path key={`iso-preview-${pid}`} d={edgeD(a.cx, a.y + a.h, geo.isoX + geo.dbCW / 2, dbY)} fill="none"
+                <path key={`iso-preview-${pid}`} className="rsflow" d={edgeD(a.cx, a.y + a.h, geo.isoDbX(mainDbIdx) + geo.dbCW / 2, dbY)} fill="none"
                   stroke="#f59e0b" strokeWidth="1.6" strokeDasharray="4 4" opacity="0.55" markerEnd="url(#rsArrAmber)" />
               );
             }) : null}
@@ -1082,7 +1096,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
       <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
-      <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}'}</style>
+      <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
   );
 }
@@ -1125,7 +1139,7 @@ function WeightInput({ value, onChange, onCommit, onCancel }: { value: string; o
 
 /* ── 项目级画布：三节点（入口 → 项目 → 基础设施）。整组副本 = 项目右侧长出的节点 ── */
 const PROJ_W = 208;
-const GROUP_W = 180;
+const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
   const { previewUrl, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
@@ -1149,12 +1163,13 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
 
   const chipH = 26;
   const PROJ_H = 64 + profileIds.length * chipH + 12;
-  const GROUP_H = 118;
+  // 副本节点 = 项目节点的同样式同尺寸拷贝（2026-07-25 用户拍板：拷贝原元素，不再另造点状物）
+  const GROUP_H = PROJ_H;
   const gap = 26;
-  const midNodes: Array<{ kind: 'main' | 'group' | 'ghost' | 'add'; k?: number; actionKey?: string; w: number; h: number }> = [
+  const midNodes: Array<{ kind: 'main' | 'group' | 'ghost' | 'add'; k?: number; gi?: number; actionKey?: string; w: number; h: number }> = [
     { kind: 'main', w: PROJ_W, h: PROJ_H },
     ...Array.from({ length: groupCount }, (_, k) => ({ kind: 'group' as const, k, w: GROUP_W, h: GROUP_H })),
-    ...ghostGroupActions.map((a) => ({ kind: 'ghost' as const, actionKey: a.key, w: GROUP_W, h: GROUP_H })),
+    ...ghostGroupActions.map((a, gi) => ({ kind: 'ghost' as const, gi, actionKey: a.key, w: GROUP_W, h: GROUP_H })),
     ...(canAddGroup ? [{ kind: 'add' as const, w: GROUP_W, h: GROUP_H }] : []),
   ];
   const geoProbe = dataGeo(w, Math.max(dbInfra.length, 1));
@@ -1267,17 +1282,17 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               const group = n.node.kind === 'group';
               return (
                 <g key={`edges-${i}`}>
-                  <path d={edgeD(entryX + CW / 2, entryY + 88, cx, n.y)} fill="none"
+                  <path className="rsflow" d={edgeD(entryX + CW / 2, entryY + 88, cx, n.y)} fill="none"
                     stroke={ghost ? '#f59e0b' : group ? '#6366f1' : 'hsl(var(--muted-foreground))'} strokeWidth={group || ghost ? 2 : 1.4}
                     strokeDasharray="5 5" opacity={ghost ? 0.45 : group ? 0.7 : 0.45} markerEnd={ghost ? 'url(#rsArrAmber)' : 'url(#rsArrP)'} />
                   {!ghost ? (
-                    <path d={edgeD(cx, n.y + n.node.h, (group && allIsolated ? geo.isoX : mainDbX) + geo.dbCW / 2, dbY)} fill="none"
+                    <path className={group && allIsolated ? 'rsflow' : undefined} d={edgeD(cx, n.y + n.node.h, (group && allIsolated ? geo.isoDbX(mainDbIdx) : mainDbX) + geo.dbCW / 2, dbY)} fill="none"
                       stroke={group && allIsolated ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={group && allIsolated ? 1.8 : 1.2}
                       strokeDasharray="5 5" opacity={group && allIsolated ? 0.65 : 0.22} markerEnd={group && allIsolated ? 'url(#rsArrP)' : undefined} />
                   ) : null}
                   {/* 预期管理：隔离草稿时，整组/幽灵节点画黄色预连线到隔离副本库 */}
                   {previewIso && (group || ghost) ? (
-                    <path d={edgeD(cx, n.y + n.node.h, geo.isoX + geo.dbCW / 2, dbY)} fill="none"
+                    <path className="rsflow" d={edgeD(cx, n.y + n.node.h, geo.isoDbX(mainDbIdx) + geo.dbCW / 2, dbY)} fill="none"
                       stroke="#f59e0b" strokeWidth="1.6" strokeDasharray="4 4" opacity="0.55" markerEnd="url(#rsArrAmber)" />
                   ) : null}
                 </g>
@@ -1320,67 +1335,74 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               const st = groupStatus(k);
               const danger = st.bad > 0;
               return (
-                <div key={`group-${k}`} className={`absolute rounded-xl border-[1.5px] border-dashed bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : 'border-indigo-500/55'}`}
+                <div key={`group-${k}`} className={`absolute rounded-xl border-[1.5px] bg-background text-xs shadow-md ${danger ? 'border-destructive/60' : 'border-indigo-500/45'}`}
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[12px] font-bold">
-                    <span className="inline-flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-md bg-indigo-500 text-[10px] font-extrabold text-white">R{k + 1}</span>
-                    <span className="min-w-0 flex-1 truncate">整组副本 {k + 1}</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-indigo-500 text-[10px] font-extrabold text-white">PRJ</span>
+                    <span className="min-w-0 flex-1 truncate">项目-复制集-{k + 1}</span>
                     <button type="button" className="rounded border border-[hsl(var(--hairline))] bg-background p-0.5 text-muted-foreground hover:text-destructive"
                       title="下线这一组（每个容器各下线对应副本，进变更清单）" onClick={() => removeGroup(k)}>
                       <Trash2 className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className={`flex items-center gap-1.5 px-2.5 pt-1 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
+                  <div className={`flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] ${danger ? 'font-semibold text-destructive' : 'text-muted-foreground'}`}>
                     {st.boot > 0 ? <Loader2 className="h-2.5 w-2.5 shrink-0 animate-spin text-amber-500" /> : <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: danger ? '#ef4444' : '#10b981' }} />}
-                    <span className="truncate">{st.boot > 0 ? '创建中…' : danger ? `${st.bad} 个容器副本异常` : st.missing > 0 ? `覆盖 ${profileIds.length - st.missing}/${profileIds.length} 容器` : '全容器就绪'}</span>
+                    <span className="min-w-0 flex-1 truncate">{st.boot > 0 ? '创建中…' : danger ? `${st.bad} 个容器副本异常` : st.missing > 0 ? `覆盖 ${profileIds.length - st.missing}/${profileIds.length} 容器` : '复制集成员 · 已负载'}</span>
                     {weightFor === k ? (
                       <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitGroupWeight(k)} onCancel={() => setWeightFor(null)} />
                     ) : st.ok > 0 ? (
-                      <button type="button" className="ml-auto shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 hover:bg-indigo-500/10"
+                      <button type="button" className="shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 hover:bg-indigo-500/10"
                         title="点击调整这一组的权重（整组统一，进变更清单）"
                         onClick={() => { setWeightFor(k); setWeightDraft(String(membersOf(profileIds[0])[k]?.weight ?? 0)); }}>
                         {st.weightPct}%
                       </button>
                     ) : null}
                   </div>
-                  <div className="flex flex-wrap gap-1 px-2.5 pt-1.5">
+                  {/* 与项目节点同样式的容器 chip 行：一一对应的成员实例 */}
+                  <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => {
                       const m = membersOf(pid)[k];
-                      const c = !m ? '#9ca3af' : m.status === 'running' && m.reachable !== false ? '#10b981' : m.status === 'provisioning' ? '#f59e0b' : '#ef4444';
-                      return <span key={pid} className="h-2 w-2 rounded-full" style={{ background: c, opacity: m ? 1 : 0.4 }} title={`${pid}：${m ? (m.status === 'running' ? (m.reachable === false ? '不可达' : '运行中') : m.status) : '缺此组副本'}`} />;
+                      const c = !m ? '#9ca3af' : m.status === 'running' && m.reachable !== false ? profileColor(pid) : m.status === 'provisioning' ? '#f59e0b' : '#ef4444';
+                      return (
+                        <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[10px]"
+                          title={`${pid}：${m ? (m.status === 'running' ? (m.reachable === false ? '不可达' : '运行中') : m.status) : '缺此组副本'}`}>
+                          <span className="h-1.5 w-1.5 shrink-0 rounded-full" style={{ background: c, opacity: m ? 1 : 0.4 }} />
+                          <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
+                          {m?.hostPort ? <span className="shrink-0 font-mono text-muted-foreground">:{m.hostPort}</span> : null}
+                        </span>
+                      );
                     })}
-                  </div>
-                  <div className="px-2.5 pb-2 pt-1.5">
-                    <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-indigo-500"
-                      title="这是为你创建的复制集成员容器组：入口已做好负载，按权重分流">复制集成员 · 已负载</span>
                   </div>
                 </div>
               );
             }
             if (n.node.kind === 'ghost') {
-              // 预期管理：幽灵整组节点 = 与真节点同结构的黄色拷贝——保存后长成什么样，现在就画什么样
+              // 预期管理：幽灵节点 = 项目节点的同样式黄色拷贝——保存后长成什么样，现在就画什么样
+              const num = groupCount + (n.node.gi ?? 0) + 1;
               return (
                 <div key={`ghost-${n.node.actionKey}`} className="absolute rounded-xl border-[1.5px] border-dashed border-amber-500/60 bg-amber-500/[.04] text-xs shadow-md"
                   style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}>
-                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[12px] font-bold text-amber-600 dark:text-amber-400">
-                    <span className="inline-flex h-[20px] w-[20px] shrink-0 items-center justify-center rounded-md bg-amber-500 text-[10px] font-extrabold text-white">R+</span>
-                    <span className="min-w-0 flex-1 truncate">整组副本 · 草稿</span>
+                  <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold text-amber-600 dark:text-amber-400">
+                    <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md bg-amber-500 text-[10px] font-extrabold text-white">PRJ</span>
+                    <span className="min-w-0 flex-1 truncate">项目-复制集-{num}</span>
                     <button type="button" className="rounded border border-amber-500/50 bg-background p-0.5 text-amber-600 hover:text-destructive dark:text-amber-400"
                       title="撤销这条整组副本草稿" onClick={() => onRemoveAction(n.node.actionKey!)}>
                       <X className="h-3 w-3" />
                     </button>
                   </div>
-                  <div className="flex items-center gap-1.5 px-2.5 pt-1 text-[10px] text-amber-600/90 dark:text-amber-400/90">
+                  <div className="flex items-center gap-1.5 px-2.5 pt-0.5 text-[10px] text-amber-600/90 dark:text-amber-400/90">
                     <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500" />
                     <span className="truncate">待保存 · 保存后每容器各创建 1 个副本</span>
                   </div>
-                  <div className="flex flex-wrap gap-1 px-2.5 pt-1.5">
+                  <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => (
-                      <span key={pid} className="h-2 w-2 rounded-full border border-amber-500/70 bg-amber-500/30" title={`${pid}：保存后创建`} />
+                      <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-amber-500/40 bg-amber-500/[.06] px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
+                        title={`${pid}：保存后创建副本实例`}>
+                        <span className="h-1.5 w-1.5 shrink-0 rounded-full bg-amber-500/80" />
+                        <span className="min-w-0 flex-1 truncate font-mono">{pid}</span>
+                        <span className="shrink-0 font-mono opacity-70">待建</span>
+                      </span>
                     ))}
-                  </div>
-                  <div className="px-2.5 pb-2 pt-1.5">
-                    <span className="inline-flex rounded border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[9px] font-semibold text-amber-600 dark:text-amber-400">复制集成员 · 待保存</span>
                   </div>
                 </div>
               );
@@ -1406,7 +1428,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
       <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
       </div>
-      <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}'}</style>
+      <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
   );
 }

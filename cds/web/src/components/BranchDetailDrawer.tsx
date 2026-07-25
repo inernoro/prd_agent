@@ -341,9 +341,7 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
-// 2026-07-24 用户拍板：复制集不再单独占顶级页签，作为「部署」的子页签（发布 / 复制集）
-type DeploySubTab = 'release' | 'replicaset';
+type DrawerTab = 'overview' | 'run' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -370,6 +368,8 @@ const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading
 
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
   { key: 'overview', label: '详情' },
+  // 2026-07-25 用户拍板：复制集升顶级页签改名「运行」并默认；部署（不可变部署版本 + 部署事实账本）同级
+  { key: 'run', label: '运行' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
@@ -841,9 +841,7 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
-  // 部署子页签（2026-07-25 用户拍板重排）：复制集（默认）/ 部署（不可变部署版本 + 部署事实账本）
-  const [deploySubTab, setDeploySubTab] = useState<DeploySubTab>('replicaset');
+  const [activeTab, setActiveTab] = useState<DrawerTab>('run');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
@@ -1099,7 +1097,7 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'deployments');
+    setActiveTab(initialResourceId ? 'services' : 'run');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -1895,6 +1893,15 @@ export function BranchDetailDrawer({
               <>
                 <span className="text-muted-foreground/60">·</span>
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
+                {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {branch.commitSha ? <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                {(() => {
+                  const svcList = Object.values(branch.services || {});
+                  if (!svcList.length) return null;
+                  const up = svcList.filter((x) => (x as { status?: string }).status === 'running').length;
+                  return <span className="shrink-0 text-[11px] text-muted-foreground">服务 {up}/{svcList.length}</span>;
+                })()}
               </>
             ) : null}
           </div>
@@ -2067,38 +2074,11 @@ export function BranchDetailDrawer({
                   const recoveredRuntimeWithoutDeployLog =
                     branch.status === 'running' && !branch.lastDeployAt && Boolean(branch.lastReadyAt || branch.lastAccessedAt);
                   const displayedDeployCount = Math.max(branch.deployCount || 0, recoveredRuntimeWithoutDeployLog ? 1 : 0);
+                  // 2026-07-25 用户拍板：状态条并入抽屉标题行，origin/推送/部署次数等次要信息丢弃，
+                  // 不再单独占一格；本处只保留「上次停止」这类必须让用户看到的告警。
+                  void origin; void recoveredRuntimeWithoutDeployLog; void displayedDeployCount;
                   return (
-                    <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        {/* 状态 / commit / 服务数上移到本卡(原「运行中」卡已删,信息不丢) */}
-                        <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                        {branch.commitSha ? (
-                          <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span>
-                        ) : null}
-                        <span className="text-xs text-muted-foreground">
-                          服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}
-                        </span>
-                        <span className={`rounded border px-2 py-0.5 text-xs font-medium ${origin.className}`}>
-                          {origin.label}
-                        </span>
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
-                      </div>
-                      {branch.subject ? (
-                        <div className="mt-1 min-w-0 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
-                          {branch.subject}
-                        </div>
-                      ) : null}
-                      <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>
-                          最近推送：{formatDeployTimestamp(branch.lastPushAt)}
-                        </span>
-                        <span>
-                          最近部署：{formatDeployTimestamp(
-                            branch.lastDeployAt,
-                          )}
-                        </span>
-                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''} · 停止次数：{branch.stopCount || 0}</span>
-                      </div>
+                    <div>
                       {/*
                         2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
                         没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
@@ -2230,18 +2210,7 @@ export function BranchDetailDrawer({
               </nav>
 
               <div className="p-5">
-                {activeTab === 'deployments' ? (
-                  // 部署子页签（2026-07-24 用户拍板）：复制集并入部署，不再单独占顶级页签
-                  <div className="mb-4 inline-flex overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
-                    {([['replicaset', '复制集'], ['release', '部署']] as Array<[DeploySubTab, string]>).map(([key, label]) => (
-                      <button key={key} type="button" onClick={() => setDeploySubTab(key)}
-                        className={`px-3 py-1.5 text-xs ${deploySubTab === key ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}>
-                        {label}
-                      </button>
-                    ))}
-                  </div>
-                ) : null}
-                {activeTab === 'deployments' && deploySubTab === 'replicaset' ? (
+                {activeTab === 'run' ? (
                   <ReplicaSetPanel
                     branchId={branch.id}
                     previewUrl={branch.previewUrl || previewUrl}
@@ -2250,7 +2219,7 @@ export function BranchDetailDrawer({
                     onToast={onToast}
                   />
                 ) : null}
-                {activeTab === 'deployments' && deploySubTab === 'release' ? (
+                {activeTab === 'deployments' ? (
                   <div className="space-y-4">
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
                     <DeploymentVersionLedger
