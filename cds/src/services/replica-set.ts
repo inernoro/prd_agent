@@ -162,8 +162,19 @@ export class ReplicaSetService {
     }
     delete branch.replicaSets![profileId];
     if (Object.keys(branch.replicaSets!).length === 0) delete branch.replicaSets;
+    this.clearModeIfEmpty(branch);
     this.opts.state.save();
     this.opts.logger?.info?.(`[replica-set] 解散 ${branchId}/${profileId}（退回普通模式）`);
+  }
+
+  /** 全分支成员总数（模式二选一的判据） */
+  private totalMemberCount(branch: BranchEntry): number {
+    return Object.values(branch.replicaSets ?? {}).reduce((s, rs) => s + rs.members.length, 0);
+  }
+
+  /** 副本清零 → 自动解除模式钉住，允许下次换另一种管理模式 */
+  private clearModeIfEmpty(branch: BranchEntry): void {
+    if (branch.replicaMode && this.totalMemberCount(branch) === 0) delete branch.replicaMode;
   }
 
   /**
@@ -281,6 +292,7 @@ export class ReplicaSetService {
     // 会让 UI/快照删除守卫误判仍在活跃隔离）。快照本身保留不动。
     if (rs.members.length === 0 && rs.isolated) delete rs.isolated;
     rs.updatedAt = this.now();
+    this.clearModeIfEmpty(branch);
     this.opts.state.save();
   }
 
@@ -691,10 +703,20 @@ export class ReplicaSetService {
   startPlan(branchId: string, input: {
     onFailure: 'stop' | 'rollback';
     steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>;
+    /** 管理模式二选一（2026-07-24 用户拍板）：首次保存计划钉住，副本清零前不许换 */
+    mode?: 'container' | 'project';
   }): ReplicaPlan {
     const branch = this.requireBranch(branchId);
     if ((branch.replicaPlans || []).some((p) => p.status === 'running')) {
       throw new ReplicaSetError(409, '已有执行中的变更计划，请等它结束或取消后再保存新计划');
+    }
+    if (input.mode === 'container' || input.mode === 'project') {
+      const total = this.totalMemberCount(branch);
+      if (branch.replicaMode && branch.replicaMode !== input.mode && total > 0) {
+        throw new ReplicaSetError(409,
+          `复制集管理模式二选一：该分支已按${branch.replicaMode === 'container' ? '容器级' : '项目级'}管理（还有 ${total} 个副本）。关闭全部复制集后才能切换`);
+      }
+      branch.replicaMode = input.mode;
     }
     if (!input.steps.length) throw new ReplicaSetError(400, '计划为空');
     if (input.steps.length > 20) throw new ReplicaSetError(400, '单个计划最多 20 步');

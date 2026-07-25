@@ -152,3 +152,41 @@ describe('顺序控制', () => {
     expect(() => svc.cancelPlan('proj-main', p.id)).toThrow('已结束');
   });
 });
+
+describe('管理模式二选一（replicaMode，2026-07-24 用户拍板）', () => {
+  it('首次带 mode 保存计划即钉住模式', async () => {
+    const p = svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'container',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 50 } }],
+    });
+    expect(state.getBranch('proj-main')!.replicaMode).toBe('container');
+    await waitPlanEnd('proj-main', p.id);
+  });
+
+  it('已钉住且还有副本时，另一模式的计划被 409 拒绝', async () => {
+    const p = svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'container',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 50 } }],
+    });
+    await waitPlanEnd('proj-main', p.id);
+    expect(() => svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 60 } }],
+    })).toThrow('二选一');
+  });
+
+  it('副本清零后模式自动解除，可换另一种', async () => {
+    const p1 = svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'container',
+      steps: [{ kind: 'remove-member', profileId: 'api', params: { memberId: 'res-1' } }],
+    });
+    await waitPlanEnd('proj-main', p1.id);
+    expect(state.getBranch('proj-main')!.replicaMode).toBeUndefined();
+    const p2 = svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'primary', weight: 100 } }],
+    });
+    expect(state.getBranch('proj-main')!.replicaMode).toBe('project');
+    await waitPlanEnd('proj-main', p2.id);
+  });
+});

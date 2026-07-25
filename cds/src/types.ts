@@ -801,6 +801,12 @@ export interface BranchEntry {
   /** 复制集执行计划记录（活跃 + 历史，保留最近 20 条；含失败/回滚日志 = 问题记录） */
   replicaPlans?: ReplicaPlan[];
   /**
+   * 复制集管理模式二选一（2026-07-24 用户拍板）：container = 容器级逐容器管理；
+   * project = 项目级整组管理。首次保存计划时钉住；全部副本关闭后自动清除，
+   * 之后才允许换另一种模式。absent = 尚未启用复制集。
+   */
+  replicaMode?: 'container' | 'project';
+  /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *
    * 三层判定策略(design.cds.config-tree):

@@ -58,6 +58,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { canQuickStartBranch } from '@/lib/branch-quick-actions';
+import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
@@ -5495,20 +5496,38 @@ const BranchCard = memo(function BranchCard({
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
-        {/* 复制集标识（design.cds.replica-set）：分支卡一眼可见"这条分支有多版本并排"的特殊性 */}
+        {/* 复制集标识（2026-07-24 用户拍板改版）：不再合计成一个「复制集 xN」（会误读），
+            改为每个容器一枚专属色 chip + xN（1 主 + N 副本），颜色与复制集画布一致 */}
         {(() => {
           const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: unknown[] }> }).replicaSets;
-          const replicaCount = Object.values(replicaSets ?? {})
-            .reduce((sum, rs) => sum + (rs?.enabled && (rs.members?.length ?? 0) > 0 ? (rs.members?.length ?? 0) : 0), 0);
-          if (replicaCount === 0) return null;
+          const entries = Object.entries(replicaSets ?? {})
+            .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
+            .sort(([a], [b]) => a.localeCompare(b));
+          if (entries.length === 0) return null;
+          const projectId = (branch as { projectId?: string }).projectId;
+          const shown = entries.slice(0, 4);
           return (
-            <span
-              className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500 shadow-[0_0_8px_rgba(99,102,241,0.35)]"
-              title={`复制集模式：${replicaCount} 个副本/版本与主容器并排运行（配置仅存于本分支，删分支即消失）`}
-            >
-              <Layers className="h-3.5 w-3.5" />
-              复制集 x{replicaCount + 1}
-            </span>
+            <>
+              {shown.map(([pid, rs]) => {
+                const color = profileColor(pid);
+                const n = rs.members?.length ?? 0;
+                return (
+                  <span key={pid}
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
+                    style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
+                    title={`${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`}>
+                    <Layers className="h-3.5 w-3.5" />
+                    {profileShortName(pid, projectId)} x{n + 1}
+                  </span>
+                );
+              })}
+              {entries.length > shown.length ? (
+                <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500"
+                  title={entries.slice(shown.length).map(([pid, rs]) => `${pid} x${(rs.members?.length ?? 0) + 1}`).join('、')}>
+                  +{entries.length - shown.length}
+                </span>
+              ) : null}
+            </>
           );
         })()}
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，

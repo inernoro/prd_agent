@@ -341,7 +341,9 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'replicaset' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
+// 2026-07-24 用户拍板：复制集不再单独占顶级页签，作为「部署」的子页签（发布 / 复制集）
+type DeploySubTab = 'release' | 'replicaset';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -370,7 +372,6 @@ const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = 
   { key: 'overview', label: '详情' },
   { key: 'deployments', label: '部署' },
   { key: 'services', label: '资源' },
-  { key: 'replicaset', label: '复制集' },       // 2026-07-23 design.cds.replica-set 单服务多版本并排
   { key: 'logs', label: '日志' },
   { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
   { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
@@ -841,6 +842,8 @@ export function BranchDetailDrawer({
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
+  // 部署子页签（2026-07-24）：发布（构建/版本台账）/ 复制集（双画布）
+  const [deploySubTab, setDeploySubTab] = useState<DeploySubTab>('release');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
@@ -1619,10 +1622,12 @@ export function BranchDetailDrawer({
         method: 'POST',
         body: {
           onFailure: 'stop',
+          // 芯片快捷加副本是单容器操作 → 容器级模式；分支若已钉在项目级会被后端 409 拦下（二选一）
+          mode: 'container',
           steps: Array.from({ length: count }, () => ({ kind: 'add-replica', profileId })),
         },
       });
-      onToast?.(`已保存执行计划：${profileId} 新增 ${count} 个副本，进度见复制集页签`);
+      onToast?.(`已保存执行计划：${profileId} 新增 ${count} 个副本，进度见「部署 → 复制集」`);
       void load();
     } catch (err) {
       onToast?.(err instanceof ApiError ? err.message : String(err));
@@ -1647,7 +1652,7 @@ export function BranchDetailDrawer({
           );
           if (res.run?.stage === 'done') {
             setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
-            onToast?.(res.run.detail || `隔离副本 ${res.run.dbName} 已就绪，见「复制集」页签数据快照`);
+            onToast?.(res.run.detail || `隔离副本 ${res.run.dbName} 已就绪，见「部署 → 复制集」数据快照`);
             return;
           }
           if (res.run?.stage === 'error') {
@@ -2226,6 +2231,26 @@ export function BranchDetailDrawer({
 
               <div className="p-5">
                 {activeTab === 'deployments' ? (
+                  // 部署子页签（2026-07-24 用户拍板）：复制集并入部署，不再单独占顶级页签
+                  <div className="mb-4 inline-flex overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+                    {([['release', '发布'], ['replicaset', '复制集']] as Array<[DeploySubTab, string]>).map(([key, label]) => (
+                      <button key={key} type="button" onClick={() => setDeploySubTab(key)}
+                        className={`px-3 py-1.5 text-xs ${deploySubTab === key ? 'bg-primary font-semibold text-primary-foreground' : 'text-muted-foreground hover:bg-[hsl(var(--surface-sunken))]'}`}>
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+                {activeTab === 'deployments' && deploySubTab === 'replicaset' ? (
+                  <ReplicaSetPanel
+                    branchId={branch.id}
+                    previewUrl={branch.previewUrl || previewUrl}
+                    services={branch.services || {}}
+                    infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
+                    onToast={onToast}
+                  />
+                ) : null}
+                {activeTab === 'deployments' && deploySubTab === 'release' ? (
                   <div className="space-y-4">
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
                     <DeploymentVersionLedger
@@ -2372,16 +2397,6 @@ export function BranchDetailDrawer({
                       </>
                     )}
                   </section>
-                ) : null}
-
-                {activeTab === 'replicaset' ? (
-                  <ReplicaSetPanel
-                    branchId={branch.id}
-                    previewUrl={branch.previewUrl || previewUrl}
-                    services={branch.services || {}}
-                    infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
-                    onToast={onToast}
-                  />
                 ) : null}
 
                 {activeTab === 'services' ? (

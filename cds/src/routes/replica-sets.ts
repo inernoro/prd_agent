@@ -75,7 +75,10 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       const infraForProject = (deps.stateService.getState().infraServices || [])
         .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
       const graph = buildServiceGraph(profiles, infraForProject);
-      res.json({ replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT, graph });
+      res.json({
+        replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT, graph,
+        replicaMode: branch.replicaMode ?? null,
+      });
     } catch (err) {
       respondError(res, err);
     }
@@ -153,6 +156,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       const plan = deps.replicaSetService.startPlan(req.params.branchId, {
         onFailure: req.body?.onFailure === 'rollback' ? 'rollback' : 'stop',
         steps: Array.isArray(req.body?.steps) ? req.body.steps : [],
+        mode: req.body?.mode === 'container' || req.body?.mode === 'project' ? req.body.mode : undefined,
       });
       res.status(202).json({ plan });
     } catch (err) { respondError(res, err); }
