@@ -44,7 +44,8 @@ export type {
 
 export type CdsConnectTarget =
   | { kind: 'existing'; projectId: string }
-  | { kind: 'new' };
+  | { kind: 'new' }
+  | { kind: 'system' };
 
 export interface AgentPageLocation {
   pathname: string;
@@ -203,16 +204,36 @@ function missionPromptLines(context?: AgentPageContext): string[] {
 export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptOptions): string {
   const connectArgs = target.kind === 'new'
     ? '--new-project'
-    : `--project ${target.projectId}`;
+    : target.kind === 'existing'
+      ? `--project ${target.projectId}`
+      : null;
   const targetLabel = target.kind === 'new'
     ? '首次接入，需要创建一个新项目'
-    : `已有项目 ${target.projectId}`;
+    : target.kind === 'existing'
+      ? `已有项目 ${target.projectId}`
+      : 'CDS 系统任务，当前没有可用项目身份';
   const projectPermissionCheck = target.kind === 'new'
     ? '当前任务需要创建新项目。先读取当前仓库根、规范化 remote、当前分支和候选项目名；如果已有凭据不具备创建权限，再申请一次性新项目授权。'
-    : `认证通过后继续运行 cdscli project show ${target.projectId}；只有该命令也成功，才算已经拥有目标项目权限。`;
+    : target.kind === 'existing'
+      ? `认证通过后继续运行 cdscli project show ${target.projectId}；只有该命令也成功，才算已经拥有目标项目权限。`
+      : '当前是系统级任务且没有真实项目 ID。只读取公开认证状态和脱敏配置；不得用项目列表第一项或占位项目 ID 代替，也不得尝试项目级授权。';
   const projectStorageRule = target.kind === 'new'
     ? '新项目创建成功后，记录服务端返回的 projectId；一次性创建权限会自动吊销并换成该项目的长期项目级凭据。随后必须运行 project show <返回的 projectId> 重新验证仓库身份和权限。'
-    : `批准后把 CDS 主机、项目 ID ${target.projectId} 和项目级凭据保存到当前仓库 .cds/credentials.json；该文件必须保持 Git 忽略。`;
+    : target.kind === 'existing'
+      ? `批准后把 CDS 主机、项目 ID ${target.projectId} 和项目级凭据保存到当前仓库 .cds/credentials.json；该文件必须保持 Git 忽略。`
+      : '系统级写操作必须由已登录的人类系统所有者在 CDS 页面完成或明确批准。项目 Agent Key 不能修改全局 SSO、用户或系统配置。';
+  const authorizationRequest = connectArgs
+    ? `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} ${connectArgs} --agent <当前 Agent 名称>。`
+    : '当前没有真实项目身份，不运行 connect --project，也不生成占位项目命令。需要系统级写权限时，引导用户先在 CDS 页面完成管理员登录。';
+  const authorizationFollowUp = connectArgs
+    ? '命令会等待 CDS 页面批准。只告诉用户去 CDS 右下角处理这一条申请，然后继续等待，不使用复制密钥的旧流程。'
+    : '系统任务没有项目授权申请可轮询。用户完成管理员登录后，重新读取认证状态；仍无权限时停止，不把项目授权升级成系统权限。';
+  const operationLock = target.kind === 'system'
+    ? '在执行前锁定 CDS 主机、认证提供方和当前人类会话范围，并明确记录 projectId、branchId、commitSha 对本任务不适用。不得为补齐字段选择项目列表第一项。'
+    : '在执行前建立 host、projectId、branchId、commitSha 四项操作锁。缺少的字段先从 CDS 和当前仓库只读获取，不以项目列表第一项代替。';
+  const preferredOperations = target.kind === 'system'
+    ? '优先使用 cdscli health、auth inspect、auth check 和能力目录中已登记的系统只读接口；系统写操作只通过受保护页面与人类审批完成，不手写旁路请求。'
+    : '优先使用 cdscli health、project show、branch status、deployment-run、diagnose、help-me-check、branch logs、smoke 和 preview-url 等已经存在的能力，不手写旁路请求替代 CDS 技能。';
   const missionLines = missionPromptLines(context);
 
   return [
@@ -242,8 +263,8 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     '如果认证或目标项目检查失败，先判断是无凭据、凭据已失效，还是当前凭据只属于另一个项目，不要把三种情况混为一谈。',
     '',
     '三、仅在缺少权限时申请授权',
-    `仅在第二步未通过时运行 cli/cdscli.py connect --host ${cdsOrigin} ${connectArgs} --agent <当前 Agent 名称>。`,
-    '命令会等待 CDS 页面批准。只告诉用户去 CDS 右下角处理这一条申请，然后继续等待，不使用复制密钥的旧流程。',
+    authorizationRequest,
+    authorizationFollowUp,
     projectStorageRule,
     '',
     '四、认证范围与提权规则',
@@ -254,10 +275,10 @@ export function buildCdsAgentPrompt({ cdsOrigin, target, context }: BuildPromptO
     '当前 CDS 只支持全局通行证绑定单个项目或所有项目，不支持多个指定项目的组合；遇到该需求要明确说明边界，并分别申请项目级权限。',
     '',
     '五、锁定操作上下文并持续反馈',
-    '在执行前建立 host、projectId、branchId、commitSha 四项操作锁。缺少的字段先从 CDS 和当前仓库只读获取，不以项目列表第一项代替。',
+    operationLock,
     '每个返回项目或分支数据的命令都要核对 projectId；发生不匹配立即停止。使用全局凭据也不能省略项目过滤。',
     '按照上面的建议执行顺序工作。先读取状态再做变更；部署、更新、发布和回滚等长任务必须持续展示当前阶段、进度和下一步。',
-    '优先使用 cdscli health、project show、branch status、deployment-run、diagnose、help-me-check、branch logs、smoke 和 preview-url 等已经存在的能力，不手写旁路请求替代 CDS 技能。',
+    preferredOperations,
     '读取环境变量只使用 env get --metadata-only。日志和诊断结果必须先脱敏再总结，不把原始日志整段复制到对话。',
     '代码检查默认只读；用户只说“检查”不等于授权修改。删除、清空、恢复、回滚、发布、迁移、集群和跨项目写操作必须展示目标、影响、回滚点和预检结果后等待明确批准。',
     '',

@@ -88,6 +88,22 @@ describe('CDS Agent 接入口令', () => {
     expect(prompt).not.toContain('CDS_PASSWORD=');
   });
 
+  it('未登录且没有项目时，系统任务不生成占位项目命令', () => {
+    const context = resolveAgentPageContext({ pathname: '/login' });
+    const prompt = buildCdsAgentPrompt({
+      cdsOrigin: 'https://cds.example',
+      target: { kind: 'system' },
+      context,
+    });
+
+    expect(prompt).toContain('CDS 系统任务，当前没有可用项目身份');
+    expect(prompt).toContain('不运行 connect --project');
+    expect(prompt).toContain('项目 Agent Key 不能修改全局 SSO');
+    expect(prompt).not.toContain('<project-id>');
+    expect(prompt).not.toContain('project show');
+    expect(prompt).not.toContain('connect --host https://cds.example --project');
+  });
+
   it('为常用页面解析稳定的 Agent 任务上下文', () => {
     expect(resolveAgentPageContext({ pathname: '/project-list' }).id).toBe('projects');
     expect(resolveAgentPageContext({ pathname: '/branches/project-a' }).id).toBe('branches');

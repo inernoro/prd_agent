@@ -89,8 +89,10 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
   const target: CdsConnectTarget = mapSelection.kind === 'new'
     ? { kind: 'new' }
-    : { kind: 'existing', projectId: effectiveProjectId || '<project-id>' };
-  const targetKind = mapSelection.kind === 'new' ? 'new' : 'existing';
+    : effectiveProjectId
+      ? { kind: 'existing', projectId: effectiveProjectId }
+      : { kind: 'system' };
+  const targetKind = target.kind;
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
