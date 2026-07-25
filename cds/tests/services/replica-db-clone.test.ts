@@ -160,3 +160,31 @@ describe('resolveReplicaDbTarget', () => {
     expect(target!.infra.id).toBe('pg-b');
   });
 });
+
+describe('envOverrideFromSnapshot 统一战线同库复用（2026-07-25）', () => {
+  it('专用实例快照：库名键 + 连接串键都覆写到既有实例', async () => {
+    const { envOverrideFromSnapshot } = await import('../../src/services/replica-db-clone.js');
+    const target = {
+      engine: 'mongo', sourceDb: 'prdagent', envKeys: ['MongoDB__DatabaseName'],
+      connEnvKeys: ['MongoDB__ConnectionString'],
+    } as never;
+    const snap = {
+      id: 'rsdb_guard-1', profileId: 'api', memberId: 'guard-1', engine: 'mongo',
+      sourceDb: 'prdagent', dbName: 'prdagent_rs_guard_1',
+      dedicatedContainer: 'cds-rsdb-prdagent_rs_guard_1', dedicatedHostPort: 12345,
+      clonedAt: new Date().toISOString(),
+    } as never;
+    const env = envOverrideFromSnapshot(target, snap);
+    expect(env.MongoDB__DatabaseName).toBe('prdagent_rs_guard_1');
+    expect(env.MongoDB__ConnectionString).toBe('mongodb://${CDS_HOST}:12345');
+  });
+
+  it('共享实例快照（mysql/pg 通道）：只覆写库名键，不动连接串', async () => {
+    const { envOverrideFromSnapshot } = await import('../../src/services/replica-db-clone.js');
+    const target = { engine: 'mysql', sourceDb: 'app', envKeys: ['MYSQL_DATABASE'], connEnvKeys: ['DATABASE_URL'] } as never;
+    const snap = { id: 'rsdb_guard-2', profileId: 'api', memberId: 'guard-2', engine: 'mysql', sourceDb: 'app', dbName: 'app_rs_guard_2', clonedAt: new Date().toISOString() } as never;
+    const env = envOverrideFromSnapshot(target, snap);
+    expect(env.MYSQL_DATABASE).toBe('app_rs_guard_2');
+    expect(env.DATABASE_URL).toBeUndefined();
+  });
+});

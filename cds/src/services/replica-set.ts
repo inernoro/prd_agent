@@ -28,7 +28,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { DeploymentVersionService } from './deployment-version.js';
-import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget } from './replica-db-clone.js';
+import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromSnapshot } from './replica-db-clone.js';
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
@@ -288,9 +288,9 @@ export class ReplicaSetService {
     if (!member) throw new ReplicaSetError(404, `成员不存在: ${memberId}`);
     await this.removeMemberContainer(member);
     rs.members = rs.members.filter((m) => m.id !== memberId);
-    // 终验 R9-P3：末位成员下线后不许留悬挂的隔离标志（members=0 但 isolated=true
-    // 会让 UI/快照删除守卫误判仍在活跃隔离）。快照本身保留不动。
-    if (rs.members.length === 0 && rs.isolated) delete rs.isolated;
+    // 2026-07-25 语义更新（替代 R9-P3 的自动清挂）：零副本隔离已是合法状态
+    //（隔离先行、副本后加会自动连隔离库），末位成员下线**保留**隔离标志——
+    // 解除隔离走显式回切（revert-db）或解散（dissolve）。
     rs.updatedAt = this.now();
     this.clearModeIfEmpty(branch);
     this.opts.state.save();
@@ -375,14 +375,43 @@ export class ReplicaSetService {
    */
   isolateProfile(branchId: string, profileId: string): { accepted: boolean; reason?: string } {
     const branch = this.requireBranch(branchId);
-    const rs = branch.replicaSets?.[profileId];
-    if (!rs?.enabled) return { accepted: false, reason: '该服务未启用复制集' };
+    // 2026-07-25 用户拍板：隔离不再强制「先有副本」——零副本也可隔离（先建好隔离库并
+    // 钉住隔离态，之后加的副本自动连隔离库）。enable 幂等，无 rs 条目时就地建。
+    const rs = this.enable(branchId, profileId);
     if (rs.isolated) return { accepted: false, reason: '已处于隔离状态' };
     const members = rs.members.filter((m) => m.status === 'running');
-    if (members.length === 0) return { accepted: false, reason: '没有运行中的副本可切换' };
     const baseProfile = this.requireProfile(branch, profileId);
     const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
     if (!target) return { accepted: false, reason: `无法定位数据库：${reason}` };
+    // 统一战线同库复用：同一分支里已有别的服务把**同一个源库**隔离过（活跃隔离引用的
+    // 快照），直接复用那份隔离库/专用实例——多服务隔离禁止各克隆一份导致数据分叉。
+    const reusable = (branch.replicaDbSnapshots ?? []).find((snap) =>
+      snap.sourceDb === target.sourceDb && snap.engine === target.engine
+      && Object.values(branch.replicaSets ?? {}).some((x) => x.isolated?.snapshotId === snap.id));
+    if (reusable) {
+      rs.isolated = { dbName: reusable.dbName, snapshotId: reusable.id, isolatedAt: this.now() };
+      rs.updatedAt = this.now();
+      this.opts.state.save();
+      const envOverride = envOverrideFromSnapshot(target, reusable);
+      void (async () => {
+        for (const m of members) {
+          this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第2步 切换：复用统一隔离库，重启副本改连…' });
+          if (m.containerName) {
+            await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
+          }
+          const version = this.opts.versions.get(m.versionId);
+          if (!version) {
+            this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `部署版本已不存在: ${m.versionId}` });
+            continue;
+          }
+          await this.materializeMember(branchId, profileId, m.id, version, baseProfile, {
+            envOverride, dbName: reusable.dbName,
+          });
+        }
+        this.opts.logger?.info?.(`[replica-set] 复制隔离（同库复用）${branchId}/${profileId} → ${reusable.dbName}`);
+      })();
+      return { accepted: true };
+    }
     const used = [
       ...(branch.replicaDbSnapshots ?? []).map((s) => s.memberId),
     ].map((mid) => /^guard-(\d+)$/.exec(mid)?.[1]).filter(Boolean).map(Number);
@@ -558,9 +587,27 @@ export class ReplicaSetService {
       memberProfile.dbScope = 'shared';
       this.patchMember(branchId, profileId, memberId, { dbMode: 'isolated', isolatedDbName: dbOverride.dbName });
     }
+    // 统一战线（2026-07-25）：该服务已处于隔离态时，新加的副本自动连**既有**隔离库，
+    // 不再各克隆一份——先隔离后加副本 与 先加副本后隔离 殊途同归。
+    let joinedIsolated = false;
+    if (!dbOverride) {
+      const liveRs = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId];
+      const snap = liveRs?.isolated
+        ? (this.opts.state.getBranch(branchId)?.replicaDbSnapshots ?? []).find((x) => x.id === liveRs.isolated!.snapshotId)
+        : undefined;
+      if (liveRs?.isolated && snap) {
+        const { target } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
+        if (target) {
+          memberProfile.env = { ...(memberProfile.env || {}), ...envOverrideFromSnapshot(target, snap) };
+          memberProfile.dbScope = 'shared';
+          this.patchMember(branchId, profileId, memberId, { dbMode: 'isolated', isolatedDbName: snap.dbName });
+          joinedIsolated = true;
+        }
+      }
+    }
     const currentMember = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
       .find((m) => m.id === memberId);
-    if (!dbOverride && currentMember?.dbMode === 'isolated') {
+    if (!dbOverride && !joinedIsolated && currentMember?.dbMode === 'isolated') {
       const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
       if (!target) {
         this.patchMember(branchId, profileId, memberId, { status: 'error', statusMessage: `无法隔离数据库：${reason}` });

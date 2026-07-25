@@ -13,6 +13,7 @@
  *   - 失败红显 + 可选回滚 + 执行记录持久可查。分流实测为只读诊断即时执行。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, RotateCcw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
@@ -299,14 +300,15 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   const draftSteps: DraftStepEx[] = draft.flatMap((a) => a.steps.map((s) => ({ ...s, actionKey: a.key })));
 
   // 统一战线动作：隔离 / 回切一次覆盖所有符合条件的服务 —— 一次手势 = 一条草稿
+  // 2026-07-25 用户拍板：隔离不要求先有副本——零副本也可先隔离数据库（隔离态钉住后，
+  // 之后加的副本自动连隔离库），统一战线覆盖当前分支的所有服务
   const isolateTargets = profileIds.filter((p) => {
     const rs = replicaSets[p];
-    const hasMembers = (rs?.enabled && rs.members.length > 0) || draftSteps.some((d) => d.profileId === p && d.kind === 'add-replica');
-    return hasMembers && !rs?.isolated && !draftSteps.some((d) => d.profileId === p && d.kind === 'isolate-db');
+    return !rs?.isolated && !draftSteps.some((d) => d.profileId === p && d.kind === 'isolate-db');
   });
   const revertTargets = profileIds.filter((p) => !!replicaSets[p]?.isolated && !draftSteps.some((d) => d.profileId === p && d.kind === 'revert-db'));
   const isolateAll = (): void => {
-    if (isolateTargets.length === 0) { onToast?.('隔离作用于副本——先加副本，同一计划内先加副本再隔离'); return; }
+    if (isolateTargets.length === 0) { onToast?.('全部服务已隔离或已有隔离草稿'); return; }
     onAction(`复制隔离 · 统一战线（${isolateTargets.length} 服务切专用隔离实例，可回切）`,
       isolateTargets.map((p) => ({ kind: 'isolate-db' as const, profileId: p })));
     onToast?.(`统一战线：复制隔离草稿已加入（覆盖 ${isolateTargets.length} 个服务）`);
@@ -639,6 +641,86 @@ interface StageSharedProps {
   headerRight: JSX.Element;
 }
 
+/** 画布弹窗（分流实测 / 历史版本选择）：portal 到 body，inline 高度约束，内部滚动 */
+function CanvasModal({ title, onClose, children, wide }: { title: string; onClose: () => void; children: React.ReactNode; wide?: boolean }): JSX.Element {
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="flex w-full flex-col rounded-xl border border-[hsl(var(--hairline))] bg-background shadow-2xl"
+        style={{ maxWidth: wide ? 760 : 560, maxHeight: '82vh' }} onClick={(e) => e.stopPropagation()}>
+        <div className="flex shrink-0 items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+          <b className="text-sm">{title}</b>
+          <button type="button" className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground" title="关闭" onClick={onClose}>
+            <X className="h-4 w-4" />
+          </button>
+        </div>
+        <div className="px-4 py-3" style={{ minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain' }}>
+          {children}
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+/** 分流实测共享逻辑（容器级 / 项目级共用）：真实请求穿过入口统计落点，结果进弹窗 */
+function useProbe(branchId: string, previewUrl: string | undefined, onToast?: (m: string) => void) {
+  const [probeFor, setProbeFor] = useState<string | null>(null);
+  const [log, setLog] = useState<string[]>([]);
+  const [probeRes, setProbeRes] = useState<ProbeResult | null>(null);
+  const probing = useRef(false);
+  const runProbe = async (profileId: string): Promise<void> => {
+    if (probing.current) return;
+    if (!previewUrl) { onToast?.('该分支还没有预览入口，无法实测'); return; }
+    probing.current = true;
+    setProbeFor(profileId);
+    setLog([`分流实测 ${profileId} — 串流模式：每个请求等上一个响应返回才发出——`]);
+    setProbeRes(null);
+    try {
+      const res = await apiRequest<ProbeResult>(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`, {
+        method: 'POST', body: { host: new URL(previewUrl).hostname, count: 12 },
+      });
+      for (let i = 0; i < res.hits.length; i += 1) {
+        const hit = res.hits[i];
+        const missed = hit.servedBy === 'untagged' || hit.servedBy === 'error';
+        const line = missed
+          ? `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'error' ? '连接失败' : '未命中复制集路由'}  HTTP ${hit.status}`
+          : `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  HTTP ${hit.status}${hit.status >= 200 && hit.status < 300 ? ' OK' : ' · 业务路由响应，落点已验证'}`;
+        setLog((prev) => [...prev, line]);
+        await new Promise((r) => setTimeout(r, 120));
+      }
+      setProbeRes(res);
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+    probing.current = false;
+  };
+  const close = (): void => { if (!probing.current) { setProbeFor(null); setLog([]); setProbeRes(null); } };
+  return { probeFor, log, probeRes, probing, runProbe, close };
+}
+
+function ProbeModal({ probe }: { probe: ReturnType<typeof useProbe> }): JSX.Element | null {
+  if (!probe.probeFor) return null;
+  return (
+    <CanvasModal wide title={`分流实测 · ${probe.probeFor}`} onClose={probe.close}>
+      <div className="max-h-52 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] text-muted-foreground" style={{ overscrollBehavior: 'contain' }}>
+        {probe.log.map((line, i) => <div key={i}>{line}</div>)}
+        {probe.probing.current ? <div className="mt-1 flex items-center gap-1.5"><Loader2 className="h-3 w-3 animate-spin text-amber-500" />请求进行中…</div> : null}
+      </div>
+      {probe.probeRes ? <div className="mt-3"><ProbeDashboard result={probe.probeRes} /></div> : null}
+      {probe.probeRes ? (
+        <div className="mt-3 flex justify-end">
+          <Button type="button" size="sm" variant="outline" onClick={probe.close}>关闭</Button>
+        </div>
+      ) : null}
+    </CanvasModal>
+  );
+}
+
 function useMeasuredWidth(): [React.RefObject<HTMLDivElement>, number] {
   const hostRef = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(860);
@@ -774,10 +856,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const [weightFor, setWeightFor] = useState<string | null>(null); // `${profileId}:${memberId}`
   const [weightDraft, setWeightDraft] = useState('');
   const [pickFor, setPickFor] = useState<string | null>(null);
-  const [log, setLog] = useState<string[]>([]);
-  const [probeRes, setProbeRes] = useState<ProbeResult | null>(null);
-  const [flying, setFlying] = useState<{ path: string; key: number } | null>(null);
-  const probing = useRef(false);
+  const probe = useProbe(branchId, previewUrl, onToast);
+  // 点选节点 → 相关连线高亮、其余变淡（2026-07-25 用户拍板）
+  const [selected, setSelected] = useState<string | null>(null);
+  const dimIf = (touching: boolean): number => (selected === null ? 1 : touching ? 1 : 0.22);
 
   const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
   const layered = new Set(graph.layers.flat());
@@ -817,7 +899,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
     });
     cursorY += rowMaxH + layerGap;
   });
-  const fy = cursorY - layerGap + 26;
+  const fy = cursorY - layerGap + 64;
   const dbY = fy + 16, fh = 128;
   const height = fy + fh + 44;
   const mainDbIdx = Math.max(dbInfra.findIndex((s) => /mongo|mysql|mariadb|postgres/i.test(s.dockerImage || s.id)), 0);
@@ -831,37 +913,6 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const svcEdges = graph.edges.filter((e) => pos.has(e.from) && pos.has(e.to));
   const infraEdges = graph.edges.filter((e) => pos.has(e.from) && dbInfra.some((s) => s.id === e.to));
   const previewIso = branchIso.state === 'idle' && draftIsoCount > 0;
-
-  const runProbe = async (profileId: string): Promise<void> => {
-    if (probing.current) return;
-    probing.current = true;
-    setLog([`分流实测 ${profileId} — 串流模式：每个请求等上一个响应返回才发出——`]);
-    setProbeRes(null);
-    try {
-      if (!previewUrl) { onToast?.('该分支还没有预览入口，无法实测'); probing.current = false; return; }
-      const res = await apiRequest<ProbeResult>(`/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/probe`, {
-        method: 'POST', body: { host: new URL(previewUrl).hostname, count: 12 },
-      });
-      const target = pos.get(profileId);
-      for (let i = 0; i < res.hits.length; i += 1) {
-        const hit = res.hits[i];
-        const missed = hit.servedBy === 'untagged' || hit.servedBy === 'error';
-        if (!missed && target) {
-          setFlying({ path: edgeD(entryX + CW / 2, entryY + 88, target.cx, target.y), key: i });
-          await new Promise((r) => setTimeout(r, 520));
-          setFlying(null);
-        }
-        const line = missed
-          ? `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'error' ? '连接失败' : '未命中复制集路由'}  HTTP ${hit.status}`
-          : `#${String(hit.seq).padStart(2, '0')} 入口 → ${hit.servedBy === 'primary' ? '主实例' : hit.servedBy}  X-CDS-Replica: ${hit.servedBy}  HTTP ${hit.status}${hit.status >= 200 && hit.status < 300 ? ' OK' : ' · 业务路由响应，落点已验证'}`;
-        setLog((prev) => [...prev, line]);
-      }
-      setProbeRes(res);
-    } catch (err) {
-      onToast?.(err instanceof ApiError ? err.message : String(err));
-    }
-    probing.current = false;
-  };
 
   const commitWeight = (profileId: string, memberId: string): void => {
     const v = Math.max(0, Math.min(100, Math.round(Number(weightDraft))));
@@ -900,7 +951,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               return (
                 <path key={`entry-${id}`} className="rsflow" d={edgeD(entryX + CW / 2, entryY + 88, p.cx, p.y)} fill="none"
                   stroke={hasReplicas ? '#6366f1' : 'hsl(var(--muted-foreground))'} strokeWidth={hasReplicas ? 2 : 1.4}
-                  strokeDasharray="5 5" opacity={hasReplicas ? 0.7 : 0.4} markerEnd="url(#rsArr)" />
+                  strokeDasharray="5 5" opacity={(hasReplicas ? 0.7 : 0.4) * dimIf(selected === id || selected === 'entry')} markerEnd="url(#rsArr)" />
               );
             })}
             {svcEdges.map((e, idx) => {
@@ -913,7 +964,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                 : 'depends_on';
               return (
                 <g key={`svc-${e.from}-${e.to}`}>
-                  <path className="rsflow" d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity="0.55" markerEnd="url(#rsArr)">
+                  <path className="rsflow" d={edgeD(a.cx, a.y + a.h, b.cx, b.y)} fill="none" stroke="#6366f1" strokeWidth="1.6" strokeDasharray="5 5" opacity={0.55 * dimIf(selected === e.from || selected === e.to)} markerEnd="url(#rsArr)">
                     <title>{`${e.from} 调用 ${e.to}\n${e.envKeys.length ? `环境变量引用：${e.envKeys.join('、')}` : ''}${e.dependsOn ? `${e.envKeys.length ? '\n' : ''}depends_on 声明` : ''}`}</title>
                   </path>
                   <rect x={labelX - 4 - label.length * 2.8} y={labelY - 9} width={label.length * 5.6 + 8} height={13} rx={3}
@@ -932,8 +983,8 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
               const tx = toIso ? geo.isoDbX(mainDbIdx) + geo.dbCW / 2 : geo.dbX(idx) + geo.dbCW / 2;
               return (
                 <path key={`infra-${e.from}-${e.to}`} d={edgeD(a.cx, a.y + a.h, tx, dbY)} fill="none"
-                  stroke={toIso ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={toIso ? 1.8 : 1.2}
-                  strokeDasharray="5 5" opacity={toIso ? 0.7 : 0.16} markerEnd={toIso ? 'url(#rsArr)' : undefined}>
+                  stroke={toIso ? '#10b981' : 'hsl(var(--muted-foreground))'} strokeWidth={toIso ? 1.8 : 1.3}
+                  strokeDasharray="5 5" opacity={(toIso ? 0.7 : 0.34) * dimIf(selected === e.from || selected === e.to)} markerEnd={toIso ? 'url(#rsArr)' : undefined}>
                   <title>{`${e.from} → ${e.to}${e.envKeys.length ? `\n环境变量引用：${e.envKeys.join('、')}` : ''}`}</title>
                 </path>
               );
@@ -949,14 +1000,11 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
             }) : null}
             <DataLayerSvg geo={geo} fy={fy} fh={fh} iso={branchIso} draftIsoCount={draftIsoCount} mainDbX={mainDbX}
               transferActive={branchIso.state === 'cloning' || branchIso.state === 'switching'} />
-            {flying ? (
-              <circle key={flying.key} r="4.6" fill="#f59e0b">
-                <animateMotion dur="0.5s" repeatCount="1" fill="freeze" path={flying.path} />
-              </circle>
-            ) : null}
           </svg>
 
-          <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
+          <div onClick={() => setSelected(selected === 'entry' ? null : 'entry')} className="cursor-pointer">
+            <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
+          </div>
 
           {rows.flatMap((ids) => ids).map((pid) => {
             const p = pos.get(pid)!;
@@ -974,8 +1022,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
             const availOld = (candidates[pid] ?? []).filter((row) => !row.isCurrent && !members.some((m) => m.versionId === row.versionId && m.status !== 'error'));
             return (
               <div key={pid}>
-                <div className="absolute overflow-hidden rounded-xl border-[1.5px] bg-background text-xs shadow-md"
-                  style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : `${color}59` }}>
+                <div className="absolute cursor-pointer overflow-hidden rounded-xl border-[1.5px] bg-background text-xs shadow-md"
+                  onClick={(e) => { if ((e.target as HTMLElement).closest('button,a,input')) return; setSelected(selected === pid ? null : pid); }}
+                  title="点击高亮与它相连的线"
+                  style={{ left: p.x, top: p.y, width: BOX_W, height: p.h, borderColor: danger ? 'hsl(var(--destructive) / 0.6)' : selected === pid ? color : `${color}59`, boxShadow: selected === pid ? `0 0 0 2px ${color}55` : undefined }}>
                   <div className="flex items-center gap-2 px-2.5 pt-2 text-[13px] font-bold">
                     <span className="inline-flex h-[22px] w-[22px] shrink-0 items-center justify-center rounded-md text-[9px] font-extrabold text-white" style={{ background: color }}>{isWebLike(node, pid) ? 'WEB' : 'API'}</span>
                     <span className="min-w-0 flex-1 truncate" title={pid}>{node?.name || pid}</span>
@@ -1055,12 +1105,10 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                       <Layers className="h-3.5 w-3.5" />
                     </button>
                   ) : null}
-                  {running.length > 0 ? (
-                    <button type="button" className="flex h-6 w-6 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground shadow-sm hover:text-primary"
-                      title="分流实测：真实请求穿过入口统计落点" onClick={() => void runProbe(pid)}>
-                      <RefreshCw className="h-3.5 w-3.5" />
-                    </button>
-                  ) : null}
+                  <button type="button" className="flex h-6 w-6 items-center justify-center rounded-full border border-[hsl(var(--hairline))] bg-background text-muted-foreground shadow-sm hover:text-primary"
+                    title="分流实测：向真实入口发请求统计落点分布（弹窗显示结果）" onClick={() => void probe.runProbe(pid)}>
+                    <RefreshCw className="h-3.5 w-3.5" />
+                  </button>
                 </div>
               </div>
             );
@@ -1073,26 +1121,27 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
         </div>
       </div>
 
-      {pickFor && pickRows.length > 0 ? (
-        <div className="mx-5 mb-3 grid gap-1.5">
-          <span className="text-[11px] font-semibold text-muted-foreground">{pickFor} · 选择历史版本作为副本：</span>
-          {pickRows.slice(0, 6).map((row) => (
-            <button key={row.versionId} type="button"
-              onClick={() => { setPickFor(null); onAction(`${pickFor} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}`, [{ kind: 'add-replica', profileId: pickFor, params: { versionId: row.versionId } }]); }}
-              className="flex items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 text-left text-xs hover:border-indigo-500/50 hover:bg-indigo-500/[.06]">
-              <span className="font-mono font-semibold">{row.commitSha.slice(0, 7)}</span>
-              <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row.image}</span>
-              <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(row.createdAt).toLocaleString()}</span>
-            </button>
-          ))}
-        </div>
+      {/* 历史版本选择：弹窗（2026-07-25 用户拍板，不再显示在画布下方） */}
+      {pickFor ? (
+        <CanvasModal title={`${pickFor} · 选择历史版本作为副本`} onClose={() => setPickFor(null)}>
+          {pickRows.length === 0 ? (
+            <p className="py-4 text-center text-xs text-muted-foreground">没有可用的历史版本（需要至少一次托管构建产出的可复用镜像）</p>
+          ) : (
+            <div className="grid gap-1.5">
+              {pickRows.slice(0, 12).map((row) => (
+                <button key={row.versionId} type="button"
+                  onClick={() => { setPickFor(null); onAction(`${pickFor} · 新增历史版本副本 ${row.commitSha.slice(0, 7)}`, [{ kind: 'add-replica', profileId: pickFor, params: { versionId: row.versionId } }]); }}
+                  className="flex items-center gap-4 rounded-md border border-[hsl(var(--hairline))] bg-background px-3 py-2 text-left text-xs hover:border-indigo-500/50 hover:bg-indigo-500/[.06]">
+                  <span className="font-mono font-semibold">{row.commitSha.slice(0, 7)}</span>
+                  <span className="min-w-0 flex-1 truncate font-mono text-[11px] text-muted-foreground">{row.image}</span>
+                  <span className="shrink-0 text-[11px] text-muted-foreground">{new Date(row.createdAt).toLocaleString()}</span>
+                </button>
+              ))}
+            </div>
+          )}
+        </CanvasModal>
       ) : null}
-      {log.length > 1 ? (
-        <div className="mx-5 mb-3 max-h-32 overflow-y-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 font-mono text-[11px] text-muted-foreground">
-          {log.map((line, i) => <div key={i}>{line}</div>)}
-        </div>
-      ) : null}
-      {probeRes ? <div className="mx-5 mb-4"><ProbeDashboard result={probeRes} /></div> : null}
+      <ProbeModal probe={probe} />
       <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
@@ -1142,8 +1191,9 @@ const PROJ_W = 208;
 const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
-  const { previewUrl, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
+  const probe = useProbe(branchId, previewUrl, onToast);
   const [weightFor, setWeightFor] = useState<number | null>(null);
   const [weightDraft, setWeightDraft] = useState('');
 
@@ -1426,8 +1476,17 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
       </div>
 
       <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
+        <Button type="button" size="sm" variant="outline"
+          title="分流实测：向真实入口发请求统计落点分布（取第一个有副本的容器作代表，弹窗显示结果）"
+          onClick={() => {
+            const rep = profileIds.find((pid) => (replicaSets[pid]?.enabled && replicaSets[pid].members.length > 0)) || profileIds[0];
+            if (rep) void probe.runProbe(rep);
+          }}>
+          <RefreshCw />分流实测
+        </Button>
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
       </div>
+      <ProbeModal probe={probe} />
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
   );

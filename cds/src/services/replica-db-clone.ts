@@ -430,6 +430,20 @@ function parseMongoNumber(stdout: string): number {
  * 整库克隆大小上限（MB）。mongo 已走专用隔离实例（共享库零写入风险），
  * 上限保护的是宿主 CPU/磁盘与克隆时长；默认 3072，可经 CDS_REPLICA_CLONE_MAX_MB 调整。
  */
+/**
+ * 从已有隔离库快照重建 env 覆写（统一战线同库复用，2026-07-25）：
+ * 多个服务隔离同一个源库时只克隆一次，后来的服务 / 后加的副本直接
+ * 连到既有专用实例（mongo）或既有隔离库（mysql/pg 共享实例通道）。
+ */
+export function envOverrideFromSnapshot(target: ReplicaDbTarget, snapshot: ReplicaDbSnapshot): Record<string, string> {
+  const envOverride: Record<string, string> = {};
+  for (const key of target.envKeys) envOverride[key] = snapshot.dbName;
+  if (snapshot.dedicatedContainer && snapshot.dedicatedHostPort) {
+    for (const key of target.connEnvKeys) envOverride[key] = 'mongodb://${CDS_HOST}:' + snapshot.dedicatedHostPort;
+  }
+  return envOverride;
+}
+
 export function replicaCloneMaxMb(): number {
   const raw = Number(process.env.CDS_REPLICA_CLONE_MAX_MB);
   return Number.isFinite(raw) && raw > 0 ? Math.max(64, raw) : 3072;
