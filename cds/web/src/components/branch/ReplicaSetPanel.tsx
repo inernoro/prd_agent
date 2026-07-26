@@ -177,11 +177,13 @@ function computeBranchIso(replicaSets: Record<string, ProfileReplicaSetView>): B
   };
 }
 
-export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast }: {
+export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries, onToast }: {
   branchId: string;
   previewUrl?: string;
   services?: Record<string, PanelServiceInfo>;
   infra?: PanelInfraInfo[];
+  /** 公开入口（主应用 + 命名子域网关）——入口卡入画布（2026-07-26 用户拍板），挂在入口节点右侧 */
+  entries?: Array<{ name: string; url: string }>;
   onToast?: (message: string) => void;
 }): JSX.Element {
   const [state, setState] = useState<{ status: 'loading' } | { status: 'ok'; data: ReplicaSetsResponse } | { status: 'error'; message: string }>({ status: 'loading' });
@@ -389,7 +391,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, onToast
   );
 
   const stageProps: StageSharedProps = {
-    branchId, previewUrl, services, infra: infra ?? [], replicaSets, candidates, memberLimit,
+    branchId, previewUrl, entries: entries ?? [], services, infra: infra ?? [], replicaSets, candidates, memberLimit,
     draftActions: draft, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso,
     isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts,
     headerLeft: modeToggle, headerRight: execArea,
@@ -616,6 +618,7 @@ function PlanRecord({ plan }: { plan: Plan }): JSX.Element {
 interface StageSharedProps {
   branchId: string;
   previewUrl?: string;
+  entries: Array<{ name: string; url: string }>;
   services?: Record<string, PanelServiceInfo>;
   infra: PanelInfraInfo[];
   replicaSets: Record<string, ProfileReplicaSetView>;
@@ -940,7 +943,7 @@ function containerBoxHeight(rows: number): number {
 }
 
 function ContainerGraphStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
   const [weightFor, setWeightFor] = useState<string | null>(null); // `${profileId}:${memberId}`
   const [weightDraft, setWeightDraft] = useState('');
@@ -1099,6 +1102,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           <div onClick={() => setSelected(selected === 'entry' ? null : 'entry')} className="cursor-pointer">
             <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
           </div>
+          <EntryLinks x={entryX + CW + 12} y={entryY + 4} entries={entries} />
 
           {rows.flatMap((ids) => ids).map((pid) => {
             const p = pos.get(pid)!;
@@ -1291,7 +1295,7 @@ const PROJ_W = 208;
 const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
   const probe = useProbe(branchId, previewUrl, onToast);
   const audit = useIsolationAudit(branchId, onToast);
@@ -1458,6 +1462,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
           </svg>
 
           <StageCard x={entryX} y={entryY} name="入口" ico="GW" color="#6366f1" ok status={entryHost} foot="forwarder · 按权重分流" />
+          <EntryLinks x={entryX + CW + 12} y={entryY + 4} entries={entries} />
 
           {placed.map((n, i) => {
             if (n.node.kind === 'main') {
@@ -1638,6 +1643,25 @@ function ProbeDashboard({ result }: { result: ProbeResult }): JSX.Element {
           {nonOkTagged} 个请求返回非 2xx（业务路由无此路径）——落点以 X-CDS-Replica 响应头为准，分流统计不受影响。
         </span>
       ) : null}
+    </div>
+  );
+}
+
+/** 入口链接列（2026-07-26 入口卡入画布）：挂在画布入口节点右侧的公开入口直达链。
+ * 抽屉头部的「应用已上线」大卡只留总览页签，运行画布由此承载同一组入口。 */
+function EntryLinks({ x, y, entries }: { x: number; y: number; entries: Array<{ name: string; url: string }> }): JSX.Element | null {
+  if (entries.length === 0) return null;
+  return (
+    <div className="absolute flex flex-col gap-1" style={{ left: x, top: y }}>
+      {entries.slice(0, 4).map((e) => (
+        <a key={e.url} href={e.url} target="_blank" rel="noreferrer"
+          onClick={(ev) => ev.stopPropagation()}
+          title={'打开 ' + e.name + '：' + e.url}
+          className="inline-flex h-6 max-w-[220px] items-center gap-1.5 rounded-md border border-emerald-500/40 bg-emerald-500/[.08] px-2 text-[11px] font-medium text-emerald-600 transition-colors hover:bg-emerald-500/20 dark:text-emerald-400">
+          <span className="truncate">{e.name}</span>
+          <ExternalLink className="h-3 w-3 shrink-0" />
+        </a>
+      ))}
     </div>
   );
 }

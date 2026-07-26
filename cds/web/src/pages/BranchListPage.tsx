@@ -6334,10 +6334,11 @@ const BranchCard = memo(function BranchCard({
                   <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
                   <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
                   {estimate ? (
+                    // 窄卡（<640px）只留净耗时，预计值 + 进度条收进 sm: 以上——防 footer 换行拥挤
                     <>
-                      <span className={`font-mono ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
+                      <span className={`hidden font-mono sm:inline ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
                       <span
-                        className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))]"
+                        className="hidden h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))] sm:block"
                         aria-hidden
                       >
                         <span

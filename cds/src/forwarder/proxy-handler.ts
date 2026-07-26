@@ -61,6 +61,14 @@ export interface ProxyHandlerOptions {
   unknownHostFallbackHost?: string;
   /** Unknown host fallback 端口(默认 5500 = master workerPort)。 */
   unknownHostFallbackPort?: number;
+  /**
+   * 复制集被动健康回调（debt #12）：上游连接级失败 / 成功给出响应时通知注册表，
+   * 死副本在数据面就地临时摘除（控制面对账之外的最后防线）。
+   */
+  replicaHealth?: {
+    noteFailure(route: RouteRecord, code: string | undefined): void;
+    noteSuccess(route: RouteRecord): void;
+  } | null;
 }
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
@@ -130,6 +138,7 @@ interface ResolvedProxyOptions {
   unknownHostFallbackPort: number | undefined;
   logger: ProxyHandlerOptions['logger'];
   httpLogStore: HttpLogSink | null;
+  replicaHealth: ProxyHandlerOptions['replicaHealth'];
 }
 
 export class ProxyHandler {
@@ -147,6 +156,7 @@ export class ProxyHandler {
       unknownHostFallbackPort: opts.unknownHostFallbackPort,
       logger: opts.logger,
       httpLogStore: opts.httpLogStore ?? null,
+      replicaHealth: opts.replicaHealth ?? null,
     };
     this.agent = opts.agent ?? new http.Agent({ keepAlive: true, maxSockets: 256 });
   }
@@ -436,6 +446,8 @@ export class ProxyHandler {
         },
         (upstreamRes) => {
           const status = upstreamRes.statusCode ?? 502;
+          // 被动健康：上游给出任何响应（含 4xx/5xx 业务错误）= 端口活着 → 回池
+          if (route.replicaGroup) this.opts.replicaHealth?.noteSuccess(route);
           const contentType = String(upstreamRes.headers['content-type'] || '');
           // 改写后续要透传给客户端的 headers
           const respHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
@@ -550,6 +562,8 @@ export class ProxyHandler {
           ENOTFOUND: 'DNS 无法解析 upstream host',
         };
         const hint = ERR_HINTS[code ?? ''] ?? '上游异常';
+        // 被动健康：连接级死亡信号计入摘除判定（注册表只认 ECONNREFUSED 家族）
+        if (route.replicaGroup) this.opts.replicaHealth?.noteFailure(route, code);
         const acceptsHtml = this.isHtmlNavigationRequest(req);
         this.opts.logger?.warn?.(
           `[forward] upstream error: code=${code ?? 'UNKNOWN'} ${hint} → ${upstreamHost}:${upstreamPort} (host=${host})`,

@@ -30,6 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
 import { resolveRoute } from './forwarder/route-resolver.js';
+import { ReplicaHealthRegistry } from './forwarder/replica-health.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
 import {
@@ -78,8 +79,12 @@ if (activeHttpLogStore) {
   }
 }
 
+// 复制集被动健康注册表（debt #12）：数据面就地摘除死副本，冷却半开回池
+const replicaHealth = new ReplicaHealthRegistry();
+
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
+  replicaHealth,
   masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
   masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
   unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
@@ -245,6 +250,11 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     }));
     return true;
   }
+  if (url === '/__forwarder/replica-health') {
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ejected: replicaHealth.snapshot(), generatedAt: new Date().toISOString() }));
+    return true;
+  }
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'unknown forwarder endpoint' }));
   return true;
@@ -269,7 +279,7 @@ const server = http.createServer((req, res) => {
   if (handleDiagnostic(req, res)) return;
   const host = (req.headers.host ?? '').split(':')[0];
   const sticky = extractReplicaSticky(req);
-  const route = resolveRoute(routes, host, req.url ?? '/', { sticky });
+  const route = resolveRoute(routes, host, req.url ?? '/', { sticky, isEjected: (r) => replicaHealth.isEjected(r) });
   // 复制集会话粘性:选中组内路由后种 cookie,同一浏览器会话不横跳版本。
   // 30 分钟滑动窗口;成员被移除后 cookie 失配 → resolver 自动回落权重选择。
   if (route?.replicaGroup && route.replicaMemberId && sticky !== route.replicaMemberId) {
@@ -286,7 +296,7 @@ const server = http.createServer((req, res) => {
 
 server.on('upgrade', (req, socket, head) => {
   const host = (req.headers.host ?? '').split(':')[0];
-  const route = resolveRoute(routes, host, req.url ?? '/', { sticky: extractReplicaSticky(req) });
+  const route = resolveRoute(routes, host, req.url ?? '/', { sticky: extractReplicaSticky(req), isEjected: (r) => replicaHealth.isEjected(r) });
   void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
 });
 

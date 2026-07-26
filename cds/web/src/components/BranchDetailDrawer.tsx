@@ -2012,7 +2012,9 @@ export function BranchDetailDrawer({
                   状态判定同时看抽屉内快照 branch.status 与父组件经 SSE 实时透传的
                   branchStatus —— 抽屉打开期间 building→running 时 branch 快照不刷,
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
-              {(branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
+              {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
+                  只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
+              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
@@ -2251,6 +2253,17 @@ export function BranchDetailDrawer({
                     previewUrl={branch.previewUrl || previewUrl}
                     services={branch.services || {}}
                     infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
+                    entries={[
+                      // 入口卡入画布（2026-07-26 用户拍板）：抽屉头部入口卡只留总览，
+                      // 运行画布的入口节点承载同一组公开入口（主应用 + 命名子域网关）
+                      ...((previewUrl || branch.previewUrl) ? [{ name: '主应用', url: (previewUrl || branch.previewUrl)! }] : []),
+                      ...[...gatewayUrls]
+                        .sort((a, b) => {
+                          const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
+                          return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                        })
+                        .map((gw) => ({ name: gw.subdomain.toLowerCase() === 'llmgw-web' ? '网关控制台' : gw.subdomain, url: gw.url })),
+                    ]}
                     onToast={onToast}
                   />
                 ) : null}
@@ -2277,13 +2290,8 @@ export function BranchDetailDrawer({
                         <BuildLogsPanel logs={logs} query="" selection={selectedBuildLog} />
                       </section>
                     ) : null}
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
-                      versions={deploymentVersions}
-                      currentVersionId={branch.currentVersionId}
-                      busyVersionId={versionBusyId}
-                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    {/* 2026-07-26 用户拍板：部署子模块（进行中/历史部署卡，含分阶段容器日志）
+                        置顶——放在部署事实账本与版本账本之上 */}
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                         还没有构建记录。点击部署后，构建计划和日志会出现在这里。
@@ -2329,6 +2337,14 @@ export function BranchDetailDrawer({
                         </div>
                       </section>
                     ) : null}
+
+                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
+                    <DeploymentVersionLedger
+                      versions={deploymentVersions}
+                      currentVersionId={branch.currentVersionId}
+                      busyVersionId={versionBusyId}
+                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
+                    />
                   </div>
                 ) : null}
 

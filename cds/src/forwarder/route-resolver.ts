@@ -143,14 +143,20 @@ export function resolveRoute(
 /** 组内选择：粘性 → 加权随机 → 主成员回落。导出供单测直接覆盖分布。 */
 export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
   if (group.length === 1) return group[0];
+  // 被动健康（debt #12）：被摘除成员退出粘性与加权随机；全组皆摘仍回落主成员
+  const ejected = (r: RouteRecord): boolean => ctx?.isEjected?.(r) === true;
   if (ctx?.sticky) {
     const stuck = group.find((r) => r.replicaMemberId === ctx.sticky);
-    if (stuck) return stuck;
+    // 粘性成员被摘除 → 本次放弃粘性落回加权选择（故障转移优先于会话稳定）
+    if (stuck && !ejected(stuck)) return stuck;
   }
-  const weighted = group.filter((r) => (r.weight ?? 0) > 0);
+  const weighted = group.filter((r) => (r.weight ?? 0) > 0 && !ejected(r));
   const total = weighted.reduce((sum, r) => sum + (r.weight ?? 0), 0);
   if (total <= 0) {
-    return group.find((r) => r.replicaMemberId === 'primary') ?? group[0];
+    const primary = group.find((r) => r.replicaMemberId === 'primary');
+    if (primary && !ejected(primary)) return primary;
+    // 主成员也被摘：任何未摘成员都比必然失败强；全灭回主成员做半开试探
+    return group.find((r) => !ejected(r)) ?? primary ?? group[0];
   }
   const rand = ctx?.rand ?? Math.random;
   let cursor = rand() * total;

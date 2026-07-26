@@ -72,6 +72,11 @@ export interface ReplicaResolveContext {
   sticky?: string;
   /** 加权随机源，默认 Math.random；测试注入确定值 */
   rand?: () => number;
+  /**
+   * 被动健康摘除判定（debt #12，2026-07-26）：返回 true 的成员临时退出加权
+   * 随机与粘性命中（冷却到期后注册表自动放行半开试探）。缺省 = 不摘除。
+   */
+  isEjected?: (route: RouteRecord) => boolean;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */

@@ -263,10 +263,68 @@ export async function runIsolationAudit(
       await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb)).catch(() => undefined);
       await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb)).catch(() => undefined);
     }
+  } else if (snapshot.engine === 'mysql' || snapshot.engine === 'postgres') {
+    // mysql / pg 共享实例通道的双向金丝雀（2026-07-26 补齐，debt #27 残留偿还）：
+    // 同一实例内两个库（源库 vs 隔离库）建 canary 表真写真查，测完 DROP 不留残渣
+    const c = target.infra.containerName;
+    const env = target.infra.env || {};
+    const tokIso = `iso${Date.now().toString(36)}`;
+    const tokMain = `main${Date.now().toString(36)}`;
+    const sqlExec = (db: string, sql: string): ReturnType<typeof runDockerExec> => {
+      if (snapshot.engine === 'mysql') {
+        const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
+        return runDockerExec(['exec', '-i', '-e', `MYSQL_PWD=${pw}`, c, 'mysql', '-uroot', '-N', db, '-e', sql], '', 30_000, 16 * 1024);
+      }
+      const user = env.POSTGRES_USER || 'postgres';
+      const pw = env.POSTGRES_PASSWORD || '';
+      return runDockerExec(['exec', '-i', '-e', `PGPASSWORD=${pw}`, c, 'psql', '-U', user, '-d', db, '-t', '-A', '-c', sql], '', 30_000, 16 * 1024);
+    };
+    try {
+      const baselineSql = snapshot.engine === 'mysql'
+        ? `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${snapshot.dbName}'`
+        : `SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')`;
+      const baseline = await sqlExec(snapshot.engine === 'mysql' ? snapshot.dbName : snapshot.dbName, baselineSql);
+      const tblCount = tailNumber(baseline.stdout);
+      checks.push({
+        id: 'D1', group: '数据面', title: '克隆基线：隔离库确有数据',
+        verdict: baseline.code === 0 && tblCount > 0 ? 'pass' : 'fail',
+        evidence: baseline.code === 0 ? `隔离库 ${snapshot.dbName} tables=${tblCount}` : '隔离库不可读',
+      });
+
+      const ddl = 'CREATE TABLE IF NOT EXISTS cds_isolation_canary (t VARCHAR(64))';
+      await sqlExec(snapshot.dbName, ddl);
+      await sqlExec(target.sourceDb, ddl);
+
+      // 正向：隔离库写入 → 主库必须查无
+      const wIso = await sqlExec(snapshot.dbName, `INSERT INTO cds_isolation_canary VALUES ('${tokIso}')`);
+      const rMain = await sqlExec(target.sourceDb, `SELECT COUNT(*) FROM cds_isolation_canary WHERE t='${tokIso}'`);
+      const fwdOk = wIso.code === 0 && rMain.code === 0 && tailNumber(rMain.stdout) === 0;
+      checks.push({
+        id: 'D2', group: '数据面', title: '正向隔离：写入隔离库的数据不出现在主库',
+        verdict: fwdOk ? 'pass' : 'fail',
+        evidence: wIso.code !== 0 ? '隔离库写入失败' : rMain.code !== 0 ? '主库读取失败'
+          : `隔离库写入金丝雀 → 主库命中 ${tailNumber(rMain.stdout)} 条（期望 0）`,
+      });
+
+      // 反向：主库写入 → 隔离库必须查无
+      const wMain = await sqlExec(target.sourceDb, `INSERT INTO cds_isolation_canary VALUES ('${tokMain}')`);
+      const rIso = await sqlExec(snapshot.dbName, `SELECT COUNT(*) FROM cds_isolation_canary WHERE t='${tokMain}'`);
+      const revOk = wMain.code === 0 && rIso.code === 0 && tailNumber(rIso.stdout) === 0;
+      checks.push({
+        id: 'D3', group: '数据面', title: '反向隔离：写入主库的数据不出现在隔离库',
+        verdict: revOk ? 'pass' : 'fail',
+        evidence: wMain.code !== 0 ? '主库写入失败' : rIso.code !== 0 ? '隔离库读取失败'
+          : `主库写入金丝雀 → 隔离库命中 ${tailNumber(rIso.stdout)} 条（期望 0）`,
+      });
+    } finally {
+      // 金丝雀清理：两侧 DROP 整表——库里不留任何审计残渣
+      await sqlExec(snapshot.dbName, 'DROP TABLE IF EXISTS cds_isolation_canary').catch(() => undefined);
+      await sqlExec(target.sourceDb, 'DROP TABLE IF EXISTS cds_isolation_canary').catch(() => undefined);
+    }
   } else {
     checks.push({
       id: 'D1', group: '数据面', title: '双向金丝雀实测',
-      verdict: 'skip', evidence: `${snapshot.engine} 引擎的数据面金丝雀实测暂未实现（当前仅 mongo 专用实例通道）`,
+      verdict: 'skip', evidence: `${snapshot.engine} 引擎无数据面实测通道`,
     });
   }
 
