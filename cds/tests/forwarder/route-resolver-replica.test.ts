@@ -107,6 +107,10 @@ describe('RouteResolver — 复制集组内选择', () => {
     expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { sticky: multi })?.replicaMemberId).toBe('rscccccc');
     // 列表里没有本组成员 → 回落加权（不误钉）：rand=0.5 落在 primary 权重区间（90/100）
     expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: ['rszzzzzz'], rand: () => 0.5 })?.replicaMemberId).toBe('primary');
+    // profile 作用域条目（Codex P1 二连）：`prd-api:rsbbbbbb` 只命中 GROUP（br1:prd-api），
+    // 同名成员出现在 web 组也不会被钉（作用域不匹配走加权回主成员）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: ['prd-api:rsbbbbbb'] })?.replicaMemberId).toBe('rsbbbbbb');
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { sticky: ['prd-api:rscccccc'], rand: () => 0.5 })?.replicaMemberId).toBe('primary');
   });
 
   it('pickReplica 分布粗检:1000 次 rand 均匀采样,成员占比接近其权重', () => {

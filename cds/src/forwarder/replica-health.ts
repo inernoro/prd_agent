@@ -52,10 +52,19 @@ export interface ReplicaHealthSnapshotEntry {
   lastFailureCode?: string;
 }
 
+/**
+ * 健康状态 key 纳入上游端口（Codex P2）：主容器重部署换端口、复制集解散重建
+ * 后 res-N 从 1 重排——同名不同实例。key 不带端口时，旧实例攒下的摘除窗会
+ * 压住全新的健康替身 15-120 秒。端口变即新 key，旧 key 状态自然失联
+ *（noteFailure 侧带闲置清理，防 map 无界增长）。
+ */
 function keyOf(route: RouteRecord): string | null {
   if (!route.replicaGroup) return null;
-  return `${route.replicaGroup}::${route.replicaMemberId ?? 'primary'}`;
+  return `${route.replicaGroup}::${route.replicaMemberId ?? 'primary'}::${route.upstreamPort}`;
 }
+
+/** 闲置健康状态清理阈值：超过该时长无任何信号的条目视为陈旧（实例已换代） */
+const STALE_STATE_MS = 30 * 60_000;
 
 export class ReplicaHealthRegistry {
   private state = new Map<string, MemberHealth>();
@@ -66,6 +75,13 @@ export class ReplicaHealthRegistry {
   noteFailure(route: RouteRecord, code: string | undefined): void {
     const key = keyOf(route);
     if (!key || !code || !FATAL_CODES.has(code)) return;
+    // 顺路清扫陈旧条目（端口换代后的旧 key 无人再触达）：防 map 无界增长
+    if (this.state.size > 256) {
+      const cutoff = this.now() - STALE_STATE_MS;
+      for (const [k, v] of this.state.entries()) {
+        if (v.lastChangeAt < cutoff) this.state.delete(k);
+      }
+    }
     const cur = this.state.get(key) ?? { consecutiveFails: 0, ejectedUntil: 0, ejectRounds: 0, probeStartedAt: 0, lastChangeAt: 0 };
     cur.consecutiveFails += 1;
     cur.lastFailureCode = code;

@@ -5060,15 +5060,18 @@ function ReplicaGroupCard({ branch, groupIndex, replicaSets, previewBase, onDeta
   const entries = Object.entries(replicaSets)
     .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > groupIndex)
     .sort(([a], [b]) => a.localeCompare(b));
-  // 预览链接带**每个 profile** 的本组成员 id（Codex P1）：__rs 多值让 forwarder
-  // 一次导航种齐各组的组作用域 cookie——只带第一个 profile 的 id 时，其余服务
-  // 的后续请求会按权重混入别组成员，项目级整组预览失真。成员 id 逐 profile 取
-  //（独立删减后同一列位的 id 可能不同，不能拿首个 profile 的 id 代表全组）。
-  const memberIds = entries
-    .map(([, rs]) => rs.members?.[groupIndex]?.id)
-    .filter((id): id is string => Boolean(id));
-  const previewUrl = previewBase && memberIds.length > 0
-    ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${memberIds.map(encodeURIComponent).join(',')}`
+  // 预览链接带**每个 profile** 的作用域钉选条目 `profileId:memberId`（Codex P1
+  // 二连）：__rs 多值让 forwarder 一次导航种齐各组的组作用域 cookie；裸成员 id
+  // 列表在各 profile 成员数组错位时（A 组第 2 位是 res-2、B 组第 1 位恰好也是
+  // res-2）会把 B 组静默钉到本该属于 A 组的 id——作用域条目只命中自己的组。
+  const pinEntries = entries
+    .map(([pid, rs]) => {
+      const id = rs.members?.[groupIndex]?.id;
+      return id ? `${encodeURIComponent(pid)}:${encodeURIComponent(id)}` : null;
+    })
+    .filter((e): e is string => Boolean(e));
+  const previewUrl = previewBase && pinEntries.length > 0
+    ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${pinEntries.join(',')}`
     : '';
   const bad = entries.some(([, rs]) => rs.members?.[groupIndex]?.status === 'error');
   const projectId = (branch as { projectId?: string }).projectId;

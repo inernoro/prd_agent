@@ -30,7 +30,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { createHash } from 'node:crypto';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
-import { resolveRoute } from './forwarder/route-resolver.js';
+import { resolveRoute, stickyEntryMemberFor } from './forwarder/route-resolver.js';
 import { ReplicaHealthRegistry } from './forwarder/replica-health.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
@@ -292,7 +292,7 @@ function extractReplicaSticky(req: http.IncomingMessage): {
     byGroupHash.set(m[1], m[2]);
   }
   const url = req.url ?? '/';
-  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_,-]+)/);
+  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_:,-]+)/);
   const splitIds = (raw: string): string[] => raw.split(',').map((s) => s.trim()).filter(Boolean);
   if (queryMatch) return { explicit: splitIds(queryMatch[1]), byGroupHash };
   const header = req.headers['x-cds-replica'];
@@ -322,11 +322,15 @@ const server = http.createServer((req, res) => {
   // 该分支**每个组**的组作用域 cookie 都种上——后续 API/资源请求不再携带 __rs，
   // 只有 cookie 能保证各 profile 都落在本组成员，不与其他组的加权流量混流。
   if (route?.branchId && sticky.explicit?.length) {
-    const pinned = new Set(sticky.explicit);
     const seenGroups = new Set<string>();
     for (const r of routes) {
       if (r.branchId !== route.branchId || !r.replicaGroup || !r.replicaMemberId) continue;
-      if (r.replicaMemberId === 'primary' || !pinned.has(r.replicaMemberId) || seenGroups.has(r.replicaGroup)) continue;
+      if (r.replicaMemberId === 'primary' || seenGroups.has(r.replicaGroup)) continue;
+      // 条目支持 profile 作用域 `profileId:memberId`（Codex P1）：裸 id 列表在
+      // 各 profile 成员数组错位时会把 B 组钉到本该属于 A 组的 res-N；作用域
+      // 条目只命中 profile 匹配的组
+      const matched = sticky.explicit.some((entry) => stickyEntryMemberFor(entry, r.replicaGroup!) === r.replicaMemberId);
+      if (!matched) continue;
       seenGroups.add(r.replicaGroup);
       pinCookie(r.replicaGroup, r.replicaMemberId);
     }

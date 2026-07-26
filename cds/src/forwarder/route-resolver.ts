@@ -140,6 +140,22 @@ export function resolveRoute(
   return pickReplica(siblings.map((c) => c.route), ctx);
 }
 
+/** replicaGroup（`<branchId>:<profileId>`）的 profile 段。 */
+export function replicaGroupProfileOf(replicaGroup: string): string {
+  const i = replicaGroup.lastIndexOf(':');
+  return i >= 0 ? replicaGroup.slice(i + 1) : replicaGroup;
+}
+
+/**
+ * 解析显式钉选条目对某个组的生效成员：`memberId`（无作用域，任意组可命中）
+ * 或 `profileId:memberId`（仅 profile 匹配的组命中）。不命中返回 null。
+ */
+export function stickyEntryMemberFor(entry: string, replicaGroup: string): string | null {
+  const i = entry.indexOf(':');
+  if (i < 0) return entry;
+  return replicaGroupProfileOf(replicaGroup) === entry.slice(0, i) ? entry.slice(i + 1) : null;
+}
+
 /** 组内选择：粘性 → 加权随机 → 主成员回落。导出供单测直接覆盖分布。 */
 export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
   if (group.length === 1) return group[0];
@@ -152,7 +168,12 @@ export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): 
   const explicit = ctx?.sticky == null ? [] : (Array.isArray(ctx.sticky) ? ctx.sticky : [ctx.sticky]);
   const cookieSticky = explicit.length === 0 && groupId ? ctx?.stickyFor?.(groupId) : undefined;
   for (const want of explicit.length > 0 ? explicit : (cookieSticky ? [cookieSticky] : [])) {
-    const stuck = group.find((r) => r.replicaMemberId === want);
+    // 条目支持 profile 作用域 `profileId:memberId`（Codex P1 二连）：res-N 按
+    // profile 顺位命名，裸成员 id 列表无法表达「哪个组钉哪个成员」——A 组第 2 位
+    // 是 res-2 而 B 组恰好也有 res-2 时会被静默钉错组。作用域条目只对本组生效。
+    const memberId = groupId ? stickyEntryMemberFor(want, groupId) : (want.includes(':') ? null : want);
+    if (!memberId) continue;
+    const stuck = group.find((r) => r.replicaMemberId === memberId);
     // 粘性成员被摘除 → 本次放弃粘性落回加权选择（故障转移优先于会话稳定）
     if (stuck && !ejected(stuck)) return stuck;
   }

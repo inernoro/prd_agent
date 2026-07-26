@@ -269,6 +269,11 @@ export async function cloneReplicaDb(opts: {
   let argv: string[];
   const secrets: string[] = [];
 
+  // 两阶段 dump→导入（Codex P1）：`dump | client` 管道在 POSIX sh 下退出码取
+  // 末端 client——dump 半路失败而 client 消费掉空/残缺流照样 0 退出，set -e
+  // 拦不住，快照被记成克隆成功、副本对着空库跑实验。落盘中间产物让两个进程
+  // 的退出码都被 set -e 逐个把关（与 mongo 通道的 dump 落盘同款思路；文件写在
+  // 辅助容器自身层，随 --rm 自动消失）。
   if (target.engine === 'mysql') {
     const user = 'root';
     const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
@@ -276,7 +281,8 @@ export async function cloneReplicaDb(opts: {
     const conn = `-h127.0.0.1 -P${port} -u${user}`;
     argv = helper(['-e', `MYSQL_PWD=${pw}`],
       `set -e; mysql ${conn} -e 'CREATE DATABASE IF NOT EXISTS \`${dbName}\`'; ` +
-      `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} | mysql ${conn} ${dbName}`);
+      `mysqldump ${conn} --single-transaction --routines --triggers ${target.sourceDb} > /tmp/rsclone.sql; ` +
+      `mysql ${conn} ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
   } else {
     const user = env.POSTGRES_USER || 'postgres';
     const pw = env.POSTGRES_PASSWORD || '';
@@ -284,7 +290,8 @@ export async function cloneReplicaDb(opts: {
     const conn = `-h 127.0.0.1 -p ${port} -U ${user}`;
     argv = helper(['-e', `PGPASSWORD=${pw}`],
       `set -e; psql ${conn} -d postgres -v ON_ERROR_STOP=1 -c 'CREATE DATABASE "${dbName}"' 2>/dev/null || true; ` +
-      `pg_dump ${conn} ${target.sourceDb} | psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName}`);
+      `pg_dump ${conn} ${target.sourceDb} > /tmp/rsclone.sql; ` +
+      `psql ${conn} -q -v ON_ERROR_STOP=1 -d ${dbName} < /tmp/rsclone.sql; rm -f /tmp/rsclone.sql`);
   }
 
   opts.onOutput?.(`── 一键隔离数据库: 克隆 ${target.sourceDb} → ${dbName}（${target.engine} @ ${c}，独立限额辅助容器）──`);
