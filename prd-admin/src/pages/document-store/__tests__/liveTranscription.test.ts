@@ -1,5 +1,6 @@
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
 import {
+  LiveTranscriptionSocket,
   StreamingPcm16Resampler,
   PcmFrameAccumulator,
   bufferPendingLivePcm,
@@ -7,6 +8,60 @@ import {
   floatToPcm16,
   reduceLiveTranscriptionView,
 } from '../liveTranscription';
+
+class MockWebSocket {
+  static readonly CONNECTING = 0;
+  static readonly OPEN = 1;
+  static readonly CLOSING = 2;
+  static readonly CLOSED = 3;
+
+  static latest: MockWebSocket | null = null;
+
+  readyState = MockWebSocket.CONNECTING;
+  binaryType = '';
+  onopen: (() => void) | null = null;
+  onmessage: ((event: { data: unknown }) => void) | null = null;
+  onerror: (() => void) | null = null;
+  onclose: (() => void) | null = null;
+  private readonly openListeners: Array<() => void> = [];
+
+  constructor(_url: string, _protocols: string[]) {
+    MockWebSocket.latest = this;
+  }
+
+  addEventListener(type: string, listener: () => void): void {
+    if (type === 'open') this.openListeners.push(listener);
+  }
+
+  removeEventListener(type: string, listener: () => void): void {
+    if (type !== 'open') return;
+    const index = this.openListeners.indexOf(listener);
+    if (index >= 0) this.openListeners.splice(index, 1);
+  }
+
+  send(_data: unknown): void {}
+
+  close(): void {
+    this.readyState = MockWebSocket.CLOSED;
+    this.onclose?.();
+  }
+
+  failWhileConnecting(): void {
+    this.onerror?.();
+  }
+
+  open(): void {
+    this.readyState = MockWebSocket.OPEN;
+    this.onopen?.();
+    for (const listener of this.openListeners.splice(0)) listener();
+  }
+}
+
+afterEach(() => {
+  vi.useRealTimers();
+  vi.unstubAllGlobals();
+  MockWebSocket.latest = null;
+});
 
 describe('实时转写 PCM 协议', () => {
   it('会话建立超时后整路降级，不保留有缺口的 PCM 前缀', () => {
@@ -90,5 +145,62 @@ describe('实时转写展示状态', () => {
       state: 'degraded',
       message: '结束后自动校准',
     });
+  });
+});
+
+describe('实时转写终态竞态', () => {
+  const createSocket = () => {
+    vi.useFakeTimers();
+    vi.stubGlobal('window', {
+      location: { origin: 'https://map.example.test' },
+      setTimeout,
+      clearTimeout,
+    });
+    vi.stubGlobal('WebSocket', MockWebSocket);
+    const states: string[] = [];
+    const socket = new LiveTranscriptionSocket(
+      'session-1',
+      'token-1',
+      () => undefined,
+      state => states.push(state),
+    );
+    socket.connect();
+    return { socket, states, webSocket: MockWebSocket.latest! };
+  };
+
+  it('等待建连期间收到错误终态时立即结束，不再空等收尾超时', async () => {
+    const { socket, webSocket } = createSocket();
+    let settled = false;
+    const finish = socket.finish().then(event => {
+      settled = true;
+      return event;
+    });
+
+    webSocket.failWhileConnecting();
+    await vi.advanceTimersByTimeAsync(1);
+
+    expect(settled).toBe(true);
+    await expect(finish).resolves.toMatchObject({
+      type: 'degraded',
+      message: '实时转写连接异常，录音结束后将自动转写',
+    });
+    expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('连接持续未建立时二点五秒即降级，不再继续等待九十秒', async () => {
+    const { socket, states } = createSocket();
+    let result: Awaited<ReturnType<LiveTranscriptionSocket['finish']>> | undefined;
+    const finish = socket.finish().then(event => {
+      result = event;
+      return event;
+    });
+
+    await vi.advanceTimersByTimeAsync(2499);
+    expect(result).toBeUndefined();
+    await vi.advanceTimersByTimeAsync(1);
+
+    await expect(finish).resolves.toMatchObject({ type: 'degraded' });
+    expect(states.at(-1)).toBe('degraded');
+    expect(vi.getTimerCount()).toBe(0);
   });
 });

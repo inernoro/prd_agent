@@ -236,20 +236,31 @@ export class LiveTranscriptionSocket {
     const socket = this.socket;
     if (!socket) return null;
 
+    // 必须先登记终态等待，再等待 WebSocket 建连。连接错误和 close 都可能在
+    // 下面的 await 期间到达；若事后才登记 waiter，一次性终态事件会永久丢失。
+    const terminalPromise = this.waitForTerminal(timeoutMs);
+
     if (socket.readyState === WebSocket.CONNECTING) {
-      await Promise.race([
-        new Promise<void>((resolve) => socket.addEventListener('open', () => resolve(), { once: true })),
-        new Promise<void>((resolve) => window.setTimeout(resolve, 2500)),
-      ]);
+      await this.waitForConnection(socket, terminalPromise);
+    }
+    if (this.terminalEvent) {
+      this.close();
+      return this.terminalEvent;
+    }
+    if (socket.readyState !== WebSocket.OPEN) {
+      this.setState('degraded');
+      this.resolveTerminal({
+        type: 'degraded',
+        message: '实时转写连接超时，录音结束后将自动转写',
+      });
+      this.close();
+      return this.terminalEvent;
     }
     if (socket.readyState === WebSocket.OPEN) {
       socket.send(JSON.stringify({ type: 'finish', lastSequence: this.sequence }));
     }
 
-    const terminal = await Promise.race([
-      new Promise<LiveTranscriptionEvent | null>((resolve) => this.terminalWaiters.push(resolve)),
-      new Promise<null>((resolve) => window.setTimeout(() => resolve(null), timeoutMs)),
-    ]);
+    const terminal = await terminalPromise;
     if (!terminal) {
       this.setState('degraded');
       this.resolveTerminal({
@@ -279,6 +290,47 @@ export class LiveTranscriptionSocket {
     if (this.terminalEvent) return;
     this.terminalEvent = event;
     for (const resolve of this.terminalWaiters.splice(0)) resolve(event);
+  }
+
+  private waitForTerminal(timeoutMs: number): Promise<LiveTranscriptionEvent | null> {
+    if (this.terminalEvent) return Promise.resolve(this.terminalEvent);
+    return new Promise((resolve) => {
+      let settled = false;
+      const timeout = { id: undefined as number | undefined };
+      const waiter = (event: LiveTranscriptionEvent | null) => {
+        if (settled) return;
+        settled = true;
+        if (timeout.id !== undefined) window.clearTimeout(timeout.id);
+        const index = this.terminalWaiters.indexOf(waiter);
+        if (index >= 0) this.terminalWaiters.splice(index, 1);
+        resolve(event);
+      };
+      this.terminalWaiters.push(waiter);
+      timeout.id = window.setTimeout(() => waiter(null), timeoutMs);
+      // 保持终态为 sticky 状态，防止未来重构在登记 waiter 附近再次引入竞态。
+      if (this.terminalEvent) waiter(this.terminalEvent);
+    });
+  }
+
+  private async waitForConnection(
+    socket: WebSocket,
+    terminalPromise: Promise<LiveTranscriptionEvent | null>,
+  ): Promise<void> {
+    const timeout = { id: undefined as number | undefined };
+    let handleOpen: () => void = () => undefined;
+    const opened = new Promise<void>((resolve) => {
+      handleOpen = () => resolve();
+      socket.addEventListener('open', handleOpen, { once: true });
+    });
+    const timedOut = new Promise<void>((resolve) => {
+      timeout.id = window.setTimeout(resolve, 2500);
+    });
+    try {
+      await Promise.race([opened, terminalPromise.then(() => undefined), timedOut]);
+    } finally {
+      if (timeout.id !== undefined) window.clearTimeout(timeout.id);
+      socket.removeEventListener('open', handleOpen);
+    }
   }
 }
 

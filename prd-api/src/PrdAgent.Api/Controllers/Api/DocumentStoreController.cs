@@ -1797,20 +1797,26 @@ public class DocumentStoreController : ControllerBase
         if (session.UploadedBytes + bytes.LongLength > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小不能超过 20 MB"));
 
-        var existing = await _db.DocumentRecordingUploadChunks
-            .Find(c => c.SessionId == sessionId && c.Index == index)
-            .FirstOrDefaultAsync();
-        if (existing == null)
+        DocumentRecordingUploadChunk existing;
+        bool inserted;
+        bool payloadMatches;
+        try
         {
-            existing = new DocumentRecordingUploadChunk
-            {
-                SessionId = sessionId,
-                Index = index,
-                Data = bytes,
-                SizeBytes = bytes.LongLength,
-            };
-            await _db.DocumentRecordingUploadChunks.InsertOneAsync(existing, cancellationToken: CancellationToken.None);
+            (existing, inserted, payloadMatches) = await EnsureRecordingChunkAsync(
+                _db.DocumentRecordingUploadChunks,
+                sessionId,
+                index,
+                bytes,
+                CancellationToken.None);
         }
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        if (!payloadMatches)
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "相同分片编号的内容不一致，请查询偏移后重试"));
 
         var nextBytes = session.UploadedBytes + existing.SizeBytes;
         var update = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -1831,9 +1837,12 @@ public class DocumentStoreController : ControllerBase
             {
                 // 会话可能在 append 插入分片后被并发 cancel/complete。该分片从未计入会话，
                 // 立即补偿删除；即使进程在这里退出，上面的独立孤儿扫描也会最终回收。
-                await _db.DocumentRecordingUploadChunks.DeleteOneAsync(
-                    c => c.SessionId == sessionId && c.Index == index,
-                    CancellationToken.None);
+                if (inserted)
+                {
+                    await _db.DocumentRecordingUploadChunks.DeleteOneAsync(
+                        c => c.Id == existing.Id,
+                        CancellationToken.None);
+                }
                 return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分片状态发生变化，请查询偏移后重试"));
             }
             session = latest;
@@ -1847,11 +1856,65 @@ public class DocumentStoreController : ControllerBase
         return Ok(ApiResponse<object>.Ok(new
         {
             accepted = true,
-            duplicate = false,
+            duplicate = !inserted || update.ModifiedCount == 0,
             nextChunkIndex = session.NextChunkIndex,
             uploadedBytes = session.UploadedBytes,
         }));
     }
+
+    internal static string RecordingChunkId(string sessionId, int index)
+        => $"recording-chunk-{sessionId}-{index}";
+
+    internal static async Task<(DocumentRecordingUploadChunk Chunk, bool Inserted, bool PayloadMatches)>
+        EnsureRecordingChunkAsync(
+            IMongoCollection<DocumentRecordingUploadChunk> chunks,
+            string sessionId,
+            int index,
+            byte[] bytes,
+            CancellationToken cancellationToken)
+    {
+        var candidate = new DocumentRecordingUploadChunk
+        {
+            // 并发重试必须争用同一个 Mongo _id。只靠“先查再插”无法阻止两个请求
+            // 同时通过不存在检查，并留下相同 index 的两份分片。
+            Id = RecordingChunkId(sessionId, index),
+            SessionId = sessionId,
+            Index = index,
+            Data = bytes,
+            SizeBytes = bytes.LongLength,
+        };
+        for (var attempt = 0; attempt < 2; attempt++)
+        {
+            var existing = await chunks
+                .Find(c => c.SessionId == sessionId && c.Index == index)
+                .FirstOrDefaultAsync(cancellationToken);
+            if (existing != null)
+                return (existing, false, RecordingChunkPayloadMatches(existing, bytes));
+
+            try
+            {
+                await chunks.InsertOneAsync(candidate, cancellationToken: cancellationToken);
+                return (candidate, true, true);
+            }
+            catch (MongoWriteException ex) when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 另一个同 index 请求已原子胜出。它也可能因会话并发取消而立即
+                // 补偿删除；回读不到时重试一次，避免把这种合法竞态抛成 500。
+                existing = await chunks
+                    .Find(c => c.Id == candidate.Id)
+                    .FirstOrDefaultAsync(cancellationToken);
+                if (existing != null)
+                    return (existing, false, RecordingChunkPayloadMatches(existing, bytes));
+            }
+        }
+
+        throw new InvalidOperationException("录音分片并发状态无法收敛，请查询偏移后重试");
+    }
+
+    private static bool RecordingChunkPayloadMatches(
+        DocumentRecordingUploadChunk chunk,
+        byte[] bytes)
+        => chunk.SizeBytes == bytes.LongLength && chunk.Data.AsSpan().SequenceEqual(bytes);
 
     /// <summary>拼接已确认分片，创建正式音频条目；重复完成请求返回同一 entry。</summary>
     [HttpPost("recording-uploads/{sessionId}/complete")]
@@ -1900,20 +1963,22 @@ public class DocumentStoreController : ControllerBase
             .Find(c => c.SessionId == sessionId)
             .SortBy(c => c.Index)
             .ToListAsync();
-        if (chunks.Count == 0 || chunks.Count != session.NextChunkIndex)
-            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片尚未全部确认"));
-        for (var i = 0; i < chunks.Count; i++)
+        byte[] audioBytes;
+        try
         {
-            if (chunks[i].Index != i)
-                return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, $"录音缺少第 {i} 个分片"));
+            // 与后台归档共用同一套完整性校验。旧版本并发 append 可能留下内容相同的
+            // 重复 index；它们应被收敛恢复，内容冲突的重复项则必须拒绝。
+            audioBytes = DocumentRecordingArchiveWorker.AssembleChunks(
+                chunks,
+                session.NextChunkIndex,
+                session.UploadedBytes);
         }
-
-        await using var joined = new MemoryStream((int)session.UploadedBytes);
-        foreach (var chunk in chunks)
-            await joined.WriteAsync(chunk.Data, CancellationToken.None);
-        var audioBytes = joined.ToArray();
-        if (audioBytes.LongLength != session.UploadedBytes || audioBytes.LongLength > MaxUploadBytes)
-            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片大小校验失败"));
+        catch (InvalidOperationException ex)
+        {
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        if (audioBytes.LongLength > MaxUploadBytes)
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小超过限制"));
 
         // 原子认领：把会话从 Uploading 翻到 Completing，只有一个并发 /complete 能成功。
         // 进程若在副作用中途退出，超过租约的 Completing 可被同一个幂等流程重新认领；

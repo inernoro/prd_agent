@@ -264,17 +264,33 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         int expectedCount,
         long expectedBytes)
     {
-        if (chunks.Count == 0 || chunks.Count != expectedCount)
+        if (chunks.Count == 0 || expectedCount <= 0)
             throw new InvalidOperationException("录音归档分片数量不完整");
         if (expectedBytes <= 0 || expectedBytes > int.MaxValue)
             throw new InvalidOperationException("录音归档大小无效");
 
+        var groups = chunks
+            .GroupBy(chunk => chunk.Index)
+            .OrderBy(group => group.Key)
+            .ToArray();
+        if (groups.Length != expectedCount)
+            throw new InvalidOperationException("录音归档分片数量不完整");
+
         using var joined = new MemoryStream((int)expectedBytes);
-        for (var index = 0; index < chunks.Count; index++)
+        for (var index = 0; index < groups.Length; index++)
         {
-            var chunk = chunks[index];
-            if (chunk.Index != index || chunk.Data.LongLength != chunk.SizeBytes)
+            var group = groups[index];
+            if (group.Key != index)
                 throw new InvalidOperationException($"录音归档缺少第 {index} 个分片");
+            var chunk = group.First();
+            if (chunk.Data.LongLength != chunk.SizeBytes)
+                throw new InvalidOperationException($"录音归档第 {index} 个分片大小无效");
+            if (group.Skip(1).Any(duplicate =>
+                    duplicate.SizeBytes != chunk.SizeBytes
+                    || !duplicate.Data.AsSpan().SequenceEqual(chunk.Data)))
+            {
+                throw new InvalidOperationException($"录音归档第 {index} 个分片存在内容冲突");
+            }
             joined.Write(chunk.Data);
         }
         if (joined.Length != expectedBytes)
