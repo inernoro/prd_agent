@@ -30,3 +30,5 @@
 | security | cds | 为预览 SSO 保留可信公网回调地址，并限制未消费登录 state 的数量与清理开销 |
 | security | cds | 拒绝含反斜杠的 SSO 返回路径，阻止浏览器规范化造成的跨域跳转 |
 | fix | cds | 让 basic 模式的身份端点沿用认证门结果并支持 X-CDS-Token 请求头 |
+| security | cds | SSO 登录 state 满额时拒绝新请求并保留全部仍有效的授权流程 |
+| fix | cds | Agent 任务调度上下文携带并消费明确的项目标识 |

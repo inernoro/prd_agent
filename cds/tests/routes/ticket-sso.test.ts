@@ -245,6 +245,34 @@ describe('ticket SSO routes', () => {
     expect(location.searchParams.get('redirect_uri')).toBe('https://cds.example/auth/sso');
   });
 
+  it('rejects excess SSO starts without invalidating an existing authorization state', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const stateStore = new TicketSsoStateStore({ maxEntries: 1 });
+    const app = express();
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore,
+      sessionStore: new TicketSsoSessionStore(),
+    }));
+    server = await start(app);
+
+    const first = await call(server, 'GET', '/api/auth/sso/start?redirect=%2Fproject-list');
+    const firstState = new URL(String(first.headers.location)).searchParams.get('state');
+    const excess = await call(server, 'GET', '/api/auth/sso/start');
+
+    expect(excess.status).toBe(429);
+    expect(excess.body.code).toBe('sso_state_capacity_exceeded');
+    expect(stateStore.consume(firstState)).toMatchObject({ redirect: '/project-list' });
+  });
+
   it('reports provider timeouts separately from invalid tickets', async () => {
     const config = normalizeTicketSsoConfig({
       enabled: true,

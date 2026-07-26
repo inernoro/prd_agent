@@ -4,6 +4,7 @@ import { GH_SESSION_COOKIE } from './auth.js';
 import {
   TicketSsoExchangeError,
   TicketSsoSessionStore,
+  TicketSsoStateCapacityError,
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
   exchangeTicketSsoCode,
@@ -101,7 +102,19 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.redirect(302, '/login?sso_error=invalid_callback');
       return;
     }
-    const issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+    let issued: ReturnType<TicketSsoStateStore['issue']>;
+    try {
+      issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+    } catch (error) {
+      if (error instanceof TicketSsoStateCapacityError) {
+        res.status(429).json({
+          error: 'SSO 登录请求过多，请稍后重试',
+          code: 'sso_state_capacity_exceeded',
+        });
+        return;
+      }
+      throw error;
+    }
     res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state));
   });
 

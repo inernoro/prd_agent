@@ -1,6 +1,7 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   TicketSsoSessionStore,
+  TicketSsoStateCapacityError,
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
   exchangeTicketSsoCode,
@@ -73,7 +74,7 @@ describe('ticket SSO', () => {
     expect(store.consume(issued.state)?.redirect).toBeNull();
   });
 
-  it('caps outstanding login states by evicting the oldest state', () => {
+  it('rejects excess login states without evicting live authorization attempts', () => {
     let now = 1_000;
     const store = new TicketSsoStateStore({
       maxEntries: 3,
@@ -87,12 +88,30 @@ describe('ticket SSO', () => {
     now += 1;
     const third = store.issue('/third', 'https://cds.example/auth/sso');
     now += 1;
-    const fourth = store.issue('/fourth', 'https://cds.example/auth/sso');
+    expect(() => store.issue('/fourth', 'https://cds.example/auth/sso'))
+      .toThrow(TicketSsoStateCapacityError);
 
-    expect(store.consume(first.state)).toBeNull();
+    expect(store.consume(first.state)?.redirect).toBe('/first');
     expect(store.consume(second.state)?.redirect).toBe('/second');
     expect(store.consume(third.state)?.redirect).toBe('/third');
+    const fourth = store.issue('/fourth', 'https://cds.example/auth/sso');
     expect(store.consume(fourth.state)?.redirect).toBe('/fourth');
+  });
+
+  it('reclaims expired states at capacity without waiting for periodic cleanup', () => {
+    let now = 10_000;
+    const store = new TicketSsoStateStore({
+      maxEntries: 1,
+      ttlMs: 100,
+      gcIntervalMs: 10_000,
+      now: () => now,
+    });
+    const expired = store.issue('/expired', 'https://cds.example/auth/sso');
+    now += 101;
+    const replacement = store.issue('/replacement', 'https://cds.example/auth/sso');
+
+    expect(store.consume(expired.state)).toBeNull();
+    expect(store.consume(replacement.state)?.redirect).toBe('/replacement');
   });
 
   it('rejects an expired login state even between periodic cleanup passes', () => {

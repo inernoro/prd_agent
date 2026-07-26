@@ -47,6 +47,13 @@ export class TicketSsoExchangeError extends Error {
   }
 }
 
+export class TicketSsoStateCapacityError extends Error {
+  constructor() {
+    super('SSO_STATE_CAPACITY_EXCEEDED');
+    this.name = 'TicketSsoStateCapacityError';
+  }
+}
+
 function cleanInternalRedirect(value: unknown): string {
   if (typeof value !== 'string') return DEFAULT_REDIRECT;
   const candidate = value.trim();
@@ -163,10 +170,15 @@ export class TicketSsoStateStore {
   issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string | null } {
     const now = this.now();
     this.gcIfDue(now);
-    while (this.states.size >= this.maxEntries) {
-      const oldest = this.states.keys().next().value as string | undefined;
-      if (!oldest) break;
-      this.states.delete(oldest);
+    if (this.states.size >= this.maxEntries) {
+      const oldest = this.states.values().next().value as { createdAt: number } | undefined;
+      // Keep live authorization attempts intact. A capacity burst must reject
+      // the attacker, not evict legitimate users that are still at the IdP.
+      // Only scan when the oldest entry proves that expired states exist, so
+      // repeated rejected starts remain O(1) while the store is full of live
+      // entries.
+      if (oldest && now - oldest.createdAt > this.ttlMs) this.gcExpired(now);
+      if (this.states.size >= this.maxEntries) throw new TicketSsoStateCapacityError();
     }
     const state = randomBytes(32).toString('base64url');
     const safeRedirect = redirect === undefined || redirect === null || redirect === ''
@@ -189,6 +201,10 @@ export class TicketSsoStateStore {
 
   private gcIfDue(now: number): void {
     if (now < this.nextGcAt) return;
+    this.gcExpired(now);
+  }
+
+  private gcExpired(now: number): void {
     this.nextGcAt = now + this.gcIntervalMs;
     for (const [state, entry] of this.states) {
       if (now - entry.createdAt > this.ttlMs) this.states.delete(state);

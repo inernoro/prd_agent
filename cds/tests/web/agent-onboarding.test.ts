@@ -119,6 +119,7 @@ describe('CDS Agent 接入口令', () => {
     expect(createAgentMissionContext('branches', 'project/a').pagePath).toBe('/branches/project%2Fa');
     expect(createAgentMissionContext('project-settings', 'project/a').pagePath).toBe('/settings/project%2Fa');
     expect(createAgentMissionContext('release', 'project/a').pagePath).toContain('project=project%2Fa');
+    expect(createAgentMissionContext('tasks', 'project/a').pagePath).toBe('/task-schedule?project=project%2Fa');
     expect(createAgentMissionContext('reports', 'project/a').pagePath).toBe('/reports?project=project%2Fa');
     expect(getAgentMissionScope('auth')).toBe('system');
     expect(getAgentMissionScope('branches')).toBe('project');

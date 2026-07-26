@@ -671,7 +671,7 @@ export const AGENT_MISSION_DEFINITIONS: Record<AgentPageContextId, AgentMissionD
     steps: ['检查时区、调度表达式和目标项目', '测试动作安全性和重复执行风险', '保存后手动触发一轮', '读取运行记录和真实输出'],
     checks: ['手动触发前说明影响', '避免重复创建同一任务', '不以配置保存代替执行验收'],
     completion: ['任务按预期触发', '运行记录成功', '输出结果可验证'],
-    pagePath: () => '/task-schedule',
+    pagePath: (projectId) => projectQueryPath('/task-schedule', projectId),
   },
   reports: {
     id: 'reports',
