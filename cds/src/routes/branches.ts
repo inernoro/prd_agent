@@ -14233,8 +14233,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
             reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
           });
           if (memberOk) {
-            member.status = 'running';
-            member.statusMessage = undefined;
+            // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
+            // 进程活着，不跑就绪探测——慢启动副本或「进程活着但就绪失败」的
+            // error 成员会被立刻发回加权路由持续吐失败。与首次物化路径对齐，
+            // 用默认 TCP/HTTP 探测（60s 上限，避免多成员串行重启拖满 180s 默认）。
+            const memberReady = typeof member.hostPort === 'number' && member.hostPort > 0
+              ? await containerService.waitForReadiness(
+                  member.hostPort,
+                  { timeoutSeconds: 60 } as ReadinessProbe,
+                  undefined,
+                  undefined,
+                  member.containerName,
+                )
+              : false;
+            if (memberReady) {
+              member.status = 'running';
+              member.statusMessage = undefined;
+            } else {
+              member.status = 'error';
+              member.statusMessage = `副本容器 ${member.containerName} 已重启但 60s 内未就绪——已从分流摘除，可在画布删除后重建副本`;
+            }
           } else {
             member.status = 'error';
             member.statusMessage = `副本容器 ${member.containerName} 原地重启失败（可能已被移除），可在画布删除后重建副本`;

@@ -143,3 +143,7 @@
 | fix | cds | 整组预览钉选升级 profile 作用域条目（profileId:memberId）：治各 profile 成员数组错位时裸 id 列表把 B 组钉到 A 组的 res-N（Codex P1） |
 | chore | cds | 本 PR changelog 碎片收敛为一个（并入 07-23 碎片、删除与 main 重复的 image-timeout 碎片，Codex P1） |
 | fix | cds | 被动健康 key 纳入上游端口 + 闲置条目清理：治重部署换端口/解散重建后旧摘除窗压住全新健康实例 15-120 秒（Codex P2） |
+| fix | cds | 回切前置全员可切换检查（与隔离入口对称）：stopped/provisioning 副本存在时拒绝回切，治重启复活的容器继续写隔离库而控制面宣称已共享（Codex P1） |
+| fix | cds | 分支重启级联副本改就绪实证：TCP/HTTP 探测通过才恢复分流（60s 上限），治慢启动/就绪失败副本被立刻发回加权路由持续吐失败（Codex P1） |
+| fix | cds | 成员直达域 profile 段 DNS 清洗（发布器与前端同款算法，撞名跳过并 warn），治 profile id 含下划线/点时直达链接全废（Codex P2） |
+| fix | cds | forwarder __rs 改 URLSearchParams 完整解析，治含点/百分号编码的作用域钉选条目被字符类正则截断静默失效（Codex P2） |

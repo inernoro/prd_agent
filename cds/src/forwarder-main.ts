@@ -291,10 +291,15 @@ function extractReplicaSticky(req: http.IncomingMessage): {
   for (const m of cookieHeader.matchAll(/(?:^|;\s*)cds_rs_([a-f0-9]{8})=([A-Za-z0-9_-]+)/g)) {
     byGroupHash.set(m[1], m[2]);
   }
-  const url = req.url ?? '/';
-  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_:,-]+)/);
+  // query 用 URLSearchParams 完整解析 + 解码（Codex P2）：字符类正则会把含 `.`
+  // 或百分号编码的 `profileId:memberId` 条目截断成前缀（api.v2:res-1 → api），
+  // 作用域钉选静默失效回落加权。
   const splitIds = (raw: string): string[] => raw.split(',').map((s) => s.trim()).filter(Boolean);
-  if (queryMatch) return { explicit: splitIds(queryMatch[1]), byGroupHash };
+  try {
+    const parsed = new URL(req.url ?? '/', 'http://cds.internal');
+    const rsRaw = parsed.searchParams.get('__rs');
+    if (rsRaw && rsRaw.trim()) return { explicit: splitIds(rsRaw), byGroupHash };
+  } catch { /* 非法 URL 走 header/cookie 兜底 */ }
   const header = req.headers['x-cds-replica'];
   if (typeof header === 'string' && header.trim()) return { explicit: splitIds(header), byGroupHash };
   return { byGroupHash };

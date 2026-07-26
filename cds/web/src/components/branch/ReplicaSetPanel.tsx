@@ -96,17 +96,20 @@ export interface PanelServiceInfo { hostPort?: number; status?: string }
 export interface PanelInfraInfo { id: string; name?: string; dockerImage?: string; status?: string }
 
 /**
- * 成员直达链：`<slug>-<profileId>-<memberId>.<root>`。host 带 profile 段与
+ * 成员直达链：`<slug>-<profile清洗段>-<memberId>.<root>`。host 带 profile 段与
  * forwarder-route-publisher 同步（Codex P1：res-N 按 profile 顺位命名，
  * 不带 profile 段时两个服务的 res-1 撞同一 host）。
+ * profile 段 DNS 清洗（Codex P2）：`_`/`.` 等合法 profile 字符不是合法 DNS 标签
+ * 字符——与发布器 dnsSafeProfile **同款算法**，两端必须同步改。
  */
 export function memberDirectUrl(previewUrl: string | undefined, profileId: string, memberId: string): string | null {
   if (!previewUrl) return null;
+  const safeProfile = profileId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
   try {
     const url = new URL(previewUrl);
     const [first, ...rest] = url.hostname.split('.');
     if (!first || rest.length === 0) return null;
-    url.hostname = [`${first}-${profileId}-${memberId}`, ...rest].join('.');
+    url.hostname = [`${first}-${safeProfile}-${memberId}`, ...rest].join('.');
     return url.toString();
   } catch { return null; }
 }

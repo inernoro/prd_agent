@@ -566,6 +566,17 @@ export class ReplicaSetService {
     const rs = branch.replicaSets?.[profileId];
     if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
     const baseProfile = this.requireProfile(branch, profileId);
+    // 全员可切换才许回切（Codex P1，与隔离入口对称）：stopped 成员的容器还带着
+    // 隔离库 env，重物化循环覆盖不到它——清了隔离标记后分支重启会把它原地复活，
+    // 继续写隔离库而控制面已宣称回到共享。provisioning 成员在途物化同样盖不住。
+    const revertBlocked = rs.members.filter((m) => m.status === 'stopped' || m.status === 'provisioning');
+    if (revertBlocked.length > 0) {
+      const detail = revertBlocked.map((m) => `${m.id}(${m.status})`).join(', ');
+      return {
+        accepted: false,
+        reason: `以下副本不在可切换状态，回切无法覆盖它们: ${detail}——请先重启分支让副本回到运行态（或在画布删除已停止的副本）后再回切`,
+      };
+    }
     const members = rs.members.filter((m) => m.status === 'running' || m.status === 'error');
     // 先全员摘流、后清隔离标记（Codex P1）：异步循环逐个切换成员，若先清标记，
     // 第一个成员回主库后其余成员仍带着隔离库连接接加权流量——写入被劈到两个库、
