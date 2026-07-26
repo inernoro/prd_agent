@@ -981,6 +981,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/probe$/, '探测复制集分流'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolation-audit$/, '隔离审计'],
     [/^GET \/branches\/(.+)\/replica-plans$/, '查执行计划'],
     [/^POST \/branches\/(.+)\/replica-plans$/, '保存执行计划'],
     [/^PATCH \/branches\/(.+)\/replica-plans\/(.+)$/, '调整执行顺序'],

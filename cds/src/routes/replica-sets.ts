@@ -10,6 +10,7 @@ import type { DeploymentVersion } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
 import { buildServiceGraph } from '../services/service-graph.js';
+import { runIsolationAudit } from '../services/replica-isolation-audit.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
@@ -190,6 +191,23 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
   });
 
   // profile 级复制隔离：复制一次 → 全体副本切隔离库；回切主库快照保留
+  /**
+   * 隔离 MECE 审计（2026-07-26 用户点名「隔离测过有效吗 + 没有可观测性」）：
+   * 五面实测（意图/配置/实例/数据/边界），数据面走双向金丝雀真写真查。
+   * POST 语义：审计会向两侧库写入并清理金丝雀记录（cds_isolation_canary）。
+   * 未隔离的服务退化为「连接观测」——逐容器 docker inspect 真实连接的库。
+   */
+  router.post('/branches/:branchId/replica-sets/:profileId/isolation-audit', async (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      const report = await runIsolationAudit(deps.stateService, req.params.branchId, req.params.profileId);
+      res.json({ report });
+    } catch (err) {
+      respondError(res, err);
+    }
+  });
+
   router.post('/branches/:branchId/replica-sets/:profileId/isolate', (req, res) => {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }

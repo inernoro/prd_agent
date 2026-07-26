@@ -14,7 +14,7 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, RotateCcw, Trash2, Undo2, X } from 'lucide-react';
+import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, Database, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, RotateCcw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
@@ -721,6 +721,89 @@ function ProbeModal({ probe }: { probe: ReturnType<typeof useProbe> }): JSX.Elem
   );
 }
 
+/* ── 隔离 MECE 审计（2026-07-26 用户点名「隔离测过有效吗 + 没有可观测性」）──
+ * 五面实测矩阵弹窗：意图 / 配置（容器真实 env）/ 实例 / 数据（双向金丝雀真写真查）
+ * / 边界（显式列出没隔住的部分）。未隔离时退化为「连接观测」——逐容器列出
+ * 真实连接的库。全部度量来自服务端 docker inspect + 真实读写，不是配置推断。 */
+interface AuditCheck { id: string; group: string; title: string; verdict: 'pass' | 'fail' | 'skip' | 'boundary' | 'info'; evidence: string }
+interface AuditReport { branchId: string; profileId: string; overall: 'effective' | 'broken' | 'not-isolated'; checks: AuditCheck[]; ranAt: string }
+
+function useIsolationAudit(branchId: string, onToast?: (m: string) => void) {
+  const [auditFor, setAuditFor] = useState<string | null>(null);
+  const [report, setReport] = useState<AuditReport | null>(null);
+  const running = useRef(false);
+  const run = async (profileId: string): Promise<void> => {
+    if (running.current) return;
+    running.current = true;
+    setAuditFor(profileId);
+    setReport(null);
+    try {
+      const res = await apiRequest<{ report: AuditReport }>(
+        `/api/branches/${encodeURIComponent(branchId)}/replica-sets/${encodeURIComponent(profileId)}/isolation-audit`,
+        { method: 'POST', body: {} },
+      );
+      setReport(res.report);
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+      setAuditFor(null);
+    }
+    running.current = false;
+  };
+  const close = (): void => { if (!running.current) { setAuditFor(null); setReport(null); } };
+  return { auditFor, report, running, run, close };
+}
+
+const AUDIT_VERDICT_STYLE: Record<string, string> = {
+  pass: 'border-emerald-500/50 bg-emerald-500/10 text-emerald-600 dark:text-emerald-400',
+  fail: 'border-red-500/60 bg-red-500/10 text-red-600 dark:text-red-400',
+  boundary: 'border-amber-500/60 bg-amber-500/10 text-amber-600 dark:text-amber-400',
+  skip: 'border-[hsl(var(--hairline))] bg-muted/40 text-muted-foreground',
+  info: 'border-sky-500/40 bg-sky-500/10 text-sky-600 dark:text-sky-400',
+};
+const AUDIT_VERDICT_LABEL: Record<string, string> = { pass: '通过', fail: '失效', boundary: '已知边界', skip: '不适用', info: '观测' };
+
+function IsolationAuditModal({ audit }: { audit: ReturnType<typeof useIsolationAudit> }): JSX.Element | null {
+  if (!audit.auditFor) return null;
+  const r = audit.report;
+  const groups = r ? [...new Set(r.checks.map((c) => c.group))] : [];
+  return (
+    <CanvasModal wide title={`隔离审计（MECE 实测）· ${audit.auditFor}`} onClose={audit.close}>
+      {!r ? (
+        <div className="flex items-center gap-2 py-6 text-sm text-muted-foreground">
+          <Loader2 className="h-4 w-4 animate-spin text-amber-500" />
+          正在实测：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证…
+        </div>
+      ) : (
+        <>
+          <div className={`mb-3 rounded-md border px-3 py-2 text-sm font-semibold ${r.overall === 'effective' ? AUDIT_VERDICT_STYLE.pass : r.overall === 'broken' ? AUDIT_VERDICT_STYLE.fail : AUDIT_VERDICT_STYLE.info}`}>
+            {r.overall === 'effective' ? '隔离有效：核心检查全部实测通过（配置面 + 实例面 + 双向数据面）'
+              : r.overall === 'broken' ? '隔离失效：存在未通过的核心检查，见下方红项'
+                : '该服务未隔离——以下为逐容器真实连接观测'}
+          </div>
+          {groups.map((g) => (
+            <div key={g} className="mb-3">
+              <div className="mb-1 text-xs font-semibold text-muted-foreground">{g}</div>
+              <div className="space-y-1.5">
+                {r.checks.filter((c) => c.group === g).map((c) => (
+                  <div key={c.id} className="rounded-md border border-[hsl(var(--hairline))] px-2.5 py-1.5">
+                    <div className="flex items-center gap-2">
+                      <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] font-semibold ${AUDIT_VERDICT_STYLE[c.verdict]}`}>{AUDIT_VERDICT_LABEL[c.verdict]}</span>
+                      <span className="text-xs font-medium">{c.title}</span>
+                      <span className="ml-auto shrink-0 font-mono text-[10px] text-muted-foreground">{c.id}</span>
+                    </div>
+                    <div className="mt-1 break-all font-mono text-[10px] leading-relaxed text-muted-foreground">{c.evidence}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+          ))}
+          <div className="flex justify-end"><Button type="button" size="sm" variant="outline" onClick={audit.close}>关闭</Button></div>
+        </>
+      )}
+    </CanvasModal>
+  );
+}
+
 function useMeasuredWidth(): [React.RefObject<HTMLDivElement>, number] {
   const hostRef = useRef<HTMLDivElement>(null);
   const [w, setW] = useState(860);
@@ -769,10 +852,12 @@ function DataLayerSvg({ geo, fy, fh, iso, draftIsoCount, mainDbX, transferActive
   );
 }
 
-function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draftRevertCount, isolateTargets, revertTargets, onIsolateAll, onRevertAll, onRemoveIsoDrafts }: {
+function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draftRevertCount, isolateTargets, revertTargets, onIsolateAll, onRevertAll, onRemoveIsoDrafts, onAudit }: {
   geo: ReturnType<typeof dataGeo>; dbY: number; dbInfra: PanelInfraInfo[]; mainDbIdx: number;
   iso: BranchIso; draftIsoCount: number; draftRevertCount: number;
   isolateTargets: string[]; revertTargets: string[]; onIsolateAll: () => void; onRevertAll: () => void; onRemoveIsoDrafts: () => void;
+  /** 隔离 MECE 审计入口（弹窗矩阵）——已隔离时挂在隔离区卡上 */
+  onAudit?: () => void;
 }): JSX.Element {
   const locked = iso.state === 'done';
   const previewIso = iso.state === 'idle' && draftIsoCount > 0;
@@ -829,6 +914,10 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           foot={iso.dbNames.join(' · ')}
           extra={(
             <span className="absolute bottom-1.5 right-1.5 flex gap-1">
+              {(iso.state === 'done' || iso.state === 'partial') && onAudit ? (
+                <button type="button" className="rounded border border-sky-500/50 bg-background px-1.5 text-[10px] text-sky-600 dark:text-sky-400"
+                  title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 专用实例活性 + 双向金丝雀写入验证，弹窗显示五面矩阵" onClick={onAudit}>隔离审计</button>
+              ) : null}
               {iso.state === 'partial' && isolateTargets.length > 0 ? (
                 <button type="button" className="rounded border border-amber-500/60 bg-background px-1.5 text-[10px] text-amber-600 dark:text-amber-400"
                   title="把尚未隔离的服务也加入隔离草稿，对齐统一战线" onClick={onIsolateAll}>补齐隔离</button>
@@ -857,6 +946,11 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const [weightDraft, setWeightDraft] = useState('');
   const [pickFor, setPickFor] = useState<string | null>(null);
   const probe = useProbe(branchId, previewUrl, onToast);
+  const audit = useIsolationAudit(branchId, onToast);
+  const runAuditRep = (): void => {
+    const rep = branchIso.isolatedProfiles[0] || profileIds[0];
+    if (rep) void audit.run(rep);
+  };
   // 点选节点 → 相关连线高亮、其余变淡（2026-07-25 用户拍板）
   const [selected, setSelected] = useState<string | null>(null);
   const dimIf = (touching: boolean): number => (selected === null ? 1 : touching ? 1 : 0.22);
@@ -1117,7 +1211,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           <DataLayerCards geo={geo} dbY={dbY} dbInfra={dbInfra} mainDbIdx={mainDbIdx} iso={branchIso}
             draftIsoCount={draftIsoCount} draftRevertCount={draftRevertCount}
             isolateTargets={isolateTargets} revertTargets={revertTargets} onIsolateAll={isolateAll} onRevertAll={revertAll}
-            onRemoveIsoDrafts={removeIsoDrafts} />
+            onRemoveIsoDrafts={removeIsoDrafts} onAudit={runAuditRep} />
         </div>
       </div>
 
@@ -1142,7 +1236,13 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
         </CanvasModal>
       ) : null}
       <ProbeModal probe={probe} />
+      <IsolationAuditModal audit={audit} />
       <div className="flex flex-wrap items-center gap-2 border-t border-[hsl(var(--hairline))] px-5 py-2.5">
+        <Button type="button" size="sm" variant="outline"
+          title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 双向金丝雀写入验证；未隔离时显示逐容器连接观测"
+          onClick={runAuditRep}>
+          <Database />隔离审计
+        </Button>
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
@@ -1194,6 +1294,11 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
   const { branchId, previewUrl, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
   const probe = useProbe(branchId, previewUrl, onToast);
+  const audit = useIsolationAudit(branchId, onToast);
+  const runAuditRep = (): void => {
+    const rep = branchIso.isolatedProfiles[0] || profileIds[0];
+    if (rep) void audit.run(rep);
+  };
   const [weightFor, setWeightFor] = useState<number | null>(null);
   const [weightDraft, setWeightDraft] = useState('');
 
@@ -1471,7 +1576,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
           <DataLayerCards geo={geo} dbY={dbY} dbInfra={dbInfra} mainDbIdx={mainDbIdx} iso={branchIso}
             draftIsoCount={draftIsoCount} draftRevertCount={draftRevertCount}
             isolateTargets={isolateTargets} revertTargets={revertTargets} onIsolateAll={isolateAll} onRevertAll={revertAll}
-            onRemoveIsoDrafts={removeIsoDrafts} />
+            onRemoveIsoDrafts={removeIsoDrafts} onAudit={runAuditRep} />
         </div>
       </div>
 
@@ -1484,9 +1589,15 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
           }}>
           <RefreshCw />分流实测
         </Button>
+        <Button type="button" size="sm" variant="outline"
+          title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 双向金丝雀写入验证；未隔离时显示逐容器连接观测"
+          onClick={runAuditRep}>
+          <Database />隔离审计
+        </Button>
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
       </div>
       <ProbeModal probe={probe} />
+      <IsolationAuditModal audit={audit} />
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
     </section>
   );

@@ -405,8 +405,9 @@ function cloneStageError(stage: string, r: { code: number; stderr: string; stdou
   return new Error(`数据库克隆失败（${stage}）: ${detail || `exit ${r.code}`}`);
 }
 
-/** mongod admin eval 通道（root 凭据经 URI，脚本经 --eval，输出 --quiet） */
-function mongoAdminEval(
+/** mongod admin eval 通道（root 凭据经 URI，脚本经 --eval，输出 --quiet）。
+ * 导出给隔离审计（replica-isolation-audit）复用——主库侧金丝雀读写同一凭据链路。 */
+export function mongoAdminEval(
   containerName: string,
   port: number,
   env: Record<string, string>,
