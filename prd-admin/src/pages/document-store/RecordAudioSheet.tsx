@@ -410,9 +410,6 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           // abandon（录音中被卸载）：保留保险箱，下次进页提示恢复
           if (finishModeRef.current !== 'abandon') onClose();
         };
-        // 1s 一片：既能实时统计体积，又保证中途异常时已录内容不整段丢失
-        rec.start(1000);
-
         // 电平波形：AnalyserNode 取 RMS，rAF 滚动绘制
         const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (AudioCtx) {
@@ -447,6 +444,15 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           setLiveTranscriptState('degraded');
           setLiveTranscriptMessage('当前浏览器无法实时取流，录音结束后将自动转写');
         }
+        // PCM 捕获必须先于 MediaRecorder。只有覆盖录音全生命周期的连续 PCM
+        // 才允许实时原文标记 completed；捕获初始化失败时则明确走完整文件校准。
+        // 1s 一片：既能实时统计体积，又保证中途异常时已录内容不整段丢失。
+        if (disposed) {
+          stopLiveCaptureRef.current?.();
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        rec.start(1000);
         setState('recording');
       } catch {
         if (disposed) return;

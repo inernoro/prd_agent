@@ -58,6 +58,8 @@ public class DocumentStoreController : ControllerBase
     /// <summary>录音实时上传的单个传输分片上限；前端默认切为 512 KB。</summary>
     private const long MaxRecordingChunkBytes = 1024 * 1024;
     private static readonly TimeSpan RecordingCompletionStaleLease = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan RecordingOrphanChunkGrace = TimeSpan.FromDays(2);
+    private const int RecordingOrphanChunkScanLimit = 500;
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -1612,6 +1614,29 @@ public class DocumentStoreController : ControllerBase
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
                 s => ids.Contains(s.Id),
                 CancellationToken.None));
+        // append/cancel 可在“读到 uploading”后交错：cancel 删除父会话，append 随后才插入分片。
+        // 这类分片没有父记录，不能依赖 expired session 查询；按年龄有界扫描并独立回收。
+        var orphanCandidateGroups = await _db.DocumentRecordingUploadChunks
+            .Aggregate()
+            .Match(c => c.CreatedAt <= expiredBefore.Subtract(RecordingOrphanChunkGrace))
+            .Group(c => c.SessionId, group => new { SessionId = group.Key })
+            .Limit(RecordingOrphanChunkScanLimit)
+            .ToListAsync(CancellationToken.None);
+        if (orphanCandidateGroups.Count > 0)
+        {
+            var candidateIds = orphanCandidateGroups.Select(group => group.SessionId).ToArray();
+            var existingSessionIds = await _db.DocumentRecordingUploadSessions
+                .Find(s => candidateIds.Contains(s.Id))
+                .Project(s => s.Id)
+                .ToListAsync(CancellationToken.None);
+            var orphanSessionIds = FindOrphanedRecordingSessionIds(candidateIds, existingSessionIds);
+            if (orphanSessionIds.Count > 0)
+            {
+                await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                    c => orphanSessionIds.Contains(c.SessionId),
+                    CancellationToken.None);
+            }
+        }
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
@@ -1803,7 +1828,14 @@ public class DocumentStoreController : ControllerBase
         {
             var latest = await _db.DocumentRecordingUploadSessions.Find(s => s.Id == sessionId).FirstOrDefaultAsync();
             if (latest?.NextChunkIndex != index + 1)
+            {
+                // 会话可能在 append 插入分片后被并发 cancel/complete。该分片从未计入会话，
+                // 立即补偿删除；即使进程在这里退出，上面的独立孤儿扫描也会最终回收。
+                await _db.DocumentRecordingUploadChunks.DeleteOneAsync(
+                    c => c.SessionId == sessionId && c.Index == index,
+                    CancellationToken.None);
                 return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "分片状态发生变化，请查询偏移后重试"));
+            }
             session = latest;
         }
         else
@@ -2223,6 +2255,17 @@ public class DocumentStoreController : ControllerBase
         // 反过来先删会话，一旦进程中断，分片将失去可恢复的 session 索引。
         await deleteChunks(expiredSessionIds);
         await deleteSessions(expiredSessionIds);
+    }
+
+    internal static IReadOnlyCollection<string> FindOrphanedRecordingSessionIds(
+        IEnumerable<string> chunkSessionIds,
+        IEnumerable<string> existingSessionIds)
+    {
+        var existing = existingSessionIds.ToHashSet(StringComparer.Ordinal);
+        return chunkSessionIds
+            .Where(id => !string.IsNullOrWhiteSpace(id) && !existing.Contains(id))
+            .Distinct(StringComparer.Ordinal)
+            .ToArray();
     }
 
     private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>

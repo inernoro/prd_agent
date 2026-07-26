@@ -50,25 +50,53 @@ public sealed class DocumentStoreLiveTranscriptionRelay
             await gateway.ConnectAsync(uriBuilder.Uri, CancellationToken.None);
             await SendTextAsync(gateway, new LiveAsrControlMessage { Type = "start" });
 
-            var browserToGateway = PumpBrowserToGatewayAsync(browser, gateway);
+            var explicitFinish = 0;
+            var browserToGateway = PumpBrowserToGatewayAsync(
+                browser,
+                gateway,
+                () => Interlocked.Exchange(ref explicitFinish, 1));
             var gatewayToBrowser = PumpGatewayToBrowserAsync(
                 gateway,
                 browser,
                 evt =>
                 {
+                    var mayComplete = CanPersistCompletedTranscript(
+                        Volatile.Read(ref explicitFinish) == 1,
+                        evt);
                     latest = new LiveAsrSessionResult
                     {
-                        Completed = evt.Type == LiveAsrEventTypes.Final && !string.IsNullOrWhiteSpace(evt.Text),
-                        Degraded = evt.Type is LiveAsrEventTypes.Degraded or LiveAsrEventTypes.Error,
+                        Completed = mayComplete,
+                        Degraded = (!mayComplete && evt.Type == LiveAsrEventTypes.Final)
+                            || evt.Type is LiveAsrEventTypes.Degraded or LiveAsrEventTypes.Error,
                         Transcript = evt.Text ?? latest.Transcript,
                         Provider = evt.Provider ?? latest.Provider,
                         Model = evt.Model ?? latest.Model,
-                        Error = evt.Type is LiveAsrEventTypes.Degraded or LiveAsrEventTypes.Error
-                            ? evt.Message
-                            : null,
+                        Error = !mayComplete && evt.Type == LiveAsrEventTypes.Final
+                            ? "实时转写连接提前结束，录音结束后将自动批量转写"
+                            : evt.Type is LiveAsrEventTypes.Degraded or LiveAsrEventTypes.Error
+                                ? evt.Message
+                                : null,
                     };
                 });
-            await Task.WhenAll(browserToGateway, gatewayToBrowser);
+            var firstCompleted = await Task.WhenAny(browserToGateway, gatewayToBrowser);
+            if (firstCompleted == gatewayToBrowser && !browserToGateway.IsCompleted)
+                browser.Abort();
+            var browserFinishedExplicitly = await browserToGateway;
+            if (!browserFinishedExplicitly)
+                gateway.Abort();
+            await gatewayToBrowser;
+            if (!browserFinishedExplicitly)
+            {
+                latest = new LiveAsrSessionResult
+                {
+                    Completed = false,
+                    Degraded = true,
+                    Transcript = latest.Transcript,
+                    Provider = latest.Provider,
+                    Model = latest.Model,
+                    Error = "实时转写连接提前结束，录音结束后将自动批量转写",
+                };
+            }
         }
         catch (Exception ex)
         {
@@ -103,28 +131,43 @@ public sealed class DocumentStoreLiveTranscriptionRelay
         return latest;
     }
 
-    private static async Task PumpBrowserToGatewayAsync(WebSocket browser, WebSocket gateway)
-    {
-        while (browser.State == WebSocketState.Open && gateway.State == WebSocketState.Open)
-        {
-            var message = await ReceiveMessageAsync(browser);
-            if (message.Type == WebSocketMessageType.Close)
-            {
-                await SendTextAsync(gateway, new LiveAsrControlMessage { Type = "finish" });
-                return;
-            }
+    internal static bool CanPersistCompletedTranscript(bool explicitlyFinished, LiveAsrEvent evt)
+        => explicitlyFinished
+           && evt.Type == LiveAsrEventTypes.Final
+           && !string.IsNullOrWhiteSpace(evt.Text);
 
-            await gateway.SendAsync(
-                message.Payload,
-                message.Type,
-                endOfMessage: true,
-                CancellationToken.None);
-            if (message.Type == WebSocketMessageType.Text
-                && IsFinish(message.Payload))
+    private static async Task<bool> PumpBrowserToGatewayAsync(
+        WebSocket browser,
+        WebSocket gateway,
+        Action onExplicitFinish)
+    {
+        try
+        {
+            while (browser.State == WebSocketState.Open && gateway.State == WebSocketState.Open)
             {
-                return;
+                var message = await ReceiveMessageAsync(browser);
+                if (message.Type == WebSocketMessageType.Close)
+                    return false;
+
+                var isFinish = message.Type == WebSocketMessageType.Text
+                               && IsFinish(message.Payload);
+                if (isFinish)
+                    onExplicitFinish();
+                await gateway.SendAsync(
+                    message.Payload,
+                    message.Type,
+                    endOfMessage: true,
+                    CancellationToken.None);
+                if (isFinish)
+                    return true;
             }
         }
+        catch (WebSocketException)
+        {
+            return false;
+        }
+
+        return false;
     }
 
     private static async Task PumpGatewayToBrowserAsync(
@@ -134,7 +177,15 @@ public sealed class DocumentStoreLiveTranscriptionRelay
     {
         while (gateway.State == WebSocketState.Open)
         {
-            var message = await ReceiveMessageAsync(gateway);
+            (WebSocketMessageType Type, byte[] Payload) message;
+            try
+            {
+                message = await ReceiveMessageAsync(gateway);
+            }
+            catch (WebSocketException)
+            {
+                return;
+            }
             if (message.Type == WebSocketMessageType.Close)
                 return;
             if (message.Type != WebSocketMessageType.Text)

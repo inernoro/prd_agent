@@ -65,6 +65,16 @@ public sealed class DocumentRecordingArchiveWorkerTests
         sessionsDeleted.ShouldBeFalse();
     }
 
+    [Fact]
+    public void FindOrphanedRecordingSessionIds_ShouldIgnoreChunksWithExistingParents()
+    {
+        var orphaned = DocumentStoreController.FindOrphanedRecordingSessionIds(
+            ["cancelled-session", "active-session", "cancelled-session"],
+            ["active-session"]);
+
+        orphaned.ShouldBe(["cancelled-session"]);
+    }
+
     [Theory]
     [InlineData(DocumentRecordingUploadStatus.Uploading, true)]
     [InlineData(DocumentRecordingUploadStatus.Completing, true)]

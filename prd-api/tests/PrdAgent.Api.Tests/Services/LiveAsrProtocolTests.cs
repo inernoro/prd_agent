@@ -617,6 +617,21 @@ public class LiveAsrProtocolTests
             .ShouldBeNull();
     }
 
+    [Fact]
+    public void Relay_ShouldPersistFinalOnlyAfterExplicitBrowserFinish()
+    {
+        var final = new LiveAsrEvent
+        {
+            Type = LiveAsrEventTypes.Final,
+            Text = "仅断线前收到的局部原文",
+        };
+
+        DocumentStoreLiveTranscriptionRelay.CanPersistCompletedTranscript(false, final)
+            .ShouldBeFalse();
+        DocumentStoreLiveTranscriptionRelay.CanPersistCompletedTranscript(true, final)
+            .ShouldBeTrue();
+    }
+
     private static ModelResolutionResult Candidate(string platform, string model, string transformer)
         => new()
         {
