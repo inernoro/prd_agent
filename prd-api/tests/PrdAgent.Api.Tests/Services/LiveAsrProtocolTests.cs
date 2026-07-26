@@ -680,6 +680,65 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task SessionOrchestrator_ShouldOwnResolutionAndDrainBothChannelsWhenNoModelExists()
+    {
+        var unavailable = new ModelResolutionResult
+        {
+            Success = false,
+            ErrorMessage = "模型池不可用",
+        };
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(unavailable);
+        var gateway = new Mock<ILlmGateway>();
+        var orchestrator = new LiveAsrSessionOrchestrator(
+            resolver.Object,
+            new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance),
+            new LiveAsrBatchFallbackService(
+                gateway.Object,
+                resolver.Object,
+                NullLogger<LiveAsrBatchFallbackService>.Instance),
+            NullLogger<LiveAsrSessionOrchestrator>.Instance);
+        var transport = new CompletingLiveAsrTransport();
+        var events = new List<LiveAsrEvent>();
+        var upstreamRequests = 0;
+
+        var outcome = await orchestrator.ExecuteAsync(
+            transport,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            },
+            () => upstreamRequests++);
+
+        outcome.SessionResult.ShouldBeNull();
+        outcome.Failure.ShouldBe("模型池不可用");
+        transport.ReceiveFramesCalls.ShouldBe(1);
+        events.ShouldContain(evt =>
+            evt.Type == LiveAsrEventTypes.Degraded
+            && evt.ErrorCode == "LIVE_ASR_MODEL_UNAVAILABLE");
+        upstreamRequests.ShouldBe(0);
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Never);
+        resolver.Verify(x => x.ResolveAsync(
+            It.IsAny<string>(),
+            It.IsAny<string>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<string?>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
     public void WebSocketAuth_ShouldReadTokenOnlyOnExactLiveTranscriptionSuffix()
     {
         LiveAsrWebSocketAuth.ExtractToken(
@@ -758,5 +817,24 @@ public class LiveAsrProtocolTests
                 It.IsAny<CancellationToken>()))
             .Returns(Task.CompletedTask);
         return resolver;
+    }
+
+    private sealed class CompletingLiveAsrTransport : ILiveAsrSessionTransport
+    {
+        public int ReceiveFramesCalls { get; private set; }
+
+        public Task<bool> ReceiveStartAsync() => Task.FromResult(true);
+
+        public async Task ReceiveFramesAsync(
+            IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
+            Func<LiveAsrEvent, Task> emit)
+        {
+            ReceiveFramesCalls++;
+            foreach (var writer in writers)
+            {
+                await writer.WriteAsync(new LiveAsrAudioFrame(1, [], IsFinal: true));
+                writer.TryComplete();
+            }
+        }
     }
 }

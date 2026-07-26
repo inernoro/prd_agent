@@ -88,6 +88,20 @@ export function nextRecordingFinalizationLock(
   return finalizationLocked || mode === 'complete';
 }
 
+type RecordingCompletionRetryStatus =
+  | { success: true; data: { status: string } }
+  | { success: false; error: { code: string } };
+
+export function shouldStopRecordingCompletionRetry(
+  status: RecordingCompletionRetryStatus | null,
+): boolean {
+  if (!status) return false;
+  if (status.success) return status.data.status === 'cancelled';
+  return status.error.code === 'NOT_FOUND'
+    || status.error.code === 'SESSION_NOT_FOUND'
+    || status.error.code === 'SESSION_EXPIRED';
+}
+
 export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
@@ -400,8 +414,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
               for (let attempt = 0; !completed?.success && attempt < 32; attempt++) {
                 await new Promise((r) => setTimeout(r, Math.min(5000, 1000 * (attempt + 1))));
                 const status = await getRecordingUpload(sessionId).catch(() => null);
-                // 会话已被取消/清理：服务端不存在也不会创建条目，走整文件兜底。
-                if (status?.success && status.data.status === 'cancelled') break;
+                // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
+                // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
+                if (shouldStopRecordingCompletionRetry(status)) break;
                 // uploading / completing / completed 均可安全重试（幂等），completed 直接回条目。
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
               }

@@ -3943,6 +3943,7 @@ public class GatewayDataDomainGuardTests
     {
         var liveEndpoint = ReadRepoFile("llmgw/serving/LiveAsrGatewayEndpoint.cs");
         var gatewayEndpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+        var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
 
         Assert.Contains("GatewayHttpEndpoints.AdmitSpecializedRequestAsync", liveEndpoint);
         Assert.Contains("RecordAndCheckAppCallerGovernanceAsync", gatewayEndpoints);
@@ -3952,13 +3953,19 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("logWriter.MarkError", liveEndpoint);
         Assert.Contains("GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey", liveEndpoint);
         Assert.Contains("HttpContextFinalStatusCodeKey", gatewayEndpoints);
+        Assert.Contains("LiveAsrSessionOrchestrator", liveEndpoint);
+        Assert.DoesNotContain("IModelResolver", liveEndpoint);
+        Assert.DoesNotContain("Channel.CreateBounded", liveEndpoint);
+        Assert.DoesNotContain("TranscribeLivePcmAsync", liveEndpoint);
+        Assert.DoesNotContain("LiveAsrBatchFallbackService", liveEndpoint);
+        Assert.Contains("AddScoped<LiveAsrSessionOrchestrator>", servingProgram);
         Assert.True(
             liveEndpoint.IndexOf("AdmitSpecializedRequestAsync", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("AcceptWebSocketAsync", StringComparison.Ordinal),
             "实时 ASR 必须在接受 WebSocket 和访问付费上游前完成治理准入");
         Assert.True(
             liveEndpoint.IndexOf("logWriter.StartAsync", StringComparison.Ordinal)
-            < liveEndpoint.IndexOf("TranscribeLivePcmAsync", StringComparison.Ordinal),
+            < liveEndpoint.IndexOf("orchestrator.ExecuteAsync", StringComparison.Ordinal),
             "实时 ASR 必须先建立请求生命周期日志，再访问流式供应商");
     }
 

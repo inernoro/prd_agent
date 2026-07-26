@@ -295,6 +295,7 @@ builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.IModelResolver, Pr
 builder.Services.AddScoped<PrdAgent.Infrastructure.LlmGateway.ILlmGateway, PrdAgent.Infrastructure.LlmGateway.LlmGateway>();
 builder.Services.AddScoped<DoubaoStreamAsrService>();
 builder.Services.AddScoped<LiveAsrBatchFallbackService>();
+builder.Services.AddScoped<LiveAsrSessionOrchestrator>();
 
 // serving 侧平台密钥自检（消盲区：serving 到底能不能解密真实平台密文）。
 // 此前密钥完整性 Worker 只在 MAP(api) 侧注册，serving 缺钥时静默用 stub 兜底、无任何自检。
