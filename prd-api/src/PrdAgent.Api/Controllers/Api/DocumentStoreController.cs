@@ -1075,13 +1075,15 @@ public class DocumentStoreController : ControllerBase
             attachmentsDeleted = r.DeletedCount;
         }
 
-        // 更新空间文档计数（按真实剩余数重算，避免负数或偏差）
-        var remaining = await _db.DocumentEntries.CountDocumentsAsync(e => e.StoreId == entry.StoreId);
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == entry.StoreId,
-            Builders<DocumentStore>.Update
-                .Set(s => s.DocumentCount, (int)remaining)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow));
+        // 按实际删除数原子递减，可与并发新增、删除交换顺序。若历史计数已低于删除量，
+        // 不允许减成负数，改走带空间状态 CAS 的真实条目数校准。
+        await ApplyDocumentCountDeletionAsync(
+            _db.DocumentStores,
+            _db.DocumentEntries,
+            entry.StoreId,
+            checked((int)entriesResult.DeletedCount),
+            DateTime.UtcNow,
+            CancellationToken.None);
 
         _logger.LogInformation(
             "[document-store] Entry cascaded deleted: {EntryId} from store {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} views={Views} inlineComments={Comments} agentRuns={Runs} versions={Versions} mentions={Mentions}",
@@ -2311,8 +2313,8 @@ public class DocumentStoreController : ControllerBase
                 cancellationToken: CancellationToken.None);
         }
 
-        // 该方法同时服务首次完成与崩溃恢复。用当前条目数补足计数下限，避免上次已经
-        // upsert entry、但尚未更新计数或会话时出现少计；$max 会保全并发上传的更高值。
+        // 该方法同时服务首次完成与崩溃恢复。完成条目与计数是跨文档写入，恢复时按
+        // 当前条目数校准；条件写回会拒绝并发新增、删除或其他空间更新后的陈旧快照。
         if (entry.Id == CompletedRecordingEntryId(sessionId))
         {
             // 旧版本可能在完成条目写入后崩溃，又错误创建了 pending 条目。
@@ -2321,13 +2323,10 @@ public class DocumentStoreController : ControllerBase
                 e => e.Id == PendingRecordingEntryId(sessionId) && e.StoreId == store.Id,
                 cancellationToken: CancellationToken.None);
         }
-        var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
-            e => e.StoreId == store.Id,
-            cancellationToken: CancellationToken.None);
-        await ApplyRecordingDocumentCountFloorAsync(
+        await ReconcileRecordingDocumentCountAsync(
             _db.DocumentStores,
+            _db.DocumentEntries,
             store.Id,
-            checked((int)documentCount),
             DateTime.UtcNow,
             CancellationToken.None);
         var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -2435,16 +2434,12 @@ public class DocumentStoreController : ControllerBase
             entry,
             new ReplaceOptions { IsUpsert = true },
             cancellationToken: CancellationToken.None);
-        // 若进程在 entry upsert 与计数更新之间退出，恢复时以当前条目数补足下限，
-        // 避免重复 $inc，也不会用旧快照压低并发上传刚写入的更高计数。
-        var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
-            e => e.StoreId == store.Id,
-            cancellationToken: CancellationToken.None);
-        var normalizedDocumentCount = checked((int)documentCount);
-        await ApplyRecordingDocumentCountFloorAsync(
+        // 若进程在 entry upsert 与计数更新之间退出，恢复时按当前条目数校准。读取空间
+        // 状态后若发生并发新增或删除，CAS 会拒绝陈旧统计，避免重复 $inc 或覆盖新计数。
+        await ReconcileRecordingDocumentCountAsync(
             _db.DocumentStores,
+            _db.DocumentEntries,
             store.Id,
-            normalizedDocumentCount,
             DateTime.UtcNow,
             CancellationToken.None);
         if (upsert.UpsertedId != null)
@@ -2503,21 +2498,93 @@ public class DocumentStoreController : ControllerBase
         => status is DocumentRecordingUploadStatus.Uploading
             or DocumentRecordingUploadStatus.Completing;
 
-    internal static async Task ApplyRecordingDocumentCountFloorAsync(
+    internal static async Task<bool> ReconcileRecordingDocumentCountAsync(
+        IMongoCollection<DocumentStore> stores,
+        IMongoCollection<DocumentEntry> entries,
+        string storeId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        const int maxAttempts = 3;
+        for (var attempt = 0; attempt < maxAttempts; attempt++)
+        {
+            var snapshot = await stores.Find(s => s.Id == storeId).FirstOrDefaultAsync(cancellationToken);
+            if (snapshot == null)
+                return false;
+
+            var observedDocumentCount = checked((int)await entries.CountDocumentsAsync(
+                e => e.StoreId == storeId,
+                cancellationToken: cancellationToken));
+            var appliedAt = now > snapshot.UpdatedAt
+                ? now
+                : snapshot.UpdatedAt.AddMilliseconds(1);
+            if (await TryApplyRecordingDocumentCountSnapshotAsync(
+                    stores,
+                    storeId,
+                    snapshot.DocumentCount,
+                    snapshot.UpdatedAt,
+                    observedDocumentCount,
+                    appliedAt,
+                    cancellationToken))
+                return true;
+        }
+
+        return false;
+    }
+
+    internal static async Task<bool> TryApplyRecordingDocumentCountSnapshotAsync(
         IMongoCollection<DocumentStore> stores,
         string storeId,
+        int expectedDocumentCount,
+        DateTime expectedUpdatedAt,
         int observedDocumentCount,
         DateTime now,
         CancellationToken cancellationToken)
     {
-        // $max 只补足录音恢复造成的少计，不会把普通上传刚完成的并发 $inc
-        // 覆盖成更旧的 CountDocuments 快照。
-        await stores.UpdateOneAsync(
-            s => s.Id == storeId,
+        // 条目统计不是事务快照。只有空间仍处于统计前的计数与更新时间时才允许写回；
+        // 并发新增、删除或其他更新会让条件失配，不能用陈旧统计覆盖较新的事实。
+        var filter = Builders<DocumentStore>.Filter.And(
+            Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
+            Builders<DocumentStore>.Filter.Eq(s => s.DocumentCount, expectedDocumentCount),
+            Builders<DocumentStore>.Filter.Eq(s => s.UpdatedAt, expectedUpdatedAt));
+        var result = await stores.UpdateOneAsync(
+            filter,
             Builders<DocumentStore>.Update
-                .Max(s => s.DocumentCount, observedDocumentCount)
+                .Set(s => s.DocumentCount, observedDocumentCount)
                 .Set(s => s.UpdatedAt, now),
             cancellationToken: cancellationToken);
+        return result.ModifiedCount == 1;
+    }
+
+    internal static async Task ApplyDocumentCountDeletionAsync(
+        IMongoCollection<DocumentStore> stores,
+        IMongoCollection<DocumentEntry> entries,
+        string storeId,
+        int deletedCount,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (deletedCount <= 0)
+            return;
+
+        var filter = Builders<DocumentStore>.Filter.And(
+            Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
+            Builders<DocumentStore>.Filter.Gte(s => s.DocumentCount, deletedCount));
+        var result = await stores.UpdateOneAsync(
+            filter,
+            Builders<DocumentStore>.Update
+                .Inc(s => s.DocumentCount, -deletedCount)
+                .Set(s => s.UpdatedAt, now),
+            cancellationToken: cancellationToken);
+        if (result.MatchedCount == 0)
+        {
+            await ReconcileRecordingDocumentCountAsync(
+                stores,
+                entries,
+                storeId,
+                now,
+                cancellationToken);
+        }
     }
 
     internal static async Task<DocumentRecordingUploadSession?> ClaimRecordingCompletionAsync(
@@ -2829,15 +2896,12 @@ public class DocumentStoreController : ControllerBase
                 cancellationToken);
             entryCreated = upsert.UpsertedId != null;
 
-            // 录音完成跨越附件、条目、计数、会话四个写入。恢复时不能再次 $inc，
-            // 也不能因上次在 entry upsert 后崩溃而永久少计，故以当前条目数补足下限。
-            var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
-                e => e.StoreId == store.Id,
-                cancellationToken: cancellationToken);
-            await ApplyRecordingDocumentCountFloorAsync(
+            // 录音完成跨越附件、条目、计数、会话四个写入。恢复时不能再次 $inc；按当前
+            // 条目数条件校准，避免崩溃永久少计，也避免陈旧快照覆盖并发新增或删除。
+            await ReconcileRecordingDocumentCountAsync(
                 _db.DocumentStores,
+                _db.DocumentEntries,
                 store.Id,
-                checked((int)documentCount),
                 DateTime.UtcNow,
                 cancellationToken);
         }
