@@ -19,6 +19,7 @@
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { PER_BRANCH_DB_ENV_KEYS, applyPerBranchDbIsolation } from './db-scope-isolation.js';
@@ -86,8 +87,12 @@ export function resolveReplicaDbTarget(
   branch: BranchEntry,
   profile: BuildProfile,
 ): { target: ReplicaDbTarget | null; reason?: string } {
+  // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
+  // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
+  // 解析到项目级默认库——克隆的不是该分支实际在用的库，或漏掉分支级连接串 key。
   const merged: Record<string, string> = {
     ...state.getCustomEnv(branch.projectId),
+    ...state.getCustomEnvScope(branch.id),
     ...(profile.env || {}),
   };
   const runtimeEnv = applyPerBranchDbIsolation(merged, profile.dbScope, branch.branch);
@@ -135,13 +140,19 @@ function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine
 }
 
 /**
- * 隔离库名生成：`<源库>_rs_<成员id>`，成员 id 里 SQL 标识符不允许的字符（如
- * `guard-1` / `res-1` 的连字符）归一为下划线——生成名必须自证通过 DB_NAME_SAFE。
+ * 隔离库名生成：`<源库>_rs_<分支哈希6位>_<成员id>`，成员 id 里 SQL 标识符不允许的
+ * 字符（如 `guard-1` / `res-1` 的连字符）归一为下划线——生成名必须自证通过 DB_NAME_SAFE。
  * （复验 R2-P1-1：guard-N 直拼进库名被自家白名单拒绝，隔离 100% 失败于第 1 步。）
+ *
+ * 分支哈希段（Codex P1，2026-07-26）：guard-N / 确定性成员 id 在**不同分支**上会
+ * 生成完全相同的隔离库名——mongo 专用实例容器名由库名派生，第二个分支克隆时
+ * `docker rm -f` 同名容器会直接摧毁第一个分支正在使用的隔离库；mysql/pg 共享
+ * 实例内同名库同样互相覆盖。库名里揉进分支身份哈希后，容器名与库名天然唯一。
  */
-export function isolatedDbNameFor(sourceDb: string, memberId: string): string {
+export function isolatedDbNameFor(sourceDb: string, memberId: string, branchId: string): string {
   const safeMember = memberId.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-  return `${sourceDb}_rs_${safeMember}`.toLowerCase();
+  const branchHash = createHash('sha1').update(branchId).digest('hex').slice(0, 6);
+  return `${sourceDb}_rs_${branchHash}_${safeMember}`.toLowerCase();
 }
 
 export interface CloneResult {
@@ -158,11 +169,13 @@ export async function cloneReplicaDb(opts: {
   target: ReplicaDbTarget;
   memberId: string;
   profileId: string;
+  /** 分支 id：揉进隔离库名/专用实例容器名的哈希段，防跨分支同名互杀（Codex P1） */
+  branchId: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
   const { target, memberId, profileId } = opts;
-  const dbName = isolatedDbNameFor(target.sourceDb, memberId);
+  const dbName = isolatedDbNameFor(target.sourceDb, memberId, opts.branchId);
   if (!DB_NAME_SAFE.test(dbName)) throw new Error(`隔离库名不合法: ${dbName}`);
   if (dbName.length > 60) {
     throw new Error(`隔离库名超长（${dbName.length} > 60，mysql/postgres 标识符上限），源库名过长时暂不支持隔离`);
@@ -336,13 +349,17 @@ async function cloneMongoViaDedicatedInstance(opts: {
     ), '', 600_000, 64 * 1024);
     if (dump.code !== 0) throw cloneStageError('mongo dump', dump, secrets);
 
-    onOutput?.(`── 阶段2/3: 启动专用隔离实例（${isoImage}，内存上限 1.5G / WT cache 1G）──`);
+    onOutput?.(`── 阶段2/3: 启动专用隔离实例（${isoImage}，内存上限 1.5G / WT cache 1G${user ? '，root 认证=源库同凭据' : '，源库无认证、实例保持同姿态'}）──`);
+    // 认证（Codex P1）：`-p 27017` 默认发布到宿主全部网卡，能摸到该端口的任何人
+    // 都可读写这份生产派生克隆。专用实例复用**源库的 root 凭据**（不新增落盘密钥、
+    // 与共享 infra 的安全姿态一致）；源库本身无认证时保持同姿态（克隆不比源更暴露）。
     const runIso = await runDockerExec([
       'run', '-d', '--name', isoName,
       '--label', 'cds.type=rsdb',
       '--restart', 'unless-stopped',
       '-p', '27017',
       '--memory', '1536m', '--memory-swap', '1536m',
+      ...(user ? ['-e', `MONGO_INITDB_ROOT_USERNAME=${user}`, '-e', `MONGO_INITDB_ROOT_PASSWORD=${pw}`] : []),
       isoImage, 'mongod', '--wiredTigerCacheSizeGB', '1',
     ], '', 300_000, 16 * 1024);
     if (runIso.code !== 0) throw cloneStageError('启动专用实例', runIso, secrets);
@@ -365,7 +382,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
 
     onOutput?.('── 阶段3/3: mongorestore 写入专用实例（写压不触碰共享库）──');
     const restore = await runDockerExec(toolsHelper(isoName,
-      `set -e; mongorestore --host 127.0.0.1 --port 27017 --archive=/rsclone/dump.archive.gz --gzip ` +
+      `set -e; mongorestore --host 127.0.0.1 --port 27017 ${authFlags} --archive=/rsclone/dump.archive.gz --gzip ` +
       `--nsFrom='${target.sourceDb}.*' --nsTo='${dbName}.*' --numParallelCollections=1 --numInsertionWorkersPerCollection=1`,
     ), '', 900_000, 64 * 1024);
     if (restore.code !== 0) throw cloneStageError('mongo restore', restore, secrets);
@@ -373,8 +390,9 @@ async function cloneMongoViaDedicatedInstance(opts: {
 
     const envOverride: Record<string, string> = {};
     for (const key of target.envKeys) envOverride[key] = dbName;
-    // 连接串覆写：保留 ${CDS_HOST} 模板，随容器启动的既有模板解析链路落成宿主地址
-    for (const key of target.connEnvKeys) envOverride[key] = 'mongodb://${CDS_HOST}:' + isoHostPort;
+    // 连接串覆写：保留 ${CDS_HOST} 模板，随容器启动的既有模板解析链路落成宿主地址；
+    // 实例带认证时凭据入串（percent-encode 防特殊字符撞 ${VAR} 模板展开）
+    for (const key of target.connEnvKeys) envOverride[key] = dedicatedConnString(user, pw, isoHostPort);
     return {
       envOverride,
       snapshot: {
@@ -387,6 +405,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
         infraContainer: c,
         dedicatedContainer: isoName,
         dedicatedHostPort: isoHostPort,
+        ...(user ? { dedicatedAuth: 'source-infra' as const } : {}),
         clonedAt: (opts.now?.() ?? new Date()).toISOString(),
       },
     };
@@ -436,11 +455,26 @@ function parseMongoNumber(stdout: string): number {
  * 多个服务隔离同一个源库时只克隆一次，后来的服务 / 后加的副本直接
  * 连到既有专用实例（mongo）或既有隔离库（mysql/pg 共享实例通道）。
  */
+/**
+ * 专用实例连接串：带认证时凭据 percent-encode 入串（authSource=admin），
+ * `$` 会被编码为 %24，不会撞上容器 env 的 ${VAR} 模板展开。
+ */
+function dedicatedConnString(user: string, pw: string, hostPort: number): string {
+  const cred = user ? `${encodeURIComponent(user)}:${encodeURIComponent(pw)}@` : '';
+  const authSuffix = user ? '/?authSource=admin' : '';
+  return `mongodb://${cred}\${CDS_HOST}:${hostPort}${authSuffix}`;
+}
+
 export function envOverrideFromSnapshot(target: ReplicaDbTarget, snapshot: ReplicaDbSnapshot): Record<string, string> {
   const envOverride: Record<string, string> = {};
   for (const key of target.envKeys) envOverride[key] = snapshot.dbName;
   if (snapshot.dedicatedContainer && snapshot.dedicatedHostPort) {
-    for (const key of target.connEnvKeys) envOverride[key] = 'mongodb://${CDS_HOST}:' + snapshot.dedicatedHostPort;
+    // 带认证标记的实例复用源库 root 凭据（活取 infra env，不落盘新密钥）；
+    // 旧无认证实例（快照无标记）维持裸串，不误发凭据
+    const env = target.infra?.env || {};
+    const user = snapshot.dedicatedAuth === 'source-infra' ? (env.MONGO_INITDB_ROOT_USERNAME || '') : '';
+    const pw = snapshot.dedicatedAuth === 'source-infra' ? (env.MONGO_INITDB_ROOT_PASSWORD || '') : '';
+    for (const key of target.connEnvKeys) envOverride[key] = dedicatedConnString(user, pw, snapshot.dedicatedHostPort);
   }
   return envOverride;
 }

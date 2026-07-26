@@ -608,6 +608,12 @@ export interface ReplicaDbSnapshot {
   dedicatedContainer?: string;
   /** 专用隔离实例的宿主端口（成员连接串覆写用） */
   dedicatedHostPort?: number;
+  /**
+   * 专用实例认证标记（Codex P1，2026-07-26）：'source-infra' = 实例以**源库的
+   * root 凭据**启用认证（凭据活取自 infra env，不在快照落盘）。缺省 = 历史
+   * 无认证实例，消费方（连接串生成/审计 eval）不得对其发凭据。
+   */
+  dedicatedAuth?: 'source-infra';
   clonedAt: string;
 }
 

@@ -77,8 +77,23 @@ const tcpProbe = async (port: number): Promise<boolean> => {
   });
 };
 
-/** 专用隔离实例（无鉴权 mongod）eval 通道 */
-function isoInstanceEval(container: string, script: string): ReturnType<typeof runDockerExec> {
+/**
+ * 专用隔离实例 eval 通道。带 `dedicatedAuth: 'source-infra'` 标记的实例复用
+ * 源库 root 凭据（Codex P1 认证收紧）；历史无认证实例不发凭据。
+ * 凭据经 docker exec -e 注入，不进 argv（宿主 ps 不可见）。
+ */
+function isoInstanceEval(
+  container: string,
+  script: string,
+  auth?: { user: string; pw: string },
+): ReturnType<typeof runDockerExec> {
+  if (auth?.user) {
+    return runDockerExec([
+      'exec', '-i', '-e', `RS_ISO_USER=${auth.user}`, '-e', `RS_ISO_PW=${auth.pw}`,
+      container, 'sh', '-c',
+      `mongosh -u "$RS_ISO_USER" -p "$RS_ISO_PW" --authenticationDatabase admin --quiet --eval '${script.replace(/'/g, `'"'"'`)}'`,
+    ], '', 30_000, 16 * 1024);
+  }
   return runDockerExec(['exec', '-i', container, 'mongosh', '--quiet', '--eval', script], '', 30_000, 16 * 1024);
 }
 
@@ -215,13 +230,16 @@ export async function runIsolationAudit(
   if (snapshot.engine === 'mongo' && snapshot.dedicatedContainer) {
     const infraEnv = target.infra.env || {};
     const infraPort = target.infra.containerPort || 27017;
+    const isoAuth = snapshot.dedicatedAuth === 'source-infra'
+      ? { user: infraEnv.MONGO_INITDB_ROOT_USERNAME || '', pw: infraEnv.MONGO_INITDB_ROOT_PASSWORD || '' }
+      : undefined;
     const tokIso = `iso${Date.now().toString(36)}`;
     const tokMain = `main${Date.now().toString(36)}`;
     const isoDb = `db.getSiblingDB('${snapshot.dbName}')`;
     const mainDb = `db.getSiblingDB('${target.sourceDb}')`;
     try {
       const baseline = await isoInstanceEval(snapshot.dedicatedContainer,
-        `print(Number(${isoDb}.getCollectionNames().length))`);
+        `print(Number(${isoDb}.getCollectionNames().length))`, isoAuth);
       const collCount = tailNumber(baseline.stdout);
       checks.push({
         id: 'D1', group: '数据面', title: '克隆基线：隔离库确有数据',
@@ -231,7 +249,7 @@ export async function runIsolationAudit(
 
       // 正向：隔离库写入 → 主库必须查无
       const wIso = await isoInstanceEval(snapshot.dedicatedContainer,
-        `${isoDb}.cds_isolation_canary.insertOne({t:'${tokIso}'}); print('ok')`);
+        `${isoDb}.cds_isolation_canary.insertOne({t:'${tokIso}'}); print('ok')`, isoAuth);
       const rMain = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
         `print(Number(${mainDb}.cds_isolation_canary.countDocuments({t:'${tokIso}'})))`);
       const fwdOk = wIso.code === 0 && rMain.code === 0 && tailNumber(rMain.stdout) === 0;
@@ -246,7 +264,7 @@ export async function runIsolationAudit(
       const wMain = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
         `${mainDb}.cds_isolation_canary.insertOne({t:'${tokMain}'}); print('ok')`);
       const rIso = await isoInstanceEval(snapshot.dedicatedContainer,
-        `print(Number(${isoDb}.cds_isolation_canary.countDocuments({t:'${tokMain}'})))`);
+        `print(Number(${isoDb}.cds_isolation_canary.countDocuments({t:'${tokMain}'})))`, isoAuth);
       const revOk = wMain.code === 0 && rIso.code === 0 && tailNumber(rIso.stdout) === 0;
       checks.push({
         id: 'D3', group: '数据面', title: '反向隔离：写入主库的数据不出现在隔离库',
@@ -260,7 +278,7 @@ export async function runIsolationAudit(
       const cleanup = (dbExpr: string): string =>
         `${dbExpr}.cds_isolation_canary.deleteMany({t:{$in:['${tokIso}','${tokMain}']}}); ` +
         `if (${dbExpr}.cds_isolation_canary.countDocuments({}) === 0) { ${dbExpr}.cds_isolation_canary.drop(); }`;
-      await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb)).catch(() => undefined);
+      await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb), isoAuth).catch(() => undefined);
       await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb)).catch(() => undefined);
     }
   } else if (snapshot.engine === 'mysql' || snapshot.engine === 'postgres') {

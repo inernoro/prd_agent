@@ -20,6 +20,8 @@ export interface ReplicaSetsRouterDeps {
   deploymentVersionService: DeploymentVersionService;
   assertProjectAccess: (req: Request, projectId: string) => { status: number; body: unknown } | null;
   dispatchVersion: (version: DeploymentVersion, trigger: 'manual' | 'rollback') => Promise<VersionDispatchResult>;
+  /** 查部署 run 当前状态（promote 终态门用；running=成功终态，failed/cancelled=失败终态） */
+  getDeploymentRunStatus: (runId: string) => string | undefined;
 }
 
 export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
@@ -334,12 +336,44 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       res.status(result.status || 500).json({ error: result.error || '版本部署未被接受' });
       return;
     }
-    await deps.replicaSetService.dissolve(req.params.branchId, req.params.profileId);
+    // 终态门（Codex P1，2026-07-26）：dispatchVersion 的 accepted 只代表「后台部署
+    // 已受理」，新主容器可能还要构建/启动数分钟——此刻解散会把唯一健康出口
+    //（含刚被提升的成员本体）拆掉；部署最终失败时更是主副两空。改为后台盯
+    // run 到终态：running（成功终态）才解散；failed/cancelled 保留复制集。
+    const { branchId, profileId } = req.params;
+    const promoteRunId = result.runId;
+    void (async () => {
+      const startedAt = Date.now();
+      const timeoutMs = 30 * 60_000;
+      for (;;) {
+        await new Promise((r) => setTimeout(r, 5_000));
+        const status = promoteRunId ? deps.getDeploymentRunStatus(promoteRunId) : undefined;
+        if (status === 'running') {
+          try {
+            await deps.replicaSetService.dissolve(branchId, profileId);
+            console.log(`[replica-set] promote 部署成功终态，已解散复制集 ${branchId}/${profileId}`);
+          } catch (err) {
+            console.warn(`[replica-set] promote 后解散复制集失败（可手动解散）: ${(err as Error).message}`);
+          }
+          return;
+        }
+        if (status === 'failed' || status === 'cancelled') {
+          console.warn(`[replica-set] promote 部署终态 ${status}，保留复制集 ${branchId}/${profileId} 作为回退出口`);
+          return;
+        }
+        if (!promoteRunId || Date.now() - startedAt > timeoutMs) {
+          console.warn(`[replica-set] promote 部署 ${promoteRunId || '(无 runId)'} 超过 30 分钟未到终态，保留复制集 ${branchId}/${profileId}（可手动解散）`);
+          return;
+        }
+      }
+    })();
     res.status(202).json({
       accepted: true,
       promotedVersionId: version.id,
-      runId: result.runId,
-      streamUrl: result.runId ? `/api/deployment-runs/${result.runId}/stream` : undefined,
+      runId: promoteRunId,
+      streamUrl: promoteRunId ? `/api/deployment-runs/${promoteRunId}/stream` : undefined,
+      replicaSetRetained: true,
+      note: '复制集将在新主版本部署成功后自动解散；部署失败则保留作为回退出口',
     });
   });
 

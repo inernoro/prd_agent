@@ -138,14 +138,23 @@ describe('resolveReplicaDbTarget', () => {
 
   it('隔离库名生成必须自证通过白名单（复验 R2-P1-1：guard-N/res-N 连字符归一）', () => {
     const SAFE = /^[a-z0-9_]+$/;
-    // isolateProfile / startDbGuard 的真实生成格式是 guard-<N>；addMember 的是 res-<N>
-    expect(isolatedDbNameFor('prdagent', 'guard-1')).toBe('prdagent_rs_guard_1');
-    expect(isolatedDbNameFor('prdagent', 'res-2')).toBe('prdagent_rs_res_2');
+    // isolateProfile / startDbGuard 的真实生成格式是 guard-<N>；addMember 的是 res-<N>；
+    // 库名含分支哈希段（Codex P1：防跨分支 guard-1 同名互杀），格式 <源库>_rs_<hash6>_<成员>
+    expect(isolatedDbNameFor('prdagent', 'guard-1', 'br-a')).toMatch(/^prdagent_rs_[0-9a-f]{6}_guard_1$/);
+    expect(isolatedDbNameFor('prdagent', 'res-2', 'br-a')).toMatch(/^prdagent_rs_[0-9a-f]{6}_res_2$/);
     for (const memberId of ['guard-1', 'guard-12', 'res-1', 'res-3', 'rsfa7a2b']) {
-      const name = isolatedDbNameFor('prdagent', memberId);
+      const name = isolatedDbNameFor('prdagent', memberId, 'proj-main');
       expect(SAFE.test(name), `${memberId} → ${name} 必须通过 DB_NAME_SAFE`).toBe(true);
       expect(name).toContain('_rs_'); // dropReplicaDb 的删除守卫要求
     }
+  });
+
+  it('同源库同成员 id 在不同分支生成不同库名/容器名（Codex P1：跨分支同名互杀）', () => {
+    const a = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a');
+    const b = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-b');
+    expect(a).not.toBe(b);
+    // 同分支重复调用必须稳定（快照复用/删除守卫都依赖确定性命名）
+    expect(isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a')).toBe(a);
   });
 
   it('dependsOn 优先选中显式声明的 infra 实例', () => {
@@ -177,6 +186,25 @@ describe('envOverrideFromSnapshot 统一战线同库复用（2026-07-25）', () 
     const env = envOverrideFromSnapshot(target, snap);
     expect(env.MongoDB__DatabaseName).toBe('prdagent_rs_guard_1');
     expect(env.MongoDB__ConnectionString).toBe('mongodb://${CDS_HOST}:12345');
+  });
+
+  it('带认证标记的专用实例快照：连接串带源库 root 凭据（percent-encode + authSource=admin）', async () => {
+    const { envOverrideFromSnapshot } = await import('../../src/services/replica-db-clone.js');
+    const target = {
+      engine: 'mongo', sourceDb: 'prdagent', envKeys: ['MongoDB__DatabaseName'],
+      connEnvKeys: ['MongoDB__ConnectionString'],
+      infra: { env: { MONGO_INITDB_ROOT_USERNAME: 'root', MONGO_INITDB_ROOT_PASSWORD: 'p@ss$1' } },
+    } as never;
+    const snap = {
+      id: 'rsdb_guard-1', profileId: 'api', memberId: 'guard-1', engine: 'mongo',
+      sourceDb: 'prdagent', dbName: 'prdagent_rs_abc123_guard_1',
+      dedicatedContainer: 'cds-rsdb-prdagent_rs_abc123_guard_1', dedicatedHostPort: 12345,
+      dedicatedAuth: 'source-infra',
+      clonedAt: new Date().toISOString(),
+    } as never;
+    const env = envOverrideFromSnapshot(target, snap);
+    // $ 必须被编码为 %24，否则会撞上容器 env 的 ${VAR} 模板展开
+    expect(env.MongoDB__ConnectionString).toBe('mongodb://root:p%40ss%241@${CDS_HOST}:12345/?authSource=admin');
   });
 
   it('共享实例快照（mysql/pg 通道）：只覆写库名键，不动连接串', async () => {

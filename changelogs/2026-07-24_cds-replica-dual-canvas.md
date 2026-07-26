@@ -52,3 +52,8 @@
 | fix | cds | 删项目级联清理复制集成员容器与专用隔离实例（Codex P1：rsdb 容器无归属 label，项目删除后永久漏跑） |
 | fix | cds | 成员物化加三道在册栅栏（Codex P2：克隆/启动期间成员被移除会起台账外幽灵容器、追加无主快照） |
 | merge | cds | 同步主分支（codex SSO 安全收紧 + 分支卡动作层级 + 生图长超时），文本零冲突；语义冲突一处：replica-sets 路由补登记进 Agent 能力目录（守卫测试） |
+| security | cds | mongo 专用隔离实例启用认证（复用源库 root 凭据，不落盘新密钥；旧无认证实例带标记区分不误发凭据），治宿主全网卡裸端口暴露生产派生克隆（Codex P1） |
+| fix | cds | 隔离库名/专用实例容器名加分支哈希段，治跨分支 guard-1 同名互杀（第二分支克隆 rm -f 摧毁第一分支在用隔离库，Codex P1） |
+| fix | cds | 隔离目标解析合入分支级环境变量（与部署路径同优先级），治分支覆写库名/连接串时克隆到项目级默认库（Codex P1） |
+| fix | cds | promote 改终态门：部署 run 成功终态才解散复制集，失败/取消保留作回退出口，治派发受理瞬间拆掉唯一健康出口（Codex P1） |
+| security | cds | forwarder /__forwarder/replica-health 诊断端点补 loopback 门禁，与相邻 routes/stats/active 同姿态（Codex P2） |

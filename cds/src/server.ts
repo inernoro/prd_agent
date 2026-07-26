@@ -4038,6 +4038,7 @@ export function createServer(deps: ServerDeps): express.Express {
     deploymentVersionService,
     assertProjectAccess: assertProjectAccess as any,
     dispatchVersion,
+    getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
   }));
 
   app.use('/api', createManagedProjectsRouter({

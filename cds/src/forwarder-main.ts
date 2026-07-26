@@ -251,6 +251,13 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     return true;
   }
   if (url === '/__forwarder/replica-health') {
+    // 与相邻 routes/stats/active 同一道门（Codex P2）：摘除表含跨项目的分支/
+    // profile/成员/故障态标识，公网预览 host 不得读取。
+    if (!isLoopback) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden' }));
+      return true;
+    }
     res.writeHead(200, { 'Content-Type': 'application/json' });
     res.end(JSON.stringify({ ejected: replicaHealth.snapshot(), generatedAt: new Date().toISOString() }));
     return true;

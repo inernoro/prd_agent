@@ -353,6 +353,7 @@ export class ReplicaSetService {
       target,
       memberId: guardId,
       profileId,
+      branchId: branch.id,
       now: this.opts.now,
       onOutput: (line) => onStage('cloning', line),
     }).then((cloned) => {
@@ -422,7 +423,7 @@ export class ReplicaSetService {
     void (async () => {
       try {
         const cloned = await cloneReplicaDb({
-          target, memberId: guardId, profileId, now: this.opts.now,
+          target, memberId: guardId, profileId, branchId, now: this.opts.now,
           // 复验 R5-P1：克隆保护/进度必须有用户可见 sink——透传到成员 statusMessage
           //（保持「第1步」前缀，UI 的隔离阶段判定依赖它）+ 服务端日志
           onOutput: (line) => {
@@ -618,6 +619,7 @@ export class ReplicaSetService {
           target,
           memberId,
           profileId,
+          branchId,
           now: this.opts.now,
           onOutput,
         });
