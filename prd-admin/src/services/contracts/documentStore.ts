@@ -152,6 +152,61 @@ export type DocumentEntry = {
   updatedAt: string;
 };
 
+export type TutorialLinkStep = {
+  sourceId: string;
+  stepIds: string[];
+  evidenceIds: string[];
+  impact: string[];
+};
+
+export type TutorialLinkSurface = {
+  id: string;
+  label?: string;
+  routes: string[];
+  pagePath: string;
+  changeSources: string[];
+  tutorialSourceIds: string[];
+  tutorialLinks: TutorialLinkStep[];
+  anchors: Array<{ name: string; product: string; tutorial: string }>;
+};
+
+export type TutorialLinkGraphRevision = {
+  schemaVersion: number;
+  graphSha256: string;
+  sourceRevision: string;
+  manifestSha256: string;
+  verifiedAtCommit: string;
+  generatedAt: string;
+  savedAt: string;
+  savedBy: string;
+  surfaces: TutorialLinkSurface[];
+};
+
+export type TutorialLinkGraphSnapshot = {
+  exists: boolean;
+  draft?: TutorialLinkGraphRevision | null;
+  published?: TutorialLinkGraphRevision | null;
+  updatedAt?: string | null;
+  history: Array<{
+    versionId: string;
+    graphSha256: string;
+    sourceRevision: string;
+    verifiedAtCommit: string;
+    publishedAt: string;
+    publishedBy: string;
+    rolledBackFromVersionId?: string | null;
+  }>;
+};
+
+export type TutorialLinkRouteResolution = {
+  storeId: string;
+  storeName: string;
+  requestedRoute: string;
+  graphSha256: string;
+  surfaces: Array<{ id: string; label?: string; routes: string[]; sourceIds: string[] }>;
+  tutorials: Array<{ sourceId: string; entryId: string; title: string }>;
+};
+
 export type KnowledgeCreativePublishKind = 'poster' | 'tutorial' | 'copy-html' | 'page';
 
 export type KnowledgeCreativePublishInput = {

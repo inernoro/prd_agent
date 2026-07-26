@@ -16,6 +16,16 @@ describe('resolveLlmGatewaySsoHref', () => {
     })).toBe(`https://map-sso-codex-prd-agent-llmgw-web.miduo.org/auth/map#code=${code}`);
   });
 
+  it('可携带受控的 Gateway 页面回跳路径', () => {
+    expect(resolveLlmGatewaySsoHref(code, { hostname: 'map.ebcone.net', protocol: 'https:' }, '/logs?requestId=req-1'))
+      .toBe(`/llmgw/auth/map?returnTo=${encodeURIComponent('/logs?requestId=req-1')}#code=${code}`);
+  });
+
+  it.each(['//attacker.example', 'https://attacker.example', '/logs\ninvalid'])('拒绝不安全回跳路径：%s', (returnTo) => {
+    expect(resolveLlmGatewaySsoHref(code, { hostname: 'map.ebcone.net', protocol: 'https:' }, returnTo))
+      .toBe(`/llmgw/auth/map#code=${code}`);
+  });
+
   it.each([`${'a'.repeat(42)}`, 'unsafe/value', '', null])('拒绝非法一次性 code：%s', (value) => {
     expect(resolveLlmGatewaySsoHref(value, { hostname: 'map.ebcone.net', protocol: 'https:' })).toBeNull();
   });
