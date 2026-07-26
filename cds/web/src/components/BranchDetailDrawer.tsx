@@ -504,6 +504,23 @@ interface MetricSeries {
 }
 const METRIC_RING_SIZE = 60;
 
+/** 总览仪表块（2026-07-26「让总览像一个总览」）：大数字 + 语义色点 + 一句副文案 */
+function OverviewTile({ label, value, sub, tone = 'muted', mono }: {
+  label: string; value: string; sub?: string; tone?: 'good' | 'bad' | 'muted'; mono?: boolean;
+}): JSX.Element {
+  const dot = tone === 'good' ? '#10b981' : tone === 'bad' ? '#ef4444' : 'hsl(var(--muted-foreground))';
+  return (
+    <div className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-3.5 py-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
+        {label}
+      </div>
+      <div className={`mt-1 truncate text-lg font-bold ${tone === 'bad' ? 'text-destructive' : ''} ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+      {sub ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div> : null}
+    </div>
+  );
+}
+
 function DrawerTabButton({
   tab,
   active,
@@ -848,7 +865,8 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<DrawerTab>('run');
+  // 2026-07-26 用户拍板：总览承载入口卡就必须坐第一号位——打开抽屉默认总览（仪表盘）
+  const [activeTab, setActiveTab] = useState<DrawerTab>('overview');
   // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
   const [configSection, setConfigSection] = useState<ConfigSection>('variables');
   // Phase A — Variables tab(2026-05-04)
@@ -1106,7 +1124,7 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'run');
+    setActiveTab(initialResourceId ? 'services' : 'overview');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -2544,24 +2562,48 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'overview' ? (
-                  <section className="cds-surface-raised cds-hairline px-5 py-4">
-                    <div className="grid gap-3 text-sm">
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">分支</span>
-                        <span className="min-w-0 truncate font-mono">{branch.branch}</span>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">提交</span>
-                        <span className="font-mono">{branch.commitSha?.slice(0, 7) || '-'}</span>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">状态</span>
-                        <span>{statusLabel(branch.status)}</span>
-                      </div>
+                {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
+                    状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
+                {activeTab === 'overview' ? (() => {
+                  const svcList = Object.values(branch.services || {});
+                  const upCount = svcList.filter((sv) => sv.status === 'running').length;
+                  const svcBad = svcList.some((sv) => sv.status === 'error');
+                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {};
+                  const rsList = Object.values(rsMap).filter((rs) => rs?.enabled);
+                  const memberCount = rsList.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
+                  const memberBad = rsList.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
+                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
+                  const latest = (arr?: number[]): number | null => (arr && arr.length > 0 ? arr[arr.length - 1] : null);
+                  const seriesList = Object.values(metricSeries);
+                  const cpuNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.cpu) ?? 0)) : null;
+                  const memNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.mem) ?? 0)) : null;
+                  const netNow = seriesList.length > 0
+                    ? seriesList.reduce((n, sv) => n + (latest(sv.rxRate) ?? 0) + (latest(sv.txRate) ?? 0), 0)
+                    : null;
+                  const running = branch.status === 'running' || branchStatus === 'running';
+                  return (
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                      <OverviewTile label="状态" value={statusLabel(branch.status)} sub={branch.branch}
+                        tone={branch.status === 'error' ? 'bad' : running ? 'good' : 'muted'} />
+                      <OverviewTile label="服务" value={`${upCount} / ${svcList.length}`} sub={svcBad ? '有服务异常' : '运行中 / 总数'}
+                        tone={svcBad ? 'bad' : upCount === svcList.length && svcList.length > 0 ? 'good' : 'muted'} />
+                      <OverviewTile label="复制集" value={memberCount > 0 ? `${memberCount} 副本` : '未启用'}
+                        sub={memberCount > 0 ? `${rsMode === 'project' ? '项目级' : '容器级'}${memberBad ? ' · 有异常' : ' · 入口按权重分流'}` : '在「运行」页签开启'}
+                        tone={memberBad ? 'bad' : memberCount > 0 ? 'good' : 'muted'} />
+                      <OverviewTile label="版本" value={branch.commitSha?.slice(0, 7) || '-'} sub="当前部署提交" mono />
+                      <OverviewTile label="CPU" value={cpuNow != null ? `${cpuNow.toFixed(0)}%` : '—'}
+                        sub={cpuNow != null ? '最忙服务瞬时值' : '监控采样中…'}
+                        tone={cpuNow != null && cpuNow > 85 ? 'bad' : 'muted'} />
+                      <OverviewTile label="内存" value={memNow != null ? `${memNow.toFixed(0)}%` : '—'}
+                        sub={memNow != null ? '最高服务占限额比' : '监控采样中…'}
+                        tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
+                      <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
+                        sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
+                      <OverviewTile label="入口" value={running && (previewUrl || branch.previewUrl) ? `${1 + gatewayUrls.length} 个` : '未上线'}
+                        sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
                     </div>
-                  </section>
-                ) : null}
+                  );
+                })() : null}
 
                 {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
                     原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
@@ -2672,7 +2714,7 @@ export function BranchDetailDrawer({
                 {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
                 {activeTab === 'overview' ? (
                   <section className="mt-4">
-                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">指标</h4>
+                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">监控</h4>
                     <MetricsPanel
                       state={metricsState}
                       series={metricSeries}
