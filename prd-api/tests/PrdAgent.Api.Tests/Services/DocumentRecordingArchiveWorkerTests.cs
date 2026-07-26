@@ -17,6 +17,54 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .ShouldBe(DocumentStoreController.PendingRecordingEntryId("session-1"));
     }
 
+    [Fact]
+    public void CompletedRecordingIds_ShouldBeDeterministicForCrashRecovery()
+    {
+        DocumentStoreController.CompletedRecordingEntryId("session-1")
+            .ShouldBe("recording-completed-session-1");
+        DocumentStoreController.CompletedRecordingAttachmentId("session-1")
+            .ShouldBe("recording-attachment-session-1");
+    }
+
+    [Fact]
+    public async Task CleanupExpiredRecordingUploads_ShouldDeleteChunksBeforeSessions()
+    {
+        var calls = new List<string>();
+
+        await DocumentStoreController.CleanupExpiredRecordingUploadsAsync(
+            ["session-1"],
+            _ =>
+            {
+                calls.Add("chunks");
+                return Task.CompletedTask;
+            },
+            _ =>
+            {
+                calls.Add("sessions");
+                return Task.CompletedTask;
+            });
+
+        calls.ShouldBe(["chunks", "sessions"]);
+    }
+
+    [Fact]
+    public async Task CleanupExpiredRecordingUploads_ShouldRetainSessionWhenChunkDeletionFails()
+    {
+        var sessionsDeleted = false;
+
+        await Should.ThrowAsync<InvalidOperationException>(() =>
+            DocumentStoreController.CleanupExpiredRecordingUploadsAsync(
+                ["session-1"],
+                _ => throw new InvalidOperationException("chunk delete failed"),
+                _ =>
+                {
+                    sessionsDeleted = true;
+                    return Task.CompletedTask;
+                }));
+
+        sessionsDeleted.ShouldBeFalse();
+    }
+
     [Theory]
     [InlineData(DocumentRecordingUploadStatus.Uploading, true)]
     [InlineData(DocumentRecordingUploadStatus.Completing, true)]

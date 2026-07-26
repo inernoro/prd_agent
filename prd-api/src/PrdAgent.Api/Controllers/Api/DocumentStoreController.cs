@@ -1604,15 +1604,14 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.ExpiresAt <= expiredBefore)
             .Project(s => s.Id)
             .ToListAsync(CancellationToken.None);
-        await _db.DocumentRecordingUploadSessions.DeleteManyAsync(
-            s => s.ExpiresAt <= expiredBefore,
-            CancellationToken.None);
-        if (expiredSessionIds.Count > 0)
-        {
-            await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                c => expiredSessionIds.Contains(c.SessionId),
-                CancellationToken.None);
-        }
+        await CleanupExpiredRecordingUploadsAsync(
+            expiredSessionIds,
+            ids => _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                c => ids.Contains(c.SessionId),
+                CancellationToken.None),
+            ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
+                s => ids.Contains(s.Id),
+                CancellationToken.None));
         var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
         var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
@@ -2033,7 +2032,9 @@ public class DocumentStoreController : ControllerBase
         var stored = await CreateUploadedDocumentEntryAsync(
             store, actorId, actorName, avatarFileName,
             session.FileName, session.MimeType, audioBytes, parentId: null,
-            CancellationToken.None, storedAsset: recordingAsset);
+            CancellationToken.None,
+            storedAsset: recordingAsset,
+            recordingSessionId: sessionId);
 
         if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(claimed.LiveTranscript))
@@ -2200,9 +2201,29 @@ public class DocumentStoreController : ControllerBase
     internal static string PendingRecordingEntryId(string sessionId)
         => $"recording-pending-{sessionId}";
 
+    internal static string CompletedRecordingEntryId(string sessionId)
+        => $"recording-completed-{sessionId}";
+
+    internal static string CompletedRecordingAttachmentId(string sessionId)
+        => $"recording-attachment-{sessionId}";
+
     internal static bool CanEnterRecordingCompletion(string status)
         => status is DocumentRecordingUploadStatus.Uploading
             or DocumentRecordingUploadStatus.Completing;
+
+    internal static async Task CleanupExpiredRecordingUploadsAsync(
+        IReadOnlyCollection<string> expiredSessionIds,
+        Func<IReadOnlyCollection<string>, Task> deleteChunks,
+        Func<IReadOnlyCollection<string>, Task> deleteSessions)
+    {
+        if (expiredSessionIds.Count == 0)
+            return;
+
+        // 分片必须先删。若删除分片失败，会话仍保留，下次清理还能重新定位这些分片；
+        // 反过来先删会话，一旦进程中断，分片将失去可恢复的 session 索引。
+        await deleteChunks(expiredSessionIds);
+        await deleteSessions(expiredSessionIds);
+    }
 
     private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>
         CreateUploadedDocumentEntryAsync(
@@ -2216,7 +2237,8 @@ public class DocumentStoreController : ControllerBase
             string? parentId,
             CancellationToken cancellationToken,
             int assetSaveAttempts = 1,
-            StoredAsset? storedAsset = null)
+            StoredAsset? storedAsset = null,
+            string? recordingSessionId = null)
     {
         var stored = storedAsset ?? await SaveUploadedAssetAsync(
             fileName,
@@ -2233,6 +2255,9 @@ public class DocumentStoreController : ControllerBase
 
         var attachment = new Attachment
         {
+            AttachmentId = recordingSessionId == null
+                ? Guid.NewGuid().ToString()
+                : CompletedRecordingAttachmentId(recordingSessionId),
             UploaderId = userId,
             FileName = fileName,
             MimeType = mime,
@@ -2242,7 +2267,18 @@ public class DocumentStoreController : ControllerBase
             UploadedAt = DateTime.UtcNow,
             ExtractedText = extractedText?.Length > 50000 ? extractedText[..50000] : extractedText,
         };
-        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: cancellationToken);
+        if (recordingSessionId == null)
+        {
+            await _db.Attachments.InsertOneAsync(attachment, cancellationToken: cancellationToken);
+        }
+        else
+        {
+            await _db.Attachments.ReplaceOneAsync(
+                a => a.AttachmentId == attachment.AttachmentId,
+                attachment,
+                new ReplaceOptions { IsUpsert = true },
+                cancellationToken);
+        }
 
         string? documentId = null;
         if (!string.IsNullOrWhiteSpace(extractedText))
@@ -2257,6 +2293,9 @@ public class DocumentStoreController : ControllerBase
         var contentIndex = extractedText?.Length > 2000 ? extractedText[..2000] : extractedText;
         var entry = new DocumentEntry
         {
+            Id = recordingSessionId == null
+                ? Guid.NewGuid().ToString("N")
+                : CompletedRecordingEntryId(recordingSessionId),
             StoreId = store.Id,
             ParentId = string.IsNullOrEmpty(parentId) ? null : parentId,
             AttachmentId = attachment.AttachmentId,
@@ -2274,18 +2313,44 @@ public class DocumentStoreController : ControllerBase
             ContentIndex = contentIndex?.Trim(),
             LastChangedAt = DateTime.UtcNow,
         };
-        await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: cancellationToken);
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
-                .Inc(s => s.DocumentCount, 1)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: cancellationToken);
+        var entryCreated = true;
+        if (recordingSessionId == null)
+        {
+            await _db.DocumentEntries.InsertOneAsync(entry, cancellationToken: cancellationToken);
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == store.Id,
+                Builders<DocumentStore>.Update
+                    .Inc(s => s.DocumentCount, 1)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+        }
+        else
+        {
+            var upsert = await _db.DocumentEntries.ReplaceOneAsync(
+                e => e.Id == entry.Id,
+                entry,
+                new ReplaceOptions { IsUpsert = true },
+                cancellationToken);
+            entryCreated = upsert.UpsertedId != null;
+
+            // 录音完成跨越附件、条目、计数、会话四个写入。恢复时不能再次 $inc，
+            // 也不能因上次在 entry upsert 后崩溃而永久少计，故以真实条目数校准。
+            var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
+                e => e.StoreId == store.Id,
+                cancellationToken: cancellationToken);
+            await _db.DocumentStores.UpdateOneAsync(
+                s => s.Id == store.Id,
+                Builders<DocumentStore>.Update
+                    .Set(s => s.DocumentCount, checked((int)documentCount))
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+        }
 
         _logger.LogInformation(
             "[document-store] File uploaded: {EntryId} '{FileName}' ({Size}B) to store {StoreId} by {UserId}",
             entry.Id, fileName, bytes.LongLength, store.Id, userId);
-        await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
+        if (entryCreated)
+            await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
         return (entry, attachment, documentId, stored.Url);
     }
