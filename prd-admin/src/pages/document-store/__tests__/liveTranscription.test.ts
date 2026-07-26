@@ -3,6 +3,7 @@ import {
   LiveTranscriptionSocket,
   StreamingPcm16Resampler,
   PcmFrameAccumulator,
+  LivePcmFrameGate,
   bufferPendingLivePcm,
   encodeLivePcmFrame,
   floatToPcm16,
@@ -140,6 +141,26 @@ describe('实时转写 PCM 协议', () => {
 
     accumulator.push(new Int16Array(321).fill(4));
     expect(accumulator.flush()?.length).toBe(321);
+  });
+
+  it('暂停边界先冲刷尾帧，丢弃暂停采样，并从干净相位恢复', () => {
+    const frames: Int16Array[] = [];
+    const gate = new LivePcmFrameGate(16_000, (pcm) => frames.push(pcm));
+
+    gate.push(new Float32Array(500).fill(0.25));
+    gate.pause();
+    gate.push(new Float32Array(1_600).fill(0.5));
+    gate.resume();
+    gate.push(new Float32Array(1_600).fill(0.75));
+    gate.stop();
+    gate.stop();
+    gate.resume();
+    gate.push(new Float32Array(1_600).fill(1));
+
+    expect(frames.map(frame => frame.length)).toEqual([500, 1_600]);
+    expect(frames[0][0]).toBe(floatToPcm16(0.25));
+    expect(frames[1][0]).toBe(floatToPcm16(0.75));
+    expect(frames.every(frame => !frame.includes(floatToPcm16(0.5)))).toBe(true);
   });
 
   it('帧头使用四字节小端顺序号，PCM16 紧随其后', () => {

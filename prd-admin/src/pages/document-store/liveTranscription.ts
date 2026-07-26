@@ -139,6 +139,63 @@ export class PcmFrameAccumulator {
   }
 }
 
+/**
+ * 将连续采样切成实时传输帧，并把暂停区间从实时 PCM 中明确隔离。
+ * MediaRecorder 暂停时 AudioContext 仍会产出采样；若只在成帧后过滤，暂停前尾样本
+ * 会和暂停区间或恢复后的样本混成一帧，序号却仍连续。这里在暂停边界先冲刷尾帧，
+ * 暂停期间拒收采样，恢复时重置重采样相位，使实时流与最终录音的有效区间一致。
+ */
+export class LivePcmFrameGate {
+  private resampler: StreamingPcm16Resampler;
+  private readonly accumulator = new PcmFrameAccumulator();
+  private accepting = true;
+  private stopped = false;
+
+  constructor(
+    private readonly inputSampleRate: number,
+    private readonly onPcm: (pcm: Int16Array) => void,
+  ) {
+    this.resampler = new StreamingPcm16Resampler(inputSampleRate);
+  }
+
+  push(samples: Float32Array): void {
+    if (!this.accepting || this.stopped) return;
+    for (const frame of this.accumulator.push(this.resampler.process(samples))) {
+      this.onPcm(frame);
+    }
+  }
+
+  pause(): void {
+    if (!this.accepting || this.stopped) return;
+    this.flushTail();
+    this.accepting = false;
+  }
+
+  resume(): void {
+    if (this.accepting || this.stopped) return;
+    this.resampler = new StreamingPcm16Resampler(this.inputSampleRate);
+    this.accepting = true;
+  }
+
+  stop(): void {
+    if (this.stopped) return;
+    if (this.accepting) this.flushTail();
+    this.accepting = false;
+    this.stopped = true;
+  }
+
+  private flushTail(): void {
+    const tail = this.accumulator.flush();
+    if (tail) this.onPcm(tail);
+  }
+}
+
+export type LivePcmCaptureController = {
+  pause: () => void;
+  resume: () => void;
+  stop: () => void;
+};
+
 export function encodeLivePcmFrame(sequence: number, pcm: Int16Array): ArrayBuffer {
   if (!Number.isInteger(sequence) || sequence <= 0)
     throw new Error('实时音频顺序号必须为正整数');
@@ -365,16 +422,8 @@ export async function startLivePcmCapture(
   context: AudioContext,
   source: MediaStreamAudioSourceNode,
   onPcm: (pcm: Int16Array) => void,
-): Promise<() => void> {
-  const resampler = new StreamingPcm16Resampler(context.sampleRate);
-  const accumulator = new PcmFrameAccumulator();
-  const acceptSamples = (samples: Int16Array) => {
-    for (const frame of accumulator.push(samples)) onPcm(frame);
-  };
-  const flushTail = () => {
-    const tail = accumulator.flush();
-    if (tail) onPcm(tail);
-  };
+): Promise<LivePcmCaptureController> {
+  const gate = new LivePcmFrameGate(context.sampleRate, onPcm);
   if (context.audioWorklet && typeof AudioWorkletNode !== 'undefined') {
     const sourceCode = `
       class MapLivePcmProcessor extends AudioWorkletProcessor {
@@ -392,16 +441,23 @@ export async function startLivePcmCapture(
       const node = new AudioWorkletNode(context, 'map-live-pcm');
       const silent = context.createGain();
       silent.gain.value = 0;
-      node.port.onmessage = (event: MessageEvent<Float32Array>) => acceptSamples(resampler.process(event.data));
+      node.port.onmessage = (event: MessageEvent<Float32Array>) => gate.push(event.data);
       source.connect(node);
       node.connect(silent);
       silent.connect(context.destination);
-      return () => {
-        flushTail();
-        node.port.onmessage = null;
-        source.disconnect(node);
-        node.disconnect();
-        silent.disconnect();
+      let disconnected = false;
+      return {
+        pause: () => gate.pause(),
+        resume: () => gate.resume(),
+        stop: () => {
+          if (disconnected) return;
+          disconnected = true;
+          gate.stop();
+          node.port.onmessage = null;
+          source.disconnect(node);
+          node.disconnect();
+          silent.disconnect();
+        },
       };
     } catch {
       // 部分 Safari 版本暴露 audioWorklet 但禁止 blob module；继续走 ScriptProcessor 兼容路径。
@@ -414,16 +470,23 @@ export async function startLivePcmCapture(
   const silent = context.createGain();
   silent.gain.value = 0;
   processor.onaudioprocess = (event) => {
-    acceptSamples(resampler.process(event.inputBuffer.getChannelData(0)));
+    gate.push(event.inputBuffer.getChannelData(0));
   };
   source.connect(processor);
   processor.connect(silent);
   silent.connect(context.destination);
-  return () => {
-    flushTail();
-    processor.onaudioprocess = null;
-    source.disconnect(processor);
-    processor.disconnect();
-    silent.disconnect();
+  let disconnected = false;
+  return {
+    pause: () => gate.pause(),
+    resume: () => gate.resume(),
+    stop: () => {
+      if (disconnected) return;
+      disconnected = true;
+      gate.stop();
+      processor.onaudioprocess = null;
+      source.disconnect(processor);
+      processor.disconnect();
+      silent.disconnect();
+    },
   };
 }

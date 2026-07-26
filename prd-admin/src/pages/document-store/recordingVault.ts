@@ -36,7 +36,13 @@ type VaultServerStatus =
   | null;
 
 type VaultServerCompletion =
-  | { success: true }
+  | {
+      success: true;
+      data?: {
+        archivePending?: boolean;
+        deferredTranscriptionRunId?: string | null;
+      };
+    }
   | { success: false; error: { code: string } }
   | null;
 
@@ -80,6 +86,24 @@ export function decideVaultServerRecovery(
     return 'recover-local';
   }
   return 'keep-protected';
+}
+
+/** 服务端恢复成功后，归档中的延迟转写仍需接回页面现有后台观察器。 */
+export function deferredRunIdForRecoveredVaultCompletion(
+  completion: VaultServerCompletion,
+): string | null {
+  if (!completion?.success || completion.data?.archivePending !== true) return null;
+  return completion.data.deferredTranscriptionRunId?.trim() || null;
+}
+
+/** 多段保险箱录音可能同时恢复；观察队列必须保留全部任务并对重入去重。 */
+export function enqueueBackgroundTranscriptionRun(
+  current: string[],
+  runId: string,
+): string[] {
+  const normalized = runId.trim();
+  if (!normalized || current.includes(normalized)) return current;
+  return [...current, normalized];
 }
 
 function openDb(): Promise<IDBDatabase | null> {

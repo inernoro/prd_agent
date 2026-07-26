@@ -1,5 +1,10 @@
 import { describe, expect, it } from 'vitest';
-import { decideVaultServerRecovery, shouldRetryVaultServerCompletion } from '../recordingVault';
+import {
+  decideVaultServerRecovery,
+  deferredRunIdForRecoveredVaultCompletion,
+  enqueueBackgroundTranscriptionRun,
+  shouldRetryVaultServerCompletion,
+} from '../recordingVault';
 
 describe('recording vault completion retry gate', () => {
   it('retries only server-owned completing and completed sessions', () => {
@@ -24,6 +29,35 @@ describe('recording vault completion retry gate', () => {
       error: { code: 'SERVER_ERROR' },
     })).toBe(false);
     expect(shouldRetryVaultServerCompletion(null)).toBe(false);
+  });
+});
+
+describe('recording vault deferred transcription recovery', () => {
+  it('watches only a non-empty deferred run owned by an archive-pending completion', () => {
+    expect(deferredRunIdForRecoveredVaultCompletion({
+      success: true,
+      data: { archivePending: true, deferredTranscriptionRunId: ' run-1 ' },
+    })).toBe('run-1');
+    expect(deferredRunIdForRecoveredVaultCompletion({
+      success: true,
+      data: { archivePending: false, deferredTranscriptionRunId: 'run-1' },
+    })).toBeNull();
+    expect(deferredRunIdForRecoveredVaultCompletion({
+      success: true,
+      data: { archivePending: true, deferredTranscriptionRunId: ' ' },
+    })).toBeNull();
+    expect(deferredRunIdForRecoveredVaultCompletion(null)).toBeNull();
+  });
+
+  it('keeps multiple recovered runs while trimming and deduplicating replays', () => {
+    const first = enqueueBackgroundTranscriptionRun([], ' run-1 ');
+    const duplicate = enqueueBackgroundTranscriptionRun(first, 'run-1');
+    const second = enqueueBackgroundTranscriptionRun(duplicate, 'run-2');
+
+    expect(first).toEqual(['run-1']);
+    expect(duplicate).toEqual(['run-1']);
+    expect(second).toEqual(['run-1', 'run-2']);
+    expect(enqueueBackgroundTranscriptionRun(second, ' ')).toEqual(second);
   });
 });
 

@@ -29,6 +29,7 @@ import {
   bufferPendingLivePcm,
   reduceLiveTranscriptionView,
   startLivePcmCapture,
+  type LivePcmCaptureController,
   type LiveTranscriptionState,
 } from './liveTranscription';
 
@@ -217,7 +218,7 @@ export function RecordAudioSheet({
   const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
-  const stopLiveCaptureRef = useRef<(() => void) | null>(null);
+  const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
   const liveCaptureEnabledRef = useRef(true);
   // MediaRecorder.onstop 一旦进入完成链路，就由该链路独占终态。关闭、背景点击、
   // Escape 或上传文件入口都不能再把 complete 改写为 discard。
@@ -380,8 +381,8 @@ export function RecordAudioSheet({
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
     liveCaptureEnabledRef.current = false;
-    stopLiveCaptureRef.current?.();
-    stopLiveCaptureRef.current = null;
+    liveCaptureRef.current?.stop();
+    liveCaptureRef.current = null;
     liveTranscriptionRef.current?.close();
     liveTranscriptionRef.current = null;
     pendingLivePcmRef.current = [];
@@ -410,13 +411,13 @@ export function RecordAudioSheet({
     finishModeRef.current = mode;
     if (mode === 'complete') {
       // 先刷新不足 100ms 的最后一帧，再关闭采集开关。
-      stopLiveCaptureRef.current?.();
+      liveCaptureRef.current?.stop();
       liveCaptureEnabledRef.current = false;
     } else {
       liveCaptureEnabledRef.current = false;
-      stopLiveCaptureRef.current?.();
+      liveCaptureRef.current?.stop();
     }
-    stopLiveCaptureRef.current = null;
+    liveCaptureRef.current = null;
     if (mode === 'discard') {
       liveTranscriptionRef.current?.close();
       liveTranscriptionRef.current = null;
@@ -607,8 +608,8 @@ export function RecordAudioSheet({
           source.connect(analyser);
           analyserRef.current = analyser;
           try {
-            stopLiveCaptureRef.current = await startLivePcmCapture(ctx, source, (pcm) => {
-              // stopLivePcmCapture 会同步冲刷不足 100ms 的尾帧。用户可能在暂停时
+            liveCaptureRef.current = await startLivePcmCapture(ctx, source, (pcm) => {
+              // liveCapture.stop 会同步冲刷不足 100ms 的尾帧。用户可能在暂停时
               // 点击完成，此时 recorder.state 仍是 paused，但完成锁已取得，尾帧仍须发送。
               if (!shouldForwardLivePcm(
                 liveCaptureEnabledRef.current,
@@ -640,7 +641,7 @@ export function RecordAudioSheet({
         // 才允许实时原文标记 completed；捕获初始化失败时则明确走完整文件校准。
         // 1s 一片：既能实时统计体积，又保证中途异常时已录内容不整段丢失。
         if (disposed) {
-          stopLiveCaptureRef.current?.();
+          liveCaptureRef.current?.stop();
           stream.getTracks().forEach(track => track.stop());
           return;
         }
@@ -735,8 +736,17 @@ export function RecordAudioSheet({
   const togglePause = () => {
     const rec = recorderRef.current;
     if (!rec) return;
-    if (rec.state === 'recording') { rec.pause(); setState('paused'); }
-    else if (rec.state === 'paused') { rec.resume(); setState('recording'); }
+    if (rec.state === 'recording') {
+      // 先冲刷尾帧再切换 recorder.state；回调门禁仍看到 recording，暂停前的
+      // 最后不足一帧样本不会被 shouldForwardLivePcm 当成暂停数据丢弃。
+      liveCaptureRef.current?.pause();
+      rec.pause();
+      setState('paused');
+    } else if (rec.state === 'paused') {
+      rec.resume();
+      liveCaptureRef.current?.resume();
+      setState('recording');
+    }
   };
 
   const destinationPicker = storeOptions.length > 0 ? (
