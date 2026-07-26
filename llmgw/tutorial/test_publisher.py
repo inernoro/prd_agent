@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import copy
 import hashlib
+import json
 from pathlib import Path
 import sys
 import unittest
@@ -123,6 +124,13 @@ class TutorialPublisherTests(unittest.TestCase):
         self.assertTrue(all(count >= publisher.MIN_IMAGES_PER_CHAPTER for count in counts))
         self.assertGreaterEqual(len(set(urls)), publisher.MIN_UNIQUE_IMAGES)
         self.assertGreaterEqual(len(urls), publisher.MIN_EVIDENCE_REFERENCES)
+
+    def test_publisher_thresholds_come_from_evidence_ssot(self):
+        evidence = json.loads(Path(__file__).with_name("evidence-map.json").read_text(encoding="utf-8"))
+
+        self.assertEqual(evidence["minimumImagesPerChapter"], publisher.MIN_IMAGES_PER_CHAPTER)
+        self.assertEqual(evidence["minimumUniqueImages"], publisher.MIN_UNIQUE_IMAGES)
+        self.assertEqual(evidence["minimumEvidenceReferences"], publisher.MIN_EVIDENCE_REFERENCES)
 
     def test_every_numbered_step_has_an_inline_image(self):
         chapters = [node for node in self.source.nodes if node.source_id.startswith("chapter-")]

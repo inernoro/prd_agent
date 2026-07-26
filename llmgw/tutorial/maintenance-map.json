@@ -1,44 +1,285 @@
 {
-  "schemaVersion": 1,
+  "schemaVersion": 2,
+  "policy": {
+    "randomAuditSampleSize": 5,
+    "randomAuditSeed": "git-head",
+    "skipWhenNoRelevantChanges": true,
+    "requireTutorialReverseLink": true,
+    "requireEvidenceForLinkedChapter": true
+  },
+  "globalChangeSources": [
+    {
+      "glob": "llmgw/web/src/App.tsx",
+      "impact": ["content", "screenshot"],
+      "reason": "路由或页面注册变化会影响教程入口与深链"
+    },
+    {
+      "glob": "llmgw/web/src/components/ConsoleLayout.tsx",
+      "impact": ["content", "screenshot"],
+      "reason": "全局导航变化会影响所有页面的进入路径"
+    },
+    {
+      "glob": "llmgw/web/src/theme.css",
+      "impact": ["screenshot"],
+      "reason": "全局视觉 token 变化会使教程图片失效"
+    },
+    {
+      "glob": "llmgw/web/src/lib/access.ts",
+      "impact": ["content"],
+      "reason": "权限变化会影响教程角色说明与入口可见性"
+    }
+  ],
   "surfaces": [
     {
-      "id":"map-sso",
-      "pagePath":"llmgw/web/src/pages/MapSsoPage.tsx",
-      "tutorialSourceIds":["chapter-02","chapter-30"],
-      "anchors":[
-        {"name":"安全登录过渡","product":"正在从 MAP 安全登录","tutorial":"正在从 MAP 安全登录"},
-        {"name":"过期后返回","product":"返回 MAP 重新打开","tutorial":"返回 MAP"}
+      "id": "map-sso",
+      "routes": ["/auth/map"],
+      "pagePath": "llmgw/web/src/pages/MapSsoPage.tsx",
+      "tutorialSourceIds": ["chapter-02", "chapter-30"],
+      "anchors": [
+        {"name": "安全登录过渡", "product": "正在从 MAP 安全登录", "tutorial": "正在从 MAP 安全登录"},
+        {"name": "过期后返回", "product": "返回 MAP 重新打开", "tutorial": "返回 MAP"}
       ]
     },
-    {"id":"login","pagePath":"llmgw/web/src/pages/LoginPage.tsx","tutorialSourceIds":["chapter-02","chapter-30"]},
-    {"id":"home","pagePath":"llmgw/web/src/pages/OverviewPage.tsx","tutorialSourceIds":["chapter-03"]},
-    {"id":"logs","pagePath":"llmgw/web/src/pages/LogsPage.tsx","tutorialSourceIds":["chapter-13","chapter-21","chapter-30","practical-image-03","practical-image-04"]},
-    {"id":"log-detail","pagePath":"llmgw/web/src/pages/LogDetailPage.tsx","tutorialSourceIds":["chapter-13","chapter-21"]},
-    {"id":"log-entity-details","pagePath":"llmgw/web/src/pages/EntityDetailsPages.tsx","tutorialSourceIds":["chapter-06","chapter-07","chapter-09","chapter-13","chapter-14","chapter-18","chapter-21","practical-image-01","practical-image-02","practical-image-03","practical-image-04"]},
-    {"id":"app-callers","pagePath":"llmgw/web/src/pages/AppCallersPage.tsx","tutorialSourceIds":["chapter-09","chapter-14","practical-image-02"]},
-    {"id":"prompt-policy","pagePath":"llmgw/web/src/pages/PromptPolicyPage.tsx","tutorialSourceIds":["chapter-20","chapter-24"]},
-    {"id":"model-pools","pagePath":"llmgw/web/src/pages/ModelPoolsPage.tsx","tutorialSourceIds":["chapter-08","chapter-17","chapter-18"]},
-    {"id":"logical-models","pagePath":"llmgw/web/src/pages/LogicalModelsPage.tsx","tutorialSourceIds":["chapter-18","practical-image-01","practical-image-02","practical-image-03","practical-image-04"]},
-    {"id":"providers","pagePath":"llmgw/web/src/pages/PlatformsPage.tsx","tutorialSourceIds":["chapter-06","practical-image-01"]},
-    {"id":"models","pagePath":"llmgw/web/src/pages/ModelsPage.tsx","tutorialSourceIds":["chapter-07","practical-image-01","practical-image-02"]},
     {
-      "id":"exchanges",
-      "pagePath":"llmgw/web/src/pages/ExchangesPage.tsx",
-      "tutorialSourceIds":["chapter-19","chapter-30"],
-      "anchors":[
-        {"name":"创建入口","product":"新建 Exchange","tutorial":"新建 Exchange"},
-        {"name":"WSS 安全边界","product":"只有豆包流式语音识别可使用公网 WSS","tutorial":"只有豆包流式 ASR 使用 WSS"},
-        {"name":"运行时固定公网地址","product":"运行时会固定已验证公网 IP","tutorial":"运行时会重新解析并固定公网 IP"}
+      "id": "login",
+      "routes": ["/login"],
+      "pagePath": "llmgw/web/src/pages/LoginPage.tsx",
+      "tutorialSourceIds": ["chapter-02", "chapter-30"]
+    },
+    {
+      "id": "home",
+      "routes": ["/"],
+      "pagePath": "llmgw/web/src/pages/HomePage.tsx",
+      "tutorialSourceIds": ["chapter-03"]
+    },
+    {
+      "id": "logs",
+      "routes": ["/logs"],
+      "pagePath": "llmgw/web/src/pages/LogsPage.tsx",
+      "changeSources": [
+        "llmgw/web/src/components/LogsView.tsx",
+        "llmgw/web/src/components/GenerationDetailsDrawer.tsx",
+        "llmgw/web/src/components/LogTableSettings.tsx",
+        "llmgw/web/src/components/LogEntityHoverCard.tsx",
+        "llmgw/web/src/components/LogEntityIcon.tsx",
+        "llmgw/web/src/lib/logsHelpers.ts"
+      ],
+      "tutorialSourceIds": ["chapter-13", "chapter-21", "chapter-30", "practical-image-03", "practical-image-04"],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-21",
+          "stepIds": ["logs-observability-table"],
+          "impact": ["content", "screenshot"],
+          "evidenceIds": [
+            "109-logs-table-settings",
+            "110-logs-app-hover",
+            "111-logs-model-hover",
+            "113-logs-provider-hover"
+          ]
+        }
       ]
     },
-    {"id":"audits","pagePath":"llmgw/web/src/pages/AuditsPage.tsx","tutorialSourceIds":["chapter-24"]},
-    {"id":"service-keys","pagePath":"llmgw/web/src/pages/ServiceKeysPage.tsx","tutorialSourceIds":["chapter-10","chapter-15","chapter-16","chapter-26"]},
-    {"id":"quickstart","pagePath":"llmgw/web/src/pages/QuickstartPage.tsx","tutorialSourceIds":["chapter-10","chapter-11","chapter-12","chapter-27"]},
-    {"id":"learning-center","pagePath":"llmgw/web/src/pages/LearningCenterPage.tsx","tutorialSourceIds":["chapter-00","chapter-32"]},
-    {"id":"organization","pagePath":"llmgw/web/src/pages/OrganizationPage.tsx","tutorialSourceIds":["chapter-04","chapter-05","chapter-25","chapter-26"]},
-    {"id":"shadow","pagePath":"llmgw/web/src/pages/ShadowPage.tsx","tutorialSourceIds":["chapter-29"]},
-    {"id":"governance","pagePath":"llmgw/web/src/pages/GovernancePage.tsx","tutorialSourceIds":["chapter-22","chapter-29","chapter-31"]},
-    {"id":"settings","pagePath":"llmgw/web/src/pages/SettingsPage.tsx","tutorialSourceIds":["chapter-02","chapter-32"]},
-    {"id":"usage","pagePath":"llmgw/web/src/pages/UsagePage.tsx","tutorialSourceIds":["chapter-22","chapter-23","chapter-28"]}
+    {
+      "id": "change-password",
+      "routes": [
+        "/change-password"
+      ],
+      "pagePath": "llmgw/web/src/pages/ChangePasswordPage.tsx",
+      "tutorialSourceIds": [
+        "chapter-02",
+        "chapter-05",
+        "chapter-26"
+      ]
+    },
+    {
+      "id": "log-detail",
+      "routes": ["/logs/:id"],
+      "pagePath": "llmgw/web/src/pages/LogDetailPage.tsx",
+      "changeSources": ["llmgw/web/src/components/GenerationDetailsDrawer.tsx"],
+      "tutorialSourceIds": ["chapter-13", "chapter-21"]
+    },
+    {
+      "id": "log-entity-details",
+      "routes": ["/models/view", "/platforms/view", "/app-callers/view"],
+      "pagePath": "llmgw/web/src/pages/EntityDetailsPages.tsx",
+      "changeSources": [
+        "llmgw/web/src/components/EntityPreviewDrawer.tsx",
+        "llmgw/web/src/components/AppCallerDetailsDrawer.tsx"
+      ],
+      "tutorialSourceIds": [
+        "chapter-06",
+        "chapter-07",
+        "chapter-09",
+        "chapter-13",
+        "chapter-14",
+        "chapter-18",
+        "chapter-21",
+        "practical-image-01",
+        "practical-image-02",
+        "practical-image-03",
+        "practical-image-04"
+      ]
+    },
+    {
+      "id": "app-callers",
+      "routes": ["/app-callers"],
+      "pagePath": "llmgw/web/src/pages/AppCallersPage.tsx",
+      "tutorialSourceIds": ["chapter-09", "chapter-14", "practical-image-02"]
+    },
+    {
+      "id": "prompt-policy",
+      "routes": ["/app-callers/:id/prompt-policy"],
+      "pagePath": "llmgw/web/src/pages/PromptPolicyPage.tsx",
+      "tutorialSourceIds": ["chapter-20", "chapter-24"]
+    },
+    {
+      "id": "model-pools",
+      "routes": ["/pools"],
+      "pagePath": "llmgw/web/src/pages/ModelPoolsPage.tsx",
+      "tutorialSourceIds": ["chapter-08", "chapter-17", "chapter-18"]
+    },
+    {
+      "id": "logical-models",
+      "routes": ["/logical-models"],
+      "pagePath": "llmgw/web/src/pages/LogicalModelsPage.tsx",
+      "tutorialSourceIds": ["chapter-18", "practical-image-01", "practical-image-02", "practical-image-03", "practical-image-04"]
+    },
+    {
+      "id": "providers",
+      "routes": ["/platforms"],
+      "pagePath": "llmgw/web/src/pages/PlatformsPage.tsx",
+      "tutorialSourceIds": ["chapter-06", "practical-image-01"]
+    },
+    {
+      "id": "models",
+      "routes": ["/models"],
+      "pagePath": "llmgw/web/src/pages/ModelsPage.tsx",
+      "tutorialSourceIds": ["chapter-07", "practical-image-01", "practical-image-02"]
+    },
+    {
+      "id": "exchanges",
+      "routes": ["/exchanges"],
+      "pagePath": "llmgw/web/src/pages/ExchangesPage.tsx",
+      "changeSources": [
+        "llmgw/console-api/Program.cs",
+        "llmgw/console-api/Models/Dtos.cs",
+        "llmgw/console-api/Provisioning/GatewayConfigurationProvisioning.cs",
+        "llmgw/serving/Program.cs",
+        "llmgw/serving/GatewayServingReadinessProbe.cs",
+        "prd-api/src/**/*Exchange*.cs"
+      ],
+      "tutorialSourceIds": ["chapter-19", "chapter-30"],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-19",
+          "stepIds": ["exchange-create-and-wss"],
+          "impact": ["content", "screenshot"],
+          "evidenceIds": ["089-nav-Exchange", "093-exchange-form", "094-exchange-key-boundary", "095-exchange-model-map"]
+        }
+      ],
+      "anchors": [
+        {"name": "创建入口", "product": "新建 Exchange", "tutorial": "新建 Exchange"},
+        {"name": "WSS 安全边界", "product": "只有豆包流式语音识别可使用公网 WSS", "tutorial": "只有豆包流式 ASR 使用 WSS"},
+        {"name": "运行时固定公网地址", "product": "运行时会固定已验证公网 IP", "tutorial": "运行时会重新解析并固定公网 IP"}
+      ]
+    },
+    {
+      "id": "audits",
+      "routes": ["/audits"],
+      "pagePath": "llmgw/web/src/pages/AuditsPage.tsx",
+      "tutorialSourceIds": ["chapter-24"]
+    },
+    {
+      "id": "service-keys",
+      "routes": ["/service-keys"],
+      "pagePath": "llmgw/web/src/pages/ServiceKeysPage.tsx",
+      "tutorialSourceIds": ["chapter-10", "chapter-15", "chapter-16", "chapter-26"]
+    },
+    {
+      "id": "quickstart",
+      "routes": ["/quickstart"],
+      "pagePath": "llmgw/web/src/pages/QuickstartPage.tsx",
+      "changeSources": [
+        "scripts/gw-smoke.py",
+        "scripts/llmgw-protocol-canary.py",
+        "llmgw/serving/GatewayHttpEndpoints.cs"
+      ],
+      "tutorialSourceIds": ["chapter-10", "chapter-11", "chapter-12", "chapter-27", "practical-quickstart-05"],
+      "tutorialLinks": [
+        {
+          "sourceId": "practical-quickstart-05",
+          "stepIds": ["quickstart-three-minute"],
+          "impact": ["content", "screenshot"],
+          "evidenceIds": ["060-nav-Quickstart", "064-quickstart-generate", "066-quickstart-protocols", "068-quickstart-copy"]
+        }
+      ]
+    },
+    {
+      "id": "learning-center",
+      "routes": ["/learn"],
+      "pagePath": "llmgw/web/src/pages/LearningCenterPage.tsx",
+      "tutorialSourceIds": ["chapter-00", "chapter-01", "chapter-32"]
+    },
+    {
+      "id": "organization",
+      "routes": ["/organization"],
+      "pagePath": "llmgw/web/src/pages/OrganizationPage.tsx",
+      "changeSources": [
+        "llmgw/console-api/**/*Provision*.cs",
+        "llmgw/console-api/**/*Membership*.cs"
+      ],
+      "tutorialSourceIds": ["chapter-04", "chapter-05", "chapter-25", "chapter-26"],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-05",
+          "stepIds": ["organization-teams-members"],
+          "impact": ["content", "screenshot"],
+          "evidenceIds": ["016-organization-roles", "018-organization-teams", "019-organization-add-member", "020-organization-members"]
+        }
+      ]
+    },
+    {
+      "id": "shadow",
+      "routes": ["/shadow"],
+      "pagePath": "llmgw/web/src/pages/ShadowPage.tsx",
+      "tutorialSourceIds": ["chapter-29"]
+    },
+    {
+      "id": "governance",
+      "routes": ["/governance"],
+      "pagePath": "llmgw/web/src/pages/OverviewPage.tsx",
+      "changeSources": [
+        "llmgw/console-api/Governance/*.cs",
+        "llmgw/serving/GatewayRuntimeGovernance.cs",
+        "prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayGovernanceRecords.cs"
+      ],
+      "tutorialSourceIds": ["chapter-22", "chapter-29", "chapter-31"],
+      "tutorialLinks": [
+        {
+          "sourceId": "chapter-22",
+          "stepIds": ["governance-budget-usage"],
+          "impact": ["content", "screenshot"],
+          "evidenceIds": ["013-organization-appcaller-limit", "044-appcaller-budget", "045-appcaller-rate", "076-nav-预算与用量", "077-usage-overview"]
+        }
+      ]
+    },
+    {
+      "id": "settings",
+      "routes": ["/settings"],
+      "pagePath": "llmgw/web/src/pages/SettingsPage.tsx",
+      "tutorialSourceIds": ["chapter-02", "chapter-32"]
+    },
+    {
+      "id": "usage",
+      "routes": ["/usage"],
+      "pagePath": "llmgw/web/src/pages/UsagePage.tsx",
+      "changeSources": [
+        "llmgw/console-api/Models/Dtos.cs",
+        "llmgw/serving/GatewayHttpEndpoints.cs",
+        "llmgw/serving/GatewayRuntimeGovernance.cs",
+        "prd-api/src/**/*Usage*.cs"
+      ],
+      "tutorialSourceIds": ["chapter-22", "chapter-23", "chapter-28"]
+    }
   ]
 }

@@ -1,129 +1,131 @@
 ---
 name: tutorial-daily-maintain
-description: 页面教程的每日定时维护 Agent。扫描 git 当日/本周增量,把"改了哪些页面"映射到受影响的页面教程(*-page-guide),检测 data-tour-id 锚点漂移,起草「本周有更新」更新提醒(tier=advanced, *-update-YYYYwNN),必要时建议升 page-guide Version,并把一份教程健康/验收报告发布到独立的「页面教程验收知识库」出分享链。首版只产草稿 + 漂移告警给人确认,不自动改 seed。触发词:"维护教程"、"教程日常维护"、"教程更新提醒"、"tutorial maintain"、"/tutorial-daily-maintain"、"本周教程有更新"。
+description: 维护产品页面、教程步骤与截图证据的双向关系。扫描提交增量，验证页面到教程及教程到页面反链，执行固定种子的随机抽检，仅在命中相关变化时输出漂移报告或更新草稿。默认不自动修改教程正文、截图、DailyTips seed 或远端知识库。适用于 LLMGW 权威教程，也保留 DailyTips 页面教程适配流程。触发词包括“维护教程”“教程双链”“教程日常维护”“教程更新提醒”“tutorial maintain”和“/tutorial-daily-maintain”。
 ---
 
-# 页面教程每日维护
+# 教程双链维护
 
-> **版本**：v1.0.0 | **状态**：已落地 | **触发**：`/tutorial-daily-maintain`、"维护教程"、"教程更新提醒"、"本周教程有更新"
+## 目标
 
-把「功能更新了 → 教程没跟上 / 更新没提醒用户」从靠人记变成每天一次的定时巡检。
+把“改了页面后是否要更新教程”变成可验证关系，而不是依赖记忆或语言判断。
 
-> 与相邻技能的边界:
-> - `createzzdemo`(`/createzzdemo`):从 0 **创建**一条新教程小书。
-> - 本技能:对**已存在**的教程做**日常维护**(漂移检测 + 更新提醒 + 验收归档)。
-> - `daily-report-summary`(`/daily`):面向人的「今日大事」日报。本技能面向**教程系统自身**的健康。
-> - `create-visual-test-to-kb`(`/验收`):一次性人工取证验收。本技能是其**定时化 + 教程专用**的轻量版。
+本技能维护四类事实：
 
-数据 SSOT:
-- 教程目录 = `prd-api/src/PrdAgent.Api/Controllers/Api/DailyTipsController.cs` 的 `BuildDefaultTips`(每条 `*-page-guide`)。
-- 进度/分类口径 = `GET /api/daily-tips/progress`(onboarding/task/update + learned)。
-- 锚点 = 页面上的 `data-tour-id`。规则见 `.claude/rules/onboarding-tips.md`。
+1. 产品表面：路由、页面、共享组件、接口和主题。
+2. 教程位置：sourceId、源文件和稳定步骤标记。
+3. 验收证据：截图 ID、状态、主题、视口和已验证提交。
+4. 双向关系：页面可找到教程，教程也可反查页面、路由和证据。
 
----
+LLMGW 的契约见 [reference/bilink-contract.md](reference/bilink-contract.md)。
 
-## 触发
+## 触发与边界
 
-- 定时:建议每日一次(用 `send_later` / CI cron / 平台定时任务挂本技能)。
-- 手动:"维护教程"、"本周教程有更新"、"/tutorial-daily-maintain"。
+- 手动触发：用户要求维护教程、检查教程漂移或更新教程证据。
+- 定时触发：每日质量维护任务调用本技能的“报告模式”。
+- 无相关增量：输出 `status=skipped` 后结束，不打开浏览器、不生成报告、不通知、不修改教程。
+- 有相关增量：先检查关系和随机检测点，再给出 `review_required`、`drift` 或 `synced`。
+- 默认只报告：不自动修改教程正文、截图、DailyTips seed 或远端知识库。
+- 只有用户明确要求更新教程，且检测结果指出具体 sourceId、stepId 和 evidenceId 时，才进入内容更新与发布流程。
 
----
+定时任务调用技能不等于授权自动改正文。定时任务始终使用报告模式。
 
-## 工作流(4 步)
+## LLMGW 工作流
 
-### 第 1 步:算增量(改了哪些页面)
+### 1. 冻结增量
+
+优先使用“上次成功提交到当前目标提交”的闭区间；只有没有游标时才使用时间窗口。记录 base SHA、target SHA 和运行幂等键：
+
+```text
+llmgw-tutorial-link:<baseSha>:<targetSha>:<schemaVersion>
+```
+
+同一幂等键成功或已跳过后再次运行，必须直接退出。失败时不推进游标。
+
+### 2. 执行双链扫描
 
 ```bash
-# 当日(或上次维护以来)改动的前端页面文件
-SINCE="${1:-1 day ago}"
-git log --since="$SINCE" --name-only --pretty=format: -- 'prd-admin/src/pages/**' 'prd-admin/src/layouts/**' \
-  | sort -u | grep -E '\.tsx?$'
+python3 llmgw/tutorial/maintenance.py \
+  --base-ref "$BASE_SHA" \
+  --json-out /tmp/llmgw-tutorial-link.json \
+  --markdown-out /tmp/llmgw-tutorial-link.md \
+  --fail-on-drift
 ```
 
-把改动文件按「路由 → sourceId」映射成"受影响教程"清单。映射表来自 `onboarding-tips.md` 的页表 + `BuildDefaultTips` 里每条 seed 的 `actionUrl`。例:`pages/web-pages/*` 改动 → `webpages-page-guide`。
+扫描器必须同时检查：
 
-### 第 2 步:锚点漂移检测(改页面 → 教程是否还能跑)
+- `maintenance-map.json` 中页面、路由和 change source 是否存在。
+- manifest 中的教程是否都能反查页面，`book-index` 除外。
+- `tutorialLinks` 的 step marker 是否恰好出现一次。
+- `evidenceIds` 是否在 `evidence-map.json` 注册。
+- 截图验收提交是否为当前提交祖先。
+- 新页面、共享组件、主题和后端接口变化是否被正确命中。
 
-对每个受影响教程,做 `onboarding-tips §2` 的「锚点对账」:
+### 3. 先抽检再判断
+
+只要命中相关变化，就按 target SHA 生成固定随机种子，至少抽 5 个页面。每个样本检查页面文件、路由、教程源、反链、变更源、步骤标记和证据注册。
+
+需要强制复核时：
 
 ```bash
-# 该 seed 的所有 Selector(从 BuildDefaultTips 抽 data-tour-id=xxx)
-# 该页面现有的 data-tour-id 集合
-grep -oE 'data-tour-id="[^"]*"' prd-admin/src/pages/<page>/**/*.tsx | sort -u
+python3 llmgw/tutorial/maintenance.py \
+  --since "0 seconds ago" \
+  --force-audit \
+  --seed "$TARGET_SHA" \
+  --sample-size 5 \
+  --fail-on-drift
 ```
 
-判定:
-- seed 里引用的某个 `[data-tour-id=X]` 在页面已**不存在** → **P0 漂移**(教程会卡 10s 超时)。
-- 页面新增了核心功能但没有对应步骤 → **P1 缺步**。
-- 锚点指向 modal/dropdown 等非常驻元素 → **P2 易卡**。
+报告必须写出种子、样本 ID、每个断言和失败项。只写“已随机检查”不算验收。
 
-漂移项**只产出告警清单**(写进报告 + 可选开 issue),**不自动改 seed**——改 seed 必须人确认,避免误判。
+### 4. 分类影响
 
-### 第 3 步:起草「本周有更新」提醒(tier=advanced)
+- `content`：操作、权限、接口或业务语义可能变化。
+- `screenshot`：布局、主题、组件或状态可能使图片过期。
+- `tutorial`：教程源或证据表自身发生变化。
+- `coarse-review-required`：只有章节级关系，尚未迁移到步骤级，不能声称已同步。
+- `step-linked`：具备 sourceId、stepId 与 evidenceId 的闭环关系。
 
-对「功能确有更新、值得提醒老用户」的页面,起草一条**更新教程**(与新手教程分离,不重弹整套新手):
+页面和任意关联教程同时改过，不代表全部已同步。只有具体步骤和证据在目标提交通过校验，才允许记为 `synced`。
 
-- `sourceId`: `<page>-update-<YYYY>w<WW>`(如 `webpages-update-2026w23`),保证每周一条、可追溯。
-- `tier`: `"advanced"`(学会写真实 Version;下次该页再更新升 Version → 再次提醒)。
-- `kind`: `"card"`;`startAt`=本周一,`endAt`=本周日 + 3 天缓冲(发布窗口=本周,过期自动消失)。
-- `targetRoles`: 按受众(如只给 DEV/PM)。
-- `autoAction.steps`: 2-3 步,**只讲"变了什么"**,锚点用页面常驻元素;别重复新手教程的全流程。
+### 5. 输出或更新
 
-POST 入库(管理员令牌):
+报告模式只输出：
 
-```bash
-curl -X POST "$BASE/api/admin/daily-tips" \
-  -H "Authorization: Bearer $TOKEN" -H "Content-Type: application/json" \
-  -d @/tmp/update-tip.json
-```
+- 变更区间与幂等键。
+- 页面到教程表。
+- 教程到页面表。
+- 随机抽检种子、样本和断言。
+- 受影响步骤、证据及 P0 至 P2 漂移。
+- 明确的跳过原因或更新草稿。
 
-> 它会落在「学习中心」的「本周更新」分组,以及对应页面 pill 的选择面板里,带「更新」chip。新手教程(basic)不受影响、不重弹(诉求 5)。
+用户明确批准更新时，才依次修改教程源、补证据、运行发布器检查、生成 publisher plan，并在发布后再次 apply 验证全量 noop。
 
-### 第 4 步:发布教程健康报告到独立知识库 + 出分享链
+## DailyTips 适配
 
-把本次巡检结论(受影响教程、漂移 P0-P2 清单、本周新增更新提醒、各 onboarding 教程的 learned 覆盖率)写成一篇 Markdown,发布到独立的「页面教程验收知识库」,复用 `daily-report-summary` 的 find-or-create + publish 范式:
+非 LLMGW 的 DailyTips 页面教程继续使用：
 
-```bash
-python3 .claude/skills/daily-report-summary/reference/publish.py \
-  --base "$BASE" --impersonate "$ADMIN_USER" \
-  --library "页面教程验收知识库" \
-  --title "教程巡检-$(date +%F)" \
-  --report-md /tmp/tutorial-health-$(date +%F).md
-```
+- 教程目录：`DailyTipsController.BuildDefaultTips`。
+- 页面关系：`actionUrl`、sourceId 与页面 `data-tour-id`。
+- P0：教程引用的常驻锚点不存在或重复。
+- P1：核心能力新增但没有步骤。
+- P2：锚点落在非稳定弹层或下拉项。
 
-报告命名带状态前缀(`[正常]` / `[有漂移]` / `[已修]`),输出分享短链供团队订阅。库 appKey 建议 `tutorial-acceptance`,与日报库隔离。
+更新提醒保持 `tier=advanced` 和 `<page>-update-<YYYY>w<WW>`，不得重弹整套 basic 新手教程。
 
----
+## 定时任务隔离
 
-## 输出格式(交付给人)
+每日验收和教程维护属于“每日质量维护”同一分类，但必须由两个独立 Agent 运行：
 
-```
-教程巡检 YYYY-MM-DD
-- 受影响教程:webpages-page-guide, document-store-page-guide
-- 锚点漂移:
-  - [P0] webpages-page-guide 第 7 步 [data-tour-id=webpages-upload-primary] 在页面已不存在 → 需改 seed
-  - [P1] document-store 新增「批量导出」无对应步骤
-- 本周更新提醒(草稿,待确认入库):webpages-update-2026w23(2 步)
-- 掌握度覆盖:onboarding 14 套,平均 learned 占比 38%
-- 报告:https://<kb-share-link>
-- 待人确认:上面 1 条 P0 漂移需改 BuildDefaultTips(不自动改)
-```
+- 每日验收 Agent：负责真实浏览器取证与 Verdict。
+- 教程双链 Agent：负责静态关系、漂移和证据图谱。
 
----
+两者不得共享 memory、临时目录或登录凭据。一个任务失败不能覆盖另一个结果。教程任务无相关增量时必须静默跳过。
 
 ## 红线
 
-- **不自动改 `BuildDefaultTips`**:漂移 / 升 Version 一律产草稿 + 告警,人确认后再改(避免误判把好教程改坏)。
-- **新手与更新分离**:更新提醒一律 `tier=advanced` + `*-update-*` sourceId,绝不动 `*-page-guide`(basic),否则老用户被重弹整套新手(诉求 5 明令禁止)。
-- **禁 emoji**(CLAUDE.md §0):报告 / tip 文案 / commit 全部不带 emoji。
-- **锚点必须常驻**:起草更新提醒的步骤只锚页面常驻元素(onboarding-tips §2)。
-- 报告归档前过 `create-visual-test-to-kb` 的准入校验口径(目标/档位/证据完整性),不达标不归档。
-
----
-
-## 相关
-
-- `.claude/rules/onboarding-tips.md` — 页表 + 三类 tier + 锚点对账强制钩子
-- `.claude/skills/createzzdemo/SKILL.md` — 创建新教程
-- `.claude/skills/daily-report-summary/reference/publish.py` — KB find-or-create + publish 范式(复用)
-- `DailyTipsController.BuildDefaultTips` — 教程目录 SSOT;`GET /api/daily-tips/progress` — 进度/分类口径
+- 不用“教程文件也改了”推断教程已同步。
+- 不用图片总数推断截图覆盖正确。
+- 不使用固定“最近一天”作为长期唯一游标。
+- 不在报告、日志和 memory 中写入密码、Key 或令牌。
+- 不自动改教程正文或远端知识库。
+- 不把教程健康报告冒充产品验收 Verdict。

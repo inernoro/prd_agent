@@ -22,6 +22,7 @@ from typing import Any, Protocol
 
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = ROOT / "manifest.json"
+DEFAULT_EVIDENCE_MAP = ROOT / "evidence-map.json"
 PUBLISHER_PATH = "/api/open/document-store/publisher"
 REQUIRED_SECTIONS = (
     "你在做什么",
@@ -48,9 +49,22 @@ CHAPTER_REFERENCE_PROTECTED_RE = re.compile(
     r"```.*?```|~~~.*?~~~|`+[^`\n]*`+|\[\[[^\]\n]+\]\]|!?\[[^\]\n]*\]\((?:[^()\n]|\([^()\n]*\))*\)",
     re.DOTALL,
 )
-MIN_IMAGES_PER_CHAPTER = 2
-MIN_UNIQUE_IMAGES = 80
-MIN_EVIDENCE_REFERENCES = 111
+
+
+def load_evidence_policy(path: Path = DEFAULT_EVIDENCE_MAP) -> tuple[int, int, int]:
+    """从证据 SSOT 读取发布阈值，避免发布器与证据表各维护一份。"""
+    try:
+        payload = json.loads(path.read_text(encoding="utf-8"))
+        return (
+            int(payload["minimumImagesPerChapter"]),
+            int(payload["minimumUniqueImages"]),
+            int(payload["minimumEvidenceReferences"]),
+        )
+    except (OSError, KeyError, TypeError, ValueError, json.JSONDecodeError) as exc:
+        raise RuntimeError(f"无法读取教程证据阈值 {path}: {exc}") from exc
+
+
+MIN_IMAGES_PER_CHAPTER, MIN_UNIQUE_IMAGES, MIN_EVIDENCE_REFERENCES = load_evidence_policy()
 
 
 class TutorialError(RuntimeError):
