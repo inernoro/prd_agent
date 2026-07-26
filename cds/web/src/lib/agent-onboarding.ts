@@ -152,6 +152,7 @@ export function chooseAgentProjectId(
       || project.name?.trim().toLowerCase() === 'cds self'
     );
     if (cdsSelf) return cdsSelf.id;
+    return '';
   }
   return projects[0].id;
 }

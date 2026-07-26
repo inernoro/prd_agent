@@ -4,6 +4,16 @@ import type { StateService } from './state.js';
 
 const STATE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_REDIRECT = '/project-list';
+const SSO_ENV_KEYS = [
+  'CDS_SSO_ENABLED',
+  'CDS_SSO_PROVIDER_ID',
+  'CDS_SSO_LABEL',
+  'CDS_SSO_AUTHORIZATION_URL',
+  'CDS_SSO_TOKEN_URL',
+  'CDS_SSO_CLIENT_ID',
+  'CDS_SSO_CLIENT_SECRET',
+  'CDS_SSO_DEFAULT_REDIRECT',
+] as const;
 
 export interface TicketSsoIdentity {
   subject: string;
@@ -75,6 +85,10 @@ export function resolveTicketSsoConfig(stateService: StateService, env: NodeJS.P
   };
   const hasEnvConfig = Object.keys(fromEnv).length > 0;
   return normalizeTicketSsoConfig(hasEnvConfig ? { ...stored, ...fromEnv } : stored);
+}
+
+export function isTicketSsoEnvironmentManaged(env: NodeJS.ProcessEnv = process.env): boolean {
+  return SSO_ENV_KEYS.some((key) => env[key] !== undefined);
 }
 
 export function publicTicketSsoConfig(config: CdsSsoConfig): PublicTicketSsoConfig {

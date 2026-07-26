@@ -4,6 +4,7 @@ import {
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
   exchangeTicketSsoCode,
+  isTicketSsoEnvironmentManaged,
   normalizeTicketSsoConfig,
   publicTicketSsoConfig,
   resolveTicketSsoConfig,
@@ -20,6 +21,12 @@ describe('ticket SSO', () => {
     clientId: 'cds-console',
     clientSecret: 'secret-value',
     defaultRedirect: '/project-list',
+  });
+
+  it('detects any environment-owned SSO field', () => {
+    expect(isTicketSsoEnvironmentManaged({})).toBe(false);
+    expect(isTicketSsoEnvironmentManaged({ CDS_SSO_LABEL: '组织账号登录' })).toBe(true);
+    expect(isTicketSsoEnvironmentManaged({ CDS_SSO_ENABLED: '0' })).toBe(true);
   });
 
   it('builds a provider-neutral authorization URL and keeps the callback exact', () => {

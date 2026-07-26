@@ -20,3 +20,7 @@
 | fix | prd-api | 增加 Bearer 感知的控制台 SSO 授权承接流程并校验允许的回调来源 |
 | fix | prd-admin | 新增控制台 SSO 授权承接页面 |
 | test | prd-api | 固定模型供应限流测试时钟，消除跨分钟边界导致的 CI 假失败 |
+| security | cds | 阻止环境托管 SSO 配置落库并区分本地所有者与 SSO 人工会话 |
+| fix | cds | 修复 SSO-only 登录表单、StrictMode 回调换票与系统任务错误借用业务项目 |
+| fix | cds | 修复重复凭据误报冲突，并在项目级凭据下安全解析 CDS Self 预览 |
+| fix | prd-api | 允许已配置来源的 loopback HTTP 完成本地 SSO 回调 |

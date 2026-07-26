@@ -266,6 +266,10 @@ describe('CDS Agent 接入口令', () => {
     expect(chooseAgentProjectId(projects, requestsContext)).toBe('other');
     expect(chooseAgentProjectId(projects, legacyBranchContext)).toBe('other');
     expect(chooseAgentProjectId(projects)).toBe('prd-agent');
+    expect(chooseAgentProjectId(
+      projects.filter((project) => project.id !== 'cds-self'),
+      authContext,
+    )).toBe('');
   });
 
   it('切换项目地图后重新生成当前任务上下文', () => {

@@ -14,7 +14,7 @@ public sealed class ConsoleSsoControllerTests
     [InlineData("https://miduo.org.evil.example/auth/sso", false)]
     [InlineData("https://cds.miduo.org/other", false)]
     [InlineData("http://cds.miduo.org/auth/sso", false)]
-    public void RedirectValidation_ShouldAllowOnlyConfiguredHttpsCallback(string redirectUri, bool expected)
+    public void RedirectValidation_ShouldAllowConfiguredHttpsCallback(string redirectUri, bool expected)
     {
         var origins = Invoke<IReadOnlyList<string>>(
             "ParseOrigins",
@@ -24,6 +24,23 @@ public sealed class ConsoleSsoControllerTests
 
         Assert.Equal(expected, valid);
         Assert.Equal(expected ? redirectUri : "", args[2]);
+    }
+
+    [Theory]
+    [InlineData("http://localhost:9900/auth/sso", "http://localhost:9900")]
+    [InlineData("http://127.0.0.1:9900/auth/sso", "http://127.0.0.1:9900")]
+    [InlineData("http://[::1]:9900/auth/sso", "http://[::1]:9900")]
+    public void RedirectValidation_ShouldAllowConfiguredLoopbackHttpCallback(
+        string redirectUri,
+        string allowedOrigin)
+    {
+        var origins = Invoke<IReadOnlyList<string>>("ParseOrigins", allowedOrigin);
+        var args = new object?[] { redirectUri, origins, null };
+
+        var valid = Invoke<bool>("TryValidateRedirect", args);
+
+        Assert.True(valid);
+        Assert.Equal(redirectUri, args[2]);
     }
 
     [Fact]
@@ -63,6 +80,18 @@ public sealed class ConsoleSsoControllerTests
             "cds-console",
             "client-secret",
             new[] { "https://cds.miduo.org" }));
+    }
+
+    [Fact]
+    public void OriginParsing_ShouldDropUnsupportedSchemesAndPublicHttp()
+    {
+        var origins = Invoke<IReadOnlyList<string>>(
+            "ParseOrigins",
+            "ftp://localhost,http://cds.miduo.org,http://localhost:9900,https://cds.miduo.org");
+
+        Assert.Equal(
+            new[] { "http://localhost:9900", "https://cds.miduo.org" },
+            origins);
     }
 
     private static T Invoke<T>(string name, params object?[] args)

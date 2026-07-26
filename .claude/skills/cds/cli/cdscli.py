@@ -530,13 +530,38 @@ def cmd_auth_inspect(args: argparse.Namespace) -> None:
         else "none"
     )
     conflicts: list[str] = []
-    if explicit_host and local_host and explicit_host.rstrip("/") != local_host.rstrip("/"):
+    def comparable_host(value: str) -> str:
+        candidate = value.strip().rstrip("/")
+        if not candidate:
+            return ""
+        if not candidate.startswith(("http://", "https://")):
+            is_local = candidate.startswith((
+                "localhost", "127.", "0.0.0.0", "[::1]", "192.168.", "10.", "172.",
+            ))
+            candidate = ("http://" if is_local else "https://") + candidate
+        return candidate.lower()
+
+    if explicit_host and local_host and comparable_host(explicit_host) != comparable_host(local_host):
         conflicts.append("host")
     if explicit_project and local_project and explicit_project != local_project:
         conflicts.append("project")
-    if _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_KEY"] and local.get("projectKey"):
+    explicit_project_key = _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_KEY"]
+    explicit_access_key = _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+    local_project_key = str(local.get("projectKey") or "").strip()
+    local_bootstrap_key = str(local.get("bootstrapKey") or "").strip()
+    if (
+        explicit_project_key
+        and local_project_key
+        and not secrets.compare_digest(explicit_project_key, local_project_key)
+    ):
         conflicts.append("projectKeySource")
-    if _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"] and (local.get("projectKey") or local.get("bootstrapKey")):
+    local_effective_key = local_project_key or local_bootstrap_key
+    if (
+        not explicit_project_key
+        and explicit_access_key
+        and local_effective_key
+        and not secrets.compare_digest(explicit_access_key, local_effective_key)
+    ):
         conflicts.append("accessKeySource")
     source = "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
     summary = {
@@ -1588,7 +1613,8 @@ def _has_cds_auth() -> bool:
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
 
 
-def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
+def _call_safe(method: str, path: str, timeout: int = 10,
+               auth_key_override: str = "") -> Any:
     """像 _call(quiet=True) 但**网络错误也走 __error__ 包**而不是 _request.die()。
 
     背景：_request 在 URLError / TimeoutError 时调 die() —— die() 先 print
@@ -1601,10 +1627,13 @@ def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
     收口为 `{"__error__": True, "status": N, "body": ...}` 包返回。
     """
     url = _cds_base() + path
+    auth_headers = _auth_headers()
+    if auth_key_override:
+        auth_headers["X-AI-Access-Key"] = auth_key_override
     headers = {
         "Accept": "application/json",
         "X-CdsCli-Version": VERSION,
-        **_auth_headers(),
+        **auth_headers,
     }
     req = urllib.request.Request(url, method=method, headers=headers)
     try:
@@ -1721,6 +1750,16 @@ def _die_if_ambiguous_project_matches(scoped: list, git_branch: str,
         })
 
 
+def _branch_identity_summaries(branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """错误诊断只带项目身份，不把错误项目的预览地址误展示给调用方。"""
+    return [{
+        "id": branch.get("id"),
+        "projectId": branch.get("projectId"),
+        "projectSlug": branch.get("projectSlug"),
+        "branch": branch.get("branch"),
+    } for branch in branches]
+
+
 def _warn_quiet_call_error(body: Any, label: str) -> bool:
     """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
     调用方决定是否继续 / 退化。"""
@@ -1787,6 +1826,12 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         return
 
     project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
+    self_host_project_hint = _cds_self_project_slug_hint(repo_root)
+    self_host_global_key = (
+        _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        if self_host_project_hint and _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        else ""
+    )
 
     # Step 1: 必须有 CDS 实际连接上下文。`main()` 已会自动读取
     # .cds/credentials.json，因此一键接入后不需要污染 shell 环境变量。
@@ -1800,7 +1845,15 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     # Step 2: 只读 CDS API。网络、鉴权、代理或 JSON 异常都是硬失败，
     # 不得转成一个“看起来合理”但未发布的 URL。
-    body = _call_safe("GET", _branches_path(), timeout=10)
+    if self_host_global_key:
+        body = _call_safe(
+            "GET",
+            "/api/branches",
+            timeout=10,
+            auth_key_override=self_host_global_key,
+        )
+    else:
+        body = _call_safe("GET", _branches_path(), timeout=10)
     if _warn_quiet_call_error(body, "调 /api/branches"):
         die("CDS API 无法返回真实预览地址，拒绝本地推算。"
             "请检查 CDS 连接、鉴权和服务状态后重试。",
@@ -1815,22 +1868,32 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     # Step 3: 项目身份过滤。项目凭据带 CDS_PROJECT_ID 时优先由服务端
     # `?project=` 做确定性过滤；全局维护凭据才需本地 hint 辅助匹配。
-    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip()) and not self_host_global_key
+    validate_scoped_project = bool(self_host_project_hint)
     branches_list = body.get("branches") or []
     scoped = _match_branches_for_project(
-        branches_list, branch, project_slug_hints, project_scoped)
+        branches_list,
+        branch,
+        project_slug_hints,
+        project_scoped and not validate_scoped_project,
+    )
     if not project_scoped:
         _die_if_ambiguous_project_matches(scoped, branch, project_slug_hints)
-    if not scoped and not project_scoped:
+    if not scoped and (not project_scoped or validate_scoped_project):
         raw_same_branch = [b for b in branches_list
                            if isinstance(b, dict) and b.get("branch") == branch]
         if raw_same_branch:
+            routing_hint = (
+                f"当前分支应路由到 CDS Self 项目 '{self_host_project_hint}'，"
+                f"但项目级凭据指向了其他项目。请从 CDS Self 项目重新快速接入。"
+                if validate_scoped_project
+                else "请用项目级快速接入重建 CDS_PROJECT_ID 绑定。"
+            )
             die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 "
                 f"'{branch}' 但都不属于本地项目 hint "
-                f"'{', '.join(project_slug_hints)}'。请用项目级快速接入"
-                f"重建 CDS_PROJECT_ID 绑定。",
+                f"'{', '.join(project_slug_hints)}'。{routing_hint}",
                 code=2, extra={
-                    "rawMatches": raw_same_branch,
+                    "rawMatches": _branch_identity_summaries(raw_same_branch),
                     "projectHints": project_slug_hints,
                 })
             return
@@ -1886,11 +1949,25 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）", code=1)
         return
     project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
+    self_host_project_hint = _cds_self_project_slug_hint(repo_root)
+    self_host_global_key = (
+        _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        if self_host_project_hint and _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        else ""
+    )
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
     # 网络错误统一收口为 __error__ 包（网络错误 status=0），下面按 status 路由 exit。
-    body = _call_safe("GET", _branches_path(), timeout=10)
+    if self_host_global_key:
+        body = _call_safe(
+            "GET",
+            "/api/branches",
+            timeout=10,
+            auth_key_override=self_host_global_key,
+        )
+    else:
+        body = _call_safe("GET", _branches_path(), timeout=10)
     # API 失败（401 / 5xx / 网络）必须明确暴露，不能被后面 "找不到分支" 兜底 die 遮蔽。
     # exit code 契约：4xx → 2（用户/认证错误），5xx + 网络错误 → 3（retriable）。
     if isinstance(body, dict) and body.get("__error__"):
@@ -1915,10 +1992,15 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
             f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
             code=3, extra={"body": body if isinstance(body, str) else repr(body)})
         return
-    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip()) and not self_host_global_key
+    validate_scoped_project = bool(self_host_project_hint)
     branches_list = body.get("branches") or []
     matches = _match_branches_for_project(
-        branches_list, branch, project_slug_hints, project_scoped)
+        branches_list,
+        branch,
+        project_slug_hints,
+        project_scoped and not validate_scoped_project,
+    )
     if not project_scoped:
         _die_if_ambiguous_project_matches(matches, branch, project_slug_hints)
     for b in matches:
@@ -1933,15 +2015,20 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     # 不能误导用户去 "先 /cds-deploy"——99% 是 repo 目录名 ≠ CDS 项目 slug，
     # 应该明确报错 + 提示设 CDS_PROJECT_ID（Bugbot Medium 抓出 cmd_branch_id
     # 漏了这个分支，会卡 bridge / tagging 流程）
-    if not project_scoped:
+    if not project_scoped or validate_scoped_project:
         raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
         if raw_same_branch:
+            routing_hint = (
+                f"当前分支应路由到 CDS Self 项目 '{self_host_project_hint}'，"
+                f"请从该项目重新快速接入。"
+                if validate_scoped_project
+                else "可能是仓库目录名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                     "或检查 /api/projects 列表。"
+            )
             die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 '{branch}' "
-                f"但都不属于本地项目 hint '{', '.join(project_slug_hints)}'。可能是仓库目录"
-                f"名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
-                f"或检查 /api/projects 列表。",
+                f"但都不属于本地项目 hint '{', '.join(project_slug_hints)}'。{routing_hint}",
                 code=2, extra={
-                    "rawMatches": raw_same_branch,
+                    "rawMatches": _branch_identity_summaries(raw_same_branch),
                     "projectHints": project_slug_hints,
                 })
             return

@@ -55,6 +55,7 @@ import type { AuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
 import {
+  isTicketSsoEnvironmentManaged,
   normalizeTicketSsoConfig,
   publicTicketSsoConfig,
   resolveTicketSsoConfig,
@@ -2638,13 +2639,20 @@ export function createServer(deps: ServerDeps): express.Express {
       getConfig: resolveSsoConfig,
       saveConfig: (config) => deps.stateService.setSsoConfig(config),
       normalizeConfig: normalizeTicketSsoConfig,
+      isEnvironmentManaged: () => isTicketSsoEnvironmentManaged(),
       canWriteConfig: (req) => {
         const request = req as typeof req & {
           _cdsCookieAuth?: boolean;
           cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
           cdsSession?: unknown;
         };
-        if (authMode === 'basic') return request._cdsCookieAuth === true;
+        if (authMode === 'basic') {
+          const cookieToken = readCookie(req.headers.cookie, 'cds_token');
+          const headerToken = typeof req.headers['x-cds-token'] === 'string'
+            ? req.headers['x-cds-token']
+            : '';
+          return Boolean(validToken && (cookieToken || headerToken) === validToken);
+        }
         return Boolean(
           request.cdsSession
           && request.cdsUser?.isSystemOwner === true

@@ -219,8 +219,13 @@ public sealed class ConsoleSsoController : ControllerBase
     private static bool TryValidateRedirect(string? raw, IReadOnlyList<string> allowedOrigins, out string callback)
     {
         callback = "";
-        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri)
-            || uri.Scheme != Uri.UriSchemeHttps
+        if (!Uri.TryCreate(raw, UriKind.Absolute, out var uri))
+        {
+            return false;
+        }
+        var validScheme = uri.Scheme == Uri.UriSchemeHttps
+            || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback);
+        if (!validScheme
             || !string.Equals(uri.AbsolutePath.TrimEnd('/'), "/auth/sso", StringComparison.Ordinal)
             || !string.IsNullOrEmpty(uri.Query)
             || !string.IsNullOrEmpty(uri.Fragment))
@@ -249,6 +254,8 @@ public sealed class ConsoleSsoController : ControllerBase
             .Select(value => value.StartsWith("*.", StringComparison.Ordinal)
                 ? value.ToLowerInvariant()
                 : Uri.TryCreate(value, UriKind.Absolute, out var uri)
+                    && (uri.Scheme == Uri.UriSchemeHttps
+                        || (uri.Scheme == Uri.UriSchemeHttp && uri.IsLoopback))
                     ? uri.GetLeftPart(UriPartial.Authority).TrimEnd('/')
                     : "")
             .Where(value => value.Length > 0)

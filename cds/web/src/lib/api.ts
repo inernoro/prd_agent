@@ -477,6 +477,7 @@ export interface TicketSsoConfig {
   tokenUrl: string;
   clientId: string;
   hasClientSecret: boolean;
+  managedByEnvironment: boolean;
   defaultRedirect: string;
 }
 
@@ -484,7 +485,7 @@ export async function fetchTicketSsoConfig(): Promise<TicketSsoConfig> {
   return apiRequest('/api/auth/sso/config');
 }
 
-export async function updateTicketSsoConfig(input: Omit<TicketSsoConfig, 'hasClientSecret'> & {
+export async function updateTicketSsoConfig(input: Omit<TicketSsoConfig, 'hasClientSecret' | 'managedByEnvironment'> & {
   clientSecret?: string;
 }): Promise<TicketSsoConfig> {
   return apiRequest('/api/auth/sso/config', { method: 'PUT', body: input });

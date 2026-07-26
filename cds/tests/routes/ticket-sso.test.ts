@@ -132,6 +132,39 @@ describe('ticket SSO routes', () => {
     expect(saveConfig).toHaveBeenCalledOnce();
   });
 
+  it('keeps environment-managed SSO config read-only without persisting effective secrets', async () => {
+    const saveConfig = vi.fn();
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoConfigRouter({
+      getConfig: () => normalizeTicketSsoConfig({
+        enabled: true,
+        authorizationUrl: 'https://map.example/authorize',
+        tokenUrl: 'https://map.example/token',
+        clientId: 'cds-console',
+        clientSecret: 'environment-secret',
+      }),
+      saveConfig,
+      normalizeConfig: normalizeTicketSsoConfig,
+      canWriteConfig: () => true,
+      isEnvironmentManaged: () => true,
+    }));
+    server = await start(app);
+
+    const readResponse = await call(server, 'GET', '/api/auth/sso/config');
+    expect(readResponse.status).toBe(200);
+    expect(readResponse.body.managedByEnvironment).toBe(true);
+    expect(readResponse.body.clientSecret).toBeUndefined();
+
+    const writeResponse = await call(server, 'PUT', '/api/auth/sso/config', {
+      enabled: true,
+      label: '新的登录名称',
+    });
+    expect(writeResponse.status).toBe(409);
+    expect(writeResponse.body.error).toBe('sso_config_managed_by_environment');
+    expect(saveConfig).not.toHaveBeenCalled();
+  });
+
   it('uses the configured default redirect when login starts without a redirect', async () => {
     const config = normalizeTicketSsoConfig({
       enabled: true,

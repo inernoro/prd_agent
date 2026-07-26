@@ -15,7 +15,7 @@
  *   - 本地登录双端点回退（/api/auth/login → 404 → /api/login）
  *   - GitHub OAuth 入口
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { ArrowRight, Eye, EyeOff, Github, KeyRound, Loader2, Moon, ShieldCheck, Sun } from 'lucide-react';
 import ShapeGrid from '@/components/effects/ShapeGrid';
@@ -31,6 +31,7 @@ import {
   fetchSessionAuthed,
 } from '@/lib/api';
 import { useTheme } from '@/lib/theme';
+import { parseTicketSsoCallback } from '@/lib/ticket-sso-callback';
 
 /* 与首页 board ticker 同一套"活的控制面"语言,登录时就能看到系统在呼吸。 */
 const FEED_LINES = [
@@ -65,6 +66,8 @@ function AuthForm(): JSX.Element {
   // First-run bootstrap: when the system has zero users, the login form turns
   // into a "create the first system-owner account" form instead.
   const [needsBootstrap, setNeedsBootstrap] = useState(false);
+  const [loginMethodsReady, setLoginMethodsReady] = useState(false);
+  const [localLoginEnabled, setLocalLoginEnabled] = useState(false);
   const [githubLoginEnabled, setGithubLoginEnabled] = useState(false);
   const [ssoLogin, setSsoLogin] = useState<{ enabled: boolean; label: string }>({
     enabled: false,
@@ -79,22 +82,30 @@ function AuthForm(): JSX.Element {
     fetchAuthPublicStatus()
       .then((s) => {
         if (!alive) return;
+        setLocalLoginEnabled(s.loginMethods.local);
         setGithubLoginEnabled(s.loginMethods.github);
         setSsoLogin({
           enabled: s.loginMethods.sso === true && s.sso?.enabled === true,
           label: s.sso?.label || '使用 SSO 登录',
         });
+        setLoginMethodsReady(true);
       })
       .catch(() => {
         if (!alive) return;
+        // 旧版 CDS 可能没有 public-status；保留原有本地登录回退能力。
+        setLocalLoginEnabled(true);
         setGithubLoginEnabled(false);
         setSsoLogin({ enabled: false, label: '使用 SSO 登录' });
+        setLoginMethodsReady(true);
       });
     fetchBootstrapStatus()
       .then((s) => { if (alive) setNeedsBootstrap(s.needsBootstrap); })
       .catch(() => { /* endpoint absent in non-github modes — ignore */ });
     return () => { alive = false; };
   }, []);
+
+  const showLocalLogin = needsBootstrap || localLoginEnabled;
+  const hasExternalLogin = ssoLogin.enabled || githubLoginEnabled;
 
   function goToTarget() {
     // Legacy server 路径(/settings.html?project=… 等)必须 hard-load,让 Express
@@ -167,10 +178,19 @@ function AuthForm(): JSX.Element {
       <p className="cds-auth-sub">
         {needsBootstrap
           ? '首次启动：先创建系统所有者账号，随后直接进入控制台。'
-          : '使用操作员账号进入分支预览控制台。'}
+          : showLocalLogin
+            ? '使用操作员账号进入分支预览控制台。'
+            : '使用已配置的身份提供方进入分支预览控制台。'}
       </p>
 
-      <div className="cds-auth-fields">
+      {!loginMethodsReady ? (
+        <div className="cds-auth-fields" aria-label="正在读取登录方式">
+          <div className="cds-loading-skeleton-line h-10 w-full" />
+          <div className="cds-loading-skeleton-line h-10 w-full" />
+        </div>
+      ) : null}
+
+      {loginMethodsReady && showLocalLogin ? <div className="cds-auth-fields">
         <label className="cds-auth-field">
           <span>用户名</span>
           <input
@@ -221,7 +241,7 @@ function AuthForm(): JSX.Element {
             </button>
           </span>
         </label>
-      </div>
+      </div> : null}
 
       {error ? (
         <div className="cds-auth-error" role="alert">
@@ -229,19 +249,23 @@ function AuthForm(): JSX.Element {
         </div>
       ) : null}
 
-      <Button type="submit" disabled={busy} className="cds-auth-submit">
-        {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
-        {busy
-          ? (needsBootstrap ? '正在创建…' : '正在验证…')
-          : (needsBootstrap ? '创建并进入控制台' : '登录')}
-        {busy ? null : <ArrowRight className="h-4 w-4" />}
-      </Button>
+      {loginMethodsReady && showLocalLogin ? (
+        <Button type="submit" disabled={busy} className="cds-auth-submit">
+          {busy ? <Loader2 className="h-4 w-4 animate-spin" /> : null}
+          {busy
+            ? (needsBootstrap ? '正在创建…' : '正在验证…')
+            : (needsBootstrap ? '创建并进入控制台' : '登录')}
+          {busy ? null : <ArrowRight className="h-4 w-4" />}
+        </Button>
+      ) : null}
 
-      {needsBootstrap || (!ssoLogin.enabled && !githubLoginEnabled) ? null : (
+      {!loginMethodsReady || needsBootstrap || !hasExternalLogin ? null : (
         <>
-          <div className="cds-auth-divider" aria-hidden>
-            <span>或</span>
-          </div>
+          {showLocalLogin ? (
+            <div className="cds-auth-divider" aria-hidden>
+              <span>或</span>
+            </div>
+          ) : null}
           <div className="grid gap-2">
             {ssoLogin.enabled ? (
               <Button asChild type="button" variant="outline" className="cds-auth-github">
@@ -478,18 +502,14 @@ export function LoginPage(): JSX.Element {
 }
 
 function readSsoCallback(): { code: string; state: string } | null {
-  const params = new URLSearchParams(window.location.hash.replace(/^#/, ''));
-  const code = params.get('code') || '';
-  const state = params.get('state') || '';
-  window.history.replaceState(null, '', window.location.pathname);
-  if (!/^[A-Za-z0-9_-]{32,256}$/.test(code) || !/^[A-Za-z0-9_-]{32,256}$/.test(state)) return null;
-  return { code, state };
+  return parseTicketSsoCallback(window.location.hash);
 }
 
 export function TicketSsoPage(): JSX.Element {
   const navigate = useNavigate();
   const [callback] = useState(readSsoCallback);
   const [error, setError] = useState('');
+  const exchangeRef = useRef<ReturnType<typeof exchangeTicketSso> | null>(null);
 
   useEffect(() => {
     let alive = true;
@@ -497,7 +517,13 @@ export function TicketSsoPage(): JSX.Element {
       setError('SSO 登录链接无效或已过期，请返回登录页重新发起。');
       return () => { alive = false; };
     }
-    void exchangeTicketSso(callback)
+    window.history.replaceState(
+      null,
+      '',
+      `${window.location.pathname}${window.location.search}`,
+    );
+    exchangeRef.current ||= exchangeTicketSso(callback);
+    void exchangeRef.current
       .then((result) => {
         if (!alive) return;
         const target = result.redirect || '/project-list';

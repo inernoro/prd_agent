@@ -160,6 +160,7 @@ export function createTicketSsoConfigRouter(deps: {
   saveConfig: (config: CdsSsoConfig) => void;
   normalizeConfig: (input: Partial<CdsSsoConfig>) => CdsSsoConfig;
   canWriteConfig: (req: Request) => boolean;
+  isEnvironmentManaged?: () => boolean;
 }): Router {
   const router = Router();
 
@@ -169,6 +170,7 @@ export function createTicketSsoConfigRouter(deps: {
       ...config,
       clientSecret: undefined,
       hasClientSecret: Boolean(config.clientSecret),
+      managedByEnvironment: deps.isEnvironmentManaged?.() === true,
     });
   });
 
@@ -177,6 +179,13 @@ export function createTicketSsoConfigRouter(deps: {
       res.status(403).json({
         error: 'human_owner_required',
         message: 'SSO 属于系统级登录配置，只允许已验证的系统所有者修改。',
+      });
+      return;
+    }
+    if (deps.isEnvironmentManaged?.() === true) {
+      res.status(409).json({
+        error: 'sso_config_managed_by_environment',
+        message: '当前 SSO 配置由 CDS_SSO_* 环境变量托管，请在部署环境中修改后重启 CDS。',
       });
       return;
     }
@@ -197,6 +206,7 @@ export function createTicketSsoConfigRouter(deps: {
       ...next,
       clientSecret: undefined,
       hasClientSecret: Boolean(next.clientSecret),
+      managedByEnvironment: false,
     });
   });
 
