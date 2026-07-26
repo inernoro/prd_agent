@@ -1692,11 +1692,40 @@ public class DocumentStoreController : ControllerBase
     [HttpGet("recording-uploads/{sessionId}")]
     public async Task<IActionResult> GetRecordingUpload(string sessionId)
     {
+        var userId = GetUserId();
         var session = await _db.DocumentRecordingUploadSessions
-            .Find(s => s.Id == sessionId && s.UserId == GetUserId())
+            .Find(s => s.Id == sessionId && s.UserId == userId)
             .FirstOrDefaultAsync();
         if (session == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+        {
+            // 完成会话属于临时协调数据，过期清理后正式条目仍是恢复 SSOT。完成响应丢失时，
+            // 保险箱可凭确定性 entry ID 找回原条目，禁止把完整本地音频再次上传成重复文档。
+            var recoveredEntry = await FindRecoveredCompletedRecordingEntryAsync(
+                _db.DocumentEntries,
+                sessionId,
+                userId,
+                CancellationToken.None);
+            if (recoveredEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+
+            var recoveredMetadata = recoveredEntry.Metadata ?? new Dictionary<string, string>();
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                sessionId,
+                status = DocumentRecordingUploadStatus.Completed,
+                nextChunkIndex = 0,
+                uploadedBytes = recoveredEntry.FileSize,
+                entryId = recoveredEntry.Id,
+                archiveStatus = DocumentRecordingArchiveStatus.Completed,
+                archiveAttempts = 0,
+                archiveError = (string?)null,
+                liveTranscriptStatus = recoveredMetadata.ContainsKey("liveTranscript")
+                    ? DocumentLiveTranscriptStatus.Completed
+                    : DocumentLiveTranscriptStatus.Degraded,
+                liveTranscript = recoveredMetadata.GetValueOrDefault("liveTranscript"),
+                expiresAt = DateTime.MaxValue,
+            }));
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -1966,7 +1995,31 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.Id == sessionId && s.UserId == userId)
             .FirstOrDefaultAsync();
         if (session == null)
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+        {
+            var recoveredEntry = await FindRecoveredCompletedRecordingEntryAsync(
+                _db.DocumentEntries,
+                sessionId,
+                userId,
+                CancellationToken.None);
+            if (recoveredEntry == null)
+                return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+
+            await ReleaseRecordingCountTokensAsync(
+                _db.DocumentStores,
+                recoveredEntry.StoreId,
+                [recoveredEntry.Id],
+                DateTime.UtcNow,
+                CancellationToken.None);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                entry = recoveredEntry,
+                sessionId,
+                reused = true,
+                archivePending = false,
+                audioProtected = false,
+                deferredTranscriptionRunId = (string?)null,
+            }));
+        }
 
         if (session.Status == DocumentRecordingUploadStatus.Completed && !string.IsNullOrWhiteSpace(session.EntryId))
         {
@@ -2543,6 +2596,15 @@ public class DocumentStoreController : ControllerBase
 
     internal static string CompletedRecordingEntryId(string sessionId)
         => $"recording-completed-{sessionId}";
+
+    internal static async Task<DocumentEntry?> FindRecoveredCompletedRecordingEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        string sessionId,
+        string userId,
+        CancellationToken cancellationToken)
+        => await entries.Find(entry => entry.Id == CompletedRecordingEntryId(sessionId)
+                                      && entry.CreatedBy == userId)
+            .FirstOrDefaultAsync(cancellationToken);
 
     internal static string CompletedRecordingAttachmentId(string sessionId)
         => $"recording-attachment-{sessionId}";

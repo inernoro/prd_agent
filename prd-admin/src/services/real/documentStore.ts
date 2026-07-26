@@ -272,7 +272,7 @@ export async function appendRecordingUploadChunk(sessionId: string, index: numbe
 }
 
 /** 合并已确认分片并创建正常音频条目。重复调用会返回同一条目。 */
-export async function completeRecordingUpload(sessionId: string) {
+export async function completeRecordingUpload(sessionId: string, timeoutMs = 15_000) {
   return await apiRequest<{
     entry: import('@/services/contracts/documentStore').DocumentEntry;
     attachmentId?: string | null;
@@ -285,12 +285,12 @@ export async function completeRecordingUpload(sessionId: string) {
     deferredTranscriptionRunId?: string | null;
   }>(api.documentStore.entries.recordingUploadComplete(sessionId), {
     method: 'POST',
-    timeoutMs: 15_000,
+    timeoutMs: Math.min(15_000, Math.max(1, timeoutMs)),
   });
 }
 
 /** 回读录音上传会话状态；用于 /complete 响应丢失时判断服务端是否已完成，避免重复上传。 */
-export async function getRecordingUpload(sessionId: string) {
+export async function getRecordingUpload(sessionId: string, timeoutMs = 15_000) {
   return await apiRequest<{
     sessionId: string;
     status: 'uploading' | 'completing' | 'completed' | 'cancelled';
@@ -305,7 +305,7 @@ export async function getRecordingUpload(sessionId: string) {
     expiresAt: string;
   }>(api.documentStore.entries.recordingUploadStatus(sessionId), {
     method: 'GET',
-    timeoutMs: 15_000,
+    timeoutMs: Math.min(15_000, Math.max(1, timeoutMs)),
   });
 }
 

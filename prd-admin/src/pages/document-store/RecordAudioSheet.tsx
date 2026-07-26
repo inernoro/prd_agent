@@ -75,6 +75,7 @@ const MAX_BYTES = 19 * 1024 * 1024;
 const TRANSPORT_CHUNK_BYTES = 512 * 1024;
 const MAX_UNCERTAIN_COMPLETION_ATTEMPTS = 32;
 const MAX_SERVER_OWNED_COMPLETION_ATTEMPTS = 24;
+const MAX_FOREGROUND_COMPLETION_WAIT_MS = 45_000;
 
 function buildFileName(ext: string): string {
   const d = new Date();
@@ -153,10 +154,12 @@ export function shouldContinueRecordingCompletionRetry(
   completionSucceeded: boolean,
   uncertainAttempts: number,
   serverOwnedAttempts: number,
+  elapsedMs: number,
 ): boolean {
   return !completionSucceeded
     && uncertainAttempts < MAX_UNCERTAIN_COMPLETION_ATTEMPTS
-    && serverOwnedAttempts < MAX_SERVER_OWNED_COMPLETION_ATTEMPTS;
+    && serverOwnedAttempts < MAX_SERVER_OWNED_COMPLETION_ATTEMPTS
+    && elapsedMs < MAX_FOREGROUND_COMPLETION_WAIT_MS;
 }
 
 export function recordingCompletionOwnershipTransition(
@@ -480,7 +483,11 @@ export function RecordAudioSheet({
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
-              let completed = await completeRecordingUpload(sessionId).catch(() => null);
+              const completionStartedAt = Date.now();
+              let completed = await completeRecordingUpload(
+                sessionId,
+                MAX_FOREGROUND_COMPLETION_WAIT_MS,
+              ).catch(() => null);
               // 弱网下 /complete 的响应可能丢失，而服务端其实已创建条目。直接回退整文件
               // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
               // 会话会返回同一条目（reused），不会重复创建。
@@ -494,12 +501,23 @@ export function RecordAudioSheet({
                 completed?.success === true,
                 uncertainAttempts,
                 serverOwnedAttempts,
+                Date.now() - completionStartedAt,
               )) {
                 const delayMs = serverOwnsCompletion
                   ? 5000
                   : Math.min(5000, 1000 * (uncertainAttempts + 1));
-                await new Promise((r) => setTimeout(r, delayMs));
-                const status = await getRecordingUpload(sessionId).catch(() => null);
+                const remainingBeforeDelay = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingBeforeDelay === 0) break;
+                await new Promise((r) => setTimeout(r, Math.min(delayMs, remainingBeforeDelay)));
+                const remainingForStatus = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingForStatus === 0) break;
+                const status = await getRecordingUpload(sessionId, remainingForStatus).catch(() => null);
                 // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
                 // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
                 if (shouldStopRecordingCompletionRetry(status)) break;
@@ -525,7 +543,15 @@ export function RecordAudioSheet({
                   uncertainAttempts++;
                 }
                 // uploading / completing / completed 均可安全重试（幂等），completed 通常直接回条目。
-                completed = await completeRecordingUpload(sessionId).catch(() => null);
+                const remainingForCompletion = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingForCompletion === 0) break;
+                completed = await completeRecordingUpload(
+                  sessionId,
+                  remainingForCompletion,
+                ).catch(() => null);
                 // completed 会话的条目若已被另一标签页删除，后端会明确返回不可恢复错误。
                 // 此时结束服务端恢复循环，转用本地保险文件；网络空响应和 5xx 仍保留归属。
                 if (shouldFallbackCompletedRecording(status, completed)) {

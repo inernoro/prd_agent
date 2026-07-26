@@ -30,6 +30,49 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task FindRecoveredCompletedRecordingEntry_ShouldSurviveSessionCleanupAndRequireOwner()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var entry = new DocumentEntry
+        {
+            Id = DocumentStoreController.CompletedRecordingEntryId("expired-session"),
+            StoreId = "store-1",
+            Title = "recording.webm",
+            CreatedBy = "user-1",
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+
+        var recovered = await DocumentStoreController.FindRecoveredCompletedRecordingEntryAsync(
+            fixture.Db.DocumentEntries,
+            "expired-session",
+            "user-1",
+            CancellationToken.None);
+        var wrongOwner = await DocumentStoreController.FindRecoveredCompletedRecordingEntryAsync(
+            fixture.Db.DocumentEntries,
+            "expired-session",
+            "user-2",
+            CancellationToken.None);
+
+        recovered.ShouldNotBeNull();
+        recovered.Id.ShouldBe(entry.Id);
+        wrongOwner.ShouldBeNull();
+    }
+
+    [Fact]
+    public void CompletedEntryFallback_ShouldGuardBothStatusAndCompletionEndpoints()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+
+        // 两个调用点加一个方法定义：状态查询先发现 completed，完成请求再返回同一条目。
+        source.Split(
+                "FindRecoveredCompletedRecordingEntryAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(4);
+    }
+
+    [Fact]
     public void RecordingChunkId_ShouldBeDeterministicForConcurrentRetries()
     {
         DocumentStoreController.RecordingChunkId("session-1", 7)
