@@ -28,3 +28,4 @@
 | fix | cds | 关闭 Agent 接入对话框或跨页时清除显式任务上下文 |
 | security | cds | 限制 SSO 完整配置仅系统所有者可读，并在 SSO 退出时统一清理所有登录会话 |
 | security | cds | 为预览 SSO 保留可信公网回调地址，并限制未消费登录 state 的数量与清理开销 |
+| security | cds | 拒绝含反斜杠的 SSO 返回路径，阻止浏览器规范化造成的跨域跳转 |

@@ -57,6 +57,15 @@ describe('ticket SSO', () => {
     expect(store.consume(issued.state)).toBeNull();
   });
 
+  it('rejects backslash-based SSO return paths before browser navigation', () => {
+    const store = new TicketSsoStateStore();
+    const decodedBackslash = store.issue('/\\evil.example/x.html', 'https://cds.example/auth/sso');
+    const encodedBackslash = store.issue('/%5Cevil.example/x.html', 'https://cds.example/auth/sso');
+
+    expect(store.consume(decodedBackslash.state)?.redirect).toBe('/project-list');
+    expect(store.consume(encodedBackslash.state)?.redirect).toBe('/project-list');
+  });
+
   it('preserves a missing redirect so exchange can use the configured default', () => {
     const store = new TicketSsoStateStore();
     const issued = store.issue(undefined, 'https://cds.example/auth/sso');

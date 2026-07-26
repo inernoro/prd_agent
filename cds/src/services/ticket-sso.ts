@@ -50,7 +50,18 @@ export class TicketSsoExchangeError extends Error {
 function cleanInternalRedirect(value: unknown): string {
   if (typeof value !== 'string') return DEFAULT_REDIRECT;
   const candidate = value.trim();
-  if (!candidate.startsWith('/') || candidate.startsWith('//')) return DEFAULT_REDIRECT;
+  if (
+    !candidate.startsWith('/')
+    || candidate.startsWith('//')
+    || candidate.includes('\\')
+    || /%5c/i.test(candidate)
+  ) return DEFAULT_REDIRECT;
+  try {
+    const base = new URL('https://cds.invalid');
+    if (new URL(candidate, base).origin !== base.origin) return DEFAULT_REDIRECT;
+  } catch {
+    return DEFAULT_REDIRECT;
+  }
   if (candidate.split(/[?#]/)[0] === '/login' || candidate.split(/[?#]/)[0] === '/auth/sso') {
     return DEFAULT_REDIRECT;
   }
