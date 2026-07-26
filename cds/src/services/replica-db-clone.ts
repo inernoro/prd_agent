@@ -105,9 +105,48 @@ export function resolveReplicaDbTarget(
     return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库' };
   }
 
-  const firstKey = presentKeys[0];
-  const engine = classifyDbEnvKey(firstKey);
-  const sourceDb = runtimeEnv[firstKey];
+  // 引擎判定（Codex P1）：项目级 customEnv 会把**所有**引擎的库名 key 都灌进来
+  //（多引擎项目里连 postgres 的服务也能看到 MONGO_INITDB_DATABASE），此前按
+  // 首个 key 定引擎是插入顺序依赖的——选错引擎后面的实例定位都被框死在错引擎里，
+  // 隔离克隆出来的就是别的引擎的生产数据。多引擎并存时按 dependsOn 声明或
+  // CDS_<实例>_PORT/HOST 模板引用收敛；仍多义 → fail-closed。
+  const enginesPresent = [...new Set(
+    presentKeys.map((k) => classifyDbEnvKey(k)).filter((e): e is ReplicaDbEngine => e !== null),
+  )];
+  let engine: ReplicaDbEngine | null = enginesPresent[0] ?? null;
+  if (enginesPresent.length > 1) {
+    const running = state.getInfraServicesForProject(branch.projectId)
+      .filter((svc) => svc.status === 'running');
+    const engineOf = (svc: InfraService): ReplicaDbEngine | null => {
+      const kind = detectInfraDataKind(svc.dockerImage);
+      return kind === 'mongo' || kind === 'mysql' || kind === 'postgres' ? kind : null;
+    };
+    const declared = new Set(profile.dependsOn || []);
+    const byDepends = [...new Set(
+      running.filter((s) => declared.has(s.id)).map(engineOf)
+        .filter((e): e is ReplicaDbEngine => e !== null && enginesPresent.includes(e)),
+    )];
+    if (byDepends.length === 1) {
+      engine = byDepends[0];
+    } else {
+      const tokenOf = (id: string): string => `CDS_${id.toUpperCase().replace(/-/g, '_')}_`;
+      const rawValues = Object.values(merged).join('\n');
+      const byRef = [...new Set(
+        running.filter((s) => rawValues.includes(tokenOf(s.id))).map(engineOf)
+          .filter((e): e is ReplicaDbEngine => e !== null && enginesPresent.includes(e)),
+      )];
+      if (byRef.length === 1) {
+        engine = byRef[0];
+      } else {
+        return {
+          target: null,
+          reason: `该服务的环境变量同时出现 ${enginesPresent.join(' / ')} 多个引擎的库名 key，且无法从 dependsOn 或 CDS_<实例>_PORT/HOST 模板确定它真正连接的引擎——为防克隆错引擎的数据，已拒绝（fail-closed）。请在服务 profile 的 dependsOn 里声明数据库实例`,
+        };
+      }
+    }
+  }
+  const firstKey = presentKeys.find((k) => classifyDbEnvKey(k) === engine);
+  const sourceDb = firstKey ? runtimeEnv[firstKey] : undefined;
   if (!engine || !sourceDb) {
     return { target: null, reason: '数据库 env key 无法归类到 mongo/mysql/postgres 引擎' };
   }

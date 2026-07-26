@@ -74,7 +74,16 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       ));
       // 服务调用关系图（容器级画布数据源，两页签定案 2026-07-24）：
       // 边在服务端由 env 引用 + depends_on 推导，只暴露 env 键名，值绝不出网。
-      const profiles = deps.stateService.getEffectiveProfilesForBranch(branch);
+      // env 必须用**生效合并结果**（Codex P2）：CDS 自动供给的连接串通常写在
+      // 项目级 customEnv（applyInfraPresets）、分支覆写在分支 scope——只看
+      // profile.env 会让典型自动供给项目一条服务→infra 边都推不出来，画布拓扑
+      // 残缺。合并顺序与运行时部署一致（project custom → 分支 scope → profile.env）；
+      // 项目级 env 对所有服务可见 = 每个容器运行时确实都持有这些连接配置，
+      // 由此推出的边是真实的。
+      const projectEnvForGraph = deps.stateService.getCustomEnv(branch.projectId);
+      const branchEnvForGraph = deps.stateService.getCustomEnvScope(branch.id);
+      const profiles = deps.stateService.getEffectiveProfilesForBranch(branch)
+        .map((p) => ({ ...p, env: { ...projectEnvForGraph, ...branchEnvForGraph, ...(p.env || {}) } }));
       const infraForProject = (deps.stateService.getState().infraServices || [])
         .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
       const graph = buildServiceGraph(profiles, infraForProject);
@@ -342,6 +351,10 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     // run 到终态：running（成功终态）才解散；failed/cancelled 保留复制集。
     const { branchId, profileId } = req.params;
     const promoteRunId = result.runId;
+    // 代际栅栏（Codex P2）：记下派发瞬间的成员集合。部署跑的几分钟里操作员可能
+    // 解散旧集、另建新副本——旧 watcher 到终态后不加判定的 dissolve 会把**新建**
+    // 的副本连锅端。终态清理只在「当前成员 ⊆ 派发时成员」时执行。
+    const promoteGenerationMembers = new Set(rs.members.map((m) => m.id));
     void (async () => {
       const startedAt = Date.now();
       const timeoutMs = 30 * 60_000;
@@ -349,6 +362,13 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
         await new Promise((r) => setTimeout(r, 5_000));
         const status = promoteRunId ? deps.getDeploymentRunStatus(promoteRunId) : undefined;
         if (status === 'running') {
+          const currentRs = deps.stateService.getBranch(branchId)?.replicaSets?.[profileId];
+          if (!currentRs) return; // 已被解散/删除，无事可做
+          const sameGeneration = currentRs.members.every((m) => promoteGenerationMembers.has(m.id));
+          if (!sameGeneration) {
+            console.warn(`[replica-set] promote 终态清理跳过：${branchId}/${profileId} 的复制集在部署期间已被重建（出现新成员），不动当前集`);
+            return;
+          }
           try {
             await deps.replicaSetService.dissolve(branchId, profileId);
             console.log(`[replica-set] promote 部署成功终态，已解散复制集 ${branchId}/${profileId}`);

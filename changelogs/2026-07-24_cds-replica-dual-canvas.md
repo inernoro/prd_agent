@@ -65,3 +65,8 @@
 | fix | cds | 隔离克隆加在途闸（分支+实例+源库串行化），治并发隔离选同 guard-N 后 mongo 幂等 rm -f 互相摧毁对方成功实例（Codex P1） |
 | fix | cds | 分支停止/降温把无容器的 provisioning 成员也标 stopped + 物化栅栏按状态放弃，治分支已 idle 后后台任务仍把副本容器起出来（Codex P1） |
 | fix | cds | 删分支清理专用隔离实例失败时写墓碑交收割器持续重试，治瞬时 Docker 故障后 rsdb 容器永久无主（Codex P2） |
+| fix | cds | auto-lifecycle 自动停止级联复制集副本（此前只停主服务，"已停止"分支经成员兜底路由仍公网可达且占资源，Codex P1） |
+| fix | cds | 隔离目标引擎判定去顺序依赖：多引擎项目按 dependsOn/CDS_<实例> 模板收敛，多义 fail-closed（此前首个 env key 定引擎会克隆错引擎的生产数据，Codex P1） |
+| fix | cds | 克隆完成时分支已删的归属复查：就地 drop 刚克隆的隔离库/专用实例（此前 requireBranch 抛错后产物永久无主，Codex P1） |
+| fix | cds | 服务调用关系图合入项目级/分支级生效 env（此前只看 profile.env，自动供给项目推不出服务到基础设施的边，画布拓扑残缺，Codex P2） |
+| fix | cds | promote 终态清理加代际栅栏：当前成员非派发时子集则跳过 dissolve（防部署期间重建的新副本被旧 watcher 连锅端，Codex P2） |

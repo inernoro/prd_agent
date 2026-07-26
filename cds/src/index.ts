@@ -2036,6 +2036,35 @@ const autoLifecycleService = new AutoLifecycleService(
           svc.status = 'stopped';
         }
       }
+      // 复制集成员级联停止（Codex P1，2026-07-26）：与手动 /stop、调度器 coolFn
+      // 同款——auto-lifecycle 自动停止此前只停 branch.services，副本容器留活：
+      // 分支标 idle 后发布器的「成员兜底」仍把它们发进路由表，"已停止"的分支
+      // 对公网依旧可达且持续占资源。无容器的 provisioning 成员同样标 stopped，
+      // 物化栅栏按状态放弃。
+      for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          branchOperationLease?.assertCurrent(`auto-lifecycle stop before replica ${replicaSet.profileId}--${member.id}`);
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                projectId: branch.projectId,
+                branchId: branch.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                operationId: branchOperationLease?.operationId || null,
+                actor: 'auto-lifecycle',
+                trigger: 'auto-lifecycle',
+                operation: 'auto-lifecycle-stop-replica-member',
+                source: 'autoLifecycleService.stopBranch',
+              });
+            } catch (err) {
+              console.warn(`[auto-lifecycle] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+            }
+          } else if (member.status === 'provisioning') {
+            member.statusMessage = '物化被 auto-lifecycle 自动停止中断，可在画布删除后重建';
+          }
+          member.status = 'stopped';
+        }
+      }
       await archiveBranchContainerLogs({
         stateService,
         containerService,

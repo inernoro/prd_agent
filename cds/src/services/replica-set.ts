@@ -373,8 +373,20 @@ export class ReplicaSetService {
       branchId: branch.id,
       now: this.opts.now,
       onOutput: (line) => onStage('cloning', line),
-    }).then((cloned) => {
-      const liveBranch = this.requireBranch(branchId);
+    }).then(async (cloned) => {
+      // 归属复查（Codex P1）：克隆是长任务，期间分支/项目可能已被删除——快照
+      // 还没入台账，删除路径清不到它。此时必须就地 drop 刚克隆的产物（专用
+      // 实例整容器 / 共享库里的隔离库），否则永久无主。
+      const liveBranch = this.opts.state.getBranch(branchId);
+      if (!liveBranch) {
+        try {
+          await dropReplicaDb(cloned.snapshot, target!.infra.env || {});
+          onStage('error', `分支在克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`);
+        } catch {
+          onStage('error', `分支在克隆期间被删除，且隔离库 ${cloned.snapshot.dbName} 清理失败——请到数据库工作台手动 DROP${cloned.snapshot.dedicatedContainer ? `（专用实例 ${cloned.snapshot.dedicatedContainer}）` : ''}`);
+        }
+        return;
+      }
       liveBranch.replicaDbSnapshots = [...(liveBranch.replicaDbSnapshots || []), cloned.snapshot];
       this.opts.state.save();
       onStage('done', `隔离副本 ${cloned.snapshot.dbName} 已就绪（来源 ${cloned.snapshot.sourceDb}）`, cloned.snapshot.dbName);
@@ -461,9 +473,18 @@ export class ReplicaSetService {
             }
           },
         });
-        const live = this.requireBranch(branchId);
+        // 归属复查（Codex P1）：克隆期间分支被删 → 快照未入台账、删除路径清不到，
+        // 就地 drop 刚克隆的产物后放弃
+        const live = this.opts.state.getBranch(branchId);
+        if (!live || !live.replicaSets?.[profileId]) {
+          await dropReplicaDb(cloned.snapshot, target.infra.env || {}).catch(() => undefined);
+          this.opts.logger?.warn?.(
+            `[replica-set] 分支/复制集在隔离克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`,
+          );
+          return;
+        }
         live.replicaDbSnapshots = [...(live.replicaDbSnapshots || []), cloned.snapshot];
-        const liveRs = live.replicaSets![profileId];
+        const liveRs = live.replicaSets[profileId];
         liveRs.isolated = { dbName: cloned.snapshot.dbName, snapshotId: cloned.snapshot.id, isolatedAt: this.now() };
         this.opts.state.save();
         for (const m of members) {
