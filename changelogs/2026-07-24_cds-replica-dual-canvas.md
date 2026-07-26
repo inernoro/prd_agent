@@ -85,3 +85,7 @@
 | fix | cds | 隔离/回切三条过渡循环加停止栅栏：逐成员复查停止态，不再把 stopped 成员改回 provisioning 亲手擦掉停止栅栏（Codex P1） |
 | fix | cds | WebSocket 升级结果接入被动健康：握手成功回池、连接错误上报摘除，治 WS-only 服务端口死亡永不被摘、半开探针走 WS 永不回池（Codex P2） |
 | fix | cds | 隔离审计基线对照源库：空源库的空克隆判 pass，不再把合法空库误判 broken（Codex P2） |
+| fix | cds | 回切/复用隔离改「先全员摘流后翻标记」：治过渡期第一个成员已切、其余成员仍按旧库接加权流量，写入被劈到两个库（Codex P1） |
+| fix | cds | 保护罩多库歧义拒绝：同实例多 profile 各用不同库时列候选拒绝，不再按遍历顺序静默保护错库（Codex P2） |
+| security | cds | 分流实测 host 必须属于本分支已发布域名（previewSlug/子域派生/别名/自定义域），治跨项目内网请求探针（Codex P2） |
+| fix | cds | promote 代际栅栏加持久 token（rs.createdAt）：治解散重建后 res-N 同名新集通过成员子集检查被旧 watcher 误解散（Codex P2） |

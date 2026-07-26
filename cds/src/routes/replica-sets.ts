@@ -11,6 +11,7 @@ import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
 import { buildServiceGraph } from '../services/service-graph.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
+import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
@@ -108,6 +109,27 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     if (access) { res.status(access.status).json(access.body); return; }
     const host = typeof req.body?.host === 'string' ? req.body.host.trim().toLowerCase() : '';
     if (!host || !/^[a-z0-9.-]+$/.test(host)) { res.status(400).json({ error: '缺少合法的入口 host' }); return; }
+    // 探测 host 必须属于本分支（Codex P2）：只做语法校验时，项目 A 的调用方可以
+    // 拿自己分支的授权、填别的项目的预览 host——CDS 会替它经 loopback forwarder
+    // 发起最多 50 个真实 GET，形成跨项目的内网请求/状态探针。host 首标签必须是
+    // 本分支 previewSlug（或其 -子域派生：命名子域/成员直达域），或命中本分支的
+    // 子域别名/自定义域。
+    {
+      const branchForHost = deps.stateService.getBranch(req.params.branchId)!;
+      const projectForHost = deps.stateService.getProjects().find((p) => p.id === branchForHost.projectId);
+      const previewSlug = buildPreviewUrlForProject('', branchForHost.branch, projectForHost, branchForHost.projectId).previewSlug || '';
+      const firstLabel = host.split('.')[0] || '';
+      const aliasLabels = new Set((branchForHost.subdomainAliases ?? []).filter(Boolean).map((a) => String(a).toLowerCase()));
+      const customDomains = new Set((branchForHost.customDomains ?? []).map((d) => String(d).toLowerCase()));
+      const hostAllowed =
+        (Boolean(previewSlug) && (firstLabel === previewSlug || firstLabel.startsWith(`${previewSlug}-`)))
+        || aliasLabels.has(firstLabel)
+        || customDomains.has(host);
+      if (!hostAllowed) {
+        res.status(403).json({ error: '入口 host 不属于该分支的已发布域名，拒绝探测' });
+        return;
+      }
+    }
     // 探测 path 必须命中「被复制集化的这个服务」的路由（验收 P1-1：写死 '/'
     // 会打在前端容器上，永远显示 100% 主版本）。未显式传 path 时按 profile
     // 的 pathPrefixes / api-convention 自动推导。
@@ -351,10 +373,12 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     // run 到终态：running（成功终态）才解散；failed/cancelled 保留复制集。
     const { branchId, profileId } = req.params;
     const promoteRunId = result.runId;
-    // 代际栅栏（Codex P2）：记下派发瞬间的成员集合。部署跑的几分钟里操作员可能
-    // 解散旧集、另建新副本——旧 watcher 到终态后不加判定的 dissolve 会把**新建**
-    // 的副本连锅端。终态清理只在「当前成员 ⊆ 派发时成员」时执行。
+    // 代际栅栏（Codex P2 两连）：记下派发瞬间的成员集合 + 集的 createdAt。
+    // 部署跑的几分钟里操作员可能解散旧集、另建新副本——res-N 顺位命名会让新集
+    // 的成员 id 与旧集重合，仅比成员子集分不出「重建过的集」；createdAt 随
+    // dissolve 后重建而刷新，是持久的代际标识。两者都对上才许终态 dissolve。
     const promoteGenerationMembers = new Set(rs.members.map((m) => m.id));
+    const promoteGenerationCreatedAt = rs.createdAt;
     void (async () => {
       const startedAt = Date.now();
       const timeoutMs = 30 * 60_000;
@@ -364,7 +388,8 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
         if (status === 'running') {
           const currentRs = deps.stateService.getBranch(branchId)?.replicaSets?.[profileId];
           if (!currentRs) return; // 已被解散/删除，无事可做
-          const sameGeneration = currentRs.members.every((m) => promoteGenerationMembers.has(m.id));
+          const sameGeneration = currentRs.createdAt === promoteGenerationCreatedAt
+            && currentRs.members.every((m) => promoteGenerationMembers.has(m.id));
           if (!sameGeneration) {
             console.warn(`[replica-set] promote 终态清理跳过：${branchId}/${profileId} 的复制集在部署期间已被重建（出现新成员），不动当前集`);
             return;

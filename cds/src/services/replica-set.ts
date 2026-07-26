@@ -356,18 +356,27 @@ export class ReplicaSetService {
   ): { accepted: boolean; reason?: string } {
     const branch = this.opts.state.getBranch(branchId);
     if (!branch) return { accepted: false, reason: `分支不存在: ${branchId}` };
-    // 找到「用这个 infra 当数据库」的服务：逐 profile 解析目标，命中 infraId 即用
-    let target: ReturnType<typeof resolveReplicaDbTarget>['target'] = null;
-    let profileId = '';
+    // 找到「用这个 infra 当数据库」的服务：逐 profile 解析目标。
+    // 多库歧义拒绝（Codex P2）：同一 infra 实例上两个 profile 可以各用不同的库，
+    // 请求只带 infraId——按遍历顺序取首个会静默保护错库、UI 还报成功。收集全部
+    // 命中后若源库不唯一，列出候选拒绝，让用户改走 profile 级隔离指名要保护的库。
+    const guardHits: Array<{ profileId: string; target: NonNullable<ReturnType<typeof resolveReplicaDbTarget>['target']> }> = [];
     for (const profile of this.opts.state.getEffectiveProfilesForBranch(branch)) {
       const resolved = resolveReplicaDbTarget(this.opts.state, branch, resolveEffectiveProfile(profile, branch));
       if (resolved.target && resolved.target.infra.id === infraId) {
-        target = resolved.target;
-        profileId = profile.id;
-        break;
+        guardHits.push({ profileId: profile.id, target: resolved.target });
       }
     }
-    if (!target) return { accepted: false, reason: '没有服务把该基础设施用作数据库（或库名 env 缺失），无法定位要保护的库' };
+    if (guardHits.length === 0) return { accepted: false, reason: '没有服务把该基础设施用作数据库（或库名 env 缺失），无法定位要保护的库' };
+    const distinctDbs = [...new Set(guardHits.map((h) => h.target.sourceDb))];
+    if (distinctDbs.length > 1) {
+      return {
+        accepted: false,
+        reason: `该实例上有多个服务各用不同的库（${guardHits.map((h) => `${h.profileId}→${h.target.sourceDb}`).join('、')}），无法确定要保护哪一个——请到对应服务的「复制隔离」按 profile 指名保护`,
+      };
+    }
+    const target = guardHits[0].target;
+    const profileId = guardHits[0].profileId;
     const inflightKey = this.isolationKey(branchId, target);
     if (this.isolationInFlight.has(inflightKey)) {
       return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
@@ -447,6 +456,13 @@ export class ReplicaSetService {
       && snap.infraContainer === target.infra.containerName
       && Object.values(branch.replicaSets ?? {}).some((x) => x.isolated?.snapshotId === snap.id));
     if (reusable) {
+      // 先全员摘流、后置隔离标记（Codex P1 对称面）：异步循环逐个改连隔离库，
+      // 若先置标记，未切换的成员仍带共享库连接接加权流量——标记声称隔离、
+      // 流量却写主库。同步阶段全员标 provisioning 即刻摘流。
+      for (const m of members) {
+        m.status = 'provisioning';
+        m.statusMessage = '第2步 切换：已摘流，等待改连统一隔离库…';
+      }
       rs.isolated = { dbName: reusable.dbName, snapshotId: reusable.id, isolatedAt: this.now() };
       rs.updatedAt = this.now();
       this.opts.state.save();
@@ -551,6 +567,16 @@ export class ReplicaSetService {
     if (!rs?.isolated) return { accepted: false, reason: '当前不在隔离状态' };
     const baseProfile = this.requireProfile(branch, profileId);
     const members = rs.members.filter((m) => m.status === 'running' || m.status === 'error');
+    // 先全员摘流、后清隔离标记（Codex P1）：异步循环逐个切换成员，若先清标记，
+    // 第一个成员回主库后其余成员仍带着隔离库连接接加权流量——写入被劈到两个库、
+    // 控制面却已宣称回到共享。同步阶段把全部受影响成员标 provisioning（发布器
+    // 只发 running 成员，即刻摘流），再翻标记。
+    for (const m of members) {
+      if (m.status === 'running') {
+        m.status = 'provisioning';
+        m.statusMessage = '回切主库：已摘流，等待切换…';
+      }
+    }
     delete rs.isolated;
     rs.updatedAt = this.now();
     this.opts.state.save();
