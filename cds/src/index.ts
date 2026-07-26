@@ -1467,21 +1467,26 @@ schedulerService.setCoolFn(async (slug: string) => {
   // /restart 级联拉起已同步落地）。
   for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
     for (const member of replicaSet.members) {
-      if (!member.containerName) continue;
       branchOperationLease?.assertCurrent(`scheduler cooling before replica ${replicaSet.profileId}--${member.id}`);
-      try {
-        await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
-          projectId: branch.projectId,
-          branchId: branch.id,
-          profileId: `${replicaSet.profileId}--${member.id}`,
-          operationId: branchOperationLease?.operationId || null,
-          actor: 'scheduler',
-          trigger: 'scheduler',
-          operation: 'scheduler-cooling-replica-member',
-          source: 'schedulerService.setCoolFn',
-        });
-      } catch (err) {
-        console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+      if (member.containerName) {
+        try {
+          await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            operationId: branchOperationLease?.operationId || null,
+            actor: 'scheduler',
+            trigger: 'scheduler',
+            operation: 'scheduler-cooling-replica-member',
+            source: 'schedulerService.setCoolFn',
+          });
+        } catch (err) {
+          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+        }
+      } else if (member.status === 'provisioning') {
+        // 无容器的 provisioning 成员也标 stopped（Codex P1 同款）：物化栅栏按状态
+        // 放弃，防止降温后后台任务把副本容器起出来
+        member.statusMessage = '物化被调度器降温中断，可在画布删除后重建';
       }
       member.status = 'stopped';
     }

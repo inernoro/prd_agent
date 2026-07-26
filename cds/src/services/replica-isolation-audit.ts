@@ -235,6 +235,9 @@ export async function runIsolationAudit(
       : undefined;
     const tokIso = `iso${Date.now().toString(36)}`;
     const tokMain = `main${Date.now().toString(36)}`;
+    // 集合名每次运行唯一（Codex P1 同款防线）：清理 drop 的必然是本次自建集合，
+    // 绝不触碰应用可能拥有的固定名同名集合
+    const canaryColl = `cds_isolation_canary_${Date.now().toString(36)}`;
     const isoDb = `db.getSiblingDB('${snapshot.dbName}')`;
     const mainDb = `db.getSiblingDB('${target.sourceDb}')`;
     try {
@@ -249,9 +252,9 @@ export async function runIsolationAudit(
 
       // 正向：隔离库写入 → 主库必须查无
       const wIso = await isoInstanceEval(snapshot.dedicatedContainer,
-        `${isoDb}.cds_isolation_canary.insertOne({t:'${tokIso}'}); print('ok')`, isoAuth);
+        `${isoDb}.${canaryColl}.insertOne({t:'${tokIso}'}); print('ok')`, isoAuth);
       const rMain = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
-        `print(Number(${mainDb}.cds_isolation_canary.countDocuments({t:'${tokIso}'})))`);
+        `print(Number(${mainDb}.${canaryColl}.countDocuments({t:'${tokIso}'})))`);
       const fwdOk = wIso.code === 0 && rMain.code === 0 && tailNumber(rMain.stdout) === 0;
       checks.push({
         id: 'D2', group: '数据面', title: '正向隔离：写入隔离库的数据不出现在主库',
@@ -262,9 +265,9 @@ export async function runIsolationAudit(
 
       // 反向：主库写入 → 隔离库必须查无
       const wMain = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
-        `${mainDb}.cds_isolation_canary.insertOne({t:'${tokMain}'}); print('ok')`);
+        `${mainDb}.${canaryColl}.insertOne({t:'${tokMain}'}); print('ok')`);
       const rIso = await isoInstanceEval(snapshot.dedicatedContainer,
-        `print(Number(${isoDb}.cds_isolation_canary.countDocuments({t:'${tokMain}'})))`, isoAuth);
+        `print(Number(${isoDb}.${canaryColl}.countDocuments({t:'${tokMain}'})))`, isoAuth);
       const revOk = wMain.code === 0 && rIso.code === 0 && tailNumber(rIso.stdout) === 0;
       checks.push({
         id: 'D3', group: '数据面', title: '反向隔离：写入主库的数据不出现在隔离库',
@@ -275,9 +278,8 @@ export async function runIsolationAudit(
     } finally {
       // 金丝雀清理：两侧删净后 drop 空集合——不给库里留审计残渣（连空集合都不留，
       // 否则下次审计的 collections 基线会 +1，用户会问「这个集合哪来的」）
-      const cleanup = (dbExpr: string): string =>
-        `${dbExpr}.cds_isolation_canary.deleteMany({t:{$in:['${tokIso}','${tokMain}']}}); ` +
-        `if (${dbExpr}.cds_isolation_canary.countDocuments({}) === 0) { ${dbExpr}.cds_isolation_canary.drop(); }`;
+      // 唯一名集合整体 drop（本次自建，无条件删干净）
+      const cleanup = (dbExpr: string): string => `${dbExpr}.${canaryColl}.drop();`;
       await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb), isoAuth).catch(() => undefined);
       await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb)).catch(() => undefined);
     }
@@ -288,6 +290,7 @@ export async function runIsolationAudit(
     const env = target.infra.env || {};
     const tokIso = `iso${Date.now().toString(36)}`;
     const tokMain = `main${Date.now().toString(36)}`;
+    const canaryName = `cds_isolation_canary_${Date.now().toString(36)}`;
     const sqlExec = (db: string, sql: string): ReturnType<typeof runDockerExec> => {
       if (snapshot.engine === 'mysql') {
         const pw = env.MYSQL_ROOT_PASSWORD || env.MARIADB_ROOT_PASSWORD || '';
@@ -309,13 +312,16 @@ export async function runIsolationAudit(
         evidence: baseline.code === 0 ? `隔离库 ${snapshot.dbName} tables=${tblCount}` : '隔离库不可读',
       });
 
-      const ddl = 'CREATE TABLE IF NOT EXISTS cds_isolation_canary (t VARCHAR(64))';
+      // 表名每次运行唯一（Codex P1）：固定名 cds_isolation_canary 会撞上应用自己的
+      // 同名表——CREATE IF NOT EXISTS 复用它、finally 无条件 DROP 就把应用的表连
+      // 数据一起删了。唯一命名后 DROP 的必然是本次审计自建的表。
+      const ddl = `CREATE TABLE IF NOT EXISTS ${canaryName} (t VARCHAR(64))`;
       await sqlExec(snapshot.dbName, ddl);
       await sqlExec(target.sourceDb, ddl);
 
       // 正向：隔离库写入 → 主库必须查无
-      const wIso = await sqlExec(snapshot.dbName, `INSERT INTO cds_isolation_canary VALUES ('${tokIso}')`);
-      const rMain = await sqlExec(target.sourceDb, `SELECT COUNT(*) FROM cds_isolation_canary WHERE t='${tokIso}'`);
+      const wIso = await sqlExec(snapshot.dbName, `INSERT INTO ${canaryName} VALUES ('${tokIso}')`);
+      const rMain = await sqlExec(target.sourceDb, `SELECT COUNT(*) FROM ${canaryName} WHERE t='${tokIso}'`);
       const fwdOk = wIso.code === 0 && rMain.code === 0 && tailNumber(rMain.stdout) === 0;
       checks.push({
         id: 'D2', group: '数据面', title: '正向隔离：写入隔离库的数据不出现在主库',
@@ -325,8 +331,8 @@ export async function runIsolationAudit(
       });
 
       // 反向：主库写入 → 隔离库必须查无
-      const wMain = await sqlExec(target.sourceDb, `INSERT INTO cds_isolation_canary VALUES ('${tokMain}')`);
-      const rIso = await sqlExec(snapshot.dbName, `SELECT COUNT(*) FROM cds_isolation_canary WHERE t='${tokMain}'`);
+      const wMain = await sqlExec(target.sourceDb, `INSERT INTO ${canaryName} VALUES ('${tokMain}')`);
+      const rIso = await sqlExec(snapshot.dbName, `SELECT COUNT(*) FROM ${canaryName} WHERE t='${tokMain}'`);
       const revOk = wMain.code === 0 && rIso.code === 0 && tailNumber(rIso.stdout) === 0;
       checks.push({
         id: 'D3', group: '数据面', title: '反向隔离：写入主库的数据不出现在隔离库',
@@ -335,9 +341,10 @@ export async function runIsolationAudit(
           : `主库写入金丝雀 → 隔离库命中 ${tailNumber(rIso.stdout)} 条（期望 0）`,
       });
     } finally {
-      // 金丝雀清理：两侧 DROP 整表——库里不留任何审计残渣
-      await sqlExec(snapshot.dbName, 'DROP TABLE IF EXISTS cds_isolation_canary').catch(() => undefined);
-      await sqlExec(target.sourceDb, 'DROP TABLE IF EXISTS cds_isolation_canary').catch(() => undefined);
+      // 金丝雀清理：两侧 DROP 本次运行自建的唯一名表——库里不留任何审计残渣，
+      // 也绝不触碰应用可能拥有的固定名同名表
+      await sqlExec(snapshot.dbName, `DROP TABLE IF EXISTS ${canaryName}`).catch(() => undefined);
+      await sqlExec(target.sourceDb, `DROP TABLE IF EXISTS ${canaryName}`).catch(() => undefined);
     }
   } else {
     checks.push({

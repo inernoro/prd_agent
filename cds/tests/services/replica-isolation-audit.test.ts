@@ -150,8 +150,9 @@ describe('runIsolationAudit', () => {
     // MECE 穷尽：没隔住的部分必须显式可见
     expect(byId.get('E1')?.verdict).toBe('boundary');
     expect(byId.get('E2')?.verdict).toBe('boundary');
-    // 金丝雀清理必须发生（两侧 deleteMany）
-    const cleanups = dockerCalls.filter((argv) => argv[argv.length - 1]?.includes('deleteMany'));
+    // 金丝雀清理必须发生（两侧 drop 唯一名集合——Codex P1 改唯一命名后清理即整体 drop）
+    const cleanups = dockerCalls.filter((argv) =>
+      argv[argv.length - 1]?.includes('cds_isolation_canary_') && argv[argv.length - 1]?.includes('.drop()'));
     expect(cleanups.length).toBeGreaterThanOrEqual(2);
   });
 

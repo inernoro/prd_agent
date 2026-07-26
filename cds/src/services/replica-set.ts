@@ -89,6 +89,18 @@ export interface ReplicaCandidate {
 export class ReplicaSetService {
   constructor(private readonly opts: ReplicaSetServiceOptions) {}
 
+  /**
+   * 隔离克隆在途闸（Codex P1，2026-07-26）：同源库（分支+实例+库名）同一时刻只允许
+   * 一个克隆在跑。并发到达时 rs.isolated 未置位、快照未入台账，两次请求会选同一个
+   * guard-N → 同名隔离库/同名 rsdb 容器 → mongo 通道的幂等 rm -f 互相摧毁对方的
+   * 成功实例。在途期间重复请求直接拒绝（携带首个请求的 guardId 供提示）。
+   */
+  private readonly isolationInFlight = new Map<string, string>();
+
+  private isolationKey(branchId: string, target: { infra: { containerName: string }; sourceDb: string }): string {
+    return `${branchId}:${target.infra.containerName}:${target.sourceDb}`;
+  }
+
   private now(): string {
     return (this.opts.now?.() ?? new Date()).toISOString();
   }
@@ -346,9 +358,14 @@ export class ReplicaSetService {
       }
     }
     if (!target) return { accepted: false, reason: '没有服务把该基础设施用作数据库（或库名 env 缺失），无法定位要保护的库' };
+    const inflightKey = this.isolationKey(branchId, target);
+    if (this.isolationInFlight.has(inflightKey)) {
+      return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
+    }
     const used = (branch.replicaDbSnapshots ?? [])
       .map((s) => /^guard-(\d+)$/.exec(s.memberId)?.[1]).filter(Boolean).map(Number);
     const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
+    this.isolationInFlight.set(inflightKey, guardId);
     void cloneReplicaDb({
       target,
       memberId: guardId,
@@ -363,6 +380,8 @@ export class ReplicaSetService {
       onStage('done', `隔离副本 ${cloned.snapshot.dbName} 已就绪（来源 ${cloned.snapshot.sourceDb}）`, cloned.snapshot.dbName);
     }).catch((err) => {
       onStage('error', (err as Error).message);
+    }).finally(() => {
+      this.isolationInFlight.delete(inflightKey);
     });
     return { accepted: true };
   }
@@ -417,10 +436,15 @@ export class ReplicaSetService {
       })();
       return { accepted: true };
     }
+    const inflightKey = this.isolationKey(branchId, target);
+    if (this.isolationInFlight.has(inflightKey)) {
+      return { accepted: false, reason: `该源库已有一个隔离克隆在进行中（${this.isolationInFlight.get(inflightKey)}），请等它完成后再操作` };
+    }
     const used = [
       ...(branch.replicaDbSnapshots ?? []).map((s) => s.memberId),
     ].map((mid) => /^guard-(\d+)$/.exec(mid)?.[1]).filter(Boolean).map(Number);
     const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
+    this.isolationInFlight.set(inflightKey, guardId);
     for (const m of members) {
       this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第1步 复制：正在克隆隔离库…' });
     }
@@ -462,6 +486,8 @@ export class ReplicaSetService {
         for (const m of members) {
           this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `复制隔离失败：${(err as Error).message}` });
         }
+      } finally {
+        this.isolationInFlight.delete(inflightKey);
       }
     })();
     return { accepted: true };
@@ -745,10 +771,16 @@ export class ReplicaSetService {
     };
   }
 
-  /** 物化栅栏判据（Codex P2）：成员记录是否仍在册（移除/解散后即消失）。 */
+  /**
+   * 物化栅栏判据（Codex P2 + P1 补强）：成员记录仍在册**且未被停止**。
+   * 移除/解散会删记录；分支停止/调度器降温会把 provisioning 成员标 stopped
+   *（记录保留）——两种情况后台物化任务都必须就地放弃，否则会在分支已 idle
+   * 后把副本容器起出来。
+   */
   private memberStillTracked(branchId: string, profileId: string, memberId: string): boolean {
-    return !!this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
-      .some((m) => m.id === memberId);
+    const member = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
+      .find((m) => m.id === memberId);
+    return !!member && member.status !== 'stopped';
   }
 
   private patchMember(

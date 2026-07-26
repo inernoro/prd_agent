@@ -10941,12 +10941,26 @@ export function createBranchRouter(deps: RouterDeps): Router {
             .find((svc) => svc.containerName === snapshot.infraContainer);
           await dropReplicaDb(snapshot, snapshotInfra?.env || {});
         } catch (err) {
+          // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
+          // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
+          // 墓碑持续重试 rm -f（不带 -v，匿名卷可能残留，但容器不会漏跑）。
+          // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
+          // 记事件供人工收口（残留台账见 debt.cds.replica-set #19）。
+          if (snapshot.dedicatedContainer) {
+            try {
+              stateService.addContainerTeardownTombstones([{
+                containerName: snapshot.dedicatedContainer,
+                projectId: entry.projectId,
+                requestedAt: new Date().toISOString(),
+              }]);
+            } catch { /* 墓碑写入失败退回事件告警 */ }
+          }
           serverEventLogStore?.record({
             category: 'container',
             severity: 'warn',
             source: 'branch-delete',
             action: 'branch.delete.replica-db-drop-failed',
-            message: `删分支级联清理隔离库失败: ${snapshot.dbName}${snapshot.dedicatedContainer ? ` (专用实例 ${snapshot.dedicatedContainer})` : ''} — ${(err as Error).message}`,
+            message: `删分支级联清理隔离库失败: ${snapshot.dbName}${snapshot.dedicatedContainer ? ` (专用实例 ${snapshot.dedicatedContainer}，已写墓碑交收割器重试)` : ''} — ${(err as Error).message}`,
             projectId: entry.projectId,
             branchId: entry.id,
             requestId: requestId || null,
@@ -14059,22 +14073,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
       // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
       // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
+      // 无容器的 provisioning 成员也必须标 stopped（Codex P1）：此前 continue 跳过
+      // 让后台 materializeMember 任务继续跑，分支已 idle 后还会把副本容器起出来
+      //（成员记录仍在，memberStillTracked 栅栏拦不住）——标 stopped 后物化栅栏
+      // 按状态就地放弃。
       for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
         for (const member of replicaSet.members) {
-          if (!member.containerName) continue;
-          try {
-            await containerService.stop(member.containerName, stopAttribution.reason, {
-              projectId: entry.projectId,
-              branchId: entry.id,
-              profileId: `${replicaSet.profileId}--${member.id}`,
-              requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
-              operationId: branchOperationLease?.operationId || null,
-              actor: resolveActorFromRequest(req),
-              trigger: triggerFromRequest(req),
-              operation: 'branch-stop-replica-member',
-              source: 'api.stop-branch',
-            });
-          } catch { /* ok */ }
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, stopAttribution.reason, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
+                trigger: triggerFromRequest(req),
+                operation: 'branch-stop-replica-member',
+                source: 'api.stop-branch',
+              });
+            } catch { /* ok */ }
+          } else if (member.status === 'provisioning') {
+            member.statusMessage = '物化被分支停止中断，可在画布删除后重建';
+          }
           member.status = 'stopped';
         }
       }

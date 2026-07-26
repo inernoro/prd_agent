@@ -61,3 +61,7 @@
 | fix | cds | 成员直达子域带 profile 段（<slug>-<profile>-<成员>），治两个服务同名 res-1 撞同一 host 路由互相覆盖（Codex P1，前端直达链同步） |
 | fix | cds | 隔离快照复用增加同源实例判定（infraContainer 必须一致），治同引擎双实例同名库时把 A 实例克隆错发给连 B 实例的服务（Codex P1） |
 | fix | cds | 多实例同引擎且未声明 dependsOn 时按 CDS_<实例>_PORT/HOST 模板关联定位，无法唯一定位 fail-closed 拒绝，治盲选第一个实例克隆错库（Codex P1） |
+| security | cds | 隔离审计金丝雀表/集合改每次运行唯一命名，治固定名撞上应用同名表时 finally DROP 连业务数据一起删（Codex P1） |
+| fix | cds | 隔离克隆加在途闸（分支+实例+源库串行化），治并发隔离选同 guard-N 后 mongo 幂等 rm -f 互相摧毁对方成功实例（Codex P1） |
+| fix | cds | 分支停止/降温把无容器的 provisioning 成员也标 stopped + 物化栅栏按状态放弃，治分支已 idle 后后台任务仍把副本容器起出来（Codex P1） |
+| fix | cds | 删分支清理专用隔离实例失败时写墓碑交收割器持续重试，治瞬时 Docker 故障后 rsdb 容器永久无主（Codex P2） |
