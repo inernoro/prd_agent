@@ -55,6 +55,12 @@ public static class LiveAsrGatewayEndpoint
         if (admission is null)
             return;
 
+        var contextAccessor = http.RequestServices.GetRequiredService<ILLMRequestContextAccessor>();
+        using var requestContextScope = GatewayHttpEndpoints.OpenContextScope(
+            contextAccessor,
+            admission.Ingress.Context,
+            admission.Ingress.RequestType,
+            admission.Ingress.AppCallerCode);
         var orchestrator = http.RequestServices.GetRequiredService<LiveAsrSessionOrchestrator>();
         var logWriter = http.RequestServices.GetRequiredService<ILlmRequestLogWriter>();
         using var socket = await http.WebSockets.AcceptWebSocketAsync();

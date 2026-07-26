@@ -111,6 +111,15 @@ export function shouldStopRecordingCompletionRetry(
     || status.error.code === 'SESSION_EXPIRED';
 }
 
+export function nextRecordingCompletionOwnership(
+  serverOwnsCompletion: boolean,
+  status: RecordingCompletionRetryStatus | null,
+): boolean {
+  if (!status?.success) return serverOwnsCompletion;
+  return status.data.status === 'completing'
+    || status.data.status === 'completed';
+}
+
 export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
@@ -417,15 +426,25 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
               // 弱网下 /complete 的响应可能丢失，而服务端其实已创建条目。直接回退整文件
               // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
               // 会话会返回同一条目（reused），不会重复创建。
-              // completing 是服务端持有全部分片后的可恢复租约，不能在短暂等待后改走
-              // 第二次整文件上传，否则进程恢复时会出现两个条目。最长等待覆盖后端两分钟
-              // 的 stale lease；正常完成或响应丢失通常会在首次回读时立即返回。
-              for (let attempt = 0; !completed?.success && attempt < 32; attempt++) {
-                await new Promise((r) => setTimeout(r, Math.min(5000, 1000 * (attempt + 1))));
+              // completing / completed 表示服务端已经拥有完成流程。即使对象存储重试超过
+              // 普通弱网窗口，也只能继续轮询和幂等重试，禁止转整文件上传制造第二条记录。
+              // 只有一直无法确认归属，或服务端明确回到 uploading，才受 32 次弱网窗口限制。
+              let serverOwnsCompletion = false;
+              for (let uncertainAttempts = 0;
+                !completed?.success && (serverOwnsCompletion || uncertainAttempts < 32);) {
+                const delayMs = serverOwnsCompletion
+                  ? 5000
+                  : Math.min(5000, 1000 * (uncertainAttempts + 1));
+                await new Promise((r) => setTimeout(r, delayMs));
                 const status = await getRecordingUpload(sessionId).catch(() => null);
                 // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
                 // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
                 if (shouldStopRecordingCompletionRetry(status)) break;
+                serverOwnsCompletion = nextRecordingCompletionOwnership(
+                  serverOwnsCompletion,
+                  status,
+                );
+                if (!serverOwnsCompletion) uncertainAttempts++;
                 // uploading / completing / completed 均可安全重试（幂等），completed 直接回条目。
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
               }

@@ -4812,7 +4812,7 @@ public static class GatewayHttpEndpoints
     // 把 GatewayRequestContext 转成 LlmRequestContext 并打开作用域。
     // LlmRequestContext 必填位置参数：RequestId / GroupId / SessionId / UserId / ViewRole /
     //   DocumentChars / DocumentHash / SystemPromptRedacted，随后是可选 RequestType / AppCallerCode。
-    private static IDisposable OpenContextScope(
+    internal static IDisposable OpenContextScope(
         ILLMRequestContextAccessor accessor,
         GatewayRequestContext? ctx,
         string requestType,

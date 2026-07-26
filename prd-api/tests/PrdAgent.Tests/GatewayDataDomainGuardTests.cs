@@ -3946,6 +3946,8 @@ public class GatewayDataDomainGuardTests
         var servingProgram = ReadRepoFile("llmgw/serving/Program.cs");
 
         Assert.Contains("GatewayHttpEndpoints.AdmitSpecializedRequestAsync", liveEndpoint);
+        Assert.Contains("GetRequiredService<ILLMRequestContextAccessor>", liveEndpoint);
+        Assert.Contains("GatewayHttpEndpoints.OpenContextScope", liveEndpoint);
         Assert.Contains("RecordAndCheckAppCallerGovernanceAsync", gatewayEndpoints);
         Assert.Contains("ILlmRequestLogWriter", liveEndpoint);
         Assert.Contains("logWriter.StartAsync", liveEndpoint);
@@ -3967,6 +3969,10 @@ public class GatewayDataDomainGuardTests
             liveEndpoint.IndexOf("logWriter.StartAsync", StringComparison.Ordinal)
             < liveEndpoint.IndexOf("orchestrator.ExecuteAsync", StringComparison.Ordinal),
             "实时 ASR 必须先建立请求生命周期日志，再访问流式供应商");
+        Assert.True(
+            liveEndpoint.IndexOf("GatewayHttpEndpoints.OpenContextScope", StringComparison.Ordinal)
+            < liveEndpoint.IndexOf("orchestrator.ExecuteAsync", StringComparison.Ordinal),
+            "实时 ASR 必须先把已验证租户打开为请求上下文，再解析和访问该租户的模型供应商");
     }
 
     private static string ReadRepoFile(string relativePath)

@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canDiscardRecording,
+  nextRecordingCompletionOwnership,
   nextRecordingFinalizationLock,
   shouldForwardLivePcm,
   shouldStopRecordingCompletionRetry,
@@ -64,6 +65,31 @@ describe('RecordAudioSheet finalization guard', () => {
     expect(shouldStopRecordingCompletionRetry({
       success: true,
       data: { status: 'completing' },
+    })).toBe(false);
+  });
+
+  it('keeps server completion ownership sticky across transient status failures', () => {
+    const completing = nextRecordingCompletionOwnership(false, {
+      success: true,
+      data: { status: 'completing' },
+    });
+
+    expect(completing).toBe(true);
+    expect(nextRecordingCompletionOwnership(completing, null)).toBe(true);
+    expect(nextRecordingCompletionOwnership(completing, {
+      success: false,
+      error: { code: 'SERVER_ERROR' },
+    })).toBe(true);
+    expect(nextRecordingCompletionOwnership(completing, {
+      success: true,
+      data: { status: 'completed' },
+    })).toBe(true);
+  });
+
+  it('releases completion ownership only when the server explicitly returns to uploading', () => {
+    expect(nextRecordingCompletionOwnership(true, {
+      success: true,
+      data: { status: 'uploading' },
     })).toBe(false);
   });
 });
