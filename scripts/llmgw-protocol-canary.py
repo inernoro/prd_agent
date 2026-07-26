@@ -27,6 +27,12 @@ from typing import Any
 TARGET_PROTOCOLS = ("gw-native", "openai-compatible", "claude-compatible", "gemini-compatible")
 DEFAULT_APP_CALLER = "report-agent.generate::chat"
 DEFAULT_MAX_RUNTIME_CALLS = 4
+QUICKSTART_DRY_RUN = os.environ.get("LLMGW_PROTOCOL_CANARY_QUICKSTART_DRY_RUN", "").strip().lower() in {
+    "1",
+    "true",
+    "yes",
+    "on",
+}
 
 
 def _default_base() -> str:
@@ -127,6 +133,11 @@ def _existing_report_covers(
     mode = str(payload.get("mode") or payload.get("Mode") or "").strip().lower()
     if verdict != "pass" or mode != "execute":
         return False, f"existing verdict/mode is not reusable: verdict={verdict or 'empty'} mode={mode or 'empty'}"
+    if QUICKSTART_DRY_RUN and (
+        payload.get("quickstartDryRun") is not True
+        or payload.get("upstreamCalled") is not False
+    ):
+        return False, "existing report is not a verified quickstart dry-run"
 
     existing_root = _normalized_root(payload.get("root") or payload.get("Root"))
     if root and existing_root and existing_root != _normalized_root(root):
@@ -207,6 +218,8 @@ def _headers_for_protocol(protocol: str, run_id: str) -> dict[str, str]:
         "X-Gateway-Run-Id": run_id,
         "X-Gateway-Model-Policy": "auto",
     }
+    if QUICKSTART_DRY_RUN:
+        headers["X-Gateway-Dry-Run"] = "quickstart"
     if protocol in {"openai-compatible", "claude-compatible", "gemini-compatible"}:
         headers["X-Gateway-App-Title"] = "LLM Gateway protocol canary"
     return headers
@@ -401,6 +414,8 @@ def _self_test() -> int:
                 "verdict": "pass",
                 "mode": "execute",
                 "root": "https://example.test",
+                "quickstartDryRun": QUICKSTART_DRY_RUN,
+                "upstreamCalled": False if QUICKSTART_DRY_RUN else None,
                 "health": {"commit": "abc123"},
                 "cases": [
                     {"protocol": "gw-native", "ok": True},
@@ -501,6 +516,8 @@ def main() -> int:
         "runId": run_id,
         "maxTokens": max_tokens,
         "maxRuntimeCalls": max_runtime_calls,
+        "quickstartDryRun": QUICKSTART_DRY_RUN,
+        "upstreamCalled": False if QUICKSTART_DRY_RUN else None,
         "reusedExisting": False,
         "protocols": list(selected_protocols),
         "health": {},

@@ -36,6 +36,7 @@ SMOKE_MAX_TOKENS = int(os.environ.get("GW_SMOKE_MAX_TOKENS", "4"))
 SMOKE_REQUEST_TIMEOUT = int(os.environ.get("GW_SMOKE_REQUEST_TIMEOUT_SECONDS", os.environ.get("GW_TIMEOUT", "120")))
 SMOKE_SOURCE_SYSTEM = os.environ.get("GW_SMOKE_SOURCE_SYSTEM", "release-probe").strip() or "release-probe"
 SMOKE_APP_CALLER = os.environ.get("GW_SMOKE_APP_CALLER", "report-agent.generate::chat").strip() or "report-agent.generate::chat"
+QUICKSTART_DRY_RUN = os.environ.get("GW_SMOKE_QUICKSTART_DRY_RUN", "").strip().lower() in {"1", "true", "yes", "on"}
 
 # 每类 ModelType 抽 1 个代表入口（D1×D2 抽样）。真机存在性以 /gw/v1/pools 为准。
 # 默认只跑低成本 chat provider canary；intent/vision 需要通过 GW_SMOKE_MODEL_TYPES 显式打开。
@@ -92,6 +93,8 @@ def _req(method, path, body=None):
         app_caller = str((query.get("appCallerCode") or [app_caller])[0]).strip()
     r.add_header("X-Gateway-Source", source_system)
     r.add_header("X-Gateway-App-Caller", app_caller)
+    if QUICKSTART_DRY_RUN and method == "POST":
+        r.add_header("X-Gateway-Dry-Run", "quickstart")
     # 预览域名走 Cloudflare：默认 Python-urllib UA 会被 CF 按浏览器签名拦截（error 1010 / 403）。
     # 带一个正常浏览器 UA 即可放行（与真人浏览器/curl 一致）。
     r.add_header("User-Agent", "Mozilla/5.0 (X11; Linux x86_64) gw-smoke/1.0")
@@ -356,11 +359,16 @@ def main():
         }
         code, raw = _req("POST", "/invoke", body)
         d = _envelope_data(raw) or {}
-        res = d.get("Resolution") or {}
-        ok = (code == 200 and d.get("Success") is True
-              and bool(d.get("Content")) and bool(res.get("ActualModel")))
+        res = _pick(d, "resolution") or {}
+        success = _pick(d, "success")
+        content = _pick(d, "content")
+        actual_model = _pick(res, "actualModel")
+        upstream_called = _pick(d, "upstreamCalled")
+        ok = (code == 200 and success is True
+              and bool(content) and bool(actual_model)
+              and (not QUICKSTART_DRY_RUN or upstream_called is False))
         # 无"选 A 给 B"：若请求指定了 expectedModel，actualModel 应一致（此处未指定，仅记录）。
-        detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
+        detail = f"{code} success={success} model={actual_model} contentLen={len(content or '')} upstreamCalled={upstream_called}"
         rows.append((f"invoke[{mtype}]", ok, detail))
 
     # 4) send 兼容入口：MAP 旧客户端仍用 /send，只抽 chat 一类避免 D 层冒烟成本膨胀。
@@ -375,10 +383,15 @@ def main():
         }
         code, raw = _req("POST", "/send", send_body)
         d = _envelope_data(raw) or {}
-        res = d.get("Resolution") or {}
-        ok = (code == 200 and d.get("Success") is True
-              and bool(d.get("Content")) and bool(res.get("ActualModel")))
-        detail = f"{code} success={d.get('Success')} model={res.get('ActualModel')} contentLen={len(d.get('Content') or '')}"
+        res = _pick(d, "resolution") or {}
+        success = _pick(d, "success")
+        content = _pick(d, "content")
+        actual_model = _pick(res, "actualModel")
+        upstream_called = _pick(d, "upstreamCalled")
+        ok = (code == 200 and success is True
+              and bool(content) and bool(actual_model)
+              and (not QUICKSTART_DRY_RUN or upstream_called is False))
+        detail = f"{code} success={success} model={actual_model} contentLen={len(content or '')} upstreamCalled={upstream_called}"
         rows.append(("send-compat[chat]", ok, detail))
 
     # 5) stream：真实 SSE 边界。只抽 chat 一类，避免 D 层冒烟成本膨胀。
@@ -396,21 +409,24 @@ def main():
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw, events = _sse_req("/stream", stream_body)
-        stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+        stream_text = "".join(str(_pick(e, "content") or "") for e in events if isinstance(e, dict))
         stream_model = next(
             (
-                (e.get("Resolution") or {}).get("ActualModel")
+                _pick(_pick(e, "resolution") or {}, "actualModel")
                 for e in events
-                if isinstance(e, dict) and isinstance(e.get("Resolution"), dict)
+                if isinstance(e, dict) and isinstance(_pick(e, "resolution"), dict)
             ),
             None,
         )
         stream_done = any(
             isinstance(e, dict)
-            and (e.get("FinishReason") or str(e.get("Type")).lower() in {"done", "4"})
+            and (_pick(e, "finishReason") or str(_pick(e, "type")).lower() in {"done", "4"})
             for e in events
         )
-        ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done
+        dry_run_safe = not QUICKSTART_DRY_RUN or all(
+            _pick(e, "upstreamCalled") is False for e in events if isinstance(e, dict)
+        )
+        ok = code == 200 and len(events) >= 2 and bool(stream_text) and bool(stream_model) and stream_done and dry_run_safe
         rows.append(("stream[chat]", ok, f"{code} events={len(events)} model={stream_model} contentLen={len(stream_text)}"))
 
     # 6) client-stream：CreateClient/ILLMClient 跨进程 SSE 边界。
@@ -427,12 +443,15 @@ def main():
             "Context": {"UserId": "smoke-test", "IsHealthProbe": True, "GatewayTransport": "http", "SourceSystem": SMOKE_SOURCE_SYSTEM, "IngressProtocol": "gw-native"},
         }
         code, raw, events = _sse_req("/client-stream", client_stream_body)
-        client_stream_text = "".join(str(e.get("Content") or "") for e in events if isinstance(e, dict))
+        client_stream_text = "".join(str(_pick(e, "content") or "") for e in events if isinstance(e, dict))
         client_stream_done = any(
-            isinstance(e, dict) and str(e.get("Type")).lower() in {"done", "4"}
+            isinstance(e, dict) and str(_pick(e, "type")).lower() in {"done", "4"}
             for e in events
         )
-        ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done
+        dry_run_safe = not QUICKSTART_DRY_RUN or all(
+            _pick(e, "upstreamCalled") is False for e in events if isinstance(e, dict)
+        )
+        ok = code == 200 and len(events) >= 2 and bool(client_stream_text) and client_stream_done and dry_run_safe
         rows.append(("client-stream[chat]", ok, f"{code} events={len(events)} contentLen={len(client_stream_text)}"))
 
     # 7) route matrix：只打 /resolve，不消耗上游模型 token。用于证明 auto/pool/pinned 路由策略进入 GW router。
@@ -516,6 +535,8 @@ def main():
         "base": base,
         "expectedCommit": EXPECTED_COMMIT,
         "healthCommit": health_commit,
+        "mode": "quickstart-dry-run" if QUICKSTART_DRY_RUN else "runtime",
+        "upstreamCalled": False if QUICKSTART_DRY_RUN else None,
         "passed": passed,
         "total": len(rows),
         "rows": report_rows,

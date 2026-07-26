@@ -49,7 +49,10 @@ Required environment for deploy stages:
   LLMGW_CONSOLE_BASE and LLMGW_CONSOLE_TOKEN, or LLMGW_CONSOLE_USER/PASSWORD
                               Required for config-authority and http-full stages
   LLMGW_POST_DEPLOY_SERVICE_KEY
-                              Optional scoped service key for post-deploy smoke/protocol canary.
+                              Optional scoped service key for post-deploy business smoke.
+  LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY
+                              Optional independently fenced key for sourceSystem=canary protocol requests.
+                              Falls back to the business smoke key for compatibility.
                               Global shadow/runtime gates continue to use LLMGW_GATE_KEY.
   LLMGW_STAGE_MIN_FREE_MB minimum free disk MB before execute deploy stages, default 4096
   LLMGW_STAGE_AUTO_RESTORE_SHADOW_ON_FAILURE=1 restores shadow/low-sample after failed high-sample shadow-start (default)
