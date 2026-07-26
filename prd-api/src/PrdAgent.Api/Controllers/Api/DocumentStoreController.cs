@@ -1984,10 +1984,66 @@ public class DocumentStoreController : ControllerBase
         }
 
         var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
-        var pendingEntryId = PendingRecordingEntryId(sessionId);
-        var interruptedPendingEntry = await _db.DocumentEntries
-            .Find(e => e.Id == pendingEntryId && e.StoreId == store.Id)
+        var recoveryEntryIds = RecordingRecoveryEntryIds(sessionId);
+        var interruptedEntries = await _db.DocumentEntries
+            .Find(Builders<DocumentEntry>.Filter.And(
+                Builders<DocumentEntry>.Filter.In(e => e.Id, recoveryEntryIds),
+                Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, store.Id)))
+            .ToListAsync(CancellationToken.None);
+        var interruptedCompletedEntry = interruptedEntries.FirstOrDefault(
+            e => e.Id == recoveryEntryIds[0]);
+        var recoveredAttachmentId = CompletedRecordingAttachmentId(sessionId);
+        var interruptedAttachment = await _db.Attachments
+            .Find(a => a.AttachmentId == recoveredAttachmentId)
             .FirstOrDefaultAsync(CancellationToken.None);
+        if (interruptedAttachment != null && !string.IsNullOrWhiteSpace(interruptedAttachment.Url))
+        {
+            if (interruptedCompletedEntry == null)
+            {
+                // 附件写入发生在条目 upsert 之前。若进程恰好在两者之间退出，直接复用
+                // 确定性附件里的存储 URL 重建条目，不能再次访问对象存储或转 pending。
+                var rebuilt = await CreateUploadedDocumentEntryAsync(
+                    store,
+                    actorId,
+                    actorName,
+                    avatarFileName,
+                    claimed.FileName,
+                    claimed.MimeType,
+                    audioBytes,
+                    parentId: null,
+                    CancellationToken.None,
+                    storedAsset: new StoredAsset(
+                        string.Empty,
+                        interruptedAttachment.Url,
+                        interruptedAttachment.Size,
+                        interruptedAttachment.MimeType),
+                    recordingSessionId: sessionId);
+                interruptedCompletedEntry = rebuilt.Entry;
+            }
+
+            // 存储成功路径使用确定性 entry/attachment ID。若进程在任一落库步骤后退出，
+            // 必须先恢复这条已完成记录，再考虑对象存储；否则重试时恰逢存储故障会
+            // 另外创建 pending entry，形成两条可见记录和错误计数。
+            await FinalizeCompletedRecordingAsync(
+                store,
+                claimed,
+                sessionId,
+                userId,
+                interruptedCompletedEntry,
+                interruptedAttachment.Url);
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                entry = interruptedCompletedEntry,
+                attachmentId = interruptedAttachment.AttachmentId,
+                documentId = interruptedCompletedEntry.DocumentId,
+                fileUrl = interruptedAttachment.Url,
+                sessionId,
+                reused = true,
+            }));
+        }
+
+        var interruptedPendingEntry = interruptedEntries.FirstOrDefault(
+            e => e.Id == recoveryEntryIds[1]);
         if (interruptedPendingEntry != null)
         {
             // 上一次进程可能已写入 pending entry 或修正文档计数，却尚未来得及更新会话。
@@ -2067,37 +2123,13 @@ public class DocumentStoreController : ControllerBase
             CancellationToken.None,
             storedAsset: recordingAsset,
             recordingSessionId: sessionId);
-
-        if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
-            && !string.IsNullOrWhiteSpace(claimed.LiveTranscript))
-        {
-            var metadata = stored.Entry.Metadata ?? new Dictionary<string, string>();
-            metadata["liveTranscript"] = claimed.LiveTranscript.Trim();
-            metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
-            if (!string.IsNullOrWhiteSpace(claimed.LiveTranscriptProvider))
-                metadata["liveTranscriptProvider"] = claimed.LiveTranscriptProvider;
-            if (!string.IsNullOrWhiteSpace(claimed.LiveTranscriptModel))
-                metadata["liveTranscriptModel"] = claimed.LiveTranscriptModel;
-            stored.Entry.Metadata = metadata;
-            await _db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == stored.Entry.Id,
-                Builders<DocumentEntry>.Update.Set(e => e.Metadata, metadata),
-                cancellationToken: CancellationToken.None);
-        }
-
-        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
-            s => s.Id == sessionId && s.UserId == userId,
-            Builders<DocumentRecordingUploadSession>.Update
-                .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
-                .Set(s => s.EntryId, stored.Entry.Id)
-                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
-                .Set(s => s.ArchiveUrl, stored.FileUrl)
-                .Set(s => s.ArchiveError, null)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
-        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
-            c => c.SessionId == sessionId,
-            cancellationToken: CancellationToken.None);
+        await FinalizeCompletedRecordingAsync(
+            store,
+            claimed,
+            sessionId,
+            userId,
+            stored.Entry,
+            stored.FileUrl);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -2108,6 +2140,65 @@ public class DocumentStoreController : ControllerBase
             sessionId,
             reused = false,
         }));
+    }
+
+    private async Task FinalizeCompletedRecordingAsync(
+        DocumentStore store,
+        DocumentRecordingUploadSession session,
+        string sessionId,
+        string userId,
+        DocumentEntry entry,
+        string fileUrl)
+    {
+        if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+            && !string.IsNullOrWhiteSpace(session.LiveTranscript))
+        {
+            var metadata = entry.Metadata ?? new Dictionary<string, string>();
+            metadata["liveTranscript"] = session.LiveTranscript.Trim();
+            metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
+            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
+                metadata["liveTranscriptProvider"] = session.LiveTranscriptProvider;
+            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
+                metadata["liveTranscriptModel"] = session.LiveTranscriptModel;
+            entry.Metadata = metadata;
+            await _db.DocumentEntries.UpdateOneAsync(
+                e => e.Id == entry.Id,
+                Builders<DocumentEntry>.Update.Set(e => e.Metadata, metadata),
+                cancellationToken: CancellationToken.None);
+        }
+
+        // 该方法同时服务首次完成与崩溃恢复。按真实条目数校准，避免上次已经
+        // upsert entry、但尚未更新计数或会话时出现重复增减。
+        if (entry.Id == CompletedRecordingEntryId(sessionId))
+        {
+            // 旧版本可能在完成条目写入后崩溃，又错误创建了 pending 条目。
+            // 确认完成资产可恢复后由完成形态胜出，清掉同会话的降级重复项。
+            await _db.DocumentEntries.DeleteOneAsync(
+                e => e.Id == PendingRecordingEntryId(sessionId) && e.StoreId == store.Id,
+                cancellationToken: CancellationToken.None);
+        }
+        var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
+            e => e.StoreId == store.Id,
+            cancellationToken: CancellationToken.None);
+        await _db.DocumentStores.UpdateOneAsync(
+            s => s.Id == store.Id,
+            Builders<DocumentStore>.Update
+                .Set(s => s.DocumentCount, checked((int)documentCount))
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId && s.UserId == userId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.EntryId, entry.Id)
+                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
+                .Set(s => s.ArchiveUrl, fileUrl)
+                .Set(s => s.ArchiveError, null)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: CancellationToken.None);
+        await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
+            c => c.SessionId == sessionId,
+            cancellationToken: CancellationToken.None);
     }
 
     /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>
@@ -2238,6 +2329,9 @@ public class DocumentStoreController : ControllerBase
 
     internal static string CompletedRecordingAttachmentId(string sessionId)
         => $"recording-attachment-{sessionId}";
+
+    internal static IReadOnlyList<string> RecordingRecoveryEntryIds(string sessionId)
+        => [CompletedRecordingEntryId(sessionId), PendingRecordingEntryId(sessionId)];
 
     internal static bool CanEnterRecordingCompletion(string status)
         => status is DocumentRecordingUploadStatus.Uploading

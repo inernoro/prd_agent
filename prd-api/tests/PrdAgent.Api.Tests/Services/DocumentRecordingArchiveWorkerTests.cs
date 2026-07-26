@@ -27,6 +27,16 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void RecoveryEntryIds_ShouldCheckCompletedBeforePending()
+    {
+        DocumentStoreController.RecordingRecoveryEntryIds("session-1")
+            .ShouldBe([
+                "recording-completed-session-1",
+                "recording-pending-session-1",
+            ]);
+    }
+
+    [Fact]
     public async Task CleanupExpiredRecordingUploads_ShouldDeleteChunksBeforeSessions()
     {
         var calls = new List<string>();

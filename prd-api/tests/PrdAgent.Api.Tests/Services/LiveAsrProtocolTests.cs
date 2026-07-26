@@ -632,6 +632,15 @@ public class LiveAsrProtocolTests
             .ShouldBeTrue();
     }
 
+    [Fact]
+    public void Relay_ShouldBoundGatewayConnectionBelowBrowserFinalizationDeadline()
+    {
+        DocumentStoreLiveTranscriptionRelay.GatewayConnectTimeout
+            .ShouldBeLessThan(TimeSpan.FromSeconds(90));
+        DocumentStoreLiveTranscriptionRelay.GatewayConnectTimeout
+            .ShouldBeGreaterThan(TimeSpan.Zero);
+    }
+
     private static ModelResolutionResult Candidate(string platform, string model, string transformer)
         => new()
         {

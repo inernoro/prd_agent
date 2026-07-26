@@ -717,6 +717,7 @@ public sealed class GatewayBudgetCoordinator
     public const string TenantAggregateRequestType = "$aggregate";
     public const string HttpContextLeaseKey = "llmgw.budget.lease";
     public const string HttpContextOutcomeUnknownKey = "llmgw.budget.outcome-unknown";
+    public const string HttpContextFinalStatusCodeKey = "llmgw.budget.final-status-code";
     private readonly LlmGatewayDataContext _data;
     private readonly ILogger<GatewayBudgetCoordinator> _logger;
 

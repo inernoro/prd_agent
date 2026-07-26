@@ -20,3 +20,6 @@
 | fix | prd-api | 为成功录音归档使用确定性条目与附件标识，并按先分片后会话的顺序清理过期数据 |
 | fix | prd-admin | 在录音开始前完成 PCM 捕获初始化，避免实时转写遗漏开头语音 |
 | fix | prd-api | 浏览器未明确完成即断线时强制降级，并独立回收 append 与 cancel 竞态产生的孤儿分片 |
+| fix | llmgw | 实时 ASR WebSocket 复用 appCaller 限流、预算与生命周期日志治理 |
+| fix | prd-api | 限制实时转写网关建连时长，并优先恢复已落库的确定性完成条目 |
+| test | prd-api | 补充实时 ASR 治理身份、建连期限和双形态录音恢复顺序回归测试 |

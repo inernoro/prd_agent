@@ -1,3 +1,4 @@
+using System.Diagnostics;
 using System.Net.WebSockets;
 using System.Text;
 using System.Text.Json;
@@ -6,6 +7,7 @@ using System.Threading.Channels;
 using Microsoft.AspNetCore.Builder;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Logging;
+using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
@@ -46,13 +48,34 @@ public static class LiveAsrGatewayEndpoint
             return;
         }
 
+        // WebSocket 只是传输形态，不能成为绕过网关治理的旁路。先完成与普通
+        // serving 入口相同的租户、团队、限流和预算裁决，拒绝时不接受连接。
+        var admission = await GatewayHttpEndpoints.AdmitSpecializedRequestAsync(
+            http,
+            AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
+            ModelTypes.Asr,
+            "gw-native",
+            CancellationToken.None);
+        if (admission is null)
+            return;
+
         var resolver = http.RequestServices.GetRequiredService<IModelResolver>();
         var asr = http.RequestServices.GetRequiredService<DoubaoStreamAsrService>();
         var batchFallback = http.RequestServices.GetRequiredService<LiveAsrBatchFallbackService>();
+        var logWriter = http.RequestServices.GetRequiredService<ILlmRequestLogWriter>();
         var logger = http.RequestServices.GetRequiredService<ILoggerFactory>()
             .CreateLogger("LiveAsrGatewayEndpoint");
         using var socket = await http.WebSockets.AcceptWebSocketAsync();
         using var writeLock = new SemaphoreSlim(1, 1);
+        var startedAt = DateTime.UtcNow;
+        var stopwatch = Stopwatch.StartNew();
+        var logId = await logWriter.StartAsync(
+            CreateLiveAsrLogStart(admission, startedAt),
+            CancellationToken.None);
+        var firstByteRecorded = 0;
+        var paidUpstreamAttempted = 0;
+        LiveAsrSessionResult? sessionResult = null;
+        string? sessionFailure = null;
 
         async Task EmitAsync(LiveAsrEvent evt)
         {
@@ -64,6 +87,12 @@ public static class LiveAsrGatewayEndpoint
             {
                 if (socket.State == WebSocketState.Open)
                 {
+                    if (!string.IsNullOrWhiteSpace(evt.Text)
+                        && Interlocked.Exchange(ref firstByteRecorded, 1) == 0
+                        && !string.IsNullOrWhiteSpace(logId))
+                    {
+                        logWriter.MarkFirstByte(logId, DateTime.UtcNow);
+                    }
                     await socket.SendAsync(
                         bytes,
                         WebSocketMessageType.Text,
@@ -86,6 +115,7 @@ public static class LiveAsrGatewayEndpoint
             var start = await ReceiveStartAsync(socket);
             if (start is null)
             {
+                sessionFailure = "实时转写缺少合法 start 控制消息";
                 await EmitAsync(new LiveAsrEvent
                 {
                     Type = LiveAsrEventTypes.Error,
@@ -134,11 +164,13 @@ public static class LiveAsrGatewayEndpoint
             {
                 if (batchCandidates.Count > 0)
                 {
+                    Interlocked.Exchange(ref paidUpstreamAttempted, 1);
                     var drainPrimaryTask = DrainFramesAsync(frames.Reader);
                     var batchResult = await batchFallback.TranscribeAsync(
                         batchCandidates,
                         batchFrames.Reader,
                         EmitAsync);
+                    sessionResult = batchResult;
                     if (!batchResult.Completed)
                     {
                         await EmitAsync(new LiveAsrEvent
@@ -164,6 +196,9 @@ public static class LiveAsrGatewayEndpoint
                         ?? automatic.ErrorMessage
                         ?? "模型池没有可用的实时 ASR 方案，录音结束后将自动批量转写",
                 });
+                sessionFailure = preferred.ErrorMessage
+                    ?? automatic.ErrorMessage
+                    ?? "模型池没有可用的实时 ASR 方案";
                 await Task.WhenAll(
                     receiveTask,
                     DrainFramesAsync(frames.Reader),
@@ -201,6 +236,7 @@ public static class LiveAsrGatewayEndpoint
                 }
                 else
                 {
+                    Interlocked.Exchange(ref paidUpstreamAttempted, 1);
                     finalResult = await asr.TranscribeLivePcmAsync(
                         ResolveWebSocketUrl(candidate),
                         appKey,
@@ -233,6 +269,7 @@ public static class LiveAsrGatewayEndpoint
             {
                 if (string.IsNullOrWhiteSpace(finalResult?.Transcript) && batchCandidates.Count > 0)
                 {
+                    Interlocked.Exchange(ref paidUpstreamAttempted, 1);
                     // 流式候选在建立阶段全部失败：排空主通道解除背压，由已同步缓存的
                     // 滚动窗口通道接管，用户仍可在录音过程中看到原文。
                     var drainPrimaryTask = DrainFramesAsync(frames.Reader);
@@ -240,6 +277,7 @@ public static class LiveAsrGatewayEndpoint
                         batchCandidates,
                         batchFrames.Reader,
                         EmitAsync);
+                    sessionResult = finalResult;
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     if (finalResult.Completed)
                         return;
@@ -255,6 +293,8 @@ public static class LiveAsrGatewayEndpoint
                     ErrorCode = "LIVE_ASR_DEGRADED",
                     Message = "实时转写已降级，录音仍在安全保存，结束后将自动批量转写",
                 });
+                sessionResult = finalResult;
+                sessionFailure = finalResult?.Error ?? "实时转写已降级";
                 // 已无可执行候选时仍持续排空浏览器 PCM，直到收到 finish。
                 // 否则 bounded channel 填满后会卡住接收循环，MAP 无法正常结束会话并持久化降级状态。
                 await Task.WhenAll(
@@ -265,9 +305,11 @@ public static class LiveAsrGatewayEndpoint
             }
 
             await receiveTask;
+            sessionResult = finalResult;
         }
         catch (Exception ex)
         {
+            sessionFailure = ex.Message;
             logger.LogWarning(ex, "实时 ASR 网关会话异常");
             await EmitAsync(new LiveAsrEvent
             {
@@ -278,6 +320,45 @@ public static class LiveAsrGatewayEndpoint
         }
         finally
         {
+            stopwatch.Stop();
+            // WebSocket 握手成功后 HTTP 状态固定为 101，不能代表上游是否真正消费了
+            // 预算。专用端点显式覆盖结算结果：已访问付费上游则保守结算，未访问则释放。
+            http.Items[GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey] =
+                Volatile.Read(ref paidUpstreamAttempted) == 1
+                    ? StatusCodes.Status200OK
+                    : StatusCodes.Status400BadRequest;
+            if (!string.IsNullOrWhiteSpace(logId))
+            {
+                if (sessionFailure is null && sessionResult?.Completed == true)
+                {
+                    logWriter.MarkDone(logId, new LlmLogDone(
+                        StatusCode: StatusCodes.Status200OK,
+                        ResponseHeaders: null,
+                        InputTokens: null,
+                        OutputTokens: null,
+                        CacheCreationInputTokens: null,
+                        CacheReadInputTokens: null,
+                        TokenUsageSource: "missing",
+                        ImageSuccessCount: null,
+                        AnswerText: sessionResult.Transcript,
+                        ThinkingText: null,
+                        AssembledTextChars: sessionResult.Transcript?.Length,
+                        AssembledTextHash: null,
+                        Status: "succeeded",
+                        EndedAt: DateTime.UtcNow,
+                        DurationMs: stopwatch.ElapsedMilliseconds,
+                        FinishReason: "stop",
+                        Provider: sessionResult.Provider,
+                        Model: sessionResult.Model));
+                }
+                else
+                {
+                    logWriter.MarkError(
+                        logId,
+                        sessionFailure ?? sessionResult?.Error ?? "实时转写未完成，已交由完整录音校准",
+                        StatusCodes.Status502BadGateway);
+                }
+            }
             if (socket.State == WebSocketState.Open)
             {
                 try
@@ -294,6 +375,48 @@ public static class LiveAsrGatewayEndpoint
             }
         }
     }
+
+    private static LlmLogStart CreateLiveAsrLogStart(
+        GatewaySpecializedAdmission admission,
+        DateTime startedAt)
+        => new(
+            RequestId: admission.RequestId,
+            Provider: "gateway-live-asr",
+            Model: "auto",
+            ApiBase: null,
+            Path: "/gw/v1/asr/live",
+            HttpMethod: "GET",
+            RequestHeadersRedacted: null,
+            RequestBodyRedacted: "{}",
+            RequestBodyHash: null,
+            QuestionText: null,
+            SystemPromptChars: null,
+            SystemPromptHash: null,
+            SystemPromptText: null,
+            MessageCount: null,
+            GroupId: null,
+            SessionId: null,
+            UserId: admission.Ingress.Context?.UserId,
+            ViewRole: null,
+            DocumentChars: null,
+            DocumentHash: null,
+            UserPromptChars: null,
+            StartedAt: startedAt,
+            RequestType: admission.Ingress.RequestType,
+            AppCallerCode: admission.Ingress.AppCallerCode,
+            IsStreaming: true,
+            GatewayTransport: GatewayTransports.Http,
+            ParameterPolicy: admission.Ingress.ParameterPolicy,
+            SourceSystem: admission.Ingress.SourceSystem,
+            IngressProtocol: admission.Ingress.IngressProtocol,
+            AppCallerTitle: admission.Ingress.AppCallerTitle,
+            ModelPolicy: admission.Ingress.ModelPolicy,
+            TenantId: admission.Authorization.TenantId,
+            TeamId: admission.Authorization.TeamId,
+            ServiceKeyId: admission.Authorization.KeyId,
+            ClientCode: admission.Authorization.ClientCode,
+            Environment: admission.Authorization.Environment,
+            ServiceKeyPrefix: admission.Authorization.KeyPrefixSnapshot);
 
     private static async Task<LiveAsrControlMessage?> ReceiveStartAsync(WebSocket socket)
     {

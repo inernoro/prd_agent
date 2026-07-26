@@ -9,6 +9,8 @@ namespace PrdAgent.Api.Services;
 
 public sealed class DocumentStoreLiveTranscriptionRelay
 {
+    internal static readonly TimeSpan GatewayConnectTimeout = TimeSpan.FromSeconds(8);
+
     private static readonly JsonSerializerOptions WireJson = new()
     {
         PropertyNamingPolicy = JsonNamingPolicy.CamelCase,
@@ -47,7 +49,29 @@ public sealed class DocumentStoreLiveTranscriptionRelay
         var latest = new LiveAsrSessionResult { Degraded = true, Error = "实时转写未启动" };
         try
         {
-            await gateway.ConnectAsync(uriBuilder.Uri, CancellationToken.None);
+            using (var connectDeadline = new CancellationTokenSource(GatewayConnectTimeout))
+            {
+                try
+                {
+                    await gateway.ConnectAsync(uriBuilder.Uri, connectDeadline.Token);
+                }
+                catch (OperationCanceledException) when (connectDeadline.IsCancellationRequested)
+                {
+                    latest = new LiveAsrSessionResult
+                    {
+                        Completed = false,
+                        Degraded = true,
+                        Error = "实时转写网关连接超时，录音结束后将自动批量转写",
+                    };
+                    await TrySendBrowserEventAsync(browser, new LiveAsrEvent
+                    {
+                        Type = LiveAsrEventTypes.Degraded,
+                        ErrorCode = "LIVE_ASR_GATEWAY_CONNECT_TIMEOUT",
+                        Message = latest.Error,
+                    });
+                    return latest;
+                }
+            }
             await SendTextAsync(gateway, new LiveAsrControlMessage { Type = "start" });
 
             var explicitFinish = 0;

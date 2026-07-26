@@ -3938,6 +3938,30 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GATEWAY_APP_CALLER_MISMATCH", endpoints);
     }
 
+    [Fact]
+    public void LiveAsrWebSocket_UsesSharedGovernanceAndRequestLifecycleLogging()
+    {
+        var liveEndpoint = ReadRepoFile("llmgw/serving/LiveAsrGatewayEndpoint.cs");
+        var gatewayEndpoints = ReadRepoFile("llmgw/serving/GatewayHttpEndpoints.cs");
+
+        Assert.Contains("GatewayHttpEndpoints.AdmitSpecializedRequestAsync", liveEndpoint);
+        Assert.Contains("RecordAndCheckAppCallerGovernanceAsync", gatewayEndpoints);
+        Assert.Contains("ILlmRequestLogWriter", liveEndpoint);
+        Assert.Contains("logWriter.StartAsync", liveEndpoint);
+        Assert.Contains("logWriter.MarkDone", liveEndpoint);
+        Assert.Contains("logWriter.MarkError", liveEndpoint);
+        Assert.Contains("GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey", liveEndpoint);
+        Assert.Contains("HttpContextFinalStatusCodeKey", gatewayEndpoints);
+        Assert.True(
+            liveEndpoint.IndexOf("AdmitSpecializedRequestAsync", StringComparison.Ordinal)
+            < liveEndpoint.IndexOf("AcceptWebSocketAsync", StringComparison.Ordinal),
+            "实时 ASR 必须在接受 WebSocket 和访问付费上游前完成治理准入");
+        Assert.True(
+            liveEndpoint.IndexOf("logWriter.StartAsync", StringComparison.Ordinal)
+            < liveEndpoint.IndexOf("TranscribeLivePcmAsync", StringComparison.Ordinal),
+            "实时 ASR 必须先建立请求生命周期日志，再访问流式供应商");
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();
