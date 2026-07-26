@@ -255,11 +255,13 @@ export async function runIsolationAudit(
           : `主库写入金丝雀 → 隔离库命中 ${tailNumber(rIso.stdout)} 条（期望 0）`,
       });
     } finally {
-      // 金丝雀清理：两侧都删（失败不影响审计结论，集合只含审计数据）
-      await isoInstanceEval(snapshot.dedicatedContainer,
-        `${isoDb}.cds_isolation_canary.deleteMany({t:{$in:['${tokIso}','${tokMain}']}})`).catch(() => undefined);
-      await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
-        `${mainDb}.cds_isolation_canary.deleteMany({t:{$in:['${tokIso}','${tokMain}']}})`).catch(() => undefined);
+      // 金丝雀清理：两侧删净后 drop 空集合——不给库里留审计残渣（连空集合都不留，
+      // 否则下次审计的 collections 基线会 +1，用户会问「这个集合哪来的」）
+      const cleanup = (dbExpr: string): string =>
+        `${dbExpr}.cds_isolation_canary.deleteMany({t:{$in:['${tokIso}','${tokMain}']}}); ` +
+        `if (${dbExpr}.cds_isolation_canary.countDocuments({}) === 0) { ${dbExpr}.cds_isolation_canary.drop(); }`;
+      await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb)).catch(() => undefined);
+      await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb)).catch(() => undefined);
     }
   } else {
     checks.push({
