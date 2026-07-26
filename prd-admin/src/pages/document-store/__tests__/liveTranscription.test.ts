@@ -24,6 +24,8 @@ class MockWebSocket {
   onerror: (() => void) | null = null;
   onclose: (() => void) | null = null;
   private readonly openListeners: Array<() => void> = [];
+  readonly sent: unknown[] = [];
+  closeCalls = 0;
 
   constructor(_url: string, _protocols: string[]) {
     MockWebSocket.latest = this;
@@ -39,9 +41,12 @@ class MockWebSocket {
     if (index >= 0) this.openListeners.splice(index, 1);
   }
 
-  send(_data: unknown): void {}
+  send(data: unknown): void {
+    this.sent.push(data);
+  }
 
   close(): void {
+    this.closeCalls++;
     this.readyState = MockWebSocket.CLOSED;
     this.onclose?.();
   }
@@ -202,5 +207,22 @@ describe('实时转写终态竞态', () => {
     await expect(finish).resolves.toMatchObject({ type: 'degraded' });
     expect(states.at(-1)).toBe('degraded');
     expect(vi.getTimerCount()).toBe(0);
+  });
+
+  it('提前降级后完成录音仍发送 finish 并关闭套接字', async () => {
+    const { socket, webSocket } = createSocket();
+    webSocket.open();
+    webSocket.onmessage?.({
+      data: JSON.stringify({
+        type: 'degraded',
+        message: '模型池暂不可用',
+      }),
+    });
+
+    await expect(socket.finish()).resolves.toMatchObject({ type: 'degraded' });
+
+    expect(webSocket.sent).toContain(JSON.stringify({ type: 'finish', lastSequence: 0 }));
+    expect(webSocket.closeCalls).toBe(1);
+    expect(webSocket.readyState).toBe(MockWebSocket.CLOSED);
   });
 });

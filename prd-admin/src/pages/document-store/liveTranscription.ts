@@ -231,7 +231,11 @@ export class LiveTranscriptionSocket {
   }
 
   async finish(timeoutMs = 90_000): Promise<LiveTranscriptionEvent | null> {
-    if (this.terminalEvent) return this.terminalEvent;
+    if (this.terminalEvent) {
+      const terminal = this.terminalEvent;
+      this.signalFinishAndClose();
+      return terminal;
+    }
     this.setState('finalizing');
     const socket = this.socket;
     if (!socket) return null;
@@ -244,7 +248,7 @@ export class LiveTranscriptionSocket {
       await this.waitForConnection(socket, terminalPromise);
     }
     if (this.terminalEvent) {
-      this.close();
+      this.signalFinishAndClose();
       return this.terminalEvent;
     }
     if (socket.readyState !== WebSocket.OPEN) {
@@ -270,6 +274,14 @@ export class LiveTranscriptionSocket {
     }
     this.close();
     return terminal ?? this.terminalEvent;
+  }
+
+  private signalFinishAndClose(): void {
+    const socket = this.socket;
+    if (socket?.readyState === WebSocket.OPEN) {
+      socket.send(JSON.stringify({ type: 'finish', lastSequence: this.sequence }));
+    }
+    this.close();
   }
 
   close(): void {
