@@ -87,6 +87,23 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void RecordingChunkRetry_ShouldRequireEveryStoredPayloadToMatch()
+    {
+        var requested = new byte[] { 1, 2, 3 };
+
+        DocumentStoreController.RecordingChunkRetryMatches(
+                [Chunk(0, [1, 2, 3]), Chunk(0, [1, 2, 3])],
+                requested)
+            .ShouldBeTrue();
+        DocumentStoreController.RecordingChunkRetryMatches(
+                [Chunk(0, [1, 2, 3]), Chunk(0, [1, 2, 9])],
+                requested)
+            .ShouldBeFalse();
+        DocumentStoreController.RecordingChunkRetryMatches([], requested)
+            .ShouldBeFalse();
+    }
+
+    [Fact]
     public async Task ArchiveClaim_ShouldOnlyTakeSessionsOwnedByCurrentInstance()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

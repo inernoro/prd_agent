@@ -1776,14 +1776,6 @@ public class DocumentStoreController : ControllerBase
         if (session.Status != DocumentRecordingUploadStatus.Uploading || session.ExpiresAt <= DateTime.UtcNow)
             return StatusCode(StatusCodes.Status410Gone,
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束或过期"));
-        if (index < session.NextChunkIndex)
-            return Ok(ApiResponse<object>.Ok(new
-            {
-                accepted = true,
-                duplicate = true,
-                nextChunkIndex = session.NextChunkIndex,
-                uploadedBytes = session.UploadedBytes,
-            }));
         if (index > session.NextChunkIndex)
             return Conflict(ApiResponse<object>.Fail(
                 ErrorCodes.INVALID_FORMAT, $"分片顺序不连续，应从 {session.NextChunkIndex} 继续"));
@@ -1795,6 +1787,30 @@ public class DocumentStoreController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片不能为空"));
         if (bytes.LongLength > MaxRecordingChunkBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音分片不能超过 1 MB"));
+
+        if (index < session.NextChunkIndex)
+        {
+            // 旧偏移重传也必须验证请求体。只按 index 返回成功会把不同音频误报成
+            // 已保护；历史版本还可能留下同 index 多文档，因此所有副本都要一致。
+            var confirmedChunks = await _db.DocumentRecordingUploadChunks
+                .Find(c => c.SessionId == sessionId && c.Index == index)
+                .ToListAsync(CancellationToken.None);
+            if (!RecordingChunkRetryMatches(confirmedChunks, bytes))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    confirmedChunks.Count == 0
+                        ? "已确认分片缺失，请重新开始录音上传"
+                        : "相同分片编号的内容不一致，请查询偏移后重试"));
+            }
+            return Ok(ApiResponse<object>.Ok(new
+            {
+                accepted = true,
+                duplicate = true,
+                nextChunkIndex = session.NextChunkIndex,
+                uploadedBytes = session.UploadedBytes,
+            }));
+        }
         if (session.UploadedBytes + bytes.LongLength > MaxUploadBytes)
             return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小不能超过 20 MB"));
 
@@ -1916,6 +1932,11 @@ public class DocumentStoreController : ControllerBase
         DocumentRecordingUploadChunk chunk,
         byte[] bytes)
         => chunk.SizeBytes == bytes.LongLength && chunk.Data.AsSpan().SequenceEqual(bytes);
+
+    internal static bool RecordingChunkRetryMatches(
+        IReadOnlyList<DocumentRecordingUploadChunk> chunks,
+        byte[] bytes)
+        => chunks.Count > 0 && chunks.All(chunk => RecordingChunkPayloadMatches(chunk, bytes));
 
     /// <summary>拼接已确认分片，创建正式音频条目；重复完成请求返回同一 entry。</summary>
     [HttpPost("recording-uploads/{sessionId}/complete")]
