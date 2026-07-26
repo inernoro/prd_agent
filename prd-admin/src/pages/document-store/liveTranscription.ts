@@ -35,6 +35,25 @@ export function reduceLiveTranscriptionView(
 const TARGET_SAMPLE_RATE = 16_000;
 const FRAME_SAMPLES = 1_600;
 const MAX_QUEUED_FRAMES = 300;
+export const MAX_PENDING_LIVE_PCM_FRAMES = 100;
+
+/**
+ * 会话创建前的 PCM 只允许短时缓冲。达到上限后返回 false 并清空已有帧，
+ * 调用方必须停用本次实时转写，让完整录音在结束后统一校准；禁止跳过中段后
+ * 继续生成连续序号，否则服务端无法识别音频缺口。
+ */
+export function bufferPendingLivePcm(
+  pending: Int16Array[],
+  pcm: Int16Array,
+  capacity = MAX_PENDING_LIVE_PCM_FRAMES,
+): boolean {
+  if (pending.length >= capacity) {
+    pending.length = 0;
+    return false;
+  }
+  pending.push(pcm);
+  return true;
+}
 
 export class StreamingPcm16Resampler {
   private nextSourcePosition = 0;

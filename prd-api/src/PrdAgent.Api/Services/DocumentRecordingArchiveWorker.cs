@@ -92,7 +92,22 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 ? await db.DocumentEntries.Find(e => e.Id == session.EntryId).FirstOrDefaultAsync(CancellationToken.None)
                 : null;
             if (entry == null)
-                throw new InvalidOperationException("待归档录音条目不存在");
+            {
+                // 用户已删除条目是永久状态，不是对象存储瞬时故障。先删分片再删会话，
+                // 即使进程在两步之间退出，下一轮仍能完成清理，不会十年重试并占用 Mongo。
+                await db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                    c => c.SessionId == session.Id,
+                    cancellationToken: CancellationToken.None);
+                await db.DocumentRecordingUploadSessions.DeleteOneAsync(
+                    s => s.Id == session.Id
+                         && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving,
+                    cancellationToken: CancellationToken.None);
+                _logger.LogInformation(
+                    "[recording-archive] Removed orphaned archive session={SessionId} entry={EntryId}",
+                    session.Id,
+                    session.EntryId);
+                return;
+            }
 
             var chunks = await db.DocumentRecordingUploadChunks
                 .Find(c => c.SessionId == session.Id)

@@ -1,4 +1,5 @@
 using PrdAgent.Api.Services;
+using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
 using Shouldly;
 using Xunit;
@@ -7,6 +8,15 @@ namespace PrdAgent.Api.Tests.Services;
 
 public sealed class DocumentRecordingArchiveWorkerTests
 {
+    [Fact]
+    public void PendingRecordingEntryId_ShouldBeDeterministicForCrashRecovery()
+    {
+        DocumentStoreController.PendingRecordingEntryId("session-1")
+            .ShouldBe("recording-pending-session-1");
+        DocumentStoreController.PendingRecordingEntryId("session-1")
+            .ShouldBe(DocumentStoreController.PendingRecordingEntryId("session-1"));
+    }
+
     [Fact]
     public void AssembleChunks_ShouldRestoreOrderedAudio()
     {

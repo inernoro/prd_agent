@@ -300,6 +300,57 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldTranscribeAudibleSubSecondTailBeforeFinal()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        var call = 0;
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(() => new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = ++call == 1
+                    ? """{"text":"完整窗口"}"""
+                    : """{"text":"最后几个字"}""",
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            2,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.SampleRate).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(3, [], IsFinal: true));
+        frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldBe("完整窗口 最后几个字");
+        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Final);
+        gateway.Verify(x => x.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
+    }
+
+    [Fact]
     public async Task BatchFallback_ShouldNotCompleteWhenBufferedAudioLostItsPrefix()
     {
         var candidate = BatchCandidate("primary", "openai/gpt-audio");

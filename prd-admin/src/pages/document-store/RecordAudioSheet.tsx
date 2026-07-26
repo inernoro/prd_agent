@@ -19,6 +19,7 @@ import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 import { useAuthStore } from '@/stores/authStore';
 import {
   LiveTranscriptionSocket,
+  bufferPendingLivePcm,
   reduceLiveTranscriptionView,
   startLivePcmCapture,
   type LiveTranscriptionState,
@@ -113,6 +114,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const liveUploadFailedRef = useRef(false);
   const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
+  const livePcmCompleteRef = useRef(true);
   const stopLiveCaptureRef = useRef<(() => void) | null>(null);
   const liveCaptureEnabledRef = useRef(true);
   // 完成/取消/组件卸载 的意图标记：onstop 回调按它决定产出 File / 删保险箱 / 保留保险箱。
@@ -125,6 +127,11 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
 
   const connectLiveTranscription = useCallback((sessionId: string) => {
     if (liveTranscriptionRef.current) return;
+    if (!livePcmCompleteRef.current) {
+      setLiveTranscriptState('degraded');
+      setLiveTranscriptMessage('实时音频未完整保留，录音结束后将自动完整转写');
+      return;
+    }
     const token = useAuthStore.getState().token;
     if (!token) {
       setLiveTranscriptState('degraded');
@@ -220,11 +227,14 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
       const previousSessionId = uploadSessionIdRef.current;
       liveTranscriptionRef.current?.close();
       liveTranscriptionRef.current = null;
+      // 已说出的 PCM 无法重放到新会话。新知识库只保留完整的 MediaRecorder 分片，
+      // 并在结束后做全文件校准，禁止把切换后的尾段误标为完整实时原文。
+      livePcmCompleteRef.current = false;
       pendingLivePcmRef.current = [];
       setLiveTranscript('');
       liveTranscriptValueRef.current = '';
-      setLiveTranscriptState('connecting');
-      setLiveTranscriptMessage('正在连接新知识库的实时转写');
+      setLiveTranscriptState('degraded');
+      setLiveTranscriptMessage('已切换知识库，录音结束后将自动完整转写');
       if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
       uploadSessionIdRef.current = null;
       uploadSessionPromiseRef.current = null;
@@ -360,8 +370,11 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
               // 弱网下 /complete 的响应可能丢失，而服务端其实已创建条目。直接回退整文件
               // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
               // 会话会返回同一条目（reused），不会重复创建。
-              for (let attempt = 0; !completed?.success && attempt < 4; attempt++) {
-                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
+              // completing 是服务端持有全部分片后的可恢复租约，不能在短暂等待后改走
+              // 第二次整文件上传，否则进程恢复时会出现两个条目。最长等待覆盖后端两分钟
+              // 的 stale lease；正常完成或响应丢失通常会在首次回读时立即返回。
+              for (let attempt = 0; !completed?.success && attempt < 32; attempt++) {
+                await new Promise((r) => setTimeout(r, Math.min(5000, 1000 * (attempt + 1))));
                 const status = await getRecordingUpload(sessionId).catch(() => null);
                 // 会话已被取消/清理：服务端不存在也不会创建条目，走整文件兜底。
                 if (status?.success && status.data.status === 'cancelled') break;
@@ -416,9 +429,14 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                 liveTranscriptionRef.current.send(pcm);
                 return;
               }
-            // API 会话建立前先保留十秒 PCM，避免快速开口时丢掉第一句话。
-            if (pendingLivePcmRef.current.length < 100)
-              pendingLivePcmRef.current.push(pcm);
+              if (!livePcmCompleteRef.current) return;
+              // API 会话建立前只短时保留 PCM。超过上限立即整路降级，禁止静默丢掉
+              // 中段后继续发送连续序号并把不完整原文误标为 completed。
+              if (!bufferPendingLivePcm(pendingLivePcmRef.current, pcm)) {
+                livePcmCompleteRef.current = false;
+                setLiveTranscriptState('degraded');
+                setLiveTranscriptMessage('连接耗时过长，录音结束后将自动完整转写');
+              }
             });
           } catch {
             setLiveTranscriptState('degraded');

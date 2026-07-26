@@ -2,12 +2,22 @@ import { describe, expect, it } from 'vitest';
 import {
   StreamingPcm16Resampler,
   PcmFrameAccumulator,
+  bufferPendingLivePcm,
   encodeLivePcmFrame,
   floatToPcm16,
   reduceLiveTranscriptionView,
 } from '../liveTranscription';
 
 describe('实时转写 PCM 协议', () => {
+  it('会话建立超时后整路降级，不保留有缺口的 PCM 前缀', () => {
+    const pending = Array.from({ length: 100 }, () => new Int16Array(1_600).fill(1));
+
+    const complete = bufferPendingLivePcm(pending, new Int16Array(1_600).fill(2));
+
+    expect(complete).toBe(false);
+    expect(pending).toHaveLength(0);
+  });
+
   it('48kHz 一百毫秒音频稳定降采样为 16kHz 一千六百点', () => {
     const input = Float32Array.from({ length: 4_800 }, (_, index) =>
       Math.sin(index / 20) * 0.5);

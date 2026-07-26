@@ -108,7 +108,9 @@ public sealed class LiveAsrBatchFallbackService
             }
         }
 
-        if (pending.Length >= SampleRate * BytesPerSample)
+        // 只要还有 PCM 就必须处理。结尾不足一秒也可能包含最后几个字；
+        // EncodeWave 会补齐供应商要求的时长，静音门则负责跳过真正的空尾包。
+        if (pending.Length > 0)
         {
             windowIndex++;
             var text = await TranscribeWindowAsync(candidates, pending.ToArray(), windowIndex, emit);
