@@ -173,6 +173,11 @@ export function ConsoleLayout() {
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
             <div className="lg-user-popover">
               <div><strong>{who}</strong><small>{tenant?.name ?? '当前租户'} · {tenant?.role ?? 'member'}</small></div>
+              {canOpenMapTutorials ? (
+                <a href={mapTutorialHref}>
+                  <BookOpen size={15} />相关教程<ExternalLink className="lg-user-menu-end-icon" size={14} />
+                </a>
+              ) : null}
               {user?.identityProvider === 'map' ? (
                 <button type="button" onClick={() => window.location.assign(resolveMapHomeHref())}>
                   <Activity size={15} />返回 MAP<ExternalLink className="lg-user-menu-end-icon" size={14} />
