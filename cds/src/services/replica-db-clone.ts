@@ -495,7 +495,7 @@ export function mongoAdminEval(
   const user = env.MONGO_INITDB_ROOT_USERNAME || '';
   const pw = env.MONGO_INITDB_ROOT_PASSWORD || '';
   const uri = user
-    ? `mongodb://${user}:${pw}@localhost:${port}/admin?authSource=admin`
+    ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pw)}@localhost:${port}/admin?authSource=admin`
     : `mongodb://localhost:${port}/admin`;
   return runDockerExec(['exec', '-i', containerName, 'mongosh', uri, '--quiet', '--eval', script], '', 30_000, 16 * 1024);
 }
@@ -578,7 +578,7 @@ export async function dropReplicaDb(snapshot: ReplicaDbSnapshot, infraEnv: Recor
     const pw = infraEnv.MONGO_INITDB_ROOT_PASSWORD || '';
     secrets.push(pw);
     const uri = user
-      ? `mongodb://${user}:${pw}@localhost:27017/${dbName}?authSource=admin`
+      ? `mongodb://${encodeURIComponent(user)}:${encodeURIComponent(pw)}@localhost:27017/${dbName}?authSource=admin`
       : `mongodb://localhost:27017/${dbName}`;
     argv = ['exec', '-i', c, 'mongosh', uri, '--quiet', '--eval', 'db.dropDatabase()'];
   }

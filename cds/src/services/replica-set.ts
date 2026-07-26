@@ -421,6 +421,18 @@ export class ReplicaSetService {
     // 钉住隔离态，之后加的副本自动连隔离库）。enable 幂等，无 rs 条目时就地建。
     const rs = this.enable(branchId, profileId);
     if (rs.isolated) return { accepted: false, reason: '已处于隔离状态' };
+    // 全员可切换才许隔离（Codex P1）：切换循环只处理捕获的成员数组，但隔离标记
+    // 作用于整个复制集——stopped 成员会被分支重启路径按**原共享库 env** 原地
+    // docker restart 复活，provisioning 成员的在途物化同样连着共享库；控制面
+    // 声称隔离、这些成员却在写主库。存在非 running 成员时拒绝并指明处置路径。
+    const blocked = rs.members.filter((m) => m.status !== 'running');
+    if (blocked.length > 0) {
+      const detail = blocked.map((m) => `${m.id}(${m.status})`).join(', ');
+      return {
+        accepted: false,
+        reason: `以下副本不在运行态，隔离切换无法覆盖它们: ${detail}——请先重启分支让副本回到运行态，或在画布删除失败/停止的副本后再隔离`,
+      };
+    }
     const members = rs.members.filter((m) => m.status === 'running');
     const baseProfile = this.requireProfile(branch, profileId);
     const { target, reason } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
@@ -1203,6 +1215,10 @@ export class ReplicaSetService {
           }
         } else {
           plan.rollbackLog.push(`步骤 ${s.id}(${s.kind}) 不可自动回滚，保持现状`);
+          // 破坏性且未还原的步骤不许让计划整体标 rolled-back（Codex P1）：
+          // remove-member / dissolve 已删掉的成员或集不会被本次回滚复原，
+          // 「已回滚」会让操作员误以为现场回到了计划前的状态
+          if (s.kind === 'remove-member' || s.kind === 'dissolve') allOk = false;
         }
       } catch (err) {
         plan.rollbackLog.push(`回滚 ${s.id} 异常: ${(err as Error).message.slice(0, 200)}`);

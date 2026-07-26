@@ -78,3 +78,6 @@
 | fix | cds | 隔离库名哈希段升级为分支+profile 双身份、快照 id 加 profile 段：治同分支两个服务的 res-1 同名互杀专用实例、快照 id 重复误删台账（Codex P1） |
 | fix | cds | 命名子域路由走复制集展开：治 llmgw 类命名入口 100% 流量打主容器、分流权重失效且绕过被动健康（Codex P1） |
 | fix | cds | isolate-db 回滚谓词实证回切结果：成员 error 即抛、超时上抛，不再把重物化失败谎报成 rolled-back（Codex P1） |
+| fix | cds | 隔离前置全员运行态检查：存在 stopped/error/provisioning 副本时拒绝隔离（否则重启会按共享库 env 复活它们、控制面却声称已隔离，Codex P1） |
+| fix | cds | 计划回滚遇不可还原的破坏性步骤（remove-member/dissolve）不再整体标 rolled-back，终态 error 如实告知现场未复原（Codex P1） |
+| fix | cds | mongoAdminEval/dropReplicaDb 的 mongo 连接串凭据 percent-encode，治密码含 @ : / # 时体积预检和清理全部失败（Codex P2） |
