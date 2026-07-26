@@ -51,3 +51,4 @@
 | fix | cds | forwarder 复制集粘性 cookie 与上游 Set-Cookie 合并下发（Codex P1：登录响应带 cookie 时 cds_rs 被覆盖，登录后立刻横跳版本） |
 | fix | cds | 删项目级联清理复制集成员容器与专用隔离实例（Codex P1：rsdb 容器无归属 label，项目删除后永久漏跑） |
 | fix | cds | 成员物化加三道在册栅栏（Codex P2：克隆/启动期间成员被移除会起台账外幽灵容器、追加无主快照） |
+| merge | cds | 同步主分支（codex SSO 安全收紧 + 分支卡动作层级 + 生图长超时），文本零冲突；语义冲突一处：replica-sets 路由补登记进 Agent 能力目录（守卫测试） |
