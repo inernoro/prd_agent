@@ -17,6 +17,9 @@ let memberDbName = 'appdb_rs_guard_1';
 let mainCanaryHit = 0;
 let isoCanaryHit = 0;
 let isoPort = 0;
+let isoCollCount = 4;
+let srcCollCount = 4;
+let srcBaselineFail = false;
 
 vi.mock('../../src/routes/infra-data.js', () => ({
   detectInfraDataKind: (image: string) => {
@@ -50,7 +53,10 @@ vi.mock('../../src/routes/infra-data.js', () => ({
     if (argv[0] === 'exec') {
       const script = argv[argv.length - 1];
       const onIso = argv.some((a) => a.startsWith('cds-rsdb-'));
-      if (script.includes('getCollectionNames')) return { code: 0, stderr: '', stdout: '4\n' };
+      if (script.includes('getCollectionNames')) {
+        if (!onIso && srcBaselineFail) return { code: 1, stderr: 'auth failed', stdout: '' };
+        return { code: 0, stderr: '', stdout: `${onIso ? isoCollCount : srcCollCount}\n` };
+      }
       if (script.includes('insertOne')) return { code: 0, stderr: '', stdout: 'ok\n' };
       if (script.includes('countDocuments')) {
         return { code: 0, stderr: '', stdout: `${onIso ? isoCanaryHit : mainCanaryHit}\n` };
@@ -85,6 +91,9 @@ beforeEach(async () => {
   memberDbName = 'appdb_rs_guard_1';
   mainCanaryHit = 0;
   isoCanaryHit = 0;
+  isoCollCount = 4;
+  srcCollCount = 4;
+  srcBaselineFail = false;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rsaudit-'));
   state = new StateService(path.join(tmpDir, 'state.json'));
   state.addProject({ id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString() } as Parameters<typeof state.addProject>[0]);
@@ -169,6 +178,31 @@ describe('runIsolationAudit', () => {
     expect(r.overall).toBe('broken');
     expect(r.checks.find((c) => c.id === 'D2')?.verdict).toBe('fail');
     expect(r.checks.find((c) => c.id === 'D2')?.evidence).toContain('命中 1 条');
+  });
+
+  it('半截克隆（隔离库集合数少于源库）→ D1 fail → broken（Codex 第十四轮 P1）', async () => {
+    isoCollCount = 2;
+    srcCollCount = 4;
+    const r = await runIsolationAudit(state, 'proj-main', 'api');
+    expect(r.overall).toBe('broken');
+    const d1 = r.checks.find((c) => c.id === 'D1');
+    expect(d1?.verdict).toBe('fail');
+    expect(d1?.evidence).toContain('克隆可能不完整');
+  });
+
+  it('源库基线不可读 → D1 fail（不许只靠「克隆非空」放行）（Codex 第十四轮 P1）', async () => {
+    srcBaselineFail = true;
+    const r = await runIsolationAudit(state, 'proj-main', 'api');
+    const d1 = r.checks.find((c) => c.id === 'D1');
+    expect(d1?.verdict).toBe('fail');
+    expect(d1?.evidence).toContain('源库基线不可读');
+  });
+
+  it('空源库的空克隆合法 → D1 pass（0 >= 0 天然覆盖）', async () => {
+    isoCollCount = 0;
+    srcCollCount = 0;
+    const r = await runIsolationAudit(state, 'proj-main', 'api');
+    expect(r.checks.find((c) => c.id === 'D1')?.verdict).toBe('pass');
   });
 
   it('未隔离 → 退化为逐容器连接观测', async () => {

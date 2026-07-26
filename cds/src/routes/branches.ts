@@ -14234,24 +14234,36 @@ export function createBranchRouter(deps: RouterDeps): Router {
           });
           if (memberOk) {
             // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
-            // 进程活着，不跑就绪探测——慢启动副本或「进程活着但就绪失败」的
-            // error 成员会被立刻发回加权路由持续吐失败。与首次物化路径对齐，
-            // 用默认 TCP/HTTP 探测（60s 上限，避免多成员串行重启拖满 180s 默认）。
-            const memberReady = typeof member.hostPort === 'number' && member.hostPort > 0
-              ? await containerService.waitForReadiness(
-                  member.hostPort,
-                  { timeoutSeconds: 60 } as ReadinessProbe,
-                  undefined,
-                  undefined,
-                  member.containerName,
-                )
-              : false;
+            // 进程活着，不跑就绪探测。就绪契约复用该成员**自己版本快照**里的
+            // readinessProbe / startupSignal（与首次物化同一分支逻辑，Codex 第十四轮
+            // P1）——noHttp 后台 worker、自定义健康路径、启动信号成员都按各自契约
+            // 判定；快照不可得时才退默认 60s TCP/HTTP 探测兜底。
+            const memberSnapshot = deploymentVersionService
+              ?.get(member.versionId)
+              ?.profiles.find((p) => p.profileId === replicaSet.profileId);
+            let memberReady = false;
+            if (memberSnapshot?.startupSignal) {
+              memberReady = await containerService.waitForStartupSignal(
+                member.containerName,
+                memberSnapshot.startupSignal,
+                undefined,
+                120,
+              );
+            } else if (typeof member.hostPort === 'number' && member.hostPort > 0) {
+              memberReady = await containerService.waitForReadiness(
+                member.hostPort,
+                memberSnapshot?.readinessProbe ?? ({ timeoutSeconds: 60 } as ReadinessProbe),
+                undefined,
+                undefined,
+                member.containerName,
+              );
+            }
             if (memberReady) {
               member.status = 'running';
               member.statusMessage = undefined;
             } else {
               member.status = 'error';
-              member.statusMessage = `副本容器 ${member.containerName} 已重启但 60s 内未就绪——已从分流摘除，可在画布删除后重建副本`;
+              member.statusMessage = `副本容器 ${member.containerName} 已重启但未通过就绪契约（readinessProbe/startupSignal）——已从分流摘除，可在画布删除后重建副本`;
             }
           } else {
             member.status = 'error';

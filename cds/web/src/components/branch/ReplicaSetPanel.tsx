@@ -104,7 +104,15 @@ export interface PanelInfraInfo { id: string; name?: string; dockerImage?: strin
  */
 export function memberDirectUrl(previewUrl: string | undefined, profileId: string, memberId: string): string | null {
   if (!previewUrl) return null;
-  const safeProfile = profileId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  // 防撞编码（Codex 第十四轮 P2）：清洗有损时追加原始 id 的 djb2-xor 短哈希，
+  // 与发布器 dnsSafeProfile 完全同款——两端必须同步改
+  const cleaned = profileId.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  let safeProfile = cleaned;
+  if (cleaned !== profileId) {
+    let h = 5381;
+    for (let i = 0; i < profileId.length; i++) h = ((h * 33) ^ profileId.charCodeAt(i)) >>> 0;
+    safeProfile = `${cleaned}-${h.toString(36)}`;
+  }
   try {
     const url = new URL(previewUrl);
     const [first, ...rest] = url.hostname.split('.');

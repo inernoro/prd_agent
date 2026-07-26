@@ -155,6 +155,48 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     expect(routes.some((r) => r.host === `${slug}-res-1.miduo.org`)).toBe(false);
   });
 
+  it('清洗有损的 profile id（api_v2 与 api.v2）直达子域防撞：各自获得含短哈希的不同 host（Codex 第十四轮 P2）', () => {
+    state.addProject({
+      id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addProject>[0]);
+    for (const [id, prefix] of [['api_v2', '/a/'], ['api.v2', '/b/']] as const) {
+      state.addBuildProfile({
+        id, name: id, projectId: 'proj', dockerImage: 'node:20',
+        workDir: '.', command: 'node server.js', containerPort: 3000, pathPrefixes: [prefix],
+      } as Parameters<typeof state.addBuildProfile>[0]);
+    }
+    const member = (port: number): object => ({
+      id: 'res-1', versionId: 'dv_1', weight: 0, image: 'img@sha256:x',
+      status: 'running', hostPort: port, dbMode: 'shared', createdAt: new Date().toISOString(),
+    });
+    state.addBranch({
+      id: 'proj-main', projectId: 'proj', branch: 'main',
+      worktreePath: path.join(tmpDir, 'main'),
+      services: {
+        'api_v2': { profileId: 'api_v2', containerName: 'c-a', hostPort: 9100, status: 'running' },
+        'api.v2': { profileId: 'api.v2', containerName: 'c-b', hostPort: 9200, status: 'running' },
+      },
+      status: 'running', createdAt: new Date().toISOString(),
+      replicaSets: {
+        'api_v2': { profileId: 'api_v2', enabled: true, primaryWeight: 100, members: [member(9300)], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+        'api.v2': { profileId: 'api.v2', enabled: true, primaryWeight: 100, members: [member(9400)], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      },
+    } as Parameters<typeof state.addBranch>[0]);
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const routes = readRoutes();
+    // 修复前两者同归 <slug>-api-v2-res-1（后者被 skip，UI 链接落错 profile）；
+    // 修复后清洗有损 → 追加原始 id 短哈希，两个成员 host 并存且互不相同
+    const memberHosts = [...new Set(routes.filter((r) => r.host.endsWith('-res-1.miduo.org')).map((r) => r.host))];
+    expect(memberHosts.length).toBe(2);
+    for (const h of memberHosts) expect(/^[a-z0-9-]+\.miduo\.org$/.test(h)).toBe(true);
+    const hostOf = (port: number, prefix: string): string[] => memberHosts
+      .filter((h) => routes.some((r) => r.host === h && r.pathPrefix === prefix && r.upstreamPort === port));
+    expect(hostOf(9300, '/a/').length).toBe(1);
+    expect(hostOf(9400, '/b/').length).toBe(1);
+    expect(hostOf(9300, '/a/')[0]).not.toBe(hostOf(9400, '/b/')[0]);
+  });
+
   it('profile 已删除:成员兜底不再发布其副本路由（Codex P1：被删服务不许继续公网可达）', () => {
     state.addProject({
       id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString(),

@@ -147,3 +147,7 @@
 | fix | cds | 分支重启级联副本改就绪实证：TCP/HTTP 探测通过才恢复分流（60s 上限），治慢启动/就绪失败副本被立刻发回加权路由持续吐失败（Codex P1） |
 | fix | cds | 成员直达域 profile 段 DNS 清洗（发布器与前端同款算法，撞名跳过并 warn），治 profile id 含下划线/点时直达链接全废（Codex P2） |
 | fix | cds | forwarder __rs 改 URLSearchParams 完整解析，治含点/百分号编码的作用域钉选条目被字符类正则截断静默失效（Codex P2） |
+| fix | cds | 复制集分支重启级联就绪判定复用成员版本快照的 readinessProbe/startupSignal 契约（noHttp 后台副本、自定义健康路径、启动信号成员按各自契约实证，快照不可得才退默认探测） |
+| fix | cds | 隔离审计 D1 克隆基线改真对照：两侧基线必须可读且克隆集合/表数不少于源库才 pass，半截克隆与源库基线读取失败不再静默放行 |
+| fix | cds | 复制集成员直达子域 DNS 段防撞：profile id 清洗有损时追加确定性短哈希（api_v2 与 api.v2 不再同归一段），发布器与前端直达链接同款算法 |
+| docs | doc | design.cds.replica-set 与 debt.cds.replica-set 补标准文档头部（H1 类型后缀 + 版本/日期/状态元数据） |

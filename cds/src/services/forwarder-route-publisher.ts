@@ -366,8 +366,17 @@ export class ForwarderRoutePublisher {
       // 导入），但单 DNS 标签不许下划线、点会多出一级域逃出通配证书。清洗成
       // [a-z0-9-]；清洗后撞名（api_v2 与 api.v2 同归 api-v2）时保留首个、跳过
       // 后续并 warn——与前端 memberDirectUrl 的同款清洗保持一致（两端必须同步改）。
-      const dnsSafeProfile = (id: string): string =>
-        id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+      // 防撞编码（Codex 第十四轮 P2）：清洗**有损**（api_v2 与 api.v2 同归 api-v2）
+      // 时追加原始 id 的确定性短哈希（djb2-xor，base36），保证不同 profile 落到
+      // 不同 DNS 段；已是合法 DNS 段的 id 原样保留（既有直达域名不变）。撞名
+      // skip+warn 仍保留为最后防线。与前端 memberDirectUrl 同款算法，两端必须同步改。
+      const dnsSafeProfile = (id: string): string => {
+        const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+        if (cleaned === id) return cleaned;
+        let h = 5381;
+        for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+        return `${cleaned}-${h.toString(36)}`;
+      };
       const emittedMemberHosts = new Set<string>();
       for (const [profileId, replica] of replicaByProfile) {
         for (const member of replica.members) {
