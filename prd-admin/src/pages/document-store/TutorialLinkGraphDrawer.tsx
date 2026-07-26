@@ -69,6 +69,15 @@ export function TutorialLinkGraphDrawer({
   const selectedSurface = surfaces.find(surface => surface.id === selectedSurfaceId)
     ?? draft?.surfaces.find(surface => surface.id === selectedSurfaceId)
     ?? null;
+  const selectedTutorialLinks = useMemo(() => {
+    if (!selectedSurface) return [];
+    const detailed = new Map(selectedSurface.tutorialLinks.map(link => [link.sourceId, link]));
+    return selectedSurface.tutorialSourceIds.map(sourceId => ({
+      sourceId,
+      stepIds: detailed.get(sourceId)?.stepIds ?? [],
+      evidenceIds: detailed.get(sourceId)?.evidenceIds ?? [],
+    }));
+  }, [selectedSurface]);
   const hasUnpublishedDraft = Boolean(draft && draft.graphSha256 !== published?.graphSha256);
   const linkCount = surfaces.reduce((total, surface) => total + surface.tutorialLinks.length, 0);
   const evidenceCount = surfaces.reduce(
@@ -119,7 +128,7 @@ export function TutorialLinkGraphDrawer({
 
   return createPortal(
     <div className="fixed inset-0 z-[1000] flex justify-end" role="dialog" aria-modal="true" aria-labelledby="tutorial-link-graph-title">
-      <button type="button" className="absolute inset-0 cursor-default bg-black/45" aria-label="关闭教程关系" onClick={onClose} />
+      <button type="button" className="absolute inset-0 cursor-default bg-black/45" aria-label="关闭教程关系背景" onClick={onClose} />
       <section
         className="surface-base relative z-10 flex h-full min-h-0 w-full flex-col overflow-hidden border-l border-token-subtle shadow-2xl lg:max-w-[1120px]"
         style={{
@@ -144,7 +153,7 @@ export function TutorialLinkGraphDrawer({
                 {busy ? <MapSpinner size={13} /> : <GitBranch size={13} />}发布草稿
               </button>
             )}
-            <button type="button" onClick={onClose} className="surface-action grid h-8 w-8 place-items-center rounded-[8px] text-token-muted" aria-label="关闭"><X size={16} /></button>
+            <button type="button" onClick={onClose} className="surface-action grid h-8 w-8 place-items-center rounded-[8px] text-token-muted" aria-label="关闭教程关系"><X size={16} /></button>
           </div>
         </header>
 
@@ -249,7 +258,7 @@ export function TutorialLinkGraphDrawer({
             <header className="flex items-start justify-between gap-3 border-b border-token-subtle p-5"><div><div className="text-[11px] text-token-muted">页面关系详情</div><h3 className="mt-1 text-[17px] font-semibold text-token-primary">{selectedSurface.label ?? selectedSurface.id}</h3></div><button type="button" className="surface-action grid h-8 w-8 place-items-center rounded-[8px] text-token-muted" onClick={() => setSelectedSurfaceId(null)} aria-label="关闭详情"><X size={15} /></button></header>
             <div className="min-h-0 flex-1 space-y-5 overflow-auto p-5">
               <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">产品路由</h4><div className="mt-2 space-y-2">{selectedSurface.routes.map(route => <button key={route} type="button" onClick={() => void onOpenProductRoute(route)} className="surface-action flex w-full items-center justify-between rounded-[9px] px-3 py-2.5 text-left font-mono text-[11px] text-token-primary"><span>{route}</span><ArrowUpRight size={13} /></button>)}</div></section>
-              <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">关联教程与步骤</h4><div className="mt-2 space-y-2">{selectedSurface.tutorialLinks.map(link => <button key={link.sourceId} type="button" onClick={() => onOpenTutorial(link.sourceId)} className="surface-raised block w-full rounded-[9px] p-3 text-left"><span className="flex items-center justify-between gap-2 text-[12px] font-semibold text-token-primary"><span className="truncate">{tutorialTitles[link.sourceId] ?? link.sourceId}</span><Link2 size={13} /></span><small className="mt-1 block text-[10px] text-token-muted">步骤 {link.stepIds.join('、')} · 证据 {link.evidenceIds.join('、')}</small></button>)}</div></section>
+              <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">关联教程与步骤</h4><div className="mt-2 space-y-2">{selectedTutorialLinks.map(link => <button key={link.sourceId} type="button" onClick={() => onOpenTutorial(link.sourceId)} className="surface-raised block w-full rounded-[9px] p-3 text-left"><span className="flex items-center justify-between gap-2 text-[12px] font-semibold text-token-primary"><span className="truncate">{tutorialTitles[link.sourceId] ?? link.sourceId}</span><Link2 size={13} /></span><small className="mt-1 block text-[10px] text-token-muted">{link.stepIds.length > 0 ? `步骤 ${link.stepIds.join('、')} · 证据 ${link.evidenceIds.join('、') || '待补'}` : '页面级关系 · 尚无步骤级证据'}</small></button>)}</div></section>
               <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">变更来源</h4><div className="mt-2 space-y-1 font-mono text-[10px] text-token-muted">{selectedSurface.changeSources.map(source => <div key={source}>{source}</div>)}</div></section>
             </div>
           </aside>
