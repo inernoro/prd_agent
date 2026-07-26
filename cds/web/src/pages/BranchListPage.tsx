@@ -15,7 +15,6 @@ import {
   Github,
   Lightbulb,
   Loader2,
-  Clock3,
   MoreHorizontal,
   Network,
   Play,
@@ -69,7 +68,7 @@ import {
   type BranchResourceInfraInput,
   type BranchResourceProfileInput,
 } from '@/lib/resources';
-import { statusClass, statusRailClass } from '@/lib/statusStyle';
+import { statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
@@ -6293,16 +6292,8 @@ const BranchCard = memo(function BranchCard({
             模式/净耗时/预计 + 细进度条。顶部 chips 行构建期间保持端口/容器信息。 */}
         {isInterim ? (
           <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
-            <span
-              className={`branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${statusClass(branch.status)}`}
-              title={`${statusLabel(branch.status)}已持续时间`}
-              data-since={busySince || ''}
-            >
-              <span className={`h-1.5 w-1.5 rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
-              {statusLabel(branch.status)}
-              <Clock3 className="h-3 w-3" aria-hidden />
-              <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
-            </span>
+            {/* 2026-07-26 用户纠偏：独立「构建中 + 计时」chip 冗余（耗时在进度 pill
+                里已有）且会挤压遮挡左侧 commit sha——删除，状态由 pill 内脉冲色点承载 */}
             {branch.buildQueue ? (
               <span
                 className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
@@ -6326,11 +6317,13 @@ const BranchCard = memo(function BranchCard({
                 : '';
               return (
                 <span
-                  className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+                  className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+                  data-since={busySince || ''}
                   title={estimate
-                    ? `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
-                    : `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
+                    ? `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                    : `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
                 >
+                  <span className={`h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
                   <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
                   <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
                   {estimate ? (
