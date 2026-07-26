@@ -11,6 +11,7 @@ import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
+import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
@@ -3925,6 +3926,15 @@ export function createServer(deps: ServerDeps): express.Express {
   // 启动收敛：CDS 自更新/重启会打断执行中的复制集计划——开机把僵尸 running
   // 计划标记为中断，杜绝「更新 CDS 导致的不一致」（用户点名的安全防线）
   replicaSetService.reconcileInterruptedPlans();
+  // 副本容器真身对账（2026-07-26 孤儿收割器误杀事故）：启动即对账一次收敛
+  // CDS 停机期间的副本死亡，此后每分钟兜底；取证器 die 事件另走秒级摘流。
+  // executor 节点不跑：集群共享 state 时它拿本机 docker 对账会误杀 master 的成员
+  // （成员容器只在 master 本机，与 auto-lifecycle 的协调者集中纪律同源）。
+  if (deps.config.mode !== 'executor') {
+    replicaSetService.startMemberReconcileLoop();
+    setReplicaMemberDeathListener((containerName, verdict) =>
+      replicaSetService.noteMemberContainerDeath(containerName, verdict));
+  }
   app.use('/api', createReplicaSetsRouter({
     stateService: deps.stateService,
     replicaSetService,

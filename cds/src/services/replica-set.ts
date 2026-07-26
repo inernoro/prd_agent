@@ -747,6 +747,84 @@ export class ReplicaSetService {
     return fixed;
   }
 
+  /* ── 副本容器真身对账（2026-07-26 孤儿收割器误杀事故的第二道防线）──
+   * 事故：收割器不认识成员容器（认领已修），5 个 running 副本被优雅停掉后
+   * state 仍标 running → forwarder 按权重把入口真实流量打到死端口（50% 503）。
+   * 对账原则：status 是控制面意图，容器真身以 docker 为准——任何原因死掉的
+   * 副本（误杀/OOM/crash/人为 stop）都要在一个对账周期内标 error 摘流。
+   * 路由发布器只发 running 成员且每 2s 重建路由，标记后自动收敛。 */
+
+  /**
+   * 全量对账：docker ps 存活容器名集合 vs state 里 running 成员的容器名。
+   * 不在集合里 → 标 error（带原因，UI 红显 + 摘流）。docker 查询失败本轮放弃
+   * （宁漏勿误，与孤儿收割器同一纪律）。返回本轮标记数。
+   */
+  async reconcileMembersAgainstDocker(): Promise<number> {
+    const tracked: Array<{ branchId: string; profileId: string; memberId: string; containerName: string }> = [];
+    for (const branch of this.opts.state.getAllBranches()) {
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        for (const m of rs.members) {
+          if (m.status === 'running' && m.containerName) {
+            tracked.push({ branchId: branch.id, profileId: rs.profileId, memberId: m.id, containerName: m.containerName });
+          }
+        }
+      }
+    }
+    if (tracked.length === 0) return 0;
+    const res = await this.opts.shell.exec(
+      `docker ps --filter "label=cds.managed=true" --format '{{.Names}}'`,
+      { timeout: 30_000 },
+    );
+    if (res.exitCode !== 0) return 0;
+    const alive = new Set(res.stdout.trim().split('\n').map((s) => s.trim()).filter(Boolean));
+    let marked = 0;
+    for (const t of tracked) {
+      if (alive.has(t.containerName)) continue;
+      this.patchMember(t.branchId, t.profileId, t.memberId, {
+        status: 'error',
+        statusMessage: '副本容器已不在运行（对账发现）——已从入口分流摘除；可在画布删除后重建副本',
+      });
+      marked += 1;
+      this.opts.logger?.warn?.(
+        `[replica-set] 对账：${t.branchId}/${t.profileId}/${t.memberId} 容器 ${t.containerName} 已消失，标 error 并摘流`,
+      );
+    }
+    return marked;
+  }
+
+  /**
+   * 生命周期取证器 die 事件即时对账：running 成员的容器意外死亡秒级摘流，
+   * 不等周期对账。计划内的主动收割（remove/isolate 重物化）发生时成员状态
+   * 已不是 running，天然跳过——只有「意外死亡」会被标记。
+   */
+  noteMemberContainerDeath(containerName: string, verdict: string): void {
+    for (const branch of this.opts.state.getAllBranches()) {
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        const m = rs.members.find((x) => x.containerName === containerName);
+        if (!m) continue;
+        if (m.status !== 'running') return;
+        this.patchMember(branch.id, rs.profileId, m.id, {
+          status: 'error',
+          statusMessage: `副本容器死亡：${verdict}——已从入口分流摘除`,
+        });
+        this.opts.logger?.warn?.(
+          `[replica-set] 副本死亡即时摘流：${branch.id}/${rs.profileId}/${m.id}（${containerName}）${verdict}`,
+        );
+        return;
+      }
+    }
+  }
+
+  /** 启动即对账一次（收敛 CDS 停机期间的死亡），此后周期兜底。 */
+  startMemberReconcileLoop(intervalMs = 60_000): void {
+    const run = () => void this.reconcileMembersAgainstDocker().catch((err) => {
+      this.opts.logger?.warn?.(`[replica-set] 副本对账异常: ${(err as Error).message}`);
+    });
+    run();
+    const timer = setInterval(run, intervalMs);
+    (timer as { unref?: () => void }).unref?.();
+  }
+
   startPlan(branchId: string, input: {
     onFailure: 'stop' | 'rollback';
     steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>;

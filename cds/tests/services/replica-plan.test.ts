@@ -190,3 +190,57 @@ describe('管理模式二选一（replicaMode，2026-07-24 用户拍板）', () 
     await waitPlanEnd('proj-main', p2.id);
   });
 });
+
+describe('副本容器真身对账（2026-07-26 孤儿收割器误杀事故防线）', () => {
+  const makeSvc = (psStdout: string, psExitCode = 0) => new ReplicaSetService({
+    state,
+    container: { remove: async () => undefined } as never,
+    versions: { get: () => undefined, assertReusable: () => undefined } as never,
+    shell: {
+      exec: async (cmd: string) => cmd.includes('docker ps')
+        ? { stdout: psStdout, stderr: '', exitCode: psExitCode }
+        : { stdout: '', stderr: '', exitCode: 0 },
+    } as never,
+    portStart: 10000,
+  });
+
+  beforeEach(() => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaSets!.api.members[0].containerName = 'cds-proj-main-api-res-1';
+    state.save();
+  });
+
+  it('容器消失的 running 成员标 error 摘流；仍存活的成员不动', async () => {
+    const marked = await makeSvc('cds-proj-main-api\ncds-other-container').reconcileMembersAgainstDocker();
+    expect(marked).toBe(1);
+    const m = state.getBranch('proj-main')!.replicaSets!.api.members[0];
+    expect(m.status).toBe('error');
+    expect(m.statusMessage).toContain('摘除');
+  });
+
+  it('容器还活着时对账零动作', async () => {
+    const marked = await makeSvc('cds-proj-main-api-res-1').reconcileMembersAgainstDocker();
+    expect(marked).toBe(0);
+    expect(state.getBranch('proj-main')!.replicaSets!.api.members[0].status).toBe('running');
+  });
+
+  it('docker 查询失败本轮放弃（宁漏勿误）', async () => {
+    const marked = await makeSvc('', 1).reconcileMembersAgainstDocker();
+    expect(marked).toBe(0);
+    expect(state.getBranch('proj-main')!.replicaSets!.api.members[0].status).toBe('running');
+  });
+
+  it('die 事件即时摘流：running 成员标 error；非 running（计划内收割中）跳过', () => {
+    const s = makeSvc('');
+    s.noteMemberContainerDeath('cds-proj-main-api-res-1', '外部 SIGKILL');
+    const m = state.getBranch('proj-main')!.replicaSets!.api.members[0];
+    expect(m.status).toBe('error');
+    expect(m.statusMessage).toContain('外部 SIGKILL');
+    // provisioning（隔离重物化窗口）不许被 die 事件覆盖
+    m.status = 'provisioning';
+    m.statusMessage = '第2步 切换：重启副本改连隔离库…';
+    state.save();
+    s.noteMemberContainerDeath('cds-proj-main-api-res-1', '进程自身退出（exitCode=0）');
+    expect(state.getBranch('proj-main')!.replicaSets!.api.members[0].status).toBe('provisioning');
+  });
+});

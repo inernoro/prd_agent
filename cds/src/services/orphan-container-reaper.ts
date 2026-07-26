@@ -46,7 +46,12 @@ export interface TombstoneStateView {
 /** 收割器状态视图的窄接口（便于单测注入，不拖整个 StateService）。 */
 export interface OrphanReaperStateView extends TombstoneStateView {
   getProjects(): Array<{ id: string }>;
-  getAllBranches(): Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
+  getAllBranches(): Array<{
+    id: string;
+    services?: Record<string, { containerName?: string }>;
+    /** 复制集成员容器不在 services 里，但同样是有主容器（2026-07-26 误杀事故）。 */
+    replicaSets?: Record<string, { members: Array<{ id: string; containerName?: string }> }>;
+  }>;
   getInfraServices(): Array<{ containerName: string }>;
   /** 启用中的外部访问代理容器名（缺省视为无启用策略）。 */
   getActiveExternalAccessProxyContainerNames?(): Set<string>;
@@ -275,6 +280,18 @@ export async function sweepOrphanCdsContainers(opts: {
     for (const [profileId, svc] of Object.entries(b.services || {})) {
       knownAppPairs.add(`${b.id}/${profileId}`);
       if (svc?.containerName) knownAppContainerNames.add(svc.containerName);
+    }
+    // 复制集成员容器认领（2026-07-26 真实事故）：成员容器带 cds.profile.id=
+    // `<profileId>--<memberId>`，但成员运行态记在 branch.replicaSets 不在 services，
+    // 此前收割器不认识 → 21:41 建的 5 个副本 23:09 被当孤儿优雅停掉，state 仍标
+    // running，forwarder 继续按权重把入口真实流量打到死端口（50% 503）。
+    // 只要成员还在 state 台账里（任何状态），它的容器就有主；成员移除走
+    // removeMember 的显式收割，不归本收割器。
+    for (const [profileId, rs] of Object.entries(b.replicaSets || {})) {
+      for (const m of rs.members || []) {
+        knownAppPairs.add(`${b.id}/${profileId}--${m.id}`);
+        if (m.containerName) knownAppContainerNames.add(m.containerName);
+      }
     }
   }
   const knownBranchIds = new Set(branches.map((b) => b.id));

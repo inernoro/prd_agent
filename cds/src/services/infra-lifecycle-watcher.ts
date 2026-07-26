@@ -29,6 +29,19 @@ export function getActiveInfraLifecycleWatcher(): InfraLifecycleWatcher | null {
   return activeWatcher;
 }
 
+/**
+ * 副本成员死亡监听（2026-07-26）：取证器看到 cds-*-res-N 的 die 事件时回调，
+ * 由 server.ts 注册到 ReplicaSetService.noteMemberContainerDeath——running 副本
+ * 意外死亡秒级标 error 摘流，不等周期对账（死端口多接一秒流量就是一秒 503）。
+ * 模块级注册避免 watcher（index.ts 构造）与 ReplicaSetService（server.ts 构造）
+ * 之间的跨文件依赖注入。
+ */
+type ReplicaMemberDeathListener = (containerName: string, verdict: string) => void;
+let replicaMemberDeathListener: ReplicaMemberDeathListener | null = null;
+export function setReplicaMemberDeathListener(fn: ReplicaMemberDeathListener | null): void {
+  replicaMemberDeathListener = fn;
+}
+
 export class InfraLifecycleWatcher {
   private proc: ChildProcess | null = null;
   private events: InfraLifecycleEvent[] = [];
@@ -131,6 +144,10 @@ export class InfraLifecycleWatcher {
         containerName: name,
         details: event as unknown as Record<string, unknown>,
       });
+      // 副本成员死亡 → 即时通知控制面摘流（listener 未注册时仅取证）
+      if (event.event === 'die' && isReplicaMember) {
+        try { replicaMemberDeathListener?.(name, verdict); } catch { /* 取证不因摘流回调失败而中断 */ }
+      }
     }
   }
 }
