@@ -7,7 +7,7 @@ import {
 } from '../recordingVault';
 
 describe('recording vault completion retry gate', () => {
-  it('retries only server-owned completing and completed sessions', () => {
+  it('retries every non-terminal bound session, including pre-claim uploading', () => {
     expect(shouldRetryVaultServerCompletion({
       success: true,
       data: { status: 'completing' },
@@ -19,7 +19,7 @@ describe('recording vault completion retry gate', () => {
     expect(shouldRetryVaultServerCompletion({
       success: true,
       data: { status: 'uploading' },
-    })).toBe(false);
+    })).toBe(true);
     expect(shouldRetryVaultServerCompletion({
       success: true,
       data: { status: 'cancelled' },
@@ -82,6 +82,13 @@ describe('recording vault server recovery decision', () => {
       success: false,
       error: { code: 'SERVER_ERROR' },
     })).toBe('keep-protected');
+    expect(decideVaultServerRecovery({
+      success: true,
+      data: { status: 'completing' },
+    }, {
+      success: false,
+      error: { code: 'INVALID_FORMAT' },
+    })).toBe('keep-protected');
   });
 
   it('accepts a successful idempotent completion after observing a completing lease', () => {
@@ -112,15 +119,25 @@ describe('recording vault server recovery decision', () => {
     })).toBe('keep-protected');
   });
 
-  it('allows local recovery only after explicit release or a missing completed entry', () => {
+  it('replays uploading completion and keeps protection while its outcome is unknown', () => {
     expect(decideVaultServerRecovery({
       success: true,
       data: { status: 'uploading' },
-    })).toBe('recover-local');
+    })).toBe('keep-protected');
     expect(decideVaultServerRecovery({
       success: true,
       data: { status: 'uploading' },
-    }, { success: true })).toBe('recover-local');
+    }, { success: true })).toBe('completed');
+    expect(decideVaultServerRecovery({
+      success: true,
+      data: { status: 'uploading' },
+    }, {
+      success: false,
+      error: { code: 'INVALID_FORMAT' },
+    })).toBe('keep-protected');
+  });
+
+  it('allows local recovery only after an explicit terminal or missing-session result', () => {
     expect(decideVaultServerRecovery({
       success: true,
       data: { status: 'cancelled' },
@@ -128,6 +145,13 @@ describe('recording vault server recovery decision', () => {
     expect(decideVaultServerRecovery({
       success: false,
       error: { code: 'SESSION_EXPIRED' },
+    })).toBe('recover-local');
+    expect(decideVaultServerRecovery({
+      success: true,
+      data: { status: 'uploading' },
+    }, {
+      success: false,
+      error: { code: 'NOT_FOUND' },
     })).toBe('recover-local');
     expect(decideVaultServerRecovery({
       success: true,

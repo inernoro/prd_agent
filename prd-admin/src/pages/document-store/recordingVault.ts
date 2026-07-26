@@ -50,11 +50,14 @@ export type VaultServerRecoveryDecision = 'completed' | 'keep-protected' | 'reco
 
 /**
  * 已进入服务端完成流程的会话需要重放幂等完成请求。completed 用于取回已落库条目，
- * completing 用于在旧完成租约失效后重新领取；其余状态禁止误触发完成流程。
+ * uploading 覆盖“绑定已持久化、首个完成请求尚未认领”的崩溃窗口，completing
+ * 用于在旧完成租约失效后重新领取，completed 用于取回已落库条目。
  */
 export function shouldRetryVaultServerCompletion(status: VaultServerStatus): boolean {
   return status?.success === true
-    && (status.data.status === 'completing' || status.data.status === 'completed');
+    && (status.data.status === 'uploading'
+      || status.data.status === 'completing'
+      || status.data.status === 'completed');
 }
 
 /**
@@ -73,16 +76,19 @@ export function decideVaultServerRecovery(
   }
   // 完成请求是幂等的：即使调用前读取到的是 completing，成功响应也必须优先收敛终态。
   if (completion?.success && shouldRetryVaultServerCompletion(status)) return 'completed';
-  if (status.data.status === 'uploading' || status.data.status === 'cancelled') {
-    return 'recover-local';
-  }
-  if (status.data.status === 'completing') return 'keep-protected';
+  if (status.data.status === 'cancelled') return 'recover-local';
   if (completion?.success === false && [
-    'INVALID_FORMAT',
     'NOT_FOUND',
     'SESSION_NOT_FOUND',
     'SESSION_EXPIRED',
   ].includes(completion.error.code)) {
+    return 'recover-local';
+  }
+  // completed 且条目已被明确删除时，后端以 INVALID_FORMAT 表示该终态不可复用。
+  // uploading / completing 的同码可能只是另一完成请求刚刚抢到租约，必须继续保护。
+  if (status.data.status === 'completed'
+      && completion?.success === false
+      && completion.error.code === 'INVALID_FORMAT') {
     return 'recover-local';
   }
   return 'keep-protected';
