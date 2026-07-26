@@ -8,6 +8,283 @@
 
 ## [未发布]
 
+### 2026-07-26
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | llmgw | 修复运行时 Provider 日志入口空跳转、手机日志固定时间列裁切并对齐日志标题与暗色对比度 |
+| fix | llmgw | 正式发布四协议 canary 支持独立 sourceSystem fencing key，避免错误复用 MAP 业务 smoke key |
+
+### 2026-07-25
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动；D4 扫描到的 `**pnpm**` 为正文加粗误判非技能表行，已核实非真实幽灵），D6 处理 5 条 changelog（llmgw OpenRouter 日志字体列布局与详情路由/WSS 与安全 HTTP 出站保留网段拒绝规则/Key 撤销删除站内确认弹窗/CDS 验收报告离线 ZIP 与知识库导入深链/团队成员搜索权限修复），均无需追加设计文档章节（WSS 出站策略已被 `doc/design.llm-gateway-physical-isolation.md` 覆盖；报告导入/reportId 幂等已被 `doc/design.acceptance.kb.md` 覆盖；其余为窄范围 UI/bug fix，无对应 design 文档），仅登记 manifest，manifest 累计 487 条 |
+
+### 2026-07-24
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 同步官方验收技能目录内嵌规则快照，消除与仓库 SSOT 的漂移 |
+| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 处理 5 条 changelog（验收报告顶部缺口统计口径修复/CDS 热重启等待页轮询与叙事动画重做/CDS 预览地址真实来源与安全隐藏/CDS 项目级 Agent Key 项目列表隔离/上一轮熵减自身记录），均无匹配的 design 文档章节需要追加（预览地址行为已由 CLAUDE.md §11 覆盖；其余为窄范围 bug fix/安全修复，无对应 design 文档），仅登记 manifest，manifest 累计 482 条 |
+| fix | llmgw | 修复正式 ASR canary 上传 multipart 文件后未写租户 manifest，导致 serving 回读对象被误判不存在 |
+| fix | llmgw | 修正日志实体悬浮热区、App 显示语义与图片输入输出统计 |
+| fix | llmgw | 对齐暗色日志辅助值和可点击实体亮度，历史 App 无注册记录时回退到真实日志详情 |
+| feat | llmgw | 图片响应异步保存为安全预览并在请求详情展示媒体元数据 |
+| security | llmgw | 临时图片地址经公网校验、禁止跳转和体积限制后异步留存 |
+| fix | cds | 图片生成与编辑预览请求使用 600 秒专用转发窗口，普通请求保持原超时 |
+| feat | llmgw | 请求详情支持 URL 深链、前后导航与同源新标签安全会话恢复 |
+| docs | llmgw | 更新请求日志和视觉创作实战教程的图片日志验收规则 |
+| fix | llmgw | 接通维护发布对旧版严格 not-required 配置权威与运行门禁证据的既有兼容校验 |
+| fix | llmgw | 允许发布账本仅在已审计维护基线且零阈值 scoped shadow 形状下接受空 shadowChecks |
+| fix | llmgw | 修复维护发布仍调用已禁止的无 appCaller 全局影子查询，保留普通全量发布的严格门禁 |
+| fix | llmgw | 修复维护发布阶段报告与历史台账复核未继承限定 shadow 跳过契约的问题 |
+| fix | llmgw | 将手机端日志表格设置的列选择、排序、重置、页签与入口触控区域统一提升至至少 44 像素 |
+| feat | llmgw | 新增覆盖 invoke、send 与双流式入口的非付费正式发布 smoke |
+| test | llmgw | 四协议发布 canary 支持受治理的 Quickstart dry-run 并记录未调用上游 |
+| fix | llmgw | 修复发布审计将网关 Key 与 appCaller 边界拒绝误判为上游 Provider 凭据故障 |
+| fix | llmgw | 修复 Provider 审计将 Gateway multipart 文件引用错误误判为上游 ASR 故障 |
+| fix | llmgw | 修复正式发布烟测未在全部 chat 路径使用配置 AppCaller 的问题 |
+
+### 2026-07-23
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | acceptance | 验收报告自动补齐孤立证据并阻断缩略图、锚点和图号断链 |
+| feat | acceptance | 验收报告增加证据与目录双 Tab、问题章节分级标记和图片返回入口 |
+| feat | acceptance | 有条件通过首屏聚合风险与缺口，并增加人工控制的验收档案版本号 |
+| test | acceptance | 增加证据关系完整性、重复图片和逐卡跳转回归测试 |
+| fix | acceptance | 提升每日验收必需章节常量位置，避免官方技能包截断后丢失归档门禁 |
+| test | prd-api | 更新 LLMGW 日志守卫为 HoverCard 与主题样式语义契约 |
+| ci | repository | 补充 LLMGW Web 变更触发跨模块服务端守卫 |
+| fix | acceptance | 手机端验收报告改用紧凑可折叠纵向导航并修复跳转遮挡 |
+| rule | acceptance | 统一验收报告的类型前缀、重点对象与目标日期命名格式 |
+| polish | cds | 调整分支卡片预览与一键启动按钮的视觉层级 |
+| fix | cds | 修复分支卡片提交历史浮层遮挡当前提交摘要的问题 |
+| polish | cds | 使用 Shiny Text 重构 AI 操作分支卡片的标题与状态动效 |
+| fix | cds | CDS 专属分支自动优先匹配 CDS Self 预览项目，避免误开业务项目 |
+| polish | cds | 重构侧栏用户菜单与右下角更新、授权提醒层级 |
+| feat | cds | 新增可配置的一次性票据 SSO，和密码登录并存，登录后默认进入主分支项目列表 |
+| feat | prd-api | 新增数据库单次消费的通用控制台 SSO 提供方接口，供 CDS 等外部控制台安全换票 |
+| feat | cds | 新增全局常驻的上下文感知 Agent 接入入口，并支持在登录与认证页直接交给 Agent 配置 |
+| feat | cds | 将 Agent 项目与任务选择重构为可探索的接入地图，切换地图地标即可生成对应操作上下文 |
+| fix | cds | 避免预览实例的分支状态条遮挡常驻 Agent 接入入口 |
+| polish | cds | 保留 Agent 接入原流程，将当前任务改为可展开的大洲与地界世界地图选择器 |
+| polish | cds | 撤除 Agent 地图隐喻，将任务选择简化为一排 N 个清晰的任务卡片 |
+| feat | cds | 将接入 Agent 升级为集中维护的 CDS 操作任务库，支持分类排障、静默认证与跨项目提权指引 |
+| feat | cds | 建立覆盖全部接口模块族的 Agent 能力目录并补齐完整五技能包协作更新 |
+| security | cds | 增加凭据来源脱敏检查、提示注入防护、操作锁与环境变量元数据读取 |
+| fix | cds | 修复接入 Agent 弹窗在移动端的页签横向裁切 |
+| security | cds | 修复 SSO-only 鉴权绕过、全局配置越权与 SSO 身份错误获得所有者权限的问题 |
+| fix | cds | 修复 SSO 会话识别、退出跳转、默认返回页和回调地址协议校验 |
+| fix | cds | 修复 Agent 跨项目任务上下文、项目深链和项目列表刷新问题 |
+| fix | prd-api | 增加 Bearer 感知的控制台 SSO 授权承接流程并校验允许的回调来源 |
+| fix | prd-admin | 新增控制台 SSO 授权承接页面 |
+| test | prd-api | 固定模型供应限流测试时钟，消除跨分钟边界导致的 CI 假失败 |
+| security | cds | 阻止环境托管 SSO 配置落库并区分本地所有者与 SSO 人工会话 |
+| fix | cds | 修复 SSO-only 登录表单、StrictMode 回调换票与系统任务错误借用业务项目 |
+| fix | cds | 修复重复凭据误报冲突，并在项目级凭据下安全解析 CDS Self 预览 |
+| fix | prd-api | 允许已配置来源的 loopback HTTP 完成本地 SSO 回调 |
+| security | cds | 将 SSO 回调锁定到规范公网地址，并为换票请求增加超时与可用性错误分类 |
+| fix | cds | 关闭 Agent 接入对话框或跨页时清除显式任务上下文 |
+| security | cds | 限制 SSO 完整配置仅系统所有者可读，并在 SSO 退出时统一清理所有登录会话 |
+| security | cds | 为预览 SSO 保留可信公网回调地址，并限制未消费登录 state 的数量与清理开销 |
+| security | cds | 拒绝含反斜杠的 SSO 返回路径，阻止浏览器规范化造成的跨域跳转 |
+| fix | cds | 让 basic 模式的身份端点沿用认证门结果并支持 X-CDS-Token 请求头 |
+| security | cds | SSO 登录 state 满额时拒绝新请求并保留全部仍有效的授权流程 |
+| fix | cds | Agent 任务调度上下文携带并消费明确的项目标识 |
+| fix | cds | 修复部署已失败但 GitHub check run 长期停留 in_progress 的问题：新增 CheckRunRunner.reconcileStale 周期收敛（每 5 分钟按 DeploymentRun/分支真实终态把滞留的 check run 补收尾为 failure/cancelled/success），不再只靠重启时的 reconcileOrphans |
+| fix | cds | 部署被更高优先级操作取代（superseded）提前返回的路径补上 check run 收尾为 cancelled，不再留下永远转圈的黄灯 |
+| fix | cds | 举一反三补齐两条「部署未启动、GitHub 彻底静默」的兄弟路径：webhook 部署派发失败、极速版等待 CI 镜像超时，均通过新增 CheckRunRunner.concludeWithoutDeploy 直接创建已完结的 failure check run，push 后 PR Checks 面板不再空无一物 |
+| fix | prd-admin | 清理知识库页面固定暗色表面并增强浅色主题下边框与分隔线辨识度 |
+| fix | prd-admin | 统一共享搜索选择器、通知订阅面板与任务抽屉的明暗主题边界 |
+| fix | prd-admin | 批量迁移产品管理、渠道追踪、邮件、演讲与文档浏览器的固定白色表面和文字 |
+| fix | prd-admin | 继续迁移共享外壳、开放平台、评审、CCAS 与知识列表等常规界面，样式债务总分降至 71850 |
+| test | prd-admin | 样式债务扫描新增自适应边框、表面和悬浮态风险明细 |
+| test | prd-admin | 新增逐文件自适应主题棘轮与版本化总分基线检查 |
+| feat | prd-admin | 新增可复用的自适应主题风险扫描、评分、迁移与验收技能 |
+| refactor | prd-admin | 继续迁移普通管理页与共享组件的固定主题样式，样式债务总分降至 69318 |
+| feat | prd-admin | 新增静态主题变量内联样式安全迁移器，自动跳过动态颜色、尺寸与画布几何 |
+| refactor | prd-admin | 完成普通管理界面固定边框、表面、悬浮态和非语义白字的全量主题迁移 |
+| test | prd-admin | 样式债务评分升级为 metric v3 三层口径，普通界面风险与未分类风险归零 |
+| feat | prd-admin | 新增刻意视觉分类清单、逐文件零容忍棘轮与四类可复用主题迁移器 |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（0 改动，D4 的 pnpm 命中为正文散文提及非技能表行，确认为误报未删），D6 核对 5 条 changelog（快捷知识库录音与转录聚焦/视觉创作接入网关图片模型/CDS 发布弹窗性能修复/前一日熵清理自身/录音上传去重），均无匹配的 design 文档章节需要覆盖；PR review 发现 debt.knowledge-base.md 与 debt.cds.performance.md 的既有台账并未真正覆盖 2026-07-20/21 两个批次（此前判断有误），已补齐两份 debt 台账的对应日期化章节，manifest 累计 472 条 |
+| fix | llmgw | 修复 appCaller 最近请求链接丢失 Gateway 基址并误跳 MAP 根路径的问题 |
+| polish | llmgw | 对齐 OpenRouter 日志 Jakarta 字体、洞察区密度、宽表列宽、实体图标与明暗主题对比度 |
+| fix | llmgw | 修复日志中的 Exchange 被误当作普通 Provider 打开，改为进入对应 Exchange 详情抽屉 |
+| fix | llmgw | 修复正式控制台字体资源误请求 MAP 根路径导致 Plus Jakarta 回退系统字体的问题 |
+| polish | llmgw | 重构请求日志表格设置、实体图标、列分布和右侧详情交互 |
+| fix | llmgw | 修复日志趋势图空白槽与 requestId 搜索框边界重叠 |
+| fix | llmgw | 表格设置使用自适应 Portal 避免视口越界和卡片裁剪，并补齐请求详情侧栏的可访问对话框语义 |
+| docs | llmgw | 同步请求记录教程中的表格设置、日志抽屉和 App 摘要流程 |
+| polish | llmgw | 请求记录的模型、Provider 与 App 增加统一的悬浮信息卡、图标和点状下划线反馈 |
+| feat | llmgw | 新增模型、Provider 与 App 独立详情页，串联真实配置、路由、治理和最近请求 |
+| docs | llmgw | 更新请求记录教程中的实体悬浮、详情页与返回路径 |
+| fix | llmgw | 修复正式维护发布重复执行 Provider 审计并被已继承基线错误阻断的问题 |
+| fix | llmgw | 手机端请求详情覆盖完整视口，消除左侧残留空隙与长字段额外换行 |
+| test | llmgw | 同步维护发布免重复 Provider 审计后的生产脚本守卫断言 |
+| fix | llmgw | 修复 Provisioning 修复租约被更高 generation 接管后旧持有者仍可继续写入业务数据的问题 |
+| test | llmgw | 增加旧 repair token 与 generation 失效后的业务写入围栏回归测试 |
+| fix | llmgw | 补齐模型、Provider 与 App 详情页的教程漂移映射和回归测试 |
+| fix | llmgw | 补齐图像生成响应的用量、费用、完成原因和成功图片数采集，并按模态展示日志单位 |
+| polish | llmgw | 将原生租户下拉重构为组织切换面板，补齐模型与 Provider 品牌图标 |
+| feat | llmgw | Quickstart 生成配置后自动执行零费用安全验证，收敛三分钟接入路径 |
+| docs | llmgw | 同步组织与团队边界、自动 Quickstart、图片用量和费用证据教程 |
+| polish | llmgw | 日志页打包 Geist 字体并对齐 OpenRouter 的字号、筛选入口、列密度与无横向滚动布局 |
+| fix | llmgw | 重排移动端控制台顶栏，将组织切换移入导航抽屉并补齐可用的请求搜索入口 |
+| fix | llmgw | 按独立视觉验收恢复移动日志趋势图、点击提示、横向宽表与主页面纵向滚动，并提升双主题亮度层级和触控尺寸 |
+| test | llmgw | 同步日志筛选器、组织切换器与移动端字号的架构守卫断言 |
+| fix | prd-api | 修复身份认证前限流导致同出口用户共享限流桶的问题 |
+| fix | prd-admin | 修复产品评审流限流或断流后重复连接并持续显示评审中的问题 |
+| test | prd-api | 同步日志详情守卫与当前选中状态命名 |
+
+### 2026-07-22
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | acceptance | 修复验收报告顶部缺口统计口径并在右上角显示报告时间 |
+| fix | cds | 修复热重启等待页卡 35% 不动且就绪后不跳转:forwarder 将 /_cds/waiting-status 误按通用 passthrough 剥前缀打到 REST 端口,被 SPA 兜底以 200 HTML 吞掉,轮询 JSON 解析静默失败;现转给 master worker proxy 并保留 Host |
+| fix | cds | 热重启进度改为 elapsed/median 连续映射 35+frac*61(服务端与等待页脚本同公式),弃用 max(35, frac*100) 下限钳制,消除重启前三分之一时间进度条完全静止的窗口 |
+| test | cds | 新增 forwarder waiting-status 路由回归测试(不走 REST passthrough、保留 Host、未配 fallback 时退回旧行为)并更新热重启进度公式断言 |
+| style | cds | 宝石六芒 loader 换代为「组装-碎裂叙事」核心动画:逐面弹入组装、驻留段轮流呼吸、逐面旋转碎裂循环,消灭旧版占一半周期的完整静止死相 |
+| style | cds | favicon 从 ember 橙统一到品牌 iris 紫蓝(双栈同步),消除 favicon 与应用内品牌色系分裂 |
+| feat | cds | 预览等待页、forwarder 等待页、nginx 自升级页前景加入宝石六芒核心叙事(服务端 SSOT 模块 loading-pages/gem.ts,矿色按状态设定 v2:构建琥珀/重启银河/品牌 iris),自升级页旧圆圈 spinner 退役 |
+| fix | cds | 快速接入强制安装 preview-url，预览地址改为只读取 CDS API 真实多入口并禁止本地推算 |
+| fix | cds | 分支 API 合并主应用与模型网关等命名服务入口，避免把根域数量误当成系统入口数量 |
+| security | cds | Agent 预览地址仅暴露公开 previewDomain，隐藏、备用和内部根域不再进入 API 输出 |
+| fix | prd-api | 同步官方技能内嵌目录中的真实预览地址交付规则 |
+| security | cds | 项目级 Agent Key 的项目列表仅返回绑定项目，防止跨项目元数据泄露 |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 核对 5 条 changelog（GPT-5.6 raw chat 默认修复/首页明暗主题重塑/LLM 网关逻辑模型与 Offering/网关实战教程目录/移动端验收硬门禁），均无需向 design 文档追加新章节（GPT-5.6 raw chat 修复无对应设计文档；首页主题重塑属前端 UI 层且已有 admin-dual-theme.md 规则与 debt.frontend.mobile-light-theme.md 台账覆盖；逻辑模型与 Offering 已由同日更新的 design.platform.model-pool.md v3.0 完整覆盖；网关实战教程目录与既有 plan.platform.llm-gateway-authoritative-tutorial.md 范围不同、无匹配章节；移动端验收硬门禁已由 real-visual-acceptance.md 等规则层覆盖），仅登记 manifest 避免向无关文档强行插入内容，manifest 累计 472 条 |
+| polish | llmgw | 对齐 OpenRouter 日志字体、字号、完整列布局，并消除单列吞占造成的大段空白 |
+| feat | llmgw | 日志行进入独立请求详情路径，App 链接进入对应 appCaller 配置与治理页面 |
+| docs | llmgw | 同步请求记录实战教程的列表字段、独立详情和 App 跳转步骤 |
+| security | prd-api | 外部 WSS 与安全 HTTP 出站补齐 IPv4、IPv6 特殊用途和保留网段拒绝规则 |
+| test | prd-api | 增加保留地址拒绝与公网地址放行回归矩阵 |
+| fix | prd-admin | 让正式知识库公开教程支持全局深浅主题切换并移除写死暗色表面 |
+| fix | prd-admin | Key 撤销与删除改用站内确认弹窗，避免原生确认框阻断操作和自动化验收 |
+| feat | cds | 验收报告新增离线 ZIP 下载、右键知识库操作、时间分组排序与报告时间展示 |
+| feat | cds | 已停止分支卡片右下角新增轻量一键启动入口 |
+| feat | prd-admin | 知识库页支持消费 CDS 单报告导入深链并自动进入当前用户的目标知识库 |
+| feat | prd-api | CDS 报告导入支持按 reportId 精确同步并按已授权来源地址匹配系统互联连接 |
+| fix | prd-admin | 修复团队副负责人添加成员时因误用管理员接口而无法搜索用户的问题 |
+
+### 2026-07-21
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| refactor | cds | 发布弹窗重构为分阶段向导(选站点 → 发布前检查 → 发布):发布开始后前序配置/预检收起成一行摘要、实时发布状态占满弹窗,不再被长滚动挤到最底部遮挡 |
+| fix | cds | 发布前检查里的发布脚本收进「查看脚本」折叠框 + 自身横向滚动,修复整段 shell 平铺撑破弹窗、底部横向滚动条的问题 |
+| refactor | cds | 发布弹窗主操作固定到底部 sticky footer,按阶段只显示一颗主按钮(发布前检查 → 开始发布 → 打开上线地址),非专家也能看懂下一步 |
+| fix | cds | CDS 系统设置的「用户管理 / 用户痕迹」tab 按运行时认证模式门控:auth-local 路由仅在 authMode=github 时挂载,basic/disabled 模式下无条件调用 /api/auth/users、/api/auth/activity 会直接 404,现按 /api/auth/public-status 探测的 mode 隐藏这两个 tab 并回退默认 tab |
+| perf | cds | 修复接口持续排队(3.7s 攀升至 40s+)的两个高置信根因之一:部署卡死看门狗的 execSync(git diff) 幂等判断前置 + 按不可变 sha 对记忆化,stale 分支不再每 5 分钟重复同步阻塞事件循环 |
+| perf | cds | 项目列表页轮询从裸 setInterval 改为自调度循环:等上一轮返回再排下一轮(天然 in-flight 去重)、页面隐藏暂停、回前台立即刷新;并消除每轮重复请求两次 /api/pending-imports;资源用量弹窗 5s 轮询同改 |
+| test | cds | 新增回归测试:已告警分支跳过 diffRuntimePaths(锁定幂等前置的性能语义) |
+| fix | cds | forwarder 代理响应剥掉 hop-by-hop 头(Connection/Keep-Alive/Transfer-Encoding 等):master SSE 的 Connection: close(防 nginx upstream 池复用死 socket,保留)不再透传到 HTTP/2 客户端连接,修复 /api/branches/stream 约 2.7 分钟 ERR_HTTP2_PROTOCOL_ERROR 断流 |
+| perf | cds | http 请求日志治理:成功 GET 读请求(轮询/控制面/静态)按 1:10 采样落库(非 GET/错误/SSE/部署/容器操作全保留,在途请求实时面板不受影响);写链加 500 条有界背压,Mongo 慢时丢弃非错误记录而非无界积压 |
+| perf | cds | mongo-split 存储层增量快照重构：save() 支持脏范围 hint，同 tick 全带 hint 时只克隆被点名的 kind/实体，不再对整个 state 做 structuredClone |
+| perf | cds | mongo-split 持久化改按实体 id 缓存上次落库的 stableJson 字符串，diff 只 stringify 当前侧；删除 persistedCache 整份 state 的第二次 structuredClone，消灭每周期约 4 遍全量序列化 |
+| perf | cds | 部署 run 事件 append/心跳、发布日志、服务部署日志等高频写路径带上实体级/global 脏 hint；部分写失败自动全量重同步兜底，flush/generation/启动恢复语义不变 |
+| test | cds | server-integration 套件对沙箱环境免疫:套件级摘除 CDS_USERNAME/CDS_PASSWORD(结束后恢复),修复开发机/Agent 沙箱配置远端 CDS 凭据时 10 个用例因 basic auth 误开而 401 假红 |
+| fix | cds | 站内信陈旧通知清理:通知面板打开时对引用的项目探活,项目已删除(404)的通知自动移除,不再让用户点「查看推荐方式」落到已失效项目的 404 页;项目元信息降级(fallback)期间不再新发携带死链的通知 |
+| fix | cds | 分支失败归因补全:detectContainerFatalCause 新增 Flyway 迁移失败/exit 137/139/signal 9(代码侧)与 OOM(配置侧)模式,就绪探测日志取样窗口 80 行扩到 400 行;Spring/Flyway 应用崩溃不再被误标成「就绪探测超时」甩锅 CDS |
+| test | cds | 新增 Flyway/exit-137/OOM 归因回归测试 |
+| fix | cds | mongo-split 写失败恢复加固:在途写失败时排队中的 partial 就地升级为全量快照,杜绝 flush 谎报成功而失败变更缺失的窗口(Codex P1) |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（0 改动），D6 核对 5 条 changelog（ASR 额度告警/短录音误判/双主题契约扩面/GPT-5.6 迁移/前一日熵清理自身），均无匹配的 design 文档章节需要覆盖（相关内容已由 CLAUDE.md 规则层与既有 debt 台账覆盖），manifest 累计 467 条 |
+| fix | prd-api | 修复录音上传并发 /complete 竞态：完成前原子认领会话（Uploading→Completing），杜绝重复音频条目与文档数双计 |
+| fix | prd-admin | 修复弱网下 /complete 响应丢失导致整文件重复上传：回退前回读会话状态并幂等重试 /complete，服务端已完成则复用同一条目 |
+
+### 2026-07-20
+
+| 类型 | 模块 | 描述 |
+|------|------|------|
+| fix | prd-api | 修复豆包异步转录统一响应被误判为空，并补齐独立网关额度告警通知 |
+| fix | prd-api | 录音转录改为原地写回源条目，保持知识库文档标题、目录位置和音频附件不变 |
+| fix | prd-admin | 统一录音、转录原文与整理结果的单页体验，修复移动端操作区重叠并优先录制 M4A |
+| feat | prd-admin | 新增普通播放与交互式播放双模式，支持转录歌词滚轮、点句跳播及整理模块顺序高亮 |
+| feat | prd-api | 记录转录笔记当前整理方式，为播放器页签提供后端真实标签 |
+| fix | prd-admin | 修复移动端快速创建抽屉关闭后仍占用模态语义与焦点层的问题 |
+| fix | prd-api | 修复五秒左右的清晰短录音被 ASR 稳定误判为无有效语音的问题 |
+| fix | cds | 修复自更新直接重建在线前端目录导致懒加载模块断代与页面黑屏，并刷新受污染的前端资源指纹 |
+| security | cds | 增加共享控制面版本继承门禁，兼容旧技能的同版本与快进更新，并要求非快进发布或回滚提供当前 SHA 乐观锁和审计原因 |
+| feat | cds | 新增不拉代码、不切分支的当前精确 SHA 重启接口和 cdscli 命令 |
+| fix | cds | 修复 cdscli 收到 self-update SSE 错误事件后仍返回成功的问题 |
+| feat | cds | 新增兼容旧客户端的渐进式 Agent 操作者身份采集与审计关联 |
+| feat | cds | CDS 自更新和精确版本重启结果返回 Agent session、requestId 与 operationId 供复盘关联 |
+| test | cds | 覆盖 legacy、declared、非法字段、日志脱敏及 self-update/release 关联 |
+| fix | cds | 修复 Git 代理路径中的 GitHub 仓库身份被正式发布预检误判 |
+| fix | cds | 修复无协议 GitHub origin 被正式发布预检误判为跨项目仓库 |
+| fix | prd-admin | 修复 VOC 与 Command+K 在浅色主题下的固定暗色表面和低对比文字 |
+| refactor | prd-admin | 统一选择态、可视化中性层与语义文字的双主题样式契约 |
+| test | prd-admin | 增加关键页面主题契约守卫和全局主题风险扫描 |
+| refactor | prd-admin | 移除重复命令面板并将实际 Command+K 与共享按钮迁移到统一主题契约 |
+| fix | prd-admin | 修复首页、百宝箱、工作流、VOC 与知识库浅色主题下的低对比文字 |
+| fix | prd-admin | 修复真实浏览器复测发现的工作流危险操作与知识库排序低对比文字 |
+| fix | prd-admin | 修复系统互联、基础设施服务与涌现卡片在浅色主题下的混合表面及交互低对比问题 |
+| test | prd-admin | 新增路由、设置 tab、主题与交互状态验收矩阵及固定表面、固定文字、动态文字色扫描 |
+| fix | prd-admin | 修复风险扫描外扩发现的项目路由页面浅色文字，并显式隔离 CDS Agent 与授权弹窗的固定暗色 scope |
+| fix | prd-admin | 修复风险榜首周报海报工作台浅色主题白字，并将创建弹窗固定暗色限制在显式 scope 内 |
+| polish | prd-admin | 重设计侧栏 MAP 路径品牌标识并为全局主题入口增加 CDS 同款圆形水波切换动效 |
+| refactor | prd-admin | 将周报智能体明暗状态、切换动效与语义色接入全局主题唯一来源并保留编辑风格品牌层 |
+| polish | prd-admin | 将周报日常记录中的字符图标统一替换为 Lucide 图标 |
+| fix | prd-admin | 将周报浅色卡片的纯白表面迁移到全局暖纸张 surface token |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（0 改动），D6 处理 5 条 changelog→doc 覆盖（cds 自更新极速版接线状态更正 + 生产更新防护/操作者身份补记），manifest 累计 462 条 |
+| feat | prd-api | 将 OpenAI 默认与转写文案模型按角色迁移到 GPT-5.6 Sol/Terra，并兼容推理参数与输出 token 参数 |
+| feat | prd-admin | 将管理端模型示例迁移到 GPT-5.6 分层模型并补齐 Sol/Terra/Luna 能力识别 |
+| fix | prd-api | 修复默认 raw Chat 路径未应用 GPT-5.6 请求参数兼容的问题 |
+| polish | prd-admin | 重塑首页明暗主题层级，为智能体插画注入类别色彩并新增全局外观切换入口 |
+| refactor | prd-admin | 统一明暗主题 token 与智能体图片卡渲染契约，浅色模式自动使用高键插画 |
+| polish | prd-admin | 重构百宝箱卡片密度，新增紧凑、标准与大图三种可记忆的展示方式 |
+| polish | prd-admin | 为 23 个智能体新增浅色专用插画，移除浅色主题的暗图洗白滤镜并强化暖灰层级 |
+| fix | prd-admin | 系统修复市场、资产、网页、工作流、模型、用户、统计与 VOC 页面的浅色文字对比度 |
+| refactor | prd-admin | 新增跨主题语义色与固定暗色可视化表面契约，并校验测试及正式构建均包含 23 张浅色插画 |
+| fix | prd-admin | 修复移动端兼容提示在浅色主题下文字与 PC 专属说明不可见的问题 |
+| polish | prd-admin | 将首页门头收敛为平衡工作台栅格，并用真实进度、状态和时间增强继续上次工作现场 |
+| fix | prd-admin | 将更新中心标签、二级信息层与关联缺陷悬浮窗迁移到双主题语义表面，修复浅色模式文字对比度不足 |
+| feat | llmgw | 新增面向调用方的逻辑模型目录与多上游 Offering 管理，支持优先级、权重、协议、端点、并发和速率配置 |
+| feat | prd-api | 视觉创作按逻辑模型 PublicId 调用 Gateway，并在上游失败时按候选协议重建图片请求 |
+| fix | prd-api | 修复 Offering 跨实例速率限制、健康回写、入口并发治理和自定义端点路径语义 |
+| fix | prd-api | 修复 MAP 到 Serving 二次解析丢失逻辑模型并误退回旧池，跨进程保留图片协议重建契约 |
+| fix | prd-api | 逻辑模型在 MAP 处于 inproc 迁移期时仍强制交给独立 Gateway 解析与发送，禁止同名旧模型池静默接管 |
+| fix | prd-api | 视觉创作任务独立保存逻辑模型公开 ID，禁止上游模型名覆盖用户选择并被同名旧模型池重新接管 |
+| fix | prd-api | 生图后台任务通过显式必需逻辑模型契约进入独立 Gateway，不再依赖后台目录反推并硬拒绝旧池回退 |
+| fix | prd-admin | 视觉创作生成记录以稳定逻辑模型为主展示，上游模型仅保留在 Gateway 审计日志中 |
+| docs | llmgw | 将模型池教程重写为逻辑模型目录、多上游路由、故障切换与日志验收实战 |
+| fix | prd-api | 显式逻辑模型在生图 Worker 中跳过 MAP 模型池预解析，保留公开 ID 并由独立 Gateway 单次解析上游 |
+| fix | prd-api | 显式逻辑模型的解析与发送强制共用独立 Gateway HTTP 边界，不再受 MAP 全局 inproc 模式影响 |
+| fix | prd-api | 预览环境 Run 队列作用域加入 commit revision fencing，阻止同分支残留旧 Worker 抢走新架构任务 |
+| ops | prd-api | 生图 Run 管理员查询返回部署作用域，支持精确审计任务由哪个项目、分支和 revision 入队 |
+| fix | prd-api | 生图客户端以 logical-model 平台标记恢复稳定模型身份并强制独立 Gateway，阻断参数缺失时退回同名旧模型池 |
+| fix | prd-api | 将逻辑模型公开 ID 随 Run 上下文贯穿执行链，并在 Shadow 网关四条发送路径硬隔离旧模型池 |
+| refactor | prd-api | 视觉创作所有生图请求统一跨进程进入独立 Gateway，默认池和故障兜底不再由 MAP 进程内发送 |
+| fix | prd-api | 视觉创作编译期直接依赖 HTTP Serving 客户端，消除标记接口被错误装配为进程内网关的空间 |
+| fix | prd-api | 生图任务使用旧 Worker 不可识别的作用域队列状态并叠加 revision fencing，阻断共享 Mongo 下跨分支抢单 |
+| fix | llmgw | 上游返回 401 至 404 时自动切换同一逻辑模型的下一 Offering，避免单个 Provider 凭据或模型端点差异中断应用 |
+| docs | llmgw | 在权威知识库新增实战教程目录，首批覆盖 gpt-image-2-all、视觉创作绑定、图片模型回退与日志验证 |
+| test | llmgw | 增加实战教程目录结构与排序守卫，并纳入页面漂移映射 |
+| rule | acceptance | 视觉验收新增真实触控移动端证据、独立用户路径与报告归档硬门禁 |
+| fix | acceptance | 登录态 CDS 报告打开验证支持读取 sandbox iframe 正文与图片 |
+| fix | acceptance | verify-open 改用 route 逐请求注入 CDS 密钥，仅同 host 附带，杜绝密钥泄漏到外链子资源；并支持 CDS_PROJECT_KEY 回退 |
+| fix | acceptance | 移动端硬门禁豁免桌面原生/内部非页面报告的「移动端不适用」声明，避免 API-only/后端证据被无差别拒收 |
+| feat | prd-admin | 知识库右下角悬浮加号支持双击进入快捷知识库录音，单击仍保留原新增菜单 |
+| feat | prd-api | 新增按用户稳定身份原子创建快捷知识库的幂等接口，避免重命名和并发触发产生重复库 |
+| polish | prd-admin | 录音和解析过程改为视觉居中，增加阶段计时、固定底部操作区与移动端安全区适配 |
+| feat | prd-admin | 录音时可下拉选择目标知识库，完成后默认保存录音与可编辑原文，用户可明确取消或主动一键整理 |
+| fix | prd-admin | 无麦克风或拒绝权限时仍保留录音保存知识库下拉选择，不再把目标库选择一起隐藏 |
+| feat | prd-api | 转录默认仅执行原文识别，新增原文校对接口，并以用户修订后的原文作为后续整理依据 |
+| polish | prd-admin | 录音文档以原文和整理类型命名的页签承载播放、逐句校对与可选整理结果 |
+| polish | prd-admin | 移动端进入已转录录音文档后隐藏新增悬浮按钮，避免播放与原文阅读时遮挡正文 |
+| fix | prd-admin | 快捷录音自动启动意图改为绑定知识库并在首次执行时消费，避免转录完成跳库或重新进库时重复开始录音 |
+| fix | prd-admin | 转录整理增加独立状态轮询兜底，修复后台已完成但移动端因流事件丢失长期停在写入中的问题 |
+| feat | prd-api | 新增录音顺序分片上传会话，录音过程中持续保存服务端分片并支持幂等完成与整段上传降级 |
+| feat | prd-admin | 快捷录音增加实时保护状态和已上传体积，网络失败时自动保留本机保险箱并走原上传链路 |
+| feat | prd-api | 会议纪要整理升级为方案评审结果通知模板，支持会议邀请或已有纪要作为补充资料并保留明确的不同意见归属 |
+| polish | prd-admin | 会议纪要整理支持粘贴多行资料、即时识别方案时间地址与参与人员，并保持原文可编辑 |
+| fix | prd-api | 视觉创作模型列表与 LLMGW 网关模型池使用同一查询链路 |
+| fix | prd-admin | 视觉创作将网关池成员展开为可精确选择的图片模型 |
+| docs | llmgw | 实战教程同步 GPT Image 2 与 Nano Banana 2 测试配置和验收方法 |
+| fix | prd-api | LLMGW 权威模型池请求在日志中统一标记为专属模型池 |
+
+
 ### 2026-07-20
 
 | 类型 | 模块 | 描述 |
