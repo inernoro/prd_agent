@@ -4,14 +4,14 @@
 :root {
   --font-sans: 'Plus Jakarta Sans Variable', 'PingFang SC', 'Noto Sans SC', 'Microsoft YaHei',
     -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif;
-  --bg-page: #05080a;
+  --bg-page: #03080a;
   --bg-surface: #0c1114;
   --bg-elevated: #11181d;
   --bg-input: #091014;
   --bg-base: #030608;
   --bg-hover: rgba(255, 255, 255, 0.055);
 
-  --text-primary: #f8fafc;
+  --text-primary: #fcfcfe;
   --text-secondary: #c4c4cc;
   --text-muted: #a1a1aa;
   --log-text-entity: #fcfcfe;
@@ -3227,7 +3227,7 @@ a:focus-visible {
   margin: 0;
   color: var(--text-primary);
   font-size: 20px;
-  font-weight: 600;
+  font-weight: 700;
   line-height: 1.8;
   letter-spacing: -0.02em;
 }
@@ -5975,7 +5975,7 @@ a:focus-visible {
 
   .lg-logs-heading h1 {
     font-size: 20px;
-    font-weight: 600;
+    font-weight: 700;
     line-height: 1.55;
     letter-spacing: -0.02em;
   }
@@ -6054,6 +6054,13 @@ a:focus-visible {
     column-gap: 8px;
     padding-right: 10px;
     padding-left: 10px;
+  }
+
+  .lg-log-table-head > div:first-child,
+  .lg-log-table-row > div:first-child {
+    left: 10px;
+    isolation: isolate;
+    box-shadow: 8px 0 10px color-mix(in srgb, var(--bg-surface) 88%, transparent);
   }
 
   .lg-log-table-head > div:not(.lg-log-table-settings) {
