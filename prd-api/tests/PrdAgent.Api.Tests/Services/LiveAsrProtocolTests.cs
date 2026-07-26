@@ -198,6 +198,7 @@ public class LiveAsrProtocolTests
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
         frames.Writer.TryComplete();
         var events = new List<LiveAsrEvent>();
+        var upstreamRequests = 0;
 
         var result = await service.TranscribeAsync(
             [candidate],
@@ -206,12 +207,14 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            () => upstreamRequests++);
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
         events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Partial && evt.Stable);
         events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Final && evt.Stable);
+        upstreamRequests.ShouldBe(1);
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.Is<GatewayRawRequest>(request =>
                 request.EndpointPath == "/v1/chat/completions"
@@ -235,15 +238,18 @@ public class LiveAsrProtocolTests
             new byte[LiveAsrBatchFallbackService.WindowBytes]));
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
         frames.Writer.TryComplete();
+        var upstreamRequests = 0;
 
         var result = await service.TranscribeAsync(
             [candidate],
             frames.Reader,
-            _ => Task.CompletedTask);
+            _ => Task.CompletedTask,
+            () => upstreamRequests++);
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
         result.Error.ShouldBe("没有识别到有效语音");
+        upstreamRequests.ShouldBe(0);
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.IsAny<GatewayRawRequest>(),
             It.IsAny<GatewayModelResolution>(),
@@ -491,20 +497,98 @@ public class LiveAsrProtocolTests
             Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
         await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
         frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
 
         var result = await service.TranscribeAsync(
             [first, second],
             frames.Reader,
-            _ => Task.CompletedTask);
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldBe("备用供应商成功");
+        result.Provider.ShouldBe(second.ActualPlatformName);
+        result.Model.ShouldBe(second.ActualModel);
+        events.Single(evt => evt.Type == LiveAsrEventTypes.Ready).Provider.ShouldBeNull();
+        events.Single(evt => evt.Type == LiveAsrEventTypes.Ready).Model.ShouldBeNull();
+        events.Single(evt => evt.Type == LiveAsrEventTypes.Partial).Provider
+            .ShouldBe(second.ActualPlatformName);
+        events.Single(evt => evt.Type == LiveAsrEventTypes.Final).Model
+            .ShouldBe(second.ActualModel);
         resolver.Verify(x => x.RecordFailureAsync(
             It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "first"),
             It.IsAny<CancellationToken>()), Times.Once);
         resolver.Verify(x => x.RecordSuccessAsync(
             It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "second"),
             It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
+    public async Task BatchFallback_ShouldExcludeFailedCandidateAndPromoteWinnerForLaterWindows()
+    {
+        var first = BatchCandidate("first", "first-audio");
+        var second = BatchCandidate("second", "second-audio");
+        var firstCalls = 0;
+        var secondCalls = 0;
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                GatewayRawRequest _,
+                GatewayModelResolution resolution,
+                CancellationToken _) =>
+            {
+                if (resolution.ActualModel == "first-audio")
+                {
+                    firstCalls++;
+                    return GatewayRawResponse.Fail("PROVIDER_FAILED", "首选供应商失败", 503);
+                }
+                secondCalls++;
+                return new GatewayRawResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = $"{{\"text\":\"备用窗口{secondCalls}\"}}",
+                };
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            2,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(3, [], IsFinal: true));
+        frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
+
+        var result = await service.TranscribeAsync(
+            [first, second],
+            frames.Reader,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        result.Completed.ShouldBeTrue();
+        result.Transcript.ShouldBe("备用窗口1 备用窗口2");
+        result.Provider.ShouldBe(second.ActualPlatformName);
+        result.Model.ShouldBe(second.ActualModel);
+        firstCalls.ShouldBe(1);
+        secondCalls.ShouldBe(2);
+        events.Where(evt => evt.Type == LiveAsrEventTypes.Partial)
+            .ShouldAllBe(evt => evt.Provider == second.ActualPlatformName
+                                && evt.Model == second.ActualModel);
     }
 
     [Fact]

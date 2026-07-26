@@ -41,18 +41,24 @@ public sealed class LiveAsrBatchFallbackService
     public async Task<LiveAsrSessionResult> TranscribeAsync(
         IReadOnlyList<ModelResolutionResult> candidates,
         ChannelReader<LiveAsrAudioFrame> frames,
-        Func<LiveAsrEvent, Task> emit)
+        Func<LiveAsrEvent, Task> emit,
+        Action? onUpstreamRequest = null)
     {
-        var provider = candidates.FirstOrDefault()?.ActualPlatformName;
-        var model = candidates.FirstOrDefault()?.ActualModel;
+        string? provider = null;
+        string? model = null;
         await emit(new LiveAsrEvent
         {
             Type = LiveAsrEventTypes.Ready,
-            Provider = provider,
-            Model = model,
+            // 此时尚未有候选成功，不预报首选方案为实际执行方。真实身份从
+            // 首个成功窗口开始写入 partial/final 与会话结果。
+            Provider = null,
+            Model = null,
             Message = "流式供应商不可用，已切换到滚动窗口实时转写",
         });
 
+        // 候选状态属于整个录音会话，不属于单个五秒窗口。某候选完整失败后从
+        // 本会话移除；成功候选晋升到首位，后续窗口不再反复等待已知故障方案。
+        var sessionCandidates = candidates.ToList();
         using var pending = new MemoryStream();
         var transcriptParts = new List<string>();
         var windowIndex = 0;
@@ -79,8 +85,13 @@ public sealed class LiveAsrBatchFallbackService
             {
                 var bytes = TakePrefix(pending, WindowBytes);
                 windowIndex++;
-                var text = await TranscribeWindowAsync(candidates, bytes, windowIndex, emit);
-                if (text is null)
+                var window = await TranscribeWindowAsync(
+                    sessionCandidates,
+                    bytes,
+                    windowIndex,
+                    emit,
+                    onUpstreamRequest);
+                if (!window.Succeeded)
                 {
                     return new LiveAsrSessionResult
                     {
@@ -92,9 +103,14 @@ public sealed class LiveAsrBatchFallbackService
                     };
                 }
 
-                if (!string.IsNullOrWhiteSpace(text))
+                if (window.Candidate != null)
                 {
-                    transcriptParts.Add(text.Trim());
+                    provider = window.Candidate.ActualPlatformName;
+                    model = window.Candidate.ActualModel;
+                }
+                if (!string.IsNullOrWhiteSpace(window.Text))
+                {
+                    transcriptParts.Add(window.Text.Trim());
                     await emit(new LiveAsrEvent
                     {
                         Type = LiveAsrEventTypes.Partial,
@@ -113,8 +129,13 @@ public sealed class LiveAsrBatchFallbackService
         if (pending.Length > 0)
         {
             windowIndex++;
-            var text = await TranscribeWindowAsync(candidates, pending.ToArray(), windowIndex, emit);
-            if (text is null)
+            var window = await TranscribeWindowAsync(
+                sessionCandidates,
+                pending.ToArray(),
+                windowIndex,
+                emit,
+                onUpstreamRequest);
+            if (!window.Succeeded)
             {
                 return new LiveAsrSessionResult
                 {
@@ -125,8 +146,13 @@ public sealed class LiveAsrBatchFallbackService
                     Error = "最后一个滚动窗口 ASR 调用失败",
                 };
             }
-            if (!string.IsNullOrWhiteSpace(text))
-                transcriptParts.Add(text.Trim());
+            if (window.Candidate != null)
+            {
+                provider = window.Candidate.ActualPlatformName;
+                model = window.Candidate.ActualModel;
+            }
+            if (!string.IsNullOrWhiteSpace(window.Text))
+                transcriptParts.Add(window.Text.Trim());
         }
 
         var transcript = JoinTranscript(transcriptParts);
@@ -171,21 +197,23 @@ public sealed class LiveAsrBatchFallbackService
         };
     }
 
-    private async Task<string?> TranscribeWindowAsync(
-        IReadOnlyList<ModelResolutionResult> candidates,
+    private async Task<BatchWindowResult> TranscribeWindowAsync(
+        List<ModelResolutionResult> candidates,
         byte[] pcm,
         int windowIndex,
-        Func<LiveAsrEvent, Task> emit)
+        Func<LiveAsrEvent, Task> emit,
+        Action? onUpstreamRequest)
     {
         // 纯静音窗口不发给多模态模型。否则部分模型会把静音补全成
         // “请播放音频”等解释性文本，既污染原文又产生无效调用成本。
         if (!HasLikelySpeech(pcm))
-            return string.Empty;
+            return BatchWindowResult.Silent;
 
         var wave = EncodeWave(pcm, MinimumProviderSeconds);
-        for (var index = 0; index < candidates.Count; index++)
+        var orderedCandidates = candidates.ToArray();
+        for (var index = 0; index < orderedCandidates.Length; index++)
         {
-            var candidate = candidates[index];
+            var candidate = orderedCandidates[index];
             for (var providerAttempt = 1;
                  providerAttempt <= ProviderValidationAttempts;
                  providerAttempt++)
@@ -196,7 +224,7 @@ public sealed class LiveAsrBatchFallbackService
                     Provider = candidate.ActualPlatformName,
                     Model = candidate.ActualModel,
                     Attempt = (index * ProviderValidationAttempts) + providerAttempt,
-                    TotalAttempts = candidates.Count * ProviderValidationAttempts,
+                    TotalAttempts = orderedCandidates.Length * ProviderValidationAttempts,
                     Message = providerAttempt == 1
                         ? $"正在识别第 {windowIndex} 个实时片段"
                         : $"正在进行第 {providerAttempt - 1} 次转写校验",
@@ -204,8 +232,10 @@ public sealed class LiveAsrBatchFallbackService
 
                 try
                 {
+                    var request = BuildRequest(candidate, wave, providerAttempt);
+                    onUpstreamRequest?.Invoke();
                     var response = await _gateway.SendRawWithResolutionAsync(
-                        BuildRequest(candidate, wave, providerAttempt),
+                        request,
                         candidate.ToGatewayResolution(),
                         CancellationToken.None);
                     var text = response.Success && !string.IsNullOrWhiteSpace(response.Content)
@@ -216,12 +246,14 @@ public sealed class LiveAsrBatchFallbackService
                         if (IsNoSpeech(text))
                         {
                             await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
-                            return string.Empty;
+                            PromoteCandidate(candidates, candidate);
+                            return new BatchWindowResult(true, string.Empty, candidate);
                         }
                         if (!LooksLikeAssistantReply(text))
                         {
                             await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
-                            return text.Trim();
+                            PromoteCandidate(candidates, candidate);
+                            return new BatchWindowResult(true, text.Trim(), candidate);
                         }
                         _logger.LogWarning(
                             "滚动窗口 ASR 返回解释性回答，已拒绝写入原文 window={Window} candidate={Candidate} providerAttempt={ProviderAttempt}",
@@ -238,6 +270,10 @@ public sealed class LiveAsrBatchFallbackService
                         response.StatusCode,
                         response.ErrorCode,
                         providerAttempt);
+                    // 传输或供应商明确失败时立即切换，不把四次“回答校验”额度
+                    // 浪费在已不可用的候选上。只有成功响应但文本无效才继续校验。
+                    if (!response.Success)
+                        break;
                 }
                 catch (Exception ex)
                 {
@@ -247,12 +283,34 @@ public sealed class LiveAsrBatchFallbackService
                         windowIndex,
                         candidate.ActualModel,
                         providerAttempt);
+                    break;
                 }
             }
             await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
+            candidates.Remove(candidate);
         }
 
-        return null;
+        return BatchWindowResult.Failed;
+    }
+
+    private static void PromoteCandidate(
+        List<ModelResolutionResult> candidates,
+        ModelResolutionResult candidate)
+    {
+        var index = candidates.IndexOf(candidate);
+        if (index <= 0)
+            return;
+        candidates.RemoveAt(index);
+        candidates.Insert(0, candidate);
+    }
+
+    private sealed record BatchWindowResult(
+        bool Succeeded,
+        string Text,
+        ModelResolutionResult? Candidate)
+    {
+        public static BatchWindowResult Silent { get; } = new(true, string.Empty, null);
+        public static BatchWindowResult Failed { get; } = new(false, string.Empty, null);
     }
 
     public static IReadOnlyList<ModelResolutionResult> SelectBatchCandidates(

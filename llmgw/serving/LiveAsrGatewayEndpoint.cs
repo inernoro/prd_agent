@@ -164,12 +164,12 @@ public static class LiveAsrGatewayEndpoint
             {
                 if (batchCandidates.Count > 0)
                 {
-                    Interlocked.Exchange(ref paidUpstreamAttempted, 1);
                     var drainPrimaryTask = DrainFramesAsync(frames.Reader);
                     var batchResult = await batchFallback.TranscribeAsync(
                         batchCandidates,
                         batchFrames.Reader,
-                        EmitAsync);
+                        EmitAsync,
+                        () => Interlocked.Exchange(ref paidUpstreamAttempted, 1));
                     sessionResult = batchResult;
                     if (!batchResult.Completed)
                     {
@@ -269,14 +269,14 @@ public static class LiveAsrGatewayEndpoint
             {
                 if (string.IsNullOrWhiteSpace(finalResult?.Transcript) && batchCandidates.Count > 0)
                 {
-                    Interlocked.Exchange(ref paidUpstreamAttempted, 1);
                     // 流式候选在建立阶段全部失败：排空主通道解除背压，由已同步缓存的
                     // 滚动窗口通道接管，用户仍可在录音过程中看到原文。
                     var drainPrimaryTask = DrainFramesAsync(frames.Reader);
                     finalResult = await batchFallback.TranscribeAsync(
                         batchCandidates,
                         batchFrames.Reader,
-                        EmitAsync);
+                        EmitAsync,
+                        () => Interlocked.Exchange(ref paidUpstreamAttempted, 1));
                     sessionResult = finalResult;
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     if (finalResult.Completed)

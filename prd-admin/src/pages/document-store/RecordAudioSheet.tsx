@@ -77,6 +77,17 @@ function formatElapsed(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
+export function canDiscardRecording(finalizationLocked: boolean): boolean {
+  return !finalizationLocked;
+}
+
+export function nextRecordingFinalizationLock(
+  finalizationLocked: boolean,
+  mode: 'complete' | 'discard',
+): boolean {
+  return finalizationLocked || mode === 'complete';
+}
+
 export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
@@ -117,6 +128,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const livePcmCompleteRef = useRef(true);
   const stopLiveCaptureRef = useRef<(() => void) | null>(null);
   const liveCaptureEnabledRef = useRef(true);
+  // MediaRecorder.onstop 一旦进入完成链路，就由该链路独占终态。关闭、背景点击、
+  // Escape 或上传文件入口都不能再把 complete 改写为 discard。
+  const finalizationLockedRef = useRef(false);
   // 完成/取消/组件卸载 的意图标记：onstop 回调按它决定产出 File / 删保险箱 / 保留保险箱。
   // abandon = 录音中组件被卸载（如 SPA 路由跳走）：保留保险箱数据，下次进页可恢复。
   const finishModeRef = useRef<'complete' | 'discard' | 'abandon'>('discard');
@@ -290,6 +304,16 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   }, []);
 
   const stopRecorder = useCallback((mode: 'complete' | 'discard') => {
+    if (mode === 'discard' && !canDiscardRecording(finalizationLockedRef.current)) return;
+    // 完成意图一旦被接受就同步锁定，不能等异步 onstop 才加锁；否则用户在
+    // recorder.stop() 与 onstop 之间点击关闭，仍可能把完整录音改写为 discard。
+    if (mode === 'complete') {
+      finalizationLockedRef.current = nextRecordingFinalizationLock(
+        finalizationLockedRef.current,
+        mode,
+      );
+      setState('finalizing');
+    }
     finishModeRef.current = mode;
     if (mode === 'complete') {
       // 先刷新不足 100ms 的最后一帧，再关闭采集开关。
@@ -350,7 +374,6 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         };
         rec.onstop = async () => {
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
-            setState('finalizing');
             await liveTranscriptionRef.current?.finish();
             const liveSessionId = uploadSessionIdRef.current;
             if (liveSessionId) {
@@ -383,6 +406,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
               }
               if (completed?.success) {
+                if (finishModeRef.current !== 'complete') return;
                 onUploadedRef.current(
                   completed.data.entry,
                   vaultIdRef.current,
@@ -399,6 +423,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             const blob = new Blob(chunksRef.current, { type: baseMime });
             const file = new File([blob], fileNameRef.current || buildFileName(recordingExtension(baseMime)), { type: baseMime });
             if (sessionId) void cancelRecordingUpload(sessionId);
+            if (finishModeRef.current !== 'complete') return;
             onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
@@ -742,8 +767,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             </div>
             <button
               onClick={() => stopRecorder('discard')}
+              disabled={state === 'finalizing'}
               aria-label="取消录音"
-              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft">
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
               <X size={15} />
             </button>
           </div>
@@ -758,8 +784,13 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 py-4'}`}
             style={{ borderTop: '1px solid var(--border-faint)' }}>
             <button
-              onClick={() => { stopRecorder('discard'); onPickFile(targetStoreId || storeId); }}
-              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft">
+              onClick={() => {
+                if (!canDiscardRecording(finalizationLockedRef.current)) return;
+                stopRecorder('discard');
+                onPickFile(targetStoreId || storeId);
+              }}
+              disabled={state === 'finalizing'}
+              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
               <FileUp size={13} /> 已有录音文件？上传音频文件
             </button>
           </div>
