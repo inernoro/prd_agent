@@ -1460,6 +1460,32 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopped';
     }
   }
+  // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
+  // branch.services 快照里，上面的循环停不到它们。不停的话，降温分支的副本
+  // 继续占资源；更糟的是主容器已停、成员还挂着分流权重，入口流量会被加权
+  // 路由导向一个"半活"的分支。与手动 /stop 的级联语义保持一致（配套的
+  // /restart 级联拉起已同步落地）。
+  for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+    for (const member of replicaSet.members) {
+      if (!member.containerName) continue;
+      branchOperationLease?.assertCurrent(`scheduler cooling before replica ${replicaSet.profileId}--${member.id}`);
+      try {
+        await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+          projectId: branch.projectId,
+          branchId: branch.id,
+          profileId: `${replicaSet.profileId}--${member.id}`,
+          operationId: branchOperationLease?.operationId || null,
+          actor: 'scheduler',
+          trigger: 'scheduler',
+          operation: 'scheduler-cooling-replica-member',
+          source: 'schedulerService.setCoolFn',
+        });
+      } catch (err) {
+        console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+      }
+      member.status = 'stopped';
+    }
+  }
   await archiveBranchContainerLogs({
     stateService,
     containerService,

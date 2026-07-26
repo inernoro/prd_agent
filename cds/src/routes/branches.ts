@@ -41,6 +41,7 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
+import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -10927,6 +10928,34 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
       } catch { /* best-effort：发现失败不阻断删除 */ }
+      // 隔离库级联清理（Codex P1，2026-07-26）：专用隔离实例（cds-rsdb-*，label 是
+      // cds.type=rsdb、**没有** cds.branch.id）与共享库里的隔离库（<源库>_rs_<member>）
+      // 只记录在 branch.replicaDbSnapshots 台账。分支状态一删，快照 API 与上面的
+      // app 容器残留清扫都够不着它们——每删一个带隔离库的分支就永久漏跑一个数据库
+      // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
+      // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
+      // 不会误删共享主库）。
+      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+        try {
+          const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === snapshot.infraContainer);
+          await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+        } catch (err) {
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'branch-delete',
+            action: 'branch.delete.replica-db-drop-failed',
+            message: `删分支级联清理隔离库失败: ${snapshot.dbName}${snapshot.dedicatedContainer ? ` (专用实例 ${snapshot.dedicatedContainer})` : ''} — ${(err as Error).message}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
+            ...operationAuditFields,
+            details: { snapshotId: snapshot.id, engine: snapshot.engine, dedicatedContainer: snapshot.dedicatedContainer || null },
+          });
+        }
+      }
       // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
@@ -14157,6 +14186,38 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'error';
           svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
           failed.push(svc.containerName);
+        }
+      }
+
+      // 复制集成员级联重启（Codex P1，2026-07-26）：成员容器不在 entry.services
+      // 快照里，分支停止/降温会把它们一并停掉；这里若不拉起，例行「停止 → 重启」
+      // 会让副本分流永久消失——成员记录还在（占成员上限、钉住管理模式），但没有
+      // 任何路径能再物化它们，只能删了重建。成员重启失败不阻断分支主服务恢复，
+      // 只把该成员标 error（画布可见），用户可在画布删除后重建。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (!member.containerName) continue;
+          if (member.status === 'provisioning') continue;
+          assertBranchOperationCurrent(branchOperationLease, `restart before replica ${replicaSet.profileId}--${member.id}`);
+          const memberOk = await containerService.restartServiceInPlace(member.containerName, undefined, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            requestId,
+            operationId: branchOperationLease?.operationId || null,
+            actor,
+            trigger,
+            operation: 'branch-restart-replica-member',
+            source: 'api.restart-branch',
+            reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
+          });
+          if (memberOk) {
+            member.status = 'running';
+            member.statusMessage = undefined;
+          } else {
+            member.status = 'error';
+            member.statusMessage = `副本容器 ${member.containerName} 原地重启失败（可能已被移除），可在画布删除后重建副本`;
+          }
         }
       }
 
