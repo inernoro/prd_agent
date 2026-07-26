@@ -124,3 +124,28 @@ describe('RouteResolver — 复制集组内选择', () => {
     expect(memberHits).toBeLessThan(120);
   });
 });
+
+describe('半开探针占位只给最终选中者（Codex 第十六轮 P2）', () => {
+  it('加权掷签落到健康成员时，落选的半开成员不被占位', () => {
+    const reserved: string[] = [];
+    const picked = pickReplica(replicaGroupRoutes(), {
+      isEjected: () => false,
+      reserveProbe: (r2) => reserved.push(r2.replicaMemberId!),
+      rand: () => 0.5, // 权重 90/10，0.5 落 primary
+    });
+    expect(picked.replicaMemberId).toBe('primary');
+    // 占位回调只对最终选中者发生一次——候选过滤阶段不烧任何成员的探针名额
+    expect(reserved).toEqual(['primary']);
+  });
+
+  it('掷签落到半开成员本身时，占位给它', () => {
+    const reserved: string[] = [];
+    const picked = pickReplica(replicaGroupRoutes(), {
+      isEjected: () => false,
+      reserveProbe: (r2) => reserved.push(r2.replicaMemberId!),
+      rand: () => 0.95, // 落到 10% 的 rsaaaaaa
+    });
+    expect(picked.replicaMemberId).toBe('rsaaaaaa');
+    expect(reserved).toEqual(['rsaaaaaa']);
+  });
+});

@@ -313,6 +313,7 @@ const server = http.createServer((req, res) => {
     sticky: sticky.explicit,
     stickyFor: (group) => sticky.byGroupHash.get(replicaGroupCookieHash(group)),
     isEjected: (r) => replicaHealth.isEjected(r),
+    reserveProbe: (r) => replicaHealth.reserveProbe(r),
   });
   // 复制集会话粘性:选中组内路由后种**组作用域** cookie,同一浏览器会话不横跳版本。
   // 30 分钟滑动窗口;成员被移除后 cookie 失配 → resolver 自动回落权重选择。
@@ -359,6 +360,7 @@ server.on('upgrade', (req, socket, head) => {
     sticky: sticky.explicit,
     stickyFor: (group) => sticky.byGroupHash.get(replicaGroupCookieHash(group)),
     isEjected: (r) => replicaHealth.isEjected(r),
+    reserveProbe: (r) => replicaHealth.reserveProbe(r),
   });
   void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
 });

@@ -397,7 +397,8 @@ export class ReplicaSetService {
       // 还没入台账，删除路径清不到它。此时必须就地 drop 刚克隆的产物（专用
       // 实例整容器 / 共享库里的隔离库），否则永久无主。
       const liveBranch = this.opts.state.getBranch(branchId);
-      if (!liveBranch) {
+      // deleting 标记同样视为已删（Codex 第十六轮 P1）：删除路径可能已扫过台账
+      if (!liveBranch || liveBranch.deleting) {
         try {
           await dropReplicaDb(cloned.snapshot, target!.infra.env || {});
           onStage('error', `分支在克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`);
@@ -469,11 +470,16 @@ export class ReplicaSetService {
       const envOverride = envOverrideFromSnapshot(target, reusable);
       void (async () => {
         for (const m of members) {
-          // 停止栅栏（Codex P1）：分支停止会把成员标 stopped——过渡循环若把它改回
-          // provisioning，就亲手擦掉了栅栏，materializeMember 会在分支已 idle 后
-          // 把副本起出来。逐成员复查在册与停止态，停了就不碰。
+          // 停止栅栏（Codex P1）：分支停止会把成员标 stopped——过渡循环不把它改回
+          // provisioning（materializeMember 会在分支已 idle 后把副本起出来），但
+          // 也不能只跳过（Codex 第十六轮 P1）：旧容器带着共享库 env，分支重启会
+          // 原地复活写主库。停了的成员强制退役容器，保持隔离一致性。
           const liveM = this.findMember(branchId, profileId, m.id);
-          if (!liveM || liveM.status === 'stopped') continue;
+          if (!liveM) continue;
+          if (liveM.status === 'stopped') {
+            await this.retireStoppedTransitionMember(branchId, profileId, m.id, liveM.containerName, 'replica-isolate');
+            continue;
+          }
           this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第2步 切换：复用统一隔离库，重启副本改连…' });
           if (m.containerName) {
             await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
@@ -521,10 +527,11 @@ export class ReplicaSetService {
             }
           },
         });
-        // 归属复查（Codex P1）：克隆期间分支被删 → 快照未入台账、删除路径清不到，
-        // 就地 drop 刚克隆的产物后放弃
+        // 归属复查（Codex P1）：克隆期间分支被删/删除进行中（deleting 标记，
+        // Codex 第十六轮 P1——删除可能已扫过台账，追加即成永久无主）→ 快照
+        // 不入台账，就地 drop 刚克隆的产物后放弃
         const live = this.opts.state.getBranch(branchId);
-        if (!live || !live.replicaSets?.[profileId]) {
+        if (!live || live.deleting || !live.replicaSets?.[profileId]) {
           await dropReplicaDb(cloned.snapshot, target.infra.env || {}).catch(() => undefined);
           this.opts.logger?.warn?.(
             `[replica-set] 分支/复制集在隔离克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`,
@@ -537,9 +544,14 @@ export class ReplicaSetService {
         this.opts.state.save();
         switchPhaseStarted = true;
         for (const m of members) {
-          // 停止栅栏（同上）：停了的成员不拆容器不重物化，交还给停止/重启语义
+          // 停止栅栏（同上）+ 强制退役（Codex 第十六轮 P1）：停了的成员不重物化，
+          // 但旧容器必须移除——隔离标记已落地，带共享库 env 的容器不许留给重启复活
           const liveM = this.findMember(branchId, profileId, m.id);
-          if (!liveM || liveM.status === 'stopped') continue;
+          if (!liveM) continue;
+          if (liveM.status === 'stopped') {
+            await this.retireStoppedTransitionMember(branchId, profileId, m.id, liveM.containerName, 'replica-isolate');
+            continue;
+          }
           this.patchMember(branchId, profileId, m.id, { statusMessage: '第2步 切换：重启副本改连隔离库…' });
           if (m.containerName) {
             await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
@@ -611,9 +623,17 @@ export class ReplicaSetService {
     void (async () => {
       for (const m of members) {
         // 停止栅栏（Codex P1）：分支停止把成员标 stopped 后，回切循环不许再改回
-        // provisioning 复活它（materializeMember 会在分支 idle 后起容器）
+        // provisioning 复活它；但也不能只跳过（Codex 第十六轮 P1）——隔离标记
+        // 已清除，带隔离库 env 的旧容器不许留给重启复活继续写隔离库
         const liveM = this.findMember(branchId, profileId, m.id);
-        if (!liveM || liveM.status === 'stopped') continue;
+        if (!liveM) continue;
+        if (liveM.status === 'stopped') {
+          await this.retireStoppedTransitionMember(branchId, profileId, m.id, liveM.containerName, 'replica-revert');
+          // 元数据同步清理：集已回共享，退役成员不许留 isolated 标记（未来任何
+          // 重物化路径读到它会再克隆一份孤立库）
+          this.patchMember(branchId, profileId, m.id, { dbMode: 'shared', isolatedDbName: undefined });
+          continue;
+        }
         this.patchMember(branchId, profileId, m.id, {
           status: 'provisioning', statusMessage: '回切主库：重启副本恢复原连接…', dbMode: 'shared', isolatedDbName: undefined,
         });
@@ -886,9 +906,40 @@ export class ReplicaSetService {
    *（记录保留）——两种情况后台物化任务都必须就地放弃，否则会在分支已 idle
    * 后把副本容器起出来。
    */
+  /**
+   * 停止与数据库切换重叠时的强制退役（Codex 第十六轮 P1）：转换循环撞见
+   * stopped 成员时不能只跳过——它的容器还带着**旧数据库模式**的 env，分支
+   * 重启会原地 docker restart 把它复活：隔离后写主库 / 回切后写隔离库，
+   * 控制面宣称的状态与数据面分叉。停了的容器直接移除并清 containerName/
+   * hostPort（重启级联跳过无容器成员，不会带错库 env 复活），一致性优先；
+   * 成员保留在台账（画布可见 stopped + 说明），由用户重启分支后在画布重建。
+   */
+  private async retireStoppedTransitionMember(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    containerName: string | undefined,
+    trigger: 'replica-isolate' | 'replica-revert',
+  ): Promise<void> {
+    if (containerName) {
+      await this.opts.container.remove(containerName, { actor: 'replica-set', trigger }).catch(() => undefined);
+    }
+    this.patchMember(branchId, profileId, memberId, {
+      containerName: undefined,
+      hostPort: undefined,
+      statusMessage: '数据库切换期间分支被停止：旧容器已移除（避免带旧数据库连接复活），重启分支后请在画布重建该副本',
+    });
+    this.opts.logger?.warn?.(
+      `[replica-set] 数据库切换与分支停止重叠，已退役成员容器 ${branchId}/${profileId}/${memberId}（防旧库 env 复活）`,
+    );
+  }
+
   private memberStillTracked(branchId: string, profileId: string, memberId: string): boolean {
-    const member = this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
-      .find((m) => m.id === memberId);
+    const branch = this.opts.state.getBranch(branchId);
+    // 删除栅栏（Codex 第十六轮 P1）：分支删除已置 deleting 标记时视同不在册——
+    // 删除路径可能已扫过快照台账，此刻再入账/再起容器都会变成永久无主残留
+    if (!branch || branch.deleting) return false;
+    const member = branch.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
     return !!member && member.status !== 'stopped';
   }
 

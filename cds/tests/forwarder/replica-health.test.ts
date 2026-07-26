@@ -53,26 +53,34 @@ describe('ReplicaHealthRegistry', () => {
     expect(reg.isEjected(m)).toBe(false); // 回池后重新从零计数
   });
 
-  it('半开只放行一个探针：到期后首个请求试探，并发请求仍视为摘除（Codex P2）', () => {
+  it('半开只放行一个探针：查询不占位，reserveProbe 占位后并发请求仍视为摘除（Codex P2 + 第十六轮 P2）', () => {
     let now = 0;
     const reg = new ReplicaHealthRegistry(() => now);
     const m = member('res-1');
     reg.noteFailure(m, 'ECONNREFUSED');
     reg.noteFailure(m, 'ECONNREFUSED');
     now = 15_000 + 1; // 冷却到期
-    expect(reg.isEjected(m)).toBe(false); // 首个请求占到探针
+    // isEjected 是纯查询（第十六轮 P2）：重复查询不烧探针名额——落选成员的
+    // 候选过滤不许替它占位
+    expect(reg.isEjected(m)).toBe(false);
+    expect(reg.isEjected(m)).toBe(false);
+    reg.reserveProbe(m);                  // 最终选中者才占位
     expect(reg.isEjected(m)).toBe(true);  // 并发请求不许跟着涌向死成员
     expect(reg.isEjected(m)).toBe(true);
-    // 探针成功 → 完全回池，所有请求放行
+    // 探针成功 → 完全回池，所有请求放行；健康成员上 reserveProbe 是 no-op
     reg.noteSuccess(m);
+    reg.reserveProbe(m);
     expect(reg.isEjected(m)).toBe(false);
     // 再摘一轮：探针占位超时（如客户端中途放弃、无成败回调）→ 下一个请求接棒
     reg.noteFailure(m, 'ECONNREFUSED');
     reg.noteFailure(m, 'ECONNREFUSED');
     now += 15_000 + 1;
-    expect(reg.isEjected(m)).toBe(false); // 探针 1
+    reg.reserveProbe(m);                  // 探针 1 占位
+    expect(reg.isEjected(m)).toBe(true);
     now += 10_001;                        // 超过 PROBE_TIMEOUT_MS
-    expect(reg.isEjected(m)).toBe(false); // 接棒探针
+    expect(reg.isEjected(m)).toBe(false); // 占位超时 → 半开重新可见
+    reg.reserveProbe(m);                  // 接棒探针占位
+    expect(reg.isEjected(m)).toBe(true);
   });
 
   it('非复制集路由永不参与（replicaGroup 缺省）', () => {

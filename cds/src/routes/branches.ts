@@ -10847,12 +10847,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     try {
       entry.status = 'stopping';
+      // 克隆完成栅栏（Codex 第十六轮 P1）：先置删除标记再遍历快照台账。
+      // 复制集的在途克隆完成回调查到该标记即自弃（drop 刚克隆的库、不入账），
+      // 封死「台账已扫过 → 完成回调追加新快照 → removeBranch」的无主库窗口。
+      entry.deleting = true;
       entry.lastStoppedAt = deleteStartedAt;
       entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
       entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
       stateService.save();
     } catch (err) {
       entry.status = previousDeleteIntent.status;
+      entry.deleting = undefined;
       entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
       entry.lastStopSource = previousDeleteIntent.lastStopSource;
       entry.lastStopReason = previousDeleteIntent.lastStopReason;

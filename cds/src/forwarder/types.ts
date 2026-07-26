@@ -88,6 +88,12 @@ export interface ReplicaResolveContext {
    * 随机与粘性命中（冷却到期后注册表自动放行半开试探）。缺省 = 不摘除。
    */
   isEjected?: (route: RouteRecord) => boolean;
+  /**
+   * 半开探针占位（Codex 第十六轮 P2）：resolver 在**最终选中**成员后调用。
+   * isEjected 是纯查询——若查询即占位，候选过滤阶段会替落选成员烧掉唯一
+   * 探针名额，拖慢恢复。缺省 = 无占位语义。
+   */
+  reserveProbe?: (route: RouteRecord) => void;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */

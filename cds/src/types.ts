@@ -689,6 +689,14 @@ export interface ProfileReplicaSet {
 export interface BranchEntry {
   id: string;
   /**
+   * 删除进行中标记（Codex 第十六轮 P1）：删除路由在遍历快照台账/拆容器之前
+   * 置位。复制集的克隆完成回调（隔离/保护罩/成员物化）看到该标记即放弃入账
+   * 并就地清掉刚克隆的库——否则「删除已扫过台账 → 克隆完成追加新快照 →
+   * removeBranch」的间隙会留下永久无主的隔离库/专用实例容器。删除失败时回滚
+   * 清位；进程崩溃残留该标记也无害（重试删除即收敛）。
+   */
+  deleting?: boolean;
+  /**
    * 该分支所属项目。PR_B.1 起为必填 — migrateProjectScoping() 启动时把
    * pre-P4 / 孤儿引用补齐到 legacy project 的真实 id。消费方不再需要
    * `b.projectId || 'default'` 兜底。

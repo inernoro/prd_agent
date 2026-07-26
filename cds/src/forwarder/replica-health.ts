@@ -118,10 +118,29 @@ export class ReplicaHealthRegistry {
     const now = this.now();
     if (cur.ejectedUntil > now) return true;
     if (cur.ejectedUntil === 0) return false;
-    // 冷却已到期：半开态。占位探针在途且未超时 → 其余请求仍视为摘除
-    if (cur.probeStartedAt > 0 && now - cur.probeStartedAt < PROBE_TIMEOUT_MS) return true;
+    // 冷却已到期：半开态。占位探针在途且未超时 → 其余请求仍视为摘除。
+    // 本方法是**纯查询**（Codex 第十六轮 P2）：占位不在这里发生——resolver 的
+    // 候选过滤会对每个成员调本方法，若查询即占位，低权重成员会在加权掷签
+    // **之前**就被占掉唯一探针名额；掷签落到别的健康成员时没有任何请求真的
+    // 去探它，占位只能等 10s 超时，反复错过会把恢复拖长数分钟。占位改由
+    // reserveProbe 在**最终选中**该成员后执行。
+    return cur.probeStartedAt > 0 && now - cur.probeStartedAt < PROBE_TIMEOUT_MS;
+  }
+
+  /**
+   * 半开探针占位：仅当该成员处于「冷却已到期且无在途探针」的半开态时生效。
+   * 由 route-resolver 在加权选择**选中**该成员后调用——选中者才占位，落选者
+   * 不烧名额。Node 单线程下「查询 → 选择 → 占位」同步完成，无竞态窗口。
+   */
+  reserveProbe(route: RouteRecord): void {
+    const key = keyOf(route);
+    if (!key) return;
+    const cur = this.state.get(key);
+    if (!cur) return;
+    const now = this.now();
+    if (cur.ejectedUntil === 0 || cur.ejectedUntil > now) return;
+    if (cur.probeStartedAt > 0 && now - cur.probeStartedAt < PROBE_TIMEOUT_MS) return;
     cur.probeStartedAt = now;
-    return false;
   }
 
   /** 诊断快照（forwarder 诊断端点用）。 */

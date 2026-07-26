@@ -154,3 +154,7 @@
 | fix | cds | promote 整分支回滚显式化：提升成员会连带改动其他服务时逐 profile 对照当前版本并 409 列出影响面，要求 confirmWholeBranch 显式确认，不再静默把 web/worker 拉回历史版本 |
 | fix | cds | 复制隔离克隆阶段失败不再毒化健康成员：容器未动时恢复隔离前状态回到分流（只留失败说明），切换阶段中途失败才如实标 error |
 | fix | cds | 项目级复制集画布并入全量服务清单：无可复用版本快照的服务不再从画布消失；整组副本要求覆盖项目全部服务，缺快照/达上限时显式阻断并说明，不再静默发起残组 |
+| fix | cds | promote 影响面对照扩到 materializeProfiles 恢复的全部运行时契约字段（workDir/pathPrefixes/subdomain/dependsOn/readinessProbe/startupSignal/deployedMode），仅探针或路由前缀不同的历史契约不再被静默重放 |
+| fix | cds | 分支删除置 deleting 栅栏：在途克隆完成回调（隔离/保护罩/成员物化）看到标记即自弃并清掉刚克隆的库，封死「台账已扫过后追加快照」的永久无主库窗口 |
+| fix | cds | forwarder 半开探针改「选中者才占位」：isEjected 纯查询化 + reserveProbe 由 resolver 在最终选中后调用，低权重半开成员不再被落选请求烧掉探针名额拖慢回池 |
+| fix | cds | 隔离/回切与分支停止重叠时强制退役 stopped 成员容器（移除旧容器 + 清 containerName），封死「重启原地复活带旧库 env 写错库」的一致性分叉；回切侧同步清成员隔离元数据 |

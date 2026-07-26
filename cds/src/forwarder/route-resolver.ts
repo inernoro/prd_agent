@@ -158,6 +158,14 @@ export function stickyEntryMemberFor(entry: string, replicaGroup: string): strin
 
 /** 组内选择：粘性 → 加权随机 → 主成员回落。导出供单测直接覆盖分布。 */
 export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
+  const chosen = pickReplicaInner(group, ctx);
+  // 半开探针占位只给最终选中者（Codex 第十六轮 P2）：候选过滤阶段的 isEjected
+  // 是纯查询；处于半开态的成员真的被掷中接流量时才占掉唯一探针名额
+  ctx?.reserveProbe?.(chosen);
+  return chosen;
+}
+
+function pickReplicaInner(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
   if (group.length === 1) return group[0];
   // 被动健康（debt #12）：被摘除成员退出粘性与加权随机；全组皆摘仍回落主成员
   const ejected = (r: RouteRecord): boolean => ctx?.isEjected?.(r) === true;

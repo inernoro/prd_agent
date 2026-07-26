@@ -6,7 +6,7 @@
  */
 import { Router, type Request } from 'express';
 import { connect as tcpConnect } from 'node:net';
-import type { DeploymentVersion } from '../types.js';
+import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
 import { buildServiceGraph } from '../services/service-graph.js';
@@ -16,10 +16,23 @@ import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
 /**
- * promote 影响面计算（Codex 第十五轮 P1，纯函数供单测）：DeploymentVersion 是
- * 整分支快照，找出「提升 profileId 到 version」时会被连带改动的其他 profile——
- * 目标版本里缺失、当前版本里缺失、或镜像/命令/端口任一不同都算改动。
+ * promote 影响面计算（Codex 第十五轮 P1 + 第十六轮 P1，纯函数供单测）：
+ * DeploymentVersion 是整分支快照，找出「提升 profileId 到 version」时会被连带
+ * 改动的其他 profile。对照面必须覆盖 materializeProfiles 会恢复的**全部**运行时
+ * 契约字段（镜像/kind/命令/端口/workDir/pathPrefixes/subdomain/dependsOn/
+ * readinessProbe/startupSignal/deployedMode）——只比镜像会漏掉「仅探针或路由
+ * 前缀不同」的历史契约被静默重放。任一侧缺失该 profile 也算改动。
  */
+function materializedFingerprint(p: DeploymentVersionProfile): string {
+  return JSON.stringify({
+    image: p.artifactImage, kind: p.artifactKind, cmd: p.runtimeCommand ?? null,
+    port: p.containerPort, workDir: p.containerWorkDir ?? null,
+    prefixes: p.pathPrefixes ?? null, subdomain: p.subdomain ?? null,
+    dependsOn: p.dependsOn ?? null, readiness: p.readinessProbe ?? null,
+    startupSignal: p.startupSignal ?? null, mode: p.deployedMode ?? null,
+  });
+}
+
 export function promoteAffectedProfiles(
   version: DeploymentVersion,
   currentVersion: DeploymentVersion | undefined,
@@ -33,10 +46,7 @@ export function promoteAffectedProfiles(
   for (const pid of otherIds) {
     const target = version.profiles.find((p) => p.profileId === pid);
     const current = currentVersion?.profiles.find((p) => p.profileId === pid);
-    if (!target || !current
-      || target.artifactImage !== current.artifactImage
-      || target.runtimeCommand !== current.runtimeCommand
-      || target.containerPort !== current.containerPort) {
+    if (!target || !current || materializedFingerprint(target) !== materializedFingerprint(current)) {
       affected.push(pid);
     }
   }
