@@ -1591,7 +1591,28 @@ export function BranchDetailDrawer({
     });
   }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
-  const selectedService = services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
+  // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
+  // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
+  // services[0]，面板身份校验（state.profileId === service.profileId）失败后直接
+  // 显示「暂无容器日志」——副本日志加载成功却永远看不见。现在副本合成一个
+  // 「服务形状」的展示对象（身份键 = 复合键），面板/复制按钮同一链路直出。
+  const memberLogTargets = useMemo(() =>
+    Object.entries((branch?.replicaSets as Record<string, { enabled?: boolean; members?: Array<{ id: string; status?: string; hostPort?: number; containerName?: string }> }> | undefined) ?? {})
+      .flatMap(([pid, rs]) => (rs?.enabled ? rs.members ?? [] : []).map((m) => ({ key: `${pid}::${m.id}`, pid, member: m }))),
+  [branch?.replicaSets]);
+  const selectedMemberTarget = memberLogTargets.find((t) => t.key === selectedServiceId) || null;
+  const selectedService = selectedMemberTarget
+    ? null
+    : services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
+  const selectedLogService: ServiceState | null = selectedMemberTarget
+    ? {
+        profileId: selectedMemberTarget.key,
+        containerName: selectedMemberTarget.member.containerName || `cds-${branch?.id ?? ''}-${selectedMemberTarget.pid}-${selectedMemberTarget.member.id}`,
+        hostPort: selectedMemberTarget.member.hostPort ?? 0,
+        status: selectedMemberTarget.member.status === 'running' ? 'running'
+          : selectedMemberTarget.member.status === 'error' ? 'error' : 'starting',
+      }
+    : selectedService;
   // 复制集化（含成员）的服务集合：资源卡加特殊标识（design.cds.replica-set）
   const replicaProfileIds = useMemo(() => {
     const set = new Set<string>();
@@ -1851,13 +1872,14 @@ export function BranchDetailDrawer({
   }, [branch]);
 
   const openContainerLogs = useCallback((profileId?: string) => {
-    const target = profileId || selectedService?.profileId;
+    // 复合键（副本）与普通服务键都接受：优先显式传入，其次保持当前选择
+    const target = profileId || selectedServiceId || selectedService?.profileId;
     setLogsMode('container');
     setActiveTab('logs');
     if (target) {
       void loadServiceLogs(target);
     }
-  }, [loadServiceLogs, selectedService?.profileId]);
+  }, [loadServiceLogs, selectedServiceId, selectedService?.profileId]);
 
   const openFailureLogs = useCallback((profileId?: string) => {
     openContainerLogs(profileId);
@@ -2319,7 +2341,8 @@ export function BranchDetailDrawer({
                               if (logsMode === 'system') return void loadSystemLogs();
                               if (logsMode === 'webhook') return void loadTriggerLogs();
                               if (logsMode === 'build' || logsMode === 'http') return void load();
-                              if (selectedService) void loadServiceLogs(selectedService.profileId);
+                              const target = selectedServiceId || selectedService?.profileId;
+                              if (target) void loadServiceLogs(target);
                             }}
                           >
                             <RefreshCw />
@@ -2343,31 +2366,36 @@ export function BranchDetailDrawer({
                       <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
-                        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
-                          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
-                            {(services.length > 0 ? services : []).map((svc) => (
-                              <button
-                                key={svc.profileId}
-                                type="button"
-                                className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
-                                  selectedService?.profileId === svc.profileId
-                                    ? 'border-primary bg-primary/10 text-foreground'
-                                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground hover:text-foreground'
-                                }`}
-                                onClick={() => openContainerLogs(svc.profileId)}
-                              >
-                                <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
-                                {svc.profileId}
-                                <span className="font-mono">:{svc.hostPort || '?'}</span>
-                              </button>
-                            ))}
-                            {/* 复制集成员容器日志（2026-07-25，debt #4）：被复制的分支囊括所有容器的日志——
-                                项目级/容器级同源（都是 per-profile members），成员 chip 靛蓝区分 */}
-                            {Object.entries((branch?.replicaSets as Record<string, { enabled?: boolean; members?: Array<{ id: string; status?: string; hostPort?: number }> }> | undefined) ?? {})
-                              .flatMap(([pid, rs]) => (rs?.enabled ? (rs.members ?? []) : []).map((m) => ({ pid, m })))
-                              .map(({ pid, m }) => {
-                                const key = `${pid}::${m.id}`;
-                                return (
+                        {/* 容器选择器：主容器 / 副本容器分两行分组（2026-07-26 用户反馈——
+                            此前 10 个 chip 挤一条横滚行，副本排末尾被遮住根本翻不到） */}
+                        <div className="space-y-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">主容器</span>
+                            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                              {(services.length > 0 ? services : []).map((svc) => (
+                                <button
+                                  key={svc.profileId}
+                                  type="button"
+                                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
+                                    !selectedMemberTarget && selectedService?.profileId === svc.profileId
+                                      ? 'border-primary bg-primary/10 text-foreground'
+                                      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground hover:text-foreground'
+                                  }`}
+                                  onClick={() => openContainerLogs(svc.profileId)}
+                                >
+                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                                  {svc.profileId}
+                                  <span className="font-mono">:{svc.hostPort || '?'}</span>
+                                </button>
+                              ))}
+                            </div>
+                            <CopyServiceLogsButton service={selectedLogService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                          </div>
+                          {memberLogTargets.length > 0 ? (
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
+                              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                                {memberLogTargets.map(({ key, pid, member: m }) => (
                                   <button
                                     key={key}
                                     type="button"
@@ -2383,12 +2411,16 @@ export function BranchDetailDrawer({
                                     {pid} · {m.id}
                                     <span className="font-mono">:{m.hostPort || '?'}</span>
                                   </button>
-                                );
-                              })}
-                          </div>
-                          <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                        <ServiceLogsPanel
+                          service={selectedLogService}
+                          state={filterServiceLogs(serviceLogs, logQuery)}
+                          replica={selectedMemberTarget ? { pid: selectedMemberTarget.pid, memberId: selectedMemberTarget.member.id } : undefined}
+                        />
                       </>
                     )}
                   </section>
@@ -6117,9 +6149,12 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
 function ServiceLogsPanel({
   service,
   state,
+  replica,
 }: {
   service: ServiceState | null;
   state: ServiceLogsState;
+  /** 副本容器时传入：面板标题亮明身份（2026-07-26 用户反馈「没有清晰的东西证明是副本的日志」） */
+  replica?: { pid: string; memberId: string };
 }): JSX.Element {
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
@@ -6135,9 +6170,18 @@ function ServiceLogsPanel({
     <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
       <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
         <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
-          <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
-            <span>容器详情日志</span>
-            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-2">
+              {replica ? (
+                <>
+                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
+                  <span className="truncate">{replica.pid} · <b className="font-mono text-foreground">{replica.memberId}</b> 的容器日志</span>
+                </>
+              ) : (
+                <span className="truncate">主容器 <b className="font-mono text-foreground">{service.profileId}</b> 的日志</span>
+              )}
+            </span>
+            {state.status === 'loading' && isCurrent ? <span className="shrink-0">读取中...</span> : null}
           </div>
           {service.errorMessage ? (
             <div className="mb-2 shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">
