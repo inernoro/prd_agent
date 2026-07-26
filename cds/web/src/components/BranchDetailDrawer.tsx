@@ -366,18 +366,25 @@ type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
 const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
 const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
 
+/**
+ * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
+ *   总览=现在怎么样（原详情 + 指标并入）；运行=跑着几个怎么分流；
+ *   部署=发生过什么发布（构建日志内联到每条部署，不再跳页签）；
+ *   日志=容器在说什么（只留持续流：容器/系统/Webhook/HTTP，构建模式移除归部署）；
+ *   配置=下次怎么跑（生效变量 + 配置检查器 + 分支设置三分区）；资源=数据在哪。
+ * 分类原则：一次性记录跟事件走、持续流水跟对象走、读与写同域合并。
+ */
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
-  { key: 'overview', label: '详情' },
-  // 2026-07-25 用户拍板：复制集升顶级页签改名「运行」并默认；部署（不可变部署版本 + 部署事实账本）同级
+  { key: 'overview', label: '总览' },
   { key: 'run', label: '运行' },
   { key: 'deployments', label: '部署' },
-  { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
-  { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
-  { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
-  { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
-  { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
+  { key: 'config', label: '配置' },
+  { key: 'services', label: '资源' },
 ];
+
+/** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
+type ConfigSection = 'variables' | 'inspector' | 'settings';
 
 // Phase A (2026-05-04):分支生效环境变量
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
@@ -842,6 +849,8 @@ export function BranchDetailDrawer({
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
   const [activeTab, setActiveTab] = useState<DrawerTab>('run');
+  // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
+  const [configSection, setConfigSection] = useState<ConfigSection>('variables');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
@@ -1235,10 +1244,10 @@ export function BranchDetailDrawer({
   }, [branchId]);
 
   useEffect(() => {
-    if (activeTab === 'variables' && envState.status === 'idle') {
+    if (activeTab === 'config' && configSection === 'variables' && envState.status === 'idle') {
       void loadEnv();
     }
-  }, [activeTab, envState.status, loadEnv]);
+  }, [activeTab, configSection, envState.status, loadEnv]);
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
@@ -1318,7 +1327,8 @@ export function BranchDetailDrawer({
   }, [branchId]);
 
   useEffect(() => {
-    if (activeTab !== 'metrics' || !branchId) return;
+    // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
+    if (activeTab !== 'overview' || !branchId) return;
     // 立即拉一次,然后每 5s 轮询。docker stats 一次 ~300-800ms,5s 周期足够。
     // Bugbot PR #524 第七轮反馈:把 loadMetrics 加入 deps,避免未来给
     // loadMetrics 加新依赖时 setInterval 静默捕获 stale 闭包。loadMetrics 自身
@@ -1485,9 +1495,9 @@ export function BranchDetailDrawer({
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
         }
-      } else if (activeTab === 'variables') {
+      } else if (activeTab === 'config') {
         await loadEnv();
-      } else if (activeTab === 'metrics') {
+      } else if (activeTab === 'overview') {
         await loadMetrics();
       }
       onToast?.('已刷新当前分支面板');
@@ -1838,10 +1848,11 @@ export function BranchDetailDrawer({
     return { [targetPhase]: state };
   }, [activeDeployment, activeDeploymentPhases, deploymentLogProfileId, failedPhaseKey, failureDiag, serviceLogs]);
 
+  // 方案 A：构建日志是「某一次部署」的一次性记录——就地在部署页签内联展开，
+  // 不再跳到日志页签（旧「日志·构建」模式已移除，消除双日志面板）
   const openBuildLogs = useCallback((selection?: BuildLogSelection) => {
     setSelectedBuildLog(selection || null);
-    setLogsMode('build');
-    setActiveTab('logs');
+    setActiveTab('deployments');
   }, []);
 
   const openDeploymentBuildLogs = useCallback((deployment: BranchDeploymentItem) => {
@@ -2245,6 +2256,27 @@ export function BranchDetailDrawer({
                 ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
+                    {/* 方案 A：构建日志内联在部署页签（一次性记录跟事件走）——点任意
+                        部署记录的「日志」在此就地展开，不再跳日志页签 */}
+                    {selectedBuildLog ? (
+                      <section className="cds-surface-raised cds-hairline rounded-md border border-[hsl(var(--hairline))]">
+                        <header className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+                          <span className="text-xs font-semibold">构建日志 · {selectedBuildLog.title}</span>
+                          {selectedBuildLog.commitSha ? (
+                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground"
+                            title="收起构建日志"
+                            onClick={() => setSelectedBuildLog(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </header>
+                        <BuildLogsPanel logs={logs} query="" selection={selectedBuildLog} />
+                      </section>
+                    ) : null}
                     <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
                     <DeploymentVersionLedger
                       versions={deploymentVersions}
@@ -2305,10 +2337,10 @@ export function BranchDetailDrawer({
                     <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                          {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
                           {([
-                            ['system', '系统日志'],
-                            ['build', '构建日志'],
                             ['container', '容器日志'],
+                            ['system', '系统日志'],
                             ['webhook', 'Webhook'],
                             ['http', 'HTTP'],
                           ] as Array<[LogsMode, string]>).map(([mode, label]) => (
@@ -2318,7 +2350,6 @@ export function BranchDetailDrawer({
                               className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === mode ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
                               onClick={() => {
                                 if (mode === 'container') { openContainerLogs(); return; }
-                                if (mode === 'build') setSelectedBuildLog(null);
                                 setLogsMode(mode);
                               }}
                             >
@@ -2340,7 +2371,7 @@ export function BranchDetailDrawer({
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
                               if (logsMode === 'webhook') return void loadTriggerLogs();
-                              if (logsMode === 'build' || logsMode === 'http') return void load();
+                              if (logsMode === 'http') return void load();
                               const target = selectedServiceId || selectedService?.profileId;
                               if (target) void loadServiceLogs(target);
                             }}
@@ -2362,8 +2393,6 @@ export function BranchDetailDrawer({
                       />
                     ) : logsMode === 'http' ? (
                       <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
-                    ) : logsMode === 'build' ? (
-                      <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
                         {/* 容器选择器：主容器 / 副本容器分两行分组（2026-07-26 用户反馈——
@@ -2518,7 +2547,29 @@ export function BranchDetailDrawer({
                   </section>
                 ) : null}
 
-                {activeTab === 'variables' ? (
+                {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
+                    原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
+                {activeTab === 'config' ? (
+                  <div className="mb-4 inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                    {([
+                      ['variables', '生效变量', '当前分支实际生效的环境变量（读，含来源标签）'],
+                      ['inspector', '配置检查器', '逐 key 溯源 + 部署计划'],
+                      ['settings', '分支设置', '分支行为设置（写）'],
+                    ] as Array<[ConfigSection, string, string]>).map(([key, label, hint]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        title={hint}
+                        className={`h-8 rounded px-3 text-xs transition-colors ${configSection === key ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setConfigSection(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
+                ) : null}
+
+                {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
                     state={envState}
                     revealedValues={revealedValues}
@@ -2582,11 +2633,11 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'config' && branchId ? (
+                {activeTab === 'config' && configSection === 'inspector' && branchId ? (
                   <EffectiveConfigPanel branchId={branchId} onToast={onToast} />
                 ) : null}
 
-                {activeTab === 'settings' ? (
+                {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
                     branch={branch}
                     projectId={projectId}
@@ -2602,12 +2653,16 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'metrics' ? (
-                  <MetricsPanel
-                    state={metricsState}
-                    series={metricSeries}
-                    onRefresh={() => void loadMetrics()}
-                  />
+                {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
+                {activeTab === 'overview' ? (
+                  <section className="mt-4">
+                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">指标</h4>
+                    <MetricsPanel
+                      state={metricsState}
+                      series={metricSeries}
+                      onRefresh={() => void loadMetrics()}
+                    />
+                  </section>
                 ) : null}
 
                 <div className="mt-5 text-center text-xs text-muted-foreground">
@@ -2679,7 +2734,7 @@ export function BranchDetailDrawer({
                   type="button"
                   variant="outline"
                   className="cds-branch-detail-footer-secondary flex-[1_1_0]"
-                  onClick={() => setActiveTab('settings')}
+                  onClick={() => { setConfigSection('settings'); setActiveTab('config'); }}
                 >
                   <Settings />
                   详细设置
