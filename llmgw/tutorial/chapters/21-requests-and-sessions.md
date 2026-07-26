@@ -30,6 +30,7 @@
 
 ![图 070 Logs 用真实趋势、汇总指标和完整表格同时回答规模与单次请求问题](https://cds.miduo.org/api/reports/assets/44b4bb30a046acdba3e8fbb76e9c5332f2d23630e1bacb1072be8b4f86b8b75a.png)
 
+<!-- tutorial-step: logs-observability-table -->
 3. 关闭抽屉，再搜索[[第 20 章：配置 PromptPolicy|第 20 章]] chat 命令输出的 requestId。列表应连续显示时间、请求 ID、模型、Provider、App、输入、输出、费用、用途、速度、结束原因、客户端用户和状态；模型、Provider 和 App 前应有可辨识图标，列宽不应靠一列吞掉中间空白。点击表头最右侧的“表格设置”，可以显隐列、上下调整顺序，并在紧凑、均衡、舒适三档密度间切换；这些选择只保存在当前浏览器，不改服务端日志。
 
    文本请求的输入、输出和速度使用上游实际返回的 token 与 token/s。图片生成优先显示成功图片数，速度显示平均每张生成耗时；如果上游同时返回 `prompt_tokens`、`completion_tokens` 和 `usage.cost`，详情继续保留这些实际值。上游没有返回输入 token 时保持 `—`，不能为了让页面更满而补造 `1 prompt`。费用优先显示上游逐请求返回值，其次使用模型价格快照估算；两者都没有时明确显示“未计价”，不能把未知写成 0。旧日志如果在元数据采集上线前产生，仍可能保持未知，不能用页面补造历史 token。

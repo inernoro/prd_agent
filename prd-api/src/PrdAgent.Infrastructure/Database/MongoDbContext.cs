@@ -324,6 +324,7 @@ public class MongoDbContext
     public IMongoCollection<DocumentEntryVersion> DocumentEntryVersions => _database.GetCollection<DocumentEntryVersion>("document_entry_versions");
     public IMongoCollection<KnowledgeBaseDraft> KnowledgeBaseDrafts => _database.GetCollection<KnowledgeBaseDraft>("knowledge_base_drafts");
     public IMongoCollection<DocumentStoreSyncLink> DocumentStoreSyncLinks => _database.GetCollection<DocumentStoreSyncLink>("document_store_sync_links");
+    public IMongoCollection<TutorialLinkGraph> TutorialLinkGraphs => _database.GetCollection<TutorialLinkGraph>("tutorial_link_graphs");
 
     /// <summary>
     /// 通用 @ 账本（双链 + 反向链接 + 宇宙图 SSOT）。

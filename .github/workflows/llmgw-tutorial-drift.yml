@@ -1,8 +1,14 @@
 name: LLMGW Tutorial Drift
 
 on:
-  schedule:
-    - cron: '20 18 * * *'
+  pull_request:
+    paths:
+      - 'llmgw/web/**'
+      - 'llmgw/console-api/**'
+      - 'llmgw/serving/**'
+      - 'llmgw/tutorial/**'
+      - 'prd-api/src/**'
+      - '.github/workflows/llmgw-tutorial-drift.yml'
   workflow_dispatch:
     inputs:
       since:
@@ -12,6 +18,10 @@ on:
 
 permissions:
   contents: read
+
+concurrency:
+  group: llmgw-tutorial-drift-${{ github.ref }}
+  cancel-in-progress: true
 
 jobs:
   tutorial-drift:
@@ -28,15 +38,24 @@ jobs:
           python3 llmgw/tutorial/publisher.py check
           python3 -m unittest llmgw/tutorial/test_publisher.py llmgw/tutorial/test_maintenance.py
 
-      - name: Generate daily drift report
+      - name: Generate drift report
         env:
           INPUT_SINCE: ${{ github.event.inputs.since || '1 day ago' }}
+          BASE_REF: ${{ github.event.pull_request.base.sha }}
         run: |
-          python3 llmgw/tutorial/maintenance.py \
-            --since "$INPUT_SINCE" \
-            --json-out artifacts/llmgw-tutorial-drift/report.json \
-            --markdown-out artifacts/llmgw-tutorial-drift/report.md \
-            --fail-on-drift
+          if [ -n "$BASE_REF" ]; then
+            python3 llmgw/tutorial/maintenance.py \
+              --base-ref "$BASE_REF" \
+              --json-out artifacts/llmgw-tutorial-drift/report.json \
+              --markdown-out artifacts/llmgw-tutorial-drift/report.md \
+              --fail-on-drift
+          else
+            python3 llmgw/tutorial/maintenance.py \
+              --since "$INPUT_SINCE" \
+              --json-out artifacts/llmgw-tutorial-drift/report.json \
+              --markdown-out artifacts/llmgw-tutorial-drift/report.md \
+              --fail-on-drift
+          fi
 
       - name: Upload drift evidence
         if: always()

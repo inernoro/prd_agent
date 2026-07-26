@@ -4,6 +4,8 @@
 
 ## 三分钟路径
 
+<!-- tutorial-step: quickstart-three-minute -->
+
 ### 第一分钟：选择客户端
 
 1. 进入“开发者 → Quickstart”。
