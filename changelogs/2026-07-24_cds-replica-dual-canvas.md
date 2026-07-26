@@ -57,3 +57,7 @@
 | fix | cds | 隔离目标解析合入分支级环境变量（与部署路径同优先级），治分支覆写库名/连接串时克隆到项目级默认库（Codex P1） |
 | fix | cds | promote 改终态门：部署 run 成功终态才解散复制集，失败/取消保留作回退出口，治派发受理瞬间拆掉唯一健康出口（Codex P1） |
 | security | cds | forwarder /__forwarder/replica-health 诊断端点补 loopback 门禁，与相邻 routes/stats/active 同姿态（Codex P2） |
+| fix | cds | 复制集粘性 cookie 改组作用域（cds_rs_<组哈希>），治同 host 多复制集 profile 时 res-1 跨组误钉/cookie 互相覆写（Codex P1） |
+| fix | cds | 成员直达子域带 profile 段（<slug>-<profile>-<成员>），治两个服务同名 res-1 撞同一 host 路由互相覆盖（Codex P1，前端直达链同步） |
+| fix | cds | 隔离快照复用增加同源实例判定（infraContainer 必须一致），治同引擎双实例同名库时把 A 实例克隆错发给连 B 实例的服务（Codex P1） |
+| fix | cds | 多实例同引擎且未声明 dependsOn 时按 CDS_<实例>_PORT/HOST 模板关联定位，无法唯一定位 fail-closed 拒绝，治盲选第一个实例克隆错库（Codex P1） |

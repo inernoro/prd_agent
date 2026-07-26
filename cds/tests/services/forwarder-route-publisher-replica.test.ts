@@ -116,12 +116,33 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     expect(webDefault?.replicaGroup).toBeUndefined();
 
     // 成员直达子域:整套路由,api 钉到成员端口,web 仍走主容器
-    const memberHost = `${slug}-rsaaaaaa.miduo.org`;
+    const memberHost = `${slug}-api-rsaaaaaa.miduo.org`;
     const direct = routes.filter((r) => r.host === memberHost);
     expect(direct.length).toBeGreaterThan(0);
     expect(direct.find((r) => r.pathPrefix === '/api/')?.upstreamPort).toBe(9300);
     expect(direct.find((r) => !r.pathPrefix)?.upstreamPort).toBe(9100);
     expect(direct.every((r) => r.replicaGroup === undefined)).toBe(true);
+  });
+
+  it('两个 profile 各有同名成员 id:直达子域带 profile 段互不撞 host（Codex P1）', () => {
+    const member = (): object => ({
+      id: 'res-1', versionId: 'dv_1', weight: 0, image: 'img@sha256:x',
+      status: 'running', hostPort: 0, dbMode: 'shared', createdAt: new Date().toISOString(),
+    });
+    const { slug } = setup({
+      api: { profileId: 'api', enabled: true, primaryWeight: 100, members: [{ ...member(), hostPort: 9300 }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+      web: { profileId: 'web', enabled: true, primaryWeight: 100, members: [{ ...member(), hostPort: 9400 }], createdAt: new Date().toISOString(), updatedAt: new Date().toISOString() },
+    });
+    const routes = readRoutes();
+    const apiDirect = routes.filter((r) => r.host === `${slug}-api-res-1.miduo.org`);
+    const webDirect = routes.filter((r) => r.host === `${slug}-web-res-1.miduo.org`);
+    expect(apiDirect.length).toBeGreaterThan(0);
+    expect(webDirect.length).toBeGreaterThan(0);
+    // 各自把**自己的** profile 钉到自己成员的端口
+    expect(apiDirect.find((r) => r.pathPrefix === '/api/')?.upstreamPort).toBe(9300);
+    expect(webDirect.find((r) => !r.pathPrefix)?.upstreamPort).toBe(9400);
+    // 旧格式（不带 profile 段）的撞车 host 不再出现
+    expect(routes.some((r) => r.host === `${slug}-res-1.miduo.org`)).toBe(false);
   });
 
   it('主容器不可路由（error）但成员 running:仍发成员路由与直达子域,不发 primary 记录（Codex P1）', () => {
@@ -177,7 +198,7 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     // 没有任何路由把上游指到已挂的主容器端口
     expect(hostRoutes.some((r) => r.upstreamPort === 9200)).toBe(false);
     // 成员直达子域仍在
-    const direct = routes.filter((r) => r.host === `${slug}-rsaaaaaa.miduo.org`);
+    const direct = routes.filter((r) => r.host === `${slug}-api-rsaaaaaa.miduo.org`);
     expect(direct.length).toBeGreaterThan(0);
     expect(direct.every((r) => r.upstreamPort === 9300)).toBe(true);
   });

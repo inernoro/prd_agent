@@ -352,12 +352,15 @@ export class ForwarderRoutePublisher {
         emitHostRouteSet(host);
       }
 
-      // 复制集成员直达子域:`<previewSlug>-<memberId>.<root>` 整套路由,
+      // 复制集成员直达子域:`<previewSlug>-<profileId>-<memberId>.<root>` 整套路由,
       // 仅复制集 profile 的上游钉到该成员端口,其余服务仍走主容器 ——
       // 用户拿直达链能浏览整个应用,只有该服务是成员版本。63 字符守卫同命名子域。
+      // host 带 profile 段（Codex P1）:res-N 按 profile 顺位命名,两个服务都有
+      // res-1 时旧格式 `<slug>-res-1` 撞同一 host,两套整组路由互相覆盖,至少
+      // 一个服务的直达链钉不住自己宣传的版本。
       for (const [profileId, replica] of replicaByProfile) {
         for (const member of replica.members) {
-          const memberLabel = `${previewSlug}-${member.id}`;
+          const memberLabel = `${previewSlug}-${profileId}-${member.id}`;
           if (memberLabel.length > 63) {
             this.opts.logger?.warn?.(
               `[forwarder-publisher] 跳过复制集成员直达子域 ${memberLabel}.*（第一 DNS 标签超 63 octet 上限）；成员仍可经主入口 ?__rs=${member.id} 粘性直达`,

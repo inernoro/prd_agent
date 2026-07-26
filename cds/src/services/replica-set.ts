@@ -386,8 +386,12 @@ export class ReplicaSetService {
     if (!target) return { accepted: false, reason: `无法定位数据库：${reason}` };
     // 统一战线同库复用：同一分支里已有别的服务把**同一个源库**隔离过（活跃隔离引用的
     // 快照），直接复用那份隔离库/专用实例——多服务隔离禁止各克隆一份导致数据分叉。
+    // 同库判定必须含来源实例（Codex P1）：同引擎两个 infra 实例里可以各有一个
+    // 同名库——只比库名会把 A 实例的克隆错发给连 B 实例的服务（mongo 专用实例
+    // 快照直接把服务重定向到 A 的数据；mysql/pg 则指向 B 上从未克隆过的库名）。
     const reusable = (branch.replicaDbSnapshots ?? []).find((snap) =>
       snap.sourceDb === target.sourceDb && snap.engine === target.engine
+      && snap.infraContainer === target.infra.containerName
       && Object.values(branch.replicaSets ?? {}).some((x) => x.isolated?.snapshotId === snap.id));
     if (reusable) {
       rs.isolated = { dbName: reusable.dbName, snapshotId: reusable.id, isolatedAt: this.now() };

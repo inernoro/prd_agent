@@ -77,6 +77,23 @@ describe('RouteResolver — 复制集组内选择', () => {
     expect(resolveRoute(routes, 'demo.miduo.org', '/', { rand: () => 0.1 })?.upstreamPort).toBe(9100);
   });
 
+  it('组作用域粘性 stickyFor:按本组 replicaGroup 查值,他组的钉选不串味（Codex P1）', () => {
+    // 两个组各有一个 res-1 语义的成员;stickyFor 只对匹配组返回钉选
+    const groupB = 'br1:web';
+    const routes = [
+      ...replicaGroupRoutes(),
+      r({ _id: 'b:primary', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9500, weight: 100, replicaGroup: groupB, replicaMemberId: 'primary' }),
+      r({ _id: 'b:rs01', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9600, weight: 0, replicaGroup: groupB, replicaMemberId: 'rsaaaaaa' }),
+    ];
+    const stickyFor = (g: string): string | undefined => (g === GROUP ? 'rsbbbbbb' : undefined);
+    // A 组:钉到 weight=0 的 rsbbbbbb（cookie 粘性生效）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { stickyFor })?.replicaMemberId).toBe('rsbbbbbb');
+    // B 组:A 组的钉选不外溢——B 组无钉选,按权重回主成员（rsaaaaaa weight=0 不该被 A 组的 cookie 钉中）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { stickyFor })?.replicaMemberId).toBe('primary');
+    // 显式 sticky（query __rs / header）优先于组 cookie
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: 'rsaaaaaa', stickyFor })?.replicaMemberId).toBe('rsaaaaaa');
+  });
+
   it('pickReplica 分布粗检:1000 次 rand 均匀采样,成员占比接近其权重', () => {
     const group = replicaGroupRoutes();
     let memberHits = 0;

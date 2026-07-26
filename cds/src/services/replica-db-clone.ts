@@ -123,9 +123,29 @@ export function resolveReplicaDbTarget(
   if (infraCandidates.length === 0) {
     return { target: null, reason: `项目里没有运行中的 ${engine} 基础设施容器，无法执行克隆` };
   }
-  // 优先 profile.dependsOn 显式声明的那个（多库项目防克隆到错的实例）
+  // 实例定位（Codex P1）：优先 profile.dependsOn 显式声明；多实例同引擎且未声明时
+  // 不再盲选第一个——按 env 原始值里的 CDS_<实例ID>_PORT/HOST 模板 token 关联
+  //（与 service-graph 同源的连接证据）；仍无法唯一定位 → fail-closed 拒绝，
+  // 防止把「另一个实例上的同名库」克隆出来当实验数据。
   const dependsOn = new Set(profile.dependsOn || []);
-  const infra = infraCandidates.find((svc) => dependsOn.has(svc.id)) || infraCandidates[0];
+  let infra = infraCandidates.find((svc) => dependsOn.has(svc.id));
+  if (!infra) {
+    if (infraCandidates.length === 1) {
+      infra = infraCandidates[0];
+    } else {
+      const tokenFor = (id: string): string => `CDS_${id.toUpperCase().replace(/-/g, '_')}_`;
+      const allEnvValues = Object.values(merged).join('\n');
+      const referenced = infraCandidates.filter((svc) => allEnvValues.includes(tokenFor(svc.id)));
+      if (referenced.length === 1) {
+        infra = referenced[0];
+      } else {
+        return {
+          target: null,
+          reason: `项目里有 ${infraCandidates.length} 个运行中的 ${engine} 实例（${infraCandidates.map((s) => s.id).join(' / ')}），且该服务未通过 dependsOn 或 CDS_<实例>_PORT/HOST 模板指明连接哪一个——为防克隆到错误实例的同名库，已拒绝（fail-closed）。请在服务 profile 的 dependsOn 里声明目标实例`,
+        };
+      }
+    }
+  }
 
   const connEnvKeys = engine === 'mongo'
     ? Object.keys(runtimeEnv).filter((key) => MONGO_CONN_ENV_PATTERN.test(key))

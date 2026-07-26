@@ -95,13 +95,18 @@ interface ProbeResult { tally: Record<string, number>; hits: ProbeHit[]; count: 
 export interface PanelServiceInfo { hostPort?: number; status?: string }
 export interface PanelInfraInfo { id: string; name?: string; dockerImage?: string; status?: string }
 
-export function memberDirectUrl(previewUrl: string | undefined, memberId: string): string | null {
+/**
+ * 成员直达链：`<slug>-<profileId>-<memberId>.<root>`。host 带 profile 段与
+ * forwarder-route-publisher 同步（Codex P1：res-N 按 profile 顺位命名，
+ * 不带 profile 段时两个服务的 res-1 撞同一 host）。
+ */
+export function memberDirectUrl(previewUrl: string | undefined, profileId: string, memberId: string): string | null {
   if (!previewUrl) return null;
   try {
     const url = new URL(previewUrl);
     const [first, ...rest] = url.hostname.split('.');
     if (!first || rest.length === 0) return null;
-    url.hostname = [`${first}-${memberId}`, ...rest].join('.');
+    url.hostname = [`${first}-${profileId}-${memberId}`, ...rest].join('.');
     return url.toString();
   } catch { return null; }
 }
@@ -1150,7 +1155,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   ) : null}
                   {members.map((m) => {
                     const removal = draftRemovals.has(m.id);
-                    const url = memberDirectUrl(previewUrl, m.id);
+                    const url = memberDirectUrl(previewUrl, pid, m.id);
                     return (
                       <ChipRow key={m.id} color={color} mono={m.id}
                         sub={m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? (m.statusMessage || '失败') : removal ? '待下线（草稿）' : m.reachable === false ? '不可达' : undefined}

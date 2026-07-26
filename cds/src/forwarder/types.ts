@@ -70,6 +70,13 @@ export interface RouteRecord {
 export interface ReplicaResolveContext {
   /** 粘性目标成员 id（query __rs > header x-cds-replica > cookie cds_rs） */
   sticky?: string;
+  /**
+   * 组作用域粘性（Codex P1，2026-07-26）：cookie 粘性按 replicaGroup 查值。
+   * 同一 host 有多个复制集 profile 时，单一 host 级 cookie 会被各组互相覆写
+   * （res-N 按 profile 顺位命名，选 A 组 res-1 会连带钉住 B 组 res-1）。
+   * `sticky`（query __rs / header 显式指定）优先于本回调。
+   */
+  stickyFor?: (replicaGroup: string) => string | undefined;
   /** 加权随机源，默认 Math.random；测试注入确定值 */
   rand?: () => number;
   /**
