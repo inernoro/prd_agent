@@ -244,10 +244,18 @@ export async function runIsolationAudit(
       const baseline = await isoInstanceEval(snapshot.dedicatedContainer,
         `print(Number(${isoDb}.getCollectionNames().length))`, isoAuth);
       const collCount = tailNumber(baseline.stdout);
+      // 空库不误判（Codex P2）：源库合法为空时正确的克隆同样为空——基线以
+      // 源库对照为准，隔离库可读且（有数据 或 源库本来就空）即 pass
+      const srcBaseline = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv,
+        `print(Number(${mainDb}.getCollectionNames().length))`);
+      const srcCollCount = tailNumber(srcBaseline.stdout);
+      const emptyOk = srcBaseline.code === 0 && srcCollCount === 0;
       checks.push({
-        id: 'D1', group: '数据面', title: '克隆基线：隔离库确有数据',
-        verdict: baseline.code === 0 && collCount > 0 ? 'pass' : 'fail',
-        evidence: baseline.code === 0 ? `隔离库 ${snapshot.dbName} collections=${collCount}` : '隔离库不可读',
+        id: 'D1', group: '数据面', title: '克隆基线：隔离库数据与源库对照',
+        verdict: baseline.code === 0 && (collCount > 0 || emptyOk) ? 'pass' : 'fail',
+        evidence: baseline.code === 0
+          ? `隔离库 ${snapshot.dbName} collections=${collCount} · 源库 collections=${Number.isFinite(srcCollCount) ? srcCollCount : '?'}${emptyOk && collCount === 0 ? '（源库为空，空克隆合法）' : ''}`
+          : '隔离库不可读',
       });
 
       // 正向：隔离库写入 → 主库必须查无
@@ -304,12 +312,21 @@ export async function runIsolationAudit(
       const baselineSql = snapshot.engine === 'mysql'
         ? `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${snapshot.dbName}'`
         : `SELECT COUNT(*) FROM pg_catalog.pg_tables WHERE schemaname NOT IN ('pg_catalog','information_schema')`;
-      const baseline = await sqlExec(snapshot.engine === 'mysql' ? snapshot.dbName : snapshot.dbName, baselineSql);
+      const baseline = await sqlExec(snapshot.dbName, baselineSql);
       const tblCount = tailNumber(baseline.stdout);
+      // 空库不误判（Codex P2）：与 mongo 通道同款——源库对照，空源库的空克隆合法
+      const srcBaselineSql = snapshot.engine === 'mysql'
+        ? `SELECT COUNT(*) FROM information_schema.tables WHERE table_schema='${target.sourceDb}'`
+        : baselineSql;
+      const srcBaseline = await sqlExec(target.sourceDb, srcBaselineSql);
+      const srcTblCount = tailNumber(srcBaseline.stdout);
+      const emptyOk = srcBaseline.code === 0 && srcTblCount === 0;
       checks.push({
-        id: 'D1', group: '数据面', title: '克隆基线：隔离库确有数据',
-        verdict: baseline.code === 0 && tblCount > 0 ? 'pass' : 'fail',
-        evidence: baseline.code === 0 ? `隔离库 ${snapshot.dbName} tables=${tblCount}` : '隔离库不可读',
+        id: 'D1', group: '数据面', title: '克隆基线：隔离库数据与源库对照',
+        verdict: baseline.code === 0 && (tblCount > 0 || emptyOk) ? 'pass' : 'fail',
+        evidence: baseline.code === 0
+          ? `隔离库 ${snapshot.dbName} tables=${tblCount} · 源库 tables=${Number.isFinite(srcTblCount) ? srcTblCount : '?'}${emptyOk && tblCount === 0 ? '（源库为空，空克隆合法）' : ''}`
+          : '隔离库不可读',
       });
 
       // 表名每次运行唯一（Codex P1）：固定名 cds_isolation_canary 会撞上应用自己的

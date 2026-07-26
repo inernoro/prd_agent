@@ -37,6 +37,15 @@ afterEach(async () => {
   if (fs.existsSync(tmpDir)) fs.rmSync(tmpDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
 });
 
+function addProfiles(...ids: string[]): void {
+  for (const id of ids) {
+    state.addBuildProfile({
+      id, name: id, projectId: 'proj', dockerImage: 'node:20',
+      workDir: '.', command: 'node server.js', containerPort: 3000,
+    } as Parameters<typeof state.addBuildProfile>[0]);
+  }
+}
+
 function setup(replicaSets?: unknown): { host: string; slug: string } {
   state.addProject({
     id: 'proj',
@@ -44,6 +53,7 @@ function setup(replicaSets?: unknown): { host: string; slug: string } {
     name: 'demo',
     createdAt: new Date().toISOString(),
   } as Parameters<typeof state.addProject>[0]);
+  addProfiles('web', 'api');
   state.addBranch({
     id: 'proj-main',
     projectId: 'proj',
@@ -145,6 +155,35 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     expect(routes.some((r) => r.host === `${slug}-res-1.miduo.org`)).toBe(false);
   });
 
+  it('profile 已删除:成员兜底不再发布其副本路由（Codex P1：被删服务不许继续公网可达）', () => {
+    state.addProject({
+      id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString(),
+    } as Parameters<typeof state.addProject>[0]);
+    addProfiles('web'); // api profile 已被删除，只剩遗留的 replicaSets.api
+    state.addBranch({
+      id: 'proj-main', projectId: 'proj', branch: 'main',
+      worktreePath: path.join(tmpDir, 'main'),
+      services: { web: { profileId: 'web', containerName: 'c-web', hostPort: 9100, status: 'running' } },
+      status: 'running', createdAt: new Date().toISOString(),
+      replicaSets: {
+        api: {
+          profileId: 'api', enabled: true, primaryWeight: 80,
+          members: [{ id: 'res-1', versionId: 'dv_1', weight: 20, image: 'img@sha256:x', status: 'running', hostPort: 9300, dbMode: 'shared', createdAt: new Date().toISOString() }],
+          createdAt: new Date().toISOString(), updatedAt: new Date().toISOString(),
+        },
+      },
+    } as Parameters<typeof state.addBranch>[0]);
+    publisher = new ForwarderRoutePublisher({ state, outputPath: outFile, rootDomains: ['miduo.org'] });
+    publisher.publishNow();
+    const routes = readRoutes();
+    // 被删 profile 的副本不进任何路由：无组路由、无直达子域、无端口引用
+    expect(routes.some((r) => r.replicaGroup === 'proj-main:api')).toBe(false);
+    expect(routes.some((r) => r.upstreamPort === 9300)).toBe(false);
+    expect(routes.some((r) => r.host.includes('-api-res-1.'))).toBe(false);
+    // 幸存的 web 服务路由不受影响
+    expect(routes.some((r) => r.upstreamPort === 9100)).toBe(true);
+  });
+
   it('主容器不可路由（error）但成员 running:仍发成员路由与直达子域,不发 primary 记录（Codex P1）', () => {
     // 单服务分支 + 主容器 error:修复前 routableServices 为空,整个分支 host 蒸发
     state.addProject({
@@ -153,6 +192,7 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
       name: 'demo',
       createdAt: new Date().toISOString(),
     } as Parameters<typeof state.addProject>[0]);
+    addProfiles('api');
     state.addBranch({
       id: 'proj-main',
       projectId: 'proj',

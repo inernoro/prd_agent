@@ -724,6 +724,9 @@ export class ProxyHandler {
 
     return new Promise<void>((resolve) => {
       upstreamReq.on('upgrade', (upstreamRes, upstreamSocket, upstreamHead) => {
+        // 被动健康（Codex P2）：升级握手成功 = 端口活着，与 HTTP 路径同款回池——
+        // 否则被摘成员的半开探针走 WebSocket 成功后永远回不了池
+        if (route.replicaGroup) this.opts.replicaHealth?.noteSuccess(route);
         // 把 upstream 的 101 + headers 写回客户端
         const headers = ['HTTP/1.1 101 Switching Protocols'];
         for (const [k, v] of Object.entries(upstreamRes.headers)) {
@@ -757,7 +760,12 @@ export class ProxyHandler {
         socket.on('error', cleanup);
       });
 
-      upstreamReq.on('error', () => {
+      upstreamReq.on('error', (err) => {
+        // 被动健康（Codex P2）：WebSocket-only 服务的端口死亡此前从不计入摘除——
+        // 连接级死亡信号与 HTTP 路径同口径上报（非致命错误码由 registry 自行过滤）
+        if (route.replicaGroup) {
+          this.opts.replicaHealth?.noteFailure(route, (err as NodeJS.ErrnoException).code);
+        }
         try {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();

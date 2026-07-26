@@ -81,3 +81,7 @@
 | fix | cds | 隔离前置全员运行态检查：存在 stopped/error/provisioning 副本时拒绝隔离（否则重启会按共享库 env 复活它们、控制面却声称已隔离，Codex P1） |
 | fix | cds | 计划回滚遇不可还原的破坏性步骤（remove-member/dissolve）不再整体标 rolled-back，终态 error 如实告知现场未复原（Codex P1） |
 | fix | cds | mongoAdminEval/dropReplicaDb 的 mongo 连接串凭据 percent-encode，治密码含 @ : / # 时体积预检和清理全部失败（Codex P2） |
+| fix | cds | 删 build-profile 级联收割其复制集（成员容器 + 配置），发布器另加数据面保险：profile 不在生效清单即整组跳过——治被删服务经成员兜底继续公网可达（Codex P1） |
+| fix | cds | 隔离/回切三条过渡循环加停止栅栏：逐成员复查停止态，不再把 stopped 成员改回 provisioning 亲手擦掉停止栅栏（Codex P1） |
+| fix | cds | WebSocket 升级结果接入被动健康：握手成功回池、连接错误上报摘除，治 WS-only 服务端口死亡永不被摘、半开探针走 WS 永不回池（Codex P2） |
+| fix | cds | 隔离审计基线对照源库：空源库的空克隆判 pass，不再把合法空库误判 broken（Codex P2） |

@@ -195,6 +195,10 @@ export class ForwarderRoutePublisher {
       }>();
       for (const rs of Object.values(branch.replicaSets ?? {})) {
         if (!rs.enabled) continue;
+        // 数据面保险（Codex P1）：profile 已被删除（不在分支生效 profiles 里）时，
+        // 成员兜底不许把它的副本再抬进可路由集合——控制面删 profile 已级联解散
+        // 复制集，这里防的是任何绕过级联的路径让「被删的服务」继续公网可达。
+        if (!profileById.has(rs.profileId)) continue;
         const members = rs.members
           .filter((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0)
           .map((m) => ({ id: m.id, hostPort: m.hostPort as number, weight: m.weight }));

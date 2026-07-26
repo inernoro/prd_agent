@@ -16348,6 +16348,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
             completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
           }
         }
+        // 复制集级联解散（Codex P1，2026-07-26）：profile 删除后主服务从
+        // branch.services 消失，但 replicaSets[profileId] 与成员容器留活——发布器
+        // 的「主宕成员兜底」会把这些成员继续发进路由表，被操作员删掉的服务对
+        // 公网依旧可达且持续占资源。删 profile 必须连带收割其复制集。
+        const orphanRs = entry.replicaSets?.[removedProfileId];
+        if (orphanRs) {
+          for (const member of orphanRs.members) {
+            if (!member.containerName) continue;
+            await containerService.remove(member.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: `${removedProfileId}--${member.id}`,
+              requestId,
+              actor,
+              trigger,
+              operation: 'build-profile-delete-replica-member',
+              source: 'api.delete-build-profile',
+              reason: `删除构建配置 ${removedProfileId} 时级联收割复制集副本`,
+            }).catch(() => { /* best-effort：容器可能已不在 */ });
+          }
+          delete entry.replicaSets![removedProfileId];
+          if (Object.keys(entry.replicaSets!).length === 0) {
+            delete entry.replicaSets;
+            delete entry.replicaMode;
+          }
+        }
       }
       stateService.save();
       res.json({ message: '已删除', skippedBusyCount: skippedBusy.length, skippedBusy });

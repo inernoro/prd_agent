@@ -453,6 +453,11 @@ export class ReplicaSetService {
       const envOverride = envOverrideFromSnapshot(target, reusable);
       void (async () => {
         for (const m of members) {
+          // 停止栅栏（Codex P1）：分支停止会把成员标 stopped——过渡循环若把它改回
+          // provisioning，就亲手擦掉了栅栏，materializeMember 会在分支已 idle 后
+          // 把副本起出来。逐成员复查在册与停止态，停了就不碰。
+          const liveM = this.findMember(branchId, profileId, m.id);
+          if (!liveM || liveM.status === 'stopped') continue;
           this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第2步 切换：复用统一隔离库，重启副本改连…' });
           if (m.containerName) {
             await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
@@ -510,6 +515,9 @@ export class ReplicaSetService {
         liveRs.isolated = { dbName: cloned.snapshot.dbName, snapshotId: cloned.snapshot.id, isolatedAt: this.now() };
         this.opts.state.save();
         for (const m of members) {
+          // 停止栅栏（同上）：停了的成员不拆容器不重物化，交还给停止/重启语义
+          const liveM = this.findMember(branchId, profileId, m.id);
+          if (!liveM || liveM.status === 'stopped') continue;
           this.patchMember(branchId, profileId, m.id, { statusMessage: '第2步 切换：重启副本改连隔离库…' });
           if (m.containerName) {
             await this.opts.container.remove(m.containerName, { actor: 'replica-set', trigger: 'replica-isolate' }).catch(() => undefined);
@@ -548,6 +556,10 @@ export class ReplicaSetService {
     this.opts.state.save();
     void (async () => {
       for (const m of members) {
+        // 停止栅栏（Codex P1）：分支停止把成员标 stopped 后，回切循环不许再改回
+        // provisioning 复活它（materializeMember 会在分支 idle 后起容器）
+        const liveM = this.findMember(branchId, profileId, m.id);
+        if (!liveM || liveM.status === 'stopped') continue;
         this.patchMember(branchId, profileId, m.id, {
           status: 'provisioning', statusMessage: '回切主库：重启副本恢复原连接…', dbMode: 'shared', isolatedDbName: undefined,
         });
