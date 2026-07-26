@@ -17,6 +17,16 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .ShouldBe(DocumentStoreController.PendingRecordingEntryId("session-1"));
     }
 
+    [Theory]
+    [InlineData(DocumentRecordingUploadStatus.Uploading, true)]
+    [InlineData(DocumentRecordingUploadStatus.Completing, true)]
+    [InlineData(DocumentRecordingUploadStatus.Completed, false)]
+    [InlineData(DocumentRecordingUploadStatus.Cancelled, false)]
+    public void CompletionEntryGuard_ShouldAllowStaleLeaseRecovery(string status, bool expected)
+    {
+        DocumentStoreController.CanEnterRecordingCompletion(status).ShouldBe(expected);
+    }
+
     [Fact]
     public void AssembleChunks_ShouldRestoreOrderedAudio()
     {

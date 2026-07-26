@@ -1856,7 +1856,7 @@ public class DocumentStoreController : ControllerBase
                 }));
             }
         }
-        if (session.Status != DocumentRecordingUploadStatus.Uploading)
+        if (!CanEnterRecordingCompletion(session.Status))
             return StatusCode(StatusCodes.Status410Gone,
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
 
@@ -2199,6 +2199,10 @@ public class DocumentStoreController : ControllerBase
 
     internal static string PendingRecordingEntryId(string sessionId)
         => $"recording-pending-{sessionId}";
+
+    internal static bool CanEnterRecordingCompletion(string status)
+        => status is DocumentRecordingUploadStatus.Uploading
+            or DocumentRecordingUploadStatus.Completing;
 
     private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>
         CreateUploadedDocumentEntryAsync(

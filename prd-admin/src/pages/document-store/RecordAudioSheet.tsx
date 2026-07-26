@@ -342,8 +342,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
-              finishModeRef.current = 'complete';
-              rec.stop();
+              // 与用户点击完成共用同一条收尾路径，先 flush 不足一百毫秒的 PCM
+              // 尾帧，再停止 MediaRecorder，禁止实时原文漏掉最后几个字。
+              stopRecorder('complete');
             }
           }
         };
