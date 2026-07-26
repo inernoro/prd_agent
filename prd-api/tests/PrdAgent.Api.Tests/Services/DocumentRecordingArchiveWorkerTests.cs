@@ -87,6 +87,230 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task ArchiveClaim_ShouldOnlyTakeSessionsOwnedByCurrentInstance()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([
+            Session("main-session", "main", DocumentRecordingArchiveStatus.Pending),
+            Session("preview-session", "preview", DocumentRecordingArchiveStatus.Pending),
+            Session("unowned-session", "", DocumentRecordingArchiveStatus.Pending),
+        ]);
+
+        var claimed = await DocumentRecordingArchiveWorker.ClaimOwnedArchiveSessionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "preview",
+            "preview-lease",
+            DateTime.UtcNow,
+            CancellationToken.None);
+
+        claimed.ShouldNotBeNull();
+        claimed!.Id.ShouldBe("preview-session");
+        claimed.OwnerInstanceId.ShouldBe("preview");
+        claimed.ArchiveLeaseId.ShouldBe("preview-lease");
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == "main-session").SingleAsync())
+            .ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == "unowned-session").SingleAsync())
+            .ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+    }
+
+    [Fact]
+    public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = Session("legacy-unowned", "", DocumentRecordingArchiveStatus.Pending);
+        session.Status = DocumentRecordingUploadStatus.Completed;
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        var results = await Task.WhenAll(
+            DocumentStoreController.AdoptUnownedRecordingArchiveAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                session.Id,
+                session.UserId,
+                "main",
+                CancellationToken.None),
+            DocumentStoreController.AdoptUnownedRecordingArchiveAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                session.Id,
+                session.UserId,
+                "preview",
+                CancellationToken.None));
+        var adopted = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == session.Id)
+            .SingleAsync();
+
+        results.Count(result => result).ShouldBe(1);
+        new[] { "main", "preview" }.ShouldContain(adopted.OwnerInstanceId);
+    }
+
+    [Fact]
+    public async Task StaleArchiveRecovery_ShouldNotReleaseAnotherInstancesLease()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var now = DateTime.UtcNow;
+        var main = Session("main-stale", "main", DocumentRecordingArchiveStatus.Archiving);
+        main.ArchiveLeaseId = "main-old";
+        main.UpdatedAt = now.AddMinutes(-20);
+        var preview = Session("preview-stale", "preview", DocumentRecordingArchiveStatus.Archiving);
+        preview.ArchiveLeaseId = "preview-old";
+        preview.UpdatedAt = now.AddMinutes(-20);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([main, preview]);
+
+        var released = await DocumentRecordingArchiveWorker.ReleaseStaleOwnedArchiveLeasesAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "preview",
+            now,
+            CancellationToken.None);
+
+        released.ShouldBe(1);
+        var recoveredPreview = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == "preview-stale")
+            .SingleAsync();
+        recoveredPreview.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Pending);
+        recoveredPreview.ArchiveLeaseId.ShouldBeNull();
+        var untouchedMain = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == "main-stale")
+            .SingleAsync();
+        untouchedMain.ArchiveStatus.ShouldBe(DocumentRecordingArchiveStatus.Archiving);
+        untouchedMain.ArchiveLeaseId.ShouldBe("main-old");
+    }
+
+    [Fact]
+    public async Task CompletionClaim_ShouldIncludeFinalChunkCommittedBeforeClaim()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = Session("complete-after-append", "main", DocumentRecordingArchiveStatus.None);
+        session.NextChunkIndex = 1;
+        session.UploadedBytes = 2;
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync([
+            Chunk("complete-after-append", 0, [1, 2]),
+            Chunk("complete-after-append", 1, [3, 4]),
+        ]);
+        await fixture.Db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == session.Id
+                 && s.Status == DocumentRecordingUploadStatus.Uploading
+                 && s.NextChunkIndex == 1,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.NextChunkIndex, 2)
+                .Set(s => s.UploadedBytes, 4));
+
+        var claimed = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "completion-lease",
+            DateTime.UtcNow,
+            CancellationToken.None);
+        var chunks = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == session.Id)
+            .SortBy(c => c.Index)
+            .ToListAsync();
+
+        claimed.ShouldNotBeNull();
+        claimed!.NextChunkIndex.ShouldBe(2);
+        claimed.UploadedBytes.ShouldBe(4);
+        DocumentRecordingArchiveWorker.AssembleChunks(
+                chunks,
+                claimed.NextChunkIndex,
+                claimed.UploadedBytes)
+            .ShouldBe(new byte[] { 1, 2, 3, 4 });
+    }
+
+    [Fact]
+    public async Task CompletionClaim_ShouldBlockAndExcludeAppendThatHasNotCommitted()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = Session("complete-before-append", "main", DocumentRecordingArchiveStatus.None);
+        session.NextChunkIndex = 1;
+        session.UploadedBytes = 2;
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync([
+            Chunk("complete-before-append", 0, [1, 2]),
+            Chunk("complete-before-append", 1, [3, 4]),
+        ]);
+
+        var claimed = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "completion-lease",
+            DateTime.UtcNow,
+            CancellationToken.None);
+        var appendCommit = await fixture.Db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == session.Id
+                 && s.Status == DocumentRecordingUploadStatus.Uploading
+                 && s.NextChunkIndex == 1,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.NextChunkIndex, 2)
+                .Set(s => s.UploadedBytes, 4));
+        await fixture.Db.DocumentRecordingUploadChunks.DeleteOneAsync(
+            c => c.SessionId == session.Id && c.Index == 1);
+        var acceptedChunks = await fixture.Db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == session.Id)
+            .ToListAsync();
+
+        claimed.ShouldNotBeNull();
+        appendCommit.ModifiedCount.ShouldBe(0);
+        claimed!.NextChunkIndex.ShouldBe(1);
+        DocumentRecordingArchiveWorker.AssembleChunks(
+                acceptedChunks,
+                claimed.NextChunkIndex,
+                claimed.UploadedBytes)
+            .ShouldBe(new byte[] { 1, 2 });
+    }
+
+    [Fact]
+    public async Task CompletionLease_ShouldPreventOldClaimFromReleasingNewClaim()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = Session("completion-fence", "main", DocumentRecordingArchiveStatus.None);
+        session.UpdatedAt = DateTime.UtcNow.AddMinutes(-20);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        var first = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "old-lease",
+            DateTime.UtcNow.AddMinutes(-20),
+            CancellationToken.None);
+        first.ShouldNotBeNull();
+        var second = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "new-lease",
+            DateTime.UtcNow,
+            CancellationToken.None);
+        second.ShouldNotBeNull();
+
+        var oldReleased = await DocumentStoreController.ReleaseRecordingCompletionClaimAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "old-lease",
+            CancellationToken.None);
+        var current = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == session.Id)
+            .SingleAsync();
+
+        oldReleased.ShouldBeFalse();
+        current.Status.ShouldBe(DocumentRecordingUploadStatus.Completing);
+        current.CompletionLeaseId.ShouldBe("new-lease");
+    }
+
+    [Fact]
     public void RecoveryEntryIds_ShouldCheckCompletedBeforePending()
     {
         DocumentStoreController.RecordingRecoveryEntryIds("session-1")
@@ -274,6 +498,31 @@ public sealed class DocumentRecordingArchiveWorkerTests
             Index = index,
             Data = data,
             SizeBytes = data.LongLength,
+        };
+
+    private static DocumentRecordingUploadChunk Chunk(string sessionId, int index, byte[] data)
+        => new()
+        {
+            Id = DocumentStoreController.RecordingChunkId(sessionId, index),
+            SessionId = sessionId,
+            Index = index,
+            Data = data,
+            SizeBytes = data.LongLength,
+        };
+
+    private static DocumentRecordingUploadSession Session(
+        string id,
+        string ownerInstanceId,
+        string archiveStatus)
+        => new()
+        {
+            Id = id,
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = ownerInstanceId,
+            FileName = "recording.webm",
+            MimeType = "audio/webm",
+            ArchiveStatus = archiveStatus,
         };
 
     private sealed class RecordingMongoFixture : IAsyncDisposable

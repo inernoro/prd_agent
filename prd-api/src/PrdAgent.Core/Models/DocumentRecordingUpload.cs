@@ -12,6 +12,11 @@ public class DocumentRecordingUploadSession
 
     public string UserId { get; set; } = string.Empty;
 
+    /// <summary>
+    /// 创建该录音会话的部署实例。共享 MongoDB 的主干和预览分支只能处理自己的归档任务。
+    /// </summary>
+    public string OwnerInstanceId { get; set; } = string.Empty;
+
     public string FileName { get; set; } = string.Empty;
 
     public string MimeType { get; set; } = "audio/webm";
@@ -35,6 +40,12 @@ public class DocumentRecordingUploadSession
     public string? ArchiveError { get; set; }
 
     public string? ArchiveUrl { get; set; }
+
+    /// <summary>归档 Worker 的本次租约令牌，防止过期 Worker 覆盖重新认领者。</summary>
+    public string? ArchiveLeaseId { get; set; }
+
+    /// <summary>完成上传请求的本次租约令牌，防止过期请求提交或释放新的认领。</summary>
+    public string? CompletionLeaseId { get; set; }
 
     public string LiveTranscriptStatus { get; set; } = DocumentLiveTranscriptStatus.Pending;
 

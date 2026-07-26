@@ -8,7 +8,7 @@ namespace PrdAgent.Api.Services;
 
 /// <summary>
 /// 将对象存储故障期间已落 Mongo 的录音分片异步归档到正式资产存储。
-/// 归档成功前不删除分片；多实例通过 pending -> archiving 原子认领互斥。
+/// 归档成功前不删除分片；部署实例归属、状态认领与租约令牌共同隔离并发执行者。
 /// </summary>
 public sealed class DocumentRecordingArchiveWorker : BackgroundService
 {
@@ -55,34 +55,23 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
         var storage = scope.ServiceProvider.GetRequiredService<IAssetStorage>();
+        var instanceId = InstanceIdentity.Get(
+            scope.ServiceProvider.GetRequiredService<IConfiguration>());
         var now = DateTime.UtcNow;
 
-        await db.DocumentRecordingUploadSessions.UpdateManyAsync(
-            s => s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
-                 && s.UpdatedAt <= now.Subtract(StaleLease),
-            Builders<DocumentRecordingUploadSession>.Update
-                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
-                .Set(s => s.ArchiveNextAttemptAt, now),
-            cancellationToken: CancellationToken.None);
+        await ReleaseStaleOwnedArchiveLeasesAsync(
+            db.DocumentRecordingUploadSessions,
+            instanceId,
+            now,
+            CancellationToken.None);
 
-        var dueFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
-            Builders<DocumentRecordingUploadSession>.Filter.Eq(
-                s => s.ArchiveStatus,
-                DocumentRecordingArchiveStatus.Pending),
-            Builders<DocumentRecordingUploadSession>.Filter.Or(
-                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.ArchiveNextAttemptAt, null),
-                Builders<DocumentRecordingUploadSession>.Filter.Lte(s => s.ArchiveNextAttemptAt, now)));
-        var session = await db.DocumentRecordingUploadSessions.FindOneAndUpdateAsync(
-            dueFilter,
-            Builders<DocumentRecordingUploadSession>.Update
-                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Archiving)
-                .Set(s => s.UpdatedAt, now),
-            new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
-            {
-                ReturnDocument = ReturnDocument.After,
-                Sort = Builders<DocumentRecordingUploadSession>.Sort.Ascending(s => s.ArchiveNextAttemptAt),
-            },
-            cancellationToken: CancellationToken.None);
+        var archiveLeaseId = Guid.NewGuid().ToString("N");
+        var session = await ClaimOwnedArchiveSessionAsync(
+            db.DocumentRecordingUploadSessions,
+            instanceId,
+            archiveLeaseId,
+            now,
+            CancellationToken.None);
         if (session == null)
             return;
 
@@ -100,7 +89,9 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     cancellationToken: CancellationToken.None);
                 await db.DocumentRecordingUploadSessions.DeleteOneAsync(
                     s => s.Id == session.Id
-                         && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving,
+                         && s.OwnerInstanceId == instanceId
+                         && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                         && s.ArchiveLeaseId == archiveLeaseId,
                     cancellationToken: CancellationToken.None);
                 _logger.LogInformation(
                     "[recording-archive] Removed orphaned archive session={SessionId} entry={EntryId}",
@@ -125,9 +116,19 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             // 归档期间实时中继可能刚好完成。回读最新会话，避免用认领时的旧快照
             // 误排一次完整文件 ASR，或漏写已经稳定完成的实时原文。
             var latestSession = await db.DocumentRecordingUploadSessions
-                .Find(s => s.Id == session.Id)
-                .FirstOrDefaultAsync(CancellationToken.None)
-                ?? session;
+                .Find(s => s.Id == session.Id
+                           && s.OwnerInstanceId == instanceId
+                           && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                           && s.ArchiveLeaseId == archiveLeaseId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (latestSession == null)
+            {
+                _logger.LogInformation(
+                    "[recording-archive] Lease superseded session={SessionId} lease={LeaseId}",
+                    session.Id,
+                    archiveLeaseId);
+                return;
+            }
 
             var attachmentId = entry.AttachmentId;
             if (string.IsNullOrWhiteSpace(attachmentId))
@@ -191,8 +192,6 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 entryUpdate,
                 cancellationToken: CancellationToken.None);
 
-            var instanceId = InstanceIdentity.Get(
-                scope.ServiceProvider.GetRequiredService<IConfiguration>());
             var deferredRun = BuildDeferredTranscriptionRun(latestSession, entry.Id, instanceId);
             if (deferredRun != null)
             {
@@ -214,20 +213,26 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 }
             }
 
-            await db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
                 s => s.Id == session.Id
-                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving,
+                     && s.OwnerInstanceId == instanceId
+                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                     && s.ArchiveLeaseId == archiveLeaseId,
                 Builders<DocumentRecordingUploadSession>.Update
                     .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
+                    .Unset(s => s.ArchiveLeaseId)
                     .Set(s => s.ArchiveUrl, stored.Url)
                     .Set(s => s.ArchiveError, null)
                     .Set(s => s.ArchiveNextAttemptAt, null)
                     .Set(s => s.UpdatedAt, DateTime.UtcNow)
                     .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
                 cancellationToken: CancellationToken.None);
-            await db.DocumentRecordingUploadChunks.DeleteManyAsync(
-                c => c.SessionId == session.Id,
-                cancellationToken: CancellationToken.None);
+            if (completed.ModifiedCount == 1)
+            {
+                await db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                    c => c.SessionId == session.Id,
+                    cancellationToken: CancellationToken.None);
+            }
             _logger.LogInformation(
                 "[recording-archive] Archived session={SessionId} entry={EntryId} bytes={Bytes}",
                 session.Id,
@@ -241,9 +246,12 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             var error = ex.Message.Length > 300 ? ex.Message[..300] : ex.Message;
             await db.DocumentRecordingUploadSessions.UpdateOneAsync(
                 s => s.Id == session.Id
-                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving,
+                     && s.OwnerInstanceId == instanceId
+                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                     && s.ArchiveLeaseId == archiveLeaseId,
                 Builders<DocumentRecordingUploadSession>.Update
                     .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                    .Unset(s => s.ArchiveLeaseId)
                     .Set(s => s.ArchiveAttempts, attempts)
                     .Set(s => s.ArchiveNextAttemptAt, nextAttempt)
                     .Set(s => s.ArchiveError, error)
@@ -257,6 +265,53 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 attempts,
                 nextAttempt);
         }
+    }
+
+    internal static async Task<long> ReleaseStaleOwnedArchiveLeasesAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string instanceId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var released = await sessions.UpdateManyAsync(
+            s => s.OwnerInstanceId == instanceId
+                 && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                 && s.UpdatedAt <= now.Subtract(StaleLease),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(s => s.ArchiveLeaseId)
+                .Set(s => s.ArchiveNextAttemptAt, now),
+            cancellationToken: cancellationToken);
+        return released.ModifiedCount;
+    }
+
+    internal static async Task<DocumentRecordingUploadSession?> ClaimOwnedArchiveSessionAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string instanceId,
+        string archiveLeaseId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var dueFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.OwnerInstanceId, instanceId),
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                s => s.ArchiveStatus,
+                DocumentRecordingArchiveStatus.Pending),
+            Builders<DocumentRecordingUploadSession>.Filter.Or(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.ArchiveNextAttemptAt, null),
+                Builders<DocumentRecordingUploadSession>.Filter.Lte(s => s.ArchiveNextAttemptAt, now)));
+        return await sessions.FindOneAndUpdateAsync(
+            dueFilter,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Archiving)
+                .Set(s => s.ArchiveLeaseId, archiveLeaseId)
+                .Set(s => s.UpdatedAt, now),
+            new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+                Sort = Builders<DocumentRecordingUploadSession>.Sort.Ascending(s => s.ArchiveNextAttemptAt),
+            },
+            cancellationToken);
     }
 
     internal static byte[] AssembleChunks(

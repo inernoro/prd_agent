@@ -1654,6 +1654,7 @@ public class DocumentStoreController : ControllerBase
         {
             StoreId = storeId,
             UserId = userId,
+            OwnerInstanceId = InstanceIdentity.Get(_config),
             FileName = fileName,
             MimeType = mime,
         };
@@ -1934,6 +1935,15 @@ public class DocumentStoreController : ControllerBase
             {
                 var archivePending = session.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
                     or DocumentRecordingArchiveStatus.Archiving;
+                if (archivePending && string.IsNullOrWhiteSpace(session.OwnerInstanceId))
+                {
+                    await AdoptUnownedRecordingArchiveAsync(
+                        _db.DocumentRecordingUploadSessions,
+                        sessionId,
+                        userId,
+                        InstanceIdentity.Get(_config),
+                        CancellationToken.None);
+                }
                 var needsDeferredTranscription = archivePending
                     && (session.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
                         || string.IsNullOrWhiteSpace(session.LiveTranscript));
@@ -1959,57 +1969,19 @@ public class DocumentStoreController : ControllerBase
         if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
-        var chunks = await _db.DocumentRecordingUploadChunks
-            .Find(c => c.SessionId == sessionId)
-            .SortBy(c => c.Index)
-            .ToListAsync();
-        byte[] audioBytes;
-        try
-        {
-            // 与后台归档共用同一套完整性校验。旧版本并发 append 可能留下内容相同的
-            // 重复 index；它们应被收敛恢复，内容冲突的重复项则必须拒绝。
-            audioBytes = DocumentRecordingArchiveWorker.AssembleChunks(
-                chunks,
-                session.NextChunkIndex,
-                session.UploadedBytes);
-        }
-        catch (InvalidOperationException ex)
-        {
-            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
-        }
-        if (audioBytes.LongLength > MaxUploadBytes)
-            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小超过限制"));
-
-        // 原子认领：把会话从 Uploading 翻到 Completing，只有一个并发 /complete 能成功。
+        // 先原子认领，再读取认领后的会话快照和分片。Append 只允许修改 Uploading，
+        // 因而认领之后不会再有“会话计数已前进、分片快照仍是旧值”的截尾窗口。
+        // 只有一个并发 /complete 能成功；过期 Completing 可由同一幂等流程重新认领。
         // 进程若在副作用中途退出，超过租约的 Completing 可被同一个幂等流程重新认领；
         // 否则会话会永久卡住，分片和已创建的 pending entry 都无人接管。
-        // 上面的分片读取/校验都是只读操作，认领放在唯一有副作用的“创建条目”之前，
-        // 保证两个并发请求不会各自 CreateUploadedDocumentEntryAsync 造成重复条目 + 文档数双计。
-        var completionLeaseCutoff = DateTime.UtcNow.Subtract(RecordingCompletionStaleLease);
-        var claimableStatus = Builders<DocumentRecordingUploadSession>.Filter.Or(
-            Builders<DocumentRecordingUploadSession>.Filter.Eq(
-                s => s.Status,
-                DocumentRecordingUploadStatus.Uploading),
-            Builders<DocumentRecordingUploadSession>.Filter.And(
-                Builders<DocumentRecordingUploadSession>.Filter.Eq(
-                    s => s.Status,
-                    DocumentRecordingUploadStatus.Completing),
-                Builders<DocumentRecordingUploadSession>.Filter.Lte(
-                    s => s.UpdatedAt,
-                    completionLeaseCutoff)));
-        var claimed = await _db.DocumentRecordingUploadSessions.FindOneAndUpdateAsync(
-            Builders<DocumentRecordingUploadSession>.Filter.And(
-                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.Id, sessionId),
-                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.UserId, userId),
-                claimableStatus),
-            Builders<DocumentRecordingUploadSession>.Update
-                .Set(s => s.Status, DocumentRecordingUploadStatus.Completing)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
-            {
-                ReturnDocument = ReturnDocument.After,
-            },
-            cancellationToken: CancellationToken.None);
+        var completionLeaseId = Guid.NewGuid().ToString("N");
+        var claimed = await ClaimRecordingCompletionAsync(
+            _db.DocumentRecordingUploadSessions,
+            sessionId,
+            userId,
+            completionLeaseId,
+            DateTime.UtcNow,
+            CancellationToken.None);
         if (claimed == null)
         {
             // 没抢到：说明并发的另一个请求已经在完成或已完成。回读最新状态决定响应，
@@ -2026,6 +1998,15 @@ public class DocumentStoreController : ControllerBase
                 {
                     var archivePending = fresh.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
                         or DocumentRecordingArchiveStatus.Archiving;
+                    if (archivePending && string.IsNullOrWhiteSpace(fresh.OwnerInstanceId))
+                    {
+                        await AdoptUnownedRecordingArchiveAsync(
+                            _db.DocumentRecordingUploadSessions,
+                            sessionId,
+                            userId,
+                            InstanceIdentity.Get(_config),
+                            CancellationToken.None);
+                    }
                     var needsDeferredTranscription = archivePending
                         && (fresh.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
                             || string.IsNullOrWhiteSpace(fresh.LiveTranscript));
@@ -2046,6 +2027,41 @@ public class DocumentStoreController : ControllerBase
                 return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音正在完成，请稍候"));
             return StatusCode(StatusCodes.Status410Gone,
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
+        }
+
+        var chunks = await _db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == sessionId)
+            .SortBy(c => c.Index)
+            .ToListAsync();
+        byte[] audioBytes;
+        try
+        {
+            // 与后台归档共用同一套完整性校验。旧版本并发 append 可能留下内容相同的
+            // 重复 index；它们应被收敛恢复，内容冲突的重复项则必须拒绝。
+            audioBytes = DocumentRecordingArchiveWorker.AssembleChunks(
+                chunks,
+                claimed.NextChunkIndex,
+                claimed.UploadedBytes);
+        }
+        catch (InvalidOperationException ex)
+        {
+            await ReleaseRecordingCompletionClaimAsync(
+                _db.DocumentRecordingUploadSessions,
+                sessionId,
+                userId,
+                completionLeaseId,
+                CancellationToken.None);
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message));
+        }
+        if (audioBytes.LongLength > MaxUploadBytes)
+        {
+            await ReleaseRecordingCompletionClaimAsync(
+                _db.DocumentRecordingUploadSessions,
+                sessionId,
+                userId,
+                completionLeaseId,
+                CancellationToken.None);
+            return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音总大小超过限制"));
         }
 
         var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
@@ -2089,13 +2105,19 @@ public class DocumentStoreController : ControllerBase
             // 存储成功路径使用确定性 entry/attachment ID。若进程在任一落库步骤后退出，
             // 必须先恢复这条已完成记录，再考虑对象存储；否则重试时恰逢存储故障会
             // 另外创建 pending entry，形成两条可见记录和错误计数。
-            await FinalizeCompletedRecordingAsync(
+            if (!await FinalizeCompletedRecordingAsync(
                 store,
                 claimed,
                 sessionId,
                 userId,
                 interruptedCompletedEntry,
-                interruptedAttachment.Url);
+                interruptedAttachment.Url,
+                completionLeaseId))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "录音完成租约已更新，请稍候查询结果"));
+            }
             return Ok(ApiResponse<object>.Ok(new
             {
                 entry = interruptedCompletedEntry,
@@ -2120,7 +2142,16 @@ public class DocumentStoreController : ControllerBase
                 avatarFileName,
                 claimed,
                 sessionId);
-            await MarkRecordingArchivePendingAsync(sessionId, userId, recoveredEntry.Id);
+            if (!await MarkRecordingArchivePendingAsync(
+                    sessionId,
+                    userId,
+                    recoveredEntry.Id,
+                    completionLeaseId))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "录音完成租约已更新，请稍候查询结果"));
+            }
             return Ok(ApiResponse<object>.Ok(new
             {
                 entry = recoveredEntry,
@@ -2143,8 +2174,8 @@ public class DocumentStoreController : ControllerBase
             // 降级判定只包住对象存储调用。附件、条目、计数或活动日志在存储成功后
             // 即使抛出相同类型的超时，也不能被误判成存储故障再创建 pending 条目。
             recordingAsset = await SaveUploadedAssetAsync(
-                session.FileName,
-                session.MimeType,
+                claimed.FileName,
+                claimed.MimeType,
                 audioBytes,
                 CancellationToken.None,
                 assetSaveAttempts: 3);
@@ -2161,7 +2192,16 @@ public class DocumentStoreController : ControllerBase
                 avatarFileName,
                 claimed,
                 sessionId);
-            await MarkRecordingArchivePendingAsync(sessionId, userId, pendingEntry.Id);
+            if (!await MarkRecordingArchivePendingAsync(
+                    sessionId,
+                    userId,
+                    pendingEntry.Id,
+                    completionLeaseId))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "录音完成租约已更新，请稍候查询结果"));
+            }
             _logger.LogError(
                 ex,
                 "[document-store] 录音对象存储暂时不可用，已转入 Mongo 耐久队列 session={SessionId} entry={EntryId}",
@@ -2184,17 +2224,23 @@ public class DocumentStoreController : ControllerBase
         }
         var stored = await CreateUploadedDocumentEntryAsync(
             store, actorId, actorName, avatarFileName,
-            session.FileName, session.MimeType, audioBytes, parentId: null,
+            claimed.FileName, claimed.MimeType, audioBytes, parentId: null,
             CancellationToken.None,
             storedAsset: recordingAsset,
             recordingSessionId: sessionId);
-        await FinalizeCompletedRecordingAsync(
+        if (!await FinalizeCompletedRecordingAsync(
             store,
             claimed,
             sessionId,
             userId,
             stored.Entry,
-            stored.FileUrl);
+            stored.FileUrl,
+            completionLeaseId))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "录音完成租约已更新，请稍候查询结果"));
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -2207,13 +2253,14 @@ public class DocumentStoreController : ControllerBase
         }));
     }
 
-    private async Task FinalizeCompletedRecordingAsync(
+    private async Task<bool> FinalizeCompletedRecordingAsync(
         DocumentStore store,
         DocumentRecordingUploadSession session,
         string sessionId,
         string userId,
         DocumentEntry entry,
-        string fileUrl)
+        string fileUrl,
+        string completionLeaseId)
     {
         if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(session.LiveTranscript))
@@ -2251,19 +2298,27 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.DocumentCount, checked((int)documentCount))
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
-        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
-            s => s.Id == sessionId && s.UserId == userId,
+        var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId
+                 && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Completing
+                 && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entry.Id)
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
                 .Set(s => s.ArchiveUrl, fileUrl)
                 .Set(s => s.ArchiveError, null)
+                .Unset(s => s.CompletionLeaseId)
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (completed.ModifiedCount == 0)
+            return false;
+
         await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
             c => c.SessionId == sessionId,
             cancellationToken: CancellationToken.None);
+        return true;
     }
 
     /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>
@@ -2365,25 +2420,31 @@ public class DocumentStoreController : ControllerBase
         return entry;
     }
 
-    private async Task MarkRecordingArchivePendingAsync(
+    private async Task<bool> MarkRecordingArchivePendingAsync(
         string sessionId,
         string userId,
-        string entryId)
+        string entryId,
+        string completionLeaseId)
     {
-        await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
+        var pending = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId
                  && s.UserId == userId
-                 && s.Status == DocumentRecordingUploadStatus.Completing,
+                 && s.Status == DocumentRecordingUploadStatus.Completing
+                 && s.CompletionLeaseId == completionLeaseId,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entryId)
+                .Set(s => s.OwnerInstanceId, InstanceIdentity.Get(_config))
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
+                .Unset(s => s.ArchiveLeaseId)
+                .Unset(s => s.CompletionLeaseId)
                 .Set(s => s.ArchiveAttempts, 3)
                 .Set(s => s.ArchiveNextAttemptAt, DateTime.UtcNow.AddMinutes(1))
                 .Set(s => s.ArchiveError, "对象存储暂时不可用，已进入后台归档队列")
                 .Set(s => s.UpdatedAt, DateTime.UtcNow)
                 .Set(s => s.ExpiresAt, DateTime.UtcNow.AddYears(10)),
             cancellationToken: CancellationToken.None);
+        return pending.ModifiedCount == 1;
     }
 
     internal static string PendingRecordingEntryId(string sessionId)
@@ -2401,6 +2462,87 @@ public class DocumentStoreController : ControllerBase
     internal static bool CanEnterRecordingCompletion(string status)
         => status is DocumentRecordingUploadStatus.Uploading
             or DocumentRecordingUploadStatus.Completing;
+
+    internal static async Task<DocumentRecordingUploadSession?> ClaimRecordingCompletionAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string sessionId,
+        string userId,
+        string completionLeaseId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var claimableStatus = Builders<DocumentRecordingUploadSession>.Filter.Or(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                s => s.Status,
+                DocumentRecordingUploadStatus.Uploading),
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    s => s.Status,
+                    DocumentRecordingUploadStatus.Completing),
+                Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                    s => s.UpdatedAt,
+                    now.Subtract(RecordingCompletionStaleLease))));
+        return await sessions.FindOneAndUpdateAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.Id, sessionId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.UserId, userId),
+                claimableStatus),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Completing)
+                .Set(s => s.CompletionLeaseId, completionLeaseId)
+                .Set(s => s.UpdatedAt, now),
+            new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            cancellationToken);
+    }
+
+    internal static async Task<bool> ReleaseRecordingCompletionClaimAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string sessionId,
+        string userId,
+        string completionLeaseId,
+        CancellationToken cancellationToken)
+    {
+        var released = await sessions.UpdateOneAsync(
+            s => s.Id == sessionId
+                 && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Completing
+                 && s.CompletionLeaseId == completionLeaseId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Uploading)
+                .Unset(s => s.CompletionLeaseId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: cancellationToken);
+        return released.ModifiedCount == 1;
+    }
+
+    internal static async Task<bool> AdoptUnownedRecordingArchiveAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string sessionId,
+        string userId,
+        string instanceId,
+        CancellationToken cancellationToken)
+    {
+        var archivePending = Builders<DocumentRecordingUploadSession>.Filter.In(
+            s => s.ArchiveStatus,
+            [DocumentRecordingArchiveStatus.Pending, DocumentRecordingArchiveStatus.Archiving]);
+        var unowned = Builders<DocumentRecordingUploadSession>.Filter.Or(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.OwnerInstanceId, null),
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.OwnerInstanceId, ""));
+        var adopted = await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.Id, sessionId),
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(s => s.UserId, userId),
+                archivePending,
+                unowned),
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.OwnerInstanceId, instanceId)
+                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: cancellationToken);
+        return adopted.ModifiedCount == 1;
+    }
 
     internal static async Task CleanupExpiredRecordingUploadsAsync(
         IReadOnlyCollection<string> expiredSessionIds,
