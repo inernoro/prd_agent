@@ -283,7 +283,10 @@ export async function completeRecordingUpload(sessionId: string) {
     archivePending?: boolean;
     audioProtected?: boolean;
     deferredTranscriptionRunId?: string | null;
-  }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
+  }>(api.documentStore.entries.recordingUploadComplete(sessionId), {
+    method: 'POST',
+    timeoutMs: 15_000,
+  });
 }
 
 /** 回读录音上传会话状态；用于 /complete 响应丢失时判断服务端是否已完成，避免重复上传。 */
@@ -300,7 +303,10 @@ export async function getRecordingUpload(sessionId: string) {
     liveTranscriptStatus: 'pending' | 'active' | 'completed' | 'degraded';
     liveTranscript?: string | null;
     expiresAt: string;
-  }>(api.documentStore.entries.recordingUploadStatus(sessionId), { method: 'GET' });
+  }>(api.documentStore.entries.recordingUploadStatus(sessionId), {
+    method: 'GET',
+    timeoutMs: 15_000,
+  });
 }
 
 /** 用户主动放弃时清理服务端临时录音分片。 */

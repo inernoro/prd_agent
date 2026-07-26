@@ -3,7 +3,9 @@ import {
   canDiscardRecording,
   nextRecordingCompletionOwnership,
   nextRecordingFinalizationLock,
+  recordingCompletionOwnershipTransition,
   shouldFallbackCompletedRecording,
+  shouldContinueRecordingCompletionRetry,
   shouldForwardLivePcm,
   shouldStopRecordingCompletionRetry,
 } from '../RecordAudioSheet';
@@ -128,5 +130,19 @@ describe('RecordAudioSheet finalization guard', () => {
       success: false,
       error: { code: 'INVALID_FORMAT' },
     })).toBe(false);
+  });
+
+  it('bounds both uncertain and server-owned completion retries', () => {
+    expect(shouldContinueRecordingCompletionRetry(false, 31, 23)).toBe(true);
+    expect(shouldContinueRecordingCompletionRetry(false, 32, 0)).toBe(false);
+    expect(shouldContinueRecordingCompletionRetry(false, 0, 24)).toBe(false);
+    expect(shouldContinueRecordingCompletionRetry(true, 0, 0)).toBe(false);
+  });
+
+  it('persists and clears the recovery binding exactly on ownership transitions', () => {
+    expect(recordingCompletionOwnershipTransition(false, true)).toBe('acquired');
+    expect(recordingCompletionOwnershipTransition(true, true)).toBe('unchanged');
+    expect(recordingCompletionOwnershipTransition(true, false)).toBe('released');
+    expect(recordingCompletionOwnershipTransition(false, false)).toBe('unchanged');
   });
 });

@@ -21,10 +21,56 @@ export type VaultSessionMeta = {
   startedAt: number;
   /** 录音发生时所在的知识库（恢复时只在同库提示，避免笔记落错库） */
   storeId?: string;
+  /** 服务端已接管完成流程；恢复时必须先查询该会话，禁止直接重传整文件。 */
+  serverUploadSessionId?: string;
   /** 汇总信息（listSessions 时计算） */
   bytes: number;
   chunkCount: number;
 };
+
+type StoredVaultSessionMeta = Omit<VaultSessionMeta, 'bytes' | 'chunkCount'>;
+
+type VaultServerStatus =
+  | { success: true; data: { status: 'uploading' | 'completing' | 'completed' | 'cancelled' } }
+  | { success: false; error: { code: string } }
+  | null;
+
+type VaultServerCompletion =
+  | { success: true }
+  | { success: false; error: { code: string } }
+  | null;
+
+export type VaultServerRecoveryDecision = 'completed' | 'keep-protected' | 'recover-local';
+
+/**
+ * 服务端接管后的恢复决策 SSOT。只有服务端明确未持有可恢复结果时才允许整文件重传；
+ * 网络未知与瞬时服务错误始终保留本地保险文件和服务端会话绑定。
+ */
+export function decideVaultServerRecovery(
+  status: VaultServerStatus,
+  completion: VaultServerCompletion = null,
+): VaultServerRecoveryDecision {
+  if (!status) return 'keep-protected';
+  if (!status.success) {
+    return ['NOT_FOUND', 'SESSION_NOT_FOUND', 'SESSION_EXPIRED'].includes(status.error.code)
+      ? 'recover-local'
+      : 'keep-protected';
+  }
+  if (status.data.status === 'uploading' || status.data.status === 'cancelled') {
+    return 'recover-local';
+  }
+  if (status.data.status === 'completing') return 'keep-protected';
+  if (completion?.success) return 'completed';
+  if (completion?.success === false && [
+    'INVALID_FORMAT',
+    'NOT_FOUND',
+    'SESSION_NOT_FOUND',
+    'SESSION_EXPIRED',
+  ].includes(completion.error.code)) {
+    return 'recover-local';
+  }
+  return 'keep-protected';
+}
 
 function openDb(): Promise<IDBDatabase | null> {
   return new Promise((resolve) => {
@@ -81,12 +127,55 @@ export async function vaultUpdateSessionStore(id: string, storeId: string): Prom
   try {
     const tx = db.transaction(META_STORE, 'readwrite');
     const store = tx.objectStore(META_STORE);
-    const current = await new Promise<{ id: string; mime: string; startedAt: number; storeId?: string } | null>((resolve) => {
+    const current = await new Promise<StoredVaultSessionMeta | null>((resolve) => {
       const req = store.get(id);
       req.onsuccess = () => resolve(req.result ?? null);
       req.onerror = () => resolve(null);
     });
     if (current) store.put({ ...current, storeId });
+    await txDone(tx);
+  } catch { /* best-effort */ }
+  db.close();
+}
+
+/**
+ * 记录服务端已经接管完成流程。该标记让页面恢复时先查询同一个幂等会话，
+ * 避免弱网下把本地保险文件再次上传成第二条录音。
+ */
+export async function vaultMarkServerCompletion(id: string, serverUploadSessionId: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    const tx = db.transaction(META_STORE, 'readwrite');
+    const store = tx.objectStore(META_STORE);
+    const current = await new Promise<StoredVaultSessionMeta | null>((resolve) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    });
+    if (current) store.put({ ...current, serverUploadSessionId });
+    await txDone(tx);
+  } catch { /* best-effort */ }
+  db.close();
+}
+
+/** 服务端明确未接管时解除保护，之后才允许走本地整文件恢复。 */
+export async function vaultClearServerCompletion(id: string): Promise<void> {
+  const db = await openDb();
+  if (!db) return;
+  try {
+    const tx = db.transaction(META_STORE, 'readwrite');
+    const store = tx.objectStore(META_STORE);
+    const current = await new Promise<StoredVaultSessionMeta | null>((resolve) => {
+      const req = store.get(id);
+      req.onsuccess = () => resolve(req.result ?? null);
+      req.onerror = () => resolve(null);
+    });
+    if (current) {
+      const next = { ...current };
+      delete next.serverUploadSessionId;
+      store.put(next);
+    }
     await txDone(tx);
   } catch { /* best-effort */ }
   db.close();
@@ -110,7 +199,7 @@ export async function vaultListSessions(): Promise<VaultSessionMeta[]> {
   if (!db) return [];
   try {
     const tx = db.transaction([META_STORE, CHUNK_STORE], 'readonly');
-    const metas: { id: string; mime: string; startedAt: number; storeId?: string }[] = await new Promise((resolve) => {
+    const metas: StoredVaultSessionMeta[] = await new Promise((resolve) => {
       const req = tx.objectStore(META_STORE).getAll();
       req.onsuccess = () => resolve(req.result ?? []);
       req.onerror = () => resolve([]);

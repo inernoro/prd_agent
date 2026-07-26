@@ -125,6 +125,8 @@ import {
   getAgentRun,
   getOrCreateQuickCaptureStore,
   importCdsAcceptanceReport,
+  completeRecordingUpload,
+  getRecordingUpload,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -155,7 +157,13 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
-import { vaultListSessions, vaultLoadSessionFile, vaultDeleteSession } from './recordingVault';
+import {
+  decideVaultServerRecovery,
+  vaultClearServerCompletion,
+  vaultDeleteSession,
+  vaultListSessions,
+  vaultLoadSessionFile,
+} from './recordingVault';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -989,10 +997,46 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     vaultCheckedRef.current = true;
     void (async () => {
       const all = await vaultListSessions();
-      // 过期会话（>7 天）直接清理；恢复只提示【本库】的会话，避免笔记落错库
+      // 普通本地会话超过七天清理；服务端已接管的会话必须保留保险文件，
+      // 直到确认同一幂等会话完成或明确退回未接管状态。
       const now = Date.now();
-      for (const s of all.filter(s => now - s.startedAt > 7 * 24 * 3600 * 1000)) void vaultDeleteSession(s.id);
-      const sessions = all.filter(s => s.storeId === storeId && now - s.startedAt <= 7 * 24 * 3600 * 1000);
+      for (const s of all.filter(s => !s.serverUploadSessionId && now - s.startedAt > 7 * 24 * 3600 * 1000)) {
+        void vaultDeleteSession(s.id);
+      }
+      const currentStoreSessions = all.filter(
+        s => s.storeId === storeId
+          && (Boolean(s.serverUploadSessionId) || now - s.startedAt <= 7 * 24 * 3600 * 1000),
+      );
+      const sessions = [] as typeof currentStoreSessions;
+      for (const session of currentStoreSessions) {
+        if (!session.serverUploadSessionId) {
+          sessions.push(session);
+          continue;
+        }
+
+        const status = await getRecordingUpload(session.serverUploadSessionId).catch(() => null);
+        let completion = null as Awaited<ReturnType<typeof completeRecordingUpload>> | null;
+        if (status?.success && status.data.status === 'completed') {
+          completion = await completeRecordingUpload(session.serverUploadSessionId).catch(() => null);
+        }
+        const decision = decideVaultServerRecovery(status, completion);
+        if (decision === 'completed' && completion?.success) {
+          setEntries(prev => [
+            completion.data.entry,
+            ...prev.filter(item => item.id !== completion.data.entry.id),
+          ]);
+          await vaultDeleteSession(session.id);
+          toast.success('后台录音已完成', '已恢复服务端接管的同一条录音');
+          continue;
+        }
+        if (decision === 'keep-protected') continue;
+
+        // 服务端明确未持有可恢复结果后，才解除保护并允许本地整文件恢复。
+        await vaultClearServerCompletion(session.id);
+        const recoverable = { ...session };
+        delete recoverable.serverUploadSessionId;
+        sessions.push(recoverable);
+      }
       if (sessions.length === 0) return;
       const latest = sessions[0];
       const d = new Date(latest.startedAt);
@@ -2146,6 +2190,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 isNewRecording: true,
               });
               transcribeFlowOpenRef.current = true;
+            }}
+            onServerCompletionDeferred={() => {
+              setShowRecorder(false);
+              toast.info(
+                '录音已转入后台确认',
+                '前台等待已结束，本地保险文件仍保留；下次进入会优先恢复同一服务端会话',
+              );
+              setTimeout(() => { void loadEntries(); }, 5000);
+              setTimeout(() => { void loadEntries(); }, 15000);
             }}
             onPickFile={(targetStoreId) => {
               setShowRecorder(false);

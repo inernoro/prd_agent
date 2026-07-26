@@ -2,6 +2,7 @@ using PrdAgent.Api.Services;
 using PrdAgent.Api.Controllers.Api;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using Shouldly;
 using Xunit;
@@ -452,6 +453,50 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
             .DocumentCount.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task RecordingEntryCountTokens_ShouldBeTransientAcrossCompletedSessions()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
+        var store = new DocumentStore
+        {
+            Id = "recording-count-bounded-tokens",
+            Name = "录音计数令牌容量测试",
+            OwnerId = "user-1",
+            DocumentCount = 0,
+            UpdatedAt = t0,
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+
+        for (var index = 0; index < 256; index++)
+        {
+            var entryId = $"recording-completed-session-{index}";
+            (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+                fixture.Db.DocumentStores,
+                store.Id,
+                entryId,
+                t0.AddSeconds(index * 2),
+                CancellationToken.None)).ShouldBeTrue();
+            await DocumentStoreController.ReleaseRecordingCountTokensAsync(
+                fixture.Db.DocumentStores,
+                store.Id,
+                [entryId],
+                t0.AddSeconds(index * 2 + 1),
+                CancellationToken.None);
+        }
+
+        var stored = await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync();
+        stored.DocumentCount.ShouldBe(256);
+        var rawStore = await fixture.Db.Database
+            .GetCollection<BsonDocument>("document_stores")
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", store.Id))
+            .SingleAsync();
+        rawStore[DocumentStoreController.RecordingCountedEntryIdsField]
+            .AsBsonArray.Count.ShouldBe(0);
     }
 
     [Fact]

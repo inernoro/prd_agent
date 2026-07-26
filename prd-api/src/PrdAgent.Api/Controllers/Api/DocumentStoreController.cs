@@ -1607,10 +1607,10 @@ public class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var expiredBefore = DateTime.UtcNow;
-        var expiredSessionIds = await _db.DocumentRecordingUploadSessions
+        var expiredSessions = await _db.DocumentRecordingUploadSessions
             .Find(s => s.ExpiresAt <= expiredBefore)
-            .Project(s => s.Id)
             .ToListAsync(CancellationToken.None);
+        var expiredSessionIds = expiredSessions.Select(s => s.Id).ToArray();
         await CleanupExpiredRecordingUploadsAsync(
             expiredSessionIds,
             ids => _db.DocumentRecordingUploadChunks.DeleteManyAsync(
@@ -1619,6 +1619,20 @@ public class DocumentStoreController : ControllerBase
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
                 s => ids.Contains(s.Id),
                 CancellationToken.None));
+        foreach (var expiredStoreGroup in expiredSessions.GroupBy(s => s.StoreId, StringComparer.Ordinal))
+        {
+            foreach (var entryIdBatch in expiredStoreGroup
+                         .SelectMany(s => RecordingRecoveryEntryIds(s.Id))
+                         .Chunk(500))
+            {
+                await ReleaseRecordingCountTokensAsync(
+                    _db.DocumentStores,
+                    expiredStoreGroup.Key,
+                    entryIdBatch,
+                    DateTime.UtcNow,
+                    CancellationToken.None);
+            }
+        }
         // append/cancel 可在“读到 uploading”后交错：cancel 删除父会话，append 随后才插入分片。
         // 这类分片没有父记录，不能依赖 expired session 查询；按年龄有界扫描并独立回收。
         var orphanCandidateGroups = await _db.DocumentRecordingUploadChunks
@@ -1959,6 +1973,12 @@ public class DocumentStoreController : ControllerBase
             var completedEntry = await _db.DocumentEntries.Find(e => e.Id == session.EntryId).FirstOrDefaultAsync();
             if (completedEntry != null)
             {
+                await ReleaseRecordingCountTokensAsync(
+                    _db.DocumentStores,
+                    session.StoreId,
+                    [session.EntryId],
+                    DateTime.UtcNow,
+                    CancellationToken.None);
                 var archivePending = session.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
                     or DocumentRecordingArchiveStatus.Archiving;
                 if (archivePending && string.IsNullOrWhiteSpace(session.OwnerInstanceId))
@@ -2021,6 +2041,12 @@ public class DocumentStoreController : ControllerBase
                 var reusedEntry = await _db.DocumentEntries.Find(e => e.Id == fresh.EntryId).FirstOrDefaultAsync();
                 if (reusedEntry != null)
                 {
+                    await ReleaseRecordingCountTokensAsync(
+                        _db.DocumentStores,
+                        fresh.StoreId,
+                        [fresh.EntryId],
+                        DateTime.UtcNow,
+                        CancellationToken.None);
                     var archivePending = fresh.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
                         or DocumentRecordingArchiveStatus.Archiving;
                     if (archivePending && string.IsNullOrWhiteSpace(fresh.OwnerInstanceId))
@@ -2176,6 +2202,7 @@ public class DocumentStoreController : ControllerBase
             if (!await MarkRecordingArchivePendingAsync(
                     sessionId,
                     userId,
+                    store.Id,
                     recoveredEntry.Id,
                     completionLeaseId))
             {
@@ -2227,6 +2254,7 @@ public class DocumentStoreController : ControllerBase
             if (!await MarkRecordingArchivePendingAsync(
                     sessionId,
                     userId,
+                    store.Id,
                     pendingEntry.Id,
                     completionLeaseId))
             {
@@ -2347,6 +2375,13 @@ public class DocumentStoreController : ControllerBase
         if (completed.ModifiedCount == 0)
             return false;
 
+        await ReleaseRecordingCountTokensAsync(
+            _db.DocumentStores,
+            store.Id,
+            [entry.Id],
+            DateTime.UtcNow,
+            CancellationToken.None);
+
         await _db.DocumentRecordingUploadChunks.DeleteManyAsync(
             c => c.SessionId == sessionId,
             cancellationToken: CancellationToken.None);
@@ -2459,6 +2494,7 @@ public class DocumentStoreController : ControllerBase
     private async Task<bool> MarkRecordingArchivePendingAsync(
         string sessionId,
         string userId,
+        string storeId,
         string entryId,
         string completionLeaseId)
     {
@@ -2480,7 +2516,16 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow)
                 .Set(s => s.ExpiresAt, DateTime.UtcNow.AddYears(10)),
             cancellationToken: CancellationToken.None);
-        return pending.ModifiedCount == 1;
+        if (pending.ModifiedCount == 0)
+            return false;
+
+        await ReleaseRecordingCountTokensAsync(
+            _db.DocumentStores,
+            storeId,
+            [entryId],
+            DateTime.UtcNow,
+            CancellationToken.None);
+        return true;
     }
 
     internal static string PendingRecordingEntryId(string sessionId)
@@ -2525,6 +2570,27 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, now),
             cancellationToken: cancellationToken);
         return result.ModifiedCount == 1;
+    }
+
+    internal static async Task ReleaseRecordingCountTokensAsync(
+        IMongoCollection<DocumentStore> stores,
+        string storeId,
+        IReadOnlyCollection<string> entryIds,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        if (entryIds.Count == 0)
+            return;
+
+        // 令牌只覆盖“条目已 upsert、会话尚未进入 Completed”的崩溃窗口。
+        // 终态后重试直接复用 session.EntryId，不会再次进入记账路径，因此立即移除令牌，
+        // 让主知识库文档的数组规模受同时完成中的录音数约束，而不是随历史录音数增长。
+        await stores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .PullAll(RecordingCountedEntryIdsField, entryIds)
+                .Set(s => s.UpdatedAt, now),
+            cancellationToken: cancellationToken);
     }
 
     internal static async Task ApplyDocumentCountDeletionAsync(

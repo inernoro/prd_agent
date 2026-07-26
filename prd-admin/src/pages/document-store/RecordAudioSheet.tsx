@@ -14,7 +14,14 @@ import {
   startRecordingUpload,
 } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
-import { vaultStartSession, vaultAppendChunk, vaultDeleteSession, vaultUpdateSessionStore } from './recordingVault';
+import {
+  vaultStartSession,
+  vaultAppendChunk,
+  vaultClearServerCompletion,
+  vaultDeleteSession,
+  vaultMarkServerCompletion,
+  vaultUpdateSessionStore,
+} from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
 import { useAuthStore } from '@/stores/authStore';
 import {
@@ -55,6 +62,8 @@ export type RecordAudioSheetProps = {
     targetStoreId?: string,
     deferredTranscriptionRunId?: string | null,
   ) => void;
+  /** 前台有界等待结束、服务端仍持有完成流程时通知父页转入后台。 */
+  onServerCompletionDeferred: () => void;
   /** 「上传音频文件」兜底：打开既有的 audio file input */
   onPickFile: (targetStoreId?: string) => void;
 };
@@ -64,6 +73,8 @@ type RecState = 'requesting' | 'recording' | 'paused' | 'finalizing' | 'unavaila
 /** 后端单文件上限 20MB；录到接近上限时自动收尾，避免上传被拒 */
 const MAX_BYTES = 19 * 1024 * 1024;
 const TRANSPORT_CHUNK_BYTES = 512 * 1024;
+const MAX_UNCERTAIN_COMPLETION_ATTEMPTS = 32;
+const MAX_SERVER_OWNED_COMPLETION_ATTEMPTS = 24;
 
 function buildFileName(ext: string): string {
   const d = new Date();
@@ -138,7 +149,34 @@ export function shouldFallbackCompletedRecording(
     || completion.error.code === 'SESSION_EXPIRED';
 }
 
-export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
+export function shouldContinueRecordingCompletionRetry(
+  completionSucceeded: boolean,
+  uncertainAttempts: number,
+  serverOwnedAttempts: number,
+): boolean {
+  return !completionSucceeded
+    && uncertainAttempts < MAX_UNCERTAIN_COMPLETION_ATTEMPTS
+    && serverOwnedAttempts < MAX_SERVER_OWNED_COMPLETION_ATTEMPTS;
+}
+
+export function recordingCompletionOwnershipTransition(
+  previous: boolean,
+  next: boolean,
+): 'acquired' | 'released' | 'unchanged' {
+  if (!previous && next) return 'acquired';
+  if (previous && !next) return 'released';
+  return 'unchanged';
+}
+
+export function RecordAudioSheet({
+  storeId,
+  storeName,
+  onClose,
+  onComplete,
+  onUploaded,
+  onServerCompletionDeferred,
+  onPickFile,
+}: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
   const [unavailableReason, setUnavailableReason] = useState('');
@@ -188,6 +226,8 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   onCompleteRef.current = onComplete;
   const onUploadedRef = useRef(onUploaded);
   onUploadedRef.current = onUploaded;
+  const onServerCompletionDeferredRef = useRef(onServerCompletionDeferred);
+  onServerCompletionDeferredRef.current = onServerCompletionDeferred;
 
   const connectLiveTranscription = useCallback((sessionId: string) => {
     if (liveTranscriptionRef.current) return;
@@ -445,11 +485,16 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
               // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
               // 会话会返回同一条目（reused），不会重复创建。
               // completing / completed 表示服务端已经拥有完成流程。即使对象存储重试超过
-              // 普通弱网窗口，也只能继续轮询和幂等重试，禁止转整文件上传制造第二条记录。
-              // 只有一直无法确认归属，或服务端明确回到 uploading，才受 32 次弱网窗口限制。
+              // 普通弱网窗口，也禁止转整文件上传制造第二条记录。前台等待达到硬上限后，
+              // 将服务端会话写入本地保险箱并退出抽屉；下次进页先恢复同一幂等会话。
               let serverOwnsCompletion = false;
-              for (let uncertainAttempts = 0;
-                !completed?.success && (serverOwnsCompletion || uncertainAttempts < 32);) {
+              let uncertainAttempts = 0;
+              let serverOwnedAttempts = 0;
+              while (shouldContinueRecordingCompletionRetry(
+                completed?.success === true,
+                uncertainAttempts,
+                serverOwnedAttempts,
+              )) {
                 const delayMs = serverOwnsCompletion
                   ? 5000
                   : Math.min(5000, 1000 * (uncertainAttempts + 1));
@@ -458,16 +503,36 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                 // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
                 // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
                 if (shouldStopRecordingCompletionRetry(status)) break;
+                const previousOwnership = serverOwnsCompletion;
                 serverOwnsCompletion = nextRecordingCompletionOwnership(
                   serverOwnsCompletion,
                   status,
                 );
-                if (!serverOwnsCompletion) uncertainAttempts++;
+                const ownershipTransition = recordingCompletionOwnershipTransition(
+                  previousOwnership,
+                  serverOwnsCompletion,
+                );
+                if (ownershipTransition === 'acquired') {
+                  // 首次确认服务端已接管就立即持久化绑定。不等前台轮询耗尽，
+                  // 因为移动系统可能在等待期间回收页面。
+                  await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                } else if (ownershipTransition === 'released') {
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                }
+                if (serverOwnsCompletion) {
+                  serverOwnedAttempts++;
+                } else {
+                  uncertainAttempts++;
+                }
                 // uploading / completing / completed 均可安全重试（幂等），completed 通常直接回条目。
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
                 // completed 会话的条目若已被另一标签页删除，后端会明确返回不可恢复错误。
                 // 此时结束服务端恢复循环，转用本地保险文件；网络空响应和 5xx 仍保留归属。
-                if (shouldFallbackCompletedRecording(status, completed)) break;
+                if (shouldFallbackCompletedRecording(status, completed)) {
+                  serverOwnsCompletion = false;
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                  break;
+                }
               }
               if (completed?.success) {
                 if (finishModeRef.current !== 'complete') return;
@@ -478,6 +543,12 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                   completed.data.deferredTranscriptionRunId,
                 );
                 onClose();
+                return;
+              }
+              if (serverOwnsCompletion) {
+                await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                setLiveProtection('local');
+                onServerCompletionDeferredRef.current();
                 return;
               }
               liveUploadFailedRef.current = true;
