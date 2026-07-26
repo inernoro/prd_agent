@@ -485,6 +485,15 @@ describe('Server route ordering (regression)', () => {
         authProvider: 'local',
         isSystemOwner: true,
       });
+
+      const headerToken = cookie.slice('cds_token='.length);
+      const headerAuthedMe = await request(server, '/api/me', { 'X-CDS-Token': headerToken });
+      expect(headerAuthedMe.status).toBe(200);
+      expect(JSON.parse(headerAuthedMe.body).user).toMatchObject({
+        username: 'operator',
+        authProvider: 'local',
+        isSystemOwner: true,
+      });
     } finally {
       if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
       else process.env.CDS_AUTH_MODE = prevMode;

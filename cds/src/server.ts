@@ -2668,11 +2668,17 @@ export function createServer(deps: ServerDeps): express.Express {
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
-      const ssoIdentity = (req as typeof req & {
+      const request = req as typeof req & {
         cdsSsoIdentity?: { username: string; displayName: string; email?: string | null };
-      }).cdsSsoIdentity;
+        _cdsCookieAuth?: boolean;
+      };
+      const ssoIdentity = request.cdsSsoIdentity;
       if (authMode !== 'disabled' && !ssoIdentity) {
-        if (readCookie(req.headers.cookie, 'cds_token') !== validToken) {
+        // The outer basic-auth gate validates both the cds_token cookie and
+        // the supported X-CDS-Token header, then stamps this human marker.
+        // Trust that single validation result so /api/me stays consistent
+        // with every other protected endpoint.
+        if (!request._cdsCookieAuth) {
           res.status(401).json({ error: 'unauthenticated' });
           return;
         }
