@@ -140,21 +140,24 @@ describe('resolveReplicaDbTarget', () => {
     const SAFE = /^[a-z0-9_]+$/;
     // isolateProfile / startDbGuard 的真实生成格式是 guard-<N>；addMember 的是 res-<N>；
     // 库名含分支哈希段（Codex P1：防跨分支 guard-1 同名互杀），格式 <源库>_rs_<hash6>_<成员>
-    expect(isolatedDbNameFor('prdagent', 'guard-1', 'br-a')).toMatch(/^prdagent_rs_[0-9a-f]{6}_guard_1$/);
-    expect(isolatedDbNameFor('prdagent', 'res-2', 'br-a')).toMatch(/^prdagent_rs_[0-9a-f]{6}_res_2$/);
+    expect(isolatedDbNameFor('prdagent', 'guard-1', 'br-a', 'api')).toMatch(/^prdagent_rs_[0-9a-f]{6}_guard_1$/);
+    expect(isolatedDbNameFor('prdagent', 'res-2', 'br-a', 'api')).toMatch(/^prdagent_rs_[0-9a-f]{6}_res_2$/);
     for (const memberId of ['guard-1', 'guard-12', 'res-1', 'res-3', 'rsfa7a2b']) {
-      const name = isolatedDbNameFor('prdagent', memberId, 'proj-main');
+      const name = isolatedDbNameFor('prdagent', memberId, 'proj-main', 'api');
       expect(SAFE.test(name), `${memberId} → ${name} 必须通过 DB_NAME_SAFE`).toBe(true);
       expect(name).toContain('_rs_'); // dropReplicaDb 的删除守卫要求
     }
   });
 
-  it('同源库同成员 id 在不同分支生成不同库名/容器名（Codex P1：跨分支同名互杀）', () => {
-    const a = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a');
-    const b = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-b');
-    expect(a).not.toBe(b);
-    // 同分支重复调用必须稳定（快照复用/删除守卫都依赖确定性命名）
-    expect(isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a')).toBe(a);
+  it('同源库同成员 id 在不同分支/不同 profile 生成不同库名（Codex P1 两连：跨分支与跨 profile 同名互杀）', () => {
+    const a = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a', 'api');
+    const b = isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-b', 'api');
+    const c = isolatedDbNameFor('prdagent', 'res-1', 'proj-branch-a', 'api');
+    const d = isolatedDbNameFor('prdagent', 'res-1', 'proj-branch-a', 'web');
+    expect(a).not.toBe(b);      // 跨分支唯一
+    expect(c).not.toBe(d);      // 同分支跨 profile 唯一（res-N 按 profile 顺位命名必然重复）
+    // 同作用域重复调用必须稳定（快照复用/删除守卫都依赖确定性命名）
+    expect(isolatedDbNameFor('prdagent', 'guard-1', 'proj-branch-a', 'api')).toBe(a);
   });
 
   it('dependsOn 优先选中显式声明的 infra 实例', () => {

@@ -75,3 +75,6 @@
 | fix | cds | 「预览本组」链接带每个 profile 的成员 id（__rs 多值），forwarder 一次导航种齐各组组作用域 cookie，治项目级整组预览混入他组加权流量（Codex P1） |
 | fix | cds | 被动健康半开改单探针占位：冷却到期只放行一个请求试探（10s 超时接棒），治高流量下死成员每个退避周期挨一波真实 503（Codex P2） |
 | fix | cds | 生命周期取证器 error/close 汇入单一重连闸，治 spawn 失败双定时器成倍繁殖 watcher、生命周期记录与死亡回调翻倍（Codex P2） |
+| fix | cds | 隔离库名哈希段升级为分支+profile 双身份、快照 id 加 profile 段：治同分支两个服务的 res-1 同名互杀专用实例、快照 id 重复误删台账（Codex P1） |
+| fix | cds | 命名子域路由走复制集展开：治 llmgw 类命名入口 100% 流量打主容器、分流权重失效且绕过被动健康（Codex P1） |
+| fix | cds | isolate-db 回滚谓词实证回切结果：成员 error 即抛、超时上抛，不再把重物化失败谎报成 rolled-back（Codex P1） |

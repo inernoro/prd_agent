@@ -1185,10 +1185,16 @@ export class ReplicaSetService {
         } else if (s.kind === 'isolate-db') {
           const r = this.revertProfile(branchId, s.profileId);
           if (r.accepted) {
+            // 回切结果必须实证（Codex P1）：此前谓词把一切非 provisioning 状态都当
+            // 成功、超时也被 .catch 吞掉——成员重物化失败（error）时计划照样标
+            // rolled-back，副本实际不可用却对操作员报「已回滚」。error 即抛、超时
+            // 上抛，走外层 catch 记日志 + allOk=false，该步保持 done 不谎报
             await this.waitFor(branchId, 600_000, () => {
               const rs = this.requireBranch(branchId).replicaSets?.[s.profileId];
+              const errored = rs?.members.find((m) => m.status === 'error');
+              if (errored) throw new Error(errored.statusMessage || '回切后成员重物化失败');
               return !rs?.isolated && (rs?.members || []).every((m) => m.status !== 'provisioning');
-            }).catch(() => undefined);
+            });
             plan.rollbackLog.push(`回滚 ${s.id}: 已回切主库（隔离库转快照保留）`);
             s.status = 'rolled-back';
           } else {

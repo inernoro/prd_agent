@@ -199,19 +199,20 @@ function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine
 }
 
 /**
- * 隔离库名生成：`<源库>_rs_<分支哈希6位>_<成员id>`，成员 id 里 SQL 标识符不允许的
+ * 隔离库名生成：`<源库>_rs_<哈希6位>_<成员id>`，成员 id 里 SQL 标识符不允许的
  * 字符（如 `guard-1` / `res-1` 的连字符）归一为下划线——生成名必须自证通过 DB_NAME_SAFE。
  * （复验 R2-P1-1：guard-N 直拼进库名被自家白名单拒绝，隔离 100% 失败于第 1 步。）
  *
- * 分支哈希段（Codex P1，2026-07-26）：guard-N / 确定性成员 id 在**不同分支**上会
- * 生成完全相同的隔离库名——mongo 专用实例容器名由库名派生，第二个分支克隆时
- * `docker rm -f` 同名容器会直接摧毁第一个分支正在使用的隔离库；mysql/pg 共享
- * 实例内同名库同样互相覆盖。库名里揉进分支身份哈希后，容器名与库名天然唯一。
+ * 哈希段 = sha1(分支id::profileId)（Codex P1 两连，2026-07-26）：res-N / guard-N
+ * 这类确定性成员 id 在**不同分支**乃至同分支的**不同 profile** 上都会重复——
+ * mongo 专用实例容器名由库名派生，第二次克隆的幂等 `docker rm -f` 会直接摧毁
+ * 前一个正在使用的隔离实例；mysql/pg 共享实例内同名库同样互相覆盖。
+ * 分支 + profile 双重身份揉进哈希后，容器名与库名天然唯一。
  */
-export function isolatedDbNameFor(sourceDb: string, memberId: string, branchId: string): string {
+export function isolatedDbNameFor(sourceDb: string, memberId: string, branchId: string, profileId: string): string {
   const safeMember = memberId.toLowerCase().replace(/[^a-z0-9_]/g, '_');
-  const branchHash = createHash('sha1').update(branchId).digest('hex').slice(0, 6);
-  return `${sourceDb}_rs_${branchHash}_${safeMember}`.toLowerCase();
+  const scopeHash = createHash('sha1').update(`${branchId}::${profileId}`).digest('hex').slice(0, 6);
+  return `${sourceDb}_rs_${scopeHash}_${safeMember}`.toLowerCase();
 }
 
 export interface CloneResult {
@@ -234,7 +235,7 @@ export async function cloneReplicaDb(opts: {
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
   const { target, memberId, profileId } = opts;
-  const dbName = isolatedDbNameFor(target.sourceDb, memberId, opts.branchId);
+  const dbName = isolatedDbNameFor(target.sourceDb, memberId, opts.branchId, profileId);
   if (!DB_NAME_SAFE.test(dbName)) throw new Error(`隔离库名不合法: ${dbName}`);
   if (dbName.length > 60) {
     throw new Error(`隔离库名超长（${dbName.length} > 60，mysql/postgres 标识符上限），源库名过长时暂不支持隔离`);
@@ -296,7 +297,7 @@ export async function cloneReplicaDb(opts: {
     for (let attempt = 1; attempt <= 5; attempt += 1) {
       try {
         await dropReplicaDb({
-          id: `rsdb_${memberId}`, profileId, memberId,
+          id: `rsdb_${profileId}_${memberId}`, profileId, memberId,
           engine: target.engine, sourceDb: target.sourceDb, dbName, infraContainer: c,
           clonedAt: (opts.now?.() ?? new Date()).toISOString(),
         }, env);
@@ -315,7 +316,7 @@ export async function cloneReplicaDb(opts: {
   return {
     envOverride,
     snapshot: {
-      id: `rsdb_${memberId}`,
+      id: `rsdb_${profileId}_${memberId}`,
       profileId,
       memberId,
       engine: target.engine,
@@ -455,7 +456,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     return {
       envOverride,
       snapshot: {
-        id: `rsdb_${memberId}`,
+        id: `rsdb_${profileId}_${memberId}`,
         profileId,
         memberId,
         engine: 'mongo',

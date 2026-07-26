@@ -405,7 +405,10 @@ export class ForwarderRoutePublisher {
         }
         writtenSubdomains.add(sub);
         for (const root of this.opts.rootDomains) {
-          records.push({
+          // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
+          //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
+          // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
+          pushRoute({
             _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
             host: `${previewSlug}-${sub}.${root}`,
             upstreamHost: '127.0.0.1',
@@ -415,7 +418,7 @@ export class ForwarderRoutePublisher {
             weight: 100,
             healthState: svc.status === 'running' ? 'running' : 'unknown',
             // 不写 updatedAt(理由同前:dedup 失效防御)
-          });
+          }, svc.profileId);
         }
       }
     }
