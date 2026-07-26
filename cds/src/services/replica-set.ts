@@ -621,6 +621,20 @@ export class ReplicaSetService {
           now: this.opts.now,
           onOutput,
         });
+        // 物化栅栏（Codex P2，2026-07-26）：克隆是长 await，期间用户可能已把成员
+        // 移除/复制集解散——记录没了还往台账追加快照会留下无主隔离库。确认成员
+        // 仍在册才入账；不在就顺手把刚克隆出来的库清掉（best-effort）。
+        if (!this.memberStillTracked(branchId, profileId, memberId)) {
+          try {
+            const infraEnv = this.opts.state.getInfraServicesForProject(branch.projectId)
+              .find((s) => s.containerName === cloned.snapshot.infraContainer)?.env || {};
+            await dropReplicaDb(cloned.snapshot, infraEnv);
+          } catch { /* best-effort：清不掉留给快照台账人工删 */ }
+          this.opts.logger?.warn?.(
+            `[replica-set] 成员在隔离克隆期间被移除，放弃物化并清理克隆库 ${branchId}/${profileId}/${memberId}`,
+          );
+          return;
+        }
         memberProfile.env = { ...(memberProfile.env || {}), ...cloned.envOverride };
         memberProfile.dbScope = 'shared';
         const liveBranch = this.requireBranch(branchId);
@@ -638,6 +652,16 @@ export class ReplicaSetService {
       }
     }
 
+    // 物化栅栏（Codex P2，2026-07-26）：端口分配/克隆等 await 期间成员可能已被
+    // 移除或复制集已解散——removeMember 只能移除**当时存在**的容器，本任务继续
+    // 跑会再起一个台账外的幽灵容器（谁都停不掉，只能等孤儿收割器）。启动前
+    // 最后确认成员仍在册，不在就地放弃。
+    if (!this.memberStillTracked(branchId, profileId, memberId)) {
+      this.opts.logger?.warn?.(
+        `[replica-set] 成员在物化期间被移除，放弃启动容器 ${branchId}/${profileId}/${memberId}`,
+      );
+      return;
+    }
     try {
       await this.opts.container.runService(
         branch,
@@ -671,6 +695,20 @@ export class ReplicaSetService {
         });
         return;
       }
+      // 收尾栅栏（Codex P2）：容器启动/就绪等待期间成员被移除 → 刚起的容器已经
+      // 没有台账记录（patchMember 会静默 no-op），必须就地拆掉，不留幽灵。
+      if (!this.memberStillTracked(branchId, profileId, memberId)) {
+        try {
+          await this.opts.container.remove(containerName, {
+            actor: 'replica-set',
+            trigger: 'replica-set-remove',
+          });
+        } catch { /* best-effort：拆不掉交给孤儿收割器（无主容器过 grace 即收） */ }
+        this.opts.logger?.warn?.(
+          `[replica-set] 成员在容器启动期间被移除，已拆除刚启动的容器 ${containerName}`,
+        );
+        return;
+      }
       this.patchMember(branchId, profileId, memberId, { status: 'running', statusMessage: undefined });
       this.opts.logger?.info?.(
         `[replica-set] 成员就绪 ${branchId}/${profileId}/${memberId} :${hostPort} (${snapshot.artifactImage})`,
@@ -699,6 +737,12 @@ export class ReplicaSetService {
       ...this.opts.state.getCustomEnvScope(branch.id),
       ...(project ? { CDS_PROJECT_ID: project.id, CDS_PROJECT_SLUG: project.slug } : {}),
     };
+  }
+
+  /** 物化栅栏判据（Codex P2）：成员记录是否仍在册（移除/解散后即消失）。 */
+  private memberStillTracked(branchId: string, profileId: string, memberId: string): boolean {
+    return !!this.opts.state.getBranch(branchId)?.replicaSets?.[profileId]?.members
+      .some((m) => m.id === memberId);
   }
 
   private patchMember(

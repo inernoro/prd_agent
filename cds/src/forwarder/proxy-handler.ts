@@ -475,6 +475,20 @@ export class ProxyHandler {
           if (route.branchId && this.isStaticAssetRequest(req.url || '/')) {
             respHeaders['cache-control'] = 'no-cache, must-revalidate';
           }
+          // 复制集粘性 cookie 合并（Codex P1，2026-07-26）：forwarder-main 在代理前用
+          // res.setHeader 种 cds_rs，但 writeHead 的同名头会覆盖 setHeader——上游响应
+          // 自己也带 Set-Cookie（登录/会话端点必带）时，浏览器只收到应用 cookie、
+          // 丢了 cds_rs，登录后的下一个请求立刻被加权路由横跳到另一个版本。
+          // 这里把 res 上已种的 Set-Cookie 并进上游数组一起下发。
+          {
+            const ownSetCookie = res.getHeader('set-cookie');
+            if (ownSetCookie) {
+              const upstream = respHeaders['set-cookie'];
+              const upstreamArr = Array.isArray(upstream) ? upstream : (upstream ? [String(upstream)] : []);
+              const ownArr = Array.isArray(ownSetCookie) ? ownSetCookie.map(String) : [String(ownSetCookie)];
+              respHeaders['set-cookie'] = [...upstreamArr, ...ownArr];
+            }
+          }
 
           // Widget injection 条件:HTML 200 + route 带 branchId+branchName(对齐
           // master ProxyService.proxyRequest 行为,2026-05-08 用户反馈预览左下角

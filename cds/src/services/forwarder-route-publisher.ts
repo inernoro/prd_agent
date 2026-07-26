@@ -178,6 +178,39 @@ export class ForwarderRoutePublisher {
           routableServices.push({ profileId, hostPort: svc.hostPort, status: String(svc.status) });
         }
       }
+
+      // 复制集（design.cds.replica-set）:每个启用复制集且有 running 成员的 profile,
+      // 主入口路由扩展成一组同 host 同 prefix 的兄弟路由（primary + members,
+      // replicaGroup 标记）,由 resolver 按权重/粘性选择;成员另获直达子域
+      // `<previewSlug>-<memberId>.<root>`（整套路由,仅该 profile 的端口钉到成员）。
+      // 主容器不可路由（error/stopped）但成员还活着时（Codex P1，2026-07-26）:
+      // 不能整组跳过——那会连健康成员的路由和直达子域一起蒸发,单服务分支 host
+      // 直接消失。此时以成员身份把该 profile 补进可路由集合,组内只发成员路由
+      //（不发 primary 记录）,resolver 权重全零时的兜底会自动落到组内成员。
+      const replicaByProfile = new Map<string, {
+        group: string;
+        primaryWeight: number;
+        primaryRoutable: boolean;
+        members: Array<{ id: string; hostPort: number; weight: number }>;
+      }>();
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        if (!rs.enabled) continue;
+        const members = rs.members
+          .filter((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0)
+          .map((m) => ({ id: m.id, hostPort: m.hostPort as number, weight: m.weight }));
+        if (members.length === 0) continue;
+        const primarySvc = routableServices.find((s) => s.profileId === rs.profileId);
+        replicaByProfile.set(rs.profileId, {
+          group: `${branch.id}:${rs.profileId}`,
+          primaryWeight: rs.primaryWeight,
+          primaryRoutable: !!primarySvc,
+          members,
+        });
+        if (!primarySvc) {
+          routableServices.push({ profileId: rs.profileId, hostPort: members[0].hostPort, status: 'running' });
+        }
+      }
+
       if (routableServices.length === 0) continue;
 
       // 默认入口优先挑 running 服务。若全部仍在 building/starting，则保留
@@ -201,30 +234,6 @@ export class ForwarderRoutePublisher {
         if (host) hosts.push(host);
       }
 
-      // 复制集（design.cds.replica-set）:每个启用复制集且有 running 成员的 profile,
-      // 主入口路由扩展成一组同 host 同 prefix 的兄弟路由（primary + members,
-      // replicaGroup 标记）,由 resolver 按权重/粘性选择;成员另获直达子域
-      // `<previewSlug>-<memberId>.<root>`（整套路由,仅该 profile 的端口钉到成员）。
-      const replicaByProfile = new Map<string, {
-        group: string;
-        primaryWeight: number;
-        members: Array<{ id: string; hostPort: number; weight: number }>;
-      }>();
-      for (const rs of Object.values(branch.replicaSets ?? {})) {
-        if (!rs.enabled) continue;
-        const primarySvc = routableServices.find((s) => s.profileId === rs.profileId);
-        if (!primarySvc) continue;
-        const members = rs.members
-          .filter((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0)
-          .map((m) => ({ id: m.id, hostPort: m.hostPort as number, weight: m.weight }));
-        if (members.length === 0) continue;
-        replicaByProfile.set(rs.profileId, {
-          group: `${branch.id}:${rs.profileId}`,
-          primaryWeight: rs.primaryWeight,
-          members,
-        });
-      }
-
       // 单条路由入账:普通 profile 原样;复制集 profile 主入口展开成组;
       // override（成员直达 host）把该 profile 的上游钉到成员端口,不展开组。
       const pushRoute = (
@@ -243,12 +252,16 @@ export class ForwarderRoutePublisher {
           records.push(base);
           return;
         }
-        records.push({
-          ...base,
-          weight: replica.primaryWeight,
-          replicaGroup: replica.group,
-          replicaMemberId: 'primary',
-        });
+        // 主容器不可路由时只发成员路由（Codex P1）:不发 primary 记录,
+        // resolver 的「全组权重为零 → 回落非摘除成员」兜底保证仍有出口。
+        if (replica.primaryRoutable) {
+          records.push({
+            ...base,
+            weight: replica.primaryWeight,
+            replicaGroup: replica.group,
+            replicaMemberId: 'primary',
+          });
+        }
         for (const member of replica.members) {
           records.push({
             ...base,

@@ -47,3 +47,7 @@
 | fix | cds | 分支重启级联拉起复制集副本容器（Codex P1：此前停止/降温后副本分流永久消失，成员记录空占上限且无路径复原） |
 | fix | cds | 调度器降温级联停复制集副本容器（此前主容器停了、副本还挂权重接分流，且降温分支的副本白占资源） |
 | fix | cds | 删分支级联 drop 隔离库与专用隔离实例容器（Codex P1：rsdb 容器无 cds.branch.id label，台账删除后彻底无主、永久漏跑） |
+| fix | cds | 主容器不可路由时仍发复制集成员路由与直达子域（Codex P1：此前整组蒸发，单服务分支 host 直接消失） |
+| fix | cds | forwarder 复制集粘性 cookie 与上游 Set-Cookie 合并下发（Codex P1：登录响应带 cookie 时 cds_rs 被覆盖，登录后立刻横跳版本） |
+| fix | cds | 删项目级联清理复制集成员容器与专用隔离实例（Codex P1：rsdb 容器无归属 label，项目删除后永久漏跑） |
+| fix | cds | 成员物化加三道在册栅栏（Codex P2：克隆/启动期间成员被移除会起台账外幽灵容器、追加无主快照） |
