@@ -47,6 +47,9 @@ public class DocumentRecordingUploadSession
     /// <summary>完成上传请求的本次租约令牌，防止过期请求提交或释放新的认领。</summary>
     public string? CompletionLeaseId { get; set; }
 
+    /// <summary>由 Mongo 原子递增的完成租约版本，用于跨实例写栅栏，不依赖应用服务器时钟。</summary>
+    public long CompletionLeaseVersion { get; set; }
+
     public string LiveTranscriptStatus { get; set; } = DocumentLiveTranscriptStatus.Pending;
 
     public string? LiveTranscript { get; set; }

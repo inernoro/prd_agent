@@ -172,6 +172,14 @@ export function recordingCompletionOwnershipTransition(
   return 'unchanged';
 }
 
+/**
+ * `/complete` 一旦发出，响应超时就是未知结果而不是失败。直到服务端明确回到可上传态
+ * 或明确表示会话不存在，本地整文件都必须保持保护，避免同一录音生成第二条 entry。
+ */
+export function recordingCompletionOwnershipAfterRequestIssued(): boolean {
+  return true;
+}
+
 export function RecordAudioSheet({
   storeId,
   storeName,
@@ -485,6 +493,8 @@ export function RecordAudioSheet({
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
               const completionStartedAt = Date.now();
+              let serverOwnsCompletion = recordingCompletionOwnershipAfterRequestIssued();
+              await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
               let completed = await completeRecordingUpload(
                 sessionId,
                 MAX_FOREGROUND_COMPLETION_WAIT_MS,
@@ -495,7 +505,6 @@ export function RecordAudioSheet({
               // completing / completed 表示服务端已经拥有完成流程。即使对象存储重试超过
               // 普通弱网窗口，也禁止转整文件上传制造第二条记录。前台等待达到硬上限后，
               // 将服务端会话写入本地保险箱并退出抽屉；下次进页先恢复同一幂等会话。
-              let serverOwnsCompletion = false;
               let uncertainAttempts = 0;
               let serverOwnedAttempts = 0;
               while (shouldContinueRecordingCompletionRetry(
@@ -521,7 +530,11 @@ export function RecordAudioSheet({
                 const status = await getRecordingUpload(sessionId, remainingForStatus).catch(() => null);
                 // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
                 // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
-                if (shouldStopRecordingCompletionRetry(status)) break;
+                if (shouldStopRecordingCompletionRetry(status)) {
+                  serverOwnsCompletion = false;
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                  break;
+                }
                 const previousOwnership = serverOwnsCompletion;
                 serverOwnsCompletion = nextRecordingCompletionOwnership(
                   serverOwnsCompletion,
@@ -549,6 +562,10 @@ export function RecordAudioSheet({
                   MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
                 );
                 if (remainingForCompletion === 0) break;
+                if (!serverOwnsCompletion) {
+                  serverOwnsCompletion = recordingCompletionOwnershipAfterRequestIssued();
+                  await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                }
                 completed = await completeRecordingUpload(
                   sessionId,
                   remainingForCompletion,

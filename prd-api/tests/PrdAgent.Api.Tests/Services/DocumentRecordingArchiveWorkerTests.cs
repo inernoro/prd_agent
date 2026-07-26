@@ -73,6 +73,164 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var now = new DateTime(2026, 7, 26, 0, 0, 0, DateTimeKind.Utc);
+        var store = new DocumentStore
+        {
+            Id = "stale-pending-lease-store",
+            Name = "旧完成租约补偿测试",
+            OwnerId = "user-1",
+            DocumentCount = 0,
+        };
+        var entry = new DocumentEntry
+        {
+            Id = DocumentStoreController.PendingRecordingEntryId("session-1"),
+            StoreId = store.Id,
+            Title = "recording.webm",
+            CreatedBy = "user-1",
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey] = "lease-new",
+            },
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            entry.Id,
+            now,
+            CancellationToken.None)).ShouldBeTrue();
+
+        (await DocumentStoreController.CompensateStalePendingRecordingEntryAsync(
+            fixture.Db.DocumentEntries,
+            fixture.Db.DocumentStores,
+            store.Id,
+            entry.Id,
+            "lease-old",
+            now.AddSeconds(1),
+            CancellationToken.None)).ShouldBeFalse();
+        (await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).AnyAsync()).ShouldBeTrue();
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(1);
+
+        (await DocumentStoreController.CompensateStalePendingRecordingEntryAsync(
+            fixture.Db.DocumentEntries,
+            fixture.Db.DocumentStores,
+            store.Id,
+            entry.Id,
+            "lease-new",
+            now.AddSeconds(2),
+            CancellationToken.None)).ShouldBeTrue();
+        (await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).AnyAsync()).ShouldBeFalse();
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(0);
+        var rawStore = await fixture.Db.Database
+            .GetCollection<BsonDocument>("document_stores")
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", store.Id))
+            .SingleAsync();
+        rawStore[DocumentStoreController.RecordingCountedEntryIdsField]
+            .AsBsonArray.Count.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task PendingLeaseFencedUpsert_ShouldRejectOlderWriterAfterNewLeaseWins()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        const long oldLeaseVersion = 1;
+        const long newLeaseVersion = 2;
+        var entryId = DocumentStoreController.PendingRecordingEntryId("session-fenced");
+
+        static DocumentEntry Entry(string id, string leaseId, long leaseVersion) => new()
+        {
+            Id = id,
+            StoreId = "store-fenced",
+            Title = $"{leaseId}.webm",
+            CreatedBy = "user-1",
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey] = leaseId,
+                [DocumentStoreController.PendingRecordingCompletionLeaseVersionMetadataKey] =
+                    DocumentStoreController.FormatRecordingCompletionLeaseVersion(leaseVersion),
+            },
+        };
+
+        var first = await DocumentStoreController.UpsertPendingRecordingEntryForLeaseAsync(
+            fixture.Db.DocumentEntries,
+            Entry(entryId, "lease-old", oldLeaseVersion),
+            "lease-old",
+            oldLeaseVersion,
+            CancellationToken.None);
+        first.Inserted.ShouldBeTrue();
+
+        var takeover = await DocumentStoreController.UpsertPendingRecordingEntryForLeaseAsync(
+            fixture.Db.DocumentEntries,
+            Entry(entryId, "lease-new", newLeaseVersion),
+            "lease-new",
+            newLeaseVersion,
+            CancellationToken.None);
+        takeover.LeaseOwned.ShouldBeTrue();
+        takeover.Entry.Metadata[DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey]
+            .ShouldBe("lease-new");
+
+        var revivedOldRequest = await DocumentStoreController.UpsertPendingRecordingEntryForLeaseAsync(
+            fixture.Db.DocumentEntries,
+            Entry(entryId, "lease-old", oldLeaseVersion),
+            "lease-old",
+            oldLeaseVersion,
+            CancellationToken.None);
+        revivedOldRequest.LeaseOwned.ShouldBeFalse();
+        revivedOldRequest.Entry.Metadata[DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey]
+            .ShouldBe("lease-new");
+        var persisted = await fixture.Db.DocumentEntries.Find(e => e.Id == entryId).SingleAsync();
+        persisted.Title.ShouldBe("lease-new.webm");
+        persisted.Metadata[DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey]
+            .ShouldBe("lease-new");
+
+        for (var iteration = 0; iteration < 20; iteration++)
+        {
+            var concurrentEntryId = DocumentStoreController.PendingRecordingEntryId(
+                $"session-concurrent-{iteration}");
+            await Task.WhenAll(
+                DocumentStoreController.UpsertPendingRecordingEntryForLeaseAsync(
+                    fixture.Db.DocumentEntries,
+                    Entry(concurrentEntryId, "lease-old", oldLeaseVersion),
+                    "lease-old",
+                    oldLeaseVersion,
+                    CancellationToken.None),
+                DocumentStoreController.UpsertPendingRecordingEntryForLeaseAsync(
+                    fixture.Db.DocumentEntries,
+                    Entry(concurrentEntryId, "lease-new", newLeaseVersion),
+                    "lease-new",
+                    newLeaseVersion,
+                    CancellationToken.None));
+            var concurrentWinner = await fixture.Db.DocumentEntries
+                .Find(e => e.Id == concurrentEntryId)
+                .SingleAsync();
+            concurrentWinner.Metadata[DocumentStoreController.PendingRecordingCompletionLeaseMetadataKey]
+                .ShouldBe("lease-new");
+        }
+    }
+
+    [Fact]
+    public void PendingLeaseCompensation_ShouldGuardBothLeaseFailureBranches()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+
+        // 两个失败分支加一个方法定义：历史 pending 恢复和存储降级都必须补偿。
+        source.Split(
+                "CompensateStalePendingRecordingEntryAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(4);
+    }
+
+    [Fact]
     public void RecordingChunkId_ShouldBeDeterministicForConcurrentRetries()
     {
         DocumentStoreController.RecordingChunkId("session-1", 7)
@@ -347,6 +505,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             DateTime.UtcNow.AddMinutes(-20),
             CancellationToken.None);
         first.ShouldNotBeNull();
+        first!.CompletionLeaseVersion.ShouldBe(1);
         var second = await DocumentStoreController.ClaimRecordingCompletionAsync(
             fixture.Db.DocumentRecordingUploadSessions,
             session.Id,
@@ -355,6 +514,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             DateTime.UtcNow,
             CancellationToken.None);
         second.ShouldNotBeNull();
+        second!.CompletionLeaseVersion.ShouldBe(2);
 
         var oldReleased = await DocumentStoreController.ReleaseRecordingCompletionClaimAsync(
             fixture.Db.DocumentRecordingUploadSessions,
@@ -417,6 +577,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             CancellationToken.None);
         reclaimed.ShouldNotBeNull();
         reclaimed!.CompletionLeaseId.ShouldBe("new-lease");
+        reclaimed.CompletionLeaseVersion.ShouldBe(2);
 
         var expiredOwnerRefresh = await DocumentStoreController.RefreshRecordingCompletionLeaseAsync(
             fixture.Db.DocumentRecordingUploadSessions,

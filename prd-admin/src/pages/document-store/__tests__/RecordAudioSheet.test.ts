@@ -3,6 +3,7 @@ import {
   canDiscardRecording,
   nextRecordingCompletionOwnership,
   nextRecordingFinalizationLock,
+  recordingCompletionOwnershipAfterRequestIssued,
   recordingCompletionOwnershipTransition,
   shouldFallbackCompletedRecording,
   shouldContinueRecordingCompletionRetry,
@@ -87,6 +88,18 @@ describe('RecordAudioSheet finalization guard', () => {
       success: true,
       data: { status: 'completed' },
     })).toBe(true);
+  });
+
+  it('protects the server session before every completion request has a confirmed response', () => {
+    expect(recordingCompletionOwnershipAfterRequestIssued()).toBe(true);
+    expect(nextRecordingCompletionOwnership(
+      recordingCompletionOwnershipAfterRequestIssued(),
+      null,
+    )).toBe(true);
+    expect(nextRecordingCompletionOwnership(
+      recordingCompletionOwnershipAfterRequestIssued(),
+      { success: false, error: { code: 'SERVER_ERROR' } },
+    )).toBe(true);
   });
 
   it('releases completion ownership only when the server explicitly returns to uploading', () => {

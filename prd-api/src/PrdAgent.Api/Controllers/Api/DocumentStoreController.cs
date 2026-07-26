@@ -1,3 +1,4 @@
+using System.Globalization;
 using System.Text.Json.Nodes;
 using System.Text.RegularExpressions;
 using System.Net.WebSockets;
@@ -2261,7 +2262,9 @@ public class DocumentStoreController : ControllerBase
                 actorName,
                 avatarFileName,
                 claimed,
-                sessionId);
+                sessionId,
+                completionLeaseId,
+                claimed.CompletionLeaseVersion);
             if (!await MarkRecordingArchivePendingAsync(
                     sessionId,
                     userId,
@@ -2269,6 +2272,14 @@ public class DocumentStoreController : ControllerBase
                     recoveredEntry.Id,
                     completionLeaseId))
             {
+                await CompensateStalePendingRecordingEntryAsync(
+                    _db.DocumentEntries,
+                    _db.DocumentStores,
+                    store.Id,
+                    recoveredEntry.Id,
+                    completionLeaseId,
+                    DateTime.UtcNow,
+                    CancellationToken.None);
                 return Conflict(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
                     "录音完成租约已更新，请稍候查询结果"));
@@ -2313,7 +2324,9 @@ public class DocumentStoreController : ControllerBase
                 actorName,
                 avatarFileName,
                 claimed,
-                sessionId);
+                sessionId,
+                completionLeaseId,
+                claimed.CompletionLeaseVersion);
             if (!await MarkRecordingArchivePendingAsync(
                     sessionId,
                     userId,
@@ -2321,6 +2334,14 @@ public class DocumentStoreController : ControllerBase
                     pendingEntry.Id,
                     completionLeaseId))
             {
+                await CompensateStalePendingRecordingEntryAsync(
+                    _db.DocumentEntries,
+                    _db.DocumentStores,
+                    store.Id,
+                    pendingEntry.Id,
+                    completionLeaseId,
+                    DateTime.UtcNow,
+                    CancellationToken.None);
                 return Conflict(ApiResponse<object>.Fail(
                     ErrorCodes.INVALID_FORMAT,
                     "录音完成租约已更新，请稍候查询结果"));
@@ -2482,7 +2503,9 @@ public class DocumentStoreController : ControllerBase
         string? userName,
         string? avatarFileName,
         DocumentRecordingUploadSession session,
-        string sessionId)
+        string sessionId,
+        string completionLeaseId,
+        long completionLeaseVersion)
     {
         var transcript = session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             ? session.LiveTranscript?.Trim()
@@ -2491,6 +2514,9 @@ public class DocumentStoreController : ControllerBase
         {
             ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Pending,
             ["recordingUploadSessionId"] = sessionId,
+            [PendingRecordingCompletionLeaseMetadataKey] = completionLeaseId,
+            [PendingRecordingCompletionLeaseVersionMetadataKey] =
+                FormatRecordingCompletionLeaseVersion(completionLeaseVersion),
         };
         if (!string.IsNullOrWhiteSpace(transcript))
         {
@@ -2528,30 +2554,127 @@ public class DocumentStoreController : ControllerBase
             LastChangedAt = DateTime.UtcNow,
             Metadata = metadata,
         };
-        var upsert = await _db.DocumentEntries.ReplaceOneAsync(
-            e => e.Id == entry.Id,
+        var (persistedEntry, inserted, leaseOwned) = await UpsertPendingRecordingEntryForLeaseAsync(
+            _db.DocumentEntries,
             entry,
-            new ReplaceOptions { IsUpsert = true },
-            cancellationToken: CancellationToken.None);
+            completionLeaseId,
+            completionLeaseVersion,
+            CancellationToken.None);
         // 记账令牌和增量写在同一个 store 文档内。entry upsert 后进程退出时，重试会继续
         // 记账；记账后进程退出时，同一 entry ID 的重试不会再次增加计数。
-        await EnsureRecordingEntryCountedAsync(
-            _db.DocumentStores,
-            store.Id,
-            entry.Id,
-            DateTime.UtcNow,
-            CancellationToken.None);
-        if (upsert.UpsertedId != null)
+        if (leaseOwned)
         {
-            await LogStoreActivityAsync(
-                store,
-                userId,
-                TeamActivityAction.EntryCreated,
-                "entry",
-                entry.Id,
-                entry.Title);
+            await EnsureRecordingEntryCountedAsync(
+                _db.DocumentStores,
+                store.Id,
+                persistedEntry.Id,
+                DateTime.UtcNow,
+                CancellationToken.None);
+            if (inserted)
+            {
+                await LogStoreActivityAsync(
+                    store,
+                    userId,
+                    TeamActivityAction.EntryCreated,
+                    "entry",
+                    persistedEntry.Id,
+                    persistedEntry.Title);
+            }
         }
-        return entry;
+        return persistedEntry;
+    }
+
+    internal const string PendingRecordingCompletionLeaseMetadataKey = "recordingCompletionLeaseId";
+    internal const string PendingRecordingCompletionLeaseVersionMetadataKey =
+        "recordingCompletionLeaseVersion";
+
+    internal static string FormatRecordingCompletionLeaseVersion(long version)
+        => version.ToString("D20", CultureInfo.InvariantCulture);
+
+    internal static async Task<(DocumentEntry Entry, bool Inserted, bool LeaseOwned)>
+        UpsertPendingRecordingEntryForLeaseAsync(
+            IMongoCollection<DocumentEntry> entries,
+            DocumentEntry entry,
+            string completionLeaseId,
+            long completionLeaseVersion,
+            CancellationToken cancellationToken)
+    {
+        var formattedVersion = FormatRecordingCompletionLeaseVersion(completionLeaseVersion);
+        var leaseIdPath = $"Metadata.{PendingRecordingCompletionLeaseMetadataKey}";
+        var leaseVersionPath = $"Metadata.{PendingRecordingCompletionLeaseVersionMetadataKey}";
+        var sameOrOlderLease = Builders<DocumentEntry>.Filter.Or(
+            Builders<DocumentEntry>.Filter.Eq(leaseIdPath, completionLeaseId),
+            Builders<DocumentEntry>.Filter.Exists(leaseIdPath, false),
+            Builders<DocumentEntry>.Filter.Lt(leaseVersionPath, formattedVersion));
+        var replaceable = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.Eq(e => e.Id, entry.Id),
+            sameOrOlderLease);
+
+        // 先尝试条件替换，再尝试首次插入。不能使用带复合过滤器的 upsert：当较新的
+        // lease 已经占用同一确定性 _id 时，它会以 duplicate key 失败。显式拆开后，
+        // 旧请求只会读到新所有者的条目，永远不能把它覆盖回旧版本。
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            var replaced = await entries.ReplaceOneAsync(
+                replaceable,
+                entry,
+                new ReplaceOptions { IsUpsert = false },
+                cancellationToken);
+            if (replaced.MatchedCount == 1)
+                return (entry, false, true);
+
+            try
+            {
+                await entries.InsertOneAsync(entry, cancellationToken: cancellationToken);
+                return (entry, true, true);
+            }
+            catch (MongoWriteException ex)
+                when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+            {
+                // 另一租约在 replace 与 insert 之间占用了确定性 ID。重新进入条件
+                // replace：当前请求较新时接管，较旧时持续被栅栏拒绝。
+            }
+        }
+
+        var winner = await entries
+            .Find(e => e.Id == entry.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        return winner != null
+            ? (winner, false, winner.Metadata.TryGetValue(
+                PendingRecordingCompletionLeaseMetadataKey,
+                out var winnerLeaseId) && winnerLeaseId == completionLeaseId)
+            : throw new InvalidOperationException("录音 pending 条目租约竞争未能收敛");
+    }
+
+    internal static async Task<bool> CompensateStalePendingRecordingEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        IMongoCollection<DocumentStore> stores,
+        string storeId,
+        string entryId,
+        string completionLeaseId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        // 只删除仍带旧租约令牌的 pending 形态。新请求若已经接管，会先用自己的
+        // lease ID 重写确定性条目；旧请求的补偿过滤器因此不会误删新所有者的结果。
+        var staleLease = Builders<DocumentEntry>.Filter.And(
+            Builders<DocumentEntry>.Filter.Eq(e => e.Id, entryId),
+            Builders<DocumentEntry>.Filter.Eq(e => e.StoreId, storeId),
+            Builders<DocumentEntry>.Filter.Eq(
+                $"Metadata.{PendingRecordingCompletionLeaseMetadataKey}",
+                completionLeaseId));
+        var deleted = await entries.DeleteOneAsync(staleLease, cancellationToken);
+        if (deleted.DeletedCount == 0)
+            return false;
+
+        await ApplyDocumentCountDeletionAsync(
+            stores,
+            storeId,
+            checked((int)deleted.DeletedCount),
+            now,
+            cancellationToken,
+            [entryId]);
+        return true;
     }
 
     private async Task<bool> MarkRecordingArchivePendingAsync(
@@ -2726,6 +2849,7 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completing)
                 .Set(s => s.CompletionLeaseId, completionLeaseId)
+                .Inc(s => s.CompletionLeaseVersion, 1)
                 .Set(s => s.UpdatedAt, now),
             new FindOneAndUpdateOptions<DocumentRecordingUploadSession>
             {
