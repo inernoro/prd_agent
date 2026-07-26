@@ -43,6 +43,15 @@ type VaultServerCompletion =
 export type VaultServerRecoveryDecision = 'completed' | 'keep-protected' | 'recover-local';
 
 /**
+ * 已进入服务端完成流程的会话需要重放幂等完成请求。completed 用于取回已落库条目，
+ * completing 用于在旧完成租约失效后重新领取；其余状态禁止误触发完成流程。
+ */
+export function shouldRetryVaultServerCompletion(status: VaultServerStatus): boolean {
+  return status?.success === true
+    && (status.data.status === 'completing' || status.data.status === 'completed');
+}
+
+/**
  * 服务端接管后的恢复决策 SSOT。只有服务端明确未持有可恢复结果时才允许整文件重传；
  * 网络未知与瞬时服务错误始终保留本地保险文件和服务端会话绑定。
  */
@@ -56,11 +65,12 @@ export function decideVaultServerRecovery(
       ? 'recover-local'
       : 'keep-protected';
   }
+  // 完成请求是幂等的：即使调用前读取到的是 completing，成功响应也必须优先收敛终态。
+  if (completion?.success && shouldRetryVaultServerCompletion(status)) return 'completed';
   if (status.data.status === 'uploading' || status.data.status === 'cancelled') {
     return 'recover-local';
   }
   if (status.data.status === 'completing') return 'keep-protected';
-  if (completion?.success) return 'completed';
   if (completion?.success === false && [
     'INVALID_FORMAT',
     'NOT_FOUND',

@@ -159,6 +159,7 @@ import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
 import {
   decideVaultServerRecovery,
+  shouldRetryVaultServerCompletion,
   vaultClearServerCompletion,
   vaultDeleteSession,
   vaultListSessions,
@@ -1016,7 +1017,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
         const status = await getRecordingUpload(session.serverUploadSessionId).catch(() => null);
         let completion = null as Awaited<ReturnType<typeof completeRecordingUpload>> | null;
-        if (status?.success && status.data.status === 'completed') {
+        if (shouldRetryVaultServerCompletion(status)) {
           completion = await completeRecordingUpload(session.serverUploadSessionId).catch(() => null);
         }
         const decision = decideVaultServerRecovery(status, completion);
