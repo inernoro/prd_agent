@@ -69,7 +69,11 @@ export interface RouteRecord {
 /** 复制集选择上下文：由 forwarder-main 从请求提取，传给 resolveRoute。 */
 export interface ReplicaResolveContext {
   /** 粘性目标成员 id（query __rs > header x-cds-replica > cookie cds_rs） */
-  sticky?: string;
+  /**
+   * 显式钉选（query __rs / header x-cds-replica）。支持多个成员 id（项目级
+   * 整组预览一条链接钉住每个 profile 的组，Codex P1）：组内命中任一 id 即钉。
+   */
+  sticky?: string | readonly string[];
   /**
    * 组作用域粘性（Codex P1，2026-07-26）：cookie 粘性按 replicaGroup 查值。
    * 同一 host 有多个复制集 profile 时，单一 host 级 cookie 会被各组互相覆写

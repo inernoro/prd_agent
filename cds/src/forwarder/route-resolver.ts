@@ -145,12 +145,14 @@ export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): 
   if (group.length === 1) return group[0];
   // 被动健康（debt #12）：被摘除成员退出粘性与加权随机；全组皆摘仍回落主成员
   const ejected = (r: RouteRecord): boolean => ctx?.isEjected?.(r) === true;
-  // 粘性来源：显式指定（query __rs / header）优先；否则按本组的组作用域 cookie
-  //（Codex P1：单一 host 级 cookie 会被多组互相覆写/误钉）
+  // 粘性来源：显式指定（query __rs / header，可多值——项目级整组预览一条链接
+  // 钉住每个组）优先；否则按本组的组作用域 cookie（Codex P1：单一 host 级
+  // cookie 会被多组互相覆写/误钉）
   const groupId = group[0]?.replicaGroup;
-  const sticky = ctx?.sticky ?? (groupId ? ctx?.stickyFor?.(groupId) : undefined);
-  if (sticky) {
-    const stuck = group.find((r) => r.replicaMemberId === sticky);
+  const explicit = ctx?.sticky == null ? [] : (Array.isArray(ctx.sticky) ? ctx.sticky : [ctx.sticky]);
+  const cookieSticky = explicit.length === 0 && groupId ? ctx?.stickyFor?.(groupId) : undefined;
+  for (const want of explicit.length > 0 ? explicit : (cookieSticky ? [cookieSticky] : [])) {
+    const stuck = group.find((r) => r.replicaMemberId === want);
     // 粘性成员被摘除 → 本次放弃粘性落回加权选择（故障转移优先于会话稳定）
     if (stuck && !ejected(stuck)) return stuck;
   }

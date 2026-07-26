@@ -199,6 +199,16 @@ export class ReplicaSetService {
     if (this.opts.isRemoteBranch?.(branch)) {
       throw new ReplicaSetError(409, '该分支部署在远端执行器上，复制集暂只支持本机（embedded）分支');
     }
+    // 隔离克隆期间禁加成员（Codex P1）：克隆开始时快照的成员数组决定「第2步
+    // 切换」覆盖谁——克隆中途加入的成员会以共享库身份启动、切换循环碰不到它，
+    // 而隔离标记照常生效：UI 与审计声称隔离，新成员却仍在写主库。克隆是分钟级
+    // 短窗口，拒绝并提示等待是最可预期的行为。
+    {
+      const { target: gateTarget } = resolveReplicaDbTarget(this.opts.state, branch, profile);
+      if (gateTarget && this.isolationInFlight.has(this.isolationKey(branchId, gateTarget))) {
+        throw new ReplicaSetError(409, '该服务的数据库正在隔离克隆中，请等隔离完成后再添加副本');
+      }
+    }
     const rs = this.enable(branchId, profileId);
     if (rs.members.length >= REPLICA_MEMBER_LIMIT) {
       throw new ReplicaSetError(409, `成员数已达上限 ${REPLICA_MEMBER_LIMIT}，请先下线一个成员`);
@@ -1048,9 +1058,16 @@ export class ReplicaSetService {
           this.savePlan();
           log(`步骤失败: ${next.error}`);
           if (plan.onFailure === 'rollback') {
-            await this.rollbackPlan(branchId, planId);
+            // 回滚失败不许谎报成功（Codex P1）：任一步回滚失败（如副本容器移除
+            // 抛错，成员记录与分流权重仍然活着）→ 计划终态是 error 而非
+            // rolled-back，rollbackLog 里有逐步真相
+            const allRolledBack = await this.rollbackPlan(branchId, planId);
             const p2 = this.requirePlan(branchId, planId);
-            p2.status = 'rolled-back';
+            p2.status = allRolledBack ? 'rolled-back' : 'error';
+            if (!allRolledBack) {
+              p2.rollbackLog = p2.rollbackLog || [];
+              p2.rollbackLog.push('部分步骤回滚失败，现场未完全还原——请按上方日志逐项人工核对');
+            }
             p2.endedAt = this.now();
           } else {
             plan.status = 'error';
@@ -1140,15 +1157,22 @@ export class ReplicaSetService {
     await this.dissolve(branchId, profileId);
   }
 
-  /** 逆序回滚已完成步骤（不可回滚的步骤记日志跳过） */
-  private async rollbackPlan(branchId: string, planId: string): Promise<void> {
+  /**
+   * 逆序回滚已完成步骤（不可回滚的步骤记日志跳过）。
+   * 返回是否全部成功回滚（Codex P1）：任一步失败必须让调用方把计划标 error，
+   * 不许在副本/权重仍然活着时对操作员谎报「已回滚」。
+   */
+  private async rollbackPlan(branchId: string, planId: string): Promise<boolean> {
     const plan = this.requirePlan(branchId, planId);
     plan.rollbackLog = plan.rollbackLog || [];
+    let allOk = true;
     const done = plan.steps.filter((s) => s.status === 'done').reverse();
     for (const s of done) {
       try {
         if (s.kind === 'add-replica' && s.resultMemberId) {
-          await this.removeMember(branchId, s.profileId, s.resultMemberId).catch(() => undefined);
+          // 不吞错：removeMember 抛错（容器移除失败时成员记录与权重仍在）要走
+          // 外层 catch 记日志并把 allOk 翻 false，该步保持 done 不标 rolled-back
+          await this.removeMember(branchId, s.profileId, s.resultMemberId);
           plan.rollbackLog.push(`回滚 ${s.id}: 已下线副本 ${s.resultMemberId}`);
           s.status = 'rolled-back';
         } else if (s.kind === 'set-weight' && typeof s.prevWeight === 'number' && s.params?.memberId) {
@@ -1169,15 +1193,18 @@ export class ReplicaSetService {
             s.status = 'rolled-back';
           } else {
             plan.rollbackLog.push(`回滚 ${s.id} 失败: ${r.reason}`);
+            allOk = false;
           }
         } else {
           plan.rollbackLog.push(`步骤 ${s.id}(${s.kind}) 不可自动回滚，保持现状`);
         }
       } catch (err) {
         plan.rollbackLog.push(`回滚 ${s.id} 异常: ${(err as Error).message.slice(0, 200)}`);
+        allOk = false;
       }
       this.savePlan();
     }
+    return allOk;
   }
 
   private findMember(branchId: string, profileId: string, memberId: string): ReplicaMember | undefined {

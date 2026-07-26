@@ -94,6 +94,21 @@ describe('RouteResolver — 复制集组内选择', () => {
     expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: 'rsaaaaaa', stickyFor })?.replicaMemberId).toBe('rsaaaaaa');
   });
 
+  it('显式钉选支持多值（项目级整组预览）:组内命中任一 id 即钉,他组 id 被忽略（Codex P1）', () => {
+    const groupB = 'br1:web';
+    const routes = [
+      ...replicaGroupRoutes(),
+      r({ _id: 'b:primary', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9500, weight: 100, replicaGroup: groupB, replicaMemberId: 'primary' }),
+      r({ _id: 'b:rs09', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9600, weight: 0, replicaGroup: groupB, replicaMemberId: 'rscccccc' }),
+    ];
+    const multi = ['rsbbbbbb', 'rscccccc'];
+    // A 组命中 rsbbbbbb（weight=0 仍钉中）,B 组命中 rscccccc
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: multi })?.replicaMemberId).toBe('rsbbbbbb');
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { sticky: multi })?.replicaMemberId).toBe('rscccccc');
+    // 列表里没有本组成员 → 回落加权（不误钉）：rand=0.5 落在 primary 权重区间（90/100）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: ['rszzzzzz'], rand: () => 0.5 })?.replicaMemberId).toBe('primary');
+  });
+
   it('pickReplica 分布粗检:1000 次 rand 均匀采样,成员占比接近其权重', () => {
     const group = replicaGroupRoutes();
     let memberHits = 0;

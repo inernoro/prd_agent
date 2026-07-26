@@ -5060,8 +5060,16 @@ function ReplicaGroupCard({ branch, groupIndex, replicaSets, previewBase, onDeta
   const entries = Object.entries(replicaSets)
     .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > groupIndex)
     .sort(([a], [b]) => a.localeCompare(b));
-  const memberId = entries[0]?.[1].members?.[groupIndex]?.id || `res-${groupIndex + 1}`;
-  const previewUrl = previewBase ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${encodeURIComponent(memberId)}` : '';
+  // 预览链接带**每个 profile** 的本组成员 id（Codex P1）：__rs 多值让 forwarder
+  // 一次导航种齐各组的组作用域 cookie——只带第一个 profile 的 id 时，其余服务
+  // 的后续请求会按权重混入别组成员，项目级整组预览失真。成员 id 逐 profile 取
+  //（独立删减后同一列位的 id 可能不同，不能拿首个 profile 的 id 代表全组）。
+  const memberIds = entries
+    .map(([, rs]) => rs.members?.[groupIndex]?.id)
+    .filter((id): id is string => Boolean(id));
+  const previewUrl = previewBase && memberIds.length > 0
+    ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${memberIds.map(encodeURIComponent).join(',')}`
+    : '';
   const bad = entries.some(([, rs]) => rs.members?.[groupIndex]?.status === 'error');
   const projectId = (branch as { projectId?: string }).projectId;
   return (

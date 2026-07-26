@@ -70,3 +70,8 @@
 | fix | cds | 克隆完成时分支已删的归属复查：就地 drop 刚克隆的隔离库/专用实例（此前 requireBranch 抛错后产物永久无主，Codex P1） |
 | fix | cds | 服务调用关系图合入项目级/分支级生效 env（此前只看 profile.env，自动供给项目推不出服务到基础设施的边，画布拓扑残缺，Codex P2） |
 | fix | cds | promote 终态清理加代际栅栏：当前成员非派发时子集则跳过 dissolve（防部署期间重建的新副本被旧 watcher 连锅端，Codex P2） |
+| fix | cds | 隔离克隆期间禁加成员（在途闸扩展）：治克隆中途加入的成员连共享库、切换循环碰不到它、隔离态却声称生效（Codex P1） |
+| fix | cds | 计划回滚失败不再谎报成功：removeMember 抛错不吞、任一步失败计划终态 error + 回滚日志说明现场未还原（Codex P1） |
+| fix | cds | 「预览本组」链接带每个 profile 的成员 id（__rs 多值），forwarder 一次导航种齐各组组作用域 cookie，治项目级整组预览混入他组加权流量（Codex P1） |
+| fix | cds | 被动健康半开改单探针占位：冷却到期只放行一个请求试探（10s 超时接棒），治高流量下死成员每个退避周期挨一波真实 503（Codex P2） |
+| fix | cds | 生命周期取证器 error/close 汇入单一重连闸，治 spawn 失败双定时器成倍繁殖 watcher、生命周期记录与死亡回调翻倍（Codex P2） |

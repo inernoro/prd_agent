@@ -57,6 +57,10 @@ export class InfraLifecycleWatcher {
 
   stop(): void {
     this.stopped = true;
+    if (this.reconnectTimer) {
+      clearTimeout(this.reconnectTimer);
+      this.reconnectTimer = null;
+    }
     try { this.proc?.kill('SIGTERM'); } catch { /* noop */ }
     this.proc = null;
   }
@@ -94,15 +98,25 @@ export class InfraLifecycleWatcher {
       }
       if (buf.length > 64 * 1024) buf = '';
     });
-    // docker daemon 重启 / 网络抖动导致 events 流断开时 5s 自愈重连
-    proc.on('close', () => {
-      this.proc = null;
-      if (!this.stopped) setTimeout(() => this.spawnWatcher(), 5_000);
-    });
-    proc.on('error', () => {
-      this.proc = null;
-      if (!this.stopped) setTimeout(() => this.spawnWatcher(), 30_000);
-    });
+    // docker daemon 重启 / 网络抖动导致 events 流断开时自愈重连。
+    // error 与 close 必须汇入**同一个**带闸的重连定时器（Codex P2）：spawn 失败时
+    // Node 会先 error 后 close 各触发一次，双定时器会各起一条常驻 events 流——
+    // 反复失败还会成倍繁殖 watcher，生命周期记录/死亡回调全部翻倍。
+    proc.on('close', () => this.scheduleReconnect(5_000));
+    proc.on('error', () => this.scheduleReconnect(30_000));
+  }
+
+  private reconnectTimer: ReturnType<typeof setTimeout> | null = null;
+
+  /** 单一重连闸：已排定则不重复排（首个触发者的延迟生效）。 */
+  private scheduleReconnect(delayMs: number): void {
+    this.proc = null;
+    if (this.stopped || this.reconnectTimer) return;
+    this.reconnectTimer = setTimeout(() => {
+      this.reconnectTimer = null;
+      if (!this.stopped) this.spawnWatcher();
+    }, delayMs);
+    this.reconnectTimer.unref?.();
   }
 
   private ingest(line: string): void {

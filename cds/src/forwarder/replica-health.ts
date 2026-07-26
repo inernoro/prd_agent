@@ -34,9 +34,15 @@ interface MemberHealth {
   ejectedUntil: number;
   /** 连续摘除轮数（指数退避的指数） */
   ejectRounds: number;
+  /** 半开探针占位时间戳（ms）；0 = 无在途探针。冷却到期后只放行**一个**请求试探 */
+  probeStartedAt: number;
   lastFailureCode?: string;
   lastChangeAt: number;
 }
+
+/** 半开探针占位超时：探针请求既没成功也没触发失败回调（如客户端中途放弃）时，
+ * 超过该时长允许下一个请求接棒试探，防止成员被无限期卡在摘除态。 */
+const PROBE_TIMEOUT_MS = 10_000;
 
 export interface ReplicaHealthSnapshotEntry {
   key: string;
@@ -60,10 +66,11 @@ export class ReplicaHealthRegistry {
   noteFailure(route: RouteRecord, code: string | undefined): void {
     const key = keyOf(route);
     if (!key || !code || !FATAL_CODES.has(code)) return;
-    const cur = this.state.get(key) ?? { consecutiveFails: 0, ejectedUntil: 0, ejectRounds: 0, lastChangeAt: 0 };
+    const cur = this.state.get(key) ?? { consecutiveFails: 0, ejectedUntil: 0, ejectRounds: 0, probeStartedAt: 0, lastChangeAt: 0 };
     cur.consecutiveFails += 1;
     cur.lastFailureCode = code;
     cur.lastChangeAt = this.now();
+    cur.probeStartedAt = 0;
     if (cur.consecutiveFails >= FAILS_TO_EJECT) {
       const backoff = Math.min(MAX_EJECT_MS, BASE_EJECT_MS * 2 ** cur.ejectRounds);
       cur.ejectedUntil = this.now() + backoff;
@@ -81,13 +88,24 @@ export class ReplicaHealthRegistry {
     if (this.state.has(key)) this.state.delete(key);
   }
 
-  /** 该成员当前是否处于摘除窗内（冷却到期即放行半开试探）。 */
+  /**
+   * 该成员当前是否处于摘除窗内。冷却到期后只放行**一个**半开探针请求
+   *（Codex P2）：高流量下若到期即对所有请求放行，死成员会在每个退避周期
+   * 挨一波真实流量、用户看到成波的 503；探针占位后其余请求继续走健康成员，
+   * 直到探针成功（回池）/失败（再摘）/超时（下一个请求接棒）。
+   */
   isEjected(route: RouteRecord): boolean {
     const key = keyOf(route);
     if (!key) return false;
     const cur = this.state.get(key);
     if (!cur) return false;
-    return cur.ejectedUntil > this.now();
+    const now = this.now();
+    if (cur.ejectedUntil > now) return true;
+    if (cur.ejectedUntil === 0) return false;
+    // 冷却已到期：半开态。占位探针在途且未超时 → 其余请求仍视为摘除
+    if (cur.probeStartedAt > 0 && now - cur.probeStartedAt < PROBE_TIMEOUT_MS) return true;
+    cur.probeStartedAt = now;
+    return false;
   }
 
   /** 诊断快照（forwarder 诊断端点用）。 */

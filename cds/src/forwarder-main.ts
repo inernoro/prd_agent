@@ -282,7 +282,8 @@ function replicaGroupCookieHash(group: string): string {
 }
 
 function extractReplicaSticky(req: http.IncomingMessage): {
-  explicit?: string;
+  /** 显式钉选（query __rs / header）。支持逗号多值：项目级整组预览一条链接钉住每个组 */
+  explicit?: string[];
   byGroupHash: Map<string, string>;
 } {
   const byGroupHash = new Map<string, string>();
@@ -291,10 +292,11 @@ function extractReplicaSticky(req: http.IncomingMessage): {
     byGroupHash.set(m[1], m[2]);
   }
   const url = req.url ?? '/';
-  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_-]+)/);
-  if (queryMatch) return { explicit: queryMatch[1], byGroupHash };
+  const queryMatch = url.match(/[?&]__rs=([A-Za-z0-9_,-]+)/);
+  const splitIds = (raw: string): string[] => raw.split(',').map((s) => s.trim()).filter(Boolean);
+  if (queryMatch) return { explicit: splitIds(queryMatch[1]), byGroupHash };
   const header = req.headers['x-cds-replica'];
-  if (typeof header === 'string' && header.trim()) return { explicit: header.trim(), byGroupHash };
+  if (typeof header === 'string' && header.trim()) return { explicit: splitIds(header), byGroupHash };
   return { byGroupHash };
 }
 
@@ -309,12 +311,29 @@ const server = http.createServer((req, res) => {
   });
   // 复制集会话粘性:选中组内路由后种**组作用域** cookie,同一浏览器会话不横跳版本。
   // 30 分钟滑动窗口;成员被移除后 cookie 失配 → resolver 自动回落权重选择。
-  if (route?.replicaGroup && route.replicaMemberId) {
-    const groupHash = replicaGroupCookieHash(route.replicaGroup);
-    if (sticky.byGroupHash.get(groupHash) !== route.replicaMemberId) {
-      res.setHeader('Set-Cookie', `cds_rs_${groupHash}=${route.replicaMemberId}; Path=/; Max-Age=1800; SameSite=Lax`);
+  const stickyCookies: string[] = [];
+  const pinCookie = (group: string, memberId: string): void => {
+    const groupHash = replicaGroupCookieHash(group);
+    if (sticky.byGroupHash.get(groupHash) !== memberId) {
+      stickyCookies.push(`cds_rs_${groupHash}=${memberId}; Path=/; Max-Age=1800; SameSite=Lax`);
     }
+  };
+  // 显式多钉选（Codex P1，项目级整组预览）：__rs 带多个成员 id 时，这一次导航就把
+  // 该分支**每个组**的组作用域 cookie 都种上——后续 API/资源请求不再携带 __rs，
+  // 只有 cookie 能保证各 profile 都落在本组成员，不与其他组的加权流量混流。
+  if (route?.branchId && sticky.explicit?.length) {
+    const pinned = new Set(sticky.explicit);
+    const seenGroups = new Set<string>();
+    for (const r of routes) {
+      if (r.branchId !== route.branchId || !r.replicaGroup || !r.replicaMemberId) continue;
+      if (r.replicaMemberId === 'primary' || !pinned.has(r.replicaMemberId) || seenGroups.has(r.replicaGroup)) continue;
+      seenGroups.add(r.replicaGroup);
+      pinCookie(r.replicaGroup, r.replicaMemberId);
+    }
+  } else if (route?.replicaGroup && route.replicaMemberId) {
+    pinCookie(route.replicaGroup, route.replicaMemberId);
   }
+  if (stickyCookies.length > 0) res.setHeader('Set-Cookie', stickyCookies);
   // 可观测性（用户拍板）：复制集链路的每个响应都盖「谁服务的」标记头，
   // curl -I / 浏览器 DevTools / 探测端点都能核对——分流不是摆设。
   if (route?.replicaGroup && route.replicaMemberId) {
