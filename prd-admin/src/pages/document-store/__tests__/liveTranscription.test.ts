@@ -99,6 +99,33 @@ describe('实时转写 PCM 协议', () => {
     expect(whole.length).toBe(16_000);
   });
 
+  it('44.1kHz 非整数降采样的分块结果与整段结果逐点一致', () => {
+    const input = Float32Array.from({ length: 44_100 }, (_, index) =>
+      Math.sin(index / 17) * 0.6 + Math.cos(index / 43) * 0.2);
+    const chunkSizes = [127, 128, 511, 97, 1_024, 333];
+    const chunkedResampler = new StreamingPcm16Resampler(44_100);
+    const chunks: Int16Array[] = [];
+    let offset = 0;
+    let chunkIndex = 0;
+    while (offset < input.length) {
+      const size = Math.min(chunkSizes[chunkIndex % chunkSizes.length], input.length - offset);
+      chunks.push(chunkedResampler.process(input.subarray(offset, offset + size)));
+      offset += size;
+      chunkIndex++;
+    }
+    const chunkedLength = chunks.reduce((total, chunk) => total + chunk.length, 0);
+    const chunked = new Int16Array(chunkedLength);
+    offset = 0;
+    for (const chunk of chunks) {
+      chunked.set(chunk, offset);
+      offset += chunk.length;
+    }
+    const whole = new StreamingPcm16Resampler(44_100).process(input);
+
+    expect(chunked).toEqual(whole);
+    expect(whole.length).toBe(16_000);
+  });
+
   it('任意 AudioWorklet 小块都聚合为固定一百毫秒帧，停止时保留尾帧', () => {
     const accumulator = new PcmFrameAccumulator(1_600);
     const frames = [

@@ -57,6 +57,8 @@ export function bufferPendingLivePcm(
 
 export class StreamingPcm16Resampler {
   private nextSourcePosition = 0;
+  private inputSamplesSeen = 0;
+  private previousSample: number | null = null;
 
   constructor(
     private readonly inputSampleRate: number,
@@ -69,16 +71,29 @@ export class StreamingPcm16Resampler {
   process(input: Float32Array): Int16Array {
     if (input.length === 0) return new Int16Array();
     const ratio = this.inputSampleRate / this.outputSampleRate;
+    const blockStart = this.inputSamplesSeen;
+    const blockEnd = blockStart + input.length;
+    const lastAvailablePosition = blockEnd - 1;
     const samples: number[] = [];
-    while (this.nextSourcePosition < input.length) {
+    while (this.nextSourcePosition <= lastAvailablePosition) {
       const left = Math.floor(this.nextSourcePosition);
-      const right = Math.min(left + 1, input.length - 1);
       const fraction = this.nextSourcePosition - left;
-      const sample = input[left] + (input[right] - input[left]) * fraction;
+      // 非整数位置若落在块尾与下一块首样本之间，必须等下一次 process 再插值。
+      // previousSample 保留上一块末样本，使分块输入与整段输入得到完全相同的 PCM。
+      if (fraction > 0 && left + 1 >= blockEnd) break;
+      const readSample = (position: number): number => {
+        if (position === blockStart - 1 && this.previousSample != null)
+          return this.previousSample;
+        return input[position - blockStart];
+      };
+      const leftSample = readSample(left);
+      const rightSample = fraction === 0 ? leftSample : readSample(left + 1);
+      const sample = leftSample + (rightSample - leftSample) * fraction;
       samples.push(floatToPcm16(sample));
       this.nextSourcePosition += ratio;
     }
-    this.nextSourcePosition -= input.length;
+    this.previousSample = input[input.length - 1];
+    this.inputSamplesSeen = blockEnd;
     return Int16Array.from(samples);
   }
 }
