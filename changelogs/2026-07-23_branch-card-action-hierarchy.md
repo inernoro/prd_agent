@@ -26,3 +26,4 @@
 | fix | prd-api | 允许已配置来源的 loopback HTTP 完成本地 SSO 回调 |
 | security | cds | 将 SSO 回调锁定到规范公网地址，并为换票请求增加超时与可用性错误分类 |
 | fix | cds | 关闭 Agent 接入对话框或跨页时清除显式任务上下文 |
+| security | cds | 限制 SSO 完整配置仅系统所有者可读，并在 SSO 退出时统一清理所有登录会话 |

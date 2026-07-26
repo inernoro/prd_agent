@@ -102,6 +102,10 @@ describe('ticket SSO routes', () => {
     }));
     server = await start(app);
 
+    const readResponse = await call(server, 'GET', '/api/auth/sso/config');
+    expect(readResponse.status).toBe(403);
+    expect(readResponse.body.error).toBe('human_owner_required');
+
     const response = await call(server, 'PUT', '/api/auth/sso/config', {
       enabled: false,
       label: '组织账号登录',
@@ -386,5 +390,69 @@ describe('ticket SSO routes', () => {
 
     expect(response.status).toBe(302);
     expect(response.headers.location).toBe('/login?sso_error=invalid_callback');
+  });
+
+  it('clears every CDS login cookie and invalidates the alternate server session on SSO logout', async () => {
+    const sessionStore = new TicketSsoSessionStore();
+    const ssoSession = sessionStore.create({
+      subject: 'provider:user-1',
+      username: 'sso-user',
+      displayName: 'SSO User',
+    });
+    const logoutGithubSession = vi.fn(async () => undefined);
+    const app = express();
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => normalizeTicketSsoConfig({ enabled: false }),
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore,
+      logoutGithubSession,
+    }));
+    server = await start(app);
+
+    const response = await call(server, 'POST', '/api/auth/sso/logout', undefined, {
+      Cookie: `cds_sso_session=${ssoSession.token}; cds_gh_session=github-token; cds_token=basic-token`,
+    });
+
+    expect(response.status).toBe(200);
+    expect(response.body.success).toBe(true);
+    expect(sessionStore.get(ssoSession.token)).toBeNull();
+    expect(logoutGithubSession).toHaveBeenCalledWith('github-token');
+    const cleared = response.headers['set-cookie'] as string[];
+    expect(cleared).toHaveLength(3);
+    expect(cleared).toEqual(expect.arrayContaining([
+      expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+      expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+      expect.stringMatching(/^cds_token=.*Max-Age=0/),
+    ]));
+  });
+
+  it('still clears browser login cookies when alternate server session invalidation fails', async () => {
+    const app = express();
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => normalizeTicketSsoConfig({ enabled: false }),
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+      logoutGithubSession: vi.fn(async () => {
+        throw new Error('store unavailable');
+      }),
+    }));
+    server = await start(app);
+
+    const response = await call(server, 'POST', '/api/auth/sso/logout', undefined, {
+      Cookie: 'cds_gh_session=github-token; cds_token=basic-token',
+    });
+
+    expect(response.status).toBe(503);
+    expect(response.body).toMatchObject({
+      success: false,
+      error: 'alternate_session_logout_failed',
+    });
+    const cleared = response.headers['set-cookie'] as string[];
+    expect(cleared).toHaveLength(3);
+    expect(cleared.every((cookie) => cookie.includes('Max-Age=0'))).toBe(true);
   });
 });

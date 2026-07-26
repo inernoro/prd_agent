@@ -1844,6 +1844,10 @@ export function createServer(deps: ServerDeps): express.Express {
       cookieSecure,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,
+      logoutGithubSession: async (token) => {
+        const authService = app.locals.cdsAuthService as AuthService | undefined;
+        if (authService) await authService.logout(token);
+      },
     }),
   );
   app.use((req, _res, next) => {

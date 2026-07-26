@@ -1,5 +1,6 @@
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
+import { GH_SESSION_COOKIE } from './auth.js';
 import {
   TicketSsoExchangeError,
   TicketSsoSessionStore,
@@ -19,6 +20,7 @@ export interface TicketSsoRouterDeps {
   sessionStore: TicketSsoSessionStore;
   fetchImpl?: typeof fetch;
   tokenExchangeTimeoutMs?: number;
+  logoutGithubSession?: (token: string) => Promise<void>;
 }
 
 function externalCallbackUrl(req: Request, configuredBaseUrl?: string): string {
@@ -61,9 +63,9 @@ function sessionCookie(token: string, expiresAt: Date, secure: boolean): string 
   return parts.join('; ');
 }
 
-function logoutCookie(secure: boolean): string {
+function logoutCookie(name: string, secure: boolean): string {
   const parts = [
-    `${TICKET_SSO_COOKIE}=`,
+    `${name}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -162,9 +164,29 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
     }
   });
 
-  router.post('/auth/sso/logout', (req, res) => {
-    deps.sessionStore.delete(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
-    res.setHeader('Set-Cookie', logoutCookie(deps.cookieSecure));
+  router.post('/auth/sso/logout', async (req, res) => {
+    const ssoToken = parseCookie(req.headers.cookie, TICKET_SSO_COOKIE);
+    const githubToken = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    deps.sessionStore.delete(ssoToken);
+    const clearCookies = [
+      logoutCookie(TICKET_SSO_COOKIE, deps.cookieSecure),
+      logoutCookie(GH_SESSION_COOKIE, deps.cookieSecure),
+      logoutCookie('cds_token', deps.cookieSecure),
+    ];
+    try {
+      if (githubToken && deps.logoutGithubSession) {
+        await deps.logoutGithubSession(githubToken);
+      }
+    } catch {
+      res.setHeader('Set-Cookie', clearCookies);
+      res.status(503).json({
+        success: false,
+        error: 'alternate_session_logout_failed',
+        message: '服务端会话注销失败，本地登录状态已清除。',
+      });
+      return;
+    }
+    res.setHeader('Set-Cookie', clearCookies);
     res.json({ success: true });
   });
 
@@ -180,7 +202,14 @@ export function createTicketSsoConfigRouter(deps: {
 }): Router {
   const router = Router();
 
-  router.get('/auth/sso/config', (_req: Request, res: Response) => {
+  router.get('/auth/sso/config', (req: Request, res: Response) => {
+    if (!deps.canWriteConfig(req)) {
+      res.status(403).json({
+        error: 'human_owner_required',
+        message: 'SSO 属于系统级登录配置，只允许已验证的系统所有者读取。',
+      });
+      return;
+    }
     const config = deps.getConfig();
     res.json({
       ...config,
