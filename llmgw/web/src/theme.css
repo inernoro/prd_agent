@@ -5894,6 +5894,14 @@ a:focus-visible {
 }
 
 @media (max-width: 680px) {
+  .lg-user-popover {
+    position: fixed;
+    top: 52px;
+    right: 12px;
+    left: auto;
+    width: min(220px, calc(100vw - 24px));
+  }
+
   .lg-desktop-tenant-switcher,
   .lg-header-link {
     display: none;
