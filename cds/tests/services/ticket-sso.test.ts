@@ -1,9 +1,11 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
   TicketSsoSessionStore,
+  TicketSsoStateCapacityError,
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
   exchangeTicketSsoCode,
+  isTicketSsoEnvironmentManaged,
   normalizeTicketSsoConfig,
   publicTicketSsoConfig,
   resolveTicketSsoConfig,
@@ -20,6 +22,12 @@ describe('ticket SSO', () => {
     clientId: 'cds-console',
     clientSecret: 'secret-value',
     defaultRedirect: '/project-list',
+  });
+
+  it('detects any environment-owned SSO field', () => {
+    expect(isTicketSsoEnvironmentManaged({})).toBe(false);
+    expect(isTicketSsoEnvironmentManaged({ CDS_SSO_LABEL: '组织账号登录' })).toBe(true);
+    expect(isTicketSsoEnvironmentManaged({ CDS_SSO_ENABLED: '0' })).toBe(true);
   });
 
   it('builds a provider-neutral authorization URL and keeps the callback exact', () => {
@@ -48,6 +56,92 @@ describe('ticket SSO', () => {
       callbackUrl: 'https://cds.example/auth/sso',
     });
     expect(store.consume(issued.state)).toBeNull();
+  });
+
+  it('rejects backslash-based SSO return paths before browser navigation', () => {
+    const store = new TicketSsoStateStore();
+    const decodedBackslash = store.issue('/\\evil.example/x.html', 'https://cds.example/auth/sso');
+    const encodedBackslash = store.issue('/%5Cevil.example/x.html', 'https://cds.example/auth/sso');
+
+    expect(store.consume(decodedBackslash.state)?.redirect).toBe('/project-list');
+    expect(store.consume(encodedBackslash.state)?.redirect).toBe('/project-list');
+  });
+
+  it('preserves a missing redirect so exchange can use the configured default', () => {
+    const store = new TicketSsoStateStore();
+    const issued = store.issue(undefined, 'https://cds.example/auth/sso');
+    expect(issued.redirect).toBeNull();
+    expect(store.consume(issued.state)?.redirect).toBeNull();
+  });
+
+  it('rejects excess login states without evicting live authorization attempts', () => {
+    let now = 1_000;
+    const store = new TicketSsoStateStore({
+      maxEntries: 3,
+      ttlMs: 300_000,
+      gcIntervalMs: 30_000,
+      now: () => now,
+    });
+    const first = store.issue('/first', 'https://cds.example/auth/sso');
+    now += 1;
+    const second = store.issue('/second', 'https://cds.example/auth/sso');
+    now += 1;
+    const third = store.issue('/third', 'https://cds.example/auth/sso');
+    now += 1;
+    expect(() => store.issue('/fourth', 'https://cds.example/auth/sso'))
+      .toThrow(TicketSsoStateCapacityError);
+
+    expect(store.consume(first.state)?.redirect).toBe('/first');
+    expect(store.consume(second.state)?.redirect).toBe('/second');
+    expect(store.consume(third.state)?.redirect).toBe('/third');
+    const fourth = store.issue('/fourth', 'https://cds.example/auth/sso');
+    expect(store.consume(fourth.state)?.redirect).toBe('/fourth');
+  });
+
+  it('reclaims expired states at capacity without waiting for periodic cleanup', () => {
+    let now = 10_000;
+    const store = new TicketSsoStateStore({
+      maxEntries: 1,
+      ttlMs: 100,
+      gcIntervalMs: 10_000,
+      now: () => now,
+    });
+    const expired = store.issue('/expired', 'https://cds.example/auth/sso');
+    now += 101;
+    const replacement = store.issue('/replacement', 'https://cds.example/auth/sso');
+
+    expect(store.consume(expired.state)).toBeNull();
+    expect(store.consume(replacement.state)?.redirect).toBe('/replacement');
+  });
+
+  it('rejects an expired login state even between periodic cleanup passes', () => {
+    let now = 5_000;
+    const store = new TicketSsoStateStore({
+      ttlMs: 100,
+      gcIntervalMs: 10_000,
+      now: () => now,
+    });
+    const issued = store.issue('/project-list', 'https://cds.example/auth/sso');
+    now += 101;
+
+    expect(store.consume(issued.state)).toBeNull();
+  });
+
+  it('accepts only HTTPS URLs or local HTTP development URLs', () => {
+    expect(normalizeTicketSsoConfig({
+      authorizationUrl: 'http://localhost:5500/authorize',
+      tokenUrl: 'http://127.0.0.1:5000/token',
+    })).toMatchObject({
+      authorizationUrl: 'http://localhost:5500/authorize',
+      tokenUrl: 'http://127.0.0.1:5000/token',
+    });
+    expect(normalizeTicketSsoConfig({
+      authorizationUrl: 'ftp://localhost/authorize',
+      tokenUrl: 'javascript://localhost/token',
+    })).toMatchObject({
+      authorizationUrl: '',
+      tokenUrl: '',
+    });
   });
 
   it('creates opaque sessions and deletes them on logout', () => {

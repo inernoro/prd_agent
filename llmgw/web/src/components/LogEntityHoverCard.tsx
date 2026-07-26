@@ -45,6 +45,7 @@ export function LogEntityHoverCard({
   const cardId = useId();
   const anchorRef = useRef<HTMLSpanElement>(null);
   const cardRef = useRef<HTMLDivElement>(null);
+  const openTimerRef = useRef<number | null>(null);
   const closeTimerRef = useRef<number | null>(null);
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<Position | null>(null);
@@ -56,18 +57,36 @@ export function LogEntityHoverCard({
     }
   }, []);
 
-  const show = useCallback(() => {
+  const cancelOpen = useCallback(() => {
+    if (openTimerRef.current != null) {
+      window.clearTimeout(openTimerRef.current);
+      openTimerRef.current = null;
+    }
+  }, []);
+
+  const showNow = useCallback(() => {
+    cancelOpen();
     cancelClose();
     setOpen(true);
-  }, [cancelClose]);
+  }, [cancelClose, cancelOpen]);
+
+  const showSoon = useCallback(() => {
+    cancelOpen();
+    cancelClose();
+    openTimerRef.current = window.setTimeout(() => {
+      setOpen(true);
+      openTimerRef.current = null;
+    }, 180);
+  }, [cancelClose, cancelOpen]);
 
   const hideSoon = useCallback(() => {
+    cancelOpen();
     cancelClose();
     closeTimerRef.current = window.setTimeout(() => {
       setOpen(false);
       setPosition(null);
     }, 140);
-  }, [cancelClose]);
+  }, [cancelClose, cancelOpen]);
 
   const updatePosition = useCallback(() => {
     const anchor = anchorRef.current;
@@ -102,7 +121,10 @@ export function LogEntityHoverCard({
     };
   }, [open, updatePosition]);
 
-  useEffect(() => () => cancelClose(), [cancelClose]);
+  useEffect(() => () => {
+    cancelOpen();
+    cancelClose();
+  }, [cancelClose, cancelOpen]);
 
   const stopRowKeyboard = (event: KeyboardEvent<HTMLElement>) => {
     event.stopPropagation();
@@ -118,9 +140,9 @@ export function LogEntityHoverCard({
     <span
       ref={anchorRef}
       className="lg-log-entity-hover-root"
-      onMouseEnter={show}
+      onMouseEnter={showSoon}
       onMouseLeave={hideSoon}
-      onFocus={show}
+      onFocus={showNow}
       onBlur={handleBlur}
     >
       <Link
@@ -148,9 +170,9 @@ export function LogEntityHoverCard({
             width: `min(${CARD_WIDTH}px, calc(100vw - ${VIEWPORT_GAP * 2}px))`,
             visibility: position ? 'visible' : 'hidden',
           }}
-          onMouseEnter={show}
+          onMouseEnter={showNow}
           onMouseLeave={hideSoon}
-          onFocus={show}
+          onFocus={showNow}
           onBlur={(event) => {
             const next = event.relatedTarget as Node | null;
             if (next && (cardRef.current?.contains(next) || anchorRef.current?.contains(next))) return;

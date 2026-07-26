@@ -1,0 +1,1 @@
+| chore | doc | 每日熵减计划：D1-D5 全部干净（0 改动，D4 的 pnpm 命中为正文散文提及非技能表行，确认为误报未删），D6 核对 5 条 changelog（快捷知识库录音与转录聚焦/视觉创作接入网关图片模型/CDS 发布弹窗性能修复/前一日熵清理自身/录音上传去重），均无匹配的 design 文档章节需要覆盖；PR review 发现 debt.knowledge-base.md 与 debt.cds.performance.md 的既有台账并未真正覆盖 2026-07-20/21 两个批次（此前判断有误），已补齐两份 debt 台账的对应日期化章节，manifest 累计 472 条 |

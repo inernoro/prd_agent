@@ -2,7 +2,7 @@
 // tenantId 永远由服务端会话解析；密钥仅写入，不从 API 读回。
 import { useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, KeyRound, Pencil, Plus, Route, Trash2 } from 'lucide-react';
-import { Link } from 'react-router-dom';
+import { Link, useSearchParams } from 'react-router-dom';
 import {
   bulkRotateApiKeys,
   claimExchangeToGateway,
@@ -60,6 +60,8 @@ const emptyForm = (): ExchangeFormState => ({
 
 export function ExchangesPage() {
   const { tenant } = useAuth();
+  const [searchParams] = useSearchParams();
+  const focusedExchangeId = searchParams.get('exchangeId')?.trim() || null;
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [items, setItems] = useState<ExchangeItem[] | null>(null);
   const [meta, setMeta] = useState<ExchangeMetaData | null>(null);
@@ -98,6 +100,11 @@ export function ExchangesPage() {
     });
     return () => { alive = false; };
   }, []);
+
+  useEffect(() => {
+    if (!focusedExchangeId || items === null || items.some((item) => item.id === focusedExchangeId)) return;
+    setNotice('当前租户中没有找到该 Exchange');
+  }, [focusedExchangeId, items]);
 
   function openCreate() {
     setForm(emptyForm());
@@ -382,6 +389,8 @@ export function ExchangesPage() {
                     buttonLabel="查看路由"
                     kicker="Exchange 路由预览"
                     title={item.name || item.id}
+                    icon={<Route size={20} />}
+                    initiallyOpen={item.id === focusedExchangeId}
                     summary="从当前卡片直接查看 adapter 如何把 Gateway 请求转换并发往上游。这里只展示配置与请求边界，不会试连目标地址，也不会读取通讯密钥。"
                     status={[
                       { label: item.enabled ? '已启用' : '已停用', tone: item.enabled ? 'good' : 'warning' },

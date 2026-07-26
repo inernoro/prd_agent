@@ -14,6 +14,7 @@ import {
   createAgentMissionContext,
   getAgentMissionScope,
   PROJECT_SKILL_PATHS,
+  resolveAgentMissionContextForTarget,
   type AgentPageContext,
   type AgentPageContextId,
   type CdsConnectTarget,
@@ -79,14 +80,19 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
     : mapSelection.kind === 'project'
       ? mapSelection.projectId
       : '';
-  const selectedContext = missionId === sourceContext.id
-    ? sourceContext
-    : createAgentMissionContext(missionId, effectiveProjectId);
+  const selectedContext = resolveAgentMissionContextForTarget(
+    missionId,
+    sourceContext,
+    projects,
+    effectiveProjectId,
+  );
   const cdsOrigin = typeof window !== 'undefined' ? window.location.origin : 'https://<your-cds-host>';
   const target: CdsConnectTarget = mapSelection.kind === 'new'
     ? { kind: 'new' }
-    : { kind: 'existing', projectId: effectiveProjectId || '<project-id>' };
-  const targetKind = mapSelection.kind === 'new' ? 'new' : 'existing';
+    : effectiveProjectId
+      ? { kind: 'existing', projectId: effectiveProjectId }
+      : { kind: 'system' };
+  const targetKind = target.kind;
   const prompt = useMemo(
     () => buildCdsAgentPrompt({ cdsOrigin, target, context: selectedContext }),
     [cdsOrigin, target.kind, effectiveProjectId, selectedContext.id, selectedContext.pagePath],
@@ -117,8 +123,8 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         <DialogHeader>
           <DialogTitle>接入 Agent</DialogTitle>
           <DialogDescription>
-            Agent 会同时获得当前页面的任务上下文和安全边界。授权仍在 CDS 页面完成，
-            不需要学习底层参数，也不需要把密钥复制到对话中。
+            选择项目和任务后，Agent 会获得可执行步骤、安全边界与完成标准。
+            已有项目权限会静默复用，只有缺少权限或明确提权时才需要批准。
           </DialogDescription>
         </DialogHeader>
 
@@ -174,7 +180,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </label>
         ) : null}
 
-        <nav className="flex gap-1 border-b border-[hsl(var(--hairline))]">
+        <nav className="grid grid-cols-3 gap-1 border-b border-[hsl(var(--hairline))]">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -183,11 +189,11 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
                 key={tab.key}
                 type="button"
                 onClick={() => setActive(tab.key)}
-                className={`relative inline-flex h-10 shrink-0 items-center gap-2 px-3 text-sm transition-colors ${
+                className={`relative inline-flex h-10 min-w-0 items-center justify-center gap-1 px-1 text-sm transition-colors sm:gap-2 sm:px-3 ${
                   selected ? 'text-foreground' : 'text-muted-foreground hover:text-foreground'
                 }`}
               >
-                <Icon className="h-4 w-4" />
+                <Icon className="hidden h-4 w-4 sm:block" />
                 <span>{tab.label}</span>
                 {tab.recommended ? (
                   <span className="rounded border border-primary/40 bg-primary/10 px-1.5 py-0.5 text-[10px] font-medium text-primary">
@@ -227,7 +233,7 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
     <div className="space-y-3">
       <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
         <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
-        <span>口令中不含密钥。Agent 发起申请后，你只需要在 CDS 右下角批准一次。</span>
+        <span>口令不含密钥。Agent 会先静默检查当前项目权限；检查通过就直接工作，缺少权限才会在 CDS 右下角申请批准。</span>
       </div>
       <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
         <pre className="max-h-72 overflow-y-auto whitespace-pre-wrap break-words pr-12 font-mono text-xs leading-relaxed text-foreground" style={{ overscrollBehavior: 'contain' }}>
@@ -245,7 +251,7 @@ function ConnectTab({ prompt }: { prompt: string }): JSX.Element {
 function ManualTab(): JSX.Element {
   return (
     <div className="space-y-3 text-sm text-muted-foreground">
-      <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的三个目录复制到当前项目对应的技能目录。</p>
+      <p>技能包采用通用的 SKILL.md 结构。下载后把 skills/ 下的五个目录复制到当前项目对应的技能目录。</p>
       <Button asChild>
         <a href="/api/export-skill" download>
           <Download className="h-4 w-4" />

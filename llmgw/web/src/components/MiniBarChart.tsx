@@ -5,7 +5,8 @@ import type { TimeseriesPoint } from '@/lib/types';
 export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; height?: number }) {
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const max = Math.max(1, ...data.map((d) => d.count));
-  const labelStep = Math.max(1, Math.ceil(data.length / 6));
+  const labelStep = Math.max(1, Math.ceil(Math.max(0, data.length - 1) / 5));
+  const lastIndex = data.length - 1;
   const activePoint = activeIndex == null ? null : data[activeIndex];
   return (
     <div className="lg-mini-bar-chart" style={{ height }} onPointerLeave={() => setActiveIndex(null)}>
@@ -20,6 +21,8 @@ export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; 
       ) : (
         data.map((d, i) => {
           const ratio = Math.max(0.04, d.count / max);
+          const showLabel = i === lastIndex
+            || (i % labelStep === 0 && lastIndex - i >= Math.max(2, Math.ceil(labelStep * 0.65)));
           return (
             <button
               key={`${d.date}-${i}`}
@@ -36,8 +39,8 @@ export function MiniBarChart({ data, height = 140 }: { data: TimeseriesPoint[]; 
                 style={{ height: `${ratio * 100}%` }}
               />
               <small
-                aria-hidden={i % labelStep !== 0 && i !== data.length - 1}
-                style={{ visibility: i % labelStep === 0 || i === data.length - 1 ? 'visible' : 'hidden' }}
+                aria-hidden={!showLabel}
+                style={{ visibility: showLabel ? 'visible' : 'hidden' }}
               >
                 {d.date.slice(5)}
               </small>

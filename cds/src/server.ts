@@ -58,6 +58,7 @@ import type { AuthStore } from './infra/auth-store/memory-store.js';
 import { GitHubOAuthClient } from './services/github-oauth-client.js';
 import { AuthService } from './services/auth-service.js';
 import {
+  isTicketSsoEnvironmentManaged,
   normalizeTicketSsoConfig,
   publicTicketSsoConfig,
   resolveTicketSsoConfig,
@@ -1862,24 +1863,71 @@ export function createServer(deps: ServerDeps): express.Express {
     '/api',
     createTicketSsoPublicRouter({
       resolveConfig: resolveSsoConfig,
-      publicBaseUrl: configuredPublicBaseUrl,
+      publicBaseUrl,
       cookieSecure,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,
+      logoutGithubSession: async (token) => {
+        const authService = app.locals.cdsAuthService as AuthService | undefined;
+        if (authService) await authService.logout(token);
+      },
     }),
   );
   app.use((req, _res, next) => {
     const identity = ticketSsoIdentity(req, ticketSsoSessionStore);
     if (identity) {
-      (req as typeof req & { cdsSsoIdentity?: typeof identity }).cdsSsoIdentity = identity;
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const request = req as typeof req & {
+        cdsSsoIdentity?: typeof identity;
+        _cdsCookieAuth?: boolean;
+        cdsUser?: Record<string, unknown>;
+        cdsSession?: {
+          id: string;
+          token: string;
+          userId: string;
+          createdAt: string;
+          expiresAt: string;
+          lastSeenAt: string;
+          orgsCheckedAt: string;
+          userAgent: string | null;
+          ipAddress: string | null;
+        };
+      };
+      const userId = `sso:${identity.subject}`;
+      request.cdsSsoIdentity = identity;
+      request._cdsCookieAuth = true;
+      request.cdsUser = {
+        ...legacyAuthUser(identity.username, 'disabled'),
+        id: userId,
+        authProvider: 'sso',
+        name: identity.displayName,
+        email: identity.email ?? null,
+        isSystemOwner: false,
+        lastLoginAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      request.cdsSession = {
+        id: userId,
+        token: '',
+        userId,
+        createdAt: now,
+        expiresAt,
+        lastSeenAt: now,
+        orgsCheckedAt: now,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        ipAddress: req.ip || null,
+      };
     }
     next();
   });
 
   app.get('/api/auth/public-status', (_req, res) => {
     const sso = publicTicketSsoConfig(resolveSsoConfig());
+    const publicMode = authMode === 'disabled' && sso.enabled ? 'sso' : authMode;
     res.json({
-      mode: authMode,
+      mode: publicMode,
       enabled: authMode !== 'disabled' || sso.enabled,
       loginMethods: {
         github: authMode === 'github',
@@ -2043,8 +2091,15 @@ export function createServer(deps: ServerDeps): express.Express {
       res.setHeader('Set-Cookie', 'cds_token=; Path=/; Max-Age=0; SameSite=Lax; HttpOnly');
       res.json({ success: true });
     });
+  }
 
+  // Non-GitHub deployments still install a dynamic gate so an SSO-only
+  // instance cannot advertise login while leaving dashboard/API routes open.
+  // When both basic auth and SSO are disabled the middleware is a no-op.
+  if (authMode !== 'github') {
     app.use((req, res, next) => {
+      const ssoGateEnabled = publicTicketSsoConfig(resolveSsoConfig()).enabled;
+      if (authMode === 'disabled' && !ssoGateEnabled) return next();
       if (req.path === '/') return next();
       if ((req as typeof req & { cdsSsoIdentity?: unknown }).cdsSsoIdentity) return next();
       if (req.path === '/login' || req.path === '/login.html' || req.path === '/auth/sso' || req.path === '/api/login' || req.path === '/api/logout') return next();
@@ -2590,8 +2645,13 @@ export function createServer(deps: ServerDeps): express.Express {
       }
     });
 
-    console.log(`  Auth: enabled (user: ${cdsUser})`);
-  } else if (authMode === 'disabled') {
+    if (authEnabled) {
+      console.log(`  Auth: enabled (user: ${cdsUser})`);
+    } else if (publicTicketSsoConfig(resolveSsoConfig()).enabled) {
+      console.log('  Auth: SSO-only mode');
+    }
+  }
+  if (authMode === 'disabled' && !publicTicketSsoConfig(resolveSsoConfig()).enabled) {
     console.warn(
       '  Auth warning: disabled — set CDS_AUTH_MODE=github (+ CDS_GITHUB_CLIENT_ID/SECRET/ALLOWED_ORGS) or CDS_USERNAME/CDS_PASSWORD to enable login',
     );
@@ -2606,16 +2666,42 @@ export function createServer(deps: ServerDeps): express.Express {
       getConfig: resolveSsoConfig,
       saveConfig: (config) => deps.stateService.setSsoConfig(config),
       normalizeConfig: normalizeTicketSsoConfig,
+      isEnvironmentManaged: () => isTicketSsoEnvironmentManaged(),
+      canWriteConfig: (req) => {
+        const request = req as typeof req & {
+          _cdsCookieAuth?: boolean;
+          cdsUser?: { isSystemOwner?: boolean; authProvider?: string };
+          cdsSession?: unknown;
+        };
+        if (authMode === 'basic') {
+          const cookieToken = readCookie(req.headers.cookie, 'cds_token');
+          const headerToken = typeof req.headers['x-cds-token'] === 'string'
+            ? req.headers['x-cds-token']
+            : '';
+          return Boolean(validToken && (cookieToken || headerToken) === validToken);
+        }
+        return Boolean(
+          request.cdsSession
+          && request.cdsUser?.isSystemOwner === true
+          && request.cdsUser.authProvider !== 'sso',
+        );
+      },
     }),
   );
 
   if (authMode !== 'github') {
     app.get('/api/me', (req, res) => {
-      const ssoIdentity = (req as typeof req & {
+      const request = req as typeof req & {
         cdsSsoIdentity?: { username: string; displayName: string; email?: string | null };
-      }).cdsSsoIdentity;
+        _cdsCookieAuth?: boolean;
+      };
+      const ssoIdentity = request.cdsSsoIdentity;
       if (authMode !== 'disabled' && !ssoIdentity) {
-        if (readCookie(req.headers.cookie, 'cds_token') !== validToken) {
+        // The outer basic-auth gate validates both the cds_token cookie and
+        // the supported X-CDS-Token header, then stamps this human marker.
+        // Trust that single validation result so /api/me stays consistent
+        // with every other protected endpoint.
+        if (!request._cdsCookieAuth) {
           res.status(401).json({ error: 'unauthenticated' });
           return;
         }
@@ -2652,11 +2738,19 @@ export function createServer(deps: ServerDeps): express.Express {
     const ssoIdentity = (req as typeof req & {
       cdsSsoIdentity?: { username: string; displayName: string };
     }).cdsSsoIdentity;
+    const activeProvider = ssoIdentity
+      ? 'sso'
+      : authMode === 'github' && sessionUser
+        ? 'github'
+        : authMode === 'basic'
+          ? 'local'
+          : null;
     const user = ssoIdentity
       ? {
           username: ssoIdentity.username,
           name: ssoIdentity.displayName,
           authProvider: resolveSsoConfig().providerId,
+          isSystemOwner: false,
         }
       : authMode === 'github' && sessionUser
       ? {
@@ -2670,8 +2764,9 @@ export function createServer(deps: ServerDeps): express.Express {
         ? { username: cdsUser }
         : null;
     res.json({
-      mode: authMode,
+      mode: ssoIdentity ? 'sso' : authMode,
       enabled: authMode !== 'disabled' || Boolean(ssoIdentity),
+      activeProvider,
       logoutEndpoint: ssoIdentity
         ? '/api/auth/sso/logout'
         : authMode === 'github'
@@ -2679,6 +2774,7 @@ export function createServer(deps: ServerDeps): express.Express {
           : authMode === 'basic'
             ? '/api/logout'
             : null,
+      postLogoutRedirect: ssoIdentity ? '/login' : null,
       user,
     });
   });

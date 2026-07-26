@@ -24,6 +24,7 @@ function loginHref(mode?: string): string {
 function authModeLabel(mode?: string): string {
   if (mode === 'github') return 'GitHub OAuth';
   if (mode === 'basic') return '账号密码';
+  if (mode === 'sso') return 'SSO';
   if (mode === 'disabled') return '未启用';
   return mode || 'unknown';
 }
@@ -86,7 +87,7 @@ export function AuthTab(): JSX.Element {
     setLogoutError('');
     try {
       await apiRequest(state.data.logoutEndpoint, { method: 'POST' });
-      window.location.href = loginHref(state.data.mode);
+      window.location.href = state.data.postLogoutRedirect || loginHref(state.data.mode);
     } catch (err) {
       setLogoutState('error');
       setLogoutError(err instanceof ApiError ? err.message : String(err));
@@ -194,7 +195,7 @@ export function AuthTab(): JSX.Element {
               <input
                 type="checkbox"
                 checked={sso?.enabled === true}
-                disabled={!sso}
+                disabled={!sso || sso.managedByEnvironment}
                 onChange={(event) => setSso((current) => current ? { ...current, enabled: event.target.checked } : current)}
               />
               允许 SSO 登录
@@ -224,6 +225,11 @@ export function AuthTab(): JSX.Element {
 
           {sso ? (
             <div className="mt-4 grid gap-4 md:grid-cols-2">
+              {sso.managedByEnvironment ? (
+                <div className="rounded-md border border-amber-500/35 bg-amber-500/10 px-3 py-2 text-sm leading-6 text-foreground md:col-span-2">
+                  当前配置由 CDS_SSO_* 环境变量托管。页面仅展示生效值，请在部署环境中修改后重启 CDS。
+                </div>
+              ) : null}
               {([
                 ['providerId', '提供方标识', 'corporate-sso'],
                 ['label', '登录按钮名称', '使用公司账号登录'],
@@ -236,6 +242,7 @@ export function AuthTab(): JSX.Element {
                   <span className="mb-1.5 block text-sm text-muted-foreground">{label}</span>
                   <input
                     className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                    disabled={sso.managedByEnvironment}
                     value={sso[key]}
                     placeholder={placeholder}
                     onChange={(event) => setSso((current) => current ? { ...current, [key]: event.target.value } : current)}
@@ -248,13 +255,18 @@ export function AuthTab(): JSX.Element {
                   type="password"
                   autoComplete="new-password"
                   className="h-10 w-full rounded-md border border-border bg-background px-3 text-sm outline-none focus:border-primary"
+                  disabled={sso.managedByEnvironment}
                   value={ssoSecret}
                   placeholder={sso.hasClientSecret ? '已安全保存，留空保持不变' : '输入客户端密钥'}
                   onChange={(event) => setSsoSecret(event.target.value)}
                 />
               </label>
               <div className="flex items-center gap-3 md:col-span-2">
-                <Button type="button" disabled={ssoSaveState === 'running'} onClick={() => void saveSso()}>
+                <Button
+                  type="button"
+                  disabled={sso.managedByEnvironment || ssoSaveState === 'running'}
+                  onClick={() => void saveSso()}
+                >
                   {ssoSaveState === 'running' ? '保存中' : '保存 SSO 配置'}
                 </Button>
                 {ssoSaveState === 'saved' ? <span className="text-sm text-emerald-500">配置已保存并立即生效</span> : null}

@@ -151,6 +151,73 @@ public class GatewayMultipartHttpTests
     }
 
     [Fact]
+    public async Task HttpClient_WithGatewayData_WritesTenantManifestForServingRehydrate()
+    {
+        var testDatabase = await TryCreateDatabaseAsync();
+        if (testDatabase is null) return;
+        await using var scope = testDatabase;
+        var storage = new MemoryAssetStorage();
+        GatewayRawRequest? captured = null;
+        var handler = new CapturingHandler(async request =>
+        {
+            captured = JsonSerializer.Deserialize<GatewayRawRequest>(
+                await request.Content!.ReadAsStringAsync(),
+                PascalJson);
+            return new HttpResponseMessage(HttpStatusCode.OK)
+            {
+                Content = JsonContent.Create(new GatewayRawResponse
+                {
+                    Success = true,
+                    StatusCode = 200,
+                    Content = "ok",
+                }, options: PascalJson),
+            };
+        });
+        var client = new HttpLlmGatewayClient(
+            new SingleClientFactory(new HttpClient(handler)),
+            Config("http://llmgw.test"),
+            NullLogger<HttpLlmGatewayClient>.Instance,
+            assetStorage: storage,
+            gatewayData: scope.Context);
+        var bytes = Encoding.UTF8.GetBytes("manifest-voice-bytes");
+
+        var response = await client.SendRawWithResolutionAsync(
+            new GatewayRawRequest
+            {
+                AppCallerCode = "document-store.subtitle::asr",
+                ModelType = "asr",
+                IsMultipart = true,
+                MultipartFiles = new Dictionary<string, (string FileName, byte[] Content, string MimeType)>
+                {
+                    ["file"] = ("voice.wav", bytes, "audio/wav"),
+                },
+                Context = new GatewayRequestContext
+                {
+                    TenantId = "tenant-asr-canary",
+                    RequestId = "asr-canary-manifest-test",
+                },
+            },
+            new GatewayModelResolution
+            {
+                Success = true,
+                ActualModel = "asr-model",
+            });
+
+        response.Success.ShouldBeTrue();
+        captured.ShouldNotBeNull();
+        var fileRef = captured!.MultipartFileRefs!["file"];
+        var manifest = await scope.Context.Database
+            .GetCollection<GatewayMultipartObjectRecord>("llmgw_multipart_objects")
+            .Find(x => x.TenantId == "tenant-asr-canary" && x.RefKey == fileRef.RefKey)
+            .SingleOrDefaultAsync();
+        manifest.ShouldNotBeNull();
+        manifest!.RequestId.ShouldBe("asr-canary-manifest-test");
+        manifest.Sha256.ShouldBe(Sha256Hex(bytes));
+        manifest.SizeBytes.ShouldBe(bytes.LongLength);
+        manifest.Status.ShouldBe("uploaded");
+    }
+
+    [Fact]
     public async Task RawEndpoint_RehydratesMultipartFileRefs_BeforeGatewaySend()
     {
         var bytes = Encoding.UTF8.GetBytes("image-bytes");

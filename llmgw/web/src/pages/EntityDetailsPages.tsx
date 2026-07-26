@@ -327,6 +327,7 @@ export function ProviderDetailsPage() {
   const [provider, setProvider] = useState<PlatformItem | null>(null);
   const [models, setModels] = useState<ModelItem[]>([]);
   const [recent, setRecent] = useState<LlmLogListItem[]>([]);
+  const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -346,9 +347,16 @@ export function ProviderDetailsPage() {
         return;
       }
       const matched = platformResult.data.items.find((item) => item.id === requestedId || item.name === requestedName) ?? null;
-      setProvider(matched);
-      setModels(requestedId ? modelResult.data.items : modelResult.data.items.filter((item) => item.platformId === matched?.id));
-      if (logResult?.success) setRecent(logResult.data.items);
+      const recentItems = logResult?.success ? logResult.data.items : [];
+      const observed = recentItems.find((item) => (item.platformName || item.provider) === requestedName) ?? recentItems[0] ?? null;
+      setRegistered(Boolean(matched));
+      setProvider(matched ?? (observed ? observedProvider(observed, requestedName) : null));
+      setModels(matched
+        ? requestedId
+          ? modelResult.data.items
+          : modelResult.data.items.filter((item) => item.platformId === matched.id)
+        : []);
+      setRecent(recentItems);
       setLoading(false);
     });
     return () => {
@@ -357,6 +365,13 @@ export function ProviderDetailsPage() {
   }, [requestedId, requestedName]);
 
   const totalCalls = models.reduce((sum, item) => sum + item.callCount, 0);
+  const observedModels = Array.from(new Set(
+    recent
+      .map((item) => item.logicalModelPublicId || item.model)
+      .filter((model): model is string => Boolean(model)),
+  ));
+  const observedProtocol = recent.find((item) => item.protocol)?.protocol || provider?.platformType || '未标注';
+  const observedTransport = recent.find((item) => item.transport)?.transport || '未标注';
   if (loading) return <SectionLoader text="正在加载 Provider 详情" />;
   if (error) return <DetailError message={error} backHref="/logs" />;
   if (!provider) return <DetailError message="当前租户中没有找到该 Provider，可能已删除或不在你的权限范围内。" backHref="/logs" />;
@@ -366,19 +381,28 @@ export function ProviderDetailsPage() {
       kind="provider"
       title={provider.name}
       identifier={provider.providerId || provider.id}
-      subtitle={`Gateway Provider · ${provider.platformType || '未标注协议'}`}
+      subtitle={`${registered ? 'Gateway Provider' : '运行时 Provider'} · ${provider.platformType || '未标注协议'}`}
       description={provider.remark || '该 Provider 负责把 Gateway 请求发送到上游服务。页面只展示当前租户有权读取的连接摘要，不显示密钥明文，也不会建立新的上游连接。'}
       icon={<ProviderEntityIcon provider={provider.name} size="lg" />}
-      status={[
+      status={registered ? [
         { label: provider.enabled ? '已启用' : '已停用', tone: provider.enabled ? 'good' : 'warning' },
         { label: provider.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: provider.hasKey ? 'good' : 'warning' },
         { label: provider.authority === 'llm_gateway' ? 'Gateway 权威配置' : 'MAP 兼容配置', tone: 'neutral' },
+      ] : [
+        { label: '仅日志观测', tone: 'neutral' },
+        { label: '非配置实体', tone: 'neutral' },
+        { label: '不补造密钥状态', tone: 'neutral' },
       ]}
-      metrics={[
+      metrics={registered ? [
         { label: '托管模型', value: models.length, hint: '当前租户可见', icon: <Server size={17} /> },
         { label: '最大并发', value: provider.maxConcurrency || '未配置', hint: 'Provider 级上限', icon: <Gauge size={17} /> },
         { label: '累计调用', value: fmtCompact(totalCalls || recent.length), hint: '可见模型累计', icon: <Route size={17} /> },
         { label: '密钥状态', value: provider.hasKey ? '就绪' : '未就绪', hint: '不会显示密钥明文', icon: <KeyRound size={17} /> },
+      ] : [
+        { label: '最近请求', value: fmtCompact(recent.length), hint: '当前筛选窗口', icon: <Route size={17} /> },
+        { label: '观察模型', value: observedModels.length, hint: '来自日志，不代表配置', icon: <Server size={17} /> },
+        { label: '上游协议', value: observedProtocol, hint: '最近记录', icon: <Gauge size={17} /> },
+        { label: '传输方式', value: observedTransport, hint: '最近记录', icon: <KeyRound size={17} /> },
       ]}
       backHref="/logs"
       backLabel="返回请求记录"
@@ -388,12 +412,12 @@ export function ProviderDetailsPage() {
         {
           id: 'connection',
           title: 'Connection',
-          description: '这组字段决定 Gateway 如何连接该 Provider。',
+          description: registered ? '这组字段决定 Gateway 如何连接该 Provider。' : '该 Provider 只存在于运行日志中；以下字段是最近一次可见记录，不会伪装成可编辑配置。',
           content: <Facts items={[
             { label: '接口类型', value: provider.platformType || '未配置' },
-            { label: 'API 地址', value: <code>{provider.apiUrl || '未配置'}</code>, hint: '这是上游地址，不是业务应用调用 Gateway 的地址。' },
+            { label: 'API 地址', value: <code>{provider.apiUrl || (registered ? '未配置' : '日志未记录')}</code>, hint: registered ? '这是上游地址，不是业务应用调用 Gateway 的地址。' : '运行日志不保存可复用的上游连接地址。' },
             { label: '供应方标识', value: provider.providerId || '未单独设置' },
-            { label: '最大并发', value: provider.maxConcurrency || '未配置' },
+            { label: '最大并发', value: registered ? provider.maxConcurrency || '未配置' : '不适用' },
             { label: '配置来源', value: provider.sourceCollection || '未标注' },
             { label: '最近更新', value: provider.updatedAt ? fmtDate(provider.updatedAt) : '未记录' },
           ]} />,
@@ -401,8 +425,8 @@ export function ProviderDetailsPage() {
         {
           id: 'models',
           title: 'Models',
-          description: '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。',
-          content: models.length ? (
+          description: registered ? '该 Provider 下当前可见的模型。点击模型可继续进入模型详情。' : '从最近请求中观察到的模型；只证明实际请求经过这里，不补造托管关系。',
+          content: registered && models.length ? (
             <div className="lg-entity-detail-card-list">
               {models.map((model) => (
                 <Link key={model.id} to={`/models/view?model=${encodeURIComponent(model.modelName || model.name)}&platformId=${encodeURIComponent(provider.id)}`}>
@@ -412,7 +436,17 @@ export function ProviderDetailsPage() {
                 </Link>
               ))}
             </div>
-          ) : <div className="lg-entity-detail-empty">该 Provider 尚未关联模型。</div>,
+          ) : !registered && observedModels.length ? (
+            <div className="lg-entity-detail-card-list">
+              {observedModels.map((model) => (
+                <Link key={model} to={`/models/view?model=${encodeURIComponent(model)}`}>
+                  <ModelEntityIcon model={model} />
+                  <div><strong>{model}</strong><span>日志观测 · 非配置关系</span></div>
+                  <ArrowUpRight size={15} />
+                </Link>
+              ))}
+            </div>
+          ) : <div className="lg-entity-detail-empty">该 Provider 尚未关联或观察到模型。</div>,
         },
         {
           id: 'activity',
@@ -425,6 +459,65 @@ export function ProviderDetailsPage() {
   );
 }
 
+function observedProvider(item: LlmLogListItem, requestedName: string): PlatformItem {
+  const name = item.platformName || item.provider || requestedName;
+  return {
+    id: item.platformId || `observed:${name}`,
+    name,
+    platformType: item.protocol || 'runtime',
+    providerId: item.provider || name,
+    apiUrl: null,
+    enabled: true,
+    maxConcurrency: 0,
+    remark: '该 Provider 仅在运行日志中被观察到，不是当前租户的可编辑 Provider 配置。页面展示可验证的运行事实，不补造连接、密钥或并发配置。',
+    hasKey: false,
+    sourceCollection: 'llmrequestlogs',
+    authority: 'runtime_observed',
+    createdAt: null,
+    updatedAt: item.endedAt || item.startedAt,
+  };
+}
+
+function observedAppCaller(item: LlmLogListItem, requestedCode: string): GatewayAppCaller {
+  const requestType = item.requestType?.trim() || requestedCode.split('::').pop() || 'unknown';
+  return {
+    id: `observed:${requestedCode}`,
+    teamId: item.teamId || null,
+    appCallerCode: item.appCallerCode?.replace(/^G-/, '') || requestedCode,
+    requestType,
+    sourceSystem: item.sourceSystem || '未标注',
+    clientCode: item.clientCode || '未标注',
+    environment: item.environment || '未标注',
+    purpose: 'runtime',
+    ingressProtocol: item.ingressProtocol || '未标注',
+    observedIngressProtocols: item.ingressProtocol ? [item.ingressProtocol] : [],
+    title: item.appCallerCodeDisplayName || item.appCallerTitle || null,
+    status: 'observed',
+    modelPoolId: item.modelPoolId || null,
+    modelPolicy: item.modelPolicy || null,
+    parameterPolicy: null,
+    lastObservedModelPoolId: item.modelPoolId || null,
+    lastObservedModelPolicy: item.modelPolicy || null,
+    lastObservedParameterPolicy: null,
+    lastObservedRequestId: item.requestId || item.id,
+    lastObservedSessionId: item.sessionId || null,
+    lastObservedRunId: item.runId || null,
+    owner: null,
+    monthlyBudgetUsd: null,
+    budgetReservationUsd: null,
+    rateLimitPerMinute: null,
+    notes: null,
+    totalSeen: 1,
+    firstSeenAt: item.startedAt,
+    lastSeenAt: item.startedAt,
+    createdAt: null,
+    rotatesKeyId: null,
+    rotatedByKeyId: null,
+    rotationState: 'observed',
+    updatedAt: item.startedAt,
+  };
+}
+
 export function AppCallerDetailsPage() {
   const [params] = useSearchParams();
   const requestedCode = (params.get('code') || '').replace(/^G-/, '');
@@ -432,6 +525,7 @@ export function AppCallerDetailsPage() {
   const [app, setApp] = useState<GatewayAppCaller | null>(null);
   const [pool, setPool] = useState<ModelPool | null>(null);
   const [recent, setRecent] = useState<LlmLogListItem[]>([]);
+  const [registered, setRegistered] = useState(true);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState<string | null>(null);
 
@@ -453,10 +547,14 @@ export function AppCallerDetailsPage() {
       const matched = appResult.data.items.find((item) => (
         item.id === requestedId
         || item.appCallerCode.replace(/^G-/, '') === requestedCode
-      )) ?? appResult.data.items[0] ?? null;
-      setApp(matched);
-      setPool(poolResult.data.items.find((item) => item.id === matched?.modelPoolId) ?? null);
-      if (logResult?.success) setRecent(logResult.data.items);
+      )) ?? null;
+      const recentItems = logResult?.success ? logResult.data.items : [];
+      const observed = recentItems.find((item) => item.appCallerCode?.replace(/^G-/, '') === requestedCode) ?? recentItems[0] ?? null;
+      const resolved = matched ?? (observed ? observedAppCaller(observed, requestedCode) : null);
+      setRegistered(Boolean(matched));
+      setApp(resolved);
+      setPool(poolResult.data.items.find((item) => item.id === resolved?.modelPoolId) ?? null);
+      setRecent(recentItems);
       setLoading(false);
     });
     return () => {
@@ -475,23 +573,25 @@ export function AppCallerDetailsPage() {
       title={app.title || displayCode}
       identifier={displayCode}
       subtitle={`${app.sourceSystem || '未知来源'} · ${app.requestType || '未标注类型'}`}
-      description={app.notes || 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'}
+      description={app.notes || (registered
+        ? 'App 表示发起 Gateway 请求的业务身份。页面汇总它的调用来源、模型路由、预算与速率治理以及最近请求，便于从一条日志继续定位完整业务上下文。'
+        : '该 App 已出现在请求日志中，但当前租户注册表尚无对应治理记录。这里先保留真实调用来源、路由与最近请求，不补造预算或速率配置。')}
       icon={<AppEntityIcon size="lg" />}
       status={[
-        { label: app.status === 'active' ? '已启用' : app.status || '状态未知', tone: app.status === 'active' ? 'good' : 'warning' },
+        { label: registered ? (app.status === 'active' ? '已启用' : app.status || '状态未知') : '仅日志观测', tone: registered && app.status === 'active' ? 'good' : 'warning' },
         { label: app.modelPolicy || 'auto', tone: 'neutral' },
         { label: app.owner ? `负责人 ${app.owner}` : '未指定负责人', tone: app.owner ? 'good' : 'warning' },
       ]}
       metrics={[
-        { label: '累计请求', value: fmtCompact(app.totalSeen), hint: '注册表累计观察', icon: <Route size={17} /> },
-        { label: '月预算', value: app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}`, hint: '租户治理边界内', icon: <CircleDollarSign size={17} /> },
-        { label: '每分钟请求', value: app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute, hint: 'App 级速率限制', icon: <Gauge size={17} /> },
+        { label: registered ? '累计请求' : '近 30 天请求', value: fmtCompact(registered ? app.totalSeen : recent.length), hint: registered ? '注册表累计观察' : '来自当前日志范围', icon: <Route size={17} /> },
+        { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}`, hint: '租户治理边界内', icon: <CircleDollarSign size={17} /> },
+        { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute, hint: 'App 级速率限制', icon: <Gauge size={17} /> },
         { label: '最近调用', value: app.lastSeenAt ? fmtDate(app.lastSeenAt) : '暂无', hint: '最后一次观察时间', icon: <Clock3 size={17} /> },
       ]}
       backHref="/logs"
       backLabel="返回请求记录"
       primaryHref={`/app-callers?search=${encodeURIComponent(app.appCallerCode)}&focus=${encodeURIComponent(app.appCallerCode)}`}
-      primaryLabel="打开治理配置"
+      primaryLabel={registered ? '打开治理配置' : '打开 App 注册表'}
       sections={[
         {
           id: 'identity',
@@ -523,9 +623,9 @@ export function AppCallerDetailsPage() {
           id: 'governance',
           title: 'Governance',
           content: <Facts items={[
-            { label: '月预算', value: app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
-            { label: '单次预占', value: app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
-            { label: '每分钟请求', value: app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
+            { label: '月预算', value: !registered ? '未登记' : app.monthlyBudgetUsd == null ? '未限制' : `USD ${app.monthlyBudgetUsd}` },
+            { label: '单次预占', value: !registered ? '未登记' : app.budgetReservationUsd == null ? '未设置' : `USD ${app.budgetReservationUsd}` },
+            { label: '每分钟请求', value: !registered ? '未登记' : app.rateLimitPerMinute == null ? '未限制' : app.rateLimitPerMinute },
             { label: '负责人', value: app.owner || '未指定' },
             { label: '首次观察', value: app.firstSeenAt ? fmtDate(app.firstSeenAt) : '未记录' },
             { label: '最近更新', value: app.updatedAt ? fmtDate(app.updatedAt) : '未记录' },

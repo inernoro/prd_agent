@@ -66,6 +66,7 @@ function NavigationBridge() {
 //   2. AppShell 内但不进 launcher 的路由（admin 后端菜单 / 移动端 / 子路由）
 //   3. 子路由专用组件（如 LiteraryAgentEditorPageWrapper / WorkflowEditorPage 等）
 const LoginPage = lazy(() => import('@/pages/LoginPage'));
+const ConsoleSsoAuthorizePage = lazy(() => import('@/pages/ConsoleSsoAuthorizePage'));
 const InlineCommentBubbleMockupPage = lazy(() => import('@/pages/_mockup/InlineCommentBubbleMockupPage'));
 const InlineCommentOverlayProbe = lazy(() => import('@/pages/_mockup/InlineCommentOverlayProbe'));
 const JoinTeamPage = lazy(() => import('@/pages/JoinTeamPage'));
@@ -220,6 +221,14 @@ export default function App() {
         } />
 
         <Route path="/login" element={<LoginPage />} />
+        <Route
+          path="/console-sso/authorize"
+          element={
+            <RequireAuth>
+              <ConsoleSsoAuthorizePage />
+            </RequireAuth>
+          }
+        />
 
         {/* 静态 mockup（无需登录），仅供评审样式 */}
         <Route path="/_mockup/inline-comment-bubble" element={<InlineCommentBubbleMockupPage />} />

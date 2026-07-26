@@ -1255,6 +1255,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("GW_EXPECT_COMMIT=\"$expect_commit\"", script);
         Assert.Contains("LLMGW_POST_DEPLOY_SMOKE_KEY=\"${LLMGW_POST_DEPLOY_SERVICE_KEY:-$gate_key}\"", script);
         Assert.Contains("smoke_key=\"${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}\"", script);
+        Assert.Contains("protocol_canary_key=\"${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}\"", script);
         Assert.Contains("GW_BASE=\"$gate_base\" GW_KEY=\"$smoke_key\" GW_TIMEOUT=\"${LLMGW_GATE_SMOKE_TIMEOUT_SECONDS:-120}\" GW_EXPECT_COMMIT=\"$expect_commit\" python3 scripts/gw-smoke.py", script);
         Assert.Contains("LLMGW_GATE_RUN_SERVING_PROBE", script);
         Assert.Contains("LLMGW_SERVING_PROBE_JSON_OUT", script);
@@ -1265,7 +1266,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLMGW_DEPLOY_MIN_FREE_MB:-4096", script);
         Assert.Contains("LLM Gateway exec_dep deploy", script);
         Assert.Contains("provider_audit_required=0", script);
-        Assert.Contains("if [ \"$mode\" = \"http\" ] || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
+        Assert.Contains("if { [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ]; } || [ \"$canary_stage\" = \"video-asr\" ]; then", script);
         Assert.Contains("scripts/llmgw-prod-provider-config-audit.py", script);
         Assert.Contains("LLMGW_PROVIDER_AUDIT_JSON_OUT", script);
         Assert.Contains("LLMGW_PROVIDER_AUDIT_REPORT_MD", script);
@@ -1304,6 +1305,8 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("LLM Gateway post-deploy protocol canary: required before runtime gates", script);
         Assert.Contains("LLM Gateway post-deploy protocol canary: disabled; not passing unverified JSON to runtime gates", script);
         Assert.Contains("python3 scripts/llmgw-protocol-canary.py", script);
+        Assert.Contains("GW_KEY=\"$protocol_canary_key\" python3 scripts/llmgw-protocol-canary.py", script);
+        Assert.DoesNotContain("GW_KEY=\"$smoke_key\" python3 scripts/llmgw-protocol-canary.py", script);
         Assert.Contains("protocol_canary_arg=\"--protocol-canary-json $protocol_canary_json\"", script);
         Assert.Contains("$protocol_canary_arg --require-runtime-gates", script);
         Assert.Contains("[ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" = \"1\" ]", script);
@@ -1420,7 +1423,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("export LLMGW_MAINTENANCE_BASELINE_JSON=\"$maintenance_baseline_json\"", stage);
         Assert.Contains("LLMGW_GATE_SHADOW_RELEASE_COMMIT:-$expect_commit", deploy);
         Assert.Contains("LLM Gateway maintenance release: audited baseline accepted", deploy);
-        Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0\"", deploy);
+        Assert.Contains("args=\"--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells\"", deploy);
         Assert.Contains("[ \"$maintenance_release\" != \"1\" ]", deploy);
         Assert.Contains("{ [ \"$mode\" = \"http\" ] && [ \"$maintenance_release\" != \"1\" ]; }", deploy);
         Assert.Contains("config-authority inherited from audited full-http maintenance baseline", deploy);
@@ -3445,6 +3448,7 @@ public class GatewayDataDomainGuardTests
     {
         var drawer = ReadRepoFile("llmgw/web/src/components/GenerationDetailsDrawer.tsx");
         var logs = ReadRepoFile("llmgw/web/src/components/LogsView.tsx");
+        var entityDetails = ReadRepoFile("llmgw/web/src/pages/EntityDetailsPages.tsx");
         var theme = ReadRepoFile("llmgw/web/src/theme.css");
 
         Assert.Contains("生成详情", drawer);
@@ -3459,22 +3463,57 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("['audit', '审计']", drawer);
         Assert.Contains("无法打开这条生成记录", drawer);
         Assert.Contains("请求详情加载失败，请稍后重试", drawer);
+        Assert.Contains("width: 'min(820px, 100vw)'", drawer);
+        Assert.DoesNotContain("width: 'min(820px, 96vw)'", drawer);
         Assert.Contains("openedRequestIdRef", logs);
-        Assert.Contains("setSelectedLogId(matched.id)", logs);
+        Assert.Contains("openLogDetail(matched.id)", logs);
         Assert.Contains("Provider 实际费用", drawer);
         Assert.Contains("汇率快照", drawer);
         Assert.Contains("请求内容", drawer);
         Assert.Contains("响应内容", drawer);
         Assert.Contains("原始数据", drawer);
-        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", drawer);
-        Assert.Contains("return code.startsWith('G-') ? code : `G-${code}`", logs);
+        Assert.Contains("const displayName = detail.appCallerCodeDisplayName?.trim() || detail.appCallerTitle?.trim()", drawer);
+        Assert.Contains("const displayName = item.appCallerCodeDisplayName?.trim() || item.appCallerTitle?.trim()", logs);
+        Assert.Contains("<ImageResponseGallery detail={detail}", drawer);
+        Assert.Contains("detail.imageSuccessCount", drawer);
+        Assert.Contains("s/image", drawer);
+        Assert.Contains("query.set('transaction', id)", logs);
+        Assert.Contains("onPrevious=", logs);
+        Assert.Contains("onNext=", logs);
+        Assert.DoesNotContain("return '1 prompt'", logs);
+        Assert.DoesNotContain("image/min", logs);
+        Assert.Contains("display: inline-flex;", theme);
+        Assert.Contains("width: fit-content;", theme);
+        Assert.DoesNotContain(".lg-log-entity-hover-root {\n  display: block;", theme);
         Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
         Assert.Contains("font-size: 14px;", theme);
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
-        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*560", theme);
+        Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*450", theme);
+        Assert.Contains("--log-text-entity: #fcfcfe", theme);
+        Assert.Contains("--log-text-muted: rgba(252, 252, 254, 0.627)", theme);
+        Assert.Matches(@"(?s)\.lg-log-entity\s*\{[^}]*color:\s*var\(--log-text-entity\)", theme);
+        Assert.Contains("observedAppCaller(observed, requestedCode)", entityDetails);
+        Assert.Contains("仅日志观测", entityDetails);
+        Assert.Contains("不补造预算或速率配置", entityDetails);
+        Assert.Contains("observedProvider(observed, requestedName)", entityDetails);
+        Assert.Contains("非配置实体", entityDetails);
+        Assert.Contains("不补造密钥状态", entityDetails);
+        Assert.Contains("日志观测 · 非配置关系", entityDetails);
+        Assert.Contains("--bg-page: #03080a", theme);
+        Assert.Contains("--text-primary: #fcfcfe", theme);
+        Assert.Matches(@"(?s)\.lg-logs-heading h1\s*\{[^}]*font-weight:\s*700", theme);
+        Assert.Matches(@"(?s)@media[^}]*max-width:\s*680px.*?\.lg-log-table-head > div:first-child,[^}]*left:\s*10px", theme);
+
+        var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");
+        Assert.Contains("CreateClient(\"SafeOutbound\")", imageBackground);
+        Assert.Contains("EnsureSafeHttpUrlAsync", imageBackground);
+        Assert.Contains("ResponseHeadersRead", imageBackground);
+        Assert.Contains("Content-Type 不是 image/*", imageBackground);
+        Assert.Contains("MaxStoredImageBytes", imageBackground);
+        Assert.DoesNotContain("Url = image.SourceUrl", imageBackground);
 
         var appCallers = ReadRepoFile("llmgw/web/src/pages/AppCallersPage.tsx");
         Assert.Contains("tableLayout: 'fixed'", appCallers);
@@ -3562,6 +3601,17 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("llmgw-serve:", devCompose);
         Assert.Contains("dockerfile: llmgw/serving/Dockerfile", devCompose);
         Assert.Contains("- llmgw-serve", devCompose);
+    }
+
+    [Fact]
+    public void GatewayWeb_UsesPublicSubpathForEntryAndFontAssets()
+    {
+        var vite = ReadRepoFile("llmgw/web/vite.config.ts");
+        var nginx = ReadRepoFile("llmgw/web/nginx.conf");
+
+        Assert.Contains("base: '/llmgw/'", vite);
+        Assert.Contains("location ^~ /llmgw/assets/", nginx);
+        Assert.Contains("alias /usr/share/nginx/html/assets/;", nginx);
     }
 
     [Fact]

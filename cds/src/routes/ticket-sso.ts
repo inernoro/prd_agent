@@ -1,7 +1,10 @@
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
+import { GH_SESSION_COOKIE } from './auth.js';
 import {
+  TicketSsoExchangeError,
   TicketSsoSessionStore,
+  TicketSsoStateCapacityError,
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
   exchangeTicketSsoCode,
@@ -17,22 +20,23 @@ export interface TicketSsoRouterDeps {
   stateStore: TicketSsoStateStore;
   sessionStore: TicketSsoSessionStore;
   fetchImpl?: typeof fetch;
+  tokenExchangeTimeoutMs?: number;
+  logoutGithubSession?: (token: string) => Promise<void>;
 }
 
 function externalCallbackUrl(req: Request, configuredBaseUrl?: string): string {
-  if (configuredBaseUrl) {
-    return `${configuredBaseUrl.replace(/\/$/, '')}/auth/sso`;
+  const candidate = configuredBaseUrl
+    ? new URL(configuredBaseUrl)
+    : new URL(`${req.protocol || 'http'}://${String(req.headers.host || '').trim()}`);
+  const isLoopback = candidate.hostname === 'localhost'
+    || candidate.hostname === '127.0.0.1'
+    || candidate.hostname === '[::1]'
+    || candidate.hostname === '::1';
+  const isLocalHttp = candidate.protocol === 'http:' && isLoopback;
+  if (candidate.username || candidate.password || (candidate.protocol !== 'https:' && !isLocalHttp)) {
+    throw new Error('SSO_CALLBACK_PROTOCOL_INVALID');
   }
-  const protocol = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
-    .split(',')[0]
-    .trim();
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
-    .split(',')[0]
-    .trim();
-  const candidate = new URL(`${protocol}://${host}`);
-  const isLocalHttp = candidate.protocol === 'http:'
-    && (candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1');
-  if (candidate.protocol !== 'https:' && !isLocalHttp) {
+  if (!configuredBaseUrl && !isLoopback) {
     throw new Error('SSO_CALLBACK_PROTOCOL_INVALID');
   }
   candidate.pathname = '/auth/sso';
@@ -60,9 +64,9 @@ function sessionCookie(token: string, expiresAt: Date, secure: boolean): string 
   return parts.join('; ');
 }
 
-function logoutCookie(secure: boolean): string {
+function logoutCookie(name: string, secure: boolean): string {
   const parts = [
-    `${TICKET_SSO_COOKIE}=`,
+    `${name}=`,
     'Path=/',
     'HttpOnly',
     'SameSite=Lax',
@@ -98,7 +102,19 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
       res.redirect(302, '/login?sso_error=invalid_callback');
       return;
     }
-    const issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+    let issued: ReturnType<TicketSsoStateStore['issue']>;
+    try {
+      issued = deps.stateStore.issue(req.query.redirect, callbackUrl);
+    } catch (error) {
+      if (error instanceof TicketSsoStateCapacityError) {
+        res.status(429).json({
+          error: 'SSO 登录请求过多，请稍后重试',
+          code: 'sso_state_capacity_exceeded',
+        });
+        return;
+      }
+      throw error;
+    }
     res.redirect(302, buildTicketSsoAuthorizationUrl(config, callbackUrl, issued.state));
   });
 
@@ -119,6 +135,7 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         req.body?.code,
         state.callbackUrl,
         deps.fetchImpl,
+        deps.tokenExchangeTimeoutMs,
       );
       const session = deps.sessionStore.create(identity);
       res.setHeader(
@@ -138,7 +155,21 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
           authProvider: config.providerId,
         },
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof TicketSsoExchangeError && error.reason === 'timeout') {
+        res.status(504).json({
+          error: '身份提供方响应超时，请重新发起 SSO 登录',
+          code: 'sso_provider_timeout',
+        });
+        return;
+      }
+      if (error instanceof TicketSsoExchangeError && error.reason === 'unavailable') {
+        res.status(502).json({
+          error: '身份提供方暂时不可用，请稍后重试',
+          code: 'sso_provider_unavailable',
+        });
+        return;
+      }
       res.status(401).json({
         error: 'SSO 一次性授权无效、已使用或已过期',
         code: 'sso_exchange_failed',
@@ -146,9 +177,29 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
     }
   });
 
-  router.post('/auth/sso/logout', (req, res) => {
-    deps.sessionStore.delete(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
-    res.setHeader('Set-Cookie', logoutCookie(deps.cookieSecure));
+  router.post('/auth/sso/logout', async (req, res) => {
+    const ssoToken = parseCookie(req.headers.cookie, TICKET_SSO_COOKIE);
+    const githubToken = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
+    deps.sessionStore.delete(ssoToken);
+    const clearCookies = [
+      logoutCookie(TICKET_SSO_COOKIE, deps.cookieSecure),
+      logoutCookie(GH_SESSION_COOKIE, deps.cookieSecure),
+      logoutCookie('cds_token', deps.cookieSecure),
+    ];
+    try {
+      if (githubToken && deps.logoutGithubSession) {
+        await deps.logoutGithubSession(githubToken);
+      }
+    } catch {
+      res.setHeader('Set-Cookie', clearCookies);
+      res.status(503).json({
+        success: false,
+        error: 'alternate_session_logout_failed',
+        message: '服务端会话注销失败，本地登录状态已清除。',
+      });
+      return;
+    }
+    res.setHeader('Set-Cookie', clearCookies);
     res.json({ success: true });
   });
 
@@ -159,19 +210,43 @@ export function createTicketSsoConfigRouter(deps: {
   getConfig: () => CdsSsoConfig;
   saveConfig: (config: CdsSsoConfig) => void;
   normalizeConfig: (input: Partial<CdsSsoConfig>) => CdsSsoConfig;
+  canWriteConfig: (req: Request) => boolean;
+  isEnvironmentManaged?: () => boolean;
 }): Router {
   const router = Router();
 
-  router.get('/auth/sso/config', (_req: Request, res: Response) => {
+  router.get('/auth/sso/config', (req: Request, res: Response) => {
+    if (!deps.canWriteConfig(req)) {
+      res.status(403).json({
+        error: 'human_owner_required',
+        message: 'SSO 属于系统级登录配置，只允许已验证的系统所有者读取。',
+      });
+      return;
+    }
     const config = deps.getConfig();
     res.json({
       ...config,
       clientSecret: undefined,
       hasClientSecret: Boolean(config.clientSecret),
+      managedByEnvironment: deps.isEnvironmentManaged?.() === true,
     });
   });
 
   router.put('/auth/sso/config', (req: Request, res: Response) => {
+    if (!deps.canWriteConfig(req)) {
+      res.status(403).json({
+        error: 'human_owner_required',
+        message: 'SSO 属于系统级登录配置，只允许已验证的系统所有者修改。',
+      });
+      return;
+    }
+    if (deps.isEnvironmentManaged?.() === true) {
+      res.status(409).json({
+        error: 'sso_config_managed_by_environment',
+        message: '当前 SSO 配置由 CDS_SSO_* 环境变量托管，请在部署环境中修改后重启 CDS。',
+      });
+      return;
+    }
     const current = deps.getConfig();
     const next = deps.normalizeConfig({
       ...current,
@@ -189,6 +264,7 @@ export function createTicketSsoConfigRouter(deps: {
       ...next,
       clientSecret: undefined,
       hasClientSecret: Boolean(next.clientSecret),
+      managedByEnvironment: false,
     });
   });
 

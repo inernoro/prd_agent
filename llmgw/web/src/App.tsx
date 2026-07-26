@@ -32,8 +32,13 @@ import { getRouterBasename } from '@/lib/runtimeBase';
 
 // 受保护路由守卫：未登录跳登录页；已登录但挂着「强制改密」标记则跳改密页（服务端策略门同样拦截，双保险）。
 function RequireAuth({ children }: { children: ReactNode }) {
-  const { authed, mustChangePassword, tenant, logout } = useAuth();
+  const { authed, initializing, mustChangePassword, tenant, logout } = useAuth();
   const location = useLocation();
+  if (initializing) return (
+    <div role="status" aria-live="polite" style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', background: 'var(--bg-canvas)', color: 'var(--text-secondary)' }}>
+      正在恢复安全会话
+    </div>
+  );
   if (!authed) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
   if (mustChangePassword) return <Navigate to="/change-password" replace />;
   if (!isTenantRole(tenant?.role)) return (

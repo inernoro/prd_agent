@@ -138,12 +138,16 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
                 .Ascending(x => x.OfferingId)
                 .Ascending(x => x.WindowStart),
             new CreateIndexOptions { Unique = true }));
+        var clock = new FixedTimeProvider(
+            new DateTimeOffset(2026, 7, 24, 8, 30, 0, TimeSpan.Zero));
         var first = new GatewayProviderConcurrencyCoordinator(
             scope.Context,
-            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance,
+            clock);
         var second = new GatewayProviderConcurrencyCoordinator(
             scope.Context,
-            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance);
+            NullLogger<GatewayProviderConcurrencyCoordinator>.Instance,
+            clock);
         var limited = Resolution("platform-a", "model-a", 0, 0, "offering-a", 1);
 
         var firstAdmission = await first.AcquireAsync("tenant-a", limited, 30, CancellationToken.None);
@@ -249,5 +253,10 @@ public sealed class GatewayProviderConcurrencyCoordinatorTests
         public LlmGatewayDataContext Context { get; }
 
         public async ValueTask DisposeAsync() => await _client.DropDatabaseAsync(_databaseName);
+    }
+
+    private sealed class FixedTimeProvider(DateTimeOffset utcNow) : TimeProvider
+    {
+        public override DateTimeOffset GetUtcNow() => utcNow;
     }
 }

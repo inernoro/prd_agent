@@ -21,9 +21,14 @@ class ReleaseDualKeyContractTests(unittest.TestCase):
         )
         self.assertIn('smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"', self.source)
 
-    def test_business_smoke_and_protocol_canary_use_scoped_key(self) -> None:
+    def test_business_smoke_and_protocol_canary_support_independent_scoped_keys(self) -> None:
         self.assertIn('GW_BASE="$gate_base" GW_KEY="$smoke_key"', self.source)
-        self.assertIn('GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py', self.source)
+        self.assertIn(
+            'protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"',
+            self.source,
+        )
+        self.assertIn('GW_KEY="$protocol_canary_key" python3 scripts/llmgw-protocol-canary.py', self.source)
+        self.assertNotIn('GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py', self.source)
 
     def test_global_runtime_gate_keeps_release_gate_key(self) -> None:
         self.assertIn(

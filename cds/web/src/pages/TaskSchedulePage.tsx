@@ -1,10 +1,12 @@
 import { useCallback, useEffect, useMemo, useState, type ReactNode } from 'react';
 import { ArrowDown, ArrowUp, CalendarClock, Globe2, Pencil, Play, Plus, RefreshCw, Save, SlidersHorizontal, Terminal, Trash2, type LucideIcon } from 'lucide-react';
+import { useLocation } from 'react-router-dom';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogDescription, DialogFooter, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { apiRequest } from '@/lib/api';
 import { parseCurlCommand } from '@/lib/curl-import';
+import { resolveTaskScheduleProjectId, taskScheduleProjectReference } from '@/lib/task-schedule-project';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 type ScheduleType = 'manual' | 'interval' | 'daily';
@@ -138,6 +140,7 @@ const compactInputClass = 'h-9 w-full rounded-md border border-input bg-backgrou
 const segmentClass = 'inline-flex h-8 items-center gap-1.5 rounded-md border px-2.5 text-xs font-medium transition-colors';
 
 export function TaskSchedulePage(): JSX.Element {
+  const location = useLocation();
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [jobs, setJobs] = useState<ScheduledJob[]>([]);
   const [runs, setRuns] = useState<ScheduledJobRun[]>([]);
@@ -166,20 +169,29 @@ export function TaskSchedulePage(): JSX.Element {
         apiRequest<{ runs: ScheduledJobRun[] }>('/api/scheduled-jobs/runs?limit=100'),
       ]);
       const nextProjects = projectRes.projects || [];
+      const initialProjectId = resolveTaskScheduleProjectId(location.search, nextProjects);
       setProjects(nextProjects);
       setJobs(jobRes.jobs || []);
       setRuns(runRes.runs || []);
-      setForm((prev) => prev.projectId ? prev : emptyForm(nextProjects[0]?.id || ''));
+      setForm((prev) => prev.projectId ? prev : emptyForm(initialProjectId));
     } catch (err) {
       setError((err as Error).message);
     } finally {
       setLoading(false);
     }
-  }, []);
+  }, [location.search]);
 
   useEffect(() => {
     void load();
   }, [load]);
+
+  useEffect(() => {
+    if (!taskScheduleProjectReference(location.search) || projects.length === 0 || selectedId) return;
+    const requestedProjectId = resolveTaskScheduleProjectId(location.search, projects);
+    setForm((prev) => prev.id || prev.projectId === requestedProjectId
+      ? prev
+      : { ...prev, projectId: requestedProjectId });
+  }, [location.search, projects, selectedId]);
 
   useEffect(() => {
     if (!toast) return undefined;
@@ -204,7 +216,7 @@ export function TaskSchedulePage(): JSX.Element {
 
   const newJob = (): void => {
     setSelectedId('');
-    setForm(emptyForm(projects[0]?.id || ''));
+    setForm(emptyForm(resolveTaskScheduleProjectId(location.search, projects)));
   };
 
   const openActionDialog = (index: number | null = null): void => {

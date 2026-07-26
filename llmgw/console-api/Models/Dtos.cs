@@ -187,6 +187,11 @@ public sealed class LlmLogDetail
     public int? ToolCallCount { get; set; }
     public int? InputTokens { get; set; }
     public int? OutputTokens { get; set; }
+    public int? ImageSuccessCount { get; set; }
+    public List<LogImageDto> OutputImages { get; set; } = new();
+    public string? OutputImageCaptureStatus { get; set; }
+    public string? OutputImageCaptureError { get; set; }
+    public string? OutputImageCapturedAt { get; set; }
     public decimal? InputPricePerMillion { get; set; }
     public decimal? OutputPricePerMillion { get; set; }
     public decimal? PricePerCall { get; set; }
@@ -230,6 +235,16 @@ public sealed class LlmLogDetail
     public string? FinishReason { get; set; }
     public bool? IsStreaming { get; set; }
     public string? Error { get; set; }
+}
+
+public sealed class LogImageDto
+{
+    public string Url { get; set; } = string.Empty;
+    public string? OriginalUrl { get; set; }
+    public string? Label { get; set; }
+    public string? Sha256 { get; set; }
+    public string? MimeType { get; set; }
+    public long? SizeBytes { get; set; }
 }
 
 public sealed class RouterTraceDto

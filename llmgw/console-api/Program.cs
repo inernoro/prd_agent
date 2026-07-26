@@ -9192,6 +9192,11 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     ToolCallCount = d.AsNullableInt("ToolCallCount"),
     InputTokens = d.AsNullableInt("InputTokens"),
     OutputTokens = d.AsNullableInt("OutputTokens"),
+    ImageSuccessCount = d.AsNullableInt("ImageSuccessCount"),
+    OutputImages = MapLogImages(d, "OutputImages"),
+    OutputImageCaptureStatus = d.AsNullableString("OutputImageCaptureStatus"),
+    OutputImageCaptureError = d.AsNullableString("OutputImageCaptureError"),
+    OutputImageCapturedAt = d.AsNullableUtcDateTime("OutputImageCapturedAt").ToIso(),
     InputPricePerMillion = d.AsNullableDecimal("InputPricePerMillion"),
     OutputPricePerMillion = d.AsNullableDecimal("OutputPricePerMillion"),
     PricePerCall = d.AsNullableDecimal("PricePerCall"),
@@ -9236,6 +9241,25 @@ static LlmLogDetail MapDetail(BsonDocument d) => new()
     IsStreaming = d.AsNullableBool("IsStreaming"),
     Error = d.AsNullableString("Error"),
 };
+
+static List<LogImageDto> MapLogImages(BsonDocument d, string field)
+{
+    if (!d.TryGetValue(field, out var value) || !value.IsBsonArray) return [];
+    return value.AsBsonArray
+        .Where(item => item.IsBsonDocument)
+        .Select(item => item.AsBsonDocument)
+        .Select(image => new LogImageDto
+        {
+            Url = image.GetStringOrEmpty("Url"),
+            OriginalUrl = image.AsNullableString("OriginalUrl"),
+            Label = image.AsNullableString("Label"),
+            Sha256 = image.AsNullableString("Sha256"),
+            MimeType = image.AsNullableString("MimeType"),
+            SizeBytes = image.AsNullableLong("SizeBytes"),
+        })
+        .Where(image => !string.IsNullOrWhiteSpace(image.Url))
+        .ToList();
+}
 
 static RouterTraceDto BuildRouterTrace(BsonDocument d)
 {

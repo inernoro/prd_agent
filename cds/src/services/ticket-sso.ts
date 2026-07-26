@@ -3,7 +3,20 @@ import type { CdsSsoConfig } from '../types.js';
 import type { StateService } from './state.js';
 
 const STATE_TTL_MS = 5 * 60 * 1000;
+const STATE_STORE_MAX_ENTRIES = 1024;
+const STATE_STORE_GC_INTERVAL_MS = 30 * 1000;
 const DEFAULT_REDIRECT = '/project-list';
+const DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
+const SSO_ENV_KEYS = [
+  'CDS_SSO_ENABLED',
+  'CDS_SSO_PROVIDER_ID',
+  'CDS_SSO_LABEL',
+  'CDS_SSO_AUTHORIZATION_URL',
+  'CDS_SSO_TOKEN_URL',
+  'CDS_SSO_CLIENT_ID',
+  'CDS_SSO_CLIENT_SECRET',
+  'CDS_SSO_DEFAULT_REDIRECT',
+] as const;
 
 export interface TicketSsoIdentity {
   subject: string;
@@ -18,10 +31,44 @@ export interface PublicTicketSsoConfig {
   label: string;
 }
 
+interface TicketSsoTokenResponse {
+  success?: boolean;
+  data?: Partial<TicketSsoIdentity>;
+  error?: { message?: string };
+}
+
+export class TicketSsoExchangeError extends Error {
+  constructor(
+    public readonly reason: 'timeout' | 'unavailable',
+    cause?: unknown,
+  ) {
+    super(reason === 'timeout' ? 'SSO_PROVIDER_TIMEOUT' : 'SSO_PROVIDER_UNAVAILABLE', { cause });
+    this.name = 'TicketSsoExchangeError';
+  }
+}
+
+export class TicketSsoStateCapacityError extends Error {
+  constructor() {
+    super('SSO_STATE_CAPACITY_EXCEEDED');
+    this.name = 'TicketSsoStateCapacityError';
+  }
+}
+
 function cleanInternalRedirect(value: unknown): string {
   if (typeof value !== 'string') return DEFAULT_REDIRECT;
   const candidate = value.trim();
-  if (!candidate.startsWith('/') || candidate.startsWith('//')) return DEFAULT_REDIRECT;
+  if (
+    !candidate.startsWith('/')
+    || candidate.startsWith('//')
+    || candidate.includes('\\')
+    || /%5c/i.test(candidate)
+  ) return DEFAULT_REDIRECT;
+  try {
+    const base = new URL('https://cds.invalid');
+    if (new URL(candidate, base).origin !== base.origin) return DEFAULT_REDIRECT;
+  } catch {
+    return DEFAULT_REDIRECT;
+  }
   if (candidate.split(/[?#]/)[0] === '/login' || candidate.split(/[?#]/)[0] === '/auth/sso') {
     return DEFAULT_REDIRECT;
   }
@@ -32,7 +79,9 @@ function cleanAbsoluteHttpsUrl(value: unknown): string {
   if (typeof value !== 'string') return '';
   try {
     const url = new URL(value.trim());
-    if (url.protocol !== 'https:' && url.hostname !== 'localhost' && url.hostname !== '127.0.0.1') return '';
+    const isLocalHttp = url.protocol === 'http:'
+      && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+    if (url.protocol !== 'https:' && !isLocalHttp) return '';
     url.hash = '';
     return url.toString();
   } catch {
@@ -75,6 +124,10 @@ export function resolveTicketSsoConfig(stateService: StateService, env: NodeJS.P
   return normalizeTicketSsoConfig(hasEnvConfig ? { ...stored, ...fromEnv } : stored);
 }
 
+export function isTicketSsoEnvironmentManaged(env: NodeJS.ProcessEnv = process.env): boolean {
+  return SSO_ENV_KEYS.some((key) => env[key] !== undefined);
+}
+
 export function publicTicketSsoConfig(config: CdsSsoConfig): PublicTicketSsoConfig {
   const configured = Boolean(
     config.enabled
@@ -92,32 +145,69 @@ export function publicTicketSsoConfig(config: CdsSsoConfig): PublicTicketSsoConf
 
 export class TicketSsoStateStore {
   private readonly states = new Map<string, {
-    redirect: string;
+    redirect: string | null;
     callbackUrl: string;
     createdAt: number;
   }>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+  private readonly gcIntervalMs: number;
+  private readonly now: () => number;
+  private nextGcAt = 0;
 
-  issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string } {
-    this.gc();
+  constructor(options: {
+    ttlMs?: number;
+    maxEntries?: number;
+    gcIntervalMs?: number;
+    now?: () => number;
+  } = {}) {
+    this.ttlMs = Math.max(1, options.ttlMs ?? STATE_TTL_MS);
+    this.maxEntries = Math.max(1, options.maxEntries ?? STATE_STORE_MAX_ENTRIES);
+    this.gcIntervalMs = Math.max(1, options.gcIntervalMs ?? STATE_STORE_GC_INTERVAL_MS);
+    this.now = options.now ?? Date.now;
+  }
+
+  issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string | null } {
+    const now = this.now();
+    this.gcIfDue(now);
+    if (this.states.size >= this.maxEntries) {
+      const oldest = this.states.values().next().value as { createdAt: number } | undefined;
+      // Keep live authorization attempts intact. A capacity burst must reject
+      // the attacker, not evict legitimate users that are still at the IdP.
+      // Only scan when the oldest entry proves that expired states exist, so
+      // repeated rejected starts remain O(1) while the store is full of live
+      // entries.
+      if (oldest && now - oldest.createdAt > this.ttlMs) this.gcExpired(now);
+      if (this.states.size >= this.maxEntries) throw new TicketSsoStateCapacityError();
+    }
     const state = randomBytes(32).toString('base64url');
-    const safeRedirect = cleanInternalRedirect(redirect);
-    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: Date.now() });
+    const safeRedirect = redirect === undefined || redirect === null || redirect === ''
+      ? null
+      : cleanInternalRedirect(redirect);
+    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: now });
     return { state, redirect: safeRedirect };
   }
 
-  consume(state: unknown): { redirect: string; callbackUrl: string } | null {
-    this.gc();
+  consume(state: unknown): { redirect: string | null; callbackUrl: string } | null {
     if (typeof state !== 'string') return null;
+    const now = this.now();
+    this.gcIfDue(now);
     const entry = this.states.get(state);
     if (!entry) return null;
     this.states.delete(state);
+    if (now - entry.createdAt > this.ttlMs) return null;
     return { redirect: entry.redirect, callbackUrl: entry.callbackUrl };
   }
 
-  private gc(): void {
-    const now = Date.now();
+  private gcIfDue(now: number): void {
+    if (now < this.nextGcAt) return;
+    this.gcExpired(now);
+  }
+
+  private gcExpired(now: number): void {
+    this.nextGcAt = now + this.gcIntervalMs;
     for (const [state, entry] of this.states) {
-      if (now - entry.createdAt > STATE_TTL_MS) this.states.delete(state);
+      if (now - entry.createdAt > this.ttlMs) this.states.delete(state);
     }
   }
 }
@@ -177,26 +267,50 @@ export async function exchangeTicketSsoCode(
   code: unknown,
   callbackUrl: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS,
 ): Promise<TicketSsoIdentity> {
   if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{32,256}$/.test(code)) {
     throw new Error('SSO_CODE_INVALID');
   }
-  const response = await fetchImpl(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'urn:cds:params:oauth:grant-type:ticket',
-      code,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      redirect_uri: callbackUrl,
-    }),
-  });
-  const payload = await response.json().catch(() => null) as {
-    success?: boolean;
-    data?: Partial<TicketSsoIdentity>;
-    error?: { message?: string };
-  } | null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  let response: Response;
+  let payload: TicketSsoTokenResponse | null = null;
+  try {
+    response = await fetchImpl(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'urn:cds:params:oauth:grant-type:ticket',
+        code,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: callbackUrl,
+      }),
+      signal: controller.signal,
+    });
+    try {
+      payload = await response.json() as TicketSsoTokenResponse;
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        throw new TicketSsoExchangeError('timeout', error);
+      }
+    }
+  } catch (error) {
+    if (error instanceof TicketSsoExchangeError) throw error;
+    if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw new TicketSsoExchangeError('timeout', error);
+    }
+    throw new TicketSsoExchangeError('unavailable', error);
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (response.status === 408 || response.status === 504) {
+    throw new TicketSsoExchangeError('timeout');
+  }
+  if (response.status === 429 || response.status >= 500 || (response.ok && payload === null)) {
+    throw new TicketSsoExchangeError('unavailable');
+  }
   if (!response.ok || payload?.success !== true || !payload.data) {
     throw new Error(payload?.error?.message || `SSO_TOKEN_EXCHANGE_${response.status}`);
   }

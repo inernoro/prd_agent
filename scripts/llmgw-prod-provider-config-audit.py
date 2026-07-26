@@ -33,6 +33,17 @@ VIDEO_APP_CALLERS = [
 DEFAULT_ASR_POOL_ID = "asr_doubao_bigmodel_pool"
 DEFAULT_ASR_MODEL_ID = "doubao-asr-bigmodel"
 DEFAULT_ASR_TRANSFORMER = "doubao-asr"
+GATEWAY_BOUNDARY_ERROR_PREFIXES = (
+    "GATEWAY_KEY_",
+    "GATEWAY_LEGACY_KEY_",
+    "MULTIPART_",
+)
+GATEWAY_BOUNDARY_ERROR_CODES = {
+    "GATEWAY_APP_CALLER_MISMATCH",
+    "GATEWAY_APP_CALLER_REQUIRED",
+    "GATEWAY_REQUEST_REJECTED",
+    "GATEWAY_SOURCE_SYSTEM_MISMATCH",
+}
 DEFAULT_VIDEO_TRANSFORMER = "volcengine-video"
 VOLCENGINE_VIDEO_TASKS_PATH = "/contents/generations/tasks"
 
@@ -474,6 +485,15 @@ def _gateway_log_error_text(log: dict[str, Any]) -> str:
     return "\n".join(part for part in parts if part).strip()
 
 
+def _gateway_boundary_rejection_code(error_text: str) -> str | None:
+    """Return a pre-provider gateway identity rejection code, if present."""
+
+    for code in re.findall(r"\b(?:GATEWAY|MULTIPART)_[A-Z0-9_]+\b", error_text.upper()):
+        if code in GATEWAY_BOUNDARY_ERROR_CODES or code.startswith(GATEWAY_BOUNDARY_ERROR_PREFIXES):
+            return code
+    return None
+
+
 def _try_parse_json_prefix(text: str) -> Any | None:
     stripped = text.strip()
     if not stripped.startswith("{"):
@@ -542,6 +562,9 @@ def _summarize_gateway_log(
     log: dict[str, Any],
     classification: str | None = None,
     asr_diagnostic: dict[str, Any] | None = None,
+    *,
+    provider_relevant: bool = True,
+    gateway_boundary_code: str | None = None,
 ) -> dict[str, Any]:
     text = _gateway_log_error_text(log)
     summary = {
@@ -557,7 +580,10 @@ def _summarize_gateway_log(
         "modelGroupId": log.get("ModelGroupId"),
         "error": text[:500],
         "classification": classification,
+        "providerRelevant": provider_relevant,
     }
+    if gateway_boundary_code:
+        summary["gatewayBoundaryCode"] = gateway_boundary_code
     if asr_diagnostic is not None:
         summary["asrDiagnostic"] = asr_diagnostic
     return summary
@@ -834,7 +860,36 @@ def _audit(
         app_code = str(log.get("AppCallerCode") or "")
         model_id = str(log.get("Model") or "")
         error_text = _gateway_log_error_text(log)
+        gateway_boundary_code = _gateway_boundary_rejection_code(error_text)
         classification = None
+        asr_diagnostic = None
+        if gateway_boundary_code and (app_code in ASR_APP_CALLERS or app_code in VIDEO_APP_CALLERS):
+            provider_kind = "ASR" if app_code in ASR_APP_CALLERS else "video"
+            classification = (
+                "Gateway rejected request before provider dispatch "
+                f"({gateway_boundary_code}); {provider_kind} provider configuration was not evaluated."
+            )
+            _append_unique(
+                warnings,
+                f"recent gateway log {provider_kind} excluded from provider audit: "
+                f"{app_code} model={model_id} code={gateway_boundary_code}",
+            )
+            classification_item = {
+                "logId": str(log.get("_id") or ""),
+                "classification": classification,
+                "providerRelevant": False,
+            }
+            if app_code in ASR_APP_CALLERS:
+                asr_log_classifications.append(classification_item)
+            else:
+                video_log_classifications.append(classification_item)
+            recent_failed_logs.append(_summarize_gateway_log(
+                log,
+                classification,
+                provider_relevant=False,
+                gateway_boundary_code=gateway_boundary_code,
+            ))
+            continue
         if app_code in ASR_APP_CALLERS:
             failures.append(f"recent gateway log ASR failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
             classification = _classify_asr_seed_error(
@@ -867,6 +922,7 @@ def _audit(
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
                     "diagnostic": asr_diagnostic,
+                    "providerRelevant": True,
                 })
         if app_code in VIDEO_APP_CALLERS:
             failures.append(f"recent gateway log video failed: {app_code} model={model_id} statusCode={log.get('StatusCode')}")
@@ -883,6 +939,7 @@ def _audit(
                 video_log_classifications.append({
                     "logId": str(log.get("_id") or ""),
                     "classification": classification,
+                    "providerRelevant": True,
                 })
         if app_code in ASR_APP_CALLERS or app_code in VIDEO_APP_CALLERS:
             recent_failed_logs.append(_summarize_gateway_log(
@@ -1103,6 +1160,26 @@ def _self_test_report() -> dict[str, Any]:
                 "Error": "unauthorized",
             },
             {
+                "_id": "fixture-asr-gateway-scope-denied",
+                "AppCallerCode": "video-agent.v2d.transcribe::asr",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": DEFAULT_ASR_MODEL_ID,
+                "Status": "failed",
+                "StatusCode": 403,
+                "Error": '{"error":{"code":"GATEWAY_KEY_SCOPE_DENIED","message":"scope denied"}}',
+            },
+            {
+                "_id": "fixture-asr-multipart-ref-not-found",
+                "AppCallerCode": "document-store.subtitle::asr",
+                "RequestType": "raw",
+                "GatewayTransport": "http",
+                "Model": "",
+                "Status": "failed",
+                "StatusCode": 404,
+                "Error": "GATEWAY_REQUEST_REJECTED",
+            },
+            {
                 "_id": "fixture-video-model-not-open",
                 "AppCallerCode": "video-agent.videogen::video-gen",
                 "RequestType": "raw",
@@ -1179,12 +1256,48 @@ def _self_test_report() -> dict[str, Any]:
         str(item.get("step") or "") == "fixture-unbound-video-pool"
         for item in blockers
     )
+    gateway_scope_log = next(
+        (
+            item
+            for item in ((audit.get("recentGatewayLogs") or {}).get("failed") or [])
+            if str(item.get("id") or "") == "fixture-asr-gateway-scope-denied"
+        ),
+        None,
+    )
+    gateway_scope_excluded = bool(
+        gateway_scope_log
+        and gateway_scope_log.get("providerRelevant") is False
+        and gateway_scope_log.get("gatewayBoundaryCode") == "GATEWAY_KEY_SCOPE_DENIED"
+        and not any(
+            str(item.get("logId") or "") == "fixture-asr-gateway-scope-denied"
+            for item in blockers
+        )
+    )
+    multipart_log = next(
+        (
+            item
+            for item in ((audit.get("recentGatewayLogs") or {}).get("failed") or [])
+            if str(item.get("id") or "") == "fixture-asr-multipart-ref-not-found"
+        ),
+        None,
+    )
+    multipart_excluded = bool(
+        multipart_log
+        and multipart_log.get("providerRelevant") is False
+        and multipart_log.get("gatewayBoundaryCode") == "GATEWAY_REQUEST_REJECTED"
+        and not any(
+            str(item.get("logId") or "") == "fixture-asr-multipart-ref-not-found"
+            for item in blockers
+        )
+    )
     ok = (
         not missing
         and not missing_pairs
         and deferred_ids == ["fixture-unbound-video-pool"]
         and not unbound_leaked_as_blocker
         and request_type_validation_pass
+        and gateway_scope_excluded
+        and multipart_excluded
     )
     return {
         "generatedAt": datetime.now(timezone.utc).isoformat(),
@@ -1198,6 +1311,8 @@ def _self_test_report() -> dict[str, Any]:
         "deferredUnboundPoolIds": deferred_ids,
         "unboundPoolLeakedAsBlocker": unbound_leaked_as_blocker,
         "requestTypeValidationPass": request_type_validation_pass,
+        "gatewayScopeExcludedFromProviderAudit": gateway_scope_excluded,
+        "multipartExcludedFromProviderAudit": multipart_excluded,
         "sampleAuditVerdict": audit.get("verdict"),
         "sampleAuditExternalBlockers": blockers,
     }

@@ -552,9 +552,9 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
   return (
     <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 0 }}>
       {links.map((link) => (
-        <a
+        <Link
           key={link.label}
-          href={link.href}
+          to={link.href}
           style={{
             color: 'var(--accent)',
             fontSize: 13,
@@ -568,7 +568,7 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
           title={link.value ?? ''}
         >
           {link.label}: {link.value}
-        </a>
+        </Link>
       ))}
     </div>
   );

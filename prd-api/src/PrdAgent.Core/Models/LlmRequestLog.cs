@@ -295,6 +295,11 @@ public class LlmRequestLog
     public List<LlmLogImage>? InputImages { get; set; }
     /// <summary>生成结果图列表（COS URL 来自生图结果）</summary>
     public List<LlmLogImage>? OutputImages { get; set; }
+    /// <summary>响应图片异步持久化状态：pending / stored / failed / queue_full。</summary>
+    public string? OutputImageCaptureStatus { get; set; }
+    /// <summary>响应图片异步持久化失败原因；不包含图片正文。</summary>
+    public string? OutputImageCaptureError { get; set; }
+    public DateTime? OutputImageCapturedAt { get; set; }
 
     // 时序
     public DateTime StartedAt { get; set; } = DateTime.UtcNow;
@@ -350,4 +355,6 @@ public class LlmLogImage
     /// <summary>标签（如"手绘草图"、"参考图"、"生成结果"）</summary>
     public string? Label { get; set; }
     public string? Sha256 { get; set; }
+    public string? MimeType { get; set; }
+    public long? SizeBytes { get; set; }
 }

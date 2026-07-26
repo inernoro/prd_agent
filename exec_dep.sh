@@ -45,8 +45,11 @@ set -eu
 #     非空时同样必须通过 stage runner，避免 raw 证据采样绕过 gate
 #   - LLMGW_GATE_BASE / GW_BASE：release gate 使用的 serving base URL（形如 https://host/gw/v1）
 #   - LLMGW_GATE_KEY / GW_KEY：release gate 使用的 X-Gateway-Key；未设时回退 LLMGW_SERVE_KEY
-#   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层 smoke / protocol canary 使用的 scoped service key；
-#     未设时兼容回退 LLMGW_GATE_KEY。全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke 复用 legacy key。
+#   - LLMGW_POST_DEPLOY_SERVICE_KEY：发布后 D 层业务 smoke 使用的 scoped service key；
+#     未设时兼容回退 LLMGW_GATE_KEY。
+#   - LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY：四协议 canary 使用的 scoped service key；
+#     sourceSystem 应与 canary 请求的 X-Gateway-Source 一致。未设时兼容回退业务 smoke key。
+#     全局 shadow/runtime gate 仍使用 LLMGW_GATE_KEY，禁止外部 smoke/canary 复用 legacy key。
 #   - LLMGW_SERVE_BASE_URL：生产必须为 http://gateway，客户端会追加 /gw/v1/*，禁止 API 固定到单个 serving
 #   - LLMGW_READINESS_ASSET_PROBE_KEY：生产深度 readiness 使用的稳定对象 key，必须存在
 #   - LLMGW_GATE_MIN_TOTAL：全局 shadow 最小样本数，默认 30
@@ -1269,7 +1272,7 @@ run_llmgw_release_gate_if_needed() {
   scripts/llmgw-disk-space-guard.sh "${LLMGW_DEPLOY_DISK_GUARD_PATH:-.}" "${LLMGW_DEPLOY_MIN_FREE_MB:-4096}" "LLM Gateway exec_dep deploy"
 
   provider_audit_required=0
-  if [ "$mode" = "http" ] || [ "$canary_stage" = "video-asr" ]; then
+  if { [ "$mode" = "http" ] && [ "$maintenance_release" != "1" ]; } || [ "$canary_stage" = "video-asr" ]; then
     provider_audit_required=1
   fi
   if [ "$provider_audit_required" = "1" ]; then
@@ -1290,6 +1293,8 @@ run_llmgw_release_gate_if_needed() {
     echo "LLM Gateway provider config audit: required before deploy (mode=$mode, canaryStage=${canary_stage:-none})"
     # shellcheck disable=SC2086
     python3 scripts/llmgw-prod-provider-config-audit.py $provider_audit_args
+  elif [ "$mode" = "http" ] && [ "$maintenance_release" = "1" ]; then
+    echo "LLM Gateway provider config audit: inherited from audited full-http maintenance baseline"
   fi
 
   gate_base="${LLMGW_GATE_BASE:-${GW_BASE:-}}"
@@ -1317,7 +1322,11 @@ run_llmgw_release_gate_if_needed() {
   LLMGW_POST_DEPLOY_EXPECT_COMMIT="$expect_commit"
 
   if [ "$maintenance_release" = "1" ]; then
-    args="--base $gate_base --min-total 0 --min-per-app 0"
+    # 维护发布已经通过 maintenance baseline 审计继承了完整 http-full
+    # shadow 证据。当前 serving API 要求 shadow-comparisons 必须显式带
+    # appCaller，因此不能再发起旧版的全局无 appCaller 查询。这里只跳过
+    # 已继承的 global cells；健康、commit、部署后 smoke 与公网门禁仍照常执行。
+    args="--base $gate_base --min-total 0 --min-per-app 0 --skip-global-cells"
   else
     args="--base $gate_base --min-total ${LLMGW_GATE_MIN_TOTAL:-30} --min-per-app ${LLMGW_GATE_MIN_PER_APP:-30}"
   fi
@@ -1452,6 +1461,7 @@ run_llmgw_post_deploy_verification_if_needed() {
   gate_base="${LLMGW_POST_DEPLOY_GATE_BASE:-}"
   gate_key="${LLMGW_POST_DEPLOY_GATE_KEY:-}"
   smoke_key="${LLMGW_POST_DEPLOY_SMOKE_KEY:-$gate_key}"
+  protocol_canary_key="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY:-$smoke_key}"
   expect_commit="${LLMGW_POST_DEPLOY_EXPECT_COMMIT:-}"
 
   if [ -z "$gate_base" ]; then
@@ -1506,6 +1516,10 @@ run_llmgw_post_deploy_verification_if_needed() {
         echo "ERROR: LLM Gateway post-deploy protocol canary requires immutable --commit/sha tag so --expect-commit can be enforced." >&2
         exit 1
       fi
+      if [ -z "$protocol_canary_key" ]; then
+        echo "ERROR: LLM Gateway post-deploy protocol canary requires LLMGW_POST_DEPLOY_PROTOCOL_CANARY_KEY or a compatible smoke key." >&2
+        exit 1
+      fi
       protocol_canary_json="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_JSON_OUT:-}"
       protocol_canary_md="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_REPORT_MD:-}"
       protocol_canary_max_runtime_calls="${LLMGW_POST_DEPLOY_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-${LLMGW_PROTOCOL_CANARY_MAX_RUNTIME_CALLS:-4}}"
@@ -1529,7 +1543,7 @@ run_llmgw_post_deploy_verification_if_needed() {
       fi
       echo "LLM Gateway post-deploy protocol canary: required before runtime gates"
       # shellcheck disable=SC2086
-      GW_KEY="$smoke_key" python3 scripts/llmgw-protocol-canary.py \
+      GW_KEY="$protocol_canary_key" python3 scripts/llmgw-protocol-canary.py \
         --base "$gate_base" \
         --expect-commit "$expect_commit" \
         --execute \
