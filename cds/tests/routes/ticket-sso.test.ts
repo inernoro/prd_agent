@@ -34,6 +34,7 @@ async function call(
   method: string,
   path: string,
   body?: unknown,
+  headers?: http.OutgoingHttpHeaders,
 ): Promise<TestResponse> {
   return new Promise((resolve, reject) => {
     const send = () => {
@@ -49,8 +50,9 @@ async function call(
               Accept: 'application/json',
               'Content-Type': 'application/json',
               'Content-Length': String(Buffer.byteLength(payload)),
+              ...headers,
             }
-          : { Accept: 'application/json' },
+          : { Accept: 'application/json', ...headers },
       }, (res) => {
         let raw = '';
         res.on('data', (chunk: Buffer) => {
@@ -208,5 +210,181 @@ describe('ticket SSO routes', () => {
 
     expect(exchange.status).toBe(200);
     expect(exchange.body.redirect).toBe('/reports?project=cds-self');
+  });
+
+  it('uses the canonical public base URL instead of forwarded host headers', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      publicBaseUrl: 'https://cds.example/base-path',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+    }));
+    server = await start(app);
+
+    const response = await call(server, 'GET', '/api/auth/sso/start', undefined, {
+      'X-Forwarded-Host': 'attacker.allowed.example',
+      'X-Forwarded-Proto': 'https',
+    });
+
+    expect(response.status).toBe(302);
+    const location = new URL(String(response.headers.location));
+    expect(location.searchParams.get('redirect_uri')).toBe('https://cds.example/auth/sso');
+  });
+
+  it('reports provider timeouts separately from invalid tickets', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const fetchImpl = vi.fn((_url: string | URL | Request, init?: RequestInit) => (
+      new Promise<Response>((_resolve, reject) => {
+        init?.signal?.addEventListener('abort', () => {
+          reject(new DOMException('aborted', 'AbortError'));
+        });
+      })
+    ));
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+      fetchImpl: fetchImpl as typeof fetch,
+      tokenExchangeTimeoutMs: 5,
+    }));
+    server = await start(app);
+
+    const startResponse = await call(server, 'GET', '/api/auth/sso/start');
+    const state = new URL(String(startResponse.headers.location)).searchParams.get('state');
+    const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
+      code: 'a'.repeat(43),
+      state,
+    });
+
+    expect(exchange.status).toBe(504);
+    expect(exchange.body.code).toBe('sso_provider_timeout');
+  });
+
+  it('reports provider connection failures separately from invalid tickets', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+      fetchImpl: vi.fn(async () => {
+        throw new TypeError('connection refused');
+      }) as typeof fetch,
+    }));
+    server = await start(app);
+
+    const startResponse = await call(server, 'GET', '/api/auth/sso/start');
+    const state = new URL(String(startResponse.headers.location)).searchParams.get('state');
+    const exchange = await call(server, 'POST', '/api/auth/sso/exchange', {
+      code: 'a'.repeat(43),
+      state,
+    });
+
+    expect(exchange.status).toBe(502);
+    expect(exchange.body.code).toBe('sso_provider_unavailable');
+  });
+
+  it('classifies provider 5xx responses as unavailable and explicit ticket rejection as invalid', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const fetchImpl = vi.fn()
+      .mockResolvedValueOnce(new Response('upstream unavailable', { status: 503 }))
+      .mockResolvedValueOnce(new Response(JSON.stringify({
+        success: false,
+        error: { message: 'ticket expired' },
+      }), {
+        status: 401,
+        headers: { 'Content-Type': 'application/json' },
+      }));
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      publicBaseUrl: 'https://cds.example',
+      cookieSecure: true,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+      fetchImpl: fetchImpl as typeof fetch,
+    }));
+    server = await start(app);
+
+    const firstStart = await call(server, 'GET', '/api/auth/sso/start');
+    const firstState = new URL(String(firstStart.headers.location)).searchParams.get('state');
+    const unavailable = await call(server, 'POST', '/api/auth/sso/exchange', {
+      code: 'a'.repeat(43),
+      state: firstState,
+    });
+    expect(unavailable.status).toBe(502);
+    expect(unavailable.body.code).toBe('sso_provider_unavailable');
+
+    const secondStart = await call(server, 'GET', '/api/auth/sso/start');
+    const secondState = new URL(String(secondStart.headers.location)).searchParams.get('state');
+    const rejected = await call(server, 'POST', '/api/auth/sso/exchange', {
+      code: 'b'.repeat(43),
+      state: secondState,
+    });
+    expect(rejected.status).toBe(401);
+    expect(rejected.body.code).toBe('sso_exchange_failed');
+  });
+
+  it('rejects non-loopback callback hosts when no canonical base URL is configured', async () => {
+    const config = normalizeTicketSsoConfig({
+      enabled: true,
+      authorizationUrl: 'https://map.example/api/console-sso/authorize',
+      tokenUrl: 'https://map.example/api/console-sso/token',
+      clientId: 'cds-console',
+      clientSecret: 'secret-value',
+    });
+    const app = express();
+    app.use('/api', createTicketSsoPublicRouter({
+      resolveConfig: () => config,
+      cookieSecure: false,
+      stateStore: new TicketSsoStateStore(),
+      sessionStore: new TicketSsoSessionStore(),
+    }));
+    server = await start(app);
+
+    const response = await call(server, 'GET', '/api/auth/sso/start', undefined, {
+      Host: 'attacker.allowed.example',
+      'X-Forwarded-Host': 'attacker.allowed.example',
+      'X-Forwarded-Proto': 'https',
+    });
+
+    expect(response.status).toBe(302);
+    expect(response.headers.location).toBe('/login?sso_error=invalid_callback');
   });
 });

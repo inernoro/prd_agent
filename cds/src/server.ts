@@ -1840,7 +1840,7 @@ export function createServer(deps: ServerDeps): express.Express {
     '/api',
     createTicketSsoPublicRouter({
       resolveConfig: resolveSsoConfig,
-      publicBaseUrl: configuredPublicBaseUrl,
+      publicBaseUrl,
       cookieSecure,
       stateStore: ticketSsoStateStore,
       sessionStore: ticketSsoSessionStore,

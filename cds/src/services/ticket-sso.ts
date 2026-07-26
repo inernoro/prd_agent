@@ -4,6 +4,7 @@ import type { StateService } from './state.js';
 
 const STATE_TTL_MS = 5 * 60 * 1000;
 const DEFAULT_REDIRECT = '/project-list';
+const DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 const SSO_ENV_KEYS = [
   'CDS_SSO_ENABLED',
   'CDS_SSO_PROVIDER_ID',
@@ -26,6 +27,22 @@ export interface PublicTicketSsoConfig {
   enabled: boolean;
   providerId: string;
   label: string;
+}
+
+interface TicketSsoTokenResponse {
+  success?: boolean;
+  data?: Partial<TicketSsoIdentity>;
+  error?: { message?: string };
+}
+
+export class TicketSsoExchangeError extends Error {
+  constructor(
+    public readonly reason: 'timeout' | 'unavailable',
+    cause?: unknown,
+  ) {
+    super(reason === 'timeout' ? 'SSO_PROVIDER_TIMEOUT' : 'SSO_PROVIDER_UNAVAILABLE', { cause });
+    this.name = 'TicketSsoExchangeError';
+  }
 }
 
 function cleanInternalRedirect(value: unknown): string {
@@ -195,26 +212,50 @@ export async function exchangeTicketSsoCode(
   code: unknown,
   callbackUrl: string,
   fetchImpl: typeof fetch = fetch,
+  timeoutMs = DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS,
 ): Promise<TicketSsoIdentity> {
   if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{32,256}$/.test(code)) {
     throw new Error('SSO_CODE_INVALID');
   }
-  const response = await fetchImpl(config.tokenUrl, {
-    method: 'POST',
-    headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
-    body: JSON.stringify({
-      grant_type: 'urn:cds:params:oauth:grant-type:ticket',
-      code,
-      client_id: config.clientId,
-      client_secret: config.clientSecret,
-      redirect_uri: callbackUrl,
-    }),
-  });
-  const payload = await response.json().catch(() => null) as {
-    success?: boolean;
-    data?: Partial<TicketSsoIdentity>;
-    error?: { message?: string };
-  } | null;
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), Math.max(1, timeoutMs));
+  let response: Response;
+  let payload: TicketSsoTokenResponse | null = null;
+  try {
+    response = await fetchImpl(config.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({
+        grant_type: 'urn:cds:params:oauth:grant-type:ticket',
+        code,
+        client_id: config.clientId,
+        client_secret: config.clientSecret,
+        redirect_uri: callbackUrl,
+      }),
+      signal: controller.signal,
+    });
+    try {
+      payload = await response.json() as TicketSsoTokenResponse;
+    } catch (error) {
+      if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+        throw new TicketSsoExchangeError('timeout', error);
+      }
+    }
+  } catch (error) {
+    if (error instanceof TicketSsoExchangeError) throw error;
+    if (controller.signal.aborted || (error instanceof Error && error.name === 'AbortError')) {
+      throw new TicketSsoExchangeError('timeout', error);
+    }
+    throw new TicketSsoExchangeError('unavailable', error);
+  } finally {
+    clearTimeout(timeout);
+  }
+  if (response.status === 408 || response.status === 504) {
+    throw new TicketSsoExchangeError('timeout');
+  }
+  if (response.status === 429 || response.status >= 500 || (response.ok && payload === null)) {
+    throw new TicketSsoExchangeError('unavailable');
+  }
   if (!response.ok || payload?.success !== true || !payload.data) {
     throw new Error(payload?.error?.message || `SSO_TOKEN_EXCHANGE_${response.status}`);
   }

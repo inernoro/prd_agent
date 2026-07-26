@@ -136,6 +136,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(agentOnboardingSource).toContain('全局通行证属于认证提权');
     expect(globalAgentAccessSource).toContain('if (!open) return undefined');
     expect(globalAgentAccessSource).toContain('setProjects(null)');
+    expect(globalAgentAccessSource).toContain('if (!nextOpen) setRequestedContextId(undefined)');
+    expect(globalAgentAccessSource).toContain('onOpenChange={handleOpenChange}');
+    expect(globalAgentAccessSource).toContain('[routerLocation.pathname, routerLocation.search, routerLocation.hash]');
     expect(styles).toContain('.cds-agent-mission-strip');
     expect(styles).toContain('.cds-agent-mission-categories');
     expect(styles).toContain('.cds-agent-mission-card');

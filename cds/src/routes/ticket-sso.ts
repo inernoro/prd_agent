@@ -1,6 +1,7 @@
 import { Router, type Request, type Response } from 'express';
 import type { CdsSsoConfig } from '../types.js';
 import {
+  TicketSsoExchangeError,
   TicketSsoSessionStore,
   TicketSsoStateStore,
   buildTicketSsoAuthorizationUrl,
@@ -17,22 +18,22 @@ export interface TicketSsoRouterDeps {
   stateStore: TicketSsoStateStore;
   sessionStore: TicketSsoSessionStore;
   fetchImpl?: typeof fetch;
+  tokenExchangeTimeoutMs?: number;
 }
 
 function externalCallbackUrl(req: Request, configuredBaseUrl?: string): string {
-  if (configuredBaseUrl) {
-    return `${configuredBaseUrl.replace(/\/$/, '')}/auth/sso`;
+  const candidate = configuredBaseUrl
+    ? new URL(configuredBaseUrl)
+    : new URL(`${req.protocol || 'http'}://${String(req.headers.host || '').trim()}`);
+  const isLoopback = candidate.hostname === 'localhost'
+    || candidate.hostname === '127.0.0.1'
+    || candidate.hostname === '[::1]'
+    || candidate.hostname === '::1';
+  const isLocalHttp = candidate.protocol === 'http:' && isLoopback;
+  if (candidate.username || candidate.password || (candidate.protocol !== 'https:' && !isLocalHttp)) {
+    throw new Error('SSO_CALLBACK_PROTOCOL_INVALID');
   }
-  const protocol = String(req.headers['x-forwarded-proto'] || req.protocol || 'https')
-    .split(',')[0]
-    .trim();
-  const host = String(req.headers['x-forwarded-host'] || req.headers.host || '')
-    .split(',')[0]
-    .trim();
-  const candidate = new URL(`${protocol}://${host}`);
-  const isLocalHttp = candidate.protocol === 'http:'
-    && (candidate.hostname === 'localhost' || candidate.hostname === '127.0.0.1');
-  if (candidate.protocol !== 'https:' && !isLocalHttp) {
+  if (!configuredBaseUrl && !isLoopback) {
     throw new Error('SSO_CALLBACK_PROTOCOL_INVALID');
   }
   candidate.pathname = '/auth/sso';
@@ -119,6 +120,7 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
         req.body?.code,
         state.callbackUrl,
         deps.fetchImpl,
+        deps.tokenExchangeTimeoutMs,
       );
       const session = deps.sessionStore.create(identity);
       res.setHeader(
@@ -138,7 +140,21 @@ export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
           authProvider: config.providerId,
         },
       });
-    } catch {
+    } catch (error) {
+      if (error instanceof TicketSsoExchangeError && error.reason === 'timeout') {
+        res.status(504).json({
+          error: '身份提供方响应超时，请重新发起 SSO 登录',
+          code: 'sso_provider_timeout',
+        });
+        return;
+      }
+      if (error instanceof TicketSsoExchangeError && error.reason === 'unavailable') {
+        res.status(502).json({
+          error: '身份提供方暂时不可用，请稍后重试',
+          code: 'sso_provider_unavailable',
+        });
+        return;
+      }
       res.status(401).json({
         error: 'SSO 一次性授权无效、已使用或已过期',
         code: 'sso_exchange_failed',

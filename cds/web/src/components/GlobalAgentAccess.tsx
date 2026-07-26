@@ -77,6 +77,16 @@ export function GlobalAgentAccess(): JSX.Element {
     return () => ctrl.abort();
   }, [open]);
 
+  useEffect(() => {
+    setRequestedContextId(undefined);
+    setOpen(false);
+  }, [routerLocation.pathname, routerLocation.search, routerLocation.hash]);
+
+  const handleOpenChange = (nextOpen: boolean): void => {
+    setOpen(nextOpen);
+    if (!nextOpen) setRequestedContextId(undefined);
+  };
+
   return (
     <>
       {showFloatingEntry ? (
@@ -99,7 +109,7 @@ export function GlobalAgentAccess(): JSX.Element {
       ) : null}
       <SkillDownloadDialog
         open={open}
-        onOpenChange={setOpen}
+        onOpenChange={handleOpenChange}
         projects={projects || []}
         context={context}
       />

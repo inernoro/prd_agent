@@ -24,3 +24,5 @@
 | fix | cds | 修复 SSO-only 登录表单、StrictMode 回调换票与系统任务错误借用业务项目 |
 | fix | cds | 修复重复凭据误报冲突，并在项目级凭据下安全解析 CDS Self 预览 |
 | fix | prd-api | 允许已配置来源的 loopback HTTP 完成本地 SSO 回调 |
+| security | cds | 将 SSO 回调锁定到规范公网地址，并为换票请求增加超时与可用性错误分类 |
+| fix | cds | 关闭 Agent 接入对话框或跨页时清除显式任务上下文 |
