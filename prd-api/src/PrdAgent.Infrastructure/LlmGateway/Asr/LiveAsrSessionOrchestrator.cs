@@ -46,6 +46,7 @@ public sealed class LiveAsrSessionOrchestrator
 
     public async Task<LiveAsrOrchestrationResult> ExecuteAsync(
         ILiveAsrSessionTransport transport,
+        GatewayRequestContext requestContext,
         Func<LiveAsrEvent, Task> emit,
         Action onUpstreamRequest)
     {
@@ -105,7 +106,8 @@ public sealed class LiveAsrSessionOrchestrator
                         batchCandidates,
                         batchFrames.Reader,
                         emit,
-                        onUpstreamRequest);
+                        onUpstreamRequest,
+                        requestContext);
                     sessionResult = batchResult;
                     if (!batchResult.Completed)
                     {
@@ -210,7 +212,8 @@ public sealed class LiveAsrSessionOrchestrator
                         batchCandidates,
                         batchFrames.Reader,
                         emit,
-                        onUpstreamRequest);
+                        onUpstreamRequest,
+                        requestContext);
                     sessionResult = finalResult;
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     if (finalResult.Completed)

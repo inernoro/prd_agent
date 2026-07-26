@@ -385,7 +385,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
-    public async Task RecordingDocumentCountReconcile_ShouldRepairStableUndercount()
+    public async Task RecordingEntryCount_ShouldApplyExactlyOnceAcrossRetries()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         if (fixture == null) return;
@@ -393,36 +393,35 @@ public sealed class DocumentRecordingArchiveWorkerTests
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
         {
-            Id = "recording-count-reconcile",
-            Name = "录音计数校准测试",
+            Id = "recording-count-idempotent",
+            Name = "录音计数幂等测试",
             OwnerId = "user-1",
             DocumentCount = 1,
             UpdatedAt = t0,
         };
         await fixture.Db.DocumentStores.InsertOneAsync(store);
-        await fixture.Db.DocumentEntries.InsertManyAsync([
-            new DocumentEntry { Id = "count-entry-1", StoreId = store.Id, Title = "一" },
-            new DocumentEntry { Id = "count-entry-2", StoreId = store.Id, Title = "二" },
-        ]);
 
-        var applied = await DocumentStoreController.ReconcileRecordingDocumentCountAsync(
+        var first = await DocumentStoreController.EnsureRecordingEntryCountedAsync(
             fixture.Db.DocumentStores,
-            fixture.Db.DocumentEntries,
             store.Id,
+            "recording-entry-1",
             t0.AddMinutes(1),
             CancellationToken.None);
+        var retry = await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            "recording-entry-1",
+            t0.AddMinutes(2),
+            CancellationToken.None);
 
-        applied.ShouldBeTrue();
+        first.ShouldBeTrue();
+        retry.ShouldBeFalse();
         (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
             .DocumentCount.ShouldBe(2);
     }
 
-    [Theory]
-    [InlineData(2, 1)]
-    [InlineData(2, 3)]
-    public async Task RecordingDocumentCountSnapshot_ShouldRejectConcurrentMutation(
-        int observedDocumentCount,
-        int concurrentDocumentCount)
+    [Fact]
+    public async Task RecordingEntryCount_ShouldCommuteWithConcurrentNormalAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         if (fixture == null) return;
@@ -430,31 +429,71 @@ public sealed class DocumentRecordingArchiveWorkerTests
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
         {
-            Id = $"recording-count-race-{concurrentDocumentCount}",
+            Id = "recording-count-add-race",
             Name = "录音计数竞态测试",
             OwnerId = "user-1",
             DocumentCount = 2,
             UpdatedAt = t0,
         };
         await fixture.Db.DocumentStores.InsertOneAsync(store);
-        await fixture.Db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
-                .Set(s => s.DocumentCount, concurrentDocumentCount)
-                .Set(s => s.UpdatedAt, t0.AddSeconds(1)));
 
-        var applied = await DocumentStoreController.TryApplyRecordingDocumentCountSnapshotAsync(
+        await Task.WhenAll(
+            fixture.Db.DocumentStores.UpdateOneAsync(
+                s => s.Id == store.Id,
+                Builders<DocumentStore>.Update
+                    .Inc(s => s.DocumentCount, 1)
+                    .Set(s => s.UpdatedAt, t0.AddSeconds(1))),
+            DocumentStoreController.EnsureRecordingEntryCountedAsync(
+                fixture.Db.DocumentStores,
+                store.Id,
+                "recording-entry-race",
+                t0.AddSeconds(2),
+                CancellationToken.None));
+
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(4);
+    }
+
+    [Fact]
+    public async Task RecordingEntryCountToken_ShouldBeRemovedWithDeletedEntry()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
+        var store = new DocumentStore
+        {
+            Id = "recording-count-token-cleanup",
+            Name = "录音计数令牌清理测试",
+            OwnerId = "user-1",
+            DocumentCount = 0,
+            UpdatedAt = t0,
+        };
+        const string entryId = "recording-completed-session-cleanup";
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
             fixture.Db.DocumentStores,
             store.Id,
-            expectedDocumentCount: 2,
-            expectedUpdatedAt: t0,
-            observedDocumentCount,
-            now: t0.AddSeconds(2),
-            CancellationToken.None);
+            entryId,
+            t0.AddSeconds(1),
+            CancellationToken.None)).ShouldBeTrue();
 
-        applied.ShouldBeFalse();
+        await DocumentStoreController.ApplyDocumentCountDeletionAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            deletedCount: 1,
+            now: t0.AddSeconds(2),
+            cancellationToken: CancellationToken.None,
+            countedRecordingEntryIds: [entryId]);
+        (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            entryId,
+            t0.AddSeconds(3),
+            CancellationToken.None)).ShouldBeTrue();
+
         (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
-            .DocumentCount.ShouldBe(concurrentDocumentCount);
+            .DocumentCount.ShouldBe(1);
     }
 
     [Fact]
@@ -482,7 +521,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
                     .Set(s => s.UpdatedAt, t0.AddSeconds(1))),
             DocumentStoreController.ApplyDocumentCountDeletionAsync(
                 fixture.Db.DocumentStores,
-                fixture.Db.DocumentEntries,
                 store.Id,
                 deletedCount: 1,
                 now: t0.AddSeconds(2),
@@ -493,7 +531,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
-    public async Task DocumentCountDeletion_ShouldReconcileInsteadOfGoingNegative()
+    public async Task DocumentCountDeletion_ShouldClampInsteadOfGoingNegative()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         if (fixture == null) return;
@@ -508,19 +546,16 @@ public sealed class DocumentRecordingArchiveWorkerTests
             UpdatedAt = t0,
         };
         await fixture.Db.DocumentStores.InsertOneAsync(store);
-        await fixture.Db.DocumentEntries.InsertOneAsync(
-            new DocumentEntry { Id = "remaining-entry", StoreId = store.Id, Title = "剩余条目" });
 
         await DocumentStoreController.ApplyDocumentCountDeletionAsync(
             fixture.Db.DocumentStores,
-            fixture.Db.DocumentEntries,
             store.Id,
             deletedCount: 1,
             now: t0.AddSeconds(1),
             CancellationToken.None);
 
         (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
-            .DocumentCount.ShouldBe(1);
+            .DocumentCount.ShouldBe(0);
     }
 
     [Fact]

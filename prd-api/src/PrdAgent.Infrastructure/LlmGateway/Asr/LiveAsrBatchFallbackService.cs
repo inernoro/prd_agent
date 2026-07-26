@@ -42,7 +42,8 @@ public sealed class LiveAsrBatchFallbackService
         IReadOnlyList<ModelResolutionResult> candidates,
         ChannelReader<LiveAsrAudioFrame> frames,
         Func<LiveAsrEvent, Task> emit,
-        Action? onUpstreamRequest = null)
+        Action? onUpstreamRequest,
+        GatewayRequestContext requestContext)
     {
         string? provider = null;
         string? model = null;
@@ -90,7 +91,8 @@ public sealed class LiveAsrBatchFallbackService
                     bytes,
                     windowIndex,
                     emit,
-                    onUpstreamRequest);
+                    onUpstreamRequest,
+                    requestContext);
                 if (!window.Succeeded)
                 {
                     return new LiveAsrSessionResult
@@ -134,7 +136,8 @@ public sealed class LiveAsrBatchFallbackService
                 pending.ToArray(),
                 windowIndex,
                 emit,
-                onUpstreamRequest);
+                onUpstreamRequest,
+                requestContext);
             if (!window.Succeeded)
             {
                 return new LiveAsrSessionResult
@@ -202,7 +205,8 @@ public sealed class LiveAsrBatchFallbackService
         byte[] pcm,
         int windowIndex,
         Func<LiveAsrEvent, Task> emit,
-        Action? onUpstreamRequest)
+        Action? onUpstreamRequest,
+        GatewayRequestContext requestContext)
     {
         // 纯静音窗口不发给多模态模型。否则部分模型会把静音补全成
         // “请播放音频”等解释性文本，既污染原文又产生无效调用成本。
@@ -232,7 +236,7 @@ public sealed class LiveAsrBatchFallbackService
 
                 try
                 {
-                    var request = BuildRequest(candidate, wave, providerAttempt);
+                    var request = BuildRequest(candidate, wave, providerAttempt, requestContext);
                     onUpstreamRequest?.Invoke();
                     var response = await _gateway.SendRawWithResolutionAsync(
                         request,
@@ -393,13 +397,15 @@ public sealed class LiveAsrBatchFallbackService
     private static GatewayRawRequest BuildRequest(
         ModelResolutionResult candidate,
         byte[] wave,
-        int providerAttempt)
+        int providerAttempt,
+        GatewayRequestContext requestContext)
     {
         if (candidate.IsExchange
             && string.Equals(candidate.ExchangeTransformerType, "doubao-asr", StringComparison.OrdinalIgnoreCase))
         {
             return BaseRequest(
                 candidate,
+                requestContext,
                 requestBody: new JsonObject { ["audio_data"] = Convert.ToBase64String(wave) });
         }
 
@@ -410,6 +416,7 @@ public sealed class LiveAsrBatchFallbackService
                 : $"这是第 {providerAttempt - 1} 次结果校验。必须读取本消息 input_audio 里的 WAV 音频，只输出真实人声原文；禁止要求用户再次提供、上传或播放音频。没有人声时只输出 NO_SPEECH。";
             return BaseRequest(
                 candidate,
+                requestContext,
                 endpointPath: "/v1/chat/completions",
                 requestBody: new JsonObject
                 {
@@ -445,6 +452,7 @@ public sealed class LiveAsrBatchFallbackService
 
         return BaseRequest(
             candidate,
+            requestContext,
             endpointPath: "/v1/audio/transcriptions",
             multipartFields: new Dictionary<string, object>
             {
@@ -460,6 +468,7 @@ public sealed class LiveAsrBatchFallbackService
 
     private static GatewayRawRequest BaseRequest(
         ModelResolutionResult candidate,
+        GatewayRequestContext requestContext,
         string? endpointPath = null,
         JsonObject? requestBody = null,
         Dictionary<string, object>? multipartFields = null,
@@ -478,10 +487,11 @@ public sealed class LiveAsrBatchFallbackService
             MultipartFields = multipartFields,
             MultipartFiles = multipartFiles,
             TimeoutSeconds = 90,
-            Context = new GatewayRequestContext
-            {
-                RequestId = $"live-window-{Guid.NewGuid():N}",
-            },
+            // 原始请求必须携带 serving 已验证的租户与服务密钥身份。环境作用域只供
+            // ModelResolver 使用，LlmGateway 的安全出站、归因和并发核算读取请求本身。
+            Context = GatewayRequestContext.WithRequestId(
+                requestContext,
+                $"live-window-{Guid.NewGuid():N}"),
         };
     }
 

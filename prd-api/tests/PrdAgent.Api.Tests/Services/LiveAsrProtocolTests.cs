@@ -13,6 +13,13 @@ namespace PrdAgent.Api.Tests.Services;
 
 public class LiveAsrProtocolTests
 {
+    private static GatewayRequestContext TestRequestContext()
+        => new()
+        {
+            TenantId = "test-tenant",
+            RequestId = "test-live-asr-request",
+        };
+
     [Fact]
     public void AudioFrame_ShouldPreserveLittleEndianSequenceAndPcm()
     {
@@ -199,6 +206,16 @@ public class LiveAsrProtocolTests
         frames.Writer.TryComplete();
         var events = new List<LiveAsrEvent>();
         var upstreamRequests = 0;
+        var verifiedContext = new GatewayRequestContext
+        {
+            TenantId = "tenant-external",
+            TeamId = "team-1",
+            ServiceKeyId = "service-key-1",
+            ClientCode = "document-client",
+            Environment = "preview",
+            ServiceKeyPrefix = "sk-live",
+            RequestId = "live-session-request",
+        };
 
         var result = await service.TranscribeAsync(
             [candidate],
@@ -208,7 +225,8 @@ public class LiveAsrProtocolTests
                 events.Add(evt);
                 return Task.CompletedTask;
             },
-            () => upstreamRequests++);
+            () => upstreamRequests++,
+            verifiedContext);
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
@@ -218,7 +236,16 @@ public class LiveAsrProtocolTests
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.Is<GatewayRawRequest>(request =>
                 request.EndpointPath == "/v1/chat/completions"
-                && request.RequestBody != null),
+                && request.RequestBody != null
+                && request.Context != null
+                && request.Context.TenantId == "tenant-external"
+                && request.Context.TeamId == "team-1"
+                && request.Context.ServiceKeyId == "service-key-1"
+                && request.Context.ClientCode == "document-client"
+                && request.Context.Environment == "preview"
+                && request.Context.ServiceKeyPrefix == "sk-live"
+                && request.Context.RequestId != "live-session-request"
+                && request.Context.RequestId!.StartsWith("live-window-")),
             It.IsAny<GatewayModelResolution>(),
             It.IsAny<CancellationToken>()), Times.Once);
     }
@@ -244,7 +271,8 @@ public class LiveAsrProtocolTests
             [candidate],
             frames.Reader,
             _ => Task.CompletedTask,
-            () => upstreamRequests++);
+            () => upstreamRequests++,
+            TestRequestContext());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -295,7 +323,9 @@ public class LiveAsrProtocolTests
         var result = await service.TranscribeAsync(
             [candidate],
             frames.Reader,
-            _ => Task.CompletedTask);
+            _ => Task.CompletedTask,
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.Split("窗口原文").Length.ShouldBe(13);
@@ -345,7 +375,9 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldBe("完整窗口 最后几个字");
@@ -390,7 +422,9 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -437,7 +471,9 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeFalse();
         result.Degraded.ShouldBeTrue();
@@ -506,7 +542,9 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldBe("备用供应商成功");
@@ -578,7 +616,9 @@ public class LiveAsrProtocolTests
             {
                 events.Add(evt);
                 return Task.CompletedTask;
-            });
+            },
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldBe("备用窗口1 备用窗口2");
@@ -626,7 +666,9 @@ public class LiveAsrProtocolTests
         var result = await service.TranscribeAsync(
             [candidate],
             frames.Reader,
-            _ => Task.CompletedTask);
+            _ => Task.CompletedTask,
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
@@ -672,7 +714,9 @@ public class LiveAsrProtocolTests
         var result = await service.TranscribeAsync(
             [candidate],
             frames.Reader,
-            _ => Task.CompletedTask);
+            _ => Task.CompletedTask,
+            null,
+            TestRequestContext());
 
         result.Completed.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
@@ -711,6 +755,11 @@ public class LiveAsrProtocolTests
 
         var outcome = await orchestrator.ExecuteAsync(
             transport,
+            new GatewayRequestContext
+            {
+                TenantId = "tenant-1",
+                RequestId = "orchestration-request",
+            },
             evt =>
             {
                 events.Add(evt);
