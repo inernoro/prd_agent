@@ -64,6 +64,41 @@ describe('ticket SSO', () => {
     expect(store.consume(issued.state)?.redirect).toBeNull();
   });
 
+  it('caps outstanding login states by evicting the oldest state', () => {
+    let now = 1_000;
+    const store = new TicketSsoStateStore({
+      maxEntries: 3,
+      ttlMs: 300_000,
+      gcIntervalMs: 30_000,
+      now: () => now,
+    });
+    const first = store.issue('/first', 'https://cds.example/auth/sso');
+    now += 1;
+    const second = store.issue('/second', 'https://cds.example/auth/sso');
+    now += 1;
+    const third = store.issue('/third', 'https://cds.example/auth/sso');
+    now += 1;
+    const fourth = store.issue('/fourth', 'https://cds.example/auth/sso');
+
+    expect(store.consume(first.state)).toBeNull();
+    expect(store.consume(second.state)?.redirect).toBe('/second');
+    expect(store.consume(third.state)?.redirect).toBe('/third');
+    expect(store.consume(fourth.state)?.redirect).toBe('/fourth');
+  });
+
+  it('rejects an expired login state even between periodic cleanup passes', () => {
+    let now = 5_000;
+    const store = new TicketSsoStateStore({
+      ttlMs: 100,
+      gcIntervalMs: 10_000,
+      now: () => now,
+    });
+    const issued = store.issue('/project-list', 'https://cds.example/auth/sso');
+    now += 101;
+
+    expect(store.consume(issued.state)).toBeNull();
+  });
+
   it('accepts only HTTPS URLs or local HTTP development URLs', () => {
     expect(normalizeTicketSsoConfig({
       authorizationUrl: 'http://localhost:5500/authorize',

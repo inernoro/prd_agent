@@ -3,6 +3,8 @@ import type { CdsSsoConfig } from '../types.js';
 import type { StateService } from './state.js';
 
 const STATE_TTL_MS = 5 * 60 * 1000;
+const STATE_STORE_MAX_ENTRIES = 1024;
+const STATE_STORE_GC_INTERVAL_MS = 30 * 1000;
 const DEFAULT_REDIRECT = '/project-list';
 const DEFAULT_TOKEN_EXCHANGE_TIMEOUT_MS = 10_000;
 const SSO_ENV_KEYS = [
@@ -129,30 +131,56 @@ export class TicketSsoStateStore {
     callbackUrl: string;
     createdAt: number;
   }>();
+  private readonly ttlMs: number;
+  private readonly maxEntries: number;
+  private readonly gcIntervalMs: number;
+  private readonly now: () => number;
+  private nextGcAt = 0;
+
+  constructor(options: {
+    ttlMs?: number;
+    maxEntries?: number;
+    gcIntervalMs?: number;
+    now?: () => number;
+  } = {}) {
+    this.ttlMs = Math.max(1, options.ttlMs ?? STATE_TTL_MS);
+    this.maxEntries = Math.max(1, options.maxEntries ?? STATE_STORE_MAX_ENTRIES);
+    this.gcIntervalMs = Math.max(1, options.gcIntervalMs ?? STATE_STORE_GC_INTERVAL_MS);
+    this.now = options.now ?? Date.now;
+  }
 
   issue(redirect: unknown, callbackUrl = ''): { state: string; redirect: string | null } {
-    this.gc();
+    const now = this.now();
+    this.gcIfDue(now);
+    while (this.states.size >= this.maxEntries) {
+      const oldest = this.states.keys().next().value as string | undefined;
+      if (!oldest) break;
+      this.states.delete(oldest);
+    }
     const state = randomBytes(32).toString('base64url');
     const safeRedirect = redirect === undefined || redirect === null || redirect === ''
       ? null
       : cleanInternalRedirect(redirect);
-    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: Date.now() });
+    this.states.set(state, { redirect: safeRedirect, callbackUrl, createdAt: now });
     return { state, redirect: safeRedirect };
   }
 
   consume(state: unknown): { redirect: string | null; callbackUrl: string } | null {
-    this.gc();
     if (typeof state !== 'string') return null;
+    const now = this.now();
+    this.gcIfDue(now);
     const entry = this.states.get(state);
     if (!entry) return null;
     this.states.delete(state);
+    if (now - entry.createdAt > this.ttlMs) return null;
     return { redirect: entry.redirect, callbackUrl: entry.callbackUrl };
   }
 
-  private gc(): void {
-    const now = Date.now();
+  private gcIfDue(now: number): void {
+    if (now < this.nextGcAt) return;
+    this.nextGcAt = now + this.gcIntervalMs;
     for (const [state, entry] of this.states) {
-      if (now - entry.createdAt > STATE_TTL_MS) this.states.delete(state);
+      if (now - entry.createdAt > this.ttlMs) this.states.delete(state);
     }
   }
 }
