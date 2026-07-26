@@ -14,9 +14,25 @@ export function resolveGatewayConsoleHref(location: GatewayLocation = window.loc
 }
 
 /** 只把固定格式的一次性 code 放进受控 Gateway 消费地址的 fragment。 */
-export function resolveLlmGatewaySsoHref(code: unknown, location: GatewayLocation = window.location): string | null {
+function normalizeGatewayReturnTo(returnTo: unknown): string | null {
+  if (returnTo == null || returnTo === '') return null;
+  if (typeof returnTo !== 'string' || returnTo.length > 512) return null;
+  if (!returnTo.startsWith('/') || returnTo.startsWith('//') || [...returnTo].some(char => {
+    const code = char.charCodeAt(0);
+    return code <= 31 || code === 127;
+  })) return null;
+  return returnTo;
+}
+
+export function resolveLlmGatewaySsoHref(
+  code: unknown,
+  location: GatewayLocation = window.location,
+  returnTo?: string,
+): string | null {
   if (typeof code !== 'string' || !MAP_SSO_CODE_PATTERN.test(code)) return null;
   const gatewayBase = resolveGatewayConsoleHref(location);
   if (!gatewayBase) return null;
-  return `${gatewayBase}auth/map#code=${code}`;
+  const safeReturnTo = normalizeGatewayReturnTo(returnTo);
+  const query = safeReturnTo ? `?returnTo=${encodeURIComponent(safeReturnTo)}` : '';
+  return `${gatewayBase}auth/map${query}#code=${code}`;
 }

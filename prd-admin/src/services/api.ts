@@ -1317,6 +1317,8 @@ export const api = {
       transcribeTranscript: (runId: string) => `/api/document-store/agent-runs/${runId}/transcript`,
       // 一键生成双链（标题精确匹配，改写正文为 [[标题]]）
       autoLink: (storeId: string) => `/api/document-store/stores/${storeId}/auto-link`,
+      tutorialLinkGraph: (storeId: string) => `/api/document-store/stores/${storeId}/tutorial-link-graph`,
+      tutorialLinkGraphResolve: () => '/api/document-store/tutorial-link-graphs/resolve',
     },
     entries: {
       list: (storeId: string) => `/api/document-store/stores/${storeId}/entries`,

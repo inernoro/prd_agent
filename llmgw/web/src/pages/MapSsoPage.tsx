@@ -13,10 +13,21 @@ function takeMapSsoCode(): string | null {
   return code && MAP_SSO_CODE_PATTERN.test(code) ? code : null;
 }
 
+export function takeSafeMapReturnTo(search: string): string {
+  const value = new URLSearchParams(search).get('returnTo');
+  const hasControlCharacter = [...(value ?? '')].some(char => {
+    const code = char.charCodeAt(0);
+    return code <= 31 || code === 127;
+  });
+  if (!value || value.length > 512 || !value.startsWith('/') || value.startsWith('//') || hasControlCharacter) return '/';
+  return value;
+}
+
 export function MapSsoPage() {
   const { loginWithMapCode } = useAuth();
   const navigate = useNavigate();
   const [code] = useState(takeMapSsoCode);
+  const [returnTo] = useState(() => takeSafeMapReturnTo(window.location.search));
   const [error, setError] = useState<string | null>(null);
 
   useEffect(() => {
@@ -29,13 +40,13 @@ export function MapSsoPage() {
     void loginWithMapCode(code).then((result) => {
       if (!active) return;
       if (result.success) {
-        navigate('/', { replace: true });
+        navigate(returnTo, { replace: true });
         return;
       }
       setError('安全登录未完成。一次性链接可能已使用或已过期，请从 MAP 重新打开。');
     });
     return () => { active = false; };
-  }, [code, loginWithMapCode, navigate]);
+  }, [code, loginWithMapCode, navigate, returnTo]);
 
   return (
     <main className="lg-map-sso-page">

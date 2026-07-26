@@ -4,7 +4,7 @@ import {
   Check, ExternalLink, GitCompare, KeyRound, LayoutDashboard, LogOut, Menu, Moon, Search, Server, Settings,
   ShieldCheck, Shuffle, Sun, Tags, X,
 } from 'lucide-react';
-import { NavLink, Outlet, useNavigate } from 'react-router-dom';
+import { NavLink, Outlet, useLocation, useNavigate } from 'react-router-dom';
 import { getAvailableTenants, setSession, switchTenant } from '@/lib/api';
 import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
@@ -50,6 +50,7 @@ const NAV_GROUPS: NavGroup[] = [
 export function ConsoleLayout() {
   const { user, tenant, logout } = useAuth();
   const navigate = useNavigate();
+  const location = useLocation();
   const [mobileOpen, setMobileOpen] = useState(false);
   const [mobileSearchOpen, setMobileSearchOpen] = useState(false);
   const [search, setSearch] = useState('');
@@ -62,6 +63,14 @@ export function ConsoleLayout() {
     items: group.items.filter((item) => canAccessPage(tenant, item.page)),
   })).filter((group) => group.items.length > 0);
   const canSearchRequests = canUseCapability(tenant?.role, 'logsRead');
+  const canOpenMapTutorials = tenant?.role === 'owner' || tenant?.role === 'admin';
+  const mapTutorialHref = (() => {
+    const base = new URL(resolveMapHomeHref(), window.location.href);
+    base.pathname = `${base.pathname.replace(/\/$/, '')}/document-store`;
+    base.searchParams.set('tutorialRoute', location.pathname);
+    base.searchParams.set('tutorialLinks', '1');
+    return base.toString();
+  })();
 
   useEffect(() => {
     getAvailableTenants().then((res) => {
@@ -158,6 +167,7 @@ export function ConsoleLayout() {
               {mobileSearchOpen ? <X size={18} /> : <Search size={18} />}
             </button>
           ) : null}
+          {canOpenMapTutorials ? <a className="lg-header-link" href={mapTutorialHref}><BookOpen size={15} /><span>相关教程</span><ExternalLink size={12} /></a> : null}
           <NavLink className="lg-header-link" to="/learn"><BookOpen size={15} /><span>文档</span></NavLink>
           <details className="lg-user-menu">
             <summary aria-label="打开用户菜单"><span>{who.slice(0, 1).toUpperCase()}</span><strong>{who}</strong><ChevronDown size={13} /></summary>
