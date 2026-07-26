@@ -1,12 +1,12 @@
 # 数据字典（数据库 / 缓存 Key / 所有持久化清单） · 规则
 
-> **版本**：v1.0 | **日期**：2026-07-17 | **状态**：已落地
+> **版本**：v1.1 | **日期**：2026-07-23 | **状态**：已落地
 
 本文件用于**集中说明本项目所有“持久化/可恢复状态”**（服务端数据库、缓存 Key、对象存储、客户端本地存储、桌面端落盘文件等），作为研发与运维的统一对照表。
 
 维护规则（强制）：
 - 新增/变更任何持久化点（集合/索引/TTL、缓存 key、COS key、localStorage/IndexedDB、落盘文件路径/格式）时，**必须同步更新本文件**。
-- 以代码为准：后端集合/索引/TTL 以 `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` 为权威来源；缓存 key 以 `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` 为权威来源；COS key 以 `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` 为权威来源。
+- 以代码为准：后端集合以 `prd-api/src/PrdAgent.Infrastructure/Database/MongoDbContext.cs` 和实际 `GetCollection` 调用为权威来源，索引/TTL 以 `scripts/mongodb-indexes.js` 可执行 DBA 清单为权威来源；缓存 key 以 `prd-api/src/PrdAgent.Core/Interfaces/ICacheManager.cs` 为权威来源；COS key 以 `prd-api/src/PrdAgent.Infrastructure/Services/AssetStorage/TencentCosStorage.cs` 为权威来源。
 
 
 ## MongoDB（长期存储）
@@ -37,6 +37,7 @@
 | `llmplatforms` | `LLMPlatform` | LLM 平台（OpenAI/Anthropic/...） | `name` 唯一 |
 | `llmmodels` | `LLMModel` | LLM 模型配置 | `modelName`；`platformId`；`priority` |
 | `appsettings` | `AppSettings` | 全局设置（固定 `Id="global"`） | （未显式创建额外索引） |
+| `console_sso_tickets` | `BsonDocument` | 外部控制台 SSO 的 60 秒一次性票据。只保存授权码 SHA-256 哈希、客户端、回跳地址、管理员身份快照和 issued/consumed 状态，不保存授权码明文 | `codeHash` 唯一；`expiresAt` TTL（`expireAfterSeconds: 0`）；消费使用 `issued → consumed` 原子条件更新 |
 | `promptstages` | `PromptSettings` / `BsonDocument` | 提示词配置（集合名为历史兼容保留 `promptstages`） | （未显式创建额外索引） |
 | `systemprompts` | `SystemPromptSettings` | PRD 问答系统提示词（可按角色覆盖） | （未显式创建额外索引） |
 | `llmrequestlogs` | `LlmRequestLog` | LLM 请求日志（调试/审计/统计） | `startedAt desc`；`requestId`；`groupId`；`sessionId`；`(provider, model)`；**TTL 7 天**（`endedAt`） |

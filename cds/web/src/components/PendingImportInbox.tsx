@@ -130,10 +130,10 @@ export function PendingImportInbox(): JSX.Element | null {
 
   return (
     <>
-      {/* flap 熔断告警 — 右下角持久 toast,直到用户点 X */}
+      {/* flap 熔断告警 — 由 AppShell 右下角消息栈定位,直到用户点 X */}
       {showFlap && flap ? (
         <div
-          className="fixed bottom-20 right-4 z-50 max-w-md cds-surface-elevated cds-hairline rounded-lg shadow-lg p-4"
+          className="w-full cds-surface-elevated cds-hairline rounded-lg shadow-lg p-4"
           role="alert"
         >
           <div className="flex items-start gap-3">
@@ -157,14 +157,14 @@ export function PendingImportInbox(): JSX.Element | null {
         </div>
       ) : null}
 
-      {/* 右下角徽章 — 只在 count > 0 时显示 */}
+      {/* Agent 导入徽章 — 只在 count > 0 时显示 */}
       {count > 0 ? (
         <button
           type="button"
           onClick={() => setOpen(true)}
-          className="fixed bottom-4 right-4 z-40 inline-flex items-center gap-2 rounded-full
+          className="ml-auto inline-flex min-h-11 items-center gap-2 rounded-full
                      cds-surface-elevated cds-hairline shadow-lg px-4 py-2 text-sm font-medium
-                     text-foreground hover:scale-105 transition-transform"
+                     text-foreground transition-colors hover:bg-[hsl(var(--surface-sunken))]"
           aria-label={`${count} 个待审批的 Agent 导入`}
         >
           <Inbox className="h-4 w-4" />
@@ -178,7 +178,10 @@ export function PendingImportInbox(): JSX.Element | null {
 
       {/* 审批抽屉(Dialog) */}
       <Dialog open={open} onOpenChange={setOpen}>
-        <DialogContent className="max-w-2xl">
+        <DialogContent
+          className="max-w-2xl overflow-hidden"
+          style={{ maxHeight: 'min(760px, calc(100dvh - 32px))' }}
+        >
           <DialogHeader>
             <DialogTitle className="flex items-center gap-2">
               <Bot className="h-5 w-5" />

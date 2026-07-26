@@ -1,12 +1,12 @@
 ---
 name: cds
-version: 0.11.0
+version: 0.12.0
 description: CDS (Cloud Dev Space) core skill — provides cross-Agent, project-scoped onboarding without copying keys or modifying shell profiles, hosts the canonical cdscli Python CLI, manages CDS authentication and project access, owns CDS service self-update, exposes managed deployment runs and versions, requires the companion preview-url skill to read actual preview URLs from CDS, and dispatches scanning or deployment work to the matching CDS skill. Activates for CDS onboarding, connect, authentication, deployment status, versions, rollback, self-update, preview URLs, or the bare word CDS when intent is unclear.
 ---
 
 # CDS — 核心技能：安全接入 / cdscli / 托管交付 / self-update / 分诊器
 
-> **版本**：v0.11.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
+> **版本**：v0.12.0 | **状态**：已落地 | **触发**：`/cds`、`/cds-auth`、"接入 CDS"、"CDS 授权"、"部署记录"、"版本回滚"、"cds 自更新"、"预览地址"
 
 > **冷热分离**：
 > - 接入新项目、生成 compose、上传 YAML → **`cds-project-scan`**（冷路径）
@@ -49,6 +49,7 @@ $CLI connect --host https://cds.example --project <id> --agent Codex
 $CLI connect --host https://cds.example --new-project --agent Cursor
 $CLI init                                # 交互式安全向导
 $CLI init --legacy-env                   # 仅兼容旧用户：写 ~/.cdsrc
+$CLI auth inspect --strict               # 脱敏检查凭据来源；冲突时停止
 $CLI auth check                          # 校验当前项目凭据
 
 # 托管交付真相：运行过程与可复用版本
@@ -60,7 +61,7 @@ $CLI deployment-version deploy <versionId>
 
 # Env 管理
 $CLI env get --scope _global
-$CLI env get --scope <projectId>
+$CLI env get --scope <projectId> --metadata-only  # Agent 默认只读键名和元数据
 $CLI env set DB_PASS=s3cret --scope <projectId>
 
 # 构建配置：就绪超时(探活) / 部署模式 —— AI 用 key 直接设，不依赖 dashboard
@@ -91,6 +92,7 @@ $CLI schedule run <scheduledJobId>
 
 # CDS 服务自更新（仅改 cds/ 代码时）
 $CLI self branches                       # 看 CDS 自身能切到哪些分支
+$CLI self status                         # 看当前版本、提交和运行状态
 $CLI self update --branch <branch>       # 切 + pull + 重启 CDS 进程
 
 # 验收报告 / 视觉取证（CDS 自托管 HTML/Markdown，登录态门控，可按项目/文件夹归类）
@@ -104,6 +106,40 @@ $CLI report-folder list [--project <id>]
 ```
 
 完整命令族 → `$CLI --help`，分技能用法 → `cds-project-scan` / `cds-deploy-pipeline` 各自的 SKILL.md。
+
+## 完整技能包与版本协作
+
+CDS 对外技能包固定包含五个目录：
+
+- `cds`
+- `cds-project-scan`
+- `cds-deploy-pipeline`
+- `cds-release`
+- `preview-url`
+
+Agent 接入时先运行 `cdscli version`。只有五个技能都存在、manifest 可读且版本不是
+`stale` 时才静默复用。`cdscli update` 会统一备份并更新完整五技能包；不能只更新
+`skills/cds/` 后让其余技能继续漂移。
+
+仓库内 Web 任务使用能力注册表登记真实接口模块族、认证、风险、首选技能和 CLI 状态。
+任务卡只是面向用户的场景入口，不代表所有 REST 端点都能由 Agent 直接调用。
+
+## MCP 协作边界
+
+CDS 当前正式可用的 Agent 通道是“技能 + cdscli + REST”。尚未发布 CDS MCP Server，
+因此任何提示词不得声称已存在 MCP Tool。
+
+后续 MCP 必须消费同一能力注册表，并遵循：
+
+1. 第一阶段只提供认证摘要、能力发现、项目/分支状态、部署诊断、观测和预览地址等只读工具。
+2. 每个工具单独声明项目作用域、只读/写入/破坏性、是否幂等和是否需要人类批准。
+3. MCP 从当前仓库 `.cds/credentials.json` 读取凭据，密钥不进入 MCP 配置、参数或对话。
+4. 不提供 `call_any_api`、`run_any_cli`、`execute_shell` 等万能工具。
+5. Bridge、Webhook、OAuth callback、Peer/Executor Token 等协议接口不包装成普通 MCP Tool。
+6. 写操作只能在能力注册表有明确输入、验证、回滚和审批合同后逐项开放。
+
+在 MCP 落地前，CLI 未覆盖的能力只能按 `reference/api.md` 做受限的只读检查；不得编造
+CLI 命令，也不得因为 REST 接口存在就绕过 human-only、protocol-only 或 internal-only 边界。
 
 ## Agent 使用任务调度口令的标准流程
 

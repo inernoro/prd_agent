@@ -176,3 +176,53 @@ def test_project_create_switches_from_bootstrap_to_project_key(workspace, monkey
     assert saved["projectId"] == "proj-new"
     assert saved["projectKey"] == project_key
     assert "bootstrapKey" not in saved
+
+
+def test_auth_inspect_strict_accepts_identical_workspace_and_environment_credentials(workspace, monkeypatch):
+    secret = "cdsp_same-project-key"
+    cdscli._save_local_credentials(
+        host="https://cds.example",
+        project_id="proj-a",
+        project_key=secret,
+    )
+    monkeypatch.setenv("CDS_HOST", "cds.example")
+    monkeypatch.setenv("CDS_PROJECT_ID", "proj-a")
+    monkeypatch.setenv("CDS_PROJECT_KEY", secret)
+    monkeypatch.setattr(cdscli, "_EXPLICIT_CREDENTIAL_ENV", {
+        "CDS_HOST": "cds.example",
+        "CDS_PROJECT_ID": "proj-a",
+        "CDS_PROJECT_KEY": secret,
+        "AI_ACCESS_KEY": "",
+    })
+
+    code, output = run_command(["auth", "inspect", "--strict"])
+
+    assert code == 0, output
+    payload = json.loads(output.strip().split("\n")[-1])
+    assert payload["data"]["conflicts"] == []
+    assert secret not in output
+
+
+def test_auth_inspect_strict_rejects_different_workspace_and_environment_keys(workspace, monkeypatch):
+    cdscli._save_local_credentials(
+        host="https://cds.example",
+        project_id="proj-a",
+        project_key="cdsp_workspace-key",
+    )
+    monkeypatch.setenv("CDS_HOST", "https://cds.example")
+    monkeypatch.setenv("CDS_PROJECT_ID", "proj-a")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "cdsp_other-key")
+    monkeypatch.setattr(cdscli, "_EXPLICIT_CREDENTIAL_ENV", {
+        "CDS_HOST": "https://cds.example",
+        "CDS_PROJECT_ID": "proj-a",
+        "CDS_PROJECT_KEY": "cdsp_other-key",
+        "AI_ACCESS_KEY": "",
+    })
+
+    code, output = run_command(["auth", "inspect", "--strict"])
+
+    assert code == 2
+    payload = json.loads(output.strip().split("\n")[-1])
+    assert payload["credentialSummary"]["conflicts"] == ["projectKeySource"]
+    assert "cdsp_workspace-key" not in output
+    assert "cdsp_other-key" not in output

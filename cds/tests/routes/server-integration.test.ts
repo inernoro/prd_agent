@@ -1,11 +1,22 @@
-import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, beforeAll, afterAll, vi } from 'vitest';
 
 // 环境免疫:本套件的 createServer 会读 CDS_USERNAME / CDS_PASSWORD 决定是否开
 // basic auth。开发机/Agent 沙箱常为连接远端 CDS 配置这两个变量,导致所有
 // 未带凭据的请求 401、10 个用例假红(2026-07-21 排查:main 基线即红,曾被
 // 误判为分支回归)。套件级摘除 + 恢复;需要 auth 的用例(public-status)自行
 // 显式 set/restore,不受影响。
-const AUTH_ENV_KEYS = ['CDS_USERNAME', 'CDS_PASSWORD'] as const;
+const AUTH_ENV_KEYS = [
+  'CDS_AUTH_MODE',
+  'CDS_USERNAME',
+  'CDS_PASSWORD',
+  'CDS_GITHUB_CLIENT_ID',
+  'CDS_GITHUB_CLIENT_SECRET',
+  'CDS_SSO_ENABLED',
+  'CDS_SSO_AUTHORIZATION_URL',
+  'CDS_SSO_TOKEN_URL',
+  'CDS_SSO_CLIENT_ID',
+  'CDS_SSO_CLIENT_SECRET',
+] as const;
 const savedAuthEnv = new Map<string, string | undefined>();
 beforeAll(() => {
   for (const key of AUTH_ENV_KEYS) {
@@ -21,6 +32,7 @@ afterAll(() => {
   }
 });
 import http from 'node:http';
+import crypto from 'node:crypto';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -29,6 +41,7 @@ import { createServer, installSpaFallback } from '../../src/server.js';
 import { createClusterRouter } from '../../src/routes/cluster.js';
 import { createSchedulerRouter } from '../../src/scheduler/routes.js';
 import { StateService } from '../../src/services/state.js';
+import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
 import { ExecutorRegistry } from '../../src/scheduler/executor-registry.js';
 import { MockShellExecutor } from '../../src/services/shell-executor.js';
 import { WorktreeService } from '../../src/services/worktree.js';
@@ -110,6 +123,43 @@ async function request(
   });
 }
 
+async function requestJson(
+  server: http.Server,
+  method: string,
+  urlPath: string,
+  body: unknown,
+  headers: http.OutgoingHttpHeaders = {},
+): Promise<HttpResponse> {
+  return new Promise((resolve, reject) => {
+    const addr = server.address() as { port: number };
+    const payload = JSON.stringify(body);
+    const req = http.request({
+      hostname: '127.0.0.1',
+      port: addr.port,
+      path: urlPath,
+      method,
+      headers: {
+        Accept: 'application/json',
+        'Content-Type': 'application/json',
+        'Content-Length': String(Buffer.byteLength(payload)),
+        ...headers,
+      },
+    }, (res) => {
+      let raw = '';
+      res.on('data', (chunk: Buffer) => (raw += chunk.toString()));
+      res.on('end', () => resolve({
+        status: res.statusCode!,
+        contentType: (res.headers['content-type'] || '').toString(),
+        body: raw,
+        headers: res.headers,
+      }));
+    });
+    req.on('error', reject);
+    req.write(payload);
+    req.end();
+  });
+}
+
 async function startForwarderActiveServer(active: ActiveHttpRequestRecord[]): Promise<http.Server> {
   const forwarder = http.createServer((req, res) => {
     if ((req.url || '').startsWith('/__forwarder/active')) {
@@ -173,10 +223,15 @@ describe('Server route ordering (regression)', () => {
     });
   }
 
-  function buildRealServerWithEvents(events: ServerEventRecord[]): express.Express {
+  function buildRealServerWithEvents(
+    events: ServerEventRecord[],
+    setupState?: (stateService: StateService) => void,
+    authStore?: MemoryAuthStore,
+  ): express.Express {
     const stateFile = path.join(tmpDir, 'state.json');
     const stateService = new StateService(stateFile);
     stateService.load();
+    setupState?.(stateService);
     const serverEventLogStore: ServerEventLogSink = {
       record() {},
       async findRecent(filter = {}) {
@@ -215,6 +270,7 @@ describe('Server route ordering (regression)', () => {
       shell: new MockShellExecutor(),
       config: makeConfig({ repoRoot: tmpDir, worktreeBase: path.join(tmpDir, 'worktrees') }),
       serverEventLogStore,
+      authStore,
     });
   }
 
@@ -373,6 +429,12 @@ describe('Server route ordering (regression)', () => {
         loginMethods: {
           github: false,
           local: true,
+          sso: false,
+        },
+        sso: {
+          enabled: false,
+          providerId: 'ticket-sso',
+          label: '使用 SSO 登录',
         },
       });
 
@@ -423,6 +485,15 @@ describe('Server route ordering (regression)', () => {
         authProvider: 'local',
         isSystemOwner: true,
       });
+
+      const headerToken = cookie.slice('cds_token='.length);
+      const headerAuthedMe = await request(server, '/api/me', { 'X-CDS-Token': headerToken });
+      expect(headerAuthedMe.status).toBe(200);
+      expect(JSON.parse(headerAuthedMe.body).user).toMatchObject({
+        username: 'operator',
+        authProvider: 'local',
+        isSystemOwner: true,
+      });
     } finally {
       if (prevMode === undefined) delete process.env.CDS_AUTH_MODE;
       else process.env.CDS_AUTH_MODE = prevMode;
@@ -430,6 +501,198 @@ describe('Server route ordering (regression)', () => {
       else process.env.CDS_USERNAME = prevUser;
       if (prevPass === undefined) delete process.env.CDS_PASSWORD;
       else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
+  it('real createServer gates protected routes when SSO is the only login method', async () => {
+    try {
+      process.env.CDS_SSO_ENABLED = '1';
+      process.env.CDS_SSO_AUTHORIZATION_URL = 'https://map.example/api/console-sso/authorize';
+      process.env.CDS_SSO_TOKEN_URL = 'https://map.example/api/console-sso/token';
+      process.env.CDS_SSO_CLIENT_ID = 'cds-console';
+      process.env.CDS_SSO_CLIENT_SECRET = 'secret-value';
+
+      const app = buildRealServerWithEvents([]);
+      server = await startServer(app);
+
+      const publicStatus = await request(server, '/api/auth/public-status');
+      expect(publicStatus.status).toBe(200);
+      expect(JSON.parse(publicStatus.body)).toMatchObject({
+        mode: 'sso',
+        enabled: true,
+        loginMethods: {
+          github: false,
+          local: false,
+          sso: true,
+        },
+      });
+
+      const protectedApi = await request(server, '/api/server-events');
+      expect(protectedApi.status).toBe(401);
+      expect(JSON.parse(protectedApi.body).error).toBe('unauthorized');
+
+      const start = await request(server, '/api/auth/sso/start');
+      expect(start.status).toBe(302);
+      expect(String(start.headers.location)).toContain('https://map.example/api/console-sso/authorize');
+    } finally {
+      delete process.env.CDS_SSO_ENABLED;
+      delete process.env.CDS_SSO_AUTHORIZATION_URL;
+      delete process.env.CDS_SSO_TOKEN_URL;
+      delete process.env.CDS_SSO_CLIENT_ID;
+      delete process.env.CDS_SSO_CLIENT_SECRET;
+    }
+  });
+
+  it('does not expose SSO config to SSO sessions or project-scoped Agent keys', async () => {
+    const prevUser = process.env.CDS_USERNAME;
+    const prevPass = process.env.CDS_PASSWORD;
+    try {
+      process.env.CDS_USERNAME = 'operator';
+      process.env.CDS_PASSWORD = 'secret';
+      vi.stubGlobal('fetch', vi.fn(async () => new Response(JSON.stringify({
+        success: true,
+        data: {
+          subject: 'provider:user-1',
+          username: 'sso-user',
+          displayName: 'SSO User',
+        },
+      }), {
+        status: 200,
+        headers: { 'Content-Type': 'application/json' },
+      })));
+
+      const projectKey = 'cdsp_reviewconfig_review-key-secret';
+      const app = buildRealServerWithEvents([], (stateService) => {
+        stateService.addProject({
+          id: 'review-config-project',
+          slug: 'reviewconfig-project',
+          name: 'Review Config Project',
+          kind: 'git',
+          dockerNetwork: 'cds-proj-review-config',
+          legacyFlag: false,
+          createdAt: new Date().toISOString(),
+          updatedAt: new Date().toISOString(),
+        });
+        stateService.addAgentKey('review-config-project', {
+          id: 'review01',
+          label: 'review project key',
+          hash: crypto.createHash('sha256').update(projectKey).digest('hex'),
+          scope: 'rw',
+          createdAt: new Date().toISOString(),
+        });
+        stateService.setSsoConfig({
+          enabled: true,
+          providerId: 'ticket-sso',
+          label: '使用 SSO 登录',
+          authorizationUrl: 'https://provider.example/authorize',
+          tokenUrl: 'https://provider.example/token',
+          clientId: 'cds-console',
+          clientSecret: 'stored-secret',
+          defaultRedirect: '/project-list',
+        });
+      });
+      server = await startServer(app);
+
+      const start = await request(server, '/api/auth/sso/start');
+      const state = new URL(String(start.headers.location)).searchParams.get('state');
+      expect(state).toBeTruthy();
+      const exchange = await requestJson(server, 'POST', '/api/auth/sso/exchange', {
+        code: 'a'.repeat(43),
+        state,
+      });
+      expect(exchange.status).toBe(200);
+      const ssoCookie = (Array.isArray(exchange.headers['set-cookie'])
+        ? exchange.headers['set-cookie'][0]
+        : String(exchange.headers['set-cookie'] || '')).split(';')[0];
+
+      const deniedSsoRead = await request(server, '/api/auth/sso/config', { Cookie: ssoCookie });
+      expect(deniedSsoRead.status).toBe(403);
+      expect(deniedSsoRead.body).not.toContain('stored-secret');
+      expect(deniedSsoRead.body).not.toContain('provider.example/token');
+
+      const deniedAgentRead = await request(server, '/api/auth/sso/config', {
+        'X-AI-Access-Key': projectKey,
+      });
+      expect(deniedAgentRead.status).toBe(403);
+      expect(deniedAgentRead.body).not.toContain('cds-console');
+      expect(deniedAgentRead.body).not.toContain('provider.example/token');
+
+      const denied = await requestJson(server, 'PUT', '/api/auth/sso/config', {
+        enabled: false,
+        label: '不应保存',
+      }, { Cookie: ssoCookie });
+      expect(denied.status).toBe(403);
+      expect(JSON.parse(denied.body).error).toBe('human_owner_required');
+
+      const login = await requestJson(server, 'POST', '/api/login', {
+        username: 'operator',
+        password: 'secret',
+      });
+      expect(login.status).toBe(200);
+      const localCookie = (Array.isArray(login.headers['set-cookie'])
+        ? login.headers['set-cookie'][0]
+        : String(login.headers['set-cookie'] || '')).split(';')[0];
+      const allowedRead = await request(server, '/api/auth/sso/config', { Cookie: localCookie });
+      expect(allowedRead.status).toBe(200);
+      expect(JSON.parse(allowedRead.body)).toMatchObject({
+        clientId: 'cds-console',
+        hasClientSecret: true,
+      });
+      expect(allowedRead.body).not.toContain('stored-secret');
+      const allowed = await requestJson(server, 'PUT', '/api/auth/sso/config', {
+        enabled: false,
+        label: '本地所有者可保存',
+      }, { Cookie: localCookie });
+      expect(allowed.status).toBe(200);
+      expect(JSON.parse(allowed.body).label).toBe('本地所有者可保存');
+    } finally {
+      vi.unstubAllGlobals();
+      if (prevUser === undefined) delete process.env.CDS_USERNAME;
+      else process.env.CDS_USERNAME = prevUser;
+      if (prevPass === undefined) delete process.env.CDS_PASSWORD;
+      else process.env.CDS_PASSWORD = prevPass;
+    }
+  });
+
+  it('invalidates the persisted GitHub session when the unified SSO logout route is used', async () => {
+    try {
+      process.env.CDS_AUTH_MODE = 'github';
+      process.env.CDS_GITHUB_CLIENT_ID = 'test-client';
+      process.env.CDS_GITHUB_CLIENT_SECRET = 'test-secret';
+      const authStore = new MemoryAuthStore();
+      const user = await authStore.upsertUser({
+        githubId: 42,
+        githubLogin: 'logout-user',
+        email: null,
+        name: 'Logout User',
+        avatarUrl: null,
+        orgs: [],
+      });
+      const session = await authStore.createSession({
+        userId: user.id,
+        ttlMs: 60_000,
+        userAgent: 'integration-test',
+        ipAddress: '127.0.0.1',
+      });
+      const app = buildRealServerWithEvents([], undefined, authStore);
+      server = await startServer(app);
+
+      const response = await requestJson(server, 'POST', '/api/auth/sso/logout', {}, {
+        Cookie: `cds_gh_session=${session.token}; cds_token=legacy-basic-token`,
+      });
+
+      expect(response.status).toBe(200);
+      expect(await authStore.findSessionByToken(session.token)).toBeNull();
+      const cleared = response.headers['set-cookie'] as string[];
+      expect(cleared).toEqual(expect.arrayContaining([
+        expect.stringMatching(/^cds_sso_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_gh_session=.*Max-Age=0/),
+        expect.stringMatching(/^cds_token=.*Max-Age=0/),
+      ]));
+    } finally {
+      delete process.env.CDS_AUTH_MODE;
+      delete process.env.CDS_GITHUB_CLIENT_ID;
+      delete process.env.CDS_GITHUB_CLIENT_SECRET;
     }
   });
 

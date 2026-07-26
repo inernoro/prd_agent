@@ -414,7 +414,7 @@ export async function listKnowledgeBaseConnections(): Promise<KnowledgeBaseConne
 
 // ── Local users + activity (auth-local, 2026-06-20) ──
 
-export type CdsAuthProvider = 'github' | 'local';
+export type CdsAuthProvider = 'github' | 'local' | 'sso';
 
 export interface CdsPublicUser {
   id: string;
@@ -443,17 +443,52 @@ export interface CdsUserActivity {
 }
 
 export interface CdsAuthPublicStatus {
-  mode: 'disabled' | 'basic' | 'github';
+  mode: 'disabled' | 'basic' | 'github' | 'sso';
   enabled: boolean;
   loginMethods: {
     github: boolean;
     local: boolean;
+    sso: boolean;
+  };
+  sso?: {
+    enabled: boolean;
+    providerId: string;
+    label: string;
   };
 }
 
 /** Public auth capability probe for the login page. Does not expose current user details. */
 export async function fetchAuthPublicStatus(): Promise<CdsAuthPublicStatus> {
   return apiRequest<CdsAuthPublicStatus>('/api/auth/public-status');
+}
+
+export async function exchangeTicketSso(input: {
+  code: string;
+  state: string;
+}): Promise<{ success: boolean; redirect: string }> {
+  return apiRequest('/api/auth/sso/exchange', { method: 'POST', body: input });
+}
+
+export interface TicketSsoConfig {
+  enabled: boolean;
+  providerId: string;
+  label: string;
+  authorizationUrl: string;
+  tokenUrl: string;
+  clientId: string;
+  hasClientSecret: boolean;
+  managedByEnvironment: boolean;
+  defaultRedirect: string;
+}
+
+export async function fetchTicketSsoConfig(): Promise<TicketSsoConfig> {
+  return apiRequest('/api/auth/sso/config');
+}
+
+export async function updateTicketSsoConfig(input: Omit<TicketSsoConfig, 'hasClientSecret' | 'managedByEnvironment'> & {
+  clientSecret?: string;
+}): Promise<TicketSsoConfig> {
+  return apiRequest('/api/auth/sso/config', { method: 'PUT', body: input });
 }
 
 export interface CdsInstanceMode {

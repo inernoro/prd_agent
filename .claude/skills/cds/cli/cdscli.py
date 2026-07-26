@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.11.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.12.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -63,6 +63,10 @@ _GENERIC_WORKSPACE_SLUGS = {
 _DNS_LABEL_MAX_LENGTH = 63
 _PREVIEW_SLUG_HASH_LENGTH = 8
 _LOCAL_CREDENTIALS_RELATIVE_PATH = os.path.join(".cds", "credentials.json")
+_EXPLICIT_CREDENTIAL_ENV = {
+    key: os.environ.get(key, "").strip()
+    for key in ("CDS_HOST", "CDS_PROJECT_ID", "CDS_PROJECT_KEY", "AI_ACCESS_KEY")
+}
 
 
 def _workspace_root(start: str | None = None) -> str:
@@ -504,6 +508,83 @@ def cmd_auth_check(args: argparse.Namespace) -> None:
         ok({"method": which, "status": status, "configKeys": list(body.keys())[:5] if isinstance(body, dict) else None},
            note=f"认证通过 via {which}")
     die(f"认证失败: {status} {body}", code=2)
+
+
+def cmd_auth_inspect(args: argparse.Namespace) -> None:
+    """只输出凭据来源、目标和作用域摘要，永不输出密钥。"""
+    local = _load_local_credentials()
+    local_host = str(local.get("host") or "").strip()
+    local_project = str(local.get("projectId") or "").strip()
+    explicit_host = _EXPLICIT_CREDENTIAL_ENV["CDS_HOST"]
+    explicit_project = _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_ID"]
+    effective_host = os.environ.get("CDS_HOST", "").strip()
+    effective_project = os.environ.get("CDS_PROJECT_ID", "").strip()
+    effective_key = os.environ.get("CDS_PROJECT_KEY", "").strip() or os.environ.get("AI_ACCESS_KEY", "").strip()
+    key_kind = (
+        "project"
+        if effective_key.startswith("cdsp_")
+        else "global"
+        if effective_key.startswith("cdsg_")
+        else "bootstrap"
+        if effective_key
+        else "none"
+    )
+    conflicts: list[str] = []
+    def comparable_host(value: str) -> str:
+        candidate = value.strip().rstrip("/")
+        if not candidate:
+            return ""
+        if not candidate.startswith(("http://", "https://")):
+            is_local = candidate.startswith((
+                "localhost", "127.", "0.0.0.0", "[::1]", "192.168.", "10.", "172.",
+            ))
+            candidate = ("http://" if is_local else "https://") + candidate
+        return candidate.lower()
+
+    if explicit_host and local_host and comparable_host(explicit_host) != comparable_host(local_host):
+        conflicts.append("host")
+    if explicit_project and local_project and explicit_project != local_project:
+        conflicts.append("project")
+    explicit_project_key = _EXPLICIT_CREDENTIAL_ENV["CDS_PROJECT_KEY"]
+    explicit_access_key = _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+    local_project_key = str(local.get("projectKey") or "").strip()
+    local_bootstrap_key = str(local.get("bootstrapKey") or "").strip()
+    if (
+        explicit_project_key
+        and local_project_key
+        and not secrets.compare_digest(explicit_project_key, local_project_key)
+    ):
+        conflicts.append("projectKeySource")
+    local_effective_key = local_project_key or local_bootstrap_key
+    if (
+        not explicit_project_key
+        and explicit_access_key
+        and local_effective_key
+        and not secrets.compare_digest(explicit_access_key, local_effective_key)
+    ):
+        conflicts.append("accessKeySource")
+    source = "explicit-env" if any(_EXPLICIT_CREDENTIAL_ENV.values()) else "workspace" if local else "none"
+    summary = {
+        "source": source,
+        "host": effective_host or None,
+        "projectId": effective_project or None,
+        "keyKind": key_kind,
+        "workspaceCredentials": {
+            "present": bool(local),
+            "host": local_host or None,
+            "projectId": local_project or None,
+            "hasProjectKey": bool(local.get("projectKey")),
+            "hasBootstrapKey": bool(local.get("bootstrapKey")),
+        },
+        "conflicts": conflicts,
+    }
+    if conflicts and getattr(args, "strict", False):
+        die(
+            f"凭据来源冲突: {', '.join(conflicts)}。请先明确当前仓库要操作的 CDS 主机和项目。",
+            code=2,
+            extra={"credentialSummary": summary},
+        )
+    ok(summary, note="凭据摘要已脱敏" + (f"，发现来源冲突: {', '.join(conflicts)}" if conflicts else ""))
 
 
 _PROJECT_SENSITIVE_FIELDS = (
@@ -1387,6 +1468,92 @@ def _project_slug_hints(repo_root: str) -> list[str]:
     return unique((directory_slug or origin_slug,))
 
 
+def _git_changed_paths_since_default_branch(repo_root: str) -> list[str]:
+    """读取当前分支相对默认分支的改动路径，不调用 shell、不猜远端地址。"""
+    for default_ref in ("origin/main", "main", "origin/master", "master"):
+        try:
+            merge_base = subprocess.check_output(
+                ["git", "merge-base", "HEAD", default_ref],
+                cwd=repo_root, text=True, stderr=subprocess.DEVNULL,
+            ).strip()
+            if not merge_base:
+                continue
+            raw = subprocess.check_output(
+                ["git", "diff", "--name-only", f"{merge_base}..HEAD"],
+                cwd=repo_root, text=True, stderr=subprocess.DEVNULL,
+            )
+            return [
+                path.strip().replace("\\", "/").lstrip("/")
+                for path in raw.splitlines()
+                if path.strip()
+            ]
+        except (subprocess.CalledProcessError, OSError):
+            continue
+    return []
+
+
+def _cds_self_project_slug_hint(repo_root: str) -> str:
+    """CDS 自托管仓库的分支按改动范围选择独立的 ``cds-self`` 项目。
+
+    同一个 GitHub 仓库可以同时登记业务项目和 CDS Self 项目。仅靠仓库目录名
+    会稳定命中业务项目（例如 ``prd-agent``），导致 Agent 给出一条能打开、
+    但内容属于另一个项目的预览地址。这里以 self-host compose 为显式标记，
+    并且只在有效代码改动全部位于 ``cds/**`` 时启用；混合改动继续走常规项目，
+    避免把业务发布误路由到 CDS Self。
+    """
+    marker = os.path.join(repo_root, "cds", "cds-compose.selfhost.yml")
+    if not os.path.isfile(marker):
+        return ""
+
+    changed_paths = _git_changed_paths_since_default_branch(repo_root)
+    auxiliary_prefixes = (
+        "changelogs/",
+        "doc/",
+        ".agents/",
+        ".claude/",
+        ".codex/",
+        ".Codex/",
+    )
+    effective_paths = [
+        path for path in changed_paths
+        if path not in {"AGENTS.md"}
+        and not path.startswith(auxiliary_prefixes)
+    ]
+    if not effective_paths or not all(
+        path == "cds" or path.startswith("cds/")
+        for path in effective_paths
+    ):
+        return ""
+
+    try:
+        with open(marker, "r", encoding="utf-8") as file:
+            marker_text = file.read()
+    except OSError:
+        return ""
+    project_block = re.search(
+        r"(?ms)^x-cds-project:\s*\n(?P<body>(?:^[ \t]+.*\n?)*)",
+        marker_text,
+    )
+    if not project_block:
+        return ""
+    name_match = re.search(
+        r"(?m)^[ \t]+name:\s*[\"']?([^\"'\s#]+)",
+        project_block.group("body"),
+    )
+    return _slugify_for_preview(name_match.group(1)) if name_match else ""
+
+
+def _branch_lookup_project_slug_hints(repo_root: str) -> list[str]:
+    """分支查询身份：显式配置优先，其次 CDS Self 范围路由，最后常规项目。"""
+    explicit = os.environ.get("CDS_PROJECT_SLUG", "").strip()
+    if explicit:
+        return [_slugify_for_preview(explicit)]
+    self_host_slug = _cds_self_project_slug_hint(repo_root)
+    if self_host_slug:
+        return [self_host_slug]
+    return _project_slug_hints(repo_root)
+
+
 def _compute_preview_slug(branch: str, project_slug: str) -> str:
     """与 cds/src/services/preview-slug.ts:computePreviewSlug 完全一致（v3）。
 
@@ -1446,7 +1613,8 @@ def _has_cds_auth() -> bool:
                 or os.environ.get("AI_ACCESS_KEY", "").strip())
 
 
-def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
+def _call_safe(method: str, path: str, timeout: int = 10,
+               auth_key_override: str = "") -> Any:
     """像 _call(quiet=True) 但**网络错误也走 __error__ 包**而不是 _request.die()。
 
     背景：_request 在 URLError / TimeoutError 时调 die() —— die() 先 print
@@ -1459,10 +1627,13 @@ def _call_safe(method: str, path: str, timeout: int = 10) -> Any:
     收口为 `{"__error__": True, "status": N, "body": ...}` 包返回。
     """
     url = _cds_base() + path
+    auth_headers = _auth_headers()
+    if auth_key_override:
+        auth_headers["X-AI-Access-Key"] = auth_key_override
     headers = {
         "Accept": "application/json",
         "X-CdsCli-Version": VERSION,
-        **_auth_headers(),
+        **auth_headers,
     }
     req = urllib.request.Request(url, method=method, headers=headers)
     try:
@@ -1579,6 +1750,16 @@ def _die_if_ambiguous_project_matches(scoped: list, git_branch: str,
         })
 
 
+def _branch_identity_summaries(branches: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    """错误诊断只带项目身份，不把错误项目的预览地址误展示给调用方。"""
+    return [{
+        "id": branch.get("id"),
+        "projectId": branch.get("projectId"),
+        "projectSlug": branch.get("projectSlug"),
+        "branch": branch.get("branch"),
+    } for branch in branches]
+
+
 def _warn_quiet_call_error(body: Any, label: str) -> bool:
     """如果 `_call(..., quiet=True)` 返回了 __error__ 包，打 stderr 警告并返回 True。
     调用方决定是否继续 / 退化。"""
@@ -1644,7 +1825,13 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
         die("当前没有分支（detached HEAD？）— 先 git checkout 一个功能分支", code=1)
         return
 
-    project_slug_hints = _project_slug_hints(repo_root)
+    project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
+    self_host_project_hint = _cds_self_project_slug_hint(repo_root)
+    self_host_global_key = (
+        _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        if self_host_project_hint and _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        else ""
+    )
 
     # Step 1: 必须有 CDS 实际连接上下文。`main()` 已会自动读取
     # .cds/credentials.json，因此一键接入后不需要污染 shell 环境变量。
@@ -1658,7 +1845,15 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     # Step 2: 只读 CDS API。网络、鉴权、代理或 JSON 异常都是硬失败，
     # 不得转成一个“看起来合理”但未发布的 URL。
-    body = _call_safe("GET", _branches_path(), timeout=10)
+    if self_host_global_key:
+        body = _call_safe(
+            "GET",
+            "/api/branches",
+            timeout=10,
+            auth_key_override=self_host_global_key,
+        )
+    else:
+        body = _call_safe("GET", _branches_path(), timeout=10)
     if _warn_quiet_call_error(body, "调 /api/branches"):
         die("CDS API 无法返回真实预览地址，拒绝本地推算。"
             "请检查 CDS 连接、鉴权和服务状态后重试。",
@@ -1673,22 +1868,32 @@ def cmd_preview_url(args: argparse.Namespace) -> None:
 
     # Step 3: 项目身份过滤。项目凭据带 CDS_PROJECT_ID 时优先由服务端
     # `?project=` 做确定性过滤；全局维护凭据才需本地 hint 辅助匹配。
-    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip()) and not self_host_global_key
+    validate_scoped_project = bool(self_host_project_hint)
     branches_list = body.get("branches") or []
     scoped = _match_branches_for_project(
-        branches_list, branch, project_slug_hints, project_scoped)
+        branches_list,
+        branch,
+        project_slug_hints,
+        project_scoped and not validate_scoped_project,
+    )
     if not project_scoped:
         _die_if_ambiguous_project_matches(scoped, branch, project_slug_hints)
-    if not scoped and not project_scoped:
+    if not scoped and (not project_scoped or validate_scoped_project):
         raw_same_branch = [b for b in branches_list
                            if isinstance(b, dict) and b.get("branch") == branch]
         if raw_same_branch:
+            routing_hint = (
+                f"当前分支应路由到 CDS Self 项目 '{self_host_project_hint}'，"
+                f"但项目级凭据指向了其他项目。请从 CDS Self 项目重新快速接入。"
+                if validate_scoped_project
+                else "请用项目级快速接入重建 CDS_PROJECT_ID 绑定。"
+            )
             die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 "
                 f"'{branch}' 但都不属于本地项目 hint "
-                f"'{', '.join(project_slug_hints)}'。请用项目级快速接入"
-                f"重建 CDS_PROJECT_ID 绑定。",
+                f"'{', '.join(project_slug_hints)}'。{routing_hint}",
                 code=2, extra={
-                    "rawMatches": raw_same_branch,
+                    "rawMatches": _branch_identity_summaries(raw_same_branch),
                     "projectHints": project_slug_hints,
                 })
             return
@@ -1743,12 +1948,26 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     if not branch:
         die("当前没有分支（detached HEAD？）", code=1)
         return
-    project_slug_hints = _project_slug_hints(repo_root)
+    project_slug_hints = _branch_lookup_project_slug_hints(repo_root)
+    self_host_project_hint = _cds_self_project_slug_hint(repo_root)
+    self_host_global_key = (
+        _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        if self_host_project_hint and _EXPLICIT_CREDENTIAL_ENV["AI_ACCESS_KEY"]
+        else ""
+    )
 
     # 用 _call_safe 而不是 _call(quiet=True)：后者在 URLError / TimeoutError 时
     # _request.die() exit 1（违反 CLI 契约 4xx→2/5xx→3）。_call_safe 把 HTTP +
     # 网络错误统一收口为 __error__ 包（网络错误 status=0），下面按 status 路由 exit。
-    body = _call_safe("GET", _branches_path(), timeout=10)
+    if self_host_global_key:
+        body = _call_safe(
+            "GET",
+            "/api/branches",
+            timeout=10,
+            auth_key_override=self_host_global_key,
+        )
+    else:
+        body = _call_safe("GET", _branches_path(), timeout=10)
     # API 失败（401 / 5xx / 网络）必须明确暴露，不能被后面 "找不到分支" 兜底 die 遮蔽。
     # exit code 契约：4xx → 2（用户/认证错误），5xx + 网络错误 → 3（retriable）。
     if isinstance(body, dict) and body.get("__error__"):
@@ -1773,10 +1992,15 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
             f"无法解析 — 检查 CDS proxy 是否健康，或 CDS_HOST 是否正确",
             code=3, extra={"body": body if isinstance(body, str) else repr(body)})
         return
-    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip())
+    project_scoped = bool(os.environ.get("CDS_PROJECT_ID", "").strip()) and not self_host_global_key
+    validate_scoped_project = bool(self_host_project_hint)
     branches_list = body.get("branches") or []
     matches = _match_branches_for_project(
-        branches_list, branch, project_slug_hints, project_scoped)
+        branches_list,
+        branch,
+        project_slug_hints,
+        project_scoped and not validate_scoped_project,
+    )
     if not project_scoped:
         _die_if_ambiguous_project_matches(matches, branch, project_slug_hints)
     for b in matches:
@@ -1791,15 +2015,20 @@ def cmd_branch_id(args: argparse.Namespace) -> None:
     # 不能误导用户去 "先 /cds-deploy"——99% 是 repo 目录名 ≠ CDS 项目 slug，
     # 应该明确报错 + 提示设 CDS_PROJECT_ID（Bugbot Medium 抓出 cmd_branch_id
     # 漏了这个分支，会卡 bridge / tagging 流程）
-    if not project_scoped:
+    if not project_scoped or validate_scoped_project:
         raw_same_branch = [b for b in branches_list if b.get("branch") == branch]
         if raw_same_branch:
+            routing_hint = (
+                f"当前分支应路由到 CDS Self 项目 '{self_host_project_hint}'，"
+                f"请从该项目重新快速接入。"
+                if validate_scoped_project
+                else "可能是仓库目录名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
+                     "或检查 /api/projects 列表。"
+            )
             die(f"/api/branches 有 {len(raw_same_branch)} 条同名分支 '{branch}' "
-                f"但都不属于本地项目 hint '{', '.join(project_slug_hints)}'。可能是仓库目录"
-                f"名 ≠ CDS 项目 slug — 设 CDS_PROJECT_ID=<真实 projectId> 重试，"
-                f"或检查 /api/projects 列表。",
+                f"但都不属于本地项目 hint '{', '.join(project_slug_hints)}'。{routing_hint}",
                 code=2, extra={
-                    "rawMatches": raw_same_branch,
+                    "rawMatches": _branch_identity_summaries(raw_same_branch),
                     "projectHints": project_slug_hints,
                 })
             return
@@ -2244,6 +2473,25 @@ def cmd_env_get(args: argparse.Namespace) -> None:
     scope = args.scope or "_global"
     path = f"/api/env?scope={urllib.parse.quote(scope)}"
     body = _call("GET", path)
+    if getattr(args, "metadata_only", False) and isinstance(body, dict):
+        env = body.get("env")
+        metadata: dict[str, Any] = {
+            "scope": body.get("scope", scope),
+            "missingRequiredEnvKeys": body.get("missingRequiredEnvKeys", []),
+            "envMeta": body.get("envMeta", {}),
+        }
+        if isinstance(env, dict) and scope == "_all":
+            metadata["envKeysByScope"] = {
+                str(bucket): sorted(str(key) for key in values.keys())
+                for bucket, values in env.items()
+                if isinstance(values, dict)
+            }
+        elif isinstance(env, dict):
+            metadata["envKeys"] = sorted(str(key) for key in env.keys())
+        global_env = body.get("globalEnv")
+        if isinstance(global_env, dict):
+            metadata["globalEnvKeys"] = sorted(str(key) for key in global_env.keys())
+        ok(metadata, note="仅返回环境变量键名和元数据")
     ok(body)
 
 
@@ -2717,6 +2965,11 @@ def cmd_peer_node_revoke(args: argparse.Namespace) -> None:
 
 def cmd_self_branches(args: argparse.Namespace) -> None:
     body = _call("GET", "/api/self-branches", timeout=10)
+    ok(body)
+
+
+def cmd_self_status(args: argparse.Namespace) -> None:
+    body = _call("GET", "/api/self-status", timeout=20)
     ok(body)
 
 
@@ -4668,7 +4921,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             # 提示:init.sql 修改后必须重置 data volume,否则不会重新执行
             init_path = tpl.get("init_sql_path") or ""
             if init_path and any(init_path in str(v) for v in original_volumes):
-                lines.append(f"    # ⚠ init.sql 已挂到 {init_path}")
+                lines.append(f"    # [警告] init.sql 已挂到 {init_path}")
                 lines.append(f"    #   修改后必须重置 data volume(否则不会重新执行):")
                 lines.append(f"    #   docker volume rm <项目>_<volume-name> 后再 deploy")
         lines.append(f"    # 来源 docker-compose 的 {r['original_image']!r},已切换为 cdscli 推荐 image")
@@ -4741,7 +4994,7 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
         if wd:
             lines.append(f"    working_dir: {wd}")
 
-        # Phase 3:carry over volumes(★ 关键:相对路径 mount ./xxx:/app 是 CDS
+        # Phase 3: carry over volumes（关键：相对路径 mount ./xxx:/app 是 CDS
         # 识别"应用 service"的硬性要求 — compose-parser.ts 的 hasRelativeVolumeMount
         # 走这一项判定。漏掉的话 CDS 会把它当成 infra,完全跑不起来)
         original_volumes = svc.get("volumes") or []
@@ -4861,14 +5114,14 @@ def _yaml_from_compose_services(root: str, services: dict) -> "tuple[str, dict]"
             needs_wait = bool(relevant_targets)
             needs_migrate = bool(detected_orm and detected_orm.get("migrate_cmd"))
             if needs_wait or needs_migrate:
-                lines.append(f"    # ⚠ 该 service 未声明 command,使用镜像默认 CMD,cdscli 无法注入 wait-for / migration 前缀。")
+                lines.append(f"    # [警告] 该 service 未声明 command,使用镜像默认 CMD,cdscli 无法注入 wait-for / migration 前缀。")
                 if needs_wait:
                     target_list = ",".join(t[0] for t in relevant_targets)
-                    lines.append(f"    # ⚠ 检测到依赖 schemaful infra({target_list}):未 wait 启动可能 Connection refused。")
+                    lines.append(f"    # [警告] 检测到依赖 schemaful infra({target_list}):未 wait 启动可能 Connection refused。")
                 if needs_migrate:
-                    lines.append(f"    # ⚠ 检测到 ORM({detected_orm['label']})migration:{detected_orm['migrate_cmd']}")
-                    lines.append(f"    # ⚠ 不跑 migration 会启动后报 'table doesn\\'t exist'。")
-                lines.append(f"    # ⚠ 修复:在 docker-compose 显式写 command,cdscli 会自动包装。")
+                    lines.append(f"    # [警告] 检测到 ORM({detected_orm['label']})migration:{detected_orm['migrate_cmd']}")
+                    lines.append(f"    # [警告] 不跑 migration 会启动后报 'table doesn\\'t exist'。")
+                lines.append(f"    # [警告] 修复:在 docker-compose 显式写 command,cdscli 会自动包装。")
                 # stderr 同步告警,scan 输出可见
                 print(
                     f"[scan] WARN: service '{name}' 未声明 command,无法注入 "
@@ -7239,13 +7492,13 @@ def _version_compare(a: str, b: str) -> int:
 
 
 def cmd_update(args: argparse.Namespace) -> None:
-    """自升级：从 /api/export-skill 拉最新 tar.gz，原地替换本技能目录。
+    """自升级：从 /api/export-skill 拉最新 tar.gz，更新完整 CDS 技能包。
 
     步骤：
       1. 定位当前技能根（cli/cdscli.py 的父父目录）
       2. 下载 tar.gz 到临时目录
-      3. 整颗技能目录备份到当前项目 .cds/skill-backups（失败回滚用）
-      4. 解压 tar.gz，从里面的 skills/cds/ 同步到当前根
+      3. 五个 CDS 技能目录统一备份到当前项目 .cds/skill-backups
+      4. 校验包内五个技能齐全后同步到当前 Agent Skills 根
       5. 用户自定义的非 tracked 文件（如用户本地脚本）保留不动
 
     不动：项目凭据 / shell profile / 系统环境变量
@@ -7261,6 +7514,8 @@ def cmd_update(args: argparse.Namespace) -> None:
     if os.path.basename(skill_root) != "cds":
         die(f"cdscli.py 不在期望的 <skills>/cds/cli/ 位置（实际: {cli_path}）。"
             f"请用 Dashboard 的 (zip) 按钮重新下载完整包。", code=1)
+    skills_root = os.path.dirname(skill_root)
+    bundle_skills = ["cds", "cds-project-scan", "cds-deploy-pipeline", "cds-release", "preview-url"]
 
     # 1. 下载
     url = _cds_base() + "/api/export-skill"
@@ -7275,15 +7530,19 @@ def cmd_update(args: argparse.Namespace) -> None:
     if len(tar_bytes) < 100:
         die(f"下载内容过短（{len(tar_bytes)} bytes），疑似失败", code=3)
 
-    # 2. 备份当前技能目录
+    # 2. 备份当前完整技能包
     ts = time.strftime("%Y%m%d-%H%M%S")
     workspace_root = _workspace_root()
     backup_base = os.path.join(workspace_root, ".cds", "skill-backups")
     os.makedirs(backup_base, exist_ok=True)
     _exclude_local_path(workspace_root, "/.cds/skill-backups/")
-    bak_root = os.path.join(backup_base, f"cds-{ts}")
+    bak_root = os.path.join(backup_base, f"cds-bundle-{ts}")
     try:
-        shutil.copytree(skill_root, bak_root)
+        os.makedirs(bak_root, exist_ok=False)
+        for skill_name in bundle_skills:
+            current_dir = os.path.join(skills_root, skill_name)
+            if os.path.isdir(current_dir):
+                shutil.copytree(current_dir, os.path.join(bak_root, skill_name))
     except Exception as e:
         die(f"备份失败: {e}", code=3)
 
@@ -7299,47 +7558,48 @@ def cmd_update(args: argparse.Namespace) -> None:
                 safe_members.append(m)
             tar.extractall(tmp_dir, members=safe_members)
 
-        # 4. 找到解压内的通用 skills/cds/；兼容旧包的 .claude/skills/cds/。
-        src_cds_dir = None
+        # 4. 找到解压内的通用 skills 根并校验五个目录齐全。
+        src_skills_dir = None
         for root, dirs, _files in os.walk(tmp_dir):
-            if (
-                os.path.basename(root) == "cds"
-                and os.path.isfile(os.path.join(root, "SKILL.md"))
-                and os.path.isfile(os.path.join(root, "cli", "cdscli.py"))
-            ):
-                src_cds_dir = root
+            if os.path.basename(root) != "skills":
+                continue
+            if all(os.path.isfile(os.path.join(root, name, "SKILL.md")) for name in bundle_skills):
+                src_skills_dir = root
                 break
-        if not src_cds_dir:
-            die("tar.gz 内找不到 skills/cds/ 结构。升级失败（已保留备份）。",
+        if not src_skills_dir:
+            die("tar.gz 内找不到完整的五技能包。升级失败（已保留备份）。",
                 code=3, extra={"backupAt": bak_root})
 
-        # 5. 用内容同步：遍历 src 下所有路径，强制覆盖 dst
+        # 5. 用内容同步：五个技能统一更新，保留用户自定义的额外文件。
         replaced_files: list[str] = []
-        for root, dirs, files in os.walk(src_cds_dir):
-            rel = os.path.relpath(root, src_cds_dir)
-            target_root = os.path.join(skill_root, rel) if rel != "." else skill_root
-            os.makedirs(target_root, exist_ok=True)
-            for d in dirs:
-                os.makedirs(os.path.join(target_root, d), exist_ok=True)
-            for f in files:
-                src_f = os.path.join(root, f)
-                dst_f = os.path.join(target_root, f)
-                shutil.copy2(src_f, dst_f)
-                replaced_files.append(os.path.relpath(dst_f, skill_root))
+        for skill_name in bundle_skills:
+            src_skill_dir = os.path.join(src_skills_dir, skill_name)
+            dst_skill_dir = os.path.join(skills_root, skill_name)
+            os.makedirs(dst_skill_dir, exist_ok=True)
+            shutil.copytree(src_skill_dir, dst_skill_dir, dirs_exist_ok=True)
+            for root, _dirs, files in os.walk(src_skill_dir):
+                for filename in files:
+                    rel = os.path.relpath(os.path.join(root, filename), src_skill_dir)
+                    replaced_files.append(f"{skill_name}/{rel}")
     except Exception as e:
         # 出错了，回滚
         try:
-            shutil.rmtree(skill_root, ignore_errors=True)
-            shutil.move(bak_root, skill_root)
+            for skill_name in bundle_skills:
+                target_dir = os.path.join(skills_root, skill_name)
+                backup_dir = os.path.join(bak_root, skill_name)
+                shutil.rmtree(target_dir, ignore_errors=True)
+                if os.path.isdir(backup_dir):
+                    shutil.copytree(backup_dir, target_dir)
         except Exception as rollback_err:
-            die(f"升级失败且回滚也失败！请手动 `mv {bak_root} {skill_root}` "
+            die(f"升级失败且回滚也失败！请从 {bak_root} 恢复五个技能目录 "
                 f"（原错: {e}; 回滚错: {rollback_err}）", code=3)
         die(f"升级失败，已自动回滚: {e}", code=3)
     finally:
         shutil.rmtree(tmp_dir, ignore_errors=True)
 
     ok({
-        "skillRoot": skill_root,
+        "skillsRoot": skills_root,
+        "skillsUpdated": bundle_skills,
         "backupAt": bak_root,
         "filesReplaced": len(replaced_files),
         "sample": replaced_files[:8],
@@ -7789,6 +8049,9 @@ def _build_parser() -> argparse.ArgumentParser:
     sub.add_parser("health", help="CDS /healthz").set_defaults(func=cmd_health)
 
     auth = sub.add_parser("auth", help="认证").add_subparsers(dest="sub", required=True)
+    ai = auth.add_parser("inspect", help="脱敏检查凭据来源、主机、项目与作用域")
+    ai.add_argument("--strict", action="store_true", help="发现环境与仓库凭据冲突时返回非零状态")
+    ai.set_defaults(func=cmd_auth_inspect)
     auth.add_parser("check", help="验证当前凭据").set_defaults(func=cmd_auth_check)
 
     proj = sub.add_parser("project", help="项目").add_subparsers(dest="sub", required=True)
@@ -8063,7 +8326,10 @@ def _build_parser() -> argparse.ArgumentParser:
     pfr.set_defaults(func=cmd_profile_readiness)
 
     env = sub.add_parser("env", help="环境变量").add_subparsers(dest="sub", required=True)
-    eg = env.add_parser("get"); eg.add_argument("--scope"); eg.set_defaults(func=cmd_env_get)
+    eg = env.add_parser("get")
+    eg.add_argument("--scope")
+    eg.add_argument("--metadata-only", action="store_true", help="只返回键名和元数据，不输出变量值")
+    eg.set_defaults(func=cmd_env_get)
     es = env.add_parser(
         "set",
         help="设置 env 单键。支持 KEY=VALUE 位置参数,或 --key/--value 组合(value 含 = 时用后者)",
@@ -8075,6 +8341,7 @@ def _build_parser() -> argparse.ArgumentParser:
     es.set_defaults(func=cmd_env_set)
 
     slf = sub.add_parser("self", help="CDS 自身").add_subparsers(dest="sub", required=True)
+    slf.add_parser("status", help="读取 CDS Self 当前版本与运行状态").set_defaults(func=cmd_self_status)
     slf.add_parser("branches").set_defaults(func=cmd_self_branches)
     su = slf.add_parser("update"); su.add_argument("--branch")
     su.add_argument(

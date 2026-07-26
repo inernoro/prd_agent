@@ -20,7 +20,7 @@
  * Optional for backward compatibility: existing OAuth users persisted before
  * this field existed read as `undefined`, which callers treat as `github`.
  */
-export type CdsAuthProvider = 'github' | 'local';
+export type CdsAuthProvider = 'github' | 'local' | 'sso';
 
 /** A CDS user. Sourced from GitHub OAuth, or provisioned as a local account. */
 export interface CdsUser {
