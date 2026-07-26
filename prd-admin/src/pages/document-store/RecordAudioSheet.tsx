@@ -88,6 +88,15 @@ export function nextRecordingFinalizationLock(
   return finalizationLocked || mode === 'complete';
 }
 
+export function shouldForwardLivePcm(
+  liveCaptureEnabled: boolean,
+  recorderState: 'inactive' | 'recording' | 'paused',
+  finalizationLocked: boolean,
+): boolean {
+  return liveCaptureEnabled
+    && (recorderState === 'recording' || finalizationLocked);
+}
+
 type RecordingCompletionRetryStatus =
   | { success: true; data: { status: string } }
   | { success: false; error: { code: string } };
@@ -462,7 +471,13 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           analyserRef.current = analyser;
           try {
             stopLiveCaptureRef.current = await startLivePcmCapture(ctx, source, (pcm) => {
-              if (!liveCaptureEnabledRef.current || rec.state !== 'recording') return;
+              // stopLivePcmCapture 会同步冲刷不足 100ms 的尾帧。用户可能在暂停时
+              // 点击完成，此时 recorder.state 仍是 paused，但完成锁已取得，尾帧仍须发送。
+              if (!shouldForwardLivePcm(
+                liveCaptureEnabledRef.current,
+                rec.state,
+                finalizationLockedRef.current,
+              )) return;
               if (liveTranscriptionRef.current) {
                 liveTranscriptionRef.current.send(pcm);
                 return;

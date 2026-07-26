@@ -57,7 +57,10 @@ public class DocumentStoreController : ControllerBase
     private const long MaxUploadBytes = 20 * 1024 * 1024;
     /// <summary>录音实时上传的单个传输分片上限；前端默认切为 512 KB。</summary>
     private const long MaxRecordingChunkBytes = 1024 * 1024;
-    private static readonly TimeSpan RecordingCompletionStaleLease = TimeSpan.FromMinutes(2);
+    // 单次对象存储请求最长可达 120 秒且会重试三次。过期阈值必须覆盖完整副作用
+    // 周期；同时由 30 秒心跳续租，避免慢存储期间第二个 /complete 抢占并发覆写。
+    private static readonly TimeSpan RecordingCompletionStaleLease = TimeSpan.FromMinutes(15);
+    private static readonly TimeSpan RecordingCompletionLeaseHeartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RecordingOrphanChunkGrace = TimeSpan.FromDays(2);
     private const int RecordingOrphanChunkScanLimit = 500;
 
@@ -2050,6 +2053,13 @@ public class DocumentStoreController : ControllerBase
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
         }
 
+        await using var completionLeaseHeartbeat = new RecordingCompletionLeaseHeartbeat(
+            _db.DocumentRecordingUploadSessions,
+            sessionId,
+            userId,
+            completionLeaseId,
+            _logger);
+
         var chunks = await _db.DocumentRecordingUploadChunks
             .Find(c => c.SessionId == sessionId)
             .SortBy(c => c.Index)
@@ -2300,8 +2310,8 @@ public class DocumentStoreController : ControllerBase
                 cancellationToken: CancellationToken.None);
         }
 
-        // 该方法同时服务首次完成与崩溃恢复。按真实条目数校准，避免上次已经
-        // upsert entry、但尚未更新计数或会话时出现重复增减。
+        // 该方法同时服务首次完成与崩溃恢复。用当前条目数补足计数下限，避免上次已经
+        // upsert entry、但尚未更新计数或会话时出现少计；$max 会保全并发上传的更高值。
         if (entry.Id == CompletedRecordingEntryId(sessionId))
         {
             // 旧版本可能在完成条目写入后崩溃，又错误创建了 pending 条目。
@@ -2313,12 +2323,12 @@ public class DocumentStoreController : ControllerBase
         var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
             e => e.StoreId == store.Id,
             cancellationToken: CancellationToken.None);
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
-                .Set(s => s.DocumentCount, checked((int)documentCount))
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
+        await ApplyRecordingDocumentCountFloorAsync(
+            _db.DocumentStores,
+            store.Id,
+            checked((int)documentCount),
+            DateTime.UtcNow,
+            CancellationToken.None);
         var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId
                  && s.UserId == userId
@@ -2416,18 +2426,18 @@ public class DocumentStoreController : ControllerBase
             entry,
             new ReplaceOptions { IsUpsert = true },
             cancellationToken: CancellationToken.None);
-        // 若进程在 entry upsert 与计数更新之间退出，恢复时按真实条目数重新校准，
-        // 避免重复 $inc，也避免永远少计一次。
+        // 若进程在 entry upsert 与计数更新之间退出，恢复时以当前条目数补足下限，
+        // 避免重复 $inc，也不会用旧快照压低并发上传刚写入的更高计数。
         var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
             e => e.StoreId == store.Id,
             cancellationToken: CancellationToken.None);
         var normalizedDocumentCount = checked((int)documentCount);
-        await _db.DocumentStores.UpdateOneAsync(
-            s => s.Id == store.Id,
-            Builders<DocumentStore>.Update
-                .Set(s => s.DocumentCount, normalizedDocumentCount)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: CancellationToken.None);
+        await ApplyRecordingDocumentCountFloorAsync(
+            _db.DocumentStores,
+            store.Id,
+            normalizedDocumentCount,
+            DateTime.UtcNow,
+            CancellationToken.None);
         if (upsert.UpsertedId != null)
         {
             await LogStoreActivityAsync(
@@ -2483,6 +2493,23 @@ public class DocumentStoreController : ControllerBase
     internal static bool CanEnterRecordingCompletion(string status)
         => status is DocumentRecordingUploadStatus.Uploading
             or DocumentRecordingUploadStatus.Completing;
+
+    internal static async Task ApplyRecordingDocumentCountFloorAsync(
+        IMongoCollection<DocumentStore> stores,
+        string storeId,
+        int observedDocumentCount,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        // $max 只补足录音恢复造成的少计，不会把普通上传刚完成的并发 $inc
+        // 覆盖成更旧的 CountDocuments 快照。
+        await stores.UpdateOneAsync(
+            s => s.Id == storeId,
+            Builders<DocumentStore>.Update
+                .Max(s => s.DocumentCount, observedDocumentCount)
+                .Set(s => s.UpdatedAt, now),
+            cancellationToken: cancellationToken);
+    }
 
     internal static async Task<DocumentRecordingUploadSession?> ClaimRecordingCompletionAsync(
         IMongoCollection<DocumentRecordingUploadSession> sessions,
@@ -2588,6 +2615,101 @@ public class DocumentStoreController : ControllerBase
             .Where(id => !string.IsNullOrWhiteSpace(id) && !existing.Contains(id))
             .Distinct(StringComparer.Ordinal)
             .ToArray();
+    }
+
+    internal static async Task<bool> RefreshRecordingCompletionLeaseAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string sessionId,
+        string userId,
+        string completionLeaseId,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var refreshed = await sessions.UpdateOneAsync(
+            s => s.Id == sessionId
+                 && s.UserId == userId
+                 && s.Status == DocumentRecordingUploadStatus.Completing
+                 && s.CompletionLeaseId == completionLeaseId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.UpdatedAt, now),
+            cancellationToken: cancellationToken);
+        return refreshed.ModifiedCount == 1;
+    }
+
+    private sealed class RecordingCompletionLeaseHeartbeat : IAsyncDisposable
+    {
+        private readonly CancellationTokenSource _stop = new();
+        private readonly Task _run;
+
+        public RecordingCompletionLeaseHeartbeat(
+            IMongoCollection<DocumentRecordingUploadSession> sessions,
+            string sessionId,
+            string userId,
+            string completionLeaseId,
+            ILogger logger)
+        {
+            _run = RunAsync(
+                sessions,
+                sessionId,
+                userId,
+                completionLeaseId,
+                logger,
+                _stop.Token);
+        }
+
+        public async ValueTask DisposeAsync()
+        {
+            await _stop.CancelAsync();
+            try
+            {
+                await _run;
+            }
+            catch (OperationCanceledException) when (_stop.IsCancellationRequested)
+            {
+                // 正常结束请求时中断下一次心跳等待。
+            }
+            _stop.Dispose();
+        }
+
+        private static async Task RunAsync(
+            IMongoCollection<DocumentRecordingUploadSession> sessions,
+            string sessionId,
+            string userId,
+            string completionLeaseId,
+            ILogger logger,
+            CancellationToken cancellationToken)
+        {
+            while (!cancellationToken.IsCancellationRequested)
+            {
+                await Task.Delay(RecordingCompletionLeaseHeartbeatInterval, cancellationToken);
+                try
+                {
+                    if (!await RefreshRecordingCompletionLeaseAsync(
+                            sessions,
+                            sessionId,
+                            userId,
+                            completionLeaseId,
+                            DateTime.UtcNow,
+                            cancellationToken))
+                    {
+                        return;
+                    }
+                }
+                catch (OperationCanceledException) when (cancellationToken.IsCancellationRequested)
+                {
+                    return;
+                }
+                catch (Exception ex)
+                {
+                    // 15 分钟过期阈值覆盖短暂续租失败；保留循环继续自愈。
+                    logger.LogWarning(
+                        ex,
+                        "[document-store] 录音完成租约续期失败 session={SessionId} lease={LeaseId}",
+                        sessionId,
+                        completionLeaseId);
+                }
+            }
+        }
     }
 
     private async Task<(DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl)>
@@ -2699,16 +2821,16 @@ public class DocumentStoreController : ControllerBase
             entryCreated = upsert.UpsertedId != null;
 
             // 录音完成跨越附件、条目、计数、会话四个写入。恢复时不能再次 $inc，
-            // 也不能因上次在 entry upsert 后崩溃而永久少计，故以真实条目数校准。
+            // 也不能因上次在 entry upsert 后崩溃而永久少计，故以当前条目数补足下限。
             var documentCount = await _db.DocumentEntries.CountDocumentsAsync(
                 e => e.StoreId == store.Id,
                 cancellationToken: cancellationToken);
-            await _db.DocumentStores.UpdateOneAsync(
-                s => s.Id == store.Id,
-                Builders<DocumentStore>.Update
-                    .Set(s => s.DocumentCount, checked((int)documentCount))
-                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
-                cancellationToken: cancellationToken);
+            await ApplyRecordingDocumentCountFloorAsync(
+                _db.DocumentStores,
+                store.Id,
+                checked((int)documentCount),
+                DateTime.UtcNow,
+                cancellationToken);
         }
 
         _logger.LogInformation(

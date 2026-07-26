@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   canDiscardRecording,
   nextRecordingFinalizationLock,
+  shouldForwardLivePcm,
   shouldStopRecordingCompletionRetry,
 } from '../RecordAudioSheet';
 
@@ -20,6 +21,19 @@ describe('RecordAudioSheet finalization guard', () => {
     expect(lockedOnComplete).toBe(true);
     expect(canDiscardRecording(lockedOnComplete)).toBe(false);
     expect(nextRecordingFinalizationLock(lockedOnComplete, 'discard')).toBe(true);
+  });
+
+  it('forwards live PCM while actively recording', () => {
+    expect(shouldForwardLivePcm(true, 'recording', false)).toBe(true);
+  });
+
+  it('holds PCM while paused but flushes the tail after completion owns the terminal state', () => {
+    expect(shouldForwardLivePcm(true, 'paused', false)).toBe(false);
+    expect(shouldForwardLivePcm(true, 'paused', true)).toBe(true);
+  });
+
+  it('never forwards a tail after live capture has been disabled', () => {
+    expect(shouldForwardLivePcm(false, 'paused', true)).toBe(false);
   });
 
   it('stops completion retries when the server reports a removed session', () => {

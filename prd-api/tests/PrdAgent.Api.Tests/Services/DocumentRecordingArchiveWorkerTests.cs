@@ -328,6 +328,97 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task CompletionLeaseHeartbeat_ShouldBlockEarlyReclaimAndFenceExpiredOwner()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var t0 = DateTime.UtcNow;
+        var session = Session("completion-heartbeat", "main", DocumentRecordingArchiveStatus.None);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        var first = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "old-lease",
+            t0,
+            CancellationToken.None);
+        first.ShouldNotBeNull();
+
+        var refreshed = await DocumentStoreController.RefreshRecordingCompletionLeaseAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "old-lease",
+            t0.AddMinutes(10),
+            CancellationToken.None);
+        refreshed.ShouldBeTrue();
+
+        var blocked = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "new-lease",
+            t0.AddMinutes(20),
+            CancellationToken.None);
+        blocked.ShouldBeNull();
+
+        var reclaimed = await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "new-lease",
+            t0.AddMinutes(26),
+            CancellationToken.None);
+        reclaimed.ShouldNotBeNull();
+        reclaimed!.CompletionLeaseId.ShouldBe("new-lease");
+
+        var expiredOwnerRefresh = await DocumentStoreController.RefreshRecordingCompletionLeaseAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            session.UserId,
+            "old-lease",
+            t0.AddMinutes(27),
+            CancellationToken.None);
+        expiredOwnerRefresh.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task RecordingDocumentCountFloor_ShouldNeverOverwriteConcurrentHigherCount()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var store = new DocumentStore
+        {
+            Id = "recording-count-floor",
+            Name = "录音计数校准测试",
+            OwnerId = "user-1",
+            DocumentCount = 10,
+        };
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+
+        await DocumentStoreController.ApplyRecordingDocumentCountFloorAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            8,
+            DateTime.UtcNow,
+            CancellationToken.None);
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(10);
+
+        await DocumentStoreController.ApplyRecordingDocumentCountFloorAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            12,
+            DateTime.UtcNow,
+            CancellationToken.None);
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(12);
+    }
+
+    [Fact]
     public void RecoveryEntryIds_ShouldCheckCompletedBeforePending()
     {
         DocumentStoreController.RecordingRecoveryEntryIds("session-1")
