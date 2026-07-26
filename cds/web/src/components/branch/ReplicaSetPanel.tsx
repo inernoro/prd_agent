@@ -306,7 +306,12 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
 
   const { replicaSets, candidates, memberLimit } = state.data;
   const snapshots = state.data.snapshots ?? [];
-  const profileIds = Array.from(new Set([...Object.keys(replicaSets), ...Object.keys(candidates)])).sort();
+  // 全量服务清单（Codex 第十五轮 P1）：并上 services——没有可复用版本快照的服务
+  // 不在 candidates 里，若又没有既有复制集就会从画布消失，项目级「整组」会把它
+  // 静默排除在外（假整组：该服务流量仍打主实例）。全量列出，缺口交给整组门显式拦。
+  const profileIds = Array.from(new Set([
+    ...Object.keys(services ?? {}), ...Object.keys(replicaSets), ...Object.keys(candidates),
+  ])).sort();
   const graph: ServiceGraphView = state.data.graph ?? { nodes: [], edges: [], layers: [profileIds] };
   const branchIso = computeBranchIso(replicaSets);
   const totalMembers = Object.values(replicaSets).reduce((s, rs) => s + (rs.enabled ? rs.members.length : 0), 0);
@@ -1311,7 +1316,7 @@ const PROJ_W = 208;
 const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, entries, services, infra, replicaSets, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
   const probe = useProbe(branchId, previewUrl, onToast);
   const audit = useIsolationAudit(branchId, onToast);
@@ -1332,9 +1337,14 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     const adds = draftSteps.filter((d) => d.profileId === p && d.kind === 'add-replica').length;
     return membersOf(p).length + adds < memberLimit;
   });
+  // 整组必须覆盖项目全部服务（Codex 第十五轮 P1）：无可复用当前版本快照的服务
+  // 物化不了副本——缺一个服务的「整组」是假整组（该服务流量仍打主实例，项目级
+  // 实验失真）。缺口在 addGroup 里显式挡下并说明，不静默发起残组。
+  const missingSnap = profileIds.filter((p) => !(candidates[p] ?? []).some((r) => r.isCurrent));
+  const limitBlocked = profileIds.filter((p) => !addable.includes(p));
   // 幽灵整组节点 = 含新增副本步骤的草稿操作（一次手势一个节点，可单独撤销）
   const ghostGroupActions = draftActions.filter((a) => a.steps.some((s) => s.kind === 'add-replica'));
-  const canAddGroup = addable.length > 0;
+  const canAddGroup = profileIds.length > 0;
 
   const chipH = 26;
   const PROJ_H = 64 + profileIds.length * chipH + 12;
@@ -1425,8 +1435,16 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     if (steps.length) onAction(`整组副本 ${k + 1} 权重 → ${v}（${steps.length} 容器统一）`, steps);
   };
   const addGroup = (): void => {
-    onAction(`整组副本（${addable.length} 容器各加 1 个当前版本副本）`,
-      addable.map((p) => ({ kind: 'add-replica' as const, profileId: p })));
+    if (missingSnap.length > 0) {
+      onToast?.(`无法加整组副本：${missingSnap.join('、')} 没有可复用的当前版本快照（先完成一次成功部署）——整组副本必须覆盖项目全部服务，缺口会让项目级实验失真`);
+      return;
+    }
+    if (limitBlocked.length > 0) {
+      onToast?.(`无法加整组副本：${limitBlocked.join('、')} 已达副本上限 ${memberLimit}——整组副本必须全员齐增`);
+      return;
+    }
+    onAction(`整组副本（${profileIds.length} 容器各加 1 个当前版本副本）`,
+      profileIds.map((p) => ({ kind: 'add-replica' as const, profileId: p })));
     onToast?.('整组副本草稿已加入');
   };
 
@@ -1587,7 +1605,11 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
               <button key={`add-${i}`} type="button"
                 className="absolute flex flex-col items-center justify-center gap-1 rounded-xl border-2 border-dashed border-indigo-500/50 bg-indigo-500/10 text-xs font-semibold text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
                 style={{ left: n.x, top: n.y, width: GROUP_W, height: n.node.h }}
-                title={`加一组副本：${addable.length} 个容器各加一个当前版本副本（进变更清单）`}
+                title={missingSnap.length > 0
+                  ? `整组副本被阻断：${missingSnap.join('、')} 缺可复用当前版本快照（先完成一次成功部署）`
+                  : limitBlocked.length > 0
+                    ? `整组副本被阻断：${limitBlocked.join('、')} 已达副本上限`
+                    : `加一组副本：${profileIds.length} 个容器各加一个当前版本副本（进变更清单）`}
                 onClick={addGroup}>
                 <Plus className="h-5 w-5" />整组副本
               </button>

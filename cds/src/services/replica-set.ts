@@ -500,9 +500,14 @@ export class ReplicaSetService {
     ].map((mid) => /^guard-(\d+)$/.exec(mid)?.[1]).filter(Boolean).map(Number);
     const guardId = `guard-${used.length ? Math.max(...used) + 1 : 1}`;
     this.isolationInFlight.set(inflightKey, guardId);
+    // 克隆阶段失败要能还原（Codex 第十五轮 P2）：第 1 步只是 dump/restore，成员
+    // 容器一个都没动过——失败时把摘流的成员恢复原状态，而不是全员标 error 把
+    // 健康副本从分流里永久踢掉（rs.isolated 未落，计划回滚也救不了它们）。
+    const preIsolationStatus = new Map(members.map((m) => [m.id, m.status]));
     for (const m of members) {
       this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第1步 复制：正在克隆隔离库…' });
     }
+    let switchPhaseStarted = false;
     void (async () => {
       try {
         const cloned = await cloneReplicaDb({
@@ -530,6 +535,7 @@ export class ReplicaSetService {
         const liveRs = live.replicaSets[profileId];
         liveRs.isolated = { dbName: cloned.snapshot.dbName, snapshotId: cloned.snapshot.id, isolatedAt: this.now() };
         this.opts.state.save();
+        switchPhaseStarted = true;
         for (const m of members) {
           // 停止栅栏（同上）：停了的成员不拆容器不重物化，交还给停止/重启语义
           const liveM = this.findMember(branchId, profileId, m.id);
@@ -551,7 +557,18 @@ export class ReplicaSetService {
         this.opts.logger?.info?.(`[replica-set] 复制隔离完成 ${branchId}/${profileId} → ${cloned.snapshot.dbName}`);
       } catch (err) {
         for (const m of members) {
-          this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `复制隔离失败：${(err as Error).message}` });
+          const liveM = this.findMember(branchId, profileId, m.id);
+          if (!liveM || liveM.status === 'stopped') continue;
+          if (!switchPhaseStarted) {
+            // 第 1 步（克隆）失败：容器没动过，恢复原状态回到分流，只留失败说明
+            this.patchMember(branchId, profileId, m.id, {
+              status: preIsolationStatus.get(m.id) ?? 'error',
+              statusMessage: `复制隔离失败（克隆阶段，副本未动、仍连共享库）：${(err as Error).message}`,
+            });
+          } else {
+            // 第 2 步（切换）中途失败：部分容器可能已被拆/重建，如实标 error
+            this.patchMember(branchId, profileId, m.id, { status: 'error', statusMessage: `复制隔离失败：${(err as Error).message}` });
+          }
         }
       } finally {
         this.isolationInFlight.delete(inflightKey);

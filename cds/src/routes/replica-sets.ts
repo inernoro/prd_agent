@@ -15,6 +15,34 @@ import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
+/**
+ * promote 影响面计算（Codex 第十五轮 P1，纯函数供单测）：DeploymentVersion 是
+ * 整分支快照，找出「提升 profileId 到 version」时会被连带改动的其他 profile——
+ * 目标版本里缺失、当前版本里缺失、或镜像/命令/端口任一不同都算改动。
+ */
+export function promoteAffectedProfiles(
+  version: DeploymentVersion,
+  currentVersion: DeploymentVersion | undefined,
+  profileId: string,
+): string[] {
+  const otherIds = new Set([
+    ...version.profiles.map((p) => p.profileId),
+    ...(currentVersion?.profiles.map((p) => p.profileId) ?? []),
+  ].filter((pid) => pid !== profileId));
+  const affected: string[] = [];
+  for (const pid of otherIds) {
+    const target = version.profiles.find((p) => p.profileId === pid);
+    const current = currentVersion?.profiles.find((p) => p.profileId === pid);
+    if (!target || !current
+      || target.artifactImage !== current.artifactImage
+      || target.runtimeCommand !== current.runtimeCommand
+      || target.containerPort !== current.containerPort) {
+      affected.push(pid);
+    }
+  }
+  return affected.sort();
+}
+
 export interface ReplicaSetsRouterDeps {
   stateService: StateService;
   replicaSetService: ReplicaSetService;
@@ -360,6 +388,25 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       deps.deploymentVersionService.assertReusable(version);
     } catch (err) {
       res.status(409).json({ error: 'deployment_version_not_reusable', message: (err as Error).message });
+      return;
+    }
+    // 整分支回滚显式化（Codex 第十五轮 P1）：DeploymentVersion 是整分支快照，
+    // dispatchVersion 会把版本里**所有** profile 一起物化——多服务分支上提升一个
+    // 老版本成员，web/worker 等其他服务也会被拉回历史版本，版本里没有的服务
+    // 还会被移除。逐 profile 对照当前版本，其他服务会被改动时拒绝静默执行，
+    // 要求调用方显式确认（confirmWholeBranch: true）这是整分支回滚。
+    const currentVersion = branch.currentVersionId
+      ? deps.deploymentVersionService.get(branch.currentVersionId)
+      : undefined;
+    const affectedProfiles = promoteAffectedProfiles(version, currentVersion, req.params.profileId);
+    if (affectedProfiles.length > 0 && req.body?.confirmWholeBranch !== true) {
+      res.status(409).json({
+        error: 'promote_affects_other_profiles',
+        affected: affectedProfiles,
+        message: `提升该成员会把整条分支回滚到历史版本 ${version.id}，同时改动其他服务: ${affectedProfiles.join(', ')}`
+          + '——这是整分支回滚操作。确认要整分支回滚请在请求体携带 confirmWholeBranch: true 重试；'
+          + '只想切换单个服务请改用该服务的复制集权重（把该成员权重调到 100、主实例调到 0）。',
+      });
       return;
     }
     const result = await deps.dispatchVersion(version, 'rollback');
