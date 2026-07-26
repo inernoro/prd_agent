@@ -48,7 +48,12 @@ export type RecordAudioSheetProps = {
    */
   onComplete: (file: File, vaultSessionId: string, targetStoreId?: string) => void;
   /** 实时分片已在服务端合并为条目，直接进入转录，避免再次上传整段文件。 */
-  onUploaded: (entry: DocumentEntry, vaultSessionId: string, targetStoreId?: string) => void;
+  onUploaded: (
+    entry: DocumentEntry,
+    vaultSessionId: string,
+    targetStoreId?: string,
+    deferredTranscriptionRunId?: string | null,
+  ) => void;
   /** 「上传音频文件」兜底：打开既有的 audio file input */
   onPickFile: (targetStoreId?: string) => void;
 };
@@ -364,7 +369,12 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
               }
               if (completed?.success) {
-                onUploadedRef.current(completed.data.entry, vaultIdRef.current, targetStoreIdRef.current || storeId);
+                onUploadedRef.current(
+                  completed.data.entry,
+                  vaultIdRef.current,
+                  targetStoreIdRef.current || storeId,
+                  completed.data.deferredTranscriptionRunId,
+                );
                 onClose();
                 return;
               }

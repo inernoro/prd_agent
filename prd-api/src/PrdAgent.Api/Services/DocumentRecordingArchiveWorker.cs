@@ -107,11 +107,22 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 type: "doc",
                 fileName: session.FileName);
 
+            // 归档期间实时中继可能刚好完成。回读最新会话，避免用认领时的旧快照
+            // 误排一次完整文件 ASR，或漏写已经稳定完成的实时原文。
+            var latestSession = await db.DocumentRecordingUploadSessions
+                .Find(s => s.Id == session.Id)
+                .FirstOrDefaultAsync(CancellationToken.None)
+                ?? session;
+
             var attachmentId = entry.AttachmentId;
             if (string.IsNullOrWhiteSpace(attachmentId))
             {
+                // 固定 ID + upsert：Worker 若在“附件落库、条目回写”之间崩溃，
+                // stale lease 重跑时不会再制造一条孤儿附件。
+                attachmentId = $"recording-archive-{session.Id}";
                 var attachment = new Attachment
                 {
+                    AttachmentId = attachmentId,
                     UploaderId = session.UserId,
                     FileName = session.FileName,
                     MimeType = session.MimeType,
@@ -120,21 +131,74 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     Type = AttachmentType.Document,
                     UploadedAt = DateTime.UtcNow,
                 };
-                await db.Attachments.InsertOneAsync(
+                await db.Attachments.ReplaceOneAsync(
+                    a => a.AttachmentId == attachmentId,
                     attachment,
+                    new ReplaceOptions { IsUpsert = true },
                     cancellationToken: CancellationToken.None);
-                attachmentId = attachment.AttachmentId;
             }
 
+            var entryUpdate = Builders<DocumentEntry>.Update.Combine(
+                Builders<DocumentEntry>.Update.Set(e => e.AttachmentId, attachmentId),
+                Builders<DocumentEntry>.Update.Set(
+                    e => e.Metadata["audioArchiveStatus"],
+                    DocumentRecordingArchiveStatus.Completed),
+                Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
+            if (latestSession.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+                && !string.IsNullOrWhiteSpace(latestSession.LiveTranscript))
+            {
+                var transcriptUpdates = new List<UpdateDefinition<DocumentEntry>>
+                {
+                    entryUpdate,
+                    Builders<DocumentEntry>.Update.Set(
+                        e => e.Metadata["liveTranscriptStatus"],
+                        DocumentLiveTranscriptStatus.Completed),
+                    Builders<DocumentEntry>.Update.Set(
+                        e => e.Metadata["liveTranscript"],
+                        latestSession.LiveTranscript.Trim()),
+                };
+                if (!string.IsNullOrWhiteSpace(latestSession.LiveTranscriptProvider))
+                {
+                    transcriptUpdates.Add(Builders<DocumentEntry>.Update.Set(
+                        e => e.Metadata["liveTranscriptProvider"],
+                        latestSession.LiveTranscriptProvider));
+                }
+                if (!string.IsNullOrWhiteSpace(latestSession.LiveTranscriptModel))
+                {
+                    transcriptUpdates.Add(Builders<DocumentEntry>.Update.Set(
+                        e => e.Metadata["liveTranscriptModel"],
+                        latestSession.LiveTranscriptModel));
+                }
+                entryUpdate = Builders<DocumentEntry>.Update.Combine(transcriptUpdates);
+            }
             await db.DocumentEntries.UpdateOneAsync(
                 e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update.Combine(
-                    Builders<DocumentEntry>.Update.Set(e => e.AttachmentId, attachmentId),
-                    Builders<DocumentEntry>.Update.Set(
-                        e => e.Metadata["audioArchiveStatus"],
-                        DocumentRecordingArchiveStatus.Completed),
-                    Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow)),
+                entryUpdate,
                 cancellationToken: CancellationToken.None);
+
+            var instanceId = InstanceIdentity.Get(
+                scope.ServiceProvider.GetRequiredService<IConfiguration>());
+            var deferredRun = BuildDeferredTranscriptionRun(latestSession, entry.Id, instanceId);
+            if (deferredRun != null)
+            {
+                try
+                {
+                    await db.DocumentStoreAgentRuns.InsertOneAsync(
+                        deferredRun,
+                        cancellationToken: CancellationToken.None);
+                    _logger.LogInformation(
+                        "[recording-archive] Deferred transcription queued session={SessionId} run={RunId}",
+                        session.Id,
+                        deferredRun.Id);
+                }
+                catch (MongoWriteException ex)
+                    when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+                {
+                    // Run ID 由 session ID 决定。崩溃重试只确认同一个任务已存在，
+                    // 不会创建第二条转录任务。
+                }
+            }
+
             await db.DocumentRecordingUploadSessions.UpdateOneAsync(
                 s => s.Id == session.Id
                      && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving,
@@ -208,4 +272,31 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         var minutes = Math.Min(360, Math.Pow(2, Math.Clamp(attempts, 0, 8)));
         return TimeSpan.FromMinutes(minutes);
     }
+
+    internal static DocumentStoreAgentRun? BuildDeferredTranscriptionRun(
+        DocumentRecordingUploadSession session,
+        string entryId,
+        string ownerInstanceId)
+    {
+        if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+            && !string.IsNullOrWhiteSpace(session.LiveTranscript))
+        {
+            return null;
+        }
+
+        return new DocumentStoreAgentRun
+        {
+            Id = DeferredTranscriptionRunId(session.Id),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = entryId,
+            StoreId = session.StoreId,
+            UserId = session.UserId,
+            OwnerInstanceId = ownerInstanceId,
+            Status = DocumentStoreRunStatus.Queued,
+            Phase = "等待音频归档完成",
+        };
+    }
+
+    internal static string DeferredTranscriptionRunId(string sessionId)
+        => $"recording-archive-transcribe-{sessionId}";
 }

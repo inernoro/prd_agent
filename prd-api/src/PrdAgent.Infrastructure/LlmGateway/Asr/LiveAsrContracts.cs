@@ -104,6 +104,8 @@ public sealed class LiveAsrSessionResult
 {
     public bool Completed { get; init; }
     public bool Degraded { get; init; }
+    /// <summary>当前流式候选是否已经从一次性音频通道消费过任意 PCM 帧。</summary>
+    public bool ConsumedAudio { get; init; }
     public string Transcript { get; init; } = string.Empty;
     public string? Provider { get; init; }
     public string? Model { get; init; }
@@ -135,4 +137,13 @@ public static class LiveAsrCandidatePolicy
             .Take(MaxAttempts)
             .ToList();
     }
+
+    /// <summary>
+    /// 一次性通道只有在候选尚未消费音频、也未产出文字时才允许切换。
+    /// 否则下一个候选只能看到尾段，会把不完整原文误标为完成。
+    /// </summary>
+    public static bool CanTryNextCandidate(LiveAsrSessionResult result)
+        => !result.Completed
+            && !result.ConsumedAudio
+            && string.IsNullOrWhiteSpace(result.Transcript);
 }

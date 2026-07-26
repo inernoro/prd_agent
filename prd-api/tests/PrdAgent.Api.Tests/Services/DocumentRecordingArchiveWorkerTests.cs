@@ -45,6 +45,51 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .ShouldBe(TimeSpan.FromMinutes(expectedMinutes));
     }
 
+    [Fact]
+    public void BuildDeferredTranscriptionRun_ShouldQueueMissingLiveTranscriptExactlyOnce()
+    {
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-1",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+        };
+
+        var run = DocumentRecordingArchiveWorker.BuildDeferredTranscriptionRun(
+            session,
+            "entry-1",
+            "instance-1");
+
+        run.ShouldNotBeNull();
+        run!.Id.ShouldBe("recording-archive-transcribe-session-1");
+        run.Kind.ShouldBe(DocumentStoreAgentRunKind.Transcribe);
+        run.SourceEntryId.ShouldBe("entry-1");
+        run.StoreId.ShouldBe("store-1");
+        run.UserId.ShouldBe("user-1");
+        run.OwnerInstanceId.ShouldBe("instance-1");
+        run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+    }
+
+    [Fact]
+    public void BuildDeferredTranscriptionRun_ShouldSkipCompletedLiveTranscript()
+    {
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-2",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = "完整实时原文",
+        };
+
+        DocumentRecordingArchiveWorker.BuildDeferredTranscriptionRun(
+                session,
+                "entry-2",
+                "instance-1")
+            .ShouldBeNull();
+    }
+
     private static DocumentRecordingUploadChunk Chunk(int index, byte[] data)
         => new()
         {

@@ -282,6 +282,7 @@ export async function completeRecordingUpload(sessionId: string) {
     reused: boolean;
     archivePending?: boolean;
     audioProtected?: boolean;
+    deferredTranscriptionRunId?: string | null;
   }>(api.documentStore.entries.recordingUploadComplete(sessionId), { method: 'POST' });
 }
 

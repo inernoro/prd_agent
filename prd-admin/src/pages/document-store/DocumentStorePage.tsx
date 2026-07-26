@@ -2115,7 +2115,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow({ file, title: file.name, vaultSessionId, storeId: targetStoreId || storeId, isNewRecording: true });
               transcribeFlowOpenRef.current = true;
             }}
-            onUploaded={(entry, vaultSessionId, targetStoreId) => {
+            onUploaded={(entry, vaultSessionId, targetStoreId, deferredTranscriptionRunId) => {
               const destination = targetStoreId || storeId;
               const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
               const liveTranscriptReady = entry.metadata?.liveTranscriptStatus === 'completed'
@@ -2128,10 +2128,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                   '录音已安全保存',
                   liveTranscriptReady
                     ? '实时原文已保存，音频正在后台补充云端归档'
-                    : '音频已进入耐久队列，云端恢复后将自动归档',
+                    : '音频已进入耐久队列，云端恢复后将自动归档并转录',
                 );
               }
-              if (archivePending && !liveTranscriptReady) return;
+              if (archivePending && !liveTranscriptReady) {
+                if (deferredTranscriptionRunId) {
+                  transcribeRunRef.current = deferredTranscriptionRunId;
+                  setBgTranscribeRunId(deferredTranscriptionRunId);
+                }
+                return;
+              }
               setTranscribeFlow({
                 entryId: entry.id,
                 title: entry.title,

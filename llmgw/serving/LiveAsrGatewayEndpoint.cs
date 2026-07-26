@@ -117,8 +117,9 @@ public static class LiveAsrGatewayEndpoint
                 FullMode = BoundedChannelFullMode.Wait,
             });
             // 备用路径最多缓存最近一分钟 PCM。正常流式路径不读取它，因此必须 DropOldest，
-            // 不能反向阻塞浏览器录音；若流式在建立阶段失败，窗口 ASR 可立即接管。
-            var batchFrames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(600)
+            // 不能反向阻塞浏览器录音。备用服务会校验从序号 1 到 final 的完整覆盖；
+            // 一旦前缀被淘汰，只能输出非终态预览并交给完整录音批处理校准。
+            var batchFrames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(601)
             {
                 SingleReader = true,
                 SingleWriter = true,
@@ -222,9 +223,9 @@ public static class LiveAsrGatewayEndpoint
                 }
 
                 await resolver.RecordFailureAsync(candidate, CancellationToken.None);
-                // 上游一旦已经返回过文字，继续切换会产生两套时间轴。保留已得到的文字，
-                // 将最终校准交给录音文件批处理；只有建立阶段失败才尝试下一个候选。
-                if (!string.IsNullOrWhiteSpace(finalResult.Transcript))
+                // 一次性音频通道只允许在“建连失败且尚未消费任何 PCM”时切换。
+                // 候选只要读过一帧，下一候选就无法重放前缀，必须转备用或完整文件校准。
+                if (!LiveAsrCandidatePolicy.CanTryNextCandidate(finalResult))
                     break;
             }
 

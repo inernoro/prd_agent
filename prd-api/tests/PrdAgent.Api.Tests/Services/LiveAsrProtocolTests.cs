@@ -300,6 +300,114 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldNotCompleteWhenBufferedAudioLostItsPrefix()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"仅剩尾段"}""",
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            2,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(3, [], IsFinal: true));
+        frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
+        result.Transcript.ShouldBe("仅剩尾段");
+        events.ShouldNotContain(evt => evt.Type == LiveAsrEventTypes.Final);
+    }
+
+    [Fact]
+    public async Task BatchFallback_ShouldDegradeAfterDropOldestEvictsLongRecordingPrefix()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"滚动尾段"}""",
+            });
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            HealthyResolver().Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(601)
+        {
+            SingleReader = true,
+            SingleWriter = true,
+            FullMode = BoundedChannelFullMode.DropOldest,
+        });
+        var framePcm = Enumerable.Repeat((byte)1, 3_200).ToArray();
+        for (var sequence = 1; sequence <= 602; sequence++)
+            await frames.Writer.WriteAsync(new LiveAsrAudioFrame(sequence, framePcm));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(603, [], IsFinal: true));
+        frames.Writer.TryComplete();
+        var events = new List<LiveAsrEvent>();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            evt =>
+            {
+                events.Add(evt);
+                return Task.CompletedTask;
+            });
+
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
+        result.Transcript.ShouldContain("滚动尾段");
+        events.ShouldNotContain(evt => evt.Type == LiveAsrEventTypes.Final);
+    }
+
+    [Theory]
+    [InlineData(false, "", true)]
+    [InlineData(true, "", false)]
+    [InlineData(false, "已有片段", false)]
+    public void CandidatePolicy_ShouldOnlySwitchBeforeAudioOrTextWasConsumed(
+        bool consumedAudio,
+        string transcript,
+        bool expected)
+    {
+        var result = new LiveAsrSessionResult
+        {
+            Degraded = true,
+            ConsumedAudio = consumedAudio,
+            Transcript = transcript,
+        };
+
+        LiveAsrCandidatePolicy.CanTryNextCandidate(result).ShouldBe(expected);
+    }
+
+    [Fact]
     public async Task BatchFallback_ShouldSwitchCandidateWhenFirstProviderFails()
     {
         var first = BatchCandidate("first", "first-audio");

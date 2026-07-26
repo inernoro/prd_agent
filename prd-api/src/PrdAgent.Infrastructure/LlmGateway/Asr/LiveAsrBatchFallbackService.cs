@@ -3,11 +3,12 @@ using System.Text;
 using System.Text.Json;
 using System.Text.Json.Nodes;
 using System.Threading.Channels;
+using Microsoft.Extensions.Logging;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.LlmGateway;
 using PrdAgent.Infrastructure.LlmGateway.Asr;
 
-namespace PrdAgent.LlmGatewayHost;
+namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 
 /// <summary>
 /// 流式供应商不可用时的滚动窗口 ASR。它在录音过程中持续消费 PCM，
@@ -55,11 +56,23 @@ public sealed class LiveAsrBatchFallbackService
         using var pending = new MemoryStream();
         var transcriptParts = new List<string>();
         var windowIndex = 0;
+        var expectedSequence = 1L;
+        var completeAudioCoverage = true;
+        var receivedFinalFrame = false;
 
         await foreach (var frame in frames.ReadAllAsync(CancellationToken.None))
         {
             if (frame.IsFinal)
+            {
+                receivedFinalFrame = true;
+                completeAudioCoverage &= frame.Sequence == expectedSequence;
                 break;
+
+            }
+
+            if (frame.Sequence != expectedSequence)
+                completeAudioCoverage = false;
+            expectedSequence = frame.Sequence + 1;
 
             pending.Write(frame.Pcm);
             while (pending.Length >= WindowBytes)
@@ -123,6 +136,18 @@ public sealed class LiveAsrBatchFallbackService
                 Provider = provider,
                 Model = model,
                 Error = "没有识别到有效语音",
+            };
+        }
+
+        if (!receivedFinalFrame || !completeAudioCoverage)
+        {
+            return new LiveAsrSessionResult
+            {
+                Degraded = true,
+                Transcript = transcript,
+                Provider = provider,
+                Model = model,
+                Error = "备用实时转写只覆盖部分录音，必须使用完整录音重新校准",
             };
         }
 

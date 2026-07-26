@@ -616,6 +616,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
 
         IDisposable? safeTransport = null;
         long latestAudioSequence = 0;
+        long consumedAudioFrames = 0;
         var latestText = string.Empty;
         try
         {
@@ -669,6 +670,8 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
                             await ws.SendAsync(finalRequest, WebSocketMessageType.Binary, endOfMessage: true, CancellationToken.None);
                             return;
                         }
+
+                        Interlocked.Increment(ref consumedAudioFrames);
 
                         if (pending is not null)
                         {
@@ -754,6 +757,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             {
                 Completed = !string.IsNullOrWhiteSpace(latestText),
                 Degraded = string.IsNullOrWhiteSpace(latestText),
+                ConsumedAudio = Interlocked.Read(ref consumedAudioFrames) > 0,
                 Transcript = latestText,
                 Provider = provider,
                 Model = model,
@@ -773,6 +777,7 @@ public class DoubaoStreamAsrService : IDoubaoStreamAsrExecutor
             {
                 Completed = false,
                 Degraded = true,
+                ConsumedAudio = Interlocked.Read(ref consumedAudioFrames) > 0,
                 Transcript = latestText,
                 Provider = provider,
                 Model = model,

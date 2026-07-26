@@ -1836,7 +1836,24 @@ public class DocumentStoreController : ControllerBase
         {
             var completedEntry = await _db.DocumentEntries.Find(e => e.Id == session.EntryId).FirstOrDefaultAsync();
             if (completedEntry != null)
-                return Ok(ApiResponse<object>.Ok(new { entry = completedEntry, sessionId, reused = true }));
+            {
+                var archivePending = session.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
+                    or DocumentRecordingArchiveStatus.Archiving;
+                var needsDeferredTranscription = archivePending
+                    && (session.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
+                        || string.IsNullOrWhiteSpace(session.LiveTranscript));
+                return Ok(ApiResponse<object>.Ok(new
+                {
+                    entry = completedEntry,
+                    sessionId,
+                    reused = true,
+                    archivePending,
+                    audioProtected = archivePending,
+                    deferredTranscriptionRunId = needsDeferredTranscription
+                        ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                        : null,
+                }));
+            }
         }
         if (session.Status != DocumentRecordingUploadStatus.Uploading)
             return StatusCode(StatusCodes.Status410Gone,
@@ -1895,7 +1912,24 @@ public class DocumentStoreController : ControllerBase
             {
                 var reusedEntry = await _db.DocumentEntries.Find(e => e.Id == fresh.EntryId).FirstOrDefaultAsync();
                 if (reusedEntry != null)
-                    return Ok(ApiResponse<object>.Ok(new { entry = reusedEntry, sessionId, reused = true }));
+                {
+                    var archivePending = fresh.ArchiveStatus is DocumentRecordingArchiveStatus.Pending
+                        or DocumentRecordingArchiveStatus.Archiving;
+                    var needsDeferredTranscription = archivePending
+                        && (fresh.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
+                            || string.IsNullOrWhiteSpace(fresh.LiveTranscript));
+                    return Ok(ApiResponse<object>.Ok(new
+                    {
+                        entry = reusedEntry,
+                        sessionId,
+                        reused = true,
+                        archivePending,
+                        audioProtected = archivePending,
+                        deferredTranscriptionRunId = needsDeferredTranscription
+                            ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                            : null,
+                    }));
+                }
             }
             if (fresh != null && fresh.Status == DocumentRecordingUploadStatus.Completing)
                 return Conflict(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音正在完成，请稍候"));
@@ -1904,13 +1938,17 @@ public class DocumentStoreController : ControllerBase
         }
 
         var (actorId, actorName, avatarFileName) = await GetActorWithAvatarAsync();
-        (DocumentEntry Entry, Attachment Attachment, string? DocumentId, string FileUrl) stored;
+        StoredAsset recordingAsset;
         try
         {
-            stored = await CreateUploadedDocumentEntryAsync(
-                store, actorId, actorName, avatarFileName,
-                session.FileName, session.MimeType, audioBytes, parentId: null,
-                CancellationToken.None, assetSaveAttempts: 3);
+            // 降级判定只包住对象存储调用。附件、条目、计数或活动日志在存储成功后
+            // 即使抛出相同类型的超时，也不能被误判成存储故障再创建 pending 条目。
+            recordingAsset = await SaveUploadedAssetAsync(
+                session.FileName,
+                session.MimeType,
+                audioBytes,
+                CancellationToken.None,
+                assetSaveAttempts: 3);
         }
         catch (Exception ex) when (IsAssetStorageFailure(ex))
         {
@@ -1954,8 +1992,15 @@ public class DocumentStoreController : ControllerBase
                 reused = false,
                 archivePending = true,
                 audioProtected = true,
+                deferredTranscriptionRunId = string.IsNullOrWhiteSpace(pendingEntry.Metadata.GetValueOrDefault("liveTranscript"))
+                    ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                    : null,
             }));
         }
+        var stored = await CreateUploadedDocumentEntryAsync(
+            store, actorId, actorName, avatarFileName,
+            session.FileName, session.MimeType, audioBytes, parentId: null,
+            CancellationToken.None, storedAsset: recordingAsset);
 
         if (claimed.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(claimed.LiveTranscript))
@@ -2095,32 +2140,15 @@ public class DocumentStoreController : ControllerBase
             byte[] bytes,
             string? parentId,
             CancellationToken cancellationToken,
-            int assetSaveAttempts = 1)
+            int assetSaveAttempts = 1,
+            StoredAsset? storedAsset = null)
     {
-        // 传原始文件名，让存储优先沿用扩展名；浏览器上报的 m4a MIME 并不可靠。
-        StoredAsset? stored = null;
-        var attempts = Math.Clamp(assetSaveAttempts, 1, 3);
-        for (var attempt = 1; attempt <= attempts; attempt++)
-        {
-            try
-            {
-                stored = await _assetStorage.SaveAsync(
-                    bytes, mime, cancellationToken,
-                    domain: "prd-agent", type: "doc", fileName: fileName);
-                break;
-            }
-            catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
-            {
-                _logger.LogWarning(
-                    ex,
-                    "[document-store] 录音资产写入失败，准备第 {NextAttempt}/{TotalAttempts} 次尝试",
-                    attempt + 1,
-                    attempts);
-                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
-            }
-        }
-        if (stored == null)
-            throw new InvalidOperationException("资产存储未返回结果");
+        var stored = storedAsset ?? await SaveUploadedAssetAsync(
+            fileName,
+            mime,
+            bytes,
+            cancellationToken,
+            assetSaveAttempts);
 
         string? extractedText = null;
         if (_fileContentExtractor.IsSupported(mime))
@@ -2185,6 +2213,36 @@ public class DocumentStoreController : ControllerBase
         await LogStoreActivityAsync(store, userId, TeamActivityAction.EntryCreated, "entry", entry.Id, entry.Title);
 
         return (entry, attachment, documentId, stored.Url);
+    }
+
+    private async Task<StoredAsset> SaveUploadedAssetAsync(
+        string fileName,
+        string mime,
+        byte[] bytes,
+        CancellationToken cancellationToken,
+        int assetSaveAttempts)
+    {
+        // 传原始文件名，让存储优先沿用扩展名；浏览器上报的 m4a MIME 并不可靠。
+        var attempts = Math.Clamp(assetSaveAttempts, 1, 3);
+        for (var attempt = 1; attempt <= attempts; attempt++)
+        {
+            try
+            {
+                return await _assetStorage.SaveAsync(
+                    bytes, mime, cancellationToken,
+                    domain: "prd-agent", type: "doc", fileName: fileName);
+            }
+            catch (Exception ex) when (attempt < attempts && IsAssetStorageFailure(ex))
+            {
+                _logger.LogWarning(
+                    ex,
+                    "[document-store] 录音资产写入失败，准备第 {NextAttempt}/{TotalAttempts} 次尝试",
+                    attempt + 1,
+                    attempts);
+                await Task.Delay(TimeSpan.FromMilliseconds(250 * attempt), cancellationToken);
+            }
+        }
+        throw new InvalidOperationException("资产存储重试未返回结果");
     }
 
     private static bool IsAssetStorageFailure(Exception ex)
