@@ -422,6 +422,78 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void InterruptedCompletedEntryRecovery_ShouldCountBeforeFinalizing()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var recoveryStart = source.IndexOf(
+            "if (interruptedAttachment != null && !string.IsNullOrWhiteSpace(interruptedAttachment.Url))",
+            StringComparison.Ordinal);
+        recoveryStart.ShouldBeGreaterThanOrEqualTo(0);
+        var recoveryEnd = source.IndexOf(
+            "var interruptedPendingEntry =",
+            recoveryStart,
+            StringComparison.Ordinal);
+        recoveryEnd.ShouldBeGreaterThan(recoveryStart);
+        var recoveryBlock = source[recoveryStart..recoveryEnd];
+
+        var ensureCounted = recoveryBlock.IndexOf(
+            "await EnsureRecordingEntryCountedAsync(",
+            StringComparison.Ordinal);
+        var finalize = recoveryBlock.IndexOf(
+            "if (!await FinalizeCompletedRecordingAsync(",
+            StringComparison.Ordinal);
+        ensureCounted.ShouldBeGreaterThanOrEqualTo(0);
+        finalize.ShouldBeGreaterThan(ensureCounted);
+    }
+
+    [Fact]
+    public async Task InterruptedCompletedEntryRecovery_ShouldRestoreMissingCountExactlyOnce()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
+        var store = new DocumentStore
+        {
+            Id = "recording-recovered-missing-count",
+            Name = "录音恢复补记测试",
+            OwnerId = "user-1",
+            DocumentCount = 4,
+            UpdatedAt = t0,
+        };
+        const string entryId = "recording-completed-interrupted-before-count";
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+
+        (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            entryId,
+            t0.AddSeconds(1),
+            CancellationToken.None)).ShouldBeTrue();
+        (await DocumentStoreController.EnsureRecordingEntryCountedAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            entryId,
+            t0.AddSeconds(2),
+            CancellationToken.None)).ShouldBeFalse();
+        await DocumentStoreController.ReleaseRecordingCountTokensAsync(
+            fixture.Db.DocumentStores,
+            store.Id,
+            [entryId],
+            t0.AddSeconds(3),
+            CancellationToken.None);
+
+        var stored = await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync();
+        stored.DocumentCount.ShouldBe(5);
+        var rawStore = await fixture.Db.Database
+            .GetCollection<BsonDocument>("document_stores")
+            .Find(Builders<BsonDocument>.Filter.Eq("_id", store.Id))
+            .SingleAsync();
+        rawStore[DocumentStoreController.RecordingCountedEntryIdsField]
+            .AsBsonArray.Count.ShouldBe(0);
+    }
+
+    [Fact]
     public async Task RecordingEntryCount_ShouldCommuteWithConcurrentNormalAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -972,5 +1044,26 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         public async ValueTask DisposeAsync()
             => await _client.DropDatabaseAsync(_databaseName);
+    }
+
+    private static string DocumentStoreControllerPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(
+                dir.FullName,
+                "prd-api",
+                "src",
+                "PrdAgent.Api",
+                "Controllers",
+                "Api",
+                "DocumentStoreController.cs");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate DocumentStoreController.cs from test base directory.");
     }
 }

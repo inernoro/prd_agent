@@ -2159,6 +2159,16 @@ public class DocumentStoreController : ControllerBase
                 interruptedCompletedEntry = rebuilt.Entry;
             }
 
+            // 进程可能在确定性 entry upsert 后、原子记账前退出。恢复分支
+            // 不会再调用 CreateUploadedDocumentEntryAsync，因此必须在会话进入终态
+            // 并回收过渡令牌之前幂等补记，避免条目数永久少一。
+            await EnsureRecordingEntryCountedAsync(
+                _db.DocumentStores,
+                store.Id,
+                interruptedCompletedEntry.Id,
+                DateTime.UtcNow,
+                CancellationToken.None);
+
             // 存储成功路径使用确定性 entry/attachment ID。若进程在任一落库步骤后退出，
             // 必须先恢复这条已完成记录，再考虑对象存储；否则重试时恰逢存储故障会
             // 另外创建 pending entry，形成两条可见记录和错误计数。
