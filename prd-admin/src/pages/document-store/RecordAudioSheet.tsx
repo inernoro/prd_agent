@@ -101,6 +101,11 @@ type RecordingCompletionRetryStatus =
   | { success: true; data: { status: string } }
   | { success: false; error: { code: string } };
 
+type RecordingCompletionAttempt =
+  | { success: true }
+  | { success: false; error: { code: string } }
+  | null;
+
 export function shouldStopRecordingCompletionRetry(
   status: RecordingCompletionRetryStatus | null,
 ): boolean {
@@ -118,6 +123,19 @@ export function nextRecordingCompletionOwnership(
   if (!status?.success) return serverOwnsCompletion;
   return status.data.status === 'completing'
     || status.data.status === 'completed';
+}
+
+export function shouldFallbackCompletedRecording(
+  status: RecordingCompletionRetryStatus | null,
+  completion: RecordingCompletionAttempt,
+): boolean {
+  if (!status?.success || status.data.status !== 'completed' || completion?.success !== false) {
+    return false;
+  }
+  return completion.error.code === 'INVALID_FORMAT'
+    || completion.error.code === 'NOT_FOUND'
+    || completion.error.code === 'SESSION_NOT_FOUND'
+    || completion.error.code === 'SESSION_EXPIRED';
 }
 
 export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
@@ -445,8 +463,11 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
                   status,
                 );
                 if (!serverOwnsCompletion) uncertainAttempts++;
-                // uploading / completing / completed 均可安全重试（幂等），completed 直接回条目。
+                // uploading / completing / completed 均可安全重试（幂等），completed 通常直接回条目。
                 completed = await completeRecordingUpload(sessionId).catch(() => null);
+                // completed 会话的条目若已被另一标签页删除，后端会明确返回不可恢复错误。
+                // 此时结束服务端恢复循环，转用本地保险文件；网络空响应和 5xx 仍保留归属。
+                if (shouldFallbackCompletedRecording(status, completed)) break;
               }
               if (completed?.success) {
                 if (finishModeRef.current !== 'complete') return;

@@ -1968,9 +1968,6 @@ public class DocumentStoreController : ControllerBase
                         InstanceIdentity.Get(_config),
                         CancellationToken.None);
                 }
-                var needsDeferredTranscription = archivePending
-                    && (session.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
-                        || string.IsNullOrWhiteSpace(session.LiveTranscript));
                 return Ok(ApiResponse<object>.Ok(new
                 {
                     entry = completedEntry,
@@ -1978,9 +1975,11 @@ public class DocumentStoreController : ControllerBase
                     reused = true,
                     archivePending,
                     audioProtected = archivePending,
-                    deferredTranscriptionRunId = needsDeferredTranscription
-                        ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
-                        : null,
+                    deferredTranscriptionRunId =
+                        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                            archivePending,
+                            completedEntry,
+                            sessionId),
                 }));
             }
         }
@@ -2031,9 +2030,6 @@ public class DocumentStoreController : ControllerBase
                             InstanceIdentity.Get(_config),
                             CancellationToken.None);
                     }
-                    var needsDeferredTranscription = archivePending
-                        && (fresh.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
-                            || string.IsNullOrWhiteSpace(fresh.LiveTranscript));
                     return Ok(ApiResponse<object>.Ok(new
                     {
                         entry = reusedEntry,
@@ -2041,9 +2037,11 @@ public class DocumentStoreController : ControllerBase
                         reused = true,
                         archivePending,
                         audioProtected = archivePending,
-                        deferredTranscriptionRunId = needsDeferredTranscription
-                            ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
-                            : null,
+                        deferredTranscriptionRunId =
+                            DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                                archivePending,
+                                reusedEntry,
+                                sessionId),
                     }));
                 }
             }
@@ -2193,10 +2191,11 @@ public class DocumentStoreController : ControllerBase
                 reused = true,
                 archivePending = true,
                 audioProtected = true,
-                deferredTranscriptionRunId = string.IsNullOrWhiteSpace(
-                    recoveredEntry.Metadata.GetValueOrDefault("liveTranscript"))
-                    ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
-                    : null,
+                deferredTranscriptionRunId =
+                    DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                        archivePending: true,
+                        recoveredEntry,
+                        sessionId),
             }));
         }
         StoredAsset recordingAsset;
@@ -2248,9 +2247,11 @@ public class DocumentStoreController : ControllerBase
                 reused = false,
                 archivePending = true,
                 audioProtected = true,
-                deferredTranscriptionRunId = string.IsNullOrWhiteSpace(pendingEntry.Metadata.GetValueOrDefault("liveTranscript"))
-                    ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
-                    : null,
+                deferredTranscriptionRunId =
+                    DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                        archivePending: true,
+                        pendingEntry,
+                        sessionId),
             }));
         }
         var stored = await CreateUploadedDocumentEntryAsync(
@@ -2397,6 +2398,14 @@ public class DocumentStoreController : ControllerBase
         {
             metadata["liveTranscript"] = transcript;
             metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
+        }
+        else
+        {
+            // 响应会把固定 run ID 交给前端轮询，因此该意图必须先持久化。实时原文可能
+            // 在 pending entry 创建后才到达，不能让归档 Worker 因看到晚到原文而吞掉任务。
+            metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true";
+            metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdMetadataKey] =
+                DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId);
         }
         if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
             metadata["liveTranscriptProvider"] = session.LiveTranscriptProvider;

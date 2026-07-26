@@ -12,6 +12,8 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class DocumentRecordingArchiveWorker : BackgroundService
 {
+    internal const string DeferredTranscriptionRequiredMetadataKey = "deferredTranscriptionRequired";
+    internal const string DeferredTranscriptionRunIdMetadataKey = "deferredTranscriptionRunId";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
     private static readonly TimeSpan StaleLease = TimeSpan.FromMinutes(10);
     private readonly IServiceScopeFactory _scopeFactory;
@@ -154,45 +156,23 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     cancellationToken: CancellationToken.None);
             }
 
-            var entryUpdate = Builders<DocumentEntry>.Update.Combine(
-                Builders<DocumentEntry>.Update.Set(e => e.AttachmentId, attachmentId),
-                Builders<DocumentEntry>.Update.Set(
-                    e => e.Metadata["audioArchiveStatus"],
-                    DocumentRecordingArchiveStatus.Completed),
-                Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, DateTime.UtcNow));
-            if (latestSession.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
-                && !string.IsNullOrWhiteSpace(latestSession.LiveTranscript))
-            {
-                var transcriptUpdates = new List<UpdateDefinition<DocumentEntry>>
-                {
-                    entryUpdate,
-                    Builders<DocumentEntry>.Update.Set(
-                        e => e.Metadata["liveTranscriptStatus"],
-                        DocumentLiveTranscriptStatus.Completed),
-                    Builders<DocumentEntry>.Update.Set(
-                        e => e.Metadata["liveTranscript"],
-                        latestSession.LiveTranscript.Trim()),
-                };
-                if (!string.IsNullOrWhiteSpace(latestSession.LiveTranscriptProvider))
-                {
-                    transcriptUpdates.Add(Builders<DocumentEntry>.Update.Set(
-                        e => e.Metadata["liveTranscriptProvider"],
-                        latestSession.LiveTranscriptProvider));
-                }
-                if (!string.IsNullOrWhiteSpace(latestSession.LiveTranscriptModel))
-                {
-                    transcriptUpdates.Add(Builders<DocumentEntry>.Update.Set(
-                        e => e.Metadata["liveTranscriptModel"],
-                        latestSession.LiveTranscriptModel));
-                }
-                entryUpdate = Builders<DocumentEntry>.Update.Combine(transcriptUpdates);
-            }
-            await db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
-                entryUpdate,
-                cancellationToken: CancellationToken.None);
+            // pending entry 创建后，实时中继仍可能晚一步写入最终原文。记住客户端当时
+            // 是否已经拿到原文：若没有，即使现在原文已到，也仍需创建固定 ID 的转录 run，
+            // 让前端轮询有终点并生成标准转录笔记。
+            var entryRequiresDeferredTranscription = RequiresDeferredTranscription(entry);
+            await FinalizeArchivedEntryAsync(
+                db.DocumentEntries,
+                entry.Id,
+                attachmentId,
+                latestSession,
+                entryRequiresDeferredTranscription,
+                CancellationToken.None);
 
-            var deferredRun = BuildDeferredTranscriptionRun(latestSession, entry.Id, instanceId);
+            var deferredRun = BuildDeferredTranscriptionRun(
+                latestSession,
+                entry.Id,
+                instanceId,
+                entryRequiresDeferredTranscription);
             if (deferredRun != null)
             {
                 try
@@ -362,10 +342,12 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
     internal static DocumentStoreAgentRun? BuildDeferredTranscriptionRun(
         DocumentRecordingUploadSession session,
         string entryId,
-        string ownerInstanceId)
+        string ownerInstanceId,
+        bool entryRequiresDeferredTranscription)
     {
         if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
-            && !string.IsNullOrWhiteSpace(session.LiveTranscript))
+            && !string.IsNullOrWhiteSpace(session.LiveTranscript)
+            && !entryRequiresDeferredTranscription)
         {
             return null;
         }
@@ -385,4 +367,87 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
 
     internal static string DeferredTranscriptionRunId(string sessionId)
         => $"recording-archive-transcribe-{sessionId}";
+
+    internal static string? DeferredTranscriptionRunIdForClient(
+        bool archivePending,
+        DocumentEntry entry,
+        string sessionId)
+        => archivePending && RequiresDeferredTranscription(entry)
+            ? DeferredTranscriptionRunId(sessionId)
+            : null;
+
+    internal static bool HasCompletedLiveTranscript(DocumentEntry entry)
+        => entry.Metadata != null
+           && entry.Metadata.GetValueOrDefault("liveTranscriptStatus")
+               == DocumentLiveTranscriptStatus.Completed
+           && !string.IsNullOrWhiteSpace(entry.Metadata.GetValueOrDefault("liveTranscript"));
+
+    internal static bool RequiresDeferredTranscription(DocumentEntry entry)
+        => entry.Metadata?.GetValueOrDefault(DeferredTranscriptionRequiredMetadataKey) == "true"
+           || !HasCompletedLiveTranscript(entry);
+
+    internal static async Task FinalizeArchivedEntryAsync(
+        IMongoCollection<DocumentEntry> entries,
+        string entryId,
+        string attachmentId,
+        DocumentRecordingUploadSession session,
+        bool entryRequiresDeferredTranscription,
+        CancellationToken cancellationToken)
+    {
+        var now = DateTime.UtcNow;
+        var updates = new List<UpdateDefinition<DocumentEntry>>
+        {
+            Builders<DocumentEntry>.Update.Set(e => e.AttachmentId, attachmentId),
+            Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["audioArchiveStatus"],
+                DocumentRecordingArchiveStatus.Completed),
+            Builders<DocumentEntry>.Update.Set(e => e.UpdatedAt, now),
+        };
+        if (entryRequiresDeferredTranscription)
+        {
+            // 与原文、索引更新原子落库。若进程在随后插入 run 前退出，下一轮仍能从
+            // 该持久化意图恢复同一个确定性任务，不能用刚写入的原文反推客户端已收到。
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata[DeferredTranscriptionRequiredMetadataKey],
+                "true"));
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata[DeferredTranscriptionRunIdMetadataKey],
+                DeferredTranscriptionRunId(session.Id)));
+        }
+        if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
+            && !string.IsNullOrWhiteSpace(session.LiveTranscript))
+        {
+            var transcript = session.LiveTranscript.Trim();
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscriptStatus"],
+                DocumentLiveTranscriptStatus.Completed));
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscript"],
+                transcript));
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Summary,
+                transcript.Length > 200 ? transcript[..200] : transcript));
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.ContentIndex,
+                transcript.Length > 2000 ? transcript[..2000] : transcript));
+            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now));
+            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
+            {
+                updates.Add(Builders<DocumentEntry>.Update.Set(
+                    e => e.Metadata["liveTranscriptProvider"],
+                    session.LiveTranscriptProvider));
+            }
+            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
+            {
+                updates.Add(Builders<DocumentEntry>.Update.Set(
+                    e => e.Metadata["liveTranscriptModel"],
+                    session.LiveTranscriptModel));
+            }
+        }
+
+        await entries.UpdateOneAsync(
+            e => e.Id == entryId,
+            Builders<DocumentEntry>.Update.Combine(updates),
+            cancellationToken: cancellationToken);
+    }
 }

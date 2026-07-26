@@ -3,6 +3,7 @@ import {
   canDiscardRecording,
   nextRecordingCompletionOwnership,
   nextRecordingFinalizationLock,
+  shouldFallbackCompletedRecording,
   shouldForwardLivePcm,
   shouldStopRecordingCompletionRetry,
 } from '../RecordAudioSheet';
@@ -90,6 +91,42 @@ describe('RecordAudioSheet finalization guard', () => {
     expect(nextRecordingCompletionOwnership(true, {
       success: true,
       data: { status: 'uploading' },
+    })).toBe(false);
+  });
+
+  it('falls back when a completed session has irrecoverably lost its entry', () => {
+    const completedStatus = {
+      success: true as const,
+      data: { status: 'completed' },
+    };
+
+    expect(shouldFallbackCompletedRecording(completedStatus, {
+      success: false,
+      error: { code: 'INVALID_FORMAT' },
+    })).toBe(true);
+    expect(shouldFallbackCompletedRecording(completedStatus, {
+      success: false,
+      error: { code: 'NOT_FOUND' },
+    })).toBe(true);
+  });
+
+  it('keeps server ownership for completed sessions across transient failures', () => {
+    const completedStatus = {
+      success: true as const,
+      data: { status: 'completed' },
+    };
+
+    expect(shouldFallbackCompletedRecording(completedStatus, null)).toBe(false);
+    expect(shouldFallbackCompletedRecording(completedStatus, {
+      success: false,
+      error: { code: 'SERVER_ERROR' },
+    })).toBe(false);
+    expect(shouldFallbackCompletedRecording({
+      success: true,
+      data: { status: 'completing' },
+    }, {
+      success: false,
+      error: { code: 'INVALID_FORMAT' },
     })).toBe(false);
   });
 });

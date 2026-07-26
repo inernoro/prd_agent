@@ -568,7 +568,8 @@ public sealed class DocumentRecordingArchiveWorkerTests
         var run = DocumentRecordingArchiveWorker.BuildDeferredTranscriptionRun(
             session,
             "entry-1",
-            "instance-1");
+            "instance-1",
+            entryRequiresDeferredTranscription: true);
 
         run.ShouldNotBeNull();
         run!.Id.ShouldBe("recording-archive-transcribe-session-1");
@@ -595,8 +596,122 @@ public sealed class DocumentRecordingArchiveWorkerTests
         DocumentRecordingArchiveWorker.BuildDeferredTranscriptionRun(
                 session,
                 "entry-2",
-                "instance-1")
+                "instance-1",
+                entryRequiresDeferredTranscription: false)
             .ShouldBeNull();
+    }
+
+    [Fact]
+    public void BuildDeferredTranscriptionRun_ShouldQueueWhenLiveTranscriptArrivesAfterPendingEntry()
+    {
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-late-live",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = "晚到的完整实时原文",
+        };
+
+        var run = DocumentRecordingArchiveWorker.BuildDeferredTranscriptionRun(
+            session,
+            "entry-late-live",
+            "instance-1",
+            entryRequiresDeferredTranscription: true);
+
+        run.ShouldNotBeNull();
+        run!.Id.ShouldBe("recording-archive-transcribe-session-late-live");
+        run.SourceEntryId.ShouldBe("entry-late-live");
+    }
+
+    [Fact]
+    public void DeferredTranscriptionRunIdForClient_ShouldPreserveIntentAcrossLateTranscriptAndResponseRetry()
+    {
+        var entry = new DocumentEntry
+        {
+            Id = "entry-late-live",
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed,
+                ["liveTranscript"] = "晚到的完整实时原文",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+
+        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                archivePending: true,
+                entry,
+                "session-late-live")
+            .ShouldBe("recording-archive-transcribe-session-late-live");
+        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                archivePending: false,
+                entry,
+                "session-late-live")
+            .ShouldBeNull();
+
+        entry.Metadata.Remove(DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey);
+        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
+                archivePending: true,
+                entry,
+                "session-late-live")
+            .ShouldBeNull();
+    }
+
+    [Fact]
+    public async Task FinalizeArchivedEntry_ShouldIndexLateLiveTranscriptAndPreserveRunSignal()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var entry = new DocumentEntry
+        {
+            Id = "entry-late-live",
+            StoreId = "store-1",
+            Title = "recording.webm",
+            Metadata = new Dictionary<string, string>
+            {
+                ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Pending,
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var transcript = new string('a', 2100);
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-late-live",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = transcript,
+            LiveTranscriptProvider = "provider-1",
+            LiveTranscriptModel = "model-1",
+        };
+
+        DocumentRecordingArchiveWorker.HasCompletedLiveTranscript(entry).ShouldBeFalse();
+        DocumentRecordingArchiveWorker.RequiresDeferredTranscription(entry).ShouldBeTrue();
+        await DocumentRecordingArchiveWorker.FinalizeArchivedEntryAsync(
+            fixture.Db.DocumentEntries,
+            entry.Id,
+            "attachment-1",
+            session,
+            entryRequiresDeferredTranscription: true,
+            cancellationToken: CancellationToken.None);
+
+        var updated = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        updated.AttachmentId.ShouldBe("attachment-1");
+        updated.Summary.ShouldBe(transcript[..200]);
+        updated.ContentIndex.ShouldBe(transcript[..2000]);
+        updated.Metadata["audioArchiveStatus"].ShouldBe(DocumentRecordingArchiveStatus.Completed);
+        updated.Metadata["liveTranscriptStatus"].ShouldBe(DocumentLiveTranscriptStatus.Completed);
+        updated.Metadata["liveTranscript"].ShouldBe(transcript);
+        updated.Metadata["liveTranscriptProvider"].ShouldBe("provider-1");
+        updated.Metadata["liveTranscriptModel"].ShouldBe("model-1");
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey]
+            .ShouldBe("true");
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdMetadataKey]
+            .ShouldBe("recording-archive-transcribe-session-late-live");
+        updated.LastChangedAt.ShouldNotBeNull();
+        DocumentRecordingArchiveWorker.HasCompletedLiveTranscript(updated).ShouldBeTrue();
+        DocumentRecordingArchiveWorker.RequiresDeferredTranscription(updated).ShouldBeTrue();
     }
 
     private static DocumentRecordingUploadChunk Chunk(int index, byte[] data)
