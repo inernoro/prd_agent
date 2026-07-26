@@ -16,6 +16,8 @@ description: 维护产品页面、教程步骤与截图证据的双向关系。�
 3. 验收证据：截图 ID、状态、主题、视口和已验证提交。
 4. 双向关系：页面可找到教程，教程也可反查页面、路由和证据。
 
+关系的运行时权威状态保存在 MAP `TutorialLinkGraph`。Git 中的 manifest、维护映射和证据表是可版本化的生成输入、校验规则与回滚来源，不是第二份可人工编辑的关系 SSOT。
+
 LLMGW 的契约见 [reference/bilink-contract.md](reference/bilink-contract.md)。
 
 ## 触发与边界
@@ -23,8 +25,8 @@ LLMGW 的契约见 [reference/bilink-contract.md](reference/bilink-contract.md)�
 - 手动触发：用户要求维护教程、检查教程漂移或更新教程证据。
 - 定时触发：每日质量维护任务调用本技能的“报告模式”。
 - 无相关增量：输出 `status=skipped` 后结束，不打开浏览器、不生成报告、不通知、不修改教程。
-- 有相关增量：先检查关系和随机检测点，再给出 `review_required`、`drift` 或 `synced`。
-- 默认只报告：不自动修改教程正文、截图、DailyTips seed 或远端知识库。
+- 有相关增量：先检查关系和随机检测点，再给出 `review_required`、`drift` 或 `synced`；校验通过时允许把新关系写成 MAP Draft。
+- 默认不改内容：不自动修改教程正文、截图、DailyTips seed，也不自动发布 MAP Draft。
 - 只有用户明确要求更新教程，且检测结果指出具体 sourceId、stepId 和 evidenceId 时，才进入内容更新与发布流程。
 
 定时任务调用技能不等于授权自动改正文。定时任务始终使用报告模式。
@@ -89,7 +91,7 @@ python3 llmgw/tutorial/maintenance.py \
 
 ### 5. 输出或更新
 
-报告模式只输出：
+报告模式输出：
 
 - 变更区间与幂等键。
 - 页面到教程表。
@@ -98,7 +100,16 @@ python3 llmgw/tutorial/maintenance.py \
 - 受影响步骤、证据及 P0 至 P2 漂移。
 - 明确的跳过原因或更新草稿。
 
-用户明确批准更新时，才依次修改教程源、补证据、运行发布器检查、生成 publisher plan，并在发布后再次 apply 验证全量 noop。
+当状态不是 `skipped`、P0/P1 为 0 且项目级最小权限发布 Key 可用时，将当前图谱只写入 MAP Draft：
+
+```bash
+python3 llmgw/tutorial/publisher.py graph-draft \
+  --store-id "$MAP_TUTORIAL_STORE_ID"
+```
+
+必须记录服务端返回的 `graphSha256`。这一步不修改教程正文，不覆盖 Published，也不产生可见教程变更。缺少 Key 时输出“Draft 未同步”并继续保留本地报告，禁止在日志中打印 Key。
+
+用户明确批准更新时，才依次修改教程源、补证据、运行发布器检查、生成 publisher plan。`apply` 在教程内容读回成功后发布同一图谱 Draft，并在第二次 apply 验证教程节点和图谱均为 noop。
 
 ## DailyTips 适配
 
@@ -127,5 +138,5 @@ python3 llmgw/tutorial/maintenance.py \
 - 不用图片总数推断截图覆盖正确。
 - 不使用固定“最近一天”作为长期唯一游标。
 - 不在报告、日志和 memory 中写入密码、Key 或令牌。
-- 不自动改教程正文或远端知识库。
+- 不自动改教程正文，不自动把图谱 Draft 发布为 Published。
 - 不把教程健康报告冒充产品验收 Verdict。

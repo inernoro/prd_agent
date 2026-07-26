@@ -30,6 +30,7 @@ class MemoryGateway:
         self.store_updated_at = 1
         self.put_count = 0
         self.fail_after = fail_after
+        self.link_graph: dict = {"exists": False, "draft": None, "published": None, "history": []}
 
     def snapshot(self, store_id: str, managed_publisher: str) -> dict:
         nodes = [copy.deepcopy(self.foreign)] + [copy.deepcopy(item) for item in self.nodes.values()]
@@ -99,6 +100,31 @@ class MemoryGateway:
         self.store_updated_at += 1
         return {"action": "deleted"}
 
+    def get_link_graph(self, store_id: str, managed_publisher: str) -> dict:
+        return copy.deepcopy(self.link_graph)
+
+    def save_link_graph_draft(self, store_id: str, body: dict) -> dict:
+        current_draft = self.link_graph.get("draft") or {}
+        if current_draft.get("graphSha256") != body.get("expectedDraftSha256"):
+            raise publisher.ApiConflict("草稿 SHA 不匹配")
+        graph = copy.deepcopy(body["graph"])
+        graph["graphSha256"] = hashlib.sha256(
+            json.dumps(graph, ensure_ascii=False, sort_keys=True).encode("utf-8")
+        ).hexdigest()
+        self.link_graph.update({"exists": True, "draft": graph})
+        return copy.deepcopy(self.link_graph)
+
+    def publish_link_graph(self, store_id: str, body: dict) -> dict:
+        draft = self.link_graph.get("draft") or {}
+        published = self.link_graph.get("published") or {}
+        if draft.get("graphSha256") != body.get("expectedDraftSha256"):
+            raise publisher.ApiConflict("草稿 SHA 不匹配")
+        if published.get("graphSha256") != body.get("expectedPublishedSha256"):
+            raise publisher.ApiConflict("已发布 SHA 不匹配")
+        self.link_graph["published"] = copy.deepcopy(draft)
+        self.link_graph["history"].append({"graphSha256": draft["graphSha256"]})
+        return copy.deepcopy(self.link_graph)
+
 
 class TutorialPublisherTests(unittest.TestCase):
     @classmethod
@@ -154,6 +180,7 @@ class TutorialPublisherTests(unittest.TestCase):
         first = publisher.apply_plan(gateway, "store-a", self.source, first_plan)
         self.assertEqual(len(self.source.nodes), first["counts"]["created"])
         self.assertEqual(0, first["counts"]["noop"])
+        self.assertEqual("published", first["linkGraph"]["action"])
 
         node_times = {key: value["updatedAt"] for key, value in gateway.nodes.items()}
         store_time = gateway.store_updated_at
@@ -163,6 +190,8 @@ class TutorialPublisherTests(unittest.TestCase):
         self.assertEqual(len(self.source.nodes), second["counts"]["noop"])
         self.assertEqual(node_times, {key: value["updatedAt"] for key, value in gateway.nodes.items()})
         self.assertEqual(store_time, gateway.store_updated_at)
+        self.assertEqual("noop", second["linkGraph"]["action"])
+        self.assertEqual(1, len(gateway.link_graph["history"]))
 
         drifted = gateway.nodes["chapter-11"]
         drifted["content"] += "\n人工修改"

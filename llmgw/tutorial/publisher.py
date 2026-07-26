@@ -23,6 +23,7 @@ from typing import Any, Protocol
 ROOT = Path(__file__).resolve().parent
 DEFAULT_MANIFEST = ROOT / "manifest.json"
 DEFAULT_EVIDENCE_MAP = ROOT / "evidence-map.json"
+DEFAULT_MAINTENANCE_MAP = ROOT / "maintenance-map.json"
 PUBLISHER_PATH = "/api/open/document-store/publisher"
 REQUIRED_SECTIONS = (
     "你在做什么",
@@ -115,6 +116,9 @@ class PublisherGateway(Protocol):
     def put_node(self, store_id: str, source_id: str, body: dict[str, Any]) -> dict[str, Any]: ...
     def set_primary(self, store_id: str, body: dict[str, Any]) -> dict[str, Any]: ...
     def delete_created_node(self, store_id: str, source_id: str, query: dict[str, str]) -> dict[str, Any]: ...
+    def get_link_graph(self, store_id: str, publisher: str) -> dict[str, Any]: ...
+    def save_link_graph_draft(self, store_id: str, body: dict[str, Any]) -> dict[str, Any]: ...
+    def publish_link_graph(self, store_id: str, body: dict[str, Any]) -> dict[str, Any]: ...
 
 
 def sha256_text(value: str) -> str:
@@ -379,6 +383,27 @@ class HttpPublisherGateway:
         encoded = urllib.parse.urlencode(query)
         return self._request("DELETE", f"{PUBLISHER_PATH}/stores/{urllib.parse.quote(store_id)}/nodes/{urllib.parse.quote(source_id)}?{encoded}")
 
+    def get_link_graph(self, store_id: str, publisher: str) -> dict[str, Any]:
+        query = urllib.parse.urlencode({"publisher": publisher})
+        return self._request(
+            "GET",
+            f"{PUBLISHER_PATH}/stores/{urllib.parse.quote(store_id)}/tutorial-link-graph?{query}",
+        )
+
+    def save_link_graph_draft(self, store_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request(
+            "PUT",
+            f"{PUBLISHER_PATH}/stores/{urllib.parse.quote(store_id)}/tutorial-link-graph/draft",
+            body,
+        )
+
+    def publish_link_graph(self, store_id: str, body: dict[str, Any]) -> dict[str, Any]:
+        return self._request(
+            "POST",
+            f"{PUBLISHER_PATH}/stores/{urllib.parse.quote(store_id)}/tutorial-link-graph/publish",
+            body,
+        )
+
 
 def build_plan(source: TutorialSource, snapshot: dict[str, Any]) -> list[PlanItem]:
     if not snapshot.get("applyAllowed"):
@@ -475,6 +500,101 @@ def _rollback_created(gateway: PublisherGateway, store_id: str, source: Tutorial
     return rolled_back
 
 
+def build_link_graph_revision(
+    source: TutorialSource,
+    source_revision: str,
+    maintenance_map_path: Path = DEFAULT_MAINTENANCE_MAP,
+    evidence_map_path: Path = DEFAULT_EVIDENCE_MAP,
+) -> dict[str, Any]:
+    """把 Git 中的维护输入转换成 MAP 运行时图谱，不把策略文件本身当作远端 SSOT。"""
+    try:
+        mapping = json.loads(maintenance_map_path.read_text(encoding="utf-8"))
+        evidence = json.loads(evidence_map_path.read_text(encoding="utf-8"))
+    except (OSError, json.JSONDecodeError) as exc:
+        raise TutorialError(f"无法读取教程双链输入: {exc}") from exc
+    if mapping.get("schemaVersion") != 2 or evidence.get("schemaVersion") != 2:
+        raise TutorialError("教程双链与证据输入必须使用 schemaVersion 2")
+    surfaces = mapping.get("surfaces")
+    if not isinstance(surfaces, list) or not surfaces:
+        raise TutorialError("教程双链输入缺少 surfaces")
+    clean_surfaces = []
+    for surface in surfaces:
+        if not isinstance(surface, dict):
+            raise TutorialError("教程双链 surface 必须是对象")
+        clean_surfaces.append({
+            "id": surface.get("id"),
+            "label": surface.get("label"),
+            "routes": surface.get("routes", []),
+            "pagePath": surface.get("pagePath"),
+            "changeSources": surface.get("changeSources", []),
+            "tutorialSourceIds": surface.get("tutorialSourceIds", []),
+            "tutorialLinks": surface.get("tutorialLinks", []),
+            "anchors": surface.get("anchors", []),
+        })
+    verified_commit = evidence.get("verifiedAtCommit")
+    generated_at = evidence.get("verifiedAt")
+    if not isinstance(verified_commit, str) or not verified_commit:
+        raise TutorialError("evidence-map 缺少 verifiedAtCommit")
+    if not isinstance(generated_at, str) or not generated_at:
+        raise TutorialError("evidence-map 缺少 verifiedAt")
+    return {
+        "schemaVersion": 2,
+        "sourceRevision": source_revision,
+        "manifestSha256": source.manifest_sha256,
+        "verifiedAtCommit": verified_commit,
+        "generatedAt": generated_at,
+        "surfaces": clean_surfaces,
+    }
+
+
+def sync_link_graph(
+    gateway: PublisherGateway,
+    store_id: str,
+    source: TutorialSource,
+    source_revision: str,
+) -> dict[str, Any]:
+    staged = stage_link_graph(gateway, store_id, source, source_revision)
+    draft_sha = staged["graphSha256"]
+    published_sha = staged.get("publishedSha256")
+    if draft_sha == published_sha:
+        return {"action": "noop", "graphSha256": draft_sha}
+    published = gateway.publish_link_graph(store_id, {
+        "publisher": source.publisher,
+        "expectedDraftSha256": draft_sha,
+        "expectedPublishedSha256": published_sha,
+    })
+    published_revision = published.get("published") if isinstance(published.get("published"), dict) else {}
+    if published_revision.get("graphSha256") != draft_sha:
+        raise TutorialError("图谱发布后 SHA256 读回不一致")
+    return {"action": "published", "graphSha256": draft_sha}
+
+
+def stage_link_graph(
+    gateway: PublisherGateway,
+    store_id: str,
+    source: TutorialSource,
+    source_revision: str,
+) -> dict[str, Any]:
+    current = gateway.get_link_graph(store_id, source.publisher)
+    current_draft = current.get("draft") if isinstance(current.get("draft"), dict) else {}
+    current_published = current.get("published") if isinstance(current.get("published"), dict) else {}
+    saved = gateway.save_link_graph_draft(store_id, {
+        "publisher": source.publisher,
+        "expectedDraftSha256": current_draft.get("graphSha256"),
+        "graph": build_link_graph_revision(source, source_revision),
+    })
+    saved_draft = saved.get("draft") if isinstance(saved.get("draft"), dict) else {}
+    draft_sha = saved_draft.get("graphSha256")
+    if not isinstance(draft_sha, str) or not draft_sha:
+        raise TutorialError("保存图谱草稿后没有返回 graphSha256")
+    published_sha = current_published.get("graphSha256")
+    return {
+        "action": "noop" if draft_sha == published_sha else "drafted",
+        "graphSha256": draft_sha,
+        "publishedSha256": published_sha,
+    }
+
+
 def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource, plan: list[PlanItem]) -> dict[str, Any]:
     conflicts = [item for item in plan if item.action == "conflict"]
     if conflicts:
@@ -514,12 +634,14 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
         mismatches = sorted(source_id for source_id, value in expected.items() if actual.get(source_id) != value)
         if mismatches:
             raise TutorialError(f"发布后 SHA256 不一致: {', '.join(mismatches)}")
+        link_graph = sync_link_graph(gateway, store_id, source, revision)
         return {
             "runId": run_id,
             "actions": actions,
             "counts": {name: sum(1 for item in actions if item["action"] == name) for name in ("created", "updated", "noop")},
             "primaryChanged": primary_changed,
             "snapshotSha256": verified.get("snapshotSha256"),
+            "linkGraph": link_graph,
         }
     except Exception:
         _rollback_created(gateway, store_id, source, run_id)
@@ -541,7 +663,7 @@ def plan_as_dict(plan: list[PlanItem]) -> list[dict[str, Any]]:
 
 def _parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(description="校验并发布模型网关权威教程")
-    parser.add_argument("command", choices=("check", "plan", "apply"))
+    parser.add_argument("command", choices=("check", "plan", "apply", "graph-draft"))
     parser.add_argument("--manifest", type=Path, default=DEFAULT_MANIFEST)
     parser.add_argument("--base-url", default=os.environ.get("MAP_BASE_URL", "https://map.ebcone.net"))
     parser.add_argument("--store-id", default=os.environ.get("MAP_TUTORIAL_STORE_ID"))
@@ -568,9 +690,16 @@ def main(argv: list[str] | None = None) -> int:
             if not args.store_id:
                 raise TutorialError("plan/apply 必须提供 --store-id 或 MAP_TUTORIAL_STORE_ID")
             gateway = HttpPublisherGateway(args.base_url, os.environ.get(args.key_env, ""))
-            snapshot = gateway.snapshot(args.store_id, source.publisher)
-            plan = build_plan(source, snapshot)
-            result = {"status": "ok", "storeId": args.store_id, "plan": plan_as_dict(plan)}
+            if args.command == "graph-draft":
+                result = {
+                    "status": "ok",
+                    "storeId": args.store_id,
+                    "linkGraph": stage_link_graph(gateway, args.store_id, source, _source_revision()),
+                }
+            else:
+                snapshot = gateway.snapshot(args.store_id, source.publisher)
+                plan = build_plan(source, snapshot)
+                result = {"status": "ok", "storeId": args.store_id, "plan": plan_as_dict(plan)}
             if args.command == "apply":
                 result["apply"] = apply_plan(gateway, args.store_id, source, plan)
         if args.json:
@@ -580,9 +709,11 @@ def main(argv: list[str] | None = None) -> int:
         elif args.command == "plan":
             counts = {name: sum(1 for item in result["plan"] if item["action"] == name) for name in ("create", "update", "verify-noop", "conflict")}
             print("发布计划: " + ", ".join(f"{name}={count}" for name, count in counts.items()))
-        else:
+        elif args.command == "apply":
             counts = result["apply"]["counts"]
             print("发布完成: " + ", ".join(f"{name}={counts[name]}" for name in ("created", "updated", "noop")))
+        else:
+            print(f"图谱草稿: {result['linkGraph']['action']}, SHA256={result['linkGraph']['graphSha256']}")
         return 0
     except TutorialError as exc:
         print(f"失败: {exc}", file=sys.stderr)
