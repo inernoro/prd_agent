@@ -716,6 +716,14 @@ export interface ReportComment {
   content: string;
   createdAt: string;
   updatedAt?: string;
+  /** 划词锚定：被选中的原文片段（无则为传统段落级评论） */
+  selectedText?: string;
+  /** 选中片段前上下文（多处命中时消歧） */
+  contextBefore?: string;
+  /** 选中片段后上下文 */
+  contextAfter?: string;
+  startOffset?: number;
+  endOffset?: number;
 }
 
 export interface ReportLikeUser {
@@ -759,6 +767,12 @@ export type CreateCommentContract = (input: {
   sectionIndex: number;
   content: string;
   parentCommentId?: string;
+  /** 划词锚定（可选，仅顶级评论生效） */
+  selectedText?: string;
+  contextBefore?: string;
+  contextAfter?: string;
+  startOffset?: number;
+  endOffset?: number;
 }) => Promise<ApiResponse<{ comment: ReportComment }>>;
 
 export type UpdateCommentContract = (input: {

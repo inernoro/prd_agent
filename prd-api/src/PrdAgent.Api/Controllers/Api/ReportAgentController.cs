@@ -134,6 +134,14 @@ public class ReportAgentController : ControllerBase
 
     private string GetUserId() => this.GetRequiredUserId();
 
+    /// <summary>裁剪可空字符串到指定长度；空白视为 null（划词锚点字段用）</summary>
+    private static string? Truncate(string? value, int maxLength)
+    {
+        if (string.IsNullOrWhiteSpace(value)) return null;
+        var trimmed = value.Trim();
+        return trimmed.Length <= maxLength ? trimmed : trimmed[..maxLength];
+    }
+
     private string? GetUsername()
         => User.FindFirst("name")?.Value
            ?? User.FindFirst(ClaimTypes.Name)?.Value;
@@ -3791,6 +3799,10 @@ public class ReportAgentController : ControllerBase
                 return BadRequest(ApiResponse<object>.Fail("NOT_FOUND", "父评论不存在"));
         }
 
+        // 划词锚点仅顶级评论生效；裁剪长度防止超长选区/上下文膨胀存储
+        var isReply = !string.IsNullOrEmpty(req.ParentCommentId);
+        var selectedText = isReply ? null : Truncate(req.SelectedText, 500);
+
         var comment = new ReportComment
         {
             ReportId = id,
@@ -3799,7 +3811,12 @@ public class ReportAgentController : ControllerBase
             ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
             AuthorUserId = userId,
             AuthorDisplayName = authorDisplayName,
-            Content = req.Content.Trim()
+            Content = req.Content.Trim(),
+            SelectedText = selectedText,
+            ContextBefore = selectedText == null ? null : Truncate(req.ContextBefore, 100),
+            ContextAfter = selectedText == null ? null : Truncate(req.ContextAfter, 100),
+            StartOffset = selectedText == null ? null : req.StartOffset,
+            EndOffset = selectedText == null ? null : req.EndOffset
         };
 
         await _db.ReportComments.InsertOneAsync(comment);
@@ -5366,6 +5383,13 @@ public class CreateCommentRequest
     public int SectionIndex { get; set; }
     public string Content { get; set; } = string.Empty;
     public string? ParentCommentId { get; set; }
+
+    // 划词锚定（可选）：仅顶级评论生效，回复不携带锚点
+    public string? SelectedText { get; set; }
+    public string? ContextBefore { get; set; }
+    public string? ContextAfter { get; set; }
+    public int? StartOffset { get; set; }
+    public int? EndOffset { get; set; }
 }
 
 public class UpdateCommentRequest
