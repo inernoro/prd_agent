@@ -59,11 +59,26 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 6. 07:07:52 「stale webhook deploy dispatch interrupted」+「部署重试已关闭（未设 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED`），跳过 1 个中断派发的自动补发」——中断的部署不会自动补发，需人工重触发。
 7. 07:08 看门狗把 `dr_b0a5600` 心跳过期收敛为 failed（PR check 红）；07:09 人工重触发 `dr_5d089e2c` 一次成功，分支服务全部恢复。
 
-**根因判断**：宿主机资源耗尽（kafka/mongo 相继死亡）→ 自用 mongo 不可用 → state persist 失败 → master 宕机。当时生产运行 `95d1c24`（复制集第 25 轮），已逐行排除该 commit 的三处改动与本事故的因果（均有异常兜底且不在崩溃路径）。
+**根因判断（2026-07-27 复盘后细化）**：触发链是**镜像缺失回落宿主源码构建**引发的资源尖峰——
+
+1. 本次 push 只改 `cds/**`，CI 的「Detect changed components」据此**跳过**了 prd-admin / prd-api / llmgw 三个组件镜像构建（该 workflow run 中三个 build job 均为 `skipped`）。
+2. CDS 部署按 SHA 拉 `ghcr.io/.../prdagent-admin:sha-95d1c24...` 扑空 → 事件明确打出 `prebuilt image missing, auto fallback to source-build mode 'static'` → 在宿主上**同时源码构建 admin + api + llmgw-web**。
+3. 构建高峰期间 `cds-infra-metersphere-kafka` 连续 die（exitCode=1）、CDS 自用 mongo 死亡 → state persist 失败 → master 宕机。
+
+**已排除的两个怀疑**（均实测取证，勿再重复排查）：
+- **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 `doc/debt.cds.replica-set.md` #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，自 07-26 起一直在，期间 CDS 正常经历数十次部署；孤儿容器扫描（dryRun + includeStopped）候选为 0。
+- **不是磁盘/内存被打满的稳态问题**：事故后实测宿主 96GB 内存（可用 44GB）、磁盘 338GB 用 285GB（85%，剩 54GB），两者都未触顶。
+- 生产当时运行 `95d1c24`（复制集第 25 轮），已逐行排除该 commit 三处改动与本事故的因果（均有异常兜底且不在崩溃路径）。
+
+**取证缺口**：`InfraLifecycleWatcher` 的 die/oom 事件缓冲区是**内存态**，master 重启即清空——本次事后已无法判定自用 mongo 是 cgroup OOM 还是自身退出。取证器（`debt.cds.replica-set.md` #17）需要持久化才能支撑跨重启复盘。
+
+**稳态压力（非本次触发因，但需要治理）**：414 条 deployment version 各绑 per-SHA 镜像，55 分支 / 158 服务；`docker system df -v` 在 20s 超时内跑不完（`/api/projects/:id/storage` 返回「无法读取卷大小」）——docker 对象数量过多的直接信号，磁盘 85% 的主要贡献者更可能是累积镜像而非单份 DB 克隆。
 
 **暴露的结构性债务**：
 - （#5 本体）master 把自用 mongo 当强依赖，mongo 死亡波及全局且不能自愈拉回（35 分钟窗口远超任何合理重启退避）。偿还方向：state persist 失败降级为「内存态 + json fallback + 告警」而非放任 master 死亡；master 存活性看门狗（进程级，独立于 systemd 默认退避）。
+- **组件未变更却回落宿主源码构建**（本次触发因，最高优先）：CI 因组件代码未变而跳过镜像构建是**正确**的，错在 CDS 侧把「按 SHA 拉镜像扑空」一律当作「需要在宿主全量重编」。组件代码既然未变，上一版镜像就是等价产物。偿还方向：按 SHA 拉取失败时，先回退到「该组件最近一次有镜像的版本」（或当前正在跑的镜像）复用，只有组件代码确实变更且镜像缺失才允许宿主源码构建；宿主源码构建还应串行化 + 并发闸，禁止三个重编同时打满宿主。
 - 中断派发自动补发机制已存在但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 门禁默认关闭——与 `doc/debt.cds.selfupdate-prebuilt.md` 开放债务 #1 的偿还方向重合，评估默认开启。
+- 镜像/版本保留无上限（414 条 version）：需要保留策略（按分支保留最近 N 版 + 定期 `docker image prune`）。
 
 ## 相关
 
