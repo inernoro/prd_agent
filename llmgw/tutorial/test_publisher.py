@@ -34,6 +34,8 @@ class MemoryGateway:
         self.fail_graph_publish = fail_graph_publish
         self.lose_graph_publish_response = False
         self.lose_put_response_for: set[str] = set()
+        self.fail_primary_before_commit = False
+        self.lose_primary_response_after_commit = False
         self.link_graph: dict = {"exists": False, "draft": None, "published": None, "history": []}
 
     def snapshot(self, store_id: str, managed_publisher: str) -> dict:
@@ -125,10 +127,16 @@ class MemoryGateway:
         return {"action": action, "nodeId": f"node-{source_id}", "updatedAt": self.store_updated_at}
 
     def set_primary(self, store_id: str, body: dict) -> dict:
+        if self.fail_primary_before_commit:
+            self.fail_primary_before_commit = False
+            raise publisher.ApiConflict("注入的主文档写入前失败")
         if self.store_updated_at != body["expectedStoreUpdatedAt"]:
             raise publisher.ApiConflict("store CAS 不匹配")
         self.primary_entry_id = self.nodes[body["sourceId"]]["id"]
         self.store_updated_at += 1
+        if self.lose_primary_response_after_commit:
+            self.lose_primary_response_after_commit = False
+            raise publisher.TutorialError("注入的主文档响应丢失")
         return {"primaryEntryId": self.primary_entry_id, "updatedAt": self.store_updated_at}
 
     def delete_created_node(self, store_id: str, source_id: str, query: dict[str, str]) -> dict:
@@ -385,6 +393,35 @@ class TutorialPublisherTests(unittest.TestCase):
 
         self.assertNotIn(new_parent.source_id, gateway.nodes)
         self.assertIsNone(gateway.nodes[reparented.source_id]["parentId"])
+
+    def test_primary_write_is_reconciled_after_committed_response_loss(self):
+        gateway = MemoryGateway()
+        gateway.lose_primary_response_after_commit = True
+
+        applied = publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+
+        self.assertEqual("reconciled", applied["primary"]["action"])
+        self.assertEqual(gateway.nodes[self.source.primary_source_id]["id"], gateway.primary_entry_id)
+
+    def test_primary_write_retries_after_transient_precommit_failure(self):
+        gateway = MemoryGateway()
+        gateway.fail_primary_before_commit = True
+
+        applied = publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+
+        self.assertEqual("reconciled", applied["primary"]["action"])
+        self.assertEqual(2, applied["primary"]["attempts"])
+        self.assertEqual(gateway.nodes[self.source.primary_source_id]["id"], gateway.primary_entry_id)
 
     def test_graph_only_revision_comes_from_remote_content(self):
         gateway = MemoryGateway()

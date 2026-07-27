@@ -696,6 +696,46 @@ def stage_link_graph(
     }
 
 
+def _set_primary_with_reconcile(
+    gateway: PublisherGateway,
+    store_id: str,
+    source: TutorialSource,
+) -> dict[str, Any]:
+    last_error: TutorialError | None = None
+    for attempt in range(2):
+        snapshot = gateway.snapshot(store_id, source.publisher)
+        primary_remote = next(
+            (
+                node for node in snapshot.get("nodes", [])
+                if node.get("sourceId") == source.primary_source_id and node.get("managed")
+            ),
+            None,
+        )
+        if primary_remote is None:
+            raise TutorialError("设置主文档前找不到受管目标节点")
+        if snapshot.get("store", {}).get("primaryEntryId") == primary_remote.get("id"):
+            return {"action": "reconciled" if last_error else "noop", "attempts": attempt}
+        try:
+            gateway.set_primary(store_id, {
+                "publisher": source.publisher,
+                "sourceId": source.primary_source_id,
+                "expectedStoreUpdatedAt": snapshot["store"]["updatedAt"],
+            })
+        except TutorialError as exc:
+            last_error = exc
+        verified = gateway.snapshot(store_id, source.publisher)
+        verified_primary = next(
+            (
+                node for node in verified.get("nodes", [])
+                if node.get("sourceId") == source.primary_source_id and node.get("managed")
+            ),
+            None,
+        )
+        if verified_primary is not None and verified.get("store", {}).get("primaryEntryId") == verified_primary.get("id"):
+            return {"action": "reconciled" if last_error else "updated", "attempts": attempt + 1}
+    raise TutorialError("主文档设置在重试与回读后仍未完成，发布结果需要修复") from last_error
+
+
 def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource, plan: list[PlanItem]) -> dict[str, Any]:
     conflicts = [item for item in plan if item.action == "conflict"]
     if conflicts:
@@ -747,18 +787,17 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
         if rollback_errors:
             raise TutorialError("发布失败，且一致性恢复未完全结束: " + "; ".join(rollback_errors)) from exc
         raise
-    if primary_changed:
-        current_snapshot = gateway.snapshot(store_id, source.publisher)
-        gateway.set_primary(store_id, {
-            "publisher": source.publisher,
-            "sourceId": source.primary_source_id,
-            "expectedStoreUpdatedAt": current_snapshot["store"]["updatedAt"],
-        })
+    primary_result = (
+        _set_primary_with_reconcile(gateway, store_id, source)
+        if primary_changed
+        else {"action": "noop", "attempts": 0}
+    )
     return {
         "runId": run_id,
         "actions": actions,
         "counts": {name: sum(1 for item in actions if item["action"] == name) for name in ("created", "updated", "noop")},
         "primaryChanged": primary_changed,
+        "primary": primary_result,
         "snapshotSha256": verified.get("snapshotSha256"),
         "linkGraph": link_graph,
     }
