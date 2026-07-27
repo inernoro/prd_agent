@@ -788,6 +788,58 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task SessionOrchestrator_ShouldStopBlockedReceiverWhenFailureRecordingThrows()
+    {
+        var candidate = Candidate(
+            "doubao",
+            LiveAsrCandidatePolicy.PreferredModel,
+            "doubao-asr-stream",
+            apiKey: string.Empty);
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.ResolveAsync(
+                It.IsAny<string>(),
+                It.IsAny<string>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<string?>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(candidate);
+        resolver.Setup(x => x.RecordFailureAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("健康状态写入失败"));
+        var gateway = new Mock<ILlmGateway>();
+        var orchestrator = new LiveAsrSessionOrchestrator(
+            resolver.Object,
+            new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance),
+            new LiveAsrBatchFallbackService(
+                gateway.Object,
+                resolver.Object,
+                NullLogger<LiveAsrBatchFallbackService>.Instance),
+            NullLogger<LiveAsrSessionOrchestrator>.Instance);
+        var transport = new BlockingLiveAsrTransport();
+        var events = new List<LiveAsrEvent>();
+
+        var outcome = await orchestrator.ExecuteAsync(
+                transport,
+                TestRequestContext(),
+                evt =>
+                {
+                    events.Add(evt);
+                    return Task.CompletedTask;
+                },
+                () => { })
+            .WaitAsync(TimeSpan.FromSeconds(2));
+
+        outcome.Failure.ShouldBe("健康状态写入失败");
+        await transport.Completion.WaitAsync(TimeSpan.FromSeconds(2));
+        transport.CancellationWasRequested.ShouldBeTrue();
+        events.ShouldContain(evt =>
+            evt.Type == LiveAsrEventTypes.Degraded
+            && evt.ErrorCode == "LIVE_ASR_GATEWAY_FAILED");
+    }
+
+    [Fact]
     public void WebSocketAuth_ShouldReadTokenOnlyOnExactLiveTranscriptionSuffix()
     {
         LiveAsrWebSocketAuth.ExtractToken(
@@ -833,7 +885,11 @@ public class LiveAsrProtocolTests
             .ShouldBeGreaterThan(TimeSpan.Zero);
     }
 
-    private static ModelResolutionResult Candidate(string platform, string model, string transformer)
+    private static ModelResolutionResult Candidate(
+        string platform,
+        string model,
+        string transformer,
+        string? apiKey = null)
         => new()
         {
             Success = true,
@@ -841,6 +897,7 @@ public class LiveAsrProtocolTests
             ActualPlatformId = platform,
             ActualModel = model,
             ExchangeTransformerType = transformer,
+            ApiKey = apiKey,
         };
 
     private static ModelResolutionResult BatchCandidate(string platform, string model)
@@ -876,13 +933,48 @@ public class LiveAsrProtocolTests
 
         public async Task ReceiveFramesAsync(
             IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
-            Func<LiveAsrEvent, Task> emit)
+            Func<LiveAsrEvent, Task> emit,
+            CancellationToken cancellationToken)
         {
             ReceiveFramesCalls++;
             foreach (var writer in writers)
             {
-                await writer.WriteAsync(new LiveAsrAudioFrame(1, [], IsFinal: true));
+                await writer.WriteAsync(
+                    new LiveAsrAudioFrame(1, [], IsFinal: true),
+                    cancellationToken);
                 writer.TryComplete();
+            }
+        }
+    }
+
+    private sealed class BlockingLiveAsrTransport : ILiveAsrSessionTransport
+    {
+        private readonly TaskCompletionSource _completion =
+            new(TaskCreationOptions.RunContinuationsAsynchronously);
+
+        public Task Completion => _completion.Task;
+        public bool CancellationWasRequested { get; private set; }
+
+        public Task<bool> ReceiveStartAsync() => Task.FromResult(true);
+
+        public async Task ReceiveFramesAsync(
+            IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
+            Func<LiveAsrEvent, Task> emit,
+            CancellationToken cancellationToken)
+        {
+            try
+            {
+                for (var sequence = 1; sequence <= 200; sequence++)
+                {
+                    var frame = new LiveAsrAudioFrame(sequence, [1, 2]);
+                    foreach (var writer in writers)
+                        await writer.WriteAsync(frame, cancellationToken);
+                }
+            }
+            finally
+            {
+                CancellationWasRequested = cancellationToken.IsCancellationRequested;
+                _completion.TrySetResult();
             }
         }
     }

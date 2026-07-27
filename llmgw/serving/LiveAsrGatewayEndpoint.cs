@@ -255,7 +255,8 @@ public static class LiveAsrGatewayEndpoint
 
         public async Task ReceiveFramesAsync(
             IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
-            Func<LiveAsrEvent, Task> emit)
+            Func<LiveAsrEvent, Task> emit,
+            CancellationToken cancellationToken)
         {
             long previousSequence = 0;
             try
@@ -265,7 +266,8 @@ public static class LiveAsrGatewayEndpoint
                     var message = await ReceiveMessageAsync(
                         _socket,
                         LiveAsrWireProtocol.MaxPcmBytesPerFrame
-                        + LiveAsrWireProtocol.SequencePrefixBytes);
+                        + LiveAsrWireProtocol.SequencePrefixBytes,
+                        cancellationToken);
                     if (message.Type == WebSocketMessageType.Close)
                         break;
 
@@ -298,7 +300,7 @@ public static class LiveAsrGatewayEndpoint
 
                     previousSequence = frame!.Sequence;
                     foreach (var writer in writers)
-                        await writer.WriteAsync(frame, CancellationToken.None);
+                        await writer.WriteAsync(frame, cancellationToken);
                 }
             }
             finally
@@ -309,7 +311,17 @@ public static class LiveAsrGatewayEndpoint
                     IsFinal: true);
                 foreach (var writer in writers)
                 {
-                    await writer.WriteAsync(finalFrame, CancellationToken.None);
+                    if (!cancellationToken.IsCancellationRequested)
+                    {
+                        try
+                        {
+                            await writer.WriteAsync(finalFrame, cancellationToken);
+                        }
+                        catch (ChannelClosedException)
+                        {
+                            // 编排器异常收尾时可能先关闭通道；此时只需完成剩余 writer。
+                        }
+                    }
                     writer.TryComplete();
                 }
             }
@@ -318,13 +330,14 @@ public static class LiveAsrGatewayEndpoint
 
     private static async Task<(WebSocketMessageType Type, byte[] Payload)> ReceiveMessageAsync(
         WebSocket socket,
-        int maxBytes)
+        int maxBytes,
+        CancellationToken cancellationToken = default)
     {
         using var stream = new MemoryStream();
         var buffer = new byte[16 * 1024];
         while (true)
         {
-            var result = await socket.ReceiveAsync(buffer, CancellationToken.None);
+            var result = await socket.ReceiveAsync(buffer, cancellationToken);
             if (result.MessageType == WebSocketMessageType.Close)
                 return (WebSocketMessageType.Close, Array.Empty<byte>());
             if (stream.Length + result.Count > maxBytes)

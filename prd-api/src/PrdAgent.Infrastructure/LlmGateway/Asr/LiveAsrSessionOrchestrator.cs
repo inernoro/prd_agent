@@ -14,7 +14,8 @@ public interface ILiveAsrSessionTransport
 
     Task ReceiveFramesAsync(
         IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
-        Func<LiveAsrEvent, Task> emit);
+        Func<LiveAsrEvent, Task> emit,
+        CancellationToken cancellationToken);
 }
 
 public sealed record LiveAsrOrchestrationResult(
@@ -52,6 +53,10 @@ public sealed class LiveAsrSessionOrchestrator
     {
         LiveAsrSessionResult? sessionResult = null;
         string? sessionFailure = null;
+        Channel<LiveAsrAudioFrame>? frames = null;
+        Channel<LiveAsrAudioFrame>? batchFrames = null;
+        Task? receiveTask = null;
+        using var receiveCancellation = new CancellationTokenSource();
         try
         {
             if (!await transport.ReceiveStartAsync())
@@ -79,7 +84,7 @@ public sealed class LiveAsrSessionOrchestrator
                 ct: CancellationToken.None);
             var candidates = LiveAsrCandidatePolicy.Select(preferred, automatic);
             var batchCandidates = LiveAsrBatchFallbackService.SelectBatchCandidates(automatic);
-            var frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(100)
+            frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(100)
             {
                 SingleReader = true,
                 SingleWriter = true,
@@ -87,15 +92,16 @@ public sealed class LiveAsrSessionOrchestrator
             });
             // 备用预览最多保存最近一分钟 PCM，不能反向阻塞浏览器。完整性由
             // BatchFallback 校验；前缀被淘汰时不输出完成终态，交完整文件校准。
-            var batchFrames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(601)
+            batchFrames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(601)
             {
                 SingleReader = true,
                 SingleWriter = true,
                 FullMode = BoundedChannelFullMode.DropOldest,
             });
-            var receiveTask = transport.ReceiveFramesAsync(
+            receiveTask = transport.ReceiveFramesAsync(
                 [frames.Writer, batchFrames.Writer],
-                emit);
+                emit,
+                receiveCancellation.Token);
 
             if (candidates.Count == 0)
             {
@@ -246,6 +252,28 @@ public sealed class LiveAsrSessionOrchestrator
         {
             sessionFailure = ex.Message;
             _logger.LogWarning(ex, "实时 ASR 会话编排异常");
+            receiveCancellation.Cancel();
+            frames?.Writer.TryComplete();
+            batchFrames?.Writer.TryComplete();
+            if (receiveTask is not null)
+            {
+                try
+                {
+                    await receiveTask;
+                }
+                catch (OperationCanceledException) when (receiveCancellation.IsCancellationRequested)
+                {
+                    // 异常收尾主动取消接收，确保 WebSocket 和有界通道不再持有后台任务。
+                }
+                catch (ChannelClosedException)
+                {
+                    // 双通道已主动关闭，阻塞中的写入会以 ChannelClosedException 结束。
+                }
+                catch (Exception receiveEx)
+                {
+                    _logger.LogDebug(receiveEx, "实时 ASR 接收任务在异常收尾时退出");
+                }
+            }
             await emit(new LiveAsrEvent
             {
                 Type = LiveAsrEventTypes.Degraded,
