@@ -176,3 +176,5 @@
 | fix | cds | 专用隔离实例连接串凭据改容器活取（inspect env，失败退 infra 现值）：源库轮换 root 密码后，新增副本/重物化不再拿新密码连按旧凭据初始化的老实例 |
 | fix | cds | mongo 克隆 dump 归档改 docker 托管卷承载并在 daemon 命名空间清理：容器化 master 走宿主 socket 时宿主 bind 路径跨命名空间失真，生产派生归档不再滞留宿主 /tmp |
 | fix | cds | 隔离审计对专用实例的认证同样改容器活取凭据（与成员复用路径同款），源库轮换密码后健康隔离不再被审计误报 broken |
+| fix | cds | 执行计划回滚补偿失败步骤自身残留：add-replica 半程入册的成员清理、isolate-db 半程隔离回切、set-weight 恢复原值，破坏性/单向步骤失败如实保持 error 不谎报 rolled-back |
+| fix | cds | 副本身份响应头以路由为唯一权威：复制集路由强制覆写 X-CDS-Replica*、非复制集路由删净，应用/历史版本自发同名头不再伪造分流探测统计 |

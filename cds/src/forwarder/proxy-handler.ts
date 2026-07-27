@@ -466,6 +466,17 @@ export class ProxyHandler {
           respHeaders['x-cds-upstream'] = `${upstreamHost}:${upstreamPort}`;
           if (route.branchId) respHeaders['x-cds-branch'] = route.branchId;
           if (route._id) respHeaders['x-cds-route-id'] = route._id;
+          // 副本身份头以**路由**为唯一权威（Codex 第二十四轮 P2）：respHeaders 从
+          // 上游响应展开，应用/历史版本若自己发 X-CDS-Replica* 会盖掉 forwarder-main
+          // 在代理前 setHeader 的可信值——分流探测统计的就成了应用伪造的落点。
+          // 复制集路由强制覆写为选中成员；非复制集路由删净，untagged 才是诚实信号。
+          if (route.replicaGroup && route.replicaMemberId) {
+            respHeaders['x-cds-replica'] = route.replicaMemberId;
+            respHeaders['x-cds-replica-group'] = route.replicaGroup;
+          } else {
+            delete respHeaders['x-cds-replica'];
+            delete respHeaders['x-cds-replica-group'];
+          }
           // Cookie cache control:cookie 含 cds_branch 时禁缓存(对齐 master proxy.ts:971-973)。
           // 防止浏览器在 cookie 路由场景下混用不同分支的 disk cache。
           if (req.headers.cookie?.includes('cds_branch')) {

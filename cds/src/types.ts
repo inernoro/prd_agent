@@ -650,6 +650,12 @@ export interface ReplicaPlanStep {
   /** 执行产物（add-replica 生成的成员 id / set-weight 的原权重），回滚用 */
   resultMemberId?: string;
   prevWeight?: number;
+  /**
+   * 破坏性/单向步骤已开始真实变更的标记（Codex 第二十四轮 P1）：校验期失败
+   * （目标不存在等）零副作用，不置位；置位后步骤失败 = 现场可能有不可自动
+   * 复原的部分效果，回滚必须如实保持 error 而非谎报 rolled-back。
+   */
+  mutationStarted?: boolean;
   startedAt?: string;
   endedAt?: string;
 }

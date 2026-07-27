@@ -1388,6 +1388,12 @@ export class ReplicaSetService {
     if (step.kind === 'remove-member') {
       const memberId = step.params?.memberId;
       if (!memberId) throw new Error('缺少 memberId');
+      // 变更起始标记（Codex 第二十四轮 P1）：目标在册才算真实开动——校验类
+      // 失败（成员不存在）零副作用，回滚不必为它保守化
+      if (this.findMember(branchId, profileId, memberId)) {
+        step.mutationStarted = true;
+        this.savePlan();
+      }
       await this.removeMember(branchId, profileId, memberId);
       return;
     }
@@ -1418,6 +1424,9 @@ export class ReplicaSetService {
     if (step.kind === 'revert-db') {
       const r = this.revertProfile(branchId, profileId);
       if (!r.accepted) throw new Error(r.reason || '回切未被接受');
+      // revert 已受理 = 摘流与隔离标记清除已发生（单向变更开动）
+      step.mutationStarted = true;
+      this.savePlan();
       await this.waitFor(branchId, 600_000, () => {
         const rs = this.requireBranch(branchId).replicaSets?.[profileId];
         const errored = rs?.members.find((m) => m.status === 'error');
@@ -1427,6 +1436,10 @@ export class ReplicaSetService {
       return;
     }
     // dissolve
+    if (this.requireBranch(branchId).replicaSets?.[profileId]) {
+      step.mutationStarted = true;
+      this.savePlan();
+    }
     await this.dissolve(branchId, profileId);
   }
 
@@ -1439,6 +1452,54 @@ export class ReplicaSetService {
     const plan = this.requirePlan(branchId, planId);
     plan.rollbackLog = plan.rollbackLog || [];
     let allOk = true;
+    // 失败步骤自身的残留补偿（Codex 第二十四轮 P1）：抛错的步骤可能已落下半程
+    // 持久效果——add-replica 在就绪失败前已入册成员并记 resultMemberId、
+    // isolate-db 可能在重物化失败前已置 rs.isolated。只回滚 done 步骤就报
+    // rolled-back，残留副本/半程隔离还在现场，是对操作员谎报。补偿失败步骤
+    // 在前（它是最后执行的，逆序回滚的第一站），无残留则静默跳过。
+    for (const s of plan.steps.filter((x) => x.status === 'error')) {
+      try {
+        if (s.kind === 'add-replica' && s.resultMemberId) {
+          if (this.findMember(branchId, s.profileId, s.resultMemberId)) {
+            await this.removeMember(branchId, s.profileId, s.resultMemberId);
+            plan.rollbackLog.push(`补偿失败步骤 ${s.id}: 已清理残留副本 ${s.resultMemberId}`);
+          }
+        } else if (s.kind === 'isolate-db') {
+          const rsNow = this.requireBranch(branchId).replicaSets?.[s.profileId];
+          if (rsNow?.isolated) {
+            const r = this.revertProfile(branchId, s.profileId);
+            if (!r.accepted) {
+              plan.rollbackLog.push(`补偿失败步骤 ${s.id} 未完成: ${r.reason}`);
+              allOk = false;
+            } else {
+              await this.waitFor(branchId, 600_000, () => {
+                const cur = this.requireBranch(branchId).replicaSets?.[s.profileId];
+                const memberErr = cur?.members.find((m) => m.status === 'error');
+                if (memberErr) throw new Error(memberErr.statusMessage || '回切后成员重物化失败');
+                return !cur?.isolated && (cur?.members || []).every((m) => m.status !== 'provisioning');
+              });
+              plan.rollbackLog.push(`补偿失败步骤 ${s.id}: 已回切主库（半程隔离已清除）`);
+            }
+          }
+        } else if (s.kind === 'set-weight' && typeof s.prevWeight === 'number' && s.params?.memberId) {
+          const rsNow = this.requireBranch(branchId).replicaSets?.[s.profileId];
+          if (rsNow && (s.params.memberId === 'primary' || this.findMember(branchId, s.profileId, s.params.memberId))) {
+            this.updateMember(branchId, s.profileId, s.params.memberId, { weight: s.prevWeight });
+            plan.rollbackLog.push(`补偿失败步骤 ${s.id}: 权重恢复为 ${s.prevWeight}`);
+          }
+        } else if ((s.kind === 'remove-member' || s.kind === 'dissolve' || s.kind === 'revert-db') && s.mutationStarted) {
+          // 破坏性/单向步骤在真实开动后失败，可能已产生不可自动复原的部分效果
+          //（半删的成员/已清除的隔离标记）——如实保持 error，不谎报 rolled-back。
+          // 未置 mutationStarted 的失败是校验期拒绝（目标不存在等），零副作用。
+          plan.rollbackLog.push(`失败步骤 ${s.id}(${s.kind}) 可能已产生不可自动复原的部分效果，保持现状——请按画布实况人工核对`);
+          allOk = false;
+        }
+      } catch (err) {
+        plan.rollbackLog.push(`补偿失败步骤 ${s.id} 异常: ${(err as Error).message.slice(0, 200)}`);
+        allOk = false;
+      }
+      this.savePlan();
+    }
     const done = plan.steps.filter((s) => s.status === 'done').reverse();
     for (const s of done) {
       try {
