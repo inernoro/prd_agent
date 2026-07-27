@@ -152,7 +152,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             "// collection: document_recording_upload_chunks",
             StringComparison.Ordinal);
         var recordingIndexesEnd = source.IndexOf(
-            "if (tightenedUniqueIndexMigrationFailures.length > 0)",
+            "// end collection: document_recording_upload_sessions",
             recordingIndexesStart,
             StringComparison.Ordinal);
 
@@ -164,7 +164,25 @@ public sealed class DocumentRecordingArchiveWorkerTests
         recordingIndexes.ShouldContain("idx_document_recording_sessions_expires");
         recordingIndexes.ShouldContain("idx_document_recording_sessions_archive_due");
         recordingIndexes.ShouldContain("idx_document_recording_sessions_archive_stale");
-        recordingIndexes.ShouldNotContain("expireAfterSeconds");
+        var legacyTtlRemoval = recordingIndexes.IndexOf(
+            "recordingSessionCollection.dropIndex(index.name)",
+            StringComparison.Ordinal);
+        var replacementDefinition = recordingIndexes.IndexOf(
+            "db.document_recording_upload_sessions.createIndex(",
+            StringComparison.Ordinal);
+        var replacementIndex = recordingIndexes.IndexOf(
+            "idx_document_recording_sessions_expires",
+            StringComparison.Ordinal);
+        var nextSessionIndex = recordingIndexes.IndexOf(
+            "idx_document_recording_sessions_archive_due",
+            replacementIndex,
+            StringComparison.Ordinal);
+        legacyTtlRemoval.ShouldBeGreaterThanOrEqualTo(0);
+        replacementDefinition.ShouldBeGreaterThan(legacyTtlRemoval);
+        replacementIndex.ShouldBeGreaterThan(legacyTtlRemoval);
+        nextSessionIndex.ShouldBeGreaterThan(replacementIndex);
+        recordingIndexes[replacementDefinition..nextSessionIndex]
+            .ShouldNotContain("expireAfterSeconds");
     }
 
     [Fact]

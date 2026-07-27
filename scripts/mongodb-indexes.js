@@ -1297,6 +1297,20 @@ db.document_recording_upload_chunks.createIndex(
 // collection: document_recording_upload_sessions
 // 过期会话由应用按“先删分片、再删会话”的顺序回收。这里故意不用 TTL：
 // Mongo TTL 若先删除父会话，会让分片失去可恢复的关联记录。
+// 旧版数据字典曾建议 DBA 自行创建 TTL；先精确移除同键 TTL，避免新索引
+// 因 options conflict 中止并让破坏性过期策略继续生效。
+const recordingSessionCollectionName = "document_recording_upload_sessions"
+const recordingSessionCollection = db.getCollection(recordingSessionCollectionName)
+const recordingSessionCollectionExists =
+  db.getCollectionInfos({ name: recordingSessionCollectionName }).length > 0
+if (recordingSessionCollectionExists) {
+  recordingSessionCollection.getIndexes()
+    .filter(index =>
+      JSON.stringify(index.key) === JSON.stringify({ "ExpiresAt": 1 }) &&
+      index.expireAfterSeconds !== undefined
+    )
+    .forEach(index => recordingSessionCollection.dropIndex(index.name))
+}
 db.document_recording_upload_sessions.createIndex(
   { "ExpiresAt": 1 },
   { name: "idx_document_recording_sessions_expires" }
@@ -1311,6 +1325,7 @@ db.document_recording_upload_sessions.createIndex(
   { "OwnerInstanceId": 1, "ArchiveStatus": 1, "UpdatedAt": 1 },
   { name: "idx_document_recording_sessions_archive_stale" }
 )
+// end collection: document_recording_upload_sessions
 
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
