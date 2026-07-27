@@ -66,7 +66,10 @@ public class DocumentRecordingUploadSession
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    /// <summary>未完成会话的清理时间；建议为本集合建立 TTL 索引。</summary>
+    /// <summary>
+    /// 未完成会话的清理时间。仅建立普通查询索引，不使用 TTL；
+    /// 清理流程必须先删除分片再删除会话，避免留下无法关联的孤儿分片。
+    /// </summary>
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(1);
 }
 

@@ -1281,6 +1281,37 @@ db.home_recent_opens.createIndex(
   { name: "uniq_home_recent_opens_user_entity", unique: true }
 )
 
+// collection: document_recording_upload_chunks
+// 会话内分片读取、排序、重试确认和批量删除共用此前缀。
+// _id 已由应用按 session + index 确定性生成；保持非唯一索引以兼容历史重复分片。
+db.document_recording_upload_chunks.createIndex(
+  { "SessionId": 1, "Index": 1 },
+  { name: "idx_document_recording_chunks_session_index" }
+)
+// 孤儿回收先按年龄形成有界候选，再按 SessionId 分组。
+db.document_recording_upload_chunks.createIndex(
+  { "CreatedAt": 1, "SessionId": 1 },
+  { name: "idx_document_recording_chunks_created_session" }
+)
+
+// collection: document_recording_upload_sessions
+// 过期会话由应用按“先删分片、再删会话”的顺序回收。这里故意不用 TTL：
+// Mongo TTL 若先删除父会话，会让分片失去可恢复的关联记录。
+db.document_recording_upload_sessions.createIndex(
+  { "ExpiresAt": 1 },
+  { name: "idx_document_recording_sessions_expires" }
+)
+// 归档 Worker 按实例和 pending 状态取下一条到期任务，并按重试时间排序。
+db.document_recording_upload_sessions.createIndex(
+  { "OwnerInstanceId": 1, "ArchiveStatus": 1, "ArchiveNextAttemptAt": 1 },
+  { name: "idx_document_recording_sessions_archive_due" }
+)
+// Worker 重启时按实例、archiving 状态和更新时间释放过期租约。
+db.document_recording_upload_sessions.createIndex(
+  { "OwnerInstanceId": 1, "ArchiveStatus": 1, "UpdatedAt": 1 },
+  { name: "idx_document_recording_sessions_archive_stale" }
+)
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

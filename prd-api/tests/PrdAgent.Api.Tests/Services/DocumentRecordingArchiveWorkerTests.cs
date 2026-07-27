@@ -145,6 +145,29 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void RecordingUploadCollections_ShouldDeclareAllQueryIndexesWithoutTtl()
+    {
+        var source = File.ReadAllText(MongoIndexesPath());
+        var recordingIndexesStart = source.IndexOf(
+            "// collection: document_recording_upload_chunks",
+            StringComparison.Ordinal);
+        var recordingIndexesEnd = source.IndexOf(
+            "if (tightenedUniqueIndexMigrationFailures.length > 0)",
+            recordingIndexesStart,
+            StringComparison.Ordinal);
+
+        recordingIndexesStart.ShouldBeGreaterThanOrEqualTo(0);
+        recordingIndexesEnd.ShouldBeGreaterThan(recordingIndexesStart);
+        var recordingIndexes = source[recordingIndexesStart..recordingIndexesEnd];
+        recordingIndexes.ShouldContain("idx_document_recording_chunks_session_index");
+        recordingIndexes.ShouldContain("idx_document_recording_chunks_created_session");
+        recordingIndexes.ShouldContain("idx_document_recording_sessions_expires");
+        recordingIndexes.ShouldContain("idx_document_recording_sessions_archive_due");
+        recordingIndexes.ShouldContain("idx_document_recording_sessions_archive_stale");
+        recordingIndexes.ShouldNotContain("expireAfterSeconds");
+    }
+
+    [Fact]
     public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -1571,23 +1594,28 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     private static string DocumentStoreControllerPath()
+        => RepositoryFilePath(
+            "prd-api",
+            "src",
+            "PrdAgent.Api",
+            "Controllers",
+            "Api",
+            "DocumentStoreController.cs");
+
+    private static string MongoIndexesPath()
+        => RepositoryFilePath("scripts", "mongodb-indexes.js");
+
+    private static string RepositoryFilePath(params string[] segments)
     {
         var dir = new DirectoryInfo(AppContext.BaseDirectory);
         while (dir is not null)
         {
-            var path = Path.Combine(
-                dir.FullName,
-                "prd-api",
-                "src",
-                "PrdAgent.Api",
-                "Controllers",
-                "Api",
-                "DocumentStoreController.cs");
+            var path = Path.Combine([dir.FullName, .. segments]);
             if (File.Exists(path)) return path;
             dir = dir.Parent;
         }
 
         throw new DirectoryNotFoundException(
-            "Could not locate DocumentStoreController.cs from test base directory.");
+            $"Could not locate {string.Join('/', segments)} from test base directory.");
     }
 }
