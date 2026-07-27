@@ -4,7 +4,7 @@ import { execFile } from 'node:child_process';
 import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
-import { diskGuard, imageKeepGenerationsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
+import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -286,7 +286,7 @@ export class JanitorService {
         })));
     const plan: ImageRetentionPlan = computeImageRetentionPlan({
       ledger, hostImages, inUseImages, keepGenerations,
-      maxRemovals: this.config.imageMaxRemovalsPerSweep ?? 40,
+      maxRemovals: imageMaxRemovalsFor(tier, this.config.imageMaxRemovalsPerSweep ?? 40),
     });
     const removed: string[] = [];
     const failed: Array<{ image: string; error: string }> = [];

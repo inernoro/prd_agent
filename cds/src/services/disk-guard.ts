@@ -63,6 +63,23 @@ export function imageKeepGenerationsFor(tier: DiskTier, base = 5): number {
   }
 }
 
+/**
+ * 该档位下单轮最多回收几个镜像。
+ *
+ * 2026-07-27 生产实测：首轮 sweep 删 40 个、**积压 4598 个**——按固定 40/轮、
+ * 每小时一轮要跑五天才能消化完存量，等于「在跑」但追不上。回收强度必须随磁盘
+ * 压力放大：越紧张删得越猛。上限仍存在（单轮 rmi 是串行的，不能把一次 sweep
+ * 拖成小时级，也不该长时间占住 docker daemon）。
+ */
+export function imageMaxRemovalsFor(tier: DiskTier, base = 40): number {
+  switch (tier) {
+    case 'freeze': return Math.max(base, 400);
+    case 'reclaim': return Math.max(base, 200);
+    case 'notice': return Math.max(base, 100);
+    default: return base;
+  }
+}
+
 /** 给用户看的一句话（冻结时会原样出现在部署被拒的响应里）。 */
 export function describeDiskTier(tier: DiskTier, usedPercent: number | null): string {
   const pct = typeof usedPercent === 'number' ? `${Math.round(usedPercent)}%` : '未知';

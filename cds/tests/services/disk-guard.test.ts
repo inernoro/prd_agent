@@ -1,6 +1,6 @@
 import { describe, it, expect, beforeEach } from 'vitest';
 import {
-  classifyDiskTier, shouldFreezeDeploys, imageKeepGenerationsFor, describeDiskTier, diskGuard,
+  classifyDiskTier, shouldFreezeDeploys, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, diskGuard,
 } from '../../src/services/disk-guard.js';
 
 /**
@@ -120,5 +120,19 @@ describe('多挂载点探测（Codex 第二十九轮 P2）', () => {
     diskGuard.setProbe(() => []);
     diskGuard.refreshNow();
     expect(diskGuard.get().tier).toBe('freeze');
+  });
+});
+
+describe('回收强度随磁盘压力放大（2026-07-27 生产实测：积压 4598 个）', () => {
+  it('越紧张单轮删得越多，正常档保持保守', () => {
+    expect(imageMaxRemovalsFor('ok')).toBe(40);
+    expect(imageMaxRemovalsFor('notice')).toBe(100);
+    expect(imageMaxRemovalsFor('reclaim')).toBe(200);
+    expect(imageMaxRemovalsFor('freeze')).toBe(400);
+  });
+
+  it('配置基数更大时以基数为准（不因分档反而删得更少）', () => {
+    expect(imageMaxRemovalsFor('notice', 500)).toBe(500);
+    expect(imageMaxRemovalsFor('ok', 500)).toBe(500);
   });
 });
