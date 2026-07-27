@@ -136,3 +136,25 @@ describe('回收强度随磁盘压力放大（2026-07-27 生产实测：积压 4
     expect(imageMaxRemovalsFor('ok', 500)).toBe(500);
   });
 });
+
+describe('sweep 不得覆盖多文件系统读数（Codex 第三十轮 P1）', () => {
+  beforeEach(() => diskGuard.reset());
+
+  it('注册了探测器时，按探测器的 worst-of 刷新，忽略调用方给的单盘兜底值', () => {
+    // janitor 只量 worktree；若直接拿它 update，docker 盘已到冻结线时每轮 sweep
+    // 都会把闸门重新打开，同轮的镜像回收还会按低压档位执行。
+    diskGuard.setProbe(() => [
+      { totalBytes: 100, freeBytes: 70 }, // worktree 30%
+      { totalBytes: 100, freeBytes: 4 },  // docker 96%
+    ]);
+    const tier = diskGuard.refreshOrUpdate(30);
+    expect(tier).toBe('freeze');
+    expect(diskGuard.get().usedPercent).toBe(96);
+  });
+
+  it('没有探测器时才用兜底值（janitor 单测与旧部署路径不回归）', () => {
+    const tier = diskGuard.refreshOrUpdate(88);
+    expect(tier).toBe('reclaim');
+    expect(diskGuard.get().usedPercent).toBe(88);
+  });
+});

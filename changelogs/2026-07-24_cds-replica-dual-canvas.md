@@ -200,3 +200,6 @@
 | fix | cds | promote 终态清理改用不可复用的成员身份栅栏，不再误删同 id 的替身成员 |
 | feat | cds | janitor 快照带上最近一轮 sweep 摘要（磁盘档位/删除分支数/镜像回收与截断数），回收结果从只打日志变为外部可核 |
 | perf | cds | 镜像回收单轮上限随磁盘档位放大（40/100/200/400）：生产实测积压 4598 个，固定 40 追不上存量 |
+| fix | cds | sweep 不再用 worktree 单盘读数覆盖多文件系统档位：docker 盘吃紧时闸门不会被每轮重新打开 |
+| fix | cds | sweep 并发合并成同一次：周期定时器/启动首轮/手工触发不再叠加抢 docker daemon |
+| fix | cds | sweep 摘要在 TTL 清理关闭时同样记录：janitor 关掉后回收仍留证，不再恒为 null |

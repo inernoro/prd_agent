@@ -152,6 +152,20 @@ class DiskGuardState {
     }
   }
 
+  /**
+   * 有探测器就按探测器（多挂载点取最紧张者）刷新，没有才用调用方给的读数兜底。
+   *
+   * janitor 的 sweep 只量 worktree（它本来就是为 worktree TTL 设计的），若直接
+   * `update(worktree%)` 会把探测器算出的「worst-of 多文件系统」结果**覆盖掉**
+   * （Codex 第三十轮 P1）：docker 盘已经到冻结线、worktree 还很空时，每一轮 sweep
+   * 都会把闸门重新打开，直到 60s TTL 过期才恢复；同一轮的镜像回收也会按低压档位
+   * 执行，该抢救的时候反而回收得最少。
+   */
+  refreshOrUpdate(fallbackUsedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
+    if (this.probe) return this.refreshNow(thresholds);
+    return this.update(fallbackUsedPercent, thresholds);
+  }
+
   update(usedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
     this.usedPercent = typeof usedPercent === 'number' && Number.isFinite(usedPercent) ? usedPercent : null;
     this.tier = classifyDiskTier(this.usedPercent, thresholds);

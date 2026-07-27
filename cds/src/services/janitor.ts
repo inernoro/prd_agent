@@ -251,6 +251,8 @@ export class JanitorService {
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
   private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
+  private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
   private orphanInfraScan: OrphanInfraScanFn | null = null;
 
@@ -378,7 +380,49 @@ export class JanitorService {
    * Run one sweep pass. Returns a full report, even when disabled
    * (enables manual / on-demand invocation via admin API).
    */
+  /**
+   * 对外的 sweep 入口：**去重 + 摘要记录**的外壳。
+   *
+   * - 去重（Codex 第三十轮 P2）：周期定时器、启动首轮、手工触发端点三条路都会
+   *   调这里，而一轮在磁盘压力下可能做多达 400 次串行 rmi（每次 60s 超时），
+   *   完全可能长过一个 interval。并发跑会算出同一份删除清单、互相抢 docker
+   *   daemon，恰好在最需要它稳的恢复期制造失败。在跑就**合并**到同一次，
+   *   不叠加（与 concurrency-gate-discipline「重试要合并不要叠加」同纪律）。
+   * - 摘要记录（Codex 第三十轮 P2）：此前写在 runSweep 末尾，而 runSweep 在
+   *   「TTL 清理被关掉」时会提前 return——回收明明跑了，/api/janitor/state 却
+   *   永远是 lastSweep:null，正好废掉这份用来举证「回收是否在工作」的证据。
+   *   放到外壳里，两条 return 路径都记得到。
+   */
   async sweep(): Promise<JanitorSweepReport> {
+    if (this.sweepInFlight) return this.sweepInFlight;
+    const run = (async () => {
+      try {
+        const report = await this.runSweep();
+        this.lastSweepSummary = {
+          at: report.timestamp,
+          diskTier: report.diskTier,
+          removedBranches: report.removedBranches.length,
+          imageRetention: report.imageRetention
+            ? {
+              removed: report.imageRetention.removed.length,
+              failed: report.imageRetention.failed.length,
+              deferred: report.imageRetention.deferred,
+              keepGenerations: report.imageRetention.keepGenerations,
+            }
+            : null,
+          dockerPrune: report.dockerPrune?.reclaimed ?? null,
+          errors: report.errors.length,
+        };
+        return report;
+      } finally {
+        this.sweepInFlight = null;
+      }
+    })();
+    this.sweepInFlight = run;
+    return run;
+  }
+
+  private async runSweep(): Promise<JanitorSweepReport> {
     const report: JanitorSweepReport = {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
@@ -414,7 +458,10 @@ export class JanitorService {
     //     磁盘从 80% 涨到 100% 全程没有任何一处会因此少做点什么。现在把档位写进
     //     进程内 diskGuard——freeze 档（默认 90%）部署派发会被直接拒绝，回收强度
     //     也随档位上调（镜像保留代数收紧）。
-    report.diskTier = diskGuard.update(usedPercentForTier);
+    // 有注册探测器时按它刷新（worst-of worktree + docker 数据目录），没有才用
+    // 上面的 worktree 读数兜底——直接 update(worktree%) 会覆盖掉多文件系统结果
+    //（Codex 第三十轮 P1）。
+    report.diskTier = diskGuard.refreshOrUpdate(usedPercentForTier);
     if (report.diskTier !== 'ok') {
       console.warn(`[janitor] ${describeDiskTier(report.diskTier, usedPercentForTier)}`);
     }
@@ -509,21 +556,6 @@ export class JanitorService {
       }
     }
 
-    this.lastSweepSummary = {
-      at: report.timestamp,
-      diskTier: report.diskTier,
-      removedBranches: report.removedBranches.length,
-      imageRetention: report.imageRetention
-        ? {
-          removed: report.imageRetention.removed.length,
-          failed: report.imageRetention.failed.length,
-          deferred: report.imageRetention.deferred,
-          keepGenerations: report.imageRetention.keepGenerations,
-        }
-        : null,
-      dockerPrune: report.dockerPrune?.reclaimed ?? null,
-      errors: report.errors.length,
-    };
     return report;
   }
 

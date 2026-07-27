@@ -351,6 +351,35 @@ describe('JanitorService', () => {
     });
   });
 
+  describe('sweep 去重与摘要可达（Codex 第三十轮）', () => {
+    it('并发调用合并成同一次 sweep，不叠加', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      const [a, b, c] = await Promise.all([janitor.sweep(), janitor.sweep(), janitor.sweep()]);
+      // 合并 = 三个调用拿到同一个 report 对象（而不是各跑一轮各出一份）
+      expect(a).toBe(b);
+      expect(b).toBe(c);
+    });
+
+    it('合并窗口结束后仍能再跑新的一轮', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      const first = await janitor.sweep();
+      const second = await janitor.sweep();
+      expect(second).not.toBe(first);
+    });
+
+    it('TTL 清理被关掉时也记得下摘要——回收跑了就必须留证', async () => {
+      // 此前摘要写在提前 return 之后，janitor 一关，/api/janitor/state 永远
+      // lastSweep:null，正好废掉「回收是否在工作」的证据。
+      setup({ enabled: false, dockerPrune: false, imageRetention: false });
+      mockDiskState = { totalBytes: 100, freeBytes: 30 }; // 70% -> ok
+      await janitor.sweep();
+      const last = janitor.getSnapshot().lastSweep;
+      expect(last).not.toBeNull();
+      expect(last!.diskTier).toBe('ok');
+      expect(last!.removedBranches).toBe(0);
+    });
+  });
+
   describe('回收结果可观测（2026-07-27 复盘）', () => {
     it('sweep 后快照带上本轮摘要——外部据此确认回收是否真的在跑', async () => {
       setup({ dockerPrune: false, imageRetention: false });
