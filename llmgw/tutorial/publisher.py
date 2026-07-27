@@ -506,12 +506,21 @@ def _restore_updated(
     source: TutorialSource,
     initial_snapshot: dict[str, Any],
     updated_source_ids: set[str],
+    run_id: str,
 ) -> list[str]:
-    if not updated_source_ids:
-        return []
     current_snapshot = gateway.snapshot(store_id, source.publisher)
     before = {node.get("sourceId"): node for node in initial_snapshot.get("nodes", []) if node.get("managed")}
     current = {node.get("sourceId"): node for node in current_snapshot.get("nodes", []) if node.get("managed")}
+    committed_source_ids = {
+        source_id
+        for source_id, node in current.items()
+        if source_id in before
+        and isinstance(node.get("metadata"), dict)
+        and node["metadata"].get("lastAppliedRunId") == run_id
+    }
+    restore_source_ids = updated_source_ids | committed_source_ids
+    if not restore_source_ids:
+        return []
     before_id_to_source = {node.get("id"): source_id for source_id, node in before.items()}
     restored: list[str] = []
     rollback_run_id = f"rollback-{uuid.uuid4().hex[:16]}"
@@ -522,7 +531,7 @@ def _restore_updated(
     }
     for source_node in source.nodes:
         source_id = source_node.source_id
-        if source_id not in updated_source_ids:
+        if source_id not in restore_source_ids:
             continue
         previous = before.get(source_id)
         remote = current.get(source_id)
@@ -530,6 +539,8 @@ def _restore_updated(
             raise TutorialError(f"{source_id}: 发布失败后无法读取待恢复节点")
         metadata = previous.get("metadata") if isinstance(previous.get("metadata"), dict) else {}
         remote_metadata = remote.get("metadata") if isinstance(remote.get("metadata"), dict) else {}
+        if remote_metadata.get("lastAppliedRunId") != run_id:
+            raise TutorialError(f"{source_id}: 待恢复节点已被其他发布批次接管")
         gateway.put_node(store_id, source_id, {
             "publisher": source.publisher,
             "runId": rollback_run_id,
@@ -632,11 +643,21 @@ def sync_link_graph(
     published_sha = staged.get("publishedSha256")
     if draft_sha == published_sha:
         return {"action": "noop", "graphSha256": draft_sha}
-    published = gateway.publish_link_graph(store_id, {
-        "publisher": source.publisher,
-        "expectedDraftSha256": draft_sha,
-        "expectedPublishedSha256": published_sha,
-    })
+    try:
+        published = gateway.publish_link_graph(store_id, {
+            "publisher": source.publisher,
+            "expectedDraftSha256": draft_sha,
+            "expectedPublishedSha256": published_sha,
+        })
+    except TutorialError as publish_error:
+        try:
+            reconciled = gateway.get_link_graph(store_id, source.publisher)
+        except TutorialError:
+            raise publish_error
+        reconciled_published = reconciled.get("published") if isinstance(reconciled.get("published"), dict) else {}
+        if reconciled_published.get("graphSha256") != draft_sha:
+            raise publish_error
+        return {"action": "published", "graphSha256": draft_sha, "reconciled": True}
     published_revision = published.get("published") if isinstance(published.get("published"), dict) else {}
     if published_revision.get("graphSha256") != draft_sha:
         raise TutorialError("图谱发布后 SHA256 读回不一致")
@@ -716,11 +737,11 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
     except Exception as exc:
         rollback_errors: list[str] = []
         try:
-            _rollback_created(gateway, store_id, source, run_id)
+            _restore_updated(gateway, store_id, source, initial_snapshot, updated_source_ids, run_id)
         except TutorialError as rollback_exc:
             rollback_errors.append(str(rollback_exc))
         try:
-            _restore_updated(gateway, store_id, source, initial_snapshot, updated_source_ids)
+            _rollback_created(gateway, store_id, source, run_id)
         except TutorialError as rollback_exc:
             rollback_errors.append(str(rollback_exc))
         if rollback_errors:
