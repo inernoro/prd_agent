@@ -182,21 +182,25 @@ public sealed class LiveAsrBatchFallbackService
             };
         }
 
+        const string calibrationMessage =
+            "备用实时预览已生成，录音结束后将使用完整音频自动校准";
         await emit(new LiveAsrEvent
         {
-            Type = LiveAsrEventTypes.Final,
+            Type = LiveAsrEventTypes.Degraded,
             Text = transcript,
-            Stable = true,
+            Stable = false,
             Provider = provider,
             Model = model,
-            Message = "备用实时转写已完成",
+            ErrorCode = "LIVE_ASR_BATCH_REQUIRES_CALIBRATION",
+            Message = calibrationMessage,
         });
         return new LiveAsrSessionResult
         {
-            Completed = true,
+            Degraded = true,
             Transcript = transcript,
             Provider = provider,
             Model = model,
+            Error = calibrationMessage,
         };
     }
 

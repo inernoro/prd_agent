@@ -1806,6 +1806,29 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.LiveTranscriptError, result.Error)
                 .Set(s => s.LiveTranscriptUpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
+        if (result.Completed && !string.IsNullOrWhiteSpace(result.Transcript))
+        {
+            // 完成接口可能与实时中继同时收尾。若条目已经完成，由中继补写晚到原文；
+            // 若条目仍在 completing，完成接口会在提交终态后重读同一会话并补写。
+            var completedSession = await _db.DocumentRecordingUploadSessions
+                .Find(s => s.Id == sessionId && s.UserId == userId)
+                .FirstOrDefaultAsync(CancellationToken.None);
+            if (completedSession?.Status == DocumentRecordingUploadStatus.Completed
+                && !string.IsNullOrWhiteSpace(completedSession.EntryId))
+            {
+                var completedEntry = await _db.DocumentEntries
+                    .Find(e => e.Id == completedSession.EntryId)
+                    .FirstOrDefaultAsync(CancellationToken.None);
+                if (completedEntry != null)
+                {
+                    await PersistCompletedLiveTranscriptAsync(
+                        _db.DocumentEntries,
+                        completedEntry,
+                        completedSession,
+                        CancellationToken.None);
+                }
+            }
+        }
     }
 
     /// <summary>按顺序接收一个录音二进制分片。重复发送已确认的 index 会幂等返回。</summary>
@@ -2408,23 +2431,6 @@ public class DocumentStoreController : ControllerBase
         string fileUrl,
         string completionLeaseId)
     {
-        if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
-            && !string.IsNullOrWhiteSpace(session.LiveTranscript))
-        {
-            var metadata = entry.Metadata ?? new Dictionary<string, string>();
-            metadata["liveTranscript"] = session.LiveTranscript.Trim();
-            metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
-            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
-                metadata["liveTranscriptProvider"] = session.LiveTranscriptProvider;
-            if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
-                metadata["liveTranscriptModel"] = session.LiveTranscriptModel;
-            entry.Metadata = metadata;
-            await _db.DocumentEntries.UpdateOneAsync(
-                e => e.Id == entry.Id,
-                Builders<DocumentEntry>.Update.Set(e => e.Metadata, metadata),
-                cancellationToken: CancellationToken.None);
-        }
-
         // 该方法同时服务首次完成与崩溃恢复。完成条目在创建时已通过确定性令牌记账；
         // 这里只对实际删除的旧 pending 条目做原子减量，避免重复形态同时占用计数。
         if (entry.Id == CompletedRecordingEntryId(sessionId))
@@ -2459,6 +2465,20 @@ public class DocumentStoreController : ControllerBase
         if (completed.ModifiedCount == 0)
             return false;
 
+        // 终态提交后重读，覆盖对象存储工作期间写入 session 的实时原文。若原文在
+        // 本次重读之后才到达，中继端会看到 completed + EntryId 并执行同一幂等补写。
+        var finalizedSession = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (finalizedSession != null)
+        {
+            await PersistCompletedLiveTranscriptAsync(
+                _db.DocumentEntries,
+                entry,
+                finalizedSession,
+                CancellationToken.None);
+        }
+
         await ReleaseRecordingCountTokensAsync(
             _db.DocumentStores,
             store.Id,
@@ -2470,6 +2490,70 @@ public class DocumentStoreController : ControllerBase
             c => c.SessionId == sessionId,
             cancellationToken: CancellationToken.None);
         return true;
+    }
+
+    internal static async Task<bool> PersistCompletedLiveTranscriptAsync(
+        IMongoCollection<DocumentEntry> entries,
+        DocumentEntry entry,
+        DocumentRecordingUploadSession session,
+        CancellationToken cancellationToken)
+    {
+        if (session.LiveTranscriptStatus != DocumentLiveTranscriptStatus.Completed
+            || string.IsNullOrWhiteSpace(session.LiveTranscript))
+        {
+            return false;
+        }
+
+        var transcript = session.LiveTranscript.Trim();
+        var metadata = entry.Metadata != null
+            ? new Dictionary<string, string>(entry.Metadata)
+            : new Dictionary<string, string>();
+        metadata["liveTranscript"] = transcript;
+        metadata["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed;
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
+            metadata["liveTranscriptProvider"] = session.LiveTranscriptProvider;
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
+            metadata["liveTranscriptModel"] = session.LiveTranscriptModel;
+
+        var summary = transcript.Length > 200 ? transcript[..200] : transcript;
+        var contentIndex = transcript.Length > 2000 ? transcript[..2000] : transcript;
+        var now = DateTime.UtcNow;
+        entry.Metadata = metadata;
+        entry.Summary = summary;
+        entry.ContentIndex = contentIndex;
+        entry.LastChangedAt = now;
+        var updates = new List<UpdateDefinition<DocumentEntry>>
+        {
+            Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscript"],
+                transcript),
+            Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscriptStatus"],
+                DocumentLiveTranscriptStatus.Completed),
+            Builders<DocumentEntry>.Update.Set(e => e.Summary, summary),
+            Builders<DocumentEntry>.Update.Set(e => e.ContentIndex, contentIndex),
+            Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now),
+        };
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
+        {
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscriptProvider"],
+                session.LiveTranscriptProvider));
+        }
+        if (!string.IsNullOrWhiteSpace(session.LiveTranscriptModel))
+        {
+            updates.Add(Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata["liveTranscriptModel"],
+                session.LiveTranscriptModel));
+        }
+
+        // 只更新实时原文相关字段，避免晚到中继用旧 entry 快照覆盖归档状态、
+        // 延迟转写意图或其他并发写入的 Metadata。
+        var persisted = await entries.UpdateOneAsync(
+            e => e.Id == entry.Id,
+            Builders<DocumentEntry>.Update.Combine(updates),
+            cancellationToken: cancellationToken);
+        return persisted.ModifiedCount == 1;
     }
 
     /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>

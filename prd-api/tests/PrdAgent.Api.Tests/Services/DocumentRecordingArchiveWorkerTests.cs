@@ -651,6 +651,82 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void NormalArchive_ShouldPersistLateTranscriptFromBothRaceOrderings()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        source.Split(
+                "PersistCompletedLiveTranscriptAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(4);
+
+        var finalizeStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            StringComparison.Ordinal);
+        var finalizeEnd = source.IndexOf(
+            "internal static async Task<bool> PersistCompletedLiveTranscriptAsync(",
+            finalizeStart,
+            StringComparison.Ordinal);
+        var finalizeBlock = source[finalizeStart..finalizeEnd];
+        var terminalWrite = finalizeBlock.IndexOf(
+            "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
+            StringComparison.Ordinal);
+        var transcriptWrite = finalizeBlock.IndexOf(
+            "await PersistCompletedLiveTranscriptAsync(",
+            StringComparison.Ordinal);
+
+        terminalWrite.ShouldBeGreaterThanOrEqualTo(0);
+        transcriptWrite.ShouldBeGreaterThan(terminalWrite);
+    }
+
+    [Fact]
+    public async Task PersistCompletedLiveTranscript_ShouldIndexLateNormalArchiveTranscript()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var entry = new DocumentEntry
+        {
+            Id = "normal-entry-late-live",
+            StoreId = "store-1",
+            Title = "recording.webm",
+            Metadata = new Dictionary<string, string>
+            {
+                ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Completed,
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var transcript = new string('晚', 2101);
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "normal-session-late-live",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = transcript,
+            LiveTranscriptProvider = "provider-1",
+            LiveTranscriptModel = "model-1",
+        };
+
+        (await DocumentStoreController.PersistCompletedLiveTranscriptAsync(
+                fixture.Db.DocumentEntries,
+                entry,
+                session,
+                CancellationToken.None))
+            .ShouldBeTrue();
+
+        var updated = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        updated.Summary.ShouldBe(transcript[..200]);
+        updated.ContentIndex.ShouldBe(transcript[..2000]);
+        updated.Metadata["liveTranscript"].ShouldBe(transcript);
+        updated.Metadata["liveTranscriptStatus"].ShouldBe(DocumentLiveTranscriptStatus.Completed);
+        updated.Metadata["liveTranscriptProvider"].ShouldBe("provider-1");
+        updated.Metadata["liveTranscriptModel"].ShouldBe("model-1");
+        updated.Metadata["audioArchiveStatus"].ShouldBe(DocumentRecordingArchiveStatus.Completed);
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey]
+            .ShouldBe("true");
+        updated.LastChangedAt.ShouldNotBeNull();
+    }
+
+    [Fact]
     public async Task InterruptedCompletedEntryRecovery_ShouldRestoreMissingCountExactlyOnce()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

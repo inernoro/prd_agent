@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   canDiscardRecording,
+  enqueueRecordingDestinationChange,
   nextRecordingCompletionOwnership,
   nextRecordingFinalizationLock,
   recordingCompletionOwnershipAfterRequestIssued,
@@ -158,5 +159,42 @@ describe('RecordAudioSheet finalization guard', () => {
     expect(recordingCompletionOwnershipTransition(true, true)).toBe('unchanged');
     expect(recordingCompletionOwnershipTransition(true, false)).toBe('released');
     expect(recordingCompletionOwnershipTransition(false, false)).toBe('unchanged');
+  });
+
+  it('serializes a destination switch and historical replay before newly arriving chunks', async () => {
+    const order: string[] = [];
+    let releaseOldUpload!: () => void;
+    const oldUpload = new Promise<void>((resolve) => {
+      releaseOldUpload = () => {
+        order.push('old-upload-finished');
+        resolve();
+      };
+    });
+    const replay = [new Blob(['first']), new Blob(['second'])];
+    const switched = enqueueRecordingDestinationChange(
+      oldUpload,
+      replay,
+      async () => {
+        order.push('destination-switched');
+      },
+      async (chunk) => {
+        order.push(`replay-${await chunk.text()}`);
+      },
+    );
+    const newChunk = switched.then(() => {
+      order.push('new-live-chunk');
+    });
+
+    expect(order).toEqual([]);
+    releaseOldUpload();
+    await newChunk;
+
+    expect(order).toEqual([
+      'old-upload-finished',
+      'destination-switched',
+      'replay-first',
+      'replay-second',
+      'new-live-chunk',
+    ]);
   });
 });

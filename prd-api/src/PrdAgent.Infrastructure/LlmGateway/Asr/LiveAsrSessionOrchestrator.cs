@@ -71,19 +71,14 @@ public sealed class LiveAsrSessionOrchestrator
                 return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
             }
 
-            // 两次解析都发生在发送前：preferred 保证当前流式模型可被发现，
-            // automatic 保留模型池的备用流式候选和批处理候选。
-            var preferred = await _resolver.ResolveAsync(
-                AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
-                ModelTypes.Asr,
-                expectedModel: LiveAsrCandidatePolicy.PreferredModel,
-                ct: CancellationToken.None);
-            var automatic = await _resolver.ResolveAsync(
+            // 一个会话只解析一次完整候选计划。流式与批量降级都从同一模型池快照筛选，
+            // 避免健康状态或配置在两次查询间变化后混用不一致的候选。
+            var plan = await _resolver.ResolveAsync(
                 AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio,
                 ModelTypes.Asr,
                 ct: CancellationToken.None);
-            var candidates = LiveAsrCandidatePolicy.Select(preferred, automatic);
-            var batchCandidates = LiveAsrBatchFallbackService.SelectBatchCandidates(automatic);
+            var candidates = LiveAsrCandidatePolicy.Select(plan);
+            var batchCandidates = LiveAsrBatchFallbackService.SelectBatchCandidates(plan);
             frames = Channel.CreateBounded<LiveAsrAudioFrame>(new BoundedChannelOptions(100)
             {
                 SingleReader = true,
@@ -117,16 +112,19 @@ public sealed class LiveAsrSessionOrchestrator
                     sessionResult = batchResult;
                     if (!batchResult.Completed)
                     {
-                        await emit(new LiveAsrEvent
+                        sessionFailure = batchResult.Error;
+                        if (string.IsNullOrWhiteSpace(batchResult.Transcript))
                         {
-                            Type = LiveAsrEventTypes.Degraded,
-                            Text = batchResult.Transcript,
-                            Stable = false,
-                            Provider = batchResult.Provider,
-                            Model = batchResult.Model,
-                            ErrorCode = "LIVE_ASR_BATCH_FALLBACK_FAILED",
-                            Message = "备用实时转写失败，录音仍在安全保存，结束后将自动批量校准",
-                        });
+                            await emit(new LiveAsrEvent
+                            {
+                                Type = LiveAsrEventTypes.Degraded,
+                                Stable = false,
+                                Provider = batchResult.Provider,
+                                Model = batchResult.Model,
+                                ErrorCode = "LIVE_ASR_BATCH_FALLBACK_FAILED",
+                                Message = "备用实时转写失败，录音仍在安全保存，结束后将自动批量校准",
+                            });
+                        }
                     }
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
@@ -136,12 +134,10 @@ public sealed class LiveAsrSessionOrchestrator
                 {
                     Type = LiveAsrEventTypes.Degraded,
                     ErrorCode = "LIVE_ASR_MODEL_UNAVAILABLE",
-                    Message = preferred.ErrorMessage
-                        ?? automatic.ErrorMessage
+                    Message = plan.ErrorMessage
                         ?? "模型池没有可用的实时 ASR 方案，录音结束后将自动批量转写",
                 });
-                sessionFailure = preferred.ErrorMessage
-                    ?? automatic.ErrorMessage
+                sessionFailure = plan.ErrorMessage
                     ?? "模型池没有可用的实时 ASR 方案";
                 await Task.WhenAll(
                     receiveTask,
@@ -224,6 +220,11 @@ public sealed class LiveAsrSessionOrchestrator
                     await Task.WhenAll(receiveTask, drainPrimaryTask);
                     if (finalResult.Completed)
                         return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+                    if (!string.IsNullOrWhiteSpace(finalResult.Transcript))
+                    {
+                        sessionFailure = finalResult.Error ?? "备用实时预览需要完整音频校准";
+                        return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+                    }
                 }
 
                 await emit(new LiveAsrEvent

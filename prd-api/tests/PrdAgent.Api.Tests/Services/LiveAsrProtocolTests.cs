@@ -78,15 +78,21 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
-    public void CandidatePolicy_ShouldKeepPreferredStreamWhenAutomaticPoolIsBatchOnly()
+    public void CandidatePolicy_ShouldPrioritizePreferredStreamWithinOneResolvedPlan()
     {
         var preferred = Candidate("doubao", LiveAsrCandidatePolicy.PreferredModel, "doubao-asr-stream");
-        var automaticBatch = Candidate("openrouter", "openai/gpt-audio", "passthrough");
+        var plan = Candidate("openrouter", "other-stream", "doubao-asr-stream");
+        plan.RetryCandidates =
+        [
+            Candidate("openrouter", "openai/gpt-audio", "passthrough"),
+            preferred,
+        ];
 
-        var selected = LiveAsrCandidatePolicy.Select(preferred, automaticBatch);
+        var selected = LiveAsrCandidatePolicy.Select(plan);
 
-        selected.Count.ShouldBe(1);
+        selected.Count.ShouldBe(2);
         selected[0].ActualModel.ShouldBe(LiveAsrCandidatePolicy.PreferredModel);
+        selected[1].ActualModel.ShouldBe("other-stream");
     }
 
     [Fact]
@@ -167,7 +173,7 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
-    public async Task BatchFallback_ShouldEmitPartialAndFinalDuringRecording()
+    public async Task BatchFallback_ShouldEmitPartialAndRequireFullFileCalibration()
     {
         var candidate = new ModelResolutionResult
         {
@@ -228,10 +234,15 @@ public class LiveAsrProtocolTests
             () => upstreamRequests++,
             verifiedContext);
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
         events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Partial && evt.Stable);
-        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Final && evt.Stable);
+        events.ShouldContain(evt =>
+            evt.Type == LiveAsrEventTypes.Degraded
+            && !evt.Stable
+            && evt.ErrorCode == "LIVE_ASR_BATCH_REQUIRES_CALIBRATION");
+        events.ShouldNotContain(evt => evt.Type == LiveAsrEventTypes.Final);
         upstreamRequests.ShouldBe(1);
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.Is<GatewayRawRequest>(request =>
@@ -327,7 +338,8 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.Split("窗口原文").Length.ShouldBe(13);
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.IsAny<GatewayRawRequest>(),
@@ -379,9 +391,11 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldBe("完整窗口 最后几个字");
-        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Final);
+        events.ShouldContain(evt => evt.Type == LiveAsrEventTypes.Degraded);
+        events.ShouldNotContain(evt => evt.Type == LiveAsrEventTypes.Final);
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.IsAny<GatewayRawRequest>(),
             It.IsAny<GatewayModelResolution>(),
@@ -546,7 +560,8 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldBe("备用供应商成功");
         result.Provider.ShouldBe(second.ActualPlatformName);
         result.Model.ShouldBe(second.ActualModel);
@@ -554,7 +569,7 @@ public class LiveAsrProtocolTests
         events.Single(evt => evt.Type == LiveAsrEventTypes.Ready).Model.ShouldBeNull();
         events.Single(evt => evt.Type == LiveAsrEventTypes.Partial).Provider
             .ShouldBe(second.ActualPlatformName);
-        events.Single(evt => evt.Type == LiveAsrEventTypes.Final).Model
+        events.Single(evt => evt.Type == LiveAsrEventTypes.Degraded).Model
             .ShouldBe(second.ActualModel);
         resolver.Verify(x => x.RecordFailureAsync(
             It.Is<ModelResolutionResult>(item => item.ActualPlatformId == "first"),
@@ -620,7 +635,8 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldBe("备用窗口1 备用窗口2");
         result.Provider.ShouldBe(second.ActualPlatformName);
         result.Model.ShouldBe(second.ActualModel);
@@ -670,7 +686,8 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
         gateway.Verify(x => x.SendRawWithResolutionAsync(
             It.IsAny<GatewayRawRequest>(),
@@ -718,7 +735,8 @@ public class LiveAsrProtocolTests
             null,
             TestRequestContext());
 
-        result.Completed.ShouldBeTrue();
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
         result.Transcript.ShouldContain("身体健康");
         responses.ShouldBe(LiveAsrBatchFallbackService.ProviderValidationAttempts);
     }
@@ -784,7 +802,7 @@ public class LiveAsrProtocolTests
             It.IsAny<string?>(),
             It.IsAny<string?>(),
             It.IsAny<string?>(),
-            It.IsAny<CancellationToken>()), Times.Exactly(2));
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

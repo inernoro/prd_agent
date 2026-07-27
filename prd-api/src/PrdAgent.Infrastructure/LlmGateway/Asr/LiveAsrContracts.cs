@@ -130,6 +130,10 @@ public static class LiveAsrCandidatePolicy
                     candidate.ExchangeTransformerType,
                     "doubao-asr-stream",
                     StringComparison.OrdinalIgnoreCase))
+            .OrderByDescending(candidate => string.Equals(
+                candidate.ActualModel,
+                PreferredModel,
+                StringComparison.OrdinalIgnoreCase))
             .GroupBy(
                 candidate => $"{candidate.ActualPlatformId}::{candidate.ActualModel}",
                 StringComparer.OrdinalIgnoreCase)

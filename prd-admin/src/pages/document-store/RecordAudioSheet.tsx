@@ -180,6 +180,18 @@ export function recordingCompletionOwnershipAfterRequestIssued(): boolean {
   return true;
 }
 
+export function enqueueRecordingDestinationChange(
+  currentQueue: Promise<void>,
+  replayChunks: readonly Blob[],
+  switchDestination: () => Promise<void>,
+  uploadChunk: (chunk: Blob) => Promise<void>,
+): Promise<void> {
+  return currentQueue.then(async () => {
+    await switchDestination();
+    for (const chunk of replayChunks) await uploadChunk(chunk);
+  });
+}
+
 export function RecordAudioSheet({
   storeId,
   storeName,
@@ -201,6 +213,7 @@ export function RecordAudioSheet({
   const [liveTranscriptState, setLiveTranscriptState] = useState<LiveTranscriptionState>('connecting');
   const [liveTranscriptMessage, setLiveTranscriptMessage] = useState('正在连接实时转写');
   const [changingDestination, setChangingDestination] = useState(false);
+  const changingDestinationRef = useRef(false);
   const [storeOptions, setStoreOptions] = useState<{ id: string; name: string }[]>(
     storeId ? [{ id: storeId, name: storeName || '当前知识库' }] : [],
   );
@@ -306,30 +319,35 @@ export function RecordAudioSheet({
     return await uploadSessionPromiseRef.current;
   }, [connectLiveTranscription, storeId]);
 
-  const queueLiveChunk = useCallback((blob: Blob) => {
-    uploadQueueRef.current = uploadQueueRef.current.then(async () => {
-      const sessionId = await ensureUploadSession();
-      if (!sessionId || liveUploadFailedRef.current) return;
-      for (let offset = 0; offset < blob.size; offset += TRANSPORT_CHUNK_BYTES) {
-        const part = blob.slice(offset, Math.min(blob.size, offset + TRANSPORT_CHUNK_BYTES), blob.type);
-        const index = uploadChunkIndexRef.current;
-        const res = await appendRecordingUploadChunk(sessionId, index, part);
-        if (!res.success) {
-          liveUploadFailedRef.current = true;
-          setLiveProtection('local');
-          return;
-        }
-        uploadChunkIndexRef.current = res.data.nextChunkIndex;
-        setProtectedBytes(res.data.uploadedBytes);
+  const uploadLiveChunk = useCallback(async (blob: Blob) => {
+    const sessionId = await ensureUploadSession();
+    if (!sessionId || liveUploadFailedRef.current) return;
+    for (let offset = 0; offset < blob.size; offset += TRANSPORT_CHUNK_BYTES) {
+      const part = blob.slice(offset, Math.min(blob.size, offset + TRANSPORT_CHUNK_BYTES), blob.type);
+      const index = uploadChunkIndexRef.current;
+      const res = await appendRecordingUploadChunk(sessionId, index, part);
+      if (!res.success) {
+        liveUploadFailedRef.current = true;
+        setLiveProtection('local');
+        return;
       }
-    }).catch(() => {
+      uploadChunkIndexRef.current = res.data.nextChunkIndex;
+      setProtectedBytes(res.data.uploadedBytes);
+    }
+  }, [ensureUploadSession]);
+
+  const queueLiveChunk = useCallback((blob: Blob) => {
+    uploadQueueRef.current = uploadQueueRef.current.then(
+      () => uploadLiveChunk(blob),
+    ).catch(() => {
       liveUploadFailedRef.current = true;
       setLiveProtection('local');
     });
-  }, [ensureUploadSession]);
+  }, [uploadLiveChunk]);
 
   const changeDestination = useCallback(async (nextStoreId: string) => {
-    if (changingDestination) return;
+    if (changingDestinationRef.current) return;
+    changingDestinationRef.current = true;
     setChangingDestination(true);
     setTargetStoreId(nextStoreId);
     targetStoreIdRef.current = nextStoreId;
@@ -339,31 +357,43 @@ export function RecordAudioSheet({
     // 这样用户不必在录音前做选择，也不会出现 UI 显示新库而文件实际留在旧库。
     try {
       if (!uploadSessionIdRef.current && !uploadSessionPromiseRef.current && !liveUploadFailedRef.current) return;
+      // 同步把切换任务插进分片队列。此刻之后到达的新分片只能排在切换和历史重放之后，
+      // 不会继续使用即将取消的旧会话，也不会与新会话的 index=0 竞争。
+      const replayChunks = chunksRef.current.slice();
+      uploadQueueRef.current = enqueueRecordingDestinationChange(
+        uploadQueueRef.current,
+        replayChunks,
+        async () => {
+          const previousSessionId = uploadSessionIdRef.current;
+          liveTranscriptionRef.current?.close();
+          liveTranscriptionRef.current = null;
+          // 已说出的 PCM 无法重放到新会话。新知识库只保留完整的 MediaRecorder 分片，
+          // 并在结束后做全文件校准，禁止把切换后的尾段误标为完整实时原文。
+          livePcmCompleteRef.current = false;
+          pendingLivePcmRef.current = [];
+          setLiveTranscript('');
+          liveTranscriptValueRef.current = '';
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('已切换知识库，录音结束后将自动完整转写');
+          if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
+          uploadSessionIdRef.current = null;
+          uploadSessionPromiseRef.current = null;
+          uploadChunkIndexRef.current = 0;
+          liveUploadFailedRef.current = false;
+          setProtectedBytes(0);
+          setLiveProtection('pending');
+        },
+        uploadLiveChunk,
+      ).catch(() => {
+        liveUploadFailedRef.current = true;
+        setLiveProtection('local');
+      });
       await uploadQueueRef.current;
-      const previousSessionId = uploadSessionIdRef.current;
-      liveTranscriptionRef.current?.close();
-      liveTranscriptionRef.current = null;
-      // 已说出的 PCM 无法重放到新会话。新知识库只保留完整的 MediaRecorder 分片，
-      // 并在结束后做全文件校准，禁止把切换后的尾段误标为完整实时原文。
-      livePcmCompleteRef.current = false;
-      pendingLivePcmRef.current = [];
-      setLiveTranscript('');
-      liveTranscriptValueRef.current = '';
-      setLiveTranscriptState('degraded');
-      setLiveTranscriptMessage('已切换知识库，录音结束后将自动完整转写');
-      if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
-      uploadSessionIdRef.current = null;
-      uploadSessionPromiseRef.current = null;
-      uploadChunkIndexRef.current = 0;
-      liveUploadFailedRef.current = false;
-      uploadQueueRef.current = Promise.resolve();
-      setProtectedBytes(0);
-      setLiveProtection('pending');
-      for (const chunk of chunksRef.current) queueLiveChunk(chunk);
     } finally {
+      changingDestinationRef.current = false;
       setChangingDestination(false);
     }
-  }, [changingDestination, queueLiveChunk]);
+  }, [uploadLiveChunk]);
 
   useEffect(() => {
     void listDocumentStoresWithPreview(1, 200, { scope: 'mine' }).then((res) => {
