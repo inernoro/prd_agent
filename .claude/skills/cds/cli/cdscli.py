@@ -44,7 +44,7 @@ import urllib.parse
 import urllib.request
 from typing import Any, Optional
 
-VERSION = "0.12.0"  # ← bumped on each SKILL.md change; 服务端自动读这一行
+VERSION = "0.12.1"  # ← bundled cli 变更时 bump；服务端自动读这一行
 _TRACE_ID: str = ""
 _HUMAN: bool = False
 _DRIFT_WARNED: bool = False  # 全进程只提示一次，避免每个请求都刷
@@ -7151,15 +7151,58 @@ def cmd_smoke(args: argparse.Namespace) -> None:
     results: list[dict[str, Any]] = []
 
     def probe(name: str, url: str, headers: dict[str, str] | None = None,
-              expect_status: int = 200) -> dict[str, Any]:
+              expect_status: int = 200,
+              json_contract: str | None = None) -> dict[str, Any]:
         req = urllib.request.Request(url, method="GET",
                                      headers={"User-Agent": "curl/8.5.0", **(headers or {})})
         try:
             with urllib.request.urlopen(req, timeout=10) as r:
-                raw = r.read()[:200].decode("utf-8", errors="replace")
-                return {"layer": name, "url": url, "status": r.status,
-                        "pass": r.status == expect_status,
-                        "preview": raw[:120]}
+                raw_bytes = r.read(65537 if json_contract else 200)
+                raw = raw_bytes.decode("utf-8", errors="replace")
+                content_type = str(r.headers.get("Content-Type", "")).strip()
+                result: dict[str, Any] = {
+                    "layer": name,
+                    "url": url,
+                    "status": r.status,
+                    "pass": r.status == expect_status,
+                    "preview": raw[:120],
+                }
+                if not json_contract:
+                    return result
+
+                result["contentType"] = content_type
+                media_type = content_type.split(";", 1)[0].strip().lower()
+                if media_type != "application/json" and not media_type.endswith("+json"):
+                    result["pass"] = False
+                    result["error"] = "expected_application_json"
+                    return result
+                if len(raw_bytes) > 65536:
+                    result["pass"] = False
+                    result["error"] = "json_response_too_large"
+                    return result
+                try:
+                    payload = json.loads(raw)
+                except (json.JSONDecodeError, UnicodeDecodeError):
+                    result["pass"] = False
+                    result["error"] = "invalid_json"
+                    return result
+
+                schema_ok = isinstance(payload, dict)
+                if json_contract == "version-check":
+                    version = payload.get("version") if isinstance(payload, dict) else None
+                    schema_ok = isinstance(version, int) and not isinstance(version, bool)
+                elif json_contract == "health":
+                    status = str(payload.get("status", "")).strip().lower() if isinstance(payload, dict) else ""
+                    schema_ok = isinstance(payload, dict) and (
+                        status in {"healthy", "ok", "ready", "success"}
+                        or payload.get("ok") is True
+                        or payload.get("healthy") is True
+                        or payload.get("success") is True
+                    )
+                if not schema_ok:
+                    result["pass"] = False
+                    result["error"] = "invalid_json_schema"
+                return result
         except urllib.error.HTTPError as e:
             return {"layer": name, "url": url, "status": e.code,
                     "pass": e.code == expect_status, "error": e.reason}
@@ -7168,30 +7211,46 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                     "error": str(e)[:80]}
 
     # L1 根路径无认证
-    results.append(probe("L1-root", f"{preview}/"))
+    l1_result = probe("L1-root", f"{preview}/")
+    results.append(l1_result)
     # L2 无认证 API (常见路径)
-    for path in ("/api/shortcuts/version-check", "/healthz", "/api/health"):
-        r = probe(f"L2{path}", f"{preview}{path}")
+    l2_results: list[dict[str, Any]] = []
+    for path, contract in (
+        ("/api/shortcuts/version-check", "version-check"),
+        ("/healthz", "health"),
+        ("/api/health", "health"),
+    ):
+        r = probe(f"L2{path}", f"{preview}{path}", json_contract=contract)
+        l2_results.append(r)
         results.append(r)
         if r["pass"]:
             break
     # L3 认证 API
     key = os.environ.get("AI_ACCESS_KEY", "")
     user = os.environ.get("MAP_AI_USER", "")
+    l3_result: dict[str, Any] | None = None
     if key:
         hdrs = {"X-AI-Access-Key": key}
         if user:
             hdrs["X-AI-Impersonate"] = user
-        results.append(probe("L3-authed", f"{preview}/api/users?pageSize=1",
-                             headers=hdrs, expect_status=200))
+        l3_result = probe("L3-authed", f"{preview}/api/users?pageSize=1",
+                          headers=hdrs, expect_status=200)
+        results.append(l3_result)
 
-    passed = sum(1 for r in results if r["pass"])
+    layers = [
+        {"layer": "L1", "pass": bool(l1_result["pass"])},
+        {"layer": "L2", "pass": any(r["pass"] for r in l2_results)},
+    ]
+    if l3_result is not None:
+        layers.append({"layer": "L3", "pass": bool(l3_result["pass"])})
+    passed = sum(1 for layer in layers if layer["pass"])
     summary = {"branchId": branch_id, "preview": preview,
-               "passed": f"{passed}/{len(results)}", "probes": results}
-    if passed == len(results):
-        ok(summary, note=f"冒烟全绿 ({passed}/{len(results)})")
+               "passed": f"{passed}/{len(layers)}", "layers": layers,
+               "probes": results}
+    if passed == len(layers):
+        ok(summary, note=f"冒烟全绿 ({passed}/{len(layers)})")
         return
-    die(f"冒烟失败 ({passed}/{len(results)} 通过)", code=2, extra={"data": summary})
+    die(f"冒烟失败 ({passed}/{len(layers)} 通过)", code=2, extra={"data": summary})
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:
