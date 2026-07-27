@@ -20,6 +20,7 @@ let isoPort = 0;
 let isoCollCount = 4;
 let srcCollCount = 4;
 let srcBaselineFail = false;
+let dropFail = false;
 
 vi.mock('../../src/routes/infra-data.js', () => ({
   detectInfraDataKind: (image: string) => {
@@ -57,6 +58,7 @@ vi.mock('../../src/routes/infra-data.js', () => ({
         if (!onIso && srcBaselineFail) return { code: 1, stderr: 'auth failed', stdout: '' };
         return { code: 0, stderr: '', stdout: `${onIso ? isoCollCount : srcCollCount}\n` };
       }
+      if (script.includes('.drop()')) return dropFail ? { code: 1, stderr: 'not authorized', stdout: '' } : { code: 0, stderr: '', stdout: 'true\n' };
       if (script.includes('insertOne')) return { code: 0, stderr: '', stdout: 'ok\n' };
       if (script.includes('countDocuments')) {
         return { code: 0, stderr: '', stdout: `${onIso ? isoCanaryHit : mainCanaryHit}\n` };
@@ -94,6 +96,7 @@ beforeEach(async () => {
   isoCollCount = 4;
   srcCollCount = 4;
   srcBaselineFail = false;
+  dropFail = false;
   tmpDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-rsaudit-'));
   state = new StateService(path.join(tmpDir, 'state.json'));
   state.addProject({ id: 'proj', slug: 'demo', name: 'demo', createdAt: new Date().toISOString() } as Parameters<typeof state.addProject>[0]);
@@ -203,6 +206,15 @@ describe('runIsolationAudit', () => {
     srcCollCount = 0;
     const r = await runIsolationAudit(state, 'proj-main', 'api');
     expect(r.checks.find((c) => c.id === 'D1')?.verdict).toBe('pass');
+  });
+
+  it('金丝雀清理失败 → D4 fail → broken，不许残渣留库还报 effective（Codex 第二十轮 P2）', async () => {
+    dropFail = true;
+    const r = await runIsolationAudit(state, 'proj-main', 'api');
+    expect(r.overall).toBe('broken');
+    const d4 = r.checks.find((c) => c.id === 'D4');
+    expect(d4?.verdict).toBe('fail');
+    expect(d4?.evidence).toContain('清理失败');
   });
 
   it('未隔离 → 退化为逐容器连接观测', async () => {

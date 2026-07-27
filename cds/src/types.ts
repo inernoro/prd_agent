@@ -584,6 +584,13 @@ export interface ReplicaMember {
   dbMode: 'shared' | 'isolated';
   /** dbMode=isolated 时的隔离库全名（<源库>_rs_<memberId>） */
   isolatedDbName?: string;
+  /**
+   * 项目级整组身份（Codex 第二十轮 P1）：同一次「整组副本」手势创建的各 profile
+   * 成员共享同一 id，前端按 id join 成组——部分失败/单侧下线造成成员数组错位时，
+   * 按位配对会把不同批次/不同版本的副本拼成假组并被预览钉选放大。容器级单独
+   * 添加的成员无此字段（按位配对仅作存量兜底）。
+   */
+  projectGroupId?: string;
   createdAt: string;
 }
 
@@ -635,6 +642,8 @@ export interface ReplicaPlanStep {
     versionId?: string;
     weight?: number;
     dbMode?: 'shared' | 'isolated';
+    /** 项目级整组身份：同手势各 profile 的 add-replica 共享（Codex 第二十轮 P1） */
+    projectGroupId?: string;
   };
   status: 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled' | 'rolled-back';
   error?: string;

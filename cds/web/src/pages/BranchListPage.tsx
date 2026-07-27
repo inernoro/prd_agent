@@ -39,11 +39,15 @@ import {
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
+import { buildProjectGroups } from '@/lib/replicaGroups';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
+
+/** 分支卡上的复制集成员最小视图（整组卡按 projectGroupId join 用） */
+type RsCardMember = { id?: string; status?: string; hostPort?: number; projectGroupId?: string; createdAt?: string };
 import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
 import {
@@ -3434,11 +3438,14 @@ export function BranchListPage(): JSX.Element {
                 {sortedBranches.map((branch) => {
                   // 项目级复制集显形（2026-07-25 用户拍板）：派生卡紧随主卡右侧（网格自然换行），
                   // 名为 <branch>-replicaset-N；非独立 git 分支，仅是同分支的复制集实例组视图。
-                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ id?: string; status?: string; hostPort?: number }> }> }).replicaSets ?? {};
+                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<RsCardMember> }> }).replicaSets ?? {};
                   const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
-                  const groupCount = rsMode === 'project'
-                    ? Math.max(0, ...Object.values(rsMap).map((r) => (r?.enabled ? (r.members?.length ?? 0) : 0)))
-                    : 0;
+                  // 按持久化组身份 join（Codex 第二十轮 P1）：与 ReplicaSetPanel 同一 SSOT，
+                  // 数组错位时不再按位拼出假组
+                  const rsPids = Object.keys(rsMap).filter((pid) => rsMap[pid]?.enabled).sort((a, b) => a.localeCompare(b));
+                  const rsGroups = rsMode === 'project'
+                    ? buildProjectGroups(rsPids, (pid) => (rsMap[pid]?.members ?? []).filter((m): m is RsCardMember & { id: string } => Boolean(m.id)))
+                    : [];
                   const rsPreviewBase = state.status === 'ok'
                     ? (state.previewMode === 'simple' ? simplePreviewUrl(state.config) : multiPreviewUrl(branch, state.config))
                     : '';
@@ -3458,12 +3465,12 @@ export function BranchListPage(): JSX.Element {
                         activeTagFilter={activeTagFilter}
                         handlers={cardHandlers}
                       />
-                      {Array.from({ length: groupCount }, (_, k) => (
+                      {rsGroups.map((group, k) => (
                         <ReplicaGroupCard
                           key={`${branch.id}-replicaset-${k + 1}`}
                           branch={branch}
                           groupIndex={k}
-                          replicaSets={rsMap}
+                          group={group}
                           previewBase={rsPreviewBase}
                           onDetail={() => cardHandlers.onDetail(branch)}
                         />
@@ -5050,30 +5057,26 @@ function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Elemen
   );
 }
 
-function ReplicaGroupCard({ branch, groupIndex, replicaSets, previewBase, onDetail }: {
+function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: {
   branch: BranchSummary;
   groupIndex: number;
-  replicaSets: Record<string, { enabled?: boolean; members?: Array<{ id?: string; status?: string; hostPort?: number }> }>;
+  /** 该组各 profile 的成员（按 projectGroupId join；存量无组 id 成员按位兜底，见 lib/replicaGroups） */
+  group: Record<string, (RsCardMember & { id: string }) | undefined>;
   previewBase: string;
   onDetail: () => void;
 }): JSX.Element {
-  const entries = Object.entries(replicaSets)
-    .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > groupIndex)
+  const entries = Object.entries(group)
+    .filter((e): e is [string, RsCardMember & { id: string }] => Boolean(e[1]))
     .sort(([a], [b]) => a.localeCompare(b));
   // 预览链接带**每个 profile** 的作用域钉选条目 `profileId:memberId`（Codex P1
   // 二连）：__rs 多值让 forwarder 一次导航种齐各组的组作用域 cookie；裸成员 id
   // 列表在各 profile 成员数组错位时（A 组第 2 位是 res-2、B 组第 1 位恰好也是
   // res-2）会把 B 组静默钉到本该属于 A 组的 id——作用域条目只命中自己的组。
-  const pinEntries = entries
-    .map(([pid, rs]) => {
-      const id = rs.members?.[groupIndex]?.id;
-      return id ? `${encodeURIComponent(pid)}:${encodeURIComponent(id)}` : null;
-    })
-    .filter((e): e is string => Boolean(e));
+  const pinEntries = entries.map(([pid, m]) => `${encodeURIComponent(pid)}:${encodeURIComponent(m.id)}`);
   const previewUrl = previewBase && pinEntries.length > 0
     ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${pinEntries.join(',')}`
     : '';
-  const bad = entries.some(([, rs]) => rs.members?.[groupIndex]?.status === 'error');
+  const bad = entries.some(([, m]) => m.status === 'error');
   const projectId = (branch as { projectId?: string }).projectId;
   return (
     <div className={`relative flex min-h-[244px] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
@@ -5085,8 +5088,7 @@ function ReplicaGroupCard({ branch, groupIndex, replicaSets, previewBase, onDeta
         </span>
       </div>
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
-        {entries.map(([pid, rs]) => {
-          const m = rs.members?.[groupIndex];
+        {entries.map(([pid, m]) => {
           const color = m?.status === 'error' ? '#ef4444' : profileColor(pid);
           return (
             <span key={pid} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs"

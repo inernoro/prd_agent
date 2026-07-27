@@ -73,6 +73,8 @@ export interface AddMemberInput {
    */
   versionId?: string;
   label?: string;
+  /** 项目级整组身份（Codex 第二十轮 P1）：同手势创建的各 profile 成员共享，前端按 id join 成组 */
+  projectGroupId?: string;
   /** 省略 versionId（同版本副本）时默认与主均分；显式选历史版本时默认 0（只挂直达链）。 */
   weight?: number;
   /** isolated = 一键隔离库（先整库克隆再切换）。 */
@@ -264,6 +266,9 @@ export class ReplicaSetService {
       status: 'provisioning',
       statusMessage: input.dbMode === 'isolated' ? '正在克隆数据库到隔离库…' : undefined,
       dbMode: input.dbMode === 'isolated' ? 'isolated' : 'shared',
+      ...(typeof input.projectGroupId === 'string' && /^[a-zA-Z0-9_-]{1,40}$/.test(input.projectGroupId)
+        ? { projectGroupId: input.projectGroupId }
+        : {}),
       createdAt: this.now(),
     };
     rs.members.push(member);
@@ -1360,6 +1365,7 @@ export class ReplicaSetService {
       const member = this.addMember(branchId, profileId, {
         versionId: step.params?.versionId || undefined,
         dbMode: step.params?.dbMode === 'isolated' ? 'isolated' : 'shared',
+        projectGroupId: step.params?.projectGroupId || undefined,
       });
       step.resultMemberId = member.id;
       this.savePlan();

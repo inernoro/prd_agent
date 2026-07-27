@@ -371,6 +371,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
         label: typeof req.body?.label === 'string' ? req.body.label : undefined,
         weight: typeof req.body?.weight === 'number' ? req.body.weight : undefined,
         dbMode: req.body?.dbMode === 'isolated' ? 'isolated' : 'shared',
+        projectGroupId: typeof req.body?.projectGroupId === 'string' ? req.body.projectGroupId : undefined,
       });
       res.status(202).json({ member });
     } catch (err) {

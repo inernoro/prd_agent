@@ -19,6 +19,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { profileColor } from '@/lib/replica-colors';
+import { buildProjectGroups, newProjectGroupId } from '@/lib/replicaGroups';
 
 export interface ReplicaMemberView {
   id: string;
@@ -33,6 +34,8 @@ export interface ReplicaMemberView {
   statusMessage?: string;
   dbMode: 'shared' | 'isolated';
   isolatedDbName?: string;
+  /** 项目级整组身份（Codex 第二十轮 P1）：整组手势创建的成员共享，按 id join 成组 */
+  projectGroupId?: string;
   createdAt: string;
   reachable?: boolean;
 }
@@ -78,7 +81,7 @@ interface ReplicaSetsResponse {
 type PlanStepKind = 'add-replica' | 'remove-member' | 'set-weight' | 'isolate-db' | 'revert-db' | 'dissolve';
 interface PlanStep {
   id: string; kind: PlanStepKind; profileId: string;
-  params?: { memberId?: string; versionId?: string; weight?: number; dbMode?: 'shared' | 'isolated' };
+  params?: { memberId?: string; versionId?: string; weight?: number; dbMode?: 'shared' | 'isolated'; projectGroupId?: string };
   status: 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled' | 'rolled-back';
   error?: string; startedAt?: string; endedAt?: string;
 }
@@ -1343,8 +1346,11 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
   const dbInfra = infra.filter((s) => /mongo|mysql|mariadb|postgres|redis/i.test(s.dockerImage || s.id));
 
   const membersOf = (pid: string): ReplicaMemberView[] => (replicaSets[pid]?.enabled ? replicaSets[pid].members : []);
-  const groupCount = Math.max(0, ...profileIds.map((p) => membersOf(p).length));
-  const uneven = profileIds.some((p) => membersOf(p).length !== groupCount) && groupCount > 0;
+  // 按持久化组身份 join（Codex 第二十轮 P1）：部分失败/单侧下线造成数组错位时，
+  // 按位配对会把不同批次的副本拼成假组；projectGroupId 缺失的存量成员退回按位
+  const groups = buildProjectGroups(profileIds, membersOf);
+  const groupCount = groups.length;
+  const uneven = groupCount > 0 && groups.some((g) => profileIds.some((pid) => !g[pid]));
   const addable = profileIds.filter((p) => {
     const adds = draftSteps.filter((d) => d.profileId === p && d.kind === 'add-replica').length;
     return membersOf(p).length + adds < memberLimit;
@@ -1412,7 +1418,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     let ok = 0, boot = 0, bad = 0, missing = 0;
     let pct = 0, pctN = 0;
     for (const pid of profileIds) {
-      const m = membersOf(pid)[k];
+      const m = groups[k]?.[pid];
       if (!m) { missing += 1; continue; }
       if (m.status === 'running' && m.reachable !== false) ok += 1;
       else if (m.status === 'provisioning') boot += 1;
@@ -1427,7 +1433,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
   const removeGroup = (k: number): void => {
     const steps: DraftStep[] = [];
     for (const pid of profileIds) {
-      const m = membersOf(pid)[k];
+      const m = groups[k]?.[pid];
       if (m) steps.push({ kind: 'remove-member', profileId: pid, params: { memberId: m.id } });
     }
     if (steps.length) {
@@ -1441,7 +1447,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     if (!Number.isFinite(v)) return;
     const steps: DraftStep[] = [];
     for (const pid of profileIds) {
-      const m = membersOf(pid)[k];
+      const m = groups[k]?.[pid];
       if (m) steps.push({ kind: 'set-weight', profileId: pid, params: { memberId: m.id, weight: v } });
     }
     if (steps.length) onAction(`整组副本 ${k + 1} 权重 → ${v}（${steps.length} 容器统一）`, steps);
@@ -1455,8 +1461,9 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
       onToast?.(`无法加整组副本：${limitBlocked.join('、')} 已达副本上限 ${memberLimit}——整组副本必须全员齐增`);
       return;
     }
+    const projectGroupId = newProjectGroupId();
     onAction(`整组副本（${profileIds.length} 容器各加 1 个当前版本副本）`,
-      profileIds.map((p) => ({ kind: 'add-replica' as const, profileId: p })));
+      profileIds.map((p) => ({ kind: 'add-replica' as const, profileId: p, params: { projectGroupId } })));
     onToast?.('整组副本草稿已加入');
   };
 
@@ -1559,7 +1566,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                     ) : st.ok > 0 ? (
                       <button type="button" className="shrink-0 rounded border border-indigo-500/45 bg-background px-1 font-mono text-[9px] text-indigo-500 hover:bg-indigo-500/10"
                         title="点击调整这一组的权重（整组统一，进变更清单）"
-                        onClick={() => { setWeightFor(k); setWeightDraft(String(membersOf(profileIds[0])[k]?.weight ?? 0)); }}>
+                        onClick={() => { setWeightFor(k); setWeightDraft(String(Object.values(groups[k] ?? {}).find(Boolean)?.weight ?? 0)); }}>
                         {st.weightPct}%
                       </button>
                     ) : null}
@@ -1567,7 +1574,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
                   {/* 与项目节点同样式的容器 chip 行：一一对应的成员实例 */}
                   <div className="flex flex-col gap-1 px-2.5 pb-2 pt-1.5">
                     {profileIds.map((pid) => {
-                      const m = membersOf(pid)[k];
+                      const m = groups[k]?.[pid];
                       const c = !m ? '#9ca3af' : m.status === 'running' && m.reachable !== false ? profileColor(pid) : m.status === 'provisioning' ? '#f59e0b' : '#ef4444';
                       return (
                         <span key={pid} className="inline-flex h-[22px] max-w-full items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-1.5 text-[10px]"

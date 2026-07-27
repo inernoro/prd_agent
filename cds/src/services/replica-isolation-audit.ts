@@ -288,11 +288,27 @@ export async function runIsolationAudit(
       });
     } finally {
       // 金丝雀清理：两侧删净后 drop 空集合——不给库里留审计残渣（连空集合都不留，
-      // 否则下次审计的 collections 基线会 +1，用户会问「这个集合哪来的」）
-      // 唯一名集合整体 drop（本次自建，无条件删干净）
+      // 否则下次审计的 collections 基线会 +1，用户会问「这个集合哪来的」）。
+      // 清理失败不许静默（Codex 第二十轮 P2）：drop 被拒/库不可达时残渣会留在
+      // 生产库里，审计却报 effective——重试一次仍失败则记 D4 fail 拖垮 overall。
       const cleanup = (dbExpr: string): string => `${dbExpr}.${canaryColl}.drop();`;
-      await isoInstanceEval(snapshot.dedicatedContainer, cleanup(isoDb), isoAuth).catch(() => undefined);
-      await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb)).catch(() => undefined);
+      const isoContainer = snapshot.dedicatedContainer!;
+      const cleanupOnce = async (): Promise<boolean> => {
+        const rIso = await isoInstanceEval(isoContainer, cleanup(isoDb), isoAuth)
+          .catch(() => ({ code: 1, stdout: '', stderr: 'exec rejected' }));
+        const rMain2 = await mongoAdminEval(target.infra.containerName, infraPort, infraEnv, cleanup(mainDb))
+          .catch(() => ({ code: 1, stdout: '', stderr: 'exec rejected' }));
+        return rIso.code === 0 && rMain2.code === 0;
+      };
+      let cleanOk = await cleanupOnce();
+      if (!cleanOk) cleanOk = await cleanupOnce();
+      checks.push({
+        id: 'D4', group: '数据面', title: '金丝雀清理：两侧 drop 干净',
+        verdict: cleanOk ? 'pass' : 'fail',
+        evidence: cleanOk
+          ? `金丝雀集合 ${canaryColl} 两侧已 drop`
+          : `金丝雀集合 ${canaryColl} 清理失败（已重试一次）——请到隔离实例与主库 ${target.sourceDb} 手动 drop`,
+      });
     }
   } else if (snapshot.engine === 'mysql' || snapshot.engine === 'postgres') {
     // mysql / pg 共享实例通道的双向金丝雀（2026-07-26 补齐，debt #27 残留偿还）：
@@ -364,9 +380,24 @@ export async function runIsolationAudit(
       });
     } finally {
       // 金丝雀清理：两侧 DROP 本次运行自建的唯一名表——库里不留任何审计残渣，
-      // 也绝不触碰应用可能拥有的固定名同名表
-      await sqlExec(snapshot.dbName, `DROP TABLE IF EXISTS ${canaryName}`).catch(() => undefined);
-      await sqlExec(target.sourceDb, `DROP TABLE IF EXISTS ${canaryName}`).catch(() => undefined);
+      // 也绝不触碰应用可能拥有的固定名同名表。清理失败记 D4 fail（Codex 第二十轮
+      // P2，与 mongo 通道同款：残渣留在生产库时不许报 effective）
+      const dropOnce = async (): Promise<boolean> => {
+        const r1 = await sqlExec(snapshot.dbName, `DROP TABLE IF EXISTS ${canaryName}`)
+          .catch(() => ({ code: 1, stdout: '', stderr: 'exec rejected' }));
+        const r2 = await sqlExec(target.sourceDb, `DROP TABLE IF EXISTS ${canaryName}`)
+          .catch(() => ({ code: 1, stdout: '', stderr: 'exec rejected' }));
+        return r1.code === 0 && r2.code === 0;
+      };
+      let dropOk = await dropOnce();
+      if (!dropOk) dropOk = await dropOnce();
+      checks.push({
+        id: 'D4', group: '数据面', title: '金丝雀清理：两侧 DROP 干净',
+        verdict: dropOk ? 'pass' : 'fail',
+        evidence: dropOk
+          ? `金丝雀表 ${canaryName} 两侧已 DROP`
+          : `金丝雀表 ${canaryName} 清理失败（已重试一次）——请到隔离库 ${snapshot.dbName} 与主库 ${target.sourceDb} 手动 DROP`,
+      });
     }
   } else {
     checks.push({
