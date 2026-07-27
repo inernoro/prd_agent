@@ -243,11 +243,20 @@ export class ForwarderRoutePublisher {
       const pushRoute = (
         base: RouteRecord,
         profileId: string,
-        override?: { profileId: string; hostPort: number },
+        override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },
       ): void => {
         if (override) {
+          // 成员直达路由必须带上副本身份（Codex 第二十八轮 P2）：第二十四轮把
+          // X-CDS-Replica 改成「以路由为准」后，proxy 对**非副本路由**会显式删掉
+          // 这两个响应头——直达链接若只钉上游端口不带身份，用户点开就拿不到
+          // 「这条请求落在哪个副本」，而这正是直达链接与观测流承诺的东西。
           records.push(profileId === override.profileId
-            ? { ...base, upstreamPort: override.hostPort }
+            ? {
+              ...base,
+              upstreamPort: override.hostPort,
+              ...(override.replicaGroup ? { replicaGroup: override.replicaGroup } : {}),
+              ...(override.replicaMemberId ? { replicaMemberId: override.replicaMemberId } : {}),
+            }
             : base);
           return;
         }
@@ -281,7 +290,7 @@ export class ForwarderRoutePublisher {
       let idx = 0;
       const emitHostRouteSet = (
         host: string,
-        override?: { profileId: string; hostPort: number },
+        override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },
       ): void => {
         // 同一 host 下避免给同一 prefix 重复发布(BuildProfile.pathPrefixes 与
         // convention 兜底可能冲突,前者优先)
@@ -395,7 +404,10 @@ export class ForwarderRoutePublisher {
             continue;
           }
           for (const root of this.opts.rootDomains) {
-            emitHostRouteSet(`${memberLabel}.${root}`, { profileId, hostPort: member.hostPort });
+            emitHostRouteSet(`${memberLabel}.${root}`, {
+              profileId, hostPort: member.hostPort,
+              replicaGroup: replica.group, replicaMemberId: member.id,
+            });
           }
         }
       }

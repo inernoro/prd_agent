@@ -519,7 +519,15 @@ export class ReplicaSetService {
         } finally {
           releaseReuseOps();
         }
-      })();
+      })().catch((err) => {
+        // 后台事务兜底 catch（Codex 第二十八轮 P1）：分支在容器操作期间被删除时，
+        // 下一次 materializeMember 会从 requireBranch 抛出。此前这里只有 finally、
+        // promise 又被 void 丢弃——Node 20 默认把未捕获拒绝升级为进程退出，等于
+        // 「删个分支就可能把 CDS 打死」。记录后交周期对账收敛，绝不让它冒泡。
+        this.opts.logger?.error?.(
+          `[replica-set] 复制隔离（同库复用）后台事务异常 ${branchId}/${profileId}（已记录，交对账收敛）: ${(err as Error).message}`,
+        );
+      });
       return { accepted: true };
     }
     const inflightKey = this.isolationKey(branchId, target);
@@ -614,7 +622,15 @@ export class ReplicaSetService {
         this.isolationInFlight.delete(inflightKey);
         releaseIsoOps();
       }
-    })();
+    })().catch((err) => {
+      // 后台事务兜底 catch（Codex 第二十八轮 P1）：分支在容器操作期间被删除时，
+      // 下一次 materializeMember 会从 requireBranch 抛出。此前这里只有 finally、
+      // promise 又被 void 丢弃——Node 20 默认把未捕获拒绝升级为进程退出，等于
+      // 「删个分支就可能把 CDS 打死」。记录后交周期对账收敛，绝不让它冒泡。
+      this.opts.logger?.error?.(
+        `[replica-set] 复制隔离后台事务异常 ${branchId}/${profileId}（已记录，交对账收敛）: ${(err as Error).message}`,
+      );
+    });
     return { accepted: true };
   }
 
@@ -682,7 +698,15 @@ export class ReplicaSetService {
       } finally {
         releaseRevertOps();
       }
-    })();
+    })().catch((err) => {
+      // 后台事务兜底 catch（Codex 第二十八轮 P1）：分支在容器操作期间被删除时，
+      // 下一次 materializeMember 会从 requireBranch 抛出。此前这里只有 finally、
+      // promise 又被 void 丢弃——Node 20 默认把未捕获拒绝升级为进程退出，等于
+      // 「删个分支就可能把 CDS 打死」。记录后交周期对账收敛，绝不让它冒泡。
+      this.opts.logger?.error?.(
+        `[replica-set] 回切主库后台事务异常 ${branchId}/${profileId}（已记录，交对账收敛）: ${(err as Error).message}`,
+      );
+    });
     return { accepted: true };
   }
 

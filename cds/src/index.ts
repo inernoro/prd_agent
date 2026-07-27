@@ -16,7 +16,8 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService } from './services/janitor.js';
+import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { diskGuard } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
 import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
@@ -1893,6 +1894,10 @@ const janitorService = new JanitorService(
   config.janitor,
   config.worktreeBase,
 );
+// 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
+// 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
+diskGuard.setProbe(() => defaultDiskUsage(config.worktreeBase));
+diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。

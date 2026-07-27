@@ -70,3 +70,27 @@ describe('磁盘分档刹车', () => {
     expect(describeDiskTier('ok', null)).toContain('未知');
   });
 });
+
+describe('磁盘刹车自带测量能力（Codex 第二十八轮 P1）', () => {
+  beforeEach(() => diskGuard.reset());
+
+  it('进程刚重启、还没有任何 sweep 时，部署闸门会就地测一次而不是放行', () => {
+    // 事故语义：CDS 刚被磁盘打满打死并重启，此刻档位还是初始的 'ok'。
+    // 若闸门直接读这个未初始化值，最危险的恢复窗口反而全程放行。
+    diskGuard.setProbe(() => ({ totalBytes: 100, freeBytes: 3 })); // 97% used
+    expect(diskGuard.get().tier).toBe('ok'); // 尚未测量
+    const reason = diskGuard.blockReasonForDeploy();
+    expect(reason).toContain('97%');
+    expect(diskGuard.get().tier).toBe('freeze');
+  });
+
+  it('探测器抛异常时保持现状放行，不把平台锁死', () => {
+    diskGuard.setProbe(() => { throw new Error('statfs failed'); });
+    expect(diskGuard.blockReasonForDeploy()).toBeNull();
+  });
+
+  it('未注册探测器时退回既有读数（janitor 仍可喂）', () => {
+    diskGuard.update(95);
+    expect(diskGuard.blockReasonForDeploy()).toContain('95%');
+  });
+});

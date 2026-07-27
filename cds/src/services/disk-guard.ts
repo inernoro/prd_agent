@@ -81,15 +81,48 @@ export function describeDiskTier(tier: DiskTier, usedPercent: number | null): st
  * 单例而非 DI，是因为读取方（部署路由、webhook 派发器）散布很广，
  * 且这是「只读一个瞬时事实」的场景，不值得为它穿一层依赖。
  */
+export type DiskUsageProbe = () => { totalBytes: number; freeBytes: number } | null;
+
+/** 读数被认为「新鲜」的时长；超过则在被问到时就地重测（见 blockReasonForDeploy）。 */
+export const DISK_READING_TTL_MS = 60_000;
+
 class DiskGuardState {
   private tier: DiskTier = 'ok';
   private usedPercent: number | null = null;
   private updatedAt: string | null = null;
+  private updatedAtMs = 0;
+  private probe: DiskUsageProbe | null = null;
+
+  /**
+   * 注册就地探测（Codex 第二十八轮 P1）。
+   *
+   * 只靠 janitor 每小时一次的 sweep 写档位有两个致命窗口：① 进程刚重启时档位是
+   * 未初始化的 'ok'，而「刚因为磁盘满而重启」正是最危险的时刻；② janitor 的 TTL
+   * 清理被关掉时根本没有周期 sweep。注册探测后，部署闸门在读数过期或缺失时会
+   * 自己测一次——刹车不再依赖 janitor 的配置与节奏。
+   */
+  setProbe(probe: DiskUsageProbe | null): void {
+    this.probe = probe;
+  }
+
+  /** 就地重测并刷新档位；无探测器或探测失败时保持现状（fail-open）。 */
+  refreshNow(thresholds?: DiskTierThresholds): DiskTier {
+    if (!this.probe) return this.tier;
+    try {
+      const usage = this.probe();
+      if (!usage || !usage.totalBytes) return this.tier;
+      const usedPercent = Math.round(((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100);
+      return this.update(usedPercent, thresholds);
+    } catch {
+      return this.tier;
+    }
+  }
 
   update(usedPercent: number | null, thresholds?: DiskTierThresholds): DiskTier {
     this.usedPercent = typeof usedPercent === 'number' && Number.isFinite(usedPercent) ? usedPercent : null;
     this.tier = classifyDiskTier(this.usedPercent, thresholds);
     this.updatedAt = new Date().toISOString();
+    this.updatedAtMs = Date.now();
     return this.tier;
   }
 
@@ -97,8 +130,17 @@ class DiskGuardState {
     return { tier: this.tier, usedPercent: this.usedPercent, updatedAt: this.updatedAt };
   }
 
-  /** 部署派发前调用；返回非 null 表示应当拒绝，值即给用户的理由。 */
+  /**
+   * 部署派发前调用；返回非 null 表示应当拒绝，值即给用户的理由。
+   *
+   * 读数缺失或超过 TTL 时**先就地重测**（Codex 第二十八轮 P1）：进程刚重启时
+   * 档位还是初始的 'ok'，而那恰恰是「刚被磁盘满打死、正在恢复」的窗口；janitor
+   * 被关掉时更是永远没有周期 sweep。刹车必须自带测量能力，不能依赖别人来喂。
+   */
   blockReasonForDeploy(): string | null {
+    if (this.probe && (this.updatedAtMs === 0 || Date.now() - this.updatedAtMs > DISK_READING_TTL_MS)) {
+      this.refreshNow();
+    }
     if (!shouldFreezeDeploys(this.tier)) return null;
     return describeDiskTier(this.tier, this.usedPercent);
   }
@@ -108,6 +150,8 @@ class DiskGuardState {
     this.tier = 'ok';
     this.usedPercent = null;
     this.updatedAt = null;
+    this.updatedAtMs = 0;
+    this.probe = null;
   }
 }
 

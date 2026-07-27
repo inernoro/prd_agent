@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { computeImageRetentionPlan, isCdsShaTaggedImage } from '../../src/services/image-retention.js';
+import { computeImageRetentionPlan, isCdsShaTaggedImage, imageRepository } from '../../src/services/image-retention.js';
 
 const sha = (n: number): string => String(n).padStart(40, '0');
 const img = (name: string, n: number): string => `ghcr.io/acme/${name}:sha-${sha(n)}`;
@@ -33,8 +33,9 @@ describe('部署镜像保留策略', () => {
   });
 
   it('在用镜像绝不回收——包括已停止容器引用的（删了就无法重启）', () => {
+    // 台账里必须有一条同仓库记录来确立归属（见「实例归属边界」一节）
     const plan = computeImageRetentionPlan({
-      ledger: [],
+      ledger: [{ image: img('api', 1), branchId: 'b1', profileId: 'api', createdAt: '2026-07-27T00:00:00Z' }],
       hostImages: [img('api', 1), img('api', 2)],
       inUseImages: [img('api', 1)],
       keepGenerations: 1,
@@ -76,10 +77,13 @@ describe('部署镜像保留策略', () => {
   it('单轮上限截断，且截断数量必须如实报出（不许把「跑过了」说成「清干净了」）', () => {
     const hostImages = [1, 2, 3, 4, 5].map((n) => img('api', n));
     const plan = computeImageRetentionPlan({
-      ledger: [], hostImages, inUseImages: [], keepGenerations: 1, maxRemovals: 2,
+      // 台账留最新一代确立仓库归属；其余 4 个为台账外存量泄漏
+      ledger: [{ image: img('api', 5), branchId: 'b1', profileId: 'api', createdAt: '2026-07-27T00:00:00Z' }],
+      hostImages, inUseImages: [], keepGenerations: 1, maxRemovals: 2,
     });
+    // 5 个宿主镜像 - 1 个保留代 = 4 个候选；本轮删 2，其余 2 个如实计入 deferred
     expect(plan.remove).toHaveLength(2);
-    expect(plan.deferred).toBe(3);
+    expect(plan.deferred).toBe(2);
   });
 
   it('不同服务各自计代，不会互相挤占', () => {
@@ -101,5 +105,37 @@ describe('部署镜像保留策略', () => {
       ledger, hostImages: [img('api', 1)], inUseImages: [], keepGenerations: 0,
     });
     expect(plan.remove).toEqual([]);
+  });
+});
+
+describe('镜像回收的实例归属边界（Codex 第二十八轮 P1）', () => {
+  const mine = 'ghcr.io/acme/api';
+  const theirs = 'ghcr.io/other-team/api';
+  const s40 = (n: number): string => String(n).padStart(40, '0');
+
+  it('不碰本实例台账里没出现过的仓库——同宿主其他 master 的回滚镜像必须完好', () => {
+    const plan = computeImageRetentionPlan({
+      ledger: [{ image: `${mine}:sha-${s40(9)}`, branchId: 'b1', profileId: 'api', createdAt: '2026-07-27T00:00:00Z' }],
+      hostImages: [`${mine}:sha-${s40(9)}`, `${mine}:sha-${s40(1)}`, `${theirs}:sha-${s40(1)}`],
+      inUseImages: [],
+      keepGenerations: 1,
+    });
+    expect(plan.remove).toEqual([`${mine}:sha-${s40(1)}`]);
+    expect(plan.keptReasons[`${theirs}:sha-${s40(1)}`]).toContain('不属于本 CDS 实例');
+  });
+
+  it('台账为空时不删任何东西（新实例/台账未加载，宁可不清也不误删）', () => {
+    const plan = computeImageRetentionPlan({
+      ledger: [],
+      hostImages: [`${mine}:sha-${s40(1)}`, `${theirs}:sha-${s40(2)}`],
+      inUseImages: [],
+      keepGenerations: 1,
+    });
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('仓库名解析不被端口号与多级路径干扰', () => {
+    expect(imageRepository('registry.local:5000/team/api:sha-abc')).toBe('registry.local:5000/team/api');
+    expect(imageRepository('registry.local:5000/team/api')).toBe('registry.local:5000/team/api');
   });
 });

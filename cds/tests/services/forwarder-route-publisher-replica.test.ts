@@ -131,7 +131,14 @@ describe('ForwarderRoutePublisher — 复制集路由', () => {
     expect(direct.length).toBeGreaterThan(0);
     expect(direct.find((r) => r.pathPrefix === '/api/')?.upstreamPort).toBe(9300);
     expect(direct.find((r) => !r.pathPrefix)?.upstreamPort).toBe(9100);
-    expect(direct.every((r) => r.replicaGroup === undefined)).toBe(true);
+    // 被钉到成员的那条必须带副本身份（Codex 第二十八轮 P2）：第二十四轮起
+    // proxy 对非副本路由会显式删掉 X-CDS-Replica，直达链接不带身份就拿不到
+    // 「这条请求落在哪个副本」——那正是直达链接承诺的东西。
+    const directApi = direct.find((r) => r.pathPrefix === '/api/');
+    expect(directApi?.replicaGroup).toBeDefined();
+    expect(directApi?.replicaMemberId).toBe('rsaaaaaa');
+    // 未被钉的 profile（web 仍走主容器）保持非副本语义
+    expect(direct.find((r) => !r.pathPrefix)?.replicaGroup).toBeUndefined();
   });
 
   it('两个 profile 各有同名成员 id:直达子域带 profile 段互不撞 host（Codex P1）', () => {
