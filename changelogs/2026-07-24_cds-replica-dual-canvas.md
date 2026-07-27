@@ -231,3 +231,4 @@
 | security | cds | 专用隔离实例端口只发布在 CDS_HOST（docker 网桥地址），不再挂在宿主全部网卡上——源库无认证时那是一份可从宿主外读写的生产派生克隆 |
 | fix | cds | 整组校验的成员身份改 profile+memberId 复合键：各服务同名 res-1 不再互相顶替，单服务计划骗不过整组校验 |
 | fix | cds | 项目级模式下直接改单成员权重/下线的两个端点也受整组约束（此前只有变更计划被拦，直连 API 可从侧门掏空整组语义） |
+| fix | cds | replica-set 复合键分隔符改转义写法（字面 NUL 第三次让 git 把 .ts 当二进制），并新增 tests/lint/no-literal-nul 守卫杜绝第四次 |

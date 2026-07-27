@@ -1483,7 +1483,7 @@ export class ReplicaSetService {
     //（route-resolver 的粘性条目为此专门支持 `profileId:memberId` 作用域）。只按
     // m.id 建索引会把它们坍缩成一个，覆盖判定于是认为「碰了 api 的 res-1 就等于
     // 碰了全组的 res-1」——单服务计划照样能通过整组校验。
-    const memberKey = (profileId: string, memberId: string): string => `${profileId} ${memberId}`;
+    const memberKey = (profileId: string, memberId: string): string => `${profileId}\u0000${memberId}`;
     const membersByGroup = new Map<string, Array<{ profileId: string; member: ReplicaMember }>>();
     const groupOfMember = new Map<string, string>();
     for (const [profileId, rs] of Object.entries(branch.replicaSets ?? {})) {
