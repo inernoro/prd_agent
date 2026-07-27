@@ -166,3 +166,4 @@
 | fix | cds | service-graph 边键的字面 NUL 字节改用 unicode 转义序列（运行时语义不变），文件不再被 git 判成二进制、恢复文本 diff 可审 |
 | fix | cds | 专用隔离实例容器名揉入 CDS 实例段 + cds.instance label，多 master 共宿主管同一分支不再同名互杀；幂等清理前按 label 验归属，异实例容器拒删 |
 | fix | cds | 分流探测 host 改全量对照：域名后缀必须命中 CDS 根域（缺配置退分支 previewUrl 实际后缀）+ 单标签 slug/别名匹配，别家自定义域首标签碰巧带本分支 slug 前缀不再被放行 |
+| fix | cds | cdscli 能力契约测试的版本期望改为从源码解析 VERSION 常量（治 main 上 bump 0.12.1 未同步硬编码 0.12.0 导致的主干红灯，未来 bump 免疫） |
