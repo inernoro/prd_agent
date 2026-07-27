@@ -55,12 +55,12 @@ import {
   DialogTitle,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError } from '@/lib/api';
+import { requestAgentAccess } from '@/lib/agent-onboarding';
 import { useInfraCatalog } from '@/lib/infraCatalog';
 import { RuntimeValidateButton } from '@/components/deployment/RuntimeValidateButton';
 import { CodePill, ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { EnvSetupDialog } from '@/components/env/EnvSetupDialog';
-import { SkillDownloadDialog } from '@/components/SkillDownloadDialog';
 import { AgentKeyScopePanel, describeAgentKeyScope, type AgentKeyScope } from '@/components/AgentKeyScopePanel';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 
@@ -463,7 +463,6 @@ export function ProjectListPage(): JSX.Element {
   const [envSetupTarget, setEnvSetupTarget] = useState<ProjectSummary | null>(null);
   const [agentKeyProject, setAgentKeyProject] = useState<ProjectSummary | null>(null);
   const [globalAgentKeyOpen, setGlobalAgentKeyOpen] = useState(false);
-  const [skillDownloadOpen, setSkillDownloadOpen] = useState(false);
   const [monitoringOpen, setMonitoringOpen] = useState(false);
   const [legacyDialogOpen, setLegacyDialogOpen] = useState(false);
   const [pendingImportOpen, setPendingImportOpen] = useState(false);
@@ -771,7 +770,7 @@ export function ProjectListPage(): JSX.Element {
                   从 YAML 沙盒新建
                 </DropdownItem>
                 <DropdownDivider />
-                <DropdownItem onSelect={() => setSkillDownloadOpen(true)}>
+                <DropdownItem onSelect={() => requestAgentAccess('projects')}>
                   <Bot className="h-4 w-4 shrink-0" />
                   接入 Agent
                 </DropdownItem>
@@ -891,11 +890,6 @@ export function ProjectListPage(): JSX.Element {
           open={globalAgentKeyOpen}
           onOpenChange={setGlobalAgentKeyOpen}
           onToast={setToast}
-        />
-        <SkillDownloadDialog
-          open={skillDownloadOpen}
-          onOpenChange={setSkillDownloadOpen}
-          projects={projects.map((project) => ({ id: project.id, name: displayName(project), slug: project.slug }))}
         />
         <MonitoringDialog
           open={monitoringOpen}

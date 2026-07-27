@@ -75,6 +75,31 @@ describe('github auth middleware — agent key coexistence', () => {
     expect((req as any).cdsUser).toEqual({ id: 'u1' });
   });
 
+  it('stamps an SSO identity as a verified non-owner human session', async () => {
+    const authService = { validateSession: vi.fn(async () => null) } as any;
+    const mw = createGithubAuthMiddleware({ authService });
+    const req = apiReq() as any;
+    req.cdsSsoIdentity = {
+      subject: 'map:user-1',
+      username: 'operator',
+      displayName: 'Operator',
+      email: 'operator@example.com',
+    };
+    const res = mockRes();
+    const next = vi.fn();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(req._cdsCookieAuth).toBe(true);
+    expect(req.cdsSession.userId).toBe('sso:map:user-1');
+    expect(req.cdsUser).toMatchObject({
+      id: 'sso:map:user-1',
+      authProvider: 'sso',
+      isSystemOwner: false,
+    });
+  });
+
   // 构建闸健康探针必须免鉴权可达（定时回归任务 / 外部监控不带会话），
   // github 模式有自己的 PUBLIC_PATHS 白名单，与 server.ts 的
   // isPublicAccessRequestRoute 相互独立、两边都要登记（Codex P2，2026-07-16）。

@@ -148,6 +148,132 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
         (await fixture.ReadDocumentContentAsync(afterNoop.DocumentId!)).ShouldBe(content + "\n\n人工修订");
     }
 
+    [Fact]
+    public async Task TutorialLinkGraph_PublishIsCasProtectedAndRollbackCreatesHistory()
+    {
+        await using var fixture = await PublisherMongoFixture.CreateAsync();
+        var store = await fixture.InsertStoreAsync("owner-a");
+        await fixture.Db.DocumentEntries.InsertOneAsync(ManagedDocument(store.Id, "tutorial-a", "chapter-00"));
+        var service = new TutorialLinkGraphService(fixture.Db);
+
+        var initial = Graph("revision-1", DateTime.UtcNow);
+        var draft = await service.SaveDraftAsync(
+            store.Id,
+            "publisher-a",
+            initial,
+            null,
+            "owner-a",
+            CancellationToken.None);
+        draft.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+        var firstSha = draft.Graph!.Draft!.GraphSha256;
+
+        var published = await service.PublishAsync(
+            store.Id,
+            "publisher-a",
+            firstSha,
+            null,
+            "owner-a",
+            CancellationToken.None);
+        published.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+        published.Graph!.Versions.Count.ShouldBe(1);
+        var firstVersionId = published.Graph.Versions.Single().VersionId;
+
+        var changed = Graph("revision-1", DateTime.UtcNow.AddSeconds(1));
+        var changedDraft = await service.SaveDraftAsync(
+            store.Id,
+            "publisher-a",
+            changed,
+            firstSha,
+            "owner-a",
+            CancellationToken.None);
+        changedDraft.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+        var secondSha = changedDraft.Graph!.Draft!.GraphSha256;
+        secondSha.ShouldNotBe(firstSha);
+
+        var stale = await service.PublishAsync(
+            store.Id,
+            "publisher-a",
+            secondSha,
+            new string('0', 64),
+            "owner-a",
+            CancellationToken.None);
+        stale.Status.ShouldBe(TutorialLinkGraphMutationStatus.Stale);
+        (await service.GetAsync(store.Id, "publisher-a", CancellationToken.None))!
+            .Published!.GraphSha256.ShouldBe(firstSha);
+
+        var secondPublished = await service.PublishAsync(
+            store.Id,
+            "publisher-a",
+            secondSha,
+            firstSha,
+            "owner-a",
+            CancellationToken.None);
+        secondPublished.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+
+        var rollback = await service.RollbackAsync(
+            store.Id,
+            "publisher-a",
+            firstVersionId,
+            secondSha,
+            "owner-a",
+            CancellationToken.None);
+        rollback.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+        rollback.Graph!.Published!.GraphSha256.ShouldBe(firstSha);
+        rollback.Graph.Versions.Count.ShouldBe(3);
+        rollback.Graph.Versions.Last().RolledBackFromVersionId.ShouldBe(firstVersionId);
+    }
+
+    [Fact]
+    public async Task TutorialLinkGraph_RejectsMissingEvidenceMissingNodeAndOrphanTutorial()
+    {
+        await using var fixture = await PublisherMongoFixture.CreateAsync();
+        var store = await fixture.InsertStoreAsync("owner-a");
+        await fixture.Db.DocumentEntries.InsertManyAsync(new[]
+        {
+            ManagedDocument(store.Id, "tutorial-a", "chapter-00"),
+            ManagedDocument(store.Id, "tutorial-b", "chapter-01"),
+        });
+        var service = new TutorialLinkGraphService(fixture.Db);
+
+        var orphan = await service.SaveDraftAsync(
+            store.Id,
+            "publisher-a",
+            Graph("revision-1", DateTime.UtcNow),
+            null,
+            "owner-a",
+            CancellationToken.None);
+        orphan.Status.ShouldBe(TutorialLinkGraphMutationStatus.Invalid);
+        orphan.Message.ShouldNotBeNull();
+        orphan.Message!.ShouldContain("没有页面反向链接");
+
+        var missingEvidence = Graph("revision-1", DateTime.UtcNow);
+        missingEvidence.Surfaces[0].TutorialSourceIds.Add("chapter-01");
+        missingEvidence.Surfaces[0].TutorialLinks[0].EvidenceIds.Clear();
+        var invalid = await service.SaveDraftAsync(
+            store.Id,
+            "publisher-a",
+            missingEvidence,
+            null,
+            "owner-a",
+            CancellationToken.None);
+        invalid.Status.ShouldBe(TutorialLinkGraphMutationStatus.Invalid);
+        invalid.Message.ShouldNotBeNull();
+        invalid.Message!.ShouldContain("缺少验收证据");
+
+        var missingNode = Graph("revision-1", DateTime.UtcNow);
+        missingNode.Surfaces[0].TutorialSourceIds.Add("chapter-99");
+        var missing = await service.SaveDraftAsync(
+            store.Id,
+            "publisher-a",
+            missingNode,
+            null,
+            "owner-a",
+            CancellationToken.None);
+        missing.Status.ShouldBe(TutorialLinkGraphMutationStatus.Invalid);
+        missing.Message.ShouldNotBeNull();
+        missing.Message!.ShouldContain("不存在的教程节点");
+    }
+
     private static readonly string EmptySha = DocumentStorePublisherPolicy.Sha256(string.Empty);
 
     private static PublisherPutNodeRequest Request(string runId, string title)
@@ -198,6 +324,58 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
                 "folder",
                 "run-a",
                 "run-a"),
+        };
+
+    private static DocumentEntry ManagedDocument(string storeId, string id, string sourceId)
+        => new()
+        {
+            Id = id,
+            StoreId = storeId,
+            IsFolder = false,
+            Title = id,
+            ContentType = "text/markdown",
+            Metadata = DocumentStorePublisherPolicy.MergeMetadata(
+                null,
+                null,
+                "publisher-a",
+                sourceId,
+                $"chapters/{sourceId}.md",
+                EmptySha,
+                DocumentStorePublisherPolicy.Sha256("manifest"),
+                "revision-1",
+                "document",
+                "run-a",
+                "run-a"),
+        };
+
+    private static TutorialLinkGraphRevision Graph(string sourceRevision, DateTime generatedAt)
+        => new()
+        {
+            SchemaVersion = 2,
+            SourceRevision = sourceRevision,
+            ManifestSha256 = DocumentStorePublisherPolicy.Sha256("manifest"),
+            VerifiedAtCommit = "0123456789abcdef",
+            GeneratedAt = generatedAt,
+            Surfaces = new List<TutorialLinkSurface>
+            {
+                new()
+                {
+                    Id = "logs",
+                    Routes = new List<string> { "/logs" },
+                    PagePath = "llmgw/web/src/pages/LogsPage.tsx",
+                    TutorialSourceIds = new List<string> { "chapter-00" },
+                    TutorialLinks = new List<TutorialStepLink>
+                    {
+                        new()
+                        {
+                            SourceId = "chapter-00",
+                            StepIds = new List<string> { "logs-table" },
+                            EvidenceIds = new List<string> { "109-logs-table" },
+                            Impact = new List<string> { "content", "screenshot" },
+                        },
+                    },
+                },
+            },
         };
 
     private sealed class PublisherMongoFixture : IAsyncDisposable

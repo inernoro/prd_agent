@@ -140,6 +140,38 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
   });
 
   router.get('/me', async (req: Request, res: Response) => {
+    const ssoIdentity = (req as Request & {
+      cdsSsoIdentity?: {
+        subject: string;
+        username: string;
+        displayName: string;
+        email?: string | null;
+      };
+      cdsSession?: { createdAt?: string; expiresAt?: string };
+    }).cdsSsoIdentity;
+    if (ssoIdentity) {
+      const session = (req as Request & {
+        cdsSession?: { createdAt?: string; expiresAt?: string };
+      }).cdsSession;
+      res.json({
+        user: {
+          id: `sso:${ssoIdentity.subject}`,
+          githubLogin: ssoIdentity.username,
+          username: ssoIdentity.username,
+          authProvider: 'sso',
+          name: ssoIdentity.displayName,
+          email: ssoIdentity.email ?? null,
+          avatarUrl: null,
+          orgs: [],
+          isSystemOwner: false,
+        },
+        session: {
+          createdAt: session?.createdAt ?? null,
+          expiresAt: session?.expiresAt ?? null,
+        },
+      });
+      return;
+    }
     const token = parseCookie(req.headers.cookie, GH_SESSION_COOKIE);
     const result = await authService.validateSession(token ?? null);
     if (!result) {

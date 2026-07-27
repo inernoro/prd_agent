@@ -18973,6 +18973,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   //   skills/cds/                — 统一技能（主入口 + CLI + reference）
   //   skills/cds-deploy-pipeline/ — 部署流水线技能
   //   skills/cds-project-scan/   — 扫描技能（向后兼容旧工作流）
+  //   skills/cds-release/        — 正式发布、预检与回滚技能
   //   skills/preview-url/        — 真实预览地址技能（必装）
   // 包内不绑定具体 Agent 的安装路径，由接入 Agent 选择当前宿主的项目级目录。
   //
@@ -19001,7 +19002,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 要打包的技能列表
       const skillsToCopy: string[] = useLegacy
         ? ['cds-project-scan']
-        : ['cds', 'cds-deploy-pipeline', 'cds-project-scan', 'preview-url'];
+        : ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
 
       let copiedCount = 0;
       for (const skillName of skillsToCopy) {
@@ -19013,8 +19014,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         copiedCount++;
       }
 
-      if (copiedCount === 0) {
-        res.status(404).json({ error: `未找到 CDS 技能目录（已查找：${skillsRoot}）` });
+      const missingSkills = skillsToCopy.filter((name) => !fs.existsSync(path.join(skillsRoot, name)));
+      if (missingSkills.length > 0) {
+        await fs.promises.rm(packDir, { recursive: true, force: true });
+        res.status(500).json({
+          error: `CDS 技能包不完整，缺少：${missingSkills.join('、')}（已查找：${skillsRoot}）`,
+        });
         return;
       }
 
@@ -19023,12 +19028,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? `# CDS 部署技能包 (legacy: cds-project-scan)\n\n将 \`skills/cds-project-scan/\` 复制到当前 Agent 支持的项目级技能目录。\n`
         : `# CDS 技能包（全套，共 ${copiedCount} 个技能）
 
-包含：cds（主技能）、cds-deploy-pipeline（部署流水线）、cds-project-scan（扫描）、preview-url（真实预览地址）。
-覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断。
+包含：cds（主技能）、cds-project-scan（扫描）、cds-deploy-pipeline（部署流水线）、cds-release（正式发布）、preview-url（真实预览地址）。
+覆盖 CDS 全生命周期：扫描项目 → Agent 鉴权 → 部署 → 就绪检测 → 分层冒烟 → 真实预览地址 → 故障诊断 → 正式发布与回滚。
 
 ## 安装
 
-解压后，将 \`skills/\` 下的四个目录复制到当前项目的 Agent Skills 目录；缺少 \`preview-url\` 即视为接入未完成：
+解压后，将 \`skills/\` 下的五个目录复制到当前项目的 Agent Skills 目录；缺少任一目录即视为接入未完成：
 
 | Agent | 项目级目录 |
 |------|-----------|
@@ -19077,6 +19082,7 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 | \`skills/cds/reference/smoke.md\` | 分层冒烟策略 |
 | \`skills/cds/reference/diagnose.md\` | 容器日志 → 根因决策树 |
 | \`skills/cds/reference/drop-in.md\` | 新项目接入完整步骤 |
+| \`skills/cds-release/SKILL.md\` | 正式发布目标、预检、发布、回滚和证据归档 |
 | \`skills/preview-url/SKILL.md\` | 获取当前分支实际发布的一个或多个预览地址 |
 
 ## 升级
@@ -19088,15 +19094,21 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
 缺功能 / 新根因模式 / 扫描误判 → 把 \`cdscli diagnose <branchId>\` 输出贴给维护方。
 `;
       await fs.promises.writeFile(path.join(packDir, 'README.md'), readme, 'utf-8');
-      await fs.promises.writeFile(
-        path.join(packDir, 'manifest.json'),
-        JSON.stringify({
-          format: 'agent-skills',
-          version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
-          skills: skillsToCopy.filter((name) => fs.existsSync(path.join(skillsRoot, name))),
-        }, null, 2) + '\n',
-        'utf-8',
-      );
+      const skillManifest = {
+        format: 'agent-skills',
+        version: readBundledCdsCliVersion(config.repoRoot) || 'unknown',
+        skills: skillsToCopy,
+        generatedAt: new Date().toISOString(),
+      };
+      const skillManifestJson = JSON.stringify(skillManifest, null, 2) + '\n';
+      await fs.promises.writeFile(path.join(packDir, 'manifest.json'), skillManifestJson, 'utf-8');
+      if (!useLegacy) {
+        await fs.promises.writeFile(
+          path.join(packDir, 'skills', 'cds', 'cli', 'cds-skill-manifest.json'),
+          skillManifestJson,
+          'utf-8',
+        );
+      }
 
       // Create tar.gz using tar command (available on all Linux) — 异步 execFile，
       // 压缩期间事件循环不阻塞（原 execSync 会让所有请求/SSE/代理停摆）。

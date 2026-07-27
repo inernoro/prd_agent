@@ -96,5 +96,17 @@ public class AppSettings
     /// <summary>是否禁用管理后台密码登录，仅保留 SSO/破窗入口</summary>
     public bool? PasswordLoginDisabled { get; set; }
 
+    /// <summary>是否允许外部控制台通过当前管理员真人会话签发一次性 SSO 票据</summary>
+    public bool? ConsoleSsoProviderEnabled { get; set; }
+
+    /// <summary>通用控制台 SSO 客户端标识，不绑定具体消费方产品名称</summary>
+    public string? ConsoleSsoClientId { get; set; }
+
+    /// <summary>通用控制台 SSO 客户端密钥，仅后端换票校验使用</summary>
+    public string? ConsoleSsoClientSecret { get; set; }
+
+    /// <summary>允许回跳的 HTTPS Origin，逗号分隔；支持以 *. 开头的子域通配</summary>
+    public string? ConsoleSsoAllowedRedirectOrigins { get; set; }
+
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 }

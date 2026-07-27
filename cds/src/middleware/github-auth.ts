@@ -22,6 +22,7 @@ import { GH_SESSION_COOKIE } from '../routes/auth.js';
 const PUBLIC_PATHS: (string | RegExp)[] = [
   '/healthz',
   '/login',
+  '/auth/sso',
   // Compatibility URL: installSpaFallback redirects it to the React login
   // route while preserving ?redirect=...
   '/login-gh.html',
@@ -32,6 +33,10 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/api/auth/login',
   '/api/auth/bootstrap',
   '/api/auth/bootstrap-status',
+  '/api/auth/sso/public-config',
+  '/api/auth/sso/start',
+  '/api/auth/sso/exchange',
+  '/api/auth/sso/logout',
   '/api/cds-system/connections/authorize',
   '/api/cds-system/connections/token',
   '/api/cds-system/connections/accept',
@@ -92,6 +97,53 @@ export function createGithubAuthMiddleware(deps: {
     // Always let public paths through — otherwise the login page can't
     // render assets before the user is authenticated.
     if (isPublicPath(req.path)) {
+      next();
+      return;
+    }
+
+    const ssoIdentity = (req as Request & {
+      cdsSsoIdentity?: {
+        subject: string;
+        username: string;
+        displayName: string;
+        email?: string | null;
+      };
+    }).cdsSsoIdentity;
+    if (ssoIdentity) {
+      const now = new Date().toISOString();
+      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const request = req as any;
+      request._cdsCookieAuth = true;
+      request.cdsUser = {
+        id: `sso:${ssoIdentity.subject}`,
+        githubId: -1,
+        githubLogin: ssoIdentity.username,
+        authProvider: 'sso',
+        username: ssoIdentity.username,
+        email: ssoIdentity.email ?? null,
+        name: ssoIdentity.displayName,
+        avatarUrl: null,
+        orgs: [],
+        orgsCheckedAt: now,
+        // Ticket SSO proves a human identity, not a CDS ownership role.
+        // Owner-only routes remain closed until an explicit role mapping exists.
+        isSystemOwner: false,
+        status: 'active',
+        lastLoginAt: now,
+        createdAt: now,
+        updatedAt: now,
+      };
+      request.cdsSession = request.cdsSession || {
+        id: `sso:${ssoIdentity.subject}`,
+        token: '',
+        userId: `sso:${ssoIdentity.subject}`,
+        createdAt: now,
+        expiresAt,
+        lastSeenAt: now,
+        orgsCheckedAt: now,
+        userAgent: (req.headers['user-agent'] as string | undefined) ?? null,
+        ipAddress: req.ip || null,
+      };
       next();
       return;
     }

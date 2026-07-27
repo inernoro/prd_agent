@@ -23,14 +23,17 @@ public sealed class GatewayProviderConcurrencyCoordinator
     private const string CollectionName = "llmgw_provider_concurrency_slots";
     private readonly LlmGatewayDataContext _data;
     private readonly ILogger<GatewayProviderConcurrencyCoordinator> _logger;
+    private readonly TimeProvider _timeProvider;
     private readonly string _ownerInstance;
 
     public GatewayProviderConcurrencyCoordinator(
         LlmGatewayDataContext data,
-        ILogger<GatewayProviderConcurrencyCoordinator> logger)
+        ILogger<GatewayProviderConcurrencyCoordinator> logger,
+        TimeProvider? timeProvider = null)
     {
         _data = data;
         _logger = logger;
+        _timeProvider = timeProvider ?? TimeProvider.System;
         _ownerInstance = Environment.GetEnvironmentVariable("HOSTNAME")
                          ?? Environment.MachineName
                          ?? "unknown";
@@ -95,7 +98,7 @@ public sealed class GatewayProviderConcurrencyCoordinator
         if (string.IsNullOrWhiteSpace(offeringId) || limit is not > 0)
             return GatewayProviderConcurrencyAdmission.Allow();
 
-        var now = DateTime.UtcNow;
+        var now = _timeProvider.GetUtcNow().UtcDateTime;
         var windowStart = new DateTime(now.Year, now.Month, now.Day, now.Hour, now.Minute, 0, DateTimeKind.Utc);
         var collection = _data.Database.GetCollection<GatewayOfferingRateWindowRecord>("llmgw_offering_rate_windows");
         var filter = Builders<GatewayOfferingRateWindowRecord>.Filter.And(

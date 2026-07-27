@@ -88,6 +88,20 @@ export function previewInstanceBlockedMessage(binary: string): string {
 const SECRET_ENV_KEY_PATTERN =
   /(PASSWORD|PASSWD|SECRET|TOKEN|API_?KEY|ACCESS_KEY|PRIVATE_KEY|CREDENTIAL|MONGO|REDIS|DATABASE|CONNECTION|_URI$|_URL$|_DSN$)/i;
 
+function normalizePreviewPublicBaseUrl(value: string | undefined): string {
+  if (!value) return '';
+  try {
+    const url = new URL(value.trim());
+    const localHttp = url.protocol === 'http:'
+      && (url.hostname === 'localhost' || url.hostname === '127.0.0.1');
+    if (url.protocol !== 'https:' && !localHttp) return '';
+    if (url.username || url.password) return '';
+    return url.origin;
+  } catch {
+    return '';
+  }
+}
+
 /**
  * 预览实例启动自清洗：从 process.env 删除疑似父实例密钥的变量。
  * 由 load-env.ts 在 .cds.env 注入后立即调用（早于 config.ts 的模块级求值）。
@@ -104,14 +118,44 @@ export function scrubParentSecretsFromEnv(env: NodeJS.ProcessEnv = process.env):
   // 先抄下子实例专用凭据（本身命中 PASSWORD 模式，会在下面的循环里被删）。
   const previewUsername = env.CDS_PREVIEW_USERNAME;
   const previewPassword = env.CDS_PREVIEW_PASSWORD;
+  const previewPublicBaseUrl = normalizePreviewPublicBaseUrl(env.CDS_PREVIEW_PUBLIC_BASE_URL);
+  const previewSso = {
+    enabled: env.CDS_PREVIEW_SSO_ENABLED,
+    providerId: env.CDS_PREVIEW_SSO_PROVIDER_ID,
+    label: env.CDS_PREVIEW_SSO_LABEL,
+    authorizationUrl: env.CDS_PREVIEW_SSO_AUTHORIZATION_URL,
+    tokenUrl: env.CDS_PREVIEW_SSO_TOKEN_URL,
+    clientId: env.CDS_PREVIEW_SSO_CLIENT_ID,
+    clientSecret: env.CDS_PREVIEW_SSO_CLIENT_SECRET,
+    defaultRedirect: env.CDS_PREVIEW_SSO_DEFAULT_REDIRECT,
+  };
   const scrubbed: string[] = [];
   for (const key of Object.keys(env)) {
-    if (!SECRET_ENV_KEY_PATTERN.test(key)) continue;
+    if (!SECRET_ENV_KEY_PATTERN.test(key) && !key.startsWith('CDS_SSO_')) continue;
     delete env[key];
     scrubbed.push(key);
   }
   if (previewUsername) env.CDS_USERNAME = previewUsername;
   if (previewPassword) env.CDS_PASSWORD = previewPassword;
+  if (previewPublicBaseUrl) env.CDS_PUBLIC_BASE_URL = previewPublicBaseUrl;
+  const previewSsoWantsEnabled = /^(1|true|yes|on)$/i.test(previewSso.enabled || '');
+  if (previewSso.enabled) {
+    env.CDS_SSO_ENABLED = previewSsoWantsEnabled && !previewPublicBaseUrl
+      ? '0'
+      : previewSso.enabled;
+  }
+  if (previewSso.providerId) env.CDS_SSO_PROVIDER_ID = previewSso.providerId;
+  if (previewSso.label) env.CDS_SSO_LABEL = previewSso.label;
+  if (previewSso.authorizationUrl) env.CDS_SSO_AUTHORIZATION_URL = previewSso.authorizationUrl;
+  if (previewSso.tokenUrl) env.CDS_SSO_TOKEN_URL = previewSso.tokenUrl;
+  if (previewSso.clientId) env.CDS_SSO_CLIENT_ID = previewSso.clientId;
+  if (previewSso.clientSecret) env.CDS_SSO_CLIENT_SECRET = previewSso.clientSecret;
+  if (previewSso.defaultRedirect) env.CDS_SSO_DEFAULT_REDIRECT = previewSso.defaultRedirect;
+  if (previewSsoWantsEnabled && !previewPublicBaseUrl) {
+    console.warn(
+      '[preview-instance] 已禁用预览实例 SSO：启用 SSO 时必须配置有效的 CDS_PREVIEW_PUBLIC_BASE_URL。',
+    );
+  }
   // auth mode 归一化（Codex P2）：继承的 CDS_AUTH_MODE 不可信——父实例若注入
   // github，其凭据已被上面清洗，子实例会卡在配不齐的 github 模式；注入 basic
   // 而无专用凭据则整实例锁死。子实例只有两种确定态：有专用凭据 = basic，

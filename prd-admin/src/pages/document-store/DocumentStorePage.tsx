@@ -51,6 +51,7 @@ import {
   Image as ImageIcon,
   Boxes,
   KeyRound,
+  Network,
   type LucideIcon,
 } from 'lucide-react';
 import { useNavigate, useLocation } from 'react-router-dom';
@@ -127,6 +128,9 @@ import {
   importCdsAcceptanceReport,
   completeRecordingUpload,
   getRecordingUpload,
+  getTutorialLinkGraph,
+  resolveTutorialLinkRoute,
+  createLlmGatewaySsoTicket,
 } from '@/services';
 import { ShareToTeamDialog } from '@/components/team/ShareToTeamDialog';
 import { UserAvatar } from '@/components/ui/UserAvatar';
@@ -148,6 +152,7 @@ import type {
   DocumentStoreShareLink,
   InteractionStoreCard,
   DocumentStoreAccountSummary,
+  TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
@@ -172,6 +177,8 @@ import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 import { parseCdsReportImportDeepLink, withoutCdsReportImportDeepLink } from './cdsReportImportDeepLink';
+import { TutorialLinkGraphDrawer, TutorialLinkedPages } from './TutorialLinkGraphDrawer';
+import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
 
 // 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
 // 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
@@ -892,12 +899,23 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
+  const canManageTutorialGraph = useAuthStore(state => state.isRoot || state.user?.role === 'ADMIN');
   const [store, setStore] = useState<DocumentStore | null>(null);
   const [entries, setEntries] = useState<DocumentEntry[]>([]);
   /** 已被「单篇分享」的文档 id 集合（文件树标黄用） */
   const [sharedEntryIds, setSharedEntryIds] = useState<Set<string>>(new Set());
   const [loading, setLoading] = useState(true);
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
+  const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
+  const [showTutorialGraph, setShowTutorialGraph] = useState(false);
+  const isTutorialGraphStore = useMemo(
+    () => entries.some(entry => entry.metadata?.publisher === 'llmgw-authoritative-tutorial'),
+    [entries],
+  );
+  const tutorialTitles = useMemo(() => Object.fromEntries(entries.flatMap(entry => {
+    const sourceId = entry.metadata?.sourceId;
+    return sourceId ? [[sourceId, entry.title]] : [];
+  })), [entries]);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
   // 在 entries 加载完成后消费一次（设置选中条目并清理 key，避免下次进入再次自动跳转）。
@@ -1180,6 +1198,47 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     loadStore();
     loadEntries();
   }, [loadStore, loadEntries]);
+
+  useEffect(() => {
+    if (!isTutorialGraphStore || !canManageTutorialGraph) {
+      setTutorialGraph(null);
+      return;
+    }
+    let alive = true;
+    void getTutorialLinkGraph(storeId).then(result => {
+      if (alive && result.success) setTutorialGraph(result.data);
+    });
+    return () => { alive = false; };
+  }, [canManageTutorialGraph, isTutorialGraphStore, storeId]);
+
+  useEffect(() => {
+    if (!canManageTutorialGraph || !isTutorialGraphStore || new URLSearchParams(location.search).get('tutorialLinks') !== '1') return;
+    setShowTutorialGraph(true);
+  }, [canManageTutorialGraph, isTutorialGraphStore, location.search]);
+
+  const openTutorialSource = useCallback((sourceId: string) => {
+    const entry = entries.find(item => item.metadata?.sourceId === sourceId);
+    if (!entry) {
+      toast.error('教程不存在', `没有找到 sourceId 为 ${sourceId} 的已发布教程`);
+      return;
+    }
+    setShowTutorialGraph(false);
+    setSelectedEntryId(entry.id);
+  }, [entries]);
+
+  const openGatewayRoute = useCallback(async (route: string) => {
+    const ticket = await createLlmGatewaySsoTicket();
+    if (!ticket.success) {
+      toast.error('无法打开 LLM Gateway', ticket.error?.message ?? '当前账号没有管理员跳转权限');
+      return;
+    }
+    const target = resolveLlmGatewaySsoHref(ticket.data.code, window.location, route);
+    if (!target) {
+      toast.error('无法打开 LLM Gateway', '当前环境没有可用的 Gateway 地址');
+      return;
+    }
+    window.location.assign(target);
+  }, []);
 
   // ── 文档再加工：页面级任务中枢（关抽屉 / 刷新都不丢） ──
   const dismissRun = useReprocessRunStore((s) => s.dismissRun);
@@ -1754,6 +1813,16 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               storeId={store.id}
               onManage={onOpenLegacySyncPanel}
             />}
+            {canManageTutorialGraph && isTutorialGraphStore && tutorialGraph && (
+              <button
+                type="button"
+                onClick={() => setShowTutorialGraph(true)}
+                className="surface-action flex h-7 cursor-pointer items-center gap-1.5 rounded-[8px] px-2.5 text-[11px] font-semibold text-token-primary"
+                title="查看页面、教程步骤和验收证据的双向关系"
+              >
+                <Network size={13} /><span className={isMobile ? 'sr-only' : ''}>教程关系</span>
+              </button>
+            )}
             <Button variant="secondary" size="xs" onClick={() => setShowShareDialog(true)}>
               <Share2 size={13} /> 分享
             </Button>
@@ -2075,12 +2144,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               />
             </div>
           }
-          contentFooter={(entryId) => (
-            <BacklinksPanel
-              entryId={entryId}
-              onJumpToEntry={(id) => setSelectedEntryId(id)}
-            />
-          )}
+          contentFooter={(entryId) => {
+            const entry = entries.find(item => item.id === entryId);
+            return (
+              <>
+                {canManageTutorialGraph && <TutorialLinkedPages sourceId={entry?.metadata?.sourceId} snapshot={tutorialGraph} onOpenRoute={openGatewayRoute} />}
+                <BacklinksPanel entryId={entryId} onJumpToEntry={(id) => setSelectedEntryId(id)} />
+              </>
+            );
+          }}
           autocompleteStoreId={storeId}
         />
         <WikilinkHoverCard />
@@ -2099,6 +2171,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
           peerNodeName={store.peerSyncNodeName}
           onClose={() => setShowSyncCenter(false)}
           onAfterSync={() => { void loadStore(); void loadEntries(); }}
+        />
+      )}
+      {canManageTutorialGraph && showTutorialGraph && tutorialGraph && (
+        <TutorialLinkGraphDrawer
+          storeId={storeId}
+          snapshot={tutorialGraph}
+          tutorialTitles={tutorialTitles}
+          onClose={() => setShowTutorialGraph(false)}
+          onSnapshotChange={setTutorialGraph}
+          onOpenTutorial={openTutorialSource}
+          onOpenProductRoute={openGatewayRoute}
         />
       )}
 
@@ -2654,6 +2737,7 @@ export function DocumentStorePage() {
   );
   const quickCaptureRequestInFlightRef = useRef(false);
   const cdsImportRequestRef = useRef<string | null>(null);
+  const tutorialRouteRequestRef = useRef<string | null>(null);
 
   // 列表 -> 知识库阅读器是全屏级切换，必须进浏览器历史：右滑/浏览器返回 = 关阅读器回列表。
   // ?store= 同时承担深链（首页「继续上次」回跳）：hook 的 onRestore 直接恢复，不再消费后抹掉。
@@ -2670,6 +2754,32 @@ export function DocumentStorePage() {
       setPendingEntryId(deepLink.storeId === id ? deepLink.entryId : null);
     },
   });
+
+  useEffect(() => {
+    const params = new URLSearchParams(location.search);
+    const tutorialRoute = params.get('tutorialRoute');
+    if (!tutorialRoute || tutorialRouteRequestRef.current === tutorialRoute) return;
+    tutorialRouteRequestRef.current = tutorialRoute;
+    let alive = true;
+    void resolveTutorialLinkRoute(tutorialRoute).then(result => {
+      if (!alive) return;
+      if (!result.success) {
+        toast.error('没有找到关联教程', result.error?.message ?? '当前页面尚未建立教程关系');
+        params.delete('tutorialRoute');
+        navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '', hash: location.hash }, { replace: true });
+        return;
+      }
+      const firstEntryId = result.data.tutorials[0]?.entryId;
+      setSelectedStoreId(result.data.storeId);
+      setPendingEntryId(firstEntryId ?? null);
+      params.delete('tutorialRoute');
+      params.set('tutorialLinks', '1');
+      params.set('store', result.data.storeId);
+      if (firstEntryId) params.set('entry', firstEntryId);
+      navigate({ pathname: location.pathname, search: `?${params.toString()}`, hash: location.hash }, { replace: true });
+    });
+    return () => { alive = false; };
+  }, [location.hash, location.pathname, location.search, navigate]);
 
   // 深链 ?tab=xxx：清空详情视图 + 切到该 tab，
   // 这样从任意位置（含某个知识库详情内）打开教程都能落到目标页签，再把 query 抹掉避免重复触发。

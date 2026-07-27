@@ -207,6 +207,185 @@ def test_ambiguous_project_matches_die_instead_of_picking_first(monkeypatch):
     assert payload["projectHints"] == ["workspace", "prd-agent"]
 
 
+def test_cds_only_branch_prefers_self_host_project(tmp_path, monkeypatch):
+    """同仓库 CDS 专属分支应优先匹配 self-host 项目，而不是业务项目。"""
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: [
+            "cds/web/src/pages/BranchListPage.tsx",
+            "cds/src/services/preview-instance-seed.ts",
+            "changelogs/2026-07-23_cds-self-preview.md",
+        ],
+    )
+
+    assert cdscli._branch_lookup_project_slug_hints(str(tmp_path)) == ["cds-self"]
+
+
+def test_mixed_branch_keeps_regular_project_routing(tmp_path, monkeypatch):
+    """CDS 与业务模块混改时不得把整个分支误路由到 self-host 项目。"""
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: [
+            "cds/web/src/pages/BranchListPage.tsx",
+            "prd-admin/src/App.tsx",
+        ],
+    )
+    monkeypatch.setattr(cdscli, "_git_origin_slug", lambda: "prd-agent")
+
+    assert cdscli._branch_lookup_project_slug_hints(str(tmp_path)) == [
+        cdscli._slugify_for_preview(tmp_path.name),
+    ]
+
+
+def test_preview_url_revalidates_cds_self_even_with_project_scoped_credentials(tmp_path, monkeypatch):
+    """业务项目凭据不能让 CDS-only 分支返回业务项目的同名预览。"""
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: ["cds/src/server.ts"],
+    )
+    monkeypatch.setenv("CDS_PROJECT_ID", "prd-agent-project-id")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "cdsp_business-project")
+    monkeypatch.setitem(cdscli._EXPLICIT_CREDENTIAL_ENV, "AI_ACCESS_KEY", "")
+    monkeypatch.setattr(
+        cdscli.subprocess,
+        "check_output",
+        lambda args, **kwargs: (
+            "codex/cds-fix\n" if args[-1] == "--show-current" else f"{tmp_path}\n"
+        ),
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=10: {
+            "branches": [{
+                "id": "prd-agent-codex-cds-fix",
+                "projectId": "prd-agent-project-id",
+                "projectSlug": "prd-agent",
+                "branch": "codex/cds-fix",
+                "previewUrl": "https://wrong-business.example",
+            }],
+        },
+    )
+
+    code, out = call_main(["preview-url"])
+
+    assert code == 2
+    assert "CDS Self" in out
+    assert "wrong-business.example" not in out
+
+
+def test_preview_url_accepts_verified_cds_self_scope(tmp_path, monkeypatch):
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: ["cds/src/server.ts"],
+    )
+    monkeypatch.setenv("CDS_PROJECT_ID", "opaque-self-project-id")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "cdsp_self-project")
+    monkeypatch.setitem(cdscli._EXPLICIT_CREDENTIAL_ENV, "AI_ACCESS_KEY", "")
+    monkeypatch.setattr(
+        cdscli.subprocess,
+        "check_output",
+        lambda args, **kwargs: (
+            "codex/cds-fix\n" if args[-1] == "--show-current" else f"{tmp_path}\n"
+        ),
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=10: {
+            "branches": [{
+                "id": "cds-self-codex-cds-fix",
+                "projectId": "opaque-self-project-id",
+                "projectSlug": "cds-self",
+                "branch": "codex/cds-fix",
+                "previewUrl": "https://verified-self.example",
+            }],
+        },
+    )
+
+    code, out = call_main(["preview-url"])
+
+    assert code == 0, out
+    payload = parse_ok(out)
+    assert payload["data"]["url"] == "https://verified-self.example/"
+
+
+def test_preview_url_uses_explicit_global_key_to_resolve_cds_self(tmp_path, monkeypatch):
+    cds_dir = tmp_path / "cds"
+    cds_dir.mkdir()
+    (cds_dir / "cds-compose.selfhost.yml").write_text(
+        "x-cds-project:\n  name: cds-self\nservices: {}\n",
+        encoding="utf-8",
+    )
+    monkeypatch.setattr(
+        cdscli,
+        "_git_changed_paths_since_default_branch",
+        lambda _root: ["cds/src/server.ts"],
+    )
+    monkeypatch.setenv("CDS_PROJECT_ID", "prd-agent-project-id")
+    monkeypatch.setenv("CDS_PROJECT_KEY", "cdsp_business-project")
+    monkeypatch.setitem(cdscli._EXPLICIT_CREDENTIAL_ENV, "AI_ACCESS_KEY", "cdsg_global-key")
+    monkeypatch.setattr(
+        cdscli.subprocess,
+        "check_output",
+        lambda args, **kwargs: (
+            "codex/cds-fix\n" if args[-1] == "--show-current" else f"{tmp_path}\n"
+        ),
+    )
+    captured: dict = {}
+
+    def fake_call_safe(method, path, timeout=10, auth_key_override=""):
+        captured.update(path=path, auth_key_override=auth_key_override)
+        return {
+            "branches": [{
+                "id": "cds-self-codex-cds-fix",
+                "projectSlug": "cds-self",
+                "branch": "codex/cds-fix",
+                "previewUrl": "https://resolved-self.example",
+            }],
+        }
+
+    monkeypatch.setattr(cdscli, "_call_safe", fake_call_safe)
+
+    code, out = call_main(["preview-url"])
+
+    assert code == 0, out
+    assert captured == {
+        "path": "/api/branches",
+        "auth_key_override": "cdsg_global-key",
+    }
+    payload = parse_ok(out)
+    assert payload["data"]["url"] == "https://resolved-self.example/"
+
+
 def test_preview_urls_use_api_values_and_preserve_multiple_entries():
     """preview-url 只消费 API 地址，主入口优先且去重。"""
     branch = {
