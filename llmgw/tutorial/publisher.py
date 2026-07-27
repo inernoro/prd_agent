@@ -500,6 +500,80 @@ def _rollback_created(gateway: PublisherGateway, store_id: str, source: Tutorial
     return rolled_back
 
 
+def _restore_updated(
+    gateway: PublisherGateway,
+    store_id: str,
+    source: TutorialSource,
+    initial_snapshot: dict[str, Any],
+    updated_source_ids: set[str],
+) -> list[str]:
+    if not updated_source_ids:
+        return []
+    current_snapshot = gateway.snapshot(store_id, source.publisher)
+    before = {node.get("sourceId"): node for node in initial_snapshot.get("nodes", []) if node.get("managed")}
+    current = {node.get("sourceId"): node for node in current_snapshot.get("nodes", []) if node.get("managed")}
+    before_id_to_source = {node.get("id"): source_id for source_id, node in before.items()}
+    restored: list[str] = []
+    rollback_run_id = f"rollback-{uuid.uuid4().hex[:16]}"
+    reserved = {
+        "publisher", "publisherSchema", "sourceId", "sourcePath", "sourceSha256",
+        "manifestSha256", "sourceRevision", "kind", "lastAppliedSha256",
+        "createdByRunId", "lastAppliedRunId", "derivedState",
+    }
+    for source_node in source.nodes:
+        source_id = source_node.source_id
+        if source_id not in updated_source_ids:
+            continue
+        previous = before.get(source_id)
+        remote = current.get(source_id)
+        if not isinstance(previous, dict) or not isinstance(remote, dict):
+            raise TutorialError(f"{source_id}: 发布失败后无法读取待恢复节点")
+        metadata = previous.get("metadata") if isinstance(previous.get("metadata"), dict) else {}
+        remote_metadata = remote.get("metadata") if isinstance(remote.get("metadata"), dict) else {}
+        gateway.put_node(store_id, source_id, {
+            "publisher": source.publisher,
+            "runId": rollback_run_id,
+            "kind": "folder" if previous.get("isFolder") else "document",
+            "title": previous.get("title"),
+            "summary": previous.get("summary"),
+            "parentSourceId": before_id_to_source.get(previous.get("parentId")),
+            "sourcePath": metadata.get("sourcePath", source_node.source_path),
+            "sourceSha256": previous.get("contentSha256"),
+            "manifestSha256": metadata.get("manifestSha256", source.manifest_sha256),
+            "sourceRevision": metadata.get("sourceRevision", "rollback"),
+            "lastAppliedSha256": remote_metadata.get("lastAppliedSha256"),
+            "expectedUpdatedAt": remote.get("updatedAt"),
+            "contentType": previous.get("contentType") or "text/markdown",
+            "content": previous.get("content") or "",
+            "tags": previous.get("tags") or [],
+            "category": previous.get("category"),
+            "sortOrder": previous.get("sortOrder"),
+            "metadata": {key: value for key, value in metadata.items() if key not in reserved},
+        })
+        restored.append(source_id)
+        current_snapshot = gateway.snapshot(store_id, source.publisher)
+        current = {node.get("sourceId"): node for node in current_snapshot.get("nodes", []) if node.get("managed")}
+    return restored
+
+
+def _graph_core(graph: dict[str, Any]) -> dict[str, Any]:
+    keys = ("schemaVersion", "sourceRevision", "manifestSha256", "verifiedAtCommit", "generatedAt", "surfaces")
+    return {key: graph.get(key) for key in keys}
+
+
+def _snapshot_source_revision(snapshot: dict[str, Any], source: TutorialSource) -> str:
+    expected_ids = {node.source_id for node in source.nodes}
+    revisions = {
+        str(node.get("metadata", {}).get("sourceRevision"))
+        for node in snapshot.get("nodes", [])
+        if node.get("managed") and node.get("sourceId") in expected_ids
+        and isinstance(node.get("metadata"), dict) and node.get("metadata", {}).get("sourceRevision")
+    }
+    if len(revisions) != 1:
+        raise ApiConflict("远端教程节点的 sourceRevision 不一致，不能单独生成图谱草稿")
+    return next(iter(revisions))
+
+
 def build_link_graph_revision(
     source: TutorialSource,
     source_revision: str,
@@ -578,16 +652,22 @@ def stage_link_graph(
     current = gateway.get_link_graph(store_id, source.publisher)
     current_draft = current.get("draft") if isinstance(current.get("draft"), dict) else {}
     current_published = current.get("published") if isinstance(current.get("published"), dict) else {}
+    target = build_link_graph_revision(source, source_revision)
+    draft_sha = current_draft.get("graphSha256")
+    published_sha = current_published.get("graphSha256")
+    if draft_sha and draft_sha != published_sha:
+        if _graph_core(current_draft) == _graph_core(target):
+            return {"action": "drafted", "graphSha256": draft_sha, "publishedSha256": published_sha}
+        raise ApiConflict("远端存在未发布的人工图谱草稿，自动发布器拒绝覆盖")
     saved = gateway.save_link_graph_draft(store_id, {
         "publisher": source.publisher,
-        "expectedDraftSha256": current_draft.get("graphSha256"),
-        "graph": build_link_graph_revision(source, source_revision),
+        "expectedDraftSha256": draft_sha,
+        "graph": target,
     })
     saved_draft = saved.get("draft") if isinstance(saved.get("draft"), dict) else {}
     draft_sha = saved_draft.get("graphSha256")
     if not isinstance(draft_sha, str) or not draft_sha:
         raise TutorialError("保存图谱草稿后没有返回 graphSha256")
-    published_sha = current_published.get("graphSha256")
     return {
         "action": "noop" if draft_sha == published_sha else "drafted",
         "graphSha256": draft_sha,
@@ -603,11 +683,15 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
     run_id = f"run-{dt.datetime.now(dt.timezone.utc).strftime('%Y%m%d%H%M%S')}-{uuid.uuid4().hex[:8]}"
     revision = _source_revision()
     actions: list[dict[str, str]] = []
+    initial_snapshot = gateway.snapshot(store_id, source.publisher)
+    updated_source_ids: set[str] = set()
     try:
         for item in plan:
             result = gateway.put_node(store_id, item.node.source_id, _request_body(source, item, run_id, revision))
             action = str(result.get("action") or "unknown")
             actions.append({"sourceId": item.node.source_id, "action": action})
+            if action == "updated":
+                updated_source_ids.add(item.node.source_id)
             if action not in ("created", "updated", "noop"):
                 raise TutorialError(f"{item.node.source_id}: 服务端返回未知 action {action}")
         final_snapshot = gateway.snapshot(store_id, source.publisher)
@@ -618,12 +702,6 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
         if primary_remote is None:
             raise TutorialError("发布后找不到主文档")
         primary_changed = final_snapshot.get("store", {}).get("primaryEntryId") != primary_remote.get("id")
-        if primary_changed:
-            gateway.set_primary(store_id, {
-                "publisher": source.publisher,
-                "sourceId": source.primary_source_id,
-                "expectedStoreUpdatedAt": final_snapshot["store"]["updatedAt"],
-            })
         verified = gateway.snapshot(store_id, source.publisher)
         expected = {node.source_id: node.source_sha256 for node in source.nodes}
         actual = {
@@ -635,17 +713,34 @@ def apply_plan(gateway: PublisherGateway, store_id: str, source: TutorialSource,
         if mismatches:
             raise TutorialError(f"发布后 SHA256 不一致: {', '.join(mismatches)}")
         link_graph = sync_link_graph(gateway, store_id, source, revision)
-        return {
-            "runId": run_id,
-            "actions": actions,
-            "counts": {name: sum(1 for item in actions if item["action"] == name) for name in ("created", "updated", "noop")},
-            "primaryChanged": primary_changed,
-            "snapshotSha256": verified.get("snapshotSha256"),
-            "linkGraph": link_graph,
-        }
-    except Exception:
-        _rollback_created(gateway, store_id, source, run_id)
+    except Exception as exc:
+        rollback_errors: list[str] = []
+        try:
+            _rollback_created(gateway, store_id, source, run_id)
+        except TutorialError as rollback_exc:
+            rollback_errors.append(str(rollback_exc))
+        try:
+            _restore_updated(gateway, store_id, source, initial_snapshot, updated_source_ids)
+        except TutorialError as rollback_exc:
+            rollback_errors.append(str(rollback_exc))
+        if rollback_errors:
+            raise TutorialError("发布失败，且一致性恢复未完全结束: " + "; ".join(rollback_errors)) from exc
         raise
+    if primary_changed:
+        current_snapshot = gateway.snapshot(store_id, source.publisher)
+        gateway.set_primary(store_id, {
+            "publisher": source.publisher,
+            "sourceId": source.primary_source_id,
+            "expectedStoreUpdatedAt": current_snapshot["store"]["updatedAt"],
+        })
+    return {
+        "runId": run_id,
+        "actions": actions,
+        "counts": {name: sum(1 for item in actions if item["action"] == name) for name in ("created", "updated", "noop")},
+        "primaryChanged": primary_changed,
+        "snapshotSha256": verified.get("snapshotSha256"),
+        "linkGraph": link_graph,
+    }
 
 
 def plan_as_dict(plan: list[PlanItem]) -> list[dict[str, Any]]:
@@ -691,10 +786,16 @@ def main(argv: list[str] | None = None) -> int:
                 raise TutorialError("plan/apply 必须提供 --store-id 或 MAP_TUTORIAL_STORE_ID")
             gateway = HttpPublisherGateway(args.base_url, os.environ.get(args.key_env, ""))
             if args.command == "graph-draft":
+                snapshot = gateway.snapshot(args.store_id, source.publisher)
                 result = {
                     "status": "ok",
                     "storeId": args.store_id,
-                    "linkGraph": stage_link_graph(gateway, args.store_id, source, _source_revision()),
+                    "linkGraph": stage_link_graph(
+                        gateway,
+                        args.store_id,
+                        source,
+                        _snapshot_source_revision(snapshot, source),
+                    ),
                 }
             else:
                 snapshot = gateway.snapshot(args.store_id, source.publisher)
