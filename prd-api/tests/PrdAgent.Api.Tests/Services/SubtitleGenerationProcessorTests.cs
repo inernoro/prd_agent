@@ -14,6 +14,32 @@ namespace PrdAgent.Api.Tests.Services;
 public class SubtitleGenerationProcessorTests
 {
     [Fact]
+    public void CompletedLiveTranscript_ShouldBeUsed_OnlyWhenStatusAndTextAreValid()
+    {
+        var completed = new DocumentEntry
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed,
+                ["liveTranscript"] = "  已实时识别的原文  ",
+            },
+        };
+        var degraded = new DocumentEntry
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Degraded,
+                ["liveTranscript"] = "不稳定的局部文字",
+            },
+        };
+
+        SubtitleGenerationProcessor.GetCompletedLiveTranscript(completed)
+            .ShouldBe("已实时识别的原文");
+        SubtitleGenerationProcessor.GetCompletedLiveTranscript(degraded)
+            .ShouldBeNull();
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart()
     {
         GatewayRawRequest? capturedRequest = null;
@@ -131,6 +157,69 @@ public class SubtitleGenerationProcessorTests
         var exception = await Should.ThrowAsync<SubtitleAsrException>(() => task);
         exception.Message.ShouldContain("豆包异步 ASR 返回为空");
         exception.Diagnostic["responseSnippet"].ShouldBe("{\"text\":\"\",\"segments\":[]}");
+    }
+
+    [Fact]
+    public async Task AsrFallback_ShouldSwitchToNextCandidate_WhenPrimaryReturnsEmptyContent()
+    {
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(g => g.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync((
+                GatewayRawRequest _,
+                GatewayModelResolution resolution,
+                CancellationToken _) => new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = resolution.ActualModel == "doubao-asr-bigmodel"
+                    ? "{\"text\":\"\",\"segments\":[]}"
+                    : "{\"text\":\"备用 Whisper 识别成功\"}",
+            });
+
+        var primary = BuildDoubaoResolution();
+        primary.RetryCandidates =
+        [
+            new ModelResolutionResult
+            {
+                Success = true,
+                ResolutionType = "DedicatedPool",
+                ActualModel = "whisper-large-v3",
+                ActualPlatformId = "whisper-provider",
+                ActualPlatformName = "Whisper Provider",
+                PlatformType = "openai",
+                Protocol = "openai",
+                ApiUrl = "https://example.test/v1",
+                ApiKey = "test-key",
+            },
+        ];
+
+        var attempts = new List<(int Attempt, int Total)>();
+        Func<int, int, Task> onAttempt = (attempt, total) =>
+        {
+            attempts.Add((attempt, total));
+            return Task.CompletedTask;
+        };
+        var processor = BuildProcessor(gateway.Object);
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeWithFallbackAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        var task = (Task<List<SubtitleSegment>>)method!.Invoke(
+            processor,
+            new object?[] { BuildRun(), new byte[] { 1, 2, 3 }, primary, onAttempt })!;
+
+        var segments = await task;
+
+        segments.Count.ShouldBe(1);
+        segments[0].Text.ShouldBe("备用 Whisper 识别成功");
+        attempts.ShouldBe([(1, 2), (2, 2)]);
+        gateway.Verify(g => g.SendRawWithResolutionAsync(
+            It.IsAny<GatewayRawRequest>(),
+            It.IsAny<GatewayModelResolution>(),
+            It.IsAny<CancellationToken>()), Times.Exactly(2));
     }
 
     private static SubtitleGenerationProcessor BuildProcessor(ILlmGateway gateway)
