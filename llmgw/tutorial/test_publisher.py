@@ -275,12 +275,32 @@ class TutorialPublisherTests(unittest.TestCase):
         publisher.apply_plan(gateway, "store-a", self.source, plan)
         manual = copy.deepcopy(gateway.link_graph["published"])
         manual["surfaces"][0]["label"] = "人工草稿"
+        manual["generator"] = "manual-editor"
         manual["graphSha256"] = "f" * 64
         gateway.link_graph["draft"] = manual
 
         with self.assertRaisesRegex(publisher.ApiConflict, "人工图谱草稿"):
             publisher.stage_link_graph(gateway, "store-a", self.source, publisher._source_revision())
         self.assertEqual("人工草稿", gateway.link_graph["draft"]["surfaces"][0]["label"])
+
+    def test_stale_automated_graph_draft_is_replaced(self):
+        gateway = MemoryGateway()
+        publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+        first_source = dataclasses.replace(self.source, manifest_sha256="a" * 64)
+        first = publisher.stage_link_graph(gateway, "store-a", first_source, "revision-a")
+        self.assertEqual("drafted", first["action"])
+
+        second_source = dataclasses.replace(self.source, manifest_sha256="b" * 64)
+        second = publisher.stage_link_graph(gateway, "store-a", second_source, "revision-b")
+
+        self.assertEqual("drafted", second["action"])
+        self.assertEqual("b" * 64, gateway.link_graph["draft"]["manifestSha256"])
+        self.assertEqual(publisher.GRAPH_GENERATOR, gateway.link_graph["draft"]["generator"])
 
     def test_graph_publish_failure_restores_updated_content(self):
         gateway = MemoryGateway()

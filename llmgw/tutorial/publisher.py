@@ -66,6 +66,7 @@ def load_evidence_policy(path: Path = DEFAULT_EVIDENCE_MAP) -> tuple[int, int, i
 
 
 MIN_IMAGES_PER_CHAPTER, MIN_UNIQUE_IMAGES, MIN_EVIDENCE_REFERENCES = load_evidence_policy()
+GRAPH_GENERATOR = "llmgw-tutorial-publisher"
 
 
 class TutorialError(RuntimeError):
@@ -568,7 +569,7 @@ def _restore_updated(
 
 
 def _graph_core(graph: dict[str, Any]) -> dict[str, Any]:
-    keys = ("schemaVersion", "sourceRevision", "manifestSha256", "verifiedAtCommit", "generatedAt", "surfaces")
+    keys = ("schemaVersion", "sourceRevision", "manifestSha256", "verifiedAtCommit", "generator", "generatedAt", "surfaces")
     return {key: graph.get(key) for key in keys}
 
 
@@ -627,6 +628,7 @@ def build_link_graph_revision(
         "sourceRevision": source_revision,
         "manifestSha256": source.manifest_sha256,
         "verifiedAtCommit": verified_commit,
+        "generator": GRAPH_GENERATOR,
         "generatedAt": generated_at,
         "surfaces": clean_surfaces,
     }
@@ -679,7 +681,8 @@ def stage_link_graph(
     if draft_sha and draft_sha != published_sha:
         if _graph_core(current_draft) == _graph_core(target):
             return {"action": "drafted", "graphSha256": draft_sha, "publishedSha256": published_sha}
-        raise ApiConflict("远端存在未发布的人工图谱草稿，自动发布器拒绝覆盖")
+        if current_draft.get("generator") != GRAPH_GENERATOR:
+            raise ApiConflict("远端存在未发布的人工图谱草稿，自动发布器拒绝覆盖")
     saved = gateway.save_link_graph_draft(store_id, {
         "publisher": source.publisher,
         "expectedDraftSha256": draft_sha,

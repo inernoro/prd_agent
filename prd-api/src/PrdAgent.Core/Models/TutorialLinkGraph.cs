@@ -23,6 +23,7 @@ public sealed class TutorialLinkGraphRevision
     public string SourceRevision { get; set; } = string.Empty;
     public string ManifestSha256 { get; set; } = string.Empty;
     public string VerifiedAtCommit { get; set; } = string.Empty;
+    public string? Generator { get; set; }
     public DateTime GeneratedAt { get; set; }
     public DateTime SavedAt { get; set; } = DateTime.UtcNow;
     public string SavedBy { get; set; } = string.Empty;
