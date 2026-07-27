@@ -374,6 +374,27 @@ export function classifyProbeFailure(sample: Pick<UptimeSample, 'up' | 'code' | 
   return 'unreachable';
 }
 
+/**
+ * 状态页的展示优先级：故障 > 待确认 > 正常 > 已暂停 > 已排除。
+ *
+ * 为什么不按名字排：生产上 145 个目标里有 100+ 是「分支已降温 / error，暂不探测」的
+ * 暂停态（柱条全空、可用率无数据）。纯字母序会让这批空行霸占首屏（chore/archive-* 打头），
+ * 用户要滚过几十条空条才看得到真正在跑的服务——首屏必须留给「值得看的东西」
+ * （content-fills-canvas：主产物占视觉主导）。同档内仍按名字排，保证顺序稳定可预期。
+ */
+const DISPLAY_RANK: Record<string, number> = { down: 0, unknown: 1, up: 2, paused: 3 };
+
+export function compareTargetsForDisplay(
+  a: Pick<UptimeTargetRecord, 'name' | 'status' | 'excluded'>,
+  b: Pick<UptimeTargetRecord, 'name' | 'status' | 'excluded'>,
+): number {
+  // 已排除的目标不参与故障判定，一律沉底。
+  const rank = (t: Pick<UptimeTargetRecord, 'status' | 'excluded'>) =>
+    t.excluded ? 4 : (DISPLAY_RANK[t.status] ?? 1);
+  const diff = rank(a) - rank(b);
+  return diff !== 0 ? diff : a.name.localeCompare(b.name);
+}
+
 function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
   return {
     id: target.id,
@@ -657,6 +678,7 @@ export class UptimeMonitorService {
 
   /** 全量摘要：状态页一次请求就能画完（含 90 段柱条）。 */
   getSummary(barSegments: number = DEFAULT_BAR_SEGMENTS): UptimeSummary {
+    // 排序口径见 compareTargetsForDisplay：先按「值不值得看」，同档内才按名字。
     const now = this.now();
     const dayMs = 24 * 3600 * 1000;
     const targets: UptimeTargetSummary[] = [];
@@ -666,7 +688,7 @@ export class UptimeMonitorService {
     let unknown = 0;
     let excluded = 0;
 
-    for (const record of [...this.records.values()].sort((a, b) => a.name.localeCompare(b.name))) {
+    for (const record of [...this.records.values()].sort(compareTargetsForDisplay)) {
       const a24 = availabilityOverRange(record, dayMs, now);
       const a7 = availabilityOverRange(record, 7 * dayMs, now);
       const open = record.incidents.find((i) => i.endedAt === null) || null;

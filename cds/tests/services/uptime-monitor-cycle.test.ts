@@ -3,6 +3,7 @@ import type { BranchEntry } from '../../src/types.js';
 import {
   UptimeMonitorService,
   classifyProbeFailure,
+  compareTargetsForDisplay,
   parseExcludePatterns,
   pausedReasonOf,
   selectProbeTargets,
@@ -488,5 +489,36 @@ describe('非 HTTP 响应自动降级为容器状态判定', () => {
     await monitor.runCycle();
     expect(seen[seen.length - 1]).toBe('http');
     expect(monitor.getSummary().targets[0].degraded).toBe(false);
+  });
+});
+
+describe('状态页展示排序：值得看的排前面', () => {
+  const mk = (name: string, status: string, excluded = false) =>
+    ({ name, status, excluded }) as Parameters<typeof compareTargetsForDisplay>[0];
+
+  it('故障 > 待确认 > 正常 > 已暂停 > 已排除', () => {
+    const sorted = [
+      mk('e-排除', 'up', true),
+      mk('d-暂停', 'paused'),
+      mk('c-正常', 'up'),
+      mk('b-待确认', 'unknown'),
+      mk('a-故障', 'down'),
+    ].sort(compareTargetsForDisplay).map((t) => t.name);
+    expect(sorted).toEqual(['a-故障', 'b-待确认', 'c-正常', 'd-暂停', 'e-排除']);
+  });
+
+  it('事故值回归：大量暂停目标不得霸占首屏（生产上 100+ 暂停 vs 36 正常）', () => {
+    const many = [
+      ...Array.from({ length: 103 }, (_, i) => mk(`chore/archive-${i}`, 'paused')),
+      ...Array.from({ length: 36 }, (_, i) => mk(`zzz-running-${i}`, 'up')),
+    ];
+    const head = many.sort(compareTargetsForDisplay).slice(0, 36);
+    expect(head.every((t) => t.status === 'up')).toBe(true);
+  });
+
+  it('同档内按名字排，顺序稳定可预期', () => {
+    const sorted = [mk('b', 'up'), mk('a', 'up'), mk('c', 'up')]
+      .sort(compareTargetsForDisplay).map((t) => t.name);
+    expect(sorted).toEqual(['a', 'b', 'c']);
   });
 });
