@@ -10,6 +10,7 @@ import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, REPLICA_PLAN_MAX_STEPS, type ReplicaSetService } from '../services/replica-set.js';
 import { resolveReplicaDbTarget } from '../services/replica-db-clone.js';
+import { diskGuard } from '../services/disk-guard.js';
 import { buildServiceGraph } from '../services/service-graph.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
@@ -55,6 +56,17 @@ export function promoteAffectedProfiles(
   return affected.sort();
 }
 
+/**
+ * 该 POST 路径是否属于「会让磁盘增长」的复制集动作（Codex 第三十一轮 P1）。
+ *
+ * 纯函数导出以便把边界钉成回归测试：**拦错**和**漏拦**代价都很高——漏拦会让
+ * 磁盘满的恢复期被一次几个 GB 的克隆彻底压垮；拦错则会在最需要自救的时候
+ * 堵死退路（回切主库、删成员、解散都在释放空间）。
+ */
+export function isDiskGrowingReplicaAction(path: string): boolean {
+  return /^\/branches\/[^/]+\/(db-guard|replica-plans|replica-sets\/[^/]+\/(isolate|members(\/[^/]+\/promote)?))\/?$/.test(path);
+}
+
 export interface ReplicaSetsRouterDeps {
   stateService: StateService;
   replicaSetService: ReplicaSetService;
@@ -93,6 +105,23 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       sock.on('connect', () => done(true));
       sock.on('error', () => done(false));
     });
+
+  // 磁盘刹车（Codex 第三十一轮 P1）：复制集是**独立挂载的路由器**，branches.ts 里的
+  // 那道守卫罩不到这里——而这边恰恰是最能吃盘的：db-guard / isolate 走 mongodump +
+  // restore（一次几个 GB），加成员要拉镜像起容器，promote 会派发一次真实部署。
+  // 磁盘满的恢复期里，一个带认证的请求就能把最后的空间吃光，尽管部署那侧已经 507。
+  //
+  // 只罩**会让磁盘增长**的动作；revert-db / 删成员 / 解散 / 调权重 / 探测 / 审计
+  // 一律放行——它们要么释放空间，要么是恢复期必须还能用的自救手段。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST' || !isDiskGrowingReplicaAction(req.path)) {
+      next();
+      return;
+    }
+    const blocked = diskGuard.blockReasonForDeploy();
+    if (!blocked) { next(); return; }
+    res.status(507).json({ error: 'disk_low', message: blocked });
+  });
 
   router.get('/branches/:branchId/replica-sets', async (req, res) => {
     const access = guard(req, req.params.branchId);

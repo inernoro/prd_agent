@@ -203,3 +203,4 @@
 | fix | cds | sweep 不再用 worktree 单盘读数覆盖多文件系统档位：docker 盘吃紧时闸门不会被每轮重新打开 |
 | fix | cds | sweep 并发合并成同一次：周期定时器/启动首轮/手工触发不再叠加抢 docker daemon |
 | fix | cds | sweep 摘要在 TTL 清理关闭时同样记录：janitor 关掉后回收仍留证，不再恒为 null |
+| fix | cds | 复制集独立路由器补磁盘刹车：克隆/隔离/加成员/promote/计划保存在冻结档被拒，回切与释放类动作照常放行 |
