@@ -2252,12 +2252,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     branch?: string;
     toSha?: string;
   }): Promise<void> {
-    const timeoutMs = Math.max(0, Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS || '', 10)
-      || 5 * 60_000);
+    // 0 必须当 0 用（Codex 第三十七轮 P2）：`parseInt('0') || 默认值` 会把显式关闭
+    // 的 0 吞掉换成 5 分钟——文档明写「设 0 关闭」，实际却照等不误，还顺带把部署闸
+    // 关满五分钟。只有「没设 / 设了非数字」才落默认值。
+    const rawDrainTimeout = Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS ?? '', 10);
+    const timeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
     // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
     // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
     // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
-    beginSelfUpdateDrain(Date.now(), timeoutMs + 5 * 60_000);
+    // 显式设 0 = 整个机制关闭，连闸也不关（回到旧版行为，Codex 第三十七轮 P2）。
+    // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
+    if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
     const outcome = await drainInFlightDeploys({
       listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
       now: () => Date.now(),

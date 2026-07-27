@@ -149,3 +149,27 @@ describe('排空窗口闸门（第三十六轮 P1）', () => {
     expect(isSelfUpdateDraining(T0 + 1_000)).toBe(false);
   });
 });
+
+describe('排空超时的环境变量解析（第三十七轮 P2）', () => {
+  // 判定与 routes/branches.ts 的 drainDeploysBeforeSelfUpdateRestart 同源：
+  // 文档明写「设 0 关闭」，而 parseInt('0') || 默认值 会把 0 吞掉换成 5 分钟。
+  const resolve = (raw: string | undefined): number => {
+    const parsed = Number.parseInt(raw ?? '', 10);
+    return Number.isFinite(parsed) ? Math.max(0, parsed) : 5 * 60_000;
+  };
+
+  it('显式 0 就是 0（关闭排空），不被默认值吞掉', () => {
+    expect(resolve('0')).toBe(0);
+  });
+
+  it('未设置 / 非数字才落默认值', () => {
+    expect(resolve(undefined)).toBe(5 * 60_000);
+    expect(resolve('')).toBe(5 * 60_000);
+    expect(resolve('abc')).toBe(5 * 60_000);
+  });
+
+  it('负值按 0 处理，正常值原样生效', () => {
+    expect(resolve('-1')).toBe(0);
+    expect(resolve('90000')).toBe(90_000);
+  });
+});

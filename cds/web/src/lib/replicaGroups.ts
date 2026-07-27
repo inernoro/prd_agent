@@ -61,3 +61,17 @@ export function newProjectGroupId(): string {
  * 才在保存时撞 400。两值漂移由 tests/web/replica-plan-limit-contract.test.ts 拦截。
  */
 export const REPLICA_PLAN_MAX_STEPS = 60;
+
+/**
+ * 分流占比（%）—— 全零权重必须按 resolver 的真实行为渲染（Codex 第三十七轮 P2）。
+ *
+ * 权重 0 是合法值：`primaryWeight=0` + 全部运行中成员都是 0 时总权重为 0，
+ * 直接 `weight / total` 会渲染出 `NaN%`。而 forwarder 在这种情况下并不是「不转发」，
+ * 而是**回落到主实例**（SSOT：`cds/src/forwarder/route-resolver.ts` 的 `total <= 0`
+ * 分支）。所以画布必须显示「主 100% / 副本 0%」——既不是 NaN，也不能装作还在分流，
+ * 否则用户看到的占比与真实落点相反。
+ */
+export function replicaSharePct(weight: number, totalWeight: number, isPrimary: boolean): number {
+  if (totalWeight > 0) return Math.round((weight / totalWeight) * 100);
+  return isPrimary ? 100 : 0;
+}

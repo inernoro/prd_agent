@@ -226,3 +226,5 @@
 | fix | cds | 项目级计划必须整组：只覆盖部分服务的 add-replica 计划被拒，杜绝画布显示「整组」实则半数服务未覆盖 |
 | fix | cds | 副本停止核实补齐调度器降温与 auto-lifecycle 两处循环（第三十五轮只修了分支停止一处），判定抽成 settleMemberAfterStop 单一出口 |
 | fix | cds | 项目级改权重/下线必须整组：只动组里一半、或整组给不同权重一律拒绝 |
+| fix | cds | CDS_SELFUPDATE_DRAIN_TIMEOUT_MS=0 真正关闭排空：不再被 `parseInt \|\| 默认值` 吞成 5 分钟，闸门余量也从 5 分钟收到 1 分钟 |
+| fix | cds | 全零权重的分流占比按 resolver 真实回落渲染（主 100% / 副本 0%），不再显示 NaN% |

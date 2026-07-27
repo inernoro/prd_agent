@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { profileColor } from '@/lib/replica-colors';
-import { buildProjectGroups, newProjectGroupId, REPLICA_PLAN_MAX_STEPS } from '@/lib/replicaGroups';
+import { buildProjectGroups, newProjectGroupId, replicaSharePct, REPLICA_PLAN_MAX_STEPS } from '@/lib/replicaGroups';
 
 export interface ReplicaMemberView {
   id: string;
@@ -1213,7 +1213,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                   </div>
                   {members.length > 0 ? (
                     <ChipRow key="primary" color="#8b8578" mono="主实例" sub={rs?.primaryReachable === false ? '不可达' : undefined} danger={rs?.primaryReachable === false}
-                      weight={weightFor === `${pid}:primary` ? undefined : `${Math.round(((rs?.primaryWeight ?? 100) / tw) * 100)}%`}
+                      weight={weightFor === `${pid}:primary` ? undefined : `${replicaSharePct(rs?.primaryWeight ?? 100, tw, true)}%`}
                       onWeightClick={() => { setWeightFor(`${pid}:primary`); setWeightDraft(String(rs?.primaryWeight ?? 100)); }}
                       weightInput={weightFor === `${pid}:primary` ? (
                         <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitWeight(pid, 'primary')} onCancel={() => setWeightFor(null)} />
@@ -1227,7 +1227,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
                         sub={m.status === 'provisioning' ? (m.statusMessage || '创建中') : m.status === 'error' ? (m.statusMessage || '失败') : removal ? '待下线（草稿）' : m.reachable === false ? '不可达' : undefined}
                         danger={m.status === 'error' || (m.status === 'running' && m.reachable === false)}
                         boot={m.status === 'provisioning'} dim={removal}
-                        weight={m.status === 'running' && weightFor !== `${pid}:${m.id}` ? `${Math.round((m.weight / tw) * 100)}%` : undefined}
+                        weight={m.status === 'running' && weightFor !== `${pid}:${m.id}` ? `${replicaSharePct(m.weight, tw, false)}%` : undefined}
                         onWeightClick={m.status === 'running' ? () => { setWeightFor(`${pid}:${m.id}`); setWeightDraft(String(m.weight)); } : undefined}
                         weightInput={weightFor === `${pid}:${m.id}` ? (
                           <WeightInput value={weightDraft} onChange={setWeightDraft} onCommit={() => commitWeight(pid, m.id)} onCancel={() => setWeightFor(null)} />
