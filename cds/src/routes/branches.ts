@@ -2198,6 +2198,27 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // 磁盘刹车统一守卫（2026-07-27 宕机复盘 P0 + Codex 第二十九轮 P1）：根盘写满会让
+  // CDS 自用 mongo 退出、master 反复启动失败、全站不可用。构建/部署是最大的写入源，
+  // freeze 档（默认 90%）一律拒绝。
+  //
+  // 与上面的预览守卫同样做成**路由器级**：最初只在 /deploy 一个 handler 里判，
+  // 而 /deploy/:profileId 与 /force-rebuild/:profileId 各有独立 handler，照样能拉镜像、
+  // 编译、起容器——闸门等于形同虚设（逐个 handler 打补丁必然漏，预览守卫就是前车之鉴）。
+  //
+  // 只罩**产出构建物**的三个入口；stop / restart / pull 不在其列：前两个是**释放**
+  // 空间的自救动作，磁盘满时必须还能用。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST') { next(); return; }
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+    const blocked = diskGuard.blockReasonForDeploy();
+    if (!blocked) { next(); return; }
+    res.status(507).json({ error: 'disk_low', message: blocked });
+  });
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -11473,17 +11494,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         message: `拒绝部署非法分支名: ${entry.branch}`,
       });
       return;
-    }
-    // 磁盘刹车（2026-07-27 宕机复盘 P0）：根盘写满会让 CDS 自用 mongo 退出、
-    // master 反复启动失败、全站不可用。构建/部署是最大的写入源，freeze 档
-    // （默认 90%）一律拒绝新派发，把剩下的空间留给回收与自救。
-    // 只挡新部署——停止/删除这类**释放**空间的操作不走这里，磁盘满时仍能自救。
-    {
-      const blocked = diskGuard.blockReasonForDeploy();
-      if (blocked) {
-        res.status(507).json({ error: 'disk_low', message: blocked });
-        return;
-      }
     }
     {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');

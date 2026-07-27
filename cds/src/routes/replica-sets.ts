@@ -488,7 +488,12 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     // 部署跑的几分钟里操作员可能解散旧集、另建新副本——res-N 顺位命名会让新集
     // 的成员 id 与旧集重合，仅比成员子集分不出「重建过的集」；createdAt 随
     // dissolve 后重建而刷新，是持久的代际标识。两者都对上才许终态 dissolve。
-    const promoteGenerationMembers = new Set(rs.members.map((m) => m.id));
+    // 栅栏用**不可复用的成员身份**（Codex 第二十九轮 P2）：成员 id 形如 res-1，
+    // 删掉再加会复用同一个号，而复制集对象没被重建、rs.createdAt 也不变——只比
+    // id 会把「部署期间新建的替身」误判成同一代，promote 成功后顺手解散掉它刚起的
+    // 容器。改比 `id@成员自身的 createdAt`：新成员必然带新时间戳。
+    const memberToken = (m: { id: string; createdAt?: string }): string => `${m.id}@${m.createdAt ?? ''}`;
+    const promoteGenerationMembers = new Set(rs.members.map(memberToken));
     const promoteGenerationCreatedAt = rs.createdAt;
     void (async () => {
       const startedAt = Date.now();
@@ -500,7 +505,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
           const currentRs = deps.stateService.getBranch(branchId)?.replicaSets?.[profileId];
           if (!currentRs) return; // 已被解散/删除，无事可做
           const sameGeneration = currentRs.createdAt === promoteGenerationCreatedAt
-            && currentRs.members.every((m) => promoteGenerationMembers.has(m.id));
+            && currentRs.members.every((m) => promoteGenerationMembers.has(memberToken(m)));
           if (!sameGeneration) {
             console.warn(`[replica-set] promote 终态清理跳过：${branchId}/${profileId} 的复制集在部署期间已被重建（出现新成员），不动当前集`);
             return;

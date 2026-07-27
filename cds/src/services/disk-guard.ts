@@ -1,3 +1,5 @@
+import { execSync } from 'node:child_process';
+
 /**
  * 磁盘分档刹车（2026-07-27 宕机复盘 P0）。
  *
@@ -81,7 +83,9 @@ export function describeDiskTier(tier: DiskTier, usedPercent: number | null): st
  * 单例而非 DI，是因为读取方（部署路由、webhook 派发器）散布很广，
  * 且这是「只读一个瞬时事实」的场景，不值得为它穿一层依赖。
  */
-export type DiskUsageProbe = () => { totalBytes: number; freeBytes: number } | null;
+type DiskUsageReading = { totalBytes: number; freeBytes: number };
+/** 可返回单个挂载点，也可返回多个（如 worktree + docker 数据目录），取最紧张的一个。 */
+export type DiskUsageProbe = () => DiskUsageReading | DiskUsageReading[] | null;
 
 /** 读数被认为「新鲜」的时长；超过则在被问到时就地重测（见 blockReasonForDeploy）。 */
 export const DISK_READING_TTL_MS = 60_000;
@@ -105,14 +109,27 @@ class DiskGuardState {
     this.probe = probe;
   }
 
-  /** 就地重测并刷新档位；无探测器或探测失败时保持现状（fail-open）。 */
+  /**
+   * 就地重测并刷新档位；无探测器或探测失败时保持现状（fail-open）。
+   *
+   * 探测器可以返回**多个挂载点**（Codex 第二十九轮 P2）：worktree 与 docker 数据目录
+   * 常常不在同一个文件系统上，而镜像层、容器可写层、state mongo 卷全都落在 docker
+   * 那一侧——2026-07-27 事故里撑爆的正是 containerd（159GB）。只量 worktree 会在
+   * docker 盘已经 95% 时报「一切正常」，闸门恰好在该拦的时候放行。取**最紧张的那个**。
+   */
   refreshNow(thresholds?: DiskTierThresholds): DiskTier {
     if (!this.probe) return this.tier;
     try {
-      const usage = this.probe();
-      if (!usage || !usage.totalBytes) return this.tier;
-      const usedPercent = Math.round(((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100);
-      return this.update(usedPercent, thresholds);
+      const raw = this.probe();
+      const list = Array.isArray(raw) ? raw : (raw ? [raw] : []);
+      let worst: number | null = null;
+      for (const usage of list) {
+        if (!usage || !usage.totalBytes) continue;
+        const pct = Math.round(((usage.totalBytes - usage.freeBytes) / usage.totalBytes) * 100);
+        if (worst === null || pct > worst) worst = pct;
+      }
+      if (worst === null) return this.tier;
+      return this.update(worst, thresholds);
     } catch {
       return this.tier;
     }
@@ -153,6 +170,31 @@ class DiskGuardState {
     this.updatedAtMs = 0;
     this.probe = null;
   }
+}
+
+/**
+ * docker 数据目录（`docker info -f {{.DockerRootDir}}`），带进程内缓存。
+ *
+ * 该值一个进程生命周期内不会变，且 `docker info` 有可观开销，故只探一次；
+ * 拿不到（docker 不可用 / 权限不足）时返回 null，调用方退回只量 worktree。
+ * 常见默认 `/var/lib/docker`；containerd 存储通常与之同一文件系统。
+ */
+let cachedDockerRoot: string | null | undefined;
+export function resolveDockerDataRoot(execSyncFn?: (cmd: string) => string): string | null {
+  if (cachedDockerRoot !== undefined) return cachedDockerRoot;
+  try {
+    const run = execSyncFn ?? ((cmd: string) => execSync(cmd, { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }));
+    const out = String(run('docker info -f "{{.DockerRootDir}}"') || '').trim();
+    cachedDockerRoot = out && out !== '<no value>' ? out : null;
+  } catch {
+    cachedDockerRoot = null;
+  }
+  return cachedDockerRoot;
+}
+
+/** 测试用：清掉 docker 数据目录缓存。 */
+export function resetDockerDataRootCache(): void {
+  cachedDockerRoot = undefined;
 }
 
 export const diskGuard = new DiskGuardState();

@@ -235,6 +235,8 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
 
 export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
+  /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
+  private firstSweepHandle: NodeJS.Timeout | null = null;
   private removeFn: RemoveBranchFn | null = null;
   private orphanInfraScan: OrphanInfraScanFn | null = null;
 
@@ -299,12 +301,13 @@ export class JanitorService {
   setEnabled(enabled: boolean): void {
     if (this.config.enabled === enabled) return;
     this.config.enabled = enabled;
+    // 只切换「是否允许删过期分支」，不停调度——磁盘检查/镜像回收等非破坏性
+    // 动作与该开关解耦（同 start() 的说明）。
     if (enabled) {
       this.start();
-      console.log('[janitor] enabled at runtime');
+      console.log('[janitor] enabled at runtime（破坏性分支清理已开启）');
     } else {
-      this.stop();
-      console.log('[janitor] disabled at runtime');
+      console.log('[janitor] disabled at runtime（仅停用破坏性分支清理，回收类动作继续）');
     }
   }
 
@@ -316,8 +319,12 @@ export class JanitorService {
 
   /** Start periodic sweeps. Safe to call multiple times. No-op when disabled. */
   start(): void {
-    if (!this.isEnabled()) return;
     if (this.sweepHandle) return;
+    // 调度不再受 `enabled` 门禁（2026-07-27 宕机复盘）：`enabled` 的语义一直是
+    // 「是否允许**破坏性**地删过期分支」，sweep() 内部已按它单独 gate。但此前
+    // start() 在 disabled 时直接 return，连带把磁盘检查、悬空镜像清理、per-SHA
+    // 镜像回收、孤儿对账这些非破坏性动作一起停掉——dockerPrune 注释里写的
+    //「与 enabled 解耦，默认就清」根本没有兑现过。
     const intervalMs = Math.max(60_000, (this.config.sweepIntervalSeconds || 3600) * 1000);
     this.sweepHandle = setInterval(() => {
       this.sweep().catch((err) => {
@@ -327,10 +334,26 @@ export class JanitorService {
     if (typeof this.sweepHandle.unref === 'function') {
       this.sweepHandle.unref();
     }
-    console.log(`[janitor] started (TTL=${this.config.worktreeTTLDays}d, diskWarn=${this.config.diskWarnPercent}%, interval=${this.config.sweepIntervalSeconds}s)`);
+    // 启动后先跑一次（延后 30s 避开开机高峰）：此前要整整等一个 interval，
+    // 而 CDS 每次自更新都会重启——「刚因为磁盘满被打死、正在恢复」的那一小时
+    // 恰恰一次回收都不做。首轮失败只记录，不影响周期调度。
+    this.firstSweepHandle = setTimeout(() => {
+      this.firstSweepHandle = null;
+      this.sweep().catch((err) => {
+        console.error('[janitor] initial sweep error:', (err as Error).message);
+      });
+    }, 30_000);
+    if (typeof this.firstSweepHandle.unref === 'function') {
+      this.firstSweepHandle.unref();
+    }
+    console.log(`[janitor] started (enabled=${this.isEnabled()}, TTL=${this.config.worktreeTTLDays}d, diskWarn=${this.config.diskWarnPercent}%, interval=${this.config.sweepIntervalSeconds}s)`);
   }
 
   stop(): void {
+    if (this.firstSweepHandle) {
+      clearTimeout(this.firstSweepHandle);
+      this.firstSweepHandle = null;
+    }
     if (this.sweepHandle) {
       clearInterval(this.sweepHandle);
       this.sweepHandle = null;

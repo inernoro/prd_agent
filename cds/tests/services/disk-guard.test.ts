@@ -94,3 +94,31 @@ describe('磁盘刹车自带测量能力（Codex 第二十八轮 P1）', () => {
     expect(diskGuard.blockReasonForDeploy()).toContain('95%');
   });
 });
+
+describe('多挂载点探测（Codex 第二十九轮 P2）', () => {
+  beforeEach(() => diskGuard.reset());
+
+  it('worktree 宽松但 docker 数据盘吃紧时，按最紧张的那个判档', () => {
+    // 事故语义：撑爆的是 containerd/docker 那一侧（159GB），worktree 可能还很空。
+    // 只量 worktree 会在该拦的时候报「一切正常」。
+    diskGuard.setProbe(() => [
+      { totalBytes: 100, freeBytes: 60 },  // worktree 40%
+      { totalBytes: 100, freeBytes: 5 },   // docker 95%
+    ]);
+    expect(diskGuard.blockReasonForDeploy()).toContain('95%');
+    expect(diskGuard.get().tier).toBe('freeze');
+  });
+
+  it('单挂载点写法照常工作（向后兼容）', () => {
+    diskGuard.setProbe(() => ({ totalBytes: 100, freeBytes: 2 }));
+    expect(diskGuard.get().tier).toBe('ok');
+    expect(diskGuard.blockReasonForDeploy()).toContain('98%');
+  });
+
+  it('空数组 / 全零容量不改变现状，不会误判成 0% 放行', () => {
+    diskGuard.update(96);
+    diskGuard.setProbe(() => []);
+    diskGuard.refreshNow();
+    expect(diskGuard.get().tier).toBe('freeze');
+  });
+});

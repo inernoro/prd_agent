@@ -327,4 +327,27 @@ describe('JanitorService', () => {
       expect(reloaded.getJanitorWorktreeTTLOverride()).toBe(7);
     });
   });
+
+  describe('回收调度与 enabled 解耦（2026-07-27 宕机复盘）', () => {
+    it('janitor 被关掉时仍调度 sweep——破坏性分支清理关掉，回收类动作不该跟着停', () => {
+      // 此前 start() 在 !enabled 时直接 return，把磁盘检查/悬空镜像清理/per-SHA
+      // 镜像回收/孤儿对账一并停掉，dockerPrune 注释里「与 enabled 解耦，默认就清」
+      // 从未兑现。破坏性分支删除仍由 sweep() 内部单独 gate。
+      setup({ enabled: false });
+      janitor.start();
+      expect(janitor.isEnabled()).toBe(false);
+      expect(() => janitor.stop()).not.toThrow();
+    });
+
+    it('禁用状态下的 sweep 仍做磁盘检查与档位判定，但一个分支都不删', async () => {
+      setup({ enabled: false, dockerPrune: false, imageRetention: false });
+      stateService.addBranch(makeBranch('stale-branch', 90));
+      mockDiskState = { totalBytes: 100, freeBytes: 4 }; // 96% used
+      const report = await janitor.sweep();
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+      expect(report.disk?.usedPercent).toBe(96);
+      expect(report.diskTier).toBe('freeze');
+    });
+  });
 });

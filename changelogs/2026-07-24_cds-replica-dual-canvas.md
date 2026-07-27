@@ -194,3 +194,7 @@
 | fix | cds | 磁盘刹车自带测量：读数缺失或过期时部署闸门就地重测，不再依赖 janitor 的启停与一小时节奏 |
 | fix | cds | 镜像回收限定本实例部署过的仓库：共享 docker daemon 的多 master 不再互删回滚镜像 |
 | fix | cds | 成员直达路由带上副本身份，直达链接可正常返回 X-CDS-Replica |
+| fix | cds | 磁盘刹车改为路由器级守卫：按服务重部署与强制重建两个入口此前不受冻结约束 |
+| fix | cds | 磁盘探测同时量 worktree 与 docker 数据目录，取最紧张者判档 |
+| fix | cds | janitor 调度与 enabled 解耦并在启动后跑首轮：重启后不再整整一小时不回收 |
+| fix | cds | promote 终态清理改用不可复用的成员身份栅栏，不再误删同 id 的替身成员 |
