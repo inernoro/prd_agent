@@ -169,3 +169,5 @@
 | fix | cds | cdscli 能力契约测试的版本期望改为从源码解析 VERSION 常量（治 main 上 bump 0.12.1 未同步硬编码 0.12.0 导致的主干红灯，未来 bump 免疫） |
 | fix | cds | 隔离审计金丝雀清理失败不再静默：两侧 drop 带一次重试并记 D4 检查项，清理不净时 overall 判 broken，不许残渣留在生产库还报 effective |
 | fix | cds | 项目级整组改持久化组身份：整组手势生成 projectGroupId 贯穿计划/addMember 落到成员，面板项目舞台与分支整组卡按 id join（存量成员按位兜底），部分失败/单侧下线的数组错位不再拼出假组被钉选放大 |
+| fix | cds | 分流探测自动推导 path 前先过 resolveEffectiveProfile（与发布器同口径），分支级 pathPrefixes 覆写不再拿旧前缀探测出误导分布 |
+| fix | cds | WebSocket 升级握手回种复制集组作用域亲和 cookie（HTTP/WS 共用同一收集函数），WS-first 客户端重连不再重新掷签横跳版本 |

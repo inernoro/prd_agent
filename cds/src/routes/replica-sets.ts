@@ -10,6 +10,7 @@ import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
 import { buildServiceGraph } from '../services/service-graph.js';
+import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
@@ -192,9 +193,14 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     let path = typeof req.body?.path === 'string' && req.body.path.startsWith('/') ? req.body.path : '';
     if (!path) {
       const branchEntry = deps.stateService.getBranch(req.params.branchId)!;
-      const profile = deps.stateService.getEffectiveProfilesForBranch(branchEntry)
+      // 与发布器同口径（Codex 第二十一轮 P2）：分支级 profileOverrides 改过
+      // pathPrefixes 时，getEffectiveProfilesForBranch 不含该覆写——发布器发的
+      // 是 resolveEffectiveProfile 之后的前缀，这里不解析就会拿旧前缀探测，
+      // 打到别的服务出 untagged 误导分布
+      const baseProbeProfile = deps.stateService.getEffectiveProfilesForBranch(branchEntry)
         .find((p) => p.id === req.params.profileId);
-      path = profile?.pathPrefixes?.[0]
+      const probeProfile = baseProbeProfile ? resolveEffectiveProfile(baseProbeProfile, branchEntry) : undefined;
+      path = probeProfile?.pathPrefixes?.[0]
         || (req.params.profileId.includes('api') || req.params.profileId.includes('backend') ? '/api/' : '/');
     }
     // path 强校验（Codex 第十八轮 P1）：控制字符/空白/非 ASCII 会让 http.request

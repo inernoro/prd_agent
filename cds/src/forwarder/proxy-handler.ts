@@ -663,6 +663,8 @@ export class ProxyHandler {
     socket: Socket,
     head: Buffer,
     route: RouteRecord | null,
+    /** 复制集亲和 cookie（Codex 第二十一轮 P2）：追加进 101 握手响应，WS-first 客户端也能建立粘性 */
+    extraSetCookies?: string[],
   ): Promise<void> {
     // /_cds/* passthrough 同样适用于 WebSocket Upgrade(/_cds/api/*/stream 等)
     // 同 handle():用本地变量,不 mutate req(Cursor Bugbot Low)。
@@ -735,6 +737,11 @@ export class ProxyHandler {
           } else if (v != null) {
             headers.push(`${k}: ${v}`);
           }
+        }
+        // 复制集亲和 cookie（Codex 第二十一轮 P2）：与 HTTP 路径同款的组作用域
+        // cookie 写进握手响应——WS-first 客户端重连不再重新掷签横跳版本
+        if (extraSetCookies) {
+          for (const c of extraSetCookies) headers.push(`set-cookie: ${c}`);
         }
         socket.write(headers.join('\r\n') + '\r\n\r\n');
         if (upstreamHead && upstreamHead.length > 0) socket.write(upstreamHead);

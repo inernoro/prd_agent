@@ -281,6 +281,43 @@ function replicaGroupCookieHash(group: string): string {
   return createHash('sha1').update(group).digest('hex').slice(0, 8);
 }
 
+/**
+ * 复制集会话粘性 cookie 收集（HTTP 与 WebSocket 升级共用，Codex 第二十一轮 P2）：
+ * 选中组内路由后种**组作用域** cookie（30 分钟滑动窗口），同一浏览器会话不横跳
+ * 版本；成员被移除后 cookie 失配 → resolver 自动回落权重选择。
+ * 显式多钉选（项目级整组预览）：__rs 带多个成员 id 时一次导航把该分支每个组的
+ * cookie 都种上（条目支持 profile 作用域 `profileId:memberId`，只命中匹配组）。
+ * WS-first 客户端此前拿不到 cookie，每次重连都重新掷签、可在不兼容版本间横跳
+ * ——升级路径把返回值写进 101 握手响应。
+ */
+function collectReplicaStickyCookies(
+  allRoutes: RouteRecord[],
+  route: RouteRecord | null,
+  sticky: { explicit?: string[]; byGroupHash: Map<string, string> },
+): string[] {
+  const cookies: string[] = [];
+  const pin = (group: string, memberId: string): void => {
+    const groupHash = replicaGroupCookieHash(group);
+    if (sticky.byGroupHash.get(groupHash) !== memberId) {
+      cookies.push(`cds_rs_${groupHash}=${memberId}; Path=/; Max-Age=1800; SameSite=Lax`);
+    }
+  };
+  if (route?.branchId && sticky.explicit?.length) {
+    const seenGroups = new Set<string>();
+    for (const r of allRoutes) {
+      if (r.branchId !== route.branchId || !r.replicaGroup || !r.replicaMemberId) continue;
+      if (r.replicaMemberId === 'primary' || seenGroups.has(r.replicaGroup)) continue;
+      const matched = sticky.explicit.some((entry) => stickyEntryMemberFor(entry, r.replicaGroup!) === r.replicaMemberId);
+      if (!matched) continue;
+      seenGroups.add(r.replicaGroup);
+      pin(r.replicaGroup, r.replicaMemberId);
+    }
+  } else if (route?.replicaGroup && route.replicaMemberId) {
+    pin(route.replicaGroup, route.replicaMemberId);
+  }
+  return cookies;
+}
+
 function extractReplicaSticky(req: http.IncomingMessage): {
   /** 显式钉选（query __rs / header）。支持逗号多值：项目级整组预览一条链接钉住每个组 */
   explicit?: string[];
@@ -315,34 +352,7 @@ const server = http.createServer((req, res) => {
     isEjected: (r) => replicaHealth.isEjected(r),
     reserveProbe: (r) => replicaHealth.reserveProbe(r),
   });
-  // 复制集会话粘性:选中组内路由后种**组作用域** cookie,同一浏览器会话不横跳版本。
-  // 30 分钟滑动窗口;成员被移除后 cookie 失配 → resolver 自动回落权重选择。
-  const stickyCookies: string[] = [];
-  const pinCookie = (group: string, memberId: string): void => {
-    const groupHash = replicaGroupCookieHash(group);
-    if (sticky.byGroupHash.get(groupHash) !== memberId) {
-      stickyCookies.push(`cds_rs_${groupHash}=${memberId}; Path=/; Max-Age=1800; SameSite=Lax`);
-    }
-  };
-  // 显式多钉选（Codex P1，项目级整组预览）：__rs 带多个成员 id 时，这一次导航就把
-  // 该分支**每个组**的组作用域 cookie 都种上——后续 API/资源请求不再携带 __rs，
-  // 只有 cookie 能保证各 profile 都落在本组成员，不与其他组的加权流量混流。
-  if (route?.branchId && sticky.explicit?.length) {
-    const seenGroups = new Set<string>();
-    for (const r of routes) {
-      if (r.branchId !== route.branchId || !r.replicaGroup || !r.replicaMemberId) continue;
-      if (r.replicaMemberId === 'primary' || seenGroups.has(r.replicaGroup)) continue;
-      // 条目支持 profile 作用域 `profileId:memberId`（Codex P1）：裸 id 列表在
-      // 各 profile 成员数组错位时会把 B 组钉到本该属于 A 组的 res-N；作用域
-      // 条目只命中 profile 匹配的组
-      const matched = sticky.explicit.some((entry) => stickyEntryMemberFor(entry, r.replicaGroup!) === r.replicaMemberId);
-      if (!matched) continue;
-      seenGroups.add(r.replicaGroup);
-      pinCookie(r.replicaGroup, r.replicaMemberId);
-    }
-  } else if (route?.replicaGroup && route.replicaMemberId) {
-    pinCookie(route.replicaGroup, route.replicaMemberId);
-  }
+  const stickyCookies = collectReplicaStickyCookies(routes, route, sticky);
   if (stickyCookies.length > 0) res.setHeader('Set-Cookie', stickyCookies);
   // 可观测性（用户拍板）：复制集链路的每个响应都盖「谁服务的」标记头，
   // curl -I / 浏览器 DevTools / 探测端点都能核对——分流不是摆设。
@@ -362,7 +372,10 @@ server.on('upgrade', (req, socket, head) => {
     isEjected: (r) => replicaHealth.isEjected(r),
     reserveProbe: (r) => replicaHealth.reserveProbe(r),
   });
-  void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
+  // WS-first 亲和（Codex 第二十一轮 P2）：首次接触就是 WebSocket 升级的客户端
+  // 也要拿到组作用域 cookie，否则每次重连重新掷签、可在不兼容版本间横跳
+  const wsStickyCookies = collectReplicaStickyCookies(routes, route, sticky);
+  void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route, wsStickyCookies);
 });
 
 function shutdown(signal: string): void {
