@@ -37,7 +37,7 @@
 
 | # | 状态 | 债务 | 影响 | 偿还方向 |
 |---|------|------|------|----------|
-| 1 | open(2026-07-27) | 自更新重启与在途分支部署竞速：restart 模式不 drain 部署执行器，也不在启动后重排被杀的 run | 同一次 push 同时触发 webhook 分支部署与生产自更新时，分支部署被重启杀死——心跳过期后看门狗收敛为 failed（`cds.run.interrupted`，PR check 红灯），甚至重启窗口内到达的 webhook 派发整个丢失（无 run 记录）。2026-07-26~27 在 PR #1262 连续复现 3 次（dr_ff65dea4 / dr_40bacbb5 / 2b15f78 webhook 丢失），均需人工重触发。第 4 例（2026-07-27 宕机事故，见 `doc/debt.cds.state-json.md` 事故档案）证实：中断派发的自动补发机制**已存在**但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 门禁默认关闭——重启后事件明确打出「部署重试已关闭，跳过 1 个中断派发的自动补发」 | 自更新 restart 前对在途 deployment-run 二选一：等待到终态再重启（部署通常几分钟内完成），或把在途/重启窗口内到达的 run 持久化为 pending、启动后自动重新派发；与 `cds.run.interrupted` 看门狗联动（interrupted 且 retryable 的 run 启动后自动重试一次）。短期最低成本动作：评估生产默认开启 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` |
+| 1 | **偿还中(2026-07-27)** | 自更新重启与在途分支部署竞速：restart 模式不 drain 部署执行器，也不在启动后重排被杀的 run | 同一次 push 同时触发 webhook 分支部署与生产自更新时，分支部署被重启杀死——心跳过期后看门狗收敛为 failed（`cds.run.interrupted`，PR check 红灯），甚至重启窗口内到达的 webhook 派发整个丢失（无 run 记录）。2026-07-26~27 在 PR #1262 连续复现 3 次（dr_ff65dea4 / dr_40bacbb5 / 2b15f78 webhook 丢失），均需人工重触发。第 4 例（2026-07-27 宕机事故，见 `doc/debt.cds.state-json.md` 事故档案）证实：中断派发的自动补发机制**已存在**但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 门禁默认关闭——重启后事件明确打出「部署重试已关闭，跳过 1 个中断派发的自动补发」 | 自更新 restart 前对在途 deployment-run 二选一：等待到终态再重启（部署通常几分钟内完成），或把在途/重启窗口内到达的 run 持久化为 pending、启动后自动重新派发；与 `cds.run.interrupted` 看门狗联动（interrupted 且 retryable 的 run 启动后自动重试一次）。**已落地（事前避免）**：`deploy-drain.ts` + 自更新重启前钩子——重启前先等在途部署跑到终态（默认上限 5 分钟，`CDS_SELFUPDATE_DRAIN_TIMEOUT_MS` 可调，设 0 关闭；心跳过期的僵尸 run 不等；超时照常重启并把仍在途的 run 如实记进事件日志）。**刻意不走**「打开 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 自动补发」——那道闸是 2026-06-24 为治重试风暴默认关掉的，补发属事后补偿，会把旧事故一并放回。剩余边界：重启窗口内**新到达**的 webhook 派发仍可能整个丢失（连 run 记录都没有），排空只能覆盖已经建了 run 的那些 |
 
 ## 相关
 

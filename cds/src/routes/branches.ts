@@ -13,6 +13,7 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
+import { drainInFlightDeploys, type DrainableRun } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
@@ -2219,6 +2220,50 @@ export function createBranchRouter(deps: RouterDeps): Router {
     res.status(507).json({ error: 'disk_low', message: blocked });
   });
 
+  /**
+   * 自更新重启前排空在途部署（debt.cds.selfupdate-prebuilt #1，2026-07-27）。
+   *
+   * 同一次 push 会同时触发 webhook 分支部署与生产自更新；重启把在途部署执行器
+   * 一并杀掉，心跳过期后看门狗收敛为 failed（PR check 变红），需人工重触发。
+   * 本 PR 期间复现 6 次以上。这里改为**事前避免**：先等在途部署落地再重启。
+   *
+   * 刻意不走「打开自动补发」那条路——`CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关
+   * 是 2026-06-24 为治重试风暴做的决策，补发是事后补偿，会把那个旧事故放回来。
+   *
+   * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
+   * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
+   */
+  async function drainDeploysBeforeSelfUpdateRestart(context: {
+    trigger: string;
+    branch?: string;
+    toSha?: string;
+  }): Promise<void> {
+    const timeoutMs = Math.max(0, Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS || '', 10)
+      || 5 * 60_000);
+    const outcome = await drainInFlightDeploys({
+      listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+      timeoutMs,
+      onWait: (pending, waitedMs) => {
+        if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
+          console.log(`[self-update] 等待 ${pending.length} 个在途部署落地再重启（已等 ${Math.round(waitedMs / 1000)}s）`);
+        }
+      },
+    });
+    if (outcome.skipped) return;
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: outcome.drained ? 'info' : 'warn',
+      source: 'self-update',
+      action: outcome.drained ? 'self-update.deploy-drain.completed' : 'self-update.deploy-drain.timeout',
+      message: outcome.drained
+        ? `自更新重启前已等到全部在途部署落地（等待 ${Math.round(outcome.waitedMs / 1000)}s）`
+        : `自更新重启前等待在途部署超时（${Math.round(outcome.waitedMs / 1000)}s），仍在途 ${outcome.remaining.length} 个，将照常重启（这些 run 会被收敛为中断，需重新触发部署）`,
+      details: { ...context, waitedMs: outcome.waitedMs, remaining: outcome.remaining },
+    });
+  }
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -2226,6 +2271,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     actor?: string;
   }): Promise<void> {
+    // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
+    // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
+    await drainDeploysBeforeSelfUpdateRestart({
+      trigger: context.trigger, branch: context.branch, toSha: context.toSha,
+    });
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
       SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
