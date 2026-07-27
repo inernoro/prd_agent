@@ -221,6 +221,17 @@ export class ReplicaSetService {
         throw new ReplicaSetError(409, '该服务的数据库正在隔离克隆中，请等隔离完成后再添加副本');
       }
     }
+    // 模式二选一在直接加成员这条路上也要守住（Codex 第三十三轮 P2）：分支一旦钉在
+    // project 模式，副本就必须整组齐增齐减；这个端点此前完全不看模式，能给单个
+    // 服务加一个不带 projectGroupId 的孤儿副本——项目级画布上出现残缺组，而 UI 与
+    // startPlan 都按「两级互斥」渲染和校验，看到的与实际不符。带组 id 的调用
+    //（计划执行器的 add-replica 步骤）照常放行。
+    if (branch.replicaMode === 'project' && !input.projectGroupId) {
+      throw new ReplicaSetError(
+        409,
+        '该分支已钉在项目级模式：副本必须按「整组副本」齐增齐减，不能只给单个服务加。请在画布用整组操作，或先把现有副本清零再切模式',
+      );
+    }
     const rs = this.enable(branchId, profileId);
     if (rs.members.length >= REPLICA_MEMBER_LIMIT) {
       throw new ReplicaSetError(409, `成员数已达上限 ${REPLICA_MEMBER_LIMIT}，请先下线一个成员`);

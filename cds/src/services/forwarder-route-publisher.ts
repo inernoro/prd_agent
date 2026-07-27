@@ -73,6 +73,22 @@ export interface ForwarderRoutePublisherOptions {
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
 
+/**
+ * 成员直达子域的 profile 段清洗（发布器与探测白名单共用的 SSOT）。
+ *
+ * 防撞编码（Codex 第十四轮 P2）：清洗**有损**（api_v2 与 api.v2 同归 api-v2）时
+ * 追加原始 id 的确定性短哈希（djb2-xor，base36），保证不同 profile 落到不同 DNS 段；
+ * 已是合法 DNS 段的 id 原样保留（既有直达域名不变）。与前端 memberDirectUrl 同款
+ * 算法，三处必须同步改。
+ */
+export function dnsSafeProfile(id: string): string {
+  const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  if (cleaned === id) return cleaned;
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+  return `${cleaned}-${h.toString(36)}`;
+}
+
 export class ForwarderRoutePublisher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastPublishedJson: string = '';
@@ -379,13 +395,6 @@ export class ForwarderRoutePublisher {
       // 时追加原始 id 的确定性短哈希（djb2-xor，base36），保证不同 profile 落到
       // 不同 DNS 段；已是合法 DNS 段的 id 原样保留（既有直达域名不变）。撞名
       // skip+warn 仍保留为最后防线。与前端 memberDirectUrl 同款算法，两端必须同步改。
-      const dnsSafeProfile = (id: string): string => {
-        const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
-        if (cleaned === id) return cleaned;
-        let h = 5381;
-        for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
-        return `${cleaned}-${h.toString(36)}`;
-      };
       const emittedMemberHosts = new Set<string>();
       for (const [profileId, replica] of replicaByProfile) {
         for (const member of replica.members) {

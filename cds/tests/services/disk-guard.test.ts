@@ -1,6 +1,7 @@
-import { describe, it, expect, beforeEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterAll } from 'vitest';
 import {
   classifyDiskTier, shouldFreezeDeploys, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, diskGuard,
+  resolveDockerDataRoot, resetDockerDataRootCache,
 } from '../../src/services/disk-guard.js';
 
 /**
@@ -156,5 +157,37 @@ describe('sweep 不得覆盖多文件系统读数（Codex 第三十轮 P1）', (
     const tier = diskGuard.refreshOrUpdate(88);
     expect(tier).toBe('reclaim');
     expect(diskGuard.get().usedPercent).toBe(88);
+  });
+});
+
+describe('docker 数据目录必须在本命名空间可见（Codex 第三十三轮 P1）', () => {
+  beforeEach(() => { resetDockerDataRootCache(); delete process.env.CDS_DOCKER_DATA_ROOT; });
+  afterAll(() => { resetDockerDataRootCache(); delete process.env.CDS_DOCKER_DATA_ROOT; });
+
+  it('本命名空间看得见真正的 docker 根（有 overlay2/image）才采用', () => {
+    const seen = new Set(['/var/lib/docker', '/var/lib/docker/overlay2']);
+    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBe('/var/lib/docker');
+  });
+
+  it('master 跑在容器里、daemon 路径在本命名空间不存在时返回 null（宁可不量也不量错）', () => {
+    // docker info 给的是 daemon 侧路径；master 容器里 statfs 同名路径要么不存在、
+    // 要么量了个完全无关的文件系统——那会让 docker 盘满时闸门照样放行。
+    expect(resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
+  });
+
+  it('路径存在但不像 docker 根（无 overlay2/image）也拒绝采用', () => {
+    const seen = new Set(['/var/lib/docker']);
+    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => seen.has(p))).toBeNull();
+  });
+
+  it('运维显式指定的挂载点优先，且同样要求存在', () => {
+    process.env.CDS_DOCKER_DATA_ROOT = '/mnt/dockerdata';
+    expect(resolveDockerDataRoot(() => '/var/lib/docker', (p) => p === '/mnt/dockerdata')).toBe('/mnt/dockerdata');
+    resetDockerDataRootCache();
+    expect(resolveDockerDataRoot(() => '/var/lib/docker', () => false)).toBeNull();
+  });
+
+  it('docker info 不可用时返回 null，不抛', () => {
+    expect(resolveDockerDataRoot(() => { throw new Error('docker missing'); }, () => true)).toBeNull();
   });
 });

@@ -12,6 +12,7 @@ import { ReplicaSetError, REPLICA_MEMBER_LIMIT, REPLICA_PLAN_MAX_STEPS, type Rep
 import { resolveReplicaDbTarget } from '../services/replica-db-clone.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { buildServiceGraph } from '../services/service-graph.js';
+import { dnsSafeProfile } from '../services/forwarder-route-publisher.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
@@ -242,8 +243,26 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       if (!labelOnRoot && roots.length === 0) labelOnRoot = host.split('.')[0] || '';
       const aliasLabels = new Set((branchForHost.subdomainAliases ?? []).filter(Boolean).map((a) => String(a).toLowerCase()));
       const customDomains = new Set((branchForHost.customDomains ?? []).map((d) => String(d).toLowerCase()));
+      // 精确枚举本分支真实发布的标签（Codex 第三十三轮 P2）：此前是
+      // `startsWith(previewSlug + '-')` 前缀匹配——**另一个分支**只要 slug 以本分支
+      // slug 加连字符开头（或有这样的别名），它的 host 就被当成本分支的，接着这个
+      // 端点会替调用方向那个外部 host 打最多 50 次服务端 GET 并回报状态。改为按
+      // 发布器同源规则列出：主入口 + 命名子域 + 成员直达，逐一精确比对。
+      const allowedLabels = new Set<string>();
+      if (previewSlug) {
+        allowedLabels.add(previewSlug);
+        for (const p of deps.stateService.getEffectiveProfilesForBranch(branchForHost)) {
+          const sub = resolveEffectiveProfile(p, branchForHost).subdomain;
+          if (sub) allowedLabels.add(`${previewSlug}-${String(sub).toLowerCase()}`);
+        }
+        for (const [profileId, rs] of Object.entries(branchForHost.replicaSets ?? {})) {
+          for (const m of rs.members) {
+            allowedLabels.add(`${previewSlug}-${dnsSafeProfile(profileId)}-${m.id}`.toLowerCase());
+          }
+        }
+      }
       const hostAllowed =
-        (Boolean(labelOnRoot) && Boolean(previewSlug) && (labelOnRoot === previewSlug || labelOnRoot.startsWith(`${previewSlug}-`)))
+        (Boolean(labelOnRoot) && allowedLabels.has(labelOnRoot))
         || (Boolean(labelOnRoot) && aliasLabels.has(labelOnRoot))
         || customDomains.has(host);
       if (!hostAllowed) {

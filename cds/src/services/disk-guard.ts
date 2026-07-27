@@ -1,4 +1,5 @@
 import { execSync } from 'node:child_process';
+import { existsSync } from 'node:fs';
 
 /**
  * 磁盘分档刹车（2026-07-27 宕机复盘 P0）。
@@ -211,12 +212,33 @@ class DiskGuardState {
  * 常见默认 `/var/lib/docker`；containerd 存储通常与之同一文件系统。
  */
 let cachedDockerRoot: string | null | undefined;
-export function resolveDockerDataRoot(execSyncFn?: (cmd: string) => string): string | null {
+export function resolveDockerDataRoot(
+  execSyncFn?: (cmd: string) => string,
+  existsFn?: (p: string) => boolean,
+): string | null {
   if (cachedDockerRoot !== undefined) return cachedDockerRoot;
+  const exists = existsFn ?? ((path: string) => {
+    try { return existsSync(path); } catch { return false; }
+  });
+  // 运维显式指定优先（master 容器化时把宿主 docker 根挂到别处的场合）
+  const override = (process.env.CDS_DOCKER_DATA_ROOT || '').trim();
+  if (override) {
+    cachedDockerRoot = exists(override) ? override : null;
+    return cachedDockerRoot;
+  }
   try {
     const run = execSyncFn ?? ((cmd: string) => execSync(cmd, { encoding: 'utf8', timeout: 10_000, stdio: ['ignore', 'pipe', 'ignore'] }));
     const out = String(run('docker info -f "{{.DockerRootDir}}"') || '').trim();
-    cachedDockerRoot = out && out !== '<no value>' ? out : null;
+    const raw = out && out !== '<no value>' ? out : null;
+    // 命名空间校验（Codex 第三十三轮 P1）：`docker info` 给的是 **daemon 侧**路径。
+    // master 若跑在容器里（挂宿主 docker socket），statfs 这个路径量的是 master
+    // 容器自己命名空间下的同名路径——要么不存在，要么量了个完全无关的文件系统，
+    // 于是 docker 盘满了闸门照样放行（与 projects.ts docker cp 那处同一个坑）。
+    // 只有在本命名空间里能看到真正的 docker 根（有 overlay2 / image 子目录）才采用，
+    // 否则宁可退回只量 worktree，也不给出一个错误读数。
+    cachedDockerRoot = raw && exists(raw) && (exists(`${raw}/overlay2`) || exists(`${raw}/image`))
+      ? raw
+      : null;
   } catch {
     cachedDockerRoot = null;
   }
