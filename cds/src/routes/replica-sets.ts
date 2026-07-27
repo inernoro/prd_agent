@@ -179,6 +179,14 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       path = profile?.pathPrefixes?.[0]
         || (req.params.profileId.includes('api') || req.params.profileId.includes('backend') ? '/api/' : '/');
     }
+    // path 强校验（Codex 第十八轮 P1）：控制字符/空白/非 ASCII 会让 http.request
+    // 同步抛 ERR_UNESCAPED_CHARACTERS——Promise executor 里同步抛 = promise 拒绝，
+    // Express 4 异步 handler 接不住，未处理拒绝可拖垮 CDS 进程。只放行可打印
+    // ASCII（不含空格），显式传入与自动推导的 path 一律过闸。
+    if (!/^\/[\x21-\x7e]*$/.test(path)) {
+      res.status(400).json({ error: '探测 path 含非法字符（仅允许可打印 ASCII、不含空白/控制字符）' });
+      return;
+    }
     const count = Math.max(1, Math.min(50, Number(req.body?.count) || 20));
     const forwarderPort = Number(process.env.CDS_FORWARDER_PORT) || 9090;
     const hits: Array<{ seq: number; servedBy: string; status: number }> = [];
@@ -189,22 +197,28 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const { request: httpRequest } = await import('node:http');
     const probeOnce = (seq: number): Promise<{ servedBy: string; status: number }> =>
       new Promise((resolve) => {
-        const req2 = httpRequest({
-          host: '127.0.0.1',
-          port: forwarderPort,
-          method: 'GET',
-          path: `${path}${path.includes('?') ? '&' : '?'}__probe=${seq}`,
-          headers: { Host: host, 'X-CDS-Probe': '1' },
-          timeout: 8000,
-        }, (resp) => {
-          resp.resume();
-          // 无 X-CDS-Replica 头 = 没有穿过复制集路由（不能伪装成 primary 落点）
-          const tag = resp.headers['x-cds-replica'];
-          resolve({ servedBy: tag ? String(tag) : 'untagged', status: resp.statusCode || 0 });
-        });
-        req2.on('timeout', () => { req2.destroy(); resolve({ servedBy: 'error', status: 0 }); });
-        req2.on('error', () => resolve({ servedBy: 'error', status: 0 }));
-        req2.end();
+        try {
+          const req2 = httpRequest({
+            host: '127.0.0.1',
+            port: forwarderPort,
+            method: 'GET',
+            path: `${path}${path.includes('?') ? '&' : '?'}__probe=${seq}`,
+            headers: { Host: host, 'X-CDS-Probe': '1' },
+            timeout: 8000,
+          }, (resp) => {
+            resp.resume();
+            // 无 X-CDS-Replica 头 = 没有穿过复制集路由（不能伪装成 primary 落点）
+            const tag = resp.headers['x-cds-replica'];
+            resolve({ servedBy: tag ? String(tag) : 'untagged', status: resp.statusCode || 0 });
+          });
+          req2.on('timeout', () => { req2.destroy(); resolve({ servedBy: 'error', status: 0 }); });
+          req2.on('error', () => resolve({ servedBy: 'error', status: 0 }));
+          req2.end();
+        } catch {
+          // http.request 同步抛（如 ERR_UNESCAPED_CHARACTERS）不许逃出 executor
+          // 变成未处理拒绝（Codex 第十八轮 P1）——按探测失败记一条
+          resolve({ servedBy: 'error', status: 0 });
+        }
       });
     for (let i = 0; i < count; i += 1) {
       const r = await probeOnce(i);

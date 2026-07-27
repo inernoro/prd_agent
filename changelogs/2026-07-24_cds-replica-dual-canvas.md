@@ -161,3 +161,5 @@
 | fix | cds | 栅栏克隆清理失败不再静默丢弃：drop 失败时分支在世则快照入台账（可见可手删）、分支已删则专用实例写 teardown 墓碑（收割器兜底）、共享实例克隆留 error 日志给出库名，三处栅栏（成员物化/复制隔离/保护罩）统一接线 |
 | fix | cds | 副本直达链接超 63 octet DNS 标签时回落主入口 ?__rs= 作用域钉选深链，不再展示发布器已跳过的不存在 host |
 | fix | cds | 分支隔离完成态以全量有效服务为分母：零成员/无复制集条目的服务不隔离不算统一战线对齐，多服务计划中途失败不再误报 done |
+| fix | cds | 分流探测 path 强校验（仅可打印 ASCII）+ probeOnce 捕获 http.request 同步抛错，封死 ERR_UNESCAPED_CHARACTERS 经未处理拒绝拖垮 CDS 进程的通道 |
+| fix | cds | 复制集对账收敛孤儿 provisioning 成员：在途操作进程内登记（物化/隔离切换/回切全链路），不在登记表的 provisioning 即上一进程遗留——拆容器 + 标 error 指引重建，不再永久占位转圈 |

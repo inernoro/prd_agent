@@ -230,6 +230,19 @@ describe('副本容器真身对账（2026-07-26 孤儿收割器误杀事故防�
     expect(state.getBranch('proj-main')!.replicaSets!.api.members[0].status).toBe('running');
   });
 
+  it('孤儿 provisioning 成员（进程重启遗留）对账收敛为 error（Codex 第十八轮 P1）', async () => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaSets!.api.members[0].status = 'provisioning';
+    b.replicaSets!.api.members[0].statusMessage = '第1步 复制：正在克隆隔离库…';
+    state.save();
+    // 新建 service = 新进程：在途登记表为空，持久化的 provisioning 即孤儿
+    const marked = await makeSvc('cds-proj-main-api-res-1').reconcileMembersAgainstDocker();
+    expect(marked).toBe(1);
+    const m = state.getBranch('proj-main')!.replicaSets!.api.members[0];
+    expect(m.status).toBe('error');
+    expect(m.statusMessage).toContain('重启');
+  });
+
   it('die 事件即时摘流：running 成员标 error；非 running（计划内收割中）跳过', () => {
     const s = makeSvc('');
     s.noteMemberContainerDeath('cds-proj-main-api-res-1', '外部 SIGKILL');

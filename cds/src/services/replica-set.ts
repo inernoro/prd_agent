@@ -465,7 +465,9 @@ export class ReplicaSetService {
       rs.updatedAt = this.now();
       this.opts.state.save();
       const envOverride = envOverrideFromSnapshot(target, reusable);
+      const releaseReuseOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
       void (async () => {
+        try {
         for (const m of members) {
           // 停止栅栏（Codex P1）：分支停止会把成员标 stopped——过渡循环不把它改回
           // provisioning（materializeMember 会在分支已 idle 后把副本起出来），但
@@ -491,6 +493,9 @@ export class ReplicaSetService {
           });
         }
         this.opts.logger?.info?.(`[replica-set] 复制隔离（同库复用）${branchId}/${profileId} → ${reusable.dbName}`);
+        } finally {
+          releaseReuseOps();
+        }
       })();
       return { accepted: true };
     }
@@ -511,6 +516,7 @@ export class ReplicaSetService {
       this.patchMember(branchId, profileId, m.id, { status: 'provisioning', statusMessage: '第1步 复制：正在克隆隔离库…' });
     }
     let switchPhaseStarted = false;
+    const releaseIsoOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
     void (async () => {
       try {
         const cloned = await cloneReplicaDb({
@@ -582,6 +588,7 @@ export class ReplicaSetService {
         }
       } finally {
         this.isolationInFlight.delete(inflightKey);
+        releaseIsoOps();
       }
     })();
     return { accepted: true };
@@ -618,7 +625,9 @@ export class ReplicaSetService {
     delete rs.isolated;
     rs.updatedAt = this.now();
     this.opts.state.save();
+    const releaseRevertOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
     void (async () => {
+      try {
       for (const m of members) {
         // 停止栅栏（Codex P1）：分支停止把成员标 stopped 后，回切循环不许再改回
         // provisioning 复活它；但也不能只跳过（Codex 第十六轮 P1）——隔离标记
@@ -646,6 +655,9 @@ export class ReplicaSetService {
         await this.materializeMember(branchId, profileId, m.id, version, baseProfile);
       }
       this.opts.logger?.info?.(`[replica-set] 已回切主库 ${branchId}/${profileId}（隔离库保留为快照）`);
+      } finally {
+        releaseRevertOps();
+      }
     })();
     return { accepted: true };
   }
@@ -675,6 +687,23 @@ export class ReplicaSetService {
    *     → 镜像拉不到直接失败进 error 态，绝不回退源码编译（不绕 build-gate）。
    */
   private async materializeMember(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    version: DeploymentVersion,
+    baseProfile: BuildProfile,
+    dbOverride?: { envOverride: Record<string, string>; dbName: string },
+  ): Promise<void> {
+    // 在途登记（Codex 第十八轮 P1）：整个物化期间该成员对对账循环可见为「在途」
+    const releaseOp = this.trackMemberOps(branchId, profileId, [memberId]);
+    try {
+      await this.materializeMemberInner(branchId, profileId, memberId, version, baseProfile, dbOverride);
+    } finally {
+      releaseOp();
+    }
+  }
+
+  private async materializeMemberInner(
     branchId: string,
     profileId: string,
     memberId: string,
@@ -904,6 +933,28 @@ export class ReplicaSetService {
    * 后把副本容器起出来。
    */
   /**
+   * 本进程在途的成员操作登记（Codex 第十八轮 P1）：物化/隔离切换/回切期间的
+   * 成员是「合法 provisioning」；CDS 重启后这些任务消失，持久化下来的
+   * provisioning 成员没有任何自愈路径。对账循环用本登记表区分「在途」与
+   * 「上一进程遗留的孤儿」——不在表里的 provisioning 成员会被收敛为 error。
+   * 登记与置 provisioning 在同一同步 tick 内完成，无窗口。
+   */
+  private readonly inFlightMemberOps = new Set<string>();
+
+  /** 登记一批成员操作，返回释放函数（只释放本次真正新增的 key，可安全嵌套）。 */
+  private trackMemberOps(branchId: string, profileId: string, memberIds: string[]): () => void {
+    const owned: string[] = [];
+    for (const id of memberIds) {
+      const k = `${branchId}:${profileId}:${id}`;
+      if (!this.inFlightMemberOps.has(k)) {
+        this.inFlightMemberOps.add(k);
+        owned.push(k);
+      }
+    }
+    return () => { for (const k of owned) this.inFlightMemberOps.delete(k); };
+  }
+
+  /**
    * 栅栏克隆的清理（Codex 第十七轮 P1）：栅栏触发（成员被移除/复制集解散/
    * 分支删除中）时要 drop 刚克隆的库，但 **drop 失败不许静默丢弃**——克隆里
    * 是生产派生数据，必须留在可发现的账本上：
@@ -1042,6 +1093,40 @@ export class ReplicaSetService {
    * （宁漏勿误，与孤儿收割器同一纪律）。返回本轮标记数。
    */
   async reconcileMembersAgainstDocker(): Promise<number> {
+    // 孤儿 provisioning 收敛（Codex 第十八轮 P1）：CDS 重启会丢掉在途的物化/
+    // 克隆/切换任务，持久化下来的 provisioning 成员没有任何自愈路径——永远
+    // 占着副本上限、UI 持续轮询转圈；已起的克隆容器还可能悬在台账外。本进程
+    // 在途操作都登记在 inFlightMemberOps；不在登记表里的 provisioning 成员即
+    // 上一进程遗留：拆掉已起的容器（best-effort），标 error 指引重建。已入
+    // 台账的隔离库快照不动（快照列表可见、可手动删除）。
+    let orphanMarked = 0;
+    const orphaned: Array<{ branchId: string; profileId: string; memberId: string; containerName?: string }> = [];
+    for (const branch of this.opts.state.getAllBranches()) {
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        for (const m of rs.members) {
+          if (m.status === 'provisioning' && !this.inFlightMemberOps.has(`${branch.id}:${rs.profileId}:${m.id}`)) {
+            orphaned.push({ branchId: branch.id, profileId: rs.profileId, memberId: m.id, containerName: m.containerName });
+          }
+        }
+      }
+    }
+    for (const o of orphaned) {
+      // 行动前复核（对账与新操作可能交错）：仍是 provisioning 且仍不在途才收敛
+      const liveM = this.findMember(o.branchId, o.profileId, o.memberId);
+      if (!liveM || liveM.status !== 'provisioning') continue;
+      if (this.inFlightMemberOps.has(`${o.branchId}:${o.profileId}:${o.memberId}`)) continue;
+      if (o.containerName) {
+        await this.opts.container.remove(o.containerName, { actor: 'replica-set', trigger: 'replica-set-remove' }).catch(() => undefined);
+      }
+      this.patchMember(o.branchId, o.profileId, o.memberId, {
+        status: 'error',
+        statusMessage: 'CDS 重启中断了副本创建/切换（对账发现）——任务已终止；可在画布删除后重建副本',
+      });
+      orphanMarked += 1;
+      this.opts.logger?.warn?.(
+        `[replica-set] 对账：${o.branchId}/${o.profileId}/${o.memberId} 的在途操作因进程重启丢失，已收敛为 error`,
+      );
+    }
     const tracked: Array<{ branchId: string; profileId: string; memberId: string; containerName: string }> = [];
     for (const branch of this.opts.state.getAllBranches()) {
       for (const rs of Object.values(branch.replicaSets ?? {})) {
@@ -1052,14 +1137,14 @@ export class ReplicaSetService {
         }
       }
     }
-    if (tracked.length === 0) return 0;
+    if (tracked.length === 0) return orphanMarked;
     const res = await this.opts.shell.exec(
       `docker ps --filter "label=cds.managed=true" --format '{{.Names}}'`,
       { timeout: 30_000 },
     );
-    if (res.exitCode !== 0) return 0;
+    if (res.exitCode !== 0) return orphanMarked;
     const alive = new Set(res.stdout.trim().split('\n').map((s) => s.trim()).filter(Boolean));
-    let marked = 0;
+    let marked = orphanMarked;
     for (const t of tracked) {
       if (alive.has(t.containerName)) continue;
       this.patchMember(t.branchId, t.profileId, t.memberId, {
