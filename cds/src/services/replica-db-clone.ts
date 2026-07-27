@@ -16,9 +16,6 @@
  * 凭据均通过 docker exec -e 环境变量传入（MYSQL_PWD / PGPASSWORD / RS_MONGO_PW），
  * 不落 shell 参数，脚本里只出现受白名单校验的库名（[a-z0-9_]），无注入面。
  */
-import fs from 'node:fs';
-import os from 'node:os';
-import path from 'node:path';
 import { createHash } from 'node:crypto';
 import type { BranchEntry, BuildProfile, InfraService, ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
@@ -394,10 +391,14 @@ async function cloneMongoViaDedicatedInstance(opts: {
     );
   }
 
-  // 暂存目录按实例分段（Codex 第二十二轮 P1）：两个共宿主 master 并发克隆同名
-  // 目标时容器名已按实例隔离，但共享同一 /tmp 暂存目录会互相覆写 dump 归档、
-  // finally 清理还会删掉对方正在 restore 的文件
-  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', opts.instanceId ? `${opts.instanceId.slice(0, 6)}-${dbName}` : dbName);
+  // dump 归档走 docker 托管卷（Codex 第二十三轮 P1，替代宿主 bind）：容器化
+  // master 用宿主 docker socket 时，`-v 主机路径` 的 bind source 在 **daemon
+  // 宿主**解析，而 fs.rmSync 清的是 master 容器自己的文件系统——每次成功隔离
+  // 都会在宿主 /tmp 留下整份生产派生 dump.archive.gz（敏感数据滞留 + 磁盘
+  // 耗尽）。托管卷让数据与清理都发生在 daemon 命名空间（docker volume rm），
+  // 与 projects.ts 的 docker cp 同一教训：跨命名空间的 bind 路径不可信。
+  // 卷名带实例段（第二十二轮 P1 同款）：共宿主双 master 并发克隆同名目标不撞卷。
+  const scratchVol = `cds-rsclone-${opts.instanceId ? `${opts.instanceId.slice(0, 6)}-` : ''}${dbName}`;
   // 实例段进容器名（Codex 第十九轮 P1）：不带实例段时，两个共宿主的 CDS master
   // 管到同一分支/profile 会得到完全相同的容器名——一边开始隔离就把另一边活着
   // 的隔离实例 rm -f 掉。dropReplicaDb 的 cds-rsdb- 前缀守卫不受影响（快照存的
@@ -410,7 +411,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     'run', '--rm', '-i', '--pull', 'never',
     '--network', `container:${network}`,
     '--memory', '768m', '--memory-swap', '768m', '--cpus', '1',
-    '-v', `${scratchDir}:/rsclone`,
+    '-v', `${scratchVol}:/rsclone`,
     '--entrypoint', 'sh',
     ...authEnv,
     image,
@@ -418,7 +419,9 @@ async function cloneMongoViaDedicatedInstance(opts: {
   ];
 
   try {
-    fs.mkdirSync(scratchDir, { recursive: true });
+    // 清掉上次失败/崩溃残留的同名卷（陈旧归档会被 restore 成错误数据）；
+    // 同 master 并发同目标克隆已被 isolationInFlight 互斥，rm 不会撞在途卷
+    await runDockerExec(['volume', 'rm', '-f', scratchVol], '', 60_000, 8 * 1024).catch(() => undefined);
     onOutput?.(`── 一键隔离数据库: ${target.sourceDb} → 专用隔离实例 ${isoName}（${isoImage}）──`);
     // 幂等：清掉可能的同名残留（上次失败/重试）。清理前验归属（Codex 第十九轮
     // P1 backstop）：同名容器带 cds.instance 且不等于本实例时拒删——实例段进名
@@ -507,7 +510,8 @@ async function cloneMongoViaDedicatedInstance(opts: {
     await runDockerExec(['rm', '-f', '-v', isoName], '', 60_000, 8 * 1024).catch(() => undefined);
     throw err;
   } finally {
-    try { fs.rmSync(scratchDir, { recursive: true, force: true }); } catch { /* noop */ }
+    // daemon 命名空间内清理归档卷（best-effort；失败留给下次同名克隆的 pre-rm）
+    await runDockerExec(['volume', 'rm', '-f', scratchVol], '', 60_000, 8 * 1024).catch(() => undefined);
   }
 }
 

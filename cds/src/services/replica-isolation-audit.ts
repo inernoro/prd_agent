@@ -19,7 +19,7 @@
 import type { ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { runDockerExec } from '../routes/infra-data.js';
-import { mongoAdminEval, resolveReplicaDbTarget } from './replica-db-clone.js';
+import { mongoAdminEval, resolveReplicaDbTarget, dedicatedAuthFromContainer } from './replica-db-clone.js';
 
 export type AuditVerdict = 'pass' | 'fail' | 'skip' | 'boundary' | 'info';
 
@@ -230,9 +230,13 @@ export async function runIsolationAudit(
   if (snapshot.engine === 'mongo' && snapshot.dedicatedContainer) {
     const infraEnv = target.infra.env || {};
     const infraPort = target.infra.containerPort || 27017;
-    const isoAuth = snapshot.dedicatedAuth === 'source-infra'
+    // 凭据容器活取（Codex 第二十三轮 P2，与成员复用路径同款）：源库轮换 root
+    // 密码后按 infra 现值认证会连不上按旧凭据初始化的专用实例——健康的隔离被
+    // 审计误报 broken。inspect 失败退 infra 现值（与旧行为等价）。
+    const liveIsoAuth = await dedicatedAuthFromContainer(snapshot);
+    const isoAuth = liveIsoAuth ?? (snapshot.dedicatedAuth === 'source-infra'
       ? { user: infraEnv.MONGO_INITDB_ROOT_USERNAME || '', pw: infraEnv.MONGO_INITDB_ROOT_PASSWORD || '' }
-      : undefined;
+      : undefined);
     const tokIso = `iso${Date.now().toString(36)}`;
     const tokMain = `main${Date.now().toString(36)}`;
     // 集合名每次运行唯一（Codex P1 同款防线）：清理 drop 的必然是本次自建集合，
