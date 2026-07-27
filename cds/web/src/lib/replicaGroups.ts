@@ -53,3 +53,11 @@ export function buildProjectGroups<M extends ProjectGroupMemberLike>(
 export function newProjectGroupId(): string {
   return `pg-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 7)}`;
 }
+
+/**
+ * 单个计划步数上限 —— 必须与后端 `cds/src/services/replica-set.ts` 的
+ * `REPLICA_PLAN_MAX_STEPS` 相等（Codex 第二十六轮 P2）。项目级整组动作按服务数
+ * 生成步骤，前端据此在**加草稿前**预检并给出可读提示，而不是让用户攒完一堆草稿
+ * 才在保存时撞 400。两值漂移由 tests/web/replica-plan-limit-contract.test.ts 拦截。
+ */
+export const REPLICA_PLAN_MAX_STEPS = 60;

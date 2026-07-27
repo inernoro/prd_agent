@@ -8,7 +8,8 @@ import { Router, type Request } from 'express';
 import { connect as tcpConnect } from 'node:net';
 import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
-import { ReplicaSetError, REPLICA_MEMBER_LIMIT, type ReplicaSetService } from '../services/replica-set.js';
+import { ReplicaSetError, REPLICA_MEMBER_LIMIT, REPLICA_PLAN_MAX_STEPS, type ReplicaSetService } from '../services/replica-set.js';
+import { resolveReplicaDbTarget } from '../services/replica-db-clone.js';
 import { buildServiceGraph } from '../services/service-graph.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
@@ -129,10 +130,24 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       const infraForProject = (deps.stateService.getState().infraServices || [])
         .filter((s) => s.projectId === branch.projectId && (s.scope ?? 'project') === 'project');
       const graph = buildServiceGraph(profiles, infraForProject);
+      // 可隔离性由**后端**判定（Codex 第二十六轮 P2 + frontend-architecture「业务判断
+      // 不下放前端」）：无状态服务（前端等，env 里没有任何数据库名家族键）走隔离步会在
+      // resolveReplicaDbTarget 抛「没有数据库名」——统一战线把它们一并纳入，默认
+      // 失败即停策略下后面的服务就再也隔离不了，「一次覆盖全部」的承诺无法兑现。
+      // 与隔离执行路径同一个 SSOT（resolveReplicaDbTarget + resolveEffectiveProfile），
+      // 前端据此收敛动作目标与「已隔离 N/M」的分母。
+      const dbIsolatable: Record<string, { ok: boolean; reason?: string }> = {};
+      for (const p of deps.stateService.getEffectiveProfilesForBranch(branch)) {
+        const { target, reason } = resolveReplicaDbTarget(
+          deps.stateService, branch, resolveEffectiveProfile(p, branch),
+        );
+        dbIsolatable[p.id] = target ? { ok: true } : { ok: false, reason };
+      }
       // 存量分支（模式面世前的副本）按容器级报告：与 startPlan 的默认钉住兜底口径一致
       const totalMembers = Object.values(branch.replicaSets ?? {}).reduce((s, rs) => s + rs.members.length, 0);
       res.json({
-        replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT, graph,
+        replicaSets: enriched, candidates, snapshots, memberLimit: REPLICA_MEMBER_LIMIT,
+        planMaxSteps: REPLICA_PLAN_MAX_STEPS, dbIsolatable, graph,
         replicaMode: branch.replicaMode ?? (totalMembers > 0 ? 'container' : null),
       });
     } catch (err) {

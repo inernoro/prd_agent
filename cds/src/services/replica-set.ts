@@ -32,6 +32,14 @@ import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromS
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
+/**
+ * 单个计划的步数上限（Codex 第二十六轮 P2）。原值 20 与「项目级整组动作必须覆盖
+ * 全部服务」的语义冲突：服务数 > 20 的分支，整组副本 / 统一战线隔离生成的步数
+ * 恒超上限，UI 却仍把按钮渲染成可点——草稿永远存不下去。上限抬到 60（远高于
+ * 现实单分支服务数，仍拦得住失控计划），前端用 `web/src/lib/replicaGroups.ts`
+ * 的同名常量做提交前预检，两边由 replica-plan-limit-contract 测试防漂移。
+ */
+export const REPLICA_PLAN_MAX_STEPS = 60;
 
 /** 成员短 id：`rs` + 6 位 hex。同时用作粘性 cookie 值与直达子域后缀。 */
 export function newReplicaMemberId(rand: () => number = Math.random): string {
@@ -894,9 +902,23 @@ export class ReplicaSetService {
         );
       }
       if (!ready) {
+        // 就绪失败必须停容器（Codex 第二十六轮 P1）：路由早已把 error 成员摘掉，
+        // 但容器还活着——默认共享库模式下它照样跑后台消费者/定时任务读写**主库**，
+        // 还白占宿主端口与内存。stop 而非 remove：保留 docker logs 供排障。
+        let stopped = false;
+        try {
+          await this.opts.container.stop(containerName, 'replica-member-not-ready', {
+            branchId, profileId, actor: 'replica-set', trigger: 'replica-set-readiness-failed',
+          });
+          stopped = true;
+        } catch (err) {
+          this.opts.logger?.warn?.(
+            `[replica-set] 副本 ${containerName} 就绪失败后停止容器未成功（交给对账/收割兜底）: ${(err as Error).message}`,
+          );
+        }
         this.patchMember(branchId, profileId, memberId, {
           status: 'error',
-          statusMessage: `容器已启动但未就绪: ${logs.slice(-5).join(' | ') || '无输出'}`,
+          statusMessage: `容器已启动但未就绪${stopped ? '（已停止容器，避免其继续读写主库）' : '（停止容器失败，请手动确认）'}: ${logs.slice(-5).join(' | ') || '无输出'}`,
         });
         return;
       }
@@ -1271,7 +1293,9 @@ export class ReplicaSetService {
       branch.replicaMode = input.mode;
     }
     if (!input.steps.length) throw new ReplicaSetError(400, '计划为空');
-    if (input.steps.length > 20) throw new ReplicaSetError(400, '单个计划最多 20 步');
+    if (input.steps.length > REPLICA_PLAN_MAX_STEPS) {
+      throw new ReplicaSetError(400, `单个计划最多 ${REPLICA_PLAN_MAX_STEPS} 步`);
+    }
     const kinds: ReplicaPlanStepKind[] = ['add-replica', 'remove-member', 'set-weight', 'isolate-db', 'revert-db', 'dissolve'];
     for (const s of input.steps) {
       if (!kinds.includes(s.kind)) throw new ReplicaSetError(400, `未知步骤类型: ${s.kind}`);

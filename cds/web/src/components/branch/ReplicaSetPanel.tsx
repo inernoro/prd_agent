@@ -19,7 +19,7 @@ import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { profileColor } from '@/lib/replica-colors';
-import { buildProjectGroups, newProjectGroupId } from '@/lib/replicaGroups';
+import { buildProjectGroups, newProjectGroupId, REPLICA_PLAN_MAX_STEPS } from '@/lib/replicaGroups';
 
 export interface ReplicaMemberView {
   id: string;
@@ -74,6 +74,10 @@ interface ReplicaSetsResponse {
   candidates: Record<string, ReplicaCandidateView[]>;
   snapshots?: ReplicaDbSnapshotView[];
   memberLimit: number;
+  /** 单个计划步数上限（服务端 SSOT，见 replica-set.ts REPLICA_PLAN_MAX_STEPS）。 */
+  planMaxSteps?: number;
+  /** 每个服务能否隔离数据库（服务端用隔离执行同一条 resolveReplicaDbTarget 判定）。 */
+  dbIsolatable?: Record<string, { ok: boolean; reason?: string }>;
   graph?: ServiceGraphView;
   replicaMode?: ReplicaMode | null;
 }
@@ -328,7 +332,16 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
     ...Object.keys(services ?? {}), ...Object.keys(replicaSets), ...Object.keys(candidates),
   ])).sort();
   const graph: ServiceGraphView = state.data.graph ?? { nodes: [], edges: [], layers: [profileIds] };
-  const branchIso = computeBranchIso(replicaSets, profileIds);
+  // 可隔离服务集（Codex 第二十六轮 P2）：无状态服务（前端等，env 无数据库名）没有
+  // 库可隔离，纳入统一战线只会让那一步必败并按「失败即停」拖垮后续服务。服务端
+  // 判定缺省（旧版本 CDS）时退回全量，保持行为不回归。
+  const dbIsolatable = state.data.dbIsolatable;
+  const isolatableProfileIds = dbIsolatable
+    ? profileIds.filter((p) => dbIsolatable[p]?.ok !== false)
+    : profileIds;
+  const planMaxSteps = state.data.planMaxSteps ?? REPLICA_PLAN_MAX_STEPS;
+  // 分母同样只算可隔离服务，否则挂着一个前端服务的分支永远停在「部分隔离」
+  const branchIso = computeBranchIso(replicaSets, isolatableProfileIds);
   const totalMembers = Object.values(replicaSets).reduce((s, rs) => s + (rs.enabled ? rs.members.length : 0), 0);
   const pinnedMode = state.data.replicaMode ?? null;
   const lockedOther = pinnedMode !== null && totalMembers > 0;
@@ -340,19 +353,28 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   // 统一战线动作：隔离 / 回切一次覆盖所有符合条件的服务 —— 一次手势 = 一条草稿
   // 2026-07-25 用户拍板：隔离不要求先有副本——零副本也可先隔离数据库（隔离态钉住后，
   // 之后加的副本自动连隔离库），统一战线覆盖当前分支的所有服务
-  const isolateTargets = profileIds.filter((p) => {
+  const isolateTargets = isolatableProfileIds.filter((p) => {
     const rs = replicaSets[p];
     return !rs?.isolated && !draftSteps.some((d) => d.profileId === p && d.kind === 'isolate-db');
   });
   const revertTargets = profileIds.filter((p) => !!replicaSets[p]?.isolated && !draftSteps.some((d) => d.profileId === p && d.kind === 'revert-db'));
+  // 步数预检（Codex 第二十六轮 P2）：批量动作按服务数生成步骤，攒过上限时后端
+  // startPlan 会 400，用户却要等到「保存」那一刻才知道——加草稿前就拦下并说清。
+  const wouldExceedPlanLimit = (addCount: number, what: string): boolean => {
+    if (draftSteps.length + addCount <= planMaxSteps) return false;
+    onToast?.(`无法加${what}：本次会让计划达到 ${draftSteps.length + addCount} 步，超出单计划上限 ${planMaxSteps} 步——请先保存执行已有草稿，再分批操作`);
+    return true;
+  };
   const isolateAll = (): void => {
     if (isolateTargets.length === 0) { onToast?.('全部服务已隔离或已有隔离草稿'); return; }
+    if (wouldExceedPlanLimit(isolateTargets.length, '统一战线隔离')) return;
     onAction(`复制隔离 · 统一战线（${isolateTargets.length} 服务切专用隔离实例，可回切）`,
       isolateTargets.map((p) => ({ kind: 'isolate-db' as const, profileId: p })));
     onToast?.(`统一战线：复制隔离草稿已加入（覆盖 ${isolateTargets.length} 个服务）`);
   };
   const revertAll = (): void => {
     if (!revertTargets.length) return;
+    if (wouldExceedPlanLimit(revertTargets.length, '统一回切')) return;
     onAction(`回切主库（${revertTargets.length} 服务，隔离库转快照保留）`,
       revertTargets.map((p) => ({ kind: 'revert-db' as const, profileId: p })));
     onToast?.(`回切草稿已加入（${revertTargets.length} 个服务）`);
@@ -427,7 +449,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   );
 
   const stageProps: StageSharedProps = {
-    branchId, previewUrl, entries: entries ?? [], services, infra: infra ?? [], replicaSets, candidates, memberLimit,
+    branchId, previewUrl, entries: entries ?? [], services, infra: infra ?? [], replicaSets, candidates, memberLimit, planMaxSteps,
     draftActions: draft, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso,
     isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts,
     headerLeft: modeToggle, headerRight: execArea,
@@ -660,6 +682,8 @@ interface StageSharedProps {
   replicaSets: Record<string, ProfileReplicaSetView>;
   candidates: Record<string, ReplicaCandidateView[]>;
   memberLimit: number;
+  /** 单计划步数上限（服务端 SSOT），项目级整组动作提交前预检用。 */
+  planMaxSteps: number;
   draftActions: DraftAction[];
   draftSteps: DraftStepEx[];
   onAction: (label: string, steps: DraftStep[]) => void;
@@ -1331,7 +1355,7 @@ const PROJ_W = 208;
 const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, planMaxSteps, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
   const [hostRef, w] = useMeasuredWidth();
   const probe = useProbe(branchId, previewUrl, onToast);
   const audit = useIsolationAudit(branchId, onToast);
@@ -1459,6 +1483,12 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
     }
     if (limitBlocked.length > 0) {
       onToast?.(`无法加整组副本：${limitBlocked.join('、')} 已达副本上限 ${memberLimit}——整组副本必须全员齐增`);
+      return;
+    }
+    // 步数预检（Codex 第二十六轮 P2）：服务数 > 上限的项目，整组副本必然超步，
+    // 此前按钮照样可点、草稿照样能加，直到保存才被后端 400 顶回来。
+    if (draftSteps.length + profileIds.length > planMaxSteps) {
+      onToast?.(`无法加整组副本：${profileIds.length} 个服务会让计划达到 ${draftSteps.length + profileIds.length} 步，超出单计划上限 ${planMaxSteps} 步——整组副本要求全员齐增，无法拆批，请联系管理员调高上限`);
       return;
     }
     const projectGroupId = newProjectGroupId();

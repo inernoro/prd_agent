@@ -181,3 +181,6 @@
 | fix | cds | 共享实例隔离库 DROP 失败入 pendingReplicaDbDrops 台账（分支删除/栅栏清理两路），复制集对账循环持续重试补删；承载 infra 消亡时出队，不再只留一行日志失踪 |
 | fix | cds | isRemoteBranch 判定与部署路径同口径：executorId 非 master- 前缀即远端，注册表查不到时保守视为远端，离线执行器的分支不再被 master 本机错网络物化副本 |
 | fix | cds | 端口分配器把复制集成员与专用隔离实例的 hostPort 计入保留集，stopped/provisioning 成员端口不再被绕回序列判给新部署导致重启启动失败 |
+| fix | cds | 复制集副本就绪失败后停止容器：此前只标 error 却留容器活着，共享库模式下它仍跑后台任务读写主库并白占端口 |
+| fix | cds | 复制集统一战线隔离排除无状态服务：后端按 resolveReplicaDbTarget 输出 dbIsolatable，前端据此收敛目标与已隔离分母，避免必败步拖垮后续服务 |
+| fix | cds | 复制集计划步数上限提到 60 并前端预检：服务数超限的项目此前整组副本按钮可点但保存必被拒，现加草稿前即给出可读提示 |
