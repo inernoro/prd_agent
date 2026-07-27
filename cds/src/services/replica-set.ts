@@ -28,7 +28,7 @@ import type { StateService } from './state.js';
 import type { ContainerService } from './container.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { DeploymentVersionService } from './deployment-version.js';
-import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromSnapshot } from './replica-db-clone.js';
+import { cloneReplicaDb, dropReplicaDb, resolveReplicaDbTarget, envOverrideFromSnapshot, dedicatedAuthFromContainer } from './replica-db-clone.js';
 
 /** 每个服务的成员上限（不含主成员）。防资源失控，超限拒绝添加。 */
 export const REPLICA_MEMBER_LIMIT = 3;
@@ -333,12 +333,16 @@ export class ReplicaSetService {
     const branch = this.requireBranch(branchId);
     const snapshot = (branch.replicaDbSnapshots || []).find((s) => s.id === snapshotId);
     if (!snapshot) throw new ReplicaSetError(404, `隔离库快照不存在: ${snapshotId}`);
-    // 终验 R9-P3：正被活跃隔离引用的快照不许删（删了副本会连着已 drop 的库跑）
+    // 终验 R9-P3 + Codex 第二十二轮 P2：被引用的快照不许删。成员级隔离
+    //（dbMode=isolated 直加成员）没有 rs.isolated 标记，且 stopped/error 成员
+    // 的容器配置仍指向隔离库——stopped 会被分支重启原地复活、error 容器可能
+    // 还活着在用。只要**任何在册成员**还挂着该库名就算活跃引用，与状态无关；
+    // 引用解除 = 删除成员或回切。
     for (const rs of Object.values(branch.replicaSets || {})) {
       const activelyUsed = rs.isolated?.snapshotId === snapshotId
-        || rs.members.some((m) => m.isolatedDbName === snapshot.dbName && (m.status === 'running' || m.status === 'provisioning'));
+        || rs.members.some((m) => m.isolatedDbName === snapshot.dbName);
       if (activelyUsed) {
-        throw new ReplicaSetError(409, `隔离库 ${snapshot.dbName} 正被 ${rs.profileId} 的副本使用中，请先「回切主库」再删除快照`);
+        throw new ReplicaSetError(409, `隔离库 ${snapshot.dbName} 仍被 ${rs.profileId} 的在册副本引用（含已停止/失败副本——其容器配置仍指向该库），请先「回切主库」或删除引用它的副本，再删除快照`);
       }
     }
     const infra = this.opts.state.getInfraServicesForProject(branch.projectId)
@@ -472,10 +476,13 @@ export class ReplicaSetService {
       rs.isolated = { dbName: reusable.dbName, snapshotId: reusable.id, isolatedAt: this.now() };
       rs.updatedAt = this.now();
       this.opts.state.save();
-      const envOverride = envOverrideFromSnapshot(target, reusable);
       const releaseReuseOps = this.trackMemberOps(branchId, profileId, members.map((m) => m.id));
       void (async () => {
         try {
+        // 专用实例真实凭据活取（Codex 第二十二轮 P2）：源库轮换密码后按 infra 现值
+        // 重建连接串会连不上按旧凭据初始化的老实例
+        const reusableAuth = await dedicatedAuthFromContainer(reusable);
+        const envOverride = envOverrideFromSnapshot(target, reusable, reusableAuth);
         for (const m of members) {
           // 停止栅栏（Codex P1）：分支停止会把成员标 stopped——过渡循环不把它改回
           // provisioning（materializeMember 会在分支已 idle 后把副本起出来），但
@@ -794,7 +801,8 @@ export class ReplicaSetService {
       if (liveRs?.isolated && snap) {
         const { target } = resolveReplicaDbTarget(this.opts.state, branch, baseProfile);
         if (target) {
-          memberProfile.env = { ...(memberProfile.env || {}), ...envOverrideFromSnapshot(target, snap) };
+          const snapAuth = await dedicatedAuthFromContainer(snap);
+          memberProfile.env = { ...(memberProfile.env || {}), ...envOverrideFromSnapshot(target, snap, snapAuth) };
           memberProfile.dbScope = 'shared';
           this.patchMember(branchId, profileId, memberId, { dbMode: 'isolated', isolatedDbName: snap.dbName });
           joinedIsolated = true;

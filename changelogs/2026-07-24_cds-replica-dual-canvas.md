@@ -171,3 +171,6 @@
 | fix | cds | 项目级整组改持久化组身份：整组手势生成 projectGroupId 贯穿计划/addMember 落到成员，面板项目舞台与分支整组卡按 id join（存量成员按位兜底），部分失败/单侧下线的数组错位不再拼出假组被钉选放大 |
 | fix | cds | 分流探测自动推导 path 前先过 resolveEffectiveProfile（与发布器同口径），分支级 pathPrefixes 覆写不再拿旧前缀探测出误导分布 |
 | fix | cds | WebSocket 升级握手回种复制集组作用域亲和 cookie（HTTP/WS 共用同一收集函数），WS-first 客户端重连不再重新掷签横跳版本 |
+| fix | cds | 隔离库快照删除门收紧：任何在册成员（含 stopped/error）仍挂该库名即拒删——停了的容器配置仍指向隔离库，重启复活会连已 drop 的库 |
+| fix | cds | mongo 克隆暂存目录按 CDS 实例分段，共宿主双 master 并发克隆同名目标不再互相覆写/误删 dump 归档 |
+| fix | cds | 专用隔离实例连接串凭据改容器活取（inspect env，失败退 infra 现值）：源库轮换 root 密码后，新增副本/重物化不再拿新密码连按旧凭据初始化的老实例 |

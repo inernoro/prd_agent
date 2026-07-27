@@ -394,7 +394,10 @@ async function cloneMongoViaDedicatedInstance(opts: {
     );
   }
 
-  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
+  // 暂存目录按实例分段（Codex 第二十二轮 P1）：两个共宿主 master 并发克隆同名
+  // 目标时容器名已按实例隔离，但共享同一 /tmp 暂存目录会互相覆写 dump 归档、
+  // finally 清理还会删掉对方正在 restore 的文件
+  const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', opts.instanceId ? `${opts.instanceId.slice(0, 6)}-${dbName}` : dbName);
   // 实例段进容器名（Codex 第十九轮 P1）：不带实例段时，两个共宿主的 CDS master
   // 管到同一分支/profile 会得到完全相同的容器名——一边开始隔离就把另一边活着
   // 的隔离实例 rm -f 掉。dropReplicaDb 的 cds-rsdb- 前缀守卫不受影响（快照存的
@@ -555,15 +558,47 @@ function dedicatedConnString(user: string, pw: string, hostPort: number): string
   return `mongodb://${cred}\${CDS_HOST}:${hostPort}${authSuffix}`;
 }
 
-export function envOverrideFromSnapshot(target: ReplicaDbTarget, snapshot: ReplicaDbSnapshot): Record<string, string> {
+/**
+ * 专用隔离实例的真实凭据活取（Codex 第二十二轮 P2）：实例在克隆时刻用**当时的**
+ * 源库 root 凭据初始化；源库其后轮换密码时，按 infra 现值重建连接串会连不上
+ * 老实例。容器自身 env 即凭据 SSOT（不落盘任何密钥），inspect 失败（容器被删
+ * 等）返回 null，调用方退回 infra 现值兜底（与旧行为等价）。
+ */
+export async function dedicatedAuthFromContainer(snapshot: ReplicaDbSnapshot): Promise<{ user: string; pw: string } | null> {
+  if (!snapshot.dedicatedContainer || snapshot.dedicatedAuth !== 'source-infra') return null;
+  const r = await runDockerExec(['inspect', '-f', '{{json .Config.Env}}', snapshot.dedicatedContainer], '', 20_000, 16 * 1024);
+  if (r.code !== 0) return null;
+  try {
+    const envs = JSON.parse(r.stdout.trim()) as string[];
+    const get = (k: string): string => {
+      const hit = envs.find((e) => e.startsWith(`${k}=`));
+      return hit ? hit.slice(k.length + 1) : '';
+    };
+    const user = get('MONGO_INITDB_ROOT_USERNAME');
+    return user ? { user, pw: get('MONGO_INITDB_ROOT_PASSWORD') } : null;
+  } catch {
+    return null;
+  }
+}
+
+export function envOverrideFromSnapshot(
+  target: ReplicaDbTarget,
+  snapshot: ReplicaDbSnapshot,
+  /** 专用实例真实凭据（dedicatedAuthFromContainer 活取）；缺省退 infra 现值 */
+  authOverride?: { user: string; pw: string } | null,
+): Record<string, string> {
   const envOverride: Record<string, string> = {};
   for (const key of target.envKeys) envOverride[key] = snapshot.dbName;
   if (snapshot.dedicatedContainer && snapshot.dedicatedHostPort) {
-    // 带认证标记的实例复用源库 root 凭据（活取 infra env，不落盘新密钥）；
+    // 带认证标记的实例复用源库 root 凭据（优先容器活取，退 infra env，不落盘）；
     // 旧无认证实例（快照无标记）维持裸串，不误发凭据
     const env = target.infra?.env || {};
-    const user = snapshot.dedicatedAuth === 'source-infra' ? (env.MONGO_INITDB_ROOT_USERNAME || '') : '';
-    const pw = snapshot.dedicatedAuth === 'source-infra' ? (env.MONGO_INITDB_ROOT_PASSWORD || '') : '';
+    const user = snapshot.dedicatedAuth === 'source-infra'
+      ? (authOverride?.user || env.MONGO_INITDB_ROOT_USERNAME || '')
+      : '';
+    const pw = snapshot.dedicatedAuth === 'source-infra'
+      ? (authOverride ? authOverride.pw : (env.MONGO_INITDB_ROOT_PASSWORD || ''))
+      : '';
     for (const key of target.connEnvKeys) envOverride[key] = dedicatedConnString(user, pw, snapshot.dedicatedHostPort);
   }
   return envOverride;

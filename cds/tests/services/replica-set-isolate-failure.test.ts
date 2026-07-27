@@ -19,6 +19,7 @@ vi.mock('../../src/services/replica-db-clone.js', () => ({
     },
   }),
   envOverrideFromSnapshot: () => ({}),
+  dedicatedAuthFromContainer: async () => null,
 }));
 
 import { StateService } from '../../src/services/state.js';
