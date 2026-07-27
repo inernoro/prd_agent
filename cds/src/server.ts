@@ -4017,10 +4017,16 @@ export function createServer(deps: ServerDeps): express.Express {
     portStart: deps.config.portStart,
     // 多 master 共宿主的实例身份（Codex 第十九轮 P1）：专用隔离实例容器名/label
     instanceId: computeCdsInstanceId(deps.config.repoRoot),
-    isRemoteBranch: (branch) => !!(
-      branch.executorId
-      && deps.registry?.getAll().some((n) => n.id === branch.executorId && n.role !== 'embedded')
-    ),
+    // 与部署路径同口径（branches.ts remoteAttributed，Codex 第二十五轮 P1）：
+    // executorId 非空且不以 'master-' 开头即远端归属——注册表查不到（已注销/
+    // 离线/registry 不可用）时**保守视为远端**，绝不在 master 本机替离线执行器
+    // 物化副本（错 docker 网络错端口的分裂宿主副本）。
+    isRemoteBranch: (branch) => {
+      if (!branch.executorId) return false;
+      if (branch.executorId.startsWith('master-')) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
+    },
     logger: console,
   });
   // 启动收敛：CDS 自更新/重启会打断执行中的复制集计划——开机把僵尸 running

@@ -10959,6 +10959,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 requestedAt: new Date().toISOString(),
               }]);
             } catch { /* 墓碑写入失败退回事件告警 */ }
+          } else {
+            // 共享实例隔离库无容器可墓碑（Codex 第二十五轮 P1）：台账马上随
+            // removeBranch 消失，只记事件会让生产派生克隆永久失踪在共享 infra
+            // 里。入待清理台账，复制集对账循环持续重试 DROP。
+            try {
+              stateService.addPendingReplicaDbDrop({
+                snapshot, projectId: entry.projectId, requestedAt: new Date().toISOString(),
+              });
+            } catch { /* 入队失败退回事件告警 */ }
           }
           serverEventLogStore?.record({
             category: 'container',

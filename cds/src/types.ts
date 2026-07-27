@@ -1732,6 +1732,13 @@ export interface CdsState {
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
   /**
+   * 共享实例隔离库的待清理台账（Codex 第二十五轮 P1）：分支删除时 mysql/pg
+   * 隔离库 drop 失败没有容器可写墓碑，branch.replicaDbSnapshots 又随分支状态
+   * 即刻消失——生产派生克隆会永久失踪在共享 infra 里。失败的 drop 入本台账，
+   * 复制集对账循环持续重试；承载 infra 已不存在时数据随实例消亡，出队。
+   */
+  pendingReplicaDbDrops?: Array<{ snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }>;
+  /**
    * User-customisable settings for the GitHub PR preview comment that
    * CDS posts on PR open / refreshes on every deploy
    * (postOrUpdatePrComment in routes/github-webhook.ts).

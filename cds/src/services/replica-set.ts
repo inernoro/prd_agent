@@ -1007,7 +1007,12 @@ export class ReplicaSetService {
         }]);
         disposition = `专用实例 ${snapshot.dedicatedContainer} 已写 teardown 墓碑，孤儿收割器将兜底移除`;
       } else {
-        disposition = `请到实例 ${snapshot.infraContainer} 手动 DROP 库 ${snapshot.dbName}`;
+        // 共享实例克隆无容器可墓碑（Codex 第二十五轮 P1）：入待清理台账，
+        // 对账循环持续重试 DROP，不再只留一行日志
+        this.opts.state.addPendingReplicaDbDrop({
+          snapshot, projectId: live?.projectId || projectId, requestedAt: this.now(),
+        });
+        disposition = '已入待清理台账（pendingReplicaDbDrops），对账循环将持续重试 DROP';
       }
       this.opts.logger?.error?.(
         `[replica-set] 栅栏清理失败（${context}）：隔离库 ${snapshot.dbName} 未能删除（${(err as Error).message}）——${disposition}`,
@@ -1200,11 +1205,45 @@ export class ReplicaSetService {
     }
   }
 
+  /**
+   * 共享实例隔离库待清理台账的收敛（Codex 第二十五轮 P1）：分支删除/栅栏清理
+   * 时 DROP 失败的共享库克隆入 pendingReplicaDbDrops，这里逐条重试。承载
+   * infra 已不存在 → 数据随实例消亡，出队；infra 未运行 → 留队等实例回来。
+   */
+  private async processPendingDbDrops(): Promise<void> {
+    for (const item of this.opts.state.getPendingReplicaDbDrops()) {
+      const infra = this.opts.state.getInfraServicesForProject(item.projectId)
+        .find((svc) => svc.containerName === item.snapshot.infraContainer);
+      if (!infra) {
+        this.opts.state.removePendingReplicaDbDrop(item.snapshot.dbName, item.snapshot.infraContainer);
+        this.opts.logger?.info?.(
+          `[replica-set] 待清理隔离库 ${item.snapshot.dbName} 的承载实例 ${item.snapshot.infraContainer} 已不存在，数据随实例消亡，出队`,
+        );
+        continue;
+      }
+      if (infra.status !== 'running') continue;
+      try {
+        await dropReplicaDb(item.snapshot, infra.env || {});
+        this.opts.state.removePendingReplicaDbDrop(item.snapshot.dbName, item.snapshot.infraContainer);
+        this.opts.logger?.info?.(`[replica-set] 待清理隔离库 ${item.snapshot.dbName} 补删成功，出队`);
+      } catch (err) {
+        this.opts.logger?.warn?.(
+          `[replica-set] 待清理隔离库 ${item.snapshot.dbName} 重试 DROP 仍失败（留队下轮再试）: ${(err as Error).message}`,
+        );
+      }
+    }
+  }
+
   /** 启动即对账一次（收敛 CDS 停机期间的死亡），此后周期兜底。 */
   startMemberReconcileLoop(intervalMs = 60_000): void {
-    const run = () => void this.reconcileMembersAgainstDocker().catch((err) => {
-      this.opts.logger?.warn?.(`[replica-set] 副本对账异常: ${(err as Error).message}`);
-    });
+    const run = () => {
+      void this.reconcileMembersAgainstDocker().catch((err) => {
+        this.opts.logger?.warn?.(`[replica-set] 副本对账异常: ${(err as Error).message}`);
+      });
+      void this.processPendingDbDrops().catch((err) => {
+        this.opts.logger?.warn?.(`[replica-set] 待清理隔离库收敛异常: ${(err as Error).message}`);
+      });
+    };
     run();
     const timer = setInterval(run, intervalMs);
     (timer as { unref?: () => void }).unref?.();
