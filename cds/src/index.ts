@@ -42,6 +42,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { settleMemberAfterStop } from './services/replica-stop.js';
 import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
@@ -1484,12 +1485,26 @@ schedulerService.setCoolFn(async (slug: string) => {
         } catch (err) {
           console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
         }
-      } else if (member.status === 'provisioning') {
-        // 无容器的 provisioning 成员也标 stopped（Codex P1 同款）：物化栅栏按状态
-        // 放弃，防止降温后后台任务把副本容器起出来
-        member.statusMessage = '物化被调度器降温中断，可在画布删除后重建';
       }
-      member.status = 'stopped';
+      // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
+      // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
+      // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
+      await settleMemberAfterStop(member, {
+        isRunning: (name) => containerService.isRunning(name),
+        interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
+        onStillRunning: (containerName) => {
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'schedulerService.setCoolFn',
+            action: 'replica.member.stop.failed',
+            message: `副本容器降温停止失败但仍在运行: ${containerName}`,
+            branchId: branch.id,
+            projectId: branch.projectId,
+            containerName,
+          });
+        },
+      });
     }
   }
   await archiveBranchContainerLogs({
@@ -2072,10 +2087,24 @@ const autoLifecycleService = new AutoLifecycleService(
             } catch (err) {
               console.warn(`[auto-lifecycle] stop replica ${member.containerName} failed: ${(err as Error).message}`);
             }
-          } else if (member.status === 'provisioning') {
-            member.statusMessage = '物化被 auto-lifecycle 自动停止中断，可在画布删除后重建';
           }
-          member.status = 'stopped';
+          // 停止必须核实再落状态（三处循环之一，判定见 services/replica-stop.ts）
+          await settleMemberAfterStop(member, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '物化被 auto-lifecycle 自动停止中断，可在画布删除后重建',
+            onStillRunning: (containerName) => {
+              activeServerEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'autoLifecycleService.stopBranch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器自动停止失败但仍在运行: ${containerName}`,
+                branchId: branch.id,
+                projectId: branch.projectId,
+                containerName,
+              });
+            },
+          });
         }
       }
       await archiveBranchContainerLogs({

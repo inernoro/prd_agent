@@ -158,3 +158,58 @@ describe('项目级计划必须是整组动作（P2）', () => {
     expect(plan.steps).toHaveLength(1);
   });
 });
+
+describe('项目级改权重/下线必须整组（P2 的另一半）', () => {
+  beforeEach(() => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaMode = 'project';
+    // 一个跨两服务的项目级组
+    b.replicaSets!.api.members = [{ ...mkMember('rs-a', 'c-a'), projectGroupId: 'pg-1' }];
+    b.replicaSets!.web = {
+      profileId: 'web', enabled: true, primaryWeight: 100,
+      members: [{ ...mkMember('rs-w', 'c-w'), projectGroupId: 'pg-1' }],
+      updatedAt: new Date().toISOString(),
+    } as never;
+  });
+
+  const w = (memberId: string, profileId: string, weight: number) =>
+    ({ kind: 'set-weight' as const, profileId, params: { memberId, weight } });
+
+  it('只改组里一半的权重被拒（组内分流不一致 = 整组语义名存实亡）', () => {
+    expect(() => mkSvc().startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project', steps: [w('rs-a', 'api', 50)],
+    })).toThrow('必须整组进行');
+  });
+
+  it('整组覆盖但给了两个不同权重也被拒', () => {
+    expect(() => mkSvc().startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project', steps: [w('rs-a', 'api', 50), w('rs-w', 'web', 30)],
+    })).toThrow('同一个值');
+  });
+
+  it('整组同值放行', () => {
+    const plan = mkSvc().startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project', steps: [w('rs-a', 'api', 50), w('rs-w', 'web', 50)],
+    });
+    expect(plan.steps).toHaveLength(2);
+  });
+
+  it('只下线组里一个成员被拒', () => {
+    expect(() => mkSvc().startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'remove-member', profileId: 'api', params: { memberId: 'rs-a' } }],
+    })).toThrow('必须整组进行');
+  });
+
+  it('无 projectGroupId 的存量成员不受整组约束（按位配对兜底本就是容器级语义）', () => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaSets!.api.members = [mkMember('rs-legacy', 'c-l')];
+    delete (b.replicaSets!.web as { members: unknown[] }).members[0];
+    b.replicaSets!.web.members = [];
+    const plan = mkSvc().startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'rs-legacy', weight: 40 } }],
+    });
+    expect(plan.steps).toHaveLength(1);
+  });
+});

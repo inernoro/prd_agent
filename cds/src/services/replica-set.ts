@@ -1353,6 +1353,7 @@ export class ReplicaSetService {
       if (!s.profileId) throw new ReplicaSetError(400, '步骤缺少 profileId');
     }
     this.assertProjectGroupPlanIsComplete(branch, input.mode, input.steps);
+    this.assertProjectGroupMemberOpsAreWhole(branch, input.mode, input.steps);
     // 校验全过才落模式
     if (input.mode === 'container' || input.mode === 'project') branch.replicaMode = input.mode;
     const plan: ReplicaPlan = {
@@ -1416,6 +1417,64 @@ export class ReplicaSetService {
       if (missing.length > 0) {
         throw new ReplicaSetError(400,
           `项目级整组副本必须覆盖全部服务：组 ${gid} 缺 ${missing.join('、')}（共 ${known.length} 个服务，本组只覆盖 ${covered.size} 个）。残缺组会让未覆盖的服务流量仍全打主实例，项目级实验结论失真。`);
+      }
+    }
+  }
+
+  /**
+   * 项目级的改权重 / 下线也必须整组（同上一条的另一半）。
+   *
+   * 判据不用「全部服务」而用**被引用成员所在组的现有成员全集**：项目级组可能因
+   * 历史原因不齐（某服务当时加副本失败），前端 setGroupWeight / 整组下线本来就只
+   * 对该组现存成员生成步骤。要求「碰了组里一个，就得碰全组现存的」既拦得住
+   * 「只改一半权重导致组内分流各异」，又不会误拒 UI 生成的合法计划。
+   * 无 projectGroupId 的存量成员（按位配对兜底）没有组身份，不参与本约束。
+   */
+  private assertProjectGroupMemberOpsAreWhole(
+    branch: BranchEntry,
+    mode: 'container' | 'project' | undefined,
+    steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>,
+  ): void {
+    if ((mode ?? branch.replicaMode) !== 'project') return;
+    const membersByGroup = new Map<string, ReplicaMember[]>();
+    const groupOfMember = new Map<string, string>();
+    for (const rs of Object.values(branch.replicaSets ?? {})) {
+      for (const m of rs.members) {
+        if (!m.projectGroupId) continue;
+        groupOfMember.set(m.id, m.projectGroupId);
+        const arr = membersByGroup.get(m.projectGroupId) ?? [];
+        arr.push(m);
+        membersByGroup.set(m.projectGroupId, arr);
+      }
+    }
+    if (membersByGroup.size === 0) return;
+    for (const kind of ['set-weight', 'remove-member'] as const) {
+      const touched = steps.filter((s) => s.kind === kind && s.params?.memberId);
+      if (touched.length === 0) continue;
+      const byGid = new Map<string, Array<{ memberId: string; weight?: number }>>();
+      for (const s of touched) {
+        const memberId = String(s.params?.memberId);
+        const gid = groupOfMember.get(memberId);
+        if (!gid) continue; // 存量无组成员：容器级语义，不受整组约束
+        const arr = byGid.get(gid) ?? [];
+        arr.push({ memberId, weight: s.params?.weight });
+        byGid.set(gid, arr);
+      }
+      for (const [gid, entries] of byGid) {
+        const all = membersByGroup.get(gid) ?? [];
+        const coveredIds = new Set(entries.map((e) => e.memberId));
+        const missing = all.filter((m) => !coveredIds.has(m.id));
+        if (missing.length > 0) {
+          throw new ReplicaSetError(400,
+            `项目级模式下「${kind === 'set-weight' ? '改权重' : '下线副本'}」必须整组进行：组 ${gid} 还有 ${missing.length} 个成员（${missing.map((m) => m.id).join('、')}）没被本次计划覆盖。只动一半会让同一组内各服务分流不一致，整组语义名存实亡。`);
+        }
+        if (kind === 'set-weight') {
+          const weights = new Set(entries.map((e) => (typeof e.weight === 'number' ? e.weight : NaN)));
+          if (weights.size > 1) {
+            throw new ReplicaSetError(400,
+              `项目级整组改权重必须给同一个值：组 ${gid} 本次出现了 ${weights.size} 种权重。整组的意义就是同进同退。`);
+          }
+        }
       }
     }
   }
