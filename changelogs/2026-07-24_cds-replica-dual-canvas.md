@@ -163,3 +163,6 @@
 | fix | cds | 分支隔离完成态以全量有效服务为分母：零成员/无复制集条目的服务不隔离不算统一战线对齐，多服务计划中途失败不再误报 done |
 | fix | cds | 分流探测 path 强校验（仅可打印 ASCII）+ probeOnce 捕获 http.request 同步抛错，封死 ERR_UNESCAPED_CHARACTERS 经未处理拒绝拖垮 CDS 进程的通道 |
 | fix | cds | 复制集对账收敛孤儿 provisioning 成员：在途操作进程内登记（物化/隔离切换/回切全链路），不在登记表的 provisioning 即上一进程遗留——拆容器 + 标 error 指引重建，不再永久占位转圈 |
+| fix | cds | service-graph 边键的字面 NUL 字节改用 unicode 转义序列（运行时语义不变），文件不再被 git 判成二进制、恢复文本 diff 可审 |
+| fix | cds | 专用隔离实例容器名揉入 CDS 实例段 + cds.instance label，多 master 共宿主管同一分支不再同名互杀；幂等清理前按 label 验归属，异实例容器拒删 |
+| fix | cds | 分流探测 host 改全量对照：域名后缀必须命中 CDS 根域（缺配置退分支 previewUrl 实际后缀）+ 单标签 slug/别名匹配，别家自定义域首标签碰巧带本分支 slug 前缀不再被放行 |

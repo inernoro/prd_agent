@@ -11,6 +11,7 @@ import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
+import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
@@ -4014,6 +4015,8 @@ export function createServer(deps: ServerDeps): express.Express {
     versions: deploymentVersionService,
     shell: deps.shell,
     portStart: deps.config.portStart,
+    // 多 master 共宿主的实例身份（Codex 第十九轮 P1）：专用隔离实例容器名/label
+    instanceId: computeCdsInstanceId(deps.config.repoRoot),
     isRemoteBranch: (branch) => !!(
       branch.executorId
       && deps.registry?.getAll().some((n) => n.id === branch.executorId && n.role !== 'embedded')
@@ -4039,6 +4042,7 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
     dispatchVersion,
     getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
+    rootDomains: deps.config.rootDomains || [],
   }));
 
   app.use('/api', createManagedProjectsRouter({

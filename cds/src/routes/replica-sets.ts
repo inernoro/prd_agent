@@ -61,6 +61,8 @@ export interface ReplicaSetsRouterDeps {
   dispatchVersion: (version: DeploymentVersion, trigger: 'manual' | 'rollback') => Promise<VersionDispatchResult>;
   /** 查部署 run 当前状态（promote 终态门用；running=成功终态，failed/cancelled=失败终态） */
   getDeploymentRunStatus: (runId: string) => string | undefined;
+  /** CDS 公网根域清单（config.rootDomains）：分流探测 host 全量归属校验用 */
+  rootDomains?: string[];
 }
 
 export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
@@ -156,12 +158,28 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       const branchForHost = deps.stateService.getBranch(req.params.branchId)!;
       const projectForHost = deps.stateService.getProjects().find((p) => p.id === branchForHost.projectId);
       const previewSlug = buildPreviewUrlForProject('', branchForHost.branch, projectForHost, branchForHost.projectId).previewSlug || '';
-      const firstLabel = host.split('.')[0] || '';
+      // 全 host 对照（Codex 第十九轮 P2）：只看首标签前缀会放行「首标签碰巧以本
+      // 分支 slug- 开头」的**别家域名**（如别的项目的自定义域 team-other.example.com
+      // 对 slug=team）——forwarder 会替调用方把探测打到别的项目。改为：host 的
+      // 域名后缀必须命中 CDS 根域清单（缺配置时退分支 previewUrl 的实际后缀），
+      // 且余下部分是单个标签、等于 slug / slug- 前缀 / 子域别名；自定义域仍走
+      // 本分支 customDomains 全串精确匹配。
+      const roots = (deps.rootDomains ?? []).map((r) => r.toLowerCase()).filter(Boolean);
+      let labelOnRoot = '';
+      for (const root of roots) {
+        if (host.endsWith(`.${root}`)) {
+          const rest = host.slice(0, host.length - root.length - 1);
+          if (rest && !rest.includes('.')) { labelOnRoot = rest; break; }
+        }
+      }
+      // 根域未配置（纯本地 dev，无公网路由面）时退回首标签语义，保持可用；
+      // 生产/联网环境 rootDomains 恒有值，走全 host 对照
+      if (!labelOnRoot && roots.length === 0) labelOnRoot = host.split('.')[0] || '';
       const aliasLabels = new Set((branchForHost.subdomainAliases ?? []).filter(Boolean).map((a) => String(a).toLowerCase()));
       const customDomains = new Set((branchForHost.customDomains ?? []).map((d) => String(d).toLowerCase()));
       const hostAllowed =
-        (Boolean(previewSlug) && (firstLabel === previewSlug || firstLabel.startsWith(`${previewSlug}-`)))
-        || aliasLabels.has(firstLabel)
+        (Boolean(labelOnRoot) && Boolean(previewSlug) && (labelOnRoot === previewSlug || labelOnRoot.startsWith(`${previewSlug}-`)))
+        || (Boolean(labelOnRoot) && aliasLabels.has(labelOnRoot))
         || customDomains.has(host);
       if (!hostAllowed) {
         res.status(403).json({ error: '入口 host 不属于该分支的已发布域名，拒绝探测' });

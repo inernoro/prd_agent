@@ -58,6 +58,8 @@ export interface ReplicaSetServiceOptions {
    * 成员物化会错误地在 master 本机起容器，直接拒绝。由 server.ts 用 registry 注入。
    */
   isRemoteBranch?: (branch: BranchEntry) => boolean;
+  /** 本 CDS 实例 id（computeCdsInstanceId）：专用隔离实例容器命名/归属 label 用（Codex 第十九轮 P1） */
+  instanceId?: string;
   logger?: ReplicaSetLogger;
   now?: () => Date;
 }
@@ -389,6 +391,7 @@ export class ReplicaSetService {
       target,
       memberId: guardId,
       profileId,
+      instanceId: this.opts.instanceId,
       branchId: branch.id,
       now: this.opts.now,
       onOutput: (line) => onStage('cloning', line),
@@ -521,6 +524,7 @@ export class ReplicaSetService {
       try {
         const cloned = await cloneReplicaDb({
           target, memberId: guardId, profileId, branchId, now: this.opts.now,
+          instanceId: this.opts.instanceId,
           // 复验 R5-P1：克隆保护/进度必须有用户可见 sink——透传到成员 statusMessage
           //（保持「第1步」前缀，UI 的隔离阶段判定依赖它）+ 服务端日志
           onOutput: (line) => {
@@ -805,6 +809,7 @@ export class ReplicaSetService {
           target,
           memberId,
           profileId,
+          instanceId: this.opts.instanceId,
           branchId,
           now: this.opts.now,
           onOutput,

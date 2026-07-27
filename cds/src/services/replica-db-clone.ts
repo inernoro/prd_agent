@@ -231,6 +231,12 @@ export async function cloneReplicaDb(opts: {
   profileId: string;
   /** 分支 id：揉进隔离库名/专用实例容器名的哈希段，防跨分支同名互杀（Codex P1） */
   branchId: string;
+  /**
+   * 本 CDS 实例 id（computeCdsInstanceId，Codex 第十九轮 P1）：多 master 共宿主
+   * 时揉进专用实例容器名 + 打 cds.instance label——异 master 管同一分支/profile
+   * 的克隆不再同名互杀；幂等清理前也按 label 验归属，异实例容器拒删。
+   */
+  instanceId?: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -250,7 +256,7 @@ export async function cloneReplicaDb(opts: {
   // 上凡大批量写入随机 SIGSEGV[docker events die exitCode=139]，纯读从未崩——
   // 写压必须彻底移出共享实例）
   if (target.engine === 'mongo') {
-    return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, now: opts.now, onOutput: opts.onOutput });
+    return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, instanceId: opts.instanceId, now: opts.now, onOutput: opts.onOutput });
   }
 
   // ── mysql / postgres：共享实例内克隆（写入量小、历轮验收无崩溃记录，维持原路径）──
@@ -356,6 +362,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
   memberId: string;
   profileId: string;
   dbName: string;
+  instanceId?: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -388,7 +395,11 @@ async function cloneMongoViaDedicatedInstance(opts: {
   }
 
   const scratchDir = path.join(os.tmpdir(), 'cds-replica-clone', dbName);
-  const isoName = `cds-rsdb-${dbName}`;
+  // 实例段进容器名（Codex 第十九轮 P1）：不带实例段时，两个共宿主的 CDS master
+  // 管到同一分支/profile 会得到完全相同的容器名——一边开始隔离就把另一边活着
+  // 的隔离实例 rm -f 掉。dropReplicaDb 的 cds-rsdb- 前缀守卫不受影响（快照存的
+  // 是完整容器名）。
+  const isoName = `cds-rsdb-${opts.instanceId ? `${opts.instanceId.slice(0, 6)}-` : ''}${dbName}`;
   const isoImage = process.env.CDS_REPLICA_ISO_MONGO_IMAGE || 'mongo:7.0';
   const authFlags = user ? `-u "$RS_MONGO_USER" -p "$RS_MONGO_PW" --authenticationDatabase admin` : '';
   const authEnv = user ? ['-e', `RS_MONGO_USER=${user}`, '-e', `RS_MONGO_PW=${pw}`] : [];
@@ -406,7 +417,18 @@ async function cloneMongoViaDedicatedInstance(opts: {
   try {
     fs.mkdirSync(scratchDir, { recursive: true });
     onOutput?.(`── 一键隔离数据库: ${target.sourceDb} → 专用隔离实例 ${isoName}（${isoImage}）──`);
-    // 幂等：清掉可能的同名残留（上次失败/重试）
+    // 幂等：清掉可能的同名残留（上次失败/重试）。清理前验归属（Codex 第十九轮
+    // P1 backstop）：同名容器带 cds.instance 且不等于本实例时拒删——实例段进名
+    // 后正常不会撞名，这里兜的是历史遗留名/异常改名的边角。
+    if (opts.instanceId) {
+      const owner = await runDockerExec(
+        ['inspect', '-f', '{{index .Config.Labels "cds.instance"}}', isoName], '', 20_000, 4 * 1024,
+      );
+      const ownerLabel = owner.code === 0 ? owner.stdout.trim() : '';
+      if (ownerLabel && ownerLabel !== opts.instanceId) {
+        throw new Error(`同名隔离实例 ${isoName} 属于另一个 CDS 实例（cds.instance=${ownerLabel}），拒绝清理/覆盖——请检查多 master 共宿主配置`);
+      }
+    }
     await runDockerExec(['rm', '-f', isoName], '', 60_000, 8 * 1024);
 
     onOutput?.('── 阶段1/3: mongodump 只读落盘（共享库只读，零写入）──');
@@ -423,6 +445,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     const runIso = await runDockerExec([
       'run', '-d', '--name', isoName,
       '--label', 'cds.type=rsdb',
+      ...(opts.instanceId ? ['--label', `cds.instance=${opts.instanceId}`] : []),
       '--restart', 'unless-stopped',
       '-p', '27017',
       '--memory', '1536m', '--memory-swap', '1536m',
