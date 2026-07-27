@@ -198,3 +198,4 @@
 | fix | cds | 磁盘探测同时量 worktree 与 docker 数据目录，取最紧张者判档 |
 | fix | cds | janitor 调度与 enabled 解耦并在启动后跑首轮：重启后不再整整一小时不回收 |
 | fix | cds | promote 终态清理改用不可复用的成员身份栅栏，不再误删同 id 的替身成员 |
+| feat | cds | janitor 快照带上最近一轮 sweep 摘要（磁盘档位/删除分支数/镜像回收与截断数），回收结果从只打日志变为外部可核 |

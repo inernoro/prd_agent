@@ -350,4 +350,20 @@ describe('JanitorService', () => {
       expect(report.diskTier).toBe('freeze');
     });
   });
+
+  describe('回收结果可观测（2026-07-27 复盘）', () => {
+    it('sweep 后快照带上本轮摘要——外部据此确认回收是否真的在跑', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      expect(janitor.getSnapshot().lastSweep).toBeNull();
+      mockDiskState = { totalBytes: 100, freeBytes: 12 }; // 88% -> reclaim
+      await janitor.sweep();
+      const last = janitor.getSnapshot().lastSweep;
+      expect(last).not.toBeNull();
+      expect(last!.diskTier).toBe('reclaim');
+      expect(last!.removedBranches).toBe(0);
+      // 两项回收都关掉时如实报 null，而不是假装跑过
+      expect(last!.imageRetention).toBeNull();
+      expect(last!.dockerPrune).toBeNull();
+    });
+  });
 });

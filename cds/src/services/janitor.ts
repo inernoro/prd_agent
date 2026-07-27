@@ -167,6 +167,19 @@ export interface JanitorSnapshot {
   config: JanitorConfig;
   dryRun: { wouldRemove: string[]; wouldSkip: string[] };
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
+  /**
+   * 最近一次 sweep 的结果摘要（2026-07-27 复盘）。此前回收结果只打进 console，
+   * 外部无从确认「镜像回收到底有没有在跑、回收了多少、还欠多少」——这正是
+   * 交付时需要拿出来的证据。null = 本进程尚未跑过 sweep。
+   */
+  lastSweep: {
+    at: string;
+    diskTier: DiskTier;
+    removedBranches: number;
+    imageRetention: { removed: number; failed: number; deferred: number; keepGenerations: number } | null;
+    dockerPrune: string[] | null;
+    errors: number;
+  } | null;
 }
 
 /** Callback: remove a branch's worktree + docker state. */
@@ -237,6 +250,7 @@ export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
   /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
   private firstSweepHandle: NodeJS.Timeout | null = null;
+  private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
   private removeFn: RemoveBranchFn | null = null;
   private orphanInfraScan: OrphanInfraScanFn | null = null;
 
@@ -495,6 +509,21 @@ export class JanitorService {
       }
     }
 
+    this.lastSweepSummary = {
+      at: report.timestamp,
+      diskTier: report.diskTier,
+      removedBranches: report.removedBranches.length,
+      imageRetention: report.imageRetention
+        ? {
+          removed: report.imageRetention.removed.length,
+          failed: report.imageRetention.failed.length,
+          deferred: report.imageRetention.deferred,
+          keepGenerations: report.imageRetention.keepGenerations,
+        }
+        : null,
+      dockerPrune: report.dockerPrune?.reclaimed ?? null,
+      errors: report.errors.length,
+    };
     return report;
   }
 
@@ -542,6 +571,7 @@ export class JanitorService {
       config: this.config,
       dryRun: this.dryRun(),
       disk,
+      lastSweep: this.lastSweepSummary,
     };
   }
 }
