@@ -3,6 +3,8 @@ import { BrowserRouter, Link, Routes, Route, Navigate, useLocation } from 'react
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from '@/lib/auth';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
+// 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
+import { BugReportDialog } from '@/components/BugReportDialog';
 import { LoginPage } from '@/pages/LoginPage';
 import { MapSsoPage } from '@/pages/MapSsoPage';
 import { ChangePasswordPage } from '@/pages/ChangePasswordPage';
@@ -81,6 +83,7 @@ export function App() {
   return (
     <AuthProvider>
       <BrowserRouter basename={getRouterBasename()}>
+        <BugReportDialog />
         <Routes>
           <Route path="/login" element={<LoginPage />} />
           <Route path="/auth/map" element={<MapSsoPage />} />

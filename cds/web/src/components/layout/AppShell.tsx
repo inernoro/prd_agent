@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Activity, Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -135,6 +135,7 @@ const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPag
 const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
+const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
 
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -157,6 +158,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/release-center')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
+  if (pathname.startsWith('/status')) return 'status';
   return 'projects';
 }
 
@@ -493,6 +495,19 @@ function RailNav({
         >
           <ClipboardCheck />
           <span>Reports</span>
+        </Link>
+        <Link
+          to="/status"
+          className="cds-rail-item"
+          data-active={active === 'status' ? 'true' : 'false'}
+          aria-label="存活状态"
+          title="存活状态（自建探测 / 可用率柱条 / 故障时间线）"
+          onClick={onNavigate}
+          onMouseEnter={preloadStatusPage}
+          onFocus={preloadStatusPage}
+        >
+          <Activity />
+          <span>Status</span>
         </Link>
       </div>
       <div className="flex-1" />

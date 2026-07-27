@@ -8284,6 +8284,247 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
 
+// ───────────────────── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）─────────────────────
+//
+// 投递两条路（绝不假装成功）：
+//   1. 配置了 MAP 缺陷系统凭据 → 服务端带凭据转发到 MAP `POST /api/defect-agent/defects`
+//      再调 submit；凭据只在服务端读取，前端永远拿不到。
+//   2. 未配置或转发失败 → 落到网关自己的 llmgw_bug_reports 集合，
+//      响应 delivery=local + degradeReason，前端如实告知「未同步到缺陷系统」。
+var bugReports = gatewayDatabase.GetCollection<BsonDocument>("llmgw_bug_reports");
+var bugReportMapBaseUrl = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_BASE_URL") ?? string.Empty).Trim().TrimEnd('/');
+var bugReportMapToken = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_TOKEN") ?? string.Empty).Trim();
+var bugReportMapAssignee = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_ASSIGNEE") ?? string.Empty).Trim();
+var bugReportForwardConfigured = bugReportMapBaseUrl.Length > 0 && bugReportMapToken.Length > 0;
+var bugReportHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+var bugReportSeverities = new[] { "critical", "major", "minor", "trivial" };
+const long BugReportMaxAttachmentBytes = 5L * 1024 * 1024;
+// 总量闸按 **base64 字符长度** 计，因为真正写进 MongoDB 单文档的就是 base64 字符串。
+// 按解码后字节算 12MB 时，base64 恰好是 16MiB，正好顶穿 MongoDB 16MB 单文档硬上限，
+// 写库会直接抛异常，缺陷与截图全丢。这里留出文档其余字段与 BSON 开销的余量。
+const long BugReportMaxTotalBase64Chars = 12L * 1024 * 1024;
+const int BugReportMaxAttachmentCount = 4;
+// 转发缺陷系统（create + submit）的总预算，与前端「超过 10 秒转本地留存」文案一致：
+// 两段各给 10s 会让用户实际等到 20s。
+var bugReportForwardBudget = TimeSpan.FromSeconds(10);
+
+app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubmitRequest? body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var description = (body?.Description ?? string.Empty).Trim();
+    if (description.Length == 0)
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_EMPTY", "请填写问题描述"), jsonOptions, 400);
+
+    var severity = (body?.Severity ?? string.Empty).Trim().ToLowerInvariant();
+    if (!bugReportSeverities.Contains(severity, StringComparer.Ordinal))
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_SEVERITY_INVALID", "严重程度取值非法"), jsonOptions, 400);
+
+    var rawAttachments = body?.Attachments ?? new List<BugReportAttachmentDto>();
+    if (rawAttachments.Count > BugReportMaxAttachmentCount)
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_MANY", $"附件最多 {BugReportMaxAttachmentCount} 个"), jsonOptions, 400);
+
+    var attachmentDocs = new BsonArray();
+    long totalBase64Chars = 0;
+    foreach (var item in rawAttachments)
+    {
+        var data = item.DataBase64 ?? string.Empty;
+        if (data.Length == 0) continue;
+        var estimated = (long)Math.Ceiling(data.Length * 3d / 4d);
+        if (estimated > BugReportMaxAttachmentBytes)
+            return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_LARGE", "单个附件超过 5 MB"), jsonOptions, 400);
+        totalBase64Chars += data.Length;
+        if (totalBase64Chars > BugReportMaxTotalBase64Chars)
+            return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_LARGE", "附件总量超出存储上限，请压缩截图后重试"), jsonOptions, 400);
+        attachmentDocs.Add(new BsonDocument
+        {
+            { "Name", (item.Name ?? "attachment").Trim() },
+            { "MimeType", (item.MimeType ?? "application/octet-stream").Trim() },
+            { "Size", item.Size > 0 ? item.Size : estimated },
+            { "DataBase64", data },
+        });
+    }
+
+    var firstLine = description.Split('\n').FirstOrDefault()?.Trim() ?? string.Empty;
+    var title = (body?.Title ?? string.Empty).Trim();
+    if (title.Length == 0) title = firstLine.Length > 100 ? firstLine[..100] : firstLine;
+    if (title.Length == 0) title = "未命名缺陷";
+    var content = (body?.Content ?? string.Empty).Trim();
+    if (content.Length == 0) content = description;
+
+    var environmentDoc = new BsonDocument();
+    foreach (var pair in body?.Environment ?? new Dictionary<string, string>())
+    {
+        if (string.IsNullOrWhiteSpace(pair.Value)) continue;
+        environmentDoc[pair.Key] = pair.Value.Length > 500 ? pair.Value[..500] : pair.Value;
+    }
+
+    var delivery = "local";
+    string? reference = null;
+    string? degradeReason = bugReportForwardConfigured
+        ? null
+        : "未配置缺陷系统转发（LLMGW_BUG_REPORT_MAP_BASE_URL / LLMGW_BUG_REPORT_MAP_TOKEN）";
+
+    if (bugReportForwardConfigured)
+    {
+        // 转发与落库都**不得**绑在 http.RequestAborted 上（见 .claude/rules/server-authority.md）：
+        // 用户按 ESC 关面板或切页就会断连接，最坏时序是 MAP 里已建了缺陷、网关这边没有
+        // 任何记录，既查不到也无法复投。这里改用与请求生命周期解耦的独立超时预算。
+        using var forwardCts = new CancellationTokenSource(bugReportForwardBudget);
+        var forwardToken = forwardCts.Token;
+        try
+        {
+            var createBody = new Dictionary<string, object?>
+            {
+                ["title"] = title,
+                ["content"] = content,
+                ["severity"] = severity,
+            };
+            if (bugReportMapAssignee.Length > 0) createBody["assigneeUserId"] = bugReportMapAssignee;
+
+            using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{bugReportMapBaseUrl}/api/defect-agent/defects")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(createBody, jsonOptions), Encoding.UTF8, "application/json"),
+            };
+            createRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+            using var createResponse = await bugReportHttp.SendAsync(createRequest, forwardToken);
+            var createText = await createResponse.Content.ReadAsStringAsync(forwardToken);
+            if (!createResponse.IsSuccessStatusCode)
+            {
+                degradeReason = $"缺陷系统返回 HTTP {(int)createResponse.StatusCode}";
+            }
+            else
+            {
+                using var parsed = JsonDocument.Parse(createText);
+                JsonElement? defectElement = null;
+                if (parsed.RootElement.TryGetProperty("data", out var dataEl)
+                    && dataEl.TryGetProperty("defect", out var defectEl))
+                {
+                    defectElement = defectEl;
+                }
+                var defectId = defectElement.HasValue && defectElement.Value.TryGetProperty("id", out var idEl)
+                    ? idEl.GetString()
+                    : null;
+                if (string.IsNullOrWhiteSpace(defectId))
+                {
+                    degradeReason = "缺陷系统未返回缺陷 ID";
+                }
+                else
+                {
+                    delivery = "forwarded";
+                    reference = defectElement!.Value.TryGetProperty("defectNo", out var noEl)
+                        ? noEl.GetString() ?? defectId
+                        : defectId;
+                    try
+                    {
+                        using var submitRequest = new HttpRequestMessage(
+                            HttpMethod.Post,
+                            $"{bugReportMapBaseUrl}/api/defect-agent/defects/{defectId}/submit")
+                        {
+                            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                        };
+                        submitRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+                        using var submitResponse = await bugReportHttp.SendAsync(submitRequest, forwardToken);
+                        if (!submitResponse.IsSuccessStatusCode)
+                            app.Logger.LogWarning("[bug-report] 缺陷已创建但 submit 返回 {Status}", (int)submitResponse.StatusCode);
+                    }
+                    catch (Exception submitError)
+                    {
+                        // 缺陷已经落在 MAP 里，提交环节失败只影响状态流转，不改变投递结论。
+                        app.Logger.LogWarning(submitError, "[bug-report] 缺陷已创建但 submit 失败");
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 只可能是本地 10s 总预算到期（forwardToken 与请求生命周期无关）。
+            degradeReason = "缺陷系统 10 秒内无响应，已转为本地留存";
+        }
+        catch (Exception forwardError)
+        {
+            degradeReason = $"缺陷系统调用失败：{forwardError.Message}";
+        }
+    }
+
+    var bugReportDoc = new BsonDocument
+    {
+        { "_id", Guid.NewGuid().ToString("N") },
+        { "TenantId", access.TenantId },
+        { "Source", (body?.Source ?? "llmgw").Trim() },
+        { "Reporter", access.Username },
+        { "ReporterUserId", access.UserId },
+        { "Title", title },
+        { "Description", description },
+        { "Content", content },
+        { "Severity", severity },
+        { "Environment", environmentDoc },
+        { "Attachments", attachmentDocs },
+        { "Delivery", delivery },
+        { "Reference", string.IsNullOrEmpty(reference) ? (BsonValue)BsonNull.Value : new BsonString(reference) },
+        { "DegradeReason", string.IsNullOrEmpty(degradeReason) ? (BsonValue)BsonNull.Value : new BsonString(degradeReason) },
+        { "CreatedAt", DateTime.UtcNow },
+    };
+    // 落库同样与请求生命周期解耦（server-authority）；且必须兜住异常：
+    // 写库失败时若没有转发成功，这条缺陷就彻底丢了，必须给出可读原因让用户重试，
+    // 而不是抛一个裸 500。
+    try
+    {
+        await bugReports.InsertOneAsync(bugReportDoc, cancellationToken: CancellationToken.None);
+    }
+    catch (Exception storeError)
+    {
+        app.Logger.LogError(storeError, "[bug-report] 缺陷记录写入失败 delivery={Delivery}", delivery);
+        if (delivery != "forwarded")
+        {
+            return Json(
+                ApiEnvelope<BugReportSubmitResult>.Fail(
+                    "BUG_REPORT_STORE_FAILED",
+                    "缺陷未能保存（可能是附件总量超出存储上限），请压缩截图后重试"),
+                jsonOptions,
+                500);
+        }
+        // 已经转发到 MAP 的情况下，本地记录只是台账，缺失不改变「缺陷已进入系统」的事实。
+        degradeReason = "缺陷已提交到缺陷系统，但网关本地台账写入失败";
+    }
+
+    return Json(ApiEnvelope<BugReportSubmitResult>.Ok(new BugReportSubmitResult
+    {
+        Id = bugReportDoc.GetStringOrEmpty("_id"),
+        Delivery = delivery,
+        Reference = reference,
+        DegradeReason = degradeReason,
+    }), jsonOptions, 201);
+}).RequireAuthorization();
+
+app.MapGet("/gw/bug-reports", async (HttpContext http, int? limit) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var take = Math.Clamp(limit ?? 50, 1, 200);
+    var docs = await bugReports
+        .Find(Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId))
+        .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+        .Limit(take)
+        .ToListAsync(http.RequestAborted);
+    return Json(ApiEnvelope<BugReportListData>.Ok(new BugReportListData
+    {
+        ForwardConfigured = bugReportForwardConfigured,
+        Items = docs.Select(doc => new BugReportItem
+        {
+            Id = doc.GetStringOrEmpty("_id"),
+            Title = doc.GetStringOrEmpty("Title"),
+            Severity = doc.GetStringOrEmpty("Severity"),
+            Delivery = doc.GetStringOrEmpty("Delivery"),
+            Reference = doc.AsNullableString("Reference"),
+            DegradeReason = doc.AsNullableString("DegradeReason"),
+            Reporter = doc.AsNullableString("Reporter"),
+            AttachmentCount = doc.TryGetValue("Attachments", out var attachments) && attachments.IsBsonArray
+                ? attachments.AsBsonArray.Count
+                : 0,
+            CreatedAt = doc.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        }).ToList(),
+    }), jsonOptions);
+}).RequireAuthorization();
+
 _ = RunGatewayRecoveryLoopAsync(gatewayDatabase, app.Logger, app.Lifetime.ApplicationStopping);
 app.Run();
 

@@ -385,6 +385,41 @@ describe('Acceptance report routes — project-scoped key access', () => {
     expect(res.status).toBe(201);
   });
 
+  // 2026-07-27 验收报告改版（米多刊系「检验档案」皮肤 v2）：皮肤只动 CSS 与装饰性结构，
+  // 契约标记与结构 class 必须原样保留。这条用例钉住改版后的真实骨架仍能通过准入闸，
+  // 未来再改皮肤时如果误删 layout/hero/evidence-nav/reportBody 会在这里红。
+  it('accepts the redesigned dossier skin as long as the template contract stays intact', async () => {
+    const redesignedHtml = `<!doctype html>
+      <!-- map-acceptance-template: interactive-html-v2 -->
+      <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
+      <head><meta name="map-acceptance-template" content="interactive-html-v2"/></head>
+      <body>
+      <div class="layout">
+        <aside id="report-navigation">
+          <div class="side-verdict is-conditional"><b>有条件通过</b></div>
+          <div class="evidence-nav"><a href="#fig-01-entry">图01</a></div>
+        </aside>
+        <main>
+          <header class="hero"><div class="masthead"></div><div class="dateline"></div><div class="metric-grid"></div></header>
+          <section id="evidence-gallery"><div class="evidence-gallery"></div></section>
+          <article id="reportBody"><figure class="shot"><figcaption class="shot-head"></figcaption></figure></article>
+          <footer class="colophon"></footer>
+        </main>
+      </div>
+      <div class="lightbox" id="evidence-lightbox" hidden></div>
+      </body></html>`;
+    const res = await call(server, 'POST', '/api/reports', {
+      body: {
+        title: 'prd-agent · 每日验收 · 2026-07-27 · 验收报告',
+        format: 'html',
+        content: redesignedHtml,
+        verdict: 'conditional',
+        tier: 'L2',
+      },
+    });
+    expect(res.status).toBe(201);
+  });
+
   it('does not apply the acceptance template gate to generic HTML reports', async () => {
     const res = await call(server, 'POST', '/api/reports', {
       body: {

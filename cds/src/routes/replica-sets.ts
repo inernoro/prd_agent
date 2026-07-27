@@ -9,6 +9,7 @@ import { connect as tcpConnect } from 'node:net';
 import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, REPLICA_PLAN_MAX_STEPS, type ReplicaSetService } from '../services/replica-set.js';
+import { LoadTestError, LOADTEST_LIMITS, ReplicaLoadTestService } from '../services/replica-loadtest.js';
 import { resolveReplicaDbTarget } from '../services/replica-db-clone.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { buildServiceGraph } from '../services/service-graph.js';
@@ -98,6 +99,8 @@ export interface ReplicaSetsRouterDeps {
   getDeploymentRunStatus: (runId: string) => string | undefined;
   /** CDS 公网根域清单（config.rootDomains）：分流探测 host 全量归属校验用 */
   rootDomains?: string[];
+  /** 压测服务（省略时按 stateService + rootDomains + 磁盘刹车就地构造；测试可注入假执行器） */
+  loadTestService?: ReplicaLoadTestService;
 }
 
 export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
@@ -333,6 +336,78 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       tally[r.servedBy] = (tally[r.servedBy] || 0) + 1;
     }
     res.json({ count, host, path, tally, hits });
+  });
+
+  // ── 压测（负载测试）：复制集 = 现成的 A/B 负载对比台 ──
+  //
+  // 目标由服务端从分支状态解析（主实例 + 运行中副本，各自用 __rs 钉选），执行器
+  // 只连本机 forwarder；调用方无法指定任意 URL。磁盘冻结档、并发上限、时长上限
+  // 全部在服务层设闸，路由层只负责鉴权与错误映射。
+  const loadTests = deps.loadTestService ?? new ReplicaLoadTestService({
+    state: deps.stateService,
+    rootDomains: deps.rootDomains,
+    diskBlockReason: () => diskGuard.blockReasonForDeploy(),
+  });
+
+  /**
+   * 周期收敛的驱动点（concurrency-gate-discipline 第 4 条）：每个压测端点先收割
+   * 一次心跳过期的僵尸，保证「闸位泄漏」最多存活到下一次有人看这个面板为止，
+   * 而不是要等 CDS 重启。收割是纯内存 O(n)，n ≤ 每分支 20 条，开销可忽略。
+   */
+  const withReap = <T>(fn: () => T): T => {
+    loadTests.reapStale();
+    return fn();
+  };
+
+  router.get('/branches/:branchId/replica-loadtests', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      withReap(() => res.json({
+        runs: loadTests.list(req.params.branchId),
+        limits: LOADTEST_LIMITS,
+        active: loadTests.activeHolders(),
+        health: loadTests.health(),
+      }));
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.post('/branches/:branchId/replica-loadtests', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    const profileId = typeof req.body?.profileId === 'string' ? req.body.profileId.trim() : '';
+    if (!profileId) { res.status(400).json({ error: '缺少 profileId（要压哪个服务）' }); return; }
+    try {
+      const run = withReap(() => loadTests.start(req.params.branchId, profileId, {
+        memberIds: Array.isArray(req.body?.memberIds) ? req.body.memberIds.map(String) : undefined,
+        concurrency: req.body?.concurrency,
+        durationSec: req.body?.durationSec,
+        warmupSec: req.body?.warmupSec,
+        method: typeof req.body?.method === 'string' ? req.body.method : undefined,
+        path: typeof req.body?.path === 'string' ? req.body.path : undefined,
+        host: typeof req.body?.host === 'string' ? req.body.host : undefined,
+        headers: req.body?.headers && typeof req.body.headers === 'object' ? req.body.headers : undefined,
+        body: typeof req.body?.body === 'string' ? req.body.body : undefined,
+        maxRequests: req.body?.maxRequests,
+      }));
+      res.status(202).json({ run });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.get('/branches/:branchId/replica-loadtests/:runId', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      res.json({ run: loadTests.get(req.params.branchId, req.params.runId) });
+    } catch (err) { respondError(res, err); }
+  });
+
+  router.post('/branches/:branchId/replica-loadtests/:runId/cancel', (req, res) => {
+    const access = guard(req, req.params.branchId);
+    if (access) { res.status(access.status).json(access.body); return; }
+    try {
+      res.json({ run: loadTests.cancel(req.params.branchId, req.params.runId) });
+    } catch (err) { respondError(res, err); }
   });
 
   // ── 执行计划（草稿-保存模型）：保存即串行执行；执行中可调序/跳过/取消 ──
@@ -657,6 +732,10 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
 
 function respondError(res: { status: (code: number) => { json: (body: unknown) => void } }, err: unknown): void {
   if (err instanceof ReplicaSetError) {
+    res.status(err.status).json({ error: err.message });
+    return;
+  }
+  if (err instanceof LoadTestError) {
     res.status(err.status).json({ error: err.message });
     return;
   }

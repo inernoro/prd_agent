@@ -27,6 +27,7 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createBugReportsRouter } from './routes/bug-reports.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
@@ -737,6 +738,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/accept': '接受配对请求',
     // 项目级资源占用排行（系统级运维视图，2026-06-23）
     'GET /cds-system/resource-usage': '查看资源占用',
+    // 自建存活监控 / 状态页（2026-07-27）
+    'GET /uptime/summary': '查看存活总览',
+    'GET /uptime/incidents': '列出存活故障',
+    // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
+    'POST /bug-reports': '提交缺陷反馈',
+    'GET /bug-reports': '列出缺陷反馈',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -973,6 +980,7 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
@@ -989,6 +997,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^PATCH \/branches\/(.+)\/replica-plans\/(.+)$/, '调整执行顺序'],
     [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/steps\/(.+)\/skip$/, '跳过计划步骤'],
     [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/cancel$/, '取消执行计划'],
+    // 复制集压测（2026-07-27）。cancel 必须排在单段 runId 之前，否则会被后者吞掉；
+    // regex 本身用 [^/]+ 保持 segment-safe，不依赖数组顺序也不会误命中。
+    [/^POST \/branches\/[^/]+\/replica-loadtests\/[^/]+\/cancel$/, '取消压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests\/[^/]+$/, '查看压测报告'],
+    [/^POST \/branches\/[^/]+\/replica-loadtests$/, '发起压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests$/, '列出压测记录'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolate$/, '复制隔离数据库'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/revert-db$/, '回切主库'],
     [/^POST \/branches\/(.+)\/db-guard$/, '启动数据库保护罩'],
@@ -1445,11 +1459,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
-  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
-  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
-  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
-  // /api/reports 不需要。
+  // 全局 JSON body 解析器（默认上限 100kb）。以下路径例外，各自在路由内挂更大的解析器：
+  //   - /api/reports：验收报告正文可达数 MB（HTML/Markdown 粘贴），路由自带 12mb 解析器
+  //     （修复 PR #865 codex P2「大粘贴报告绕不过全局 JSON 解析器」）。
+  //   - /api/bug-reports：快捷提 bug 允许 4 个 x 5MB 截图（base64 后更大），路由自带 16mb
+  //     解析器；不跳过的话截图附件会在 body-parser 阶段就被全局 100kb 上限 413 掉，
+  //     且响应是 HTML 不是 JSON，前端只能显示一段读不懂的报错。
+  // rawBody 仅签名校验类路由（GitHub webhook）需要，上述两个路径都不需要。
   const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
@@ -1457,6 +1473,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -3964,6 +3981,12 @@ export function createServer(deps: ServerDeps): express.Express {
   // CDS 自托管验收报告（HTML / Markdown）。挂在全局认证网关之后，CDS 登录态即可访问。
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
+
+  // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
+  // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
+  app.use('/api', createBugReportsRouter({
+    getDataDir: () => path.dirname(deps.stateService.getCacheBase()),
+  }));
 
   app.use('/api', createDeploymentRunsRouter({
     deploymentRunService,

@@ -31,6 +31,8 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
+import { createUptimeRouter } from './routes/uptime.js';
+import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -4293,6 +4295,25 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
   }
+
+  // ── 自建存活监控（Uptime Kuma 风格状态页的数据源） ──
+  //
+  // 周期直连 `127.0.0.1:<hostPort>` 探测每个 running 分支的对外服务，绝不走
+  // proxy / forwarder —— 后者每转发一次就会 scheduler.touch()，会把 idleTTL
+  // 降温彻底废掉。详见 services/uptime-monitor.ts 顶部纪律 1。
+  // CDS_UPTIME_ENABLED=0 可一刀关停（start() 变 no-op）。
+  const uptimeMonitor = new UptimeMonitorService({
+    state: { getAllBranches: () => stateService.getAllBranches() },
+    config: uptimeConfigFromEnv(config.repoRoot),
+    logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+  });
+  app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  uptimeMonitor.start();
+  console.log(
+    uptimeMonitor.config.enabled
+      ? `  Uptime: 存活监控已启动（间隔 ${Math.round(uptimeMonitor.config.intervalMs / 1000)}s，状态页 /status）`
+      : `  Uptime: 存活监控已按 CDS_UPTIME_ENABLED=0 关闭`,
+  );
 
   // ── SPA fallback MUST be installed last ──
   //
