@@ -51,6 +51,8 @@ curl -sf "$PREVIEW_URL/api/shortcuts/version-check"
 `/api/shortcuts/version-check` 必须包含数值型 `version`；健康端点必须明确返回
 `status=healthy|ok|ready|success`，或布尔型 `ok/healthy/success=true`。API 路径
 返回 HTTP 200 的 HTML/SPA、非法 JSON 或不匹配的 JSON 结构都判为 L2 失败。
+这些路径是候选替代关系：CLI 会保留每次探测结果用于诊断，但任一候选满足对应
+契约即可判定 L2 通过；只有全部候选失败时才判定 L2 失败。
 
 ## L3 — 认证 API
 

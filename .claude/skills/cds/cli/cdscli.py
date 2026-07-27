@@ -7211,34 +7211,46 @@ def cmd_smoke(args: argparse.Namespace) -> None:
                     "error": str(e)[:80]}
 
     # L1 根路径无认证
-    results.append(probe("L1-root", f"{preview}/"))
+    l1_result = probe("L1-root", f"{preview}/")
+    results.append(l1_result)
     # L2 无认证 API (常见路径)
+    l2_results: list[dict[str, Any]] = []
     for path, contract in (
         ("/api/shortcuts/version-check", "version-check"),
         ("/healthz", "health"),
         ("/api/health", "health"),
     ):
         r = probe(f"L2{path}", f"{preview}{path}", json_contract=contract)
+        l2_results.append(r)
         results.append(r)
         if r["pass"]:
             break
     # L3 认证 API
     key = os.environ.get("AI_ACCESS_KEY", "")
     user = os.environ.get("MAP_AI_USER", "")
+    l3_result: dict[str, Any] | None = None
     if key:
         hdrs = {"X-AI-Access-Key": key}
         if user:
             hdrs["X-AI-Impersonate"] = user
-        results.append(probe("L3-authed", f"{preview}/api/users?pageSize=1",
-                             headers=hdrs, expect_status=200))
+        l3_result = probe("L3-authed", f"{preview}/api/users?pageSize=1",
+                          headers=hdrs, expect_status=200)
+        results.append(l3_result)
 
-    passed = sum(1 for r in results if r["pass"])
+    layers = [
+        {"layer": "L1", "pass": bool(l1_result["pass"])},
+        {"layer": "L2", "pass": any(r["pass"] for r in l2_results)},
+    ]
+    if l3_result is not None:
+        layers.append({"layer": "L3", "pass": bool(l3_result["pass"])})
+    passed = sum(1 for layer in layers if layer["pass"])
     summary = {"branchId": branch_id, "preview": preview,
-               "passed": f"{passed}/{len(results)}", "probes": results}
-    if passed == len(results):
-        ok(summary, note=f"冒烟全绿 ({passed}/{len(results)})")
+               "passed": f"{passed}/{len(layers)}", "layers": layers,
+               "probes": results}
+    if passed == len(layers):
+        ok(summary, note=f"冒烟全绿 ({passed}/{len(layers)})")
         return
-    die(f"冒烟失败 ({passed}/{len(results)} 通过)", code=2, extra={"data": summary})
+    die(f"冒烟失败 ({passed}/{len(layers)} 通过)", code=2, extra={"data": summary})
 
 
 def cmd_help_me_check(args: argparse.Namespace) -> None:

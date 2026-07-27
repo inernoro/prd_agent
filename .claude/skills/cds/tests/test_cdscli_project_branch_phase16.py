@@ -579,6 +579,51 @@ def test_smoke_rejects_api_html_200(monkeypatch):
                for probe in l2_probes)
 
 
+def test_smoke_accepts_any_valid_l2_candidate(monkeypatch):
+    """L2 候选是替代关系；保留失败探测，但任一合法端点即可通过。"""
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.delenv("AI_ACCESS_KEY", raising=False)
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=30: {
+            "branches": [{
+                "id": "proj-a-health-fallback",
+                "previewUrl": "https://health-fallback.example",
+            }],
+        },
+    )
+
+    def fake_urlopen(req, timeout=10):
+        if req.full_url.endswith("/api/health"):
+            return _FakeHttpResponse(b'{"status":"ok"}', "application/json")
+        return _FakeHttpResponse(
+            b"<!doctype html><title>SPA fallback</title>",
+            "text/html; charset=utf-8",
+        )
+
+    monkeypatch.setattr(cdscli.urllib.request, "urlopen", fake_urlopen)
+
+    code, out = call_main(["smoke", "proj-a-health-fallback"])
+
+    assert code == 0, out
+    payload = parse_ok(out)
+    assert payload["data"]["passed"] == "2/2"
+    assert payload["data"]["layers"] == [
+        {"layer": "L1", "pass": True},
+        {"layer": "L2", "pass": True},
+    ]
+    l2_probes = [
+        probe for probe in payload["data"]["probes"]
+        if probe["layer"].startswith("L2")
+    ]
+    assert [probe["pass"] for probe in l2_probes] == [False, False, True]
+    assert [probe["error"] for probe in l2_probes[:2]] == [
+        "expected_application_json",
+        "expected_application_json",
+    ]
+
+
 def test_smoke_rejects_version_check_without_numeric_version(monkeypatch):
     """L2 version-check 必须满足最小 JSON schema，不能只看 JSON 类型。"""
     monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
@@ -594,9 +639,7 @@ def test_smoke_rejects_version_check_without_numeric_version(monkeypatch):
     )
 
     def fake_urlopen(req, timeout=10):
-        if req.full_url.endswith("/api/shortcuts/version-check"):
-            return _FakeHttpResponse(b'{"ok":true}', "application/json")
-        return _FakeHttpResponse(b'{"status":"ok"}', "application/json")
+        return _FakeHttpResponse(b'{"state":"up"}', "application/json")
 
     monkeypatch.setattr(cdscli.urllib.request, "urlopen", fake_urlopen)
 
@@ -611,6 +654,11 @@ def test_smoke_rejects_version_check_without_numeric_version(monkeypatch):
     assert version_probe["pass"] is False
     assert version_probe["contentType"] == "application/json"
     assert version_probe["error"] == "invalid_json_schema"
+    assert all(
+        probe["error"] == "invalid_json_schema"
+        for probe in payload["data"]["probes"]
+        if probe["layer"].startswith("L2")
+    )
 
 
 # ── project clone (SSE) ──────────────────────────────────────────────
