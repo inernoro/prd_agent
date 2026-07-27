@@ -10,7 +10,7 @@ namespace PrdAgent.Infrastructure.LlmGateway.Asr;
 /// </summary>
 public interface ILiveAsrSessionTransport
 {
-    Task<bool> ReceiveStartAsync();
+    Task<bool> ReceiveStartAsync(CancellationToken cancellationToken);
 
     Task ReceiveFramesAsync(
         IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
@@ -28,6 +28,8 @@ public sealed record LiveAsrOrchestrationResult(
 /// </summary>
 public sealed class LiveAsrSessionOrchestrator
 {
+    internal static readonly TimeSpan InitialControlTimeout = TimeSpan.FromSeconds(8);
+
     private readonly IModelResolver _resolver;
     private readonly DoubaoStreamAsrService _asr;
     private readonly LiveAsrBatchFallbackService _batchFallback;
@@ -49,17 +51,38 @@ public sealed class LiveAsrSessionOrchestrator
         ILiveAsrSessionTransport transport,
         GatewayRequestContext requestContext,
         Func<LiveAsrEvent, Task> emit,
-        Action onUpstreamRequest)
+        Action onUpstreamRequest,
+        CancellationToken cancellationToken = default)
     {
         LiveAsrSessionResult? sessionResult = null;
         string? sessionFailure = null;
         Channel<LiveAsrAudioFrame>? frames = null;
         Channel<LiveAsrAudioFrame>? batchFrames = null;
         Task? receiveTask = null;
-        using var receiveCancellation = new CancellationTokenSource();
+        using var receiveCancellation =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
         try
         {
-            if (!await transport.ReceiveStartAsync())
+            bool startAccepted;
+            try
+            {
+                startAccepted = await ReceiveStartWithDeadlineAsync(
+                    transport,
+                    InitialControlTimeout,
+                    cancellationToken);
+            }
+            catch (TimeoutException ex)
+            {
+                sessionFailure = ex.Message;
+                await emit(new LiveAsrEvent
+                {
+                    Type = LiveAsrEventTypes.Error,
+                    ErrorCode = "LIVE_ASR_START_TIMEOUT",
+                    Message = sessionFailure,
+                });
+                return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+            }
+            if (!startAccepted)
             {
                 sessionFailure = "实时转写缺少合法 start 控制消息";
                 await emit(new LiveAsrEvent
@@ -283,6 +306,25 @@ public sealed class LiveAsrSessionOrchestrator
         }
 
         return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+    }
+
+    internal static async Task<bool> ReceiveStartWithDeadlineAsync(
+        ILiveAsrSessionTransport transport,
+        TimeSpan timeout,
+        CancellationToken cancellationToken)
+    {
+        using var deadline =
+            CancellationTokenSource.CreateLinkedTokenSource(cancellationToken);
+        deadline.CancelAfter(timeout);
+        try
+        {
+            return await transport.ReceiveStartAsync(deadline.Token);
+        }
+        catch (OperationCanceledException)
+            when (deadline.IsCancellationRequested && !cancellationToken.IsCancellationRequested)
+        {
+            throw new TimeoutException("实时转写等待 start 控制消息超时");
+        }
     }
 
     internal async Task<LiveAsrSessionResult> PreserveResultAndRecordHealthBestEffortAsync(

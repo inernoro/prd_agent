@@ -1708,6 +1708,12 @@ public class DocumentStoreController : ControllerBase
                 CancellationToken.None);
             if (recoveredEntry == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+            var (readableEntry, _, accessError) = await LoadReadableEntryAsync(
+                recoveredEntry.Id,
+                userId);
+            if (accessError != null)
+                return accessError;
+            recoveredEntry = readableEntry!;
 
             var recoveredMetadata = recoveredEntry.Metadata ?? new Dictionary<string, string>();
             return Ok(ApiResponse<object>.Ok(new
@@ -2027,6 +2033,12 @@ public class DocumentStoreController : ControllerBase
                 CancellationToken.None);
             if (recoveredEntry == null)
                 return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+            var (writableEntry, _, accessError) = await LoadWritableEntryAsync(
+                recoveredEntry.Id,
+                userId);
+            if (accessError != null)
+                return accessError;
+            recoveredEntry = writableEntry!;
 
             await ReleaseRecordingCountTokensAsync(
                 _db.DocumentStores,
@@ -2213,6 +2225,20 @@ public class DocumentStoreController : ControllerBase
             .FirstOrDefaultAsync(CancellationToken.None);
         if (interruptedAttachment != null && !string.IsNullOrWhiteSpace(interruptedAttachment.Url))
         {
+            // 确定性附件可能由已失效的旧请求写入。任何重建、记账或终态提交前
+            // 都必须重新续租；续租失败时只允许当前租约持有者继续产生副作用。
+            if (!await RefreshRecordingCompletionLeaseAsync(
+                    _db.DocumentRecordingUploadSessions,
+                    sessionId,
+                    userId,
+                    completionLeaseId,
+                    DateTime.UtcNow,
+                    CancellationToken.None))
+            {
+                return Conflict(ApiResponse<object>.Fail(
+                    ErrorCodes.INVALID_FORMAT,
+                    "录音完成租约已更新，请稍候查询结果"));
+            }
             if (interruptedCompletedEntry == null)
             {
                 // 附件写入发生在条目 upsert 之前。若进程恰好在两者之间退出，直接复用
@@ -2391,6 +2417,20 @@ public class DocumentStoreController : ControllerBase
                         sessionId),
             }));
         }
+        // 对象存储可能长时间阻塞，期间旧租约可能被新请求接管。存储成功本身不代表
+        // 仍拥有数据库提交权；先用 CAS 续租，再创建确定性附件、条目和计数。
+        if (!await RefreshRecordingCompletionLeaseAsync(
+                _db.DocumentRecordingUploadSessions,
+                sessionId,
+                userId,
+                completionLeaseId,
+                DateTime.UtcNow,
+                CancellationToken.None))
+        {
+            return Conflict(ApiResponse<object>.Fail(
+                ErrorCodes.INVALID_FORMAT,
+                "录音完成租约已更新，请稍候查询结果"));
+        }
         var stored = await CreateUploadedDocumentEntryAsync(
             store, actorId, actorName, avatarFileName,
             claimed.FileName, claimed.MimeType, audioBytes, parentId: null,
@@ -2431,23 +2471,8 @@ public class DocumentStoreController : ControllerBase
         string fileUrl,
         string completionLeaseId)
     {
-        // 该方法同时服务首次完成与崩溃恢复。完成条目在创建时已通过确定性令牌记账；
-        // 这里只对实际删除的旧 pending 条目做原子减量，避免重复形态同时占用计数。
-        if (entry.Id == CompletedRecordingEntryId(sessionId))
-        {
-            // 旧版本可能在完成条目写入后崩溃，又错误创建了 pending 条目。
-            // 确认完成资产可恢复后由完成形态胜出，清掉同会话的降级重复项。
-            var pendingDeleted = await _db.DocumentEntries.DeleteOneAsync(
-                e => e.Id == PendingRecordingEntryId(sessionId) && e.StoreId == store.Id,
-                cancellationToken: CancellationToken.None);
-            await ApplyDocumentCountDeletionAsync(
-                _db.DocumentStores,
-                store.Id,
-                checked((int)pendingDeleted.DeletedCount),
-                DateTime.UtcNow,
-                CancellationToken.None,
-                [PendingRecordingEntryId(sessionId)]);
-        }
+        // 先提交租约 CAS，再删除另一种确定性条目。旧请求若已失去租约，绝不能
+        // 在 CAS 失败前删除新持有者已经提交的 pending 结果。
         var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId
                  && s.UserId == userId
@@ -2463,7 +2488,36 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.UpdatedAt, DateTime.UtcNow),
             cancellationToken: CancellationToken.None);
         if (completed.ModifiedCount == 0)
+        {
+            await CompensateStaleCompletedRecordingEntryAsync(
+                _db.DocumentRecordingUploadSessions,
+                _db.DocumentEntries,
+                _db.Attachments,
+                _db.DocumentStores,
+                store.Id,
+                sessionId,
+                userId,
+                entry.Id,
+                CancellationToken.None);
             return false;
+        }
+
+        // 该方法同时服务首次完成与崩溃恢复。完成条目在创建时已通过确定性令牌记账；
+        // 这里只对实际删除的旧 pending 条目做原子减量，避免重复形态同时占用计数。
+        if (entry.Id == CompletedRecordingEntryId(sessionId))
+        {
+            // 终态 CAS 已确认本请求获胜，此时才能清掉同会话的降级重复项。
+            var pendingDeleted = await _db.DocumentEntries.DeleteOneAsync(
+                e => e.Id == PendingRecordingEntryId(sessionId) && e.StoreId == store.Id,
+                cancellationToken: CancellationToken.None);
+            await ApplyDocumentCountDeletionAsync(
+                _db.DocumentStores,
+                store.Id,
+                checked((int)pendingDeleted.DeletedCount),
+                DateTime.UtcNow,
+                CancellationToken.None,
+                [PendingRecordingEntryId(sessionId)]);
+        }
 
         // 终态提交后重读，覆盖对象存储工作期间写入 session 的实时原文。若原文在
         // 本次重读之后才到达，中继端会看到 completed + EntryId 并执行同一幂等补写。
@@ -2490,6 +2544,60 @@ public class DocumentStoreController : ControllerBase
             c => c.SessionId == sessionId,
             cancellationToken: CancellationToken.None);
         return true;
+    }
+
+    internal static async Task CompensateStaleCompletedRecordingEntryAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        IMongoCollection<DocumentEntry> entries,
+        IMongoCollection<Attachment> attachments,
+        IMongoCollection<DocumentStore> stores,
+        string storeId,
+        string sessionId,
+        string userId,
+        string completedEntryId,
+        CancellationToken cancellationToken)
+    {
+        if (completedEntryId != CompletedRecordingEntryId(sessionId))
+            return;
+
+        var winner = await sessions
+            .Find(s => s.Id == sessionId && s.UserId == userId)
+            .FirstOrDefaultAsync(cancellationToken);
+        // 只有另一个租约已经稳定提交 pending 终态时，才能确认 completed 形态属于
+        // 失效请求。新租约仍在 completing 时保留确定性副作用，供获胜请求复用。
+        if (winner?.Status != DocumentRecordingUploadStatus.Completed
+            || winner.EntryId != PendingRecordingEntryId(sessionId))
+        {
+            return;
+        }
+
+        var deleted = await entries.DeleteOneAsync(
+            e => e.Id == completedEntryId && e.StoreId == storeId,
+            cancellationToken: cancellationToken);
+        await attachments.DeleteOneAsync(
+            a => a.AttachmentId == CompletedRecordingAttachmentId(sessionId),
+            cancellationToken);
+        if (deleted.DeletedCount > 0)
+        {
+            // 完成条目可能在“entry 已 upsert、计数尚未提交”的崩溃点失租。
+            // 只有 store 仍持有该条目的记账令牌时才减量，不能误减其他正常条目。
+            var counted = Builders<DocumentStore>.Filter.And(
+                Builders<DocumentStore>.Filter.Eq(s => s.Id, storeId),
+                Builders<DocumentStore>.Filter.Eq(
+                    RecordingCountedEntryIdsField,
+                    completedEntryId));
+            await stores.UpdateOneAsync(
+                counted,
+                Builders<DocumentStore>.Update
+                    .Inc(s => s.DocumentCount, -1)
+                    .Pull(RecordingCountedEntryIdsField, completedEntryId)
+                    .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+            await stores.UpdateOneAsync(
+                s => s.Id == storeId,
+                Builders<DocumentStore>.Update.Max(s => s.DocumentCount, 0),
+                cancellationToken: cancellationToken);
+        }
     }
 
     internal static async Task<bool> PersistCompletedLiveTranscriptAsync(

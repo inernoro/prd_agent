@@ -114,7 +114,8 @@ public static class LiveAsrGatewayEndpoint
                 admission.Ingress.Context
                     ?? throw new InvalidOperationException("实时 ASR 缺少已验证请求上下文"),
                 EmitAsync,
-                () => Interlocked.Exchange(ref paidUpstreamAttempted, 1));
+                () => Interlocked.Exchange(ref paidUpstreamAttempted, 1),
+                http.RequestAborted);
         }
         finally
         {
@@ -227,11 +228,12 @@ public static class LiveAsrGatewayEndpoint
             _socket = socket;
         }
 
-        public async Task<bool> ReceiveStartAsync()
+        public async Task<bool> ReceiveStartAsync(CancellationToken cancellationToken)
         {
             var message = await ReceiveMessageAsync(
                 _socket,
-                LiveAsrWireProtocol.MaxPcmBytesPerFrame);
+                LiveAsrWireProtocol.MaxPcmBytesPerFrame,
+                cancellationToken);
             if (message.Type != WebSocketMessageType.Text)
                 return false;
             try

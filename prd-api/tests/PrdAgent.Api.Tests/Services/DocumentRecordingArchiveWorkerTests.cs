@@ -87,6 +87,17 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void RecoveredEntryFallback_ShouldRevalidateCurrentStoreAccess()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+
+        source.ShouldContain(
+            "var (readableEntry, _, accessError) = await LoadReadableEntryAsync(");
+        source.ShouldContain(
+            "var (writableEntry, _, accessError) = await LoadWritableEntryAsync(");
+    }
+
+    [Fact]
     public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -604,6 +615,138 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task StaleCompletedSideEffects_ShouldBeCompensatedOnlyAfterPendingWinnerCommits()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        const string sessionId = "stale-completed-side-effects";
+        var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
+        var pendingEntryId = DocumentStoreController.PendingRecordingEntryId(sessionId);
+        var store = new DocumentStore
+        {
+            Id = "stale-completed-store",
+            Name = "旧完成副作用补偿测试",
+            OwnerId = "user-1",
+            DocumentCount = 1,
+        };
+        var completedEntry = new DocumentEntry
+        {
+            Id = completedEntryId,
+            StoreId = store.Id,
+            Title = "stale-completed.webm",
+            CreatedBy = "user-1",
+        };
+        var completedAttachment = new Attachment
+        {
+            AttachmentId = DocumentStoreController.CompletedRecordingAttachmentId(sessionId),
+            FileName = "stale-completed.webm",
+            Url = "https://assets.invalid/stale-completed.webm",
+        };
+        var session = Session(sessionId, "main", DocumentRecordingArchiveStatus.Completed);
+        session.Status = DocumentRecordingUploadStatus.Completing;
+        session.CompletionLeaseId = "new-owner-still-working";
+
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.DocumentStores.UpdateOneAsync(
+            s => s.Id == store.Id,
+            Builders<DocumentStore>.Update.Set(
+                DocumentStoreController.RecordingCountedEntryIdsField,
+                new[] { completedEntryId }));
+        await fixture.Db.DocumentEntries.InsertOneAsync(completedEntry);
+        await fixture.Db.Attachments.InsertOneAsync(completedAttachment);
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        await DocumentStoreController.CompensateStaleCompletedRecordingEntryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            fixture.Db.DocumentEntries,
+            fixture.Db.Attachments,
+            fixture.Db.DocumentStores,
+            store.Id,
+            sessionId,
+            session.UserId,
+            completedEntryId,
+            CancellationToken.None);
+        (await fixture.Db.DocumentEntries.Find(e => e.Id == completedEntryId).FirstOrDefaultAsync())
+            .ShouldNotBeNull();
+
+        await fixture.Db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
+                .Set(s => s.EntryId, pendingEntryId)
+                .Unset(s => s.CompletionLeaseId));
+        await DocumentStoreController.CompensateStaleCompletedRecordingEntryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            fixture.Db.DocumentEntries,
+            fixture.Db.Attachments,
+            fixture.Db.DocumentStores,
+            store.Id,
+            sessionId,
+            session.UserId,
+            completedEntryId,
+            CancellationToken.None);
+
+        (await fixture.Db.DocumentEntries.Find(e => e.Id == completedEntryId).FirstOrDefaultAsync())
+            .ShouldBeNull();
+        (await fixture.Db.Attachments.Find(
+                a => a.AttachmentId == completedAttachment.AttachmentId)
+            .FirstOrDefaultAsync()).ShouldBeNull();
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task StaleCompletedSideEffects_WithoutCountTokenShouldPreserveOtherEntryCount()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        const string sessionId = "stale-completed-without-count";
+        var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
+        var store = new DocumentStore
+        {
+            Id = "stale-completed-without-count-store",
+            Name = "未记账旧完成副作用测试",
+            OwnerId = "user-1",
+            DocumentCount = 3,
+        };
+        var session = Session(sessionId, "main", DocumentRecordingArchiveStatus.Completed);
+        session.Status = DocumentRecordingUploadStatus.Completed;
+        session.EntryId = DocumentStoreController.PendingRecordingEntryId(sessionId);
+
+        await fixture.Db.DocumentStores.InsertOneAsync(store);
+        await fixture.Db.DocumentEntries.InsertOneAsync(new DocumentEntry
+        {
+            Id = completedEntryId,
+            StoreId = store.Id,
+            Title = "uncounted-stale-completed.webm",
+            CreatedBy = session.UserId,
+        });
+        await fixture.Db.Attachments.InsertOneAsync(new Attachment
+        {
+            AttachmentId = DocumentStoreController.CompletedRecordingAttachmentId(sessionId),
+            FileName = "uncounted-stale-completed.webm",
+            Url = "https://assets.invalid/uncounted-stale-completed.webm",
+        });
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        await DocumentStoreController.CompensateStaleCompletedRecordingEntryAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            fixture.Db.DocumentEntries,
+            fixture.Db.Attachments,
+            fixture.Db.DocumentStores,
+            store.Id,
+            sessionId,
+            session.UserId,
+            completedEntryId,
+            CancellationToken.None);
+
+        (await fixture.Db.DocumentStores.Find(s => s.Id == store.Id).SingleAsync())
+            .DocumentCount.ShouldBe(3);
+    }
+
+    [Fact]
     public async Task RecordingEntryCount_ShouldApplyExactlyOnceAcrossRetries()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -662,6 +805,46 @@ public sealed class DocumentRecordingArchiveWorkerTests
             StringComparison.Ordinal);
         ensureCounted.ShouldBeGreaterThanOrEqualTo(0);
         finalize.ShouldBeGreaterThan(ensureCounted);
+    }
+
+    [Fact]
+    public void SuccessfulArchive_ShouldFenceSideEffectsAndCommitBeforeDeletingPendingWinner()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var storageSuccess = source.IndexOf(
+            "var stored = await CreateUploadedDocumentEntryAsync(",
+            source.IndexOf("recordingAsset = await SaveUploadedAssetAsync(", StringComparison.Ordinal),
+            StringComparison.Ordinal);
+        storageSuccess.ShouldBeGreaterThanOrEqualTo(0);
+        var leaseFence = source.LastIndexOf(
+            "if (!await RefreshRecordingCompletionLeaseAsync(",
+            storageSuccess,
+            StringComparison.Ordinal);
+        leaseFence.ShouldBeGreaterThanOrEqualTo(0);
+        leaseFence.ShouldBeLessThan(storageSuccess);
+
+        var finalizeStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            StringComparison.Ordinal);
+        var finalizeEnd = source.IndexOf(
+            "internal static async Task CompensateStaleCompletedRecordingEntryAsync(",
+            finalizeStart,
+            StringComparison.Ordinal);
+        finalizeEnd.ShouldBeGreaterThan(finalizeStart);
+        var finalizeBlock = source[finalizeStart..finalizeEnd];
+        var terminalWrite = finalizeBlock.IndexOf(
+            "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
+            StringComparison.Ordinal);
+        var pendingDelete = finalizeBlock.IndexOf(
+            "var pendingDeleted = await _db.DocumentEntries.DeleteOneAsync(",
+            StringComparison.Ordinal);
+        var staleCompensation = finalizeBlock.IndexOf(
+            "await CompensateStaleCompletedRecordingEntryAsync(",
+            StringComparison.Ordinal);
+
+        terminalWrite.ShouldBeGreaterThanOrEqualTo(0);
+        pendingDelete.ShouldBeGreaterThan(terminalWrite);
+        staleCompensation.ShouldBeGreaterThan(terminalWrite);
     }
 
     [Fact]

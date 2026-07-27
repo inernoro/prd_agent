@@ -852,6 +852,32 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task SessionOrchestrator_ShouldBoundStartReadAndPropagateCallerCancellation()
+    {
+        var timeoutTransport = new HangingStartTransport();
+        var timeout = await Should.ThrowAsync<TimeoutException>(() =>
+            LiveAsrSessionOrchestrator.ReceiveStartWithDeadlineAsync(
+                timeoutTransport,
+                TimeSpan.FromMilliseconds(20),
+                CancellationToken.None));
+
+        timeout.Message.ShouldContain("start");
+        timeoutTransport.CancellationWasRequested.ShouldBeTrue();
+        LiveAsrSessionOrchestrator.InitialControlTimeout
+            .ShouldBeLessThanOrEqualTo(TimeSpan.FromSeconds(10));
+
+        var callerCancellationTransport = new HangingStartTransport();
+        using var callerCancellation = new CancellationTokenSource();
+        callerCancellation.Cancel();
+        await Should.ThrowAsync<OperationCanceledException>(() =>
+            LiveAsrSessionOrchestrator.ReceiveStartWithDeadlineAsync(
+                callerCancellationTransport,
+                TimeSpan.FromSeconds(1),
+                callerCancellation.Token));
+        callerCancellationTransport.CancellationWasRequested.ShouldBeTrue();
+    }
+
+    [Fact]
     public async Task SessionOrchestrator_ShouldStopBlockedReceiverWhenStatusEmissionThrows()
     {
         var candidate = Candidate(
@@ -1033,7 +1059,8 @@ public class LiveAsrProtocolTests
     {
         public int ReceiveFramesCalls { get; private set; }
 
-        public Task<bool> ReceiveStartAsync() => Task.FromResult(true);
+        public Task<bool> ReceiveStartAsync(CancellationToken cancellationToken)
+            => Task.FromResult(true);
 
         public async Task ReceiveFramesAsync(
             IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
@@ -1051,6 +1078,31 @@ public class LiveAsrProtocolTests
         }
     }
 
+    private sealed class HangingStartTransport : ILiveAsrSessionTransport
+    {
+        public bool CancellationWasRequested { get; private set; }
+
+        public async Task<bool> ReceiveStartAsync(CancellationToken cancellationToken)
+        {
+            try
+            {
+                await Task.Delay(Timeout.InfiniteTimeSpan, cancellationToken);
+                return true;
+            }
+            catch (OperationCanceledException)
+            {
+                CancellationWasRequested = cancellationToken.IsCancellationRequested;
+                throw;
+            }
+        }
+
+        public Task ReceiveFramesAsync(
+            IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
+            Func<LiveAsrEvent, Task> emit,
+            CancellationToken cancellationToken)
+            => throw new InvalidOperationException("start 超时前不应接收音频帧");
+    }
+
     private sealed class BlockingLiveAsrTransport : ILiveAsrSessionTransport
     {
         private readonly TaskCompletionSource _completion =
@@ -1059,7 +1111,8 @@ public class LiveAsrProtocolTests
         public Task Completion => _completion.Task;
         public bool CancellationWasRequested { get; private set; }
 
-        public Task<bool> ReceiveStartAsync() => Task.FromResult(true);
+        public Task<bool> ReceiveStartAsync(CancellationToken cancellationToken)
+            => Task.FromResult(true);
 
         public async Task ReceiveFramesAsync(
             IReadOnlyList<ChannelWriter<LiveAsrAudioFrame>> writers,
