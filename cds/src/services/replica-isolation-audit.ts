@@ -190,6 +190,23 @@ export async function runIsolationAudit(
       id: `B1-${me.id}`, group: '配置面', title: `副本 ${me.id} 真实 env 指向隔离库 ${snapshot.dbName}`,
       verdict: dbOk ? 'pass' : 'fail', evidence: dbKeyHits.join(' · '),
     });
+    // 关系型连接 URL 也必须查（Codex 第三十二轮 P1）：库名写死在 URL 路径里，
+    // 应用读的就是它。此前审计只比库名 key——URL 还指着主库时照样报「已隔离」，
+    // 审计本身成了假隔离的背书。
+    const urlKeys = Object.keys(target.urlEnvValues || {});
+    if (urlKeys.length > 0) {
+      const urlOk = urlKeys.every((k) => {
+        const v = me.env![k] ?? '';
+        const seg = /^[a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*\/([^/?#]*)/.exec(v)?.[1];
+        return seg === snapshot.dbName;
+      });
+      checks.push({
+        id: `B1u-${me.id}`, group: '配置面',
+        title: `副本 ${me.id} 连接 URL 的库名段指向隔离库 ${snapshot.dbName}`,
+        verdict: urlOk ? 'pass' : 'fail',
+        evidence: urlKeys.map((k) => `${k}=${maskConn(me.env![k] ?? '(未设置)')}`).join(' · '),
+      });
+    }
     if (snapshot.dedicatedContainer && snapshot.dedicatedHostPort) {
       const connOk = target.connEnvKeys.length > 0
         && target.connEnvKeys.every((k) => (me.env![k] ?? '').includes(`:${snapshot.dedicatedHostPort}`));

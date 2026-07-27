@@ -67,6 +67,26 @@ export function isDiskGrowingReplicaAction(path: string): boolean {
   return /^\/branches\/[^/]+\/(db-guard|replica-plans|replica-sets\/[^/]+\/(isolate|members(\/[^/]+\/promote)?))\/?$/.test(path);
 }
 
+/** 计划步骤里会让磁盘增长的那几种（其余是删除/回切/调权重，都在释放或不占空间）。 */
+const DISK_GROWING_STEP_KINDS = new Set(['add-replica', 'isolate-db']);
+
+/**
+ * 该请求是否真的会让磁盘增长（Codex 第三十二轮 P1）。
+ *
+ * 计划端点不能只看路径：面板的「删成员 / 解散 / 回切主库」这些**清理动作也全部
+ * 经 POST /replica-plans 提交**。按路径一刀切等于在磁盘压力最大、最需要清理的
+ * 时候，把 UI 上唯一的回收入口也堵死了——正是「拦错比漏拦更伤」的那一面。
+ * 所以计划要看步骤种类：含 add-replica / isolate-db 才拦，纯清理计划放行。
+ */
+export function requestGrowsDisk(path: string, body: unknown): boolean {
+  if (!isDiskGrowingReplicaAction(path)) return false;
+  if (!/^\/branches\/[^/]+\/replica-plans\/?$/.test(path)) return true;
+  const steps = (body as { steps?: Array<{ kind?: string }> } | null | undefined)?.steps;
+  // 步骤读不出来（畸形 body）时保守当作会增长——真正的清理计划一定带得出 steps
+  if (!Array.isArray(steps)) return true;
+  return steps.some((step) => DISK_GROWING_STEP_KINDS.has(String(step?.kind || '')));
+}
+
 export interface ReplicaSetsRouterDeps {
   stateService: StateService;
   replicaSetService: ReplicaSetService;
@@ -114,7 +134,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
   // 只罩**会让磁盘增长**的动作；revert-db / 删成员 / 解散 / 调权重 / 探测 / 审计
   // 一律放行——它们要么释放空间，要么是恢复期必须还能用的自救手段。
   router.use((req, res, next) => {
-    if (req.method !== 'POST' || !isDiskGrowingReplicaAction(req.path)) {
+    if (req.method !== 'POST' || !requestGrowsDisk(req.path, req.body)) {
       next();
       return;
     }

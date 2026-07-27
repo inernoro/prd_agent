@@ -67,6 +67,8 @@ export interface ReplicaDbTarget {
   envKeys: string[];
   /** 连接串 env key（mongo 专用隔离实例通道需要把副本改指新实例） */
   connEnvKeys: string[];
+  /** 关系型连接 URL 的 env key → 原值（库名段等于源库的那些，隔离时按新库名重写）。 */
+  urlEnvValues?: Record<string, string>;
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
@@ -79,6 +81,44 @@ const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|
  * 解析某服务的数据库目标：库名 env key、运行时真实库名、承载它的 infra 容器。
  * 找不到（无 DB env / infra 未运行 / 引擎不支持）返回带原因的 null 结果。
  */
+/**
+ * 关系型连接 URL 里把库名段换成隔离库（Codex 第三十二轮 P1）。
+ *
+ * CDS 的 mysql/postgres 预设注入的是 `DATABASE_URL / MYSQL_URL / POSTGRES_URL`，
+ * 形如 `mysql://app:pw@mysql:3306/<db>`——**库名是 URL 路径里的字面量**，而应用
+ * 真正读的就是这个 URL。此前隔离只改 `MYSQL_DATABASE` / `POSTGRES_DB`（那是
+ * 服务端初始化变量，不是应用的连接配置），于是副本照旧写主库，控制面与隔离审计
+ * 却双双报告「已隔离」——隔离在关系型上一直是假的。
+ *
+ * 只改路径段：主机/端口/凭据/查询参数原样保留（关系型隔离走同实例建新库，
+ * 不像 mongo 那样另起专用实例）。无法解析或路径段对不上源库时返回 null，
+ * 由调用方按「不认识就不动」处理，绝不瞎改用户的连接串。
+ */
+export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb: string): string | null {
+  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
+  if (!m) return null;
+  const [, prefix, dbSegment, tail] = m;
+  if (dbSegment !== sourceDb) return null;
+  return `${prefix}/${isolatedDb}${tail || ''}`;
+}
+
+/** 值看起来像关系型连接 URL（用于把它们纳入隔离覆写范围）。 */
+const RELATIONAL_URL_SCHEME = /^(mysql|mariadb|postgres|postgresql|jdbc:mysql|jdbc:postgresql):\/\//i;
+
+/**
+ * 隔离时的 env 覆写公共部分：库名 key + 关系型连接 URL 的库名段重写。
+ * （Codex 第三十二轮 P1：只改库名 key 对关系型无效，应用读的是 URL。）
+ */
+function baseIsolationEnvOverride(target: ReplicaDbTarget, dbName: string): Record<string, string> {
+  const envOverride: Record<string, string> = {};
+  for (const key of target.envKeys) envOverride[key] = dbName;
+  for (const [key, url] of Object.entries(target.urlEnvValues || {})) {
+    const rewritten = rewriteRelationalUrlDb(url, target.sourceDb, dbName);
+    if (rewritten) envOverride[key] = rewritten;
+  }
+  return envOverride;
+}
+
 export function resolveReplicaDbTarget(
   state: StateService,
   branch: BranchEntry,
@@ -187,7 +227,18 @@ export function resolveReplicaDbTarget(
     ? Object.keys(runtimeEnv).filter((key) => MONGO_CONN_ENV_PATTERN.test(key))
     : [];
 
-  return { target: { engine, envKeys, connEnvKeys, sourceDb, infra } };
+  // 关系型连接 URL（Codex 第三十二轮 P1）：库名写死在 URL 路径里，必须一并覆写，
+  // 否则改了 MYSQL_DATABASE 也没用——应用读的是 URL。只收「路径段确实等于源库」
+  // 的那些，避免把指向别的库/别的实例的连接串误改。
+  const urlEnvValues: Record<string, string> = {};
+  if (engine !== 'mongo') {
+    for (const [key, value] of Object.entries(runtimeEnv)) {
+      if (typeof value !== 'string' || !RELATIONAL_URL_SCHEME.test(value)) continue;
+      if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) urlEnvValues[key] = value;
+    }
+  }
+
+  return { target: { engine, envKeys, connEnvKeys, urlEnvValues, sourceDb, infra } };
 }
 
 function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine): boolean {
@@ -321,8 +372,9 @@ export async function cloneReplicaDb(opts: {
   }
   opts.onOutput?.(`── 隔离库 ${dbName} 克隆完成 ──`);
 
-  const envOverride: Record<string, string> = {};
-  for (const key of target.envKeys) envOverride[key] = dbName;
+  // 关系型隔离的 env 覆写必须连 DATABASE_URL/MYSQL_URL/POSTGRES_URL 一起改
+  //（Codex 第三十二轮 P1）——只改 MYSQL_DATABASE/POSTGRES_DB 时应用照旧连主库。
+  const envOverride: Record<string, string> = baseIsolationEnvOverride(target, dbName);
   return {
     envOverride,
     snapshot: {
@@ -488,7 +540,7 @@ async function cloneMongoViaDedicatedInstance(opts: {
     onOutput?.(`── 隔离库 ${dbName} 就绪 @ 专用实例 ${isoName}（宿主端口 ${isoHostPort}）──`);
 
     const envOverride: Record<string, string> = {};
-    for (const key of target.envKeys) envOverride[key] = dbName;
+    Object.assign(envOverride, baseIsolationEnvOverride(target, dbName));
     // 连接串覆写：保留 ${CDS_HOST} 模板，随容器启动的既有模板解析链路落成宿主地址；
     // 实例带认证时凭据入串（percent-encode 防特殊字符撞 ${VAR} 模板展开）
     for (const key of target.connEnvKeys) envOverride[key] = dedicatedConnString(user, pw, isoHostPort);
@@ -594,8 +646,7 @@ export function envOverrideFromSnapshot(
   /** 专用实例真实凭据（dedicatedAuthFromContainer 活取）；缺省退 infra 现值 */
   authOverride?: { user: string; pw: string } | null,
 ): Record<string, string> {
-  const envOverride: Record<string, string> = {};
-  for (const key of target.envKeys) envOverride[key] = snapshot.dbName;
+  const envOverride: Record<string, string> = baseIsolationEnvOverride(target, snapshot.dbName);
   if (snapshot.dedicatedContainer && snapshot.dedicatedHostPort) {
     // 带认证标记的实例复用源库 root 凭据（优先容器活取，退 infra env，不落盘）；
     // 旧无认证实例（快照无标记）维持裸串，不误发凭据

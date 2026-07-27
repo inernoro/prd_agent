@@ -213,7 +213,11 @@ export async function processTeardownTombstones(opts: {
       });
       continue;
     }
-    const rm = await shell.exec(`docker rm -f ${quote(name)}`, { timeout: 60_000 });
+    // 带 removeVolumes 标记的墓碑必须连匿名卷一起删（Codex 第三十二轮 P1）：
+    // 专用隔离实例的数据在匿名卷里、装的是生产派生克隆，只删容器等于把敏感数据
+    // 和它占的盘一起变成谁也扫不到的孤儿。
+    const rmFlags = tombstone.removeVolumes ? '-f -v' : '-f';
+    const rm = await shell.exec(`docker rm ${rmFlags} ${quote(name)}`, { timeout: 60_000 });
     if (rm.exitCode === 0 || /no such container/i.test(rm.stderr || '')) {
       state.removeContainerTeardownTombstone(name);
       result.removed.push(name);

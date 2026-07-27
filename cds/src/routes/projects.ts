@@ -3576,11 +3576,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
     const requestedAt = new Date().toISOString();
     if (teardownContainers.length > 0) {
+      // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
+      // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
+      // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
+      const volumeBearing = new Set(dedicatedDbContainerNames);
       stateService.addContainerTeardownTombstones(
         teardownContainers.map((containerName) => ({
           containerName,
           projectId: project.id,
           requestedAt,
+          ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
         })),
       );
     }

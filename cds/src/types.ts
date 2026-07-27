@@ -1524,6 +1524,14 @@ export interface ContainerTeardownTombstone {
   projectId: string;
   /** 墓碑写入时刻（ISO）。晚于此刻创建的同名容器属于后继项目，不许动。 */
   requestedAt: string;
+  /**
+   * 移除时必须连匿名数据卷一起删（`docker rm -f -v`）。
+   *
+   * 复制集专用隔离实例（cds-rsdb-*）的数据在**匿名卷**里，装的是生产派生克隆。
+   * 墓碑路径原本一律跑 `docker rm -f`（不带 -v）：容器没了、卷永久失去追踪，
+   * 既留着敏感数据又持续吃盘，谁也扫不到（Codex 第三十二轮 P1）。
+   */
+  removeVolumes?: boolean;
 }
 
 export interface CdsState {

@@ -204,3 +204,7 @@
 | fix | cds | sweep 并发合并成同一次：周期定时器/启动首轮/手工触发不再叠加抢 docker daemon |
 | fix | cds | sweep 摘要在 TTL 清理关闭时同样记录：janitor 关掉后回收仍留证，不再恒为 null |
 | fix | cds | 复制集独立路由器补磁盘刹车：克隆/隔离/加成员/promote/计划保存在冻结档被拒，回切与释放类动作照常放行 |
+| fix | cds | 关系型隔离重写连接 URL 的库名段：此前只改 MYSQL_DATABASE/POSTGRES_DB，副本仍按 DATABASE_URL 写主库，隔离形同虚设 |
+| fix | cds | 隔离审计增查连接 URL 库名段，不再为假隔离背书 |
+| fix | cds | 计划端点按步骤种类判定磁盘刹车：纯清理计划在冻结档放行，面板回收入口不被堵死 |
+| fix | cds | 专用隔离实例墓碑标注连卷删除：容器移除时不再留下装着生产派生克隆的孤儿匿名卷 |

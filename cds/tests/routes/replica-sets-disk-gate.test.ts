@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { isDiskGrowingReplicaAction } from '../../src/routes/replica-sets.js';
+import { isDiskGrowingReplicaAction, requestGrowsDisk } from '../../src/routes/replica-sets.js';
 import { diskGuard } from '../../src/services/disk-guard.js';
 
 /**
@@ -68,5 +68,33 @@ describe('复制集磁盘刹车：档位联动', () => {
   it('未到冻结档不拦（85% 属主动回收档，回收更狠但不停业务）', () => {
     diskGuard.update(85);
     expect(diskGuard.blockReasonForDeploy()).toBeNull();
+  });
+});
+
+describe('计划端点按步骤种类判定（Codex 第三十二轮 P1）', () => {
+  it('纯清理计划在冻结档必须放行——面板的删成员/解散/回切都走这个端点', () => {
+    // 按路径一刀切等于在磁盘压力最大、最需要回收的时候，把 UI 上唯一的清理入口
+    // 也堵死了：拦错比漏拦更伤。
+    expect(requestGrowsDisk('/branches/b1/replica-plans', {
+      steps: [{ kind: 'remove-member' }, { kind: 'dissolve' }, { kind: 'revert-db' }],
+    })).toBe(false);
+  });
+
+  it('含加副本或隔离步骤的计划照拦', () => {
+    expect(requestGrowsDisk('/branches/b1/replica-plans', {
+      steps: [{ kind: 'remove-member' }, { kind: 'add-replica' }],
+    })).toBe(true);
+    expect(requestGrowsDisk('/branches/b1/replica-plans', { steps: [{ kind: 'isolate-db' }] })).toBe(true);
+  });
+
+  it('步骤读不出来时保守当作会增长（畸形 body 不该成为绕过手段）', () => {
+    expect(requestGrowsDisk('/branches/b1/replica-plans', {})).toBe(true);
+    expect(requestGrowsDisk('/branches/b1/replica-plans', null)).toBe(true);
+    expect(requestGrowsDisk('/branches/b1/replica-plans', { steps: 'not-an-array' })).toBe(true);
+  });
+
+  it('非计划端点不看 body，按路径判定不变', () => {
+    expect(requestGrowsDisk('/branches/b1/db-guard', { steps: [{ kind: 'remove-member' }] })).toBe(true);
+    expect(requestGrowsDisk('/branches/b1/replica-sets/api/revert-db', {})).toBe(false);
   });
 });

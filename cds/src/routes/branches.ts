@@ -10970,7 +10970,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch (err) {
           // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
           // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
-          // 墓碑持续重试 rm -f（不带 -v，匿名卷可能残留，但容器不会漏跑）。
+          // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
+          // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
           // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
           // 记事件供人工收口（残留台账见 debt.cds.replica-set #19）。
           if (snapshot.dedicatedContainer) {
@@ -10979,6 +10980,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 containerName: snapshot.dedicatedContainer,
                 projectId: entry.projectId,
                 requestedAt: new Date().toISOString(),
+                removeVolumes: true,
               }]);
             } catch { /* 墓碑写入失败退回事件告警 */ }
           } else {
