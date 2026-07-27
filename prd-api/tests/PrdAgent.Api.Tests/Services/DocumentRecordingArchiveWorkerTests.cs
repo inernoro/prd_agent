@@ -2069,6 +2069,34 @@ public sealed class DocumentRecordingArchiveWorkerTests
         catalog.ShouldContain("idx_recording_sessions_archive_expiry");
         catalog.ShouldContain("idx_recording_sessions_expired_cleanup_claim");
         catalog.ShouldContain("idx_recording_chunks_session_index");
+        catalog.ShouldContain("idx_recording_sessions_archive_stale_lease");
+        catalog.ShouldContain("idx_recording_chunks_created_session");
+    }
+
+    [Fact]
+    public void RecordingUploadCollections_ShouldDropLegacyTtlAndDeclareNone()
+    {
+        var catalog = File.ReadAllText(MongoDbIndexCatalogPath());
+        const string sectionStartMarker =
+            "// begin collection: document_recording_upload_sessions + document_recording_upload_chunks";
+        const string sectionEndMarker =
+            "// end collection: document_recording_upload_sessions + document_recording_upload_chunks";
+
+        var sectionStart = catalog.IndexOf(sectionStartMarker, StringComparison.Ordinal);
+        sectionStart.ShouldBeGreaterThanOrEqualTo(0);
+        var sectionEnd = catalog.IndexOf(sectionEndMarker, sectionStart, StringComparison.Ordinal);
+        sectionEnd.ShouldBeGreaterThan(sectionStart);
+        var section = catalog[sectionStart..sectionEnd];
+
+        var legacyTtlRemoval = section.IndexOf(
+            "index.expireAfterSeconds !== undefined",
+            StringComparison.Ordinal);
+        legacyTtlRemoval.ShouldBeGreaterThanOrEqualTo(0);
+        var firstRecordingCreateIndex = section.IndexOf(
+            ".createIndex(",
+            StringComparison.Ordinal);
+        firstRecordingCreateIndex.ShouldBeGreaterThan(legacyTtlRemoval);
+        section[firstRecordingCreateIndex..].ShouldNotContain("expireAfterSeconds");
     }
 
     [Fact]
