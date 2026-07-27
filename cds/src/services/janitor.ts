@@ -89,7 +89,20 @@ export const defaultImageDocker: ImageDockerFns = {
   },
   removeImage: async (image) => {
     const out = await execDocker(['rmi', image], 60_000);
-    return out.startsWith('__ERR__') ? out.replace('__ERR__ ', '') : null;
+    if (!out.startsWith('__ERR__')) return null;
+    const err = out.replace('__ERR__ ', '');
+    // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
+    // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
+    // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
+    // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
+    // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
+    if (!/must be forced/i.test(err)) return err;
+    const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000);
+    if (refs.startsWith('__ERR__') || refs.trim() !== '') {
+      return `${err}（有容器引用或引用检查失败，未强制删除）`;
+    }
+    const forced = await execDocker(['rmi', '-f', image], 60_000);
+    return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
   },
 };
 
