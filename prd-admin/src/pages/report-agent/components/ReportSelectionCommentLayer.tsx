@@ -13,7 +13,8 @@ import {
 // 周报划词评论层：
 //   1. 捕获正文选区（限单个段落容器 [data-report-section] 内）→ 浮出「评论」按钮；
 //   2. 把带锚点的评论重定位回已渲染 DOM，画「黄色下划线」（非底色高亮，遵循用户要求）；
-//   3. 下划线末尾放评论数角标，点击联动滚动到该段落下的评论线程。
+//   3. 下划线本身可点（贴线的细条命中区），点击联动滚动到该段落下的评论线程；
+//      不放数字角标（用户 2026-07-27 反馈：不要在文字后面显示数字）。
 // 锚定算法复用知识库 SSOT（findTextRange / locateInSegments），本层只做周报侧的轻量视觉。
 // 坐标系同 doc-browser InlineCommentOverlay：本层是 relative 容器内 0x0 的 absolute 原点，
 // 子元素位置 = 文本 rect 减本层 rect，随内容一起滚动，无需监听 scroll。
@@ -21,7 +22,6 @@ import {
 interface UnderlineMark {
   key: string;
   rects: Array<{ top: number; left: number; width: number; height: number }>;
-  badge: { top: number; left: number };
   comments: ReportComment[];
 }
 
@@ -97,13 +97,7 @@ export function ReportSelectionCommentLayer({
         width: r.width,
         height: r.height,
       }));
-      const last = rectList[rectList.length - 1];
-      next.push({
-        key,
-        rects,
-        badge: { top: last.top - oRect.top - 4, left: last.right - oRect.left + 3 },
-        comments: list,
-      });
+      next.push({ key, rects, comments: list });
     });
     setMarks(next);
   }, [comments, containerRef]);
@@ -191,11 +185,7 @@ export function ReportSelectionCommentLayer({
     };
   }, [containerRef]);
 
-  // 角标：黄金底 + 统一深墨字（两种主题的黄底上对比度都 >=4.5，无需按主题翻转）。
-  // 深色字面量写 rgba 形式——它衬在黄底上、双主题都成立，
-  // 不属于 themeHardcodeRatchet 要拦的「浅色主题下漂浮暗块」场景
-  const badgeBg = isLight ? '#ca8a04' : '#eab308';
-  const badgeFg = 'rgba(26, 18, 5, 0.92)';
+  const accentGold = isLight ? '#ca8a04' : '#eab308';
 
   return (
     <div ref={overlayRef} style={{ position: 'absolute', top: 0, left: 0, width: 0, height: 0 }}>
@@ -204,7 +194,7 @@ export function ReportSelectionCommentLayer({
         const stroke = underlineStroke(isLight, emphasized);
         return (
           <div key={m.key}>
-            {/* 黄色下划线：常态只画线不铺底色；hover 角标时加柔和底色提示范围。
+            {/* 黄色下划线（视觉层）：常态只画线不铺底色；hover 时线加深并出柔和底色提示范围。
                 pointerEvents:none —— 不挡正文再次划词/点击链接 */}
             {m.rects.map((r, i) => (
               <div
@@ -223,43 +213,47 @@ export function ReportSelectionCommentLayer({
                 }}
               />
             ))}
-            {/* 评论数角标：点击滚到该线程 */}
-            <button
-              type="button"
-              onClick={(e) => { e.stopPropagation(); onActivateThread(m.comments[0]); }}
-              onMouseEnter={() => setHoveredKey(m.key)}
-              onMouseLeave={() => setHoveredKey((k) => (k === m.key ? null : k))}
-              title={`${m.comments.length} 条划词评论，点击查看`}
-              className="cursor-pointer"
-              style={{
-                position: 'absolute',
-                top: m.badge.top,
-                left: m.badge.left,
-                minWidth: 16,
-                height: 16,
-                padding: '0 4px',
-                borderRadius: 8,
-                border: 'none',
-                background: badgeBg,
-                color: badgeFg,
-                fontSize: 9,
-                fontWeight: 800,
-                lineHeight: '16px',
-                pointerEvents: 'auto',
-                zIndex: 6,
-                boxShadow: '0 1px 3px rgba(0,0,0,0.35)',
-              }}
-            >
-              {m.comments.length}
-            </button>
+            {/* 命中层：贴着下划线的细条，点击滚到该评论线程。
+                只占行底部 ~8px，不遮文字主体，正文仍可正常划词 */}
+            {m.rects.map((r, i) => (
+              <div
+                key={`hit-${i}`}
+                role="button"
+                tabIndex={-1}
+                onClick={(e) => { e.stopPropagation(); onActivateThread(m.comments[0]); }}
+                onMouseEnter={() => setHoveredKey(m.key)}
+                onMouseLeave={() => setHoveredKey((k) => (k === m.key ? null : k))}
+                title={m.comments.length > 1 ? `${m.comments.length} 条划词评论，点击查看` : '点击查看划词评论'}
+                style={{
+                  position: 'absolute',
+                  top: r.top + r.height - 6,
+                  left: r.left,
+                  width: r.width,
+                  height: 8,
+                  cursor: 'pointer',
+                  pointerEvents: 'auto',
+                  background: 'transparent',
+                  zIndex: 5,
+                }}
+              />
+            ))}
           </div>
         );
       })}
 
-      {/* 选中后浮出的「评论」按钮 */}
+      {/* 选中后浮出的「评论」按钮。
+          注意：本层 overlay 是 0x0 原点，绝对定位子元素的 shrink-to-fit 可用宽度为 0，
+          不显式给 width:max-content + nowrap 会被压成竖排圆团（2026-07-27 用户反馈的变形根因） */}
       {pending && (
         <div
-          style={{ position: 'absolute', top: pending.pos.top, left: pending.pos.left, zIndex: 20, pointerEvents: 'auto' }}
+          style={{
+            position: 'absolute',
+            top: pending.pos.top,
+            left: pending.pos.left,
+            width: 'max-content',
+            zIndex: 20,
+            pointerEvents: 'auto',
+          }}
         >
           <button
             type="button"
@@ -270,15 +264,22 @@ export function ReportSelectionCommentLayer({
               setPending(null);
               window.getSelection()?.removeAllRanges();
             }}
-            className="flex items-center gap-1.5 px-2.5 py-1.5 rounded-full text-[12px] font-medium cursor-pointer"
+            className="inline-flex items-center cursor-pointer"
             style={{
+              gap: 6,
+              padding: '5px 12px 5px 10px',
+              whiteSpace: 'nowrap',
+              borderRadius: 999,
+              fontSize: 12,
+              fontWeight: 500,
+              lineHeight: '16px',
               background: 'var(--bg-elevated)',
               color: 'var(--text-primary)',
-              border: `1px solid ${underlineStroke(isLight, true)}`,
-              boxShadow: '0 4px 14px rgba(0,0,0,0.28)',
+              border: '1px solid var(--border-primary)',
+              boxShadow: '0 6px 18px rgba(0,0,0,0.22)',
             }}
           >
-            <MessageSquarePlus size={13} style={{ color: badgeBg }} />
+            <MessageSquarePlus size={13} style={{ color: accentGold, flexShrink: 0 }} />
             评论
           </button>
         </div>
