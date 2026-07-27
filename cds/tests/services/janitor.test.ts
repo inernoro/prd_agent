@@ -380,6 +380,50 @@ describe('JanitorService', () => {
     });
   });
 
+  describe('回收失败必须带原因（2026-07-27 实测：只报 failed:1 等于没说）', () => {
+    it('镜像删除失败时摘要带上原因样本，成功时不带这个字段', async () => {
+      setup({ dockerPrune: false });
+      // 注入一个「列得出、删不掉」的镜像：台账里有它确立仓库归属，rmi 必失败
+      const img = 'ghcr.io/acme/api:sha-' + '0'.repeat(40);
+      const failing = new JanitorService(
+        stateService,
+        { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600, dockerPrune: false },
+        '/tmp/wt',
+        clock,
+        mockDiskUsage,
+        async () => ({ ran: true, reclaimed: [], errors: [] }),
+        {
+          listImages: async () => [img],
+          listInUseImages: async () => [],
+          removeImage: async () => 'Error response from daemon: conflict: unable to delete',
+        },
+      );
+      // 台账为空 = 无归属仓库，按安全边界一个都不删，也就没有失败可报
+      const noCandidate = await failing.sweep();
+      expect(noCandidate.imageRetention?.failed).toHaveLength(0);
+      expect(failing.getSnapshot().lastSweep!.imageRetention!.failureSamples).toBeUndefined();
+
+      // 台账里放一代同仓库镜像：确立归属，宿主上那个台账外的镜像成为候选
+      stateService.addBranch(makeBranch('b1', 1));
+      stateService.addDeploymentVersion({
+        id: 'dv_1', projectId: 'default', branchId: 'b1', commitSha: 'c1', configHash: 'h1',
+        profiles: [{
+          profileId: 'api', name: 'api', artifactImage: 'ghcr.io/acme/api:sha-' + '1'.repeat(40),
+          artifactKind: 'prebuilt-image', reusable: true, containerPort: 3000,
+        }],
+        migrations: [], capabilities: [], createdByRunId: 'run1',
+        createdAt: new Date('2026-07-27T00:00:00Z').toISOString(),
+      });
+      const withCandidate = await failing.sweep();
+      expect(withCandidate.imageRetention!.failed).toHaveLength(1);
+      const samples = failing.getSnapshot().lastSweep!.imageRetention!.failureSamples;
+      expect(samples).toHaveLength(1);
+      // 原因必须能定位到具体镜像与 docker 的原话，而不是一个孤零零的数字
+      expect(samples![0]).toContain(img);
+      expect(samples![0]).toContain('unable to delete');
+    });
+  });
+
   describe('回收结果可观测（2026-07-27 复盘）', () => {
     it('sweep 后快照带上本轮摘要——外部据此确认回收是否真的在跑', async () => {
       setup({ dockerPrune: false, imageRetention: false });

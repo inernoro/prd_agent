@@ -176,7 +176,14 @@ export interface JanitorSnapshot {
     at: string;
     diskTier: DiskTier;
     removedBranches: number;
-    imageRetention: { removed: number; failed: number; deferred: number; keepGenerations: number } | null;
+    imageRetention: {
+      removed: number;
+      failed: number;
+      /** 失败原因样本（最多 3 条）：只报数字等于「知道有问题但不知道是什么问题」。 */
+      failureSamples?: string[];
+      deferred: number;
+      keepGenerations: number;
+    } | null;
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -406,6 +413,9 @@ export class JanitorService {
             ? {
               removed: report.imageRetention.removed.length,
               failed: report.imageRetention.failed.length,
+              ...(report.imageRetention.failed.length > 0
+                ? { failureSamples: report.imageRetention.failed.slice(0, 3).map((f) => `${f.image}: ${f.error.slice(0, 160)}`) }
+                : {}),
               deferred: report.imageRetention.deferred,
               keepGenerations: report.imageRetention.keepGenerations,
             }
