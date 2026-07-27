@@ -213,3 +213,64 @@ describe('项目级改权重/下线必须整组（P2 的另一半）', () => {
     expect(plan.steps).toHaveLength(1);
   });
 });
+
+describe('成员身份必须是 profile + memberId 复合键（第三十八轮 P2）', () => {
+  // 成员 id 在每个 profile 内独立分配，一个项目级组里几个服务各有一个 res-1 是
+  // 常态（route-resolver 的粘性条目为此专门支持 profileId:memberId 作用域）。
+  // 只按 memberId 建索引会把它们坍缩，单服务计划就能骗过整组校验。
+  beforeEach(() => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaMode = 'project';
+    b.replicaSets!.api.members = [{ ...mkMember('res-1', 'c-api'), projectGroupId: 'pg-1' }];
+    b.replicaSets!.web = {
+      profileId: 'web', enabled: true, primaryWeight: 100,
+      members: [{ ...mkMember('res-1', 'c-web'), projectGroupId: 'pg-1' }],
+      updatedAt: new Date().toISOString(),
+    } as never;
+  });
+
+  it('同名 res-1 分属两个服务时，只改其一仍被拒（不会互相顶替覆盖）', () => {
+    expect(() => mkSvc().startPlan('proj-main', {
+      onFailure: 'stop',
+      mode: 'project',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 50 } }],
+    })).toThrow('必须整组进行');
+  });
+
+  it('两个服务的同名 res-1 都覆盖到才放行', () => {
+    const plan = mkSvc().startPlan('proj-main', {
+      onFailure: 'stop',
+      mode: 'project',
+      steps: [
+        { kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 50 } },
+        { kind: 'set-weight', profileId: 'web', params: { memberId: 'res-1', weight: 50 } },
+      ],
+    });
+    expect(plan.steps).toHaveLength(2);
+  });
+});
+
+describe('直接改单成员的项目级守卫（第三十八轮 P2）', () => {
+  beforeEach(() => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaMode = 'project';
+    b.replicaSets!.api.members = [{ ...mkMember('rs-a', 'c-a'), projectGroupId: 'pg-1' }];
+  });
+
+  it('项目级组成员不许绕开计划单独改权重 / 单独下线', () => {
+    const svc = mkSvc();
+    expect(() => svc.assertDirectMemberMutationAllowed('proj-main', 'api', 'rs-a', 'weight')).toThrow('整组');
+    expect(() => svc.assertDirectMemberMutationAllowed('proj-main', 'api', 'rs-a', 'remove')).toThrow('整组');
+  });
+
+  it('容器级分支照旧放行（直接改单成员本来就是它的语义）', () => {
+    state.getBranch('proj-main')!.replicaMode = 'container';
+    expect(() => mkSvc().assertDirectMemberMutationAllowed('proj-main', 'api', 'rs-a', 'weight')).not.toThrow();
+  });
+
+  it('项目级分支里无组身份的存量成员也放行', () => {
+    const b = state.getBranch('proj-main')!;
+    b.replicaSets!.api.members = [mkMember('rs-legacy', 'c-l')];
+    expect(() => mkSvc().assertDirectMemberMutationAllowed('proj-main', 'api', 'rs-legacy', 'remove')).not.toThrow();
+  });
+});

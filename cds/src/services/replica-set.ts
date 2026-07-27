@@ -113,6 +113,20 @@ export class ReplicaSetService {
     return `${branchId}:${target.infra.containerName}:${target.sourceDb}`;
   }
 
+  /**
+   * 专用隔离实例的端口发布地址（Codex 第三十八轮 P1）：取 `CDS_HOST`，也就是副本
+   * 容器连接串里实际用的那个 docker 网桥地址。只发布在这一个地址上，宿主之外
+   * 够不着这份生产派生克隆。取不到时返回 undefined，退回旧的全网卡行为（宁可
+   * 保持功能可用，也不猜一个地址把隔离打死）。
+   */
+  private dockerBridgeHost(): string | undefined {
+    try {
+      return this.opts.state.getCdsEnvVars()['CDS_HOST'] || undefined;
+    } catch {
+      return undefined;
+    }
+  }
+
   private now(): string {
     return (this.opts.now?.() ?? new Date()).toISOString();
   }
@@ -327,6 +341,31 @@ export class ReplicaSetService {
     return rs;
   }
 
+  /**
+   * 直接改单个成员的路由入口守卫（Codex 第三十八轮 P2）。
+   *
+   * 项目级整组的约束此前只长在**计划**上（startPlan）。但 PATCH / DELETE 单成员
+   * 这两个直接端点根本不看 `replicaMode`——API 调用方绕开计划就能给项目级组里的
+   * 一个成员单独改权重、或只下线其中一个，组内当场分流不一致，整组语义被从侧门
+   * 掏空。这里在**路由层**拦（不能放进 updateMember / removeMember 本身：计划
+   * 执行正是通过它们落地整组动作的，放里面会把合法的整组计划一并拒掉）。
+   *
+   * 只拦真正影响分流的改动：改权重与下线。改标签是纯展示，不会让组失衡，放行。
+   */
+  assertDirectMemberMutationAllowed(
+    branchId: string,
+    profileId: string,
+    memberId: string,
+    action: 'weight' | 'remove',
+  ): void {
+    const branch = this.opts.state.getBranch(branchId);
+    if (!branch || branch.replicaMode !== 'project') return;
+    const member = branch.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+    if (!member?.projectGroupId) return; // 无组身份的存量成员是容器级语义
+    throw new ReplicaSetError(409,
+      `该分支按项目级管理，组内成员必须整组${action === 'weight' ? '改权重' : '下线'}：${profileId}/${memberId} 属于整组 ${member.projectGroupId}，请用画布的整组操作（走变更计划一次覆盖全组），不要单独改一个。`);
+  }
+
   /** 下线成员：移除容器 + 删记录（隔离库按保留语义不动）。 */
   async removeMember(branchId: string, profileId: string, memberId: string): Promise<void> {
     const branch = this.requireBranch(branchId);
@@ -420,6 +459,7 @@ export class ReplicaSetService {
       memberId: guardId,
       profileId,
       instanceId: this.opts.instanceId,
+      publishHost: this.dockerBridgeHost(),
       branchId: branch.id,
       now: this.opts.now,
       onOutput: (line) => onStage('cloning', line),
@@ -564,6 +604,7 @@ export class ReplicaSetService {
         const cloned = await cloneReplicaDb({
           target, memberId: guardId, profileId, branchId, now: this.opts.now,
           instanceId: this.opts.instanceId,
+          publishHost: this.dockerBridgeHost(),
           // 复验 R5-P1：克隆保护/进度必须有用户可见 sink——透传到成员 statusMessage
           //（保持「第1步」前缀，UI 的隔离阶段判定依赖它）+ 服务端日志
           onOutput: (line) => {
@@ -866,6 +907,7 @@ export class ReplicaSetService {
           memberId,
           profileId,
           instanceId: this.opts.instanceId,
+          publishHost: this.dockerBridgeHost(),
           branchId,
           now: this.opts.now,
           onOutput,
@@ -1436,14 +1478,20 @@ export class ReplicaSetService {
     steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>,
   ): void {
     if ((mode ?? branch.replicaMode) !== 'project') return;
-    const membersByGroup = new Map<string, ReplicaMember[]>();
+    // 成员身份必须是 profile + memberId 复合键（Codex 第三十八轮 P2）：成员 id 在
+    // **每个 profile 内独立分配**，同一个项目级组里几个服务各有一个 res-1 是常态
+    //（route-resolver 的粘性条目为此专门支持 `profileId:memberId` 作用域）。只按
+    // m.id 建索引会把它们坍缩成一个，覆盖判定于是认为「碰了 api 的 res-1 就等于
+    // 碰了全组的 res-1」——单服务计划照样能通过整组校验。
+    const memberKey = (profileId: string, memberId: string): string => `${profileId} ${memberId}`;
+    const membersByGroup = new Map<string, Array<{ profileId: string; member: ReplicaMember }>>();
     const groupOfMember = new Map<string, string>();
-    for (const rs of Object.values(branch.replicaSets ?? {})) {
+    for (const [profileId, rs] of Object.entries(branch.replicaSets ?? {})) {
       for (const m of rs.members) {
         if (!m.projectGroupId) continue;
-        groupOfMember.set(m.id, m.projectGroupId);
+        groupOfMember.set(memberKey(profileId, m.id), m.projectGroupId);
         const arr = membersByGroup.get(m.projectGroupId) ?? [];
-        arr.push(m);
+        arr.push({ profileId, member: m });
         membersByGroup.set(m.projectGroupId, arr);
       }
     }
@@ -1451,22 +1499,22 @@ export class ReplicaSetService {
     for (const kind of ['set-weight', 'remove-member'] as const) {
       const touched = steps.filter((s) => s.kind === kind && s.params?.memberId);
       if (touched.length === 0) continue;
-      const byGid = new Map<string, Array<{ memberId: string; weight?: number }>>();
+      const byGid = new Map<string, Array<{ key: string; weight?: number }>>();
       for (const s of touched) {
-        const memberId = String(s.params?.memberId);
-        const gid = groupOfMember.get(memberId);
+        const key = memberKey(s.profileId, String(s.params?.memberId));
+        const gid = groupOfMember.get(key);
         if (!gid) continue; // 存量无组成员：容器级语义，不受整组约束
         const arr = byGid.get(gid) ?? [];
-        arr.push({ memberId, weight: s.params?.weight });
+        arr.push({ key, weight: s.params?.weight });
         byGid.set(gid, arr);
       }
       for (const [gid, entries] of byGid) {
         const all = membersByGroup.get(gid) ?? [];
-        const coveredIds = new Set(entries.map((e) => e.memberId));
-        const missing = all.filter((m) => !coveredIds.has(m.id));
+        const coveredKeys = new Set(entries.map((e) => e.key));
+        const missing = all.filter((m) => !coveredKeys.has(memberKey(m.profileId, m.member.id)));
         if (missing.length > 0) {
           throw new ReplicaSetError(400,
-            `项目级模式下「${kind === 'set-weight' ? '改权重' : '下线副本'}」必须整组进行：组 ${gid} 还有 ${missing.length} 个成员（${missing.map((m) => m.id).join('、')}）没被本次计划覆盖。只动一半会让同一组内各服务分流不一致，整组语义名存实亡。`);
+            `项目级模式下「${kind === 'set-weight' ? '改权重' : '下线副本'}」必须整组进行：组 ${gid} 还有 ${missing.length} 个成员（${missing.map((m) => `${m.profileId}/${m.member.id}`).join('、')}）没被本次计划覆盖。只动一半会让同一组内各服务分流不一致，整组语义名存实亡。`);
         }
         if (kind === 'set-weight') {
           const weights = new Set(entries.map((e) => (typeof e.weight === 'number' ? e.weight : NaN)));

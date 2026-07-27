@@ -472,6 +472,13 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
+      // 项目级整组守卫（Codex 第三十八轮 P2）：绕开变更计划直接改单个成员的权重，
+      // 会让项目级组内分流当场不一致。纯改标签不影响分流，放行。
+      if (typeof req.body?.weight === 'number' || typeof req.body?.primaryWeight === 'number') {
+        deps.replicaSetService.assertDirectMemberMutationAllowed(
+          req.params.branchId, req.params.profileId, req.params.memberId, 'weight',
+        );
+      }
       const rs = deps.replicaSetService.updateMember(
         req.params.branchId,
         req.params.profileId,
@@ -492,6 +499,10 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
+      // 同上：项目级组只能整组下线，单个成员从侧门删掉会留下残缺组
+      deps.replicaSetService.assertDirectMemberMutationAllowed(
+        req.params.branchId, req.params.profileId, req.params.memberId, 'remove',
+      );
       await deps.replicaSetService.removeMember(
         req.params.branchId,
         req.params.profileId,

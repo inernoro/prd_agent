@@ -285,6 +285,12 @@ export async function cloneReplicaDb(opts: {
    * 的克隆不再同名互杀；幂等清理前也按 label 验归属，异实例容器拒删。
    */
   instanceId?: string;
+  /**
+   * 专用隔离实例的发布地址（Codex 第三十八轮 P1）。传入 `CDS_HOST`（docker 网桥
+   * 地址，即容器实际连过来的那个 IP），端口就只发布在这一个地址上，而不是
+   * `-p 27017` 的全网卡。见下方 runIso 处的详细说明。缺省时退回全网卡（旧行为）。
+   */
+  publishHost?: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -304,7 +310,7 @@ export async function cloneReplicaDb(opts: {
   // 上凡大批量写入随机 SIGSEGV[docker events die exitCode=139]，纯读从未崩——
   // 写压必须彻底移出共享实例）
   if (target.engine === 'mongo') {
-    return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, instanceId: opts.instanceId, now: opts.now, onOutput: opts.onOutput });
+    return cloneMongoViaDedicatedInstance({ target, memberId, profileId, dbName, instanceId: opts.instanceId, publishHost: opts.publishHost, now: opts.now, onOutput: opts.onOutput });
   }
 
   // ── mysql / postgres：共享实例内克隆（写入量小、历轮验收无崩溃记录，维持原路径）──
@@ -412,6 +418,8 @@ async function cloneMongoViaDedicatedInstance(opts: {
   profileId: string;
   dbName: string;
   instanceId?: string;
+  /** 专用实例端口的发布地址（见 cloneReplicaDb 同名参数与下方 runIso 说明）。 */
+  publishHost?: string;
   now?: () => Date;
   onOutput?: (line: string) => void;
 }): Promise<CloneResult> {
@@ -497,15 +505,24 @@ async function cloneMongoViaDedicatedInstance(opts: {
     if (dump.code !== 0) throw cloneStageError('mongo dump', dump, secrets);
 
     onOutput?.(`── 阶段2/3: 启动专用隔离实例（${isoImage}，内存上限 1.5G / WT cache 1G${user ? '，root 认证=源库同凭据' : '，源库无认证、实例保持同姿态'}）──`);
-    // 认证（Codex P1）：`-p 27017` 默认发布到宿主全部网卡，能摸到该端口的任何人
-    // 都可读写这份生产派生克隆。专用实例复用**源库的 root 凭据**（不新增落盘密钥、
-    // 与共享 infra 的安全姿态一致）；源库本身无认证时保持同姿态（克隆不比源更暴露）。
+    // 认证（Codex P1）：专用实例复用**源库的 root 凭据**（不新增落盘密钥、与共享
+    // infra 的安全姿态一致）；源库本身无认证时保持同姿态。
+    //
+    // 发布面（Codex 第三十八轮 P1）：`-p 27017` 会把端口发布到宿主**全部网卡**，
+    // 源库无 root 凭据时这就是一份无认证的生产派生克隆挂在公网/内网可达地址上。
+    // 而消费方（副本容器）用的连接串是 `mongodb://${CDS_HOST}:<port>`——CDS_HOST
+    // 是 docker 网桥地址，所以只发布在这一个地址上就够：宿主上任意网络的容器都能
+    // 经网桥 IP 连到，宿主之外则完全够不着。
+    //
+    // 不用 Codex 建议的 127.0.0.1：容器访问不到宿主的 loopback，绑上去等于把隔离
+    // 功能整个打死。绑在「消费方实际使用的那个地址」才是既收紧又不破坏的解。
+    const publishSpec = opts.publishHost ? `${opts.publishHost}::27017` : '27017';
     const runIso = await runDockerExec([
       'run', '-d', '--name', isoName,
       '--label', 'cds.type=rsdb',
       ...(opts.instanceId ? ['--label', `cds.instance=${opts.instanceId}`] : []),
       '--restart', 'unless-stopped',
-      '-p', '27017',
+      '-p', publishSpec,
       // 日志限额（2026-07-27 宕机复盘 P1）：专用隔离实例是长跑容器，默认 json-file
       // 无上限，restore 期间的 mongod 日志尤其密集。
       '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3',
