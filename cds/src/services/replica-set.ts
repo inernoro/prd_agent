@@ -399,12 +399,9 @@ export class ReplicaSetService {
       const liveBranch = this.opts.state.getBranch(branchId);
       // deleting 标记同样视为已删（Codex 第十六轮 P1）：删除路径可能已扫过台账
       if (!liveBranch || liveBranch.deleting) {
-        try {
-          await dropReplicaDb(cloned.snapshot, target!.infra.env || {});
-          onStage('error', `分支在克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`);
-        } catch {
-          onStage('error', `分支在克隆期间被删除，且隔离库 ${cloned.snapshot.dbName} 清理失败——请到数据库工作台手动 DROP${cloned.snapshot.dedicatedContainer ? `（专用实例 ${cloned.snapshot.dedicatedContainer}）` : ''}`);
-        }
+        // 清理失败不静默（Codex 第十七轮 P1）：drop 失败会入台账/写墓碑/留日志
+        await this.dropFencedClone(cloned.snapshot, target!.infra.env || {}, branchId, branch.projectId, '数据库保护罩栅栏');
+        onStage('error', `分支在克隆期间被删除，克隆产物已清理（若清理失败已登记墓碑/台账兜底）：${cloned.snapshot.dbName}`);
         return;
       }
       liveBranch.replicaDbSnapshots = [...(liveBranch.replicaDbSnapshots || []), cloned.snapshot];
@@ -532,7 +529,8 @@ export class ReplicaSetService {
         // 不入台账，就地 drop 刚克隆的产物后放弃
         const live = this.opts.state.getBranch(branchId);
         if (!live || live.deleting || !live.replicaSets?.[profileId]) {
-          await dropReplicaDb(cloned.snapshot, target.infra.env || {}).catch(() => undefined);
+          // 清理失败不静默（Codex 第十七轮 P1）：drop 失败会入台账/写墓碑/留日志
+          await this.dropFencedClone(cloned.snapshot, target.infra.env || {}, branchId, branch.projectId, '复制隔离栅栏');
           this.opts.logger?.warn?.(
             `[replica-set] 分支/复制集在隔离克隆期间被删除，已清理刚克隆的隔离库 ${cloned.snapshot.dbName}`,
           );
@@ -786,11 +784,10 @@ export class ReplicaSetService {
         // 移除/复制集解散——记录没了还往台账追加快照会留下无主隔离库。确认成员
         // 仍在册才入账；不在就顺手把刚克隆出来的库清掉（best-effort）。
         if (!this.memberStillTracked(branchId, profileId, memberId)) {
-          try {
-            const infraEnv = this.opts.state.getInfraServicesForProject(branch.projectId)
-              .find((s) => s.containerName === cloned.snapshot.infraContainer)?.env || {};
-            await dropReplicaDb(cloned.snapshot, infraEnv);
-          } catch { /* best-effort：清不掉留给快照台账人工删 */ }
+          const infraEnv = this.opts.state.getInfraServicesForProject(branch.projectId)
+            .find((s) => s.containerName === cloned.snapshot.infraContainer)?.env || {};
+          // 清理失败不静默（Codex 第十七轮 P1）：drop 失败会入台账/写墓碑/留日志
+          await this.dropFencedClone(cloned.snapshot, infraEnv, branchId, branch.projectId, '成员物化栅栏');
           this.opts.logger?.warn?.(
             `[replica-set] 成员在隔离克隆期间被移除，放弃物化并清理克隆库 ${branchId}/${profileId}/${memberId}`,
           );
@@ -906,6 +903,49 @@ export class ReplicaSetService {
    *（记录保留）——两种情况后台物化任务都必须就地放弃，否则会在分支已 idle
    * 后把副本容器起出来。
    */
+  /**
+   * 栅栏克隆的清理（Codex 第十七轮 P1）：栅栏触发（成员被移除/复制集解散/
+   * 分支删除中）时要 drop 刚克隆的库，但 **drop 失败不许静默丢弃**——克隆里
+   * 是生产派生数据，必须留在可发现的账本上：
+   *   - 分支还在（非删除中）→ 快照入 replicaDbSnapshots 台账（快照列表可见、
+   *     可手动删除，分支删除路径也会再扫到它）；
+   *   - 分支已删/删除中 → 专用实例容器写 teardown 墓碑（孤儿收割器兜底收走，
+   *     容器一删数据即随之消失）；
+   *   - 共享实例克隆（mysql/pg 库在共用 infra 里）无容器可墓碑 → error 日志
+   *     给出库名与实例名供人工 DROP（最后兜底，不再是静默 catch）。
+   */
+  private async dropFencedClone(
+    snapshot: ReplicaDbSnapshot,
+    infraEnv: Record<string, string>,
+    branchId: string,
+    projectId: string,
+    context: string,
+  ): Promise<void> {
+    try {
+      await dropReplicaDb(snapshot, infraEnv);
+    } catch (err) {
+      const live = this.opts.state.getBranch(branchId);
+      let disposition: string;
+      if (live && !live.deleting) {
+        live.replicaDbSnapshots = [...(live.replicaDbSnapshots || []), snapshot];
+        this.opts.state.save();
+        disposition = '快照已入台账，可在数据快照列表手动删除';
+      } else if (snapshot.dedicatedContainer) {
+        this.opts.state.addContainerTeardownTombstones([{
+          containerName: snapshot.dedicatedContainer,
+          projectId: live?.projectId || projectId,
+          requestedAt: this.now(),
+        }]);
+        disposition = `专用实例 ${snapshot.dedicatedContainer} 已写 teardown 墓碑，孤儿收割器将兜底移除`;
+      } else {
+        disposition = `请到实例 ${snapshot.infraContainer} 手动 DROP 库 ${snapshot.dbName}`;
+      }
+      this.opts.logger?.error?.(
+        `[replica-set] 栅栏清理失败（${context}）：隔离库 ${snapshot.dbName} 未能删除（${(err as Error).message}）——${disposition}`,
+      );
+    }
+  }
+
   /**
    * 停止与数据库切换重叠时的强制退役（Codex 第十六轮 P1）：转换循环撞见
    * stopped 成员时不能只跳过——它的容器还带着**旧数据库模式**的 env，分支

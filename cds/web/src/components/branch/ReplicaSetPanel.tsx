@@ -117,7 +117,15 @@ export function memberDirectUrl(previewUrl: string | undefined, profileId: strin
     const url = new URL(previewUrl);
     const [first, ...rest] = url.hostname.split('.');
     if (!first || rest.length === 0) return null;
-    url.hostname = [`${first}-${safeProfile}-${memberId}`, ...rest].join('.');
+    const label = `${first}-${safeProfile}-${memberId}`;
+    if (label.length > 63) {
+      // 第一 DNS 标签超 63 octet 上限时发布器不会发这条直达路由（Codex 第十七轮
+      // P2）——展示不存在的 host 会让用户拿到 DNS 解析失败。回落为主入口的
+      // profile 作用域钉选深链（?__rs=profileId:memberId），同样一击直达该副本
+      url.searchParams.set('__rs', `${profileId}:${memberId}`);
+      return url.toString();
+    }
+    url.hostname = [label, ...rest].join('.');
     return url.toString();
   } catch { return null; }
 }
@@ -170,25 +178,29 @@ function dataGeo(w: number, dbCount: number) {
 interface BranchIso {
   state: 'idle' | 'cloning' | 'switching' | 'partial' | 'done';
   isolatedProfiles: string[];
-  withMembersProfiles: string[];
+  effectiveProfiles: string[];
   dbNames: string[];
 }
-function computeBranchIso(replicaSets: Record<string, ProfileReplicaSetView>): BranchIso {
+function computeBranchIso(replicaSets: Record<string, ProfileReplicaSetView>, effectiveProfileIds: string[]): BranchIso {
   const entries = Object.values(replicaSets);
-  const withMembers = entries.filter((rs) => rs.enabled && rs.members.length > 0);
   const isolated = entries.filter((rs) => rs.isolated);
   const cloning = entries.some((rs) => rs.members.some((m) => m.status === 'provisioning' && m.statusMessage?.includes('第1步')));
   const switching = isolated.length > 0 && entries.some((rs) => rs.members.some((m) => m.status === 'provisioning'));
+  // 完成判定以**全量有效服务**为分母（Codex 第十七轮 P2）：零副本服务同样可
+  // 隔离（零副本先隔离是既定语义），没有 rs 条目/没有成员的服务不隔离就不算
+  // 「统一战线已对齐」——多服务计划中途失败时不许把分支报成 done
+  const allIsolated = effectiveProfileIds.length > 0
+    && effectiveProfileIds.every((pid) => !!replicaSets[pid]?.isolated);
   let state: BranchIso['state'] = 'idle';
   if (cloning) state = 'cloning';
   else if (switching) state = 'switching';
   else if (isolated.length === 0) state = 'idle';
-  else if (withMembers.every((rs) => rs.isolated)) state = 'done';
+  else if (allIsolated) state = 'done';
   else state = 'partial';
   return {
     state,
     isolatedProfiles: isolated.map((rs) => rs.profileId),
-    withMembersProfiles: withMembers.map((rs) => rs.profileId),
+    effectiveProfiles: effectiveProfileIds,
     dbNames: isolated.map((rs) => rs.isolated!.dbName),
   };
 }
@@ -313,7 +325,7 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
     ...Object.keys(services ?? {}), ...Object.keys(replicaSets), ...Object.keys(candidates),
   ])).sort();
   const graph: ServiceGraphView = state.data.graph ?? { nodes: [], edges: [], layers: [profileIds] };
-  const branchIso = computeBranchIso(replicaSets);
+  const branchIso = computeBranchIso(replicaSets, profileIds);
   const totalMembers = Object.values(replicaSets).reduce((s, rs) => s + (rs.enabled ? rs.members.length : 0), 0);
   const pinnedMode = state.data.replicaMode ?? null;
   const lockedOther = pinnedMode !== null && totalMembers > 0;
@@ -933,7 +945,7 @@ function DataLayerCards({ geo, dbY, dbInfra, mainDbIdx, iso, draftIsoCount, draf
           ok={iso.state === 'done'} boot={iso.state === 'cloning'} danger={iso.state === 'partial'}
           status={iso.state === 'cloning' ? '第1步 复制：拷入数据…'
             : iso.state === 'switching' ? '第2步 切换：副本改连新库…'
-            : iso.state === 'partial' ? `统一战线未对齐 ${iso.isolatedProfiles.length}/${iso.withMembersProfiles.length}`
+            : iso.state === 'partial' ? `统一战线未对齐 ${iso.isolatedProfiles.length}/${iso.effectiveProfiles.length}`
             : draftRevertCount > 0 ? '回切主库 · 待保存' : `专用实例 · ${iso.isolatedProfiles.length} 服务已切换`}
           foot={iso.dbNames.join(' · ')}
           extra={(
@@ -1050,7 +1062,7 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
         {headerLeft}
         <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] font-semibold text-indigo-500"><Layers className="mr-1 inline h-3 w-3" />{profileIds.length} 容器 · 边=环境变量引用</span>
         {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.withMembersProfiles.length} · 建议补齐</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length} · 建议补齐</span> : null}
         {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
@@ -1456,7 +1468,7 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
         {groupCount > 0 ? <span className="rounded-md border border-indigo-500/45 bg-indigo-500/10 px-1.5 py-0.5 text-[11px] text-indigo-500">整组副本 x{groupCount}</span> : null}
         {uneven ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">各容器副本数不齐</span> : null}
         {branchIso.state === 'done' ? <span className="rounded-md border border-emerald-500/50 bg-emerald-500/10 px-1.5 py-0.5 text-[11px] text-emerald-600 dark:text-emerald-400">已隔离 · 统一战线</span> : null}
-        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.withMembersProfiles.length}</span> : null}
+        {branchIso.state === 'partial' ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">部分隔离 {branchIso.isolatedProfiles.length}/{branchIso.effectiveProfiles.length}</span> : null}
         {draftActions.length > 0 ? <span className="rounded-md border border-amber-500/50 bg-amber-500/10 px-1.5 py-0.5 text-[11px] text-amber-600 dark:text-amber-400">{draftActions.length} 项变更待保存</span> : null}
         {headerRight}
       </div>
