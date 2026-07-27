@@ -19,6 +19,8 @@
  * 判定做成纯函数，便于把「什么算在途」「什么时候该放弃等待」写成回归测试。
  */
 
+import type { DeploymentRunStatus } from '../types.js';
+
 /** 部署 run 里本模块关心的最小形状。 */
 export interface DrainableRun {
   id: string;
@@ -30,13 +32,34 @@ export interface DrainableRun {
 }
 
 /**
- * 非终态状态集合。CDS 的部署 run 以 `running` 表示**成功终态**（历史语义，
- * 见 deployment-runs 路由），故它不在此列；真正「还在跑」的是下面这些。
+ * 全量状态 → 是否终态。CDS 的部署 run 以 `running` 表示**成功终态**（历史语义，
+ * 见 deployment-runs 路由与 deployment-run.ts 的 TERMINAL_STATUSES）。
+ *
+ * 写成 `Record<DeploymentRunStatus, boolean>` 而不是「在途状态字面量数组」是
+ * 刻意的（Codex 第三十六轮 P1）：初版枚举在途状态时漏掉了 `preparing` 与
+ * `verifying`——两个货真价实的非终态，于是恰好停在这两步的部署照样会被重启
+ * 杀掉，排空等于半开的门。Record 少一个键 TS 直接报错，以后新增状态**必须**
+ * 在这里表态，不会再有静默漏项。
  */
-const IN_FLIGHT_STATUSES = new Set(['queued', 'building', 'deploying', 'pending', 'starting']);
+const RUN_STATUS_TERMINAL: Record<DeploymentRunStatus, boolean> = {
+  pending: false,
+  queued: false,
+  preparing: false,
+  building: false,
+  starting: false,
+  verifying: false,
+  running: true,
+  failed: true,
+  cancelled: true,
+};
 
 export function isRunInFlight(run: DrainableRun): boolean {
-  return IN_FLIGHT_STATUSES.has(String(run.status || '').toLowerCase());
+  const status = String(run.status || '').toLowerCase() as DeploymentRunStatus;
+  if (!status) return false; // 连状态都没有的记录没什么可等的
+  const terminal = RUN_STATUS_TERMINAL[status];
+  // 不认识的状态按在途处理：本轮的漏洞就是「没登记 = 当成终态 = 不等」，
+  // 保守一侧代价只是最多多等一个超时窗口，激进一侧代价是杀掉在途部署。
+  return terminal !== true;
 }
 
 /**
@@ -55,6 +78,48 @@ export function isRunAlive(run: DrainableRun, nowMs: number): boolean {
 /** 当前仍值得等待的 run（在途且心跳新鲜）。 */
 export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number): DrainableRun[] {
   return runs.filter((r) => isRunAlive(r, nowMs));
+}
+
+/* ------------------------------------------------------------------ *
+ * 排空窗口闸门（Codex 第三十六轮 P1）
+ *
+ * 只「等在途部署落地」是半个修复：排空最后一次轮询之后、进程真正退出之前仍有
+ * 一段真空，这期间到达的 webhook / 手动部署会新建 run 并立刻被重启杀掉——正是
+ * 排空要消灭的那个现象，只是把窗口从几分钟压到几秒。所以排空一开始就把部署入口
+ * 关上：新请求当场收到 503 + Retry-After，是**明说的拒绝**，不是建到一半被腰斩
+ * 的容器和一条要人工重触发的红灯。
+ *
+ * 闸门自带过期时间（fail-open）：重启若因任何原因没发生（spawn 失败、上层提前
+ * 返回），闸门到点自动打开，绝不把部署永久锁死——同 disk-guard 的纪律。
+ * ------------------------------------------------------------------ */
+
+let drainGateUntilMs: number | null = null;
+
+/** 默认最长持闸时长：排空超时之外再留一段给 flush + 重启交接。 */
+export const DRAIN_GATE_MAX_HOLD_MS = 10 * 60_000;
+
+export function beginSelfUpdateDrain(nowMs: number, maxHoldMs = DRAIN_GATE_MAX_HOLD_MS): void {
+  drainGateUntilMs = nowMs + Math.max(0, maxHoldMs);
+}
+
+/** 重启被放弃时显式开闸（正常路径不需要——进程直接没了）。 */
+export function endSelfUpdateDrain(): void {
+  drainGateUntilMs = null;
+}
+
+export function isSelfUpdateDraining(nowMs: number): boolean {
+  if (drainGateUntilMs === null) return false;
+  if (nowMs >= drainGateUntilMs) {
+    drainGateUntilMs = null; // 到点自动开闸
+    return false;
+  }
+  return true;
+}
+
+/** 部署入口的拒绝理由；null = 放行。 */
+export function selfUpdateDrainBlockReason(nowMs: number): string | null {
+  if (!isSelfUpdateDraining(nowMs)) return null;
+  return 'CDS 正在自更新重启，已暂停接受新的构建/部署请求（避免刚起的部署被重启腰斩）。重启通常在一分钟内完成，稍后重试即可；GitHub 侧可 push 新 commit 或在 PR 评论 /cds redeploy 重新触发。';
 }
 
 export interface DrainOutcome {

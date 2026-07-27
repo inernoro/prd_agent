@@ -13,7 +13,9 @@ import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
-import { drainInFlightDeploys, type DrainableRun } from '../services/deploy-drain.js';
+import {
+  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, type DrainableRun,
+} from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
@@ -2216,8 +2218,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       return;
     }
     const blocked = diskGuard.blockReasonForDeploy();
-    if (!blocked) { next(); return; }
-    res.status(507).json({ error: 'disk_low', message: blocked });
+    if (blocked) {
+      res.status(507).json({ error: 'disk_low', message: blocked });
+      return;
+    }
+    // 自更新排空窗口闸（Codex 第三十六轮 P1）：排空期间到达的新部署会被随后的
+    // 重启腰斩——那正是排空要消灭的现象。明说拒绝好过建到一半被杀。
+    const draining = selfUpdateDrainBlockReason(Date.now());
+    if (draining) {
+      res.setHeader('Retry-After', '60');
+      res.status(503).json({ error: 'self_update_draining', message: draining });
+      return;
+    }
+    next();
   });
 
   /**
@@ -2240,6 +2253,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   }): Promise<void> {
     const timeoutMs = Math.max(0, Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS || '', 10)
       || 5 * 60_000);
+    // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
+    // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
+    // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
+    beginSelfUpdateDrain(Date.now(), timeoutMs + 5 * 60_000);
     const outcome = await drainInFlightDeploys({
       listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
       now: () => Date.now(),

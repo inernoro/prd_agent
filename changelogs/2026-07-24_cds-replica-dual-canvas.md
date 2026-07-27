@@ -220,3 +220,7 @@
 | fix | cds | 隔离审计改用分支生效 profile 解析目标，profileOverrides 场景不再验错实例 |
 | fix | cds | 栅栏兜底墓碑补 removeVolumes 标记（第三十二轮漏掉的第三个入口） |
 | feat | cds | 自更新重启前排空在途部署：从源头消除「自更新杀掉分支部署导致 CI 红」的竞态，超时照常重启并如实记录 |
+| fix | cds | 排空在途判定改由终态表取反推导：补上此前漏掉的 preparing / verifying 两个非终态（生产已实证第 7 次竞态正是死在 prepare） |
+| fix | cds | 排空期间关闭部署入口（503 + Retry-After，闸门自动过期 fail-open）：消除「最后一次轮询之后新建 run 仍被重启腰斩」的真空 |
+| fix | cds | 副本容器移除后复核容器是否真的消失：仍在则保留成员记录并写 teardown 墓碑，不再产生无人认领的容器 |
+| fix | cds | 项目级计划必须整组：只覆盖部分服务的 add-replica 计划被拒，杜绝画布显示「整组」实则半数服务未覆盖 |

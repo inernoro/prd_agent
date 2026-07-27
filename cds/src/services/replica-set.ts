@@ -182,7 +182,7 @@ export class ReplicaSetService {
     const rs = branch.replicaSets?.[profileId];
     if (!rs) return;
     for (const member of rs.members) {
-      await this.removeMemberContainer(member);
+      await this.removeMemberContainer(member, branch);
     }
     delete branch.replicaSets![profileId];
     if (Object.keys(branch.replicaSets!).length === 0) delete branch.replicaSets;
@@ -334,7 +334,7 @@ export class ReplicaSetService {
     if (!rs) throw new ReplicaSetError(404, '该服务未启用复制集');
     const member = rs.members.find((m) => m.id === memberId);
     if (!member) throw new ReplicaSetError(404, `成员不存在: ${memberId}`);
-    await this.removeMemberContainer(member);
+    await this.removeMemberContainer(member, branch);
     rs.members = rs.members.filter((m) => m.id !== memberId);
     // 2026-07-25 语义更新（替代 R9-P3 的自动清挂）：零副本隔离已是合法状态
     //（隔离先行、副本后加会自动连隔离库），末位成员下线**保留**隔离标志——
@@ -727,7 +727,7 @@ export class ReplicaSetService {
     if (!branch?.replicaSets) return;
     for (const rs of Object.values(branch.replicaSets)) {
       for (const member of rs.members) {
-        await this.removeMemberContainer(member).catch((err) => {
+        await this.removeMemberContainer(member, branch).catch((err) => {
           this.opts.logger?.warn?.(
             `[replica-set] 分支收割成员容器失败 ${branchId}/${rs.profileId}/${member.id}: ${(err as Error).message}`,
           );
@@ -1352,6 +1352,7 @@ export class ReplicaSetService {
       if (!kinds.includes(s.kind)) throw new ReplicaSetError(400, `未知步骤类型: ${s.kind}`);
       if (!s.profileId) throw new ReplicaSetError(400, '步骤缺少 profileId');
     }
+    this.assertProjectGroupPlanIsComplete(branch, input.mode, input.steps);
     // 校验全过才落模式
     if (input.mode === 'container' || input.mode === 'project') branch.replicaMode = input.mode;
     const plan: ReplicaPlan = {
@@ -1368,6 +1369,55 @@ export class ReplicaSetService {
     this.opts.state.save();
     void this.runPlan(branchId, plan.id);
     return plan;
+  }
+
+  /**
+   * 项目级计划必须是**整组**动作（Codex 第三十六轮 P2）。
+   *
+   * 项目级模式的语义是「一次手势，全项目同进同退」——前端 addGroup 也是这么生成的：
+   * 缺快照、撞上限、超步数三道门任一不过就整组不给加。但后端此前只在 addMember
+   * 里拦「项目级模式下不带 projectGroupId 的单个成员」，计划层完全没校验：一个只
+   * 覆盖部分服务的 add-replica 计划照样能存下并执行，跑完就得到一个残缺组——
+   * 画布上是「整组 x1」，实际只有一半服务有副本，另一半流量仍全打主实例，
+   * 项目级实验的结论直接失真（而这正是模式二选一想杜绝的状态）。
+   *
+   * 判据取**保守**的必需集：分支上已有服务或已有复制集配置的 profile。不直接用
+   * 全部 effective profiles——从未部署过的 profile 前端根本不会列出，拿它当分母
+   * 会把合法计划误拒。
+   */
+  private assertProjectGroupPlanIsComplete(
+    branch: BranchEntry,
+    mode: 'container' | 'project' | undefined,
+    steps: Array<{ kind: ReplicaPlanStepKind; profileId: string; params?: ReplicaPlanStep['params'] }>,
+  ): void {
+    const effectiveMode = mode ?? branch.replicaMode;
+    if (effectiveMode !== 'project') return;
+    const addSteps = steps.filter((s) => s.kind === 'add-replica');
+    if (addSteps.length === 0) return;
+    const ungrouped = addSteps.find((s) => !s.params?.projectGroupId);
+    if (ungrouped) {
+      throw new ReplicaSetError(400,
+        `项目级模式下的加副本必须是整组动作：步骤（${ungrouped.profileId}）缺少 projectGroupId。请用画布上的「整组副本」按钮生成计划。`);
+    }
+    const known = this.opts.state
+      .getEffectiveProfilesForBranch(branch)
+      .map((p) => p.id)
+      .filter((id) => Boolean(branch.services?.[id]) || Boolean(branch.replicaSets?.[id]));
+    if (known.length === 0) return;
+    const byGroup = new Map<string, Set<string>>();
+    for (const s of addSteps) {
+      const gid = String(s.params?.projectGroupId);
+      const set = byGroup.get(gid) ?? new Set<string>();
+      set.add(s.profileId);
+      byGroup.set(gid, set);
+    }
+    for (const [gid, covered] of byGroup) {
+      const missing = known.filter((id) => !covered.has(id));
+      if (missing.length > 0) {
+        throw new ReplicaSetError(400,
+          `项目级整组副本必须覆盖全部服务：组 ${gid} 缺 ${missing.join('、')}（共 ${known.length} 个服务，本组只覆盖 ${covered.size} 个）。残缺组会让未覆盖的服务流量仍全打主实例，项目级实验结论失真。`);
+      }
+    }
   }
 
   listPlans(branchId: string): ReplicaPlan[] {
@@ -1681,14 +1731,57 @@ export class ReplicaSetService {
     }
   }
 
-  private async removeMemberContainer(member: ReplicaMember): Promise<void> {
-    if (member.containerName) {
-      await this.opts.container.remove(member.containerName, {
-        actor: 'replica-set',
-        trigger: 'replica-set-remove',
-      });
+  /**
+   * 移除成员容器，并**复核容器真的没了**（Codex 第三十六轮 P1）。
+   *
+   * `ContainerService.remove` 从不因 `docker rm` 失败抛错——它只记一条
+   * `container.remove.completed` 事件（severity=error）就返回。原实现拿它当成功，
+   * 紧接着调用方（removeMember / dissolve / teardownForBranch）就把成员记录删了：
+   * 容器还在跑、还占端口、还在接流量，而 CDS 里已经没有任何记录指向它——既不归
+   * 成员对账管（记录没了），也不归孤儿收割器管（没写墓碑）。这正是「删了个副本，
+   * 机器上多出一个谁也不认识的容器」的成因。
+   *
+   * 现在：删完复核；仍在则**写 teardown 墓碑**交孤儿收割器兜底，并抛错让调用方
+   * 保留成员记录（下次重试仍可见）。两道保险各自独立——即使调用方吞掉异常
+   * （teardownForBranch 就是这么做的，分支删除不能因一个容器卡住），墓碑也还在。
+   */
+  private async removeMemberContainer(member: ReplicaMember, branch: BranchEntry): Promise<void> {
+    const name = member.containerName;
+    if (!name) { member.status = 'stopped'; return; }
+    await this.opts.container.remove(name, {
+      actor: 'replica-set',
+      trigger: 'replica-set-remove',
+    });
+    if (!(await this.containerStillExists(name))) {
+      member.status = 'stopped';
+      return;
     }
-    member.status = 'stopped';
+    this.opts.state.addContainerTeardownTombstones([{
+      containerName: name,
+      projectId: branch.projectId,
+      requestedAt: this.now(),
+    }]);
+    this.opts.state.save();
+    member.status = 'error';
+    member.statusMessage = `容器 ${name} 移除未生效（docker rm 未成功），已写 teardown 墓碑交孤儿收割器兜底`;
+    throw new ReplicaSetError(409,
+      `副本容器 ${name} 移除失败：容器仍存在。已写 teardown 墓碑由孤儿收割器兜底移除，成员记录保留，可稍后重试。`);
+  }
+
+  /**
+   * 容器是否仍存在（含已停止的）。用 `docker ps -a` 而不是 `isRunning`：
+   * `docker stop` 成功、`docker rm` 失败时容器处于 exited——isRunning 会说 false，
+   * 于是「删干净了」的结论恰好在最需要报警的场景下出错。
+   *
+   * 查询本身失败时保守当作**仍存在**：误判成「已删」会静默漏掉容器，误判成
+   * 「还在」只是多写一次墓碑 + 多一次重试，代价不对称。
+   */
+  private async containerStillExists(containerName: string): Promise<boolean> {
+    const res = await this.opts.shell
+      .exec(`docker ps -a --filter "name=^/${containerName}$" --format '{{.Names}}'`, { timeout: 30_000 })
+      .catch(() => null);
+    if (!res || res.exitCode !== 0) return true;
+    return res.stdout.split('\n').some((line) => line.trim() === containerName);
   }
 
   private requireBranch(branchId: string): BranchEntry {

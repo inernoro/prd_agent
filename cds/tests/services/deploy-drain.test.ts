@@ -1,6 +1,7 @@
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, beforeEach } from 'vitest';
 import {
   drainInFlightDeploys, isRunInFlight, isRunAlive, pendingRunsToDrain,
+  beginSelfUpdateDrain, endSelfUpdateDrain, isSelfUpdateDraining, selfUpdateDrainBlockReason,
   DRAIN_STALE_HEARTBEAT_MS, type DrainableRun,
 } from '../../src/services/deploy-drain.js';
 
@@ -21,10 +22,17 @@ describe('在途判定', () => {
     expect(isRunInFlight(run('a', 'cancelled'))).toBe(false);
   });
 
-  it('queued / building / deploying 算在途', () => {
-    for (const s of ['queued', 'building', 'deploying', 'pending', 'starting']) {
+  it('全部非终态都算在途——preparing / verifying 曾被漏掉（第三十六轮 P1）', () => {
+    // 初版按字面量枚举在途状态，漏了 preparing 与 verifying：恰好停在这两步的
+    // 部署照样被重启杀掉，排空等于半开的门。现在按「终态表取反」推导。
+    for (const s of ['pending', 'queued', 'preparing', 'building', 'starting', 'verifying']) {
       expect(isRunInFlight(run('a', s)), s).toBe(true);
     }
+  });
+
+  it('不认识的状态按在途处理（漏登记的代价必须落在多等一会儿这一侧）', () => {
+    expect(isRunInFlight(run('a', 'some-future-status'))).toBe(true);
+    expect(isRunInFlight(run('a', ''))).toBe(false); // 连状态都没有的记录没什么可等
   });
 
   it('心跳早已过期的僵尸 run 不再等——否则它能把自更新拖满整个超时窗口', () => {
@@ -109,5 +117,35 @@ describe('排空流程', () => {
     ]);
     await drainInFlightDeploys({ ...deps, onWait: (p) => seen.push(p.map((r) => r.id)) });
     expect(seen[0]).toEqual(['a']);
+  });
+});
+
+describe('排空窗口闸门（第三十六轮 P1）', () => {
+  beforeEach(() => { endSelfUpdateDrain(); });
+
+  it('未排空时不拦任何部署', () => {
+    expect(isSelfUpdateDraining(T0)).toBe(false);
+    expect(selfUpdateDrainBlockReason(T0)).toBeNull();
+  });
+
+  it('排空一开始就关闸——否则最后一次轮询之后到达的部署照样被重启腰斩', () => {
+    beginSelfUpdateDrain(T0, 60_000);
+    expect(isSelfUpdateDraining(T0 + 1_000)).toBe(true);
+    const reason = selfUpdateDrainBlockReason(T0 + 1_000);
+    expect(reason).toContain('自更新');
+    expect(reason).toContain('重试');
+  });
+
+  it('闸门自动过期（fail-open）：重启万一没发生，也绝不把部署永久锁死', () => {
+    beginSelfUpdateDrain(T0, 60_000);
+    expect(isSelfUpdateDraining(T0 + 59_000)).toBe(true);
+    expect(isSelfUpdateDraining(T0 + 60_000)).toBe(false);
+    expect(selfUpdateDrainBlockReason(T0 + 60_000)).toBeNull();
+  });
+
+  it('放弃重启时可显式开闸', () => {
+    beginSelfUpdateDrain(T0, 60_000);
+    endSelfUpdateDrain();
+    expect(isSelfUpdateDraining(T0 + 1_000)).toBe(false);
   });
 });
