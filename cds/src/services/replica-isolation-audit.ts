@@ -20,6 +20,7 @@ import type { ReplicaDbSnapshot } from '../types.js';
 import type { StateService } from './state.js';
 import { runDockerExec } from '../routes/infra-data.js';
 import { mongoAdminEval, resolveReplicaDbTarget, dedicatedAuthFromContainer } from './replica-db-clone.js';
+import { resolveEffectiveProfile } from './container.js';
 
 export type AuditVerdict = 'pass' | 'fail' | 'skip' | 'boundary' | 'info';
 
@@ -114,7 +115,11 @@ export async function runIsolationAudit(
   if (!profile) throw new Error(`服务不存在: ${profileId}`);
   const checks: IsolationAuditCheck[] = [];
   const ranAt = new Date().toISOString();
-  const { target } = resolveReplicaDbTarget(state, branch, profile);
+  // 用**分支生效 profile**解析审计目标（Codex 第三十五轮 P2）：分支级 profileOverrides
+  // 改过数据库 env 或 dependsOn 时，基线 profile 会把审计指到另一个实例——要么误报
+  // broken，要么拿一个同名但无关的库去验「隔离有效」。部署与副本物化早已走
+  // resolveEffectiveProfile，审计必须同口径，否则它验的不是真实运行的那套配置。
+  const { target } = resolveReplicaDbTarget(state, branch, resolveEffectiveProfile(profile, branch));
 
   const mainContainer = branch.services?.[profileId]?.containerName;
   const mainEnv = mainContainer ? await inspectContainerEnv(mainContainer) : null;

@@ -940,15 +940,24 @@ export class ReplicaSetService {
         // 就绪失败必须停容器（Codex 第二十六轮 P1）：路由早已把 error 成员摘掉，
         // 但容器还活着——默认共享库模式下它照样跑后台消费者/定时任务读写**主库**，
         // 还白占宿主端口与内存。stop 而非 remove：保留 docker logs 供排障。
-        let stopped = false;
+        // 停止结果必须实测（Codex 第三十五轮 P1 的同类）：container.stop 在 docker
+        // 非零退出时只记事件不抛异常，只靠 try/catch 判定会把「其实没停下来」
+        // 报成「已停止」，而这条文案正是用户判断「它还在不在写主库」的唯一依据。
         try {
           await this.opts.container.stop(containerName, 'replica-member-not-ready', {
             branchId, profileId, actor: 'replica-set', trigger: 'replica-set-readiness-failed',
           });
-          stopped = true;
         } catch (err) {
           this.opts.logger?.warn?.(
-            `[replica-set] 副本 ${containerName} 就绪失败后停止容器未成功（交给对账/收割兜底）: ${(err as Error).message}`,
+            `[replica-set] 副本 ${containerName} 就绪失败后停止容器报错: ${(err as Error).message}`,
+          );
+        }
+        // 不用可选链：container 是完整 ContainerService，isRunning 必然存在；
+        // 写成 `?.` 会在方法哪天被改名时静默退回「总是报已停止」的旧错误行为。
+        const stopped = !(await this.opts.container.isRunning(containerName).catch(() => true));
+        if (!stopped) {
+          this.opts.logger?.warn?.(
+            `[replica-set] 副本 ${containerName} 就绪失败后仍在运行（可能继续读写主库），交对账/收割兜底`,
           );
         }
         this.patchMember(branchId, profileId, memberId, {
@@ -1061,6 +1070,10 @@ export class ReplicaSetService {
           containerName: snapshot.dedicatedContainer,
           projectId: live?.projectId || projectId,
           requestedAt: this.now(),
+          // 连匿名卷一并删（Codex 第三十五轮 P1）：专用实例的数据卷装着生产派生
+          // 克隆，通用墓碑跑的是 rm -f（不带 -v），容器没了卷却永久失去追踪。
+          // 第三十二轮修了分支删除与项目删除两条路径，唯独漏了这条栅栏兜底。
+          removeVolumes: true,
         }]);
         disposition = `专用实例 ${snapshot.dedicatedContainer} 已写 teardown 墓碑，孤儿收割器将兜底移除`;
       } else {

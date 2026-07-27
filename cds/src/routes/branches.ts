@@ -14130,7 +14130,28 @@ export function createBranchRouter(deps: RouterDeps): Router {
                 operation: 'branch-stop-replica-member',
                 source: 'api.stop-branch',
               });
-            } catch { /* ok */ }
+            } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
+            // 停止**必须核实**再落状态（Codex 第三十五轮 P1）：ContainerService.stop
+            // 在 docker stop 非零退出时只记录事件、不抛异常，此前这里无条件标
+            // stopped——一个其实还活着的共享库副本就此从所有视野里消失：发布器把它
+            // 摘出路由，成员对账只看 running 记录，孤儿收割器又认为它有主，
+            // 于是没有任何一条链路会再回头看它，而它还在跑消费者和定时任务写主库。
+            const stillRunning = await containerService.isRunning(member.containerName).catch(() => true);
+            if (stillRunning) {
+              member.status = 'error';
+              member.statusMessage = `停止失败：容器 ${member.containerName} 仍在运行（可能仍在读写主库），请在画布手动删除该副本或检查 docker`;
+              serverEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'api.stop-branch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器停止失败但仍在运行: ${member.containerName}`,
+                branchId: entry.id,
+                projectId: entry.projectId,
+                containerName: member.containerName,
+              });
+              continue;
+            }
           } else if (member.status === 'provisioning') {
             member.statusMessage = '物化被分支停止中断，可在画布删除后重建';
           }

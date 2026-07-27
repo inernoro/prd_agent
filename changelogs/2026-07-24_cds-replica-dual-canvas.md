@@ -216,3 +216,6 @@
 | fix | cds | 计划模式赋值移到全部校验之后：被拒的请求不再偷改分支 replicaMode |
 | merge | cds | 合并 main（解 CLI 版本契约测试冲突，采用 main 的模块级 cliVersion 解析） |
 | fix | cds | 镜像回收对 must-be-forced 的镜像做受控强删：先确认无任何容器引用才 -f，查不清一律不动 |
+| fix | cds | 副本停止后实测容器状态再落 stopped：停不下来的共享库副本不再从所有对账视野里消失 |
+| fix | cds | 隔离审计改用分支生效 profile 解析目标，profileOverrides 场景不再验错实例 |
+| fix | cds | 栅栏兜底墓碑补 removeVolumes 标记（第三十二轮漏掉的第三个入口） |
