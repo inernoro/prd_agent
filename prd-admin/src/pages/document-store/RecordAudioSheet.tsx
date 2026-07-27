@@ -14,8 +14,24 @@ import {
   startRecordingUpload,
 } from '@/services';
 import type { DocumentEntry } from '@/services/contracts/documentStore';
-import { vaultStartSession, vaultAppendChunk, vaultDeleteSession, vaultUpdateSessionStore } from './recordingVault';
+import {
+  vaultStartSession,
+  vaultAppendChunk,
+  vaultClearServerCompletion,
+  vaultDeleteSession,
+  vaultMarkServerCompletion,
+  vaultUpdateSessionStore,
+} from './recordingVault';
 import { recordingExtension, selectRecordingMimeType } from './recordingMedia';
+import { useAuthStore } from '@/stores/authStore';
+import {
+  LiveTranscriptionSocket,
+  bufferPendingLivePcm,
+  reduceLiveTranscriptionView,
+  startLivePcmCapture,
+  type LivePcmCaptureController,
+  type LiveTranscriptionState,
+} from './liveTranscription';
 
 /**
  * 录音转笔记的「现场录音」面板：打开即请求麦克风并开始录音（MediaRecorder），
@@ -41,7 +57,14 @@ export type RecordAudioSheetProps = {
    */
   onComplete: (file: File, vaultSessionId: string, targetStoreId?: string) => void;
   /** 实时分片已在服务端合并为条目，直接进入转录，避免再次上传整段文件。 */
-  onUploaded: (entry: DocumentEntry, vaultSessionId: string, targetStoreId?: string) => void;
+  onUploaded: (
+    entry: DocumentEntry,
+    vaultSessionId: string,
+    targetStoreId?: string,
+    deferredTranscriptionRunId?: string | null,
+  ) => void;
+  /** 前台有界等待结束、服务端仍持有完成流程时通知父页转入后台。 */
+  onServerCompletionDeferred: () => void;
   /** 「上传音频文件」兜底：打开既有的 audio file input */
   onPickFile: (targetStoreId?: string) => void;
 };
@@ -51,6 +74,9 @@ type RecState = 'requesting' | 'recording' | 'paused' | 'finalizing' | 'unavaila
 /** 后端单文件上限 20MB；录到接近上限时自动收尾，避免上传被拒 */
 const MAX_BYTES = 19 * 1024 * 1024;
 const TRANSPORT_CHUNK_BYTES = 512 * 1024;
+const MAX_UNCERTAIN_COMPLETION_ATTEMPTS = 32;
+const MAX_SERVER_OWNED_COMPLETION_ATTEMPTS = 24;
+const MAX_FOREGROUND_COMPLETION_WAIT_MS = 45_000;
 
 function buildFileName(ext: string): string {
   const d = new Date();
@@ -64,7 +90,117 @@ function formatElapsed(sec: number): string {
   return `${String(m).padStart(2, '0')}:${String(s).padStart(2, '0')}`;
 }
 
-export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUploaded, onPickFile }: RecordAudioSheetProps) {
+export function canDiscardRecording(finalizationLocked: boolean): boolean {
+  return !finalizationLocked;
+}
+
+export function nextRecordingFinalizationLock(
+  finalizationLocked: boolean,
+  mode: 'complete' | 'discard',
+): boolean {
+  return finalizationLocked || mode === 'complete';
+}
+
+export function shouldForwardLivePcm(
+  liveCaptureEnabled: boolean,
+  recorderState: 'inactive' | 'recording' | 'paused',
+  finalizationLocked: boolean,
+): boolean {
+  return liveCaptureEnabled
+    && (recorderState === 'recording' || finalizationLocked);
+}
+
+type RecordingCompletionRetryStatus =
+  | { success: true; data: { status: string } }
+  | { success: false; error: { code: string } };
+
+type RecordingCompletionAttempt =
+  | { success: true }
+  | { success: false; error: { code: string } }
+  | null;
+
+export function shouldStopRecordingCompletionRetry(
+  status: RecordingCompletionRetryStatus | null,
+): boolean {
+  if (!status) return false;
+  if (status.success) return status.data.status === 'cancelled';
+  return status.error.code === 'NOT_FOUND'
+    || status.error.code === 'SESSION_NOT_FOUND'
+    || status.error.code === 'SESSION_EXPIRED';
+}
+
+export function nextRecordingCompletionOwnership(
+  serverOwnsCompletion: boolean,
+  status: RecordingCompletionRetryStatus | null,
+): boolean {
+  if (!status?.success) return serverOwnsCompletion;
+  return status.data.status === 'completing'
+    || status.data.status === 'completed';
+}
+
+export function shouldFallbackCompletedRecording(
+  status: RecordingCompletionRetryStatus | null,
+  completion: RecordingCompletionAttempt,
+): boolean {
+  if (!status?.success || status.data.status !== 'completed' || completion?.success !== false) {
+    return false;
+  }
+  return completion.error.code === 'INVALID_FORMAT'
+    || completion.error.code === 'NOT_FOUND'
+    || completion.error.code === 'SESSION_NOT_FOUND'
+    || completion.error.code === 'SESSION_EXPIRED';
+}
+
+export function shouldContinueRecordingCompletionRetry(
+  completionSucceeded: boolean,
+  uncertainAttempts: number,
+  serverOwnedAttempts: number,
+  elapsedMs: number,
+): boolean {
+  return !completionSucceeded
+    && uncertainAttempts < MAX_UNCERTAIN_COMPLETION_ATTEMPTS
+    && serverOwnedAttempts < MAX_SERVER_OWNED_COMPLETION_ATTEMPTS
+    && elapsedMs < MAX_FOREGROUND_COMPLETION_WAIT_MS;
+}
+
+export function recordingCompletionOwnershipTransition(
+  previous: boolean,
+  next: boolean,
+): 'acquired' | 'released' | 'unchanged' {
+  if (!previous && next) return 'acquired';
+  if (previous && !next) return 'released';
+  return 'unchanged';
+}
+
+/**
+ * `/complete` 一旦发出，响应超时就是未知结果而不是失败。直到服务端明确回到可上传态
+ * 或明确表示会话不存在，本地整文件都必须保持保护，避免同一录音生成第二条 entry。
+ */
+export function recordingCompletionOwnershipAfterRequestIssued(): boolean {
+  return true;
+}
+
+export function enqueueRecordingDestinationChange(
+  currentQueue: Promise<void>,
+  replayChunks: readonly Blob[],
+  switchDestination: () => Promise<void>,
+  uploadChunk: (chunk: Blob) => Promise<void>,
+): Promise<void> {
+  return currentQueue.then(async () => {
+    await switchDestination();
+    for (const chunk of replayChunks) await uploadChunk(chunk);
+  });
+}
+
+export function RecordAudioSheet({
+  storeId,
+  storeName,
+  onClose,
+  onComplete,
+  onUploaded,
+  onServerCompletionDeferred,
+  onPickFile,
+}: RecordAudioSheetProps) {
   const isMobile = useIsMobile();
   const [state, setState] = useState<RecState>('requesting');
   const [unavailableReason, setUnavailableReason] = useState('');
@@ -72,7 +208,12 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const [targetStoreId, setTargetStoreId] = useState(storeId ?? '');
   const [protectedBytes, setProtectedBytes] = useState(0);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
+  const [liveTranscript, setLiveTranscript] = useState('');
+  const liveTranscriptValueRef = useRef('');
+  const [liveTranscriptState, setLiveTranscriptState] = useState<LiveTranscriptionState>('connecting');
+  const [liveTranscriptMessage, setLiveTranscriptMessage] = useState('正在连接实时转写');
   const [changingDestination, setChangingDestination] = useState(false);
+  const changingDestinationRef = useRef(false);
   const [storeOptions, setStoreOptions] = useState<{ id: string; name: string }[]>(
     storeId ? [{ id: storeId, name: storeName || '当前知识库' }] : [],
   );
@@ -95,6 +236,14 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
   const uploadChunkIndexRef = useRef(0);
   const liveUploadFailedRef = useRef(false);
+  const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
+  const pendingLivePcmRef = useRef<Int16Array[]>([]);
+  const livePcmCompleteRef = useRef(true);
+  const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
+  const liveCaptureEnabledRef = useRef(true);
+  // MediaRecorder.onstop 一旦进入完成链路，就由该链路独占终态。关闭、背景点击、
+  // Escape 或上传文件入口都不能再把 complete 改写为 discard。
+  const finalizationLockedRef = useRef(false);
   // 完成/取消/组件卸载 的意图标记：onstop 回调按它决定产出 File / 删保险箱 / 保留保险箱。
   // abandon = 录音中组件被卸载（如 SPA 路由跳走）：保留保险箱数据，下次进页可恢复。
   const finishModeRef = useRef<'complete' | 'discard' | 'abandon'>('discard');
@@ -102,6 +251,43 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   onCompleteRef.current = onComplete;
   const onUploadedRef = useRef(onUploaded);
   onUploadedRef.current = onUploaded;
+  const onServerCompletionDeferredRef = useRef(onServerCompletionDeferred);
+  onServerCompletionDeferredRef.current = onServerCompletionDeferred;
+
+  const connectLiveTranscription = useCallback((sessionId: string) => {
+    if (liveTranscriptionRef.current) return;
+    if (!livePcmCompleteRef.current) {
+      setLiveTranscriptState('degraded');
+      setLiveTranscriptMessage('实时音频未完整保留，录音结束后将自动完整转写');
+      return;
+    }
+    const token = useAuthStore.getState().token;
+    if (!token) {
+      setLiveTranscriptState('degraded');
+      setLiveTranscriptMessage('登录状态不可用，录音结束后将自动转写');
+      return;
+    }
+    const socket = new LiveTranscriptionSocket(
+      sessionId,
+      token,
+      (event) => {
+        const view = reduceLiveTranscriptionView(liveTranscriptValueRef.current, event);
+        liveTranscriptValueRef.current = view.text;
+        setLiveTranscript(view.text);
+        setLiveTranscriptMessage(view.message);
+      },
+      (nextState) => {
+        setLiveTranscriptState(nextState);
+        if (nextState === 'live') setLiveTranscriptMessage('正在实时转写');
+        if (nextState === 'finalizing') setLiveTranscriptMessage('正在确认最后一句');
+        if (nextState === 'completed') setLiveTranscriptMessage('实时转写已完成');
+        if (nextState === 'degraded') setLiveTranscriptMessage('实时转写已降级，结束后将自动校准');
+      },
+    );
+    liveTranscriptionRef.current = socket;
+    socket.connect();
+    for (const pcm of pendingLivePcmRef.current.splice(0)) socket.send(pcm);
+  }, []);
 
   const ensureUploadSession = useCallback(async (): Promise<string | null> => {
     if (uploadSessionIdRef.current) return uploadSessionIdRef.current;
@@ -114,44 +300,54 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         if (!res.success) {
           liveUploadFailedRef.current = true;
           setLiveProtection('local');
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
           return null;
         }
         uploadSessionIdRef.current = res.data.sessionId;
         setLiveProtection('active');
+        connectLiveTranscription(res.data.sessionId);
         return res.data.sessionId;
       })
       .catch(() => {
         liveUploadFailedRef.current = true;
         setLiveProtection('local');
+        setLiveTranscriptState('degraded');
+        setLiveTranscriptMessage('网络不可用，录音结束后将自动转写');
         return null;
       });
     return await uploadSessionPromiseRef.current;
-  }, [storeId]);
+  }, [connectLiveTranscription, storeId]);
+
+  const uploadLiveChunk = useCallback(async (blob: Blob) => {
+    const sessionId = await ensureUploadSession();
+    if (!sessionId || liveUploadFailedRef.current) return;
+    for (let offset = 0; offset < blob.size; offset += TRANSPORT_CHUNK_BYTES) {
+      const part = blob.slice(offset, Math.min(blob.size, offset + TRANSPORT_CHUNK_BYTES), blob.type);
+      const index = uploadChunkIndexRef.current;
+      const res = await appendRecordingUploadChunk(sessionId, index, part);
+      if (!res.success) {
+        liveUploadFailedRef.current = true;
+        setLiveProtection('local');
+        return;
+      }
+      uploadChunkIndexRef.current = res.data.nextChunkIndex;
+      setProtectedBytes(res.data.uploadedBytes);
+    }
+  }, [ensureUploadSession]);
 
   const queueLiveChunk = useCallback((blob: Blob) => {
-    uploadQueueRef.current = uploadQueueRef.current.then(async () => {
-      const sessionId = await ensureUploadSession();
-      if (!sessionId || liveUploadFailedRef.current) return;
-      for (let offset = 0; offset < blob.size; offset += TRANSPORT_CHUNK_BYTES) {
-        const part = blob.slice(offset, Math.min(blob.size, offset + TRANSPORT_CHUNK_BYTES), blob.type);
-        const index = uploadChunkIndexRef.current;
-        const res = await appendRecordingUploadChunk(sessionId, index, part);
-        if (!res.success) {
-          liveUploadFailedRef.current = true;
-          setLiveProtection('local');
-          return;
-        }
-        uploadChunkIndexRef.current = res.data.nextChunkIndex;
-        setProtectedBytes(res.data.uploadedBytes);
-      }
-    }).catch(() => {
+    uploadQueueRef.current = uploadQueueRef.current.then(
+      () => uploadLiveChunk(blob),
+    ).catch(() => {
       liveUploadFailedRef.current = true;
       setLiveProtection('local');
     });
-  }, [ensureUploadSession]);
+  }, [uploadLiveChunk]);
 
   const changeDestination = useCallback(async (nextStoreId: string) => {
-    if (changingDestination) return;
+    if (changingDestinationRef.current) return;
+    changingDestinationRef.current = true;
     setChangingDestination(true);
     setTargetStoreId(nextStoreId);
     targetStoreIdRef.current = nextStoreId;
@@ -161,21 +357,43 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
     // 这样用户不必在录音前做选择，也不会出现 UI 显示新库而文件实际留在旧库。
     try {
       if (!uploadSessionIdRef.current && !uploadSessionPromiseRef.current && !liveUploadFailedRef.current) return;
+      // 同步把切换任务插进分片队列。此刻之后到达的新分片只能排在切换和历史重放之后，
+      // 不会继续使用即将取消的旧会话，也不会与新会话的 index=0 竞争。
+      const replayChunks = chunksRef.current.slice();
+      uploadQueueRef.current = enqueueRecordingDestinationChange(
+        uploadQueueRef.current,
+        replayChunks,
+        async () => {
+          const previousSessionId = uploadSessionIdRef.current;
+          liveTranscriptionRef.current?.close();
+          liveTranscriptionRef.current = null;
+          // 已说出的 PCM 无法重放到新会话。新知识库只保留完整的 MediaRecorder 分片，
+          // 并在结束后做全文件校准，禁止把切换后的尾段误标为完整实时原文。
+          livePcmCompleteRef.current = false;
+          pendingLivePcmRef.current = [];
+          setLiveTranscript('');
+          liveTranscriptValueRef.current = '';
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('已切换知识库，录音结束后将自动完整转写');
+          if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
+          uploadSessionIdRef.current = null;
+          uploadSessionPromiseRef.current = null;
+          uploadChunkIndexRef.current = 0;
+          liveUploadFailedRef.current = false;
+          setProtectedBytes(0);
+          setLiveProtection('pending');
+        },
+        uploadLiveChunk,
+      ).catch(() => {
+        liveUploadFailedRef.current = true;
+        setLiveProtection('local');
+      });
       await uploadQueueRef.current;
-      const previousSessionId = uploadSessionIdRef.current;
-      if (previousSessionId) await cancelRecordingUpload(previousSessionId).catch(() => null);
-      uploadSessionIdRef.current = null;
-      uploadSessionPromiseRef.current = null;
-      uploadChunkIndexRef.current = 0;
-      liveUploadFailedRef.current = false;
-      uploadQueueRef.current = Promise.resolve();
-      setProtectedBytes(0);
-      setLiveProtection('pending');
-      for (const chunk of chunksRef.current) queueLiveChunk(chunk);
     } finally {
+      changingDestinationRef.current = false;
       setChangingDestination(false);
     }
-  }, [changingDestination, queueLiveChunk]);
+  }, [uploadLiveChunk]);
 
   useEffect(() => {
     void listDocumentStoresWithPreview(1, 200, { scope: 'mine' }).then((res) => {
@@ -200,6 +418,12 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
 
   const cleanup = useCallback(() => {
     cancelAnimationFrame(rafRef.current);
+    liveCaptureEnabledRef.current = false;
+    liveCaptureRef.current?.stop();
+    liveCaptureRef.current = null;
+    liveTranscriptionRef.current?.close();
+    liveTranscriptionRef.current = null;
+    pendingLivePcmRef.current = [];
     // 录音进行中被卸载（SPA 路由跳走等）：标记 abandon —— 停轨会触发 onstop，
     // 不能让默认的 discard 把保险箱数据删掉（那是断网/忘关场景唯一的恢复来源）
     if (finishModeRef.current === 'discard' && recorderRef.current && recorderRef.current.state !== 'inactive') {
@@ -212,7 +436,30 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   }, []);
 
   const stopRecorder = useCallback((mode: 'complete' | 'discard') => {
+    if (mode === 'discard' && !canDiscardRecording(finalizationLockedRef.current)) return;
+    // 完成意图一旦被接受就同步锁定，不能等异步 onstop 才加锁；否则用户在
+    // recorder.stop() 与 onstop 之间点击关闭，仍可能把完整录音改写为 discard。
+    if (mode === 'complete') {
+      finalizationLockedRef.current = nextRecordingFinalizationLock(
+        finalizationLockedRef.current,
+        mode,
+      );
+      setState('finalizing');
+    }
     finishModeRef.current = mode;
+    if (mode === 'complete') {
+      // 先刷新不足 100ms 的最后一帧，再关闭采集开关。
+      liveCaptureRef.current?.stop();
+      liveCaptureEnabledRef.current = false;
+    } else {
+      liveCaptureEnabledRef.current = false;
+      liveCaptureRef.current?.stop();
+    }
+    liveCaptureRef.current = null;
+    if (mode === 'discard') {
+      liveTranscriptionRef.current?.close();
+      liveTranscriptionRef.current = null;
+    }
     const rec = recorderRef.current;
     if (rec && rec.state !== 'inactive') rec.stop();
     else if (mode === 'discard') onClose();
@@ -241,6 +488,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
         });
         recorderRef.current = rec;
         void vaultStartSession(vaultIdRef.current, mime || 'audio/webm', storeId);
+        void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
             chunksRef.current.push(e.data);
@@ -250,32 +498,131 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
-              finishModeRef.current = 'complete';
-              rec.stop();
+              // 与用户点击完成共用同一条收尾路径，先 flush 不足一百毫秒的 PCM
+              // 尾帧，再停止 MediaRecorder，禁止实时原文漏掉最后几个字。
+              stopRecorder('complete');
             }
           }
         };
         rec.onstop = async () => {
           if (finishModeRef.current === 'complete' && chunksRef.current.length > 0) {
-            setState('finalizing');
+            await liveTranscriptionRef.current?.finish();
+            const liveSessionId = uploadSessionIdRef.current;
+            if (liveSessionId) {
+              // upstream final 先到浏览器，MAP 随后才把最终原文写入会话。
+              // 完成音频条目前短轮询确认持久化，避免极小竞态让已成功实时转写又跑一遍批处理。
+              for (let attempt = 0; attempt < 10; attempt++) {
+                const liveStatus = await getRecordingUpload(liveSessionId).catch(() => null);
+                if (!liveStatus?.success
+                    || liveStatus.data.liveTranscriptStatus === 'completed'
+                    || liveStatus.data.liveTranscriptStatus === 'degraded') break;
+                await new Promise((resolve) => window.setTimeout(resolve, 200));
+              }
+            }
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
-              let completed = await completeRecordingUpload(sessionId).catch(() => null);
+              const completionStartedAt = Date.now();
+              let serverOwnsCompletion = recordingCompletionOwnershipAfterRequestIssued();
+              await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+              let completed = await completeRecordingUpload(
+                sessionId,
+                MAX_FOREGROUND_COMPLETION_WAIT_MS,
+              ).catch(() => null);
               // 弱网下 /complete 的响应可能丢失，而服务端其实已创建条目。直接回退整文件
               // 上传会造成重复录音，所以先回读会话状态并幂等重试 /complete：服务端对已完成
               // 会话会返回同一条目（reused），不会重复创建。
-              for (let attempt = 0; !completed?.success && attempt < 4; attempt++) {
-                await new Promise((r) => setTimeout(r, 1000 * (attempt + 1)));
-                const status = await getRecordingUpload(sessionId).catch(() => null);
-                // 会话已被取消/清理：服务端不存在也不会创建条目，走整文件兜底。
-                if (status?.success && status.data.status === 'cancelled') break;
-                // uploading / completing / completed 均可安全重试（幂等），completed 直接回条目。
-                completed = await completeRecordingUpload(sessionId).catch(() => null);
+              // completing / completed 表示服务端已经拥有完成流程。即使对象存储重试超过
+              // 普通弱网窗口，也禁止转整文件上传制造第二条记录。前台等待达到硬上限后，
+              // 将服务端会话写入本地保险箱并退出抽屉；下次进页先恢复同一幂等会话。
+              let uncertainAttempts = 0;
+              let serverOwnedAttempts = 0;
+              while (shouldContinueRecordingCompletionRetry(
+                completed?.success === true,
+                uncertainAttempts,
+                serverOwnedAttempts,
+                Date.now() - completionStartedAt,
+              )) {
+                const delayMs = serverOwnsCompletion
+                  ? 5000
+                  : Math.min(5000, 1000 * (uncertainAttempts + 1));
+                const remainingBeforeDelay = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingBeforeDelay === 0) break;
+                await new Promise((r) => setTimeout(r, Math.min(delayMs, remainingBeforeDelay)));
+                const remainingForStatus = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingForStatus === 0) break;
+                const status = await getRecordingUpload(sessionId, remainingForStatus).catch(() => null);
+                // cancel/过期清理会直接删除会话并返回 NOT_FOUND，不能继续空转重试
+                // 两分多钟。仅网络错误保留重试，因为此时无法判断服务端是否已完成。
+                if (shouldStopRecordingCompletionRetry(status)) {
+                  serverOwnsCompletion = false;
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                  break;
+                }
+                const previousOwnership = serverOwnsCompletion;
+                serverOwnsCompletion = nextRecordingCompletionOwnership(
+                  serverOwnsCompletion,
+                  status,
+                );
+                const ownershipTransition = recordingCompletionOwnershipTransition(
+                  previousOwnership,
+                  serverOwnsCompletion,
+                );
+                if (ownershipTransition === 'acquired') {
+                  // 首次确认服务端已接管就立即持久化绑定。不等前台轮询耗尽，
+                  // 因为移动系统可能在等待期间回收页面。
+                  await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                } else if (ownershipTransition === 'released') {
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                }
+                if (serverOwnsCompletion) {
+                  serverOwnedAttempts++;
+                } else {
+                  uncertainAttempts++;
+                }
+                // uploading / completing / completed 均可安全重试（幂等），completed 通常直接回条目。
+                const remainingForCompletion = Math.max(
+                  0,
+                  MAX_FOREGROUND_COMPLETION_WAIT_MS - (Date.now() - completionStartedAt),
+                );
+                if (remainingForCompletion === 0) break;
+                if (!serverOwnsCompletion) {
+                  serverOwnsCompletion = recordingCompletionOwnershipAfterRequestIssued();
+                  await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                }
+                completed = await completeRecordingUpload(
+                  sessionId,
+                  remainingForCompletion,
+                ).catch(() => null);
+                // completed 会话的条目若已被另一标签页删除，后端会明确返回不可恢复错误。
+                // 此时结束服务端恢复循环，转用本地保险文件；网络空响应和 5xx 仍保留归属。
+                if (shouldFallbackCompletedRecording(status, completed)) {
+                  serverOwnsCompletion = false;
+                  await vaultClearServerCompletion(vaultIdRef.current);
+                  break;
+                }
               }
               if (completed?.success) {
-                onUploadedRef.current(completed.data.entry, vaultIdRef.current, targetStoreIdRef.current || storeId);
+                if (finishModeRef.current !== 'complete') return;
+                onUploadedRef.current(
+                  completed.data.entry,
+                  vaultIdRef.current,
+                  targetStoreIdRef.current || storeId,
+                  completed.data.deferredTranscriptionRunId,
+                );
                 onClose();
+                return;
+              }
+              if (serverOwnsCompletion) {
+                await vaultMarkServerCompletion(vaultIdRef.current, sessionId);
+                setLiveProtection('local');
+                onServerCompletionDeferredRef.current();
                 return;
               }
               liveUploadFailedRef.current = true;
@@ -285,6 +632,7 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             const blob = new Blob(chunksRef.current, { type: baseMime });
             const file = new File([blob], fileNameRef.current || buildFileName(recordingExtension(baseMime)), { type: baseMime });
             if (sessionId) void cancelRecordingUpload(sessionId);
+            if (finishModeRef.current !== 'complete') return;
             onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
@@ -296,9 +644,6 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           // abandon（录音中被卸载）：保留保险箱，下次进页提示恢复
           if (finishModeRef.current !== 'abandon') onClose();
         };
-        // 1s 一片：既能实时统计体积，又保证中途异常时已录内容不整段丢失
-        rec.start(1000);
-
         // 电平波形：AnalyserNode 取 RMS，rAF 滚动绘制
         const AudioCtx = window.AudioContext ?? (window as unknown as { webkitAudioContext?: typeof AudioContext }).webkitAudioContext;
         if (AudioCtx) {
@@ -309,7 +654,45 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
           analyser.fftSize = 512;
           source.connect(analyser);
           analyserRef.current = analyser;
+          try {
+            liveCaptureRef.current = await startLivePcmCapture(ctx, source, (pcm) => {
+              // liveCapture.stop 会同步冲刷不足 100ms 的尾帧。用户可能在暂停时
+              // 点击完成，此时 recorder.state 仍是 paused，但完成锁已取得，尾帧仍须发送。
+              if (!shouldForwardLivePcm(
+                liveCaptureEnabledRef.current,
+                rec.state,
+                finalizationLockedRef.current,
+              )) return;
+              if (liveTranscriptionRef.current) {
+                liveTranscriptionRef.current.send(pcm);
+                return;
+              }
+              if (!livePcmCompleteRef.current) return;
+              // API 会话建立前只短时保留 PCM。超过上限立即整路降级，禁止静默丢掉
+              // 中段后继续发送连续序号并把不完整原文误标为 completed。
+              if (!bufferPendingLivePcm(pendingLivePcmRef.current, pcm)) {
+                livePcmCompleteRef.current = false;
+                setLiveTranscriptState('degraded');
+                setLiveTranscriptMessage('连接耗时过长，录音结束后将自动完整转写');
+              }
+            });
+          } catch {
+            setLiveTranscriptState('degraded');
+            setLiveTranscriptMessage('当前浏览器无法实时取流，录音结束后将自动转写');
+          }
+        } else {
+          setLiveTranscriptState('degraded');
+          setLiveTranscriptMessage('当前浏览器无法实时取流，录音结束后将自动转写');
         }
+        // PCM 捕获必须先于 MediaRecorder。只有覆盖录音全生命周期的连续 PCM
+        // 才允许实时原文标记 completed；捕获初始化失败时则明确走完整文件校准。
+        // 1s 一片：既能实时统计体积，又保证中途异常时已录内容不整段丢失。
+        if (disposed) {
+          liveCaptureRef.current?.stop();
+          stream.getTracks().forEach(track => track.stop());
+          return;
+        }
+        rec.start(1000);
         setState('recording');
       } catch {
         if (disposed) return;
@@ -400,8 +783,17 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
   const togglePause = () => {
     const rec = recorderRef.current;
     if (!rec) return;
-    if (rec.state === 'recording') { rec.pause(); setState('paused'); }
-    else if (rec.state === 'paused') { rec.resume(); setState('recording'); }
+    if (rec.state === 'recording') {
+      // 先冲刷尾帧再切换 recorder.state；回调门禁仍看到 recording，暂停前的
+      // 最后不足一帧样本不会被 shouldForwardLivePcm 当成暂停数据丢弃。
+      liveCaptureRef.current?.pause();
+      rec.pause();
+      setState('paused');
+    } else if (rec.state === 'paused') {
+      rec.resume();
+      liveCaptureRef.current?.resume();
+      setState('recording');
+    }
   };
 
   const destinationPicker = storeOptions.length > 0 ? (
@@ -485,6 +877,29 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             {(protectedBytes / 1024).toFixed(0)} KB
           </span>
         )}
+      </div>
+
+      <div
+        className="w-full rounded-[14px] px-4 py-3 text-left"
+        style={{
+          background: liveTranscriptState === 'degraded'
+            ? 'rgba(245,158,11,0.08)'
+            : 'var(--bg-elevated)',
+          border: liveTranscriptState === 'degraded'
+            ? '1px solid rgba(245,158,11,0.28)'
+            : '1px solid var(--border-faint)',
+        }}>
+        <div className="flex items-center justify-between gap-3">
+          <span className="text-[12px] font-semibold text-token-primary">实时原文</span>
+          <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+        </div>
+        <p className="mt-2 min-h-10 whitespace-pre-wrap text-[13px] leading-6 text-token-secondary">
+          {liveTranscript || (
+            liveTranscriptState === 'degraded'
+              ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'
+              : '开始说话后，识别文字会显示在这里。'
+          )}
+        </p>
       </div>
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
@@ -576,8 +991,9 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             </div>
             <button
               onClick={() => stopRecorder('discard')}
+              disabled={state === 'finalizing'}
               aria-label="取消录音"
-              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft">
+              className="flex h-11 w-11 cursor-pointer items-center justify-center rounded-[10px] text-token-muted hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
               <X size={15} />
             </button>
           </div>
@@ -592,8 +1008,13 @@ export function RecordAudioSheet({ storeId, storeName, onClose, onComplete, onUp
             className={`shrink-0 ${isMobile ? 'px-4 pb-4 pt-3' : 'px-5 py-4'}`}
             style={{ borderTop: '1px solid var(--border-faint)' }}>
             <button
-              onClick={() => { stopRecorder('discard'); onPickFile(targetStoreId || storeId); }}
-              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft">
+              onClick={() => {
+                if (!canDiscardRecording(finalizationLockedRef.current)) return;
+                stopRecorder('discard');
+                onPickFile(targetStoreId || storeId);
+              }}
+              disabled={state === 'finalizing'}
+              className="flex w-full cursor-pointer items-center justify-center gap-1.5 rounded-[10px] py-2 text-[12px] font-semibold text-token-muted transition-colors hover-bg-soft disabled:cursor-not-allowed disabled:opacity-40">
               <FileUp size={13} /> 已有录音文件？上传音频文件
             </button>
           </div>

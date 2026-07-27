@@ -34,6 +34,13 @@ describe('deriveTranscribeSteps', () => {
     expect(steps[2].state).toBe('pending');
   });
 
+  it('自动切换识别方案时：第二步保持 active 并展示当前方案', () => {
+    const steps = deriveTranscribeSteps({ ...base, status: 'running', phase: '识别中（方案 2/3）' });
+    expect(steps[1].state).toBe('active');
+    expect(steps[1].sub).toBe('识别中（方案 2/3）');
+    expect(steps[2].state).toBe('pending');
+  });
+
   it('生成摘要阶段：转录 done、摘要 active', () => {
     const steps = deriveTranscribeSteps({ ...base, status: 'running', phase: '生成摘要' });
     expect(steps[1].state).toBe('done');

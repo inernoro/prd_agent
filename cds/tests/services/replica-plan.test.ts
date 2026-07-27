@@ -175,6 +175,33 @@ describe('管理模式二选一（replicaMode，2026-07-24 用户拍板）', () 
     })).toThrow('二选一');
   });
 
+  it('计划校验失败时不得改动分支模式（Codex 第三十四轮 P2）', () => {
+    // 模式赋值原本在步骤校验之前：被 400 拒掉的请求仍把 live BranchEntry 改了，
+    // 之后任何一次无关的 state save 就把它落盘——被拒的 project 请求能让后续
+    // 容器级直接加副本莫名 409。
+    // 夹具分支自带 1 个副本 + 存量兜底会钉成 container，先清零让模式可切换，
+    // 否则请求会先撞「二选一」409，测不到「校验顺序」这件事。
+    const b = state.getBranch('proj-main')!;
+    b.replicaSets!.api.members = [];
+    delete b.replicaMode;
+    expect(() => svc.startPlan('proj-main', { onFailure: 'stop', mode: 'project', steps: [] }))
+      .toThrow('计划为空');
+    expect(state.getBranch('proj-main')!.replicaMode).toBeUndefined();
+    expect(() => svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'bogus' as never, profileId: 'api' }],
+    })).toThrow('未知步骤类型');
+    expect(state.getBranch('proj-main')!.replicaMode).toBeUndefined();
+    // 全部校验通过时才落模式（步骤选 set-weight：dissolve 会触发「副本清零即
+    // 自动解除模式」那条规则，把刚落的模式又删掉，测不出本条要验的东西）
+    const ok = svc.startPlan('proj-main', {
+      onFailure: 'stop', mode: 'project',
+      steps: [{ kind: 'set-weight', profileId: 'api', params: { memberId: 'res-1', weight: 10 } }],
+    });
+    expect(ok).toBeTruthy();
+    expect(state.getBranch('proj-main')!.replicaMode).toBe('project');
+  });
+
   it('副本清零后模式自动解除，可换另一种', async () => {
     const p1 = svc.startPlan('proj-main', {
       onFailure: 'stop', mode: 'container',

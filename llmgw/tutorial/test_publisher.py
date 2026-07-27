@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import copy
+import dataclasses
 import hashlib
 import json
 from pathlib import Path
@@ -12,7 +13,7 @@ import publisher
 
 
 class MemoryGateway:
-    def __init__(self, fail_after: int | None = None):
+    def __init__(self, fail_after: int | None = None, fail_graph_publish: bool = False):
         self.nodes: dict[str, dict] = {}
         self.foreign = {
             "id": "foreign-1",
@@ -30,6 +31,11 @@ class MemoryGateway:
         self.store_updated_at = 1
         self.put_count = 0
         self.fail_after = fail_after
+        self.fail_graph_publish = fail_graph_publish
+        self.lose_graph_publish_response = False
+        self.lose_put_response_for: set[str] = set()
+        self.fail_primary_before_commit = False
+        self.lose_primary_response_after_commit = False
         self.link_graph: dict = {"exists": False, "draft": None, "published": None, "history": []}
 
     def snapshot(self, store_id: str, managed_publisher: str) -> dict:
@@ -51,11 +57,17 @@ class MemoryGateway:
     def put_node(self, store_id: str, source_id: str, body: dict) -> dict:
         self.put_count += 1
         if self.fail_after is not None and self.put_count > self.fail_after:
+            self.fail_after = None
             raise publisher.TutorialError("注入的中途失败")
         existing = self.nodes.get(source_id)
         if existing is not None and existing["updatedAt"] != body.get("expectedUpdatedAt"):
             raise publisher.ApiConflict("expectedUpdatedAt 不匹配")
-        if existing is not None and existing["contentSha256"] == body["sourceSha256"]:
+        parent_id = self.nodes[body["parentSourceId"]]["id"] if body.get("parentSourceId") else None
+        if (
+            existing is not None
+            and existing["contentSha256"] == body["sourceSha256"]
+            and existing["parentId"] == parent_id
+        ):
             existing["metadata"]["lastAppliedRunId"] = body["runId"]
             return {"action": "noop", "nodeId": existing["id"], "updatedAt": existing["updatedAt"]}
         action = "created" if existing is None else "updated"
@@ -64,17 +76,43 @@ class MemoryGateway:
         metadata = {
             "publisher": body["publisher"],
             "sourceId": source_id,
+            "sourcePath": body["sourcePath"],
             "sourceSha256": body["sourceSha256"],
+            "manifestSha256": body["manifestSha256"],
+            "sourceRevision": body["sourceRevision"],
+            "kind": body["kind"],
             "lastAppliedSha256": body["sourceSha256"],
             "createdByRunId": created_by,
             "lastAppliedRunId": body["runId"],
         }
+        if body.get("replaceCustomMetadata"):
+            metadata.update(body.get("metadata") or {})
+        else:
+            metadata.update(existing.get("metadata", {}) if existing else {})
+            metadata.update(body.get("metadata") or {})
+            metadata.update({
+                "publisher": body["publisher"],
+                "sourceId": source_id,
+                "sourcePath": body["sourcePath"],
+                "sourceSha256": body["sourceSha256"],
+                "manifestSha256": body["manifestSha256"],
+                "sourceRevision": body["sourceRevision"],
+                "kind": body["kind"],
+                "lastAppliedSha256": body["sourceSha256"],
+                "createdByRunId": created_by,
+                "lastAppliedRunId": body["runId"],
+            })
         metadata_sha = publisher.sha256_text("\n".join(f"{key}:{metadata[key]}" for key in sorted(metadata)))
         self.nodes[source_id] = {
             "id": f"node-{source_id}",
-            "parentId": None,
+            "parentId": parent_id,
             "isFolder": body["kind"] == "folder",
             "title": body["title"],
+            "summary": body.get("summary"),
+            "contentType": body.get("contentType"),
+            "tags": body.get("tags") or [],
+            "category": body.get("category"),
+            "sortOrder": body.get("sortOrder"),
             "metadata": metadata,
             "metadataSha256": metadata_sha,
             "contentSha256": body["sourceSha256"],
@@ -83,19 +121,30 @@ class MemoryGateway:
             "sourceId": source_id,
             "updatedAt": self.store_updated_at,
         }
+        if source_id in self.lose_put_response_for:
+            self.lose_put_response_for.remove(source_id)
+            raise publisher.TutorialError("注入的节点响应丢失")
         return {"action": action, "nodeId": f"node-{source_id}", "updatedAt": self.store_updated_at}
 
     def set_primary(self, store_id: str, body: dict) -> dict:
+        if self.fail_primary_before_commit:
+            self.fail_primary_before_commit = False
+            raise publisher.ApiConflict("注入的主文档写入前失败")
         if self.store_updated_at != body["expectedStoreUpdatedAt"]:
             raise publisher.ApiConflict("store CAS 不匹配")
         self.primary_entry_id = self.nodes[body["sourceId"]]["id"]
         self.store_updated_at += 1
+        if self.lose_primary_response_after_commit:
+            self.lose_primary_response_after_commit = False
+            raise publisher.TutorialError("注入的主文档响应丢失")
         return {"primaryEntryId": self.primary_entry_id, "updatedAt": self.store_updated_at}
 
     def delete_created_node(self, store_id: str, source_id: str, query: dict[str, str]) -> dict:
         node = self.nodes[source_id]
         if node["metadata"]["createdByRunId"] != query["runId"]:
             raise publisher.ApiConflict("不是本批次创建")
+        if any(item.get("parentId") == node["id"] for item in self.nodes.values()):
+            raise publisher.ApiConflict("节点仍有子项")
         del self.nodes[source_id]
         self.store_updated_at += 1
         return {"action": "deleted"}
@@ -115,6 +164,9 @@ class MemoryGateway:
         return copy.deepcopy(self.link_graph)
 
     def publish_link_graph(self, store_id: str, body: dict) -> dict:
+        if self.fail_graph_publish:
+            self.fail_graph_publish = False
+            raise publisher.TutorialError("注入的图谱发布失败")
         draft = self.link_graph.get("draft") or {}
         published = self.link_graph.get("published") or {}
         if draft.get("graphSha256") != body.get("expectedDraftSha256"):
@@ -123,6 +175,9 @@ class MemoryGateway:
             raise publisher.ApiConflict("已发布 SHA 不匹配")
         self.link_graph["published"] = copy.deepcopy(draft)
         self.link_graph["history"].append({"graphSha256": draft["graphSha256"]})
+        if self.lose_graph_publish_response:
+            self.lose_graph_publish_response = False
+            raise publisher.TutorialError("注入的图谱发布响应丢失")
         return copy.deepcopy(self.link_graph)
 
 
@@ -213,6 +268,187 @@ class TutorialPublisherTests(unittest.TestCase):
             publisher.apply_plan(gateway, "store-a", self.source, plan)
         self.assertEqual({}, gateway.nodes)
         self.assertEqual("人工保留内容", gateway.foreign["title"])
+
+    def test_manual_graph_draft_is_not_overwritten(self):
+        gateway = MemoryGateway()
+        plan = publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher))
+        publisher.apply_plan(gateway, "store-a", self.source, plan)
+        manual = copy.deepcopy(gateway.link_graph["published"])
+        manual["surfaces"][0]["label"] = "人工草稿"
+        manual["generator"] = "manual-editor"
+        manual["graphSha256"] = "f" * 64
+        gateway.link_graph["draft"] = manual
+
+        with self.assertRaisesRegex(publisher.ApiConflict, "人工图谱草稿"):
+            publisher.stage_link_graph(gateway, "store-a", self.source, publisher._source_revision())
+        self.assertEqual("人工草稿", gateway.link_graph["draft"]["surfaces"][0]["label"])
+
+    def test_stale_automated_graph_draft_is_replaced(self):
+        gateway = MemoryGateway()
+        publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+        first_source = dataclasses.replace(self.source, manifest_sha256="a" * 64)
+        first = publisher.stage_link_graph(gateway, "store-a", first_source, "revision-a")
+        self.assertEqual("drafted", first["action"])
+
+        second_source = dataclasses.replace(self.source, manifest_sha256="b" * 64)
+        second = publisher.stage_link_graph(gateway, "store-a", second_source, "revision-b")
+
+        self.assertEqual("drafted", second["action"])
+        self.assertEqual("b" * 64, gateway.link_graph["draft"]["manifestSha256"])
+        self.assertEqual(publisher.GRAPH_GENERATOR, gateway.link_graph["draft"]["generator"])
+
+    def test_graph_publish_failure_restores_updated_content(self):
+        gateway = MemoryGateway()
+        first_plan = publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher))
+        publisher.apply_plan(gateway, "store-a", self.source, first_plan)
+        before = copy.deepcopy(gateway.nodes)
+
+        changed_node = dataclasses.replace(
+            self.source.nodes[0],
+            content=self.source.nodes[0].content + "\n\n受控更新",
+            source_sha256=publisher.sha256_text(self.source.nodes[0].content + "\n\n受控更新"),
+        )
+        changed_source = dataclasses.replace(
+            self.source,
+            manifest_sha256="e" * 64,
+            nodes=[changed_node, *self.source.nodes[1:]],
+        )
+        plan = publisher.build_plan(changed_source, gateway.snapshot("store-a", changed_source.publisher))
+        gateway.fail_graph_publish = True
+        with self.assertRaisesRegex(publisher.TutorialError, "图谱发布失败"):
+            publisher.apply_plan(gateway, "store-a", changed_source, plan)
+        self.assertEqual(before[changed_node.source_id]["content"], gateway.nodes[changed_node.source_id]["content"])
+        self.assertEqual(
+            before[changed_node.source_id]["contentSha256"],
+            gateway.nodes[changed_node.source_id]["contentSha256"],
+        )
+
+    def test_committed_graph_publish_is_reconciled_after_response_loss(self):
+        gateway = MemoryGateway()
+        gateway.lose_graph_publish_response = True
+        plan = publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher))
+
+        applied = publisher.apply_plan(gateway, "store-a", self.source, plan)
+
+        self.assertTrue(applied["linkGraph"]["reconciled"])
+        self.assertEqual(len(self.source.nodes), len(gateway.nodes))
+        self.assertEqual(
+            gateway.link_graph["draft"]["graphSha256"],
+            gateway.link_graph["published"]["graphSha256"],
+        )
+
+    def test_committed_node_update_is_discovered_after_response_loss(self):
+        gateway = MemoryGateway()
+        publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+        before = copy.deepcopy(gateway.nodes)
+        changed_node = dataclasses.replace(
+            self.source.nodes[0],
+            content=self.source.nodes[0].content + "\n\n响应丢失更新",
+            source_sha256=publisher.sha256_text(self.source.nodes[0].content + "\n\n响应丢失更新"),
+        )
+        changed_source = dataclasses.replace(
+            self.source,
+            manifest_sha256="d" * 64,
+            nodes=[changed_node, *self.source.nodes[1:]],
+        )
+        gateway.lose_put_response_for.add(changed_node.source_id)
+
+        with self.assertRaisesRegex(publisher.TutorialError, "节点响应丢失"):
+            publisher.apply_plan(
+                gateway,
+                "store-a",
+                changed_source,
+                publisher.build_plan(changed_source, gateway.snapshot("store-a", changed_source.publisher)),
+            )
+
+        self.assertEqual(before[changed_node.source_id]["content"], gateway.nodes[changed_node.source_id]["content"])
+        self.assertEqual(
+            before[changed_node.source_id]["contentSha256"],
+            gateway.nodes[changed_node.source_id]["contentSha256"],
+        )
+
+    def test_updated_children_are_restored_before_new_parent_is_deleted(self):
+        gateway = MemoryGateway()
+        publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+        new_parent = dataclasses.replace(
+            self.source.nodes[0],
+            source_id="rollback-parent",
+            kind="folder",
+            title="回滚父目录",
+            source_path="rollback-parent",
+            content="",
+            source_sha256=publisher.sha256_text(""),
+            parent_source_id=None,
+        )
+        reparented = dataclasses.replace(self.source.nodes[0], parent_source_id=new_parent.source_id)
+        changed_source = dataclasses.replace(
+            self.source,
+            manifest_sha256="c" * 64,
+            nodes=[new_parent, reparented, *self.source.nodes[1:]],
+        )
+        gateway.fail_after = gateway.put_count + 2
+
+        with self.assertRaisesRegex(publisher.TutorialError, "中途失败"):
+            publisher.apply_plan(
+                gateway,
+                "store-a",
+                changed_source,
+                publisher.build_plan(changed_source, gateway.snapshot("store-a", changed_source.publisher)),
+            )
+
+        self.assertNotIn(new_parent.source_id, gateway.nodes)
+        self.assertIsNone(gateway.nodes[reparented.source_id]["parentId"])
+
+    def test_primary_write_is_reconciled_after_committed_response_loss(self):
+        gateway = MemoryGateway()
+        gateway.lose_primary_response_after_commit = True
+
+        applied = publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+
+        self.assertEqual("reconciled", applied["primary"]["action"])
+        self.assertEqual(gateway.nodes[self.source.primary_source_id]["id"], gateway.primary_entry_id)
+
+    def test_primary_write_retries_after_transient_precommit_failure(self):
+        gateway = MemoryGateway()
+        gateway.fail_primary_before_commit = True
+
+        applied = publisher.apply_plan(
+            gateway,
+            "store-a",
+            self.source,
+            publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher)),
+        )
+
+        self.assertEqual("reconciled", applied["primary"]["action"])
+        self.assertEqual(2, applied["primary"]["attempts"])
+        self.assertEqual(gateway.nodes[self.source.primary_source_id]["id"], gateway.primary_entry_id)
+
+    def test_graph_only_revision_comes_from_remote_content(self):
+        gateway = MemoryGateway()
+        plan = publisher.build_plan(self.source, gateway.snapshot("store-a", self.source.publisher))
+        publisher.apply_plan(gateway, "store-a", self.source, plan)
+        snapshot = gateway.snapshot("store-a", self.source.publisher)
+        self.assertEqual(publisher._source_revision(), publisher._snapshot_source_revision(snapshot, self.source))
 
     def test_unexpected_managed_node_fails_closed(self):
         gateway = MemoryGateway()

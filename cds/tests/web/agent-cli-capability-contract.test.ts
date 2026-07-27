@@ -6,6 +6,7 @@ import { describe, expect, it } from 'vitest';
 
 const cliPath = path.resolve(process.cwd(), '../.claude/skills/cds/cli/cdscli.py');
 const cliSource = fs.readFileSync(cliPath, 'utf8');
+const cliVersion = cliSource.match(/^VERSION\s*=\s*["']([^"']+)["']/m)?.[1];
 
 function help(...args: string[]): string {
   const result = spawnSync('python3', [cliPath, ...args, '--help'], {
@@ -113,6 +114,7 @@ describe('CDS Agent CLI 能力契约', () => {
   });
 
   it('version 能从导出包约定位置读取完整技能清单', () => {
+    expect(cliVersion).toBeTruthy();
     const tempDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-version-manifest-'));
     const copiedCli = path.join(tempDir, 'skills', 'cds', 'cli', 'cdscli.py');
     const manifestPath = path.join(tempDir, 'skills', 'cds', 'cli', 'cds-skill-manifest.json');
@@ -120,7 +122,7 @@ describe('CDS Agent CLI 能力契约', () => {
     try {
       fs.mkdirSync(path.dirname(copiedCli), { recursive: true });
       fs.copyFileSync(cliPath, copiedCli);
-      fs.writeFileSync(manifestPath, JSON.stringify({ format: 'agent-skills', version: '0.12.0', skills }));
+      fs.writeFileSync(manifestPath, JSON.stringify({ format: 'agent-skills', version: cliVersion, skills }));
       const result = spawnSync('python3', [copiedCli, 'version'], {
         cwd: tempDir,
         encoding: 'utf8',
@@ -135,11 +137,6 @@ describe('CDS Agent CLI 能力契约', () => {
       expect(result.status, result.stderr).toBe(0);
       const payload = JSON.parse(result.stdout);
       expect(payload.data.manifest.skills).toEqual(skills);
-      // version 来自 cdscli.py 的 VERSION 常量——从源码解析而非硬编码，
-      // 否则每次 bump VERSION 都会把本测试打红（2026-07-27 main 上 0.12.1
-      // bump 未同步此处硬编码 0.12.0，主干 CI 直接红，本 PR 合并树被连带）
-      const cliVersion = /VERSION = "([^"]+)"/.exec(cliSource)?.[1];
-      expect(cliVersion).toBeTruthy();
       expect(payload.data.version).toBe(cliVersion);
     } finally {
       fs.rmSync(tempDir, { recursive: true, force: true });

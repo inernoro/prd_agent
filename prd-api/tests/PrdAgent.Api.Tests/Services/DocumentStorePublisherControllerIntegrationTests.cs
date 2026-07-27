@@ -165,6 +165,7 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
             "owner-a",
             CancellationToken.None);
         draft.Status.ShouldBe(TutorialLinkGraphMutationStatus.Success);
+        draft.Graph!.Draft!.Generator.ShouldBe("llmgw-tutorial-publisher");
         var firstSha = draft.Graph!.Draft!.GraphSha256;
 
         var published = await service.PublishAsync(
@@ -355,6 +356,7 @@ public sealed class DocumentStorePublisherControllerIntegrationTests
             SourceRevision = sourceRevision,
             ManifestSha256 = DocumentStorePublisherPolicy.Sha256("manifest"),
             VerifiedAtCommit = "0123456789abcdef",
+            Generator = "llmgw-tutorial-publisher",
             GeneratedAt = generatedAt,
             Surfaces = new List<TutorialLinkSurface>
             {

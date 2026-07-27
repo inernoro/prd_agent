@@ -126,6 +126,8 @@ import {
   getAgentRun,
   getOrCreateQuickCaptureStore,
   importCdsAcceptanceReport,
+  completeRecordingUpload,
+  getRecordingUpload,
   getTutorialLinkGraph,
   resolveTutorialLinkRoute,
   createLlmGatewaySsoTicket,
@@ -160,7 +162,16 @@ import { SubscriptionDetailDrawer } from './SubscriptionDetailDrawer';
 import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
-import { vaultListSessions, vaultLoadSessionFile, vaultDeleteSession } from './recordingVault';
+import {
+  decideVaultServerRecovery,
+  deferredRunIdForRecoveredVaultCompletion,
+  enqueueBackgroundTranscriptionRun,
+  shouldRetryVaultServerCompletion,
+  vaultClearServerCompletion,
+  vaultDeleteSession,
+  vaultListSessions,
+  vaultLoadSessionFile,
+} from './recordingVault';
 import { ReprocessChatDrawer, saveActiveShortVideoRun } from './ReprocessChatDrawer';
 import { ShortVideoRunIndicator } from './ShortVideoRunIndicator';
 import { ViewersDrawer } from './ViewersDrawer';
@@ -885,6 +896,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 自动动作是真正的一次性意图：开始执行即通知父层清除，不能跟着下一次知识库挂载重放。 */
   onInitialActionConsumed: (requestId: number) => void;
 }) {
+  const tutorialPublisher = 'llmgw-authoritative-tutorial';
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
@@ -897,13 +909,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
   const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
   const [showTutorialGraph, setShowTutorialGraph] = useState(false);
-  const isTutorialGraphStore = useMemo(
-    () => entries.some(entry => entry.metadata?.publisher === 'llmgw-authoritative-tutorial'),
-    [entries],
-  );
+  const isTutorialGraphStore = tutorialGraph?.exists === true;
   const tutorialTitles = useMemo(() => Object.fromEntries(entries.flatMap(entry => {
     const sourceId = entry.metadata?.sourceId;
-    return sourceId ? [[sourceId, entry.title]] : [];
+    return sourceId && entry.metadata?.publisher === tutorialPublisher ? [[sourceId, entry.title]] : [];
   })), [entries]);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
@@ -998,6 +1007,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [showRecorder, setShowRecorder] = useState(false);
   // 上传进度（浮动进度卡：文件名 + 百分比 + 第 n / 共 m）
   const [uploadProgress, setUploadProgress] = useState<{ name: string; percent: number; index: number; total: number } | null>(null);
+  // 「后台运行」看护的 SSOT。保险箱恢复与当前录音上传必须接入同一观察器，
+  // 否则归档中的延迟转写会在抽屉外静默完成或失败。
+  const transcribeRunRef = useRef<string | null>(null);
+  const transcribeFlowOpenRef = useRef(false);
+  const [bgTranscribeRunIds, setBgTranscribeRunIds] = useState<string[]>([]);
+  const watchBackgroundTranscription = useCallback((runId: string) => {
+    const normalized = runId.trim();
+    if (!normalized) return;
+    transcribeRunRef.current = normalized;
+    setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
+  }, []);
   // 保险箱恢复只在进页时检查一次
   const vaultCheckedRef = useRef(false);
 
@@ -1007,10 +1027,53 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     vaultCheckedRef.current = true;
     void (async () => {
       const all = await vaultListSessions();
-      // 过期会话（>7 天）直接清理；恢复只提示【本库】的会话，避免笔记落错库
+      // 普通本地会话超过七天清理；服务端已接管的会话必须保留保险文件，
+      // 直到确认同一幂等会话完成或明确退回未接管状态。
       const now = Date.now();
-      for (const s of all.filter(s => now - s.startedAt > 7 * 24 * 3600 * 1000)) void vaultDeleteSession(s.id);
-      const sessions = all.filter(s => s.storeId === storeId && now - s.startedAt <= 7 * 24 * 3600 * 1000);
+      for (const s of all.filter(s => !s.serverUploadSessionId && now - s.startedAt > 7 * 24 * 3600 * 1000)) {
+        void vaultDeleteSession(s.id);
+      }
+      const currentStoreSessions = all.filter(
+        s => s.storeId === storeId
+          && (Boolean(s.serverUploadSessionId) || now - s.startedAt <= 7 * 24 * 3600 * 1000),
+      );
+      const sessions = [] as typeof currentStoreSessions;
+      for (const session of currentStoreSessions) {
+        if (!session.serverUploadSessionId) {
+          sessions.push(session);
+          continue;
+        }
+
+        const status = await getRecordingUpload(session.serverUploadSessionId).catch(() => null);
+        let completion = null as Awaited<ReturnType<typeof completeRecordingUpload>> | null;
+        if (shouldRetryVaultServerCompletion(status)) {
+          completion = await completeRecordingUpload(session.serverUploadSessionId).catch(() => null);
+        }
+        const decision = decideVaultServerRecovery(status, completion);
+        if (decision === 'completed' && completion?.success) {
+          const deferredRunId = deferredRunIdForRecoveredVaultCompletion(completion);
+          if (deferredRunId) watchBackgroundTranscription(deferredRunId);
+          setEntries(prev => [
+            completion.data.entry,
+            ...prev.filter(item => item.id !== completion.data.entry.id),
+          ]);
+          await vaultDeleteSession(session.id);
+          toast.success(
+            '后台录音已完成',
+            deferredRunId
+              ? '录音已恢复，转录笔记仍在后台生成'
+              : '已恢复服务端接管的同一条录音',
+          );
+          continue;
+        }
+        if (decision === 'keep-protected') continue;
+
+        // 服务端明确未持有可恢复结果后，才解除保护并允许本地整文件恢复。
+        await vaultClearServerCompletion(session.id);
+        const recoverable = { ...session };
+        delete recoverable.serverUploadSessionId;
+        sessions.push(recoverable);
+      }
       if (sessions.length === 0) return;
       const latest = sessions[0];
       const d = new Date(latest.startedAt);
@@ -1037,13 +1100,6 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     })();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
-  // 「后台运行」看护：抽屉关闭时若 run 仍在途，接手轮询到终态再刷新列表
-  // （否则后台完成的转录笔记要手动刷新才出现，Codex P2）
-  const transcribeRunRef = useRef<string | null>(null);
-  // 抽屉是否处于打开态（ref 而非 state：上传期关闭后 runId 迟到时，
-  // 回调闭包里读 state 是陈旧值，读 ref 才能判断「已关闭 → 立即接手看护」）
-  const transcribeFlowOpenRef = useRef(false);
-  const [bgTranscribeRunId, setBgTranscribeRunId] = useState<string | null>(null);
   /** 当前打开的智能体抽屉目标：可绑定文档，也可作为知识库工具会话打开。 */
   const [reprocessTarget, setReprocessTarget] = useState<{
     id?: string;
@@ -1142,24 +1198,54 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [loadStore, loadEntries]);
 
   useEffect(() => {
-    if (!isTutorialGraphStore || !canManageTutorialGraph) {
+    if (!canManageTutorialGraph) {
       setTutorialGraph(null);
       return;
     }
+    setTutorialGraph(null);
     let alive = true;
     void getTutorialLinkGraph(storeId).then(result => {
       if (alive && result.success) setTutorialGraph(result.data);
     });
+    return () => { alive = false; };
+  }, [canManageTutorialGraph, storeId]);
+
+  useEffect(() => {
+    if (!canManageTutorialGraph || !isTutorialGraphStore) return;
+    let alive = true;
+    void (async () => {
+      const pageSize = 500;
+      const authoritative: DocumentEntry[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (authoritative.length < total) {
+        const result = await listDocumentEntries(storeId, page, pageSize);
+        if (!alive || !result.success || !result.data) return;
+        authoritative.push(...result.data.items.filter(entry => entry.metadata?.publisher === tutorialPublisher));
+        total = result.data.total ?? 0;
+        if (page * pageSize >= total || result.data.items.length === 0) break;
+        page += 1;
+      }
+      if (!alive) return;
+      setEntries(current => {
+        const merged = new Map(current.map(entry => [entry.id, entry]));
+        authoritative.forEach(entry => merged.set(entry.id, entry));
+        return [...merged.values()];
+      });
+    })();
     return () => { alive = false; };
   }, [canManageTutorialGraph, isTutorialGraphStore, storeId]);
 
   useEffect(() => {
     if (!canManageTutorialGraph || !isTutorialGraphStore || new URLSearchParams(location.search).get('tutorialLinks') !== '1') return;
     setShowTutorialGraph(true);
-  }, [canManageTutorialGraph, isTutorialGraphStore, location.search]);
+    const params = new URLSearchParams(location.search);
+    params.delete('tutorialLinks');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [canManageTutorialGraph, isTutorialGraphStore, location.pathname, location.search, navigate]);
 
   const openTutorialSource = useCallback((sourceId: string) => {
-    const entry = entries.find(item => item.metadata?.sourceId === sourceId);
+    const entry = entries.find(item => item.metadata?.publisher === tutorialPublisher && item.metadata?.sourceId === sourceId);
     if (!entry) {
       toast.error('教程不存在', `没有找到 sourceId 为 ${sourceId} 的已发布教程`);
       return;
@@ -1218,27 +1304,27 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
 
   // 「后台运行」看护：轮询在途转录 run 到终态 → 刷新列表 + toast 告知结果
   useEffect(() => {
-    if (!bgTranscribeRunId) return;
+    if (bgTranscribeRunIds.length === 0) return;
     let cancelled = false;
     const timer = window.setInterval(async () => {
-      const res = await getAgentRun(bgTranscribeRunId);
-      if (cancelled || !res.success) return;
-      const st = res.data.status;
-      if (st !== 'done' && st !== 'failed' && st !== 'cancelled') return;
-      window.clearInterval(timer);
-      if (cancelled) return;
-      setBgTranscribeRunId(null);
-      transcribeRunRef.current = null;
-      void loadEntries();
-      if (st === 'done') {
-        toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
-      } else if (st === 'failed') {
-        toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+      for (const runId of bgTranscribeRunIds) {
+        const res = await getAgentRun(runId);
+        if (cancelled || !res.success) continue;
+        const st = res.data.status;
+        if (st !== 'done' && st !== 'failed' && st !== 'cancelled') continue;
+        setBgTranscribeRunIds(current => current.filter(id => id !== runId));
+        if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
+        void loadEntries();
+        if (st === 'done') {
+          toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
+        } else if (st === 'failed') {
+          toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
+        }
       }
     }, 5000);
     return () => { cancelled = true; window.clearInterval(timer); };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [bgTranscribeRunId]);
+  }, [bgTranscribeRunIds]);
 
   // 文件上传处理
   const handleFiles = useCallback(async (files: File[]) => {
@@ -2198,11 +2284,28 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow({ file, title: file.name, vaultSessionId, storeId: targetStoreId || storeId, isNewRecording: true });
               transcribeFlowOpenRef.current = true;
             }}
-            onUploaded={(entry, vaultSessionId, targetStoreId) => {
+            onUploaded={(entry, vaultSessionId, targetStoreId, deferredTranscriptionRunId) => {
               const destination = targetStoreId || storeId;
+              const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
+              const liveTranscriptReady = entry.metadata?.liveTranscriptStatus === 'completed'
+                && Boolean(entry.metadata?.liveTranscript?.trim());
               setShowRecorder(false);
               if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
               void vaultDeleteSession(vaultSessionId);
+              if (archivePending) {
+                toast.info(
+                  '录音已安全保存',
+                  liveTranscriptReady
+                    ? '实时原文已保存，音频正在后台补充云端归档'
+                    : '音频已进入耐久队列，云端恢复后将自动归档并转录',
+                );
+              }
+              if (archivePending && !liveTranscriptReady) {
+                if (deferredTranscriptionRunId) {
+                  watchBackgroundTranscription(deferredTranscriptionRunId);
+                }
+                return;
+              }
               setTranscribeFlow({
                 entryId: entry.id,
                 title: entry.title,
@@ -2211,6 +2314,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                 isNewRecording: true,
               });
               transcribeFlowOpenRef.current = true;
+            }}
+            onServerCompletionDeferred={() => {
+              setShowRecorder(false);
+              toast.info(
+                '录音已转入后台确认',
+                '前台等待已结束，本地保险文件仍保留；下次进入会优先恢复同一服务端会话',
+              );
+              setTimeout(() => { void loadEntries(); }, 5000);
+              setTimeout(() => { void loadEntries(); }, 15000);
             }}
             onPickFile={(targetStoreId) => {
               setShowRecorder(false);
@@ -2246,7 +2358,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               setTranscribeFlow(null);
               transcribeFlowOpenRef.current = false;
               // 「后台运行」：run 仍在途 → 页面接手看护（轮询到终态刷新列表）
-              if (transcribeRunRef.current) setBgTranscribeRunId(transcribeRunRef.current);
+              if (transcribeRunRef.current) watchBackgroundTranscription(transcribeRunRef.current);
             }}
             onEntryCreated={(entry) => {
               if ((transcribeFlow.storeId || storeId) === storeId) setEntries(prev => [entry, ...prev]);
@@ -2272,7 +2384,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
             onRunTracking={(rid) => {
               transcribeRunRef.current = rid;
               // 上传期间点「后台运行」→ 抽屉已关、runId 迟到：此刻直接接手看护
-              if (rid && !transcribeFlowOpenRef.current) setBgTranscribeRunId(rid);
+              if (rid && !transcribeFlowOpenRef.current) watchBackgroundTranscription(rid);
             }}
             onDiscardEntry={transcribeFlow.isNewRecording ? async (entryId) => {
               const res = await deleteDocumentEntry(entryId);

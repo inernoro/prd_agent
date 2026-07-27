@@ -212,3 +212,6 @@
 | fix | cds | docker 数据目录先校验本命名空间可见性再采用：master 容器化时不再拿 daemon 路径量错文件系统 |
 | fix | cds | 分流探测 host 白名单改为按本分支真实路由精确枚举，不再前缀匹配放过外部分支域名 |
 | fix | cds | 项目级模式下拒绝单服务直接加副本，避免画布出现残缺组 |
+| fix | cds | image-retention 分隔符改转义写法：字面 NUL 让 git 把该 .ts 当二进制，diff/blame/评审全瞎 |
+| fix | cds | 计划模式赋值移到全部校验之后：被拒的请求不再偷改分支 replicaMode |
+| merge | cds | 合并 main（解 CLI 版本契约测试冲突，采用 main 的模块级 cliVersion 解析） |

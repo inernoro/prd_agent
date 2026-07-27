@@ -453,8 +453,10 @@ builder.Services.AddScoped<PrdAgent.Api.Services.AutoLinkProcessor>();
 builder.Services.AddScoped<PrdAgent.Api.Services.EntryContentWriteService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.TutorialLinkGraphService>();
 builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreAssetNormalizer>();
+builder.Services.AddScoped<PrdAgent.Api.Services.DocumentStoreLiveTranscriptionRelay>();
 builder.Services.AddScoped<PrdAgent.Api.Services.ShortVideoMaterialProcessor>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentStoreAgentWorker>();
+builder.Services.AddHostedService<PrdAgent.Api.Services.DocumentRecordingArchiveWorker>();
 builder.Services.AddHostedService<PrdAgent.Api.Services.ShortVideoMaterialWorker>();
 // 启动时把内置「再加工·智能体」种入 DB（reprocess_agents 集合）
 builder.Services.AddHostedService<PrdAgent.Api.Services.ReprocessAgentSeeder>();
@@ -799,6 +801,11 @@ builder.Services.AddAuthentication(JwtBearerDefaults.AuthenticationScheme)
                     context.NoResult();
                     return Task.CompletedTask;
                 }
+                var liveAsrToken = PrdAgent.Api.Services.LiveAsrWebSocketAuth.ExtractToken(
+                    context.Request.Path,
+                    context.Request.Headers.SecWebSocketProtocol);
+                if (!string.IsNullOrWhiteSpace(liveAsrToken))
+                    context.Token = liveAsrToken;
                 return Task.CompletedTask;
             },
             OnTokenValidated = async context =>
@@ -1467,6 +1474,10 @@ app.Use(async (context, next) =>
         SystemPromptRedacted: null,
         ForceFullShadowSample: true));
     await next();
+});
+app.UseWebSockets(new WebSocketOptions
+{
+    KeepAliveInterval = TimeSpan.FromSeconds(20),
 });
 app.UseAuthentication();
 // 限流必须位于认证之后，否则所有已登录用户都会退化为共享代理 IP 桶，

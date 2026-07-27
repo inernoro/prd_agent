@@ -1319,13 +1319,16 @@ export class ReplicaSetService {
     // 存量分支兜底：模式字段面世前创建的副本都是逐容器操作的产物 → 默认钉容器级，
     // 防止旧分支仍可两级混管（模式二选一对存量同样生效）
     if (!branch.replicaMode && this.totalMemberCount(branch) > 0) branch.replicaMode = 'container';
+    // 校验全部前置于任何写入（Codex 第三十四轮 P2）：模式赋值原本在步骤校验之前，
+    // 于是一个「步骤为空 / 超步 / 步骤非法」而被 400 拒掉的请求，仍然把 live
+    // BranchEntry 的 replicaMode 改掉了——之后任何一次无关的 state save 就把它落盘。
+    // 后果是被拒的 mode:"project" 请求能让后续容器级直接加副本莫名 409。
     if (input.mode === 'container' || input.mode === 'project') {
       const total = this.totalMemberCount(branch);
       if (branch.replicaMode && branch.replicaMode !== input.mode && total > 0) {
         throw new ReplicaSetError(409,
           `复制集管理模式二选一：该分支已按${branch.replicaMode === 'container' ? '容器级' : '项目级'}管理（还有 ${total} 个副本）。关闭全部复制集后才能切换`);
       }
-      branch.replicaMode = input.mode;
     }
     if (!input.steps.length) throw new ReplicaSetError(400, '计划为空');
     if (input.steps.length > REPLICA_PLAN_MAX_STEPS) {
@@ -1336,6 +1339,8 @@ export class ReplicaSetService {
       if (!kinds.includes(s.kind)) throw new ReplicaSetError(400, `未知步骤类型: ${s.kind}`);
       if (!s.profileId) throw new ReplicaSetError(400, '步骤缺少 profileId');
     }
+    // 校验全过才落模式
+    if (input.mode === 'container' || input.mode === 'project') branch.replicaMode = input.mode;
     const plan: ReplicaPlan = {
       id: `rsplan_${this.now().replace(/[^0-9]/g, '').slice(0, 14)}_${Math.random().toString(36).slice(2, 7)}`,
       branchId,

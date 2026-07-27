@@ -37,6 +37,13 @@ function surfaceFingerprint(surface: TutorialLinkSurface): string {
   return JSON.stringify(surface);
 }
 
+export function resolveTutorialProductRoute(route: string): string {
+  const parameterIndex = route.indexOf('/:');
+  if (parameterIndex > 0) return route.slice(0, parameterIndex);
+  if (route.endsWith('/view')) return route.slice(0, -'/view'.length) || '/';
+  return route;
+}
+
 export function TutorialLinkGraphDrawer({
   storeId,
   snapshot,
@@ -66,7 +73,10 @@ export function TutorialLinkGraphDrawer({
       return [{ id, before, after }];
     });
   }, [draft, published]);
-  const selectedSurface = surfaces.find(surface => surface.id === selectedSurfaceId)
+  const selectedSurface = (tab === 'drift'
+    ? draft?.surfaces.find(surface => surface.id === selectedSurfaceId)
+    : surfaces.find(surface => surface.id === selectedSurfaceId))
+    ?? surfaces.find(surface => surface.id === selectedSurfaceId)
     ?? draft?.surfaces.find(surface => surface.id === selectedSurfaceId)
     ?? null;
   const selectedTutorialLinks = useMemo(() => {
@@ -257,7 +267,7 @@ export function TutorialLinkGraphDrawer({
           <aside className="surface-base absolute inset-y-0 right-0 z-20 flex w-full max-w-[460px] flex-col border-l border-token-subtle shadow-2xl" style={{ background: 'var(--bg-primary)' }} aria-label="页面关系详情">
             <header className="flex items-start justify-between gap-3 border-b border-token-subtle p-5"><div><div className="text-[11px] text-token-muted">页面关系详情</div><h3 className="mt-1 text-[17px] font-semibold text-token-primary">{selectedSurface.label ?? selectedSurface.id}</h3></div><button type="button" className="surface-action grid h-8 w-8 place-items-center rounded-[8px] text-token-muted" onClick={() => setSelectedSurfaceId(null)} aria-label="关闭详情"><X size={15} /></button></header>
             <div className="min-h-0 flex-1 space-y-5 overflow-auto p-5">
-              <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">产品路由</h4><div className="mt-2 space-y-2">{selectedSurface.routes.map(route => <button key={route} type="button" onClick={() => void onOpenProductRoute(route)} className="surface-action flex w-full items-center justify-between rounded-[9px] px-3 py-2.5 text-left font-mono text-[11px] text-token-primary"><span>{route}</span><ArrowUpRight size={13} /></button>)}</div></section>
+              <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">产品路由</h4><div className="mt-2 space-y-2">{selectedSurface.routes.map(route => { const target = resolveTutorialProductRoute(route); return <button key={route} type="button" onClick={() => void onOpenProductRoute(target)} className="surface-action flex w-full items-center justify-between rounded-[9px] px-3 py-2.5 text-left font-mono text-[11px] text-token-primary"><span>{target}</span><ArrowUpRight size={13} /></button>; })}</div></section>
               <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">关联教程与步骤</h4><div className="mt-2 space-y-2">{selectedTutorialLinks.map(link => <button key={link.sourceId} type="button" onClick={() => onOpenTutorial(link.sourceId)} className="surface-raised block w-full rounded-[9px] p-3 text-left"><span className="flex items-center justify-between gap-2 text-[12px] font-semibold text-token-primary"><span className="truncate">{tutorialTitles[link.sourceId] ?? link.sourceId}</span><Link2 size={13} /></span><small className="mt-1 block text-[10px] text-token-muted">{link.stepIds.length > 0 ? `步骤 ${link.stepIds.join('、')} · 证据 ${link.evidenceIds.join('、') || '待补'}` : '页面级关系 · 尚无步骤级证据'}</small></button>)}</div></section>
               <section><h4 className="text-[11px] font-semibold uppercase tracking-[0.12em] text-token-muted">变更来源</h4><div className="mt-2 space-y-1 font-mono text-[10px] text-token-muted">{selectedSurface.changeSources.map(source => <div key={source}>{source}</div>)}</div></section>
             </div>
@@ -285,8 +295,8 @@ export function TutorialLinkedPages({
       <div className="mb-3 flex items-center gap-2"><Network size={14} className="text-token-muted" /><h3 id="linked-product-pages-title" className="text-[13px] font-semibold text-token-primary">关联的 LLM Gateway 页面</h3></div>
       <div className="grid gap-2 sm:grid-cols-2">
         {surfaces.map(surface => (
-          <button key={surface.id} type="button" onClick={() => void onOpenRoute(surface.routes[0])} className="surface-raised flex items-center justify-between gap-3 rounded-[10px] p-3 text-left">
-            <span className="min-w-0"><strong className="block truncate text-[12px] text-token-primary">{surface.label ?? surface.id}</strong><small className="mt-1 block truncate font-mono text-[10px] text-token-muted">{surface.routes[0]}</small></span>
+          <button key={surface.id} type="button" onClick={() => void onOpenRoute(resolveTutorialProductRoute(surface.routes[0]))} className="surface-raised flex items-center justify-between gap-3 rounded-[10px] p-3 text-left">
+            <span className="min-w-0"><strong className="block truncate text-[12px] text-token-primary">{surface.label ?? surface.id}</strong><small className="mt-1 block truncate font-mono text-[10px] text-token-muted">{resolveTutorialProductRoute(surface.routes[0])}</small></span>
             <ArrowUpRight size={14} className="shrink-0 text-token-muted" />
           </button>
         ))}
