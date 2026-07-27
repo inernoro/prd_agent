@@ -94,6 +94,32 @@ class TutorialMaintenanceTests(unittest.TestCase):
         self.assertEqual("drift", report["status"])
         self.assertTrue(any("截图证据未注册" in item["message"] for item in report["findings"]))
 
+    def test_evidence_from_another_chapter_is_p1(self) -> None:
+        mapping = copy.deepcopy(self.mapping)
+        logs = next(item for item in mapping["surfaces"] if item["id"] == "logs")
+        logs["tutorialLinks"][0]["evidenceIds"] = [self.evidence["chapters"]["05"][0]]
+
+        report = self.run_scan([], mapping=mapping, force_audit=True)
+
+        self.assertEqual("drift", report["status"])
+        self.assertTrue(any("对应教程" in item["message"] for item in report["findings"]))
+
+    def test_empty_linked_chapter_evidence_is_p1(self) -> None:
+        mapping = copy.deepcopy(self.mapping)
+        logs = next(item for item in mapping["surfaces"] if item["id"] == "logs")
+        logs["tutorialLinks"][0]["evidenceIds"] = []
+
+        report = self.run_scan([], mapping=mapping, force_audit=True)
+
+        self.assertEqual("drift", report["status"])
+        self.assertTrue(any("没有章节证据" in item["message"] for item in report["findings"]))
+
+    def test_graph_metadata_change_runs_audit(self) -> None:
+        report = self.run_scan(["llmgw/tutorial/maintenance-map.json"])
+
+        self.assertNotEqual("skipped", report["randomAudit"]["status"])
+        self.assertNotEqual("no-relevant-changes", report.get("skipReason"))
+
     def test_reverse_link_gap_is_p1(self) -> None:
         mapping = copy.deepcopy(self.mapping)
         learning = next(item for item in mapping["surfaces"] if item["id"] == "learning-center")

@@ -896,6 +896,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   /** 自动动作是真正的一次性意图：开始执行即通知父层清除，不能跟着下一次知识库挂载重放。 */
   onInitialActionConsumed: (requestId: number) => void;
 }) {
+  const tutorialPublisher = 'llmgw-authoritative-tutorial';
   const navigate = useNavigate();
   const location = useLocation();
   const isMobile = useIsMobile();
@@ -908,13 +909,10 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const [selectedEntryId, setSelectedEntryId] = useState<string | undefined>(initialEntryId);
   const [tutorialGraph, setTutorialGraph] = useState<TutorialLinkGraphSnapshot | null>(null);
   const [showTutorialGraph, setShowTutorialGraph] = useState(false);
-  const isTutorialGraphStore = useMemo(
-    () => entries.some(entry => entry.metadata?.publisher === 'llmgw-authoritative-tutorial'),
-    [entries],
-  );
+  const isTutorialGraphStore = tutorialGraph?.exists === true;
   const tutorialTitles = useMemo(() => Object.fromEntries(entries.flatMap(entry => {
     const sourceId = entry.metadata?.sourceId;
-    return sourceId ? [[sourceId, entry.title]] : [];
+    return sourceId && entry.metadata?.publisher === tutorialPublisher ? [[sourceId, entry.title]] : [];
   })), [entries]);
 
   // 从宇宙图等外部页面跳转过来时，sessionStorage 里可能有一个 pending entry：
@@ -1200,24 +1198,54 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   }, [loadStore, loadEntries]);
 
   useEffect(() => {
-    if (!isTutorialGraphStore || !canManageTutorialGraph) {
+    if (!canManageTutorialGraph) {
       setTutorialGraph(null);
       return;
     }
+    setTutorialGraph(null);
     let alive = true;
     void getTutorialLinkGraph(storeId).then(result => {
       if (alive && result.success) setTutorialGraph(result.data);
     });
+    return () => { alive = false; };
+  }, [canManageTutorialGraph, storeId]);
+
+  useEffect(() => {
+    if (!canManageTutorialGraph || !isTutorialGraphStore) return;
+    let alive = true;
+    void (async () => {
+      const pageSize = 500;
+      const authoritative: DocumentEntry[] = [];
+      let page = 1;
+      let total = Infinity;
+      while (authoritative.length < total) {
+        const result = await listDocumentEntries(storeId, page, pageSize);
+        if (!alive || !result.success || !result.data) return;
+        authoritative.push(...result.data.items.filter(entry => entry.metadata?.publisher === tutorialPublisher));
+        total = result.data.total ?? 0;
+        if (page * pageSize >= total || result.data.items.length === 0) break;
+        page += 1;
+      }
+      if (!alive) return;
+      setEntries(current => {
+        const merged = new Map(current.map(entry => [entry.id, entry]));
+        authoritative.forEach(entry => merged.set(entry.id, entry));
+        return [...merged.values()];
+      });
+    })();
     return () => { alive = false; };
   }, [canManageTutorialGraph, isTutorialGraphStore, storeId]);
 
   useEffect(() => {
     if (!canManageTutorialGraph || !isTutorialGraphStore || new URLSearchParams(location.search).get('tutorialLinks') !== '1') return;
     setShowTutorialGraph(true);
-  }, [canManageTutorialGraph, isTutorialGraphStore, location.search]);
+    const params = new URLSearchParams(location.search);
+    params.delete('tutorialLinks');
+    navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '' }, { replace: true });
+  }, [canManageTutorialGraph, isTutorialGraphStore, location.pathname, location.search, navigate]);
 
   const openTutorialSource = useCallback((sourceId: string) => {
-    const entry = entries.find(item => item.metadata?.sourceId === sourceId);
+    const entry = entries.find(item => item.metadata?.publisher === tutorialPublisher && item.metadata?.sourceId === sourceId);
     if (!entry) {
       toast.error('教程不存在', `没有找到 sourceId 为 ${sourceId} 的已发布教程`);
       return;

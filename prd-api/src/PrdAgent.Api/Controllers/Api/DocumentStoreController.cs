@@ -615,6 +615,7 @@ public class DocumentStoreController : ControllerBase
         var viewEventsResult = await _db.DocumentStoreViewEvents.DeleteManyAsync(v => v.StoreId == storeId);
         var inlineCommentsResult = await _db.DocumentInlineComments.DeleteManyAsync(c => c.StoreId == storeId);
         var agentRunsResult = await _db.DocumentStoreAgentRuns.DeleteManyAsync(r => r.StoreId == storeId);
+        var tutorialGraphsResult = await _db.TutorialLinkGraphs.DeleteManyAsync(g => g.StoreId == storeId);
         // 级联清理历史版本，避免删库后 document_entry_versions 残留全文快照（存储泄漏，与条目级删除一致）—— Bugbot
         var versionsResult = await _db.DocumentEntryVersions.DeleteManyAsync(v => v.StoreId == storeId);
         // 同步配对清理：本库作为本地侧(LocalStoreId)的记录无条件删。
@@ -644,11 +645,12 @@ public class DocumentStoreController : ControllerBase
         await _db.DocumentStores.DeleteOneAsync(s => s.Id == storeId);
 
         _logger.LogInformation(
-            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links} views={Views} inlineComments={Comments} agentRuns={Runs}",
+            "[document-store] Store cascaded deleted: {StoreId} by {UserId} | entries={Entries} syncLogs={Logs} docs={Docs} attachments={Atts} likes={Likes} favorites={Favs} shareLinks={Links} views={Views} inlineComments={Comments} agentRuns={Runs} tutorialGraphs={TutorialGraphs}",
             storeId, userId, entriesResult.DeletedCount, syncLogsResult.DeletedCount,
             documentsDeleted, attachmentsDeleted,
             likesResult.DeletedCount, favoritesResult.DeletedCount, shareLinksResult.DeletedCount,
-            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount);
+            viewEventsResult.DeletedCount, inlineCommentsResult.DeletedCount, agentRunsResult.DeletedCount,
+            tutorialGraphsResult.DeletedCount);
 
         return Ok(ApiResponse<object>.Ok(new
         {
@@ -662,6 +664,7 @@ public class DocumentStoreController : ControllerBase
             deletedViewEvents = viewEventsResult.DeletedCount,
             deletedInlineComments = inlineCommentsResult.DeletedCount,
             deletedAgentRuns = agentRunsResult.DeletedCount,
+            deletedTutorialGraphs = tutorialGraphsResult.DeletedCount,
         }));
     }
 

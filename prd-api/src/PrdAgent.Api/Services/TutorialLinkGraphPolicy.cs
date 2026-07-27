@@ -19,6 +19,8 @@ internal static class TutorialLinkGraphPolicy
             return "manifestSha256 无效";
         if (string.IsNullOrWhiteSpace(graph.VerifiedAtCommit) || graph.VerifiedAtCommit.Length > 64)
             return "verifiedAtCommit 不能为空且不能超过 64 个字符";
+        if (graph.Generator != null && !DocumentStorePublisherPolicy.IsSafeToken(graph.Generator))
+            return "generator 无效";
         if (graph.GeneratedAt == default)
             return "generatedAt 不能为空";
         if (graph.Surfaces.Count is < 1 or > MaxSurfaces)
@@ -80,6 +82,7 @@ internal static class TutorialLinkGraphPolicy
             graph.SourceRevision,
             manifestSha256 = graph.ManifestSha256.ToLowerInvariant(),
             graph.VerifiedAtCommit,
+            graph.Generator,
             generatedAt = graph.GeneratedAt.ToUniversalTime().ToString("O"),
             surfaces = graph.Surfaces.OrderBy(surface => surface.Id, StringComparer.Ordinal).Select(surface => new
             {

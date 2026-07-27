@@ -96,7 +96,7 @@ public sealed class DocumentStoreTutorialLinkGraphController : ControllerBase
         var userId = this.GetRequiredUserId();
         if (store.OwnerId == userId) return true;
         var teamIds = await _teams.GetMyTeamIdsAsync(userId);
-        return store.SharedTeamIds.Any(teamIds.Contains);
+        return store.SharedTeamIds?.Any(teamIds.Contains) == true;
     }
 
     private async Task<bool> CanWriteAsync(string storeId, CancellationToken ct)
@@ -107,7 +107,7 @@ public sealed class DocumentStoreTutorialLinkGraphController : ControllerBase
         var userId = this.GetRequiredUserId();
         if (store.OwnerId == userId) return true;
         var teamIds = await _teams.GetMyTeamIdsAsync(userId);
-        return store.SharedTeamIds.Any(teamIds.Contains);
+        return store.SharedTeamIds?.Any(teamIds.Contains) == true;
     }
 
     private IActionResult Mutation(TutorialLinkGraphMutationResult result)
