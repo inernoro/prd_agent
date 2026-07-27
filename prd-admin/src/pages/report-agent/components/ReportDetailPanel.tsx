@@ -1,4 +1,4 @@
-import { useState, useEffect, useMemo } from 'react';
+import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
 import { GlassCard } from '@/components/design/GlassCard';
@@ -13,6 +13,8 @@ import { ReportTableSectionView } from './ReportTableSectionView';
 import { RichTextMarkdownContent } from './RichTextMarkdownContent';
 import { ReportLikeBar } from './ReportLikeBar';
 import { useDataTheme } from '../hooks/useDataTheme';
+import { ReportSelectionCommentLayer } from './ReportSelectionCommentLayer';
+import { underlineStroke, type ReportCommentAnchor } from './reportCommentAnchor';
 
 interface Props {
   reportId: string;
@@ -39,10 +41,15 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   const [report, setReport] = useState<WeeklyReport | null>(null);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
-  const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string } | null>(null);
+  const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
   const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const currentUserId = useAuthStore((s) => s.user?.userId);
+  /** 正文容器（划词评论层的定位坐标系） */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** 点击下划线角标后短暂标亮的目标评论 */
+  const [flashCommentId, setFlashCommentId] = useState<string | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
 
   useEffect(() => {
     (async () => {
@@ -60,11 +67,17 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   const handleCreateComment = async () => {
     if (!replyTo || !commentText.trim()) return;
     setSubmitting(true);
+    const anchor = !replyTo.parentId ? replyTo.anchor : undefined;
     const res = await createComment({
       reportId,
       sectionIndex: replyTo.sectionIndex,
       content: commentText.trim(),
       parentCommentId: replyTo.parentId,
+      selectedText: anchor?.selectedText,
+      contextBefore: anchor?.contextBefore,
+      contextAfter: anchor?.contextAfter,
+      startOffset: anchor?.startOffset,
+      endOffset: anchor?.endOffset,
     });
     setSubmitting(false);
     if (res.success) {
@@ -86,12 +99,28 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   };
 
   const openCommentInput = (sectionIndex: number, parentId?: string) => {
-    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId;
+    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId && !replyTo?.anchor;
     if (!isSameTarget) {
       setCommentText('');
     }
     setReplyTo({ sectionIndex, parentId });
   };
+
+  /** 划词后点「评论」：带锚点打开该段落的评论输入框 */
+  const handleSelectionComment = useCallback((sectionIndex: number, anchor: ReportCommentAnchor) => {
+    setCommentText('');
+    setReplyTo({ sectionIndex, anchor });
+  }, []);
+
+  /** 点击正文黄色下划线角标 → 滚动并短暂标亮对应评论 */
+  const handleActivateThread = useCallback((comment: ReportComment) => {
+    setFlashCommentId(comment.id);
+    if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlashCommentId(null), 2400);
+    requestAnimationFrame(() => {
+      document.getElementById(`report-panel-comment-${comment.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
 
   const commentsBySection = useMemo(() => {
     const map: Record<number, ReportComment[]> = {};
@@ -182,7 +211,8 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
         {/* Content */}
         <div className="flex-1 min-h-0 overflow-auto px-6 py-5">
           {activeTab === 'content' && (
-            <>
+            // relative：划词评论层（下划线/角标/评论按钮）的定位坐标系
+            <div ref={contentRef} className="relative">
               {report.sections.map((section, idx) => {
                 const sectionComments = commentsBySection[idx] || [];
                 const topLevel = sectionComments.filter((c) => !c.parentCommentId);
@@ -213,6 +243,8 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                         {section.templateSection.title}
                       </span>
                     </div>
+                    {/* data-report-section：划词评论的段落锚定根（选区必须完整落在同一块内） */}
+                    <div data-report-section={idx}>
                     {section.items.length === 0 ? (
                       <div className="text-[12px] ml-7" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
                     ) : section.templateSection.inputType === ReportInputType.IssueList ? (
@@ -288,6 +320,7 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                         ))}
                       </ul>
                     )}
+                    </div>
 
                     {/* Section comments */}
                     {topLevel.length > 0 && (
@@ -295,12 +328,22 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                         {topLevel.map((comment) => {
                           const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
                           return (
-                            <div key={comment.id} className="mb-2">
+                            <div
+                              key={comment.id}
+                              id={`report-panel-comment-${comment.id}`}
+                              className="mb-2"
+                              style={{
+                                borderRadius: 10,
+                                transition: 'box-shadow 0.3s',
+                                boxShadow: flashCommentId === comment.id ? `0 0 0 2px ${underlineStroke(isLight, true)}` : undefined,
+                              }}
+                            >
                               <CommentItem
                                 comment={comment}
                                 isMine={comment.authorUserId === currentUserId}
                                 onDelete={() => handleDeleteComment(comment.id)}
                                 onReply={() => openCommentInput(idx, comment.id)}
+                                quoteUnderline={underlineStroke(isLight)}
                               />
                               {replies.map((reply) => (
                                 <div key={reply.id} className="ml-4 mt-1">
@@ -330,7 +373,18 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                     {replyTo?.sectionIndex === idx && (
                       <div className="mt-2 ml-7 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}>
                         <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-                          {replyTo.parentId ? '回复评论' : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
+                          {replyTo.parentId
+                            ? '回复评论'
+                            : replyTo.anchor
+                              ? (
+                                <>
+                                  评论选中内容：
+                                  <span style={{ borderBottom: `2px solid ${underlineStroke(isLight)}`, paddingBottom: 1 }}>
+                                    「{replyTo.anchor.selectedText.length > 40 ? `${replyTo.anchor.selectedText.slice(0, 40)}…` : replyTo.anchor.selectedText}」
+                                  </span>
+                                </>
+                              )
+                              : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
                         </div>
                         <div className="flex items-center gap-2">
                           <input
@@ -354,7 +408,15 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                   </div>
                 );
               })}
-            </>
+              <ReportSelectionCommentLayer
+                containerRef={contentRef}
+                comments={comments}
+                isLight={isLight}
+                reflowKey={`${report.id}:${report.sections.length}`}
+                onCreateFromSelection={handleSelectionComment}
+                onActivateThread={handleActivateThread}
+              />
+            </div>
           )}
 
           {activeTab === 'plan-comparison' && <PlanComparisonPanel reportId={reportId} />}
@@ -386,12 +448,15 @@ function CommentItem({
   onDelete,
   onReply,
   isReply,
+  quoteUnderline,
 }: {
   comment: ReportComment;
   isMine: boolean;
   onDelete: () => void;
   onReply: () => void;
   isReply?: boolean;
+  /** 划词评论引用片段的下划线颜色（与正文黄色下划线同色） */
+  quoteUnderline?: string;
 }) {
   return (
     <div className="group flex items-start gap-1.5">
@@ -414,6 +479,14 @@ function CommentItem({
             {new Date(comment.createdAt).toLocaleString('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' })}
           </span>
         </div>
+        {comment.selectedText && (
+          <div className="text-[11px] mt-1 truncate" style={{ color: 'var(--text-muted)' }} title={comment.selectedText}>
+            引用：
+            <span style={{ borderBottom: `2px solid ${quoteUnderline ?? 'rgba(234, 179, 8, 0.75)'}`, paddingBottom: 1 }}>
+              {comment.selectedText.length > 60 ? `${comment.selectedText.slice(0, 60)}…` : comment.selectedText}
+            </span>
+          </div>
+        )}
         <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
       </div>
       <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
