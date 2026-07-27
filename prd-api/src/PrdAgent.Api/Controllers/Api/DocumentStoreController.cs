@@ -1701,7 +1701,7 @@ public class DocumentStoreController : ControllerBase
         {
             // 完成会话属于临时协调数据，过期清理后正式条目仍是恢复 SSOT。完成响应丢失时，
             // 保险箱可凭确定性 entry ID 找回原条目，禁止把完整本地音频再次上传成重复文档。
-            var recoveredEntry = await FindRecoveredCompletedRecordingEntryAsync(
+            var recoveredEntry = await FindRecoveredRecordingEntryAsync(
                 _db.DocumentEntries,
                 sessionId,
                 userId,
@@ -2020,7 +2020,7 @@ public class DocumentStoreController : ControllerBase
             .FirstOrDefaultAsync();
         if (session == null)
         {
-            var recoveredEntry = await FindRecoveredCompletedRecordingEntryAsync(
+            var recoveredEntry = await FindRecoveredRecordingEntryAsync(
                 _db.DocumentEntries,
                 sessionId,
                 userId,
@@ -2804,14 +2804,20 @@ public class DocumentStoreController : ControllerBase
     internal static string CompletedRecordingEntryId(string sessionId)
         => $"recording-completed-{sessionId}";
 
-    internal static async Task<DocumentEntry?> FindRecoveredCompletedRecordingEntryAsync(
+    internal static async Task<DocumentEntry?> FindRecoveredRecordingEntryAsync(
         IMongoCollection<DocumentEntry> entries,
         string sessionId,
         string userId,
         CancellationToken cancellationToken)
-        => await entries.Find(entry => entry.Id == CompletedRecordingEntryId(sessionId)
-                                      && entry.CreatedBy == userId)
-            .FirstOrDefaultAsync(cancellationToken);
+    {
+        var recoveryIds = RecordingRecoveryEntryIds(sessionId);
+        var recoveredEntries = await entries.Find(entry =>
+                recoveryIds.Contains(entry.Id) && entry.CreatedBy == userId)
+            .ToListAsync(cancellationToken);
+        return recoveryIds
+            .Select(recoveryId => recoveredEntries.FirstOrDefault(entry => entry.Id == recoveryId))
+            .FirstOrDefault(entry => entry != null);
+    }
 
     internal static string CompletedRecordingAttachmentId(string sessionId)
         => $"recording-attachment-{sessionId}";

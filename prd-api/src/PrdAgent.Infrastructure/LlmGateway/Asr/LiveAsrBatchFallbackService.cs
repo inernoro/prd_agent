@@ -253,13 +253,13 @@ public sealed class LiveAsrBatchFallbackService
                     {
                         if (IsNoSpeech(text))
                         {
-                            await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+                            await RecordHealthBestEffortAsync(candidate, succeeded: true);
                             PromoteCandidate(candidates, candidate);
                             return new BatchWindowResult(true, string.Empty, candidate);
                         }
                         if (!LooksLikeAssistantReply(text))
                         {
-                            await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+                            await RecordHealthBestEffortAsync(candidate, succeeded: true);
                             PromoteCandidate(candidates, candidate);
                             return new BatchWindowResult(true, text.Trim(), candidate);
                         }
@@ -294,11 +294,33 @@ public sealed class LiveAsrBatchFallbackService
                     break;
                 }
             }
-            await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
+            await RecordHealthBestEffortAsync(candidate, succeeded: false);
             candidates.Remove(candidate);
         }
 
         return BatchWindowResult.Failed;
+    }
+
+    private async Task RecordHealthBestEffortAsync(
+        ModelResolutionResult candidate,
+        bool succeeded)
+    {
+        try
+        {
+            if (succeeded)
+                await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+            else
+                await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 健康度持久化只影响后续候选排序，不能丢弃已经识别出的窗口原文。
+            _logger.LogWarning(
+                ex,
+                "滚动窗口 ASR 候选健康度写入失败 succeeded={Succeeded} candidate={Candidate}",
+                succeeded,
+                candidate.ActualModel);
+        }
     }
 
     private static void PromoteCandidate(

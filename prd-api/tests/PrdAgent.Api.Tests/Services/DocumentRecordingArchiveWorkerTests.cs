@@ -30,44 +30,58 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
-    public async Task FindRecoveredCompletedRecordingEntry_ShouldSurviveSessionCleanupAndRequireOwner()
+    public async Task FindRecoveredRecordingEntry_ShouldRecoverBothArchiveFormsAndRequireOwner()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         if (fixture == null) return;
 
-        var entry = new DocumentEntry
+        var completedEntry = new DocumentEntry
         {
-            Id = DocumentStoreController.CompletedRecordingEntryId("expired-session"),
+            Id = DocumentStoreController.CompletedRecordingEntryId("completed-session"),
             StoreId = "store-1",
-            Title = "recording.webm",
+            Title = "completed-recording.webm",
             CreatedBy = "user-1",
         };
-        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var archivedPendingEntry = new DocumentEntry
+        {
+            Id = DocumentStoreController.PendingRecordingEntryId("archived-pending-session"),
+            StoreId = "store-1",
+            Title = "archived-pending-recording.webm",
+            CreatedBy = "user-1",
+        };
+        await fixture.Db.DocumentEntries.InsertManyAsync([completedEntry, archivedPendingEntry]);
 
-        var recovered = await DocumentStoreController.FindRecoveredCompletedRecordingEntryAsync(
+        var recoveredCompleted = await DocumentStoreController.FindRecoveredRecordingEntryAsync(
             fixture.Db.DocumentEntries,
-            "expired-session",
+            "completed-session",
             "user-1",
             CancellationToken.None);
-        var wrongOwner = await DocumentStoreController.FindRecoveredCompletedRecordingEntryAsync(
+        var recoveredArchivedPending = await DocumentStoreController.FindRecoveredRecordingEntryAsync(
             fixture.Db.DocumentEntries,
-            "expired-session",
+            "archived-pending-session",
+            "user-1",
+            CancellationToken.None);
+        var wrongOwner = await DocumentStoreController.FindRecoveredRecordingEntryAsync(
+            fixture.Db.DocumentEntries,
+            "completed-session",
             "user-2",
             CancellationToken.None);
 
-        recovered.ShouldNotBeNull();
-        recovered.Id.ShouldBe(entry.Id);
+        recoveredCompleted.ShouldNotBeNull();
+        recoveredCompleted.Id.ShouldBe(completedEntry.Id);
+        recoveredArchivedPending.ShouldNotBeNull();
+        recoveredArchivedPending.Id.ShouldBe(archivedPendingEntry.Id);
         wrongOwner.ShouldBeNull();
     }
 
     [Fact]
-    public void CompletedEntryFallback_ShouldGuardBothStatusAndCompletionEndpoints()
+    public void RecoveredEntryFallback_ShouldGuardBothStatusAndCompletionEndpoints()
     {
         var source = File.ReadAllText(DocumentStoreControllerPath());
 
-        // 两个调用点加一个方法定义：状态查询先发现 completed，完成请求再返回同一条目。
+        // 两个调用点加一个方法定义：状态查询先找回确定性条目，完成请求再返回同一条目。
         source.Split(
-                "FindRecoveredCompletedRecordingEntryAsync(",
+                "FindRecoveredRecordingEntryAsync(",
                 StringSplitOptions.None)
             .Length.ShouldBe(4);
     }

@@ -742,6 +742,52 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
+    public async Task BatchFallback_ShouldPreserveTranscriptWhenHealthRecordingThrows()
+    {
+        var candidate = BatchCandidate("primary", "openai/gpt-audio");
+        var gateway = new Mock<ILlmGateway>();
+        gateway.Setup(x => x.SendRawWithResolutionAsync(
+                It.IsAny<GatewayRawRequest>(),
+                It.IsAny<GatewayModelResolution>(),
+                It.IsAny<CancellationToken>()))
+            .ReturnsAsync(new GatewayRawResponse
+            {
+                Success = true,
+                StatusCode = 200,
+                Content = """{"text":"备用窗口已经成功识别"}""",
+            });
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.RecordSuccessAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("健康状态写入失败"));
+        var service = new LiveAsrBatchFallbackService(
+            gateway.Object,
+            resolver.Object,
+            NullLogger<LiveAsrBatchFallbackService>.Instance);
+        var frames = Channel.CreateUnbounded<LiveAsrAudioFrame>();
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(
+            1,
+            Enumerable.Repeat((byte)1, LiveAsrBatchFallbackService.WindowBytes).ToArray()));
+        await frames.Writer.WriteAsync(new LiveAsrAudioFrame(2, [], IsFinal: true));
+        frames.Writer.TryComplete();
+
+        var result = await service.TranscribeAsync(
+            [candidate],
+            frames.Reader,
+            _ => Task.CompletedTask,
+            null,
+            TestRequestContext());
+
+        result.Completed.ShouldBeFalse();
+        result.Degraded.ShouldBeTrue();
+        result.Transcript.ShouldBe("备用窗口已经成功识别");
+        resolver.Verify(x => x.RecordSuccessAsync(
+            candidate,
+            It.IsAny<CancellationToken>()), Times.Once);
+    }
+
+    [Fact]
     public async Task SessionOrchestrator_ShouldOwnResolutionAndDrainBothChannelsWhenNoModelExists()
     {
         var unavailable = new ModelResolutionResult
@@ -806,7 +852,7 @@ public class LiveAsrProtocolTests
     }
 
     [Fact]
-    public async Task SessionOrchestrator_ShouldStopBlockedReceiverWhenFailureRecordingThrows()
+    public async Task SessionOrchestrator_ShouldStopBlockedReceiverWhenStatusEmissionThrows()
     {
         var candidate = Candidate(
             "doubao",
@@ -822,10 +868,6 @@ public class LiveAsrProtocolTests
                 It.IsAny<string?>(),
                 It.IsAny<CancellationToken>()))
             .ReturnsAsync(candidate);
-        resolver.Setup(x => x.RecordFailureAsync(
-                It.IsAny<ModelResolutionResult>(),
-                It.IsAny<CancellationToken>()))
-            .ThrowsAsync(new InvalidOperationException("健康状态写入失败"));
         var gateway = new Mock<ILlmGateway>();
         var orchestrator = new LiveAsrSessionOrchestrator(
             resolver.Object,
@@ -843,18 +885,62 @@ public class LiveAsrProtocolTests
                 TestRequestContext(),
                 evt =>
                 {
+                    if (evt.Type == LiveAsrEventTypes.Status)
+                        throw new InvalidOperationException("状态推送失败");
                     events.Add(evt);
                     return Task.CompletedTask;
                 },
                 () => { })
             .WaitAsync(TimeSpan.FromSeconds(2));
 
-        outcome.Failure.ShouldBe("健康状态写入失败");
+        outcome.Failure.ShouldBe("状态推送失败");
         await transport.Completion.WaitAsync(TimeSpan.FromSeconds(2));
         transport.CancellationWasRequested.ShouldBeTrue();
         events.ShouldContain(evt =>
             evt.Type == LiveAsrEventTypes.Degraded
             && evt.ErrorCode == "LIVE_ASR_GATEWAY_FAILED");
+    }
+
+    [Fact]
+    public async Task SessionOrchestrator_ShouldPreserveCompletedResultWhenHealthRecordingThrows()
+    {
+        var candidate = Candidate(
+            "doubao",
+            LiveAsrCandidatePolicy.PreferredModel,
+            "doubao-asr-stream",
+            apiKey: "app-key|access-key");
+        var resolver = new Mock<IModelResolver>();
+        resolver.Setup(x => x.RecordSuccessAsync(
+                It.IsAny<ModelResolutionResult>(),
+                It.IsAny<CancellationToken>()))
+            .ThrowsAsync(new InvalidOperationException("健康状态写入失败"));
+        var gateway = new Mock<ILlmGateway>();
+        var orchestrator = new LiveAsrSessionOrchestrator(
+            resolver.Object,
+            new DoubaoStreamAsrService(NullLogger<DoubaoStreamAsrService>.Instance),
+            new LiveAsrBatchFallbackService(
+                gateway.Object,
+                resolver.Object,
+                NullLogger<LiveAsrBatchFallbackService>.Instance),
+            NullLogger<LiveAsrSessionOrchestrator>.Instance);
+        var completed = new LiveAsrSessionResult
+        {
+            Completed = true,
+            Transcript = "已经成功识别的完整原文",
+            Provider = candidate.ActualPlatformName,
+            Model = candidate.ActualModel,
+        };
+
+        var preserved = await orchestrator.PreserveResultAndRecordHealthBestEffortAsync(
+            candidate,
+            completed);
+
+        preserved.ShouldBeSameAs(completed);
+        preserved.Completed.ShouldBeTrue();
+        preserved.Transcript.ShouldBe("已经成功识别的完整原文");
+        resolver.Verify(x => x.RecordSuccessAsync(
+            candidate,
+            It.IsAny<CancellationToken>()), Times.Once);
     }
 
     [Fact]

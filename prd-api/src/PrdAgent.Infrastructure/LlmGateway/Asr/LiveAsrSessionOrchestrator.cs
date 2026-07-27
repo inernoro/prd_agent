@@ -193,13 +193,12 @@ public sealed class LiveAsrSessionOrchestrator
                         requirePublicPinnedWebSocket: true);
                 }
 
+                finalResult = await PreserveResultAndRecordHealthBestEffortAsync(
+                    candidate,
+                    finalResult);
                 if (finalResult.Completed)
-                {
-                    await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
                     break;
-                }
 
-                await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
                 // 一次性音频通道只能在候选尚未消费 PCM 时切换。
                 if (!LiveAsrCandidatePolicy.CanTryNextCandidate(finalResult))
                     break;
@@ -284,6 +283,30 @@ public sealed class LiveAsrSessionOrchestrator
         }
 
         return new LiveAsrOrchestrationResult(sessionResult, sessionFailure);
+    }
+
+    internal async Task<LiveAsrSessionResult> PreserveResultAndRecordHealthBestEffortAsync(
+        ModelResolutionResult candidate,
+        LiveAsrSessionResult result)
+    {
+        try
+        {
+            if (result.Completed)
+                await _resolver.RecordSuccessAsync(candidate, CancellationToken.None);
+            else
+                await _resolver.RecordFailureAsync(candidate, CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 健康度是后置观测数据，不能反向改变已经得到的 ASR 业务结果。
+            _logger.LogWarning(
+                ex,
+                "实时 ASR 候选健康度写入失败 resultCompleted={ResultCompleted} candidate={Candidate}",
+                result.Completed,
+                candidate.ActualModel);
+        }
+
+        return result;
     }
 
     private static async Task DrainFramesAsync(ChannelReader<LiveAsrAudioFrame> reader)
