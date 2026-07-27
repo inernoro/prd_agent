@@ -69,7 +69,7 @@ public sealed class DocumentStoreTutorialLinkGraphResolveController : Controller
             if (surfaces.Length == 0) continue;
 
             var store = await _db.DocumentStores.Find(item => item.Id == graph.StoreId).FirstOrDefaultAsync(ct);
-            if (store == null || (!isRoot && store.OwnerId != userId && !store.SharedTeamIds.Any(teamIds.Contains))) continue;
+            if (store == null || (!isRoot && store.OwnerId != userId && store.SharedTeamIds?.Any(teamIds.Contains) != true)) continue;
 
             var sourceIds = surfaces.SelectMany(surface => surface.TutorialSourceIds)
                 .Distinct(StringComparer.Ordinal)

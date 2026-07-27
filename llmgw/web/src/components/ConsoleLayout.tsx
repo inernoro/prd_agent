@@ -63,7 +63,8 @@ export function ConsoleLayout() {
     items: group.items.filter((item) => canAccessPage(tenant, item.page)),
   })).filter((group) => group.items.length > 0);
   const canSearchRequests = canUseCapability(tenant?.role, 'logsRead');
-  const canOpenMapTutorials = tenant?.role === 'owner' || tenant?.role === 'admin';
+  const canOpenMapTutorials = user?.identityProvider === 'map'
+    && (tenant?.role === 'owner' || tenant?.role === 'admin');
   const mapTutorialHref = (() => {
     const base = new URL(resolveMapHomeHref(), window.location.href);
     base.pathname = `${base.pathname.replace(/\/$/, '')}/document-store`;

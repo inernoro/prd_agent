@@ -104,17 +104,21 @@ def _match_any(path: str, patterns: list[str]) -> bool:
     return any(fnmatch.fnmatch(path, pattern) for pattern in patterns)
 
 
-def _evidence_ids(evidence_map: dict[str, Any]) -> set[str]:
+def _evidence_by_source(evidence_map: dict[str, Any]) -> dict[str, set[str]]:
     chapters = evidence_map.get("chapters", {})
     if not isinstance(chapters, dict):
         raise MaintenanceError("evidence-map.chapters 必须是对象")
-    return {
-        evidence_id
-        for values in chapters.values()
-        if isinstance(values, list)
-        for evidence_id in values
-        if isinstance(evidence_id, str)
-    }
+    result: dict[str, set[str]] = {}
+    for key, values in chapters.items():
+        if not isinstance(values, list):
+            continue
+        source_id = f"chapter-{key}" if str(key).isdigit() else str(key)
+        result[source_id] = {value for value in values if isinstance(value, str)}
+    return result
+
+
+def _evidence_ids(evidence_map: dict[str, Any]) -> set[str]:
+    return set().union(*_evidence_by_source(evidence_map).values())
 
 
 def _finding(findings: list[dict[str, str]], severity: str, surface: str, message: str) -> None:
@@ -190,7 +194,7 @@ def _validate_graph(
         raise MaintenanceError("maintenance-map.surfaces 只能包含对象")
 
     sources = _manifest_sources(repo_root, manifest)
-    evidence_ids = _evidence_ids(evidence_map)
+    evidence_by_source = _evidence_by_source(evidence_map)
     findings: list[dict[str, str]] = []
     seen_ids: set[str] = set()
     seen_pages: set[str] = set()
@@ -251,9 +255,13 @@ def _validate_graph(
                 count = source_text.count(marker)
                 if count != 1:
                     _finding(findings, "P1", surface_id, f"教程步骤标记必须恰好出现一次: {source_id}/{step_id}，当前 {count} 次")
-            for evidence_id in link.get("evidenceIds", []):
-                if evidence_id not in evidence_ids:
-                    _finding(findings, "P1", surface_id, f"截图证据未注册: {evidence_id}")
+            evidence_ids = link.get("evidenceIds", [])
+            if mapping.get("policy", {}).get("requireEvidenceForLinkedChapter") and not evidence_ids:
+                _finding(findings, "P1", surface_id, f"关联教程没有章节证据: {source_id}")
+            registered = evidence_by_source.get(str(source_id), set())
+            for evidence_id in evidence_ids:
+                if evidence_id not in registered:
+                    _finding(findings, "P1", surface_id, f"截图证据未注册到对应教程: {source_id}/{evidence_id}")
 
     app_path = repo_root / "llmgw/web/src/App.tsx"
     if app_path.is_file():
@@ -297,7 +305,7 @@ def _random_audit(
     rng = random.Random(int(digest, 16))
     sample = rng.sample(surfaces, min(sample_size, len(surfaces)))
     reverse_by_source = {item["sourceId"]: item for item in reverse}
-    registered_evidence = _evidence_ids(evidence_map)
+    evidence_by_source = _evidence_by_source(evidence_map)
     checks: list[dict[str, Any]] = []
 
     def record(surface_id: str, name: str, passed: bool, detail: str) -> None:
@@ -320,10 +328,14 @@ def _random_audit(
         marker_ok = True
         evidence_ok = True
         for link in links:
-            source_path = sources.get(str(link.get("sourceId")))
+            source_id = str(link.get("sourceId"))
+            source_path = sources.get(source_id)
             text = source_path.read_text(encoding="utf-8") if source_path and source_path.is_file() else ""
             marker_ok = marker_ok and all(text.count(STEP_MARKER.format(step_id=step_id)) == 1 for step_id in link.get("stepIds", []))
-            evidence_ok = evidence_ok and all(evidence_id in registered_evidence for evidence_id in link.get("evidenceIds", []))
+            evidence_ids = link.get("evidenceIds", [])
+            evidence_ok = evidence_ok and bool(evidence_ids) and all(
+                evidence_id in evidence_by_source.get(source_id, set()) for evidence_id in evidence_ids
+            )
         record(surface_id, "step-markers", marker_ok, "步骤标记唯一")
         record(surface_id, "evidence", evidence_ok, "证据 ID 已注册")
 
@@ -420,7 +432,13 @@ def analyze(
             elif not tutorial_marker or tutorial_marker not in tutorial_text:
                 _finding(findings, "P1", surface_id, f"页面能力存在但教程缺少说明: {name}")
 
-    relevant = bool(affected or changed_pages)
+    metadata_inputs = {
+        "llmgw/tutorial/maintenance-map.json",
+        "llmgw/tutorial/evidence-map.json",
+        "llmgw/tutorial/manifest.json",
+    }
+    metadata_changed = sorted(set(files) & metadata_inputs)
+    relevant = bool(affected or changed_pages or metadata_changed)
     policy = mapping.get("policy", {})
     should_audit = force_audit or relevant
     seed = audit_seed or (_git_head(repo_root) if policy.get("randomAuditSeed") == "git-head" else now.date().isoformat())

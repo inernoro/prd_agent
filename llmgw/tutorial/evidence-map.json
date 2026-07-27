@@ -39,6 +39,7 @@
     "29": ["005-home-health", "008-home-recent", "092-nav-系统运维", "093-governance-runtime-gate", "094-governance-container-topology", "095-release-evidence-checklist"],
     "30": ["075-activity-detail", "081-usage-window", "088-audit-detail", "097-learn-first-request", "098-learn-concept-flow", "099-learn-topic-index", "100-learn-troubleshoot"],
     "31": ["055-keys-test-prod", "065-quickstart-key-once", "067-quickstart-click-test", "075-activity-detail", "077-usage-overview", "085-audit-list", "090-exchange-workflow"],
-    "32": ["096-nav-学习中心", "097-learn-first-request", "098-learn-concept-flow", "099-learn-topic-index", "100-learn-troubleshoot", "101-nav-控制台设置", "102-settings-theme-options", "103-settings-light", "104-mobile-navigation"]
+    "32": ["096-nav-学习中心", "097-learn-first-request", "098-learn-concept-flow", "099-learn-topic-index", "100-learn-troubleshoot", "101-nav-控制台设置", "102-settings-theme-options", "103-settings-light", "104-mobile-navigation"],
+    "practical-quickstart-05": ["060-nav-Quickstart", "064-quickstart-generate", "066-quickstart-protocols", "068-quickstart-copy"]
   }
 }

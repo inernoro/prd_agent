@@ -7,6 +7,8 @@ on:
       - 'llmgw/console-api/**'
       - 'llmgw/serving/**'
       - 'llmgw/tutorial/**'
+      - 'scripts/gw-smoke.py'
+      - 'scripts/llmgw-protocol-canary.py'
       - 'prd-api/src/**'
       - '.github/workflows/llmgw-tutorial-drift.yml'
   workflow_dispatch:

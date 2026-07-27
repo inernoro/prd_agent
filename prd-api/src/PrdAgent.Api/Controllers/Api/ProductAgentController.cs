@@ -248,6 +248,8 @@ public class ProductAgentController : ControllerBase
                     Builders<DocumentStoreSyncLink>.Filter.Or(
                         Builders<DocumentStoreSyncLink>.Filter.In(x => x.LocalStoreId, scopedStoreIds),
                         Builders<DocumentStoreSyncLink>.Filter.In(x => x.RemoteStoreId, scopedStoreIds)))).DeletedCount;
+                deleted["tutorial_link_graphs"] = (await _db.TutorialLinkGraphs.DeleteManyAsync(
+                    Builders<TutorialLinkGraph>.Filter.In(x => x.StoreId, scopedStoreIds))).DeletedCount;
                 deleted["document_stores"] = (await _db.DocumentStores.DeleteManyAsync(
                     Builders<DocumentStore>.Filter.In(s => s.Id, scopedStoreIds))).DeletedCount;
             }
@@ -3833,6 +3835,7 @@ public class ProductAgentController : ControllerBase
                             .Set(e => e.StoreId, store.Id)
                             .Set(e => e.VersionIds, new List<string> { v.Id })
                             .Set(e => e.UpdatedAt, DateTime.UtcNow));
+                    await _db.TutorialLinkGraphs.DeleteManyAsync(g => g.StoreId == v.KnowledgeStoreId);
                     await _db.DocumentStores.DeleteOneAsync(s => s.Id == v.KnowledgeStoreId);
                 }
                 await _db.ProductVersions.UpdateOneAsync(x => x.Id == v.Id,
