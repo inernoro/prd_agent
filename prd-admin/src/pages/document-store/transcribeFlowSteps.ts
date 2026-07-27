@@ -17,6 +17,10 @@ export type TranscribeStep = {
 /** 转录中细分阶段（后端 phase → 第二步的副标题） */
 export const TRANSCRIBE_PHASES = new Set(['排队中', '准备中', '下载素材', '提取音轨', '解析音频', '识别中']);
 
+function isTranscribePhase(phase: string): boolean {
+  return TRANSCRIBE_PHASES.has(phase) || phase.startsWith('识别中（方案 ');
+}
+
 export function deriveTranscribeSteps(input: {
   status: TranscribeFlowStatus;
   phase: string;
@@ -35,7 +39,7 @@ export function deriveTranscribeSteps(input: {
       : (status === 'failed' && !hasEntry && hasFile) ? 'failed'
         : 'done';
 
-  const inTranscribe = status === 'running' && TRANSCRIBE_PHASES.has(phase);
+  const inTranscribe = status === 'running' && isTranscribePhase(phase);
   const pastTranscribe = status === 'done' || phase === '生成摘要' || phase === '写入中' || phase === '完成';
   const transcribeState: TranscribeStepState =
     status === 'failed' && hasEntry ? (pastTranscribe ? 'done' : 'failed')
@@ -59,7 +63,7 @@ export function deriveTranscribeSteps(input: {
     {
       key: 'transcribe',
       label: '转录',
-      sub: TRANSCRIBE_PHASES.has(phase) && phase !== '排队中' ? phase : undefined,
+      sub: isTranscribePhase(phase) && phase !== '排队中' ? phase : undefined,
       state: transcribeState,
     },
   ];

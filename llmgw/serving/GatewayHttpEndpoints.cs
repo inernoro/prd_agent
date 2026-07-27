@@ -171,9 +171,15 @@ public static class GatewayHttpEndpoints
                                              GatewayBudgetCoordinator.HttpContextOutcomeUnknownKey,
                                              out var outcomeValue)
                                          && outcomeValue is true;
+                    var finalStatusCode = context.Items.TryGetValue(
+                                              GatewayBudgetCoordinator.HttpContextFinalStatusCodeKey,
+                                              out var finalStatusValue)
+                                          && finalStatusValue is int specializedStatusCode
+                        ? specializedStatusCode
+                        : context.Response.StatusCode;
                     await budgetCoordinator.FinalizeAsync(
                         lease,
-                        context.Response.StatusCode,
+                        finalStatusCode,
                         pipelineThrew,
                         outcomeUnknown);
                 }
@@ -1736,6 +1742,7 @@ public static class GatewayHttpEndpoints
         if (path.Contains("/raw", StringComparison.OrdinalIgnoreCase)
             || path.Contains("/images/", StringComparison.OrdinalIgnoreCase)) return "raw:invoke";
         if (path.Equals("/gw/v1/stream", StringComparison.OrdinalIgnoreCase)
+            || path.Equals("/gw/v1/asr/live", StringComparison.OrdinalIgnoreCase)
             || path.Equals("/gw/v1/client-stream", StringComparison.OrdinalIgnoreCase)
             || path.Contains(":streamGenerateContent", StringComparison.OrdinalIgnoreCase)) return "stream:invoke";
         if (path.Contains("/resolve", StringComparison.OrdinalIgnoreCase)
@@ -2383,6 +2390,60 @@ public static class GatewayHttpEndpoints
         "run_id",
         "runId",
     ];
+
+    /// <summary>
+    /// 为 WebSocket 等专用传输复用 HTTP 网关的 appCaller 治理入口。
+    /// 专用端点只负责协议收发，租户、团队、限流和预算仍由同一套治理逻辑裁决。
+    /// 返回 null 表示拒绝响应已经写入，调用方不得再接受 WebSocket 或访问上游。
+    /// </summary>
+    internal static async Task<GatewaySpecializedAdmission?> AdmitSpecializedRequestAsync(
+        HttpContext http,
+        string defaultAppCaller,
+        string requestType,
+        string ingressProtocol,
+        CancellationToken ct)
+    {
+        var requestId = TrackGatewayRequestId(http);
+        var appCallerCode = ResolveVerifiedAppCaller(http, defaultAppCaller);
+        var ingress = new GatewayIngressRequest
+        {
+            RequestId = requestId,
+            SourceSystem = ResolveHeader(http, "X-Gateway-Source") ?? "external",
+            IngressProtocol = ingressProtocol,
+            AppCallerCode = appCallerCode,
+            AppCallerTitle = ResolveHeader(http, "X-Gateway-App-Title"),
+            RequestType = requestType,
+            ModelPolicy = "auto",
+            ParameterPolicy = "default-drop",
+            Context = new GatewayRequestContext
+            {
+                RequestId = requestId,
+                UserId = ResolveHeader(http, "X-Gateway-User-Id"),
+                GatewayTransport = GatewayTransports.Http,
+            },
+        };
+        var governance = await RecordAndCheckAppCallerGovernanceAsync(
+            http,
+            http.RequestServices,
+            ingress,
+            ct);
+        if (await TryWriteGovernanceErrorAsync(http, governance))
+            return null;
+
+        var authorization = http.Items["llmgw.key.authorization"] as GatewayKeyAuthorization;
+        if (authorization is null || string.IsNullOrWhiteSpace(authorization.TenantId))
+        {
+            await WriteCompatErrorAsync(
+                http,
+                "实时转写缺少可验证的租户上下文",
+                "permission_error",
+                "TENANT_CONTEXT_UNAVAILABLE",
+                StatusCodes.Status503ServiceUnavailable);
+            return null;
+        }
+
+        return new GatewaySpecializedAdmission(requestId, ingress, authorization);
+    }
 
     private static async Task<AppCallerGovernanceDecision> RecordAndCheckAppCallerGovernanceAsync(
         HttpContext http,
@@ -4751,7 +4812,7 @@ public static class GatewayHttpEndpoints
     // 把 GatewayRequestContext 转成 LlmRequestContext 并打开作用域。
     // LlmRequestContext 必填位置参数：RequestId / GroupId / SessionId / UserId / ViewRole /
     //   DocumentChars / DocumentHash / SystemPromptRedacted，随后是可选 RequestType / AppCallerCode。
-    private static IDisposable OpenContextScope(
+    internal static IDisposable OpenContextScope(
         ILLMRequestContextAccessor accessor,
         GatewayRequestContext? ctx,
         string requestType,
@@ -5529,6 +5590,11 @@ public static class GatewayHttpEndpoints
                 AppCallerBudgetDecision.Reject(appCallerCode, requestType, 0, 0, DateTime.UtcNow, "TENANT_GOVERNANCE_UNAVAILABLE", "tenant"));
     }
 }
+
+internal sealed record GatewaySpecializedAdmission(
+    string RequestId,
+    GatewayIngressRequest Ingress,
+    GatewayKeyAuthorization Authorization);
 
 public sealed record RouteSelfTestResponse(
     string Status,

@@ -239,6 +239,7 @@ export async function apiRequest<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    timeoutMs?: number;
   }
 ): Promise<ApiResponse<T>> {
   return await apiRequestInner<T>(path, options, false);
@@ -252,6 +253,7 @@ async function apiRequestInner<T>(
     auth?: boolean;
     emptyResponseData?: T;
     headers?: Record<string, string>;
+    timeoutMs?: number;
   } | undefined,
   didRefresh: boolean
 ): Promise<ApiResponse<T>> {
@@ -289,9 +291,25 @@ async function apiRequestInner<T>(
   }
 
   let res: Response;
+  const timeoutMs = options?.timeoutMs;
+  const timeoutController = typeof timeoutMs === 'number' && timeoutMs > 0
+    ? new AbortController()
+    : null;
+  const timeoutId = timeoutController
+    ? globalThis.setTimeout(() => timeoutController.abort(), timeoutMs)
+    : null;
   try {
-    res = await fetch(url, { method, headers, body });
+    res = await fetch(url, {
+      method,
+      headers,
+      body,
+      ...(timeoutController ? { signal: timeoutController.signal } : {}),
+    });
   } catch (e) {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+    if (timeoutController?.signal.aborted) {
+      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+    }
     if (isDisconnectedError(e)) {
       return fail('DISCONNECTED', '已断开连接或服务器不可达') as unknown as ApiResponse<T>;
     }
@@ -303,11 +321,22 @@ async function apiRequestInner<T>(
   checkPermissionFingerprint(res);
 
   if (res.status === 204) {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
     const data = (options?.emptyResponseData ?? (true as unknown)) as T;
     return ok(data);
   }
 
-  const text = await res.text();
+  let text: string;
+  try {
+    text = await res.text();
+  } catch (e) {
+    if (timeoutController?.signal.aborted) {
+      return fail('TIMEOUT', '请求超时') as unknown as ApiResponse<T>;
+    }
+    return fail('NETWORK_ERROR', e instanceof Error ? e.message : '网络错误') as unknown as ApiResponse<T>;
+  } finally {
+    if (timeoutId != null) globalThis.clearTimeout(timeoutId);
+  }
   const contentType = (res.headers.get('content-type') ?? '').toLowerCase();
   const maybeHtml = contentType.includes('text/html') || /^\s*</.test(text) || /<html/i.test(text);
   const json = await tryParseJson(text);

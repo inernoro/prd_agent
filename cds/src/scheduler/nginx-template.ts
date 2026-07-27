@@ -149,6 +149,11 @@ ${upstream}
 
 ${branchMap}
 
+map $http_upgrade $cds_connection_upgrade {
+    default upgrade;
+    '' close;
+}
+
 server {
     listen 80;
     listen [::]:80;
@@ -167,9 +172,12 @@ server {
         proxy_set_header X-Forwarded-For $proxy_add_x_forwarded_for;
         proxy_set_header X-Forwarded-Proto $scheme;
         proxy_set_header X-Branch $cds_slug;
+        proxy_set_header Upgrade $http_upgrade;
+        proxy_set_header Connection $cds_connection_upgrade;
 
         # Pass through to ${name} — Nginx handles failover via upstream
         proxy_pass http://${name};
+        proxy_http_version 1.1;
 
         # Buffering off for SSE support (CDS uses SSE extensively)
         proxy_buffering off;

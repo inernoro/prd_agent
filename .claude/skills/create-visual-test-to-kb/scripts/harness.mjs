@@ -27,7 +27,13 @@ export async function launch(cfg, opts = {}) {
   const sc = cfg.screenshot || {};
   // 代理环境（云端/CI 出口代理）：仅当显式设置 ACC_BROWSER_PROXY 时给 Chromium 配代理，
   // 不影响本地直连运行。TLS 由出口代理重签，浏览器需信任其 CA（云端镜像已注入 NSS 信任）。
-  const launchOpts = { args: ['--no-sandbox', '--disable-setuid-sandbox'] };
+  const launchOpts = {
+    args: [
+      '--no-sandbox',
+      '--disable-setuid-sandbox',
+      ...(Array.isArray(opts.launchArgs) ? opts.launchArgs : []),
+    ],
+  };
   if (process.env.ACC_BROWSER_PROXY) launchOpts.proxy = { server: process.env.ACC_BROWSER_PROXY };
   const browser = await chromium.launch(launchOpts);
   // opts.viewport 允许调用方覆盖视口（手机端验收时传 {width:390,height:844}）。

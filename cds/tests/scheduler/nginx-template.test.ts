@@ -124,6 +124,9 @@ describe('Nginx template generator', () => {
       expect(config).toContain('server_name *.miduo.org');
       expect(config).toContain('proxy_pass http://cds_executors');
       expect(config).toContain('proxy_buffering off');  // SSE support
+      expect(config).toContain('proxy_http_version 1.1');
+      expect(config).toContain('proxy_set_header Upgrade $http_upgrade');
+      expect(config).toContain('proxy_set_header Connection $cds_connection_upgrade');
     });
 
     it('escapes dots in preview domain regex', () => {

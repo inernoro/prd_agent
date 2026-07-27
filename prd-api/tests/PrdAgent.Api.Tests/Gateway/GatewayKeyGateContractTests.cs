@@ -463,6 +463,7 @@ public class GatewayKeyGateContractTests
         new object[] { HttpMethod.Post, "/gw/v1/raw" },
         new object[] { HttpMethod.Post, "/gw/v1/profile-test" },
         new object[] { HttpMethod.Post, "/gw/v1/stream" },
+        new object[] { HttpMethod.Get, "/gw/v1/asr/live" },
         new object[] { HttpMethod.Post, "/gw/v1/client-stream" },
         new object[] { HttpMethod.Get, "/gw/v1/route-self-test" },
         new object[] { HttpMethod.Get, "/gw/v1/readyz" },
@@ -901,6 +902,30 @@ public class GatewayKeyGateContractTests
             request.Headers.Add("X-Gateway-Key", "scoped-test-key");
             request.Headers.Add("X-Gateway-App-Caller", "caller-a::chat");
             request.Headers.Add("X-Gateway-Source", path.StartsWith("/gw/", StringComparison.Ordinal) ? "map" : "external");
+
+            var response = await app.GetTestClient().SendAsync(request);
+
+            response.StatusCode.ShouldBe(HttpStatusCode.Forbidden);
+            authorizer.RequiredScope.ShouldBe("stream:invoke");
+        }
+        finally
+        {
+            await app.StopAsync();
+        }
+    }
+
+    [Fact]
+    public async Task LiveAsrWebSocketRoute_RequiresStreamInvokeScope()
+    {
+        var authorizer = new CapturingScopedKeyAuthorizer(scope => scope == "invoke");
+        await using var app = BuildHostWithGateway(new ThrowingGateway(), keyAuthorizer: authorizer);
+        await app.StartAsync();
+        try
+        {
+            var request = new HttpRequestMessage(HttpMethod.Get, "/gw/v1/asr/live");
+            request.Headers.Add("X-Gateway-Key", "scoped-test-key");
+            request.Headers.Add("X-Gateway-App-Caller", AppCallerRegistry.DocumentStoreAgent.Subtitle.Audio);
+            request.Headers.Add("X-Gateway-Source", "map");
 
             var response = await app.GetTestClient().SendAsync(request);
 
