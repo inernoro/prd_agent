@@ -98,6 +98,53 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void ActiveRecordingSessionEndpoints_ShouldRevalidateCurrentStoreAccess()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var statusStart = source.IndexOf(
+            "public async Task<IActionResult> GetRecordingUpload(",
+            StringComparison.Ordinal);
+        var liveStart = source.IndexOf(
+            "public async Task LiveTranscription(",
+            statusStart,
+            StringComparison.Ordinal);
+        var appendStart = source.IndexOf(
+            "public async Task<IActionResult> AppendRecordingUploadChunk(",
+            liveStart,
+            StringComparison.Ordinal);
+        var completeStart = source.IndexOf(
+            "public async Task<IActionResult> CompleteRecordingUpload(",
+            appendStart,
+            StringComparison.Ordinal);
+        var cancelStart = source.IndexOf(
+            "public async Task<IActionResult> CancelRecordingUpload(",
+            completeStart,
+            StringComparison.Ordinal);
+
+        statusStart.ShouldBeGreaterThanOrEqualTo(0);
+        liveStart.ShouldBeGreaterThan(statusStart);
+        appendStart.ShouldBeGreaterThan(liveStart);
+        completeStart.ShouldBeGreaterThan(appendStart);
+        cancelStart.ShouldBeGreaterThan(completeStart);
+
+        source[statusStart..liveStart].ShouldContain(
+            "await LoadReadableStoreAsync(session.StoreId, userId)");
+        source[liveStart..appendStart].ShouldContain(
+            "await LoadWritableStoreAsync(session.StoreId, userId)");
+        source[appendStart..completeStart].ShouldContain(
+            "await LoadWritableStoreAsync(session.StoreId, userId)");
+        var completeBlock = source[completeStart..cancelStart];
+        var accessCheck = completeBlock.IndexOf(
+            "await LoadWritableStoreAsync(session.StoreId, userId)",
+            StringComparison.Ordinal);
+        var completedFastPath = completeBlock.IndexOf(
+            "if (session.Status == DocumentRecordingUploadStatus.Completed",
+            StringComparison.Ordinal);
+        accessCheck.ShouldBeGreaterThanOrEqualTo(0);
+        completedFastPath.ShouldBeGreaterThan(accessCheck);
+    }
+
+    [Fact]
     public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

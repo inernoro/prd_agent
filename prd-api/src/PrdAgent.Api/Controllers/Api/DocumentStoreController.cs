@@ -248,6 +248,20 @@ public class DocumentStoreController : ControllerBase
         return (store, null);
     }
 
+    /// <summary>加载并校验可读空间。无权时统一返回不存在，避免暴露空间存在性。</summary>
+    private async Task<(DocumentStore? store, IActionResult? error)> LoadReadableStoreAsync(
+        string storeId,
+        string userId)
+    {
+        var store = await _db.DocumentStores.Find(s => s.Id == storeId).FirstOrDefaultAsync();
+        if (store == null)
+            return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId);
+        if (!await CanReadStoreAsync(store, userId, myTeamIds))
+            return (null, NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在")));
+        return (store, null);
+    }
+
     private async Task<(string userId, string userName, string? avatarFileName)> GetActorWithAvatarAsync()
     {
         var userId = GetUserId();
@@ -1737,6 +1751,10 @@ public class DocumentStoreController : ControllerBase
             }));
         }
 
+        var (_, storeAccessError) = await LoadReadableStoreAsync(session.StoreId, userId);
+        if (storeAccessError != null)
+            return storeAccessError;
+
         return Ok(ApiResponse<object>.Ok(new
         {
             sessionId = session.Id,
@@ -1771,6 +1789,12 @@ public class DocumentStoreController : ControllerBase
             .Find(s => s.Id == sessionId && s.UserId == userId)
             .FirstOrDefaultAsync(CancellationToken.None);
         if (session == null)
+        {
+            Response.StatusCode = StatusCodes.Status404NotFound;
+            return;
+        }
+        var (writableStore, _) = await LoadWritableStoreAsync(session.StoreId, userId);
+        if (writableStore == null)
         {
             Response.StatusCode = StatusCodes.Status404NotFound;
             return;
@@ -1854,6 +1878,9 @@ public class DocumentStoreController : ControllerBase
             .FirstOrDefaultAsync();
         if (session == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "录音上传会话不存在"));
+        var (_, storeAccessError) = await LoadWritableStoreAsync(session.StoreId, userId);
+        if (storeAccessError != null)
+            return storeAccessError;
         if (session.Status != DocumentRecordingUploadStatus.Uploading || session.ExpiresAt <= DateTime.UtcNow)
             return StatusCode(StatusCodes.Status410Gone,
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束或过期"));
@@ -2060,6 +2087,12 @@ public class DocumentStoreController : ControllerBase
             }));
         }
 
+        var (store, storeAccessError) = await LoadWritableStoreAsync(session.StoreId, userId);
+        if (storeAccessError != null)
+            return storeAccessError;
+        if (store == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
+
         if (session.Status == DocumentRecordingUploadStatus.Completed && !string.IsNullOrWhiteSpace(session.EntryId))
         {
             var completedEntry = await _db.DocumentEntries.Find(e => e.Id == session.EntryId).FirstOrDefaultAsync();
@@ -2100,11 +2133,6 @@ public class DocumentStoreController : ControllerBase
         if (!CanEnterRecordingCompletion(session.Status))
             return StatusCode(StatusCodes.Status410Gone,
                 ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, "录音上传会话已结束"));
-
-        var store = await _db.DocumentStores.Find(s => s.Id == session.StoreId).FirstOrDefaultAsync();
-        var myTeamIds = await _teams.GetMyTeamIdsAsync(userId, CancellationToken.None);
-        if (store == null || !await CanWriteStoreAsync(store, userId, myTeamIds))
-            return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, "文档空间不存在"));
 
         // 先原子认领，再读取认领后的会话快照和分片。Append 只允许修改 Uploading，
         // 因而认领之后不会再有“会话计数已前进、分片快照仍是旧值”的截尾窗口。
