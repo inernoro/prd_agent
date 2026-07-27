@@ -12,6 +12,11 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { diskGuard } from '../services/disk-guard.js';
+import { settleMemberAfterStop } from '../services/replica-stop.js';
+import {
+  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, type DrainableRun,
+} from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
@@ -41,6 +46,7 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
+import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -2196,6 +2202,91 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // 磁盘刹车统一守卫（2026-07-27 宕机复盘 P0 + Codex 第二十九轮 P1）：根盘写满会让
+  // CDS 自用 mongo 退出、master 反复启动失败、全站不可用。构建/部署是最大的写入源，
+  // freeze 档（默认 90%）一律拒绝。
+  //
+  // 与上面的预览守卫同样做成**路由器级**：最初只在 /deploy 一个 handler 里判，
+  // 而 /deploy/:profileId 与 /force-rebuild/:profileId 各有独立 handler，照样能拉镜像、
+  // 编译、起容器——闸门等于形同虚设（逐个 handler 打补丁必然漏，预览守卫就是前车之鉴）。
+  //
+  // 只罩**产出构建物**的三个入口；stop / restart / pull 不在其列：前两个是**释放**
+  // 空间的自救动作，磁盘满时必须还能用。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST') { next(); return; }
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+    const blocked = diskGuard.blockReasonForDeploy();
+    if (blocked) {
+      res.status(507).json({ error: 'disk_low', message: blocked });
+      return;
+    }
+    // 自更新排空窗口闸（Codex 第三十六轮 P1）：排空期间到达的新部署会被随后的
+    // 重启腰斩——那正是排空要消灭的现象。明说拒绝好过建到一半被杀。
+    const draining = selfUpdateDrainBlockReason(Date.now());
+    if (draining) {
+      res.setHeader('Retry-After', '60');
+      res.status(503).json({ error: 'self_update_draining', message: draining });
+      return;
+    }
+    next();
+  });
+
+  /**
+   * 自更新重启前排空在途部署（debt.cds.selfupdate-prebuilt #1，2026-07-27）。
+   *
+   * 同一次 push 会同时触发 webhook 分支部署与生产自更新；重启把在途部署执行器
+   * 一并杀掉，心跳过期后看门狗收敛为 failed（PR check 变红），需人工重触发。
+   * 本 PR 期间复现 6 次以上。这里改为**事前避免**：先等在途部署落地再重启。
+   *
+   * 刻意不走「打开自动补发」那条路——`CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关
+   * 是 2026-06-24 为治重试风暴做的决策，补发是事后补偿，会把那个旧事故放回来。
+   *
+   * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
+   * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
+   */
+  async function drainDeploysBeforeSelfUpdateRestart(context: {
+    trigger: string;
+    branch?: string;
+    toSha?: string;
+  }): Promise<void> {
+    // 0 必须当 0 用（Codex 第三十七轮 P2）：`parseInt('0') || 默认值` 会把显式关闭
+    // 的 0 吞掉换成 5 分钟——文档明写「设 0 关闭」，实际却照等不误，还顺带把部署闸
+    // 关满五分钟。只有「没设 / 设了非数字」才落默认值。
+    const rawDrainTimeout = Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS ?? '', 10);
+    const timeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
+    // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
+    // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
+    // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
+    // 显式设 0 = 整个机制关闭，连闸也不关（回到旧版行为，Codex 第三十七轮 P2）。
+    // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
+    if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
+    const outcome = await drainInFlightDeploys({
+      listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+      timeoutMs,
+      onWait: (pending, waitedMs) => {
+        if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
+          console.log(`[self-update] 等待 ${pending.length} 个在途部署落地再重启（已等 ${Math.round(waitedMs / 1000)}s）`);
+        }
+      },
+    });
+    if (outcome.skipped) return;
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: outcome.drained ? 'info' : 'warn',
+      source: 'self-update',
+      action: outcome.drained ? 'self-update.deploy-drain.completed' : 'self-update.deploy-drain.timeout',
+      message: outcome.drained
+        ? `自更新重启前已等到全部在途部署落地（等待 ${Math.round(outcome.waitedMs / 1000)}s）`
+        : `自更新重启前等待在途部署超时（${Math.round(outcome.waitedMs / 1000)}s），仍在途 ${outcome.remaining.length} 个，将照常重启（这些 run 会被收敛为中断，需重新触发部署）`,
+      details: { ...context, waitedMs: outcome.waitedMs, remaining: outcome.remaining },
+    });
+  }
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -2203,6 +2294,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     actor?: string;
   }): Promise<void> {
+    // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
+    // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
+    await drainDeploysBeforeSelfUpdateRestart({
+      trigger: context.trigger, branch: context.branch, toSha: context.toSha,
+    });
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
       SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
@@ -10846,12 +10942,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     try {
       entry.status = 'stopping';
+      // 克隆完成栅栏（Codex 第十六轮 P1）：先置删除标记再遍历快照台账。
+      // 复制集的在途克隆完成回调查到该标记即自弃（drop 刚克隆的库、不入账），
+      // 封死「台账已扫过 → 完成回调追加新快照 → removeBranch」的无主库窗口。
+      entry.deleting = true;
       entry.lastStoppedAt = deleteStartedAt;
       entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
       entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
       stateService.save();
     } catch (err) {
       entry.status = previousDeleteIntent.status;
+      entry.deleting = undefined;
       entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
       entry.lastStopSource = previousDeleteIntent.lastStopSource;
       entry.lastStopReason = previousDeleteIntent.lastStopReason;
@@ -10927,6 +11028,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
       } catch { /* best-effort：发现失败不阻断删除 */ }
+      // 隔离库级联清理（Codex P1，2026-07-26）：专用隔离实例（cds-rsdb-*，label 是
+      // cds.type=rsdb、**没有** cds.branch.id）与共享库里的隔离库（<源库>_rs_<member>）
+      // 只记录在 branch.replicaDbSnapshots 台账。分支状态一删，快照 API 与上面的
+      // app 容器残留清扫都够不着它们——每删一个带隔离库的分支就永久漏跑一个数据库
+      // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
+      // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
+      // 不会误删共享主库）。
+      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+        try {
+          const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === snapshot.infraContainer);
+          await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+        } catch (err) {
+          // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
+          // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
+          // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
+          // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
+          // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
+          // 记事件供人工收口（残留台账见 debt.cds.replica-set #19）。
+          if (snapshot.dedicatedContainer) {
+            try {
+              stateService.addContainerTeardownTombstones([{
+                containerName: snapshot.dedicatedContainer,
+                projectId: entry.projectId,
+                requestedAt: new Date().toISOString(),
+                removeVolumes: true,
+              }]);
+            } catch { /* 墓碑写入失败退回事件告警 */ }
+          } else {
+            // 共享实例隔离库无容器可墓碑（Codex 第二十五轮 P1）：台账马上随
+            // removeBranch 消失，只记事件会让生产派生克隆永久失踪在共享 infra
+            // 里。入待清理台账，复制集对账循环持续重试 DROP。
+            try {
+              stateService.addPendingReplicaDbDrop({
+                snapshot, projectId: entry.projectId, requestedAt: new Date().toISOString(),
+              });
+            } catch { /* 入队失败退回事件告警 */ }
+          }
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'branch-delete',
+            action: 'branch.delete.replica-db-drop-failed',
+            message: `删分支级联清理隔离库失败: ${snapshot.dbName}${snapshot.dedicatedContainer ? ` (专用实例 ${snapshot.dedicatedContainer}，已写墓碑交收割器重试)` : ''} — ${(err as Error).message}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
+            ...operationAuditFields,
+            details: { snapshotId: snapshot.id, engine: snapshot.engine, dedicatedContainer: snapshot.dedicatedContainer || null },
+          });
+        }
+      }
       // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
@@ -14028,6 +14182,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
+      // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
+      // 无容器的 provisioning 成员也必须标 stopped（Codex P1）：此前 continue 跳过
+      // 让后台 materializeMember 任务继续跑，分支已 idle 后还会把副本容器起出来
+      //（成员记录仍在，memberStillTracked 栅栏拦不住）——标 stopped 后物化栅栏
+      // 按状态就地放弃。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, stopAttribution.reason, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
+                trigger: triggerFromRequest(req),
+                operation: 'branch-stop-replica-member',
+                source: 'api.stop-branch',
+              });
+            } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
+          }
+          // 停止必须核实再落状态（Codex 第三十五轮 P1，判定见 services/replica-stop.ts）
+          await settleMemberAfterStop(member, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '物化被分支停止中断，可在画布删除后重建',
+            onStillRunning: (containerName, message) => {
+              serverEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'api.stop-branch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器停止失败但仍在运行: ${containerName}`,
+                branchId: entry.id,
+                projectId: entry.projectId,
+                containerName,
+                details: { hint: message },
+              });
+            },
+          });
+        }
+      }
       await archiveBranchContainerLogs({
         stateService,
         containerService,
@@ -14136,6 +14333,79 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'error';
           svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
           failed.push(svc.containerName);
+        }
+      }
+
+      // 复制集成员级联重启（Codex P1，2026-07-26）：成员容器不在 entry.services
+      // 快照里，分支停止/降温会把它们一并停掉；这里若不拉起，例行「停止 → 重启」
+      // 会让副本分流永久消失——成员记录还在（占成员上限、钉住管理模式），但没有
+      // 任何路径能再物化它们，只能删了重建。成员重启失败不阻断分支主服务恢复，
+      // 只把该成员标 error（画布可见），用户可在画布删除后重建。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (!member.containerName) continue;
+          if (member.status === 'provisioning') continue;
+          assertBranchOperationCurrent(branchOperationLease, `restart before replica ${replicaSet.profileId}--${member.id}`);
+          const memberOk = await containerService.restartServiceInPlace(member.containerName, undefined, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            requestId,
+            operationId: branchOperationLease?.operationId || null,
+            actor,
+            trigger,
+            operation: 'branch-restart-replica-member',
+            source: 'api.restart-branch',
+            reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
+          });
+          if (memberOk) {
+            // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
+            // 进程活着，不跑就绪探测。就绪契约复用该成员**自己版本快照**里的
+            // readinessProbe / startupSignal（与首次物化同一分支逻辑，Codex 第十四轮
+            // P1）——noHttp 后台 worker、自定义健康路径、启动信号成员都按各自契约
+            // 判定；快照不可得时才退默认 60s TCP/HTTP 探测兜底。
+            const memberSnapshot = deploymentVersionService
+              ?.get(member.versionId)
+              ?.profiles.find((p) => p.profileId === replicaSet.profileId);
+            let memberReady = false;
+            if (memberSnapshot?.startupSignal) {
+              memberReady = await containerService.waitForStartupSignal(
+                member.containerName,
+                memberSnapshot.startupSignal,
+                undefined,
+                120,
+              );
+            } else if (typeof member.hostPort === 'number' && member.hostPort > 0) {
+              memberReady = await containerService.waitForReadiness(
+                member.hostPort,
+                memberSnapshot?.readinessProbe ?? ({ timeoutSeconds: 60 } as ReadinessProbe),
+                undefined,
+                undefined,
+                member.containerName,
+              );
+            }
+            if (memberReady) {
+              member.status = 'running';
+              member.statusMessage = undefined;
+            } else {
+              // 与 materializeMember 同纪律（Codex 第二十七轮 P1，第二十六轮 P1 的重启路径
+              // 兄弟）：只标 error 而留容器活着，共享库模式下它仍跑后台消费者/定时任务
+              // 读写主库，还白占端口内存。stop 而非 remove，保留 docker logs 供排障。
+              let stopped = false;
+              try {
+                await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
+                  actor: 'branch-restart', trigger: 'replica-readiness-failed',
+                });
+                stopped = true;
+              } catch { /* 停不掉交给成员对账/孤儿收割兜底，不阻断重启主流程 */ }
+              member.status = 'error';
+              member.statusMessage = `副本容器 ${member.containerName} 已重启但未通过就绪契约（readinessProbe/startupSignal）——已从分流摘除${stopped ? '并停止容器（避免其继续读写主库）' : '（停止容器失败，请手动确认）'}，可在画布删除后重建副本`;
+            }
+          } else {
+            member.status = 'error';
+            member.statusMessage = `副本容器 ${member.containerName} 原地重启失败（可能已被移除），可在画布删除后重建副本`;
+          }
         }
       }
 
@@ -15106,14 +15376,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;
@@ -15282,14 +15567,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-env', async (req, res) => {
     const { id } = req.params;
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;
@@ -16213,6 +16513,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
             skippedBusy.push({ branchId: entry.id, profileId: removedProfileId, reason: (err as Error).message });
           } finally {
             completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+          }
+        }
+        // 复制集级联解散（Codex P1，2026-07-26）：profile 删除后主服务从
+        // branch.services 消失，但 replicaSets[profileId] 与成员容器留活——发布器
+        // 的「主宕成员兜底」会把这些成员继续发进路由表，被操作员删掉的服务对
+        // 公网依旧可达且持续占资源。删 profile 必须连带收割其复制集。
+        const orphanRs = entry.replicaSets?.[removedProfileId];
+        if (orphanRs) {
+          for (const member of orphanRs.members) {
+            if (!member.containerName) continue;
+            await containerService.remove(member.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: `${removedProfileId}--${member.id}`,
+              requestId,
+              actor,
+              trigger,
+              operation: 'build-profile-delete-replica-member',
+              source: 'api.delete-build-profile',
+              reason: `删除构建配置 ${removedProfileId} 时级联收割复制集副本`,
+            }).catch(() => { /* best-effort：容器可能已不在 */ });
+          }
+          delete entry.replicaSets![removedProfileId];
+          if (Object.keys(entry.replicaSets!).length === 0) {
+            delete entry.replicaSets;
+            delete entry.replicaMode;
           }
         }
       }

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1111,6 +1111,17 @@ export class StateService {
       for (const svc of Object.values(b.services)) {
         if (svc.hostPort) usedPorts.add(svc.hostPort);
       }
+      // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
+      // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的
+      // hostPort 判给新部署——分支重启时既有成员容器因端口被占启动失败
+      for (const rs of Object.values(b.replicaSets ?? {})) {
+        for (const m of rs.members) {
+          if (m.hostPort) usedPorts.add(m.hostPort);
+        }
+      }
+      for (const snap of b.replicaDbSnapshots ?? []) {
+        if (snap.dedicatedHostPort) usedPorts.add(snap.dedicatedHostPort);
+      }
     }
     for (const svc of this.state.infraServices || []) {
       if (svc.hostPort) usedPorts.add(svc.hostPort);
@@ -1615,6 +1626,28 @@ export class StateService {
 
   getContainerTeardownTombstones(): ContainerTeardownTombstone[] {
     return [...(this.state.pendingContainerTeardowns || [])];
+  }
+
+  /** 共享实例隔离库待清理台账（Codex 第二十五轮 P1）：drop 失败入队，收敛循环重试。 */
+  addPendingReplicaDbDrop(item: { snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }): void {
+    const list = this.state.pendingReplicaDbDrops || [];
+    if (!list.some((x) => x.snapshot.dbName === item.snapshot.dbName && x.snapshot.infraContainer === item.snapshot.infraContainer)) {
+      list.push(item);
+    }
+    this.state.pendingReplicaDbDrops = list;
+    this.save();
+  }
+
+  getPendingReplicaDbDrops(): Array<{ snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }> {
+    return [...(this.state.pendingReplicaDbDrops || [])];
+  }
+
+  removePendingReplicaDbDrop(dbName: string, infraContainer: string): void {
+    const list = this.state.pendingReplicaDbDrops;
+    if (!list?.length) return;
+    this.state.pendingReplicaDbDrops = list.filter((x) => !(x.snapshot.dbName === dbName && x.snapshot.infraContainer === infraContainer));
+    if (this.state.pendingReplicaDbDrops.length === 0) delete this.state.pendingReplicaDbDrops;
+    this.save();
   }
 
   removeContainerTeardownTombstone(containerName: string): void {

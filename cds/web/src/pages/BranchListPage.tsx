@@ -1,4 +1,5 @@
-import { memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Fragment, memo, useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Link, Navigate, useNavigate, useParams } from 'react-router-dom';
 import {
   Activity,
@@ -14,7 +15,6 @@ import {
   Github,
   Lightbulb,
   Loader2,
-  Clock3,
   MoreHorizontal,
   Network,
   Play,
@@ -31,6 +31,7 @@ import {
   Tags,
   Trash2,
   X,
+  Layers,
   XCircle,
   Zap,
 } from 'lucide-react';
@@ -38,11 +39,15 @@ import {
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { BranchDetailDrawer, type BranchDeploymentItem, type BranchResourceDetailTab } from '@/components/BranchDetailDrawer';
 import { useNowTick } from '@/hooks/useNowTick';
+import { buildProjectGroups } from '@/lib/replicaGroups';
 import { MonitoringDialog } from '@/components/monitoring/MonitoringDialog';
 import type { PerfHealth, PerfWarning } from '@/components/monitoring/useMonitoringData';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { DetectStackDialog } from '@/components/branch/DetectStackDialog';
 import { CapacityFullDialog } from '@/components/CapacityFullDialog';
+
+/** 分支卡上的复制集成员最小视图（整组卡按 projectGroupId join 用） */
+type RsCardMember = { id?: string; status?: string; hostPort?: number; projectGroupId?: string; createdAt?: string };
 import { ShinyText } from '@/components/effects/ShinyText';
 import { Button } from '@/components/ui/button';
 import {
@@ -57,6 +62,7 @@ import { ConfirmAction } from '@/components/ui/confirm-action';
 import { DropdownDivider, DropdownItem, DropdownLabel, DropdownMenu } from '@/components/ui/dropdown-menu';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { canQuickStartBranch } from '@/lib/branch-quick-actions';
+import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
 import {
@@ -66,7 +72,7 @@ import {
   type BranchResourceInfraInput,
   type BranchResourceProfileInput,
 } from '@/lib/resources';
-import { statusClass, statusRailClass } from '@/lib/statusStyle';
+import { statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 
@@ -3429,23 +3435,49 @@ export function BranchListPage(): JSX.Element {
               </div>
             ) : (
               <div className="cds-branch-card-grid">
-                {sortedBranches.map((branch) => (
-                  <BranchCard
-                    key={branch.id}
-                    branch={branch}
-                    resources={branchResourcesById.get(branch.id) || EMPTY_RESOURCES}
-                    action={actions[branch.id]}
-                    projectId={projectId}
-                    resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
-                    highlighted={highlightedBranchId === branch.id}
-                    highlightPulse={highlightPulseBranchId === branch.id}
-                    phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
-                    activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
-                    capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
-                    activeTagFilter={activeTagFilter}
-                    handlers={cardHandlers}
-                  />
-                ))}
+                {sortedBranches.map((branch) => {
+                  // 项目级复制集显形（2026-07-25 用户拍板）：派生卡紧随主卡右侧（网格自然换行），
+                  // 名为 <branch>-replicaset-N；非独立 git 分支，仅是同分支的复制集实例组视图。
+                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<RsCardMember> }> }).replicaSets ?? {};
+                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
+                  // 按持久化组身份 join（Codex 第二十轮 P1）：与 ReplicaSetPanel 同一 SSOT，
+                  // 数组错位时不再按位拼出假组
+                  const rsPids = Object.keys(rsMap).filter((pid) => rsMap[pid]?.enabled).sort((a, b) => a.localeCompare(b));
+                  const rsGroups = rsMode === 'project'
+                    ? buildProjectGroups(rsPids, (pid) => (rsMap[pid]?.members ?? []).filter((m): m is RsCardMember & { id: string } => Boolean(m.id)))
+                    : [];
+                  const rsPreviewBase = state.status === 'ok'
+                    ? (state.previewMode === 'simple' ? simplePreviewUrl(state.config) : multiPreviewUrl(branch, state.config))
+                    : '';
+                  return (
+                    <Fragment key={branch.id}>
+                      <BranchCard
+                        branch={branch}
+                        resources={branchResourcesById.get(branch.id) || EMPTY_RESOURCES}
+                        action={actions[branch.id]}
+                        projectId={projectId}
+                        resourceChipDisplay={state.status === 'ok' ? state.project.resourceChipDisplay : undefined}
+                        highlighted={highlightedBranchId === branch.id}
+                        highlightPulse={highlightPulseBranchId === branch.id}
+                        phase={leavingIds.has(branch.id) ? 'leaving' : enteringIds.has(branch.id) ? 'entering' : undefined}
+                        activityEvents={aiActivityByBranch.get(branch.id) || EMPTY_ACTIVITY}
+                        capacityWarning={state.status === 'ok' ? capacityMessage(state.capacity, [branch]) : ''}
+                        activeTagFilter={activeTagFilter}
+                        handlers={cardHandlers}
+                      />
+                      {rsGroups.map((group, k) => (
+                        <ReplicaGroupCard
+                          key={`${branch.id}-replicaset-${k + 1}`}
+                          branch={branch}
+                          groupIndex={k}
+                          group={group}
+                          previewBase={rsPreviewBase}
+                          onDetail={() => cardHandlers.onDetail(branch)}
+                        />
+                      ))}
+                    </Fragment>
+                  );
+                })}
               </div>
             )}
           </div>
@@ -4935,6 +4967,155 @@ interface BranchCardHandlers {
   onRemoveTag: (branch: BranchSummary, tag: string) => void;
 }
 
+/**
+ * 项目级复制集派生卡（2026-07-25 用户拍板）：**非独立 git 分支**——同一分支的
+ * 复制集实例组视图，紧随主分支卡右侧显形（网格自然换行），方便直达/看日志。
+ * 名称固定 <branch>-replicaset-N；操作面收敛为「打开详情 / 预览本组」，
+ * 不提供删除/部署等分支级动作（避免误伤真分支）。
+ */
+/**
+ * 降温条件快捷编辑弹窗（2026-07-26 用户拍板）：调度器降温提示条悬浮出的入口。
+ * 改的是 CDS 系统设置里的调度器空闲阈值（全部分支生效）——调度器每 tick 读
+ * 配置，保存即刻生效，下一轮降温判定就按新阈值走。
+ */
+function CoolPolicyEditorModal({ onClose }: { onClose: () => void }): JSX.Element {
+  const [minutes, setMinutes] = useState('');
+  const [enabled, setEnabled] = useState(true);
+  const [phase, setPhase] = useState<'loading' | 'ready' | 'saving' | 'error'>('loading');
+  const [message, setMessage] = useState('');
+  useEffect(() => {
+    const onKey = (e: KeyboardEvent): void => { if (e.key === 'Escape') onClose(); };
+    window.addEventListener('keydown', onKey);
+    return () => window.removeEventListener('keydown', onKey);
+  }, [onClose]);
+  useEffect(() => {
+    apiRequest<{ config?: { idleTTLSeconds?: number; enabled?: boolean } | null }>('/api/scheduler/state')
+      .then((snap) => {
+        setMinutes(String(Math.max(1, Math.round((snap.config?.idleTTLSeconds ?? 900) / 60))));
+        setEnabled(snap.config?.enabled ?? true);
+        setPhase('ready');
+      })
+      .catch((err) => {
+        setMessage(err instanceof ApiError ? err.message : String(err));
+        setPhase('error');
+      });
+  }, []);
+  const save = async (): Promise<void> => {
+    const m = Number(minutes);
+    if (!Number.isInteger(m) || m < 1 || m > 1440) { setMessage('阈值必须是 1-1440 的整数分钟'); return; }
+    setPhase('saving');
+    setMessage('');
+    try {
+      await apiRequest('/api/scheduler/config', { method: 'PUT', body: { enabled, idleTTLSeconds: m * 60 } });
+      setMessage('已保存并即刻生效：下一轮降温判定按新阈值执行');
+      setPhase('ready');
+      window.setTimeout(onClose, 1200);
+    } catch (err) {
+      setMessage(err instanceof ApiError ? err.message : String(err));
+      setPhase('ready');
+    }
+  };
+  return createPortal(
+    <div className="fixed inset-0 z-[300] flex items-center justify-center bg-black/50 p-4" onClick={onClose}>
+      <div className="w-full max-w-sm rounded-xl border border-[hsl(var(--hairline))] bg-background p-4 shadow-2xl" onClick={(e) => e.stopPropagation()}>
+        <div className="mb-1 text-sm font-semibold">设置降温条件</div>
+        <p className="mb-3 text-xs text-muted-foreground">
+          CDS 系统设置 · 调度器空闲阈值（对全部分支生效）。保存即刻生效——调度器下一轮判定就按新值执行；被降温的分支访问预览或手动启动即回温。
+        </p>
+        {phase === 'loading' ? (
+          <div className="flex items-center gap-2 py-3 text-xs text-muted-foreground"><Loader2 className="h-3.5 w-3.5 animate-spin" />读取当前配置…</div>
+        ) : (
+          <>
+            <div className="flex items-center gap-2">
+              <label className="text-xs text-muted-foreground" htmlFor="cool-idle-minutes">空闲超过</label>
+              <input
+                id="cool-idle-minutes"
+                className="h-9 w-24 rounded-md border border-input bg-background px-3 font-mono text-sm outline-none focus:ring-2 focus:ring-ring"
+                value={minutes}
+                inputMode="numeric"
+                onChange={(e) => setMinutes(e.target.value)}
+              />
+              <span className="text-xs text-muted-foreground">分钟自动降温</span>
+            </div>
+            <label className="mt-3 flex items-center gap-2 text-xs text-muted-foreground">
+              <input type="checkbox" checked={enabled} onChange={(e) => setEnabled(e.target.checked)} />
+              启用调度器自动降温（关闭 = 所有分支永不自动降温）
+            </label>
+          </>
+        )}
+        {message ? <div className={`mt-3 text-xs ${message.startsWith('已保存') ? 'text-emerald-600 dark:text-emerald-400' : 'text-destructive'}`}>{message}</div> : null}
+        <div className="mt-4 flex justify-end gap-2">
+          <Button type="button" size="sm" variant="outline" onClick={onClose}>取消</Button>
+          <Button type="button" size="sm" disabled={phase !== 'ready'} onClick={() => void save()}>
+            {phase === 'saving' ? <Loader2 className="h-3.5 w-3.5 animate-spin" /> : null}
+            保存并生效
+          </Button>
+        </div>
+      </div>
+    </div>,
+    document.body,
+  );
+}
+
+function ReplicaGroupCard({ branch, groupIndex, group, previewBase, onDetail }: {
+  branch: BranchSummary;
+  groupIndex: number;
+  /** 该组各 profile 的成员（按 projectGroupId join；存量无组 id 成员按位兜底，见 lib/replicaGroups） */
+  group: Record<string, (RsCardMember & { id: string }) | undefined>;
+  previewBase: string;
+  onDetail: () => void;
+}): JSX.Element {
+  const entries = Object.entries(group)
+    .filter((e): e is [string, RsCardMember & { id: string }] => Boolean(e[1]))
+    .sort(([a], [b]) => a.localeCompare(b));
+  // 预览链接带**每个 profile** 的作用域钉选条目 `profileId:memberId`（Codex P1
+  // 二连）：__rs 多值让 forwarder 一次导航种齐各组的组作用域 cookie；裸成员 id
+  // 列表在各 profile 成员数组错位时（A 组第 2 位是 res-2、B 组第 1 位恰好也是
+  // res-2）会把 B 组静默钉到本该属于 A 组的 id——作用域条目只命中自己的组。
+  const pinEntries = entries.map(([pid, m]) => `${encodeURIComponent(pid)}:${encodeURIComponent(m.id)}`);
+  const previewUrl = previewBase && pinEntries.length > 0
+    ? `${previewBase}${previewBase.includes('?') ? '&' : '?'}__rs=${pinEntries.join(',')}`
+    : '';
+  const bad = entries.some(([, m]) => m.status === 'error');
+  const projectId = (branch as { projectId?: string }).projectId;
+  return (
+    <div className={`relative flex min-h-[244px] flex-col rounded-xl border-2 bg-[hsl(var(--surface-raised))] ${bad ? 'border-destructive/60' : 'border-indigo-500/55'}`}
+      title={`由 ${branch.branch} 复制出的项目级复制集实例组（非独立 git 分支）：每个容器的第 ${groupIndex + 1} 个副本，入口已按权重负载`}>
+      <div className="flex items-center gap-2 px-5 pt-4">
+        <Layers className="h-4 w-4 shrink-0 text-indigo-500" />
+        <span className="min-w-0 truncate text-base font-semibold">
+          {branch.branch}<span className="text-indigo-500">-replicaset-{groupIndex + 1}</span>
+        </span>
+      </div>
+      <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3">
+        {entries.map(([pid, m]) => {
+          const color = m?.status === 'error' ? '#ef4444' : profileColor(pid);
+          return (
+            <span key={pid} className="inline-flex h-7 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs"
+              style={{ borderColor: `${color}66`, color }}
+              title={`${pid} 副本 ${m?.id ?? ''}：${m?.status === 'running' ? '运行中' : m?.status ?? '未创建'}`}>
+              <span className="h-1.5 w-1.5 rounded-full" style={{ background: m?.status === 'running' ? '#10b981' : m?.status === 'provisioning' ? '#f59e0b' : '#ef4444' }} />
+              {profileShortName(pid, projectId)}
+              {m?.hostPort ? <span className="font-mono text-muted-foreground">:{m.hostPort}</span> : null}
+            </span>
+          );
+        })}
+      </div>
+      <div className="px-5 pt-3">
+        <span className="inline-flex rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-500">复制集成员 · 入口已负载 · 非独立分支</span>
+      </div>
+      <div className="mt-auto flex items-center justify-between gap-3 px-5 pb-4 pt-3">
+        <Button type="button" variant="outline" size="sm" onClick={onDetail}>打开详情</Button>
+        {previewUrl ? (
+          <Button asChild size="sm">
+            <a href={previewUrl} target="_blank" rel="noreferrer"><ExternalLink />预览本组</a>
+          </Button>
+        ) : null}
+      </div>
+    </div>
+  );
+}
+
 const BranchCard = memo(function BranchCard({
   branch,
   resources,
@@ -5087,6 +5268,9 @@ const BranchCard = memo(function BranchCard({
   const footerSubject = commitSubject(branch);
   const [builderAvatarStatus, setBuilderAvatarStatus] = useState<AvatarLoadStatus>(() => cachedAvatarStatus(builderAvatarUrl));
   const [commitMenuOpen, setCommitMenuOpen] = useState(false);
+  // 降温条件快捷编辑（2026-07-26 用户拍板）：调度器降温的提示条悬浮显示设置入口，
+  // 就地改空闲阈值（PUT /api/scheduler/config，调度器每 tick 读配置——保存即生效）
+  const [coolEditOpen, setCoolEditOpen] = useState(false);
   const [commitHistoryState, setCommitHistoryState] = useState<
     { status: 'idle' | 'loading' | 'ok' | 'error'; commits: BranchCommitSummary[]; message?: string }
   >({ status: 'idle', commits: [] });
@@ -5494,6 +5678,53 @@ const BranchCard = memo(function BranchCard({
             service.status,会出现"branch 启动中蓝 / 服务 chip 绿"割裂)
           - 时间挪到这一行最右,小号灰字,绝对不挡分支名 */}
       <div className="flex max-w-full flex-wrap items-center gap-2 px-5 pt-3" style={{ minHeight: '1.75rem' }}>
+        {/* 复制集标识（2026-07-25 用户拍板三改）：项目级复制集已在右侧显形为独立派生卡，
+            主卡只标「已复制」不再列 xN；容器级仍是每容器专属色 chip + xN。健康态不用红
+            （红色专属出错——有副本 error 才转红）。 */}
+        {(() => {
+          const replicaSets = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets;
+          const entries = Object.entries(replicaSets ?? {})
+            .filter(([, rs]) => rs?.enabled && (rs.members?.length ?? 0) > 0)
+            .sort(([a], [b]) => a.localeCompare(b));
+          if (entries.length === 0) return null;
+          const mode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode ?? 'container';
+          if (mode === 'project') {
+            const bad = entries.some(([, rs]) => (rs.members ?? []).some((m) => m.status === 'error'));
+            return (
+              <span className={`inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium ${bad ? 'border-destructive/60 bg-destructive/10 text-destructive' : 'border-indigo-500/50 bg-indigo-500/10 text-indigo-500'}`}
+                title={bad ? '项目级复制集有副本异常，详见右侧复制集卡' : '该分支已做项目级复制：复制集实例组显示在右侧独立卡片'}>
+                <Layers className="h-3.5 w-3.5" />
+                {bad ? '已复制 · 有异常' : '已复制'}
+              </span>
+            );
+          }
+          const projectId = (branch as { projectId?: string }).projectId;
+          const shown = entries.slice(0, 4);
+          return (
+            <>
+              {shown.map(([pid, rs]) => {
+                const bad = (rs.members ?? []).some((m) => m.status === 'error');
+                const color = bad ? '#ef4444' : profileColor(pid);
+                const n = rs.members?.length ?? 0;
+                return (
+                  <span key={pid}
+                    className="inline-flex h-7 shrink-0 items-center gap-1 rounded-md border px-2 text-xs font-medium"
+                    style={{ borderColor: `${color}80`, color, background: `${color}1a` }}
+                    title={bad ? `${pid}：有副本异常，进「运行」页签查看` : `${pid}：复制集 1 主 + ${n} 副本，入口按权重分流`}>
+                    <Layers className="h-3.5 w-3.5" />
+                    {profileShortName(pid, projectId)} x{n + 1}
+                  </span>
+                );
+              })}
+              {entries.length > shown.length ? (
+                <span className="inline-flex h-7 shrink-0 items-center rounded-md border border-indigo-500/50 bg-indigo-500/10 px-2 text-xs font-medium text-indigo-500"
+                  title={entries.slice(shown.length).map(([pid, rs]) => `${pid} x${(rs.members?.length ?? 0) + 1}`).join('、')}>
+                  +{entries.length - shown.length}
+                </span>
+              ) : null}
+            </>
+          );
+        })()}
         {/* 2026-06-22 用户主诉求：停止/降温/出错（!running && !interim）时，隐藏"服务端口那一横"，
             在同一槽位单行显示「容器停止/出错」统一标识 + 信息提醒（停止来源/调度器降温原因/错误），
             让每张卡片这一行恒为单行 → 等高。运行/中间态才显示端口 chip。
@@ -5541,7 +5772,7 @@ const BranchCard = memo(function BranchCard({
           </div>
         ) : shouldShowStopReason ? (
           <div
-            className={`flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
+            className={`group flex h-7 min-w-0 flex-1 items-center gap-2 rounded-md border px-2.5 text-xs ${isError ? issueClass : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'}`}
             title={isError
               ? deployFailureMessage(branch)
               : `${stopSourceLabel} · ${branch.lastStoppedAt || '时间未知'}\n${stopReasonText}`}
@@ -5557,91 +5788,33 @@ const BranchCard = memo(function BranchCard({
                 <span className="min-w-0 flex-1 truncate text-muted-foreground/85">{stopReasonText}</span>
               </>
             )}
+            {/* 调度器降温条：悬浮显示「设置降温条件」（2026-07-26 用户拍板）——
+                就地改空闲阈值，保存即生效，不用去 CDS 系统设置绕一圈 */}
+            {!isError && branch.lastStopSource === 'scheduler' ? (
+              <button
+                type="button"
+                className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-1.5 py-0.5 text-[10px] font-medium text-muted-foreground opacity-0 transition-opacity hover:text-foreground focus-visible:opacity-100 group-hover:opacity-100"
+                title="设置降温条件：修改调度器空闲阈值（CDS 系统设置，全部分支生效，保存即刻生效）"
+                onClick={(e) => { e.stopPropagation(); setCoolEditOpen(true); }}
+              >
+                设置降温条件
+              </button>
+            ) : null}
             <span className="shrink-0 whitespace-nowrap text-muted-foreground/65">{statusTimeText}</span>
           </div>
         ) : (
           <>
-        {/* status chip 仅在异常/中间态显示;running 删除(冗余)。
-            中间态的已用时间合并在同一个 chip 内,避免"启动中"和"启动 01:34"重复。 */}
-        {(isError || isInterim) ? (
+        {/* status chip 仅在异常态显示;running 删除(冗余)。
+            2026-07-26 用户拍板：构建中的「状态 + 计时 + 模式/耗时/预计进度」全部
+            挪到卡片底部 footer 右下角——顶部这一行构建期间保持端口/容器信息不动。 */}
+        {isError ? (
           <span
-            className={`${isInterim ? 'branch-build-elapsed ' : ''}inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${isError ? issueClass : statusClass(branch.status)}`}
-            title={isInterim ? `${statusLabel(branch.status)}已持续时间` : undefined}
-            data-since={isInterim ? busySince || '' : undefined}
+            className={`inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border px-2 text-xs ${issueClass}`}
           >
-            <span className={`h-1.5 w-1.5 rounded-full ${isError ? issueRailClass : statusRailClass(branch.status)}`} aria-hidden />
-            {isError ? issueLabel : statusLabel(branch.status)}
-            {isInterim ? (
-              <>
-                <Clock3 className="h-3 w-3" aria-hidden />
-                <span className="branch-deploy-timer-value font-mono">{formatElapsedFrom(busySince, now)}</span>
-              </>
-            ) : null}
+            <span className={`h-1.5 w-1.5 rounded-full ${issueRailClass}`} aria-hidden />
+            {issueLabel}
           </span>
         ) : null}
-        {/*
-          2026-07-09 构建排队可视化：buildQueue 存在 = 有服务在等构建槽位。
-          排队 chip 单独渲染（禁止空白等待：动点 + 位置 + 等待时长），且排队
-          期间不判 overdue——排队 ≠ 构建慢，不该被琥珀色误报「超预计」。
-        */}
-        {isInterim && branch.buildQueue ? (
-          <span
-            className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
-            title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
-          >
-            <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" aria-hidden />
-            排队中 · 前面还有 {branch.buildQueue.ahead} 个
-            <span className="text-muted-foreground/70">（{branch.buildQueue.active}/{branch.buildQueue.max} 构建中）</span>
-          </span>
-        ) : null}
-        {/*
-          2026-06-20：构建中显示「模式 · 已耗时 · 历史中位预计耗时」。
-          - 模式标签区分 发布版 / 热加载（来自 deployRuntime.kind）。
-          - 已耗时实时累加（formatElapsedFrom 走 1s tick 的 now）。
-          - 预计耗时为静态历史中位（近 N 次），无样本则不显示预计（no-rootless-tree：
-            不编造数据）。下方细进度条对比已耗时 vs 预计，纯主题 token 着色，不喧宾夺主。
-          - 2026-07-09：耗时改用 effectiveDeployElapsedMs（剔除排队等待），排队中不判 overdue。
-        */}
-        {isInterim ? (() => {
-          const estimate = pickDeployEstimate(branch);
-          const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
-          const queuedNow = Boolean(branch.buildQueue);
-          const ratio = estimate && estimate.medianMs > 0
-            ? Math.min(1, elapsedMs / estimate.medianMs)
-            : 0;
-          const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
-          const elapsedText = formatDurationMs(elapsedMs);
-          const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow
-            ? `（另有排队等待，不计入耗时）`
-            : '';
-          return (
-            <span
-              className="inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
-              title={estimate
-                ? `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
-                : `当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
-            >
-              <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
-              <span className="text-muted-foreground/80">耗时</span>
-              <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
-              {estimate ? (
-                <>
-                  <span className="text-muted-foreground/80">预计</span>
-                  <span className={`font-mono ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>{formatDurationMs(estimate.medianMs)}</span>
-                  <span
-                    className="h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))]"
-                    aria-hidden
-                  >
-                    <span
-                      className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-amber-400/70' : 'bg-primary/60'}`}
-                      style={{ width: `${Math.round(ratio * 100)}%` }}
-                    />
-                  </span>
-                </>
-              ) : null}
-            </span>
-          );
-        })() : null}
         {/*
           2026-06-23 极速版（CI 预构建）状态。push 后不在 CDS 本机编译,等 GitHub Actions
           把该 commit 编译成 ghcr 镜像;期间显示「等待 CI 镜像」(动效不静止,符合禁止空白
@@ -6055,8 +6228,9 @@ const BranchCard = memo(function BranchCard({
 
       {/* 错误提醒已并入上方端口槽位（与停止/降温提醒同一行、只此一处），不再单独占一行（2026-06-22 用户："只一个提醒"）。 */}
 
+      {coolEditOpen ? <CoolPolicyEditorModal onClose={() => setCoolEditOpen(false)} /> : null}
       <footer
-        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
+        className="mt-auto grid grid-cols-[minmax(0,1fr)_auto_auto] items-center gap-2 border-t border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/42 px-5 py-3"
         onClick={(event) => {
           const target = event.target as HTMLElement;
           if (target.closest('button,a,input,textarea,select,[role="menuitem"]')) {
@@ -6127,6 +6301,64 @@ const BranchCard = memo(function BranchCard({
           </div>
           {commitHistoryPanel}
         </div>
+        {/* 构建进度簇（2026-07-26 用户拍板挪到右下角）：构建中状态 + 计时、排队、
+            模式/净耗时/预计 + 细进度条。顶部 chips 行构建期间保持端口/容器信息。 */}
+        {isInterim ? (
+          <div className="flex min-w-0 flex-wrap items-center justify-end gap-1.5">
+            {/* 2026-07-26 用户纠偏：独立「构建中 + 计时」chip 冗余（耗时在进度 pill
+                里已有）且会挤压遮挡左侧 commit sha——删除，状态由 pill 内脉冲色点承载 */}
+            {branch.buildQueue ? (
+              <span
+                className="inline-flex h-6 shrink-0 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+                title={`构建并发已满（${branch.buildQueue.active}/${branch.buildQueue.max} 进行中），本分支排队等待构建槽位；已等待 ${formatElapsedFrom(branch.buildQueue.queuedAt, now)}。排队时间不计入构建耗时对比。`}
+              >
+                <span className="h-1.5 w-1.5 animate-pulse rounded-full bg-sky-400" aria-hidden />
+                排队 · 前面 {branch.buildQueue.ahead} 个
+              </span>
+            ) : null}
+            {(() => {
+              const estimate = pickDeployEstimate(branch);
+              const elapsedMs = effectiveDeployElapsedMs(branch, busySince, now);
+              const queuedNow = Boolean(branch.buildQueue);
+              const ratio = estimate && estimate.medianMs > 0
+                ? Math.min(1, elapsedMs / estimate.medianMs)
+                : 0;
+              const overdue = estimate && !queuedNow ? elapsedMs > estimate.medianMs : false;
+              const elapsedText = formatDurationMs(elapsedMs);
+              const queueSuffix = (branch.lastDeployQueueWaitMs || 0) > 0 || queuedNow
+                ? `（另有排队等待，不计入耗时）`
+                : '';
+              return (
+                <span
+                  className="branch-build-elapsed inline-flex h-6 shrink-0 items-center gap-2 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2 text-xs text-muted-foreground"
+                  data-since={busySince || ''}
+                  title={estimate
+                    ? `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}，预计 ${formatDurationMs(estimate.medianMs)}（近 ${estimate.samples} 次成功部署的中位值）`
+                    : `${statusLabel(branch.status)}；当前以「${deployModeLabel(branch)}」部署；净耗时 ${elapsedText}${queueSuffix}；暂无历史样本，完成后将累积预计耗时`}
+                >
+                  <span className={`h-1.5 w-1.5 shrink-0 animate-pulse rounded-full ${statusRailClass(branch.status)}`} aria-hidden />
+                  <span className="font-medium text-foreground/85">{deployModeLabel(branch)}</span>
+                  <span className="branch-deploy-timer-value font-mono text-foreground/85">{elapsedText}</span>
+                  {estimate ? (
+                    // 窄卡（<640px）只留净耗时，预计值 + 进度条收进 sm: 以上——防 footer 换行拥挤
+                    <>
+                      <span className={`hidden font-mono sm:inline ${overdue ? 'text-amber-400' : 'text-foreground/70'}`}>/ {formatDurationMs(estimate.medianMs)}</span>
+                      <span
+                        className="hidden h-1 w-10 overflow-hidden rounded-full bg-[hsl(var(--hairline))] sm:block"
+                        aria-hidden
+                      >
+                        <span
+                          className={`block h-full rounded-full transition-[width] duration-700 ease-out ${overdue ? 'bg-amber-400/70' : 'bg-primary/60'}`}
+                          style={{ width: `${Math.round(ratio * 100)}%` }}
+                        />
+                      </span>
+                    </>
+                  ) : null}
+                </span>
+              );
+            })()}
+          </div>
+        ) : null}
         {/*
           重设计(2026-07-22 用户主诉求):
             - running 态:预览 + 发布合并成一个 split button。主按钮预览,

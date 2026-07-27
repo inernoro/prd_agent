@@ -1,0 +1,151 @@
+/**
+ * Forwarder 复制集分流单测 — design.cds.replica-set
+ *
+ * 实现位置:cds/src/forwarder/route-resolver.ts（pickReplica + resolveRoute 扩展）
+ * 契约:
+ *   - 不带 replicaGroup 的存量路由行为逐字节不变（weight<=0 = 禁用）
+ *   - 组内选择:粘性 > 加权随机 > 主成员回落
+ *   - weight=0 成员不参与随机,但可被粘性直达
+ */
+import { describe, it, expect } from 'vitest';
+import { pickReplica, resolveRoute } from '../../src/forwarder/route-resolver.js';
+import type { RouteRecord } from '../../src/forwarder/types.js';
+
+function r(partial: Partial<RouteRecord> & { _id: string; host: string }): RouteRecord {
+  return {
+    upstreamPort: 9001,
+    weight: 100,
+    ...partial,
+  } as RouteRecord;
+}
+
+const GROUP = 'br1:prd-api';
+
+function replicaGroupRoutes(): RouteRecord[] {
+  return [
+    r({ _id: 'g:primary', host: 'demo.miduo.org', upstreamPort: 9100, weight: 90, replicaGroup: GROUP, replicaMemberId: 'primary' }),
+    r({ _id: 'g:rs01', host: 'demo.miduo.org', upstreamPort: 9200, weight: 10, replicaGroup: GROUP, replicaMemberId: 'rsaaaaaa' }),
+    r({ _id: 'g:rs02', host: 'demo.miduo.org', upstreamPort: 9300, weight: 0, replicaGroup: GROUP, replicaMemberId: 'rsbbbbbb' }),
+  ];
+}
+
+describe('RouteResolver — 复制集组内选择', () => {
+  it('无 replicaGroup 时行为不变:weight=0 仍是禁用', () => {
+    const routes = [
+      r({ _id: 'a', host: 'demo.miduo.org', weight: 0, upstreamPort: 9100 }),
+      r({ _id: 'b', host: 'demo.miduo.org', weight: 100, upstreamPort: 9200 }),
+    ];
+    expect(resolveRoute(routes, 'demo.miduo.org', '/')?._id).toBe('b');
+  });
+
+  it('粘性 cookie 命中成员:即使 weight=0 也直达', () => {
+    const hit = resolveRoute(replicaGroupRoutes(), 'demo.miduo.org', '/', { sticky: 'rsbbbbbb' });
+    expect(hit?.upstreamPort).toBe(9300);
+    expect(hit?.replicaMemberId).toBe('rsbbbbbb');
+  });
+
+  it('粘性失配（成员已移除）回落加权选择,不 404', () => {
+    const hit = resolveRoute(replicaGroupRoutes(), 'demo.miduo.org', '/', {
+      sticky: 'rs_gone',
+      rand: () => 0,
+    });
+    expect(hit?.replicaMemberId).toBe('primary');
+  });
+
+  it('加权随机:rand 落在权重区间内选对应成员', () => {
+    // 权重 [primary=90, rsaaaaaa=10],rand=0.95 → 累计 90 之后 → 成员
+    const hit = resolveRoute(replicaGroupRoutes(), 'demo.miduo.org', '/', { rand: () => 0.95 });
+    expect(hit?.replicaMemberId).toBe('rsaaaaaa');
+    const hit2 = resolveRoute(replicaGroupRoutes(), 'demo.miduo.org', '/', { rand: () => 0.1 });
+    expect(hit2?.replicaMemberId).toBe('primary');
+  });
+
+  it('总权重为 0 时回落主成员', () => {
+    const routes = [
+      r({ _id: 'g:p', host: 'demo.miduo.org', upstreamPort: 9100, weight: 0, replicaGroup: GROUP, replicaMemberId: 'primary' }),
+      r({ _id: 'g:m', host: 'demo.miduo.org', upstreamPort: 9200, weight: 0, replicaGroup: GROUP, replicaMemberId: 'rsaaaaaa' }),
+    ];
+    expect(resolveRoute(routes, 'demo.miduo.org', '/')?.replicaMemberId).toBe('primary');
+  });
+
+  it('组内选择不跨 prefix:更具体 prefix 的普通路由优先于组', () => {
+    const routes = [
+      ...replicaGroupRoutes(),
+      r({ _id: 'x', host: 'demo.miduo.org', pathPrefix: '/api/', upstreamPort: 9400 }),
+    ];
+    expect(resolveRoute(routes, 'demo.miduo.org', '/api/v1')?.upstreamPort).toBe(9400);
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { rand: () => 0.1 })?.upstreamPort).toBe(9100);
+  });
+
+  it('组作用域粘性 stickyFor:按本组 replicaGroup 查值,他组的钉选不串味（Codex P1）', () => {
+    // 两个组各有一个 res-1 语义的成员;stickyFor 只对匹配组返回钉选
+    const groupB = 'br1:web';
+    const routes = [
+      ...replicaGroupRoutes(),
+      r({ _id: 'b:primary', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9500, weight: 100, replicaGroup: groupB, replicaMemberId: 'primary' }),
+      r({ _id: 'b:rs01', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9600, weight: 0, replicaGroup: groupB, replicaMemberId: 'rsaaaaaa' }),
+    ];
+    const stickyFor = (g: string): string | undefined => (g === GROUP ? 'rsbbbbbb' : undefined);
+    // A 组:钉到 weight=0 的 rsbbbbbb（cookie 粘性生效）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { stickyFor })?.replicaMemberId).toBe('rsbbbbbb');
+    // B 组:A 组的钉选不外溢——B 组无钉选,按权重回主成员（rsaaaaaa weight=0 不该被 A 组的 cookie 钉中）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { stickyFor })?.replicaMemberId).toBe('primary');
+    // 显式 sticky（query __rs / header）优先于组 cookie
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: 'rsaaaaaa', stickyFor })?.replicaMemberId).toBe('rsaaaaaa');
+  });
+
+  it('显式钉选支持多值（项目级整组预览）:组内命中任一 id 即钉,他组 id 被忽略（Codex P1）', () => {
+    const groupB = 'br1:web';
+    const routes = [
+      ...replicaGroupRoutes(),
+      r({ _id: 'b:primary', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9500, weight: 100, replicaGroup: groupB, replicaMemberId: 'primary' }),
+      r({ _id: 'b:rs09', host: 'demo.miduo.org', pathPrefix: '/web/', upstreamPort: 9600, weight: 0, replicaGroup: groupB, replicaMemberId: 'rscccccc' }),
+    ];
+    const multi = ['rsbbbbbb', 'rscccccc'];
+    // A 组命中 rsbbbbbb（weight=0 仍钉中）,B 组命中 rscccccc
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: multi })?.replicaMemberId).toBe('rsbbbbbb');
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { sticky: multi })?.replicaMemberId).toBe('rscccccc');
+    // 列表里没有本组成员 → 回落加权（不误钉）：rand=0.5 落在 primary 权重区间（90/100）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: ['rszzzzzz'], rand: () => 0.5 })?.replicaMemberId).toBe('primary');
+    // profile 作用域条目（Codex P1 二连）：`prd-api:rsbbbbbb` 只命中 GROUP（br1:prd-api），
+    // 同名成员出现在 web 组也不会被钉（作用域不匹配走加权回主成员）
+    expect(resolveRoute(routes, 'demo.miduo.org', '/', { sticky: ['prd-api:rsbbbbbb'] })?.replicaMemberId).toBe('rsbbbbbb');
+    expect(resolveRoute(routes, 'demo.miduo.org', '/web/x', { sticky: ['prd-api:rscccccc'], rand: () => 0.5 })?.replicaMemberId).toBe('primary');
+  });
+
+  it('pickReplica 分布粗检:1000 次 rand 均匀采样,成员占比接近其权重', () => {
+    const group = replicaGroupRoutes();
+    let memberHits = 0;
+    for (let i = 0; i < 1000; i += 1) {
+      const picked = pickReplica(group, { rand: () => (i + 0.5) / 1000 });
+      if (picked.replicaMemberId === 'rsaaaaaa') memberHits += 1;
+    }
+    expect(memberHits).toBeGreaterThan(80);
+    expect(memberHits).toBeLessThan(120);
+  });
+});
+
+describe('半开探针占位只给最终选中者（Codex 第十六轮 P2）', () => {
+  it('加权掷签落到健康成员时，落选的半开成员不被占位', () => {
+    const reserved: string[] = [];
+    const picked = pickReplica(replicaGroupRoutes(), {
+      isEjected: () => false,
+      reserveProbe: (r2) => reserved.push(r2.replicaMemberId!),
+      rand: () => 0.5, // 权重 90/10，0.5 落 primary
+    });
+    expect(picked.replicaMemberId).toBe('primary');
+    // 占位回调只对最终选中者发生一次——候选过滤阶段不烧任何成员的探针名额
+    expect(reserved).toEqual(['primary']);
+  });
+
+  it('掷签落到半开成员本身时，占位给它', () => {
+    const reserved: string[] = [];
+    const picked = pickReplica(replicaGroupRoutes(), {
+      isEjected: () => false,
+      reserveProbe: (r2) => reserved.push(r2.replicaMemberId!),
+      rand: () => 0.95, // 落到 10% 的 rsaaaaaa
+    });
+    expect(picked.replicaMemberId).toBe('rsaaaaaa');
+    expect(reserved).toEqual(['rsaaaaaa']);
+  });
+});

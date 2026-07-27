@@ -16,9 +16,11 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService } from './services/janitor.js';
+import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
+import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
@@ -40,6 +42,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { settleMemberAfterStop } from './services/replica-stop.js';
 import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
@@ -1459,6 +1462,51 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopped';
     }
   }
+  // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
+  // branch.services 快照里，上面的循环停不到它们。不停的话，降温分支的副本
+  // 继续占资源；更糟的是主容器已停、成员还挂着分流权重，入口流量会被加权
+  // 路由导向一个"半活"的分支。与手动 /stop 的级联语义保持一致（配套的
+  // /restart 级联拉起已同步落地）。
+  for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+    for (const member of replicaSet.members) {
+      branchOperationLease?.assertCurrent(`scheduler cooling before replica ${replicaSet.profileId}--${member.id}`);
+      if (member.containerName) {
+        try {
+          await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            operationId: branchOperationLease?.operationId || null,
+            actor: 'scheduler',
+            trigger: 'scheduler',
+            operation: 'scheduler-cooling-replica-member',
+            source: 'schedulerService.setCoolFn',
+          });
+        } catch (err) {
+          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+        }
+      }
+      // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
+      // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
+      // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
+      await settleMemberAfterStop(member, {
+        isRunning: (name) => containerService.isRunning(name),
+        interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
+        onStillRunning: (containerName) => {
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'schedulerService.setCoolFn',
+            action: 'replica.member.stop.failed',
+            message: `副本容器降温停止失败但仍在运行: ${containerName}`,
+            branchId: branch.id,
+            projectId: branch.projectId,
+            containerName,
+          });
+        },
+      });
+    }
+  }
   await archiveBranchContainerLogs({
     stateService,
     containerService,
@@ -1861,9 +1909,25 @@ const janitorService = new JanitorService(
   config.janitor,
   config.worktreeBase,
 );
+// 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
+// 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
+// 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
+// 文件系统上，而镜像层/容器可写层/state mongo 卷全落在 docker 那侧——2026-07-27
+// 撑爆的正是 containerd（159GB）。只量 worktree 会在 docker 盘 95% 时报「一切正常」。
+diskGuard.setProbe(() => {
+  const readings = [defaultDiskUsage(config.worktreeBase)];
+  const dockerRoot = resolveDockerDataRoot();
+  if (dockerRoot) readings.push(defaultDiskUsage(dockerRoot));
+  return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
+});
+diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+// infra 生命周期取证器（debt.cds.replica-set #17）：常驻 docker events 监听，
+// 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
+const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
+
 const infraFlapWatchdog = new InfraFlapWatchdog(
   {
     shell,
@@ -1998,6 +2062,49 @@ const autoLifecycleService = new AutoLifecycleService(
             console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
           }
           svc.status = 'stopped';
+        }
+      }
+      // 复制集成员级联停止（Codex P1，2026-07-26）：与手动 /stop、调度器 coolFn
+      // 同款——auto-lifecycle 自动停止此前只停 branch.services，副本容器留活：
+      // 分支标 idle 后发布器的「成员兜底」仍把它们发进路由表，"已停止"的分支
+      // 对公网依旧可达且持续占资源。无容器的 provisioning 成员同样标 stopped，
+      // 物化栅栏按状态放弃。
+      for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          branchOperationLease?.assertCurrent(`auto-lifecycle stop before replica ${replicaSet.profileId}--${member.id}`);
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                projectId: branch.projectId,
+                branchId: branch.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                operationId: branchOperationLease?.operationId || null,
+                actor: 'auto-lifecycle',
+                trigger: 'auto-lifecycle',
+                operation: 'auto-lifecycle-stop-replica-member',
+                source: 'autoLifecycleService.stopBranch',
+              });
+            } catch (err) {
+              console.warn(`[auto-lifecycle] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+            }
+          }
+          // 停止必须核实再落状态（三处循环之一，判定见 services/replica-stop.ts）
+          await settleMemberAfterStop(member, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '物化被 auto-lifecycle 自动停止中断，可在画布删除后重建',
+            onStillRunning: (containerName) => {
+              activeServerEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'autoLifecycleService.stopBranch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器自动停止失败但仍在运行: ${containerName}`,
+                branchId: branch.id,
+                projectId: branch.projectId,
+                containerName,
+              });
+            },
+          });
         }
       }
       await archiveBranchContainerLogs({
@@ -2939,6 +3046,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     // 缺 cmd 灾难的根因防御。standalone / scheduler 角色启用,executor 跳过。
     if (config.mode !== 'executor') {
       infraFlapWatchdog.start();
+      infraLifecycleWatcher.start();
     }
     // 2026-07-15:孤儿容器收割器。删除的项目/分支残留的 cds-managed 容器
     //（state 中无 owner）定期停掉——单日取证 68 个孤儿 app 容器 + 用户报告的
@@ -2984,6 +3092,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
+    infraLifecycleWatcher.stop();
     forwarderRoutePublisher?.stop();
     previewCanaryService?.stop();
   }

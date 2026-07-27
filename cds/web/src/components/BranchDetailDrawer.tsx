@@ -12,6 +12,9 @@ import { ActiveDeployment } from '@/components/deployment/ActiveDeployment';
 import { HistoryRow } from '@/components/deployment/HistoryRow';
 import { PreviewActionSplitButton } from '@/components/branch/PreviewActionSplitButton';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
+import { ReplicaSetPanel, type ProfileReplicaSetView } from '@/components/branch/ReplicaSetPanel';
+import { Layers, Lock, Plus } from 'lucide-react';
+import { createPortal } from 'react-dom';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
 import { deriveBranchPhases, type PhaseKey } from '@/lib/deploymentPhases';
 import { normalizeContainerLogsForDisplay } from '@/lib/containerLogs';
@@ -60,6 +63,8 @@ interface BranchDetailData {
   previewSlug?: string;
   previewUrl?: string;
   services: Record<string, ServiceState>;
+  /** 复制集模式（design.cds.replica-set）：profileId → 配置。用于资源卡特殊标识与「复制集」tab。 */
+  replicaSets?: Record<string, ProfileReplicaSetView>;
   resources?: BranchResource[];
   createdAt?: string;
   commitSha?: string;
@@ -336,7 +341,7 @@ export interface BranchDeploymentItem {
   deployMode?: string;
 }
 
-type DrawerTab = 'overview' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
+type DrawerTab = 'overview' | 'run' | 'deployments' | 'services' | 'logs' | 'variables' | 'config' | 'metrics' | 'settings';
 export type BranchResourceDetailTab = 'overview' | 'connection' | 'data' | 'backups' | 'variables' | 'metrics' | 'logs' | 'settings';
 type ResourceCloneMode = 'empty' | 'clone-main' | 'restore-backup' | 'connect-existing';
 
@@ -361,16 +366,25 @@ type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
 const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
 const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
 
+/**
+ * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
+ *   总览=现在怎么样（原详情 + 指标并入）；运行=跑着几个怎么分流；
+ *   部署=发生过什么发布（构建日志内联到每条部署，不再跳页签）；
+ *   日志=容器在说什么（只留持续流：容器/系统/Webhook/HTTP，构建模式移除归部署）；
+ *   配置=下次怎么跑（生效变量 + 配置检查器 + 分支设置三分区）；资源=数据在哪。
+ * 分类原则：一次性记录跟事件走、持续流水跟对象走、读与写同域合并。
+ */
 const drawerTabs: Array<{ key: DrawerTab; label: string; planned?: boolean }> = [
-  { key: 'overview', label: '详情' },
+  { key: 'overview', label: '总览' },
+  { key: 'run', label: '运行' },
   { key: 'deployments', label: '部署' },
-  { key: 'services', label: '资源' },
   { key: 'logs', label: '日志' },
-  { key: 'variables', label: '变量' },           // 2026-05-04 Phase A 落地
-  { key: 'config', label: '配置' },              // 2026-07-06 波2 配置检查器(逐 key 溯源 + 部署计划)
-  { key: 'metrics', label: '指标' },             // 2026-05-04 Phase B 落地
-  { key: 'settings', label: '设置' },            // 2026-05-04 Phase C 落地
+  { key: 'config', label: '配置' },
+  { key: 'services', label: '资源' },
 ];
+
+/** 配置页签内三分区（方案 A：变量/检查器/设置读写同域合并） */
+type ConfigSection = 'variables' | 'inspector' | 'settings';
 
 // Phase A (2026-05-04):分支生效环境变量
 type EnvSource = 'cds-builtin' | 'cds-derived' | 'mirror' | 'global' | 'project' | 'branch';
@@ -489,6 +503,23 @@ interface MetricSeries {
   txRate: number[];     // bytes/sec
 }
 const METRIC_RING_SIZE = 60;
+
+/** 总览仪表块（2026-07-26「让总览像一个总览」）：大数字 + 语义色点 + 一句副文案 */
+function OverviewTile({ label, value, sub, tone = 'muted', mono }: {
+  label: string; value: string; sub?: string; tone?: 'good' | 'bad' | 'muted'; mono?: boolean;
+}): JSX.Element {
+  const dot = tone === 'good' ? '#10b981' : tone === 'bad' ? '#ef4444' : 'hsl(var(--muted-foreground))';
+  return (
+    <div className="rounded-xl border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))]/70 px-3.5 py-3">
+      <div className="flex items-center gap-1.5 text-[11px] font-medium uppercase tracking-wide text-muted-foreground">
+        <span className="h-1.5 w-1.5 rounded-full" style={{ background: dot }} aria-hidden />
+        {label}
+      </div>
+      <div className={`mt-1 truncate text-lg font-bold ${tone === 'bad' ? 'text-destructive' : ''} ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+      {sub ? <div className="mt-0.5 truncate text-[11px] text-muted-foreground" title={sub}>{sub}</div> : null}
+    </div>
+  );
+}
 
 function DrawerTabButton({
   tab,
@@ -834,7 +865,10 @@ export function BranchDetailDrawer({
   const [loading, setLoading] = useState(false);
   const [headerRefreshing, setHeaderRefreshing] = useState(false);
   const [error, setError] = useState('');
-  const [activeTab, setActiveTab] = useState<DrawerTab>('deployments');
+  // 2026-07-26 用户拍板：总览承载入口卡就必须坐第一号位——打开抽屉默认总览（仪表盘）
+  const [activeTab, setActiveTab] = useState<DrawerTab>('overview');
+  // 方案 A：配置页签内三分区（生效变量 / 配置检查器 / 分支设置）
+  const [configSection, setConfigSection] = useState<ConfigSection>('variables');
   // Phase A — Variables tab(2026-05-04)
   const [envState, setEnvState] = useState<EffectiveEnvState>({ status: 'idle' });
   // 已 reveal 的 secret 明文 cache:key → 明文。server-side redaction 之后,
@@ -1090,7 +1124,7 @@ export function BranchDetailDrawer({
   useEffect(() => {
     if (!open || !branchId) return;
     failureAutoSwitchedRef.current = false;
-    setActiveTab(initialResourceId ? 'services' : 'deployments');
+    setActiveTab(initialResourceId ? 'services' : 'overview');
     setLogsMode('system');
     setSelectedBuildLog(null);
     setSelectedServiceId(null);
@@ -1228,10 +1262,10 @@ export function BranchDetailDrawer({
   }, [branchId]);
 
   useEffect(() => {
-    if (activeTab === 'variables' && envState.status === 'idle') {
+    if (activeTab === 'config' && configSection === 'variables' && envState.status === 'idle') {
       void loadEnv();
     }
-  }, [activeTab, envState.status, loadEnv]);
+  }, [activeTab, configSection, envState.status, loadEnv]);
 
   useEffect(() => {
     if (activeTab !== 'logs' || !branch) return;
@@ -1311,7 +1345,8 @@ export function BranchDetailDrawer({
   }, [branchId]);
 
   useEffect(() => {
-    if (activeTab !== 'metrics' || !branchId) return;
+    // 方案 A：指标并入总览（原独立「指标」页签取消）——总览打开时轮询
+    if (activeTab !== 'overview' || !branchId) return;
     // 立即拉一次,然后每 5s 轮询。docker stats 一次 ~300-800ms,5s 周期足够。
     // Bugbot PR #524 第七轮反馈:把 loadMetrics 加入 deps,避免未来给
     // loadMetrics 加新依赖时 setInterval 静默捕获 stale 闭包。loadMetrics 自身
@@ -1451,10 +1486,12 @@ export function BranchDetailDrawer({
     if (!branchId) return;
     setSelectedServiceId(profileId);
     setServiceLogs({ status: 'loading', profileId });
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：选择键形如 `pid::memberId`
+    const [pid, memberId] = profileId.split('::');
     try {
       const res = await apiRequest<{ logs: string }>(`/api/branches/${encodeURIComponent(branchId)}/container-logs`, {
         method: 'POST',
-        body: { profileId },
+        body: memberId ? { profileId: pid, memberId } : { profileId },
       });
       setServiceLogs({ status: 'ok', profileId, logs: res.logs || '' });
     } catch (err) {
@@ -1476,9 +1513,9 @@ export function BranchDetailDrawer({
         } else if (logsMode === 'container' && selectedServiceId) {
           await loadServiceLogs(selectedServiceId);
         }
-      } else if (activeTab === 'variables') {
+      } else if (activeTab === 'config') {
         await loadEnv();
-      } else if (activeTab === 'metrics') {
+      } else if (activeTab === 'overview') {
         await loadMetrics();
       }
       onToast?.('已刷新当前分支面板');
@@ -1582,7 +1619,106 @@ export function BranchDetailDrawer({
     });
   }, [branch, infraServices, previewUrl, resourceProfiles, resourceSnapshot]);
   const selectedResource = resources.find((resource) => resource.id === selectedResourceId) || resources[0] || null;
-  const selectedService = services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
+  // 复制集副本日志目标（2026-07-26 用户反馈「副本日志看不了 / 分不清」修复）：
+  // 副本选择键形如 `pid::memberId`，在 services 里永远匹配不到——旧代码兜底到
+  // services[0]，面板身份校验（state.profileId === service.profileId）失败后直接
+  // 显示「暂无容器日志」——副本日志加载成功却永远看不见。现在副本合成一个
+  // 「服务形状」的展示对象（身份键 = 复合键），面板/复制按钮同一链路直出。
+  const memberLogTargets = useMemo(() =>
+    Object.entries((branch?.replicaSets as Record<string, { enabled?: boolean; members?: Array<{ id: string; status?: string; hostPort?: number; containerName?: string }> }> | undefined) ?? {})
+      .flatMap(([pid, rs]) => (rs?.enabled ? rs.members ?? [] : []).map((m) => ({ key: `${pid}::${m.id}`, pid, member: m }))),
+  [branch?.replicaSets]);
+  const selectedMemberTarget = memberLogTargets.find((t) => t.key === selectedServiceId) || null;
+  const selectedService = selectedMemberTarget
+    ? null
+    : services.find((svc) => svc.profileId === selectedServiceId) || services[0] || null;
+  const selectedLogService: ServiceState | null = selectedMemberTarget
+    ? {
+        profileId: selectedMemberTarget.key,
+        containerName: selectedMemberTarget.member.containerName || `cds-${branch?.id ?? ''}-${selectedMemberTarget.pid}-${selectedMemberTarget.member.id}`,
+        hostPort: selectedMemberTarget.member.hostPort ?? 0,
+        status: selectedMemberTarget.member.status === 'running' ? 'running'
+          : selectedMemberTarget.member.status === 'error' ? 'error' : 'starting',
+      }
+    : selectedService;
+  // 复制集化（含成员）的服务集合：资源卡加特殊标识（design.cds.replica-set）
+  const replicaProfileIds = useMemo(() => {
+    const set = new Set<string>();
+    for (const [profileId, replicaSet] of Object.entries(branch?.replicaSets ?? {})) {
+      if (replicaSet?.enabled && (replicaSet.members?.length ?? 0) > 0) set.add(profileId);
+    }
+    return set;
+  }, [branch?.replicaSets]);
+  // 芯片级复制集信息：成员数 + 是否有启动中的成员（光环动画依据）
+  const replicaChipInfo = useMemo(() => {
+    const map: Record<string, { members: number; provisioning: boolean }> = {};
+    for (const [profileId, replicaSet] of Object.entries(branch?.replicaSets ?? {})) {
+      if (!replicaSet?.enabled) continue;
+      map[profileId] = {
+        members: replicaSet.members?.length ?? 0,
+        provisioning: (replicaSet.members ?? []).some((m) => m.status === 'provisioning'),
+      };
+    }
+    return map;
+  }, [branch?.replicaSets]);
+  // Railway 式「+ N 副本」：当前版本同版本实例，权重自动均分（design.cds.replica-set MVP-3）
+  // 芯片快捷加副本也走执行计划（与复制集页签「草稿-保存」同一模型：有执行记录、
+  // 失败可见、CDS 重启有启动收敛兜底——不许存在绕过计划的隐形执行通道）
+  const quickAddReplicas = useCallback(async (profileId: string, count: number) => {
+    if (!branchId) return;
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/replica-plans`, {
+        method: 'POST',
+        body: {
+          onFailure: 'stop',
+          // 芯片快捷加副本是单容器操作 → 容器级模式；分支若已钉在项目级会被后端 409 拦下（二选一）
+          mode: 'container',
+          steps: Array.from({ length: count }, () => ({ kind: 'add-replica', profileId })),
+        },
+      });
+      onToast?.(`已保存执行计划：${profileId} 新增 ${count} 个副本，进度见「部署 → 复制集」`);
+      void load();
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, load, onToast]);
+  // 数据库保护罩（design.cds.replica-set 波4）：锁按钮一键克隆隔离副本，
+  // 克隆期间芯片环绕动画，轮询进度直到 done/error（禁止空白等待）。
+  const [dbGuardBusy, setDbGuardBusy] = useState<Record<string, boolean>>({});
+  const startDbGuard = useCallback(async (infraId: string) => {
+    if (!branchId) return;
+    try {
+      await apiRequest(`/api/branches/${encodeURIComponent(branchId)}/db-guard`, {
+        method: 'POST',
+        body: { infraId },
+      });
+      setDbGuardBusy((prev) => ({ ...prev, [infraId]: true }));
+      onToast?.('保护罩启动：正在整库克隆隔离副本…');
+      const poll = async (): Promise<void> => {
+        try {
+          const res = await apiRequest<{ run: { stage: string; detail: string; dbName?: string } | null }>(
+            `/api/branches/${encodeURIComponent(branchId)}/db-guard/${encodeURIComponent(infraId)}`,
+          );
+          if (res.run?.stage === 'done') {
+            setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+            onToast?.(res.run.detail || `隔离副本 ${res.run.dbName} 已就绪，见「部署 → 复制集」数据快照`);
+            return;
+          }
+          if (res.run?.stage === 'error') {
+            setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+            onToast?.(`保护罩失败：${res.run.detail}`);
+            return;
+          }
+          setTimeout(() => { void poll(); }, 3000);
+        } catch {
+          setDbGuardBusy((prev) => ({ ...prev, [infraId]: false }));
+        }
+      };
+      setTimeout(() => { void poll(); }, 3000);
+    } catch (err) {
+      onToast?.(err instanceof ApiError ? err.message : String(err));
+    }
+  }, [branchId, onToast]);
 
   useEffect(() => {
     if (!open || activeTab !== 'services') return;
@@ -1730,10 +1866,11 @@ export function BranchDetailDrawer({
     return { [targetPhase]: state };
   }, [activeDeployment, activeDeploymentPhases, deploymentLogProfileId, failedPhaseKey, failureDiag, serviceLogs]);
 
+  // 方案 A：构建日志是「某一次部署」的一次性记录——就地在部署页签内联展开，
+  // 不再跳到日志页签（旧「日志·构建」模式已移除，消除双日志面板）
   const openBuildLogs = useCallback((selection?: BuildLogSelection) => {
     setSelectedBuildLog(selection || null);
-    setLogsMode('build');
-    setActiveTab('logs');
+    setActiveTab('deployments');
   }, []);
 
   const openDeploymentBuildLogs = useCallback((deployment: BranchDeploymentItem) => {
@@ -1764,13 +1901,14 @@ export function BranchDetailDrawer({
   }, [branch]);
 
   const openContainerLogs = useCallback((profileId?: string) => {
-    const target = profileId || selectedService?.profileId;
+    // 复合键（副本）与普通服务键都接受：优先显式传入，其次保持当前选择
+    const target = profileId || selectedServiceId || selectedService?.profileId;
     setLogsMode('container');
     setActiveTab('logs');
     if (target) {
       void loadServiceLogs(target);
     }
-  }, [loadServiceLogs, selectedService?.profileId]);
+  }, [loadServiceLogs, selectedServiceId, selectedService?.profileId]);
 
   const openFailureLogs = useCallback((profileId?: string) => {
     openContainerLogs(profileId);
@@ -1808,6 +1946,15 @@ export function BranchDetailDrawer({
               <>
                 <span className="text-muted-foreground/60">·</span>
                 <span className="min-w-0 truncate whitespace-nowrap font-mono text-xs">{branch.branch}</span>
+                {/* 2026-07-25 用户拍板：状态条并入标题行（不重要信息丢弃，不再单独占一格） */}
+                <span className={`shrink-0 rounded border px-1.5 py-0.5 text-[10px] ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
+                {branch.commitSha ? <span className="shrink-0 font-mono text-[11px] text-muted-foreground">{branch.commitSha.slice(0, 7)}</span> : null}
+                {(() => {
+                  const svcList = Object.values(branch.services || {});
+                  if (!svcList.length) return null;
+                  const up = svcList.filter((x) => (x as { status?: string }).status === 'running').length;
+                  return <span className="shrink-0 text-[11px] text-muted-foreground">服务 {up}/{svcList.length}</span>;
+                })()}
               </>
             ) : null}
           </div>
@@ -1883,7 +2030,9 @@ export function BranchDetailDrawer({
                   状态判定同时看抽屉内快照 branch.status 与父组件经 SSE 实时透传的
                   branchStatus —— 抽屉打开期间 building→running 时 branch 快照不刷,
                   只看 branch.status 会让 URL 卡在部署完成后仍隐藏(Codex review P2)。 */}
-              {(branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
+              {/* 2026-07-26 用户拍板：入口卡不再常驻抽屉头部占每个页签 ~180px——
+                  只在「总览」（现在怎么样）保留；「运行」页签由画布入口节点承载同一组入口 */}
+              {activeTab === 'overview' && (branch.status === 'running' || branchStatus === 'running') && (previewUrl || branch.previewUrl) ? (
                 <div className="mx-5 mt-4 rounded-xl border border-emerald-500/40 bg-emerald-500/[0.07] p-3">
                   <div className="mb-2 flex items-center gap-1.5 px-1 text-sm font-semibold text-emerald-600 dark:text-emerald-400">
                     <Rocket className="h-4 w-4" />
@@ -1980,38 +2129,11 @@ export function BranchDetailDrawer({
                   const recoveredRuntimeWithoutDeployLog =
                     branch.status === 'running' && !branch.lastDeployAt && Boolean(branch.lastReadyAt || branch.lastAccessedAt);
                   const displayedDeployCount = Math.max(branch.deployCount || 0, recoveredRuntimeWithoutDeployLog ? 1 : 0);
+                  // 2026-07-25 用户拍板：状态条并入抽屉标题行，origin/推送/部署次数等次要信息丢弃，
+                  // 不再单独占一格；本处只保留「上次停止」这类必须让用户看到的告警。
+                  void origin; void recoveredRuntimeWithoutDeployLog; void displayedDeployCount;
                   return (
-                    <div className="mb-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/55 px-3 py-2">
-                      <div className="flex min-w-0 flex-wrap items-center gap-2">
-                        {/* 状态 / commit / 服务数上移到本卡(原「运行中」卡已删,信息不丢) */}
-                        <span className={`rounded border px-2 py-0.5 text-xs ${statusClass(branch.status)}`}>{statusLabel(branch.status)}</span>
-                        {branch.commitSha ? (
-                          <span className="font-mono text-xs text-muted-foreground">{branch.commitSha.slice(0, 7)}</span>
-                        ) : null}
-                        <span className="text-xs text-muted-foreground">
-                          服务 {services.filter((svc) => svc.status === 'running').length}/{services.length}
-                        </span>
-                        <span className={`rounded border px-2 py-0.5 text-xs font-medium ${origin.className}`}>
-                          {origin.label}
-                        </span>
-                        <span className="min-w-0 truncate text-xs text-muted-foreground">{origin.summary}</span>
-                      </div>
-                      {branch.subject ? (
-                        <div className="mt-1 min-w-0 truncate text-sm leading-6 text-muted-foreground" title={branch.subject}>
-                          {branch.subject}
-                        </div>
-                      ) : null}
-                      <div className="mt-1 grid gap-1 text-[11px] leading-5 text-muted-foreground sm:grid-cols-3">
-                        <span>
-                          最近推送：{formatDeployTimestamp(branch.lastPushAt)}
-                        </span>
-                        <span>
-                          最近部署：{formatDeployTimestamp(
-                            branch.lastDeployAt,
-                          )}
-                        </span>
-                        <span>部署次数：{displayedDeployCount}{recoveredRuntimeWithoutDeployLog ? '（运行态恢复）' : ''} · 停止次数：{branch.stopCount || 0}</span>
-                      </div>
+                    <div>
                       {/*
                         2026-05-14：分支变灰时把"何时停 / 为什么停"亮出来。
                         没有 lastStoppedAt 的老分支显示 - 即可，不破坏 layout。
@@ -2143,15 +2265,51 @@ export function BranchDetailDrawer({
               </nav>
 
               <div className="p-5">
+                {activeTab === 'run' ? (
+                  <ReplicaSetPanel
+                    branchId={branch.id}
+                    previewUrl={branch.previewUrl || previewUrl}
+                    services={branch.services || {}}
+                    infra={infraServices.map((svc) => ({ id: svc.id, name: svc.name, dockerImage: svc.dockerImage, status: svc.status }))}
+                    entries={[
+                      // 入口卡入画布（2026-07-26 用户拍板）：抽屉头部入口卡只留总览，
+                      // 运行画布的入口节点承载同一组公开入口（主应用 + 命名子域网关）
+                      ...((previewUrl || branch.previewUrl) ? [{ name: '主应用', url: (previewUrl || branch.previewUrl)! }] : []),
+                      ...[...gatewayUrls]
+                        .sort((a, b) => {
+                          const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
+                          return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                        })
+                        .map((gw) => ({ name: gw.subdomain.toLowerCase() === 'llmgw-web' ? '网关控制台' : gw.subdomain, url: gw.url })),
+                    ]}
+                    onToast={onToast}
+                  />
+                ) : null}
                 {activeTab === 'deployments' ? (
                   <div className="space-y-4">
-                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
-                    <DeploymentVersionLedger
-                      versions={deploymentVersions}
-                      currentVersionId={branch.currentVersionId}
-                      busyVersionId={versionBusyId}
-                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
-                    />
+                    {/* 方案 A：构建日志内联在部署页签（一次性记录跟事件走）——点任意
+                        部署记录的「日志」在此就地展开，不再跳日志页签 */}
+                    {selectedBuildLog ? (
+                      <section className="cds-surface-raised cds-hairline rounded-md border border-[hsl(var(--hairline))]">
+                        <header className="flex items-center gap-2 border-b border-[hsl(var(--hairline))] px-4 py-2.5">
+                          <span className="text-xs font-semibold">构建日志 · {selectedBuildLog.title}</span>
+                          {selectedBuildLog.commitSha ? (
+                            <span className="rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{selectedBuildLog.commitSha.slice(0, 7)}</span>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="ml-auto rounded p-1 text-muted-foreground hover:text-foreground"
+                            title="收起构建日志"
+                            onClick={() => setSelectedBuildLog(null)}
+                          >
+                            <X className="h-4 w-4" />
+                          </button>
+                        </header>
+                        <BuildLogsPanel logs={logs} query="" selection={selectedBuildLog} />
+                      </section>
+                    ) : null}
+                    {/* 2026-07-26 用户拍板：部署子模块（进行中/历史部署卡，含分阶段容器日志）
+                        置顶——放在部署事实账本与版本账本之上 */}
                     {!activeDeployment && historyDeployments.length === 0 ? (
                       <section className="cds-surface-raised cds-hairline rounded-md border border-dashed border-[hsl(var(--hairline))] px-4 py-8 text-center text-sm text-muted-foreground">
                         还没有构建记录。点击部署后，构建计划和日志会出现在这里。
@@ -2197,6 +2355,14 @@ export function BranchDetailDrawer({
                         </div>
                       </section>
                     ) : null}
+
+                    <DeploymentRunLedger runs={deploymentRuns} activeRunId={branch.lastDeploymentRunId} />
+                    <DeploymentVersionLedger
+                      versions={deploymentVersions}
+                      currentVersionId={branch.currentVersionId}
+                      busyVersionId={versionBusyId}
+                      onDeploy={(version, rollback) => void deployVersion(version, rollback)}
+                    />
                   </div>
                 ) : null}
 
@@ -2205,10 +2371,10 @@ export function BranchDetailDrawer({
                     <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                          {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
                           {([
-                            ['system', '系统日志'],
-                            ['build', '构建日志'],
                             ['container', '容器日志'],
+                            ['system', '系统日志'],
                             ['webhook', 'Webhook'],
                             ['http', 'HTTP'],
                           ] as Array<[LogsMode, string]>).map(([mode, label]) => (
@@ -2218,7 +2384,6 @@ export function BranchDetailDrawer({
                               className={`h-8 rounded px-3 text-xs transition-colors ${logsMode === mode ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
                               onClick={() => {
                                 if (mode === 'container') { openContainerLogs(); return; }
-                                if (mode === 'build') setSelectedBuildLog(null);
                                 setLogsMode(mode);
                               }}
                             >
@@ -2240,8 +2405,9 @@ export function BranchDetailDrawer({
                             onClick={() => {
                               if (logsMode === 'system') return void loadSystemLogs();
                               if (logsMode === 'webhook') return void loadTriggerLogs();
-                              if (logsMode === 'build' || logsMode === 'http') return void load();
-                              if (selectedService) void loadServiceLogs(selectedService.profileId);
+                              if (logsMode === 'http') return void load();
+                              const target = selectedServiceId || selectedService?.profileId;
+                              if (target) void loadServiceLogs(target);
                             }}
                           >
                             <RefreshCw />
@@ -2261,32 +2427,63 @@ export function BranchDetailDrawer({
                       />
                     ) : logsMode === 'http' ? (
                       <HttpLogsPanel events={visibleActivityEvents} query={logQuery} />
-                    ) : logsMode === 'build' ? (
-                      <BuildLogsPanel logs={logs} query={logQuery} selection={selectedBuildLog} />
                     ) : (
                       <>
-                        <div className="flex min-w-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
-                          <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
-                            {(services.length > 0 ? services : []).map((svc) => (
-                              <button
-                                key={svc.profileId}
-                                type="button"
-                                className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
-                                  selectedService?.profileId === svc.profileId
-                                    ? 'border-primary bg-primary/10 text-foreground'
-                                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground hover:text-foreground'
-                                }`}
-                                onClick={() => openContainerLogs(svc.profileId)}
-                              >
-                                <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
-                                {svc.profileId}
-                                <span className="font-mono">:{svc.hostPort || '?'}</span>
-                              </button>
-                            ))}
+                        {/* 容器选择器：主容器 / 副本容器分两行分组（2026-07-26 用户反馈——
+                            此前 10 个 chip 挤一条横滚行，副本排末尾被遮住根本翻不到） */}
+                        <div className="space-y-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
+                          <div className="flex min-w-0 items-center gap-3">
+                            <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">主容器</span>
+                            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                              {(services.length > 0 ? services : []).map((svc) => (
+                                <button
+                                  key={svc.profileId}
+                                  type="button"
+                                  className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
+                                    !selectedMemberTarget && selectedService?.profileId === svc.profileId
+                                      ? 'border-primary bg-primary/10 text-foreground'
+                                      : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground hover:text-foreground'
+                                  }`}
+                                  onClick={() => openContainerLogs(svc.profileId)}
+                                >
+                                  <span className={`h-1.5 w-1.5 rounded-full ${svc.status === 'running' ? 'bg-emerald-500' : svc.status === 'error' ? 'bg-destructive' : 'bg-muted-foreground/40'}`} />
+                                  {svc.profileId}
+                                  <span className="font-mono">:{svc.hostPort || '?'}</span>
+                                </button>
+                              ))}
+                            </div>
+                            <CopyServiceLogsButton service={selectedLogService} state={filterServiceLogs(serviceLogs, logQuery)} />
                           </div>
-                          <CopyServiceLogsButton service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                          {memberLogTargets.length > 0 ? (
+                            <div className="flex min-w-0 items-center gap-3">
+                              <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
+                              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                                {memberLogTargets.map(({ key, pid, member: m }) => (
+                                  <button
+                                    key={key}
+                                    type="button"
+                                    className={`inline-flex h-8 shrink-0 items-center gap-2 rounded-md border px-3 text-xs transition-colors ${
+                                      selectedServiceId === key
+                                        ? 'border-indigo-500 bg-indigo-500/10 text-foreground'
+                                        : 'border-indigo-500/40 bg-indigo-500/[.04] text-muted-foreground hover:text-foreground'
+                                    }`}
+                                    title={`复制集副本容器 ${pid} · ${m.id}`}
+                                    onClick={() => openContainerLogs(key)}
+                                  >
+                                    <span className={`h-1.5 w-1.5 rounded-full ${m.status === 'running' ? 'bg-emerald-500' : m.status === 'error' ? 'bg-destructive' : 'bg-amber-500'}`} />
+                                    {pid} · {m.id}
+                                    <span className="font-mono">:{m.hostPort || '?'}</span>
+                                  </button>
+                                ))}
+                              </div>
+                            </div>
+                          ) : null}
                         </div>
-                        <ServiceLogsPanel service={selectedService} state={filterServiceLogs(serviceLogs, logQuery)} />
+                        <ServiceLogsPanel
+                          service={selectedLogService}
+                          state={filterServiceLogs(serviceLogs, logQuery)}
+                          replica={selectedMemberTarget ? { pid: selectedMemberTarget.pid, memberId: selectedMemberTarget.member.id } : undefined}
+                        />
                       </>
                     )}
                   </section>
@@ -2295,6 +2492,11 @@ export function BranchDetailDrawer({
                 {activeTab === 'services' ? (
                   <ResourceConsole
                     resources={resources}
+                    replicaProfileIds={replicaProfileIds}
+                    replicaChipInfo={replicaChipInfo}
+                    onQuickReplica={quickAddReplicas}
+                    onDbGuard={startDbGuard}
+                    dbGuardBusy={dbGuardBusy}
                     selectedResource={selectedResource}
                     initialDetailTab={initialResourceDetailTab}
                     serviceLogs={serviceLogs}
@@ -2360,26 +2562,72 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'overview' ? (
-                  <section className="cds-surface-raised cds-hairline px-5 py-4">
-                    <div className="grid gap-3 text-sm">
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">分支</span>
-                        <span className="min-w-0 truncate font-mono">{branch.branch}</span>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">提交</span>
-                        <span className="font-mono">{branch.commitSha?.slice(0, 7) || '-'}</span>
-                      </div>
-                      <div className="flex justify-between gap-3">
-                        <span className="text-muted-foreground">状态</span>
-                        <span>{statusLabel(branch.status)}</span>
-                      </div>
+                {/* 总览 = 仪表盘（2026-07-26 用户拍板「让总览像一个总览」）：
+                    状态/服务/复制集/版本/CPU/内存/流量 一屏仪表块，不再是文字堆砌 */}
+                {activeTab === 'overview' ? (() => {
+                  const svcList = Object.values(branch.services || {});
+                  const upCount = svcList.filter((sv) => sv.status === 'running').length;
+                  const svcBad = svcList.some((sv) => sv.status === 'error');
+                  const rsMap = (branch as { replicaSets?: Record<string, { enabled?: boolean; members?: Array<{ status?: string }> }> }).replicaSets ?? {};
+                  const rsList = Object.values(rsMap).filter((rs) => rs?.enabled);
+                  const memberCount = rsList.reduce((n, rs) => n + (rs.members?.length ?? 0), 0);
+                  const memberBad = rsList.some((rs) => (rs.members ?? []).some((m) => m.status === 'error'));
+                  const rsMode = (branch as { replicaMode?: 'container' | 'project' }).replicaMode;
+                  const latest = (arr?: number[]): number | null => (arr && arr.length > 0 ? arr[arr.length - 1] : null);
+                  const seriesList = Object.values(metricSeries);
+                  const cpuNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.cpu) ?? 0)) : null;
+                  const memNow = seriesList.length > 0 ? Math.max(...seriesList.map((sv) => latest(sv.mem) ?? 0)) : null;
+                  const netNow = seriesList.length > 0
+                    ? seriesList.reduce((n, sv) => n + (latest(sv.rxRate) ?? 0) + (latest(sv.txRate) ?? 0), 0)
+                    : null;
+                  const running = branch.status === 'running' || branchStatus === 'running';
+                  return (
+                    <div className="grid grid-cols-2 gap-2 lg:grid-cols-4">
+                      <OverviewTile label="状态" value={statusLabel(branch.status)} sub={branch.branch}
+                        tone={branch.status === 'error' ? 'bad' : running ? 'good' : 'muted'} />
+                      <OverviewTile label="服务" value={`${upCount} / ${svcList.length}`} sub={svcBad ? '有服务异常' : '运行中 / 总数'}
+                        tone={svcBad ? 'bad' : upCount === svcList.length && svcList.length > 0 ? 'good' : 'muted'} />
+                      <OverviewTile label="复制集" value={memberCount > 0 ? `${memberCount} 副本` : '未启用'}
+                        sub={memberCount > 0 ? `${rsMode === 'project' ? '项目级' : '容器级'}${memberBad ? ' · 有异常' : ' · 入口按权重分流'}` : '在「运行」页签开启'}
+                        tone={memberBad ? 'bad' : memberCount > 0 ? 'good' : 'muted'} />
+                      <OverviewTile label="版本" value={branch.commitSha?.slice(0, 7) || '-'} sub="当前部署提交" mono />
+                      <OverviewTile label="CPU" value={cpuNow != null ? `${cpuNow.toFixed(0)}%` : '—'}
+                        sub={cpuNow != null ? '最忙服务瞬时值' : '监控采样中…'}
+                        tone={cpuNow != null && cpuNow > 85 ? 'bad' : 'muted'} />
+                      <OverviewTile label="内存" value={memNow != null ? `${memNow.toFixed(0)}%` : '—'}
+                        sub={memNow != null ? '最高服务占限额比' : '监控采样中…'}
+                        tone={memNow != null && memNow > 85 ? 'bad' : 'muted'} />
+                      <OverviewTile label="网络" value={netNow != null ? `${formatBytes(netNow)}/s` : '—'}
+                        sub={netNow != null ? '全服务收发合计' : '监控采样中…'} />
+                      <OverviewTile label="入口" value={running && (previewUrl || branch.previewUrl) ? `${1 + gatewayUrls.length} 个` : '未上线'}
+                        sub={running ? '上方入口卡直达' : '部署成功后出现'} tone={running ? 'good' : 'muted'} />
                     </div>
-                  </section>
+                  );
+                })() : null}
+
+                {/* 方案 A：配置页签三分区（读生效值 / 逐 key 溯源 / 写分支行为）——
+                    原「变量 / 配置 / 设置」三个近义页签合并，进哪儿不再靠猜 */}
+                {activeTab === 'config' ? (
+                  <div className="mb-4 inline-flex rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
+                    {([
+                      ['variables', '生效变量', '当前分支实际生效的环境变量（读，含来源标签）'],
+                      ['inspector', '配置检查器', '逐 key 溯源 + 部署计划'],
+                      ['settings', '分支设置', '分支行为设置（写）'],
+                    ] as Array<[ConfigSection, string, string]>).map(([key, label, hint]) => (
+                      <button
+                        key={key}
+                        type="button"
+                        title={hint}
+                        className={`h-8 rounded px-3 text-xs transition-colors ${configSection === key ? 'bg-[hsl(var(--surface-raised))] text-foreground shadow-sm' : 'text-muted-foreground hover:text-foreground'}`}
+                        onClick={() => setConfigSection(key)}
+                      >
+                        {label}
+                      </button>
+                    ))}
+                  </div>
                 ) : null}
 
-                {activeTab === 'variables' ? (
+                {activeTab === 'config' && configSection === 'variables' ? (
                   <VariablesPanel
                     state={envState}
                     revealedValues={revealedValues}
@@ -2443,11 +2691,11 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'config' && branchId ? (
+                {activeTab === 'config' && configSection === 'inspector' && branchId ? (
                   <EffectiveConfigPanel branchId={branchId} onToast={onToast} />
                 ) : null}
 
-                {activeTab === 'settings' ? (
+                {activeTab === 'config' && configSection === 'settings' ? (
                   <SettingsPanel
                     branch={branch}
                     projectId={projectId}
@@ -2463,12 +2711,16 @@ export function BranchDetailDrawer({
                   />
                 ) : null}
 
-                {activeTab === 'metrics' ? (
-                  <MetricsPanel
-                    state={metricsState}
-                    series={metricSeries}
-                    onRefresh={() => void loadMetrics()}
-                  />
+                {/* 方案 A：指标并入总览（现在怎么样 = 状态 + 指标一屏看全） */}
+                {activeTab === 'overview' ? (
+                  <section className="mt-4">
+                    <h4 className="mb-2 px-1 text-xs font-semibold uppercase tracking-wide text-muted-foreground">监控</h4>
+                    <MetricsPanel
+                      state={metricsState}
+                      series={metricSeries}
+                      onRefresh={() => void loadMetrics()}
+                    />
+                  </section>
                 ) : null}
 
                 <div className="mt-5 text-center text-xs text-muted-foreground">
@@ -2540,7 +2792,7 @@ export function BranchDetailDrawer({
                   type="button"
                   variant="outline"
                   className="cds-branch-detail-footer-secondary flex-[1_1_0]"
-                  onClick={() => setActiveTab('settings')}
+                  onClick={() => { setConfigSection('settings'); setActiveTab('config'); }}
                 >
                   <Settings />
                   详细设置
@@ -3288,6 +3540,11 @@ function resourceInitialDetailTab(
 
 function ResourceConsole({
   resources,
+  replicaProfileIds,
+  replicaChipInfo,
+  onQuickReplica,
+  onDbGuard,
+  dbGuardBusy,
   selectedResource,
   initialDetailTab,
   serviceLogs,
@@ -3302,6 +3559,16 @@ function ResourceConsole({
   onCopy,
 }: {
   resources: BranchResource[];
+  /** 已复制集化（含运行成员）的 profileId 集合 —— 卡片加堆叠徽章特殊标识 */
+  replicaProfileIds?: Set<string>;
+  /** 芯片级复制集信息：成员数 + 是否有启动中成员（光环动画） */
+  replicaChipInfo?: Record<string, { members: number; provisioning: boolean }>;
+  /** Railway 式芯片「+」：一键加 N 个当前版本副本 */
+  onQuickReplica?: (profileId: string, count: number) => Promise<void> | void;
+  /** 数据库保护罩：锁按钮一键克隆隔离副本 */
+  onDbGuard?: (infraId: string) => Promise<void> | void;
+  /** 正在克隆的 infraId（芯片环绕动画依据） */
+  dbGuardBusy?: Record<string, boolean>;
   selectedResource: BranchResource | null;
   initialDetailTab?: BranchResourceDetailTab | null;
   serviceLogs: ServiceLogsState;
@@ -3322,6 +3589,9 @@ function ResourceConsole({
       .filter((group) => group.items.length > 0);
   }, [resources]);
   const [detailTab, setDetailTab] = useState<BranchResourceDetailTab>(() => resourceInitialDetailTab(selectedResource, initialDetailTab));
+  // 菜单锚点带屏幕坐标：菜单经 createPortal 挂 body（验收 P1-2：渲染在
+  // overflow-x-auto 芯片行内会被裁剪到肉眼不可见，frontend-modal 规则第 2 条）
+  const [plusMenuFor, setPlusMenuFor] = useState<{ id: string; left: number; top: number } | null>(null);
   const [resourceMutation, setResourceMutation] = useState<string | null>(null);
   const [permissionState, setPermissionState] = useState<{
     status: 'idle' | 'loading' | 'ok' | 'error';
@@ -3425,25 +3695,93 @@ function ResourceConsole({
               </span>
               {group.items.map((resource) => {
                 const active = selectedResource?.id === resource.id;
+                const profileId = resource.source === 'app' ? ((resource.raw as ServiceState | undefined)?.profileId ?? '') : '';
+                const chipInfo = profileId ? replicaChipInfo?.[profileId] : undefined;
+                // 复制集特殊标识：卡片带靛蓝描边 + 堆叠图标；有启动中成员时光环脉冲
+                const isReplicaSet = !!profileId && !!replicaProfileIds?.has(profileId);
+                const canQuickReplica = resource.source === 'app' && resource.kind === 'app' && !!onQuickReplica;
+                // 数据库保护罩入口：仅 database 类 infra 芯片；克隆中环绕脉冲动画
+                const infraId = resource.source === 'infra' ? ((resource.raw as { id?: string } | undefined)?.id ?? '') : '';
+                const canGuard = resource.source === 'infra' && resource.kind === 'database' && !!onDbGuard && !!infraId;
+                const guarding = !!infraId && !!dbGuardBusy?.[infraId];
                 return (
-                  <button
-                    key={resource.id}
-                    type="button"
-                    className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
-                      active
-                        ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
-                        : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
-                    } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''}`}
-                    onClick={() => onSelect(resource)}
-                    title={`${resource.displayName}\n${resource.serviceName}`}
-                  >
-                    <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
-                    <span className="min-w-0 flex-1">
-                      <span className="block truncate text-xs font-semibold">{resource.runtime}</span>
-                      <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
-                    </span>
-                    <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
-                  </button>
+                  <span key={resource.id} className="relative inline-flex shrink-0">
+                    <button
+                      type="button"
+                      className={`inline-flex h-10 min-w-[132px] shrink-0 items-center gap-2 rounded-md border px-2.5 text-left transition-colors ${
+                        active
+                          ? 'border-primary bg-primary/10 shadow-[0_0_0_1px_hsl(var(--primary)/.35)]'
+                          : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 hover:bg-[hsl(var(--surface-sunken))]'
+                      } ${resource.access === 'external' ? 'ring-1 ring-sky-400/30' : ''} ${
+                        isReplicaSet ? 'ring-1 ring-indigo-500/45' : ''
+                      } ${chipInfo?.provisioning ? 'animate-pulse ring-2 ring-indigo-400/60' : ''} ${
+                        guarding ? 'animate-pulse ring-2 ring-emerald-400/70' : ''
+                      } ${canQuickReplica || canGuard ? 'pr-7' : ''}`}
+                      onClick={() => onSelect(resource)}
+                      title={`${resource.displayName}\n${resource.serviceName}${isReplicaSet ? `\n复制集：${(chipInfo?.members ?? 0) + 1} 个实例并排运行` : ''}`}
+                    >
+                      <ResourceIcon resource={resource} className="h-5 w-5 shrink-0" />
+                      <span className="min-w-0 flex-1">
+                        <span className="flex items-center gap-1 truncate text-xs font-semibold">
+                          <span className="truncate">{resource.runtime}</span>
+                          {isReplicaSet ? (
+                            <span className="inline-flex items-center gap-0.5 text-indigo-500">
+                              <Layers className="h-3 w-3 shrink-0" />
+                              <span className="text-[10px] font-bold tabular-nums">x{(chipInfo?.members ?? 0) + 1}</span>
+                            </span>
+                          ) : null}
+                        </span>
+                        <span className="block truncate font-mono text-[11px] text-muted-foreground">:{resource.port || resource.containerPort || '?'}</span>
+                      </span>
+                      <span className={`h-1.5 w-1.5 shrink-0 rounded-full ${statusRailClass(resource.status)}`} />
+                    </button>
+                    {canQuickReplica ? (
+                      <button
+                        type="button"
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-indigo-500/50 bg-indigo-500/15 text-indigo-500 transition-colors hover:bg-indigo-500 hover:text-white"
+                        title="加副本（当前版本再起实例，自动均分流量）"
+                        onClick={(e) => {
+                          e.stopPropagation();
+                          if (plusMenuFor?.id === resource.id) { setPlusMenuFor(null); return; }
+                          const rect = e.currentTarget.getBoundingClientRect();
+                          setPlusMenuFor({ id: resource.id, left: Math.max(8, rect.right - 160), top: rect.bottom + 6 });
+                        }}
+                      >
+                        <Plus className="h-3 w-3" />
+                      </button>
+                    ) : null}
+                    {canGuard ? (
+                      <button
+                        type="button"
+                        disabled={guarding}
+                        className="absolute -right-1 -top-1 flex h-5 w-5 items-center justify-center rounded-full border border-emerald-500/50 bg-emerald-500/15 text-emerald-600 transition-colors hover:bg-emerald-500 hover:text-white disabled:opacity-60"
+                        title={guarding ? '正在整库克隆隔离副本…' : '保护罩：一键把当前库克隆成隔离副本（保留在数据快照列表，可随时删除）'}
+                        onClick={(e) => { e.stopPropagation(); void onDbGuard?.(infraId); }}
+                      >
+                        {guarding ? <Loader2 className="h-3 w-3 animate-spin" /> : <Lock className="h-3 w-3" />}
+                      </button>
+                    ) : null}
+                    {plusMenuFor?.id === resource.id ? createPortal(
+                      <div
+                        className="fixed z-[300] w-40 overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-background shadow-lg"
+                        style={{ left: plusMenuFor.left, top: plusMenuFor.top }}
+                      >
+                        <div className="border-b border-[hsl(var(--hairline))] px-3 py-1.5 text-[11px] text-muted-foreground">加几个副本？</div>
+                        {[1, 2, 3].map((n) => (
+                          <button
+                            key={n}
+                            type="button"
+                            className="flex w-full items-center justify-between px-3 py-2 text-left text-xs transition-colors hover:bg-indigo-500/10"
+                            onClick={() => { setPlusMenuFor(null); void onQuickReplica?.(profileId, n); }}
+                          >
+                            <span>{n} 个副本</span>
+                            <span className="text-[10px] text-muted-foreground">确认</span>
+                          </button>
+                        ))}
+                      </div>,
+                      document.body,
+                    ) : null}
+                  </span>
                 );
               })}
             </div>
@@ -5924,9 +6262,12 @@ function ResourceSettingsPanel({ resource, permissions }: { resource: BranchReso
 function ServiceLogsPanel({
   service,
   state,
+  replica,
 }: {
   service: ServiceState | null;
   state: ServiceLogsState;
+  /** 副本容器时传入：面板标题亮明身份（2026-07-26 用户反馈「没有清晰的东西证明是副本的日志」） */
+  replica?: { pid: string; memberId: string };
 }): JSX.Element {
   const logs = state.status === 'ok' ? (state.logs || '') : '';
   const isCurrent = service && state.profileId === service.profileId;
@@ -5942,9 +6283,18 @@ function ServiceLogsPanel({
     <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
       <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
         <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
-          <div className="mb-2 flex shrink-0 items-center justify-between text-xs text-muted-foreground">
-            <span>容器详情日志</span>
-            {state.status === 'loading' && isCurrent ? <span>读取中...</span> : null}
+          <div className="mb-2 flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground">
+            <span className="flex min-w-0 items-center gap-2">
+              {replica ? (
+                <>
+                  <span className="shrink-0 rounded border border-indigo-500/50 bg-indigo-500/10 px-1.5 py-0.5 text-[10px] font-semibold text-indigo-600 dark:text-indigo-400">复制集副本</span>
+                  <span className="truncate">{replica.pid} · <b className="font-mono text-foreground">{replica.memberId}</b> 的容器日志</span>
+                </>
+              ) : (
+                <span className="truncate">主容器 <b className="font-mono text-foreground">{service.profileId}</b> 的日志</span>
+              )}
+            </span>
+            {state.status === 'loading' && isCurrent ? <span className="shrink-0">读取中...</span> : null}
           </div>
           {service.errorMessage ? (
             <div className="mb-2 shrink-0 rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive">

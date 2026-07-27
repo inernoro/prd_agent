@@ -554,9 +554,163 @@ export interface BranchTombstone {
   removedAt: string;
 }
 
+/**
+ * 复制集成员 —— 一个并排运行的历史版本（2026-07-23，design.cds.replica-set）。
+ *
+ * 只允许从 reusable 的 DeploymentVersion 物化（不可变镜像，零构建秒起）。
+ * 运行态记在成员自身，**不进 branch.services**（services 消费方极多，
+ * 进去会被部署循环 / 发布器约定路由 / 服务卡当成普通服务，涟漪不可控）。
+ */
+export interface ReplicaMember {
+  /** 成员短 id（`rs` + 6 位），也是粘性 cookie / 直达子域后缀的值 */
+  id: string;
+  /** 指向 DeploymentVersion（内容寻址、不可变） */
+  versionId: string;
+  /** 用户可读标签（默认取 commit 短 sha） */
+  label?: string;
+  /** 主入口分流权重 0-100；0 = 只挂直达子域，不接主入口流量（默认） */
+  weight: number;
+  /** 物化快照：该版本此 profile 的不可变镜像引用 */
+  image: string;
+  /** 该版本的 commit sha（展示用） */
+  commitSha?: string;
+  /** 物化后的容器名（cds-<branchId>-<profileId>-<memberId>） */
+  containerName?: string;
+  /** 物化后分配的宿主端口 */
+  hostPort?: number;
+  status: 'provisioning' | 'running' | 'stopped' | 'error';
+  statusMessage?: string;
+  /** 数据库模式：shared=与主容器同库（默认）；isolated=一键隔离库（先克隆当前数据再切换） */
+  dbMode: 'shared' | 'isolated';
+  /** dbMode=isolated 时的隔离库全名（<源库>_rs_<memberId>） */
+  isolatedDbName?: string;
+  /**
+   * 项目级整组身份（Codex 第二十轮 P1）：同一次「整组副本」手势创建的各 profile
+   * 成员共享同一 id，前端按 id join 成组——部分失败/单侧下线造成成员数组错位时，
+   * 按位配对会把不同批次/不同版本的副本拼成假组并被预览钉选放大。容器级单独
+   * 添加的成员无此字段（按位配对仅作存量兜底）。
+   */
+  projectGroupId?: string;
+  createdAt: string;
+}
+
+/**
+ * 复制集隔离库快照（design.cds.replica-set MVP-2）。
+ * dbMode=isolated 的成员启动前，把当前库整库克隆成隔离库；成员下线/复制集解散
+ * 后隔离库**保留**（这就是「一键隔离数据库(保留)」的保留语义），在快照列表可见，
+ * 手动删除才 drop。
+ */
+export interface ReplicaDbSnapshot {
+  id: string;
+  profileId: string;
+  memberId: string;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  /** 克隆来源库名（克隆时间点的主库） */
+  sourceDb: string;
+  /** 隔离库名 */
+  dbName: string;
+  /** 执行克隆的 infra 容器名（drop 时复用） */
+  infraContainer: string;
+  /** mongo 专用隔离实例容器名（存在 = 隔离库在独立实例里，删除快照即移除该容器） */
+  dedicatedContainer?: string;
+  /** 专用隔离实例的宿主端口（成员连接串覆写用） */
+  dedicatedHostPort?: number;
+  /**
+   * 专用实例认证标记（Codex P1，2026-07-26）：'source-infra' = 实例以**源库的
+   * root 凭据**启用认证（凭据活取自 infra env，不在快照落盘）。缺省 = 历史
+   * 无认证实例，消费方（连接串生成/审计 eval）不得对其发凭据。
+   */
+  dedicatedAuth?: 'source-infra';
+  clonedAt: string;
+}
+
+/** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
+export type ReplicaPlanStepKind =
+  | 'add-replica'      // params: versionId?（缺省=当前版本）, dbMode?
+  | 'remove-member'    // params: memberId
+  | 'set-weight'       // params: memberId('primary'=主), weight
+  | 'isolate-db'       // profile 级复制隔离
+  | 'revert-db'        // 回切主库
+  | 'dissolve';        // 关闭复制集
+
+export interface ReplicaPlanStep {
+  id: string;
+  kind: ReplicaPlanStepKind;
+  profileId: string;
+  params?: {
+    memberId?: string;
+    versionId?: string;
+    weight?: number;
+    dbMode?: 'shared' | 'isolated';
+    /** 项目级整组身份：同手势各 profile 的 add-replica 共享（Codex 第二十轮 P1） */
+    projectGroupId?: string;
+  };
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled' | 'rolled-back';
+  error?: string;
+  /** 执行产物（add-replica 生成的成员 id / set-weight 的原权重），回滚用 */
+  resultMemberId?: string;
+  prevWeight?: number;
+  /**
+   * 破坏性/单向步骤已开始真实变更的标记（Codex 第二十四轮 P1）：校验期失败
+   * （目标不存在等）零副作用，不置位；置位后步骤失败 = 现场可能有不可自动
+   * 复原的部分效果，回滚必须如实保持 error 而非谎报 rolled-back。
+   */
+  mutationStarted?: boolean;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+/** 一次「保存并执行」的完整记录（含失败与回滚日志 = 问题记录） */
+export interface ReplicaPlan {
+  id: string;
+  branchId: string;
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'rolled-back';
+  /** 失败策略：stop=停止剩余；rollback=停止并逆序回滚已完成步骤 */
+  onFailure: 'stop' | 'rollback';
+  steps: ReplicaPlanStep[];
+  rollbackLog?: string[];
+  createdAt: string;
+  endedAt?: string;
+}
+
+/**
+ * 单个服务（profile）的复制集配置。挂在 BranchEntry.replicaSets[profileId]。
+ *
+ * 主容器（branch.services[profileId]）即天然主成员，不重建不迁移——
+ * 启用复制集是纯配置写入，零容器操作；解散（退回普通）= 收割全部成员容器
+ * + 删本配置，分支回到与未启用时完全一致的状态。
+ */
+export interface ProfileReplicaSet {
+  profileId: string;
+  enabled: boolean;
+  /** 主容器权重 0-100（与成员权重同一口径） */
+  primaryWeight: number;
+  members: ReplicaMember[];
+  /**
+   * profile 级「复制隔离」状态（2026-07-24 用户拍板的三步心智）：
+   * 复制（克隆一次隔离库）→ 切换（全体副本重物化改连隔离库）→ 可回切。
+   * absent = 副本连主库（普通态）。回切后本字段清除，快照留在台账。
+   */
+  isolated?: {
+    dbName: string;
+    snapshotId: string;
+    isolatedAt: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
+  /**
+   * 删除进行中标记（Codex 第十六轮 P1）：删除路由在遍历快照台账/拆容器之前
+   * 置位。复制集的克隆完成回调（隔离/保护罩/成员物化）看到该标记即放弃入账
+   * 并就地清掉刚克隆的库——否则「删除已扫过台账 → 克隆完成追加新快照 →
+   * removeBranch」的间隙会留下永久无主的隔离库/专用实例容器。删除失败时回滚
+   * 清位；进程崩溃残留该标记也无害（重试删除即收敛）。
+   */
+  deleting?: boolean;
   /**
    * 该分支所属项目。PR_B.1 起为必填 — migrateProjectScoping() 启动时把
    * pre-P4 / 孤儿引用补齐到 legacy project 的真实 id。消费方不再需要
@@ -662,6 +816,25 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /**
+   * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
+   * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
+   * 流量分配见 forwarder-route-publisher（replicaGroup 路由）+ route-resolver（权重/粘性）。
+   */
+  replicaSets?: Record<string, ProfileReplicaSet>;
+  /**
+   * 复制集隔离库快照台账（保留语义）：成员下线后隔离库不删，记录在这里，
+   * 手动删除才 drop。详见 ReplicaDbSnapshot。
+   */
+  replicaDbSnapshots?: ReplicaDbSnapshot[];
+  /** 复制集执行计划记录（活跃 + 历史，保留最近 20 条；含失败/回滚日志 = 问题记录） */
+  replicaPlans?: ReplicaPlan[];
+  /**
+   * 复制集管理模式二选一（2026-07-24 用户拍板）：container = 容器级逐容器管理；
+   * project = 项目级整组管理。首次保存计划时钉住；全部副本关闭后自动清除，
+   * 之后才允许换另一种模式。absent = 尚未启用复制集。
+   */
+  replicaMode?: 'container' | 'project';
   /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *
@@ -1351,6 +1524,14 @@ export interface ContainerTeardownTombstone {
   projectId: string;
   /** 墓碑写入时刻（ISO）。晚于此刻创建的同名容器属于后继项目，不许动。 */
   requestedAt: string;
+  /**
+   * 移除时必须连匿名数据卷一起删（`docker rm -f -v`）。
+   *
+   * 复制集专用隔离实例（cds-rsdb-*）的数据在**匿名卷**里，装的是生产派生克隆。
+   * 墓碑路径原本一律跑 `docker rm -f`（不带 -v）：容器没了、卷永久失去追踪，
+   * 既留着敏感数据又持续吃盘，谁也扫不到（Codex 第三十二轮 P1）。
+   */
+  removeVolumes?: boolean;
 }
 
 export interface CdsState {
@@ -1558,6 +1739,13 @@ export interface CdsState {
    * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /**
+   * 共享实例隔离库的待清理台账（Codex 第二十五轮 P1）：分支删除时 mysql/pg
+   * 隔离库 drop 失败没有容器可写墓碑，branch.replicaDbSnapshots 又随分支状态
+   * 即刻消失——生产派生克隆会永久失踪在共享 infra 里。失败的 drop 入本台账，
+   * 复制集对账循环持续重试；承载 infra 已不存在时数据随实例消亡，出队。
+   */
+  pendingReplicaDbDrops?: Array<{ snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }>;
   /**
    * User-customisable settings for the GitHub PR preview comment that
    * CDS posts on PR open / refreshes on every deploy

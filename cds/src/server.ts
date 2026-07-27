@@ -9,6 +9,10 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
+import { createReplicaSetsRouter } from './routes/replica-sets.js';
+import { ReplicaSetService } from './services/replica-set.js';
+import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
+import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
@@ -976,6 +980,25 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
+    [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/probe$/, '探测复制集分流'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolation-audit$/, '隔离审计'],
+    [/^GET \/branches\/(.+)\/replica-plans$/, '查执行计划'],
+    [/^POST \/branches\/(.+)\/replica-plans$/, '保存执行计划'],
+    [/^PATCH \/branches\/(.+)\/replica-plans\/(.+)$/, '调整执行顺序'],
+    [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/steps\/(.+)\/skip$/, '跳过计划步骤'],
+    [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/cancel$/, '取消执行计划'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolate$/, '复制隔离数据库'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/revert-db$/, '回切主库'],
+    [/^POST \/branches\/(.+)\/db-guard$/, '启动数据库保护罩'],
+    [/^GET \/branches\/(.+)\/db-guard\/(.+)$/, '查询保护罩进度'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members$/, '添加复制集成员'],
+    [/^PATCH \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '调整复制集成员'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)$/, '启用复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)$/, '解散复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-db-snapshots\/(.+)$/, '删除隔离库快照'],
     [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
@@ -1066,6 +1089,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
     [/^POST \/branches\/(.+)\/resources\/(.+)\/data\/init-sql$/, '执行分支资源初始化 SQL'],
@@ -3947,36 +3971,84 @@ export function createServer(deps: ServerDeps): express.Express {
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  const dispatchVersion = async (
+    version: import('./types.js').DeploymentVersion,
+    trigger: 'manual' | 'rollback',
+  ): Promise<import('./routes/deployment-versions.js').VersionDispatchResult> => {
+    try {
+      const upstream = await fetch(
+        `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
+            'X-CDS-Source-Project-Id': version.projectId,
+            'X-CDS-Source-Branch-Id': version.branchId,
+          },
+          body: JSON.stringify({ versionId: version.id }),
+        },
+      );
+      const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
+      if (upstream.ok) {
+        void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
+        return { accepted: true, status: upstream.status, runId };
+      }
+      const error = (await upstream.text().catch(() => '')).slice(0, 500);
+      return { accepted: false, status: upstream.status, error };
+    } catch (err) {
+      return { accepted: false, status: 503, error: (err as Error).message };
+    }
+  };
+
   app.use('/api', createDeploymentVersionsRouter({
     deploymentVersionService,
     assertProjectAccess: assertProjectAccess as any,
-    dispatchVersion: async (version, trigger) => {
-      try {
-        const upstream = await fetch(
-          `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CDS-Internal': '1',
-              'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
-              'X-CDS-Source-Project-Id': version.projectId,
-              'X-CDS-Source-Branch-Id': version.branchId,
-            },
-            body: JSON.stringify({ versionId: version.id }),
-          },
-        );
-        const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
-        if (upstream.ok) {
-          void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
-          return { accepted: true, status: upstream.status, runId };
-        }
-        const error = (await upstream.text().catch(() => '')).slice(0, 500);
-        return { accepted: false, status: upstream.status, error };
-      } catch (err) {
-        return { accepted: false, status: 503, error: (err as Error).message };
-      }
+    dispatchVersion,
+  }));
+
+  // 复制集模式（design.cds.replica-set）：单服务多版本并排 + forwarder 分流。
+  const replicaSetService = new ReplicaSetService({
+    state: deps.stateService,
+    container: deps.containerService,
+    versions: deploymentVersionService,
+    shell: deps.shell,
+    portStart: deps.config.portStart,
+    // 多 master 共宿主的实例身份（Codex 第十九轮 P1）：专用隔离实例容器名/label
+    instanceId: computeCdsInstanceId(deps.config.repoRoot),
+    // 与部署路径同口径（branches.ts remoteAttributed，Codex 第二十五轮 P1）：
+    // executorId 非空且不以 'master-' 开头即远端归属——注册表查不到（已注销/
+    // 离线/registry 不可用）时**保守视为远端**，绝不在 master 本机替离线执行器
+    // 物化副本（错 docker 网络错端口的分裂宿主副本）。
+    isRemoteBranch: (branch) => {
+      if (!branch.executorId) return false;
+      if (branch.executorId.startsWith('master-')) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
     },
+    logger: console,
+  });
+  // 启动收敛：CDS 自更新/重启会打断执行中的复制集计划——开机把僵尸 running
+  // 计划标记为中断，杜绝「更新 CDS 导致的不一致」（用户点名的安全防线）
+  replicaSetService.reconcileInterruptedPlans();
+  // 副本容器真身对账（2026-07-26 孤儿收割器误杀事故）：启动即对账一次收敛
+  // CDS 停机期间的副本死亡，此后每分钟兜底；取证器 die 事件另走秒级摘流。
+  // executor 节点不跑：集群共享 state 时它拿本机 docker 对账会误杀 master 的成员
+  // （成员容器只在 master 本机，与 auto-lifecycle 的协调者集中纪律同源）。
+  if (deps.config.mode !== 'executor') {
+    replicaSetService.startMemberReconcileLoop();
+    setReplicaMemberDeathListener((containerName, verdict) =>
+      replicaSetService.noteMemberContainerDeath(containerName, verdict));
+  }
+  app.use('/api', createReplicaSetsRouter({
+    stateService: deps.stateService,
+    replicaSetService,
+    deploymentVersionService,
+    assertProjectAccess: assertProjectAccess as any,
+    dispatchVersion,
+    getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
+    rootDomains: deps.config.rootDomains || [],
   }));
 
   app.use('/api', createManagedProjectsRouter({

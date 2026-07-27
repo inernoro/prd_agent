@@ -15,7 +15,11 @@ import { MockShellExecutor } from '../../src/services/shell-executor.js';
 
 function makeState(overrides: Partial<{
   projects: Array<{ id: string }>;
-  branches: Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
+  branches: Array<{
+    id: string;
+    services?: Record<string, { containerName?: string }>;
+    replicaSets?: Record<string, { members: Array<{ id: string; containerName?: string }> }>;
+  }>;
   infra: Array<{ containerName: string }>;
   activeProxies: string[];
 }> = {}) {
@@ -189,6 +193,36 @@ describe('sweepOrphanCdsContainers', () => {
     const result = await sweepOrphanCdsContainers({ shell, state: makeState(), env: {} });
     expect(result.actions).toEqual([]);
     expect(shell.commands.filter((c) => c.startsWith('docker stop'))).toHaveLength(0);
+  });
+
+  it('spares replica-set member containers still on the branch ledger (2026-07-26 incident)', async () => {
+    // 事故复刻：成员容器 cds.profile.id=`<profileId>--<memberId>`，运行态在
+    // branch.replicaSets 而非 services——修复前收割器不认识，过宽限期即误杀，
+    // state 仍标 running，forwarder 继续把入口真实流量打到死端口（50% 503）。
+    const shell = new MockShellExecutor();
+    mockPs(shell, [], [
+      `cds-prd-agent-main-admin-prd-agent|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.branch.id=prd-agent-main,cds.profile.id=admin-prd-agent`,
+      `cds-prd-agent-main-admin-prd-agent-res-1|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.branch.id=prd-agent-main,cds.profile.id=admin-prd-agent--res-1`,
+      // 台账上已不存在的成员容器（成员被移除但容器残留）仍是真孤儿，照常收
+      `cds-prd-agent-main-admin-prd-agent-res-9|running|${OLD_CREATED}|cds.managed=true,cds.type=app,cds.branch.id=prd-agent-main,cds.profile.id=admin-prd-agent--res-9`,
+    ]);
+    shell.addResponsePattern(/^docker stop /, () => ({ stdout: 'ok', stderr: '', exitCode: 0 }));
+    const result = await sweepOrphanCdsContainers({
+      shell,
+      state: makeState({
+        branches: [{
+          id: 'prd-agent-main',
+          services: { 'admin-prd-agent': { containerName: 'cds-prd-agent-main-admin-prd-agent' } },
+          replicaSets: {
+            'admin-prd-agent': { members: [{ id: 'res-1', containerName: 'cds-prd-agent-main-admin-prd-agent-res-1' }] },
+          },
+        }],
+      }),
+      env: {},
+    });
+    const stopped = result.actions.filter((a) => a.action === 'stopped').map((a) => a.containerName);
+    expect(stopped).toEqual(['cds-prd-agent-main-admin-prd-agent-res-9']);
+    expect(shell.commands.join('\n')).not.toContain('res-1');
   });
 
   it('treats unparseable CreatedAt as within grace (never act on partial information)', async () => {

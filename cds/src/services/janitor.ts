@@ -3,6 +3,8 @@ import path from 'node:path';
 import { execFile } from 'node:child_process';
 import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
+import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
+import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -40,6 +42,19 @@ export interface JanitorConfig {
    * 构建后"构建越来越慢"的主因(悬空层 + 构建缓存无限堆积，吃满磁盘/IO)。
    */
   dockerPrune?: boolean;
+  /**
+   * 按 CDS 版本台账回收 per-SHA 部署镜像。默认开（undefined === true）。
+   *
+   * 2026-07-27 宕机复盘 P0：`dockerPrune` 只清悬空镜像，而 CDS 自产的部署镜像
+   * 带 `sha-<40hex>` tag、永不悬空，于是每小时的清理对它们完全无效——宿主实测
+   * 攒到 5099 个镜像 / 159GB。本开关启用的是「按台账保留最近 N 代 + 回收其余」的
+   * 定向回收（安全边界见 image-retention.ts）。
+   */
+  imageRetention?: boolean;
+  /** 每个 (分支, 服务) 保留几代部署镜像。磁盘越紧张实际值越低（见 disk-guard）。 */
+  imageKeepGenerations?: number;
+  /** 单轮最多删几个镜像，避免一次 sweep 长时间占住 docker 与磁盘 IO。 */
+  imageMaxRemovalsPerSweep?: number;
 }
 
 /** 一次 Docker 垃圾清理的结果。 */
@@ -52,6 +67,44 @@ export interface DockerPruneResult {
 
 /** Callback: 执行安全的 Docker 垃圾清理。可注入以便测试。 */
 export type DockerPruneFn = () => Promise<DockerPruneResult>;
+
+/** 镜像回收所需的 docker 读写（注入点：测试里换成假实现，不碰宿主）。 */
+export interface ImageDockerFns {
+  /** 宿主上全部镜像的 `repo:tag`。 */
+  listImages: () => Promise<string[]>;
+  /** 被任何容器（含已停止）引用的镜像。 */
+  listInUseImages: () => Promise<string[]>;
+  /** 删除一个镜像；成功返回 null，失败返回错误文本（不抛，单个失败不该中断整轮）。 */
+  removeImage: (image: string) => Promise<string | null>;
+}
+
+export const defaultImageDocker: ImageDockerFns = {
+  listImages: async () => {
+    const out = await execDocker(['images', '--format', '{{.Repository}}:{{.Tag}}'], 60_000);
+    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
+  },
+  listInUseImages: async () => {
+    const out = await execDocker(['ps', '-a', '--format', '{{.Image}}'], 60_000);
+    return out.startsWith('__ERR__') ? [] : out.split('\n').filter(Boolean);
+  },
+  removeImage: async (image) => {
+    const out = await execDocker(['rmi', image], 60_000);
+    if (!out.startsWith('__ERR__')) return null;
+    const err = out.replace('__ERR__ ', '');
+    // 「must be forced」= 该镜像 ID 还挂着别的 tag / 子引用（生产实测：每轮固定
+    // 1 个 admin 镜像卡在这里，不处理就是永远失败下去的噪音）。只在**确认此刻
+    // 没有任何容器引用它**之后才 -f 重试——不带这层确认直接 -f 会把停止容器
+    // 依赖的镜像删掉，那个容器就再也起不来了。ps -a 的过滤是即时的，比 sweep
+    // 开头那张快照更新，顺带收窄了「快照之后新起容器」的竞态窗口。
+    if (!/must be forced/i.test(err)) return err;
+    const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000);
+    if (refs.startsWith('__ERR__') || refs.trim() !== '') {
+      return `${err}（有容器引用或引用检查失败，未强制删除）`;
+    }
+    const forced = await execDocker(['rmi', '-f', image], 60_000);
+    return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
+  },
+};
 
 function execDocker(args: string[], timeoutMs = 120_000): Promise<string> {
   return new Promise((resolve) => {
@@ -99,8 +152,18 @@ export interface JanitorSweepReport {
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
   /** true when disk usage exceeded diskWarnPercent. */
   diskWarning: boolean;
+  /** 磁盘档位（2026-07-27 复盘 P0）：ok/notice/reclaim/freeze。freeze 档会拒绝新的构建部署派发。 */
+  diskTier: DiskTier;
   /** Docker 垃圾清理结果(悬空镜像 + 构建缓存)。null = 本次未执行。 */
   dockerPrune: DockerPruneResult | null;
+  /** per-SHA 部署镜像定向回收结果。null = 本次未执行。 */
+  imageRetention: {
+    removed: string[];
+    failed: Array<{ image: string; error: string }>;
+    /** 满足条件但被单轮上限截断的数量——如实报出，避免「跑过了」被误读成「清干净了」。 */
+    deferred: number;
+    keepGenerations: number;
+  } | null;
   /** 孤儿 infra 容器对账(在 Docker 里但不在 CDS 台账上,2026-07-09)。
    *  只报不删——infra 容器是项目级共享,误删代价高;删除决策留给运维。
    *  null = 本次未执行(未注入扫描函数)。 */
@@ -117,6 +180,26 @@ export interface JanitorSnapshot {
   config: JanitorConfig;
   dryRun: { wouldRemove: string[]; wouldSkip: string[] };
   disk: { totalBytes: number; freeBytes: number; usedPercent: number } | null;
+  /**
+   * 最近一次 sweep 的结果摘要（2026-07-27 复盘）。此前回收结果只打进 console，
+   * 外部无从确认「镜像回收到底有没有在跑、回收了多少、还欠多少」——这正是
+   * 交付时需要拿出来的证据。null = 本进程尚未跑过 sweep。
+   */
+  lastSweep: {
+    at: string;
+    diskTier: DiskTier;
+    removedBranches: number;
+    imageRetention: {
+      removed: number;
+      failed: number;
+      /** 失败原因样本（最多 3 条）：只报数字等于「知道有问题但不知道是什么问题」。 */
+      failureSamples?: string[];
+      deferred: number;
+      keepGenerations: number;
+    } | null;
+    dockerPrune: string[] | null;
+    errors: number;
+  } | null;
 }
 
 /** Callback: remove a branch's worktree + docker state. */
@@ -185,6 +268,11 @@ function branchExpiryAnchorMs(branch: BranchEntry): number {
 
 export class JanitorService {
   private sweepHandle: NodeJS.Timeout | null = null;
+  /** 启动后的首轮 sweep（延后 30s 避开开机高峰），与周期调度分开管理。 */
+  private firstSweepHandle: NodeJS.Timeout | null = null;
+  private lastSweepSummary: JanitorSnapshot['lastSweep'] = null;
+  /** 进行中的 sweep：并发调用合并到同一次，不叠加。 */
+  private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
   private orphanInfraScan: OrphanInfraScanFn | null = null;
 
@@ -195,7 +283,43 @@ export class JanitorService {
     private readonly clock: JanitorClock = systemJanitorClock,
     private readonly diskUsage: DiskUsageFn = defaultDiskUsage,
     private readonly dockerPrune: DockerPruneFn = defaultDockerPrune,
+    /** 镜像回收所需的 docker 读写（可注入以便测试，不真的碰宿主）。 */
+    private readonly imageDocker: ImageDockerFns = defaultImageDocker,
   ) {}
+
+  /**
+   * per-SHA 部署镜像定向回收：台账（保留最近 N 代）+ 宿主镜像 + 在用镜像
+   * → 纯函数算出可删集合 → 逐个 rmi。保留代数随磁盘档位收紧。
+   */
+  private async runImageRetention(tier: DiskTier): Promise<NonNullable<JanitorSweepReport['imageRetention']>> {
+    const keepGenerations = imageKeepGenerationsFor(tier, this.config.imageKeepGenerations ?? 5);
+    const [hostImages, inUseImages] = await Promise.all([
+      this.imageDocker.listImages(),
+      this.imageDocker.listInUseImages(),
+    ]);
+    const ledger = this.stateService.getDeploymentVersions()
+      .flatMap((v) => Object.values(v.profiles || {})
+        .filter((p) => !!p.artifactImage)
+        .map((p) => ({
+          image: p.artifactImage,
+          branchId: v.branchId,
+          profileId: p.profileId,
+          createdAt: v.createdAt,
+        })));
+    const plan: ImageRetentionPlan = computeImageRetentionPlan({
+      ledger, hostImages, inUseImages, keepGenerations,
+      maxRemovals: imageMaxRemovalsFor(tier, this.config.imageMaxRemovalsPerSweep ?? 40),
+    });
+    const removed: string[] = [];
+    const failed: Array<{ image: string; error: string }> = [];
+    for (const image of plan.remove) {
+      // 串行：一次 sweep 不许把 docker 与磁盘 IO 打满（并发 prune 撞车正是
+      // 2026-07-27 人工恢复时踩到的坑：a prune operation is already running）。
+      const err = await this.imageDocker.removeImage(image);
+      if (err) failed.push({ image, error: err }); else removed.push(image);
+    }
+    return { removed, failed, deferred: plan.deferred, keepGenerations };
+  }
 
   setRemoveFn(fn: RemoveBranchFn): void {
     this.removeFn = fn;
@@ -213,12 +337,13 @@ export class JanitorService {
   setEnabled(enabled: boolean): void {
     if (this.config.enabled === enabled) return;
     this.config.enabled = enabled;
+    // 只切换「是否允许删过期分支」，不停调度——磁盘检查/镜像回收等非破坏性
+    // 动作与该开关解耦（同 start() 的说明）。
     if (enabled) {
       this.start();
-      console.log('[janitor] enabled at runtime');
+      console.log('[janitor] enabled at runtime（破坏性分支清理已开启）');
     } else {
-      this.stop();
-      console.log('[janitor] disabled at runtime');
+      console.log('[janitor] disabled at runtime（仅停用破坏性分支清理，回收类动作继续）');
     }
   }
 
@@ -230,8 +355,12 @@ export class JanitorService {
 
   /** Start periodic sweeps. Safe to call multiple times. No-op when disabled. */
   start(): void {
-    if (!this.isEnabled()) return;
     if (this.sweepHandle) return;
+    // 调度不再受 `enabled` 门禁（2026-07-27 宕机复盘）：`enabled` 的语义一直是
+    // 「是否允许**破坏性**地删过期分支」，sweep() 内部已按它单独 gate。但此前
+    // start() 在 disabled 时直接 return，连带把磁盘检查、悬空镜像清理、per-SHA
+    // 镜像回收、孤儿对账这些非破坏性动作一起停掉——dockerPrune 注释里写的
+    //「与 enabled 解耦，默认就清」根本没有兑现过。
     const intervalMs = Math.max(60_000, (this.config.sweepIntervalSeconds || 3600) * 1000);
     this.sweepHandle = setInterval(() => {
       this.sweep().catch((err) => {
@@ -241,10 +370,26 @@ export class JanitorService {
     if (typeof this.sweepHandle.unref === 'function') {
       this.sweepHandle.unref();
     }
-    console.log(`[janitor] started (TTL=${this.config.worktreeTTLDays}d, diskWarn=${this.config.diskWarnPercent}%, interval=${this.config.sweepIntervalSeconds}s)`);
+    // 启动后先跑一次（延后 30s 避开开机高峰）：此前要整整等一个 interval，
+    // 而 CDS 每次自更新都会重启——「刚因为磁盘满被打死、正在恢复」的那一小时
+    // 恰恰一次回收都不做。首轮失败只记录，不影响周期调度。
+    this.firstSweepHandle = setTimeout(() => {
+      this.firstSweepHandle = null;
+      this.sweep().catch((err) => {
+        console.error('[janitor] initial sweep error:', (err as Error).message);
+      });
+    }, 30_000);
+    if (typeof this.firstSweepHandle.unref === 'function') {
+      this.firstSweepHandle.unref();
+    }
+    console.log(`[janitor] started (enabled=${this.isEnabled()}, TTL=${this.config.worktreeTTLDays}d, diskWarn=${this.config.diskWarnPercent}%, interval=${this.config.sweepIntervalSeconds}s)`);
   }
 
   stop(): void {
+    if (this.firstSweepHandle) {
+      clearTimeout(this.firstSweepHandle);
+      this.firstSweepHandle = null;
+    }
     if (this.sweepHandle) {
       clearInterval(this.sweepHandle);
       this.sweepHandle = null;
@@ -255,7 +400,52 @@ export class JanitorService {
    * Run one sweep pass. Returns a full report, even when disabled
    * (enables manual / on-demand invocation via admin API).
    */
+  /**
+   * 对外的 sweep 入口：**去重 + 摘要记录**的外壳。
+   *
+   * - 去重（Codex 第三十轮 P2）：周期定时器、启动首轮、手工触发端点三条路都会
+   *   调这里，而一轮在磁盘压力下可能做多达 400 次串行 rmi（每次 60s 超时），
+   *   完全可能长过一个 interval。并发跑会算出同一份删除清单、互相抢 docker
+   *   daemon，恰好在最需要它稳的恢复期制造失败。在跑就**合并**到同一次，
+   *   不叠加（与 concurrency-gate-discipline「重试要合并不要叠加」同纪律）。
+   * - 摘要记录（Codex 第三十轮 P2）：此前写在 runSweep 末尾，而 runSweep 在
+   *   「TTL 清理被关掉」时会提前 return——回收明明跑了，/api/janitor/state 却
+   *   永远是 lastSweep:null，正好废掉这份用来举证「回收是否在工作」的证据。
+   *   放到外壳里，两条 return 路径都记得到。
+   */
   async sweep(): Promise<JanitorSweepReport> {
+    if (this.sweepInFlight) return this.sweepInFlight;
+    const run = (async () => {
+      try {
+        const report = await this.runSweep();
+        this.lastSweepSummary = {
+          at: report.timestamp,
+          diskTier: report.diskTier,
+          removedBranches: report.removedBranches.length,
+          imageRetention: report.imageRetention
+            ? {
+              removed: report.imageRetention.removed.length,
+              failed: report.imageRetention.failed.length,
+              ...(report.imageRetention.failed.length > 0
+                ? { failureSamples: report.imageRetention.failed.slice(0, 3).map((f) => `${f.image}: ${f.error.slice(0, 160)}`) }
+                : {}),
+              deferred: report.imageRetention.deferred,
+              keepGenerations: report.imageRetention.keepGenerations,
+            }
+            : null,
+          dockerPrune: report.dockerPrune?.reclaimed ?? null,
+          errors: report.errors.length,
+        };
+        return report;
+      } finally {
+        this.sweepInFlight = null;
+      }
+    })();
+    this.sweepInFlight = run;
+    return run;
+  }
+
+  private async runSweep(): Promise<JanitorSweepReport> {
     const report: JanitorSweepReport = {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
@@ -263,17 +453,21 @@ export class JanitorService {
       skippedRemote: [],
       disk: null,
       diskWarning: false,
+      diskTier: 'ok',
       dockerPrune: null,
+      imageRetention: null,
       orphanInfraContainers: null,
       errors: [],
     };
 
     // 1. Disk usage check (always, even when TTL cleanup disabled — cheap)
+    let usedPercentForTier: number | null = null;
     try {
       const usage = this.diskUsage(this.worktreeBase);
       if (usage) {
         const usedBytes = usage.totalBytes - usage.freeBytes;
         const usedPercent = Math.round((usedBytes / usage.totalBytes) * 100);
+        usedPercentForTier = usedPercent;
         report.disk = { ...usage, usedPercent };
         if (usedPercent >= this.config.diskWarnPercent) {
           report.diskWarning = true;
@@ -282,6 +476,17 @@ export class JanitorService {
       }
     } catch (err) {
       report.errors.push(`disk check: ${(err as Error).message}`);
+    }
+    // 1.1 磁盘分档刹车（2026-07-27 宕机复盘 P0）：此前只有一句 console.warn，
+    //     磁盘从 80% 涨到 100% 全程没有任何一处会因此少做点什么。现在把档位写进
+    //     进程内 diskGuard——freeze 档（默认 90%）部署派发会被直接拒绝，回收强度
+    //     也随档位上调（镜像保留代数收紧）。
+    // 有注册探测器时按它刷新（worst-of worktree + docker 数据目录），没有才用
+    // 上面的 worktree 读数兜底——直接 update(worktree%) 会覆盖掉多文件系统结果
+    //（Codex 第三十轮 P1）。
+    report.diskTier = diskGuard.refreshOrUpdate(usedPercentForTier);
+    if (report.diskTier !== 'ok') {
+      console.warn(`[janitor] ${describeDiskTier(report.diskTier, usedPercentForTier)}`);
     }
 
     // 1.5 Docker 垃圾清理(默认开，非破坏性——只清悬空镜像 + 构建缓存)。
@@ -295,6 +500,27 @@ export class JanitorService {
         for (const e of report.dockerPrune.errors) report.errors.push(`docker prune ${e}`);
       } catch (err) {
         report.errors.push(`docker prune: ${(err as Error).message}`);
+      }
+    }
+
+    // 1.6 per-SHA 部署镜像定向回收（2026-07-27 宕机复盘 P0）。
+    //     1.5 的 image prune 只清悬空镜像，而 CDS 自产的部署镜像永远带 tag——
+    //     每小时跑一次也一个都清不掉，宿主实测攒到 5099 个 / 159GB。这里按
+    //     「台账最近 N 代 + 在用镜像」双保险回收其余（安全边界见 image-retention.ts）。
+    if (this.config.imageRetention !== false) {
+      try {
+        report.imageRetention = await this.runImageRetention(report.diskTier);
+        const r = report.imageRetention;
+        if (r.removed.length || r.deferred) {
+          console.log(
+            `[janitor] 部署镜像回收：删除 ${r.removed.length} 个（保留 ${r.keepGenerations} 代）`
+            + (r.deferred ? `，本轮上限截断 ${r.deferred} 个待下轮` : '')
+            + (r.failed.length ? `，失败 ${r.failed.length} 个` : ''),
+          );
+        }
+        for (const f of r.failed) report.errors.push(`image rmi ${f.image}: ${f.error}`);
+      } catch (err) {
+        report.errors.push(`image retention: ${(err as Error).message}`);
       }
     }
 
@@ -400,6 +626,7 @@ export class JanitorService {
       config: this.config,
       dryRun: this.dryRun(),
       disk,
+      lastSweep: this.lastSweepSummary,
     };
   }
 }

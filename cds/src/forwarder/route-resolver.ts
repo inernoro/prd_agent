@@ -13,7 +13,7 @@
  *   4. 等权重等优先级时按 _id 字典序稳定选第一条
  */
 
-import type { RouteRecord } from './types.js';
+import type { ReplicaResolveContext, RouteRecord } from './types.js';
 
 /**
  * 候选项:从 (routes, host, path) 过滤后留下的可能命中,带"匹配评分"用于排序。
@@ -82,11 +82,20 @@ function hostScore(pattern: string, host: string): 0 | 1 | 2 {
 
 /**
  * 主入口。
+ *
+ * 复制集扩展（design.cds.replica-set）：命中的最优路由若带 replicaGroup，
+ * 则在「同组 + 同 host 评分 + 同 prefix 长度」的兄弟路由里二次选择：
+ *   1. 粘性命中（ctx.sticky === replicaMemberId）优先——weight=0 的成员也可被
+ *      粘性直达（0 只表示不参与随机分流，不表示禁用）；
+ *   2. 否则按 weight 加权随机（ctx.rand，默认 Math.random）；
+ *   3. 总权重为 0 时回落主成员（replicaMemberId='primary'），再退组内第一条。
+ * 不带 replicaGroup 的存量路由行为与历史逐字节一致（weight<=0 仍视为禁用）。
  */
 export function resolveRoute(
   routes: RouteRecord[],
   host: string,
   path: string,
+  ctx?: ReplicaResolveContext,
 ): RouteRecord | null {
   if (!routes || routes.length === 0) return null;
   if (!host) return null;
@@ -94,7 +103,8 @@ export function resolveRoute(
   const candidates: Candidate[] = [];
   for (const r of routes) {
     if (!r) continue;
-    if (typeof r.weight === 'number' && r.weight <= 0) continue; // 跳过禁用
+    // weight<=0 = 禁用 —— 但复制集成员例外:0 权重成员仍可被粘性直达
+    if (typeof r.weight === 'number' && r.weight <= 0 && !r.replicaGroup) continue;
     const hs = hostScore(r.host, host);
     if (hs === 0) continue;
     if (!pathPrefixMatches(r.pathPrefix, path)) continue;
@@ -118,5 +128,76 @@ export function resolveRoute(
     return 0;
   });
 
-  return candidates[0].route;
+  const top = candidates[0];
+  if (!top.route.replicaGroup) return top.route;
+
+  const siblings = candidates.filter(
+    (c) =>
+      c.route.replicaGroup === top.route.replicaGroup
+      && c.hostScore === top.hostScore
+      && c.pathPrefixLen === top.pathPrefixLen,
+  );
+  return pickReplica(siblings.map((c) => c.route), ctx);
+}
+
+/** replicaGroup（`<branchId>:<profileId>`）的 profile 段。 */
+export function replicaGroupProfileOf(replicaGroup: string): string {
+  const i = replicaGroup.lastIndexOf(':');
+  return i >= 0 ? replicaGroup.slice(i + 1) : replicaGroup;
+}
+
+/**
+ * 解析显式钉选条目对某个组的生效成员：`memberId`（无作用域，任意组可命中）
+ * 或 `profileId:memberId`（仅 profile 匹配的组命中）。不命中返回 null。
+ */
+export function stickyEntryMemberFor(entry: string, replicaGroup: string): string | null {
+  const i = entry.indexOf(':');
+  if (i < 0) return entry;
+  return replicaGroupProfileOf(replicaGroup) === entry.slice(0, i) ? entry.slice(i + 1) : null;
+}
+
+/** 组内选择：粘性 → 加权随机 → 主成员回落。导出供单测直接覆盖分布。 */
+export function pickReplica(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
+  const chosen = pickReplicaInner(group, ctx);
+  // 半开探针占位只给最终选中者（Codex 第十六轮 P2）：候选过滤阶段的 isEjected
+  // 是纯查询；处于半开态的成员真的被掷中接流量时才占掉唯一探针名额
+  ctx?.reserveProbe?.(chosen);
+  return chosen;
+}
+
+function pickReplicaInner(group: RouteRecord[], ctx?: ReplicaResolveContext): RouteRecord {
+  if (group.length === 1) return group[0];
+  // 被动健康（debt #12）：被摘除成员退出粘性与加权随机；全组皆摘仍回落主成员
+  const ejected = (r: RouteRecord): boolean => ctx?.isEjected?.(r) === true;
+  // 粘性来源：显式指定（query __rs / header，可多值——项目级整组预览一条链接
+  // 钉住每个组）优先；否则按本组的组作用域 cookie（Codex P1：单一 host 级
+  // cookie 会被多组互相覆写/误钉）
+  const groupId = group[0]?.replicaGroup;
+  const explicit = ctx?.sticky == null ? [] : (Array.isArray(ctx.sticky) ? ctx.sticky : [ctx.sticky]);
+  const cookieSticky = explicit.length === 0 && groupId ? ctx?.stickyFor?.(groupId) : undefined;
+  for (const want of explicit.length > 0 ? explicit : (cookieSticky ? [cookieSticky] : [])) {
+    // 条目支持 profile 作用域 `profileId:memberId`（Codex P1 二连）：res-N 按
+    // profile 顺位命名，裸成员 id 列表无法表达「哪个组钉哪个成员」——A 组第 2 位
+    // 是 res-2 而 B 组恰好也有 res-2 时会被静默钉错组。作用域条目只对本组生效。
+    const memberId = groupId ? stickyEntryMemberFor(want, groupId) : (want.includes(':') ? null : want);
+    if (!memberId) continue;
+    const stuck = group.find((r) => r.replicaMemberId === memberId);
+    // 粘性成员被摘除 → 本次放弃粘性落回加权选择（故障转移优先于会话稳定）
+    if (stuck && !ejected(stuck)) return stuck;
+  }
+  const weighted = group.filter((r) => (r.weight ?? 0) > 0 && !ejected(r));
+  const total = weighted.reduce((sum, r) => sum + (r.weight ?? 0), 0);
+  if (total <= 0) {
+    const primary = group.find((r) => r.replicaMemberId === 'primary');
+    if (primary && !ejected(primary)) return primary;
+    // 主成员也被摘：任何未摘成员都比必然失败强；全灭回主成员做半开试探
+    return group.find((r) => !ejected(r)) ?? primary ?? group[0];
+  }
+  const rand = ctx?.rand ?? Math.random;
+  let cursor = rand() * total;
+  for (const r of weighted) {
+    cursor -= r.weight ?? 0;
+    if (cursor < 0) return r;
+  }
+  return weighted[weighted.length - 1];
 }

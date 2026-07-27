@@ -55,6 +55,45 @@ export interface RouteRecord {
    * 看到 127.0.0.1:port 会找不到分支。
    */
   preserveHost?: boolean;
+  /**
+   * 复制集组标识（design.cds.replica-set）：同 host 同 prefix 的一组并排版本路由
+   * 共享同一个组 id（`<branchId>:<profileId>`）。resolver 命中组内路由时按
+   * 粘性（query __rs / header x-cds-replica / cookie cds_rs）+ weight 加权随机
+   * 在组内选择。absent = 普通路由，行为与历史逐字节一致。
+   */
+  replicaGroup?: string;
+  /** 组内成员 id：'primary'（主容器）或成员短 id（rs 开头）。 */
+  replicaMemberId?: string;
+}
+
+/** 复制集选择上下文：由 forwarder-main 从请求提取，传给 resolveRoute。 */
+export interface ReplicaResolveContext {
+  /** 粘性目标成员 id（query __rs > header x-cds-replica > cookie cds_rs） */
+  /**
+   * 显式钉选（query __rs / header x-cds-replica）。支持多个成员 id（项目级
+   * 整组预览一条链接钉住每个 profile 的组，Codex P1）：组内命中任一 id 即钉。
+   */
+  sticky?: string | readonly string[];
+  /**
+   * 组作用域粘性（Codex P1，2026-07-26）：cookie 粘性按 replicaGroup 查值。
+   * 同一 host 有多个复制集 profile 时，单一 host 级 cookie 会被各组互相覆写
+   * （res-N 按 profile 顺位命名，选 A 组 res-1 会连带钉住 B 组 res-1）。
+   * `sticky`（query __rs / header 显式指定）优先于本回调。
+   */
+  stickyFor?: (replicaGroup: string) => string | undefined;
+  /** 加权随机源，默认 Math.random；测试注入确定值 */
+  rand?: () => number;
+  /**
+   * 被动健康摘除判定（debt #12，2026-07-26）：返回 true 的成员临时退出加权
+   * 随机与粘性命中（冷却到期后注册表自动放行半开试探）。缺省 = 不摘除。
+   */
+  isEjected?: (route: RouteRecord) => boolean;
+  /**
+   * 半开探针占位（Codex 第十六轮 P2）：resolver 在**最终选中**成员后调用。
+   * isEjected 是纯查询——若查询即占位，候选过滤阶段会替落选成员烧掉唯一
+   * 探针名额，拖慢恢复。缺省 = 无占位语义。
+   */
+  reserveProbe?: (route: RouteRecord) => void;
 }
 
 /** 统计快照(诊断接口与 admin 自检都消费这个 schema)。 */

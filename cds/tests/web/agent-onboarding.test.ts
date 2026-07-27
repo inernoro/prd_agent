@@ -182,7 +182,7 @@ describe('CDS Agent 接入口令', () => {
   });
 
   it('为 MCP 适配明确登记候选、审批或禁止暴露状态', () => {
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(39);
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(40);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS
