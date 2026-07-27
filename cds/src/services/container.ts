@@ -10,6 +10,16 @@ import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
+
+/**
+ * 托管容器统一日志限额（2026-07-27 宕机复盘 P1）。
+ *
+ * docker 默认 json-file 驱动**没有上限**：长跑分支的容器日志会一直写到根盘满。
+ * 2026-07-27 根盘 100% 写满导致 CDS 自用 mongo 退出、全站 502 三十五分钟，事后
+ * 宿主实测 /var/lib/docker/containers 已积 3.5GB。50m x 3 = 单容器上界 150MB，
+ * 既够排障回看，也让「日志」这条增长曲线从无界变有界。
+ */
+export const DOCKER_LOG_LIMIT_FLAGS = ['--log-opt max-size=50m', '--log-opt max-file=3'];
 import { nodeModulesVolumeName } from '../util/node-modules-volume.js';
 import { ensureDockerNetworkWithReclaim } from './docker-network-reclaim.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from './preview-instance.js';
@@ -1403,6 +1413,10 @@ export class ContainerService {
         `-p ${service.hostPort}:${profile.containerPort}`,
         ...volumeFlags,
         ...resourceFlags,
+        // 容器日志限额（2026-07-27 宕机复盘 P1）：此前所有托管容器都用 docker 默认的
+        // 无上限 json-file 驱动，长跑分支的日志能无声吃掉几个 GB（宿主实测
+        // /var/lib/docker/containers 3.5GB）。50m x 3 既够排障回看，又给出硬上界。
+        ...DOCKER_LOG_LIMIT_FLAGS,
         ...entrypointFlags,
         // 极速版预构建镜像无 command 时,不覆盖 -w（用镜像自带 WORKDIR）也不 sh -c 包装,
         // 直接让镜像 ENTRYPOINT/CMD 启动。
@@ -2677,6 +2691,8 @@ export class ContainerService {
       ...volumeFlags,
       ...envFlags,
       ...healthFlags,
+      // 同上：基础设施容器同样受日志限额约束（2026-07-27 复盘 P1）
+      ...DOCKER_LOG_LIMIT_FLAGS,
       ...(entrypointFlag ? [entrypointFlag] : []),
       this.infraLabels(service, network),
       `--restart ${restartPolicy}`,

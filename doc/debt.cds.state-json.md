@@ -72,7 +72,7 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 
 **恢复动作**（人工经 SSH 完成）：清 journal / APT 缓存 / 悬空镜像 / 构建缓存 → 磁盘 100% → 93%；清理中停止状态的 `cds-infra-cds-state-mongo` **容器**被 `docker container prune` 连带删除（**数据卷 `cds-state-mongo-data` 未丢**），用原卷重建容器后 `systemctl reset-failed cds-master && systemctl start cds-master` 恢复；最终磁盘 85%、公网 `/healthz` 200。
 
-**⚠ 分析纪律教训（务必记住）**：本 AI 在拿到宿主数据前，仅凭 CDS API 读到「磁盘 85%、内存可用 44GB」就判定「不是磁盘打满」——**那是人工清理完之后的读数**。事后测量不能用来否定事故当时的状态；没有宿主时间序列时，只能说「当前不紧张」，不能推断「当时没满」。
+**分析纪律教训（务必记住）**：本 AI 在拿到宿主数据前，仅凭 CDS API 读到「磁盘 85%、内存可用 44GB」就判定「不是磁盘打满」——**那是人工清理完之后的读数**。事后测量不能用来否定事故当时的状态；没有宿主时间序列时，只能说「当前不紧张」，不能推断「当时没满」。
 
 **已排除的怀疑（实测取证，勿再重复排查）**：
 - **未释放的数据库克隆不是本次原因**：全量盘点 55 个分支，隔离快照仅剩 1 条（`prd-agent-main` 的 `prdagent_rs_guard_1` / `cds-rsdb-prdagent_rs_guard_1`，即 `doc/debt.cds.replica-set.md` #28 已登记的存量实例，其 `replicaSets` 已空——按「回切=隔离库转快照保留」设计留存）。该实例硬上限 `--memory 1536m`，磁盘占用量级与 159GB 的 containerd 不可比；孤儿容器扫描（dryRun + includeStopped）候选为 0。

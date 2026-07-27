@@ -57,8 +57,8 @@ describe('buildServiceGraph', () => {
     ];
     const g = buildServiceGraph(profiles, []);
     const edges = g.edges.map((e) => `${e.from}->${e.to}`).sort();
-    expect(edges).toEqual(['llmgw-web->llmgw', 'llmgw-web->llmgw-serve']);
-    const toServe = g.edges.find((e) => e.to === 'llmgw-serve')!;
+    expect(edges).toEqual(['service:llmgw-web->service:llmgw', 'service:llmgw-web->service:llmgw-serve']);
+    const toServe = g.edges.find((e) => e.to === 'service:llmgw-serve')!;
     expect(toServe.envKeys).toEqual(['LLMGW_SERVING_PROXY_TARGET']);
   });
 
@@ -66,7 +66,7 @@ describe('buildServiceGraph', () => {
     expect(infraPortVar('mongodb')).toBe('CDS_MONGODB_PORT');
     const profiles = [profile('api', { env: { MongoDB__ConnectionString: 'mongodb://${CDS_HOST}:${CDS_MONGODB_PORT}' } })];
     const g = buildServiceGraph(profiles, [infra('mongodb')]);
-    const e = g.edges.find((x) => x.from === 'api' && x.to === 'mongodb');
+    const e = g.edges.find((x) => x.from === 'service:api' && x.to === 'infra:mongodb');
     expect(e).toBeDefined();
     expect(e!.envKeys).toContain('MongoDB__ConnectionString');
   });
@@ -74,8 +74,8 @@ describe('buildServiceGraph', () => {
   it('depends_on 声明产生边（服务与基础设施都认）', () => {
     const profiles = [profile('web', { dependsOn: ['api', 'redis'] }), profile('api')];
     const g = buildServiceGraph(profiles, [infra('redis', 'redis:7')]);
-    expect(g.edges.find((e) => e.from === 'web' && e.to === 'api')?.dependsOn).toBe(true);
-    expect(g.edges.find((e) => e.from === 'web' && e.to === 'redis')?.dependsOn).toBe(true);
+    expect(g.edges.find((e) => e.from === 'service:web' && e.to === 'service:api')?.dependsOn).toBe(true);
+    expect(g.edges.find((e) => e.from === 'service:web' && e.to === 'infra:redis')?.dependsOn).toBe(true);
   });
 
   it('分层：调用方在上、被调方下沉；infra 不进分层', () => {
@@ -108,5 +108,25 @@ describe('buildServiceGraph', () => {
     const profiles = [profile('api', { env: { SELF: 'http://api-slug:5000' }, dependsOn: ['api'] })];
     const g = buildServiceGraph(profiles, []);
     expect(g.edges).toEqual([]);
+  });
+
+  it('服务与基础设施同名时不再互相吞掉（Codex 第二十七轮 P2）', () => {
+    // 项目里自管一个叫 mongodb 的服务 + 一个 mongodb 基础设施：此前两者 id 撞平面，
+    // 真实的服务→基础设施依赖被当成自环丢弃，节点 id 还重复导致前端 Map 后写覆盖先写。
+    const profiles = [profile('mongodb', { env: { CONN: 'mongodb://mongodb-slug:27017' } })];
+    const g = buildServiceGraph(profiles, [infra('mongodb')]);
+    const ids = g.nodes.map((n) => n.id);
+    expect(new Set(ids).size).toBe(ids.length);
+    expect(ids.sort()).toEqual(['infra:mongodb', 'service:mongodb']);
+    expect(g.nodes.find((n) => n.kind === 'service')!.rawId).toBe('mongodb');
+    expect(g.nodes.find((n) => n.kind === 'infra')!.rawId).toBe('mongodb');
+  });
+
+  it('同名场景下 depends_on 指向基础设施仍成边（不被自环规则误杀）', () => {
+    const profiles = [profile('redis', { dependsOn: ['redis'] })];
+    const g = buildServiceGraph(profiles, [infra('redis', 'redis:7')]);
+    expect(g.edges).toEqual([
+      expect.objectContaining({ from: 'service:redis', to: 'infra:redis', dependsOn: true }),
+    ]);
   });
 });

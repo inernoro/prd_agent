@@ -454,6 +454,9 @@ async function cloneMongoViaDedicatedInstance(opts: {
       ...(opts.instanceId ? ['--label', `cds.instance=${opts.instanceId}`] : []),
       '--restart', 'unless-stopped',
       '-p', '27017',
+      // 日志限额（2026-07-27 宕机复盘 P1）：专用隔离实例是长跑容器，默认 json-file
+      // 无上限，restore 期间的 mongod 日志尤其密集。
+      '--log-opt', 'max-size=50m', '--log-opt', 'max-file=3',
       '--memory', '1536m', '--memory-swap', '1536m',
       ...(user ? ['-e', `MONGO_INITDB_ROOT_USERNAME=${user}`, '-e', `MONGO_INITDB_ROOT_PASSWORD=${pw}`] : []),
       isoImage, 'mongod', '--wiredTigerCacheSizeGB', '1',

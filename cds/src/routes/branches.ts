@@ -12,6 +12,7 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { diskGuard } from '../services/disk-guard.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
@@ -11473,6 +11474,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
+    // 磁盘刹车（2026-07-27 宕机复盘 P0）：根盘写满会让 CDS 自用 mongo 退出、
+    // master 反复启动失败、全站不可用。构建/部署是最大的写入源，freeze 档
+    // （默认 90%）一律拒绝新派发，把剩下的空间留给回收与自救。
+    // 只挡新部署——停止/删除这类**释放**空间的操作不走这里，磁盘满时仍能自救。
+    {
+      const blocked = diskGuard.blockReasonForDeploy();
+      if (blocked) {
+        res.status(507).json({ error: 'disk_low', message: blocked });
+        return;
+      }
+    }
     {
       const m = assertProjectAccess(req as any, entry.projectId || 'default');
       if (m) { res.status(m.status).json(m.body); return; }
@@ -14276,8 +14288,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
               member.status = 'running';
               member.statusMessage = undefined;
             } else {
+              // 与 materializeMember 同纪律（Codex 第二十七轮 P1，第二十六轮 P1 的重启路径
+              // 兄弟）：只标 error 而留容器活着，共享库模式下它仍跑后台消费者/定时任务
+              // 读写主库，还白占端口内存。stop 而非 remove，保留 docker logs 供排障。
+              let stopped = false;
+              try {
+                await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
+                  actor: 'branch-restart', trigger: 'replica-readiness-failed',
+                });
+                stopped = true;
+              } catch { /* 停不掉交给成员对账/孤儿收割兜底，不阻断重启主流程 */ }
               member.status = 'error';
-              member.statusMessage = `副本容器 ${member.containerName} 已重启但未通过就绪契约（readinessProbe/startupSignal）——已从分流摘除，可在画布删除后重建副本`;
+              member.statusMessage = `副本容器 ${member.containerName} 已重启但未通过就绪契约（readinessProbe/startupSignal）——已从分流摘除${stopped ? '并停止容器（避免其继续读写主库）' : '（停止容器失败，请手动确认）'}，可在画布删除后重建副本`;
             }
           } else {
             member.status = 'error';

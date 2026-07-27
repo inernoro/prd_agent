@@ -15,7 +15,10 @@
 import type { BuildProfile, InfraService } from '../types.js';
 
 export interface ServiceGraphNode {
+  /** 带命名空间前缀的唯一 id（`service:<id>` / `infra:<id>`），跨两类节点不撞名。 */
   id: string;
+  /** 原始 profileId / infraId（前端按 profileId 关联复制集时用这个）。 */
+  rawId: string;
   name: string;
   kind: 'service' | 'infra';
   /** 入口 forwarder 按这些前缀把公网流量路由给它（有值 = 入口直达） */
@@ -74,10 +77,34 @@ export function infraPortVar(infraId: string): string {
   return `CDS_${infraId.toUpperCase().replace(/-/g, '_')}_PORT`;
 }
 
+/**
+ * 图节点 id 分命名空间（Codex 第二十七轮 P2）。
+ *
+ * 此前节点 id 直接用 profileId / infraId 原值，两个命名空间共用一个平面：项目里
+ * 只要存在同名的服务与基础设施（例如自管一个叫 `mongodb` 的服务 + 一个 `mongodb`
+ * 基础设施），后果有两层——① 真实的「服务 → 基础设施」依赖在 upsert 里表现为
+ * from === to 被当成自环丢弃；② 响应里出现重复 id，前端 `new Map(nodes.map(...))`
+ * 后写覆盖先写，画布渲染成错的。
+ *
+ * 分层数组 `layers` 仍是**原始 profileId**（按构造只含服务，前端直接当 profileId 用）。
+ */
+export const SERVICE_NODE_PREFIX = 'service:';
+export const INFRA_NODE_PREFIX = 'infra:';
+export const serviceNodeId = (id: string): string => `${SERVICE_NODE_PREFIX}${id}`;
+export const infraNodeId = (id: string): string => `${INFRA_NODE_PREFIX}${id}`;
+
+/** 反解节点 id；不带前缀的旧数据按 unknown 原样返回，消费方自行兜底。 */
+export function parseNodeId(nodeId: string): { kind: 'service' | 'infra' | 'unknown'; id: string } {
+  if (nodeId.startsWith(SERVICE_NODE_PREFIX)) return { kind: 'service', id: nodeId.slice(SERVICE_NODE_PREFIX.length) };
+  if (nodeId.startsWith(INFRA_NODE_PREFIX)) return { kind: 'infra', id: nodeId.slice(INFRA_NODE_PREFIX.length) };
+  return { kind: 'unknown', id: nodeId };
+}
+
 export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[]): ServiceGraph {
   const nodes: ServiceGraphNode[] = [
     ...profiles.map((p): ServiceGraphNode => ({
-      id: p.id,
+      id: serviceNodeId(p.id),
+      rawId: p.id,
       name: p.name || p.id,
       kind: 'service',
       pathPrefixes: p.pathPrefixes,
@@ -85,7 +112,8 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
       containerPort: p.containerPort,
     })),
     ...infra.map((s): ServiceGraphNode => ({
-      id: s.id,
+      id: infraNodeId(s.id),
+      rawId: s.id,
       name: (s as { name?: string }).name || s.id,
       kind: 'infra',
       dockerImage: (s as { dockerImage?: string }).dockerImage,
@@ -112,22 +140,27 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
   };
 
   for (const p of profiles) {
+    const self = serviceNodeId(p.id);
     for (const [envKey, raw] of Object.entries(p.env ?? {})) {
       const value = String(raw ?? '');
       if (!value) continue;
-      // 1) 主机名引用（服务或基础设施）
+      // 1) 主机名引用（服务或基础设施）。同名时服务优先——与 docker 网络别名的
+      //    解析顺序无关紧要：同一网络上两个容器不可能占用同一个别名，真撞名属病态配置。
       for (const host of extractHostTokens(value)) {
         const target = matchHostToId(host, allIdsDesc);
-        if (target && target !== p.id) upsert(p.id, target, envKey);
+        if (!target) continue;
+        const targetNode = serviceIdSet.has(target) ? serviceNodeId(target) : infraNodeId(target);
+        if (targetNode !== self) upsert(self, targetNode, envKey);
       }
       // 2) `${CDS_<INFRA>_PORT}` 模板引用
       for (const infraId of infraIds) {
-        if (value.includes(infraPortVar(infraId))) upsert(p.id, infraId, envKey);
+        if (value.includes(infraPortVar(infraId))) upsert(self, infraNodeId(infraId), envKey);
       }
     }
     // 3) depends_on 声明（可指向服务或基础设施）
     for (const dep of p.dependsOn ?? []) {
-      if (dep !== p.id && (serviceIdSet.has(dep) || infraIdSet.has(dep))) upsert(p.id, dep, undefined, true);
+      if (serviceIdSet.has(dep) && serviceNodeId(dep) !== self) upsert(self, serviceNodeId(dep), undefined, true);
+      else if (infraIdSet.has(dep)) upsert(self, infraNodeId(dep), undefined, true);
     }
   }
 
@@ -135,14 +168,18 @@ export function buildServiceGraph(profiles: BuildProfile[], infra: InfraService[
 
   // ── 服务分层（只对 service 节点；infra 由数据层框承载）──
   // depth[callee] >= depth[caller] + 1。松弛 V 轮：有环时深度封顶，不死循环。
+  // 深度按**原始 profileId** 计（layers 对外仍是原始 id），边端点先反解命名空间
   const depth = new Map<string, number>(serviceIds.map((id) => [id, 0]));
-  const svcEdges = edges.filter((e) => serviceIdSet.has(e.from) && serviceIdSet.has(e.to));
+  const svcEdges = edges
+    .map((e) => ({ from: parseNodeId(e.from), to: parseNodeId(e.to) }))
+    .filter((e) => e.from.kind === 'service' && e.to.kind === 'service'
+      && serviceIdSet.has(e.from.id) && serviceIdSet.has(e.to.id));
   for (let round = 0; round < serviceIds.length; round += 1) {
     let changed = false;
     for (const e of svcEdges) {
-      const want = (depth.get(e.from) ?? 0) + 1;
-      if (want > (depth.get(e.to) ?? 0) && want < serviceIds.length + 1) {
-        depth.set(e.to, want);
+      const want = (depth.get(e.from.id) ?? 0) + 1;
+      if (want > (depth.get(e.to.id) ?? 0) && want < serviceIds.length + 1) {
+        depth.set(e.to.id, want);
         changed = true;
       }
     }

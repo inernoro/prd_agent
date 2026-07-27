@@ -63,7 +63,7 @@ export interface ProfileReplicaSetView {
 
 interface ReplicaCandidateView { versionId: string; commitSha: string; image: string; createdAt: string; isCurrent: boolean }
 
-interface GraphNodeView { id: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string }
+interface GraphNodeView { id: string; rawId?: string; name: string; kind: 'service' | 'infra'; pathPrefixes?: string[]; subdomain?: string; containerPort?: number; dockerImage?: string }
 interface GraphEdgeView { from: string; to: string; envKeys: string[]; dependsOn: boolean }
 interface ServiceGraphView { nodes: GraphNodeView[]; edges: GraphEdgeView[]; layers: string[][] }
 
@@ -1018,7 +1018,12 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
   const [selected, setSelected] = useState<string | null>(null);
   const dimIf = (touching: boolean): number => (selected === null ? 1 : touching ? 1 : 0.22);
 
-  const nodeById = new Map(graph.nodes.map((n) => [n.id, n]));
+  // 图节点 id 带命名空间前缀（service:/infra:，Codex 第二十七轮 P2 治同名撞车），
+  // 这里按 rawId 建服务索引；rawId 缺省时兼容旧响应的裸 id。
+  const infraNodeId = (iid: string): string => `infra:${iid}`;
+  const nodeById = new Map(graph.nodes
+    .filter((n) => n.kind === 'service')
+    .map((n) => [n.rawId ?? n.id.replace(/^service:/, ''), n]));
   const layered = new Set(graph.layers.flat());
   const layers = graph.layers.map((l) => l.filter((id) => profileIds.includes(id)));
   const missing = profileIds.filter((p) => !layered.has(p));
@@ -1067,8 +1072,14 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
     return (n?.pathPrefixes?.length ?? 0) > 0 || !!n?.subdomain;
   });
   const entryTargets = entryFacing.length > 0 ? entryFacing : (rows[0] ?? []);
-  const svcEdges = graph.edges.filter((e) => pos.has(e.from) && pos.has(e.to));
-  const infraEdges = graph.edges.filter((e) => pos.has(e.from) && dbInfra.some((s) => s.id === e.to));
+  const edgeSvc = (endpoint: string): string => endpoint.replace(/^service:/, '');
+  const svcEdges = graph.edges
+    .map((e) => ({ ...e, from: edgeSvc(e.from), to: edgeSvc(e.to) }))
+    .filter((e) => pos.has(e.from) && pos.has(e.to));
+  const infraEdges = graph.edges
+    .filter((e) => dbInfra.some((s) => e.to === infraNodeId(s.id) || e.to === s.id))
+    .map((e) => ({ ...e, from: edgeSvc(e.from), to: e.to.replace(/^infra:/, '') }))
+    .filter((e) => pos.has(e.from));
   const previewIso = branchIso.state === 'idle' && draftIsoCount > 0;
 
   const commitWeight = (profileId: string, memberId: string): void => {

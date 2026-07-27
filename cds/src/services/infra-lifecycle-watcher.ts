@@ -22,6 +22,12 @@ export interface InfraLifecycleEvent {
 }
 
 const RING_LIMIT = 400;
+/**
+ * cgroup OOM 的 `oom` 与随后的 `die`(exitCode=137) 之间的关联窗口。docker 这两条
+ * 事件通常间隔毫秒级；给到 10s 足以覆盖事件流抖动，又不至于把十几秒后一次无关的
+ * 外部 SIGKILL 误归因成 OOM。
+ */
+const OOM_CORRELATION_WINDOW_MS = 10_000;
 
 // 模块级单例访问点：路由层（infra-data）零依赖注入即可读事件
 let activeWatcher: InfraLifecycleWatcher | null = null;
@@ -45,6 +51,8 @@ export function setReplicaMemberDeathListener(fn: ReplicaMemberDeathListener | n
 export class InfraLifecycleWatcher {
   private proc: ChildProcess | null = null;
   private events: InfraLifecycleEvent[] = [];
+  /** 容器名 → 最近一次 oom 事件时间戳（用于把紧随其后的 die/137 正确归因）。 */
+  private recentOom = new Map<string, number>();
   private stopped = false;
 
   constructor(private readonly deps: { serverEventLogStore?: ServerEventLogSink | null } = {}) {}
@@ -144,11 +152,29 @@ export class InfraLifecycleWatcher {
     if (this.events.length > RING_LIMIT) this.events = this.events.slice(-RING_LIMIT);
     // 死亡/OOM 类事件同步落服务器事件日志（可跨重启追溯）
     if (event.event === 'oom' || event.event === 'die') {
+      // cgroup OOM 的真实序列是 `oom` 紧跟一条 exitCode=137 的 `die`（Codex 第二十七轮 P2）。
+      // 此前两条各判各的：第一条判 cgroup OOM、第二条判「外部 SIGKILL，容器无 oom 事件」——
+      // 同一次死亡留下两条互相矛盾的证据，而这正是本取证器唯一要回答的问题。
+      // 这里记住每个容器最近一次 oom 的时间，die/137 落在窗口内即归因 cgroup OOM。
+      const now = Date.parse(event.ts) || Date.now();
+      if (event.event === 'oom') {
+        this.recentOom.set(name, now);
+        if (this.recentOom.size > RING_LIMIT) {
+          for (const [k, t] of this.recentOom) {
+            if (now - t > OOM_CORRELATION_WINDOW_MS) this.recentOom.delete(k);
+          }
+        }
+      }
+      const oomAt = this.recentOom.get(name);
+      const oomCorrelated = typeof oomAt === 'number' && now - oomAt >= 0 && now - oomAt <= OOM_CORRELATION_WINDOW_MS;
       const verdict = event.event === 'oom'
         ? 'cgroup OOM kill'
         : event.exitCode === '137'
-          ? '外部 SIGKILL（宿主 OOM killer / oomd / 人为，容器无 oom 事件）'
+          ? (oomCorrelated
+            ? 'cgroup OOM kill（同容器刚收到 oom 事件，exitCode=137 是其后续 die）'
+            : '外部 SIGKILL（宿主 OOM killer / oomd / 人为，容器无 oom 事件）')
           : `进程自身退出（exitCode=${event.exitCode ?? '?'}）`;
+      if (event.event === 'die' && oomCorrelated) this.recentOom.delete(name);
       this.deps.serverEventLogStore?.record({
         category: 'container',
         severity: event.event === 'oom' || event.exitCode === '137' ? 'error' : 'warn',
