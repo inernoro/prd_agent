@@ -1,0 +1,7 @@
+interface:
+  display_name: "教程双链维护"
+  short_description: "检查页面、教程步骤与截图证据的双向漂移"
+  default_prompt: "Use $tutorial-daily-maintain to scan changed product surfaces, verify page-to-tutorial reverse links, run reproducible random checks, and report only actionable drift."
+
+policy:
+  allow_implicit_invocation: true

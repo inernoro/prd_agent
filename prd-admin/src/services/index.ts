@@ -2028,6 +2028,10 @@ export {
   getDocStoreShareEntryContent,
   getDocStoreShareGraph,
   getDocumentStoreFolders,
+  getTutorialLinkGraph,
+  publishTutorialLinkGraph,
+  rollbackTutorialLinkGraph,
+  resolveTutorialLinkRoute,
 } from '@/services/real/documentStore';
 export type {
   DocumentStore,
@@ -2037,6 +2041,10 @@ export type {
   PublicDocumentStore,
   PublicStoreDetail,
   DocumentStoreShareLink,
+  TutorialLinkGraphSnapshot,
+  TutorialLinkGraphRevision,
+  TutorialLinkSurface,
+  TutorialLinkRouteResolution,
   DocStoreShareView,
   CreateDocumentStoreInput,
   AddDocumentEntryInput,

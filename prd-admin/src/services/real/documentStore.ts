@@ -148,6 +148,52 @@ export const deleteDocumentEntryReal: DeleteDocumentEntryContract = async (entry
   });
 };
 
+const TUTORIAL_GRAPH_PUBLISHER = 'llmgw-authoritative-tutorial';
+
+export async function getTutorialLinkGraph(storeId: string) {
+  const query = new URLSearchParams({ publisher: TUTORIAL_GRAPH_PUBLISHER });
+  return await apiRequest<import('@/services/contracts/documentStore').TutorialLinkGraphSnapshot>(
+    `${api.documentStore.stores.tutorialLinkGraph(storeId)}?${query.toString()}`,
+    { method: 'GET' },
+  );
+}
+
+export async function publishTutorialLinkGraph(storeId: string, draftSha256: string, publishedSha256?: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').TutorialLinkGraphSnapshot>(
+    `${api.documentStore.stores.tutorialLinkGraph(storeId)}/publish`,
+    {
+      method: 'POST',
+      body: {
+        publisher: TUTORIAL_GRAPH_PUBLISHER,
+        expectedDraftSha256: draftSha256,
+        expectedPublishedSha256: publishedSha256 ?? null,
+      },
+    },
+  );
+}
+
+export async function rollbackTutorialLinkGraph(storeId: string, versionId: string, publishedSha256: string) {
+  return await apiRequest<import('@/services/contracts/documentStore').TutorialLinkGraphSnapshot>(
+    `${api.documentStore.stores.tutorialLinkGraph(storeId)}/rollback`,
+    {
+      method: 'POST',
+      body: {
+        publisher: TUTORIAL_GRAPH_PUBLISHER,
+        versionId,
+        expectedPublishedSha256: publishedSha256,
+      },
+    },
+  );
+}
+
+export async function resolveTutorialLinkRoute(route: string) {
+  const query = new URLSearchParams({ publisher: TUTORIAL_GRAPH_PUBLISHER, route });
+  return await apiRequest<import('@/services/contracts/documentStore').TutorialLinkRouteResolution>(
+    `${api.documentStore.stores.tutorialLinkGraphResolve()}?${query.toString()}`,
+    { method: 'GET' },
+  );
+}
+
 /**
  * 上传文件到文档空间（multipart/form-data）。
  * 注意：不能用 apiRequest（会 JSON.stringify body），直接 fetch。
