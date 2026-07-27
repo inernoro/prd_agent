@@ -9,7 +9,7 @@
 | 层 | 何时通过才进下一层 | 目的 |
 |----|---------------------|------|
 | **L1** 根路径 | HTTP 200 | 前端静态资源可访问，CDS 代理正常 |
-| **L2** 无认证 API | HTTP 200 | 后端进程活着，路由注册完成 |
+| **L2** 无认证 API | HTTP 200 + JSON Content-Type + 端点 schema 正确 | 后端进程活着，路由注册完成，且没有被 SPA fallback 假阳性冒充 |
 | **L3** 认证 API | HTTP 200 + 数据正确 | `AI_ACCESS_KEY` / impersonate 链路正常 |
 
 CLI 封装：`cdscli smoke <branchId>` 一次性跑完三层。
@@ -46,6 +46,11 @@ curl -sf "$PREVIEW_URL/" -o /dev/null -w "code=%{http_code}\n"
 curl -sf "$PREVIEW_URL/api/shortcuts/version-check"
 # 期望: {"version":N,...}
 ```
+
+`cdscli smoke` 会同时校验 `Content-Type: application/json` 和端点最小 schema。
+`/api/shortcuts/version-check` 必须包含数值型 `version`；健康端点必须明确返回
+`status=healthy|ok|ready|success`，或布尔型 `ok/healthy/success=true`。API 路径
+返回 HTTP 200 的 HTML/SPA、非法 JSON 或不匹配的 JSON 结构都判为 L2 失败。
 
 ## L3 — 认证 API
 

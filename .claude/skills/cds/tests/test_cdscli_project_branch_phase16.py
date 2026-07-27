@@ -488,10 +488,14 @@ def test_preview_url_command_refuses_local_fallback(monkeypatch):
 
 
 class _FakeHttpResponse:
-    status = 200
+    def __init__(self, body: bytes = b'{"version":3}',
+                 content_type: str = "application/json"):
+        self.status = 200
+        self._body = body
+        self.headers = {"Content-Type": content_type}
 
-    def read(self):
-        return b'{"ok":true}'
+    def read(self, size: int = -1):
+        return self._body if size < 0 else self._body[:size]
 
     def __enter__(self):
         return self
@@ -534,6 +538,79 @@ def test_smoke_uses_api_primary_preview_url(monkeypatch):
     assert all(url.startswith("https://primary.example/") for url in requested)
     assert all("must-not-be-used" not in url for url in requested)
     assert all("secondary.example" not in url for url in requested)
+
+
+def test_smoke_rejects_api_html_200(monkeypatch):
+    """L2 API 路径返回 SPA HTML 时，即使 HTTP 200 也必须判失败。"""
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=30: {
+            "branches": [{
+                "id": "proj-a-html-fallback",
+                "previewUrl": "https://html-fallback.example",
+            }],
+        },
+    )
+
+    monkeypatch.setattr(
+        cdscli.urllib.request,
+        "urlopen",
+        lambda req, timeout=10: _FakeHttpResponse(
+            b"<!doctype html><title>LLM Gateway</title>",
+            "text/html; charset=utf-8",
+        ),
+    )
+
+    code, out = call_main(["smoke", "proj-a-html-fallback"])
+
+    assert code == 2, out
+    payload = json.loads(out.strip().split("\n")[-1])
+    l2_probes = [
+        probe for probe in payload["data"]["probes"]
+        if probe["layer"].startswith("L2")
+    ]
+    assert l2_probes
+    assert all(probe["pass"] is False for probe in l2_probes)
+    assert all(probe["contentType"] == "text/html; charset=utf-8"
+               for probe in l2_probes)
+    assert all(probe["error"] == "expected_application_json"
+               for probe in l2_probes)
+
+
+def test_smoke_rejects_version_check_without_numeric_version(monkeypatch):
+    """L2 version-check 必须满足最小 JSON schema，不能只看 JSON 类型。"""
+    monkeypatch.setenv("CDS_PROJECT_KEY", "project-key-not-real")
+    monkeypatch.setattr(
+        cdscli,
+        "_call_safe",
+        lambda method, path, timeout=30: {
+            "branches": [{
+                "id": "proj-a-invalid-schema",
+                "previewUrl": "https://invalid-schema.example",
+            }],
+        },
+    )
+
+    def fake_urlopen(req, timeout=10):
+        if req.full_url.endswith("/api/shortcuts/version-check"):
+            return _FakeHttpResponse(b'{"ok":true}', "application/json")
+        return _FakeHttpResponse(b'{"status":"ok"}', "application/json")
+
+    monkeypatch.setattr(cdscli.urllib.request, "urlopen", fake_urlopen)
+
+    code, out = call_main(["smoke", "proj-a-invalid-schema"])
+
+    assert code == 2, out
+    payload = json.loads(out.strip().split("\n")[-1])
+    version_probe = next(
+        probe for probe in payload["data"]["probes"]
+        if probe["layer"] == "L2/api/shortcuts/version-check"
+    )
+    assert version_probe["pass"] is False
+    assert version_probe["contentType"] == "application/json"
+    assert version_probe["error"] == "invalid_json_schema"
 
 
 # ── project clone (SSE) ──────────────────────────────────────────────
