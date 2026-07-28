@@ -11,7 +11,13 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 ///
 /// 约定本身：**项目级优先，不写用户主目录**。技能跟着项目的版本库走，
 /// 团队每个人都有；装到 `~` 的话，人一走团队什么都不剩。
-/// 宿主识别顺序：`.claude` → `.cursor` → 兜底 `.agents`。
+///
+/// 宿主目录：`.claude` / `.cursor` / `.agents`，**存在几个就装几个**，一个都没有时
+/// 建 `.agents/skills` 兜底。早期版本按 `.claude` → `.cursor` → `.agents` 取第一个
+/// 命中的，在同时装了多个 Agent 的仓库里会装到「不是当前 Agent 读的那个目录」——
+/// 本仓库同时有 `.claude` 和 `.agents`，从 Codex 跑引导脚本会装进 `.claude/skills`，
+/// 而 Codex 只读 `.agents/skills`，结果是「装完了但一个技能都看不见」。
+/// 装到多处的代价是几百 KB 重复文件，比装了看不见小得多。
 ///
 /// 同一份约定的另外两处实现（跨语言无法共享代码，靠本文档注释与守卫测试对齐）：
 /// - `cds/src/routes/bootstrap.ts` 的引导脚本
@@ -20,14 +26,18 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// </summary>
 public static class SkillInstallContract
 {
-    /// <summary>宿主探测片段（POSIX sh）。执行后 <c>$SKILLS_DIR</c> 即目标目录。</summary>
+    /// <summary>
+    /// 宿主探测片段（POSIX sh）。执行后 <c>$SKILLS_DIRS</c> 是空格分隔的目标目录列表
+    /// （存在几个宿主就有几个），并已全部 mkdir。
+    /// </summary>
     public const string DetectSnippet =
         """
-        if   [ -d ".claude" ]; then SKILLS_DIR=".claude/skills"
-        elif [ -d ".cursor" ]; then SKILLS_DIR=".cursor/skills"
-        else                        SKILLS_DIR=".agents/skills"
-        fi
-        mkdir -p "$SKILLS_DIR"
+        SKILLS_DIRS=""
+        for h in .claude .cursor .agents; do
+          [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+        done
+        [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
+        for d in $SKILLS_DIRS; do mkdir -p "$d"; done
         """;
 
     /// <summary>
@@ -36,11 +46,11 @@ public static class SkillInstallContract
     /// <c>if ... &amp;&amp; elif ...</c> 不是合法 shell，粘贴过去直接语法错。
     /// </summary>
     public const string DetectOneLiner =
-        "SKILLS_DIR=$([ -d .claude ] && echo .claude/skills "
-        + "|| { [ -d .cursor ] && echo .cursor/skills || echo .agents/skills; })";
+        "SKILLS_DIRS=$(for h in .claude .cursor .agents; do [ -d \"$h\" ] && "
+        + "printf '%s/skills ' \"$h\"; done); [ -n \"$SKILLS_DIRS\" ] || SKILLS_DIRS=.agents/skills";
 
     /// <summary>拼一条「下载并装到项目级技能目录」的完整命令（可直接粘贴执行）。</summary>
     public static string BuildInstallCommand(string downloadUrl, string fileName) =>
-        $"{DetectOneLiner} && mkdir -p \"$SKILLS_DIR\" && "
-        + $"curl -sSLo /tmp/{fileName} \"{downloadUrl}\" && unzip -o /tmp/{fileName} -d \"$SKILLS_DIR\"";
+        $"{DetectOneLiner} && curl -sSLo /tmp/{fileName} \"{downloadUrl}\" && "
+        + $"for d in $SKILLS_DIRS; do mkdir -p \"$d\" && unzip -o /tmp/{fileName} -d \"$d\"; done";
 }

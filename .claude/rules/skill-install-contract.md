@@ -8,11 +8,20 @@
 ## 一、安装位置：项目级优先，不写用户主目录
 
 ```sh
-if   [ -d ".claude" ]; then SKILLS_DIR=".claude/skills"   # Claude Code
-elif [ -d ".cursor" ]; then SKILLS_DIR=".cursor/skills"   # Cursor
-else                        SKILLS_DIR=".agents/skills"   # 通用 Agent Skills / Codex
-fi
+# 存在几个宿主就装几个；一个都没有时兜底 .agents/skills
+SKILLS_DIRS=""
+for h in .claude .cursor .agents; do
+  [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+done
+[ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
+for d in $SKILLS_DIRS; do mkdir -p "$d"; done
 ```
+
+**为什么装到「所有存在的宿主」而不是「第一个命中的」**：一个仓库可能同时装了多个 Agent。
+本仓库就同时有 `.claude` 和 `.agents`——按优先级取第一个的话，从 Codex 跑引导脚本会装进
+`.claude/skills`，而 Codex 只读 `.agents/skills`，结果是**装完了一个技能都看不见**。
+多装一份的代价是几百 KB 重复文件，比装了看不见小得多。只想装一个目录时用
+`--skills-dir` 显式指定。
 
 **为什么不是 `~/.claude/skills`**：帮别人建系统时，技能装在你这台机器上，人一走团队什么都不剩。装项目级则技能跟着对方的版本库走，全队 clone 下来都有。
 

@@ -10,3 +10,9 @@
 | fix | 技能 | sdd-init 产出 doc/guide.list.directory.md 取代 doc/README.md，不再违反自己刚装进去的文档命名规范 |
 | fix | 技能 | sdd-init 的角色手册安装命令与开篇描述改为项目级三宿主探测，清掉最后两处用户主目录残留 |
 | test | cds | 安装约定守卫把 sdd-init 的 SKILL.md 与 role-playbooks.md 纳入探测顺序断言 |
+| fix | cds | 引导脚本改为装到所有存在的宿主目录，不再只装第一个命中的，修复同时装了多个 Agent 的仓库「装完了当前 Agent 一个技能都看不见」 |
+| fix | prd-api | 技能安装约定升级为多宿主遍历安装，installCommand 与 INSTALL.md 同步 |
+| fix | prd-api | 匿名下载端点按「技能 + 调用方」做 10 分钟窗口去重，重复 POST 不再累加 DownloadCount，杜绝匿名刷热度排序与白造 Mongo 写入 |
+| refactor | prd-api | 下载计数去重抽成共享 SkillDownloadCounter，站内与开放接口两个 controller 共用一份 |
+| test | prd-api | 新增 SkillDownloadCounterTests：同调用方只计一次、不同技能/来源独立、登录按用户去重、指纹不含原始 IP、窗口长度有界 |
+| test | cds | 安装约定守卫新增「装到所有存在宿主」断言，早期取第一个的写法回潮即红 |

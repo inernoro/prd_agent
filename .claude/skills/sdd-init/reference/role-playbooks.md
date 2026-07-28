@@ -8,11 +8,16 @@
 ```bash
 # 装项目级：技能跟着对方的 git 走，全队 clone 下来都有。
 # 装到用户主目录的话，人一走团队什么都不剩。
-SKILLS_DIR=$([ -d .claude ] && echo .claude/skills \
-  || { [ -d .cursor ] && echo .cursor/skills || echo .agents/skills; })
-mkdir -p "$SKILLS_DIR"
+# 装到项目级，且**存在几个宿主就装几个**。
+# 一个仓库可能同时装了多个 Agent（比如同时有 .claude 和 .agents）：
+# 只装第一个命中的，从另一个 Agent 跑就「装完了一个技能都看不见」。
+SKILLS_DIRS=""
+for h in .claude .cursor .agents; do
+  [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+done
+[ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"   # 一个都没有时兜底
 curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
-  && unzip -o /tmp/<KEY>.zip -d "$SKILLS_DIR"
+  && for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o /tmp/<KEY>.zip -d "$d"; done
 ```
 
 ---

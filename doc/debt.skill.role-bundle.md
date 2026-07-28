@@ -52,3 +52,10 @@
 - **不还的后果**：客户单独下载该技能时会拿到带 emoji 的数据文件。
 - **本次已做**：`scripts/test-official-skill-bundles.mjs` 的 emoji 正则下界从 `U+1F300` 放宽到 `U+1F000`（此前漏掉 `U+1F198` 这类字符，导致 `acceptance-checklist` 两个 reference 文件的 emoji 标题混过守卫），并修掉了那两处。
 - **二次补漏**：自测的 emoji 遍历此前只扫 `.md/.txt/.json/.ya?ml`，脚本文件不在范围内，于是 `create-visual-test-to-kb/scripts/harness.mjs` 控制台输出里的两处 `U+26A0` 一路混到分发包。遍历已扩到 `.mjs/.js/.ts/.py/.sh`，那两处改为文案 `[警告]`。真验证方式是从分支预览下载 qa-starter 真解压再全量扫，纸面 review 看不出来。
+
+### D7 下载计数去重只在进程内存里
+
+- **是什么**：下载端点（fork）改匿名后，`SkillDownloadCounter` 按「技能 + 调用方（登录取 userId、匿名取 IP 哈希）」做 10 分钟窗口去重，挡住单个客户端循环刷 `DownloadCount`。但去重表在进程内存，多实例部署时每实例各一份，分布式调用方仍可绕过。
+- **为什么欠着**：真正的按 IP 限流是横切能力，不该塞进一个 controller；而本次要挡的是「一个客户端每分钟刷几百次」这种最廉价的滥用，进程内去重已经够。
+- **什么条件下必须还**：热度榜单出现明显异常，或决定把 DownloadCount 用于对外排名/结算时。做法是换成 Redis 计数或在网关层做按 IP 限流。
+- **不还的后果**：分布式调用方仍可缓慢抬高某个技能的热度排序。

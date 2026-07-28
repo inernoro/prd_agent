@@ -118,12 +118,19 @@ describe('引导脚本', () => {
   });
 
   it('默认装到项目级技能目录，绝不写用户主目录', () => {
-    expect(script).toContain('.claude/skills');
-    expect(script).toContain('.cursor/skills');
-    expect(script).toContain('.agents/skills');
+    // 三个宿主根目录都要遍历（目录名由 $h/skills 拼出，故断言宿主名而非拼好的路径）
+    expect(script).toMatch(/for h in \.claude \.cursor \.agents/);
+    expect(script).toContain('.agents/skills');   // 一个宿主都没有时的兜底
     // 装到 ~ 的话人一走团队什么都不剩
     expect(script).not.toContain('$HOME/.claude');
     expect(script).not.toContain('~/.claude');
+  });
+
+  it('装到所有存在的宿主，不是只装第一个命中的', () => {
+    // 本仓库同时有 .claude 和 .agents：只装第一个的话，从 Codex 跑会装进
+    // .claude/skills，而 Codex 只读 .agents/skills —— 装完了一个技能都看不见。
+    expect(script).toMatch(/for _d in \$SKILLS_DIRS/);      // 安装函数遍历全部目录
+    expect(script).not.toMatch(/elif \[ -d "?\.cursor/);     // 早期「取第一个」写法不许回潮
   });
 
   it('不含密钥，不改 shell profile / PATH', () => {

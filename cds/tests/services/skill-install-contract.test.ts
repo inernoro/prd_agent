@@ -21,8 +21,14 @@ import { buildBootstrapScript, findPreset } from '../../src/routes/bootstrap.js'
 const REPO_ROOT = path.resolve(__dirname, '../../..');
 const read = (rel: string): string => fs.readFileSync(path.join(REPO_ROOT, rel), 'utf8');
 
-/** 三处实现共同的探测顺序。改这里 = 改约定，必须三处同步。 */
-const EXPECTED_ORDER = ['.claude/skills', '.cursor/skills', '.agents/skills'];
+/**
+ * 三处实现共同的宿主顺序。改这里 = 改约定，必须处处同步。
+ *
+ * 写法有两种形态（都合法）：安装侧循环宿主根目录 `for h in .claude .cursor .agents`，
+ * 探测侧直接列技能目录 `for d in .claude/skills .cursor/skills .agents/skills`。
+ * 断言只看三个宿主名的先后，不绑死写法。
+ */
+const EXPECTED_ORDER = ['.claude', '.cursor', '.agents'];
 
 describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
   const sources: Array<[string, string]> = [
@@ -36,12 +42,29 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     ['sdd-init role-playbooks.md', read('.claude/skills/sdd-init/reference/role-playbooks.md')],
   ];
 
-  it.each(sources)('%s 使用同一套宿主探测顺序', (_label, text) => {
-    const found = EXPECTED_ORDER.filter((d) => text.includes(d));
-    expect(found).toEqual(EXPECTED_ORDER);
-    // 顺序也要一致：.claude 必须排在 .cursor 前，.agents 兜底在最后
-    expect(text.indexOf('.claude/skills')).toBeLessThan(text.indexOf('.cursor/skills'));
-    expect(text.indexOf('.cursor/skills')).toBeLessThan(text.indexOf('.agents/skills'));
+  /** 真正往磁盘写技能的实现。sdd-init SKILL.md 只做探测、不安装，故不在此列。 */
+  const installers = sources.filter(([label]) => label !== 'sdd-init SKILL.md');
+
+  it.each(sources)('%s 覆盖三个宿主且顺序一致', (_label, text) => {
+    // 直接取遍历宿主的那一行，别用「全文第一次出现」——正文里的说明文字会打乱顺序。
+    const loop = /for\s+\w+\s+in\s+((?:\.\w[\w/]*\s+){2}\.\w[\w/]*)\s*;?\s*do/.exec(text);
+    expect(loop, '找不到遍历宿主目录的 for 循环').not.toBeNull();
+    const hosts = loop![1].trim().split(/\s+/).map((h) => h.replace(/\/skills$/, ''));
+    expect(hosts).toEqual(EXPECTED_ORDER);
+    // 兜底目录必须是 .agents/skills（一个宿主都没有时建它）
+    expect(text).toContain('.agents/skills');
+  });
+
+  it.each(installers)('%s 装到所有存在的宿主，不是只装第一个命中的', (_label, text) => {
+    // 一个仓库可能同时装了多个 Agent（本仓库就同时有 .claude 和 .agents）。
+    // 按优先级取第一个的话，从 Codex 跑会装进 .claude/skills，而 Codex 只读
+    // .agents/skills —— 装完了一个技能都看不见。所以必须遍历安装，不能 elif 取一个。
+    expect(text).toContain('SKILLS_DIRS');
+    // 早期的「取第一个」写法（if/elif 链或 && || 三元）一律不许再出现
+    expect(text).not.toMatch(/elif\s+\[\s+-d\s+"?\.cursor/);
+    expect(text).not.toMatch(/SKILLS_DIR=\$\(\[\s+-d\s+\.claude\s+\]\s+&&/);
+    // 必须有「对每个目录都装一遍」的循环
+    expect(text).toMatch(/for\s+\w+\s+in\s+\$SKILLS_DIRS/);
   });
 
   it.each(sources)('%s 不把技能装进用户主目录', (_label, text) => {
@@ -55,7 +78,7 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
   it('MAP 侧的单行式是合法 shell（不能把 if/elif 用 && 拼起来）', () => {
     const cs = read('prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/SkillInstallContract.cs');
     const oneLiner = /DetectOneLiner\s*=\s*([\s\S]*?);/.exec(cs)?.[1] ?? '';
-    expect(oneLiner).toContain('SKILLS_DIR=$(');
+    expect(oneLiner).toContain('SKILLS_DIRS=$(');
     // `if ... && elif ...` 不是合法 shell，粘贴过去直接语法错
     expect(oneLiner).not.toMatch(/\bif\b[\s\S]*&&[\s\S]*\belif\b/);
   });

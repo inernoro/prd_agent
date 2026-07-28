@@ -67,12 +67,15 @@ curl -sSL -o "$NAME" "$URL"
 # 装到「项目级」技能目录，不是用户主目录 —— 技能跟着项目的版本库走，
 # 团队每个人 clone 下来都有；装到 ~ 的话，人一走团队什么都不剩。
 # 宿主识别与 CDS 初始化脚本同一套约定，两条路装到同一个地方，不会分裂成两处技能库。
-if   [ -d ".claude" ]; then SKILLS_DIR=".claude/skills"
-elif [ -d ".cursor" ]; then SKILLS_DIR=".cursor/skills"
-else                        SKILLS_DIR=".agents/skills"
-fi
-mkdir -p "$SKILLS_DIR"
-unzip -o "$NAME" -d "$SKILLS_DIR"
+# 装到项目级，且**存在几个宿主就装几个**。
+# 一个仓库可能同时装了多个 Agent（比如同时有 .claude 和 .agents）：
+# 只装第一个命中的，从另一个 Agent 跑就「装完了一个技能都看不见」。
+SKILLS_DIRS=""
+for h in .claude .cursor .agents; do
+  [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+done
+[ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"   # 一个都没有时兜底
+for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o "$NAME" -d "$d"; done
 ```
 
 ## 上传（**要** `marketplace.skills:write` scope —— 这是唯一需要凭据的主流程）
@@ -155,7 +158,7 @@ echo "本地版本: 1.3.0"
 >
 > ```bash
 > curl -sSLo /tmp/findmapskills.zip "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
->   && unzip -o /tmp/findmapskills.zip -d "$SKILLS_DIR"   # $SKILLS_DIR 见「下载」一节的宿主识别
+>   && for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o /tmp/findmapskills.zip -d "$d"; done   # $SKILLS_DIRS 见「下载」一节的宿主识别
 > ```
 
 后端 `OfficialSkillTemplates.cs` 的 `FindMapSkillsVersion` 常量是本技能版本的权威源。

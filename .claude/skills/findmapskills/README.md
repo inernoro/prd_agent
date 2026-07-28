@@ -11,12 +11,15 @@ PrdAgent 海鲜市场的官方操作技能。装上之后 AI 就能帮你搜索 
 装到 `~` 的话，人一走团队什么都不剩。宿主识别与 CDS 初始化脚本同一套约定：
 
 ```bash
-if   [ -d ".claude" ]; then SKILLS_DIR=".claude/skills"   # Claude Code
-elif [ -d ".cursor" ]; then SKILLS_DIR=".cursor/skills"   # Cursor
-else                        SKILLS_DIR=".agents/skills"   # 通用 Agent Skills / Codex
-fi
-mkdir -p "$SKILLS_DIR"
-unzip -o findmapskills.zip -d "$SKILLS_DIR"
+# 装到项目级，且**存在几个宿主就装几个**。
+# 一个仓库可能同时装了多个 Agent（比如同时有 .claude 和 .agents）：
+# 只装第一个命中的，从另一个 Agent 跑就「装完了一个技能都看不见」。
+SKILLS_DIRS=""
+for h in .claude .cursor .agents; do
+  [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+done
+[ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"   # 一个都没有时兜底
+for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o findmapskills.zip -d "$d"; done
 ```
 
 装完重开 AI 编程工具，说「找个海鲜市场里做 X 的技能」即可触发。

@@ -3,9 +3,11 @@ using System.Text.RegularExpressions;
 using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Api.Authorization;
+using PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
@@ -47,19 +49,22 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     private readonly SkillZipMetadataExtractor _zipExtractor;
     private readonly IConfiguration _config;
     private readonly ILogger<MarketplaceSkillsOpenApiController> _logger;
+    private readonly IMemoryCache _cache;
 
     public MarketplaceSkillsOpenApiController(
         MongoDbContext db,
         IAssetStorage assetStorage,
         SkillZipMetadataExtractor zipExtractor,
         IConfiguration config,
-        ILogger<MarketplaceSkillsOpenApiController> logger)
+        ILogger<MarketplaceSkillsOpenApiController> logger,
+        IMemoryCache cache)
     {
         _db = db;
         _config = config;
         _assetStorage = assetStorage;
         _zipExtractor = zipExtractor;
         _logger = logger;
+        _cache = cache;
     }
 
     // ======================================================================
@@ -181,15 +186,19 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "技能不存在或已下架"));
 
-        await _db.MarketplaceSkills.UpdateOneAsync(
-            x => x.Id == id,
-            Builders<MarketplaceSkill>.Update
-                .Inc(x => x.DownloadCount, 1)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        // 窗口内重复调用不再计数：端点匿名后，裸的 Inc 等于把热度排序开放给任何人刷。
+        if (SkillDownloadCounter.ShouldCount(_cache, HttpContext, id, userId))
+        {
+            await _db.MarketplaceSkills.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<MarketplaceSkill>.Update
+                    .Inc(x => x.DownloadCount, 1)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
 
-        skill.DownloadCount += 1;
-        skill.UpdatedAt = DateTime.UtcNow;
+            skill.DownloadCount += 1;
+            skill.UpdatedAt = DateTime.UtcNow;
+        }
         return Ok(ApiResponse<object>.Ok(new
         {
             downloadUrl = skill.ZipUrl,

@@ -213,15 +213,15 @@ CDS_UPSTREAM=${shq(upstream)}
 PRESET=${shq(preset.key)}
 MARKETPLACE_KEYS=${shq(marketplaceList)}
 INCLUDE_CDS_SKILLS=${preset.includeCdsSkills ? '1' : '0'}
-SKILLS_DIR=""
+SKILLS_DIRS=""
 
 while [ $# -gt 0 ]; do
   case "$1" in
-    --skills-dir) SKILLS_DIR="\${2:-}"; shift 2 ;;
-    --skills-dir=*) SKILLS_DIR="\${1#*=}"; shift ;;
+    --skills-dir) SKILLS_DIRS="\${2:-}"; shift 2 ;;
+    --skills-dir=*) SKILLS_DIRS="\${1#*=}"; shift ;;
     -h|--help)
-      echo "用法: sh bootstrap.sh [--skills-dir <目录>]"
-      echo "不指定时自动识别当前项目的 Agent 技能目录。"
+      echo "用法: sh bootstrap.sh [--skills-dir \"<目录> [目录...]\"]"
+      echo "不指定时装到当前项目所有存在的 Agent 技能目录（.claude / .cursor / .agents）。"
       exit 0 ;;
     *) echo "未知参数: $1"; exit 2 ;;
   esac
@@ -245,17 +245,33 @@ if [ -n "$missing" ]; then
   fail "请先安装上面缺少的命令，然后重新运行本脚本。"
 fi
 
-# ── 2. 探测技能目录（默认项目级）─────────────────────────────────────
+# ── 2. 探测技能目录（项目级，存在几个宿主就装几个）───────────────────
 # 装到项目级而不是用户级：技能跟着对方的 git 走，全队 clone 下来都有。
 # 装到用户主目录的话，人一走团队什么都不剩。
-if [ -z "$SKILLS_DIR" ]; then
-  if [ -d ".claude" ]; then SKILLS_DIR=".claude/skills"
-  elif [ -d ".cursor" ]; then SKILLS_DIR=".cursor/skills"
-  else SKILLS_DIR=".agents/skills"
-  fi
+#
+# 为什么装到「所有存在的宿主」而不是「第一个命中的」：一个仓库可能同时装了
+# 多个 Agent（本仓库就同时有 .claude 和 .agents）。取第一个命中的话，从 Codex
+# 跑这个脚本会装进 .claude/skills，而 Codex 只读 .agents/skills —— 装完了一个
+# 技能都看不见。多装一份的代价是几百 KB 重复文件，比装了看不见小得多。
+# 想只装一个目录用 --skills-dir 显式指定。
+if [ -z "$SKILLS_DIRS" ]; then
+  for h in .claude .cursor .agents; do
+    [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+  done
+  [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
 fi
-mkdir -p "$SKILLS_DIR"
-say "技能目录: $SKILLS_DIR"
+for d in $SKILLS_DIRS; do mkdir -p "$d"; done
+say "技能目录:$SKILLS_DIRS"
+
+# 把一个已解压的技能目录复制到全部宿主目录。
+install_skill() {
+  _src="$1"; _name="$2"
+  for _d in $SKILLS_DIRS; do
+    rm -rf "$_d/$_name"
+    cp -R "$_src" "$_d/$_name"
+  done
+  installed="$installed $_name"
+}
 
 TMP_DIR=$(mktemp -d)
 trap 'rm -rf "$TMP_DIR"' EXIT
@@ -281,10 +297,7 @@ if [ "$INCLUDE_CDS_SKILLS" = "1" ]; then
     if [ -n "$pack_skills" ]; then
       for d in "$pack_skills"/*/; do
         [ -d "$d" ] || continue
-        name=$(basename "$d")
-        rm -rf "$SKILLS_DIR/$name"
-        cp -R "$d" "$SKILLS_DIR/$name"
-        installed="$installed $name"
+        install_skill "$d" "$(basename "$d")"
       done
       say "已安装 CDS 技能包 (来源 $got)"
     else
@@ -310,10 +323,7 @@ for key in $MARKETPLACE_KEYS; do
   fi
   for d in "$extract_dir"/*/; do
     [ -d "$d" ] || continue
-    name=$(basename "$d")
-    rm -rf "$SKILLS_DIR/$name"
-    cp -R "$d" "$SKILLS_DIR/$name"
-    installed="$installed $name"
+    install_skill "$d" "$(basename "$d")"
   done
   say "已安装套装 $key"
 done
@@ -324,7 +334,7 @@ cat > .cds/bootstrap.json <<JSON
 {
   "preset": "$PRESET",
   "cdsHost": "$CDS_ORIGIN",
-  "skillsDir": "$SKILLS_DIR",
+  "skillsDirs": "$SKILLS_DIRS",
   "installedSkills": "$installed",
   "installedAt": "$(date -u +%Y-%m-%dT%H:%M:%SZ)"
 }
@@ -335,7 +345,7 @@ JSON
 # 否则 CI / 一键脚本会静默带着残缺技能集跑下去。
 echo ""
 if [ -n "$skipped" ]; then
-  echo "[初始化] 安装未完成。技能目录: $SKILLS_DIR" >&2
+  echo "[初始化] 安装未完成。技能目录:$SKILLS_DIRS" >&2
   [ -n "$installed" ] && echo "  已安装:$installed" >&2
   echo "  未安装:$skipped" >&2
   echo "" >&2
@@ -344,7 +354,7 @@ if [ -n "$skipped" ]; then
   exit 1
 fi
 
-say "安装完成。技能目录: $SKILLS_DIR"
+say "安装完成。技能目录:$SKILLS_DIRS"
 [ -n "$installed" ] && echo "  已安装:$installed"
 echo ""
 echo "下一步: 在当前目录打开你的 AI 编程工具，输入"
