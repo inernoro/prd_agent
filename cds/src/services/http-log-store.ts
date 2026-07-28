@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { IncomingHttpHeaders } from 'node:http';
 import { MongoClient, type Collection, type Sort } from 'mongodb';
+import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
 
 export interface HttpLogRecord {
   _id: string;
@@ -426,6 +427,10 @@ export function createBodyCapture(maxBytes = MAX_BODY_PREVIEW_BYTES, contentType
 export class HttpLogStore {
   private client: MongoClient | null = null;
   private collection: Collection<HttpLogRecord> | null = null;
+  /** 索引是否已建全；false 时由 scheduleIndexRetry 排程重试（不重连） */
+  private indexesReady = false;
+  private indexRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private indexRetryAttempt = 0;
   private chain: Promise<void> = Promise.resolve();
   private activeRequests = new Map<string, Omit<ActiveHttpRequestRecord, 'ageMs'>>();
   private writesSincePrune = 0;
@@ -453,22 +458,95 @@ export class HttpLogStore {
   }
 
   async init(): Promise<void> {
-    if (this.client) return;
-    this.client = new MongoClient(this.opts.uri, {
+    // 已连上但索引没建全（上次被 IndexOptionsConflict 之类挡住）→ 再试一次索引，
+    // 不重连。否则「连上了但索引永远缺」会一直缺下去（Codex 九轮 P2）。
+    if (this.client) {
+      if (!this.indexesReady && this.collection) await this.tryEnsureIndexes(this.collection);
+      return;
+    }
+    // 失败必须复位（Codex PR #1275 七轮 P2 同族）：先赋值再连，一旦 connect 抛错，
+    // client 已挂在实例上而 collection 为空 —— init() 之后被 `if (this.client) return`
+    // 永久短路，record() 又只在有 collection 时才写，于是这个日志库**静默死掉**。
+    const client = new MongoClient(this.opts.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
-    this.collection = this.client.db(this.databaseName).collection<HttpLogRecord>(this.collectionName);
-    await Promise.all([
-      this.collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
-      this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1' }),
-      this.collection.createIndex({ host: 1, ts: -1 }, { name: 'host_ts_desc' }),
-      this.collection.createIndex({ status: 1, ts: -1 }, { name: 'status_ts_desc' }),
-      this.collection.createIndex({ requestKind: 1, durationMs: -1, ts: -1 }, { name: 'kind_duration_ts_desc' }),
-      this.collection.createIndex({ durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
-      this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
+    let collection: Collection<HttpLogRecord>;
+    try {
+      await client.connect();
+      collection = client.db(this.databaseName).collection<HttpLogRecord>(this.collectionName);
+    } catch (err) {
+      await client.close().catch(() => undefined);
+      this.client = null;
+      this.collection = null;
+      throw err;
+    }
+    // 连上就算可用：**索引失败不许把一个连得上的库判死**（Codex 九轮 P2）。
+    // 典型场景是运维改了保留天数 —— 同名 ttl_ts 索引的 expireAfterSeconds 变了，
+    // Mongo 报 IndexOptionsConflict。那是配置变更的正常后果，不是故障；若沿用
+    // 「建索引失败即整体失败」，这个日志库会在改配置那天起静默死掉，而排障恰恰靠它。
+    this.client = client;
+    this.collection = collection;
+    await this.tryEnsureIndexes(collection);
+  }
+
+  /**
+   * 建索引，失败只告警不致命，并**自行排程重试**（Codex PR #1275 十轮 P2）。
+   *
+   * 只靠「下次 init() 会重试」是空头支票：index.ts / forwarder-main.ts 都只在启动时
+   * 调一次 init()，进程活着期间不会再有第二次。于是索引失败后 indexesReady 永远是
+   * false —— 尤其 TTL 对账已经 drop 掉旧索引、重建又失败时，**保留期在重启前一直
+   * 是失效的**（日志无限增长，正是 2026-07-27 那类事故的燃料）。所以这里自己排一个
+   * 退避重试，直到建成为止。
+   *
+   * 定时器 unref：这是服务起来之后的后台维护，不该仅凭它把进程钉在事件循环里
+   *（与启动期那个**刻意不 unref** 的退避定时器相反 —— 那时没有别的 handle 撑着）。
+   */
+  private async tryEnsureIndexes(collection: Collection<HttpLogRecord>): Promise<void> {
+    try {
+      await this.ensureIndexes(collection);
+      this.indexesReady = true;
+      this.indexRetryAttempt = 0;
+    } catch (err) {
+      this.indexesReady = false;
+      const delayMs = this.scheduleIndexRetry(collection);
+      console.warn(
+        `[http-log-store] 索引建立失败（库仍可写，${Math.round(delayMs / 1000)}s 后自动重试）: `
+        + `${(err as Error)?.message || err}`,
+      );
+    }
+  }
+
+  /** 排一次索引重试（指数退避，30 分钟封顶）；返回本次的等待毫秒数。 */
+  private scheduleIndexRetry(collection: Collection<HttpLogRecord>): number {
+    this.indexRetryAttempt += 1;
+    const delayMs = Math.min(30 * 60_000, 30_000 * 2 ** (this.indexRetryAttempt - 1));
+    if (this.indexRetryTimer) clearTimeout(this.indexRetryTimer);
+    const timer = setTimeout(() => {
+      this.indexRetryTimer = null;
+      if (this.collection) void this.tryEnsureIndexes(this.collection);
+    }, delayMs);
+    timer.unref?.();
+    this.indexRetryTimer = timer;
+    return delayMs;
+  }
+
+  private async ensureIndexes(collection: Collection<HttpLogRecord>): Promise<void> {
+    // 逐条对账而非 Promise.all 直挂：一条索引冲突不该掩盖其余索引的结果，
+    // 同名不同选项（改保留天数后的 ttl_ts）走 drop 再建（见 mongo-index-reconcile）。
+    const results = await Promise.allSettled([
+      ensureIndexWithReconcile(collection, { ts: -1 }, { name: 'ts_desc' }),
+      ensureIndexWithReconcile(collection, { requestId: 1 }, { name: 'requestId_1' }),
+      ensureIndexWithReconcile(collection, { host: 1, ts: -1 }, { name: 'host_ts_desc' }),
+      ensureIndexWithReconcile(collection, { status: 1, ts: -1 }, { name: 'status_ts_desc' }),
+      ensureIndexWithReconcile(collection, { requestKind: 1, durationMs: -1, ts: -1 }, { name: 'kind_duration_ts_desc' }),
+      ensureIndexWithReconcile(collection, { durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
+      ensureIndexWithReconcile(collection, { ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0) {
+      throw new Error(`${failed.length} 个索引建立失败：${failed.map((f) => (f.reason as Error)?.message || f.reason).join('; ')}`);
+    }
   }
 
   record(record: Omit<HttpLogRecord, '_id' | 'ts'> & { ts?: Date | string }): void {
@@ -621,12 +699,17 @@ export class HttpLogStore {
   }
 
   async close(): Promise<void> {
+    // 索引重试定时器必须一起收掉：它 unref 过不会钉住进程，但 close 之后
+    // collection 已置空，留着只会在下一次 tick 空转。
+    if (this.indexRetryTimer) { clearTimeout(this.indexRetryTimer); this.indexRetryTimer = null; }
     try {
       await this.flush();
     } finally {
       await this.client?.close();
       this.client = null;
       this.collection = null;
+      this.indexesReady = false;
+      this.indexRetryAttempt = 0;
     }
   }
 

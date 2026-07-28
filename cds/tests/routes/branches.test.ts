@@ -2070,6 +2070,12 @@ describe('Branch Routes', () => {
         services: {},
       });
       stateService.save();
+      // pull 后 worktree 真实停在被请求的那个 commit —— 全局 fixture 默认返回一个
+      // 与之无关的 'abc1234'，而部署台账现在按**实际落地的 sha** 记（Codex PR #1275
+      // 四轮 P2），不再照抄 entry.githubCommitSha。真实 git 下这两者本就一致，这里
+      // 把 fixture 对齐到现实，否则测的是一个现实中不存在的错位场景。
+      mock.addResponsePatternFirst(/git log --oneline/, () => ({ stdout: `${commitSha} some commit`, stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: commitSha, stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker pull .*ghcr\.io\/acme\/api:sha-/, () => ({ stdout: 'pulled', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker ps -a --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
       mock.addResponsePattern(/docker ps -aq --filter/, () => ({ stdout: '', stderr: '', exitCode: 0 }));
@@ -2123,6 +2129,12 @@ describe('Branch Routes', () => {
         services: {},
       });
       stateService.save();
+      // pull 后 worktree 真实停在被请求的那个 commit —— 全局 fixture 默认返回一个
+      // 与之无关的 'abc1234'，而部署台账现在按**实际落地的 sha** 记（Codex PR #1275
+      // 四轮 P2），不再照抄 entry.githubCommitSha。真实 git 下这两者本就一致，这里
+      // 把 fixture 对齐到现实，否则测的是一个现实中不存在的错位场景。
+      mock.addResponsePatternFirst(/git log --oneline/, () => ({ stdout: `${commitSha} some commit`, stderr: '', exitCode: 0 }));
+      mock.addResponsePatternFirst(/git rev-parse/, () => ({ stdout: commitSha, stderr: '', exitCode: 0 }));
       let artifactInspectCount = 0;
       mock.addResponsePattern(/docker image inspect .*cds-managed/, () => ({
         stdout: artifactInspectCount++ === 0 ? '' : 'artifact',

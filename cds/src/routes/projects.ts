@@ -3590,6 +3590,13 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       );
     }
 
+    // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
+    // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
+    // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
+    // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
+    // 至少墓碑还在，回收路径不断。
+    stateService.addDeletedProjectWorktreeBucket(project.id);
+
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
     // orphans in state.json. The state service returns a summary so we

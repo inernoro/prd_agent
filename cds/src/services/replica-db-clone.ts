@@ -47,18 +47,193 @@ const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> 
   { engine: 'postgres', re: /^(CDS_)?(POSTGRES(QL)?|PG)_{1,2}(DB|DATABASE)(_?NAME)?$/i },
 ];
 
-/** 判定某个 env key 是否为库名 key，并归类引擎（白名单 + 框架风格两路）。 */
-function classifyDbEnvKey(key: string): ReplicaDbEngine | null {
+/**
+ * 引擎中立的库名 key（2026-07-28 真机验收补）。
+ *
+ * Spring / 通用配置风格把库名写成 `DB_NAME` / `DATABASE_NAME` —— 名字里**不含引擎**。
+ * 上面那三条模式全靠 key 名带 MYSQL / POSTGRES / MONGO 才能归类，于是这类项目在
+ * 隔离入口就被判「环境变量里没有数据库名」，功能整个不可用。生产 CDS 上的标识中台
+ * (IMP) 正是如此：DB_NAME + SPRING_DATASOURCE_URL / *_DATASOURCE_URL / *_DB_URL，
+ * 六个服务全部 dbIsolatable.ok=false —— JDBC 改写修好了也永远走不到。
+ *
+ * 这类 key 的引擎不能猜，只能从同一份 env 里的**关系型连接 URL scheme** 读出来
+ *（`jdbc:mysql://…` 就是 mysql，明写在那里）。读不出唯一引擎时保持原样拒绝，
+ * 绝不臆断——克隆错引擎的库比不能隔离危险得多。
+ */
+const ENGINE_NEUTRAL_DB_ENV_PATTERN = /^(CDS_)?(DB|DATABASE)_{1,2}(NAME)$/i;
+
+/**
+ * 关系型连接 URL 的 scheme —— **识别与改写共用这一条**（Codex PR #1275 二轮 P1）。
+ *
+ * 曾经是两条各写各的：引擎探测认 `(jdbc:)?(mysql|mariadb|postgres(ql)?)`，而下游
+ * 决定「哪些 URL 要跟着改库名」的那条只列了 `mysql|mariadb|postgres|postgresql|
+ * jdbc:mysql|jdbc:postgresql`，漏掉 `jdbc:mariadb` 与 `jdbc:postgres`。后果是最坏的
+ * 那种：用 `DB_NAME` + `SPRING_DATASOURCE_URL=jdbc:mariadb://…` 的 Java 服务被判为
+ * 可隔离（探测认得），克隆照跑、库名 key 照改，但那条 JDBC URL 进不了改写集合——
+ * 应用读的正是它，于是副本流量继续打在源库上，控制面还报「隔离成功」。这正是
+ * 已经修过两轮的「隔离是假的」原样复活。合成一条 SSOT，从根上不给漂移留缝。
+ */
+const RELATIONAL_URL_SCHEME = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i;
+
+/**
+ * 这个值是不是关系型连接 URL —— 「能否据此判引擎」与「要不要跟着改库名」必须是
+ * 同一个答案，所以两处都调这个函数，不各自 test 各自的正则。
+ */
+export function isRelationalUrl(value: unknown): boolean {
+  return typeof value === 'string' && RELATIONAL_URL_SCHEME.test(value.trim());
+}
+
+/** 一份 env 里出现过的全部关系型引擎（去重）。 */
+export function relationalEnginesFromUrls(env: Record<string, string>): ReplicaDbEngine[] {
+  const found = new Set<ReplicaDbEngine>();
+  for (const value of Object.values(env)) {
+    if (typeof value !== 'string') continue;
+    const m = RELATIONAL_URL_SCHEME.exec(value.trim());
+    if (!m) continue;
+    const scheme = m[2].toLowerCase();
+    found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
+  }
+  return [...found];
+}
+
+/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
+export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
+  const found = relationalEnginesFromUrls(env);
+  return found.length === 1 ? found[0] : null;
+}
+
+/**
+ * 关系型连接 URL 的主机名（小写，去端口去凭据）。解析不出返回 null。
+ * 复合 scheme（`jdbc:mysql://`）与带凭据的 authority（`user:pw@host:3306`）都要认。
+ */
+export function relationalUrlHost(url: string): string | null {
+  const m = /^[a-zA-Z][a-zA-Z0-9+.:-]*:\/\/([^/?#]*)/.exec((url || '').trim());
+  if (!m) return null;
+  let authority = m[1];
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) authority = authority.slice(at + 1);
+  // IPv6 字面量 `[::1]:3306`
+  const v6 = /^\[([^\]]+)\]/.exec(authority);
+  const host = (v6 ? v6[1] : authority.replace(/:\d+$/, '')).toLowerCase();
+  return host || null;
+}
+
+/**
+ * 某个 infra 实例在容器网络里可能被写成的主机名集合。
+ *
+ * 与 `computeProfileAliases`（container.ts）同源语义：服务 id 本身、容器名，
+ * 以及去掉尾部项目标识后的短别名（`mysql-mdimp` → `mysql`）。这里刻意做得
+ * 宽松一点——判错方向只会让一条本该改写的 URL 落进 unboundUrlKeys（如实报出、
+ * 不改），比错改一条指向别的服务器的连接串安全得多。
+ */
+export function infraHostAliases(infra: InfraService): Set<string> {
+  const out = new Set<string>();
+  const id = (infra.id || '').toLowerCase();
+  if (id) out.add(id);
+  if (infra.containerName) out.add(infra.containerName.toLowerCase());
+  const dash = id.lastIndexOf('-');
+  if (dash > 0) out.add(id.slice(0, dash));
+  return out;
+}
+
+/** infra 服务镜像 → 引擎（三种受支持的数据库之一，否则 null）。 */
+function engineOfInfra(svc: InfraService): ReplicaDbEngine | null {
+  const kind = detectInfraDataKind(svc.dockerImage);
+  return kind === 'mongo' || kind === 'mysql' || kind === 'postgres' ? kind : null;
+}
+
+/**
+ * 引擎中立库名 key（DB_NAME）的引擎判定，多引擎项目下用 profile 自己的 dependsOn 收敛
+ *（Codex PR #1275 八轮 P2）。
+ *
+ * 只按「全 env 的 URL 是否唯一」判定是不够的：项目级 customEnv 会把**所有**引擎的连接串
+ * 灌给每个服务，多引擎项目里 URL 集合恒为 {mysql, postgres} → 判不出唯一引擎 → DB_NAME
+ * 被当成不可归类的 key 过滤掉 → presentKeys 空 → 直接返回「没有数据库名」。而下方那套
+ * dependsOn 消歧只在 enginesPresent.length > 1 时才跑，此刻 presentKeys 已经空了，永远轮不到。
+ * 结果就是：本轮刚刚宣传的「支持 DB_NAME」在多引擎项目上依然不可用。
+ *
+ * 收敛用**交集**而非直接采信 dependsOn：引擎必须同时满足「profile 明确声明依赖它」与
+ * 「env 里确实有它的连接串」。只满足一边说明配置本身有歧义，宁可继续 fail-closed。
+ */
+function resolveNeutralEngine(
+  state: StateService,
+  branch: BranchEntry,
+  profile: BuildProfile,
+  runtimeEnv: Record<string, string>,
+): ReplicaDbEngine | null {
+  const unique = engineFromRelationalUrls(runtimeEnv);
+  if (unique) return unique;
+  const candidates = relationalEnginesFromUrls(runtimeEnv);
+  if (candidates.length < 2) return null; // 一个都没有 → 无从判定，照旧 fail-closed
+  const declared = new Set(profile.dependsOn || []);
+  if (declared.size === 0) return null;
+  const byDepends = [...new Set(
+    state.getInfraServicesForProject(branch.projectId)
+      .filter((svc) => svc.status === 'running' && declared.has(svc.id))
+      .map(engineOfInfra)
+      .filter((e): e is ReplicaDbEngine => e !== null && candidates.includes(e)),
+  )];
+  return byDepends.length === 1 ? byDepends[0] : null;
+}
+
+/**
+ * 判定某个 env key 是否为库名 key，并归类引擎（白名单 → 框架风格 → 引擎中立三路）。
+ * 引擎中立那一路必须由调用方提供 env 上下文，否则无从判断引擎，直接不认。
+ */
+function classifyDbEnvKey(key: string, neutralEngine?: ReplicaDbEngine | null): ReplicaDbEngine | null {
   if ((PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)) return engineForEnvKey(key);
   for (const { engine, re } of FRAMEWORK_DB_ENV_PATTERNS) {
     if (re.test(key)) return engine;
   }
+  if (neutralEngine && ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key)) return neutralEngine;
   return null;
 }
 
 /** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
-function isFrameworkDbKey(key: string): boolean {
-  return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key) && classifyDbEnvKey(key) !== null;
+function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): boolean {
+  return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)
+    && classifyDbEnvKey(key, neutralEngine) !== null;
+}
+
+/**
+ * 库名 key 的**来源层级**（数字越小越优先，Codex PR #1275 九轮 P1）。
+ *
+ * 0 = profile.env（服务自己声明的）
+ * 1 = 分支 scope customEnv
+ * 2 = 项目 customEnv（灌给全部服务的默认值）
+ *
+ * 为什么来源比 key 的引擎专属度更权威：四轮修的是「项目级泛化 DB_NAME 压过 profile
+ * 自己的 MYSQL_DATABASE」，当时的解法是一律把中立 key 降档——**这在反方向上是错的**。
+ * 项目级 env 里放一个 `MYSQL_DATABASE=infra_default`（infra 预设常见），而服务自己
+ * 用 `DB_NAME=app` + `SPRING_DATASOURCE_URL=.../app` 时，按专属度排会选中
+ * `infra_default`：克隆的是 infra 默认库，应用的 DB_NAME 与 JDBC URL 仍指向 app，
+ * 而控制面照报隔离成功——与四轮那条是同一种事故的镜像。
+ *
+ * 谁更贴近这个服务，谁说了算：profile > 分支 > 项目；同层内才比引擎专属度。
+ */
+function dbEnvKeyProvenance(key: string, provenance: ReadonlyMap<string, number>): number {
+  return provenance.get(key) ?? 2;
+}
+
+/**
+ * 库名 key 的取用优先级（数字越小越优先，Codex PR #1275 四轮 P1）。
+ * 注意：这是**同来源层级内**的次级判据，主判据是上面的来源层级。
+ *
+ * 引擎中立 key（DB_NAME / DATABASE_NAME）**只在没有任何自带引擎的 key 时才算数**。
+ * 它靠同 env 的连接串反推引擎，本身不携带归属信息，而项目级 customEnv 会把一个
+ * 泛化的 DB_NAME 灌给全部服务 —— 若它和 profile 自己的 MYSQL_DATABASE 并列，
+ * 仅靠「框架 key 优先」分不出高下，排序退化成 merged env 的插入顺序，项目级那个
+ * 先进来就赢。后果：sourceDb 取到与本服务无关的库名 → 克隆错库；应用连接串的
+ * 路径段对不上这个值 → urlEnvValues 漏掉它 → 副本仍打源库，控制面还报隔离成功。
+ *
+ * 0 = 自带引擎的框架风格 key（MYSQL_DATABASE / POSTGRES_DB / MongoDB__DatabaseName…）
+ * 1 = CDS 自己的 per-branch 白名单 key（同样自带引擎，但不是应用直接读的那个）
+ * 2 = 引擎中立 key（兜底，仅当前两类都不存在）
+ */
+function dbEnvKeyRank(key: string, neutralEngine?: ReplicaDbEngine | null): number {
+  // 不传 neutralEngine 时 classify 只认自带引擎的两类 —— 据此把中立 key 分出来。
+  if (classifyDbEnvKey(key) === null) return 2;
+  return isFrameworkDbKey(key, neutralEngine) ? 0 : 1;
 }
 
 export interface ReplicaDbTarget {
@@ -69,6 +244,13 @@ export interface ReplicaDbTarget {
   connEnvKeys: string[];
   /** 关系型连接 URL 的 env key → 原值（库名段等于源库的那些，隔离时按新库名重写）。 */
   urlEnvValues?: Record<string, string>;
+  /**
+   * 库名段虽等于源库、但主机**不是**选定 infra 的连接串 key（Codex 十一轮 P1）。
+   * 这些不改写——克隆只发生在选定实例上，改了会把副本指向另一台服务器上的
+   * 同名隔离库（那里根本没有，或更糟：那里恰好有别的数据）。如实报出供 UI 展示，
+   * 让「哪些连接没被隔离」可见，而不是静默。
+   */
+  unboundUrlKeys?: string[];
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
@@ -93,17 +275,27 @@ const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|
  * 只改路径段：主机/端口/凭据/查询参数原样保留（关系型隔离走同实例建新库，
  * 不像 mongo 那样另起专用实例）。无法解析或路径段对不上源库时返回 null，
  * 由调用方按「不认识就不动」处理，绝不瞎改用户的连接串。
+ *
+ * scheme 允许内嵌冒号（2026-07-27 真机核对补）：Java/Spring 项目的连接串是
+ * `jdbc:mysql://host:3306/db?useSSL=false` 这种**复合 scheme**。下面的
+ * RELATIONAL_URL_SCHEME 一直把 `jdbc:mysql` / `jdbc:postgresql` 列为已识别，
+ * 但此处的 scheme 段原本写成 `[a-zA-Z][a-zA-Z0-9+.-]*`（不含冒号），JDBC URL
+ * 一律解析失败 → 收集阶段的探测也失败 → 这些 key 根本进不了 urlEnvValues →
+ * **静默不改写**。于是第三十二轮修好的「关系型隔离是假的」在 Java 项目上原样
+ * 复活：控制面报告已隔离，Spring 应用照旧写主库。核对生产 CDS 上的标识中台
+ * (IMP) 项目环境变量时发现——它的库连接全部走 SPRING_DATASOURCE_URL /
+ * *_DATASOURCE_URL / *_DB_URL 这类 JDBC 形态。
  */
 export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb: string): string | null {
-  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
+  const m = /^([a-zA-Z][a-zA-Z0-9+.:-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
   if (!m) return null;
   const [, prefix, dbSegment, tail] = m;
   if (dbSegment !== sourceDb) return null;
   return `${prefix}/${isolatedDb}${tail || ''}`;
 }
 
-/** 值看起来像关系型连接 URL（用于把它们纳入隔离覆写范围）。 */
-const RELATIONAL_URL_SCHEME = /^(mysql|mariadb|postgres|postgresql|jdbc:mysql|jdbc:postgresql):\/\//i;
+// 「值看起来像关系型连接 URL」的判定与引擎探测共用上面那条 RELATIONAL_URL_SCHEME，
+// 不再各写一份（两份漂移过一次，见该常量的注释）。
 
 /**
  * 隔离时的 env 覆写公共部分：库名 key + 关系型连接 URL 的库名段重写。
@@ -127,19 +319,50 @@ export function resolveReplicaDbTarget(
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
   // 解析到项目级默认库——克隆的不是该分支实际在用的库，或漏掉分支级连接串 key。
-  const merged: Record<string, string> = {
-    ...state.getCustomEnv(branch.projectId),
-    ...state.getCustomEnvScope(branch.id),
-    ...(profile.env || {}),
-  };
+  const projectEnv = state.getCustomEnv(branch.projectId) || {};
+  const scopeEnv = state.getCustomEnvScope(branch.id) || {};
+  const profileEnv = profile.env || {};
+  const merged: Record<string, string> = { ...projectEnv, ...scopeEnv, ...profileEnv };
+  // 记下每个 key 的来源层级，供库名 key 排序用（见 dbEnvKeyProvenance）
+  const envProvenance = new Map<string, number>();
+  for (const key of Object.keys(projectEnv)) envProvenance.set(key, 2);
+  for (const key of Object.keys(scopeEnv)) envProvenance.set(key, 1);
+  for (const key of Object.keys(profileEnv)) envProvenance.set(key, 0);
   const runtimeEnv = applyPerBranchDbIsolation(merged, profile.dbScope, branch.branch);
 
+  // 引擎中立 key（DB_NAME / DATABASE_NAME）的引擎从同 env 的关系型 URL scheme 读，
+  // 读不出唯一引擎就当它不是库名 key（fail-closed，见 ENGINE_NEUTRAL_DB_ENV_PATTERN）。
+  const neutralEngine = resolveNeutralEngine(state, branch, profile, runtimeEnv);
   const presentKeys = Object.keys(runtimeEnv)
-    .filter((key) => classifyDbEnvKey(key) !== null && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
-    // 框架风格 key 优先（应用真正读的配置）；同类内保持稳定序
-    .sort((a, b) => Number(isFrameworkDbKey(b)) - Number(isFrameworkDbKey(a)));
+    .filter((key) => classifyDbEnvKey(key, neutralEngine) !== null
+      && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
+    // 先按来源层级（profile > 分支 > 项目，见 dbEnvKeyProvenance），同层再按引擎
+    // 专属度（见 dbEnvKeyRank）；两级都相同时保持稳定序
+    .sort((a, b) => {
+      const byProvenance = dbEnvKeyProvenance(a, envProvenance) - dbEnvKeyProvenance(b, envProvenance);
+      if (byProvenance !== 0) return byProvenance;
+      return dbEnvKeyRank(a, neutralEngine) - dbEnvKeyRank(b, neutralEngine);
+    });
   if (presentKeys.length === 0) {
-    return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库' };
+    // 可诊断的失败原因（2026-07-28 真机验收补）：只说「没有数据库名」等于把人挡在
+    // 门外还不告诉他差什么——生产上标识中台六个服务全是这条，光看文案根本判断不出
+    // 是「真没配」还是「配了但 CDS 不认」。这里把**看到了什么**如实报出来：
+    // 疑似库名 key（只报 key 名，不报值，值可能含凭据）、以及引擎能否从连接 URL 推出。
+    // 用户据此一眼知道该补 URL 还是该改 key 名；排障也不必再去猜。
+    const suspects = Object.keys(runtimeEnv).filter(
+      (k) => /(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k),
+    );
+    const detail = suspects.length > 0
+      ? `。检测到疑似数据库相关变量：${suspects.slice(0, 12).join(', ')}`
+        + (neutralEngine
+          ? `；已从连接串推断引擎=${neutralEngine}，但其中没有能识别的库名 key（引擎中立库名 key 仅认 DB_NAME / DATABASE_NAME）`
+          : '；且**未能从任何连接串推断出引擎**（需要形如 mysql:// 或 jdbc:mysql:// 的 URL），因此 DB_NAME 这类不含引擎的 key 无法归类')
+      : '';
+    return {
+      target: null,
+      reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
+        + detail,
+    };
   }
 
   // 引擎判定（Codex P1）：项目级 customEnv 会把**所有**引擎的库名 key 都灌进来
@@ -148,16 +371,13 @@ export function resolveReplicaDbTarget(
   // 隔离克隆出来的就是别的引擎的生产数据。多引擎并存时按 dependsOn 声明或
   // CDS_<实例>_PORT/HOST 模板引用收敛；仍多义 → fail-closed。
   const enginesPresent = [...new Set(
-    presentKeys.map((k) => classifyDbEnvKey(k)).filter((e): e is ReplicaDbEngine => e !== null),
+    presentKeys.map((k) => classifyDbEnvKey(k, neutralEngine)).filter((e): e is ReplicaDbEngine => e !== null),
   )];
   let engine: ReplicaDbEngine | null = enginesPresent[0] ?? null;
   if (enginesPresent.length > 1) {
     const running = state.getInfraServicesForProject(branch.projectId)
       .filter((svc) => svc.status === 'running');
-    const engineOf = (svc: InfraService): ReplicaDbEngine | null => {
-      const kind = detectInfraDataKind(svc.dockerImage);
-      return kind === 'mongo' || kind === 'mysql' || kind === 'postgres' ? kind : null;
-    };
+    const engineOf = engineOfInfra;
     const declared = new Set(profile.dependsOn || []);
     const byDepends = [...new Set(
       running.filter((s) => declared.has(s.id)).map(engineOf)
@@ -182,7 +402,7 @@ export function resolveReplicaDbTarget(
       }
     }
   }
-  const firstKey = presentKeys.find((k) => classifyDbEnvKey(k) === engine);
+  const firstKey = presentKeys.find((k) => classifyDbEnvKey(k, neutralEngine) === engine);
   const sourceDb = firstKey ? runtimeEnv[firstKey] : undefined;
   if (!engine || !sourceDb) {
     return { target: null, reason: '数据库 env key 无法归类到 mongo/mysql/postgres 引擎' };
@@ -192,7 +412,7 @@ export function resolveReplicaDbTarget(
   }
   // 只覆写「同引擎且指向同一个库」的 key——同引擎但值不同的 key（如 init 库 ≠ 应用库）
   // 不能一起改，否则会把无关库名静默改指到克隆库
-  const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key) === engine && runtimeEnv[key] === sourceDb);
+  const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key, neutralEngine) === engine && runtimeEnv[key] === sourceDb);
 
   const infraCandidates = state.getInfraServicesForProject(branch.projectId)
     .filter((svc) => svc.status === 'running' && detectInfraDataKindForEngine(svc, engine));
@@ -230,15 +450,50 @@ export function resolveReplicaDbTarget(
   // 关系型连接 URL（Codex 第三十二轮 P1）：库名写死在 URL 路径里，必须一并覆写，
   // 否则改了 MYSQL_DATABASE 也没用——应用读的是 URL。只收「路径段确实等于源库」
   // 的那些，避免把指向别的库/别的实例的连接串误改。
+  //
+  // 但「路径段相等」还不够（Codex PR #1275 十一轮 P1）：同一个 profile 可能有两条
+  // 库名相同、**主机不同**的 JDBC URL（如主库与只读从库、或另一套环境的同名库）。
+  // 克隆只发生在 target.infra 上，若把另一台主机的那条也改成隔离库名，副本会连到
+  // 一台**根本没有这个库**的服务器（或更糟：那台上恰好有同名库，于是写进不该写的
+  // 数据），而控制面照报「隔离可用」。
+  //
+  // 绑定规则刻意分两档，避免为了治歧义反而误伤单主机的常规配置：
+  //  - 候选 URL 只有一个主机 → 无歧义，全收（保持既有行为，包括 IP / 外部主机 /
+  //    我们推不出来的别名形态，IMP 那种 `jdbc:mysql://mysql:3306/impdb` 即此档）；
+  //  - 出现两个及以上主机 → 只收主机名指向**选定 infra** 的那些，其余进
+  //    unboundUrlKeys 如实报出（不改也不静默 —— 隔离范围要可见）。
   const urlEnvValues: Record<string, string> = {};
+  const unboundUrlKeys: string[] = [];
   if (engine !== 'mongo') {
+    const candidates: Array<[string, string]> = [];
     for (const [key, value] of Object.entries(runtimeEnv)) {
-      if (typeof value !== 'string' || !RELATIONAL_URL_SCHEME.test(value)) continue;
-      if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) urlEnvValues[key] = value;
+      if (!isRelationalUrl(value)) continue;
+      if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) candidates.push([key, value]);
+    }
+    const hosts = new Set(candidates.map(([, value]) => relationalUrlHost(value) || ''));
+    if (hosts.size <= 1) {
+      for (const [key, value] of candidates) urlEnvValues[key] = value;
+    } else {
+      const aliases = infraHostAliases(infra);
+      for (const [key, value] of candidates) {
+        const host = relationalUrlHost(value) || '';
+        if (aliases.has(host)) urlEnvValues[key] = value;
+        else unboundUrlKeys.push(key);
+      }
     }
   }
 
-  return { target: { engine, envKeys, connEnvKeys, urlEnvValues, sourceDb, infra } };
+  return {
+    target: {
+      engine,
+      envKeys,
+      connEnvKeys,
+      urlEnvValues,
+      ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
+      sourceDb,
+      infra,
+    },
+  };
 }
 
 function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine): boolean {
