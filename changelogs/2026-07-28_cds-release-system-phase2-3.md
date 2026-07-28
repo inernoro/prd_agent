@@ -39,3 +39,7 @@
 | fix | cds | 共用目录判定带上 SSH 主机（Codex P2）：只比路径会把不同服务器上同名的 `/var/www/app` 判成共用，回收从此不敢删该目录里不在本目标台账的版本，磁盘无界增长；端口缺省按 22 归一，主机未知时保守判共用（误判不共用会删错东西，误判共用只是少删，两个方向代价不对称） |
 | fix | cds | 发布日志的 1 秒落盘改为真调度（Codex P2）：阈值此前只在「又来一行日志」时求值，不足 50 行后命令转静默的那几行只在内存里，要等无关 save 或 30 秒心跳才落盘，此刻进程被 kill 就丢掉排障最需要的证据——注释承诺了 1 秒而代码从不调度；改为首行 pending 即挂 unref 定时器，显式 flush 时清掉 |
 | fix | cds | 前端 DORA 契约补 `recoveredUnknownDurationCount`（Codex P2）：后端已单列「已恢复但时长未知」，前端不接这个字段就会对着有故障记录的用户说「没有失败发布」，又一次链路只建到一半 |
+| fix | cds | 产物回收全程持进程级目标锁（Codex P2）：`assertTargetFree` 只是时间点检查，而巡检器与路由各 new 了一个 ReleaseService、两张 inFlight 表互不可见，回收的 `git worktree remove` / `prune` 能撞上正在跑的发布，把一次本该成功的生产发布搞失败；锁在盘点之前拿、删除之后放，拿不到就整轮跳过不排队 |
+| fix | cds | 删除失败不再报成已回收（Codex P2）：远端逐条 `[ -e ]` 复核后才打 RECLAIMED，删不掉的打 RECLAIM_FAILED，服务层只认前者——此前直接把计划清单当结果返回，两条删除都失败时仍 `exit 0`，于是报告「已回收」而目录还在盘上、磁盘继续涨（假证据比不清理更糟，它让人以为清理在工作） |
+| fix | cds | 回滚补发 `release.status` 起始事件（Codex P2）：回滚 run 一落库就是 `rollback_running`、不经 patchStatus，总线上第一条生命周期事件是 rolled-back / failed，观测方看不到「正在回滚」 |
+| test | cds | 三条既有源码守卫补剥注释：解释「为什么不能这么写」的注释会原样出现被禁字面量，不剥就会被自己的说明文字触发（本 PR 已栽三次同款） |

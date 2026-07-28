@@ -72,6 +72,11 @@ describe('回滚可达范围只有一个判定源', () => {
   });
 });
 
+/** 只扫代码：注释里为了说明事故写法会原样出现被禁的字面量。 */
+function stripComments(source: string): string {
+  return source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+}
+
 describe('远端产物判定不许分裂', () => {
   it('产物目录形状与自动恢复剥壳只在 release-artifact-retention.ts 定义', () => {
     const shape = walk('src', ['.ts'])
@@ -97,8 +102,11 @@ describe('远端产物判定不许分裂', () => {
     const service = read('src/services/release-service.ts');
 
     expect(service).toContain('buildReleaseReclaimCommand(');
+    // 必须剥注释再扫：解释「为什么不能在这里拼 shell」的注释会原样写出 rm -rf，
+    // 不剥的话守卫被自己的说明文字触发（本 PR 已栽三次同款）。
+    const code = stripComments(service);
     // 服务层拼 shell 就等于绕开形状校验与远端路径复算，两条安全边界一起失效。
-    expect(service).not.toMatch(/rm -rf/);
-    expect(service).not.toMatch(/worktree remove/);
+    expect(code).not.toMatch(/rm -rf/);
+    expect(code).not.toMatch(/worktree remove/);
   });
 });

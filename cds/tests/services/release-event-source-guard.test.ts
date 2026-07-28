@@ -66,7 +66,11 @@ describe('发布事件判定源守卫', () => {
     const offenders: string[] = [];
     for (const file of sourceFiles) {
       if (EVENT_SSOT_FILES.has(file)) continue;
-      const text = fs.readFileSync(path.join(CDS_ROOT, file), 'utf8');
+      // 剥注释：解释「哪些事件由映射 SSOT 产出」的注释会原样写出事件名，
+      // 不剥就会被自己的说明文字触发（本 PR 已栽三次同款）。
+      const text = fs.readFileSync(path.join(CDS_ROOT, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^[ \t]*\/\/.*$/gm, '');
       for (const literal of LIFECYCLE_EVENT_LITERALS) {
         if (text.includes(literal)) offenders.push(`${file} 出现 ${literal}`);
       }
@@ -98,7 +102,11 @@ describe('发布事件判定源守卫', () => {
   it('告警级判定只有 cds-events-bus 一处，发布不得自建告警通道', () => {
     const offenders = sourceFiles.filter((file) => {
       if (file === 'src/services/cds-events-bus.ts') return false;
-      const text = fs.readFileSync(path.join(CDS_ROOT, file), 'utf8');
+      // 剥注释：解释「哪些事件由映射 SSOT 产出」的注释会原样写出事件名，
+      // 不剥就会被自己的说明文字触发（本 PR 已栽三次同款）。
+      const text = fs.readFileSync(path.join(CDS_ROOT, file), 'utf8')
+        .replace(/\/\*[\s\S]*?\*\//g, '')
+        .replace(/^[ \t]*\/\/.*$/gm, '');
       // 同一个文件里同时点名存活类与发布类告警事件 = 又长出一张自己的告警清单。
       return text.includes('preview.canary.alert') && text.includes('release.failed');
     });

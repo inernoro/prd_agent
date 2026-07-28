@@ -114,6 +114,21 @@ describe('远端发布现场读回与回收', () => {
     if (fs.existsSync(stateDir)) fs.rmSync(stateDir, { recursive: true, force: true });
   });
 
+  /**
+   * 模拟远端删除命令的**真实输出**：脚本逐条 `[ -e ]` 复核后，删掉的打 RECLAIMED、
+   * 没删掉的打 RECLAIM_FAILED。服务层只认 RECLAIMED（Codex P2：此前直接把计划清单
+   * 当结果返回，删除失败时会产出「已回收」的假证据）。所以假执行器必须照打，
+   * 否则测的就不是真实链路。
+   */
+  function reclaimStdout(command: string): string {
+    const lines: string[] = [];
+    for (const m of command.matchAll(/'(rel_[0-9a-f]{16}(?:-auto-restore)?)'/g)) {
+      lines.push(`CDS_RELEASE_RECLAIMED_WORKTREE=${m[1]}`);
+      lines.push(`CDS_RELEASE_RECLAIMED_VERSION=${m[1]}`);
+    }
+    return lines.join('\n');
+  }
+
   function createService(respond: (command: string) => string | Promise<string>): {
     service: ReleaseService;
     commands: string[];
@@ -160,7 +175,7 @@ describe('远端发布现场读回与回收', () => {
     stateService.addReleaseRun(releaseRun(ONLINE_RUN, '2026-07-28T03:00:00.000Z'));
     const { service, commands } = createService((command) => (
       isWriteCommand(command)
-        ? ''
+        ? reclaimStdout(command)
         : inventoryStdout({ current: ONLINE_RUN, previous: OLD_RUN, worktrees: [ONLINE_RUN, OLD_RUN, STALE_RUN] })
     ));
 
@@ -189,7 +204,7 @@ describe('远端发布现场读回与回收', () => {
     }));
     const { service, commands } = createService((command) => (
       isWriteCommand(command)
-        ? ''
+        ? reclaimStdout(command)
         : inventoryStdout({ current: restore, worktrees: [ONLINE_RUN, STALE_RUN, restore] })
     ));
 

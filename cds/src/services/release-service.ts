@@ -34,12 +34,14 @@ import {
 } from './release-retention.js';
 
 import { releaseTargetConfigFingerprint } from './release-target-history.js';
+import { acquireReleaseTargetLock, peekReleaseTargetLock } from './release-target-lock.js';
 import {
   buildReleaseInventoryCommand,
   buildReleaseReclaimCommand,
   computeReleaseArtifactRetentionPlan,
   detectReleaseRemoteDrift,
   isSameRemoteDirectory,
+  parseRemoteReclaimOutcome,
   parseRemoteReleaseInventory,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
@@ -847,8 +849,14 @@ export class ReleaseService {
     };
     const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
     run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
-    this.stateService.addReleaseRun(run);
+    const persisted = this.stateService.addReleaseRun(run);
     const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
+    // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
+    // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件
+    // 是 release.rolled-back / release.failed，「正在回滚」这个状态根本观测不到
+    // （Codex P2）。这里补发一次 release.status，走的仍是同一条投影链路
+    // （release-events 按 status 映射 + 去重），不另造事件类型。
+    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
     return this.stateService.getReleaseRun(rollbackId)!;
@@ -1026,12 +1034,42 @@ export class ReleaseService {
     target: ReleaseTarget,
     options: { maxRemovals?: number; dryRun?: boolean } = {},
   ): Promise<ReleaseArtifactReclaimResult> {
+    // 锁必须在**盘点之前**拿、在删除之后才放：盘点与删除之间的那段窗口正是
+    // 「检查通过了、发布随后启动、删除才真正执行」的事故形状（Codex P2）。
+    // 拿不到就整轮跳过，不排队 —— 回收是周期性的，等下一轮就行。
+    const releaseLock = acquireReleaseTargetLock(target.id, '产物回收');
+    if (!releaseLock) {
+      const holder = peekReleaseTargetLock(target.id);
+      return {
+        targetId: target.id,
+        projectId: target.projectId,
+        mode: effectiveReleaseStrategy(target).mode,
+        drift: { status: 'unknown', message: '本轮跳过回收：该目标正被占用' },
+        removedWorktrees: [],
+        removedVersions: [],
+        keptReasons: {},
+        deferred: 0,
+        skippedReason: `该发布目标正在${holder?.kind || '其他操作'}，本轮跳过回收`,
+        dryRun: options.dryRun === true,
+      };
+    }
+    try {
+      return await this.reclaimRemoteReleaseArtifactsLocked(target, options);
+    } finally {
+      releaseLock();
+    }
+  }
+
+  private async reclaimRemoteReleaseArtifactsLocked(
+    target: ReleaseTarget,
+    options: { maxRemovals?: number; dryRun?: boolean } = {},
+  ): Promise<ReleaseArtifactReclaimResult> {
     const state = await this.readRemoteReleaseState(target);
     const strategy = effectiveReleaseStrategy(target);
     const runs = this.stateService.getReleaseRuns({ targetId: target.id });
     let busyReason: string | undefined;
     try {
-      this.assertTargetFree(target.id, '产物回收');
+      this.assertTargetFree(target.id, '产物回收', { holdsTargetLock: true });
     } catch (err) {
       busyReason = errorText(err);
     }
@@ -1067,8 +1105,19 @@ export class ReleaseService {
       };
     }
     try {
-      await this.sshExec(target, command);
-      return { ...base, removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions };
+      const output = await this.sshExec(target, command);
+      // 只认远端复核过「目录真的没了」的那些。把计划清单当结果返回会在删除失败时
+      // 产出假证据：报告已回收、盘上还在、磁盘继续涨（Codex P2）。
+      const outcome = parseRemoteReclaimOutcome(output);
+      const failed = [...outcome.failedWorktrees, ...outcome.failedVersions];
+      return {
+        ...base,
+        removedWorktrees: outcome.removedWorktrees,
+        removedVersions: outcome.removedVersions,
+        ...(failed.length > 0
+          ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
+          : {}),
+      };
     } catch (err) {
       // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
       return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
@@ -1112,7 +1161,16 @@ export class ReleaseService {
    *   - run 状态非终态 = 明面上还在跑；
    *   - 执行体未退出 = run 已终态（比如刚被取消）但 SSH/探测还在飞。
    */
-  private assertTargetFree(targetId: string, action: '发布' | '回滚' | '产物回收'): void {
+  /**
+   * @param options.holdsTargetLock 调用方**自己**已经持有该目标的锁（回收路径）。
+   *   不给这个出口就会自锁：回收先 acquire、再走本闸，本闸看见自己那把锁判「目标忙」，
+   *   于是回收永远跳过自己。既有用例第一时间抓到，值得留个显式参数而不是靠巧合。
+   */
+  private assertTargetFree(
+    targetId: string,
+    action: '发布' | '回滚' | '产物回收',
+    options: { holdsTargetLock?: boolean } = {},
+  ): void {
     const inFlight = this.stateService
       .getReleaseRuns({ targetId })
       .find((r) => isReleaseRunInFlight(r));
@@ -1122,6 +1180,13 @@ export class ReleaseService {
     const settling = this.findSettlingExecution(targetId);
     if (settling) {
       throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起${action}`);
+    }
+    // 产物回收不建 run、不留台账痕迹，上面两条判据都看不见它；而它正在远端跑
+    // `git worktree remove` / `prune` / `rm -rf`，与发布抢同一个 git 仓库和同一批目录。
+    // 这把锁是进程级的，因此巡检器与路由各自 new 的 ReleaseService 也拦得住（debt #6）。
+    const lock = options.holdsTargetLock ? null : peekReleaseTargetLock(targetId);
+    if (lock) {
+      throw new Error(`该发布目标正在${lock.kind}（远端目录正在变更），请稍候再发起${action}`);
     }
   }
 

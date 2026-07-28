@@ -11,9 +11,18 @@ import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import {
+  buildReleaseReclaimCommand,
   isSameRemoteDirectory,
   normalizeRemoteDirectoryIdentity,
+  parseRemoteReclaimOutcome,
 } from '../../src/services/release-artifact-retention.js';
+import {
+  acquireReleaseTargetLock,
+  peekReleaseTargetLock,
+  resetReleaseTargetLocksForTest,
+  setReleaseTargetLockClockForTest,
+  RELEASE_TARGET_LOCK_STALE_MS,
+} from '../../src/services/release-target-lock.js';
 import { canReuseReleasePreflight, selectReleasePreflightsToPrune } from '../../src/services/release-retention.js';
 import { formatTrackedValue, releaseTargetConfigFingerprint } from '../../src/services/release-target-history.js';
 import { computeReleaseDora, type ReleaseDoraRunLike } from '../../src/services/release-dora.js';
@@ -515,5 +524,101 @@ describe('Codex 第四轮：共用目录带主机、定时落盘真调度、未�
     // 事故值：后端记着 recoveredUnknownDurationCount，前端却对着有故障记录的用户
     // 说「没有失败发布」—— 又一次「链路只建到一半」。
     expect(source).toContain('缺少恢复起点');
+  });
+});
+
+describe('Codex 第五轮：回收全程持锁、删除失败不谎报、回滚有 start 事件', () => {
+  afterEach(() => resetReleaseTargetLocksForTest());
+
+  it('回收持锁期间，发布/回滚会被同一道闸挡住', () => {
+    const release = acquireReleaseTargetLock('rt_1', '产物回收');
+    expect(release).toBeTruthy();
+    expect(peekReleaseTargetLock('rt_1')?.kind).toBe('产物回收');
+    // 第二次拿不到 —— 这把锁是模块级的，所以巡检器与路由各自 new 的
+    // ReleaseService 也共享它（debt #6 的两张 inFlight 表跨不过去）。
+    expect(acquireReleaseTargetLock('rt_1', '产物回收')).toBeNull();
+    release!();
+    expect(peekReleaseTargetLock('rt_1')).toBeNull();
+  });
+
+  it('锁按目标隔离，不误伤别的发布目标', () => {
+    const a = acquireReleaseTargetLock('rt_1', '产物回收');
+    expect(a).toBeTruthy();
+    const b = acquireReleaseTargetLock('rt_2', '产物回收');
+    expect(b).toBeTruthy();
+    a!(); b!();
+  });
+
+  it('释放函数幂等，且被抢走之后不会误放别人的锁', () => {
+    let now = 1_000_000;
+    setReleaseTargetLockClockForTest(() => now);
+    try {
+      const stale = acquireReleaseTargetLock('rt_1', '产物回收');
+      now += RELEASE_TARGET_LOCK_STALE_MS + 1;
+      // 过期后被别人接管（没有这条，一次漏放锁就永久卡死该目标）。
+      const fresh = acquireReleaseTargetLock('rt_1', '产物回收');
+      expect(fresh).toBeTruthy();
+      stale!();       // 旧持有者迟到的释放
+      stale!();       // 幂等
+      expect(peekReleaseTargetLock('rt_1')).toBeTruthy(); // 新持有者的锁还在
+      fresh!();
+    } finally {
+      setReleaseTargetLockClockForTest(null);
+    }
+  });
+
+  it('assertTargetFree 认这把锁（源码守卫：回收不留台账痕迹，只能靠它）', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).toContain('peekReleaseTargetLock(targetId)');
+    // 锁必须在盘点之前拿、删除之后才放；只在函数中段拿等于没堵住那段窗口。
+    expect(code).toContain("acquireReleaseTargetLock(target.id, '产物回收')");
+    expect(code).toContain('reclaimRemoteReleaseArtifactsLocked');
+  });
+
+  it('删除命令逐条复核目录是否真的消失，删不掉的走 FAILED', () => {
+    const cmd = buildReleaseReclaimCommand(
+      { id: 'rt_1', ssh: { appPath: '/srv/app' } } as unknown as ReleaseTarget,
+      { mode: 'generated-compose' } as never,
+      { removeWorktrees: ['rel_00000000000000aa'], removeVersions: [], keptReasons: {}, deferred: 0 },
+    );
+    expect(cmd).toContain('[ -e "$wt/$name" ]');
+    expect(cmd).toContain('CDS_RELEASE_RECLAIM_FAILED_WORKTREE');
+  });
+
+  it('只把远端复核过的那些算作已回收，删除失败如实回报', () => {
+    // 事故值：服务层直接把 plan.removeWorktrees 当结果返回，压根不看输出。
+    // 两条删除都失败时命令仍 exit 0，于是报告「已回收」、盘上还在、磁盘继续涨。
+    const outcome = parseRemoteReclaimOutcome([
+      'CDS_RELEASE_RECLAIMED_WORKTREE=rel_00000000000000aa',
+      'CDS_RELEASE_RECLAIM_FAILED_WORKTREE=rel_00000000000000bb',
+      'CDS_RELEASE_RECLAIMED_VERSION=rel_00000000000000cc',
+      'CDS_RELEASE_RECLAIM_FAILED_VERSION=../..',
+    ].join('\n'));
+
+    expect(outcome.removedWorktrees).toEqual(['rel_00000000000000aa']);
+    expect(outcome.failedWorktrees).toEqual(['rel_00000000000000bb']);
+    expect(outcome.removedVersions).toEqual(['rel_00000000000000cc']);
+    // 形状不合法的条目一律丢弃，不让脏输出混进任何一侧计数。
+    expect(outcome.failedVersions).toEqual([]);
+  });
+
+  it('源码守卫：服务层不许再把计划清单当作删除结果', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).toContain('parseRemoteReclaimOutcome(output)');
+    // 事故写法（dry-run 分支例外，那里报的本就是「本来会删哪些」）。
+    expect(code).not.toMatch(/return \{ \.\.\.base, removedWorktrees: plan\.removeWorktrees/);
+  });
+
+  it('回滚一落库就发 release.status，总线上看得到「正在回滚」', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    const at = code.indexOf('const persisted = this.stateService.addReleaseRun(run);');
+    expect(at).toBeGreaterThan(-1);
+    // 事故值：回滚 run 直接以 rollback_running 落库、不经 patchStatus，
+    // 于是总线收到的第一条生命周期事件是 rolled-back / failed，观测方看不到进行中。
+    const window = code.slice(at, at + 500);
+    expect(window).toContain("releaseEvents.emitEvent({ type: 'release.status'");
   });
 });

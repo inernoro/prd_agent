@@ -432,6 +432,41 @@ export function buildReleaseInventoryCommand(
   ].join('; ');
 }
 
+/**
+ * 回收命令的输出 → 「**真的**删掉了哪些」。
+ *
+ * 事故值（Codex P2）：服务层此前直接把 `plan.removeWorktrees` 当成 removed 返回，
+ * 压根不看输出。两条删除都失败（只读挂载、权限、句柄占用）时，命令仍 `exit 0`，
+ * 于是 API 与巡检双双报告「已回收」，而目录还在盘上、磁盘继续涨 —— 假证据比不清理更糟，
+ * 因为它让人以为清理在工作。现在远端逐条 `[ -e ]` 复核后才打 RECLAIMED，
+ * 删不掉的打 RECLAIM_FAILED，这里如实分开。
+ */
+export interface RemoteReclaimOutcome {
+  removedWorktrees: string[];
+  removedVersions: string[];
+  failedWorktrees: string[];
+  failedVersions: string[];
+}
+
+export function parseRemoteReclaimOutcome(stdout: string): RemoteReclaimOutcome {
+  const outcome: RemoteReclaimOutcome = {
+    removedWorktrees: [], removedVersions: [], failedWorktrees: [], failedVersions: [],
+  };
+  for (const rawLine of String(stdout || '').split(/\r?\n/)) {
+    const line = rawLine.trim();
+    const eq = line.indexOf('=');
+    if (eq <= 0) continue;
+    const key = line.slice(0, eq);
+    const value = line.slice(eq + 1).trim();
+    if (!value || !isReleaseArtifactId(value)) continue;
+    if (key === 'CDS_RELEASE_RECLAIMED_WORKTREE') outcome.removedWorktrees.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIMED_VERSION') outcome.removedVersions.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE') outcome.failedWorktrees.push(value);
+    else if (key === 'CDS_RELEASE_RECLAIM_FAILED_VERSION') outcome.failedVersions.push(value);
+  }
+  return outcome;
+}
+
 export function parseRemoteReleaseInventory(stdout: string): RemoteReleaseInventory {
   const inventory: RemoteReleaseInventory = {
     currentTarget: '',
@@ -487,8 +522,14 @@ export function buildReleaseReclaimCommand(
   if (worktrees.length > 0) {
     parts.push(
       `for name in ${worktrees.map(shellQuote).join(' ')}; do `
-      + 'git -C "$repo" worktree remove --force "$wt/$name" >/dev/null 2>&1 || rm -rf "$wt/$name"; '
-      + `printf 'CDS_RELEASE_RECLAIMED_WORKTREE=%s\\n' "$name"; done`,
+      + 'git -C "$repo" worktree remove --force "$wt/$name" >/dev/null 2>&1 || rm -rf "$wt/$name" >/dev/null 2>&1 || true; '
+      // 只在目录**真的不存在了**才报「已回收」。两条删除都失败时（只读挂载、
+      // 权限、句柄占用）printf 照样跑就会产出假证据：API 与巡检报告已删，
+      // 盘上还在、磁盘继续涨（Codex P2）。报不出来的那条走 FAILED，调用方据此
+      // 不计入 removed —— 宁可少报，绝不谎报。
+      + 'if [ -e "$wt/$name" ]; then '
+      + `printf 'CDS_RELEASE_RECLAIM_FAILED_WORKTREE=%s\\n' "$name"; else `
+      + `printf 'CDS_RELEASE_RECLAIMED_WORKTREE=%s\\n' "$name"; fi; done`,
     );
     parts.push('git -C "$repo" worktree prune >/dev/null 2>&1 || true');
   }
@@ -496,8 +537,10 @@ export function buildReleaseReclaimCommand(
     parts.push(`root=${shellQuote(strategy.publicDirectory || '')}`);
     parts.push(
       `for name in ${versions.map(shellQuote).join(' ')}; do `
-      + 'rm -rf "$root/.releases/$name"; '
-      + `printf 'CDS_RELEASE_RECLAIMED_VERSION=%s\\n' "$name"; done`,
+      + 'rm -rf "$root/.releases/$name" >/dev/null 2>&1 || true; '
+      + 'if [ -e "$root/.releases/$name" ]; then '
+      + `printf 'CDS_RELEASE_RECLAIM_FAILED_VERSION=%s\\n' "$name"; else `
+      + `printf 'CDS_RELEASE_RECLAIMED_VERSION=%s\\n' "$name"; fi; done`,
     );
   }
   parts.push('exit 0');
