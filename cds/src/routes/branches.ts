@@ -12361,7 +12361,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pulledSha = parsePulledSha(pullResult);
       // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
       // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
-      const isSourcePull = !branchUsesPrebuiltMode(profiles, entry)
+      // 「是否真的从源码构建」必须把**两种**极速版形态都排掉（Codex PR #1275 四轮 P2
+      // 修复时发现）：branchUsesPrebuiltMode 只认 deployModes.<mode>.prebuilt，认不出
+      // profile 级的 prebuiltImage=true。后者部署的是 tag 锁死在某个 sha 的镜像，
+      // 落地的 commit 就是那个 sha，与 worktree 刚拉到的 HEAD 无关；漏判会把 opLog /
+      // run / version 全部贴成 pulledSha。单 profile 部署路径本来就是按 profile 的
+      // prebuiltImage 判的，这里对齐它。
+      const usesPrebuilt = branchUsesPrebuiltMode(profiles, entry)
+        || profiles.some((p) => resolveEffectiveProfile(p, entry).prebuiltImage === true);
+      const isSourcePull = !usesPrebuilt
         && !(pullResult as { skipped?: boolean }).skipped
         && !!pulledSha;
       if (!requestCommitSha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
@@ -12375,6 +12383,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
+      // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
+      // 上面那段只在 `!requestCommitSha` 时才把 entry.githubCommitSha 跟到 HEAD —— 这是
+      // 有意的（该字段被 check-run/release 复用）。但 webhook 带 requestCommitSha=A 而
+      // origin 已前进到 B 时，pull 硬 reset 落地的是 B，entry 上却仍是 A：opLog 已经用
+      // pulledSha 记对了，run 与 version 却照抄 entry，于是部署审计挂在一份**没有被部署过**
+      // 的代码上，findReusable 还可能据此复用 A 的构建产物顶替 B。这里统一取实际落地值。
+      // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
+      // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
+      // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
+      const deployedCommitSha = selectedDeploymentVersion?.commitSha
+        ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
       // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
       // 原先它在刷新之前，于是 run 上盖的是**触发时**缓存的 entry.githubCommitSha，
       // 而这次构建实际落地的是 pull 之后的 HEAD —— run 写着一个 sha、构建用的却是
@@ -12383,7 +12402,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         phase: 'build',
         message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
         operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
+        commitSha: deployedCommitSha,
       });
 
 
@@ -12522,7 +12541,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      if (!selectedDeploymentVersion && deploymentVersionService && entry.githubCommitSha) {
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
         const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
         deploymentConfigHash = deploymentVersionService.computeConfigHash(
           refreshedEffectiveProfiles,
@@ -12531,7 +12552,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const reusable = deploymentVersionService.findReusable({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash: deploymentConfigHash,
         });
         if (reusable) {
@@ -13028,7 +13049,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         phase: 'ready',
         message: '服务构建与启动阶段结束，开始汇总就绪结果',
         operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
+        commitSha: deployedCommitSha,
       });
       //
       // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
@@ -13207,7 +13228,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && deploymentVersionService
         && deploymentRun
         && deploymentConfigHash
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
@@ -13215,7 +13236,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
-            commitSha: entry.githubCommitSha,
+            commitSha: deployedCommitSha,
             configHash: deploymentConfigHash,
             profiles: versionProfiles,
             branch: entry,
@@ -13327,7 +13348,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { smokeOk },
         });
       }
@@ -13620,6 +13641,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
       // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
+      // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
+      let deployedCommitSha: string | undefined = entry.githubCommitSha;
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
@@ -13636,6 +13659,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (isSourcePull) {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
+        // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
+        // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
+        deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
       }
       // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
       // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
@@ -13643,7 +13669,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         phase: 'build',
         message: `源码准备完成，开始构建 ${profile.name}`,
         operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
+        commitSha: deployedCommitSha,
         detail: { profileId },
       });
 
@@ -13977,7 +14003,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status === 'running'
         && deploymentVersionService
         && deploymentRun
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
         && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
       ) {
@@ -13989,7 +14015,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const version = deploymentVersionService.create({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash,
           profiles: versionProfiles,
           branch: entry,
@@ -14041,7 +14067,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: `${profile.name} 部署完成并通过就绪检查`,
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { profileId, hostPort: svc.hostPort },
         });
       } else {

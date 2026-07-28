@@ -24,3 +24,7 @@
 | fix | cds | 镜像复用的等价性改比 CI 构建输入范围（新增 buildScope，对齐工作流 path-filter），不再比运行时挂载目录：compose 里服务普遍挂整仓 `.`，旧口径等于比整个仓库，复用一次都不会触发，本次止损点在真实配置下形同虚设 |
 | feat | cds | cds-compose 支持 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 声明 CI 构建输入路径；未声明即不复用（fail-closed），新增 CI filter 对拍守卫测试防两处漂移 |
 | fix | cds | 删项目时落 worktree 桶墓碑：项目 id 从台账消失后，其桶不再被孤儿对账枚举，里面无人认领的 worktree 会永久占盘；墓碑并入白名单，桶清空后自动摘除 |
+| fix | cds | 库名 key 取用加优先级：引擎中立的 DB_NAME 只在没有自带引擎的 key 时兜底，此前与 MYSQL_DATABASE 同档、退化成 env 插入顺序，项目级泛化 DB_NAME 会压过服务自己的库名导致克隆错库且连接串漏改 |
+| fix | cds | 部署 run 与不可变版本改记「实际落地的 commit」：webhook 指定 A 而分支已前进到 B 时，entry.githubCommitSha 有意停在 A，run/version 却照抄它，审计挂在没被部署过的代码上，findReusable 还可能拿 A 的产物顶替 B |
+| fix | cds | isSourcePull 补认 profile 级 prebuiltImage：此前只认 deployModes.prebuilt，导致 tag 锁死 sha 的镜像部署被当成源码构建、台账贴成 pull 到的 HEAD |
+| chore | cds | MockShellExecutor 新增 addResponsePatternFirst（exec 首个命中即返回，用例覆盖通用桩只能插队首） |

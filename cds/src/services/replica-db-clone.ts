@@ -115,6 +115,26 @@ function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): 
     && classifyDbEnvKey(key, neutralEngine) !== null;
 }
 
+/**
+ * 库名 key 的取用优先级（数字越小越优先，Codex PR #1275 四轮 P1）。
+ *
+ * 引擎中立 key（DB_NAME / DATABASE_NAME）**只在没有任何自带引擎的 key 时才算数**。
+ * 它靠同 env 的连接串反推引擎，本身不携带归属信息，而项目级 customEnv 会把一个
+ * 泛化的 DB_NAME 灌给全部服务 —— 若它和 profile 自己的 MYSQL_DATABASE 并列，
+ * 仅靠「框架 key 优先」分不出高下，排序退化成 merged env 的插入顺序，项目级那个
+ * 先进来就赢。后果：sourceDb 取到与本服务无关的库名 → 克隆错库；应用连接串的
+ * 路径段对不上这个值 → urlEnvValues 漏掉它 → 副本仍打源库，控制面还报隔离成功。
+ *
+ * 0 = 自带引擎的框架风格 key（MYSQL_DATABASE / POSTGRES_DB / MongoDB__DatabaseName…）
+ * 1 = CDS 自己的 per-branch 白名单 key（同样自带引擎，但不是应用直接读的那个）
+ * 2 = 引擎中立 key（兜底，仅当前两类都不存在）
+ */
+function dbEnvKeyRank(key: string, neutralEngine?: ReplicaDbEngine | null): number {
+  // 不传 neutralEngine 时 classify 只认自带引擎的两类 —— 据此把中立 key 分出来。
+  if (classifyDbEnvKey(key) === null) return 2;
+  return isFrameworkDbKey(key, neutralEngine) ? 0 : 1;
+}
+
 export interface ReplicaDbTarget {
   engine: ReplicaDbEngine;
   /** env 里实际存在、指向该库的全部 key（CDS_ 前缀与裸名可能并存，全部要覆写） */
@@ -204,8 +224,8 @@ export function resolveReplicaDbTarget(
   const presentKeys = Object.keys(runtimeEnv)
     .filter((key) => classifyDbEnvKey(key, neutralEngine) !== null
       && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
-    // 框架风格 key 优先（应用真正读的配置）；同类内保持稳定序
-    .sort((a, b) => Number(isFrameworkDbKey(b, neutralEngine)) - Number(isFrameworkDbKey(a, neutralEngine)));
+    // 自带引擎的 key 优先、引擎中立 key 垫底（见 dbEnvKeyRank）；同档内保持稳定序
+    .sort((a, b) => dbEnvKeyRank(a, neutralEngine) - dbEnvKeyRank(b, neutralEngine));
   if (presentKeys.length === 0) {
     // 可诊断的失败原因（2026-07-28 真机验收补）：只说「没有数据库名」等于把人挡在
     // 门外还不告诉他差什么——生产上标识中台六个服务全是这条，光看文案根本判断不出

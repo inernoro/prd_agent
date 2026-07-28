@@ -219,3 +219,40 @@ describe('envOverrideFromSnapshot 统一战线同库复用（2026-07-25）', () 
     expect(env.DATABASE_URL).toBeUndefined();
   });
 });
+
+/**
+ * 引擎中立 key 只能兜底，不许压过自带引擎的 key（Codex PR #1275 四轮 P1）。
+ *
+ * 项目级 customEnv 会把一个泛化的 DB_NAME 灌给全部服务。若它与 profile 自己的
+ * MYSQL_DATABASE 并列，而排序只按「框架 key 优先」，两者同档 → 退化成 merged env
+ * 的插入顺序（project → branch → profile），项目级那个先进来就赢：sourceDb 取到
+ * 与本服务无关的库名 → 克隆错库；应用连接串路径段对不上这个值 → urlEnvValues
+ * 漏掉它 → 副本仍打源库，控制面还报「隔离成功」。
+ */
+describe('库名 key 的取用优先级', () => {
+  it('自带引擎的 MYSQL_DATABASE 压过项目级泛化 DB_NAME', () => {
+    addInfra('mysql', 'mysql:8');
+    // 项目级先灌一个与本服务无关的 DB_NAME，profile 自己声明真正的库
+    state.setCustomEnv({ DB_NAME: 'unrelated_project_db', DATABASE_URL: 'mysql://h:3306/appdb' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({ env: { MYSQL_DATABASE: 'appdb' } }),
+    );
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('appdb');
+    // 应用真正读的连接串必须进改写集合（路径段与 sourceDb 对得上）
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('DATABASE_URL');
+  });
+
+  it('没有自带引擎的 key 时，中立 DB_NAME 仍然照常兜底（不能因为加了优先级就失效）', () => {
+    addInfra('mysql', 'mysql:8');
+    state.setCustomEnv({ DB_NAME: 'impdb', SPRING_DATASOURCE_URL: 'jdbc:mysql://h:3306/impdb' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('impdb');
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+});
