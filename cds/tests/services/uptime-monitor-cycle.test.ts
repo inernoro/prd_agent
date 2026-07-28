@@ -1,4 +1,7 @@
 import { describe, it, expect, vi } from 'vitest';
+import { fileURLToPath } from 'node:url';
+import path from 'node:path';
+import fs from 'node:fs';
 import type { BranchEntry } from '../../src/types.js';
 import {
   UptimeMonitorService,
@@ -570,5 +573,18 @@ describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的�
       { scope: 'trunk', getProject: () => ({ gitDefaultBranch: 'develop' } as never) },
     );
     expect(targets).toHaveLength(1);
+  });
+});
+
+describe('探测不得等 body 结束（SSE 类端点会锁死整个监控）', () => {
+  it('defaultHttpProbe 拿到响应头就结算并拆连接，不挂在 end 上', () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/services/uptime-monitor.ts'),
+      'utf-8',
+    );
+    const fn = src.slice(src.indexOf('export const defaultHttpProbe'), src.indexOf('export type ProbeFailureKind'));
+    // 等 'end' = 被 SSE/分块响应永久挂住 → cycleRunning 重入锁不解 → 此后所有轮次被跳过
+    expect(fn).not.toContain("res.on('end'");
+    expect(fn).toContain('res.destroy()');
   });
 });

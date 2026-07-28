@@ -259,22 +259,30 @@ export async function forwardToMap(
     }
   }
 
+  // submit 失败不推翻「已进入缺陷系统」的事实（草稿已经建了），但**必须如实说**：
+  // 之前只 catch 异常、不看 res.ok，MAP 返 4xx/5xx 时 UI 照样显示「已提交」，
+  // 而单子其实还躺在草稿态没人处理（Codex PR #1273 P2）。
+  let submitIssue: string | null = null;
   try {
-    await fetchImpl(`${config.baseUrl}/api/defect-agent/defects/${created.id}/submit`, {
+    const res = await fetchImpl(`${config.baseUrl}/api/defect-agent/defects/${created.id}/submit`, {
       method: 'POST',
       headers,
       body: JSON.stringify({}),
       signal: budget,
     });
-  } catch {
-    // 已创建成功，提交环节失败只影响状态流转，不改变「已进入缺陷系统」的事实。
+    if (!res.ok) submitIssue = `缺陷已创建但提交流转失败（缺陷系统返回 HTTP ${res.status}），可能仍是草稿态`;
+  } catch (e) {
+    submitIssue = `缺陷已创建但提交流转失败（${e instanceof Error ? e.message : String(e)}），可能仍是草稿态`;
   }
+
+  const attachmentIssue = attachmentFailures > 0
+    ? `${attachmentFailures}/${attachments.length} 个截图上传失败，附件未跟随进入缺陷系统`
+    : null;
+  const issues = [submitIssue, attachmentIssue].filter(Boolean);
   return {
     ok: true,
     reference: created.defectNo || created.id,
-    partialReason: attachmentFailures > 0
-      ? `缺陷已提交，但 ${attachmentFailures}/${attachments.length} 个截图上传失败，附件未跟随进入缺陷系统`
-      : undefined,
+    partialReason: issues.length > 0 ? issues.join('；') : undefined,
   };
 }
 

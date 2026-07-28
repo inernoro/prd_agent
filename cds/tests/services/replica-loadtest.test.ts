@@ -590,8 +590,11 @@ describe('withReplicaPin：路径已带 __rs 时必须替换而不是追加（Co
 });
 
 describe('落点核对：无法证明打到各自版本时不得出对比结论（Codex PR #1273 P1）', () => {
-  const metric = (memberId: string, label: string, servedBy: Record<string, number>, p95: number) => ({
-    memberId, label, servedBy, requests: 100, p95, qps: 50, successRate: 1,
+  const metric = (
+    memberId: string, label: string, servedBy: Record<string, number>, p95: number,
+    servedGroups: Record<string, number> = {}, expectedGroup = 'b1:api',
+  ) => ({
+    memberId, label, servedBy, servedGroups, expectedGroup, requests: 100, p95, qps: 50, successRate: 1,
     min: 1, max: 9, avg: 5, p50: 4, p90: 8, p99: 9,
     errors: {} as never, series: [],
   }) as unknown as Parameters<typeof buildComparison>[0][number];
@@ -634,5 +637,31 @@ describe('压测请求必须有挂钟死线（SSE 类端点不得永久占住全
     const fn = src.slice(src.indexOf('function defaultRequestFn'));
     expect(fn).toContain('wallClock = setTimeout');
     expect(fn).toContain('clearTimeout(wallClock)');
+  });
+});
+
+
+describe('落点核对必须连副本组一起判（跨 profile 同名成员会撞，Codex PR #1273 P1）', () => {
+  const m = (memberId: string, label: string, servedBy: Record<string, number>, servedGroups: Record<string, number>, expectedGroup: string) => ({
+    memberId, label, servedBy, servedGroups, expectedGroup, requests: 100, p95: 10, qps: 50, successRate: 1,
+    min: 1, max: 9, avg: 5, p50: 4, p90: 8, p99: 9, errors: {} as never, series: [],
+  }) as unknown as Parameters<typeof buildComparison>[0][number];
+
+  it('组对得上时照常出结论', () => {
+    const c = buildComparison([
+      m('primary', '主实例', {}, { 'b1:api': 100 }, 'b1:api'),
+      m('rs-a', '版本 A', { 'rs-a': 100 }, { 'b1:api': 100 }, 'b1:api'),
+    ])!;
+    expect(c.routingVerified).toBe(true);
+  });
+
+  it('事故值：路径解析到了另一个 profile（组不符）时拒绝出结论，即使成员 id 看起来对', () => {
+    const c = buildComparison([
+      m('primary', '主实例', {}, { 'b1:web': 100 }, 'b1:api'),
+      m('rs-a', '版本 A', { 'rs-a': 100 }, { 'b1:api': 100 }, 'b1:api'),
+    ])!;
+    expect(c.routingVerified).toBe(false);
+    expect(String(c.routingIssue)).toContain('副本组');
+    expect(c.rows).toHaveLength(0);
   });
 });

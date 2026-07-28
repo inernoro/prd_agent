@@ -432,3 +432,24 @@ describe('Codex PR #1273 复审修复', () => {
     expect(String(result.partialReason)).toContain('上传失败');
   });
 });
+
+describe('MAP submit 非 2xx 必须如实告知（Codex PR #1273 P2）', () => {
+  it('create 成功但 submit 返 500 时，回传「可能仍是草稿态」而不是静默报成功', async () => {
+    const fetchImpl = (async (url: string) => {
+      if (String(url).endsWith('/defects')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, data: { defect: { id: 'd1' } } }) };
+      }
+      if (String(url).includes('/submit')) return { ok: false, status: 500, text: async () => '' };
+      return { ok: true, status: 200, text: async () => '{}' };
+    }) as unknown as FetchLike;
+
+    const result = await forwardToMap(
+      { title: 't', description: 'd', severity: 'minor', environment: {}, reporter: 'tester', attachments: [] } as Parameters<typeof forwardToMap>[0],
+      { baseUrl: 'https://map.example', token: 'tok' } as Parameters<typeof forwardToMap>[1],
+      fetchImpl,
+    );
+    expect(result.ok).toBe(true);
+    expect(String(result.partialReason)).toContain('草稿态');
+    expect(String(result.partialReason)).toContain('500');
+  });
+});

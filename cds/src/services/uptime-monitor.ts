@@ -362,15 +362,19 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
       },
       (res) => {
         const code = res.statusCode || 0;
-        res.resume(); // 丢弃 body，只关心状态码
-        res.on('end', () => {
-          finish({
-            up: code > 0 && code < 500,
-            ms: Date.now() - startedAt,
-            code,
-            err: code >= 500 ? `HTTP ${code}` : undefined,
-          });
+        // 拿到响应头就够了——存活判定只看状态码。**绝不能等 'end'**：
+        // 若被探服务的根路径是 SSE / 持续分块输出，body 永远不结束，而
+        // req 的 timeout 是 socket 空闲超时，对端定期发块就让它永不触发。
+        // 那样这个 Promise 永久挂起，runCycle 的 cycleRunning 重入锁再也不解开，
+        // **此后所有监控轮次全部被跳过**——整个存活监控静默死掉
+        // （Codex PR #1273 P2）。所以拿到头立刻结算并拆连接。
+        finish({
+          up: code > 0 && code < 500,
+          ms: Date.now() - startedAt,
+          code,
+          err: code >= 500 ? `HTTP ${code}` : undefined,
         });
+        res.destroy();
       },
     );
     req.on('timeout', () => {

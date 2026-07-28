@@ -5187,7 +5187,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   };
 
   function noteBranchProtection(entry: BranchEntry): ProtectedBranchNote | null {
-    const protection = resolveBranchProtection(entry, stateService);
+    // 第三个参数必须传：只配在 scheduler 那侧的固定名单同样要挡住批量清理，
+    // 否则「按文档 pin 住」的非主干分支挡得住降温与 janitor，却会被
+    // /cleanup、/cleanup-orphans、cleanup-stopped 删掉（Codex PR #1273 P1）。
+    const protection = resolveBranchProtection(entry, stateService, deps.config?.scheduler?.pinnedBranches ?? []);
     let reason = protection.reason;
     // 额外一道兜底：旧的全局 state.defaultBranch。SSOT 的 default-branch 判定走
     // getDefaultBranchFor(projectId)，若项目上显式写了 defaultBranch: null，就不会

@@ -87,6 +87,12 @@ export interface LoadTestTarget {
   path: string;
   /** 钉选值，写进 query `__rs` */
   pinned: string;
+  /**
+   * 期望的副本组标识 `${branchId}:${profileId}`（forwarder 回在 X-CDS-Replica-Group）。
+   * 只核对成员 id 不够：不同 profile 的成员 id 会重名（primary / rs-1 都可能撞），
+   * 压测路径若解析到了另一个启用复制集的 profile，光看成员 id 会误判为核对通过。
+   */
+  expectedGroup: string;
 }
 
 export interface LoadTestSeriesPoint {
@@ -115,6 +121,10 @@ export interface LoadTestTargetMetrics {
   errors: Record<LoadTestErrorKind, number>;
   /** 落点核对：响应头 X-CDS-Replica 的实际值分布（钉选是否真的生效） */
   servedBy: Record<string, number>;
+  /** 落点核对：响应头 X-CDS-Replica-Group 的实际值分布（是否打到了同一个 profile 的组） */
+  servedGroups: Record<string, number>;
+  /** 期望的组标识，与 servedGroups 比对，防止跨 profile 的同名成员被误判为核对通过 */
+  expectedGroup: string;
   series: LoadTestSeriesPoint[];
 }
 
@@ -200,7 +210,7 @@ export type LoadTestRequestFn = (req: {
   body?: string;
   timeoutMs: number;
   signal: AbortSignal;
-}) => Promise<{ status: number; errorKind?: LoadTestErrorKind; servedBy?: string }>;
+}) => Promise<{ status: number; errorKind?: LoadTestErrorKind; servedBy?: string; servedGroup?: string }>;
 
 /* ────────────────────────── 纯函数（可单测，不碰 IO） ────────────────────────── */
 
@@ -498,8 +508,21 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
   const seen = new Map<string, string>();
   let routingIssue: string | null = null;
   let anyEvidence = false;
+  const groupOf = (t: LoadTestTargetMetrics): string | null => {
+    const entries = Object.entries(t.servedGroups || {});
+    if (entries.length === 0) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0]![0];
+  };
   for (const t of usable) {
     const observed = identityOf(t);
+    // 组先于成员核对：成员 id 在不同 profile 之间会重名（primary / rs-1 都可能撞），
+    // 压测路径若解析到了另一个启用复制集的 profile，只看成员 id 会误判为核对通过。
+    const observedGroup = groupOf(t);
+    if (observedGroup !== null && t.expectedGroup && observedGroup !== t.expectedGroup) {
+      routingIssue = `落点核对失败：${t.label} 期望由副本组 ${t.expectedGroup} 服务，实际观测到 ${observedGroup}（压测路径可能解析到了别的服务）`;
+      anyEvidence = true;
+      break;
+    }
     if (observed === null) continue;
     anyEvidence = true;
     // 副本成员自报了家门就必须对得上。
@@ -600,6 +623,7 @@ interface TargetRuntime {
   failed: number;
   errorCounts: Record<LoadTestErrorKind, number>;
   servedBy: Record<string, number>;
+  servedGroups: Record<string, number>;
 }
 
 interface LoadTestRun {
@@ -776,7 +800,7 @@ export class ReplicaLoadTestService {
     const targets: LoadTestTarget[] = [];
     const primaryRunning = branch.services?.[profileId]?.status === 'running';
     if ((!wanted || wanted.has('primary')) && primaryRunning) {
-      targets.push({ memberId: 'primary', label: '主实例', host, path, pinned: `${profileId}:primary` });
+      targets.push({ memberId: 'primary', label: '主实例', host, path, pinned: `${profileId}:primary`, expectedGroup: `${branchId}:${profileId}` });
     }
     for (const m of rs?.members ?? []) {
       if (wanted && !wanted.has(m.id)) continue;
@@ -787,6 +811,7 @@ export class ReplicaLoadTestService {
         host,
         path,
         pinned: `${profileId}:${m.id}`,
+        expectedGroup: `${branchId}:${profileId}`,
       });
     }
     if (targets.length === 0) {
@@ -849,6 +874,7 @@ export class ReplicaLoadTestService {
         failed: 0,
         errorCounts: { timeout: 0, connect: 0, http5xx: 0, http4xx: 0, cancelled: 0, other: 0 },
         servedBy: {},
+        servedGroups: {},
       })),
       startedAtMs,
       startedAt: new Date(startedAtMs).toISOString(),
@@ -955,7 +981,7 @@ export class ReplicaLoadTestService {
       if (budget.remaining <= 0) return;
       budget.remaining -= 1;
       const startedAt = now;
-      let result: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string };
+      let result: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string; servedGroup?: string };
       try {
         result = await this.requestFn({
           port,
@@ -982,7 +1008,7 @@ export class ReplicaLoadTestService {
     run: LoadTestRun,
     rt: TargetRuntime,
     latency: number,
-    result: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string },
+    result: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string; servedGroup?: string },
   ): void {
     const second = Math.floor((this.now() - run.startedAtMs) / 1000) - run.config.warmupSec;
     let bucket = rt.buckets.get(second);
@@ -1001,6 +1027,7 @@ export class ReplicaLoadTestService {
         rt.errorCounts[kind ?? 'other'] += 1;
       }
       if (result.servedBy) rt.servedBy[result.servedBy] = (rt.servedBy[result.servedBy] || 0) + 1;
+      if (result.servedGroup) rt.servedGroups[result.servedGroup] = (rt.servedGroups[result.servedGroup] || 0) + 1;
       // 就地 O(1) 记账：不留原始采样数组，聚合成本与请求条数无关
       rt.latency.record(latency);
     }
@@ -1090,6 +1117,8 @@ export class ReplicaLoadTestService {
       p99: stats.quantile(99),
       errors: { ...rt.errorCounts },
       servedBy: { ...rt.servedBy },
+      servedGroups: { ...rt.servedGroups },
+      expectedGroup: rt.target.expectedGroup,
       series,
     };
   }
@@ -1118,7 +1147,7 @@ function defaultRequestFn(): LoadTestRequestFn {
     // 这里不再检查 run 死线，整个压测占着全局唯一的槽位直到有人手动取消
     // （Codex PR #1273 P2）。挂钟死线与活动无关，到点就拆连接。
     let wallClock: NodeJS.Timeout | null = null;
-    const done = (r: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string }): void => {
+    const done = (r: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string; servedGroup?: string }): void => {
       if (settled) return;
       settled = true;
       if (wallClock) clearTimeout(wallClock);
@@ -1146,9 +1175,10 @@ function defaultRequestFn(): LoadTestRequestFn {
         },
       }, (resp) => {
         const servedBy = resp.headers['x-cds-replica'] ? String(resp.headers['x-cds-replica']) : undefined;
+        const servedGroup = resp.headers['x-cds-replica-group'] ? String(resp.headers['x-cds-replica-group']) : undefined;
         resp.resume();
-        resp.on('end', () => done({ status: resp.statusCode || 0, servedBy }));
-        resp.on('error', () => done({ status: resp.statusCode || 0, errorKind: 'other', servedBy }));
+        resp.on('end', () => done({ status: resp.statusCode || 0, servedBy, servedGroup }));
+        resp.on('error', () => done({ status: resp.statusCode || 0, errorKind: 'other', servedBy, servedGroup }));
       });
       signal.addEventListener('abort', onAbort, { once: true });
       wallClock = setTimeout(() => { req?.destroy(); done({ status: 0, errorKind: 'timeout' }); }, timeoutMs);

@@ -58,3 +58,7 @@
 | fix | cds | 压测请求补挂钟死线：http.request 的 timeout 是 socket 空闲超时，压 SSE/持续分块端点时对端定期发字节即可让它永不触发，请求 Promise 永久挂起、占住全局唯一压测槽位 |
 | fix | cds | 修复状态页在 React.StrictMode 下永远停在骨架屏：mounted ref 只在 cleanup 置 false，第二次 setup 没置回 true，所有响应被丢弃 |
 | chore | cds | 按「同一 PR 一个碎片文件」的规则把本 PR 的五个 changelog 碎片合并为一个 |
+| fix | cds | 修复存活探测等 body 结束导致整个监控停摆：被探服务根路径若是 SSE/持续分块输出则 end 永不到来，socket 空闲超时也不触发，runCycle 的重入锁再不解开、此后所有轮次全被跳过；改为拿到响应头即结算并拆连接 |
+| fix | cds | 修复批量清理漏传 scheduler 固定名单：只配在 scheduler 那侧的 pin 挡得住降温与 janitor，却会被 /cleanup、/cleanup-orphans、cleanup-stopped 删掉 |
+| fix | cds | 压测落点核对补上副本组（X-CDS-Replica-Group）：成员 id 跨 profile 会重名，只看成员 id 会把「路径解析到别的服务」误判为核对通过 |
+| fix | cds | 修复缺陷转发 submit 返非 2xx 时静默报成功：单子其实还躺在草稿态，现在如实回传「可能仍是草稿态」及状态码 |
