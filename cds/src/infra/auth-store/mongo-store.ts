@@ -293,8 +293,11 @@ export class MongoAuthStore implements AuthStore {
     if (!session) return null;
 
     // Enforce expiry eagerly — delete the session and report as missing.
+    // Filter on the expiry we observed: a concurrent request can renew the session
+    // between our read and this delete, and a token-only delete would wipe that
+    // perfectly valid, just-extended session.
     if (new Date(session.expiresAt).getTime() <= now.getTime()) {
-      await sessions.deleteOne({ token });
+      await sessions.deleteOne({ token, expiresAt: session.expiresAt });
       return null;
     }
 
@@ -315,8 +318,10 @@ export class MongoAuthStore implements AuthStore {
     const session = await sessions.findOne({ token });
     if (!session) return null;
 
+    // Same guard as findSessionByToken: never delete on a token-only filter, or a
+    // sibling request that renewed this session first would lose it.
     if (new Date(session.expiresAt).getTime() <= now.getTime()) {
-      await sessions.deleteOne({ token });
+      await sessions.deleteOne({ token, expiresAt: session.expiresAt });
       return null;
     }
 
