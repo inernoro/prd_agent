@@ -9,6 +9,7 @@ import {
   type DiskWorktreeDir, type OrphanWorktreePlan,
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
+import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -641,6 +642,69 @@ export class JanitorService {
       console.warn(`[janitor] ${describeDiskTier(report.diskTier, usedPercentForTier)}`);
     }
 
+    // 1.4 回收互斥（2026-07-27 复盘 P2）：下面三步（悬空清理 / per-SHA 镜像回收 /
+    //     孤儿 worktree）都是真实的磁盘与 docker daemon 动作。CDS 侧任何路径同一时刻
+    //     只允许一个在跑；拿不到锁就**跳过本轮**，不排队堆积——回收是周期性的，
+    //     等下一轮就行，排队只会把几轮压在一起，在磁盘最紧张时制造更大的 IO 尖峰。
+    //     注意这把锁管不到宿主上的人：人工 docker prune 仍会撞车，那要靠运维手册的
+    //     安全命令 + cds.protected 标记来兜。
+    const reclaimed = await reclaimLock.run('janitor.sweep', async () => {
+      await this.runReclaimSteps(report);
+      return true;
+    });
+    if (isReclaimSkip(reclaimed)) {
+      report.errors.push(
+        `回收被跳过：${reclaimed.heldBy} 正在回收（已持有 ${Math.round(reclaimed.heldForMs / 1000)}s），本轮跳过不排队`,
+      );
+      console.warn(`[janitor] 回收被跳过：${reclaimed.heldBy} 正在回收，本轮跳过`);
+    }
+
+    // 2. Worktree TTL cleanup (only when enabled — destructive)
+    if (!this.isEnabled()) return report;
+
+    const now = this.clock.now();
+    const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
+    const branches = this.stateService.getAllBranches();
+
+    for (const branch of branches) {
+      // per-project default：项目级值优先，未设回落到旧 state.defaultBranch
+      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
+      const protectedReason = isBranchProtected(branch, branchDefault, []);
+      if (protectedReason) {
+        // We still track pinned stale branches so the operator can see them.
+        if (branch.lastAccessedAt && (now - Date.parse(branch.lastAccessedAt)) > ttlMs) {
+          report.skippedPinned.push(branch.id);
+        }
+        continue;
+      }
+
+      const anchorMs = branchExpiryAnchorMs(branch);
+      if (anchorMs <= 0) continue;
+
+      const idleMs = now - anchorMs;
+      if (idleMs <= ttlMs) continue;
+      if (branch.executorId) {
+        report.skippedRemote.push(branch.id);
+        continue;
+      }
+
+      // Found a stale branch. Delegate removal to the caller.
+      try {
+        if (this.removeFn) {
+          await this.removeFn(branch.id);
+        }
+        report.removedBranches.push(branch.id);
+        console.log(`[janitor] removed stale branch "${branch.id}" (idle ${Math.round(idleMs / (24*60*60*1000))}d)`);
+      } catch (err) {
+        report.errors.push(`remove ${branch.id}: ${(err as Error).message}`);
+      }
+    }
+
+    return report;
+  }
+
+  /** 回收三件套（悬空清理 / per-SHA 镜像回收 / 孤儿 worktree），由回收锁串起来。 */
+  private async runReclaimSteps(report: JanitorSweepReport): Promise<void> {
     // 1.5 Docker 垃圾清理(默认开，非破坏性——只清悬空镜像 + 构建缓存)。
     //     与 enabled(控制破坏性分支删除) 解耦：哪怕用户没开 TTL 清理，悬空层/构建
     //     缓存的堆积也是"构建越来越慢"的主因，故默认就清。config.dockerPrune=false 可关。
@@ -714,48 +778,6 @@ export class JanitorService {
       }
     }
 
-    // 2. Worktree TTL cleanup (only when enabled — destructive)
-    if (!this.isEnabled()) return report;
-
-    const now = this.clock.now();
-    const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
-    const branches = this.stateService.getAllBranches();
-
-    for (const branch of branches) {
-      // per-project default：项目级值优先，未设回落到旧 state.defaultBranch
-      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
-      const protectedReason = isBranchProtected(branch, branchDefault, []);
-      if (protectedReason) {
-        // We still track pinned stale branches so the operator can see them.
-        if (branch.lastAccessedAt && (now - Date.parse(branch.lastAccessedAt)) > ttlMs) {
-          report.skippedPinned.push(branch.id);
-        }
-        continue;
-      }
-
-      const anchorMs = branchExpiryAnchorMs(branch);
-      if (anchorMs <= 0) continue;
-
-      const idleMs = now - anchorMs;
-      if (idleMs <= ttlMs) continue;
-      if (branch.executorId) {
-        report.skippedRemote.push(branch.id);
-        continue;
-      }
-
-      // Found a stale branch. Delegate removal to the caller.
-      try {
-        if (this.removeFn) {
-          await this.removeFn(branch.id);
-        }
-        report.removedBranches.push(branch.id);
-        console.log(`[janitor] removed stale branch "${branch.id}" (idle ${Math.round(idleMs / (24*60*60*1000))}d)`);
-      } catch (err) {
-        report.errors.push(`remove ${branch.id}: ${(err as Error).message}`);
-      }
-    }
-
-    return report;
   }
 
   /**

@@ -1993,9 +1993,18 @@ EOF
     fi
   else
     info "正在拉起 MongoDB 7 容器（首次可能需要拉取镜像，请稍候）…"
+    # 保护标记 + 日志限额（2026-07-27 宕机复盘 P2）：
+    #   - cds.protected=true：这个容器一停，CDS 的状态库就没了、master 反复启动失败。
+    #     事故当天它正是被人工 `docker container prune` 连带删掉的。打上标记后，
+    #     运维手册里的安全清理命令可以用 `--filter "label!=cds.protected=true"` 排除它。
+    #   - 日志限额：全仓容器都加了 max-size/max-file，唯独这个 bootstrap 建的漏了。
     docker run -d \
       --name "$MONGO_CONTAINER" \
       --restart unless-stopped \
+      --label cds.managed=true \
+      --label cds.type=cds-state \
+      --label cds.protected=true \
+      --log-opt max-size=50m --log-opt max-file=3 \
       -p "127.0.0.1:${MONGO_PORT}:27017" \
       -v cds-state-mongo-data:/data/db \
       mongo:7 >/dev/null 2>&1 \

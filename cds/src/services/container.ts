@@ -2509,6 +2509,11 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      // 保护标记（2026-07-27 宕机复盘 P2）：infra 容器装的是项目数据（mongo/mysql/
+      // redis…），误删代价远高于应用容器——事故当天 CDS 自己的状态库就是被人工
+      // `docker container prune` 连带删掉的。运维手册的安全清理命令据此排除它们：
+      // `docker container prune --filter "label!=cds.protected=true"`。
+      '--label cds.protected=true',
       `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
