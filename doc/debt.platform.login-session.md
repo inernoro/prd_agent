@@ -25,11 +25,14 @@
 - 待补：加 `POST /api/auth/logout`，按 `(userId, clientType, sessionKey)` 删除该端 refresh 会话并
   bump tokenVersion，让「点退出」等价于「立即失效」。
 
-### 2. 网关续期不覆盖非 apiRequest 的调用方
+### 2. 网关续期依赖每条已鉴权请求都接住响应头
 
-滑动续期靠响应头下发，只有走 `llmgw/web/src/lib/api.ts` 的 `apiRequest` 才会接住。若将来加
-EventSource / 直接 fetch 的会话调用，需要同样调用 `applyRenewedToken`，否则那条链路不会延长会话
-（不会掉登录，只是不续期）。
+滑动续期靠 `X-Gw-Token` 响应头下发：走 `llmgw/web/src/lib/api.ts` 的 `apiRequest` 自动覆盖；
+绕开它的裸 fetch 必须自己调 `applyRenewedToken(res, token)`。漏一处的后果不是「不续期」那么轻——
+「只用那一个功能」的用户会在最初的 7 天期限上掉登录（真实案例：BugReportDialog 的提交请求，
+已修）。守卫：`cds/tests/services/llmgw-session-renewal-source-guard.test.ts` 扫描 llmgw/web 源码，
+用会话 token 的裸 fetch 必须出现 `applyRenewedToken`（用服务密钥打 serving 网关的调用不在此列，
+那条链路本就没有会话）。EventSource 无法读响应头，若将来引入需另设续期通道。
 
 ### 3. 网关旧 token 不会被续期
 

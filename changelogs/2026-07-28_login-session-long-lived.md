@@ -24,3 +24,4 @@
 | fix | prd-api | refresh 成功时同步续 tokenVersion 台账，避免被踢过的用户刷新后新 token 反被判成已撤销（Codex P2） |
 | fix | llmgw | 跨标签页接管会话时重置失效闩，避免新会话失效后本标签页卡在「已登录但没有 token」（Codex P2） |
 | fix | llmgw | 跨标签页换账号后按新 token 重排主动过期定时器，避免新会话没有定时器、过期后仍显示已登录（Codex P2） |
+| fix | llmgw | BugReportDialog 的裸 fetch 也接住续期响应头，避免「只提缺陷」的用户滑不动会话（Codex P2）；新增源码守卫防再漏 |
