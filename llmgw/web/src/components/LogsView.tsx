@@ -39,9 +39,11 @@ import {
 } from '@/lib/logsHelpers';
 
 const PAGE_SIZE = 30;
-const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
+// v4：默认可见列集合调整（隐藏用途/结束原因/客户端用户）+ 列宽改等比摊分。
+// 不升版本号的话，存量用户的 v3 记录会把 12 列全部保留，改动对他们等于没做。
+const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v4';
 const NARROW_TABLE_MIN_WIDTH: Record<LogsSubTab, number> = {
-  generations: 1832,
+  generations: 1080,
   upstream: 980,
   sessions: 1080,
 };

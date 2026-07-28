@@ -117,22 +117,23 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  // 列宽内容驱动：文本列用 minmax(下限, N fr) 吃掉剩余空间，数值列贴着内容给。
-  // 全部左对齐（对齐 OpenRouter 的做法）——右对齐 + 过宽列会在每列中间撑出一条空白山谷。
-  { key: 'date', label: '时间', width: '104px', required: true },
-  { key: 'generation', label: '请求 ID', width: '150px', defaultVisible: false },
-  // fr 权重刻意不均：宽屏多出来的空间主要给 App（唯一的长文本列），
-  // 模型/Provider 只留一点弹性——否则它们会被撑到 300px 却只装 156px 内容。
-  { key: 'model', label: '模型', width: 'minmax(158px, 0.35fr)' },
-  { key: 'provider', label: 'Provider', width: 'minmax(140px, 0.25fr)' },
-  { key: 'app', label: 'App', width: 'minmax(190px, 2.4fr)', tip: '点击查看 appCaller 摘要与治理入口' },
-  { key: 'input', label: '输入', width: '72px' },
-  { key: 'output', label: '输出', width: '72px' },
-  { key: 'cost', label: '费用', width: '88px' },
-  { key: 'usage', label: '用途', width: '84px', defaultVisible: false },
-  { key: 'speed', label: '速度', width: '88px' },
-  { key: 'finish', label: '结束原因', width: '88px', defaultVisible: false },
-  { key: 'user', label: '客户端用户', width: 'minmax(120px, 1fr)', defaultVisible: false },
+  // 列宽 = minmax(内容下限, 按下限等比的 fr)。
+  // 关键在 fr 权重与下限成正比：宽屏多出来的空间按比例摊给每一列，
+  // 于是每列都有 30~50% 的均匀富余（OpenRouter 那一屏就是这个比例），
+  // 而不是把余量全塞进某一列、在表格中间撑出一个空洞。
+  // 全部左对齐——右对齐 + 富余会在每列中间再撑出一条空白山谷。
+  { key: 'date', label: '时间', width: 'minmax(104px, 1.04fr)', required: true },
+  { key: 'generation', label: '请求 ID', width: 'minmax(150px, 1.5fr)', defaultVisible: false },
+  { key: 'model', label: '模型', width: 'minmax(158px, 1.58fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(140px, 1.4fr)' },
+  { key: 'app', label: 'App', width: 'minmax(190px, 1.9fr)', tip: '点击查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: 'minmax(72px, 0.72fr)' },
+  { key: 'output', label: '输出', width: 'minmax(72px, 0.72fr)' },
+  { key: 'cost', label: '费用', width: 'minmax(88px, 0.88fr)' },
+  { key: 'usage', label: '用途', width: 'minmax(84px, 0.84fr)', defaultVisible: false },
+  { key: 'speed', label: '速度', width: 'minmax(88px, 0.88fr)' },
+  { key: 'finish', label: '结束原因', width: 'minmax(88px, 0.88fr)', defaultVisible: false },
+  { key: 'user', label: '客户端用户', width: 'minmax(120px, 1.2fr)', defaultVisible: false },
   { key: 'status', label: '状态', width: '52px', align: 'center', required: true },
 ];
 
