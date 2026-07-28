@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
+import { collectReuseCandidates, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
@@ -1115,6 +1116,17 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
+      /**
+       * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
+       * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
+       *（2026-07-27 宕机的临门一脚，见 services/prebuilt-reuse.ts）。
+       */
+      ledgerImages?: readonly string[];
+      /**
+       * 该组件（profile.workDir 子树）在 fromSha 与当前部署 commit 之间是否**没有**
+       * 任何改动。由调用方在 worktree 里 git diff 判定；查不出来必须返回 false。
+       */
+      isComponentUnchangedSince?: (fromSha: string, workDir: string) => Promise<boolean>;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1232,6 +1244,62 @@ export class ContainerService {
           lastDetail = (pull.stderr || pull.stdout || '').trim();
           const hasNext = i < candidates.length - 1;
           onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+        }
+      }
+
+      // 复用上一版镜像（2026-07-27 宕机复盘 P1，判定见 services/prebuilt-reuse.ts）。
+      //
+      // 拉不到 per-SHA 镜像 = CI 没为这个 sha 构建过该组件，只有两种可能：组件本次
+      // 没变（path filter 跳过），或 CI 未完成/失败。前者复用上一版**逐字节等价**且
+      // 免掉一次宿主重编；后者复用就是静默发旧代码。用 git 在 worktree 里比该组件
+      // 子树有无差异来区分，判不出来一律当作有变更、照旧重编。
+      //
+      // 事故当天三个组件（admin/api/llmgw-web）全属前者，却全都被拉去宿主重编，
+      // 同时打满 CPU 与磁盘——这段就是那一脚的止损点。
+      if (!pulledImage && context.isComponentUnchangedSince && profile.workDir) {
+        const reuseCands = collectReuseCandidates({
+          intendedImage: primary,
+          runningImage: service.deployedImage,
+          ledgerImages: context.ledgerImages,
+        });
+        let picked: ReuseCandidate | null = null;
+        for (const cand of reuseCands) {
+          const unchanged = await context.isComponentUnchangedSince(cand.sha, profile.workDir)
+            .catch(() => false);
+          if (unchanged) { picked = cand; break; }
+        }
+        if (picked) {
+          // 在跑的那一版镜像本机一定有；台账里的历史版本可能已被镜像回收清掉，
+          // 故仍要确认本地存在或能拉到，拉不到就继续往下走源码编译。
+          const localHit = await this.shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
+          let usable = localHit.exitCode === 0;
+          if (!usable) {
+            const rePull = await this.shell.exec(`docker pull ${this.shellQuote(picked.image)}`);
+            usable = rePull.exitCode === 0;
+          }
+          if (usable) {
+            pulledImage = picked.image;
+            onOutput?.(`── 本组件此次无代码变更（${profile.workDir} 与 ${picked.sha.slice(0, 7)} 一致），复用上一版镜像 ${picked.image}，不在宿主重编 ──\n`);
+            this.recordContainerEvent({
+              severity: 'info',
+              source: 'cds-container-service',
+              action: 'app.pull.reuse-previous-image',
+              message: `component unchanged, reused previous image ${picked.image} instead of host source-build`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: profile.id,
+              requestId: context.requestId ?? undefined,
+              operationId: context.operationId ?? undefined,
+              details: {
+                intendedImage: primary,
+                reusedImage: picked.image,
+                reusedFromSha: picked.sha,
+                origin: picked.origin,
+                workDir: profile.workDir,
+                reason: 'CI 因该组件无变更跳过构建；复用等价镜像，避免宿主全量重编',
+              },
+            });
+          }
         }
       }
 

@@ -14,6 +14,7 @@ import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
+import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, type DrainableRun,
 } from '../services/deploy-drain.js';
@@ -1633,6 +1634,46 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
+  ledgerImages?: readonly string[];
+  /** 该组件子树自 fromSha 起有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
+  isComponentUnchangedSince?: (fromSha: string, workDir: string) => Promise<boolean>;
+}
+
+/**
+ * 「组件没变就复用上一版镜像」所需的两份数据（2026-07-27 宕机复盘 P1）。
+ *
+ * 判定逻辑本身在 services/prebuilt-reuse.ts（纯函数、可单测），这里只负责取数：
+ *  - ledgerImages：版本台账里该分支该服务构建过的镜像，由新到旧；
+ *  - isComponentUnchangedSince：在该分支的 worktree 里比「构建那一版的 commit」到
+ *    当前 HEAD，该组件子树（profile.workDir）有没有改动。git 查不出来（sha 不在
+ *    本地历史 / 仓库异常）一律返回 false —— 判不出来就当有变更，宁可多编一次，
+ *    也绝不静默把旧代码当新代码发出去。
+ */
+function buildPrebuiltReuseInputs(
+  stateService: StateService,
+  shell: IShellExecutor,
+  entry: BranchEntry,
+  profileId: string,
+): { ledgerImages: string[]; isComponentUnchangedSince: (fromSha: string, workDir: string) => Promise<boolean> } {
+  const ledgerImages = stateService.getDeploymentVersions()
+    .filter((v) => v.branchId === entry.id)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
+    .filter((im): im is string => !!im);
+
+  const isComponentUnchangedSince = async (fromSha: string, workDir: string): Promise<boolean> => {
+    const dir = (workDir || '').trim();
+    if (!dir || !entry.worktreePath) return false;
+    if (!/^[0-9a-f]{40}$/.test(fromSha)) return false;
+    // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
+    const r = await shell.exec(
+      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} HEAD -- ${shellQuote(dir)}`,
+    ).catch(() => null);
+    return !!r && r.exitCode === 0;
+  };
+
+  return { ledgerImages, isComponentUnchangedSince };
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
@@ -1653,6 +1694,8 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          ledgerImages: options.ledgerImages,
+          isComponentUnchangedSince: options.isComponentUnchangedSince,
         },
       );
       return;
@@ -12668,6 +12711,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
               onSourceCompileFallback: async () => {
                 if (!buildSlot) buildSlot = await acquireGateSlot();
               },
+              // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -13636,6 +13681,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
           },
+          // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
