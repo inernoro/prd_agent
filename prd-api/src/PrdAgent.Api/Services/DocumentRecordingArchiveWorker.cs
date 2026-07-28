@@ -168,29 +168,19 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 entryRequiresDeferredTranscription,
                 CancellationToken.None);
 
-            var deferredRun = BuildDeferredTranscriptionRun(
+            var deferredRun = await EnsureDeferredTranscriptionRunAsync(
+                db.DocumentStoreAgentRuns,
                 latestSession,
                 entry.Id,
                 instanceId,
-                entryRequiresDeferredTranscription);
+                entryRequiresDeferredTranscription,
+                CancellationToken.None);
             if (deferredRun != null)
             {
-                try
-                {
-                    await db.DocumentStoreAgentRuns.InsertOneAsync(
-                        deferredRun,
-                        cancellationToken: CancellationToken.None);
-                    _logger.LogInformation(
-                        "[recording-archive] Deferred transcription queued session={SessionId} run={RunId}",
-                        session.Id,
-                        deferredRun.Id);
-                }
-                catch (MongoWriteException ex)
-                    when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-                {
-                    // Run ID 由 session ID 决定。崩溃重试只确认同一个任务已存在，
-                    // 不会创建第二条转录任务。
-                }
+                _logger.LogInformation(
+                    "[recording-archive] Deferred transcription ensured session={SessionId} run={RunId}",
+                    session.Id,
+                    deferredRun.Id);
             }
 
             var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -207,7 +197,12 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     .Set(s => s.UpdatedAt, DateTime.UtcNow)
                     .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
                 cancellationToken: CancellationToken.None);
-            if (completed.ModifiedCount == 1)
+            // 延迟转录可能已经开始读取 Mongo 分片。归档成功与转录读取并发时若立即
+            // 删除分片，会在“Mongo 降级源 -> 正式附件”切换窗口制造一次假失败。
+            // 需要延迟转录的会话保留分片到 ExpiresAt，由统一 TTL 清理路径回收；
+            // 不需要延迟转录时才立即释放。
+            if (completed.ModifiedCount == 1
+                && ShouldDeleteChunksImmediatelyAfterArchive(entryRequiresDeferredTranscription))
             {
                 await db.DocumentRecordingUploadChunks.DeleteManyAsync(
                     c => c.SessionId == session.Id,
@@ -361,12 +356,47 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             UserId = session.UserId,
             OwnerInstanceId = ownerInstanceId,
             Status = DocumentStoreRunStatus.Queued,
-            Phase = "等待音频归档完成",
+            Phase = "等待完整录音转录",
         };
+    }
+
+    internal static async Task<DocumentStoreAgentRun?> EnsureDeferredTranscriptionRunAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentRecordingUploadSession session,
+        string entryId,
+        string ownerInstanceId,
+        bool entryRequiresDeferredTranscription,
+        CancellationToken cancellationToken)
+    {
+        var run = BuildDeferredTranscriptionRun(
+            session,
+            entryId,
+            ownerInstanceId,
+            entryRequiresDeferredTranscription);
+        if (run == null)
+            return null;
+
+        // 固定 run ID 让完成接口、归档 Worker、崩溃重试和用户手动重试共同收敛到
+        // 同一个任务。pending entry 建立后即可排队，处理器会直接读取 Mongo 分片；
+        // 不再把对象存储恢复当作转录的前置条件。
+        try
+        {
+            await runs.InsertOneAsync(run, cancellationToken: cancellationToken);
+            return run;
+        }
+        catch (MongoWriteException ex)
+            when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            return await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
+        }
     }
 
     internal static string DeferredTranscriptionRunId(string sessionId)
         => $"recording-archive-transcribe-{sessionId}";
+
+    internal static bool ShouldDeleteChunksImmediatelyAfterArchive(
+        bool entryRequiresDeferredTranscription)
+        => !entryRequiresDeferredTranscription;
 
     internal static string? DeferredTranscriptionRunIdForClient(
         bool archivePending,

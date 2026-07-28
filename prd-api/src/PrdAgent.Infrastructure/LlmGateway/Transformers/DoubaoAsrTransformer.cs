@@ -10,7 +10,8 @@ namespace PrdAgent.Infrastructure.LlmGateway.Transformers;
 /// 1. submit → POST /api/v3/auc/bigmodel/submit 提交转录任务
 /// 2. query  → POST /api/v3/auc/bigmodel/query  轮询结果
 /// 3. 状态码通过 X-Api-Status-Code 响应头返回：
-///    - 20000000: 完成
+///    - submit 的 20000000: 任务已受理，仍须 query
+///    - query 的 20000000: 完成
 ///    - 20000001 / 20000002: 处理中
 ///    - 其他: 失败
 ///
@@ -249,7 +250,8 @@ public class DoubaoAsrTransformer : IAsyncExchangeTransformer
     }
 
     /// <summary>
-    /// X-Api-Status-Code: 20000000 表示完成
+    /// query 响应的 X-Api-Status-Code: 20000000 表示完成。
+    /// Gateway 不得在 submit 响应上调用此方法决定是否跳过 query。
     /// </summary>
     public bool IsTaskComplete(int httpStatus, Dictionary<string, string> responseHeaders, string? responseBody)
     {

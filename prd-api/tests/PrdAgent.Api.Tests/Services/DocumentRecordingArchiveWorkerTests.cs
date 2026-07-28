@@ -1360,6 +1360,113 @@ public sealed class DocumentRecordingArchiveWorkerTests
         run.UserId.ShouldBe("user-1");
         run.OwnerInstanceId.ShouldBe("instance-1");
         run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        run.Phase.ShouldBe("等待完整录音转录");
+    }
+
+    [Fact]
+    public async Task EnsureDeferredTranscriptionRun_ShouldQueueBeforeArchiveAndRemainIdempotent()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-immediate-transcribe",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
+        };
+
+        var first = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            session,
+            "entry-1",
+            "instance-1",
+            entryRequiresDeferredTranscription: true,
+            CancellationToken.None);
+        var second = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            session,
+            "entry-1",
+            "instance-1",
+            entryRequiresDeferredTranscription: true,
+            CancellationToken.None);
+
+        first.ShouldNotBeNull();
+        second.ShouldNotBeNull();
+        second!.Id.ShouldBe(first!.Id);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+            run => run.Id == first.Id)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task PendingRecordingAudio_ShouldLoadCompleteMongoChunksWithoutAssetUrl()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var entry = new DocumentEntry
+        {
+            Id = "entry-mongo-audio",
+            StoreId = "store-1",
+            Title = "recording.m4a",
+            ContentType = "audio/mp4",
+            Metadata = new Dictionary<string, string>
+            {
+                ["recordingUploadSessionId"] = "session-mongo-audio",
+                ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Pending,
+            },
+        };
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-mongo-audio",
+            EntryId = entry.Id,
+            StoreId = entry.StoreId,
+            UserId = "user-1",
+            NextChunkIndex = 3,
+            UploadedBytes = 6,
+            Status = DocumentRecordingUploadStatus.Completed,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+        [
+            Chunk(session.Id, 0, [1, 2]),
+            Chunk(session.Id, 1, [3]),
+            Chunk(session.Id, 2, [4, 5, 6]),
+        ]);
+
+        var audio = await SubtitleGenerationProcessor.LoadPendingRecordingAudioAsync(
+            fixture.Db,
+            entry,
+            CancellationToken.None);
+
+        audio.ShouldBe(new byte[] { 1, 2, 3, 4, 5, 6 });
+    }
+
+    [Fact]
+    public void PendingArchiveCompletionPaths_ShouldQueueTranscriptionImmediately()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+
+        // completed 快路径、并发完成快路径、崩溃恢复 pending、首次存储失败 pending。
+        source.Split(
+                "await EnsurePendingRecordingTranscriptionRunAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(5);
+    }
+
+    [Theory]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    public void ArchivedChunks_ShouldRemainAvailableUntilDeferredTranscriptionFinishes(
+        bool entryRequiresDeferredTranscription,
+        bool expectedImmediateDeletion)
+    {
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksImmediatelyAfterArchive(
+                entryRequiresDeferredTranscription)
+            .ShouldBe(expectedImmediateDeletion);
     }
 
     [Fact]
