@@ -325,7 +325,11 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
       <div className="mt-2 flex flex-wrap items-center gap-x-3 gap-y-1 text-[11px] text-muted-foreground">
         <span>{shown.length} 段 · 覆盖最近 24 小时</span>
         {target.sampleCount24h > 0 ? <span>采样 {target.sampleCount24h} 次</span> : null}
-        {target.availability7d !== null ? <span>7d {formatPercent(target.availability7d)}</span> : null}
+        {target.availability7d !== null ? (
+          // 口径是自然日（UTC，含今天），不是精确到秒的滚动 7×24 小时——
+          // 跨天窗口只有按天聚合可用。标签必须说清，别让人当成滚动窗口读。
+          <span title="最近 7 个自然日（UTC，含今天）的可用率">近 7 日 {formatPercent(target.availability7d)}</span>
+        ) : null}
         {target.status === 'paused' && target.pausedReason ? (
           <span className="text-muted-foreground">{target.pausedReason}</span>
         ) : null}

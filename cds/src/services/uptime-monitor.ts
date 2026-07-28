@@ -526,6 +526,10 @@ export interface UptimeTargetSummary {
   degradeReason?: string;
   lastSample: UptimeSample | null;
   availability24h: number | null;
+  /**
+   * 最近 7 个**自然日**（UTC，含今天）的可用率。跨天窗口只有按天聚合可用，
+   * 所以口径是自然日而不是精确到秒的滚动 7×24 小时。
+   */
   availability7d: number | null;
   avgLatencyMs24h: number | null;
   sampleCount24h: number;

@@ -245,8 +245,17 @@ export function availabilityFromDaily(
 }
 
 /**
- * 窗口可用率统一入口：窗口 ≤ 采样缓冲覆盖范围时用原始采样（更精确），
- * 更长的窗口用按天聚合（采样已经被环形缓冲滚掉了）。
+ * 窗口可用率统一入口。
+ *
+ * - 窗口 ≤ 一天：走原始采样，是**精确到秒**的滚动窗口。
+ * - 更长的窗口：只能走按天聚合（原始采样已被环形缓冲滚掉），因此口径必然是
+ *   **自然日（UTC）**，边界那天是整天进来的，没法再细分。
+ *
+ * 但「口径只能到自然日」不等于「天数可以对不上」。旧写法
+ * `dayKey(now - 7d) .. dayKey(now)` 在 now 不是 UTC 零点时**跨了 8 个自然日**：
+ * 7 月 28 日中午查 7d，now-7d 落在 7 月 21 日中午 → 起始 dayKey 是 07-21，
+ * 于是 07-21 一整天（含窗口外的前半天）都被算进「最近 7 天」。
+ * 取 `now - (N-1) 天` 才是**恰好 N 个自然日**（含今天这个尚未过完的当天）。
  */
 export function availabilityOverRange(
   target: { samples: ReadonlyArray<UptimeSample>; daily: ReadonlyArray<UptimeDailyRollup> },
@@ -256,7 +265,8 @@ export function availabilityOverRange(
   if (rangeMs <= DAY_MS) {
     return availabilityFromSamples(target.samples, nowMs - rangeMs, nowMs);
   }
-  return availabilityFromDaily(target.daily, dayKey(nowMs - rangeMs), dayKey(nowMs));
+  const days = Math.max(1, Math.round(rangeMs / DAY_MS));
+  return availabilityFromDaily(target.daily, dayKey(nowMs - (days - 1) * DAY_MS), dayKey(nowMs));
 }
 
 /** 降采样后的一个时间桶。status=none 表示该桶内没有采样（灰段）。 */

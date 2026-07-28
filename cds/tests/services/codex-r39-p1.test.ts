@@ -485,3 +485,101 @@ describe('第四十一轮 P2：存活监控保留时长必须跟着探测间隔�
     }
   });
 });
+
+describe('第四十二轮 P1：回滚必须过与发布同一道并发闸', () => {
+  it('目标上有未退出的执行体时，回滚也要被挡住（不只是发布）', async () => {
+    const { ReleaseService } = await import('../../src/services/release-service.js');
+    // 事故形态：取消一次发布后 run 立刻终态，但执行体（不接 abort 的探测/已发出的 SSH）
+    // 还在飞。此前 startRollback 一道闸都没有 —— 回滚会和老执行体并发往同一台机器写，
+    // 线上最终留下的是「谁后跑完」的那个版本。
+    const runs: Array<Record<string, unknown>> = [{
+      releaseId: 'rel_cancelled',
+      projectId: 'p1',
+      branchId: 'b1',
+      targetId: 'target-prod',
+      planId: 'plan1',
+      commitSha: 'a'.repeat(40),
+      artifact: { type: 'branch-preview', commitSha: 'a'.repeat(40), branchId: 'b1', branchName: 'main' },
+      status: 'failed',
+      startedAt: new Date().toISOString(),
+      heartbeatAt: new Date().toISOString(),
+      executionSnapshot: { mode: 'generated-compose', scriptSha256: 'x'.repeat(64), summary: 's', strategy: 'compose' },
+      logs: [],
+      seq: 1,
+    }, {
+      releaseId: 'rel_prev_ok',
+      projectId: 'p1',
+      branchId: 'b1',
+      targetId: 'target-prod',
+      planId: 'plan1',
+      commitSha: 'b'.repeat(40),
+      artifact: { type: 'branch-preview', commitSha: 'b'.repeat(40), branchId: 'b1', branchName: 'main' },
+      status: 'success',
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      executionSnapshot: { mode: 'generated-compose', scriptSha256: 'y'.repeat(64), summary: 'prev', strategy: 'compose' },
+      logs: [],
+      seq: 1,
+    }];
+    const stateService = {
+      getReleaseRuns: () => runs,
+      getReleaseRun: (id: string) => runs.find((r) => r.releaseId === id),
+      getReleaseTarget: () => ({
+        id: 'target-prod', projectId: 'p1', name: '生产站点', type: 'ssh', isEnabled: true,
+        ssh: { host: '127.0.0.1', port: 22, user: 'd', privateKeyRef: 'h', appPath: '/opt/a', deployCommand: 'x', healthcheckUrl: 'http://127.0.0.1:1/h' },
+      }),
+      getLatestSuccessfulReleaseRun: () => runs[1],
+      appendReleaseRunLog: () => {},
+      patchReleaseRun: () => runs[0],
+      addReleaseRun: (r: unknown) => r,
+      getState: () => ({ projects: [] }),
+    } as never;
+
+    const service = new ReleaseService(stateService, { sshExecutor: async () => 'ok' });
+    // 把「执行体未退出」这个状态直接摆进去（等价于取消后尚未 settle）
+    (service as unknown as { inFlight: Map<string, unknown> }).inFlight
+      .set('rel_cancelled', { controller: new AbortController() });
+
+    await expect(service.startRollback('rel_cancelled', 'tester'))
+      .rejects.toThrow(/执行体尚未退出/);
+  });
+
+  it('并发闸是唯一判定源，发布与回滚都走它（防再次只补一边）', () => {
+    const source = fs.readFileSync(path.join(REPO, 'src/services/release-service.ts'), 'utf-8');
+    expect(source).toContain('private assertTargetFree(');
+    // 两个入口都必须调，且不许任何一边再内联一份判定
+    expect(source).toMatch(/assertTargetFree\(preflight\.target\.id, '发布'\)/);
+    expect(source).toMatch(/assertTargetFree\(current\.targetId, '回滚'\)/);
+    expect((source.match(/findSettlingExecution\(/g) || []).length).toBe(2); // 定义 + 闸内唯一一次调用
+  });
+});
+
+describe('第四十二轮 P2：跨天可用率的天数必须对得上标签', () => {
+  it('7d 恰好覆盖 7 个自然日，不是 8 个', async () => {
+    const { availabilityOverRange } = await import('../../src/services/uptime-metrics.js');
+    // 2026-07-28T12:00Z 查 7d。事故值：起点取 dayKey(now-7d)=07-21，
+    // 于是 07-21..07-28 共 8 个自然日，窗口外那半天的故障也被算进去。
+    const now = Date.parse('2026-07-28T12:00:00.000Z');
+    const daily = [
+      { day: '2026-07-21', up: 0, down: 100 },   // 窗口外的那天：全挂
+      { day: '2026-07-22', up: 100, down: 0 },
+      { day: '2026-07-23', up: 100, down: 0 },
+      { day: '2026-07-24', up: 100, down: 0 },
+      { day: '2026-07-25', up: 100, down: 0 },
+      { day: '2026-07-26', up: 100, down: 0 },
+      { day: '2026-07-27', up: 100, down: 0 },
+      { day: '2026-07-28', up: 100, down: 0 },
+    ] as never;
+    const out = availabilityOverRange({ samples: [], daily }, 7 * 86_400_000, now);
+    // 07-22..07-28 全绿 → 100%；把 07-21 算进来会掉到 87.5%
+    expect(out.ratio).toBe(1);
+  });
+
+  it('30d 同理：恰好 30 个自然日', async () => {
+    const { availabilityOverRange } = await import('../../src/services/uptime-metrics.js');
+    const now = Date.parse('2026-07-28T12:00:00.000Z');
+    const daily = [{ day: '2026-06-28', up: 0, down: 10 }, { day: '2026-06-29', up: 10, down: 0 }] as never;
+    const out = availabilityOverRange({ samples: [], daily }, 30 * 86_400_000, now);
+    // 30 个自然日的起点是 06-29，06-28 必须被排除在外
+    expect(out.ratio).toBe(1);
+  });
+});

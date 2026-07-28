@@ -592,19 +592,7 @@ export class ReleaseService {
     // 这道守卫是「卡死」的放大器：执行体随 CDS 重启消失后 run 永远停在 running，
     // 该目标从此发不出去。所以先做一次心跳收割，把已经死掉的 run 收敛掉再判定。
     this.reconcileInterruptedReleases();
-    const inFlight = this.stateService
-      .getReleaseRuns({ targetId: preflight.target.id })
-      .find((r) => isReleaseRunInFlight(r));
-    if (inFlight) {
-      throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起`);
-    }
-    // 光看 run 状态不够：被取消的 run 立刻是终态，但它的执行体（不接 abort 的 HTTP
-    // 探测、已发出的 SSH 命令）可能还在飞，还会走自动恢复往目标机器写东西。
-    // 目标必须一直被占着，直到 execute() 的 finally 摘牌为止（Codex PR #1273 P1）。
-    const settling = this.findSettlingExecution(preflight.target.id);
-    if (settling) {
-      throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起`);
-    }
+    this.assertTargetFree(preflight.target.id, '发布');
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const startedAt = this.nowIso();
     const run: ReleaseRun = {
@@ -651,6 +639,12 @@ export class ReleaseService {
     if (!previous) throw new Error('没有可回滚的上一版本');
     if (previous.targetId !== current.targetId) throw new Error('回滚目标版本不属于当前发布目标');
     if (!['success', 'rollback_success'].includes(previous.status)) throw new Error('只能回滚到成功版本');
+
+    // 回滚同样是往目标机器跑 SSH 写操作，必须过与发布同一道并发闸：
+    // 此前这里一道闸都没有，取消后紧接着回滚会和尚未退出的老执行体并发写
+    // （Codex PR #1273 P1）。先收一轮心跳过期的僵尸 run，免得闸门被死 run 卡住。
+    this.reconcileInterruptedReleases();
+    this.assertTargetFree(current.targetId, '回滚');
 
     const rollbackId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const rollbackStartedAt = this.nowIso();
@@ -809,6 +803,29 @@ export class ReleaseService {
    * 统一的执行体包装：登记在途句柄（供取消/收割中止）、兜住异常、结束后摘牌。
    * 句柄必须在返回调用方之前**同步**登记，否则「点了发布立刻点取消」会取消不掉。
    */
+  /**
+   * 同一发布目标的并发闸（**唯一判定源**）。startRelease 与 startRollback 必须都走它：
+   * 两者都会对同一台机器跑 SSH 写操作，只挡住一边等于没挡——上一轮给 startRelease
+   * 加了 settling 判定却漏了回滚，取消后紧接着的回滚仍能和没退出的老执行体并发写，
+   * 最终线上留下的是「谁后跑完」的那个版本（Codex PR #1273 P1）。
+   *
+   * 两层都要查：
+   *   - run 状态非终态 = 明面上还在跑；
+   *   - 执行体未退出 = run 已终态（比如刚被取消）但 SSH/探测还在飞。
+   */
+  private assertTargetFree(targetId: string, action: '发布' | '回滚'): void {
+    const inFlight = this.stateService
+      .getReleaseRuns({ targetId })
+      .find((r) => isReleaseRunInFlight(r));
+    if (inFlight) {
+      throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起${action}`);
+    }
+    const settling = this.findSettlingExecution(targetId);
+    if (settling) {
+      throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起${action}`);
+    }
+  }
+
   /** 该发布目标上是否还有「已终态但执行体没退出」的 run；有则返回它的 releaseId。 */
   private findSettlingExecution(targetId: string): string | undefined {
     for (const releaseId of this.inFlight.keys()) {

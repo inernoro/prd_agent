@@ -8487,7 +8487,10 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
                         // 缺陷已经落在 MAP 里，提交环节失败只影响状态流转，不改变投递结论，
                         // 但同样要如实告知用户「可能仍是草稿态」。
                         app.Logger.LogWarning(submitError, "[bug-report] 缺陷已创建但 submit 失败");
-                        degradeReason = $"缺陷已创建但提交流转失败（{submitError.Message}），可能仍是草稿态";
+                        var submitIssue = $"缺陷已创建但提交流转失败（{submitError.Message}），可能仍是草稿态";
+                        // 与上面的非 2xx 分支同口径：附件也失败时两条都要说，
+                        // 否则用户只被告知「可能是草稿」，完全不知道截图还丢了（Codex PR #1273 P2）。
+                        degradeReason = string.IsNullOrEmpty(degradeReason) ? submitIssue : $"{degradeReason}；{submitIssue}";
                     }
                 }
             }

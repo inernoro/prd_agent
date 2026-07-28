@@ -80,7 +80,11 @@ describe('llmgw 提缺陷：附件与前端闸门（Codex PR #1273 第四十一�
     expect(postCode).toContain('attachmentFailures');
     expect(postCode).toMatch(/未能上传到缺陷系统/);
     // 两条降级原因必须并存：后写的不能把前一条盖掉。
-    expect(postCode).toMatch(/string\.IsNullOrEmpty\(degradeReason\)\s*\?\s*submitIssue/);
+    // **两个 submit 失败分支都要拼**：非 2xx 与抛异常。只补一边的话，
+    // submit 抛异常时用户只被告知「可能是草稿」，完全不知道截图也丢了
+    // （Codex PR #1273 第四十二轮 P2）。
+    const concatCount = (postCode.match(/string\.IsNullOrEmpty\(degradeReason\)\s*\?\s*submitIssue/g) || []).length;
+    expect(concatCount).toBe(2);
   });
 });
 
