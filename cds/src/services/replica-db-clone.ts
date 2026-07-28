@@ -162,7 +162,28 @@ function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): 
 }
 
 /**
+ * 库名 key 的**来源层级**（数字越小越优先，Codex PR #1275 九轮 P1）。
+ *
+ * 0 = profile.env（服务自己声明的）
+ * 1 = 分支 scope customEnv
+ * 2 = 项目 customEnv（灌给全部服务的默认值）
+ *
+ * 为什么来源比 key 的引擎专属度更权威：四轮修的是「项目级泛化 DB_NAME 压过 profile
+ * 自己的 MYSQL_DATABASE」，当时的解法是一律把中立 key 降档——**这在反方向上是错的**。
+ * 项目级 env 里放一个 `MYSQL_DATABASE=infra_default`（infra 预设常见），而服务自己
+ * 用 `DB_NAME=app` + `SPRING_DATASOURCE_URL=.../app` 时，按专属度排会选中
+ * `infra_default`：克隆的是 infra 默认库，应用的 DB_NAME 与 JDBC URL 仍指向 app，
+ * 而控制面照报隔离成功——与四轮那条是同一种事故的镜像。
+ *
+ * 谁更贴近这个服务，谁说了算：profile > 分支 > 项目；同层内才比引擎专属度。
+ */
+function dbEnvKeyProvenance(key: string, provenance: ReadonlyMap<string, number>): number {
+  return provenance.get(key) ?? 2;
+}
+
+/**
  * 库名 key 的取用优先级（数字越小越优先，Codex PR #1275 四轮 P1）。
+ * 注意：这是**同来源层级内**的次级判据，主判据是上面的来源层级。
  *
  * 引擎中立 key（DB_NAME / DATABASE_NAME）**只在没有任何自带引擎的 key 时才算数**。
  * 它靠同 env 的连接串反推引擎，本身不携带归属信息，而项目级 customEnv 会把一个
@@ -257,11 +278,15 @@ export function resolveReplicaDbTarget(
   // 与部署路径 getMergedEnv（branches.ts）同优先级：project customEnv → 分支 scope
   // → profile.env。分支级 env 覆写过库名/连接串时（Codex P1），不合入会把隔离目标
   // 解析到项目级默认库——克隆的不是该分支实际在用的库，或漏掉分支级连接串 key。
-  const merged: Record<string, string> = {
-    ...state.getCustomEnv(branch.projectId),
-    ...state.getCustomEnvScope(branch.id),
-    ...(profile.env || {}),
-  };
+  const projectEnv = state.getCustomEnv(branch.projectId) || {};
+  const scopeEnv = state.getCustomEnvScope(branch.id) || {};
+  const profileEnv = profile.env || {};
+  const merged: Record<string, string> = { ...projectEnv, ...scopeEnv, ...profileEnv };
+  // 记下每个 key 的来源层级，供库名 key 排序用（见 dbEnvKeyProvenance）
+  const envProvenance = new Map<string, number>();
+  for (const key of Object.keys(projectEnv)) envProvenance.set(key, 2);
+  for (const key of Object.keys(scopeEnv)) envProvenance.set(key, 1);
+  for (const key of Object.keys(profileEnv)) envProvenance.set(key, 0);
   const runtimeEnv = applyPerBranchDbIsolation(merged, profile.dbScope, branch.branch);
 
   // 引擎中立 key（DB_NAME / DATABASE_NAME）的引擎从同 env 的关系型 URL scheme 读，
@@ -270,8 +295,13 @@ export function resolveReplicaDbTarget(
   const presentKeys = Object.keys(runtimeEnv)
     .filter((key) => classifyDbEnvKey(key, neutralEngine) !== null
       && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
-    // 自带引擎的 key 优先、引擎中立 key 垫底（见 dbEnvKeyRank）；同档内保持稳定序
-    .sort((a, b) => dbEnvKeyRank(a, neutralEngine) - dbEnvKeyRank(b, neutralEngine));
+    // 先按来源层级（profile > 分支 > 项目，见 dbEnvKeyProvenance），同层再按引擎
+    // 专属度（见 dbEnvKeyRank）；两级都相同时保持稳定序
+    .sort((a, b) => {
+      const byProvenance = dbEnvKeyProvenance(a, envProvenance) - dbEnvKeyProvenance(b, envProvenance);
+      if (byProvenance !== 0) return byProvenance;
+      return dbEnvKeyRank(a, neutralEngine) - dbEnvKeyRank(b, neutralEngine);
+    });
   if (presentKeys.length === 0) {
     // 可诊断的失败原因（2026-07-28 真机验收补）：只说「没有数据库名」等于把人挡在
     // 门外还不告诉他差什么——生产上标识中台六个服务全是这条，光看文案根本判断不出

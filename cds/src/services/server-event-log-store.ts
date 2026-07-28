@@ -1,5 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { MongoClient, type Collection } from 'mongodb';
+import { ensureIndexWithReconcile } from './mongo-index-reconcile.js';
 import { maskSecrets } from './secret-masker.js';
 import { getAgentOperationContext } from './agent-operation-context.js';
 import type { AgentOperatorIdentitySummary } from '../types.js';
@@ -235,6 +236,8 @@ export function enrichServerEventRecord(
 export class ServerEventLogStore implements ServerEventLogSink {
   private client: MongoClient | null = null;
   private collection: Collection<ServerEventRecord> | null = null;
+  /** 索引是否已建全；false 时后续 init 会重试（不重连） */
+  private indexesReady = false;
   private chain: Promise<void> = Promise.resolve();
   private writesSincePrune = 0;
   private lastPruneAt = 0;
@@ -253,45 +256,71 @@ export class ServerEventLogStore implements ServerEventLogSink {
   }
 
   async init(): Promise<void> {
-    if (this.client) return;
-    // 失败必须复位（Codex PR #1275 七轮 P2 同族）：先赋值再连，一旦 connect 或
-    // createIndex 抛错，client 已挂在实例上而 collection 为空 —— init() 之后被
-    // `if (this.client) return` 永久短路，record() 又只在有 collection 时才写，
-    // 于是这个日志库**静默死掉、再也不会重试**。而这个 PR 的排障恰恰依赖它。
+    // 已连上但索引没建全（上次被 IndexOptionsConflict 之类挡住）→ 再试一次索引，
+    // 不重连。否则「连上了但索引永远缺」会一直缺下去（Codex 九轮 P2）。
+    if (this.client) {
+      if (!this.indexesReady && this.collection) await this.tryEnsureIndexes(this.collection);
+      return;
+    }
+    // 失败必须复位（Codex PR #1275 七轮 P2 同族）：先赋值再连，一旦 connect 抛错，
+    // client 已挂在实例上而 collection 为空 —— init() 之后被 `if (this.client) return`
+    // 永久短路，record() 又只在有 collection 时才写，于是这个日志库**静默死掉**。
     const client = new MongoClient(this.opts.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
+    let collection: Collection<ServerEventRecord>;
     try {
       await client.connect();
-      const collection = client.db(this.databaseName).collection<ServerEventRecord>(this.collectionName);
-      await this.ensureIndexes(collection);
-      this.client = client;
-      this.collection = collection;
+      collection = client.db(this.databaseName).collection<ServerEventRecord>(this.collectionName);
     } catch (err) {
       await client.close().catch(() => undefined);
       this.client = null;
       this.collection = null;
       throw err;
     }
+    // 连上就算可用：**索引失败不许把一个连得上的库判死**（Codex 九轮 P2）。
+    // 典型场景是运维改了保留天数 —— 同名 ttl_ts 索引的 expireAfterSeconds 变了，
+    // Mongo 报 IndexOptionsConflict。那是配置变更的正常后果，不是故障；若沿用
+    // 「建索引失败即整体失败」，这个日志库会在改配置那天起静默死掉，而排障恰恰靠它。
+    this.client = client;
+    this.collection = collection;
+    await this.tryEnsureIndexes(collection);
+  }
+
+  /** 建索引，失败只告警不致命；成功才置 indexesReady，供后续 init 重试。 */
+  private async tryEnsureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
+    try {
+      await this.ensureIndexes(collection);
+      this.indexesReady = true;
+    } catch (err) {
+      this.indexesReady = false;
+      console.warn(`[server-event-log-store] 索引建立失败（库仍可写，下次 init 会重试）: ${(err as Error)?.message || err}`);
+    }
   }
 
   private async ensureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
-    await Promise.all([
-      collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
-      collection.createIndex({ category: 1, ts: -1 }, { name: 'category_ts_desc' }),
-      collection.createIndex({ severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
-      collection.createIndex({ containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
-      collection.createIndex({ branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
-      collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
-      collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
-      collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
-      collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
-      collection.createIndex({ operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
-      collection.createIndex({ operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
-      collection.createIndex({ commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
-      collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
+    // 逐条对账而非 Promise.all 直挂：一条索引冲突不该掩盖其余索引的结果，
+    // 同名不同选项（改保留天数后的 ttl_ts）走 drop 再建（见 mongo-index-reconcile）。
+    const results = await Promise.allSettled([
+      ensureIndexWithReconcile(collection, { ts: -1 }, { name: 'ts_desc' }),
+      ensureIndexWithReconcile(collection, { category: 1, ts: -1 }, { name: 'category_ts_desc' }),
+      ensureIndexWithReconcile(collection, { severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
+      ensureIndexWithReconcile(collection, { containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
+      ensureIndexWithReconcile(collection, { branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
+      ensureIndexWithReconcile(collection, { profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { requestId: 1 }, { name: 'requestId_1', sparse: true }),
+      ensureIndexWithReconcile(collection, { operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
+      ensureIndexWithReconcile(collection, { ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
+    const failed = results.filter((r): r is PromiseRejectedResult => r.status === 'rejected');
+    if (failed.length > 0) {
+      throw new Error(`${failed.length} 个索引建立失败：${failed.map((f) => (f.reason as Error)?.message || f.reason).join('; ')}`);
+    }
   }
 
   record(record: Omit<ServerEventRecord, '_id' | 'ts'> & { ts?: Date | string }): void {

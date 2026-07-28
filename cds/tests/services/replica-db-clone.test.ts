@@ -258,6 +258,51 @@ describe('库名 key 的取用优先级', () => {
 });
 
 /**
+ * 来源层级压过引擎专属度（Codex PR #1275 九轮 P1）。
+ *
+ * 四轮那条修的是「项目级泛化 DB_NAME 压过 profile 自己的 MYSQL_DATABASE」，解法是
+ * 一律把中立 key 降档 —— 在反方向上就错了：infra 预设常把 `MYSQL_DATABASE` 放在
+ * 项目级 env，而服务自己用 `DB_NAME` + JDBC URL。按专属度排会选中项目级那个默认库，
+ * 克隆错库、应用的 DB_NAME 与 URL 原地不动，控制面照报隔离成功。
+ */
+describe('库名 key 的来源层级优先于引擎专属度', () => {
+  it('profile 自己的中立 DB_NAME 压过项目级的 MYSQL_DATABASE', () => {
+    addInfra('mysql', 'mysql:8');
+    // 项目级灌一个 infra 预设默认库；服务自己声明 DB_NAME 且 JDBC URL 指向它
+    state.setCustomEnv({ MYSQL_DATABASE: 'infra_default' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({ env: { DB_NAME: 'app', SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/app' } }),
+    );
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('app');
+    // 应用真正读的连接串必须进改写集合（路径段与 sourceDb 对得上）
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+
+  it('分支 scope 的库名 key 压过项目级', () => {
+    addInfra('mysql', 'mysql:8');
+    state.setCustomEnv({ MYSQL_DATABASE: 'infra_default' }, 'proj');
+    state.setCustomEnv({ DB_NAME: 'branch_db', DATABASE_URL: 'mysql://mysql:3306/branch_db' }, 'proj-main');
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target?.sourceDb).toBe('branch_db');
+  });
+
+  it('同一来源层级内，引擎专属度仍然说了算（四轮那条不能被覆盖）', () => {
+    addInfra('mysql', 'mysql:8');
+    // 两个 key 都来自项目级 —— 此时 MYSQL_DATABASE 必须压过泛化 DB_NAME
+    state.setCustomEnv(
+      { DB_NAME: 'unrelated_project_db', MYSQL_DATABASE: 'appdb', DATABASE_URL: 'mysql://h:3306/appdb' },
+      'proj',
+    );
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target?.sourceDb).toBe('appdb');
+  });
+});
+
+/**
  * 中立库名 key 的引擎判定必须先按 profile 自己的 dependsOn 收敛（Codex PR #1275 八轮 P2）。
  *
  * 项目级 customEnv 会把**所有**引擎的连接串灌给每个服务，多引擎项目里 URL 集合恒为
