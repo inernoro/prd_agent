@@ -280,6 +280,7 @@ docs:
   debt.cds.nginx-loading-pages: "CDS Loading Pages · 债务台账"
   debt.cds.performance: "CDS 构建与前端性能 · 债务台账"
   debt.cds.project-migration: "项目迁移（CDS 项目移植） · 债务台账"
+  debt.cds.release-system: "CDS 生产发布系统 · 债务台账"
   debt.cds.removed-branch-pages: "CDS 过期分支预览页 · 债务台账"
   debt.cds.replica-set: "CDS 复制集模式 · 债务台账"
   debt.cds.reports: "CDS 验收报告治理 · 债务台账"

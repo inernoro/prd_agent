@@ -279,6 +279,7 @@
 - [CDS Loading Pages · 债务台账](./debt.cds.nginx-loading-pages.md) `debt.cds.nginx-loading-pages`
 - [CDS 构建与前端性能 · 债务台账](./debt.cds.performance.md) `debt.cds.performance`
 - [项目迁移（CDS 项目移植） · 债务台账](./debt.cds.project-migration.md) `debt.cds.project-migration`
+- [CDS 生产发布系统 · 债务台账](./debt.cds.release-system.md) `debt.cds.release-system`
 - [CDS 过期分支预览页 · 债务台账](./debt.cds.removed-branch-pages.md) `debt.cds.removed-branch-pages`
 - [CDS 复制集模式 · 债务台账](./debt.cds.replica-set.md) `debt.cds.replica-set`
 - [CDS 验收报告治理 · 债务台账](./debt.cds.reports.md) `debt.cds.reports`
