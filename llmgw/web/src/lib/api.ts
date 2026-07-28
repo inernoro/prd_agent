@@ -126,7 +126,10 @@ export type SessionExpiredReason = 'expired' | 'revoked';
 /** 服务端「会话被作废」的错误码（console-api 租户门返回，见 Program.cs 的 TenantAccess 中间件）。 */
 const REVOKED_ERROR_CODES = new Set(['TENANT_SESSION_INVALID', 'TENANT_ACCESS_DENIED']);
 
-type SessionExpiredListener = (reason: SessionExpiredReason) => void;
+/** 失效事件带上「失效的是哪个 token」，跨标签页广播时用来区分自己是不是同一个会话。 */
+export type SessionExpiredEvent = { reason: SessionExpiredReason; token: string | null };
+
+type SessionExpiredListener = (event: SessionExpiredEvent) => void;
 
 const sessionExpiredListeners = new Set<SessionExpiredListener>();
 /** 同一次失效只广播一次，避免并发请求同时 401 时把订阅者刷屏。 */
@@ -145,11 +148,11 @@ export function onSessionExpired(listener: SessionExpiredListener): () => void {
 
 /** 清会话并广播失效事件（幂等：会话已空时不重复广播）。 */
 export function expireSession(reason: SessionExpiredReason = 'expired') {
-  const had = !!getToken();
+  const token = getToken();
   clearSession();
-  if (!had || sessionExpiredNotified) return;
+  if (!token || sessionExpiredNotified) return;
   sessionExpiredNotified = true;
-  for (const listener of [...sessionExpiredListeners]) listener(reason);
+  for (const listener of [...sessionExpiredListeners]) listener({ reason, token });
 }
 
 export type SessionSnapshot = {

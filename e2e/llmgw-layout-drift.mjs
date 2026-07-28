@@ -2,7 +2,11 @@
 //
 // 用法：
 //   cd llmgw/web && pnpm build          # 先产出 dist
-//   cd e2e && node llmgw-layout-drift.mjs
+//   cd e2e && pnpm install && node llmgw-layout-drift.mjs
+//
+// 可选环境变量：
+//   LLMGW_DIST                构建产物目录（默认 <repo>/llmgw/web/dist）
+//   PLAYWRIGHT_CHROMIUM_PATH  指定 chromium 可执行文件；不设则由 Playwright 自行解析
 //
 // 它以「请求记录」页为基准，逐维度量其余页面偏了多少。
 // 不只看字号——把「为什么看起来不精致」拆成可测量的维度：
@@ -13,9 +17,14 @@
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
-const DIST = '/home/user/prd_agent/llmgw/web/dist';
+// 路径一律从当前 checkout 推出来，不写死作者机器上的绝对路径。
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = process.env.LLMGW_DIST || path.join(REPO_ROOT, 'llmgw/web/dist');
+// 浏览器优先交给 Playwright 自己解析；只有显式指定 PLAYWRIGHT_CHROMIUM_PATH 时才覆盖。
+const CHROMIUM_PATH = process.env.PLAYWRIGHT_CHROMIUM_PATH || undefined;
 const PORT = 5620;
 const MIME = { '.html': 'text/html', '.js': 'text/javascript', '.css': 'text/css', '.woff2': 'font/woff2' };
 const nowIso = new Date().toISOString();
@@ -185,7 +194,11 @@ const measure = () => {
 };
 
 await new Promise((r) => server.listen(PORT, r));
-const browser = await chromium.launch({ executablePath: '/opt/pw-browsers/chromium' });
+if (!fs.existsSync(path.join(DIST, 'index.html'))) {
+  console.error(`找不到构建产物：${DIST}\n请先执行 cd llmgw/web && pnpm build，或用 LLMGW_DIST 指定 dist 目录。`);
+  process.exit(1);
+}
+const browser = await chromium.launch(CHROMIUM_PATH ? { executablePath: CHROMIUM_PATH } : {});
 const page = await browser.newPage({ viewport: { width: 1440, height: 900 } });
 const base = `http://localhost:${PORT}/llmgw`;
 await page.goto(`${base}/logs`);
