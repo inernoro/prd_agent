@@ -86,14 +86,49 @@ export function normalizeRemoteDirectoryIdentity(raw: string): string {
   return absolute ? `/${joined}` : joined;
 }
 
+/** 远端目录的完整身份：**哪台机器上的**哪个目录。 */
+export interface RemoteDirectoryRef {
+  /** SSH 主机（大小写不敏感，主机名本来就不区分大小写） */
+  host?: string;
+  port?: number;
+  path: string;
+}
+
 /**
- * 两个远端目录是否是同一个。空路径一律判 false —— 「都没配」不构成共用，
- * 那会把所有未配 publicDirectory 的目标互相绑定，共用保护反而误伤到不相干的目标。
+ * 主机身份。端口缺省按 22 归一，免得「显式写 22」与「不写」被当成两台机器。
+ * 用户名刻意**不**参与：同一台机器的两个登录用户看到的是同一个文件系统，
+ * 按用户区分会把真正共用的目录判成不共用 —— 那正是第一轮 P1 的方向。
  */
-export function isSameRemoteDirectory(a: string, b: string): boolean {
-  const left = normalizeRemoteDirectoryIdentity(a);
-  const right = normalizeRemoteDirectoryIdentity(b);
-  return Boolean(left) && left === right;
+function normalizeRemoteHostIdentity(ref: RemoteDirectoryRef): string {
+  const host = (ref.host || '').trim().toLowerCase();
+  if (!host) return '';
+  const port = Number.isFinite(ref.port) && Number(ref.port) > 0 ? Number(ref.port) : 22;
+  return `${host}:${port}`;
+}
+
+/**
+ * 两个远端目录是否是同一个。
+ *
+ * 判据是「**同一台机器上**的同一个路径」，两半都不能少：
+ *  - 只比路径（第一版）：不同服务器上同名的 `/var/www/app` 会被判成共用，回收从此
+ *    不敢删该目录里不在本目标台账中的版本，磁盘无界增长（Codex P2）；
+ *  - 不规范化路径（更早那版）：`/opt/site` 与 `/opt/site/` 判成不共用，共用保护被
+ *    关掉，回收去删**另一个目标**的生产产物（Codex P1）。
+ * 两个方向的代价不对称：误判「不共用」会删错东西，误判「共用」只是少删。
+ * 所以主机信息缺失时**保守判共用**（宁可漏删）。
+ *
+ * 空路径一律 false：「都没配」不构成共用，否则所有未配 publicDirectory 的目标
+ * 会被互相绑定，保护反而误伤不相干的目标。
+ */
+export function isSameRemoteDirectory(a: RemoteDirectoryRef, b: RemoteDirectoryRef): boolean {
+  const left = normalizeRemoteDirectoryIdentity(a.path);
+  const right = normalizeRemoteDirectoryIdentity(b.path);
+  if (!left || left !== right) return false;
+  const leftHost = normalizeRemoteHostIdentity(a);
+  const rightHost = normalizeRemoteHostIdentity(b);
+  // 任一侧主机未知 → 判不出「是不是同一台机器」→ 保守当共用，只少删不错删。
+  if (!leftHost || !rightHost) return true;
+  return leftHost === rightHost;
 }
 
 /**

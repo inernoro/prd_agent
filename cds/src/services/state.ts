@@ -30,6 +30,7 @@ import {
 import {
   appendBoundedReleaseLog,
   shouldPersistReleaseLog,
+  RELEASE_LOG_FLUSH_INTERVAL_MS,
 } from './release-log-buffer.js';
 import {
   isSuccessfulReleaseRun,
@@ -264,6 +265,14 @@ export class StateService {
    */
   private pendingReleaseLogLines = 0;
   private lastReleaseLogSaveAtMs = 0;
+  /**
+   * 攒批的**兜底定时器**。没有它，1 秒阈值只在「又来一行日志」时才被求值 ——
+   * 一串不足 50 行的输出之后命令转入静默（编译、等待远端），这几行就只在内存里，
+   * 要等一次无关的 save 或 30 秒心跳才落盘；CDS 此刻被 kill 就丢掉排障最需要的那几行。
+   * 注释里承诺了 1 秒，代码却从不调度 —— 这类「说了没做」比没承诺更糟（Codex P2）。
+   * unref 掉：它绝不该让进程为了一次日志落盘而多活着。
+   */
+  private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -2252,12 +2261,32 @@ export class StateService {
       this.lastReleaseLogSaveAtMs = nowMs;
       // hint 让 mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
       this.save(HINT_GLOBAL);
+    } else {
+      this.scheduleReleaseLogFlush();
     }
     return run;
   }
 
+  /**
+   * 攒够时间就自己落盘，不等下一行日志来触发。
+   * 已经排上队就不重排：目的是「第一行 pending 之后最多 N 毫秒必落盘」，
+   * 每来一行就重置会让持续输出的日志永远推迟落盘（debounce 的反效果）。
+   */
+  private scheduleReleaseLogFlush(): void {
+    if (this.releaseLogFlushTimer) return;
+    this.releaseLogFlushTimer = setTimeout(() => {
+      this.releaseLogFlushTimer = null;
+      try { this.flushPendingReleaseLogs(); } catch { /* 落盘失败不该炸掉定时器回调 */ }
+    }, RELEASE_LOG_FLUSH_INTERVAL_MS);
+    this.releaseLogFlushTimer.unref?.();
+  }
+
   /** 强制把攒批中的发布日志落盘。发布执行体收尾时调用，保证不丢尾巴。 */
   flushPendingReleaseLogs(): void {
+    if (this.releaseLogFlushTimer) {
+      clearTimeout(this.releaseLogFlushTimer);
+      this.releaseLogFlushTimer = null;
+    }
     if (this.pendingReleaseLogLines <= 0) return;
     this.lastReleaseLogSaveAtMs = Date.now();
     this.save(HINT_GLOBAL);

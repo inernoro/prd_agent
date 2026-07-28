@@ -36,7 +36,7 @@ describe('P1 共用目录判据必须规范化后再比', () => {
       ['/opt/site', '/opt/x/../site'],
       ['/opt/site/', '  /opt/site  '],
     ] as Array<[string, string]>) {
-      expect(isSameRemoteDirectory(a, b)).toBe(true);
+      expect(isSameRemoteDirectory({ host: 'h', path: a }, { host: 'h', path: b })).toBe(true);
     }
   });
 
@@ -47,13 +47,13 @@ describe('P1 共用目录判据必须规范化后再比', () => {
       ['/opt/site', '/Opt/site'],
       ['../a', 'a'],
     ] as Array<[string, string]>) {
-      expect(isSameRemoteDirectory(a, b)).toBe(false);
+      expect(isSameRemoteDirectory({ host: 'h', path: a }, { host: 'h', path: b })).toBe(false);
     }
   });
 
   it('空路径不构成共用（否则所有未配目录的目标会被互相绑定）', () => {
-    expect(isSameRemoteDirectory('', '')).toBe(false);
-    expect(isSameRemoteDirectory('  ', '/opt/site')).toBe(false);
+    expect(isSameRemoteDirectory({ host: 'h', path: '' }, { host: 'h', path: '' })).toBe(false);
+    expect(isSameRemoteDirectory({ host: 'h', path: '  ' }, { host: 'h', path: '/opt/site' })).toBe(false);
   });
 
   it('绝对路径在根部吃掉多余的 ..，相对路径必须保留', () => {
@@ -446,5 +446,74 @@ describe('Codex 第三轮：指纹必须建在原值上，复用必须刷新上�
     // 刚成功时，新 run 会跳过那个最新版本，自动恢复推更旧的版本上生产。
     expect(code).not.toMatch(/previousRelease:\s*record\.previousReleaseId/);
     expect(code).toContain('previousRelease: this.stateService.getLatestSuccessfulReleaseRun(target.id)');
+  });
+});
+
+describe('Codex 第四轮：共用目录带主机、定时落盘真调度、未知时长要显示', () => {
+  it('不同服务器上的同名目录不算共用（否则回收从此不敢删，磁盘无界增长）', () => {
+    expect(isSameRemoteDirectory(
+      { host: 'a.example.test', port: 22, path: '/var/www/app' },
+      { host: 'b.example.test', port: 22, path: '/var/www/app' },
+    )).toBe(false);
+  });
+
+  it('同一台机器上的同名目录仍算共用（第一轮 P1 的方向不许回退）', () => {
+    expect(isSameRemoteDirectory(
+      { host: 'A.Example.Test', path: '/opt/site' },
+      { host: 'a.example.test', port: 22, path: '/opt/site/' },
+    )).toBe(true);
+  });
+
+  it('端口不同 = 不同机器；缺省端口按 22 归一', () => {
+    expect(isSameRemoteDirectory(
+      { host: 'a.example.test', port: 2222, path: '/opt/site' },
+      { host: 'a.example.test', port: 22, path: '/opt/site' },
+    )).toBe(false);
+    expect(isSameRemoteDirectory(
+      { host: 'a.example.test', path: '/opt/site' },
+      { host: 'a.example.test', port: 22, path: '/opt/site' },
+    )).toBe(true);
+  });
+
+  it('主机未知时保守判共用（宁可少删，不可错删）', () => {
+    // 两个方向的代价不对称：误判「不共用」会去删别人的生产产物，
+    // 误判「共用」只是磁盘多占一点。判不出来时必须倒向后者。
+    expect(isSameRemoteDirectory({ path: '/opt/site' }, { host: 'a', path: '/opt/site' })).toBe(true);
+  });
+
+  it('路径不同则无论主机是否相同都不共用', () => {
+    expect(isSameRemoteDirectory(
+      { host: 'a.example.test', path: '/opt/site' },
+      { host: 'a.example.test', path: '/opt/other' },
+    )).toBe(false);
+  });
+
+  it('源码守卫：共用判定必须带 ssh 主机，不许退回只比路径', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).toMatch(/isSameRemoteDirectory\(\s*\{[^}]*host:/);
+  });
+
+  it('源码守卫：1 秒落盘必须真的被调度，不能只在下一行日志到达时求值', () => {
+    // 事故值：阈值只在 appendReleaseRunLog 里求值。不足 50 行然后命令转静默，
+    // 这几行只在内存里，要等无关 save 或 30s 心跳；此时进程被 kill 就丢排障证据。
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/state.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    // 必须钉**调用点**（this.xxx）而不是裸函数名：`scheduleReleaseLogFlush(): void`
+    // 这个方法定义本身就含 `scheduleReleaseLogFlush()` 子串，只查名字的话，
+    // 把 append 里的调用整句删掉守卫依然是绿的 —— 不会红的守卫等于没有守卫。
+    expect(code).toContain('this.scheduleReleaseLogFlush()');
+    expect(code).toMatch(/setTimeout\([\s\S]{0,200}RELEASE_LOG_FLUSH_INTERVAL_MS\)/);
+    // 定时器不该让进程为一次日志落盘多活着，也不该在显式 flush 后还留着。
+    expect(code).toContain('unref?.()');
+    expect(code).toMatch(/flushPendingReleaseLogs\(\):[\s\S]{0,200}clearTimeout\(this\.releaseLogFlushTimer\)/);
+  });
+
+  it('前端 DORA 契约带上「已恢复但时长未知」，不与「没失败过」混为一谈', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'web/src/lib/releaseDora.ts'), 'utf8');
+    expect(source).toContain('recoveredUnknownDurationCount');
+    // 事故值：后端记着 recoveredUnknownDurationCount，前端却对着有故障记录的用户
+    // 说「没有失败发布」—— 又一次「链路只建到一半」。
+    expect(source).toContain('缺少恢复起点');
   });
 });

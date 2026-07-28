@@ -30,6 +30,12 @@ export interface ReleaseDoraMetrics {
     p50Ms: number | null;
     p90Ms: number | null;
     ongoingCount: number;
+    /**
+     * 已确认恢复、但算不出时长的失败次数（存量 run 只有恢复终点、没有起点）。
+     * 不接这个字段的话，「有失败且已恢复」会和「压根没失败过」显示成同一句话
+     * —— 后端记着，用户看不见（Codex P2）。
+     */
+    recoveredUnknownDurationCount: number;
   };
   leadTime: {
     sampleCount: number;
@@ -121,20 +127,23 @@ export function describeReleaseDora(metrics: ReleaseDoraMetrics | undefined): Re
 
   // 「尚未恢复」单列而不是混进中位：把一条还在烧的故障按当前时刻算进 p50，
   // 会让这个数字每刷新一次就变大一点，看着像在恶化，其实只是时间在走。
+  const unknownCount = recovery.recoveredUnknownDurationCount ?? 0;
   const ongoingSuffix = recovery.ongoingCount > 0 ? ` · ${recovery.ongoingCount} 次尚未恢复` : '';
+  const unknownSuffix = unknownCount > 0 ? ` · ${unknownCount} 次已恢复但时长未知` : '';
+  // 无样本时要分清三种情况：真的没失败过 / 失败了还没恢复 / 失败已恢复但算不出时长。
+  // 混成一句「没有失败发布」等于对着有故障记录的用户说没事发生。
+  const emptyReason = recovery.ongoingCount > 0
+    ? `${recovery.ongoingCount} 次失败发布尚未恢复，暂无完整样本`
+    : unknownCount > 0
+      ? `${unknownCount} 次失败发布已恢复，但缺少恢复起点，算不出时长`
+      : `${windowLabel}没有失败发布`;
   const recoveryCard: ReleaseDoraCard = recovery.sampleCount === 0
-    ? insufficientCard(
-      'recovery',
-      '恢复时长 p50',
-      recovery.ongoingCount > 0
-        ? `${recovery.ongoingCount} 次失败发布尚未恢复，暂无完整样本`
-        : `${windowLabel}没有失败发布`,
-    )
+    ? insufficientCard('recovery', '恢复时长 p50', emptyReason)
     : {
       key: 'recovery',
       label: '恢复时长 p50',
       value: formatDoraDuration(recovery.p50Ms),
-      hint: `p90 ${formatDoraDuration(recovery.p90Ms)} · ${recovery.sampleCount} 个样本${ongoingSuffix}`,
+      hint: `p90 ${formatDoraDuration(recovery.p90Ms)} · ${recovery.sampleCount} 个样本${ongoingSuffix}${unknownSuffix}`,
       insufficient: false,
     };
 

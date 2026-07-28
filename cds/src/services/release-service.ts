@@ -1087,9 +1087,14 @@ export class ReleaseService {
     if (strategy.mode !== 'generated-static' || !publicDirectory) return false;
     return this.stateService.getReleaseTargets().some((candidate) => {
       if (candidate.id === target.id || !candidate.isEnabled) return false;
-      // 裸字符串比较会把 `/opt/site` 与 `/opt/site/` 判成不共用，进而关掉共用保护、
-      // 删掉对方目标的成品。判据统一走 release-artifact-retention 那一份。
-      return isSameRemoteDirectory(effectiveReleaseStrategy(candidate).publicDirectory || '', publicDirectory);
+      // 判据是「同一台机器上的同一个目录」：只比路径会把两台服务器上同名的
+      // /var/www/app 判成共用（回收从此不敢删，磁盘无界增长），不规范化路径又会把
+      // /opt/site 与 /opt/site/ 判成不共用（去删对方目标的生产产物）。
+      // 两个方向都栽过，判据统一走 release-artifact-retention 那一份。
+      return isSameRemoteDirectory(
+        { host: candidate.ssh?.host, port: candidate.ssh?.port, path: effectiveReleaseStrategy(candidate).publicDirectory || '' },
+        { host: target.ssh?.host, port: target.ssh?.port, path: publicDirectory },
+      );
     });
   }
 
