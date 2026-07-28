@@ -49,9 +49,11 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import {
+  TICKET_SSO_COOKIE,
+  buildTicketSsoSessionCookie,
   createTicketSsoConfigRouter,
   createTicketSsoPublicRouter,
-  ticketSsoIdentity,
+  ticketSsoSession,
 } from './routes/ticket-sso.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -1852,8 +1854,12 @@ export function createServer(deps: ServerDeps): express.Express {
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://');
+  // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
+  // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
+  const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
+  const sessionTtlMs = sessionTtlDays * 24 * 60 * 60 * 1000;
   const ticketSsoStateStore = new TicketSsoStateStore();
-  const ticketSsoSessionStore = new TicketSsoSessionStore();
+  const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
@@ -1874,11 +1880,22 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
-  app.use((req, _res, next) => {
-    const identity = ticketSsoIdentity(req, ticketSsoSessionStore);
-    if (identity) {
+  app.use((req, res, next) => {
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    const identity = ssoSession?.identity ?? null;
+    if (identity && ssoSession) {
       const now = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const expiresAt = ssoSession.expiresAt.toISOString();
+      // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
+      if (ssoSession.renewed) {
+        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        if (ssoToken) {
+          res.setHeader(
+            'Set-Cookie',
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+          );
+        }
+      }
       const request = req as typeof req & {
         cdsSsoIdentity?: typeof identity;
         _cdsCookieAuth?: boolean;
@@ -2027,14 +2044,11 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
-    // 登录有效期：默认 7 天（全系统统一口径，MAP / 网关控制台同为 7 天），
-    // 且「用后自动延长」——剩余时长掉到一半时下一次请求就续满，所以只要在用就不会掉登录。
-    // CDS_SESSION_TTL_DAYS 可调（1~90 天）。
-    const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
+    // 登录有效期走上面那份统一策略（默认 7 天 + 用后自动延长，CDS_SESSION_TTL_DAYS 可调）。
     const authService = new AuthService({
       store: authStore,
       github: githubClient,
-      config: { allowedOrgs, sessionTtlMs: sessionTtlDays * 24 * 60 * 60 * 1000 },
+      config: { allowedOrgs, sessionTtlMs },
     });
 
     app.use(

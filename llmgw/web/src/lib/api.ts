@@ -218,6 +218,25 @@ export function clearSession() {
   }
 }
 
+/**
+ * 仅当本地会话仍是 `requestToken` 那一把时才清空，返回是否真的清了。
+ * 用于 401 处理：请求在途期间用户可能已换账号登录，这时那条 401 属于旧会话，不该殃及新会话。
+ */
+export function clearSessionIfCurrent(requestToken: string | null): boolean {
+  const current = (() => {
+    try {
+      return sessionStore.getItem(TOKEN_KEY);
+    } catch {
+      return null;
+    }
+  })();
+  // 本地已无会话：无所谓清不清，按「就是当前会话失效」处理，让调用方照常提示重新登录。
+  if (!current) return true;
+  if (requestToken && current !== requestToken) return false;
+  clearSession();
+  return true;
+}
+
 export function exportSessionSnapshot(): SessionSnapshot | null {
   const token = getToken();
   if (!token) return null;
@@ -308,8 +327,13 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   applyRenewedToken(res, token);
 
   if (res.status === 401) {
-    clearSession();
-    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '登录已失效，请重新登录' } };
+    // 只清「发起本次请求的那把 token」。请求在途期间用户可能已在别的标签页登出、
+    // 或换账号重新登录（会话共享 localStorage），无条件 clearSession 会把刚登录成功的
+    // 新账号一起踢下线。本地已经不是那把 token 时，这条 401 与当前会话无关，只回错误。
+    if (clearSessionIfCurrent(token)) {
+      return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '登录已失效，请重新登录' } };
+    }
+    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '该请求的登录态已失效' } };
   }
 
   let payload: unknown = null;

@@ -12,3 +12,6 @@
 | fix | prd-api | tokenVersion TTL 改为 max(会话窗口, access token 时长 + 时钟余量)，防止会话窗口配得比 token 短时已撤销的旧 token 复活（Codex P1） |
 | fix | llmgw | 续期换发只替换「发起本次请求的那把 token」，避免请求在途期间用户换账号后被旧凭据覆盖（Codex P1） |
 | fix | prd-api | access token 时长归一化收敛到 AuthTokenLifetimes 单一口径，杜绝配 0/负值时签出立刻过期的 token 却回报 7 天（Codex P2） |
+| fix | cds | ticket SSO 会话纳入统一 7 天策略并支持滑动续期 + 重发 cookie（原硬编码 12 小时且不续期）（Codex P1） |
+| fix | llmgw | 401 只清「发起本次请求的那把 token」，避免请求在途期间换账号后把新会话一起踢下线（Codex P1） |
+| fix | llmgw | 监听 storage 事件同步鉴权上下文，修复跨标签页登出/换账号后界面身份与实际凭据不一致（Codex P1） |
