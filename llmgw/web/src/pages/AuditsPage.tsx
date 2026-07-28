@@ -50,16 +50,16 @@ export function AuditsPage() {
   }, [page, action, targetType, actor, success, search, sinceHours]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE)), [data?.total]);
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--fs-caption)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
 
   if (error) return <Empty text={error} />;
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <div style={{ flexShrink: 0, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <strong style={{ fontSize: 14 }}>操作审计</strong>
-        <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.55 }}>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
+        <h1 className="lg-title">操作审计</h1>
+        <p className="lg-subtitle" style={{ marginTop: 5 }}>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
       </div>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <input
@@ -82,7 +82,7 @@ export function AuditsPage() {
         <select value={sinceHours} onChange={(e) => { setPage(1); setSinceHours(e.target.value); }} style={selectStyle}>
           {SINCE_OPTIONS.map((x) => <option key={x.value || 'all'} value={x.value}>{x.label}</option>)}
         </select>
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>{data ? `共 ${data.total} 条` : '加载中'}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{data ? `共 ${data.total} 条` : '加载中'}</span>
       </div>
 
       {!data ? <SectionLoader text="正在加载操作审计…" /> : data.items.length === 0 ? <Empty text="暂无操作审计" /> : (
@@ -116,7 +116,7 @@ export function AuditsPage() {
 
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', justifyContent: 'flex-end', gap: 8 }}>
         <Button size="sm" variant="ghost" disabled={page <= 1} onClick={() => setPage((p) => Math.max(1, p - 1))}>上一页</Button>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>{page} / {pages}</span>
+        <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{page} / {pages}</span>
         <Button size="sm" variant="ghost" disabled={page >= pages} onClick={() => setPage((p) => Math.min(pages, p + 1))}>下一页</Button>
       </div>
     </div>
@@ -134,13 +134,13 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
             <span>{actionLabel(item.action)}</span>
-            <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', fontSize: 10 }}>{item.action || '—'}</span>
+            <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{item.action || '—'}</span>
           </div>
         </td>
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 210 }}>
             <span>{item.targetName || item.targetId || '—'}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>{targetTypeLabel(item.targetType)} <code>{item.targetType || '—'}</code></span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{targetTypeLabel(item.targetType)} <code>{item.targetType || '—'}</code></span>
           </div>
         </td>
         <td style={td}>{item.actorUsername || item.actorUserId || '—'}</td>
@@ -148,7 +148,7 @@ function AuditRow({ item, td, expanded, onToggle }: { item: OperationAuditItem; 
         <td style={td}>
           <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 130 }}>
             <span>{item.remoteIp || '—'}</span>
-            <span style={{ color: 'var(--text-muted)', fontSize: 11, maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.userAgent || '—'}</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', maxWidth: 220, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{item.userAgent || '—'}</span>
           </div>
         </td>
         <td style={td}>
@@ -231,7 +231,7 @@ function fmtTime(value?: string | null) {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );
@@ -244,5 +244,5 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
 };

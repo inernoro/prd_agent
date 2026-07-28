@@ -439,7 +439,7 @@ export function LogsView() {
         return (
           <span
             className="lg-truncate"
-            style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }}
             title={it.requestId || it.id}
           >
             {it.requestId || it.id || DASH}
@@ -565,7 +565,7 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
           <LogEntityHoverCard
@@ -602,7 +602,7 @@ export function LogsView() {
       }
       case 'genId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
+          <span className="lg-truncate" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }} title={it.requestId}>
             {it.requestId || DASH}
           </span>
         );
@@ -611,15 +611,15 @@ export function LogsView() {
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
-        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>;
+        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
         return it.isFallback ? (
           <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>否</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>否</span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       default:
         return null;
     }
@@ -629,14 +629,14 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>
             {fmtDate(it.start)}
             {it.end && it.end !== it.start ? ` ~ ${fmtShortTime(it.end)}` : ''}
           </span>
         );
       case 'sessionId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
+          <span className="lg-truncate" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }} title={it.sessionId || ''}>
             {it.sessionId || DASH}
           </span>
         );
@@ -690,10 +690,10 @@ export function LogsView() {
             ) : null}
           </span>
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>
         );
       case 'requests':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{it.requestCount}</span>;
+        return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{it.requestCount}</span>;
       default:
         return null;
     }
@@ -809,7 +809,7 @@ export function LogsView() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '7px 12px',
-          fontSize: 13,
+          fontSize: 'var(--fs-secondary)',
           color: 'var(--text-muted)',
           borderTop: '1px solid var(--border-subtle)',
         }}
@@ -990,7 +990,7 @@ export function LogsView() {
         <div
           style={{
             flexShrink: 0,
-            fontSize: 13,
+            fontSize: 'var(--fs-secondary)',
             color: 'var(--err)',
             padding: '8px 12px',
             borderRadius: 'var(--radius-sm)',

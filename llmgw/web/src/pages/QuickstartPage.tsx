@@ -391,8 +391,8 @@ export function QuickstartPage() {
     <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain' }}>
       <div style={{ maxWidth: 1080, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 16 }}>
         <header>
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Rocket size={19} /><h1 style={{ margin: 0, fontSize: 20, lineHeight: '36px', fontWeight: 600 }}>Quickstart</h1></div>
-          <p style={{ margin: '4px 0 0', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.6 }}>目标 3 分钟：选择客户端，生成配置，系统自动验证密钥和团队边界。高级选项默认收起。</p>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 8 }}><Rocket size={19} /><h1 className="lg-title">Quickstart</h1></div>
+          <p className="lg-subtitle" style={{ marginTop: 4 }}>目标 3 分钟：选择客户端，生成配置，系统自动验证密钥和团队边界。高级选项默认收起。</p>
         </header>
 
         <section className="lg-client-presets" aria-label="接入方式">
@@ -484,7 +484,7 @@ export function QuickstartPage() {
               <button type="button" className={testMode === 'safe' ? 'is-active' : ''} onClick={() => { setTestMode('safe'); setTestResult(null); }}>安全连通</button>
               <button type="button" className={testMode === 'real' ? 'is-active' : ''} disabled={!realRouteReady || routeChecking} title={!realRouteReady ? '在下方展开真实路由，确认当前地址已就绪' : undefined} onClick={() => { setTestMode('real'); setTestResult(null); }}>真实模型</button>
             </div>
-            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
+            <div className="lg-safe-test-controls">{canCreateAccess ? <Button variant="primary" disabled={!bundle || testing || (testMode === 'real' && !realRouteReady)} onClick={() => void runTest()}>{testing ? (testMode === 'real' ? '正在等待真实模型' : '正在验证并写日志') : testMode === 'real' ? '发送一次真实请求' : '验证接入边界'}</Button> : null}<span style={{ alignSelf: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{canCreateAccess ? (testMode === 'real' ? '只调用下方已解析的真实模型' : '返回 requestId 且 upstreamCalled=false 才算通过') : '请联系 Owner、Admin 或 Developer 完成签发与测试'}</span></div>
             {testResult ? <div className={testResult.ok ? 'lg-test-result is-ok' : 'lg-test-result is-error'} role="status">{testResult.message}{testResult.requestId ? <Link to={`/logs?requestId=${encodeURIComponent(testResult.requestId)}`}>打开 requestId 请求记录</Link> : null}</div> : null}
           </div>
 
@@ -509,7 +509,7 @@ export function QuickstartPage() {
           </details>
 
           <details className="lg-quickstart-safety" style={{ marginTop: 10, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-surface)' }}>
-            <summary style={{ cursor: 'pointer', color: 'var(--text-primary)', fontSize: 12, fontWeight: 650 }}>展开安全测试选项</summary>
+            <summary style={{ cursor: 'pointer', color: 'var(--text-primary)', fontSize: 'var(--fs-caption)', fontWeight: 650 }}>展开安全测试选项</summary>
             <dl style={{ ...dlStyle, marginTop: 10 }}>
               <RouteRow name="安全连通" text="发送 X-Gateway-Dry-Run: quickstart，在模型解析、预算预占和上游发送前结束。" />
               <RouteRow name="真实模型" text="只有路由预览成功且不是明显开发桩时才能点击；请求不带 dry-run，并把实际结果写入同一套租户日志。" />
@@ -825,7 +825,7 @@ curl "${baseUrl}${definition.path}" \\
 }
 
 function Step({ number, title, text }: { number: string; title: string; text: string }) {
-  return <article style={cardStyle}><div style={{ color: 'var(--accent)', fontSize: 12, fontWeight: 700 }}>步骤 {number}</div><h2 style={{ margin: '6px 0', fontSize: 15, fontWeight: 600 }}>{title}</h2><p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.55 }}>{text}</p></article>;
+  return <article style={cardStyle}><div style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)', fontWeight: 700 }}>步骤 {number}</div><h2 style={{ margin: '6px 0', fontSize: 'var(--fs-heading)', fontWeight: 600 }}>{title}</h2><p style={{ margin: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-body)', lineHeight: 1.55 }}>{text}</p></article>;
 }
 
 function Field({ label, value, onChange, placeholder, disabled = false }: { label: string; value: string; onChange: (value: string) => void; placeholder?: string; disabled?: boolean }) {
@@ -833,7 +833,7 @@ function Field({ label, value, onChange, placeholder, disabled = false }: { labe
 }
 
 function RouteRow({ name, text }: { name: string; text: string }) {
-  return <div><dt style={{ color: 'var(--text-primary)', fontSize: 14, fontWeight: 600 }}>{name}</dt><dd style={{ margin: '3px 0 0', color: 'var(--text-muted)', fontSize: 14, lineHeight: 1.5 }}>{text}</dd></div>;
+  return <div><dt style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-body)', fontWeight: 600 }}>{name}</dt><dd style={{ margin: '3px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-body)', lineHeight: 1.5 }}>{text}</dd></div>;
 }
 
 function RouteFact({ label, value }: { label: string; value: string }) {
@@ -842,9 +842,9 @@ function RouteFact({ label, value }: { label: string; value: string }) {
 
 const cardStyle: React.CSSProperties = { padding: 14, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' };
 const gridStyle: React.CSSProperties = { display: 'grid', gridTemplateColumns: 'repeat(4, minmax(0, 1fr))', gap: 10 };
-const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 10px', fontSize: 15, fontWeight: 600 };
+const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 10px', fontSize: 'var(--fs-heading)', fontWeight: 600 };
 const dlStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 10, margin: 0 };
-const hintStyle: React.CSSProperties = { margin: '10px 0 0', color: 'var(--text-muted)', fontSize: 13, lineHeight: 1.55 };
-const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 13 };
-const inputStyle: React.CSSProperties = { minWidth: 0, height: 38, padding: '0 10px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 14 };
-const preStyle: React.CSSProperties = { margin: 0, minHeight: 180, overflow: 'auto', padding: 14, paddingTop: 48, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: 13, lineHeight: 1.65 };
+const hintStyle: React.CSSProperties = { margin: '10px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', lineHeight: 1.55 };
+const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' };
+const inputStyle: React.CSSProperties = { minWidth: 0, height: 38, padding: '0 10px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-body)' };
+const preStyle: React.CSSProperties = { margin: 0, minHeight: 180, overflow: 'auto', padding: 14, paddingTop: 48, background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-primary)', fontSize: 'var(--fs-secondary)', lineHeight: 1.65 };

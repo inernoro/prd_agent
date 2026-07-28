@@ -159,19 +159,19 @@ export function PlatformsPage() {
   if (error) return <Empty text={error} />;
   if (!items) return <SectionLoader text="正在加载平台…" />;
 
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--fs-caption)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <section style={createCardStyle}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <div style={{ maxWidth: 720 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Provider（模型供应方）</div>
-            <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+            <h1 className="lg-title">Provider（模型供应方）</h1>
+            <p className="lg-subtitle" style={{ marginTop: 5 }}>
               Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
-            </div>
-            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+            </p>
+            <div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
               第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
             </div>
           </div>
@@ -214,18 +214,18 @@ export function PlatformsPage() {
             </label>
             <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
               <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并继续添加模型'}</Button>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>保存后列表只显示“已配置”，不会回显密钥。</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>保存后列表只显示“已配置”，不会回显密钥。</span>
             </div>
           </form>
         ) : null}
       </section>
       {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
+        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
       {items.length > 0 && canWrite ? (
         <details style={{ flexShrink: 0 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
+          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
           <div style={toolbarStyle}>
             <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
             <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
@@ -296,7 +296,7 @@ export function PlatformsPage() {
                     </div>
                   </td>
                   <td style={td}>{p.platformType || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
                   <td style={td}>{p.maxConcurrency || '—'}</td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
@@ -370,7 +370,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
 };
 
 const toolbarStyle: React.CSSProperties = {
@@ -386,7 +386,7 @@ const toolbarStyle: React.CSSProperties = {
 };
 
 const toolbarTitleStyle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 600,
   color: 'var(--text-secondary)',
 };
@@ -395,7 +395,7 @@ const checkStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--text-secondary)',
 };
 
@@ -415,7 +415,7 @@ const fieldStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 'var(--fs-micro)',
   fontWeight: 600,
   color: 'var(--text-secondary)',
 };
@@ -429,13 +429,13 @@ const formInputStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   boxSizing: 'border-box',
 };
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );

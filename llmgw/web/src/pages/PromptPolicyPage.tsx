@@ -59,7 +59,7 @@ export function PromptPolicyPage() {
 
   return <div style={{ flex: 1, minHeight: 0, overflow: 'auto' }}>
     <div style={{ maxWidth: 1040, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
-      <header><Link to="/app-callers" style={{ color: 'var(--accent)', fontSize: 12 }}>返回调用方</Link><h1 style={{ margin: '8px 0 0', fontSize: 18 }}>提示词策略</h1>
+      <header><Link to="/app-callers" style={{ color: 'var(--accent)', fontSize: 'var(--fs-caption)' }}>返回调用方</Link><h1 className="lg-title" style={{ marginTop: 8 }}>提示词策略</h1>
         <p style={hint}>{data ? `${data.appCallerCode} · ${data.requestType}` : error}</p></header>
       {error ? <div style={errorStyle}>{error}</div> : null}{notice ? <div style={noticeStyle}>{notice}</div> : null}
       <section style={card}>
@@ -90,13 +90,13 @@ export function PromptPolicyPage() {
 
 function TextArea({ label: text, value, onChange }: { label: string; value: string; onChange: (value: string) => void }) { return <label style={label}>{text}<textarea value={value} onChange={(e) => onChange(e.target.value)} rows={7} style={{ ...inputStyle, height: 'auto', padding: 9, resize: 'vertical', lineHeight: 1.5 }} /></label>; }
 const card: React.CSSProperties = { padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' };
-const label: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 12 };
-const checkLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-primary)', fontSize: 12 };
+const label: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' };
+const checkLabel: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 5, color: 'var(--text-primary)', fontSize: 'var(--fs-caption)' };
 const inputStyle: React.CSSProperties = { height: 34, color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: '0 8px' };
-const hint: React.CSSProperties = { margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 12, lineHeight: 1.55 };
-const heading: React.CSSProperties = { margin: '0 0 10px', fontSize: 14 };
-const pre: React.CSSProperties = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 12, lineHeight: 1.55 };
-const th: React.CSSProperties = { textAlign: 'left', padding: 8, color: 'var(--text-muted)', fontSize: 11 };
-const td: React.CSSProperties = { padding: 8, borderTop: '1px solid var(--border-subtle)', fontSize: 12 };
+const hint: React.CSSProperties = { margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.55 };
+const heading: React.CSSProperties = { margin: '0 0 10px', fontSize: 'var(--fs-body)' };
+const pre: React.CSSProperties = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)', lineHeight: 1.55 };
+const th: React.CSSProperties = { textAlign: 'left', padding: 8, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
+const td: React.CSSProperties = { padding: 8, borderTop: '1px solid var(--border-subtle)', fontSize: 'var(--fs-caption)' };
 const errorStyle: React.CSSProperties = { ...card, color: '#f85149', background: 'rgba(248,81,73,.08)' };
 const noticeStyle: React.CSSProperties = { ...card, color: '#3fb950', background: 'rgba(63,185,80,.08)' };

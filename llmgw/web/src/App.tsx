@@ -39,12 +39,12 @@ function RequireAuth({ children }: { children: ReactNode }) {
       正在恢复安全会话
     </div>
   );
-  if (!authed) return <Navigate to="/login" replace state={{ from: location.pathname }} />;
+  if (!authed) return <Navigate to="/login" replace state={{ from: `${location.pathname}${location.search}` }} />;
   if (mustChangePassword) return <Navigate to="/change-password" replace />;
   if (!isTenantRole(tenant?.role)) return (
     <div style={{ minHeight: '100vh', display: 'grid', placeItems: 'center', padding: 20, background: 'var(--bg-canvas)' }}>
       <Card style={{ width: 'min(560px, 100%)' }}>
-        <h1 style={{ margin: 0, fontSize: 20 }}>当前会话没有有效租户角色</h1>
+        <h1 className="lg-title">当前会话没有有效租户角色</h1>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>控制台不会加载导航或业务接口。请退出后重新登录；若仍出现，请联系租户 Owner 检查成员关系。</p>
         <button type="button" onClick={logout}>退出登录</button>
       </Card>
@@ -67,7 +67,7 @@ function RequirePageAccess({ page, children }: { page: ConsolePage; children: Re
   return (
     <div style={{ minHeight: '100%', display: 'grid', placeItems: 'center', padding: 20 }}>
       <Card style={{ width: 'min(560px, 100%)' }}>
-        <h1 style={{ margin: 0, fontSize: 20 }}>当前角色不包含此页面</h1>
+        <h1 className="lg-title">当前角色不包含此页面</h1>
         <p style={{ color: 'var(--text-secondary)', lineHeight: 1.7 }}>
           你当前是 {roleLabel(tenant?.role)}。控制台已按服务端权限隐藏不可用入口；如果通过旧链接来到这里，不会再发起注定失败的请求。
         </p>

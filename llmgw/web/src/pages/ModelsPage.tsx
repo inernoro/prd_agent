@@ -266,26 +266,26 @@ export function ModelsPage() {
 
   if (error) return <Empty text={error} />;
 
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--fs-caption)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
       <section style={createCardStyle}>
         <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
           <div style={{ maxWidth: 760 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>模型管理</div>
-            <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
+            <h1 className="lg-title">模型管理</h1>
+            <p className="lg-subtitle" style={{ marginTop: 5 }}>
               模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池；没有匹配用途的池保持原样。
-            </div>
-            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
+            </p>
+            <div style={{ marginTop: 4, fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
               不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
             </div>
           </div>
           {canWrite && ownedPlatforms.length > 0 ? (
             <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
           ) : canWrite ? (
-            <a href="/platforms" style={{ fontSize: 12, color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
+            <a href="/platforms" style={{ fontSize: 'var(--fs-caption)', color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
           ) : null}
         </div>
         {showCreate && canWrite && ownedPlatforms.length > 0 ? (
@@ -313,18 +313,18 @@ export function ModelsPage() {
               </select>
             </label>
             <fieldset style={{ gridColumn: '1 / -1', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 10, minWidth: 0 }}>
-              <legend style={{ padding: '0 6px', fontSize: 11, fontWeight: 600, color: 'var(--text-secondary)' }}>模型用途（至少选一项）</legend>
+              <legend style={{ padding: '0 6px', fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--text-secondary)' }}>模型用途（至少选一项）</legend>
               <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 7 }}>
                 {MODEL_PURPOSES.map((purpose) => (
-                  <label key={purpose.code} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 12, color: 'var(--text-secondary)' }} title={purpose.description}>
+                  <label key={purpose.code} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }} title={purpose.description}>
                     <input type="checkbox" checked={createDraft.capabilities.includes(purpose.code)} onChange={() => toggleCreateCapability(purpose.code)} />
-                    <span><strong style={{ color: 'var(--text-primary)' }}>{purpose.label}</strong><br /><span style={{ fontSize: 10, color: 'var(--text-muted)' }}>{purpose.description}</span></span>
+                    <span><strong style={{ color: 'var(--text-primary)' }}>{purpose.label}</strong><br /><span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{purpose.description}</span></span>
                   </label>
                 ))}
               </div>
             </fieldset>
             <details style={{ gridColumn: '1 / -1' }}>
-              <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)' }}>可选：价格、模型专属密钥与备注</summary>
+              <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>可选：价格、模型专属密钥与备注</summary>
               <div style={{ marginTop: 9, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
                 <label style={checkStyle}><input type="checkbox" checked={createDraft.hasPricing} onChange={(e) => setCreateDraft((value) => ({ ...value, hasPricing: e.target.checked }))} />我知道供应方价格</label>
                 {createDraft.hasPricing ? (
@@ -341,7 +341,7 @@ export function ModelsPage() {
             </details>
             <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
               <Button type="submit" variant="primary" size="sm" disabled={createBusy || createDraft.capabilities.length === 0}>{createBusy ? '保存中…' : '保存并同步默认池'}</Button>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>模型 key 留空时会安全继承 Provider key。</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>模型 key 留空时会安全继承 Provider key。</span>
             </div>
           </form>
         ) : null}
@@ -352,18 +352,18 @@ export function ModelsPage() {
           <option value="">全部平台</option>
           {platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
         </select>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-secondary)' }}>
+        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)' }}>
           <input type="checkbox" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.target.checked)} />
           仅启用
         </label>
-        <span style={{ marginLeft: 'auto', fontSize: 12, color: 'var(--text-muted)' }}>{items ? `${items.length} 个模型` : '加载中'}</span>
+        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{items ? `${items.length} 个模型` : '加载中'}</span>
       </div>
       {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
+        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
       {items && items.length > 0 && canWrite ? (
       <details style={{ flexShrink: 0 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量维护已有模型</summary>
+        <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量维护已有模型</summary>
       <div style={{ ...toolbarStyle, marginTop: 6 }}>
         <span style={toolbarTitleStyle}>批量维护模型密钥</span>
         <input
@@ -447,7 +447,7 @@ export function ModelsPage() {
                     <td style={td}>
                       <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 180 }}>
                         <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
-                        <span style={{ fontFamily: 'ui-monospace, monospace', color: 'var(--text-muted)', fontSize: 11 }}>{m.modelName || m.id}</span>
+                        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{m.modelName || m.id}</span>
                       </div>
                     </td>
                     <td style={td}>
@@ -566,7 +566,7 @@ const selectStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
 };
 
 const inputStyle: React.CSSProperties = {
@@ -577,7 +577,7 @@ const inputStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
 };
 
 const toolbarStyle: React.CSSProperties = {
@@ -593,7 +593,7 @@ const toolbarStyle: React.CSSProperties = {
 };
 
 const toolbarTitleStyle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   fontWeight: 600,
   color: 'var(--text-secondary)',
 };
@@ -602,7 +602,7 @@ const checkStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   color: 'var(--text-secondary)',
 };
 
@@ -622,7 +622,7 @@ const fieldStyle: React.CSSProperties = {
 };
 
 const labelStyle: React.CSSProperties = {
-  fontSize: 11,
+  fontSize: 'var(--fs-micro)',
   fontWeight: 600,
   color: 'var(--text-secondary)',
 };
@@ -636,7 +636,7 @@ const formInputStyle: React.CSSProperties = {
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-sm)',
   padding: '0 9px',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   boxSizing: 'border-box',
 };
 
@@ -741,7 +741,7 @@ function mergeCapabilityText(current: string, incoming: string) {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );

@@ -128,7 +128,7 @@ export function OrganizationPage() {
     <div style={{ maxWidth: 1060, margin: '0 auto', display: 'flex', flexDirection: 'column', gap: 14 }}>
       <header style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
         <Building2 size={18} />
-        <div><h1 style={{ margin: 0, fontSize: 17 }}>组织与自助接入</h1><p style={{ ...hintStyle, marginTop: 3 }}>先建立租户边界，再用团队、角色和独立账号控制谁能做什么。</p></div>
+        <div><h1 className="lg-title">组织与自助接入</h1><p className="lg-subtitle" style={{ marginTop: 3 }}>先建立租户边界，再用团队、角色和独立账号控制谁能做什么。</p></div>
         <Button size="sm" variant="ghost" style={{ marginLeft: 'auto' }} onClick={() => void load()}><RefreshCw size={14} />刷新</Button>
       </header>
       {error ? <div role="alert" style={errorStyle}>{error}</div> : null}
@@ -139,7 +139,7 @@ export function OrganizationPage() {
             <strong>{data.tenant?.name || '当前租户'}</strong>
             <Chip label={data.tenant?.status || 'unknown'} color="#3fb950" bg="rgba(63,185,80,0.14)" />
             <Chip label={roleLabel(currentRole)} color="#58a6ff" bg="rgba(88,166,255,0.14)" />
-            <code style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 11 }}>{data.tenant?.id}</code>
+            <code style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{data.tenant?.id}</code>
           </div>
           <p style={hintStyle}>当前租户由服务端登录会话确定。请求体和自定义 tenantId header 都不能切换数据范围。</p>
         </section>
@@ -241,8 +241,8 @@ export function OrganizationPage() {
 function GovernanceLink({ icon, title, detail, to, action }: { icon: React.ReactNode; title: string; detail: string; to?: string; action: string }) {
   const content = <>
     <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-primary)', fontWeight: 600 }}>{icon}{title}</span>
-    <span style={{ color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.55 }}>{detail}</span>
-    <span style={{ color: to ? 'var(--accent)' : 'var(--text-muted)', fontSize: 11 }}>{action}</span>
+    <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', lineHeight: 1.55 }}>{detail}</span>
+    <span style={{ color: to ? 'var(--accent)' : 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{action}</span>
   </>;
   const style: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 6, padding: 10, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', textDecoration: 'none' };
   return to ? <Link to={to} style={style}>{content}</Link> : <div style={style}>{content}</div>;
@@ -292,10 +292,10 @@ function MemberRow({ member, teams, currentRole, currentUsername, canManage, onC
   return <div style={memberCardStyle} data-testid={`member-row-${member.id}`}>
     <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
       <strong>{member.displayName || member.username || member.userId}</strong>
-      {member.displayName && member.username ? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>@{member.username}</span> : null}
+      {member.displayName && member.username ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>@{member.username}</span> : null}
       <Chip label={member.status} color={member.status === 'active' ? '#3fb950' : '#f85149'} bg={member.status === 'active' ? 'rgba(63,185,80,0.14)' : 'rgba(248,81,73,0.14)'} />
-      {ownerLocked ? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>只有 Owner 可以修改 Owner</span> : null}
-      {selfLocked ? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>为防止当前会话锁死，不能在这里修改自己</span> : null}
+      {ownerLocked ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>只有 Owner 可以修改 Owner</span> : null}
+      {selfLocked ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>为防止当前会话锁死，不能在这里修改自己</span> : null}
     </div>
     {editable ? <>
       <div className="lg-quickstart-detail-grid" style={{ display: 'grid', gridTemplateColumns: 'minmax(150px, 220px) minmax(150px, 220px)', gap: 8, marginTop: 9 }}>
@@ -319,7 +319,7 @@ function MemberRow({ member, teams, currentRole, currentUsername, canManage, onC
 function TeamChoices({ teams, selected, onToggle }: { teams: TeamItem[]; selected: string[]; onToggle: (teamId: string) => void }) {
   return <fieldset style={fieldsetStyle}>
     <legend>所属团队</legend>
-    {teams.length === 0 ? <span style={{ color: 'var(--text-muted)', fontSize: 11 }}>还没有团队，可先创建团队；Owner、Admin、Viewer 和 Billing 可以不选团队。</span> : <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>{teams.filter((team) => team.status === 'active' || selected.includes(team.id)).map((team) => <label key={team.id} style={checkStyle}><input type="checkbox" checked={selected.includes(team.id)} onChange={() => onToggle(team.id)} />{team.name}{team.status !== 'active' ? '（已停用，请取消）' : ''}</label>)}</div>}
+    {teams.length === 0 ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>还没有团队，可先创建团队；Owner、Admin、Viewer 和 Billing 可以不选团队。</span> : <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>{teams.filter((team) => team.status === 'active' || selected.includes(team.id)).map((team) => <label key={team.id} style={checkStyle}><input type="checkbox" checked={selected.includes(team.id)} onChange={() => onToggle(team.id)} />{team.name}{team.status !== 'active' ? '（已停用，请取消）' : ''}</label>)}</div>}
   </fieldset>;
 }
 
@@ -333,15 +333,15 @@ function roleLabel(role: string) {
 
 const cardStyle: React.CSSProperties = { padding: 14, background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' };
 const memberCardStyle: React.CSSProperties = { padding: 11, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };
-const roleCardStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, padding: 9, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 11, lineHeight: 1.45 };
-const boundaryNoteStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9, padding: '9px 10px', color: 'var(--text-secondary)', background: 'var(--accent-soft)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 11, lineHeight: 1.55 };
-const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 5px', fontSize: 13 };
+const roleCardStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, padding: 9, background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 'var(--fs-micro)', lineHeight: 1.45 };
+const boundaryNoteStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9, padding: '9px 10px', color: 'var(--text-secondary)', background: 'var(--accent-soft)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', lineHeight: 1.55 };
+const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 5px', fontSize: 'var(--fs-secondary)' };
 const sectionHeadingRowStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between' };
-const hintStyle: React.CSSProperties = { margin: '0', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.55 };
-const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, color: 'var(--text-muted)', fontSize: 11 };
+const hintStyle: React.CSSProperties = { margin: '0', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', lineHeight: 1.55 };
+const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
 const inputStyle: React.CSSProperties = { height: 34, minWidth: 0, padding: '0 9px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };
-const fieldsetStyle: React.CSSProperties = { margin: '10px 0', padding: 10, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 11 };
-const checkStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: 12 };
-const errorStyle: React.CSSProperties = { color: 'var(--danger)', fontSize: 12, padding: '9px 11px', background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.26)', borderRadius: 'var(--radius-sm)' };
-const noticeStyle: React.CSSProperties = { color: 'var(--success)', fontSize: 12, padding: '9px 11px', background: 'rgba(63,185,80,0.08)', border: '1px solid rgba(63,185,80,0.24)', borderRadius: 'var(--radius-sm)' };
-const errorHintStyle: React.CSSProperties = { margin: '7px 0', color: 'var(--danger)', fontSize: 11, lineHeight: 1.5 };
+const fieldsetStyle: React.CSSProperties = { margin: '10px 0', padding: 10, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
+const checkStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' };
+const errorStyle: React.CSSProperties = { color: 'var(--danger)', fontSize: 'var(--fs-caption)', padding: '9px 11px', background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.26)', borderRadius: 'var(--radius-sm)' };
+const noticeStyle: React.CSSProperties = { color: 'var(--success)', fontSize: 'var(--fs-caption)', padding: '9px 11px', background: 'rgba(63,185,80,0.08)', border: '1px solid rgba(63,185,80,0.24)', borderRadius: 'var(--radius-sm)' };
+const errorHintStyle: React.CSSProperties = { margin: '7px 0', color: 'var(--danger)', fontSize: 'var(--fs-micro)', lineHeight: 1.5 };
