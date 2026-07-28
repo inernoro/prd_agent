@@ -1475,6 +1475,15 @@ export interface ReleasePreflightRecord {
   /** 本次结论所依据的产物（含 commitSha）。复用时按它比对现分支 commit。 */
   artifact?: ReleaseArtifact;
   artifactCommitSha?: string;
+  /**
+   * 结论生成时目标配置的指纹（releaseTargetConfigFingerprint）。
+   *
+   * 复用键只带 targetId 是不够的：运维在两分钟复用窗口里改了 host / 凭据 / appPath /
+   * 发布命令 / healthcheckUrl，targetId 不变，旧结论会被套到一台连通性、仓库身份、
+   * 脚本都没验证过的机器上（Codex P1）。缺省 = 阶段三早期入库的存量记录，
+   * 一律**不允许复用**（宁可多跑一次预检，也不拿证明不了的结论放行）。
+   */
+  targetConfigFingerprint?: string;
   planId?: string;
   previousReleaseId?: string;
   createdAt: string;
@@ -1559,6 +1568,13 @@ export interface ReleaseRun {
    * 变更失败率的分母。
    */
   autoRestoredAt?: string;
+  /**
+   * 最终入口探测失败、开始自动恢复的时刻 = 故障窗口的**起点**。
+   *
+   * 不能用 `finishedAt` 当起点：自动恢复跑在 failRun 之前，`finishedAt` 恒晚于
+   * `autoRestoredAt`，用它配对会得到负数并被守卫整条丢掉（这正是上一版修复空转的原因）。
+   */
+  autoRestoreStartedAt?: string;
   previousReleaseId?: string;
   requestId?: string;
   operationId?: string;

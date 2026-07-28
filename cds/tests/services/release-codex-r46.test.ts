@@ -14,13 +14,14 @@ import {
   isSameRemoteDirectory,
   normalizeRemoteDirectoryIdentity,
 } from '../../src/services/release-artifact-retention.js';
-import { selectReleasePreflightsToPrune } from '../../src/services/release-retention.js';
+import { canReuseReleasePreflight, selectReleasePreflightsToPrune } from '../../src/services/release-retention.js';
+import { releaseTargetConfigFingerprint } from '../../src/services/release-target-history.js';
 import { computeReleaseDora, type ReleaseDoraRunLike } from '../../src/services/release-dora.js';
 import {
   readReleaseHealthSnapshot,
   setReleaseHealthSource,
 } from '../../src/services/release-health-snapshot.js';
-import type { ReleasePreflightRecord } from '../../src/types.js';
+import type { ReleasePreflightRecord, ReleaseTarget } from '../../src/types.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
 
@@ -142,22 +143,50 @@ describe('P2 自动恢复必须计入恢复时长', () => {
     return { targetId: 'target-prod', status: 'success', startedAt: '', ...over };
   }
 
-  it('探测失败但自动恢复成功：算恢复，不算「进行中故障」', () => {
-    // 事故值：自动恢复只写日志、不落 run，原 run 仍是 failed。恢复配对找不到恢复者，
-    // 这次几秒就自愈的失败被算成进行中故障，一直挂到下一次成功发布为止。
+  /**
+   * 真实时序（这一段是本套件最重要的东西）：
+   *   probeReleaseSurface 抛错 → restorePreviousAfterFailedProbe 落 autoRestoreStartedAt
+   *   → 恢复成功落 autoRestoredAt → throw err 冒泡 → failRun 才写 finishedAt。
+   * 所以 **autoRestoredAt 恒早于 finishedAt**。
+   *
+   * 上一版用例把 autoRestoredAt 写成晚于 finishedAt，那个顺序现实中不可能出现；
+   * 于是用例绿着，而生产里 `autoRestoredAt >= failure.at` 恒为 false，整条修复空转。
+   * 这是「测试编码了作者的假设而不是真实时序」的教科书案例，比没有测试更糟 ——
+   * 它让人以为这件事已经验过了。
+   */
+  const REAL_ORDER = {
+    startedAt: '2026-07-28T10:00:00.000Z',
+    autoRestoreStartedAt: '2026-07-28T10:04:00.000Z',
+    autoRestoredAt: '2026-07-28T10:04:45.000Z',
+    finishedAt: '2026-07-28T10:05:00.000Z',
+  };
+
+  it('按真实时序（恢复早于 finishedAt）仍算恢复，时长取探测失败到恢复完成', () => {
+    const metrics = computeReleaseDora([
+      run({ releaseId: 'rel_fail', status: 'failed', ...REAL_ORDER }),
+    ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
+
+    expect(metrics.recovery.ongoingCount).toBe(0);
+    expect(metrics.recovery.sampleCount).toBe(1);
+    // 45s = autoRestoredAt - autoRestoreStartedAt，不是与 finishedAt 的差（那会是负数）。
+    expect(metrics.recovery.p50Ms).toBe(45_000);
+  });
+
+  it('存量 run 只有 autoRestoredAt、没有起点时，仍算已恢复不算进行中', () => {
+    // 起点缺失只该影响时长精度，不该把「生产已经恢复」这个既成事实翻转成故障进行中。
     const metrics = computeReleaseDora([
       run({
         releaseId: 'rel_fail',
         status: 'failed',
-        startedAt: '2026-07-28T10:00:00.000Z',
-        finishedAt: '2026-07-28T10:05:00.000Z',
-        autoRestoredAt: '2026-07-28T10:05:30.000Z',
+        startedAt: REAL_ORDER.startedAt,
+        autoRestoredAt: REAL_ORDER.autoRestoredAt,
+        finishedAt: REAL_ORDER.finishedAt,
       }),
     ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
 
     expect(metrics.recovery.ongoingCount).toBe(0);
     expect(metrics.recovery.sampleCount).toBe(1);
-    expect(metrics.recovery.p50Ms).toBe(30_000);
+    expect(metrics.recovery.p50Ms).toBe(0);
   });
 
   it('没有自动恢复也没有后续成功发布时，仍如实算进行中故障', () => {
@@ -165,8 +194,8 @@ describe('P2 自动恢复必须计入恢复时长', () => {
       run({
         releaseId: 'rel_fail',
         status: 'failed',
-        startedAt: '2026-07-28T10:00:00.000Z',
-        finishedAt: '2026-07-28T10:05:00.000Z',
+        startedAt: REAL_ORDER.startedAt,
+        finishedAt: REAL_ORDER.finishedAt,
       }),
     ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
 
@@ -174,22 +203,36 @@ describe('P2 自动恢复必须计入恢复时长', () => {
     expect(metrics.recovery.sampleCount).toBe(0);
   });
 
-  it('自动恢复时间戳早于失败时刻（脏数据）不许算成负的恢复时长', () => {
+  it('样本数与进行中数之和恒等于失败数（不会有失败既不算恢复也不算进行中）', () => {
     const metrics = computeReleaseDora([
+      run({ releaseId: 'rel_a', status: 'failed', ...REAL_ORDER }),
+      run({ releaseId: 'rel_b', status: 'failed', startedAt: REAL_ORDER.startedAt, finishedAt: REAL_ORDER.finishedAt }),
       run({
-        releaseId: 'rel_fail',
+        releaseId: 'rel_c',
         status: 'failed',
-        startedAt: '2026-07-28T10:00:00.000Z',
-        finishedAt: '2026-07-28T10:05:00.000Z',
+        startedAt: REAL_ORDER.startedAt,
+        finishedAt: REAL_ORDER.finishedAt,
+        // 时钟回拨造成的脏数据：恢复时刻早于起点。
+        autoRestoreStartedAt: '2026-07-28T10:04:00.000Z',
         autoRestoredAt: '2026-07-28T09:00:00.000Z',
       }),
     ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
 
-    // 早于失败时刻的时间戳不可信，一律不当恢复用：否则会往样本里塞一个负数，
-    // 把 p50 拉成「恢复发生在故障之前」这种自相矛盾的数字。
-    expect(metrics.recovery.sampleCount).toBe(0);
-    expect(metrics.recovery.ongoingCount).toBe(1);
-    expect(metrics.recovery.p50Ms).toBeNull();
+    expect(metrics.changeFailure.failed).toBe(3);
+    expect(metrics.recovery.sampleCount + metrics.recovery.ongoingCount).toBe(3);
+    // 脏数据夹到 0，不产生负的恢复时长。
+    expect(metrics.recovery.p50Ms).not.toBeNull();
+    expect(metrics.recovery.p50Ms!).toBeGreaterThanOrEqual(0);
+  });
+
+  it('源码守卫：配对不许再拿 autoRestoredAt 与 failure.at 比大小', () => {
+    // 事故写法恒为 false，删掉它不会红任何行为用例（当时的用例用的是假时序）。
+    const dora = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-dora.ts'), 'utf8');
+    expect(dora).toContain('autoRestoreStartedAt');
+    // 必须剥注释再扫：解释「为什么不能这么写」的注释里会原样出现事故写法，
+    // 不剥的话守卫会被自己的说明文字触发（本 session 第二次踩同一个坑）。
+    const code = dora.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    expect(code).not.toMatch(/autoRestoredAt\s*>=\s*failure\.at/);
   });
 });
 
@@ -218,5 +261,108 @@ describe('P2 监控关闭时发布中心必须说实话', () => {
     expect(index).toContain('CDS_UPTIME_ENABLED=0');
     expect(index).toContain('CDS_UPTIME_RELEASE_ENABLED=0');
     expect(index).toContain('setReleaseHealthSource(null, releaseProbeDisabledReason)');
+  });
+});
+
+describe('P1 预检复用必须绑定目标配置指纹', () => {
+  const base = {
+    id: 'rt_1',
+    projectId: 'p1',
+    name: '生产站点',
+    type: 'ssh' as const,
+    isEnabled: true,
+    strategy: { mode: 'existing-script' as const, command: './deploy.sh' },
+    ssh: {
+      host: 'prod.example.test',
+      port: 22,
+      user: 'deploy',
+      privateKeyRef: 'host-a',
+      appPath: '/srv/app',
+      deployCommand: './deploy.sh',
+      healthcheckUrl: 'https://prod.example.test/health',
+    },
+  } as unknown as ReleaseTarget;
+
+  function withSsh(over: Record<string, unknown>): ReleaseTarget {
+    return { ...base, ssh: { ...(base as { ssh: object }).ssh, ...over } } as ReleaseTarget;
+  }
+
+  it('配置没动时指纹稳定（否则每次发布都白跑一次预检）', () => {
+    expect(releaseTargetConfigFingerprint(base)).toBe(releaseTargetConfigFingerprint({ ...base } as ReleaseTarget));
+  });
+
+  it('任一可审计字段变了，指纹就变', () => {
+    // 事故值：复用键只有 targetId。运维在两分钟复用窗口里换了机器 / 凭据 / 目录 /
+    // 脚本 / 健康地址，键照样命中，旧结论被套到从没验证过的目标上。
+    const mutations: Array<[string, ReleaseTarget]> = [
+      ['host', withSsh({ host: 'other.example.test' })],
+      ['privateKeyRef', withSsh({ privateKeyRef: 'host-b' })],
+      ['appPath', withSsh({ appPath: '/srv/other' })],
+      ['deployCommand', withSsh({ deployCommand: './other.sh' })],
+      ['healthcheckUrl', withSsh({ healthcheckUrl: 'https://other.example.test/health' })],
+      ['port', withSsh({ port: 2222 })],
+      ['strategy.command', { ...base, strategy: { mode: 'existing-script', command: './other.sh' } } as ReleaseTarget],
+    ];
+    for (const [label, mutated] of mutations) {
+      expect(`${label}:${releaseTargetConfigFingerprint(mutated)}`)
+        .not.toBe(`${label}:${releaseTargetConfigFingerprint(base)}`);
+    }
+  });
+
+  it('指纹不含凭据引用原值（历史/记录的读权限比目标本身宽）', () => {
+    expect(releaseTargetConfigFingerprint(base)).not.toContain('host-a');
+  });
+
+  it('指纹对不上就不许复用', () => {
+    const record = {
+      id: 'pf_1',
+      projectId: 'p1',
+      branchId: 'b1',
+      targetId: 'rt_1',
+      ok: true,
+      checks: [],
+      artifactCommitSha: 'a'.repeat(40),
+      targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+      createdAt: '2026-07-28T10:00:00.000Z',
+    } as unknown as ReleasePreflightRecord;
+    const nowMs = Date.parse('2026-07-28T10:00:30.000Z');
+    const key = {
+      branchId: 'b1',
+      targetId: 'rt_1',
+      commitSha: 'a'.repeat(40),
+      targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+    };
+
+    expect(canReuseReleasePreflight(record, key, nowMs)).toBe(true);
+    expect(canReuseReleasePreflight(record, {
+      ...key,
+      targetConfigFingerprint: releaseTargetConfigFingerprint(withSsh({ host: 'other.example.test' })),
+    }, nowMs)).toBe(false);
+  });
+
+  it('存量记录没有指纹字段时一律重跑，不盲信', () => {
+    const legacy = {
+      id: 'pf_legacy',
+      projectId: 'p1',
+      branchId: 'b1',
+      targetId: 'rt_1',
+      ok: true,
+      checks: [],
+      artifactCommitSha: 'a'.repeat(40),
+      createdAt: '2026-07-28T10:00:00.000Z',
+    } as unknown as ReleasePreflightRecord;
+
+    expect(canReuseReleasePreflight(legacy, {
+      branchId: 'b1',
+      targetId: 'rt_1',
+      commitSha: 'a'.repeat(40),
+      targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+    }, Date.parse('2026-07-28T10:00:30.000Z'))).toBe(false);
+  });
+
+  it('指纹清单直接复用变更历史那张表，不另立第二份', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-target-history.ts'), 'utf8');
+    // 两张表漂移的后果最危险的方向是：历史记了一笔变更，预检却认为配置没变照旧复用。
+    expect(source).toMatch(/releaseTargetConfigFingerprint[\s\S]{0,400}RELEASE_TARGET_TRACKED_PATHS/);
   });
 });

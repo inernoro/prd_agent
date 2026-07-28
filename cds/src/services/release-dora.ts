@@ -29,6 +29,8 @@ export interface ReleaseDoraRunLike {
   rollbackOf?: string;
   /** 非空 = 探测失败后自动恢复上一版本成功完成的时刻，即这条失败的真实恢复时刻 */
   autoRestoredAt?: string;
+  /** 非空 = 探测失败、开始自动恢复的时刻，即故障窗口起点（恒早于 finishedAt） */
+  autoRestoreStartedAt?: string;
 }
 
 export interface ReleaseDoraFrequency {
@@ -230,8 +232,16 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
     // 只按 run 找恢复者会把这种几秒自愈的失败算成「进行中故障」，一直挂到下一次
     // 成功发布为止 —— 恢复时长偏长、ongoingCount 虚高（Codex P2）。
     const autoRestoredAt = Date.parse(failure.run.autoRestoredAt || '');
-    if (Number.isFinite(autoRestoredAt) && autoRestoredAt >= failure.at) {
-      recoveryDurations.push(autoRestoredAt - failure.at);
+    if (Number.isFinite(autoRestoredAt)) {
+      // 起点必须是**探测失败时刻**，不是 run 的终态时刻：自动恢复跑在 failRun 之前，
+      // finishedAt 恒晚于 autoRestoredAt。上一版拿 `autoRestoredAt >= failure.at` 当守卫，
+      // 条件恒为 false，整条修复空转（Codex P2 第二轮）。
+      const startedAt = Date.parse(failure.run.autoRestoreStartedAt || '');
+      const from = Number.isFinite(startedAt) ? startedAt : failure.at;
+      // autoRestoredAt 只在恢复真的成功后才落，所以「已恢复」是既成事实；
+      // 起点异常（时钟回拨/脏数据）只影响时长精度，不该反过来把它算成进行中故障，
+      // 故夹到 0 而不是丢样本 —— 否则 sampleCount + ongoingCount 与失败数对不上。
+      recoveryDurations.push(Math.max(0, autoRestoredAt - from));
       continue;
     }
     const restored = terminalRuns.find((item) => (

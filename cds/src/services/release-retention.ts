@@ -182,6 +182,11 @@ export interface ReleasePreflightReuseKey {
   operator?: string;
   /** 发起发布这一刻分支的真实 commit。对不上说明产物已经换了，旧结论一律作废。 */
   commitSha?: string;
+  /**
+   * 发起发布这一刻目标配置的指纹。对不上说明发的已经不是同一台机器 / 同一套脚本，
+   * 旧结论证明不了新目标（Codex P1）。
+   */
+  targetConfigFingerprint?: string;
 }
 
 function normalize(value: string | undefined): string {
@@ -209,6 +214,10 @@ export function canReuseReleasePreflight(
   if (record.targetId !== key.targetId) return false;
   if (normalize(record.previewUrl) !== normalize(key.previewUrl)) return false;
   if (normalize(record.operator) !== normalize(key.operator)) return false;
+  // 目标配置指纹缺一边或对不上，都证明不了「结论验的目标 = 现在要发的目标」。
+  // 存量记录没有这个字段，一律走重跑：多花几秒预检，换掉「发到没验过的机器上」的风险。
+  const fingerprint = normalize(key.targetConfigFingerprint);
+  if (!fingerprint || normalize(record.targetConfigFingerprint) !== fingerprint) return false;
   // commit 缺一边就证明不了「结论依据的产物 = 现在要发的产物」，宁可重跑。
   const commit = normalize(key.commitSha);
   if (!commit || normalize(record.artifactCommitSha) !== commit) return false;

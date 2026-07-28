@@ -30,3 +30,5 @@
 | fix | cds | 自动恢复补落时间戳（Codex P2）：探测失败后 `restorePreviousAfterFailedProbe` 把上一版本推回去此前**只写日志**，不落 run 也不落时间戳，原 run 仍是 failed；DORA 恢复配对因此找不到恢复者，把几秒就自愈的失败算成「进行中故障」一直挂到下次成功发布，恢复时长与 ongoingCount 双双失真。改为在失败 run 上盖 `autoRestoredAt`——不新建 run，那不是一次发布，造假 run 会污染发布频率与变更失败率的分母 |
 | fix | cds | 监控被关闭时发布中心说实话（Codex P2）：`CDS_UPTIME_ENABLED=0` / `CDS_UPTIME_RELEASE_ENABLED=0` 时快照源照常注册但记录永远建不出来，健康列永久显示「稍后自动开始探测」这个不会兑现的承诺，而实时探测已经拿掉了——那一列就永远在骗人；改为不注册源并传入区分两个开关的关闭原因 |
 | chore | cds | 三个碎片文件合并为一个（Codex P1）：同一 PR 的变更必须落在同一个碎片里（CLAUDE.md §4），否则发版合并与后续维护会丢失 PR 级的整体性 |
+| fix | cds | 预检复用绑定目标配置指纹（Codex P1）：复用键此前只有 branchId/targetId/previewUrl/operator/commitSha，运维在两分钟复用窗口里改掉 host / 凭据 / appPath / 发布命令 / healthcheckUrl 后键照样命中，旧结论被套到一台连通性、仓库身份、脚本都没验证过的机器上；指纹清单直接复用变更历史那张白名单表，不另立第二份，存量无指纹记录一律重跑 |
+| fix | cds | 自动恢复配对改用探测失败时刻（Codex P2，修上一版空转）：`autoRestoredAt` 落在 `failRun` 之前，恒早于 `finishedAt`，而上一版拿它与 run 终态时刻比大小，条件恒为 false，整条修复在生产上是空转；新增 `autoRestoreStartedAt` 作为故障窗口起点。上一版用例之所以是绿的，是因为它手写了一个现实中不可能出现的时间顺序——测试编码了作者的假设而不是真实时序 |

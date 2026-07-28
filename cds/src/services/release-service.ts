@@ -32,6 +32,7 @@ import {
   type ReleasePreflightReuseKey,
 } from './release-retention.js';
 
+import { releaseTargetConfigFingerprint } from './release-target-history.js';
 import {
   buildReleaseInventoryCommand,
   buildReleaseReclaimCommand,
@@ -653,6 +654,8 @@ export class ReleaseService {
       checks,
       artifact,
       artifactCommitSha: commitSha || undefined,
+      // 结论只对「当时那个配置的目标」成立。指纹一变就是另一台机器 / 另一套脚本。
+      targetConfigFingerprint: releaseTargetConfigFingerprint(target),
       planId: plan?.id,
       previousReleaseId: previousRelease?.releaseId,
       createdAt: this.nowIso(),
@@ -687,6 +690,11 @@ export class ReleaseService {
       previewUrl: input.previewUrl,
       operator: input.operator,
       commitSha: resolveCommitSha(branch),
+      // 取**当前**目标配置的指纹与落库那份比：运维在复用窗口里改了 host / 凭据 /
+      // appPath / 发布命令 / healthcheckUrl，这里就对不上，自动回落重跑（Codex P1）。
+      targetConfigFingerprint: releaseTargetConfigFingerprint(
+        this.stateService.getReleaseTarget(input.targetId),
+      ),
     };
     const nowMs = this.now().getTime();
     const candidates = input.preflightId
@@ -1269,6 +1277,14 @@ export class ReleaseService {
     };
     const executionTarget = { ...target, strategy };
     const execution = buildReleaseExecution(executionTarget, restoreRun, { preservePrevious: true });
+    // 探测失败时刻 = 故障窗口的起点。必须单独落一个字段，不能用 run 的 finishedAt 顶替：
+    // 本函数跑在 failRun **之前**（调用方是 `catch { await restore...; throw err; }`），
+    // finishedAt 要等异常冒泡到 failRun 才写，因此恒晚于自动恢复完成的时刻。
+    // 上一版修复拿 autoRestoredAt 与 finishedAt 比大小，条件恒为 false，整条修复是空转
+    // （Codex P2 第二轮）。而当时的用例之所以是绿的，是因为它手写了一个现实中
+    // 不可能出现的时间顺序 —— 编码了假设而不是真实时序。
+    const autoRestoreStartedAt = new Date().toISOString();
+    this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt });
     this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);

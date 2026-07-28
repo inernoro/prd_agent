@@ -261,6 +261,9 @@ describe('canReuseReleasePreflight 判据', () => {
     ok: true,
     checks: [],
     artifactCommitSha: 'a'.repeat(40),
+    // 目标配置指纹是复用的必要条件之一（Codex P1）：只比 targetId 的话，运维在两分钟
+    // 复用窗口里换掉 host / 凭据 / 目录 / 脚本，旧结论会被套到没验证过的目标上。
+    targetConfigFingerprint: 'fp_target_v1',
     createdAt: '2026-07-28T10:00:00.000Z',
   };
   const nowMs = Date.parse('2026-07-28T10:00:30.000Z');
@@ -270,10 +273,20 @@ describe('canReuseReleasePreflight 判据', () => {
     previewUrl: 'https://preview.example.test',
     operator: 'tester',
     commitSha: 'a'.repeat(40),
+    targetConfigFingerprint: 'fp_target_v1',
   };
 
   it('同一件事、同一 commit、未过期 → 可复用', () => {
     expect(canReuseReleasePreflight(base, key, nowMs)).toBe(true);
+  });
+
+  it('目标配置变了 → 旧结论证明不了新目标，必须重跑', () => {
+    expect(canReuseReleasePreflight(base, { ...key, targetConfigFingerprint: 'fp_target_v2' }, nowMs)).toBe(false);
+  });
+
+  it('存量记录没有指纹 → 一律重跑，不盲信', () => {
+    const legacy = { ...base, targetConfigFingerprint: undefined };
+    expect(canReuseReleasePreflight(legacy, key, nowMs)).toBe(false);
   });
 
   it('分支 commit 已经变了 → 旧结论证明不了新产物，必须重跑', () => {
