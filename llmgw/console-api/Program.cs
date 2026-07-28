@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Net;
+using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -8283,6 +8284,373 @@ app.MapPut("/gw/pools/{id}/claim", async (HttpContext http, string id) =>
     var fresh = await gwModelPools.Find(filter).FirstOrDefaultAsync();
     return Json(ApiEnvelope<PoolItem>.Ok(MapPool(fresh)), jsonOptions);
 }).RequireAuthorization("ConfigWrite");
+
+// ───────────────────── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）─────────────────────
+//
+// 投递两条路（绝不假装成功）：
+//   1. 配置了 MAP 缺陷系统凭据 → 服务端带凭据转发到 MAP `POST /api/defect-agent/defects`
+//      再调 submit；凭据只在服务端读取，前端永远拿不到。
+//   2. 未配置或转发失败 → 落到网关自己的 llmgw_bug_reports 集合，
+//      响应 delivery=local + degradeReason，前端如实告知「未同步到缺陷系统」。
+var bugReports = gatewayDatabase.GetCollection<BsonDocument>("llmgw_bug_reports");
+var bugReportMapBaseUrl = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_BASE_URL") ?? string.Empty).Trim().TrimEnd('/');
+var bugReportMapToken = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_TOKEN") ?? string.Empty).Trim();
+var bugReportMapAssignee = (Environment.GetEnvironmentVariable("LLMGW_BUG_REPORT_MAP_ASSIGNEE") ?? string.Empty).Trim();
+var bugReportForwardConfigured = bugReportMapBaseUrl.Length > 0 && bugReportMapToken.Length > 0;
+var bugReportHttp = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+var bugReportSeverities = new[] { "critical", "major", "minor", "trivial" };
+const long BugReportMaxAttachmentBytes = 5L * 1024 * 1024;
+// 总量闸按 **base64 字符长度** 计，因为真正写进 MongoDB 单文档的就是 base64 字符串。
+// 按解码后字节算 12MB 时，base64 恰好是 16MiB，正好顶穿 MongoDB 16MB 单文档硬上限，
+// 写库会直接抛异常，缺陷与截图全丢。这里留出文档其余字段与 BSON 开销的余量。
+const long BugReportMaxTotalBase64Chars = 12L * 1024 * 1024;
+/** 本地台账每租户保留条数上限（附件 base64 直接进文档，必须有回收）。 */
+const int BugReportRetainPerTenant = 100;
+const int BugReportMaxAttachmentCount = 4;
+// 转发缺陷系统（create + submit）的总预算，与前端「超过 10 秒转本地留存」文案一致：
+// 两段各给 10s 会让用户实际等到 20s。
+var bugReportForwardBudget = TimeSpan.FromSeconds(10);
+// 文本字段上限。没有它，一次不带附件的提交就能把多兆字节的 Description/Content
+// 原样写进每一份 MongoDB 文档；每租户 100 条的保留策略只管条数不管字节，
+// 反复提交仍能吃掉约 1GB/租户，并让转发与写库都变慢（Codex PR #1273 P1）。
+// 数值与 CDS 侧 bug-reports.ts 逐一对齐——同一个面板的两个后端不该有两套上限。
+const int BugReportMaxTitleChars = 200;
+const int BugReportMaxDescriptionChars = 20_000;
+const int BugReportMaxContentChars = 40_000;
+const int BugReportMaxEnvKeyChars = 40;
+// source 同样来自客户端且原样落库，不设限就等于前面几个上限白加（Codex PR #1273 P1）。
+// 与 CDS 侧 `asString(body.source, 'cds').slice(0, 40)` 同口径。
+const int BugReportMaxSourceChars = 40;
+// 环境字典的**条目数**上限：只截键和值不够，几万个不同的键照样能拼出多兆字节的
+// 无附件文档，把「每租户 100 条」的存储上限架空（Codex PR #1273 P1）。
+const int BugReportMaxEnvEntries = 40;
+const int BugReportMaxAttachmentNameChars = 120;
+// 截断而不是拒收：用户辛苦写的复现步骤不该被整条丢掉，但必须留下明确标记。
+static string ClampBugReportText(string value, int max)
+    => value.Length <= max ? value : $"{value[..max]}\n…（原文共 {value.Length} 字，超过 {max} 字上限，已截断）";
+// 附件元数据（文件名 / MIME）同样来自客户端，直接截断即可，不必留标记。
+static string ClampBugReportSource(string value)
+{
+    var v = value.Length == 0 ? "llmgw" : value;
+    return v.Length > 40 ? v[..40] : v;
+}
+static string ClampBugReportName(string value, string fallback)
+{
+    var v = value.Length == 0 ? fallback : value;
+    return v.Length > 120 ? v[..120] : v;
+}
+
+app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubmitRequest? body) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var description = (body?.Description ?? string.Empty).Trim();
+    if (description.Length == 0)
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_EMPTY", "请填写问题描述"), jsonOptions, 400);
+    description = ClampBugReportText(description, BugReportMaxDescriptionChars);
+
+    var severity = (body?.Severity ?? string.Empty).Trim().ToLowerInvariant();
+    if (!bugReportSeverities.Contains(severity, StringComparer.Ordinal))
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_SEVERITY_INVALID", "严重程度取值非法"), jsonOptions, 400);
+
+    var rawAttachments = body?.Attachments ?? new List<BugReportAttachmentDto>();
+    if (rawAttachments.Count > BugReportMaxAttachmentCount)
+        return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_MANY", $"附件最多 {BugReportMaxAttachmentCount} 个"), jsonOptions, 400);
+
+    var attachmentDocs = new BsonArray();
+    long totalBase64Chars = 0;
+    foreach (var item in rawAttachments)
+    {
+        var data = item.DataBase64 ?? string.Empty;
+        if (data.Length == 0) continue;
+        var estimated = (long)Math.Ceiling(data.Length * 3d / 4d);
+        if (estimated > BugReportMaxAttachmentBytes)
+            return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_LARGE", "单个附件超过 5 MB"), jsonOptions, 400);
+        totalBase64Chars += data.Length;
+        if (totalBase64Chars > BugReportMaxTotalBase64Chars)
+            return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_LARGE", "附件总量超出存储上限，请压缩截图后重试"), jsonOptions, 400);
+        attachmentDocs.Add(new BsonDocument
+        {
+            { "Name", ClampBugReportName((item.Name ?? "attachment").Trim(), "attachment") },
+            { "MimeType", ClampBugReportName((item.MimeType ?? "application/octet-stream").Trim(), "application/octet-stream") },
+            { "Size", item.Size > 0 ? item.Size : estimated },
+            { "DataBase64", data },
+        });
+    }
+
+    var firstLine = description.Split('\n').FirstOrDefault()?.Trim() ?? string.Empty;
+    var title = (body?.Title ?? string.Empty).Trim();
+    if (title.Length == 0) title = firstLine.Length > 100 ? firstLine[..100] : firstLine;
+    if (title.Length == 0) title = "未命名缺陷";
+    if (title.Length > BugReportMaxTitleChars) title = title[..BugReportMaxTitleChars];
+    var content = (body?.Content ?? string.Empty).Trim();
+    if (content.Length == 0) content = description;
+    content = ClampBugReportText(content, BugReportMaxContentChars);
+
+    var environmentDoc = new BsonDocument();
+    foreach (var pair in body?.Environment ?? new Dictionary<string, string>())
+    {
+        if (environmentDoc.ElementCount >= BugReportMaxEnvEntries) break;
+        if (string.IsNullOrWhiteSpace(pair.Value)) continue;
+        // key 也要截：环境字典的键来自客户端，不设限同样能把文档撑大。
+        var envKey = pair.Key.Length > BugReportMaxEnvKeyChars ? pair.Key[..BugReportMaxEnvKeyChars] : pair.Key;
+        environmentDoc[envKey] = pair.Value.Length > 500 ? pair.Value[..500] : pair.Value;
+    }
+
+    var delivery = "local";
+    string? reference = null;
+    string? degradeReason = bugReportForwardConfigured
+        ? null
+        : "未配置缺陷系统转发（LLMGW_BUG_REPORT_MAP_BASE_URL / LLMGW_BUG_REPORT_MAP_TOKEN）";
+
+    if (bugReportForwardConfigured)
+    {
+        // 转发与落库都**不得**绑在 http.RequestAborted 上（见 .claude/rules/server-authority.md）：
+        // 用户按 ESC 关面板或切页就会断连接，最坏时序是 MAP 里已建了缺陷、网关这边没有
+        // 任何记录，既查不到也无法复投。这里改用与请求生命周期解耦的独立超时预算。
+        using var forwardCts = new CancellationTokenSource(bugReportForwardBudget);
+        var forwardToken = forwardCts.Token;
+        try
+        {
+            var createBody = new Dictionary<string, object?>
+            {
+                ["title"] = title,
+                ["content"] = content,
+                ["severity"] = severity,
+            };
+            if (bugReportMapAssignee.Length > 0) createBody["assigneeUserId"] = bugReportMapAssignee;
+
+            using var createRequest = new HttpRequestMessage(HttpMethod.Post, $"{bugReportMapBaseUrl}/api/defect-agent/defects")
+            {
+                Content = new StringContent(JsonSerializer.Serialize(createBody, jsonOptions), Encoding.UTF8, "application/json"),
+            };
+            createRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+            using var createResponse = await bugReportHttp.SendAsync(createRequest, forwardToken);
+            var createText = await createResponse.Content.ReadAsStringAsync(forwardToken);
+            if (!createResponse.IsSuccessStatusCode)
+            {
+                degradeReason = $"缺陷系统返回 HTTP {(int)createResponse.StatusCode}";
+            }
+            else
+            {
+                using var parsed = JsonDocument.Parse(createText);
+                JsonElement? defectElement = null;
+                if (parsed.RootElement.TryGetProperty("data", out var dataEl)
+                    && dataEl.TryGetProperty("defect", out var defectEl))
+                {
+                    defectElement = defectEl;
+                }
+                var defectId = defectElement.HasValue && defectElement.Value.TryGetProperty("id", out var idEl)
+                    ? idEl.GetString()
+                    : null;
+                if (string.IsNullOrWhiteSpace(defectId))
+                {
+                    degradeReason = "缺陷系统未返回缺陷 ID";
+                }
+                else
+                {
+                    delivery = "forwarded";
+                    reference = defectElement!.Value.TryGetProperty("defectNo", out var noEl)
+                        ? noEl.GetString() ?? defectId
+                        : defectId;
+
+                    // 附件必须在 submit 之前上传：正文里只有文件名，没有图。少了这一步，
+                    // 缺陷系统收到的是「说有截图但没有截图」的单子，而 UI 照样报「已提交」——
+                    // 典型的谎报成功。CDS 侧已修（forwardToMap 的 attachments 循环），
+                    // 网关这边一直漏着（Codex PR #1273 P2）。上传失败不推翻「已进单」的
+                    // 事实，但必须如实回传部分失败，让用户知道图没跟过去。
+                    var attachmentFailures = 0;
+                    for (var i = 0; i < attachmentDocs.Count; i++)
+                    {
+                        var doc = attachmentDocs[i].AsBsonDocument;
+                        try
+                        {
+                            var bytes = Convert.FromBase64String(doc.GetValue("DataBase64", "").AsString);
+                            // 不加 using：form 的所有权交给 uploadRequest，随它一起释放。
+                            var form = new MultipartFormDataContent();
+                            var fileContent = new ByteArrayContent(bytes);
+                            var mime = doc.GetValue("MimeType", "application/octet-stream").AsString;
+                            if (mime.Length == 0) mime = "application/octet-stream";
+                            fileContent.Headers.ContentType = new MediaTypeHeaderValue(mime);
+                            var fileName = doc.GetValue("Name", "").AsString;
+                            if (fileName.Length == 0) fileName = $"screenshot-{i + 1}";
+                            form.Add(fileContent, "file", fileName);
+                            form.Add(new StringContent("由网关控制台快捷提缺陷自动上传"), "description");
+                            using var uploadRequest = new HttpRequestMessage(
+                                HttpMethod.Post,
+                                $"{bugReportMapBaseUrl}/api/defect-agent/defects/{defectId}/attachments")
+                            {
+                                Content = form,
+                            };
+                            uploadRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+                            using var uploadResponse = await bugReportHttp.SendAsync(uploadRequest, forwardToken);
+                            if (!uploadResponse.IsSuccessStatusCode) attachmentFailures++;
+                        }
+                        catch (Exception uploadError)
+                        {
+                            app.Logger.LogWarning(uploadError, "[bug-report] 附件上传失败");
+                            attachmentFailures++;
+                        }
+                    }
+                    if (attachmentFailures > 0)
+                    {
+                        degradeReason = $"缺陷已提交，但 {attachmentFailures} 个截图未能上传到缺陷系统（正文里只有文件名）";
+                    }
+
+                    try
+                    {
+                        using var submitRequest = new HttpRequestMessage(
+                            HttpMethod.Post,
+                            $"{bugReportMapBaseUrl}/api/defect-agent/defects/{defectId}/submit")
+                        {
+                            Content = new StringContent("{}", Encoding.UTF8, "application/json"),
+                        };
+                        submitRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+                        using var submitResponse = await bugReportHttp.SendAsync(submitRequest, forwardToken);
+                        if (!submitResponse.IsSuccessStatusCode)
+                        {
+                            app.Logger.LogWarning("[bug-report] 缺陷已创建但 submit 返回 {Status}", (int)submitResponse.StatusCode);
+                            // 必须回传给前端：只记日志的话 UI 会无条件说「已提交」，
+                            // 而单子其实还躺在草稿态没人处理（Codex PR #1273 P2，
+                            // CDS 侧已修，这里补齐同款）。
+                            var submitIssue = $"缺陷已创建但提交流转失败（缺陷系统返回 HTTP {(int)submitResponse.StatusCode}），可能仍是草稿态";
+                            // 附件也失败时两条都要说，后写的不能把前一条盖掉。
+                            degradeReason = string.IsNullOrEmpty(degradeReason) ? submitIssue : $"{degradeReason}；{submitIssue}";
+                        }
+                    }
+                    catch (Exception submitError)
+                    {
+                        // 缺陷已经落在 MAP 里，提交环节失败只影响状态流转，不改变投递结论，
+                        // 但同样要如实告知用户「可能仍是草稿态」。
+                        app.Logger.LogWarning(submitError, "[bug-report] 缺陷已创建但 submit 失败");
+                        var submitIssue = $"缺陷已创建但提交流转失败（{submitError.Message}），可能仍是草稿态";
+                        // 与上面的非 2xx 分支同口径：附件也失败时两条都要说，
+                        // 否则用户只被告知「可能是草稿」，完全不知道截图还丢了（Codex PR #1273 P2）。
+                        degradeReason = string.IsNullOrEmpty(degradeReason) ? submitIssue : $"{degradeReason}；{submitIssue}";
+                    }
+                }
+            }
+        }
+        catch (OperationCanceledException)
+        {
+            // 只可能是本地 10s 总预算到期（forwardToken 与请求生命周期无关）。
+            degradeReason = "缺陷系统 10 秒内无响应，已转为本地留存";
+        }
+        catch (Exception forwardError)
+        {
+            degradeReason = $"缺陷系统调用失败：{forwardError.Message}";
+        }
+    }
+
+    var bugReportDoc = new BsonDocument
+    {
+        { "_id", Guid.NewGuid().ToString("N") },
+        { "TenantId", access.TenantId },
+        { "Source", ClampBugReportSource((body?.Source ?? "llmgw").Trim()) },
+        { "Reporter", access.Username },
+        { "ReporterUserId", access.UserId },
+        { "Title", title },
+        { "Description", description },
+        { "Content", content },
+        { "Severity", severity },
+        { "Environment", environmentDoc },
+        { "Attachments", attachmentDocs },
+        { "Delivery", delivery },
+        { "Reference", string.IsNullOrEmpty(reference) ? (BsonValue)BsonNull.Value : new BsonString(reference) },
+        { "DegradeReason", string.IsNullOrEmpty(degradeReason) ? (BsonValue)BsonNull.Value : new BsonString(degradeReason) },
+        { "CreatedAt", DateTime.UtcNow },
+    };
+    // 落库同样与请求生命周期解耦（server-authority）；且必须兜住异常：
+    // 写库失败时若没有转发成功，这条缺陷就彻底丢了，必须给出可读原因让用户重试，
+    // 而不是抛一个裸 500。
+    try
+    {
+        await bugReports.InsertOneAsync(bugReportDoc, cancellationToken: CancellationToken.None);
+        // 保留策略：附件是 base64 直接进文档，单条最多约 12MB。没有上限的话，
+        // 一个拿到凭据的客户端（或不断重试的前端）反复提交就能把网关库撑爆，
+        // 且转发成功的记录也一样在长（Codex PR #1273 P1）。
+        // 按租户保留最近 N 条，超出的整条删除——本地台账是兜底证据，不是归档。
+        try
+        {
+            var tenantFilter = Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId);
+            var keepIds = await bugReports
+                .Find(tenantFilter)
+                .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+                .Limit(BugReportRetainPerTenant)
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync(CancellationToken.None);
+            if (keepIds.Count >= BugReportRetainPerTenant)
+            {
+                var keep = keepIds.Select(d => d["_id"]).ToList();
+                await bugReports.DeleteManyAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        tenantFilter,
+                        Builders<BsonDocument>.Filter.Nin("_id", keep)),
+                    CancellationToken.None);
+            }
+        }
+        catch (Exception pruneError)
+        {
+            // 回收失败不能影响「缺陷已收下」这件事本身。
+            app.Logger.LogWarning(pruneError, "[bug-report] 本地台账回收失败 tenant={Tenant}", access.TenantId);
+        }
+    }
+    catch (Exception storeError)
+    {
+        app.Logger.LogError(storeError, "[bug-report] 缺陷记录写入失败 delivery={Delivery}", delivery);
+        if (delivery != "forwarded")
+        {
+            return Json(
+                ApiEnvelope<BugReportSubmitResult>.Fail(
+                    "BUG_REPORT_STORE_FAILED",
+                    "缺陷未能保存（可能是附件总量超出存储上限），请压缩截图后重试"),
+                jsonOptions,
+                500);
+        }
+        // 已经转发到 MAP 的情况下，本地记录只是台账，缺失不改变「缺陷已进入系统」的事实。
+        // 但**不能覆盖**前面已经攒下的降级说明（截图没传上去 / 可能仍是草稿态）：
+        // 直接赋值会把那两条抹掉，用户只看到「台账写入失败」，完全不知道图也丢了
+        // （Codex PR #1273 P2，与两个 submit 分支同一个病根）。
+        const string ledgerIssue = "缺陷已提交到缺陷系统，但网关本地台账写入失败";
+        degradeReason = string.IsNullOrEmpty(degradeReason) ? ledgerIssue : $"{degradeReason}；{ledgerIssue}";
+    }
+
+    return Json(ApiEnvelope<BugReportSubmitResult>.Ok(new BugReportSubmitResult
+    {
+        Id = bugReportDoc.GetStringOrEmpty("_id"),
+        Delivery = delivery,
+        Reference = reference,
+        DegradeReason = degradeReason,
+    }), jsonOptions, 201);
+}).RequireAuthorization();
+
+app.MapGet("/gw/bug-reports", async (HttpContext http, int? limit) =>
+{
+    var access = TenantAccess.GetRequired(http);
+    var take = Math.Clamp(limit ?? 50, 1, 200);
+    var docs = await bugReports
+        .Find(Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId))
+        .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+        .Limit(take)
+        .ToListAsync(http.RequestAborted);
+    return Json(ApiEnvelope<BugReportListData>.Ok(new BugReportListData
+    {
+        ForwardConfigured = bugReportForwardConfigured,
+        Items = docs.Select(doc => new BugReportItem
+        {
+            Id = doc.GetStringOrEmpty("_id"),
+            Title = doc.GetStringOrEmpty("Title"),
+            Severity = doc.GetStringOrEmpty("Severity"),
+            Delivery = doc.GetStringOrEmpty("Delivery"),
+            Reference = doc.AsNullableString("Reference"),
+            DegradeReason = doc.AsNullableString("DegradeReason"),
+            Reporter = doc.AsNullableString("Reporter"),
+            AttachmentCount = doc.TryGetValue("Attachments", out var attachments) && attachments.IsBsonArray
+                ? attachments.AsBsonArray.Count
+                : 0,
+            CreatedAt = doc.AsNullableUtcDateTime("CreatedAt").ToIso(),
+        }).ToList(),
+    }), jsonOptions);
+}).RequireAuthorization();
 
 _ = RunGatewayRecoveryLoopAsync(gatewayDatabase, app.Logger, app.Lifetime.ApplicationStopping);
 app.Run();

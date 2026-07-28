@@ -1,5 +1,6 @@
 import type { BranchEntry, SchedulerConfig } from '../types.js';
 import type { StateService } from './state.js';
+import { resolveBranchProtection } from './branch-protection.js';
 
 /**
  * SchedulerService — branch warm-pool manager for small servers.
@@ -14,8 +15,10 @@ import type { StateService } from './state.js';
  * Pinning rules (a branch is "pinned" and cannot be evicted if ANY apply):
  *   1. `branch.pinnedByUser === true`
  *   2. `branch.isColorMarked === true` (user is actively debugging)
- *   3. `state.defaultBranch === branch.id`
+ *   3. per-project defaultBranch === branch.id
  *   4. `config.pinnedBranches.includes(branch.id)`
+ *   5. 主干分支（按 git 分支名判定，见 branch-protection.ts）
+ * 判定实现是 `branch-protection.ts` 的 SSOT，janitor 消费同一份。
  *
  * Wake/cool is delegated via callbacks so the scheduler stays pure and testable:
  *   - `wakeFn(slug)` — bring a branch from COLD to HOT (returns when HOT)
@@ -297,39 +300,15 @@ export class SchedulerService {
   /**
    * Is this branch protected from eviction?
    *
-   * Protection sources:
-   *   1. pinnedByUser flag
-   *   2. isColorMarked flag (user is debugging)
-   *   3. defaultBranch (the only branch guaranteed to exist)
-   *   4. config.pinnedBranches includes the slug
+   * 判定本身**不在这里**：统一走 `branch-protection.ts` 的 SSOT
+   * （pinnedByUser / isColorMarked / per-project defaultBranch /
+   *   config.pinnedBranches / 主干分支按 git 分支名判定）。
+   *
+   * 2026-07-27 P0：janitor 曾各写一份保护判定且漏了主干那条，导致 main 被整条删除。
+   * 收敛到同一个函数后，两处漂移在结构上不再可能发生。行为与此前逐条判定完全一致。
    */
   isPinned(branch: BranchEntry): boolean {
-    if (branch.pinnedByUser) return true;
-    if (branch.isColorMarked) return true;
-    // 走 per-project default：项目级值优先，未设时兜底到旧 state.defaultBranch。
-    if (this.stateService.getDefaultBranchFor(branch.projectId) === branch.id) return true;
-    if (this.config.pinnedBranches?.includes(branch.id)) return true;
-    // 主分支（仓库默认分支）永不降温（用户 2026-06-23 要求）。
-    // 按 **git 分支名** 匹配,不依赖 Project.defaultBranch(存的是 CDS 分支 id,可能未配置
-    // 或与实际不符 —— 这正是 main 被误降温的根因)。优先比对远端默认分支名 gitDefaultBranch,
-    // 再兜底 main/master 字面量,保证 trunk 永远保活、不被空闲/容量降温驱逐。
-    if (this.isTrunkBranch(branch)) return true;
-    return false;
-  }
-
-  /**
-   * 该分支是否为「主干分支」(仓库默认分支)。按 git 分支名判定:
-   *   - 命中项目 gitDefaultBranch(远端 reported default,如 main/master) → 是
-   *   - 兜底:分支名恰为 main / master → 是
-   * 仅依据分支名,与 Project.defaultBranch(CDS 路由 fallback 的分支 id)解耦。
-   */
-  private isTrunkBranch(branch: BranchEntry): boolean {
-    const branchName = (branch.branch || '').trim();
-    if (!branchName) return false;
-    const project = this.stateService.getProject(branch.projectId);
-    const remoteDefault = (project?.gitDefaultBranch || '').trim();
-    if (remoteDefault && branchName === remoteDefault) return true;
-    return branchName === 'main' || branchName === 'master';
+    return resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected;
   }
 
   /**

@@ -134,6 +134,8 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 写作源仍是 Markdown 模板,继续使用 `{{IMG:name}}`、证据表、缺陷表和截图回读表。
 - `format=md` 输出写作源的原始审计结构,保持现有 Markdown 格式不变。
 - `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
+- 皮肤是「米多刊系」检验档案版(`.claude/rules/report-design-system.md`):刊头 masthead + 期号 dateline + 栏目眉 + 手写体验定印章 + 刊尾 colophon;验收报告身份色青碧,每日巡检特刊身份色钢蓝,由 `flavor` 自动判定。
+- 正文每张证据是一块「档案图版」(`figure.shot`):图注在上(图号 + 说明 + 失败/风险标签 + 放大入口)、图版在下、底部返回证据列表;点正文图片开大图灯箱(左右方向键翻页,ESC 关闭),禁用 JS 时「放大查看」退化为直接打开原图链接,整页仍是可读静态页。
 - HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
 - 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档。截图先逐张上传到 CDS 内容寻址资产库,正文只引用不可变 URL;10MB 只约束文本/HTML 正文,不限制一份报告需要多少张合格证据图。
 - 执行类验收 HTML 必须由 `archive_report.py` 从 Markdown 写作源和 manifest 生成,并带 `map-acceptance-template` 模板标记。禁止把 `/tmp/*.html`、临时手写页面或外部生成的自由样式 HTML 直接上传到 CDS 作为每日/视觉验收报告。CDS 会对带 verdict 或 L0/L1/L2 档位的验收 HTML 做模板血统校验,不合格返回 `acceptance_html_template_required`。

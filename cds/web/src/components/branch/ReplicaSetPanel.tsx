@@ -14,12 +14,13 @@
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, Database, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, RotateCcw, Trash2, Undo2, X } from 'lucide-react';
+import { Activity, ArrowDown, ArrowUp, ChevronDown, ChevronRight, Copy, Database, ExternalLink, Layers, Loader2, Lock, Play, Plus, RefreshCw, RotateCcw, Trash2, Undo2, X } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
 import { apiRequest, ApiError } from '@/lib/api';
 import { profileColor } from '@/lib/replica-colors';
 import { buildProjectGroups, newProjectGroupId, replicaSharePct, REPLICA_PLAN_MAX_STEPS } from '@/lib/replicaGroups';
+import { ReplicaLoadTestPanel, type LoadTestMemberOption } from '@/components/branch/ReplicaLoadTestPanel';
 
 export interface ReplicaMemberView {
   id: string;
@@ -228,6 +229,8 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
   const [tab, setTab] = useState<ReplicaMode>('container');
   const tabInitRef = useRef(false);
   const [busy, setBusy] = useState(false);
+  /** 压测弹窗当前针对的服务（null = 未打开） */
+  const [loadTestFor, setLoadTestFor] = useState<string | null>(null);
   const draftSeq = useRef(0);
 
   const load = useCallback(async (silent = false): Promise<void> => {
@@ -453,6 +456,21 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
     draftActions: draft, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso,
     isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts,
     headerLeft: modeToggle, headerRight: execArea,
+    onOpenLoadTest: (pid) => setLoadTestFor(pid ?? profileIds[0] ?? ''),
+  };
+
+  // 压测落点清单：主实例 + 该服务的副本（未运行的也列出来但置灰，用户知道为什么少了一个）。
+  // 普通函数而非 useCallback：这里在早退分支之后，放 hook 会违反 hooks 规则。
+  const loadTestMembers = (profileId: string): LoadTestMemberOption[] => {
+    const rows: LoadTestMemberOption[] = [{
+      memberId: 'primary',
+      label: '主实例',
+      running: services?.[profileId]?.status === 'running',
+    }];
+    for (const m of replicaSets[profileId]?.members ?? []) {
+      rows.push({ memberId: m.id, label: m.label || m.id, running: m.status === 'running' });
+    }
+    return rows;
   };
 
   return (
@@ -477,6 +495,17 @@ export function ReplicaSetPanel({ branchId, previewUrl, services, infra, entries
       ) : (
         <ProjectStage {...stageProps} />
       )}
+
+      {loadTestFor !== null ? (
+        <ReplicaLoadTestPanel
+          branchId={branchId}
+          profileIds={profileIds}
+          defaultProfileId={loadTestFor || undefined}
+          membersOf={loadTestMembers}
+          onToast={onToast}
+          onClose={() => setLoadTestFor(null)}
+        />
+      ) : null}
 
       <PlanBoard
         branchId={branchId}
@@ -702,6 +731,8 @@ interface StageSharedProps {
   removeIsoDrafts: () => void;
   headerLeft: JSX.Element;
   headerRight: JSX.Element;
+  /** 打开压测弹窗（复制集 = 现成的 A/B 负载对比台） */
+  onOpenLoadTest: (profileId?: string) => void;
 }
 
 /** 画布弹窗（分流实测 / 历史版本选择）：portal 到 body，inline 高度约束，内部滚动 */
@@ -1003,7 +1034,7 @@ function containerBoxHeight(rows: number): number {
 }
 
 function ContainerGraphStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, graph, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftIsoProfiles, draftRevertCount, removeIsoDrafts, headerLeft, headerRight, onOpenLoadTest } = props;
   const [hostRef, w] = useMeasuredWidth();
   const [weightFor, setWeightFor] = useState<string | null>(null); // `${profileId}:${memberId}`
   const [weightDraft, setWeightDraft] = useState('');
@@ -1318,6 +1349,11 @@ function ContainerGraphStage(props: StageSharedProps): JSX.Element {
           onClick={runAuditRep}>
           <Database />隔离审计
         </Button>
+        <Button type="button" size="sm" variant="outline"
+          title="压测：对主实例与各副本同时加压，实时看 QPS/延迟曲线生长，结束给出谁更快、谁更稳的对比结论"
+          onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
+          <Activity />压测
+        </Button>
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 连线 = 环境变量引用（悬停看键名）· 粘性 cookie cds_rs · 响应头 X-CDS-Replica</span>
       </div>
       <style>{'@keyframes rsants{to{stroke-dashoffset:-40}}@keyframes rsflow{to{stroke-dashoffset:-20}}.rsflow{animation:rsflow 1.1s linear infinite}'}</style>
@@ -1366,7 +1402,7 @@ const PROJ_W = 208;
 const GROUP_W = 208;
 
 function ProjectStage(props: StageSharedProps): JSX.Element {
-  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, planMaxSteps, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight } = props;
+  const { branchId, previewUrl, entries, services, infra, replicaSets, candidates, memberLimit, planMaxSteps, draftActions, draftSteps, onAction, onRemoveAction, onToast, profileIds, branchIso, isolateTargets, revertTargets, isolateAll, revertAll, draftIsoCount, draftRevertCount, removeIsoDrafts, headerLeft, headerRight, onOpenLoadTest } = props;
   const [hostRef, w] = useMeasuredWidth();
   const probe = useProbe(branchId, previewUrl, onToast);
   const audit = useIsolationAudit(branchId, onToast);
@@ -1696,6 +1732,11 @@ function ProjectStage(props: StageSharedProps): JSX.Element {
           title="隔离审计（MECE 实测）：逐容器 docker inspect 真实连接 + 双向金丝雀写入验证；未隔离时显示逐容器连接观测"
           onClick={runAuditRep}>
           <Database />隔离审计
+        </Button>
+        <Button type="button" size="sm" variant="outline"
+          title="压测：对主实例与整组副本同时加压，实时看 QPS/延迟曲线生长，结束给出谁更快、谁更稳的对比结论"
+          onClick={() => onOpenLoadTest(profileIds.find((pid) => (replicaSets[pid]?.members.length ?? 0) > 0) || profileIds[0])}>
+          <Activity />压测
         </Button>
         <span className="text-[11px] text-muted-foreground">黄色 = 草稿预期（保存后转常色）· 整组副本紧跟项目节点右侧生长（放不下换行）· 保存后串行执行</span>
       </div>
