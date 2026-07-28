@@ -37,3 +37,24 @@ describe('关系型连接 URL 的库名重写', () => {
     expect(rewriteRelationalUrlDb('mysql://app:pw@mysql:3306', 'shop', 'iso')).toBeNull();
   });
 });
+
+describe('JDBC 复合 scheme（2026-07-27 真机核对）', () => {
+  // 生产 CDS 上的标识中台(IMP)项目：库连接全部走 SPRING_DATASOURCE_URL /
+  // *_DATASOURCE_URL / *_DB_URL 这类 jdbc: 形态。RELATIONAL_URL_SCHEME 一直
+  // 声称识别 jdbc:mysql / jdbc:postgresql，但解析用的 scheme 段不含冒号，
+  // JDBC URL 一律解析失败 → 收集阶段探测失败 → 根本进不了 urlEnvValues →
+  // 静默不改写。第三十二轮修好的「关系型隔离是假的」在 Java 项目上原样复活。
+  it('jdbc:mysql 连接串的库名段被改写，查询参数原样保留', () => {
+    expect(rewriteRelationalUrlDb('jdbc:mysql://mysql:3306/impdb?useSSL=false&serverTimezone=UTC', 'impdb', 'impdb_rs_x'))
+      .toBe('jdbc:mysql://mysql:3306/impdb_rs_x?useSSL=false&serverTimezone=UTC');
+  });
+
+  it('jdbc:postgresql 同样生效', () => {
+    expect(rewriteRelationalUrlDb('jdbc:postgresql://pg:5432/impdb', 'impdb', 'impdb_rs_x'))
+      .toBe('jdbc:postgresql://pg:5432/impdb_rs_x');
+  });
+
+  it('库名段对不上源库时仍然拒绝改写（不认识就不动的纪律不变）', () => {
+    expect(rewriteRelationalUrlDb('jdbc:mysql://mysql:3306/otherdb', 'impdb', 'impdb_rs_x')).toBeNull();
+  });
+});

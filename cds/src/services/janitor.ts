@@ -68,6 +68,13 @@ export interface DockerPruneResult {
 /** Callback: 执行安全的 Docker 垃圾清理。可注入以便测试。 */
 export type DockerPruneFn = () => Promise<DockerPruneResult>;
 
+/**
+ * 「按住不删」的哨兵前缀：removeImage 返回值带此前缀时，表示该镜像是被**正当理由**
+ * 保留（当前唯一一种：仍有容器引用它），不是回收失败。调用方据此归类到 held 而非
+ * failed——否则一个长期存在的停止容器就能让 failed 永远 ≥1，把这个指标变成常亮红灯。
+ */
+export const IMAGE_HELD_PREFIX = 'HELD:';
+
 /** 镜像回收所需的 docker 读写（注入点：测试里换成假实现，不碰宿主）。 */
 export interface ImageDockerFns {
   /** 宿主上全部镜像的 `repo:tag`。 */
@@ -99,7 +106,11 @@ export const defaultImageDocker: ImageDockerFns = {
     if (!/must be forced/i.test(err)) return err;
     const refs = await execDocker(['ps', '-a', '--filter', `ancestor=${image}`, '-q'], 30_000);
     if (refs.startsWith('__ERR__') || refs.trim() !== '') {
-      return `${err}（有容器引用或引用检查失败，未强制删除）`;
+      // 「有容器引用」是**正常的保留**，不是失败（2026-07-28 生产实测：每轮固定
+      // 一个 admin 镜像因停止容器引用而卡住，于是 /api/janitor/state 里 failed
+      // 恒为 1、errors 恒为 1——一个永远亮着的红灯，真出新故障时反而看不出来）。
+      // 用哨兵前缀把它与真失败区分开，由调用方归到「按住不删」而非「删失败」。
+      return `${IMAGE_HELD_PREFIX}${err}（有容器引用或引用检查失败，未强制删除）`;
     }
     const forced = await execDocker(['rmi', '-f', image], 60_000);
     return forced.startsWith('__ERR__') ? forced.replace('__ERR__ ', '') : null;
@@ -160,6 +171,8 @@ export interface JanitorSweepReport {
   imageRetention: {
     removed: string[];
     failed: Array<{ image: string; error: string }>;
+    /** 有正当理由未删（仍被容器引用）。与 failed 分开，避免常亮红灯淹没真故障。 */
+    held: Array<{ image: string; reason: string }>;
     /** 满足条件但被单轮上限截断的数量——如实报出，避免「跑过了」被误读成「清干净了」。 */
     deferred: number;
     keepGenerations: number;
@@ -192,8 +205,12 @@ export interface JanitorSnapshot {
     imageRetention: {
       removed: number;
       failed: number;
+      /** 有正当理由未删的数量（仍被容器引用）——正常值，不是故障。 */
+      held: number;
       /** 失败原因样本（最多 3 条）：只报数字等于「知道有问题但不知道是什么问题」。 */
       failureSamples?: string[];
+      /** 按住不删的原因样本（最多 3 条）。 */
+      heldSamples?: string[];
       deferred: number;
       keepGenerations: number;
     } | null;
@@ -312,13 +329,20 @@ export class JanitorService {
     });
     const removed: string[] = [];
     const failed: Array<{ image: string; error: string }> = [];
+    const held: Array<{ image: string; reason: string }> = [];
     for (const image of plan.remove) {
       // 串行：一次 sweep 不许把 docker 与磁盘 IO 打满（并发 prune 撞车正是
       // 2026-07-27 人工恢复时踩到的坑：a prune operation is already running）。
       const err = await this.imageDocker.removeImage(image);
-      if (err) failed.push({ image, error: err }); else removed.push(image);
+      if (!err) { removed.push(image); continue; }
+      // held = 有正当理由没删（当前唯一一种：仍有容器引用），不计入失败
+      if (err.startsWith(IMAGE_HELD_PREFIX)) {
+        held.push({ image, reason: err.slice(IMAGE_HELD_PREFIX.length) });
+      } else {
+        failed.push({ image, error: err });
+      }
     }
-    return { removed, failed, deferred: plan.deferred, keepGenerations };
+    return { removed, failed, held, deferred: plan.deferred, keepGenerations };
   }
 
   setRemoveFn(fn: RemoveBranchFn): void {
@@ -426,8 +450,12 @@ export class JanitorService {
             ? {
               removed: report.imageRetention.removed.length,
               failed: report.imageRetention.failed.length,
+              held: report.imageRetention.held.length,
               ...(report.imageRetention.failed.length > 0
                 ? { failureSamples: report.imageRetention.failed.slice(0, 3).map((f) => `${f.image}: ${f.error.slice(0, 160)}`) }
+                : {}),
+              ...(report.imageRetention.held.length > 0
+                ? { heldSamples: report.imageRetention.held.slice(0, 3).map((h) => `${h.image}: ${h.reason.slice(0, 160)}`) }
                 : {}),
               deferred: report.imageRetention.deferred,
               keepGenerations: report.imageRetention.keepGenerations,
@@ -515,9 +543,11 @@ export class JanitorService {
           console.log(
             `[janitor] 部署镜像回收：删除 ${r.removed.length} 个（保留 ${r.keepGenerations} 代）`
             + (r.deferred ? `，本轮上限截断 ${r.deferred} 个待下轮` : '')
+            + (r.held.length ? `，${r.held.length} 个被容器引用暂不删` : '')
             + (r.failed.length ? `，失败 ${r.failed.length} 个` : ''),
           );
         }
+        // held 不进 errors：它是正常保留，进了 errors 就等于 errors 恒 >=1
         for (const f of r.failed) report.errors.push(`image rmi ${f.image}: ${f.error}`);
       } catch (err) {
         report.errors.push(`image retention: ${(err as Error).message}`);

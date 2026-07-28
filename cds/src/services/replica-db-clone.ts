@@ -93,9 +93,19 @@ const MONGO_CONN_ENV_PATTERN = /^(CDS_)?MONGO(DB)?_{1,2}(CONNECTION_?STRING|URI|
  * 只改路径段：主机/端口/凭据/查询参数原样保留（关系型隔离走同实例建新库，
  * 不像 mongo 那样另起专用实例）。无法解析或路径段对不上源库时返回 null，
  * 由调用方按「不认识就不动」处理，绝不瞎改用户的连接串。
+ *
+ * scheme 允许内嵌冒号（2026-07-27 真机核对补）：Java/Spring 项目的连接串是
+ * `jdbc:mysql://host:3306/db?useSSL=false` 这种**复合 scheme**。下面的
+ * RELATIONAL_URL_SCHEME 一直把 `jdbc:mysql` / `jdbc:postgresql` 列为已识别，
+ * 但此处的 scheme 段原本写成 `[a-zA-Z][a-zA-Z0-9+.-]*`（不含冒号），JDBC URL
+ * 一律解析失败 → 收集阶段的探测也失败 → 这些 key 根本进不了 urlEnvValues →
+ * **静默不改写**。于是第三十二轮修好的「关系型隔离是假的」在 Java 项目上原样
+ * 复活：控制面报告已隔离，Spring 应用照旧写主库。核对生产 CDS 上的标识中台
+ * (IMP) 项目环境变量时发现——它的库连接全部走 SPRING_DATASOURCE_URL /
+ * *_DATASOURCE_URL / *_DB_URL 这类 JDBC 形态。
  */
 export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb: string): string | null {
-  const m = /^([a-zA-Z][a-zA-Z0-9+.-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
+  const m = /^([a-zA-Z][a-zA-Z0-9+.:-]*:\/\/[^/?#]*)\/([^/?#]*)([?#].*)?$/.exec(url);
   if (!m) return null;
   const [, prefix, dbSegment, tail] = m;
   if (dbSegment !== sourceDb) return null;
