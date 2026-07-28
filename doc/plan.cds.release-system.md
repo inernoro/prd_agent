@@ -15,7 +15,7 @@
 | --- | --- | --- | --- | --- | --- |
 | 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 `doc/debt.cds.release-system.md`「真实环境证据」 |
 | 二 可见 | 100 | 已验收 | 无 | — | 四条判据逐条核过：`第 N/M 步 · 标题` + ETA 同屏（`ReleaseCenterPage.tsx`）；事件上 `cds-events-bus` 且 `isAlertCdsEvent` 收敛告警判定；状态页生产目标独立分组出 24h 柱条；发布中心实时探测数 = 0（`tests/routes/releases-center-health-snapshot.test.ts`，红检确认改回实时探测即红） |
-| 三 记账 | 100 | 已验收 | 无 | — | 四条判据逐条实测：落盘 1200 行从 1200 次降到 24 次（红检确认改回每行一落即 1200）；200 条 run 入库后按目标收敛到 100 且回滚链完整；`GET /releases/center` 带 DORA 四项且无样本恒 `null`；漂移告警 `release.drift-detected` 已上总线且 `isAlertCdsEvent` 为 true。远端回收另有对抗性套件 `tests/services/release-reclaim-adversarial.test.ts`（6 例，红检确认摘掉符号链接保护即红 4 例） |
+| 三 记账 | 100 | 已验收 | 无 | — | 七轮 Codex 审查收口（P1 8 条 / P2 12 条，逐条红绿闭环，见 PR #1281 收口小结）。四条判据逐条实测：落盘 1200 行从 1200 次降到 24 次（红检确认改回每行一落即 1200）；200 条 run 入库后按目标收敛到 100 且回滚链完整；`GET /releases/center` 带 DORA 四项且无样本恒 `null`；漂移告警 `release.drift-detected` 已上总线且 `isAlertCdsEvent` 为 true。远端回收另有对抗性套件 `tests/services/release-reclaim-adversarial.test.ts`（6 例，红检确认摘掉符号链接保护即红 4 例） |
 | 四 架构升级 | 0 | 未开始（需单独立项） | 依赖不可变产物链路改造，工作量大 | 见本节下方「阶段四判断」 | — |
 
 **阶段四判断**：不在本轮做，也不建议顺手起个头。它要把发布从「在生产机重新构建」改成「消费预览阶段已验证的
