@@ -20,6 +20,7 @@ import type { SimpleIcon } from 'simple-icons';
 import {
   siAlibabacloud,
   siAnthropic,
+  siBaidu,
   siBytedance,
   siCloudflare,
   siDigitalocean,
@@ -28,14 +29,23 @@ import {
   siHuggingface,
   siMeta,
   siMistralai,
+  siModal,
+  siNvidia,
+  siOllama,
   siOpenai,
   siOpenrouter,
+  siPerplexity,
+  siReplicate,
+  siVercel,
+  siX,
 } from 'simple-icons';
 
 type IconRule = {
   match: RegExp;
   icon?: LucideIcon;
   brand?: SimpleIcon | 'deepseek' | 'map';
+  /** 命中不了任何品牌规则时，用名字生成确定性彩色首字母标记。 */
+  letter?: boolean;
   tone: string;
 };
 
@@ -59,6 +69,14 @@ const MODEL_ICON_RULES: IconRule[] = [
 
 const PROVIDER_ICON_RULES: IconRule[] = [
   { match: /openrouter/i, brand: siOpenrouter, tone: 'brand' },
+  { match: /replicate/i, brand: siReplicate, tone: 'brand' },
+  { match: /perplexity/i, brand: siPerplexity, tone: 'brand' },
+  { match: /(^|[^a-z])(xai|grok)/i, brand: siX, tone: 'brand' },
+  { match: /vercel/i, brand: siVercel, tone: 'brand' },
+  { match: /(baidu|百度|千帆)/i, brand: siBaidu, tone: 'brand' },
+  { match: /(nvidia|nim)/i, brand: siNvidia, tone: 'brand' },
+  { match: /ollama/i, brand: siOllama, tone: 'brand' },
+  { match: /modal/i, brand: siModal, tone: 'brand' },
   { match: /digitalocean/i, brand: siDigitalocean, tone: 'brand' },
   { match: /cloudflare/i, brand: siCloudflare, tone: 'brand' },
   { match: /(google|gemini|vertex)/i, brand: siGoogle, tone: 'brand' },
@@ -82,6 +100,36 @@ const APP_ICON_RULES: IconRule[] = [
   { match: /(quickstart|agent)/i, icon: BrainCircuit, tone: 'cyan' },
 ];
 
+/**
+ * 未知 Provider 的兜底标记：按名字算一个稳定色相 + 首字母。
+ * 目的和品牌 icon 一样——让「同一个 Provider 的行」在余光里成组；
+ * 我们没有这些小厂的 logo 素材，所以用确定性配色代替，不编造品牌形象。
+ */
+function LetterMark({ label, size }: { label: string; size: number }) {
+  const text = (label.trim().replace(/^(https?:\/\/)?(www\.)?/i, '')[0] || '?').toUpperCase();
+  let hash = 0;
+  for (let i = 0; i < label.length; i += 1) hash = (hash * 31 + label.charCodeAt(i)) % 360;
+  return (
+    <span
+      aria-hidden="true"
+      style={{
+        display: 'grid',
+        width: size + 3,
+        height: size + 3,
+        placeItems: 'center',
+        borderRadius: 4,
+        background: `hsl(${hash} 62% 52% / 0.16)`,
+        color: `hsl(${hash} 62% 42%)`,
+        fontSize: Math.round((size + 3) * 0.62),
+        fontWeight: 700,
+        lineHeight: 1,
+      }}
+    >
+      {text}
+    </span>
+  );
+}
+
 function resolveIcon(value: string | null | undefined, rules: IconRule[], fallback: IconRule): IconRule {
   const normalized = value?.trim() ?? '';
   return rules.find((rule) => rule.match.test(normalized)) ?? fallback;
@@ -93,7 +141,7 @@ function EntityIcon({ rule, label, size = 'sm' }: { rule: IconRule; label: strin
   const pixelSize = size === 'lg' ? 26 : 13;
   return (
     <span className={`lg-log-entity-icon lg-log-entity-icon-${rule.tone} lg-log-entity-icon-${size}`} aria-hidden="true" title={label}>
-      {rule.brand === 'deepseek' ? <DeepSeekMark size={pixelSize} /> : rule.brand === 'map' ? <MapMark size={pixelSize} /> : rule.brand ? <SimpleBrandMark icon={rule.brand} size={pixelSize} /> : rule.icon ? (() => {
+      {rule.letter ? <LetterMark label={label} size={pixelSize} /> : rule.brand === 'deepseek' ? <DeepSeekMark size={pixelSize} /> : rule.brand === 'map' ? <MapMark size={pixelSize} /> : rule.brand ? <SimpleBrandMark icon={rule.brand} size={pixelSize} /> : rule.icon ? (() => {
         const Icon = rule.icon;
         return <Icon size={pixelSize} strokeWidth={1.9} />;
       })() : null}
@@ -131,7 +179,10 @@ export function ModelEntityIcon({ model, size }: { model?: string | null; size?:
 }
 
 export function ProviderEntityIcon({ provider, size }: { provider?: string | null; size?: EntityIconSize }) {
-  return <EntityIcon rule={resolveIcon(provider, PROVIDER_ICON_RULES, { match: /.*/, icon: Cloud, tone: 'neutral' })} label={provider || 'Provider'} size={size} />;
+  const fallback: IconRule = provider?.trim()
+    ? { match: /.*/, letter: true, tone: 'plain' }
+    : { match: /.*/, icon: Cloud, tone: 'neutral' };
+  return <EntityIcon rule={resolveIcon(provider, PROVIDER_ICON_RULES, fallback)} label={provider || 'Provider'} size={size} />;
 }
 
 export function AppEntityIcon({ app, sourceSystem, size }: { app?: string | null; sourceSystem?: string | null; size?: EntityIconSize } = {}) {

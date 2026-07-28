@@ -222,6 +222,7 @@
 - [首页与登录页视觉语言 · 规则](./rule.frontend.landing-visual-style.md) `rule.frontend.landing-visual-style`
 - [移动端视觉检查矩阵 · 规则](./rule.frontend.mobile-visual-check-matrix.md) `rule.frontend.mobile-visual-check-matrix`
 - [流式文本动效 · 规则](./rule.frontend.streaming-text.md) `rule.frontend.streaming-text`
+- [LLM Gateway 控制台风格调性 · 规则](./rule.llm-gateway.console-design-tonality.md) `rule.llm-gateway.console-design-tonality`
 - [Agent 开发交付流程 · 规则](./rule.platform.agent-development.md) `rule.platform.agent-development`
 - [Agent 权限分类 · 规则](./rule.platform.agent-permissions.md) `rule.platform.agent-permissions`
 - [AI 模型可见性原则 · 规则](./rule.platform.ai-model-visibility.md) `rule.platform.ai-model-visibility`

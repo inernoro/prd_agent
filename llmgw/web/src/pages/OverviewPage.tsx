@@ -148,14 +148,20 @@ export function GovernancePage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 16 }}>
+      <header className="lg-page-heading">
+        <div>
+          <h1>系统运维</h1>
+          <p>运行闸门、协议覆盖与配置权威的当前状态，判断网关能否按预期承接流量。</p>
+        </div>
+      </header>
       {/* 部分接口失败：顶部横幅明示故障，避免「计数为 0」被误读为网关健康 */}
       {error ? (
-        <div style={{ fontSize: 12, color: '#f85149', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(248,81,73,0.35)', background: 'rgba(248,81,73,0.08)' }}>
+        <div style={{ fontSize: 'var(--fs-caption)', color: '#f85149', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid rgba(248,81,73,0.35)', background: 'rgba(248,81,73,0.08)' }}>
           部分配置接口加载失败（下方计数可能不完整）：{error}
         </div>
       ) : null}
       {actionMessage ? (
-        <div style={{ fontSize: 12, color: 'var(--text-secondary)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)' }}>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '8px 12px', borderRadius: 'var(--radius-sm)', border: '1px solid var(--border-subtle)', background: 'var(--bg-elevated)' }}>
           {actionMessage}
         </div>
       ) : null}
@@ -202,8 +208,8 @@ export function GovernancePage() {
       </div>
 
       <div style={{ display: 'flex', alignItems: 'center', gap: 10, flexWrap: 'wrap', padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <span style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)' }}>配置权威迁移</span>
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>将 MAP-only 配置复制到 llm_gateway，并把 active 调用方绑定到同类型 GW 默认池。</span>
+        <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-primary)' }}>配置权威迁移</span>
+        <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>将 MAP-only 配置复制到 llm_gateway，并把 active 调用方绑定到同类型 GW 默认池。</span>
         <Link to="/app-callers?status=active" style={{ textDecoration: 'none' }}>
           <Chip label={`未绑池 ${configAuthority!.activeMissingGatewayPool}`} color={configAuthority!.activeMissingGatewayPool > 0 ? '#d29922' : '#3fb950'} bg={configAuthority!.activeMissingGatewayPool > 0 ? 'rgba(210,153,34,0.14)' : 'rgba(63,185,80,0.14)'} />
         </Link>
@@ -222,10 +228,10 @@ export function GovernancePage() {
       {/* 容器拓扑 */}
       <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: 16 }}>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4 }}>
-          <span style={{ fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>容器拓扑</span>
+          <span style={{ fontSize: 'var(--fs-body)', fontWeight: 700, color: 'var(--text-primary)' }}>容器拓扑</span>
           <Chip label={`${TOPOLOGY.length} 个容器`} color="var(--text-secondary)" bg="var(--bg-elevated)" />
         </div>
-        <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+        <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)', marginBottom: 12 }}>
           网关是 3 个独立容器（serving 引擎 + 控制台后端 + 控制台前端），与 MAP 的 api/admin、共享 mongo/redis 各司其职。
           这就是你在 CDS 面板看到「多只脚」的原因——不是异常，是剥离后的正常形态。
         </div>
@@ -246,10 +252,10 @@ export function GovernancePage() {
                 }}
               >
                 <span style={{ display: 'inline-flex', alignItems: 'center', gap: 5, color: g.color }}>{g.icon}<Chip label={g.label} color={g.color} bg={g.bg} /></span>
-                <span style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', minWidth: 120 }}>{t.name}</span>
-                <span style={{ fontSize: 12, color: 'var(--text-secondary)', minWidth: 84 }}>{t.role}</span>
+                <span style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-primary)', minWidth: 120 }}>{t.name}</span>
+                <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', minWidth: 84 }}>{t.role}</span>
                 <Chip label={t.exposure} color={t.exposure.includes('HTTPS') ? '#3fb950' : 'var(--text-muted)'} bg={t.exposure.includes('HTTPS') ? 'rgba(63,185,80,0.14)' : 'var(--bg-surface)'} />
-                <span style={{ fontSize: 12, color: 'var(--text-muted)', flex: 1, minWidth: 180 }}>{t.desc}</span>
+                <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)', flex: 1, minWidth: 180 }}>{t.desc}</span>
               </div>
             );
           })}
@@ -285,9 +291,9 @@ function StatCard({ icon, label, value, sub, to, color }: { icon: JSX.Element; l
         gap: 6,
       }}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 12, color: 'var(--text-muted)' }}>{icon}{label}</span>
-      <span style={{ fontSize: 24, fontWeight: 700, color: color || 'var(--text-primary)', fontFamily: 'ui-monospace, monospace' }}>{value}</span>
-      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{sub}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{icon}{label}</span>
+      <span style={{ fontSize: 'var(--fs-metric)', fontWeight: 'var(--fw-strong)', color: color || 'var(--text-primary)', fontFamily: 'var(--font-mono)' }}>{value}</span>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{sub}</span>
     </Link>
   );
 }
@@ -296,17 +302,17 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-body)', fontWeight: 700, color: 'var(--text-primary)' }}>
           <ShieldCheck size={16} /> 发布 Gate
         </span>
         <Chip label={runtimeGateLabel(gates)} color={runtimeGateColor(gates.status)} bg={runtimeGateBg(gates.status)} />
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
           {gates.readyForHttpFull ? '可以进入 full-http 发布流程' : '还不能宣称 full-http 完成'}
         </span>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)', marginBottom: 12 }}>
         这些 gate 聚合控制台已有证据；它们不替代发布脚本和生产台账，只用于治理页定位当前阻塞点。
-        {gates.releaseCommit ? <span style={{ fontFamily: 'ui-monospace, monospace' }}> commit={gates.releaseCommit}</span> : null}
+        {gates.releaseCommit ? <span style={{ fontFamily: 'var(--font-mono)' }}> commit={gates.releaseCommit}</span> : null}
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
         {gates.items.map((item) => {
@@ -314,10 +320,10 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
           return (
             <div key={item.id} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 6 }}>
               <div style={{ display: 'flex', alignItems: 'center', gap: 8, justifyContent: 'space-between' }}>
-                <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
+                <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
                 <Chip label={runtimeGateStatusLabel(item.status)} color={runtimeGateColor(item.status)} bg={runtimeGateBg(item.status)} />
               </div>
-              <div style={{ fontSize: 12, color: 'var(--text-secondary)', lineHeight: 1.45 }}>{item.detail}</div>
+              <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', lineHeight: 1.45 }}>{item.detail}</div>
               {item.facts && Object.keys(item.facts).length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {runtimeGateFactsForDisplay(item).map(([key, value]) => (
@@ -330,7 +336,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
                         overflow: 'hidden',
                         textOverflow: 'ellipsis',
                         whiteSpace: 'nowrap',
-                        fontSize: 11,
+                        fontSize: 'var(--fs-micro)',
                         color: 'var(--text-secondary)',
                         border: '1px solid var(--border-subtle)',
                         borderRadius: 'var(--radius-xs)',
@@ -343,7 +349,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
                   ))}
                 </div>
               ) : null}
-              <div style={{ fontSize: 11, color: 'var(--text-muted)', fontFamily: 'ui-monospace, monospace', wordBreak: 'break-word' }}>{item.evidence}</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', wordBreak: 'break-word' }}>{item.evidence}</div>
               {actions.length > 0 ? (
                 <div style={{ display: 'flex', flexWrap: 'wrap', gap: 6 }}>
                   {actions.map((action) => (
@@ -352,7 +358,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
                       to={action.to}
                       style={{
                         textDecoration: 'none',
-                        fontSize: 11,
+                        fontSize: 'var(--fs-micro)',
                         color: 'var(--accent)',
                         border: '1px solid var(--border-subtle)',
                         borderRadius: 'var(--radius-xs)',
@@ -365,7 +371,7 @@ function RuntimeGatePanel({ gates }: { gates: RuntimeGatesData }) {
                   ))}
                 </div>
               ) : null}
-              <div style={{ fontSize: 11, color: item.blocking ? '#d29922' : 'var(--text-muted)', lineHeight: 1.45 }}>{item.nextAction}</div>
+              <div style={{ fontSize: 'var(--fs-micro)', color: item.blocking ? '#d29922' : 'var(--text-muted)', lineHeight: 1.45 }}>{item.nextAction}</div>
             </div>
           );
         })}
@@ -378,7 +384,7 @@ function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData })
   return (
     <div style={{ background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', padding: 16 }}>
       <div style={{ display: 'flex', alignItems: 'center', gap: 8, marginBottom: 4, flexWrap: 'wrap' }}>
-        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 14, fontWeight: 700, color: 'var(--text-primary)' }}>
+        <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-body)', fontWeight: 700, color: 'var(--text-primary)' }}>
           <Shuffle size={16} /> 协议入口覆盖
         </span>
         <Chip
@@ -386,18 +392,18 @@ function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData })
           color={coverage.missingRuntimeProtocols === 0 ? '#3fb950' : '#d29922'}
           bg={coverage.missingRuntimeProtocols === 0 ? 'rgba(63,185,80,0.14)' : 'rgba(210,153,34,0.14)'}
         />
-        <span style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+        <span style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
           {coverage.releaseCommit ? `commit=${coverage.releaseCommit}` : `最近 ${coverage.sinceHours} 小时`}
         </span>
       </div>
-      <div style={{ fontSize: 12, color: 'var(--text-muted)', marginBottom: 12 }}>
+      <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)', marginBottom: 12 }}>
         这里只展示真实日志和 appCaller 注册表覆盖，不把“代码支持该协议”当作生产已通过。
       </div>
       <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(230px, 1fr))', gap: 8 }}>
         {coverage.items.map((item) => (
           <div key={item.ingressProtocol} style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 12, background: 'var(--bg-elevated)', display: 'flex', flexDirection: 'column', gap: 7 }}>
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8 }}>
-              <span style={{ fontSize: 13, fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
+              <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)' }}>{item.label}</span>
               <Chip label={protocolCoverageLabel(item.status)} color={protocolCoverageColor(item.status)} bg={protocolCoverageBg(item.status)} />
             </div>
             <div style={{ display: 'grid', gridTemplateColumns: 'repeat(2, minmax(0, 1fr))', gap: 6 }}>
@@ -406,11 +412,11 @@ function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData })
               <MiniMetric label="active 覆盖" value={`${item.coveredActiveAppCallers}/${item.activeAppCallers}`} />
               <MiniMetric label="失败/丢参" value={`${item.failedRequests}/${item.droppedParameterRequests}`} />
             </div>
-            <div style={{ minHeight: 18, fontSize: 11, color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+            <div style={{ minHeight: 18, fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
               {item.requestTypes.length > 0 ? item.requestTypes.join(', ') : '暂无 requestType 样本'}
             </div>
             {item.missingActiveAppCallerCodes.length > 0 ? (
-              <div style={{ fontSize: 11, color: '#d29922', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.missingActiveAppCallerCodes.join(', ')}>
+              <div style={{ fontSize: 'var(--fs-micro)', color: '#d29922', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.missingActiveAppCallerCodes.join(', ')}>
                 缺样本：{item.missingActiveAppCallerCodes.join(', ')}
               </div>
             ) : null}
@@ -427,7 +433,7 @@ function ProtocolCoveragePanel({ coverage }: { coverage: ProtocolCoverageData })
 
 const miniLinkStyle: CSSProperties = {
   textDecoration: 'none',
-  fontSize: 11,
+  fontSize: 'var(--fs-micro)',
   color: 'var(--accent)',
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius-xs)',
@@ -438,8 +444,8 @@ const miniLinkStyle: CSSProperties = {
 function MiniMetric({ label, value }: { label: string; value: string }) {
   return (
     <div style={{ minWidth: 0, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-xs)', padding: '6px 7px', background: 'var(--bg-surface)' }}>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
-      <div style={{ fontFamily: 'ui-monospace, monospace', fontSize: 13, fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', marginBottom: 2 }}>{label}</div>
+      <div style={{ fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-secondary)', fontWeight: 650, color: 'var(--text-primary)', overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{value}</div>
     </div>
   );
 }
@@ -763,15 +769,15 @@ function QuickLink({ to, icon, label, desc }: { to: string; icon: JSX.Element; l
         gap: 4,
       }}
     >
-      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 13, fontWeight: 600, color: 'var(--accent)' }}>{icon}{label}</span>
-      <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>{desc}</span>
+      <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--accent)' }}>{icon}{label}</span>
+      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{desc}</span>
     </Link>
   );
 }
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );
