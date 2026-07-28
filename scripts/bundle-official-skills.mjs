@@ -39,6 +39,7 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // {{BASE_URL}} 占位替换），catalog 只管其余可移植技能，避免重复/降低改动风险。
 const INCLUDE = new Set([
   'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
+  'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
   'plan-first',              // 通用先方案后动手
   'product-document-generator', // 通用产品文档生成
   'doc-writer',              // 通用七类文档模板
@@ -80,6 +81,7 @@ const DISPLAY_NAME = {
   'product-document-generator': 'product-document-generator · 产品文档生成',
   'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
   'risk-matrix': 'risk-matrix · MECE 风险评估',
+  'phase0-guard': 'phase0-guard · 底座阶段护栏',
   'sdd-init': 'sdd-init · 项目骨架落地',
   'skill-validation': 'skill-validation · 需求七维度评分',
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
@@ -115,6 +117,7 @@ const TAG_OVERRIDE = {
   'create-visual-test-to-kb': ['分析'],
   'skill-validation': ['需求'],
   'sdd-init': ['需求', '精英'],
+  'phase0-guard': ['需求', '精英'],
   'plan-first': ['需求'],
   'product-document-generator': ['文档'],
   'doc-writer': ['文档'],

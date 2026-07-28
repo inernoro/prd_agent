@@ -19,6 +19,8 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createBootstrapRouter } from './routes/bootstrap.js';
+import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -1281,6 +1283,13 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
+  // 项目初始化（2026-07-28）：发引导脚本与技能 zip，只读、不签发凭据。
+  // 客户拿到任何 CDS 凭据之前就要能装技能，所以必须匿名可达。
+  // 与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/bootstrap/presets') return true;
+  if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
+  if (method === 'GET' && path === '/api/skills/bundles') return true;
+  if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -3722,6 +3731,15 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
+  // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
+  app.use('/api', createBootstrapRouter({
+    skillProxy: new SkillProxy({
+      mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+    }),
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+  }));
   app.use('/api', createScheduledJobsRouter({
     stateService: deps.stateService,
     scheduledJobService,

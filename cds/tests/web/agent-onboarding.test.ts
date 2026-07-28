@@ -182,7 +182,8 @@ describe('CDS Agent 接入口令', () => {
   });
 
   it('为 MCP 适配明确登记候选、审批或禁止暴露状态', () => {
-    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(40);
+    // 41 = 40 + bootstrap（2026-07-28 新增项目初始化路由，匿名只读）
+    expect(CDS_AGENT_CAPABILITY_DEFINITIONS).toHaveLength(41);
     expect(CDS_AGENT_CAPABILITY_DEFINITIONS.every((capability) => capability.mcpExposure)).toBe(true);
     expect(
       CDS_AGENT_CAPABILITY_DEFINITIONS

@@ -12,42 +12,115 @@
     "qa": "测试与验收"
   },
   "skillRoles": {
-    "sdd-init": ["pm", "dev", "qa"],
-    "plan-first": ["pm", "dev"],
-    "skill-validation": ["pm"],
-    "product-document-generator": ["pm"],
-    "doc-writer": ["pm", "dev"],
-    "flow-trace": ["pm", "dev"],
-    "risk-matrix": ["pm", "dev", "qa"],
-    "acceptance-checklist": ["pm", "qa"],
-    "task-handoff-checklist": ["pm", "dev"],
-    "laowang": ["pm", "dev", "qa"],
-    "ui-ux-pro-max": ["pm", "dev"],
-    "find-skills": ["pm", "dev"],
-    "human-verify": ["dev", "qa"],
-    "code-hygiene": ["dev"],
-    "conflict-resolution": ["dev"],
-    "create-skill-file": ["dev"],
-    "theme-transition": ["dev"],
-    "remotion-scene-codegen": ["dev"],
-    "acceptance-test-design": ["qa"],
-    "acceptance-scenario-orchestrator": ["qa"],
-    "create-visual-test-to-kb": ["qa"]
+    "sdd-init": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "phase0-guard": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "plan-first": [
+      "pm",
+      "dev"
+    ],
+    "skill-validation": [
+      "pm"
+    ],
+    "product-document-generator": [
+      "pm"
+    ],
+    "doc-writer": [
+      "pm",
+      "dev"
+    ],
+    "flow-trace": [
+      "pm",
+      "dev"
+    ],
+    "risk-matrix": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "acceptance-checklist": [
+      "pm",
+      "qa"
+    ],
+    "task-handoff-checklist": [
+      "pm",
+      "dev"
+    ],
+    "laowang": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "ui-ux-pro-max": [
+      "pm",
+      "dev"
+    ],
+    "find-skills": [
+      "pm",
+      "dev"
+    ],
+    "human-verify": [
+      "dev",
+      "qa"
+    ],
+    "code-hygiene": [
+      "dev"
+    ],
+    "conflict-resolution": [
+      "dev"
+    ],
+    "create-skill-file": [
+      "dev"
+    ],
+    "theme-transition": [
+      "dev"
+    ],
+    "remotion-scene-codegen": [
+      "dev"
+    ],
+    "acceptance-test-design": [
+      "qa"
+    ],
+    "acceptance-scenario-orchestrator": [
+      "qa"
+    ],
+    "create-visual-test-to-kb": [
+      "qa"
+    ]
   },
   "skillRequires": {
-    "create-visual-test-to-kb": ["acceptance-test-design", "acceptance-scenario-orchestrator"],
-    "acceptance-scenario-orchestrator": ["acceptance-test-design"]
+    "create-visual-test-to-kb": [
+      "acceptance-test-design",
+      "acceptance-scenario-orchestrator"
+    ],
+    "acceptance-scenario-orchestrator": [
+      "acceptance-test-design"
+    ]
   },
   "bundles": [
     {
       "key": "pm-starter",
       "title": "pm-starter · 产品经理入门套装",
       "version": "1.0.0",
-      "description": "产品经理一条命令装齐：需求验证、方案先行、风险评估、PRD 写作、文档规范、验收清单、交接对齐。含 sdd-init，装完直接把工作方法落到你的项目里。",
-      "roles": ["pm"],
-      "tags": ["套装", "需求", "精英"],
+      "description": "产品经理一条命令装齐：底座阶段护栏、需求验证、方案先行、风险评估、PRD 写作、文档规范、验收清单、交接对齐。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "roles": [
+        "pm"
+      ],
+      "tags": [
+        "套装",
+        "需求",
+        "精英"
+      ],
       "includes": [
         "sdd-init",
+        "phase0-guard",
         "skill-validation",
         "plan-first",
         "product-document-generator",
