@@ -187,6 +187,11 @@ export interface ReleasePreflightReuseKey {
    * 旧结论证明不了新目标（Codex P1）。
    */
   targetConfigFingerprint?: string;
+  /**
+   * 发起发布这一刻**项目**身份的指纹。目标没动但项目换了仓库时，只比目标指纹会漏
+   * （Codex P1）——而复用路径不会重跑 project-identity / remote-repository 两项检查。
+   */
+  projectIdentityFingerprint?: string;
 }
 
 function normalize(value: string | undefined): string {
@@ -218,6 +223,8 @@ export function canReuseReleasePreflight(
   // 存量记录没有这个字段，一律走重跑：多花几秒预检，换掉「发到没验过的机器上」的风险。
   const fingerprint = normalize(key.targetConfigFingerprint);
   if (!fingerprint || normalize(record.targetConfigFingerprint) !== fingerprint) return false;
+  const projectFingerprint = normalize(key.projectIdentityFingerprint);
+  if (!projectFingerprint || normalize(record.projectIdentityFingerprint) !== projectFingerprint) return false;
   // commit 缺一边就证明不了「结论依据的产物 = 现在要发的产物」，宁可重跑。
   const commit = normalize(key.commitSha);
   if (!commit || normalize(record.artifactCommitSha) !== commit) return false;

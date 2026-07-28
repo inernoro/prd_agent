@@ -58,6 +58,14 @@ export interface ReleaseDoraRecovery {
   p90Ms: number | null;
   /** 至今仍未恢复的失败事件数，单列不混进中位样本 */
   ongoingCount: number;
+  /**
+   * 已确认恢复、但算不出恢复时长的失败事件数（只有 autoRestoredAt、没有起点的存量 run）。
+   *
+   * 单列而不是夹成 0 塞进样本：把「未知时长」当成「瞬时恢复」会把 p50/p90 系统性压低，
+   * 而且违背本模块「样本不足一律 null、绝不编造 0」的口径。它也不算进行中 ——
+   * 生产确实恢复了，只是不知道花了多久。三者之和恒等于失败数。
+   */
+  recoveredUnknownDurationCount: number;
 }
 
 export interface ReleaseDoraLeadTime {
@@ -226,6 +234,7 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
   // 得到一个既不属于任何真实故障、又普遍偏短的漂亮数字。
   const recoveryDurations: number[] = [];
   let ongoingCount = 0;
+  let recoveredUnknownDurationCount = 0;
   for (const failure of failedDeploys) {
     // 自动恢复优先：探测失败后 restorePreviousAfterFailedProbe 把上一版本推回去，
     // 生产在那一刻就已经好了，但它**不产生任何 run**（那不是一次发布）。
@@ -237,11 +246,15 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
       // finishedAt 恒晚于 autoRestoredAt。上一版拿 `autoRestoredAt >= failure.at` 当守卫，
       // 条件恒为 false，整条修复空转（Codex P2 第二轮）。
       const startedAt = Date.parse(failure.run.autoRestoreStartedAt || '');
-      const from = Number.isFinite(startedAt) ? startedAt : failure.at;
-      // autoRestoredAt 只在恢复真的成功后才落，所以「已恢复」是既成事实；
-      // 起点异常（时钟回拨/脏数据）只影响时长精度，不该反过来把它算成进行中故障，
-      // 故夹到 0 而不是丢样本 —— 否则 sampleCount + ongoingCount 与失败数对不上。
-      recoveryDurations.push(Math.max(0, autoRestoredAt - from));
+      // autoRestoredAt 只在恢复真的成功后才落，所以「已恢复」是既成事实。
+      // 但起点缺失（上一版只写了终点的存量 run）或时间戳倒挂时，时长是**未知**的：
+      // 退回 failure.at 会得到负数、夹成 0 就等于宣称「瞬时恢复」，把 p50/p90 系统性
+      // 压低，也违背本文件「绝不编造 0」的口径（Codex P2）。单列计数，不进样本。
+      if (Number.isFinite(startedAt) && autoRestoredAt >= startedAt) {
+        recoveryDurations.push(autoRestoredAt - startedAt);
+      } else {
+        recoveredUnknownDurationCount += 1;
+      }
       continue;
     }
     const restored = terminalRuns.find((item) => (
@@ -261,6 +274,7 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
     p50Ms: percentile(recoveryDurations, 0.5),
     p90Ms: percentile(recoveryDurations, 0.9),
     ongoingCount,
+    recoveredUnknownDurationCount,
   };
 
   // ── 4. 变更前置时间 ──

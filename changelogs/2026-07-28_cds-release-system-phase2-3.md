@@ -32,3 +32,7 @@
 | chore | cds | 三个碎片文件合并为一个（Codex P1）：同一 PR 的变更必须落在同一个碎片里（CLAUDE.md §4），否则发版合并与后续维护会丢失 PR 级的整体性 |
 | fix | cds | 预检复用绑定目标配置指纹（Codex P1）：复用键此前只有 branchId/targetId/previewUrl/operator/commitSha，运维在两分钟复用窗口里改掉 host / 凭据 / appPath / 发布命令 / healthcheckUrl 后键照样命中，旧结论被套到一台连通性、仓库身份、脚本都没验证过的机器上；指纹清单直接复用变更历史那张白名单表，不另立第二份，存量无指纹记录一律重跑 |
 | fix | cds | 自动恢复配对改用探测失败时刻（Codex P2，修上一版空转）：`autoRestoredAt` 落在 `failRun` 之前，恒早于 `finishedAt`，而上一版拿它与 run 终态时刻比大小，条件恒为 false，整条修复在生产上是空转；新增 `autoRestoreStartedAt` 作为故障窗口起点。上一版用例之所以是绿的，是因为它手写了一个现实中不可能出现的时间顺序——测试编码了作者的假设而不是真实时序 |
+| fix | cds | 配置指纹改用原值计算（Codex P1）：指纹此前建在面向展示的 `formatTrackedValue` 上，512 字截断 + 敏感值掩码会让「只在长命令尾部不同」或「只改了 TOKEN=」的两个目标算出同一个指纹，命令换了旧预检照样放行；改走不脱敏不截断的原值 + sha256 单向哈希，脱敏只留在给人看的那一层 |
+| fix | cds | 预检复用键补项目身份指纹（Codex P1）：预检的 project-identity / remote-repository 两项验的是**项目**仓库身份，`PUT /projects/:id` 改 gitRepoUrl 时目标一个字节没动、指纹不变、缓存命中，而复用路径不会重跑这两项检查 |
+| fix | cds | 复用预检时「上一成功版本」改为现取（Codex P1）：此前还原落库那一份，若 TTL 内同目标另一条发布刚成功，新 run 会跳过该最新版本，后续健康检查失败时自动恢复会把更旧的版本推上生产并断掉回滚链 |
+| fix | cds | 缺恢复起点的存量 run 不再计作 0 时长样本（Codex P2）：只有 `autoRestoredAt` 没有起点时退回 `finishedAt` 会得到负数、夹成 0 就等于宣称「瞬时恢复」，系统性压低 p50/p90，也违背本模块「绝不编造 0」的口径；改为单列 `recoveredUnknownDurationCount`，与已知时长样本、进行中数三者之和恒等于失败数 |

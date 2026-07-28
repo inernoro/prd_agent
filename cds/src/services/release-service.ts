@@ -19,6 +19,7 @@ import {
   buildStrategyPreflightCommand,
   effectiveReleaseStrategy,
   normalizeRepositoryIdentity,
+  projectIdentityFingerprint,
   releaseProjectIdentity,
   validateReleaseStrategy,
 } from './release-strategy.js';
@@ -656,6 +657,9 @@ export class ReleaseService {
       artifactCommitSha: commitSha || undefined,
       // 结论只对「当时那个配置的目标」成立。指纹一变就是另一台机器 / 另一套脚本。
       targetConfigFingerprint: releaseTargetConfigFingerprint(target),
+      // 预检里的 project-identity / remote-repository 两项验的是**项目**的仓库身份，
+      // 不是目标。项目改了 gitRepoUrl 而目标没动时，只比目标指纹会漏（Codex P1）。
+      projectIdentityFingerprint: projectIdentityFingerprint(project),
       planId: plan?.id,
       previousReleaseId: previousRelease?.releaseId,
       createdAt: this.nowIso(),
@@ -695,6 +699,12 @@ export class ReleaseService {
       targetConfigFingerprint: releaseTargetConfigFingerprint(
         this.stateService.getReleaseTarget(input.targetId),
       ),
+      // 同理取**当前**项目身份：`PUT /projects/:id` 改掉 gitRepoUrl 后，目标指纹不变，
+      // 而复用路径不会重跑 project-identity / remote-repository —— 一次全新预检本该
+      // 拒绝的仓库身份不一致会被直接放行。
+      projectIdentityFingerprint: projectIdentityFingerprint(
+        branch ? this.stateService.getProject(branch.projectId) : undefined,
+      ),
     };
     const nowMs = this.now().getTime();
     const candidates = input.preflightId
@@ -715,9 +725,11 @@ export class ReleaseService {
       artifact: record.artifact,
       target,
       plan,
-      previousRelease: record.previousReleaseId
-        ? this.stateService.getReleaseRun(record.previousReleaseId)
-        : undefined,
+      // 「上一成功版本」必须**现取**，不能还原落库时那一份：若 TTL 内同目标另一条
+      // 发布刚成功，旧值会让新 run 跳过那个最新版本 —— 后续健康检查失败时自动恢复
+      // 会把更旧的版本推上生产，回滚链也跟着断（Codex P1）。
+      // 预检结论里 rollback-version 那条是非阻塞信息项，刷新它不改变放行判定。
+      previousRelease: this.stateService.getLatestSuccessfulReleaseRun(target.id),
       preflightId: record.id,
       reused: true,
     };

@@ -1484,6 +1484,12 @@ export interface ReleasePreflightRecord {
    * 一律**不允许复用**（宁可多跑一次预检，也不拿证明不了的结论放行）。
    */
   targetConfigFingerprint?: string;
+  /**
+   * 结论生成时**项目**身份的指纹。预检的 project-identity / remote-repository
+   * 两项验的是项目仓库身份，不是目标：改 gitRepoUrl 时目标指纹不变，只比目标会漏。
+   * 缺省 = 早期存量记录，一律不许复用。
+   */
+  projectIdentityFingerprint?: string;
   planId?: string;
   previousReleaseId?: string;
   createdAt: string;

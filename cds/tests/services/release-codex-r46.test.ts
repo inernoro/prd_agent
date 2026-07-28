@@ -15,7 +15,7 @@ import {
   normalizeRemoteDirectoryIdentity,
 } from '../../src/services/release-artifact-retention.js';
 import { canReuseReleasePreflight, selectReleasePreflightsToPrune } from '../../src/services/release-retention.js';
-import { releaseTargetConfigFingerprint } from '../../src/services/release-target-history.js';
+import { formatTrackedValue, releaseTargetConfigFingerprint } from '../../src/services/release-target-history.js';
 import { computeReleaseDora, type ReleaseDoraRunLike } from '../../src/services/release-dora.js';
 import {
   readReleaseHealthSnapshot,
@@ -172,8 +172,10 @@ describe('P2 自动恢复必须计入恢复时长', () => {
     expect(metrics.recovery.p50Ms).toBe(45_000);
   });
 
-  it('存量 run 只有 autoRestoredAt、没有起点时，仍算已恢复不算进行中', () => {
-    // 起点缺失只该影响时长精度，不该把「生产已经恢复」这个既成事实翻转成故障进行中。
+  it('存量 run 只有 autoRestoredAt、没有起点时：算已恢复，但时长未知不进样本', () => {
+    // 事故值：起点缺失时退回 finishedAt（更晚）→ 差值为负 → 夹成 0 →
+    // 「未知时长」被当成「瞬时恢复」，p50/p90 被系统性压低，
+    // 也违背本模块「绝不编造 0」的口径（Codex P2 第三轮）。
     const metrics = computeReleaseDora([
       run({
         releaseId: 'rel_fail',
@@ -185,8 +187,10 @@ describe('P2 自动恢复必须计入恢复时长', () => {
     ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
 
     expect(metrics.recovery.ongoingCount).toBe(0);
-    expect(metrics.recovery.sampleCount).toBe(1);
-    expect(metrics.recovery.p50Ms).toBe(0);
+    expect(metrics.recovery.recoveredUnknownDurationCount).toBe(1);
+    // 关键：不进样本，更不能是 0。
+    expect(metrics.recovery.sampleCount).toBe(0);
+    expect(metrics.recovery.p50Ms).toBeNull();
   });
 
   it('没有自动恢复也没有后续成功发布时，仍如实算进行中故障', () => {
@@ -219,10 +223,16 @@ describe('P2 自动恢复必须计入恢复时长', () => {
     ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
 
     expect(metrics.changeFailure.failed).toBe(3);
-    expect(metrics.recovery.sampleCount + metrics.recovery.ongoingCount).toBe(3);
-    // 脏数据夹到 0，不产生负的恢复时长。
-    expect(metrics.recovery.p50Ms).not.toBeNull();
-    expect(metrics.recovery.p50Ms!).toBeGreaterThanOrEqual(0);
+    // 三者之和恒等于失败数：已恢复且知道时长 / 已恢复但时长未知 / 仍在进行中。
+    // 少任何一类都会出现「某条失败凭空消失」或「被重复计两次」。
+    expect(
+      metrics.recovery.sampleCount
+      + metrics.recovery.ongoingCount
+      + metrics.recovery.recoveredUnknownDurationCount,
+    ).toBe(3);
+    // 时钟回拨那条进「时长未知」，不产生 0 样本也不产生负数。
+    expect(metrics.recovery.recoveredUnknownDurationCount).toBe(1);
+    expect(metrics.recovery.p50Ms).toBe(45_000);
   });
 
   it('源码守卫：配对不许再拿 autoRestoredAt 与 failure.at 比大小', () => {
@@ -323,6 +333,7 @@ describe('P1 预检复用必须绑定目标配置指纹', () => {
       checks: [],
       artifactCommitSha: 'a'.repeat(40),
       targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+      projectIdentityFingerprint: 'pid:aaaaaaaaaaaa',
       createdAt: '2026-07-28T10:00:00.000Z',
     } as unknown as ReleasePreflightRecord;
     const nowMs = Date.parse('2026-07-28T10:00:30.000Z');
@@ -331,12 +342,19 @@ describe('P1 预检复用必须绑定目标配置指纹', () => {
       targetId: 'rt_1',
       commitSha: 'a'.repeat(40),
       targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+      projectIdentityFingerprint: 'pid:aaaaaaaaaaaa',
     };
 
     expect(canReuseReleasePreflight(record, key, nowMs)).toBe(true);
     expect(canReuseReleasePreflight(record, {
       ...key,
       targetConfigFingerprint: releaseTargetConfigFingerprint(withSsh({ host: 'other.example.test' })),
+    }, nowMs)).toBe(false);
+    // 目标一个字节没动、但项目换了仓库（PUT /projects/:id 改 gitRepoUrl）也必须重跑：
+    // 复用路径不会重跑 project-identity / remote-repository 两项检查（Codex P1 第三轮）。
+    expect(canReuseReleasePreflight(record, {
+      ...key,
+      projectIdentityFingerprint: 'pid:bbbbbbbbbbbb',
     }, nowMs)).toBe(false);
   });
 
@@ -357,6 +375,7 @@ describe('P1 预检复用必须绑定目标配置指纹', () => {
       targetId: 'rt_1',
       commitSha: 'a'.repeat(40),
       targetConfigFingerprint: releaseTargetConfigFingerprint(base),
+      projectIdentityFingerprint: 'pid:aaaaaaaaaaaa',
     }, Date.parse('2026-07-28T10:00:30.000Z'))).toBe(false);
   });
 
@@ -364,5 +383,68 @@ describe('P1 预检复用必须绑定目标配置指纹', () => {
     const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-target-history.ts'), 'utf8');
     // 两张表漂移的后果最危险的方向是：历史记了一笔变更，预检却认为配置没变照旧复用。
     expect(source).toMatch(/releaseTargetConfigFingerprint[\s\S]{0,400}RELEASE_TARGET_TRACKED_PATHS/);
+  });
+});
+
+describe('Codex 第三轮：指纹必须建在原值上，复用必须刷新上一版本', () => {
+  const long = 'x'.repeat(600);
+  const withCommand = (command: string): ReleaseTarget => ({
+    id: 'rt_1',
+    projectId: 'p1',
+    name: 's',
+    type: 'ssh',
+    isEnabled: true,
+    strategy: { mode: 'existing-script', command },
+    ssh: {
+      host: 'h', port: 22, user: 'u', privateKeyRef: 'k',
+      appPath: '/srv/app', deployCommand: command, healthcheckUrl: 'https://h/health',
+    },
+  } as unknown as ReleaseTarget);
+
+  it('超过展示截断长度之后的差异照样改变指纹', () => {
+    // 事故值：指纹建在 formatTrackedValue 上，512 字之后被截断，
+    // 两条只在尾部不同的长发布命令算出同一个指纹 —— 命令换了却照旧放行。
+    const a = releaseTargetConfigFingerprint(withCommand(`${long}A`));
+    const b = releaseTargetConfigFingerprint(withCommand(`${long}B`));
+    expect(a).not.toBe(b);
+  });
+
+  it('只改敏感参数（TOKEN=）也必须改变指纹', () => {
+    // 事故值：展示层把 TOKEN=xxx 统一掩码，两个不同 token 掩码后完全相同。
+    const a = releaseTargetConfigFingerprint(withCommand('./deploy.sh TOKEN=aaaaaaaaaaaa'));
+    const b = releaseTargetConfigFingerprint(withCommand('./deploy.sh TOKEN=bbbbbbbbbbbb'));
+    expect(a).not.toBe(b);
+  });
+
+  it('指纹是单向哈希，不残留任何明文', () => {
+    const fp = releaseTargetConfigFingerprint(withCommand('./deploy.sh TOKEN=supersecret'));
+    expect(fp).not.toContain('supersecret');
+    expect(fp).not.toContain('deploy.sh');
+    expect(fp).toMatch(/^ref:[0-9a-f]{12}$/);
+  });
+
+  it('展示层仍然脱敏 + 截断（两条路分工没被搞混）', () => {
+    expect(formatTrackedValue('./deploy.sh TOKEN=supersecret', 'strategy.command'))
+      .not.toContain('supersecret');
+    expect(formatTrackedValue(`${long}A`, 'strategy.command')).toContain('已截断');
+  });
+
+  it('源码守卫：指纹不许再走展示格式化函数', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-target-history.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    const fnStart = code.indexOf('export function releaseTargetConfigFingerprint');
+    const fnEnd = code.indexOf('export function formatTrackedValue');
+    const body = code.slice(fnStart, fnEnd);
+    expect(body).toContain('rawTrackedValue(');
+    expect(body).not.toContain('formatTrackedValue(');
+  });
+
+  it('源码守卫：复用时上一成功版本必须现取，不许还原落库那份', () => {
+    const source = fs.readFileSync(path.join(CDS_ROOT, 'src/services/release-service.ts'), 'utf8');
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^[ \t]*\/\/.*$/gm, '');
+    // 事故写法：previousRelease 从 record.previousReleaseId 还原 —— TTL 内另一条发布
+    // 刚成功时，新 run 会跳过那个最新版本，自动恢复推更旧的版本上生产。
+    expect(code).not.toMatch(/previousRelease:\s*record\.previousReleaseId/);
+    expect(code).toContain('previousRelease: this.stateService.getLatestSuccessfulReleaseRun(target.id)');
   });
 });

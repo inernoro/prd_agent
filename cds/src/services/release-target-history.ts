@@ -107,6 +107,24 @@ function fingerprint(value: string): string {
 
 /** 值 → 展示字符串。undefined / 空串统一收敛成 undefined，避免「空 vs 不存在」刷出假变更。 */
 /**
+ * 值 → **原值**字符串。只做类型归一，不脱敏、不截断。
+ *
+ * 与 formatTrackedValue 的分工是本模块最容易搞错的一处：
+ *   - 这个给**指纹**用 —— 结果进单向哈希，不落库、不展示，必须保真；
+ *   - formatTrackedValue 给**展示**用 —— 会掩码敏感值、512 字截断，会丢信息。
+ *
+ * 事故值（Codex P1）：指纹曾经建在 formatTrackedValue 上，于是两个「只在长发布命令
+ * 尾部不同」或「只改了 TOKEN=xxx」的目标算出**同一个指纹** —— 命令已经换了，
+ * 旧预检照样在两分钟窗口里放行。脱敏该发生在给人看的那一层，不该发生在判等的那一层。
+ */
+function rawTrackedValue(raw: unknown): string | undefined {
+  if (raw === undefined || raw === null) return undefined;
+  if (typeof raw === 'boolean') return raw ? 'true' : 'false';
+  const text = typeof raw === 'string' ? raw : String(raw);
+  return text.trim() ? text : undefined;
+}
+
+/**
  * 目标配置指纹 —— 「这个发布目标的配置有没有变过」的唯一判据。
  *
  * 为什么复用 RELEASE_TARGET_TRACKED_PATHS 而不另立一份清单：这张表已经是「哪些字段
@@ -114,18 +132,19 @@ function fingerprint(value: string): string {
  * 两张表迟早漂移 —— 而漂移的后果是「历史里记了一笔变更，预检却认为配置没变、
  * 照旧复用旧结论」，正好是最危险的方向。加字段时只需改那一张表，两边同时生效。
  *
- * 事故值（Codex P1）：复用键只有 branchId/targetId/previewUrl/operator/commitSha。
+ * 事故值（Codex P1 第一轮）：复用键只有 branchId/targetId/previewUrl/operator/commitSha。
  * 运维在两分钟复用窗口内改了 host / 凭据 / appPath / 发布命令 / healthcheckUrl，
  * 键照样命中，于是把「旧目标上验过的结论」套到新目标上 —— 发布打到一台连通性、
  * 仓库身份、脚本都从没验证过的机器上。
  *
- * 用 privateKeyRef 的**指纹**参与计算（formatTrackedValue 已对它做脱敏），
- * 所以指纹本身不含凭据引用原值，可以安全落库。
+ * 取**原值**做单向哈希（见 rawTrackedValue）：sha256 不可逆，指纹里不残留任何明文，
+ * 落库安全；而用脱敏值会让「命令换了但掩码后一样」的两个配置撞成同一个指纹。
  */
 export function releaseTargetConfigFingerprint(target: ReleaseTarget | undefined): string {
   if (!target) return '';
   const parts = RELEASE_TARGET_TRACKED_PATHS.map(({ path: dottedPath }) => {
-    const value = formatTrackedValue(readPath(target, dottedPath), dottedPath);
+    // 字段名与值一起进哈希，避免「A 字段清空、B 字段填上同一个值」互相抵消。
+    const value = rawTrackedValue(readPath(target, dottedPath));
     return `${dottedPath}=${value ?? ''}`;
   });
   return fingerprint(parts.join('\n'));
