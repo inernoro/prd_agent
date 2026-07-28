@@ -2,7 +2,7 @@
 
 > **版本**：v1.0 | **日期**：2026-06-29 | **状态**：已落地
 
-> 关联: `doc/design.llm-gateway-physical-isolation.md`、`doc/debt.llm-gateway-isolation.md`、
+> 关联: `doc/design.platform.llm-gateway.physical-isolation.md`、`doc/debt.platform.llm-gateway.isolation.md`、
 > `doc/report.gw-test-matrix.md`（全量可见报告）、`prd-api/tests/PrdAgent.Api.Tests/Gateway/`、`scripts/gw-smoke.py`
 
 AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维度不漏不叠地覆盖每个真实调用入口与协议边界，
@@ -56,6 +56,6 @@ AI 大模型网关「真实调用面」MECE 冒烟测试矩阵。目标：按维
 
 - `ModelTestStub.FailureMode` 当前**未接入** serving 路径（resolver/gateway 不查 `model_test_stubs`）——
   canary 不依赖它，改用桩上游错误端点 / 坏 URL 模型（真实失败路径）。让 FailureMode 生效是独立改动，记
-  `doc/debt.llm-gateway-isolation.md`。
+  `doc/debt.platform.llm-gateway.isolation.md`。
 - D8 生图走 `ImageGenGateway`/`OpenAIImageClient`，不经 chat 适配器；图片格式还原在 `LlmRequestLogWriter`。
 - 不覆盖计费、不重写调度算法。

@@ -401,7 +401,7 @@ PR #1168 在不重做 full-http、模型迁移、模型池算法或发布 Gate �
 - 登录页改为左右分区的完整入口：匿名 `/gw/healthz` 明确显示服务状态，正文解释为什么登录前不能展示租户数据，并在同屏说明 Quickstart、Activity、费用和租户隔离。用户名与密码增加显式 label，桌面、平板和手机分别收敛布局；没有放宽任何鉴权，也没有展示租户数量或请求摘要。
 - CDS main 在本轮检查前已经通过正常网页链路创建 appCaller 和 tenant-scoped service key，并完成一次 OpenAI-compatible Quickstart 安全连通请求；后续只读复核确认该请求在模型解析前结束，没有 `ActualModel`、`ActualPlatformId` 或模型池证据，因此不得再表述为“真实 chat 成功”。同一测试库当时有 3 个 appCaller、0 个 GW 权威模型池，真实调用并未闭环。
 - 正式环境当前仍兼容 `https://map.ebcone.net/llmgw/` 二级目录；独立域名应把根路径反代到正式机 `127.0.0.1:8081`。仓库新增 `llmgw/deploy/public-domain.nginx.example.conf` 和完整 DNS、证书、Nginx、健康与无 key 拒绝验收顺序。
-- `sirius.ebcone.net` 的公共权威 DNS 在本轮检查时为 NXDOMAIN；现有腾讯云 COS 凭据调用 DNSPod 只读接口返回 `OperationDenied.NoPermissionToOperateDomain`。`map.ebcone.net` 现有证书 SAN 也只包含 `map.ebcone.net`。因此没有伪造“已上线”：代码、Nginx 模板和回跳语义已就绪，正式域名仍需域名管理员创建 DNS 记录并签发独立证书，具体阻塞进入 `doc/debt.llm-gateway.md`。
+- `sirius.ebcone.net` 的公共权威 DNS 在本轮检查时为 NXDOMAIN；现有腾讯云 COS 凭据调用 DNSPod 只读接口返回 `OperationDenied.NoPermissionToOperateDomain`。`map.ebcone.net` 现有证书 SAN 也只包含 `map.ebcone.net`。因此没有伪造“已上线”：代码、Nginx 模板和回跳语义已就绪，正式域名仍需域名管理员创建 DNS 记录并签发独立证书，具体阻塞进入 `doc/debt.platform.llm-gateway.md`。
 
 ### 9.4 真实请求与 OpenRouter 微观体验补强（2026-07-17）
 
@@ -585,12 +585,12 @@ OpenRouter 的正确表达是一个 `Provider` 加一个或多个 `Provider Endp
 
 ```text
 你接手的是 LLM Gateway 外部平台化与控制台体验任务。唯一 SSOT 是：
-doc/plan.platform.llm-gateway-external-platform.md
+doc/plan.platform.llm-gateway.external-platform.md
 
 先阅读：
 1. doc/design.platform.llm-gateway.md
-2. doc/plan.llm-gateway.full-cutover.md
-3. doc/debt.llm-gateway.md
+2. doc/plan.platform.llm-gateway.full-cutover.md
+3. doc/debt.platform.llm-gateway.md
 4. llmgw/console-api/Program.cs
 5. llmgw/web/src/App.tsx
 6. llmgw/web/src/components/ConsoleLayout.tsx

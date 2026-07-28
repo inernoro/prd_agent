@@ -4,7 +4,7 @@
 
 > **关联实现**：`prd-api/.../LlmGateway/LlmGateway.cs`、`ModelResolver.cs`、`LlmGateway/Adapters/*`、`LlmGateway/Transformers/*`、`Infrastructure/LLM/OpenAIImageClient.cs`、`Infrastructure/ModelPool/*`、`Core/Models/AppCallerRegistry.cs`
 > **关联取证**：`scripts/llm-gateway-phase0-forensics.mongo.js`
-> **关联债务**：`debt.llm-gateway.md`
+> **关联债务**：`debt.platform.llm-gateway.md`
 > **一句话**：把"接口模式挂在平台上、图片自成一套、池子背着 6 个没人用的策略引擎"的混乱调度，收敛为"协议挂在模型上、文本与图片共用一个网关、池退化成短兜底链、OpenRouter 做默认协议"的轻量体系——稳定优先、灵活兼容、易统计。
 
 
@@ -102,7 +102,7 @@ key      = model.ApiKey ?? platform.ApiKey
   - **G3 Claude 线原生互转**：请求 OpenAI `{type:function, function:{name,description,parameters}}` → Claude `{name, description, input_schema}`，`tool_choice` auto/required/function→object 映射；响应 Claude `content[].type=="tool_use"` → OpenAI `tool_calls`（arguments 序列化为 JSON 字符串）。**两侧 schema 不同，禁止盲透传**——这正是"全归一"会出错处。
   - **G4 能力软门**：带 `tools` 但模型 `LLMModelCapability.function_calling` 明确 false → 熔断报错（不骗用户）；未知放行。**能力描述符从死元数据升级为路由软门的首个消费者**。
   - **G5 代理回吐**：`OpenApiController` 非流/流式均把 tool_calls 按 OpenAI 形状回吐（含 `finish_reason="tool_calls"`）。
-  - **已知边界**（见 `doc/debt.llm-gateway-protocol-fidelity.md`）：Claude 流式 tool_use 增量未映射；能力软门池路径为 null（best-effort 放行）；Extensions 容器已建未消费。
+  - **已知边界**（见 `doc/debt.platform.llm-gateway.protocol-fidelity.md`）：Claude 流式 tool_use 增量未映射；能力软门池路径为 null（best-effort 放行）；Extensions 容器已建未消费。
 
 把现有 `IExchangeTransformer` 提升为这个**协议层**：openai/claude 两个 Gateway Adapter、三个 Image Adapter、五个 Transformer 收成"协议处理器"，按 protocol 字符串索引，**但各自保真、不互相拍平**。Exchange 不再是"特殊平台"，只是"一个带自己 url/key + 非 passthrough 协议的模型"。
 
@@ -396,7 +396,7 @@ P3 执行顺序：建上述 3 个默认池(生产共享 Mongo 写) → CDS 部�
 
 ### 11.5 意外情况登记 = 命名回归守护
 
-§10 与 `debt.llm-gateway.md` 挖出的每个意外，落一条**命名回归测试**（不只债务条），撞过的坑永不复发：
+§10 与 `debt.platform.llm-gateway.md` 挖出的每个意外，落一条**命名回归测试**（不只债务条），撞过的坑永不复发：
 
 | 测试名 | 守护的意外 |
 |---|---|
@@ -476,7 +476,7 @@ P4 清理范围扩大（含退役 OpenPlatformApp）；新增 **P6 平台收口*
 - `design.llm-gateway.md`——Gateway 总体设计（现状基线，本设计在其上做减法）
 - `design.llm-gateway-refactor.md`——图片 compute-then-send 重构（PR #490，本设计复用其算/发分离）
 - `design.model-pool.md`——大模型池三级调度现状（本设计将其收敛为 2 级 + 兜底链）
-- `debt.llm-gateway.md`——本次迁移的已知边界台账
+- `debt.platform.llm-gateway.md`——本次迁移的已知边界台账
 - `.claude/rules/compute-then-send.md`——算/发两阶段（图片统一契约的依据）
 - `.claude/rules/llm-gateway.md`——所有 LLM 调用必经 Gateway + LlmRequestContext
 - `.claude/rules/cross-project-isolation.md`——密钥下沉的轮换约束

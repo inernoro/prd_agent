@@ -19,7 +19,7 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
-| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动；D4 扫描到的 `**pnpm**` 为正文加粗误判非技能表行，已核实非真实幽灵），D6 处理 5 条 changelog（llmgw OpenRouter 日志字体列布局与详情路由/WSS 与安全 HTTP 出站保留网段拒绝规则/Key 撤销删除站内确认弹窗/CDS 验收报告离线 ZIP 与知识库导入深链/团队成员搜索权限修复），均无需追加设计文档章节（WSS 出站策略已被 `doc/design.llm-gateway-physical-isolation.md` 覆盖；报告导入/reportId 幂等已被 `doc/design.acceptance.kb.md` 覆盖；其余为窄范围 UI/bug fix，无对应 design 文档），仅登记 manifest，manifest 累计 487 条 |
+| chore | doc | 每日熵减计划：D1-D4 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动；D4 扫描到的 `**pnpm**` 为正文加粗误判非技能表行，已核实非真实幽灵），D6 处理 5 条 changelog（llmgw OpenRouter 日志字体列布局与详情路由/WSS 与安全 HTTP 出站保留网段拒绝规则/Key 撤销删除站内确认弹窗/CDS 验收报告离线 ZIP 与知识库导入深链/团队成员搜索权限修复），均无需追加设计文档章节（WSS 出站策略已被 `doc/design.platform.llm-gateway.physical-isolation.md` 覆盖；报告导入/reportId 幂等已被 `doc/design.acceptance.kb.md` 覆盖；其余为窄范围 UI/bug fix，无对应 design 文档），仅登记 manifest，manifest 累计 487 条 |
 
 ### 2026-07-24
 
@@ -154,7 +154,7 @@
 | security | cds | Agent 预览地址仅暴露公开 previewDomain，隐藏、备用和内部根域不再进入 API 输出 |
 | fix | prd-api | 同步官方技能内嵌目录中的真实预览地址交付规则 |
 | security | cds | 项目级 Agent Key 的项目列表仅返回绑定项目，防止跨项目元数据泄露 |
-| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 核对 5 条 changelog（GPT-5.6 raw chat 默认修复/首页明暗主题重塑/LLM 网关逻辑模型与 Offering/网关实战教程目录/移动端验收硬门禁），均无需向 design 文档追加新章节（GPT-5.6 raw chat 修复无对应设计文档；首页主题重塑属前端 UI 层且已有 admin-dual-theme.md 规则与 debt.frontend.mobile-light-theme.md 台账覆盖；逻辑模型与 Offering 已由同日更新的 design.platform.model-pool.md v3.0 完整覆盖；网关实战教程目录与既有 plan.platform.llm-gateway-authoritative-tutorial.md 范围不同、无匹配章节；移动端验收硬门禁已由 real-visual-acceptance.md 等规则层覆盖），仅登记 manifest 避免向无关文档强行插入内容，manifest 累计 472 条 |
+| chore | doc | 每日熵减计划：D1-D5 全部干净（doc/ 命名、index.yml、guide.list、CLAUDE.md 技能表均无缺项/幽灵项，0 改动），D6 核对 5 条 changelog（GPT-5.6 raw chat 默认修复/首页明暗主题重塑/LLM 网关逻辑模型与 Offering/网关实战教程目录/移动端验收硬门禁），均无需向 design 文档追加新章节（GPT-5.6 raw chat 修复无对应设计文档；首页主题重塑属前端 UI 层且已有 admin-dual-theme.md 规则与 debt.frontend.mobile-light-theme.md 台账覆盖；逻辑模型与 Offering 已由同日更新的 design.platform.model-pool.md v3.0 完整覆盖；网关实战教程目录与既有 plan.platform.llm-gateway.authoritative-tutorial.md 范围不同、无匹配章节；移动端验收硬门禁已由 real-visual-acceptance.md 等规则层覆盖），仅登记 manifest 避免向无关文档强行插入内容，manifest 累计 472 条 |
 | polish | llmgw | 对齐 OpenRouter 日志字体、字号、完整列布局，并消除单列吞占造成的大段空白 |
 | feat | llmgw | 日志行进入独立请求详情路径，App 链接进入对应 appCaller 配置与治理页面 |
 | docs | llmgw | 同步请求记录实战教程的列表字段、独立详情和 App 跳转步骤 |
@@ -944,7 +944,7 @@
 | chore | prd-api | 每日验收 SOP 的 --folder-path 要求改到源文档 doc/guide.acceptance.daily-sop.md 并重跑快照同步与官方技能打包，official-skills.generated.json 同步收录 archive_report.py 新归类行为（Codex review P1/P2） |
 | polish | cds | 将 CDS 更新、自更新历史、Docker 网络容量和危险操作拆分为独立设置页签 |
 | fix | prd-admin | 修复命令面板搜索后快速回车可能进入错误入口的问题 |
-| chore | doc | 每日熵清理巡检：D1/D2/D3/D4 双向扫描零真实欠账（历史命中均为误报，已逐条核实文件仍存在/属正文引用非索引条目）；D6 核实 5 条 changelog 内容已被更近更新的活文档（rule.acceptance.map-enterprise.md / debt.cds.ci-prebuilt.md / plan.llm-gateway.full-cutover.md）覆盖，登记入 manifest |
+| chore | doc | 每日熵清理巡检：D1/D2/D3/D4 双向扫描零真实欠账（历史命中均为误报，已逐条核实文件仍存在/属正文引用非索引条目）；D6 核实 5 条 changelog 内容已被更近更新的活文档（rule.acceptance.map-enterprise.md / debt.cds.ci-prebuilt.md / plan.platform.llm-gateway.full-cutover.md）覆盖，登记入 manifest |
 | feat | prd-api | 知识库新增录音转录全链路任务（transcribe kind：ASR 转录 + AI 流式摘要，产物为「摘要 + 转录全文」新文档，POST entries/{id}/transcribe，与字幕生成共用 ASR 分发与排队去重） |
 | feat | prd-admin | 知识库新增 Notion 式录音转录流程卡：上传音频 → 转录 → AI 摘要 → 保存笔记四阶段逐项点亮（SSE），摘要流式生长，完成后一键直达转录笔记；移动端为底部弹层、桌面端为右侧抽屉 |
 | feat | prd-admin | 音/视频条目正文顶部新增「开始转录 / 查看转录笔记」常驻入口卡；工具栏与右键菜单新增「转录」；「添加」菜单新增「上传录音转笔记」 |
@@ -1146,7 +1146,7 @@
 | docs | cds | 修正四处文档漂移：plan.cds.status 状态板自相矛盾、cds/CLAUDE.md 路由权威与规则路径、spec.cds 快照标注 + 项目管理域、债务台账点分重命名；cds-theme-tokens 规则 SSOT 更正为双栈两处并删 emoji |
 | fix | cds | 彻底堵住带作用域全局 Key 的跨 router 越界（Codex P1，reports/releases/scheduled-jobs 等）：单项目 cdsg_ Key 现同时 stamp cdsProjectKey，透明继承所有既有 cdsp_ 逐路由防护，一处收口全局生效；多项目(≥2)作用域签发暂禁（防无法用单一别名表达的越界），仅放行 create-only / 单项目 / 所有项目三档 |
 | fix | prd-admin | 修复旧资源 CSS 预加载失败时页面停留在渲染错误页 |
-| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录/自引用误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（cds 波5 事后栈检测已在 design.cds.config-tree.md + plan.cds.status.md 覆盖；llmgw ASR 直连收口/豆包流式迁移/pinned cutover 已在 plan.llm-gateway.full-cutover.md + plan.platform.llm-gateway-protocol-router.md + guide.speech-agent.doubao-asr-relay.md 覆盖，仅登记 manifest） |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录/自引用误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（cds 波5 事后栈检测已在 design.cds.config-tree.md + plan.cds.status.md 覆盖；llmgw ASR 直连收口/豆包流式迁移/pinned cutover 已在 plan.platform.llm-gateway.full-cutover.md + plan.platform.llm-gateway-protocol-router.md + guide.speech-agent.doubao-asr-relay.md 覆盖，仅登记 manifest） |
 | feat | prd-admin | 更新中心新增「热修复」子 tab，专列为他人上报缺陷所做的修复，含缺陷编号（可点击进缺陷详情）、修复 commit/PR、发布状态与验收链接 |
 | feat | prd-api | ChangelogController 新增 GET /api/changelog/github-hotfixes，基于 DefectResolutionTrace 全历史返回热修复列表 |
 | fix | prd-api | 热修复发布状态：短 commit sha 追踪先解析为完整 sha 再比对部署历史，避免短 sha 记录恒判为 unknown |
@@ -1456,7 +1456,7 @@
 | feat | cds | 波5 UI:空项目(无构建配置)态引导「检测技术栈」→ DetectStackDialog 调 detect-preview/detect-apply 一键生成构建配置(主题 token 双色,shadcn Dialog 移动安全) |
 | feat | cds | 波5 已 clone 空项目事后栈检测:GET /api/projects/:id/detect-preview(只读扫 worktree)+ POST detect-apply(用户确认后建构建配置,空项目守门,race-free) |
 | refactor | cds | 抽出 buildDetectedServicesFromDir 共享检测逻辑,detect-runtime 复用(去重) |
-| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（llmgw 控制台演进补入 design.llm-gateway-physical-isolation.md §9；cds 配置两波已在 design.cds.config-tree.md 覆盖，仅登记 manifest） |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +0/-0（历史变更记录误报已排除），D4 +0/-0（pnpm 加粗误报已排除），D6 补 5 条（llmgw 控制台演进补入 design.platform.llm-gateway.physical-isolation.md §9；cds 配置两波已在 design.cds.config-tree.md 覆盖，仅登记 manifest） |
 | fix | prd-api | 禁止 MAP 生产路径直连豆包 WebSocket ASR，改为提示绑定 HTTP ASR/Whisper 以避免绕过 llmgw-serve |
 | test | prd-api | 扩展 LLM Gateway 直连棘轮，阻止业务路径重新引用 DoubaoStreamAsrService |
 | feat | prd-api | 将豆包 WebSocket ASR 协议迁入 LLM Gateway raw 路径，Mode=http 时由 llmgw-serve 承载 |
@@ -1728,7 +1728,7 @@
 | fix | cds | 导入/配置校验豁免预构建镜像站点的 command 必填：pending-import 与 branches 配置校验对 prebuiltImage=true 的 profile（如 prd-llmgw-web 纯 nginx 前端站）不再强制 command（部署路径本就走 usePrebuiltEntrypoint 用镜像自带 ENTRYPOINT 启动，注入 command 反而绕过 nginx docker-entrypoint 初始化）。此前 llmgw-web 被解析器识别后仍卡在导入校验「缺少 command」 |
 | feat | prd-api | 新增邮件模板智能体（email-agent）：模板库 CRUD + AI 起草/润色 SSE；系统预置聚焦费用报销/维修申请/设备采购 |
 | feat | prd-admin | 新增邮件模板智能体页面：模板库/变量快填/一键复制整封邮件/AI 起草润色，注册百宝箱与导航 |
-| chore | doc | 每日熵减 2026-07-01：合并昨日重复 PR #967（D3 debt.llm-gateway 系列 3 条 + D6 manifest 标记 5 条）；本次新增 D2/D3 补缺 plan.llm-gateway.full-cutover 1 条，D6 changelog→doc 覆盖处理 5 条（imagegen-request-builder/llm-gateway-standalone/llm-log-observability/llmgw-deploy-scaffold/llmgw-web-skeleton，内容均已在既有 debt.llm-gateway-isolation.md / plan.llm-gateway.rollout.md 覆盖，无需新增章节） |
+| chore | doc | 每日熵减 2026-07-01：合并昨日重复 PR #967（D3 debt.platform.llm-gateway 系列 3 条 + D6 manifest 标记 5 条）；本次新增 D2/D3 补缺 plan.platform.llm-gateway.full-cutover 1 条，D6 changelog→doc 覆盖处理 5 条（imagegen-request-builder/llm-gateway-standalone/llm-log-observability/llmgw-deploy-scaffold/llmgw-web-skeleton，内容均已在既有 debt.platform.llm-gateway.isolation.md / plan.llm-gateway.rollout.md 覆盖，无需新增章节） |
 | docs | doc | D5 复查发现工程债务：codebase-snapshot.md 声称 MongoDB 集合数（118/120）与实际 MongoDbContext.cs 统计（249）严重漂移，需人工审查后批量更新，遵循 D5 需人工确认原则本次未自动改写 |
 | feat | cds | 分支详情面板多出口：GET /branches/:id/subdomain-aliases 新增 gatewayUrls（读 cds.subdomain 标签、复用 forwarder 同源判定 + 63 octet 守卫 + 去重），BranchDetailPage 显示「主应用入口」+「网关入口」两组 + 有网关时预览按钮带下拉「打开网关」（point 0） |
 | refactor | prd-api | A 类直连（Program.cs ILLMClient 工厂 + ModelDomainService.GetClientAsync）经评审后保留原直连以行为保持：二者均非死代码（工厂被 LLMClientFactory 注入；GetClientAsync 逐模型尊重 model.MaxTokens），改走 gateway.CreateClient 会丢采样温度/凭据兜底/per-model maxTokens；登记进直连守卫 baseline（Program.cs=6 / ModelDomainService=2），待网关支持 per-model 入口后再收口 |
@@ -1803,7 +1803,7 @@
 | fix | prd-admin | 恢复旧版同步配对的隐藏深链管理入口并保留教程兼容 |
 | fix | prd-admin | 修复同步中心手动同步失败无提示、按钮目标名滞后和历史失败常驻的问题 |
 | test | prd-admin | 新增同步中心方向心智与接收审计兼容性测试 |
-| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +3/-0（debt.llm-gateway 系列三篇补登 guide.list.directory.md），D4 +0/-0，D6 处理 5 条（均已在既有 design/debt 文档中覆盖，仅 manifest 标记） |
+| chore | doc | 熵清理：D1 0 个，D2 +0/-0，D3 +3/-0（debt.platform.llm-gateway 系列三篇补登 guide.list.directory.md），D4 +0/-0，D6 处理 5 条（均已在既有 design/debt 文档中覆盖，仅 manifest 标记） |
 | fix | prd-api | 跨进程真 socket 测试（CrossProcessServingErrorLoadTests/SelfTest）在 pull_request runner 上对成功响应体读取环境敏感（workflow_dispatch 全绿 + 生产 gw-smoke 8/8 + 影子正常证实非产品 bug），按本仓既有约定改标 Integration（CI 默认跳过、可手动跑）；新增纯单元 GatewaySerializationSecurityTests 在 CI 常驻守住「ApiKey 不过 HTTP 线」安全契约 |
 | security | prd-api | docker-compose 生产 LLMGW_SERVE_KEY/LLMGW_ADMIN_PASSWORD 改为必填（${VAR:?}，删默认值），避免默认部署用众所周知的 key/password 暴露公网 /gw/*（Codex P1）；CDS 预览走 cds-compose 显式 env 不受影响 |
 | fix | cds | 命名子域 master 兜底解析改取「previewSlug 最长(最具体)」候选 + entry.id 字典序 tie-break，消除两分支 previewSlug 互为前缀时同一 URL 路由不确定（Cursor Bugbot） |
@@ -1816,7 +1816,7 @@
 | fix | ops | _standalone.conf 8081 网关前端站 /gw-api/ 反代补 /gw/ 重写：proxy_pass 末尾带 /gw/ 把 /gw-api/auth/login 改写为后端认的 /gw/auth/login，修复原样透传导致的 404（Cursor Bugbot Medium） |
 | fix | cds | isValidServiceSubdomain 拒绝保留伪值 null/undefined/none/true/false/nan：堵住 JSON 字符串 "null" / compose label cds.subdomain:"null" 当真子域发布 <slug>-null.<root> 伪 host（Cursor Bugbot） |
 | fix | ops | docker-compose.dev.yml llmgw-web 改用 prd-llmgw-web/Dockerfile 真实构建，不再挂不存在的 ./deploy/llmgw-web/dist（空静态根导致 5590 控制台打不开）（Codex P2） |
-| docs | doc | design.llm-gateway-physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |
+| docs | doc | design.platform.llm-gateway.physical-isolation 头部补「· 设计」后缀 + 状态枚举改合法值「开发中」；debt 记 subdomain 撞项目 profile 校验缺口为波3（Cursor Bugbot / Codex P2） |
 | fix | prd-api | HttpLlmGatewayClient.GetAvailablePoolsAsync 非成功/异常不再静默吞成空池，改向上抛（与 inproc 一致），让 admin/smoke 区分「网关 down」与「真的没可用池」（Cursor Bugbot Medium） |
 | fix | prd-api | ModelResolver 恢复 legacy 直连兜底（IsMain/IsIntent/IsVision/IsImageGen）：无 dedicated/default 池或池全不可用时，未迁移到 ModelGroups 的部署回退到 flag 标记的 enabled 直连模型，而非直接 NotFound（Codex P1）；InMemoryModelResolver 同步镜像 + 单测覆盖 |
 | fix | prd-api | LlmGateway 适配器按解析出的 Protocol 选（pool-item 可覆盖），不再只按 PlatformType——混合/代理平台用对 wire 协议；Protocol 为空回落 PlatformType，普通平台零差异（Codex P2） |
@@ -1979,7 +1979,7 @@
 | docs | doc | 新增 report.gw-test-matrix（约 282 行全量可见报告：A 解析 153 入口 + B 91 cell + C 18 cell + 20 扩展维度），由 scripts/gen-gw-matrix-report.py 自动生成并产出两份 cell 目录 SSOT |
 | test | prd-api | 新增网关协议保真 MECE 自测 GatewayProtocolFidelityTests（think 三形态/tool_calls 归一/token+cache/finish_reason/跨chunk think 标签 + canary 探测元断言） |
 | test | prd-api | 新增跨进程传输 D11/D12 自测 CrossProcessServingErrorLoadTests（上游失败→Fail/抛异常不崩/并发16不串扰/错key 401） |
-| docs | prd-agent | 新增 spec.llm-gateway-test-matrix（14 维 MECE 矩阵 + 4 层分工 + 每层 canary），含 D 层真机冒烟脚本 scripts/gw-smoke.py |
+| docs | prd-agent | 新增 spec.platform.llm-gateway.test-matrix（14 维 MECE 矩阵 + 4 层分工 + 每层 canary），含 D 层真机冒烟脚本 scripts/gw-smoke.py |
 | polish | prd-admin | 调整首页、百宝箱与全局玻璃背景融合方式，改为白色柔光并改善与玻璃侧栏的衔接 |
 | fix | cds | 修复预览分支 stale worktree 导致 CDS 分支创建失败，并阻止 preview-url 输出未发布的本地 fallback 地址 |
 | feat | prd-api | 新增环境变量门控的米多星球开放 SSO 签名验令牌登录接口 |
@@ -2012,7 +2012,7 @@
 
 | 类型 | 模块 | 描述 |
 |------|------|------|
-| docs | doc | 新增 LLM 网关物理独立设计(design.llm-gateway-physical-isolation)：多智能体工作流产出+对抗评审，分阶段迁移方案+决策清单 |
+| docs | doc | 新增 LLM 网关物理独立设计(design.platform.llm-gateway.physical-isolation)：多智能体工作流产出+对抗评审，分阶段迁移方案+决策清单 |
 | chore | prd-api | 网关物理独立 阶段0 契约固化：GatewayStreamChunk 加 Seq(断线续传序号)、GatewayRawRequest 加 MultipartFileRefs + MultipartFileRef DTO(大负载COS引用)，additive 零行为变化 |
 | refactor | prd-api | 新增 ImageGenRequestBuilder 收口"模型配置 → 上游请求体"转换（尺寸归一化/size·width-height·aspect_ratio·none 格式/参数重命名），OpenAIImageClient 退化为发送器+响应解析，加新生图模型只需在 ImageGenModelConfigs 加一条配置 |
 | feat | prd-llmgw | 新增独立 AI 大模型网关观测后端（自包含 ASP.NET 服务，共享 Mongo 读 llmrequestlogs，独立 JWT 账号体系，/gw/auth/login + /gw/logs/* 端点） |
@@ -2045,7 +2045,7 @@
 | test | prd-api | 修正视觉 detail 单测 harness：NewVisionClient 改用注册了 vision modelType 的 AppCaller(Admin.Lab.Vision)，原用 Admin.Lab.Chat 触发 CreateClient 的 modelType 校验异常导致 4 条用例全挂(CI 实测发现) |
 | fix | prd-api | 协议保真 F3a：ClaudeGatewayAdapter.ConvertToClaudeFormat 不再"只抄 5 个字段"拍平采样参数，透传 Claude 原生兼容的 top_p/top_k，OpenAI 的 stop 改名为 Claude 的 stop_sequences；OpenAI 专有字段(frequency_penalty 等)按白名单挡掉避免 400。Open Platform 兼容代理路由到 Claude 池时采样参数不再静默丢失 |
 | feat | prd-api | 协议保真 G1-G5：函数调用(tools/tool_calls)穿协议不丢。Extensions/ToolCalls 容器 + IGatewayAdapter.ParseToolCalls；OpenAI 线 tool_calls 透传(流式+非流式)；Claude 线 tools/tool_choice 原生互转(OpenAI function 包裹↔Claude input_schema) + tool_use 响应→OpenAI tool_calls；能力软门(模型明确不支持 function_calling 且带 tools→熔断报错，未知放行)；Open Platform 代理回吐 tool_calls。修复"宣称 OpenAI 兼容但函数调用对外是哑的" |
-| docs | prd-api | 新增 debt.llm-gateway-protocol-fidelity 记录三处已知边界(Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null / Extensions 已建未消费)；design.llm-gateway-unification 决策一标记 G1-G5 已实现 |
+| docs | prd-api | 新增 debt.platform.llm-gateway.protocol-fidelity 记录三处已知边界(Claude 流式 tool_use 增量未映射 / 能力软门池路径为 null / Extensions 已建未消费)；design.platform.llm-gateway.unification 决策一标记 G1-G5 已实现 |
 | feat | prd-api | 日志观测性：协议保真改动在 /logs 页可瞥见。后端 LlmRequestLog 新增 ResponseToolCalls/ToolCallCount 并从网关 SendAsync(非流)+StreamAsync(流式增量按 index 合并)落盘；list 投影补 Protocol/ResolutionReason/ToolCallCount。修复网关流式从不转发 ToolCall chunk 的 G2/G5 缺口 |
 | feat | prd-admin | 日志页协议保真可视化：列表行新增协议 chip(openai/claude/exchange 着色，存量流量即可见)+ 函数调用 chip；详情面板新增 protocol 字段 + 保真参数 chips(从请求体解析 detail/top_p/top_k/tools)+ tool_calls 段。新增 lib/protocolRegistry.ts 注册表 |
 | feat | prd-api | 大模型日志观测端点：GET /api/logs/llm/timeseries(按天计数,柱状图源) + GET /api/logs/llm/sessions(按 SessionId $facet 聚合主模型/支撑模型/请求数);LlmRequestLog 落库 FinishReason/IsStreaming;list 投影暴露 |
@@ -8282,7 +8282,7 @@ feat(cds): add SSH release control plane MVP
 | feat | prd-admin | SummaryPanel + AlignmentPanel 新增 ThinkingBlock 组件：流式渲染推理模型思考过程，正文开始后自动折叠 |
 | fix | prd-api | 心跳 phase 文案分三级：0-15s "AI 正在思考"；15-40s "上游首字延迟较高（{model}），已等待 20s"；40s+ " 上游响应异常缓慢，建议中止重试"。根因是 qwen/qwen3.6-plus 走 OpenRouter 是 fake-streaming——chunk #1 @ 4.4s 只是 Start metadata，chunk #2 第一个真正的文本 token @ 52s |
 | fix | prd-api | OpenRouter 不默认转发 reasoning 的根因修复：在 request body 里加 `include_reasoning: true` + `reasoning: {exclude: false}`，修复后 thinking 事件从 1.9s 开始流式到达（从前是 52s 空白）。同步 OpenAIGatewayAdapter 支持 `reasoning` 字段（OpenRouter 归一名）和 `reasoning_content`（上游原生名） |
-| feat | doc | 新建 `doc/rule.llm-gateway.md` + 扩展 `.claude/rules/llm-gateway.md`，沉淀 5 个流式 LLM 陷阱：firstByteAt 指标歧义 / OpenRouter 必须显式开 reasoning / reasoning 字段名不统一 / fake streaming 只能 UX 降级 / 诊断 3 个信息源交叉验证。附 8 项 checklist |
+| feat | doc | 新建 `doc/rule.platform.llm-gateway.md` + 扩展 `.claude/rules/llm-gateway.md`，沉淀 5 个流式 LLM 陷阱：firstByteAt 指标歧义 / OpenRouter 必须显式开 reasoning / reasoning 字段名不统一 / fake streaming 只能 UX 降级 / 诊断 3 个信息源交叉验证。附 8 项 checklist |
 | feat | prd-api | 新增 GET /api/pr-review/items/{id}/history 端点，并行拉取 6 个 GitHub REST API（commits / reviews / review-comments / issue-comments / timeline / check-runs），每个子请求失败不致命 |
 | feat | prd-admin | PrItemCard 右上角新增"历史"悬浮按钮 + PrHistoryModal 弹窗（5 个 tab：时间线 / 提交 / 评审 / 评论 / CI 检查）。时间线 tab 支持 committed / reviewed / commented / labeled / assigned / merged / force_pushed / renamed / ready_for_review 等 20+ GitHub 事件类型，每种事件独立图标 + 颜色 + 中文描述 |
 | fix | prd-admin | PrHistoryModal 修复两个问题：(1) 用 createPortal 挂到 document.body，修复被 PrItemCard 外层 overflow-hidden 裁剪导致的超出屏幕无法滑动；(2) 改为按 tab 懒加载，打开弹窗只拉 timeline（~400ms），切 tab 时才拉对应类型。第一版打开立即并行拉 6 个 endpoint 需 2-3s |

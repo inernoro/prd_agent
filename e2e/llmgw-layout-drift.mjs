@@ -327,7 +327,7 @@ const KEYS = ['标题字号', '标题被卡片包住', '内容底部空隙', '�
   '卡片内边距种类', '卡片圆角种类', '容器间距种类', 'chip规格种类', '主操作按钮规格'];
 // 规格种类数的上限来自基准页本身，而不是拍脑袋定一个理想值——
 // 检测器的职责是「不许比基准更乱」，把基准自己收得更紧是另一件事。
-// 见 doc/rule.llm-gateway.console-design-tonality.md
+// 见 doc/rule.platform.llm-gateway.console-design-tonality.md
 const SPEC_KEYS = ['卡片内边距种类', '卡片圆角种类', '容器间距种类', 'chip规格种类', '主操作按钮规格'];
 let drift = 0;
 for (const [route, m] of Object.entries(data)) {

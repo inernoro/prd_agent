@@ -34,7 +34,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// 本测试用 Microsoft.AspNetCore.TestHost 的 in-process TestServer（无 socket、无端口、无流式成功体
 /// 读取），只走 401 短路分支，完全确定性，故可安全地作为非 Integration [Fact] 每次 CI 跑。
 /// 端点映射复用生产同一份 MapGatewayServingEndpoints（SSOT，见 GatewayHttpEndpoints）。
-/// 见 doc/design.llm-gateway-physical-isolation.md。
+/// 见 doc/design.platform.llm-gateway.physical-isolation.md。
 /// </summary>
 public class GatewayKeyGateContractTests
 {

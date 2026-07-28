@@ -1,5 +1,5 @@
 // LLM 网关统一 — Phase 0 取证脚本
-// 关联设计：doc/design.llm-gateway-unification.md §9.2
+// 关联设计：doc/design.platform.llm-gateway.unification.md §9.2
 //
 // 目的：删除任何"疑似死代码"（策略引擎 / legacy 层 / orphan code）之前，
 //       用真实库数据确认影响面。纯只读，不写任何集合。

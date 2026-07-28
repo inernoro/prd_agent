@@ -3,7 +3,7 @@
 | fix | llmgw | Exchange 去掉 eyebrow 层；三步引导卡由常驻改为仅零数据时出现（并入空状态卡的有序列表，不再多一层盒子）；主操作按钮由大号带 icon 统一为 primary/sm 纯文字 |
 | fix | llmgw | 按钮规格归一：sm 高度 30→32px 落进控件基准区间，按钮文字由 12px 提到 --fs-secondary（按钮文字是要读的，不是角标） |
 | feat | llmgw | 排版漂移检测新增五个「规格种类数」维度（卡片内边距/圆角/容器间距/chip/主操作按钮），上限取自基准页自身而非拍脑袋的理想值 |
-| docs | llmgw | 新增 doc/rule.llm-gateway.console-design-tonality.md：把三轮实测校准出来的控制台风格调性固化为规则（一层卡片/余量均匀/七档字号+角色映射/icon 是扫描锚点/同一角色一种规格），含可测量判据与三层护栏 |
+| docs | llmgw | 新增 doc/rule.platform.llm-gateway.console-design-tonality.md：把三轮实测校准出来的控制台风格调性固化为规则（一层卡片/余量均匀/七档字号+角色映射/icon 是扫描锚点/同一角色一种规格），含可测量判据与三层护栏 |
 | fix | llmgw | Provider / 模型 / 审计 / 逻辑模型的页面标题从带边框卡片里提出来，与请求记录页同构（标题裸露在页面上，卡片只装展开后的表单） |
 | fix | llmgw | 逻辑模型页内容区改为撑满剩余高度并自行滚动，空数据不再在下方留 600px 空白；模型池控件高度 30px→36px，对齐基准区间 |
 | feat | llmgw | 新增排版漂移检测 e2e/llmgw-layout-drift.mjs：以请求记录页为基准，逐页量标题字号/标题是否被卡片包住/内容底部空隙/表头与单元格字号/单行行盒/控件高度，输出漂移清单 |
