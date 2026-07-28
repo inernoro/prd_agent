@@ -101,6 +101,16 @@ describe('挂载枚举必须走 docker inspect（2026-07-28 生产实测定位�
   // 只报不删，但功能等于没生效。根因是 `docker ps --format` 里的 .Mounts 是
   // 逗号分隔**字符串**，对它 {{range}} 会让 Go 模板报错、整条命令非零退出。
   // inspect 的 .Mounts 才是数组。这里把「用哪条命令」钉死。
+  it('inspect 模板里不许出现真正的换行字符（Go 模板会解析失败、且无任何输出）', () => {
+    // 第三轮定位：`{{"\\n"}}` 写在 TS 单引号串里，\\n 被转义成真正的换行塞进 Go
+    // 模板的引号内 → unterminated quoted string → docker 非零退出且无输出 →
+    // 挂载枚举恒 null → 孤儿回收恒停在 0/66。用 {{println}} 从根上避开。
+    const src = readFileSync(new URL('../../src/services/janitor.ts', import.meta.url), 'utf8');
+    const line = src.split('\n').find((l) => l.includes("'inspect', '--format'")) || '';
+    expect(line).toContain('println .Source');
+    expect(line).not.toContain('{{"');
+  });
+
   it('默认实现用 docker inspect 而不是 docker ps 取挂载源', async () => {
     const calls: string[][] = [];
     const mod = await import('../../src/services/janitor.js');

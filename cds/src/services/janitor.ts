@@ -281,7 +281,11 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     for (let i = 0; i < idList.length; i += 100) {
       const batch = idList.slice(i, i + 100);
       const r = await execDockerDetailed(
-        ['inspect', '--format', '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}', ...batch], 60_000,
+        // 用 {{println}} 而不是 {{"\\n"}}：后者在 TS 单引号串里 \\n 会被转义成**真正的
+        // 换行**塞进 Go 模板的引号内，模板解析直接失败（unterminated quoted string），
+        // docker 非零退出且**无任何输出** —— 生产上挂载枚举一直返回 null 的真凶。
+        // println 不需要引号，从根上避开这一类转义坑。
+        ['inspect', '--format', '{{range .Mounts}}{{println .Source}}{{end}}', ...batch], 60_000,
       );
       // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
       // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
