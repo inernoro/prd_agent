@@ -115,6 +115,8 @@ import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
 import { ManagedProjectService } from './services/managed-project.js';
 import { ReleaseService } from './services/release-service.js';
+import { setReleaseDriftNotifier, startReleaseRemoteWatcher } from './services/release-remote-watcher.js';
+import { cdsEventsBus } from './services/cds-events-bus.js';
 import {
   DeploymentDiagnosisService,
   GatewayDeploymentExplanationProvider,
@@ -764,6 +766,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'PATCH /releases/targets/:id': '更新发布目标',
     'DELETE /releases/targets/:id': '删除发布目标',
     'POST /releases/targets/:id/archive': '归档发布目标并保留审计证据',
+    'GET /releases/targets/:id/changes': '查看发布目标变更历史',
+    'GET /releases/targets/:id/remote-state': '查看远端发布现场',
+    'POST /releases/targets/:id/reclaim': '回收远端发布产物',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
     'POST /releases/branches/:branchId/runs': '启动分支发布',
     'GET /releases/runs': '列出发布记录',
@@ -1012,6 +1017,9 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
     [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
     [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
+    [/^GET \/releases\/targets\/[^/]+\/changes$/, '查看发布目标变更历史'],
+    [/^GET \/releases\/targets\/[^/]+\/remote-state$/, '查看远端发布现场'],
+    [/^POST \/releases\/targets\/[^/]+\/reclaim$/, '回收远端发布产物'],
     [/^PATCH \/releases\/targets\/[^/]+$/, '更新发布目标'],
     [/^DELETE \/releases\/targets\/[^/]+$/, '删除发布目标'],
     [/^POST \/releases\/branches\/[^/]+\/preflight$/, '执行发布前检查'],
@@ -1584,8 +1592,20 @@ export function createServer(deps: ServerDeps): express.Express {
   }
   // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
   // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
-  const releaseReconciler: ReleaseRunReconciler = new ReleaseService(deps.stateService);
+  const releaseService = new ReleaseService(deps.stateService);
+  const releaseReconciler: ReleaseRunReconciler = releaseService;
   startReleaseRunReaper({ service: releaseReconciler });
+  // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
+  // 是纯内存状态机、从不外呼，混进 SSH 巡检后一台目标机器不通就会把它拖住，所有目标
+  // 的在途 run 都释放不掉，失败语义也变糊（收敛失败还是网络失败？）。同频不同体。
+  //
+  // 告警出口在这里晚绑定：巡检模块不反向 import 事件总线，「这条要不要叫醒人」的判定
+  // 只留在 CDS_EVENT_ALERT_CLASS 一处，不让存活监控一套、发布一套长出两条分发逻辑。
+  setReleaseDriftNotifier((type, data) => { cdsEventsBus.publish(type, data); });
+  startReleaseRemoteWatcher({
+    listTargets: () => deps.stateService.getReleaseTargets(),
+    releaseService,
+  });
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,

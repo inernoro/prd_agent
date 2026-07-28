@@ -65,6 +65,7 @@ import { canQuickStartBranch } from '@/lib/branch-quick-actions';
 import { profileColor, profileShortName } from '@/lib/replica-colors';
 import { reduceBranchListState, type BranchListAction, type BranchListSlice } from '@/lib/branch-list-state';
 import { releaseCenterHref } from '@/lib/releaseCenter';
+import { resolveReleaseSteps, type ReleaseRunProgressLike, type ReleaseStepState } from '@/lib/releaseSteps';
 import {
   buildBranchResources,
   ResourceIcon,
@@ -338,6 +339,8 @@ interface ReleaseRunSummary {
   logs: ReleaseLogEntry[];
   previousReleaseId?: string;
   rollbackOf?: string;
+  /** 后端下发的结构化步骤（阶段二起）。存量 run 没有，走 resolveReleaseSteps 的退化骨架。 */
+  progress?: ReleaseRunProgressLike;
 }
 
 interface ReleaseLogEntry {
@@ -4282,7 +4285,7 @@ function ReleaseBranchDialog({
   // 就固定进入「发布」阶段，前序配置/预检收起成一行摘要，状态区直接占满弹窗。
   const [wizardStep, setWizardStep] = useState<'config' | 'preflight'>('config');
   const [scriptOpen, setScriptOpen] = useState(false);
-  // 发布过程是分钟级长任务（fast.sh + exec_dep.sh + 健康检查）。每秒滴答一次，
+  // 发布过程是分钟级长任务（远端脚本 + 健康检查）。每秒滴答一次，
   // 让运行中的步骤显示"已用时 mm:ss"，用户随时知道在动而非卡死（2 秒原则）。
   const [nowTick, setNowTick] = useState(() => Date.now());
   useEffect(() => {
@@ -4572,10 +4575,10 @@ function ReleaseBranchDialog({
                 </div>
                 {!isReleaseTerminal(run.status) ? (
                   <div className="text-xs text-muted-foreground">
-                    当前阶段：{releaseCurrentStepLabel(run, logs, selectedScripts)}。发布为分钟级任务，进度会随服务器日志实时刷新。
+                    当前阶段：{releaseCurrentStepText(run, logs)}。发布为分钟级任务，进度会随服务器日志实时刷新。
                   </div>
                 ) : null}
-                <ReleaseRunStepList run={run} logs={logs} scripts={selectedScripts} />
+                <ReleaseRunStepList run={run} logs={logs} />
                 <pre className="max-h-72 overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5">
                   {logs.map((log) => `[${formatShortTime(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`).join('\n') || '等待发布日志...'}
                 </pre>
@@ -4742,18 +4745,16 @@ function ReleaseConfirmItem({ label, value, mono }: { label: string; value: stri
   );
 }
 
-type ReleaseStepState = 'pending' | 'running' | 'done' | 'failed';
-
 function ReleaseRunStepList({
   run,
   logs,
-  scripts,
 }: {
   run: ReleaseRunSummary;
   logs: ReleaseLogEntry[];
-  scripts: string[];
 }): JSX.Element {
-  const steps = releaseStepsForRun(run, logs, scripts);
+  // 步骤只从后端 run.progress 来（退化骨架也在同一处判定）。这里曾经自带一份
+  // 「日志 phase 反推 + 本仓脚本名兜底」的拷贝，与发布中心那份各自漂移。
+  const { steps } = resolveReleaseSteps({ ...run, logs });
   return (
     <div className="grid gap-2 md:grid-cols-2">
       {steps.map((step) => (
@@ -4772,7 +4773,6 @@ function ReleaseRunStepList({
           <ReleaseStepIcon state={step.state} />
           <div className="min-w-0">
             <div className="font-medium">{step.label}</div>
-            {step.detail ? <div className="mt-0.5 text-xs text-muted-foreground">{step.detail}</div> : null}
           </div>
         </div>
       ))}
@@ -4797,10 +4797,19 @@ function isReleaseTerminal(status: string): boolean {
   return ['success', 'failed', 'rollback_success', 'rollback_failed'].includes(status);
 }
 
+/**
+ * 「执行计划」chips 的展开：只把用户**真配了**的发布命令拆开展示。
+ *
+ * 这里原本兜底成 `./fast.sh && ./exec_dep.sh`——本仓库的脚本名，写死在 CDS 这个
+ * 通用产品里。换个项目、或者目标还没配命令，界面就会煞有介事地展示两个根本不会
+ * 执行的脚本。没配就说没配。
+ */
 function releaseScriptsFromCommand(command?: string): string[] {
-  const source = command?.trim() || './fast.sh && ./exec_dep.sh';
-  const matches = Array.from(new Set((source.match(/\.\/[^\s&|;]+/g) || []).map((item) => item.trim())));
-  return matches.length > 0 ? matches : [source];
+  const source = command?.trim() || '';
+  if (!source) return ['未配置发布命令'];
+  const parts = source.replace(/&&/g, '\n').replace(/;/g, '\n')
+    .split('\n').map((item) => item.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [source];
 }
 
 function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
@@ -4821,78 +4830,14 @@ function releaseStepsFromTarget(target?: ReleaseTargetSummary): string[] {
   return releaseScriptsFromCommand(target?.strategy?.command || target?.ssh?.deployCommand);
 }
 
-function releaseStepsForRun(
-  run: ReleaseRunSummary,
-  logs: ReleaseLogEntry[],
-  scripts: string[],
-): Array<{ id: string; label: string; state: ReleaseStepState; detail?: string }> {
-  const phases = new Set(logs.map((log) => log.phase).filter(Boolean));
-  const failed = run.status === 'failed' || run.status === 'rollback_failed';
-  const success = run.status === 'success' || run.status === 'rollback_success';
-  const failurePhase = [...logs].reverse().find((log) => log.level === 'error')?.phase;
-  const connectConfirmed = logs.some((log) => log.phase === 'connect' && log.message.includes('cds-release-connect-ok'))
-    || phases.has('prepare');
-  const prepareSeen = phases.has('prepare');
-  const healthSeen = phases.has('healthcheck');
-  const scriptOne = scripts[0] || './fast.sh';
-  const scriptTwo = scripts[1] || './exec_dep.sh';
-  const scriptOnePhase = releaseScriptPhase(scriptOne);
-  const scriptTwoPhase = releaseScriptPhase(scriptTwo);
-  // generated-compose / generated-static 目标与自定义发布命令不发 script:* phase,
-  // 后端把整段执行统一记在通用 `deploy` phase 下(runDeployCommand 的 emitLog
-  // 兜底;发布中心同款判定是 phaseSet.has('deploy'))。只认 script:* 会让这些
-  // 发布的执行步骤永远 pending、失败也不标红(Codex P2)。deploy 视作两个执行
-  // 步骤的统称:进行中一起亮,失败一起标。
-  const deploySeen = phases.has('deploy');
-  const scriptOneSeen = phases.has(scriptOnePhase) || deploySeen;
-  const scriptTwoSeen = phases.has(scriptTwoPhase) || deploySeen;
-  const deployFailed = failurePhase === 'deploy' && failed;
-
-  return [
-    {
-      id: 'connect',
-      label: '连接服务器',
-      state: failurePhase === 'connect' ? 'failed' : connectConfirmed || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : 'running',
-    },
-    {
-      id: 'directory',
-      label: '进入站点目录',
-      state: failurePhase === 'connect' ? 'pending' : prepareSeen || scriptOneSeen || scriptTwoSeen || healthSeen || success ? 'done' : connectConfirmed ? 'running' : 'pending',
-    },
-    {
-      id: 'script-one',
-      label: `执行 ${scriptOne.replace(/^\.\//, '')}`,
-      detail: scriptOne,
-      state: (failurePhase === scriptOnePhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : !deploySeen && scriptTwoSeen ? 'done' : scriptOneSeen ? 'running' : 'pending',
-    },
-    {
-      id: 'script-two',
-      label: `执行 ${scriptTwo.replace(/^\.\//, '')}`,
-      detail: scriptTwo,
-      state: (failurePhase === scriptTwoPhase || deployFailed) && failed ? 'failed' : healthSeen || success ? 'done' : scriptTwoSeen ? 'running' : 'pending',
-    },
-    {
-      id: 'health',
-      label: '检查上线地址',
-      state: failurePhase === 'healthcheck' ? 'failed' : success ? 'done' : run.status === 'healthchecking' || healthSeen ? 'running' : 'pending',
-    },
-    {
-      id: 'record',
-      label: '标记完成',
-      state: success ? 'done' : failed ? 'failed' : 'pending',
-    },
-  ];
-}
-
-function releaseScriptPhase(script: string): string {
-  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
-}
-
-/** 当前正在跑（或下一个待跑）的发布步骤标签，供进行中的状态行展示。 */
-function releaseCurrentStepLabel(run: ReleaseRunSummary, logs: ReleaseLogEntry[], scripts: string[]): string {
-  const steps = releaseStepsForRun(run, logs, scripts);
-  const active = steps.find((step) => step.state === 'running') || steps.find((step) => step.state === 'pending');
-  return active?.label || '收尾中';
+/** 当前正在跑（或下一个待跑）的发布步骤，供进行中的状态行展示「第 N/M 步 · 标题」。 */
+function releaseCurrentStepText(run: ReleaseRunSummary, logs: ReleaseLogEntry[]): string {
+  const { currentIndex, total, currentLabel, degraded } = resolveReleaseSteps({ ...run, logs });
+  if (total === 0) return '收尾中';
+  const label = currentLabel || '收尾中';
+  // degraded = 存量 run 没有后端步骤表，序号是猜的；此时只说标题，不给「第 N/M 步」
+  // 这种确定性表述，免得历史记录看起来比实际更精确。
+  return degraded ? label : `第 ${currentIndex}/${total} 步 · ${label}`;
 }
 
 /** 把毫秒格式化成 mm:ss（发布是分钟级，不需要小时位）。 */

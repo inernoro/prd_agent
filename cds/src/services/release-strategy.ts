@@ -58,6 +58,28 @@ export function releaseProjectIdentity(project: Project): ReleaseProjectIdentity
   };
 }
 
+/**
+ * 项目身份指纹 —— 预检复用键里代表「这还是不是同一个项目仓库」的那一段。
+ *
+ * 事故值（Codex P1）：复用键只带目标配置指纹。预检里的 `project-identity` 与
+ * `remote-repository` 两项验的是**项目**的仓库身份，而 `PUT /projects/:id` 改掉
+ * gitRepoUrl 时目标一个字节都没动 —— 指纹不变、缓存命中、这两项检查在复用路径上
+ * 根本不会重跑，于是一次全新预检本该拒绝的仓库身份不一致被直接放行。
+ *
+ * 只取规范化后的仓库标识（不含凭据段，normalizeRepositoryIdentity 已剥掉 scp/URL
+ * 里的用户信息），因此指纹不承载秘密；slug 一并纳入，改名也算换了身份。
+ */
+export function projectIdentityFingerprint(project?: Project): string {
+  if (!project) return '';
+  const identity = releaseProjectIdentity(project);
+  const parts = [
+    `projectId=${identity.projectId}`,
+    `projectSlug=${identity.projectSlug}`,
+    `repository=${normalizeRepositoryIdentity(identity.repository)}`,
+  ];
+  return `pid:${crypto.createHash('sha256').update(parts.join('\n')).digest('hex').slice(0, 12)}`;
+}
+
 export function normalizeRepositoryIdentity(value?: string): string {
   const raw = value?.trim();
   if (!raw) return '';
