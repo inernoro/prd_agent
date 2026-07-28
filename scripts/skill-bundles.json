@@ -1,0 +1,199 @@
+{
+  "version": 1,
+  "_comment": [
+    "角色套装 + 角色归属清单，被 scripts/bundle-official-skills.mjs 消费，产出 catalog v3。",
+    "改这里 → 重跑 `node scripts/bundle-official-skills.mjs` → 提交生成物即可。",
+    "roles 的作用：海鲜市场按角色筛选；bundles 的作用：一条 curl 装齐一个角色需要的全部技能。",
+    "requires：技能之间的硬依赖，下载单个技能时会自动带上（递归展开）。"
+  ],
+  "roleLabels": {
+    "pm": "产品经理",
+    "dev": "开发",
+    "qa": "测试与验收"
+  },
+  "skillRoles": {
+    "sdd-init": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "phase0-guard": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "plan-first": [
+      "pm",
+      "dev"
+    ],
+    "skill-validation": [
+      "pm"
+    ],
+    "product-document-generator": [
+      "pm"
+    ],
+    "doc-writer": [
+      "pm",
+      "dev"
+    ],
+    "flow-trace": [
+      "pm",
+      "dev"
+    ],
+    "risk-matrix": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "acceptance-checklist": [
+      "pm",
+      "qa"
+    ],
+    "task-handoff-checklist": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "laowang": [
+      "pm",
+      "dev",
+      "qa"
+    ],
+    "ui-ux-pro-max": [
+      "pm",
+      "dev"
+    ],
+    "find-skills": [
+      "pm",
+      "dev"
+    ],
+    "human-verify": [
+      "dev",
+      "qa"
+    ],
+    "code-hygiene": [
+      "dev"
+    ],
+    "conflict-resolution": [
+      "dev"
+    ],
+    "create-skill-file": [
+      "dev"
+    ],
+    "theme-transition": [
+      "dev"
+    ],
+    "remotion-scene-codegen": [
+      "dev"
+    ],
+    "acceptance-test-design": [
+      "qa"
+    ],
+    "acceptance-scenario-orchestrator": [
+      "qa"
+    ],
+    "create-visual-test-to-kb": [
+      "qa"
+    ],
+    "findmapskills": [
+      "pm",
+      "dev",
+      "qa"
+    ]
+  },
+  "skillRequires": {
+    "create-visual-test-to-kb": [
+      "acceptance-test-design",
+      "acceptance-scenario-orchestrator"
+    ],
+    "acceptance-scenario-orchestrator": [
+      "acceptance-test-design"
+    ]
+  },
+  "bundles": [
+    {
+      "key": "pm-starter",
+      "title": "pm-starter · 产品经理入门套装",
+      "version": "1.0.0",
+      "description": "产品经理一条命令装齐：底座阶段护栏、需求验证、方案先行、风险评估、PRD 写作、文档规范、验收清单、交接对齐。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "roles": [
+        "pm"
+      ],
+      "tags": [
+        "套装",
+        "需求",
+        "精英"
+      ],
+      "includes": [
+        "sdd-init",
+        "phase0-guard",
+        "skill-validation",
+        "plan-first",
+        "product-document-generator",
+        "doc-writer",
+        "risk-matrix",
+        "flow-trace",
+        "acceptance-checklist",
+        "task-handoff-checklist",
+        "laowang"
+      ],
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
+    },
+    {
+      "key": "dev-starter",
+      "title": "dev-starter · 开发入门套装",
+      "version": "1.0.0",
+      "description": "开发一条命令装齐：底座阶段护栏、方案先行、风险评估、多视角自查、代码卫生、Git 冲突解决、文档规范、交接对齐。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "roles": [
+        "dev"
+      ],
+      "tags": [
+        "套装",
+        "工具",
+        "精英"
+      ],
+      "includes": [
+        "sdd-init",
+        "phase0-guard",
+        "plan-first",
+        "risk-matrix",
+        "human-verify",
+        "code-hygiene",
+        "conflict-resolution",
+        "doc-writer",
+        "flow-trace",
+        "task-handoff-checklist",
+        "create-skill-file",
+        "laowang"
+      ],
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
+    },
+    {
+      "key": "qa-starter",
+      "title": "qa-starter · 测试与验收套装",
+      "version": "1.0.0",
+      "description": "测试一条命令装齐：验收测试设计、验收场景编排、真人验收清单、浏览器取证归档、多视角挑刺、风险排序。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "roles": [
+        "qa"
+      ],
+      "tags": [
+        "套装",
+        "分析",
+        "精英"
+      ],
+      "includes": [
+        "sdd-init",
+        "phase0-guard",
+        "acceptance-test-design",
+        "acceptance-scenario-orchestrator",
+        "acceptance-checklist",
+        "create-visual-test-to-kb",
+        "human-verify",
+        "risk-matrix",
+        "task-handoff-checklist",
+        "laowang"
+      ],
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
+    }
+  ]
+}

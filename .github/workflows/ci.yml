@@ -37,6 +37,13 @@ jobs:
               # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
               - 'llmgw/web/**'
               - 'llmgw/serving/**'
+              # 官方技能目录新鲜度自测跑在 server-build 里，它的输入是这三处。
+              # 不登记的话，「只改技能不改 prd-api」的 PR 会整个跳过这道闸 ——
+              # 而那恰好就是这道闸要防的场景（改了技能忘重新生成，分发旧内容）。
+              - '.claude/skills/**'
+              - 'scripts/skill-bundles.json'
+              - 'scripts/bundle-official-skills.mjs'
+              - 'scripts/test-official-skill-bundles.mjs'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -117,6 +124,14 @@ jobs:
           key: ${{ runner.os }}-nuget-${{ hashFiles('**/**.csproj') }}
           restore-keys: |
             ${{ runner.os }}-nuget-
+
+      # 官方技能目录是 EmbeddedResource：改了 .claude/skills 却忘了重新生成，
+      # 后端会继续分发旧内容，而编译和单测都不会红（2026-07-28 真实踩过：
+      # findmapskills 的更新命令在源文件已修，客户下载到的仍是静默不更新的旧版）。
+      # 这条自测同时校验生成物新鲜度、分发产物完整性与零 emoji。
+      - name: Official skill catalog freshness and bundle self-test
+        working-directory: ${{ github.workspace }}
+        run: node scripts/test-official-skill-bundles.mjs
 
       - name: Restore dependencies
         run: dotnet restore PrdAgent.sln

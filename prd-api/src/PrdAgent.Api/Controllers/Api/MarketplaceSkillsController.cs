@@ -5,7 +5,9 @@ using System.Text.RegularExpressions;
 using System.Text.Unicode;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
+using Microsoft.Extensions.Caching.Memory;
 using MongoDB.Bson;
+using PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 using PrdAgent.Api.Controllers.Api.OfficialSkills;
 using MongoDB.Driver;
 using PrdAgent.Api.Extensions;
@@ -25,6 +27,9 @@ namespace PrdAgent.Api.Controllers.Api;
 /// </summary>
 [ApiController]
 [Route("api/marketplace/skills")]
+// 读技能不需要登录（2026-07-28 用户决策）：技能是公开内容，把浏览和下载挡在
+// 登录后面等于要求客户先注册。查询恒带 IsPublic 过滤。
+// 需要身份的操作（收藏、上传、分享、我的收藏）仍要登录。
 [Authorize]
 public class MarketplaceSkillsController : ControllerBase
 {
@@ -50,6 +55,7 @@ public class MarketplaceSkillsController : ControllerBase
     private readonly IConfiguration _config;
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly ILogger<MarketplaceSkillsController> _logger;
+    private readonly IMemoryCache _cache;
 
     public MarketplaceSkillsController(
         MongoDbContext db,
@@ -59,7 +65,8 @@ public class MarketplaceSkillsController : ControllerBase
         SkillZipMetadataExtractor zipExtractor,
         IConfiguration config,
         IHttpClientFactory httpClientFactory,
-        ILogger<MarketplaceSkillsController> logger)
+        ILogger<MarketplaceSkillsController> logger,
+        IMemoryCache cache)
     {
         _db = db;
         _gateway = gateway;
@@ -69,6 +76,7 @@ public class MarketplaceSkillsController : ControllerBase
         _config = config;
         _httpClientFactory = httpClientFactory;
         _logger = logger;
+        _cache = cache;
     }
 
     // ======================================================================
@@ -76,13 +84,16 @@ public class MarketplaceSkillsController : ControllerBase
     // ======================================================================
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> List(
         [FromQuery] string? keyword,
         [FromQuery] string? sort,
         [FromQuery] string? tag,
         CancellationToken ct)
     {
-        var userId = this.GetRequiredUserId();
+        // 匿名可读：userId 只用于 isFavoritedByCurrentUser 这类「跟我有关」的字段，
+        // 未登录时为空串，这些字段恒为 false。查询本身恒带 IsPublic 过滤。
+        var userId = this.GetUserIdOrNull() ?? string.Empty;
 
         var builder = Builders<MarketplaceSkill>.Filter;
         var filter = builder.Eq(x => x.IsPublic, true);
@@ -111,8 +122,13 @@ public class MarketplaceSkillsController : ControllerBase
         // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
         // Web：无搜索词也展示全部官方（前端归到「官方推荐」独立行，不挤社区瀑布流）
         var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true);
-        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限
-        var dbLimit = Math.Max(200 - officialDtos.Count, 0);
+        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限。
+        // 官方条目自身也要裁：只减 DB 条数的话，官方条目一旦超过 200 总长就会破上限。
+        // 现在离 200 还远，但按构造正确比靠「现在还不到」可靠。
+        const int webHardLimit = 200;
+        if (officialDtos.Count > webHardLimit)
+            officialDtos = officialDtos.Take(webHardLimit).ToList();
+        var dbLimit = Math.Max(webHardLimit - officialDtos.Count, 0);
 
         var items = await query.Limit(dbLimit).ToListAsync(ct);
         var shareCounts = await LoadActiveShareCountsAsync(items.Select(x => x.Id), ct);
@@ -140,6 +156,7 @@ public class MarketplaceSkillsController : ControllerBase
     }
 
     [HttpGet("tags")]
+    [AllowAnonymous]
     public async Task<IActionResult> Tags(CancellationToken ct)
     {
         var allTags = await _db.MarketplaceSkills
@@ -149,8 +166,7 @@ public class MarketplaceSkillsController : ControllerBase
 
         // 合并官方目录的 tag（含「精英」「开放接口」等），否则官方专属 tag 不在筛选标签云里，
         // 用户没法按「精英」筛出 laowang。findmapskills 的 tag 一并并入。
-        var officialTags = OfficialSkillCatalog.All.SelectMany(e => e.Tags ?? new List<string>())
-            .Concat(new[] { "精英", "技能", "开放接口" });
+        var officialTags = OfficialSkillCatalog.DiscoverableTags();
 
         var distinct = allTags
             .SelectMany(x => x ?? new List<string>())
@@ -176,6 +192,7 @@ public class MarketplaceSkillsController : ControllerBase
     /// 仅供预览场景的 JSZip 解压使用,不替代 zipUrl 字段。
     /// </summary>
     [HttpGet("{id}/zip-content")]
+    [AllowAnonymous]
     public async Task<IActionResult> ZipContent(string id, CancellationToken ct)
     {
         var skill = await _db.MarketplaceSkills
@@ -694,9 +711,11 @@ public class MarketplaceSkillsController : ControllerBase
     // ======================================================================
 
     [HttpPost("{id}/fork")]
+    [AllowAnonymous]
     public async Task<IActionResult> Fork(string id, CancellationToken ct)
     {
-        var userId = this.GetRequiredUserId();
+        // 下载不需要登录（技能是公开内容）；userId 只用于回包里的「跟我有关」字段
+        var userId = this.GetUserIdOrNull() ?? string.Empty;
 
         // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL（按 id 解析具体技能）
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
@@ -711,15 +730,19 @@ public class MarketplaceSkillsController : ControllerBase
         if (skill == null)
             return NotFound(ApiResponse<object>.Fail("DOCUMENT_NOT_FOUND", "技能不存在或已下架"));
 
-        await _db.MarketplaceSkills.UpdateOneAsync(
-            x => x.Id == id,
-            Builders<MarketplaceSkill>.Update
-                .Inc(x => x.DownloadCount, 1)
-                .Set(x => x.UpdatedAt, DateTime.UtcNow),
-            cancellationToken: ct);
+        // 窗口内重复调用不再计数：端点匿名后，裸的 Inc 等于把热度排序开放给任何人刷。
+        if (SkillDownloadCounter.ShouldCount(_cache, HttpContext, id, userId))
+        {
+            await _db.MarketplaceSkills.UpdateOneAsync(
+                x => x.Id == id,
+                Builders<MarketplaceSkill>.Update
+                    .Inc(x => x.DownloadCount, 1)
+                    .Set(x => x.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: ct);
 
-        skill.DownloadCount += 1;
-        skill.UpdatedAt = DateTime.UtcNow;
+            skill.DownloadCount += 1;
+            skill.UpdatedAt = DateTime.UtcNow;
+        }
 
         return Ok(ApiResponse<object>.Ok(new
         {

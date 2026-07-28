@@ -51,6 +51,13 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   // unauthenticated leaks nothing sensitive. Keep in sync with
   // isPublicAccessRequestRoute in server.ts (basic-auth mode whitelist).
   '/api/cluster/build-gate/health',
+  // 项目初始化：客户在拿到任何凭据之前就要能装技能，所以这几个端点必须匿名。
+  // 它们只读（发脚本 / 发技能 zip），不碰项目数据，也不签发任何凭据。
+  // 与 isPublicAccessRequestRoute in server.ts（basic-auth 模式白名单）保持同步。
+  '/api/bootstrap/presets',
+  /^\/api\/bootstrap\/[a-z0-9-]+$/,
+  '/api/skills/bundles',
+  /^\/api\/skills\/[a-z0-9-]+\/download$/,
   // Static assets the login page needs before a session exists.
   /^\/assets\//,
   '/style.css',
