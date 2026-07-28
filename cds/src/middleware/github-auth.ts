@@ -16,7 +16,7 @@
 
 import type { Request, Response, NextFunction } from 'express';
 import type { AuthService } from '../services/auth-service.js';
-import { GH_SESSION_COOKIE } from '../routes/auth.js';
+import { GH_SESSION_COOKIE, buildSessionCookie } from '../routes/auth.js';
 
 /** Paths that bypass the auth gate entirely. */
 const PUBLIC_PATHS: (string | RegExp)[] = [
@@ -90,8 +90,10 @@ export function createGithubAuthMiddleware(deps: {
    * `req.cdsProjectKey` as a side effect; null when no/invalid key.
    */
   resolveAgentKey?: (req: Request) => unknown;
+  /** HTTPS deployment flag; mirrors the value the auth routers use for Set-Cookie. */
+  cookieSecure?: boolean;
 }) {
-  const { authService, resolveAgentKey } = deps;
+  const { authService, resolveAgentKey, cookieSecure = false } = deps;
 
   return async function githubAuthMiddleware(req: Request, res: Response, next: NextFunction): Promise<void> {
     // Always let public paths through — otherwise the login page can't
@@ -168,6 +170,13 @@ export function createGithubAuthMiddleware(deps: {
       }
       res.status(401).json({ error: 'unauthenticated', loginUrl: '/login' });
       return;
+    }
+
+    // Sliding renewal: the server-side session just moved its expiry out, so the
+    // browser copy has to move with it — otherwise the cookie dies first and the
+    // user is bounced to /login while a perfectly valid session is still on file.
+    if (result.renewed && token) {
+      res.setHeader('Set-Cookie', buildSessionCookie(token, result.session.expiresAt, cookieSecure));
     }
 
     // Attach the authenticated user onto the request for downstream handlers.

@@ -83,6 +83,12 @@ export interface AuthServiceConfig {
   allowedOrgs: string[];
   /** Session TTL override in milliseconds. Defaults to 30d. */
   sessionTtlMs?: number;
+  /**
+   * Sliding renewal threshold. A session whose remaining life has dropped below
+   * this fraction of the TTL is pushed back out to a full TTL on the next
+   * request — "keep using it and it never expires". Defaults to 0.5.
+   */
+  sessionRenewThreshold?: number;
   /** How long to trust a cached orgs snapshot before re-fetching. Defaults to 1h. */
   orgsRefreshMs?: number;
   /** Slug template for the first-login personal workspace. `{login}` is substituted. */
@@ -153,6 +159,12 @@ export class AuthService {
     this.config = {
       allowedOrgs: deps.config.allowedOrgs,
       sessionTtlMs: deps.config.sessionTtlMs ?? DEFAULT_SESSION_TTL_MS,
+      sessionRenewThreshold:
+        deps.config.sessionRenewThreshold !== undefined
+          && deps.config.sessionRenewThreshold > 0
+          && deps.config.sessionRenewThreshold < 1
+          ? deps.config.sessionRenewThreshold
+          : 0.5,
       orgsRefreshMs: deps.config.orgsRefreshMs ?? 60 * 60 * 1000,
       personalWorkspaceSlugTemplate:
         deps.config.personalWorkspaceSlugTemplate ?? '{login}-personal',
@@ -473,17 +485,53 @@ export class AuthService {
    * Validate a session token from the cookie. Returns null if the token
    * is missing/expired/unknown. Callers should treat null as "redirect
    * to /login".
+   *
+   * `renewed` is true when this call slid the session's expiry forward — the
+   * caller MUST then re-issue the cookie, otherwise the server-side session is
+   * extended while the browser copy still dies at the old deadline (and the
+   * fresh server expiry stops any later caller from renewing again).
+   *
+   * Callers that cannot set a cookie (e.g. logout, which is about to delete the
+   * session anyway) must pass `{ renew: false }` instead of silently dropping
+   * the flag.
    */
-  async validateSession(token: string | null): Promise<{
+  async validateSession(
+    token: string | null,
+    options: { renew?: boolean } = {},
+  ): Promise<{
     session: CdsSession;
     user: CdsUser;
+    renewed: boolean;
   } | null> {
     if (!token) return null;
     const session = await this.store.findSessionByToken(token);
     if (!session) return null;
     const user = await this.store.findUserById(session.userId);
     if (!user || user.status !== 'active') return null;
-    return { session, user };
+
+    // Sliding renewal: an in-use session never runs out. Only refresh once the
+    // remaining life has dropped below the threshold so we don't write on every
+    // single request.
+    const renewed = options.renew === false ? null : await this.renewIfNeeded(session);
+    return { session: renewed ?? session, user, renewed: renewed !== null };
+  }
+
+  /**
+   * Push a session's expiry back to a full TTL when it has burned through more
+   * than (1 - threshold) of its life. Returns the extended session, or null when
+   * no renewal happened (still fresh, or the store write failed — a failed
+   * renewal must never invalidate an otherwise valid session).
+   */
+  private async renewIfNeeded(session: CdsSession, now = new Date()): Promise<CdsSession | null> {
+    const ttlMs = this.config.sessionTtlMs;
+    const remainingMs = new Date(session.expiresAt).getTime() - now.getTime();
+    if (!Number.isFinite(remainingMs)) return null;
+    if (remainingMs > ttlMs * this.config.sessionRenewThreshold) return null;
+    try {
+      return await this.store.extendSession(session.token, ttlMs, now);
+    } catch {
+      return null;
+    }
   }
 
   /** Destroy a single session. Used by /logout. */
