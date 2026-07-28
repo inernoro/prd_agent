@@ -65,6 +65,7 @@
 - [CDS 总体架构 · 设计](./design.cds.md) `design.cds`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
 - [CDS 复制集模式（一个入口多版本并排） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
@@ -273,6 +274,7 @@
 - [CDS 多分支跨分支隔离 · 债务台账](./debt.cds.branch-isolation.md) `debt.cds.branch-isolation`
 - [CDS 构建闸（build-gate） · 债务台账](./debt.cds.build-gate.md) `debt.cds.build-gate`
 - [CDS 极速版（CI 预构建） · 债务台账](./debt.cds.ci-prebuilt.md) `debt.cds.ci-prebuilt`
+- [CDS 项目初始化 · 债务台账](./debt.cds.project-bootstrap.md) `debt.cds.project-bootstrap`
 - [CDS compose 模板 TODO secrets · 债务台账](./debt.cds.compose-secrets.md) `debt.cds.compose-secrets`
 - [CDS executor 卡死看门狗 · 债务台账](./debt.cds.executor-watchdog.md) `debt.cds.executor-watchdog`
 - [CDS Loading Pages · 债务台账](./debt.cds.nginx-loading-pages.md) `debt.cds.nginx-loading-pages`
