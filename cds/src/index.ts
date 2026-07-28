@@ -1011,8 +1011,25 @@ async function initAuthStore(): Promise<void> {
     const { RealAuthMongoHandle } = await import('./infra/auth-store/mongo-handle.js');
     const { MongoAuthStore } = await import('./infra/auth-store/mongo-store.js');
 
-    const handle = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
-    await handle.connect();
+    // 与状态库同一条退避重试纪律（Codex PR #1275 七轮 P2）。此前只有 state store
+    // 享受启动容忍，鉴权连接一次失败就 throw 退出 —— 而标准安装 `exec_cds.sh init`
+    // 同时开 `CDS_STORAGE_MODE=mongo-split` 与 `CDS_AUTH_BACKEND=mongo`，指的还是**同一个**
+    // mongo。状态库连上之后它再抖一下，进程照样死，宣传的「约 90s 忍耐窗口」形同虚设。
+    // 每次重试都 new 一个 handle：连接失败的 handle 处于半开状态，复用它等于白重试
+    //（该 handle 自身的复位见 auth-store/mongo-handle.ts）。
+    const handle = await withBootRetry(async () => {
+      const h = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
+      await h.connect();
+      return h;
+    }, {
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [auth] mongo 连接第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
     activeAuthStore = new MongoAuthStore(handle);
     console.log(`  [auth] backend=mongo (db=${mongoDb})`);
   } else {

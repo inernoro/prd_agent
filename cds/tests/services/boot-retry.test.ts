@@ -8,6 +8,7 @@
  * 过期 JSON），外加「报错要指向真凶」。
  */
 import { describe, it, expect } from 'vitest';
+import { readFileSync } from 'node:fs';
 import {
   bootRetryDelayMs, withBootRetry, diagnoseDiskForBootFailure,
   DEFAULT_BOOT_RETRY_ATTEMPTS,
@@ -81,5 +82,41 @@ describe('磁盘诊断', () => {
   it('读不到磁盘信息时返回 null（不编造）', () => {
     expect(diagnoseDiskForBootFailure(null)).toBeNull();
     expect(diagnoseDiskForBootFailure({ totalBytes: 0, freeBytes: 0 })).toBeNull();
+  });
+});
+
+/**
+ * 鉴权连接也必须享受同一条启动退避（Codex PR #1275 七轮 P2）。
+ *
+ * 标准安装 `exec_cds.sh init` 同时开 `CDS_STORAGE_MODE=mongo-split` 与
+ * `CDS_AUTH_BACKEND=mongo`，两者指向**同一个** mongo。此前只有 state store 包了
+ * 重试，鉴权那条一次失败就 throw 退出：状态库连上之后 mongo 再抖一下，进程照样死，
+ * 宣传的「约 90s 忍耐窗口」形同虚设。
+ */
+describe('鉴权连接的启动退避（契约）', () => {
+  const src = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
+
+  it('initAuthStore 里的连接包在 withBootRetry 中', () => {
+    const i = src.indexOf('async function initAuthStore()');
+    expect(i).toBeGreaterThan(-1);
+    const body = src.slice(i, i + 2400);
+    expect(body).toContain('withBootRetry(');
+    expect(body).toContain('new RealAuthMongoHandle(');
+  });
+
+  it('每次重试都新建 handle：连接失败的 handle 是半开的，复用它等于白重试', () => {
+    const i = src.indexOf('async function initAuthStore()');
+    const body = src.slice(i, i + 2400);
+    // new 必须出现在 withBootRetry 的回调内部，而不是它之前
+    const retryAt = body.indexOf('withBootRetry(');
+    const newAt = body.indexOf('new RealAuthMongoHandle(');
+    expect(newAt).toBeGreaterThan(retryAt);
+  });
+
+  it('等待定时器不 unref（同 state store：启动期没有别的 handle 撑事件循环）', () => {
+    const i = src.indexOf('async function initAuthStore()');
+    const body = src.slice(i, i + 2400);
+    expect(body).toContain('setTimeout(r, ms)');
+    expect(body).not.toContain('.unref');
   });
 });

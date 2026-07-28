@@ -265,6 +265,15 @@ export interface OrphanWorktreeFs {
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
   removeDir: (dir: string) => Promise<string | null>;
+  /**
+   * 单个目录的 mtime（毫秒）；不存在或读不出来返回 null。
+   *
+   * 删除前的**临删复核**用（Codex PR #1275 七轮 P1）：判定与删除之间隔着整轮
+   * sweep 的时间，同 slug 的分支完全可能在这中间被重建 —— `WorktreeService.create()`
+   * 会先删掉残留目录再 `git worktree add`，而 `addBranch()` 落台账在其后。用一份
+   * 陈旧的计划去删，删掉的就是刚 checkout 出来的新工作树。
+   */
+  statDirMtimeMs: (dir: string) => Promise<number | null>;
 }
 
 export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
@@ -374,6 +383,13 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       return null;
     } catch (err) {
       return (err as Error).message;
+    }
+  },
+  statDirMtimeMs: async (dir) => {
+    try {
+      return fs.statSync(dir).mtimeMs;
+    } catch {
+      return null;
     }
   },
 };
@@ -540,7 +556,40 @@ export class JanitorService {
     const realPathOf = new Map(
       diskDirs.filter((d) => d.realPath).map((d) => [normalizeWorktreePath(d.path), d.realPath as string]),
     );
+    // 临删复核（Codex PR #1275 七轮 P1）：判定发生在整轮 sweep 的开头，删除发生在
+    // 这里 —— 中间这段时间足够一个同 slug 的分支被重建。`WorktreeService.create()`
+    // 先删残留目录再 `git worktree add`，`addBranch()` 落台账更在其后，于是存在一个
+    // 「目录已是新 checkout、台账还没记上」的窗口；拿陈旧计划直接删，删掉的就是
+    // 别人刚拉出来的工作树。删之前把台账与 mtime 都重新读一遍，任一变化即放弃本条。
+    const freshClaimed = new Set(
+      this.stateService.getAllBranches()
+        .flatMap((b) => [b.worktreePath])
+        .filter((p): p is string => !!p)
+        .map(normalizeWorktreePath),
+    );
+    const plannedMtime = new Map(diskDirs.map((d) => [normalizeWorktreePath(d.path), d.mtimeMs]));
+    const skippedByRecheck: string[] = [];
     for (const dir of plan.remove) {
+      if (freshClaimed.has(dir)) {
+        // 台账在本轮期间认领了它 —— 分支重建已完成
+        plan.keptReasons[dir] = '临删复核：台账已重新认领该目录（分支疑似重建）';
+        skippedByRecheck.push(dir);
+        continue;
+      }
+      const nowMtime = await this.orphanWorktreeFs.statDirMtimeMs(dir);
+      if (nowMtime === null) {
+        plan.keptReasons[dir] = '临删复核：目录已消失（无需回收）';
+        skippedByRecheck.push(dir);
+        continue;
+      }
+      const planned = plannedMtime.get(dir);
+      if (planned === undefined || !Number.isFinite(planned) || nowMtime !== planned) {
+        // mtime 变了 = 判定之后有人动过它（重建的 checkout 会刷新 mtime），
+        // 而台账可能还没跟上。宁可漏删一轮，也不删别人正在建的东西。
+        plan.keptReasons[dir] = '临删复核：目录在本轮期间被改动过（可能正在重建），留到下轮';
+        skippedByRecheck.push(dir);
+        continue;
+      }
       const err = await this.orphanWorktreeFs.removeDir(dir);
       if (err) { failed.push({ path: dir, error: err }); continue; }
       removed.push(dir);
@@ -550,6 +599,9 @@ export class JanitorService {
         const realErr = await this.orphanWorktreeFs.removeDir(real);
         if (realErr) failed.push({ path: real, error: realErr }); else removed.push(real);
       }
+    }
+    if (skippedByRecheck.length) {
+      console.warn(`[janitor] 孤儿 worktree 临删复核拦下 ${skippedByRecheck.length} 个目录（疑似并发重建）`);
     }
     // 已删项目的桶清空了就摘墓碑：桶里一个 worktree 都不剩，就没必要再让对账进去。
     // 判据用「本轮枚举到的目录」而不是另跑一次 readdir —— 少一次磁盘往返，也避免

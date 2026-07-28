@@ -20,6 +20,8 @@ let mounted: string[] | null;
 let removeError: string | null;
 
 let seenProjectIds: readonly string[] | null = null;
+// 临删复核读到的 mtime：默认与判定时一致（OLD），改成别的值即模拟「本轮期间被改动」
+let recheckMtime: number | null = OLD;
 
 const fsFake = (): OrphanWorktreeFs => ({
   listWorktreeDirs: async (_base, knownProjectIds) => {
@@ -34,6 +36,7 @@ const fsFake = (): OrphanWorktreeFs => ({
   },
   listMountedHostPaths: async () => mounted,
   removeDir: async (dir) => { if (removeError) return removeError; removed.push(dir); return null; },
+  statDirMtimeMs: async () => recheckMtime,
 });
 
 const stateFake = (): StateService => ({
@@ -57,7 +60,7 @@ const mkJanitor = (): JanitorService => new JanitorService(
   fsFake(),
 );
 
-beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; });
+beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; recheckMtime = OLD; });
 
 describe('janitor 孤儿 worktree 接线', () => {
   it('台账无人认领且无容器挂载 → 真的删掉', async () => {
@@ -85,6 +88,29 @@ describe('janitor 孤儿 worktree 接线', () => {
   it('只在已知项目桶下枚举：项目 id 白名单必须传给 fs 层（Codex PR #1275 二轮 P1）', async () => {
     await mkJanitor().sweep();
     expect(seenProjectIds).toEqual(['proj']);
+  });
+
+  it('临删复核：目录在本轮期间被改动过 → 不删，留到下轮（Codex 七轮 P1）', async () => {
+    // 判定与删除之间，同 slug 的分支可能被重建：create() 先删残留再 git worktree add，
+    // addBranch() 落台账更在其后。拿陈旧计划直接删，删掉的就是刚 checkout 的新工作树。
+    recheckMtime = NOW; // mtime 变新 = 有人动过
+    const report = await mkJanitor().sweep();
+    expect(removed).toEqual([]);
+    expect(report.orphanWorktrees?.keptReasons[`${BASE}/proj/orphan`]).toContain('临删复核');
+  });
+
+  it('临删复核：目录已消失 → 跳过且不算失败', async () => {
+    recheckMtime = null;
+    const report = await mkJanitor().sweep();
+    expect(removed).toEqual([]);
+    expect(report.orphanWorktrees?.failed).toEqual([]);
+    expect(report.orphanWorktrees?.keptReasons[`${BASE}/proj/orphan`]).toContain('已消失');
+  });
+
+  it('临删复核通过（mtime 未变）→ 照常删除，功能没被护栏废掉', async () => {
+    const report = await mkJanitor().sweep();
+    expect(removed).toEqual([`${BASE}/proj/orphan`]);
+    expect(report.orphanWorktrees?.removed).toEqual([`${BASE}/proj/orphan`]);
   });
 
   it('删除失败进 errors，不静默吞掉', async () => {

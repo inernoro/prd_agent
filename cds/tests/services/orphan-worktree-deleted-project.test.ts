@@ -36,6 +36,7 @@ const fsFake = (): OrphanWorktreeFs => ({
   },
   listMountedHostPaths: async () => [],
   removeDir: async (dir) => { removed.push(dir); deadBucketDirs = deadBucketDirs.filter((d) => d !== dir); return null; },
+  statDirMtimeMs: async () => OLD,
 });
 
 const stateFake = (): StateService => ({
