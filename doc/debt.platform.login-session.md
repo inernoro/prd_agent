@@ -11,7 +11,7 @@
 |---|---|---|---|---|
 | MAP（prd-admin） | localStorage（zustand persist） | access token 7 天；会话滑动窗口 7 天 | 每次已鉴权请求 `AuthSlidingExpirationMiddleware` Touch 续满窗口（含 tokenVersion 键）；access token 过期后 401 → refresh → 重试 | 每请求校验 tokenVersion（`/api/auth-ops/force-expire*` 立即生效） |
 | 网关控制台（llmgw/web） | localStorage | token 7 天 | 用满 12h 的 token 在租户校验通过后由服务端换发，走 `X-Gw-Token` 响应头，前端在响应里接住 | 每请求 `TenantAccess.ResolveAsync` 重校验 SecurityVersion / 成员版本 / 租户状态 |
-| CDS | `cds_gh_session` cookie | 30 天（`CDS_SESSION_TTL_DAYS`，下限 7 天） | 剩余不足一半时下一次请求续满并重发 cookie | 会话表删除（logout / 禁用用户） |
+| CDS | `cds_gh_session` cookie | 7 天（`CDS_SESSION_TTL_DAYS`，1~90 天） | 剩余不足一半时下一次请求续满并重发 cookie | 会话表删除（logout / 禁用用户） |
 
 ## 已知边界 / 待补项
 
@@ -47,10 +47,12 @@ MAP SSO 会话）原样到期，用户需重登一次才进入 7 天滑动窗口
 （条件不匹配），结果仍然是一个被续满的会话，不会写坏数据；但如果并发的是 logout，续期会安静失败，
 下一次请求按未登录处理。当前阈值下每个会话半个 TTL 才触发一次续期，冲突概率极低，暂不改成原子更新。
 
-### 6. 三端窗口长度各行其是
+### 6. 三端都是 7 天，但没有统一 SSOT
 
-MAP 7 天 / 网关 7 天 / CDS 30 天，来源是各自原有实现的量级（3 天 / 12 小时 / 30 天）。没有统一
-SSOT，调整时要三处各改各的配置。若后续要求「一处配置管三端」，需要引入平台级会话策略配置。
+用户 2026-07-28 定调「本项目所有的系统都是 7 天」，MAP / 网关 / CDS 现已全部落到 7 天。
+但三处各有各的配置项（`Jwt:AccessTokenMinutes` + `Auth:SessionSlidingDays` / `LlmGwJwt:LifetimeDays` /
+`CDS_SESSION_TTL_DAYS`），改一个数字要动三处，存在漂移风险。若要「一处配置管三端」，
+需要引入平台级会话策略配置。
 
 ## 历史背景
 

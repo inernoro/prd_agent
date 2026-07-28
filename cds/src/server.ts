@@ -2027,9 +2027,10 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
-    // 登录有效期：默认 30 天，且「用后自动延长」——剩余时长掉到一半时下一次请求就续满，
-    // 所以只要在用就不会掉登录。CDS_SESSION_TTL_DAYS 可调，下限 7 天。
-    const sessionTtlDays = Math.max(7, Number(process.env.CDS_SESSION_TTL_DAYS) || 30);
+    // 登录有效期：默认 7 天（全系统统一口径，MAP / 网关控制台同为 7 天），
+    // 且「用后自动延长」——剩余时长掉到一半时下一次请求就续满，所以只要在用就不会掉登录。
+    // CDS_SESSION_TTL_DAYS 可调（1~90 天）。
+    const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
     const authService = new AuthService({
       store: authStore,
       github: githubClient,

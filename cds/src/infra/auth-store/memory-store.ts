@@ -133,8 +133,12 @@ export function localPlaceholderGithubId(): number {
   return -(Math.floor(Math.random() * 9_000_000_000_000_000) + 1);
 }
 
-/** Default session TTL in milliseconds. 30 days. */
-export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Default session TTL in milliseconds. 7 days — the project-wide login window
+ * (MAP and the gateway console use the same figure). Sessions slide forward on
+ * use, so 7 days is "7 days of inactivity", not "7 days since login".
+ */
+export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Max user-activity records kept in the in-memory ring buffer. */
 export const ACTIVITY_RING_CAPACITY = 1000;

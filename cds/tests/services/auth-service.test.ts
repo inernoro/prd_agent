@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
+import { MemoryAuthStore, DEFAULT_SESSION_TTL_MS } from '../../src/infra/auth-store/memory-store.js';
 import { AuthService, AuthServiceError } from '../../src/services/auth-service.js';
 import { GitHubOAuthClient, type FetchLike } from '../../src/services/github-oauth-client.js';
 
@@ -281,6 +281,24 @@ describe('AuthService', () => {
         code: 'oauth_upstream',
       });
     });
+  });
+
+  it('defaults to the project-wide 7 day login window', async () => {
+    // 全系统统一口径：MAP / 网关控制台 / CDS 都是 7 天（滑动，用后自动续满）。
+    expect(DEFAULT_SESSION_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000);
+
+    const { service } = buildService();
+    const { state } = service.startLogin('https://x/cb', '/projects.html');
+    const result = await service.handleCallback({
+      code: 'code',
+      state,
+      redirectUri: 'https://x/cb',
+      userAgent: null,
+      ipAddress: null,
+    });
+
+    const lifetimeMs = new Date(result.session.expiresAt).getTime() - new Date(result.session.createdAt).getTime();
+    expect(lifetimeMs).toBe(DEFAULT_SESSION_TTL_MS);
   });
 
   describe('validateSession', () => {
