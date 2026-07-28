@@ -42,6 +42,41 @@ const LOGS = [{
   startedAt: nowIso, durationMs: 1234, inputTokens: 100, outputTokens: 200, totalTokens: 300,
   appCallerCode: 'demo.chat::chat', streamed: false, sessionId: null, userId: null,
 }];
+/* 模型池的卡片、成员行、操作区才是这个检测器要盯的规格来源；
+   空列表只会渲染空状态，改坏了内边距/间距也照样"与基准一致"。 */
+const poolMember = (over) => ({
+  modelId: 'm1', platformId: 'p1', priority: 10, protocol: 'openai',
+  healthStatus: 0, healthStatusLabel: '健康', lastFailedAt: null, lastSuccessAt: nowIso,
+  consecutiveFailures: 0, consecutiveSuccesses: 12, enablePromptCache: false, maxTokens: 8192,
+  isMain: true, isIntent: false, isVision: false, isImageGen: false, capabilities: [],
+  inputPricePerMillion: 3, outputPricePerMillion: 15, pricePerCall: null, priceCurrency: 'USD',
+  ...over,
+});
+const POOLS = [
+  row({
+    id: 'pool-1', name: '对话主池', code: 'chat-main', priority: 50, modelType: 'chat',
+    isDefaultForType: true, strategyType: 0, description: '默认对话池',
+    sourceCollection: 'model_pools', claimedAt: nowIso,
+    models: [poolMember({}), poolMember({ modelId: 'm2', priority: 20, isMain: false, healthStatus: 1, healthStatusLabel: '降级' })],
+    boundAppCallerCount: 1,
+    boundAppCallers: [{ id: 'ac1', appCallerCode: 'demo.chat::chat', title: '演示对话', status: 'active' }],
+    recentRequests: 128, recentSucceeded: 120, recentFailed: 8, recentSuccessRatePercent: 93.8,
+    lastRequestAt: nowIso, trafficWindowHours: 24,
+    health: 'degraded', healthyMembers: 1, degradedMembers: 1, unavailableMembers: 0,
+    managedByRegistry: false, appendOnly: false, poolRole: null,
+  }),
+  row({
+    id: 'pool-2', name: '视觉池', code: 'vision-main', priority: 40, modelType: 'vision',
+    isDefaultForType: false, strategyType: 1, description: null,
+    sourceCollection: 'model_pools', claimedAt: null,
+    models: [poolMember({ modelId: 'm3', isMain: false, isVision: true })],
+    boundAppCallerCount: 0, boundAppCallers: [],
+    recentRequests: 0, recentSucceeded: 0, recentFailed: 0, recentSuccessRatePercent: null,
+    lastRequestAt: null, trafficWindowHours: 24,
+    health: 'healthy', healthyMembers: 1, degradedMembers: 0, unavailableMembers: 0,
+    managedByRegistry: true, appendOnly: true, poolRole: 'fallback',
+  }),
+];
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
   '/auth/tenants': [],
@@ -50,12 +85,19 @@ const STUBS = {
   '/logs': { ...LIST, total: 1, items: LOGS },
   '/logs/meta': { models: [], providers: [], statuses: [], appCallerCodes: [], sessions: [], teams: [], serviceKeys: [], clientCodes: [], environments: [] },
   '/logs/summary': { total: 1, succeeded: 1, failed: 0, totalTokens: 300, estimatedCostUsd: 0.01 },
-  '/logs/timeseries': { points: [], buckets: [] },
+  // 趋势图是基准页自身的一部分，空 points 会让它整块不渲染 —— 基准就不再代表真实版面。
+  '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
   '/audits': { ...LIST, items: [row({ id: 'a1', action: 'pool.update', targetType: 'pool', targetId: 'pool-1', actorUsername: 'demo', success: true, summary: '更新模型池优先级', detail: null })] },
   '/app-callers': { ...LIST, items: [], statuses: [], sourceSystems: [], ingressProtocols: [], requestTypes: [] },
-  '/pools': { ...LIST, items: [], pools: [] },
-  '/pool-types': { items: [], total: 0, ready: 0, waiting: 0 },
+  '/pools': { ...LIST, items: POOLS, pools: POOLS },
+  '/pool-types': {
+    items: [
+      { code: 'chat', name: '对话', purpose: '常规对话', sortOrder: 1, defaultPoolId: 'pool-1', modelCount: 2, ready: true, version: 1 },
+      { code: 'vision', name: '视觉', purpose: '图像理解', sortOrder: 2, defaultPoolId: '', modelCount: 1, ready: false, version: 1 },
+    ],
+    total: 2, ready: 1, waiting: 1,
+  },
   '/parameter-capabilities/meta': { items: [], templates: [] },
   '/logical-models': { items: [], total: 0 },
   '/exchanges': { ...LIST, items: [], exchanges: [] },
@@ -133,8 +175,9 @@ const measure = () => {
       if (num(cs.borderTopLeftRadius) > 0) radii.add(num(cs.borderTopLeftRadius));
     }
     if (cs.display.includes('flex') || cs.display.includes('grid')) {
+      // <4px 的不是版面间距，是图元内部的缝（柱状图柱间 3px 之类），不计入容器间距口径。
       const g = num(cs.rowGap || cs.gap);
-      if (g > 0) gaps.add(g);
+      if (g >= 4) gaps.add(g);
     }
   }
   for (const el of main.querySelectorAll('span, small')) {

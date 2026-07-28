@@ -3762,8 +3762,11 @@ a:focus-visible {
   border-bottom: 1px solid var(--border-subtle);
 }
 
+/* 收起后仍要给按钮留出在流内的高度：卡片是 overflow:hidden，
+   把按钮负偏移到卡片外会被裁掉，趋势就再也展不开了。 */
 .lg-log-trend.is-collapsed {
   padding: 0;
+  min-height: 28px;
   border-bottom: 0;
 }
 
@@ -3787,7 +3790,7 @@ a:focus-visible {
 }
 
 .lg-log-trend.is-collapsed .lg-log-trend-toggle {
-  top: -34px;
+  top: 1px;
 }
 
 /* 汇总指标并进标题行：一排小字，不再占一整张卡片。
