@@ -256,3 +256,49 @@ describe('库名 key 的取用优先级', () => {
     expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
   });
 });
+
+/**
+ * 中立库名 key 的引擎判定必须先按 profile 自己的 dependsOn 收敛（Codex PR #1275 八轮 P2）。
+ *
+ * 项目级 customEnv 会把**所有**引擎的连接串灌给每个服务，多引擎项目里 URL 集合恒为
+ * {mysql, postgres} → 判不出唯一引擎 → DB_NAME 被当成不可归类的 key 过滤掉 →
+ * presentKeys 空 → 直接「没有数据库名」返回。下游那套 dependsOn 消歧此刻永远轮不到。
+ */
+describe('多引擎项目里中立库名 key 的引擎收敛', () => {
+  beforeEach(() => {
+    addInfra('mysql', 'mysql:8');
+    addInfra('pg', 'postgres:16');
+    // 项目级把两种引擎的连接串一起灌下来 —— 单看 URL 集合判不出唯一引擎
+    state.setCustomEnv({
+      DB_NAME: 'impdb',
+      SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+      PG_URL: 'postgres://pg:5432/otherdb',
+    }, 'proj');
+  });
+
+  it('dependsOn 唯一指向一个引擎 → 中立 DB_NAME 照常可隔离', () => {
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql'] }));
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('impdb');
+    // 应用真正读的那条 JDBC 连接串必须进改写集合，否则隔离仍是假的
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+
+  it('没有 dependsOn → 仍然 fail-closed，不瞎猜引擎', () => {
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target).toBeNull();
+    expect(reason).toContain('没有数据库名');
+  });
+
+  it('dependsOn 同时声明两种引擎 → 依旧判不出唯一引擎，fail-closed', () => {
+    const { target } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql', 'pg'] }));
+    expect(target).toBeNull();
+  });
+
+  it('dependsOn 指向的实例未运行 → 不算数，fail-closed', () => {
+    addInfra('mysql-stopped', 'mysql:8', {}, 'stopped');
+    const { target } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql-stopped'] }));
+    expect(target).toBeNull();
+  });
+});

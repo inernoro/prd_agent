@@ -590,15 +590,25 @@ export class JanitorService {
         skippedByRecheck.push(dir);
         continue;
       }
-      const err = await this.orphanWorktreeFs.removeDir(dir);
-      if (err) { failed.push({ path: dir, error: err }); continue; }
-      removed.push(dir);
+      // 顺序要紧：**先真身、后别名**（Codex PR #1275 八轮 P2）。
+      // 别名是真身唯一的可发现入口 —— 真身住在顶层，而顶层被项目桶白名单刻意排除在
+      // 枚举之外。若先删别名、再删真身时遇到 EBUSY 之类的暂时性失败，那棵（往往很大的）
+      // 工作树就永远没人再发现得到，也没有下一轮重试的机会，等于永久泄漏。
+      // 反过来先删真身：真身失败就整条放弃、别名原样留着，下一轮照常重来。
       const real = realPathOf.get(dir);
       if (real) {
         // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
         const realErr = await this.orphanWorktreeFs.removeDir(real);
-        if (realErr) failed.push({ path: real, error: realErr }); else removed.push(real);
+        if (realErr) {
+          failed.push({ path: real, error: realErr });
+          plan.keptReasons[dir] = `真身回收失败，保留别名以便下轮重试（${real}）`;
+          continue; // 别名必须留着，否则真身再也找不回来
+        }
+        removed.push(real);
       }
+      const err = await this.orphanWorktreeFs.removeDir(dir);
+      if (err) { failed.push({ path: dir, error: err }); continue; }
+      removed.push(dir);
     }
     if (skippedByRecheck.length) {
       console.warn(`[janitor] 孤儿 worktree 临删复核拦下 ${skippedByRecheck.length} 个目录（疑似并发重建）`);

@@ -83,8 +83,8 @@ export function isRelationalUrl(value: unknown): boolean {
   return typeof value === 'string' && RELATIONAL_URL_SCHEME.test(value.trim());
 }
 
-/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
-export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
+/** 一份 env 里出现过的全部关系型引擎（去重）。 */
+export function relationalEnginesFromUrls(env: Record<string, string>): ReplicaDbEngine[] {
   const found = new Set<ReplicaDbEngine>();
   for (const value of Object.values(env)) {
     if (typeof value !== 'string') continue;
@@ -93,7 +93,53 @@ export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDb
     const scheme = m[2].toLowerCase();
     found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
   }
-  return found.size === 1 ? [...found][0] : null;
+  return [...found];
+}
+
+/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
+export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
+  const found = relationalEnginesFromUrls(env);
+  return found.length === 1 ? found[0] : null;
+}
+
+/** infra 服务镜像 → 引擎（三种受支持的数据库之一，否则 null）。 */
+function engineOfInfra(svc: InfraService): ReplicaDbEngine | null {
+  const kind = detectInfraDataKind(svc.dockerImage);
+  return kind === 'mongo' || kind === 'mysql' || kind === 'postgres' ? kind : null;
+}
+
+/**
+ * 引擎中立库名 key（DB_NAME）的引擎判定，多引擎项目下用 profile 自己的 dependsOn 收敛
+ *（Codex PR #1275 八轮 P2）。
+ *
+ * 只按「全 env 的 URL 是否唯一」判定是不够的：项目级 customEnv 会把**所有**引擎的连接串
+ * 灌给每个服务，多引擎项目里 URL 集合恒为 {mysql, postgres} → 判不出唯一引擎 → DB_NAME
+ * 被当成不可归类的 key 过滤掉 → presentKeys 空 → 直接返回「没有数据库名」。而下方那套
+ * dependsOn 消歧只在 enginesPresent.length > 1 时才跑，此刻 presentKeys 已经空了，永远轮不到。
+ * 结果就是：本轮刚刚宣传的「支持 DB_NAME」在多引擎项目上依然不可用。
+ *
+ * 收敛用**交集**而非直接采信 dependsOn：引擎必须同时满足「profile 明确声明依赖它」与
+ * 「env 里确实有它的连接串」。只满足一边说明配置本身有歧义，宁可继续 fail-closed。
+ */
+function resolveNeutralEngine(
+  state: StateService,
+  branch: BranchEntry,
+  profile: BuildProfile,
+  runtimeEnv: Record<string, string>,
+): ReplicaDbEngine | null {
+  const unique = engineFromRelationalUrls(runtimeEnv);
+  if (unique) return unique;
+  const candidates = relationalEnginesFromUrls(runtimeEnv);
+  if (candidates.length < 2) return null; // 一个都没有 → 无从判定，照旧 fail-closed
+  const declared = new Set(profile.dependsOn || []);
+  if (declared.size === 0) return null;
+  const byDepends = [...new Set(
+    state.getInfraServicesForProject(branch.projectId)
+      .filter((svc) => svc.status === 'running' && declared.has(svc.id))
+      .map(engineOfInfra)
+      .filter((e): e is ReplicaDbEngine => e !== null && candidates.includes(e)),
+  )];
+  return byDepends.length === 1 ? byDepends[0] : null;
 }
 
 /**
@@ -220,7 +266,7 @@ export function resolveReplicaDbTarget(
 
   // 引擎中立 key（DB_NAME / DATABASE_NAME）的引擎从同 env 的关系型 URL scheme 读，
   // 读不出唯一引擎就当它不是库名 key（fail-closed，见 ENGINE_NEUTRAL_DB_ENV_PATTERN）。
-  const neutralEngine = engineFromRelationalUrls(runtimeEnv);
+  const neutralEngine = resolveNeutralEngine(state, branch, profile, runtimeEnv);
   const presentKeys = Object.keys(runtimeEnv)
     .filter((key) => classifyDbEnvKey(key, neutralEngine) !== null
       && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
@@ -260,10 +306,7 @@ export function resolveReplicaDbTarget(
   if (enginesPresent.length > 1) {
     const running = state.getInfraServicesForProject(branch.projectId)
       .filter((svc) => svc.status === 'running');
-    const engineOf = (svc: InfraService): ReplicaDbEngine | null => {
-      const kind = detectInfraDataKind(svc.dockerImage);
-      return kind === 'mongo' || kind === 'mysql' || kind === 'postgres' ? kind : null;
-    };
+    const engineOf = engineOfInfra;
     const declared = new Set(profile.dependsOn || []);
     const byDepends = [...new Set(
       running.filter((s) => declared.has(s.id)).map(engineOf)

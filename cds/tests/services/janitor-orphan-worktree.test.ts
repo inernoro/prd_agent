@@ -22,6 +22,9 @@ let removeError: string | null;
 let seenProjectIds: readonly string[] | null = null;
 // 临删复核读到的 mtime：默认与判定时一致（OLD），改成别的值即模拟「本轮期间被改动」
 let recheckMtime: number | null = OLD;
+// 别名 → 真身的映射与「删哪个会失败」，用于验证成对回收的顺序（八轮 P2）
+let aliasRealPath: string | null = null;
+let failOnDir: string | null = null;
 
 const fsFake = (): OrphanWorktreeFs => ({
   listWorktreeDirs: async (_base, knownProjectIds) => {
@@ -29,13 +32,18 @@ const fsFake = (): OrphanWorktreeFs => ({
     return {
       dirs: [
         { path: `${BASE}/proj/live`, mtimeMs: OLD },
-        { path: `${BASE}/proj/orphan`, mtimeMs: OLD },
+        { path: `${BASE}/proj/orphan`, mtimeMs: OLD, ...(aliasRealPath ? { realPath: aliasRealPath } : {}) },
       ],
       unreadable: [],
     };
   },
   listMountedHostPaths: async () => mounted,
-  removeDir: async (dir) => { if (removeError) return removeError; removed.push(dir); return null; },
+  removeDir: async (dir) => {
+    if (removeError) return removeError;
+    if (failOnDir && dir === failOnDir) return 'EBUSY: resource busy';
+    removed.push(dir);
+    return null;
+  },
   statDirMtimeMs: async () => recheckMtime,
 });
 
@@ -60,7 +68,7 @@ const mkJanitor = (): JanitorService => new JanitorService(
   fsFake(),
 );
 
-beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; recheckMtime = OLD; });
+beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; recheckMtime = OLD; aliasRealPath = null; failOnDir = null; });
 
 describe('janitor 孤儿 worktree 接线', () => {
   it('台账无人认领且无容器挂载 → 真的删掉', async () => {
@@ -111,6 +119,26 @@ describe('janitor 孤儿 worktree 接线', () => {
     const report = await mkJanitor().sweep();
     expect(removed).toEqual([`${BASE}/proj/orphan`]);
     expect(report.orphanWorktrees?.removed).toEqual([`${BASE}/proj/orphan`]);
+  });
+
+  it('成对回收顺序：先真身后别名（Codex 八轮 P2）', async () => {
+    aliasRealPath = `${BASE}/legacy-main`;
+    const report = await mkJanitor().sweep();
+    // 真身必须排在别名前面 —— 别名是真身唯一的可发现入口
+    expect(removed).toEqual([`${BASE}/legacy-main`, `${BASE}/proj/orphan`]);
+    expect(report.orphanWorktrees?.removed).toHaveLength(2);
+  });
+
+  it('真身回收失败 → 别名必须留着，否则真身再也找不回来（Codex 八轮 P2）', async () => {
+    aliasRealPath = `${BASE}/legacy-main`;
+    failOnDir = `${BASE}/legacy-main`;
+    const report = await mkJanitor().sweep();
+    // 别名没被删（下一轮还能重来），失败如实上报
+    expect(removed).toEqual([]);
+    expect(report.orphanWorktrees?.failed).toEqual([
+      { path: `${BASE}/legacy-main`, error: 'EBUSY: resource busy' },
+    ]);
+    expect(report.orphanWorktrees?.keptReasons[`${BASE}/proj/orphan`]).toContain('保留别名');
   });
 
   it('删除失败进 errors，不静默吞掉', async () => {
