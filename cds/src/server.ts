@@ -2027,10 +2027,13 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
+    // 登录有效期：默认 30 天，且「用后自动延长」——剩余时长掉到一半时下一次请求就续满，
+    // 所以只要在用就不会掉登录。CDS_SESSION_TTL_DAYS 可调，下限 7 天。
+    const sessionTtlDays = Math.max(7, Number(process.env.CDS_SESSION_TTL_DAYS) || 30);
     const authService = new AuthService({
       store: authStore,
       github: githubClient,
-      config: { allowedOrgs },
+      config: { allowedOrgs, sessionTtlMs: sessionTtlDays * 24 * 60 * 60 * 1000 },
     });
 
     app.use(
@@ -2055,6 +2058,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
+      cookieSecure,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)

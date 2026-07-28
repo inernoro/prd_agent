@@ -160,7 +160,7 @@ public class MiduoPlanetSsoController : ControllerBase
             RefreshToken = refreshToken,
             SessionKey = sessionKey,
             ClientType = clientType,
-            ExpiresIn = 3600,
+            ExpiresIn = Math.Max(1, _cfg.GetValue<int>("Jwt:AccessTokenMinutes", 1440)) * 60,
             MustResetPassword = false,
             User = new UserInfo
             {

@@ -67,6 +67,7 @@ function stubFetch(overrides: Partial<{
 function buildService(config: {
   allowedOrgs?: string[];
   fetchImpl?: FetchLike;
+  sessionTtlMs?: number;
 } = {}) {
   const store = new MemoryAuthStore();
   const github = new GitHubOAuthClient({
@@ -79,7 +80,10 @@ function buildService(config: {
   const service = new AuthService({
     store,
     github,
-    config: { allowedOrgs: config.allowedOrgs ?? ['inernoro'] },
+    config: {
+      allowedOrgs: config.allowedOrgs ?? ['inernoro'],
+      ...(config.sessionTtlMs !== undefined ? { sessionTtlMs: config.sessionTtlMs } : {}),
+    },
   });
   return { store, github, service };
 }
@@ -298,6 +302,51 @@ describe('AuthService', () => {
 
       const validated = await service.validateSession(result.session.token);
       expect(validated?.user.id).toBe(result.user.id);
+    });
+
+    it('slides the expiry forward once a session is past the renewal threshold', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      // 刚登录：还剩满额，不该写库（renewed=false，过期时间不变）。
+      const fresh = await service.validateSession(result.session.token);
+      expect(fresh?.renewed).toBe(false);
+      expect(fresh?.session.expiresAt).toBe(result.session.expiresAt);
+
+      // 手动把过期时间挪到只剩 1 天（低于 50% 阈值），下一次访问应续满。
+      const nearlyExpired = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await store.extendSession(result.session.token, 24 * 60 * 60 * 1000);
+      expect(new Date((await store.findSessionByToken(result.session.token))!.expiresAt).getTime())
+        .toBeLessThanOrEqual(new Date(nearlyExpired).getTime() + 5_000);
+
+      const renewed = await service.validateSession(result.session.token);
+      expect(renewed?.renewed).toBe(true);
+      const remainingMs = new Date(renewed!.session.expiresAt).getTime() - Date.now();
+      expect(remainingMs).toBeGreaterThan(ttlMs * 0.9);
+    });
+
+    it('does not renew an expired session', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      await store.extendSession(result.session.token, -1000);
+      expect(await service.validateSession(result.session.token)).toBeNull();
     });
 
     it('returns null for disabled users', async () => {

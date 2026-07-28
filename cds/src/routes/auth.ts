@@ -37,7 +37,11 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | u
   return match ? decodeURIComponent(match[1]) : undefined;
 }
 
-function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
+/**
+ * Session cookie with the same expiry as the server-side session. Exported so the
+ * auth gate can re-issue it when a session slides forward (see github-auth.ts).
+ */
+export function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
   const parts = [
     `${GH_SESSION_COOKIE}=${encodeURIComponent(token)}`,

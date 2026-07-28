@@ -974,17 +974,22 @@ builder.Services.AddSingleton<IMarkdownParser, MarkdownParser>();
 builder.Services.AddSingleton<IPromptManager, PromptManager>();
 
 // 注册 JWT 服务
-var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 60);
+// Access Token 默认 24 小时：踢下线由每次请求校验 tokenVersion 保证（见 OnTokenValidated），
+// 因此拉长 access token 不会削弱撤销能力，却能显著减少「离开一会儿回来就 401」的体感。
+var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 1440);
 builder.Services.AddSingleton<IJwtService>(sp => 
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtAccessTokenMinutes));
 
 // 注册 AuthSessionService（refresh session + tokenVersion）
+// 会话滑动窗口默认 7 天：每次已鉴权请求都会 Touch 续满（AuthSlidingExpirationMiddleware），
+// 即「只要在用就不会掉登录」，连续 7 天没访问才需要重新登录。
 builder.Services.AddSingleton<IAuthSessionService>(sp =>
 {
     var cache = sp.GetRequiredService<ICacheManager>();
     var config = sp.GetRequiredService<IConfiguration>();
     var secret = config["Jwt:Secret"] ?? "default-secret";
-    return new AuthSessionService(cache, secret);
+    var slidingDays = config.GetValue<int>("Auth:SessionSlidingDays", AuthSessionService.DefaultSlidingDays);
+    return new AuthSessionService(cache, secret, slidingDays);
 });
 
 // 注册 HTTP 日志处理程序
@@ -1483,7 +1488,7 @@ app.UseAuthentication();
 // 限流必须位于认证之后，否则所有已登录用户都会退化为共享代理 IP 桶，
 // SSE 长连接还会长期占用同一并发计数，导致同出口用户互相触发 RATE_LIMITED。
 app.UseRateLimiting();
-// 认证通过后做 3 天滑动续期（now+72h，按端独立）
+// 认证通过后做滑动续期（默认 7 天，Auth:SessionSlidingDays 可调，按端独立）
 app.UseMiddleware<AuthSlidingExpirationMiddleware>();
 // 统一记录"最后操作时间"（仅写请求 + 成功响应）
 app.UseMiddleware<PrdAgent.Api.Middleware.UserLastActiveMiddleware>();

@@ -64,6 +64,11 @@ export interface AuthStore {
     ipAddress: string | null;
   }, now?: Date): Promise<CdsSession>;
   findSessionByToken(token: string, now?: Date): Promise<CdsSession | null>;
+  /**
+   * Sliding renewal: push a live session's expiry out to `now + ttlMs`.
+   * Returns the updated session, or null when the token is unknown/expired.
+   */
+  extendSession(token: string, ttlMs: number, now?: Date): Promise<CdsSession | null>;
   deleteSession(token: string): Promise<void>;
   deleteSessionsForUser(userId: string): Promise<number>;
 
@@ -328,6 +333,22 @@ export class MemoryAuthStore implements AuthStore {
     }
     // Touch lastSeenAt so the session stays "live".
     const updated: CdsSession = { ...session, lastSeenAt: now.toISOString() };
+    this.sessionsByToken.set(token, updated);
+    return updated;
+  }
+
+  async extendSession(token: string, ttlMs: number, now = new Date()): Promise<CdsSession | null> {
+    const session = this.sessionsByToken.get(token);
+    if (!session) return null;
+    if (new Date(session.expiresAt).getTime() <= now.getTime()) {
+      this.sessionsByToken.delete(token);
+      return null;
+    }
+    const updated: CdsSession = {
+      ...session,
+      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+      lastSeenAt: now.toISOString(),
+    };
     this.sessionsByToken.set(token, updated);
     return updated;
   }

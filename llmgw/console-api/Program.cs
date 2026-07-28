@@ -88,7 +88,16 @@ builder.Services.AddSingleton(mapMongoClient);
 builder.Services.AddSingleton(mapDatabase);
 
 // ── JWT 签发器（独立密钥）──
-var gwJwt = new GwJwt(jwtSecret, jwtIssuer);
+// 会话默认 7 天且用后自动续期（响应头 X-Gw-Token 换发），只要在用就不会掉登录。
+// 撤销不依赖 token 过期：每个已鉴权请求都会重新校验 SecurityVersion / 成员版本 / 租户状态。
+var jwtLifetimeDays = config.GetValue<int>("LlmGwJwt:LifetimeDays", GwJwt.DefaultLifetimeDays);
+var jwtRenewAfterHours = config.GetValue<int>("LlmGwJwt:RenewAfterHours", GwJwt.DefaultRenewAfterHours);
+var gwJwt = new GwJwt(jwtSecret, jwtIssuer, jwtLifetimeDays, jwtRenewAfterHours);
+// MAP 一键登录（联邦会话）时长：默认与普通会话一致；需要收紧回旧的 15 分钟时配置该值即可。
+var mapSsoLifetimeMinutes = config.GetValue<int>("LlmGwJwt:MapSsoLifetimeMinutes", 0);
+var mapSsoLifetime = mapSsoLifetimeMinutes > 0
+    ? TimeSpan.FromMinutes(mapSsoLifetimeMinutes)
+    : gwJwt.Lifetime;
 builder.Services.AddSingleton(gwJwt);
 
 // ── 鉴权 ──
@@ -152,7 +161,9 @@ builder.Services.AddAuthorization(options =>
 // ── CORS：内部观测工具，放开来源/头/方法（前端经 nginx 跨源访问）──
 const string CorsPolicy = "llmgw-cors";
 builder.Services.AddCors(o => o.AddPolicy(CorsPolicy, p =>
-    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()));
+    p.AllowAnyOrigin().AllowAnyHeader().AllowAnyMethod()
+        // 滑动续期换发的新 token 走响应头下发，跨源前端必须能读到这两个头。
+        .WithExposedHeaders(GwSessionHeaders.Token, GwSessionHeaders.TokenExpiresAt)));
 
 // ── JSON：camelCase 输出，与前端约定一致 ──
 var jsonOptions = new JsonSerializerOptions
@@ -440,6 +451,17 @@ app.Use(async (http, next) =>
     }
 
     http.Items[TenantAccess.ItemKey] = tenantAccess;
+
+    // 滑动续期：会话仍然有效且已用满续期间隔时，换发一枚重新计时的 token 通过响应头下发。
+    // 放在租户校验之后，保证「已被禁用/踢出」的会话不会被续期。
+    var renewed = gwJwt.TryRenew(http.User);
+    if (renewed is not null)
+    {
+        http.Response.Headers[GwSessionHeaders.Token] = renewed.Value.Token;
+        http.Response.Headers[GwSessionHeaders.TokenExpiresAt] =
+            renewed.Value.ExpiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ");
+    }
+
     await next();
 });
 app.UseAuthorization();
@@ -754,8 +776,9 @@ app.MapPost("/gw/auth/map-sso", async (HttpContext http, [FromBody] MapSsoReques
                 .Set("CompletedAt", DateTime.UtcNow));
         await WriteLoginAuditAsync(loginAudits, http, tenant.Id, mapUsername, gwUser.Id, true, null);
 
-        // MAP 联邦会话缩短为 15 分钟；再次从 MAP 点击会原子吊销该用户旧 Gateway 会话。
-        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, TimeSpan.FromMinutes(15));
+        // MAP 联邦会话默认与普通会话同为 7 天（LlmGwJwt:MapSsoLifetimeMinutes 可收紧）；
+        // 再次从 MAP 点击仍会原子吊销该用户旧 Gateway 会话。
+        var (token, expiresAt) = gwJwt.Issue(gwUser, tenant, membership, mapSsoLifetime);
         return Json(ApiEnvelope<LoginResultDto>.Ok(new LoginResultDto
         {
             Token = token,

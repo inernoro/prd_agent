@@ -7,21 +7,39 @@ using PrdAgent.LlmGw.Models;
 namespace PrdAgent.LlmGw.Auth;
 
 /// <summary>
-/// 网关 JWT 签发（HS256，独立密钥，与 MAP 完全隔离）。生命周期 12 小时。
+/// 网关 JWT 签发（HS256，独立密钥，与 MAP 完全隔离）。默认生命周期 7 天，且用后自动续期
+/// （见 <see cref="TryRenew"/>）。长 token 不削弱撤销能力：每个已鉴权请求都会用
+/// TenantAccess.ResolveAsync 重新校验用户 SecurityVersion / 成员版本 / 租户状态，
+/// 改密、禁用、踢出成员在下一次请求即刻生效。
 /// </summary>
 public sealed class GwJwt
 {
+    /// <summary>默认会话时长（天）。可用 LlmGwJwt:LifetimeDays 覆盖。</summary>
+    public const int DefaultLifetimeDays = 7;
+
+    /// <summary>默认续期间隔（小时）：token 用满这个时长后，下一次请求即自动换发新 token。</summary>
+    public const int DefaultRenewAfterHours = 12;
+
     private readonly byte[] _key;
     private readonly string _issuer;
-    private static readonly TimeSpan Lifetime = TimeSpan.FromHours(12);
+    private readonly TimeSpan _lifetime;
+    private readonly TimeSpan _renewAfter;
 
-    public GwJwt(string secret, string issuer)
+    public GwJwt(string secret, string issuer, int lifetimeDays = DefaultLifetimeDays, int renewAfterHours = DefaultRenewAfterHours)
     {
         _key = Encoding.UTF8.GetBytes(secret);
         _issuer = issuer;
+        var days = lifetimeDays <= 0 ? DefaultLifetimeDays : Math.Clamp(lifetimeDays, 1, 90);
+        _lifetime = TimeSpan.FromDays(days);
+        var renewHours = renewAfterHours <= 0 ? DefaultRenewAfterHours : renewAfterHours;
+        var renew = TimeSpan.FromHours(renewHours);
+        // 续期间隔必须短于生命周期，否则永远等不到续期就先过期了。
+        _renewAfter = renew >= _lifetime ? TimeSpan.FromTicks(_lifetime.Ticks / 2) : renew;
     }
 
     public string Issuer => _issuer;
+
+    public TimeSpan Lifetime => _lifetime;
 
     public SymmetricSecurityKey SigningKey => new(_key);
 
@@ -33,8 +51,8 @@ public sealed class GwJwt
         TimeSpan? lifetime = null)
     {
         var now = DateTime.UtcNow;
-        var requestedLifetime = lifetime ?? Lifetime;
-        var effectiveLifetime = requestedLifetime > Lifetime ? Lifetime : requestedLifetime;
+        var requestedLifetime = lifetime ?? _lifetime;
+        var effectiveLifetime = requestedLifetime > _lifetime ? _lifetime : requestedLifetime;
         if (effectiveLifetime < TimeSpan.FromMinutes(5)) effectiveLifetime = TimeSpan.FromMinutes(5);
         var expires = now.Add(effectiveLifetime);
 
@@ -77,5 +95,91 @@ public sealed class GwJwt
 
         var encoded = new JwtSecurityTokenHandler().WriteToken(token);
         return (encoded, expires);
+    }
+
+    /// <summary>
+    /// 滑动续期：token 已使用超过续期间隔时换发一枚同身份、重新计时的新 token。
+    /// 只续「完整会话时长」签发的 token —— MAP SSO 这类被显式缩短的短会话不会被悄悄拉长。
+    /// 返回 null 表示本次无需续期（仍在续期间隔内，或不是完整会话 token）。
+    /// </summary>
+    public (string Token, DateTime ExpiresAt)? TryRenew(ClaimsPrincipal principal, DateTime? utcNow = null)
+    {
+        if (principal.Identity?.IsAuthenticated != true) return null;
+
+        var now = utcNow ?? DateTime.UtcNow;
+        if (!TryReadUnixClaim(principal, JwtRegisteredClaimNames.Exp, out var expiresAt)) return null;
+        if (!TryReadUnixClaim(principal, JwtRegisteredClaimNames.Nbf, out var issuedAt)
+            && !TryReadUnixClaim(principal, JwtRegisteredClaimNames.Iat, out issuedAt)) return null;
+
+        // 显式缩短的会话（如 MAP SSO 15 分钟）保持原样，不进入滑动续期。
+        var originalLifetime = expiresAt - issuedAt;
+        if (originalLifetime < _lifetime) return null;
+
+        if (now - issuedAt < _renewAfter) return null;
+
+        var claims = new List<Claim>();
+        foreach (var claim in principal.Claims)
+        {
+            // 时间戳与 jti 由新 token 重新生成；issuer/audience 由 JwtSecurityToken 构造参数负责。
+            if (IsVolatileClaim(claim.Type)) continue;
+            claims.Add(new Claim(claim.Type, claim.Value));
+        }
+        claims.Add(new Claim(JwtRegisteredClaimNames.Jti, Guid.NewGuid().ToString("N")));
+
+        var renewedExpires = now.Add(_lifetime);
+        var creds = new SigningCredentials(SigningKey, SecurityAlgorithms.HmacSha256);
+        var renewed = new JwtSecurityToken(
+            issuer: _issuer,
+            audience: null,
+            claims: claims,
+            notBefore: now,
+            expires: renewedExpires,
+            signingCredentials: creds);
+
+        return (new JwtSecurityTokenHandler().WriteToken(renewed), renewedExpires);
+    }
+
+    /// <summary>
+    /// 换发新 token 时必须丢弃、由新 token 重新生成的 claim（时间戳 + jti + iss/aud）。
+    /// </summary>
+    private static readonly string[] VolatileClaimTypes =
+    {
+        JwtRegisteredClaimNames.Exp,
+        JwtRegisteredClaimNames.Nbf,
+        JwtRegisteredClaimNames.Iat,
+        JwtRegisteredClaimNames.Jti,
+        JwtRegisteredClaimNames.Iss,
+        JwtRegisteredClaimNames.Aud,
+    };
+
+    /// <summary>
+    /// JwtBearer 默认开启入站 claim 映射（MapInboundClaims=true），`exp` 这类短名在 ClaimsPrincipal 里
+    /// 可能已经变成 WS-* 长名。所以短名和映射后的长名都要认：漏掉长名会把旧的过期时间当普通 claim
+    /// 复制进新 token（出站映射再变回 `exp`），续期反而把有效期打回原样。
+    /// </summary>
+    private static bool IsVolatileClaim(string claimType)
+    {
+        foreach (var type in VolatileClaimTypes)
+        {
+            if (string.Equals(claimType, type, StringComparison.Ordinal)) return true;
+            if (JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.TryGetValue(type, out var mapped)
+                && string.Equals(claimType, mapped, StringComparison.Ordinal)) return true;
+        }
+        return false;
+    }
+
+    /// <summary>读取 unix 秒时间戳 claim；同样兼容入站映射后的长名。</summary>
+    private static bool TryReadUnixClaim(ClaimsPrincipal principal, string type, out DateTime value)
+    {
+        value = default;
+        var raw = principal.FindFirst(type)?.Value;
+        if (string.IsNullOrWhiteSpace(raw)
+            && JwtSecurityTokenHandler.DefaultInboundClaimTypeMap.TryGetValue(type, out var mapped))
+        {
+            raw = principal.FindFirst(mapped)?.Value;
+        }
+        if (string.IsNullOrWhiteSpace(raw) || !long.TryParse(raw, out var seconds)) return false;
+        value = DateTimeOffset.FromUnixTimeSeconds(seconds).UtcDateTime;
+        return true;
     }
 }

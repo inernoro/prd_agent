@@ -1,4 +1,6 @@
-// 独立 API 客户端：JWT 存 sessionStorage（no-localStorage 规则：认证态禁止进 localStorage）。
+// 独立 API 客户端：JWT 存 localStorage（超长登录期诉求：关浏览器再打开仍保持登录；
+// 撤销由服务端每请求校验 SecurityVersion / 成员版本兜底，详见 sessionStore 注释）。
+// 服务端滑动续期会通过 X-Gw-Token 响应头换发新 token，本文件在每次响应里自动接住。
 // base 优先走 import.meta.env.VITE_LLMGW_API_BASE；未配置时按运行路径选择 /gw 或 /llmgw/gw。
 //
 // 后端端点约定（后端另做，stub 即可）：
@@ -104,8 +106,11 @@ import { getDefaultApiBase } from './runtimeBase';
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
 const TENANT_KEY = 'llmgw.tenant';
-// 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
+// 首登强制改密标记。
 const MCP_KEY = 'llmgw.mustChangePwd';
+const SESSION_KEYS = [TOKEN_KEY, USER_KEY, TENANT_KEY, MCP_KEY];
+// 滑动续期：服务端在会话被自动延长时用这个响应头下发新 token（见 GwSessionHeaders）。
+const RENEWED_TOKEN_HEADER = 'X-Gw-Token';
 const mapSsoExchanges = new Map<string, Promise<ApiResponse<LoginResult>>>();
 
 export type SessionSnapshot = {
@@ -117,12 +122,35 @@ export type SessionSnapshot = {
 
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBase()).replace(/\/$/, '');
 
+/**
+ * 会话存储走 localStorage：关掉浏览器再打开仍然保持登录（sessionStorage 做不到，
+ * 一关标签页就得重登，正是「一下就过期」的主因之一）。
+ * 安全性不靠前端存储兜底：token 有 7 天硬过期，且每个已鉴权请求都会在服务端重新校验
+ * 用户 SecurityVersion / 成员版本 / 租户状态，改密、禁用、踢出成员会立即让旧 token 失效。
+ */
+const sessionStore: Storage = localStorage;
+
+// 老会话（存在 sessionStorage 里）平滑迁移，避免本次升级把在线用户踢下线。
+(function migrateLegacySessionStorage() {
+  try {
+    if (sessionStore.getItem(TOKEN_KEY)) return;
+    const legacyToken = sessionStorage.getItem(TOKEN_KEY);
+    if (!legacyToken) return;
+    for (const key of SESSION_KEYS) {
+      const value = sessionStorage.getItem(key);
+      if (value !== null) sessionStore.setItem(key, value);
+    }
+  } catch {
+    /* 存储不可用（隐私模式等）时忽略，走重新登录 */
+  }
+})();
+
 export function getToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
+  return sessionStore.getItem(TOKEN_KEY);
 }
 
 export function getStoredUser(): { username?: string; displayName?: string; identityProvider?: string } | null {
-  const raw = sessionStorage.getItem(USER_KEY);
+  const raw = sessionStore.getItem(USER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -132,7 +160,7 @@ export function getStoredUser(): { username?: string; displayName?: string; iden
 }
 
 export function getStoredTenant(): import('./types').TenantSession | null {
-  const raw = sessionStorage.getItem(TENANT_KEY);
+  const raw = sessionStore.getItem(TENANT_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -142,8 +170,8 @@ export function getStoredTenant(): import('./types').TenantSession | null {
 }
 
 export function setSession(result: LoginResult) {
-  sessionStorage.setItem(TOKEN_KEY, result.token);
-  sessionStorage.setItem(
+  sessionStore.setItem(TOKEN_KEY, result.token);
+  sessionStore.setItem(
     USER_KEY,
     JSON.stringify({
       username: result.username ?? undefined,
@@ -151,16 +179,16 @@ export function setSession(result: LoginResult) {
       identityProvider: result.identityProvider ?? undefined,
     }),
   );
-  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
-  else sessionStorage.removeItem(TENANT_KEY);
-  if (result.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
-  else sessionStorage.removeItem(MCP_KEY);
+  if (result.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(result.tenant));
+  else sessionStore.removeItem(TENANT_KEY);
+  if (result.mustChangePassword) sessionStore.setItem(MCP_KEY, '1');
+  else sessionStore.removeItem(MCP_KEY);
 }
 
 // 改密成功后，用重新签发的 token 替换会话并清除强制改密标记。
 export function applyChangePasswordResult(result: ChangePasswordResult) {
-  sessionStorage.setItem(TOKEN_KEY, result.token);
-  sessionStorage.setItem(
+  sessionStore.setItem(TOKEN_KEY, result.token);
+  sessionStore.setItem(
     USER_KEY,
     JSON.stringify({
       username: result.username ?? undefined,
@@ -168,15 +196,15 @@ export function applyChangePasswordResult(result: ChangePasswordResult) {
       identityProvider: result.identityProvider ?? undefined,
     }),
   );
-  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
-  sessionStorage.removeItem(MCP_KEY);
+  if (result.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(result.tenant));
+  sessionStore.removeItem(MCP_KEY);
 }
 
 export function clearSession() {
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(USER_KEY);
-  sessionStorage.removeItem(TENANT_KEY);
-  sessionStorage.removeItem(MCP_KEY);
+  sessionStore.removeItem(TOKEN_KEY);
+  sessionStore.removeItem(USER_KEY);
+  sessionStore.removeItem(TENANT_KEY);
+  sessionStore.removeItem(MCP_KEY);
 }
 
 export function exportSessionSnapshot(): SessionSnapshot | null {
@@ -191,13 +219,13 @@ export function exportSessionSnapshot(): SessionSnapshot | null {
 }
 
 export function importSessionSnapshot(snapshot: SessionSnapshot) {
-  sessionStorage.setItem(TOKEN_KEY, snapshot.token);
-  if (snapshot.user) sessionStorage.setItem(USER_KEY, JSON.stringify(snapshot.user));
-  else sessionStorage.removeItem(USER_KEY);
-  if (snapshot.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(snapshot.tenant));
-  else sessionStorage.removeItem(TENANT_KEY);
-  if (snapshot.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
-  else sessionStorage.removeItem(MCP_KEY);
+  sessionStore.setItem(TOKEN_KEY, snapshot.token);
+  if (snapshot.user) sessionStore.setItem(USER_KEY, JSON.stringify(snapshot.user));
+  else sessionStore.removeItem(USER_KEY);
+  if (snapshot.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(snapshot.tenant));
+  else sessionStore.removeItem(TENANT_KEY);
+  if (snapshot.mustChangePassword) sessionStore.setItem(MCP_KEY, '1');
+  else sessionStore.removeItem(MCP_KEY);
 }
 
 export function isAuthed(): boolean {
@@ -205,7 +233,22 @@ export function isAuthed(): boolean {
 }
 
 export function mustChangePassword(): boolean {
-  return sessionStorage.getItem(MCP_KEY) === '1';
+  return sessionStore.getItem(MCP_KEY) === '1';
+}
+
+/**
+ * 接住服务端滑动续期换发的新 token。只在本地还持有会话时替换，避免把已登出的
+ * 标签页重新「复活」成登录态。
+ */
+export function applyRenewedToken(res: Response): void {
+  const renewed = res.headers.get(RENEWED_TOKEN_HEADER);
+  if (!renewed) return;
+  try {
+    if (!sessionStore.getItem(TOKEN_KEY)) return;
+    sessionStore.setItem(TOKEN_KEY, renewed);
+  } catch {
+    /* 存储不可用时忽略：本次请求已成功，下次再续 */
+  }
 }
 
 type RequestOptions = {
@@ -245,6 +288,9 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
       error: { code: 'NETWORK_ERROR', message: e instanceof Error ? e.message : '网络请求失败' },
     };
   }
+
+  // 滑动续期：服务端换发了新 token 就地替换，用户无感继续用（无需重登、无需轮询）。
+  applyRenewedToken(res);
 
   if (res.status === 401) {
     clearSession();

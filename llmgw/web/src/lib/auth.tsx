@@ -1,4 +1,4 @@
-// 极简鉴权上下文：JWT 存 sessionStorage，未登录跳登录页；首登强制改密门。
+// 极简鉴权上下文：JWT 存 localStorage（长会话，见 lib/api.ts），未登录跳登录页；首登强制改密门。
 import { createContext, useContext, useEffect, useMemo, useState } from 'react';
 import type { ReactNode } from 'react';
 import {

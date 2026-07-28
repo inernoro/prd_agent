@@ -306,6 +306,30 @@ export class MongoAuthStore implements AuthStore {
     return { ...session, lastSeenAt: now.toISOString() };
   }
 
+  async extendSession(token: string, ttlMs: number, now = new Date()): Promise<CdsSession | null> {
+    if (!token) return null;
+    const sessions = this.handle.sessionsCollection();
+    const session = await sessions.findOne({ token });
+    if (!session) return null;
+
+    if (new Date(session.expiresAt).getTime() <= now.getTime()) {
+      await sessions.deleteOne({ token });
+      return null;
+    }
+
+    const updated: CdsSession = {
+      ...session,
+      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+      lastSeenAt: now.toISOString(),
+    };
+    // Filter on the observed expiry (and never upsert) so a concurrent logout or a
+    // competing renewal can't be resurrected/clobbered — a non-matching replace is
+    // simply a no-op. The returned value is only used for the cookie expiry; if the
+    // session did vanish, the next request fails validation and bounces to /login.
+    await sessions.replaceOne({ token, expiresAt: session.expiresAt }, updated);
+    return updated;
+  }
+
   async deleteSession(token: string): Promise<void> {
     await this.handle.sessionsCollection().deleteOne({ token });
   }
