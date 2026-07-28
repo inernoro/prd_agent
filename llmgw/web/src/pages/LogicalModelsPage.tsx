@@ -20,12 +20,13 @@ import type {
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_INPUT, FIELD_LABEL, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
+import { CARD_PADDING, GAP, INSET_PADDING } from '@/lib/surface';
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', height: 34, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
-  background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 10px', fontSize: 12,
+  ...FIELD_INPUT,
 };
-const labelStyle: React.CSSProperties = { display: 'grid', gap: 5, fontSize: 11, color: 'var(--text-secondary)' };
+const labelStyle: React.CSSProperties = FIELD_LABEL;
 
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
@@ -163,19 +164,19 @@ export function LogicalModelsPage() {
   if (items === null) return <SectionLoader text="正在加载逻辑模型目录" />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
-      <Card style={{ padding: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: 760 }}>
-            <h1 style={{ margin: 0, fontSize: 17 }}>逻辑模型目录</h1>
-            <p style={{ margin: '7px 0 0', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.7 }}>
-              应用只选择稳定的模型标识。Provider、Endpoint、协议、密钥、限流和故障切换由其下的 Offering 维护；模型池只负责未指定模型时的默认与兜底。
-            </p>
-          </div>
-          {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button> : null}
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <header className="lg-page-heading">
+        <div style={{ maxWidth: 760 }}>
+          <h1>逻辑模型目录</h1>
+          <p>
+            应用只选择稳定的模型标识。Provider、Endpoint、协议、密钥、限流和故障切换由其下的 Offering 维护；模型池只负责未指定模型时的默认与兜底。
+          </p>
         </div>
+        {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button> : null}
+      </header>
+      <Card style={{ padding: 16, display: createOpen && canWrite ? undefined : 'none' }}>
         {createOpen && canWrite ? (
-          <form onSubmit={submitLogical} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, marginTop: 14 }}>
+          <form onSubmit={submitLogical} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: GAP.normal, marginTop: 14 }}>
             <label style={labelStyle}>公开模型标识<input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} /></label>
             <label style={labelStyle}>显示名称<input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} /></label>
             <label style={labelStyle}>模型类型<select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}><option value="generation">generation</option><option value="vision">vision</option><option value="chat">chat</option><option value="video-gen">video-gen</option></select></label>
@@ -187,23 +188,24 @@ export function LogicalModelsPage() {
         ) : null}
       </Card>
 
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
       {!canWrite ? <ReadOnlyNotice /> : null}
-      {error || notice ? <div style={{ padding: '8px 11px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: error ? 'var(--danger)' : 'var(--text-secondary)', fontSize: 12 }}>{error || notice}</div> : null}
-      {items.length === 0 ? <Card style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 12 }}>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Card> : null}
+      {error || notice ? <div style={{ padding: '8px 11px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: error ? 'var(--danger)' : 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>{error || notice}</div> : null}
+      {items.length === 0 ? <Card style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-body)' }}>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Card> : null}
 
       {items.map((item) => (
-        <Card key={item.id} style={{ padding: 14 }}>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <Card key={item.id} style={{ padding: CARD_PADDING }}>
+          <div style={{ display: 'flex', gap: GAP.section, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div>
-              <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
-                <strong style={{ fontSize: 14 }}>{item.name}</strong>
-                <code style={{ fontSize: 11, color: 'var(--accent)' }}>{item.publicId}</code>
+              <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
+                <strong style={{ fontSize: 'var(--fs-body)' }}>{item.name}</strong>
+                <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)' }}>{item.publicId}</code>
                 <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
                 <Chip label={item.routingStrategy === 'weighted' ? '权重路由' : '优先级路由'} color="var(--text-secondary)" bg="var(--bg-elevated)" />
                 <Chip label={item.enabled ? '已启用' : '已停用'} color={item.enabled ? 'var(--success)' : 'var(--text-muted)'} bg="var(--bg-elevated)" />
               </div>
-              <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 11 }}>{item.capabilities.join(' · ') || '未声明能力'} · {item.offerings.length} 个 Offering</div>
-              <div style={{ marginTop: 3, color: 'var(--text-muted)', fontSize: 11 }}>可用 appCaller：{item.allowedAppCallerCodes.length > 0 ? item.allowedAppCallerCodes.join('、') : '当前租户全部 appCaller'}</div>
+              <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{item.capabilities.join(' · ') || '未声明能力'} · {item.offerings.length} 个 Offering</div>
+              <div style={{ marginTop: 3, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>可用 appCaller：{item.allowedAppCallerCodes.length > 0 ? item.allowedAppCallerCodes.join('、') : '当前租户全部 appCaller'}</div>
             </div>
             {canWrite ? <div style={{ display: 'flex', gap: 6, alignItems: 'center', flexWrap: 'wrap' }}>
               <select aria-label={`${item.name} 路由策略`} value={item.routingStrategy} disabled={busy === `strategy:${item.id}`} onChange={(e) => void changeStrategy(item, e.target.value as 'priority' | 'weighted')} style={{ ...inputStyle, width: 150 }}><option value="priority">优先级与故障切换</option><option value="weighted">权重负载均衡</option></select>
@@ -212,7 +214,7 @@ export function LogicalModelsPage() {
           </div>
 
           {offeringFor === item.id && canWrite ? (
-            <form onSubmit={(e) => submitOffering(e, item)} style={{ marginTop: 12, padding: 11, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 9 }}>
+            <form onSubmit={(e) => submitOffering(e, item)} style={{ marginTop: 12, padding: INSET_PADDING, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: GAP.normal }}>
               <label style={labelStyle}>目标类型<select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}><option value="model">Provider 模型</option><option value="exchange">Exchange</option></select></label>
               <label style={labelStyle}>上游目标<select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}><option value="">请选择</option>{targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></label>
               <label style={labelStyle}>上游模型标识，可覆盖<input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} /></label>
@@ -228,11 +230,11 @@ export function LogicalModelsPage() {
           ) : null}
 
           <div style={{ marginTop: 12, overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
-              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={{ textAlign: 'left', padding: '7px 9px', color: 'var(--text-muted)', fontSize: 10, fontWeight: 600 }}>{x}</th>)}</tr></thead>
-              <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={{ padding: 14, color: 'var(--text-muted)', fontSize: 12, borderTop: '1px solid var(--border-subtle)' }}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
+            <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr></thead>
+              <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={{ padding: 14, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', borderTop: '1px solid var(--border-subtle)' }}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
                 <tr key={o.id}>
-                  <td style={td}><strong>{o.targetName}</strong><div style={{ color: 'var(--text-muted)', fontSize: 10 }}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
+                  <td style={td}><strong>{o.targetName}</strong><div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
                   <td style={td}>{o.targetKind}</td><td style={td}>{o.protocol || '继承目标'}</td><td style={td}>{o.priority} / {o.weight}</td>
                   <td style={td}>{o.healthStatus === 0 ? '健康' : o.healthStatus === 1 ? '降权' : '不可用'}{o.consecutiveFailures > 0 ? ` · 连续失败 ${o.consecutiveFailures}` : ''}</td>
                   <td style={td}>{o.maxConcurrency ? `并发 ${o.maxConcurrency}` : '继承上游'}{o.rateLimitPerMinute ? ` · ${o.rateLimitPerMinute}/分钟` : ''}</td>
@@ -243,8 +245,9 @@ export function LogicalModelsPage() {
           </div>
         </Card>
       ))}
+      </div>
     </div>
   );
 }
 
-const td: React.CSSProperties = { padding: '8px 9px', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: 11, verticalAlign: 'middle' };
+const td: React.CSSProperties = TABLE_CELL_MUTED;

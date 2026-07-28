@@ -3,7 +3,7 @@
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation, useNavigate } from 'react-router-dom';
-import { RefreshCw, ChevronLeft, ChevronRight, Search, SlidersHorizontal } from 'lucide-react';
+import { RefreshCw, ChevronLeft, ChevronRight, ChevronUp, Search, SlidersHorizontal } from 'lucide-react';
 import { getLogs, getLogsMeta, getLogsSessions, getLogsSummary, getLogsTimeseries } from '@/lib/api';
 import type { LlmLogListItem, LogsSummaryData, SessionItem, TimeseriesPoint } from '@/lib/types';
 import { Button, Card, Chip, SectionLoader, Spinner, TabBar } from './ui';
@@ -39,9 +39,11 @@ import {
 } from '@/lib/logsHelpers';
 
 const PAGE_SIZE = 30;
-const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v3';
+// v4：默认可见列集合调整（隐藏用途/结束原因/客户端用户）+ 列宽改等比摊分。
+// 不升版本号的话，存量用户的 v3 记录会把 12 列全部保留，改动对他们等于没做。
+const TABLE_PREFERENCES_KEY = 'llmgw.logs.table-preferences.v4';
 const NARROW_TABLE_MIN_WIDTH: Record<LogsSubTab, number> = {
-  generations: 1832,
+  generations: 1080,
   upstream: 980,
   sessions: 1080,
 };
@@ -165,6 +167,7 @@ export function LogsView() {
   const location = useLocation();
   const navigate = useNavigate();
   const [subtab, setSubtab] = useState<LogsSubTab>('generations');
+  const [trendOpen, setTrendOpen] = useState(true);
   const [presetKey, setPresetKey] = useState('30d');
   const [filterModel, setFilterModel] = useState('');
   const [filterStatus, setFilterStatus] = useState('');
@@ -422,24 +425,17 @@ export function LogsView() {
   // ── 单元格渲染 ──
   const renderGenerationCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
-      case 'date': {
-        const lc = deriveLifecycle(it);
+      case 'date':
         return (
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 7, color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }}>
-            <span
-              title={`生命周期：${lc.label}`}
-              className={lc.pulse ? 'lg-pulse' : undefined}
-              style={{ display: 'inline-block', width: 6, height: 6, borderRadius: 999, flexShrink: 0, background: lc.color }}
-            />
+          <span style={{ color: 'var(--log-text-muted)', whiteSpace: 'nowrap' }} title={fmtDate(it.startedAt)}>
             {fmtShortTime(it.startedAt)}
           </span>
         );
-      }
       case 'generation':
         return (
           <span
             className="lg-truncate"
-            style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}
+            style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }}
             title={it.requestId || it.id}
           >
             {it.requestId || it.id || DASH}
@@ -565,7 +561,7 @@ export function LogsView() {
   const renderUpstreamCell = (col: ColumnDef, it: LlmLogListItem): ReactNode => {
     switch (col.key) {
       case 'date':
-        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
+        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtShortTime(it.startedAt)}</span>;
       case 'model':
         return (
           <LogEntityHoverCard
@@ -602,7 +598,7 @@ export function LogsView() {
       }
       case 'genId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.requestId}>
+          <span className="lg-truncate" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }} title={it.requestId}>
             {it.requestId || DASH}
           </span>
         );
@@ -611,15 +607,15 @@ export function LogsView() {
         return <Chip label={s.label} color={s.color} bg={s.bg} />;
       }
       case 'attempts':
-        return <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>;
+        return <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>;
       case 'fallback':
         return it.isFallback ? (
           <Chip label="已降级" color="#fbbf24" bg="rgba(251,191,36,0.16)" title={it.expectedModel ? `期望 ${it.expectedModel}` : undefined} />
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>否</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>否</span>
         );
       case 'latency':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
+        return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{fmtMs(it.durationMs)}</span>;
       default:
         return null;
     }
@@ -629,14 +625,14 @@ export function LogsView() {
     switch (col.key) {
       case 'date':
         return (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>
             {fmtDate(it.start)}
             {it.end && it.end !== it.start ? ` ~ ${fmtShortTime(it.end)}` : ''}
           </span>
         );
       case 'sessionId':
         return (
-          <span className="lg-truncate" style={{ fontSize: 13, color: 'var(--log-text-muted)', fontFamily: 'ui-monospace, monospace' }} title={it.sessionId || ''}>
+          <span className="lg-truncate" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--log-text-muted)', fontFamily: 'var(--font-mono)' }} title={it.sessionId || ''}>
             {it.sessionId || DASH}
           </span>
         );
@@ -690,10 +686,10 @@ export function LogsView() {
             ) : null}
           </span>
         ) : (
-          <span style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{DASH}</span>
+          <span style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{DASH}</span>
         );
       case 'requests':
-        return <span className="tabular" style={{ fontSize: 14, color: 'var(--log-text-muted)' }}>{it.requestCount}</span>;
+        return <span className="tabular" style={{ fontSize: 'var(--fs-body)', color: 'var(--log-text-muted)' }}>{it.requestCount}</span>;
       default:
         return null;
     }
@@ -707,6 +703,7 @@ export function LogsView() {
     rowKey,
     onRow,
     render,
+    rowTone,
     empty,
   }: {
     tableKey: LogsSubTab;
@@ -715,17 +712,28 @@ export function LogsView() {
     rowKey: (t: T, idx: number) => string;
     onRow?: (t: T) => void;
     render: (col: ColumnDef, t: T) => ReactNode;
+    rowTone?: (t: T) => 'error' | 'running' | null;
     empty: ReactNode;
   }) {
     const preferences = normalizeLogTablePreferences(columns, tablePreferences[tableKey]);
     const configuredColumns = resolveLogTableColumns(columns, preferences);
     const visibleColumns = configuredColumns;
     const gridCols = `${visibleColumns.map((column) => column.width).join(' ')} 42px`;
-    const tableMinWidth = isNarrowViewport
-      ? NARROW_TABLE_MIN_WIDTH[tableKey]
-      : tableKey === 'generations'
-        ? 1832
-        : Math.max(920, visibleColumns.length * 132 + 42);
+    // 表格最小宽度必须由列自身的下限推出来，不能写死。
+    // 以前这里对 generations 硬编码 1832px，无论列怎么配都强制横向滚动，
+    // 右侧列被切、齿轮压住表头，中间还空出大片没人用的宽度。
+    const columnMinWidth = (width: string): number => {
+      const minmax = /minmax\(\s*([\d.]+)px/.exec(width);
+      if (minmax) return Number(minmax[1]);
+      const px = /^([\d.]+)px$/.exec(width.trim());
+      if (px) return Number(px[1]);
+      return 96; // fr / auto 等无显式下限的列给一个保守值
+    };
+    const contentMinWidth = visibleColumns.reduce((sum, column) => sum + columnMinWidth(column.width), 0)
+      + (visibleColumns.length - 1) * 12 // column-gap
+      + 32 // 左右内边距
+      + 42; // 列设置齿轮
+    const tableMinWidth = isNarrowViewport ? NARROW_TABLE_MIN_WIDTH[tableKey] : contentMinWidth;
     const rowHeight = LOG_TABLE_DENSITIES.find((density) => density.key === preferences.density)?.rowHeight ?? 46;
     const alignOf = (a?: ColumnDef['align']): CSSProperties['textAlign'] => (a === 'right' ? 'right' : a === 'center' ? 'center' : 'left');
     const updatePreferences = (value: LogTablePreferences) => setTablePreferences((current) => ({ ...current, [tableKey]: value }));
@@ -776,7 +784,11 @@ export function LogsView() {
                     } : undefined}
                     role={onRow ? 'button' : undefined}
                     tabIndex={onRow ? 0 : undefined}
-                    className={onRow ? 'lg-row-clickable lg-log-table-row' : 'lg-log-table-row'}
+                    className={[
+                      'lg-log-table-row',
+                      onRow ? 'lg-row-clickable' : '',
+                      rowTone?.(t) ? `is-${rowTone(t)}` : '',
+                    ].filter(Boolean).join(' ')}
                     style={{
                       display: 'grid',
                       minHeight: rowHeight,
@@ -809,7 +821,7 @@ export function LogsView() {
           alignItems: 'center',
           justifyContent: 'space-between',
           padding: '7px 12px',
-          fontSize: 13,
+          fontSize: 'var(--fs-secondary)',
           color: 'var(--text-muted)',
           borderTop: '1px solid var(--border-subtle)',
         }}
@@ -885,7 +897,15 @@ export function LogsView() {
       <header className="lg-logs-heading">
         <div>
           <h1>Logs</h1>
-          <p>逐条查看模型、Provider、Token、费用与耗时。</p>
+          {subtab === 'generations' ? (
+            <p className="lg-log-summary-strip">
+              <span>请求 <strong className="tabular">{fmtCompact(summary?.total)}</strong></span>
+              <span>成功率 <strong className="tabular">{successRate}</strong></span>
+              <span>Token <strong className="tabular">{fmtCompact(summary?.totalTokens)}</strong></span>
+              <span>费用 <strong className="tabular">{fmtCost(summary?.estimatedCostUsd, 'USD')}</strong></span>
+              {summary?.unknownCostRequests ? <span className="lg-log-summary-warn">{summary.unknownCostRequests} 条费用未知</span> : null}
+            </p>
+          ) : null}
         </div>
         <div className="lg-log-page-actions">
           <span className="tabular">{subtab === 'sessions' ? sessTotal : total} 条</span>
@@ -990,7 +1010,7 @@ export function LogsView() {
         <div
           style={{
             flexShrink: 0,
-            fontSize: 13,
+            fontSize: 'var(--fs-secondary)',
             color: 'var(--err)',
             padding: '8px 12px',
             borderRadius: 'var(--radius-sm)',
@@ -1002,24 +1022,25 @@ export function LogsView() {
         </div>
       ) : null}
 
-      {subtab === 'generations' ? (
-        <section className="lg-log-insights" aria-label="请求汇总趋势">
-          <div className="lg-log-insight-chart">
-            <div><strong>请求趋势</strong><span>{TIME_RANGE_PRESETS.find((preset) => preset.key === presetKey)?.label}</span></div>
-            <MiniBarChart data={series} height={82} />
-          </div>
-          <div className="lg-log-insight-metrics">
-            <div><span>请求</span><strong className="tabular">{fmtCompact(summary?.total)}</strong></div>
-            <div><span>成功率</span><strong className="tabular">{successRate}</strong></div>
-            <div><span>Token</span><strong className="tabular">{fmtCompact(summary?.totalTokens)}</strong></div>
-            <div><span>估算费用</span><strong className="tabular">{fmtCost(summary?.estimatedCostUsd, 'USD')}</strong><small>{summary?.unknownCostRequests ? `${summary.unknownCostRequests} 条费用未知` : '已记录费用范围'}</small></div>
-          </div>
-        </section>
-      ) : null}
-
       <Card className="lg-log-table-card" style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', padding: 0, overflow: 'hidden' }}>
         {subtab === 'generations' && (
           <>
+            {/* 趋势是余光信息：无边框、无标题、无坐标轴，直接坐在表头上方，可折叠。
+                没有数据点时整块不渲染——空图占位比没有更糟。 */}
+            {series.length > 0 ? (
+            <div className={`lg-log-trend${trendOpen ? '' : ' is-collapsed'}`} aria-label="请求趋势">
+              {trendOpen ? <MiniBarChart data={series} height={78} /> : null}
+              <button
+                type="button"
+                className="lg-log-trend-toggle"
+                aria-label={trendOpen ? '收起趋势' : '展开趋势'}
+                title={trendOpen ? '收起趋势' : '展开趋势'}
+                onClick={() => setTrendOpen((v) => !v)}
+              >
+                <ChevronUp size={15} style={{ transform: trendOpen ? 'none' : 'rotate(180deg)', transition: 'transform .18s ease' }} />
+              </button>
+            </div>
+            ) : null}
             {loading && rows.length === 0 ? (
               <SectionLoader text="正在加载…" />
             ) : (
@@ -1030,6 +1051,11 @@ export function LogsView() {
                 rowKey={(it) => it.id}
                 onRow={(it) => openLogDetail(it.id)}
                 render={renderGenerationCell}
+                rowTone={(it) => {
+                  const lc = deriveLifecycle(it);
+                  if (lc.pulse) return 'running';
+                  return lc.key === 'failed' || lc.key === 'blackhole' ? 'error' : null;
+                }}
                 empty={emptyCell('该时间范围内还没有请求记录', true)}
               />
             )}

@@ -173,8 +173,8 @@ export function AppCallersPage() {
     bulkDraft.budgetReservationUsd.trim() ||
     bulkDraft.rateLimitPerMinute.trim()
   );
-  const th: React.CSSProperties = { height: 46, textAlign: 'left', padding: '10px 12px', fontSize: 14, color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { minHeight: 46, padding: '10px 12px', fontSize: 14, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th: React.CSSProperties = { height: 46, textAlign: 'left', padding: '10px 12px', fontSize: 'var(--fs-body)', color: 'var(--text-muted)', fontWeight: 500, whiteSpace: 'nowrap' };
+  const td: React.CSSProperties = { minHeight: 46, padding: '10px 12px', fontSize: 'var(--fs-body)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
   const selectStyle: React.CSSProperties = {
     height: 38,
     borderRadius: 'var(--radius-sm)',
@@ -182,7 +182,7 @@ export function AppCallersPage() {
     background: 'var(--bg-input)',
     color: 'var(--text-primary)',
     padding: '0 10px',
-    fontSize: 14,
+    fontSize: 'var(--fs-body)',
   };
 
   if (error) return <Empty text={error} />;
@@ -323,7 +323,7 @@ export function AppCallersPage() {
       ) : null}
 
       <div className="lg-app-caller-table-wrap">
-        <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table className="lg-data-table" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             <col style={{ width: 240 }} />
             <col style={{ width: 90 }} />
@@ -557,8 +557,8 @@ function TraceLinks({ item }: { item: GatewayAppCaller }) {
           to={link.href}
           style={{
             color: 'var(--accent)',
-            fontSize: 13,
-            fontFamily: 'ui-monospace, monospace',
+            fontSize: 'var(--fs-secondary)',
+            fontFamily: 'var(--font-mono)',
             textDecoration: 'none',
             maxWidth: 220,
             overflow: 'hidden',
@@ -624,12 +624,12 @@ function parseOptionalNonNegativeInteger(value: string): number | undefined {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );
 }
 
 function EmptyBlock({ text }: { text: string }) {
-  return <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 13 }}>{text}</div>;
+  return <div style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{text}</div>;
 }

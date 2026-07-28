@@ -227,6 +227,7 @@ docs:
   rule.frontend.landing-visual-style: "首页与登录页视觉语言 · 规则"
   rule.frontend.mobile-visual-check-matrix: "移动端视觉检查矩阵 · 规则"
   rule.frontend.streaming-text: "流式文本动效 · 规则"
+  rule.llm-gateway.console-design-tonality: "LLM Gateway 控制台风格调性 · 规则"
   rule.platform.agent-development: "Agent 开发交付流程 · 规则"
   rule.platform.agent-permissions: "Agent 权限分类 · 规则"
   rule.platform.ai-model-visibility: "AI 模型可见性原则 · 规则"

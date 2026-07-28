@@ -8,6 +8,7 @@ import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 export function PlatformsPage() {
   const { tenant } = useAuth();
@@ -159,28 +160,28 @@ export function PlatformsPage() {
   if (error) return <Empty text={error} />;
   if (!items) return <SectionLoader text="正在加载平台…" />;
 
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th = TABLE_HEAD_CELL;
+  const td = TABLE_CELL;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <section style={createCardStyle}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: 720 }}>
-            <div style={{ fontSize: 15, fontWeight: 700, color: 'var(--text-primary)' }}>Provider（模型供应方）</div>
-            <div style={{ marginTop: 5, fontSize: 12, lineHeight: 1.7, color: 'var(--text-secondary)' }}>
-              Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
-            </div>
-            <div style={{ marginTop: 4, fontSize: 12, color: 'var(--text-muted)' }}>
-              第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
-            </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <header className="lg-page-heading">
+        <div style={{ maxWidth: 720 }}>
+          <h1>Provider（模型供应方）</h1>
+          <p>
+            Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
+          </p>
+          <div style={{ marginTop: 6, ...HINT_TEXT }}>
+            第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
           </div>
-          {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
-            {showCreate ? '收起配置' : '添加 Provider'}
-          </Button> : null}
         </div>
-        {showCreate && canWrite ? (
-          <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+        {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
+          {showCreate ? '收起配置' : '添加 Provider'}
+        </Button> : null}
+      </header>
+      {showCreate && canWrite ? (
+        <section style={createCardStyle}>
+          <form onSubmit={submitCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
             <label style={fieldStyle}>
               <span style={labelStyle}>名称</span>
               <input required value={draft.name} onChange={(e) => setDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程假上游" style={formInputStyle} />
@@ -214,18 +215,18 @@ export function PlatformsPage() {
             </label>
             <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
               <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并继续添加模型'}</Button>
-              <span style={{ fontSize: 11, color: 'var(--text-muted)' }}>保存后列表只显示“已配置”，不会回显密钥。</span>
+              <span style={HINT_TEXT}>保存后列表只显示“已配置”，不会回显密钥。</span>
             </div>
           </form>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
       {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 12, color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
+        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
       {items.length > 0 && canWrite ? (
         <details style={{ flexShrink: 0 }}>
-          <summary style={{ cursor: 'pointer', fontSize: 12, color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
+          <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量轮换已有 Provider 密钥</summary>
           <div style={toolbarStyle}>
             <span style={toolbarTitleStyle}>批量维护 Provider 密钥</span>
             <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(e) => setBulkKeyValue(e.target.value)} placeholder="新 apiKey" style={inputStyle} />
@@ -241,7 +242,7 @@ export function PlatformsPage() {
         <Empty text={canWrite ? '还没有 Provider。请填写上方 4 个必填项，保存后再去添加第一个模型。' : '当前租户还没有 Provider。请联系 Owner 或 Admin 添加。'} />
       ) : (
       <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 160, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-        <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+        <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
           <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
             <tr>
               <th style={th}>平台</th>
@@ -296,7 +297,7 @@ export function PlatformsPage() {
                     </div>
                   </td>
                   <td style={td}>{p.platformType || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)', color: 'var(--text-secondary)', maxWidth: 360, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={p.apiUrl || ''}>{p.apiUrl || '—'}</td>
                   <td style={td}>{p.maxConcurrency || '—'}</td>
                   <td style={td}>
                     {p.authority === 'llm_gateway' ? (
@@ -362,16 +363,7 @@ export function PlatformsPage() {
   );
 }
 
-const inputStyle: React.CSSProperties = {
-  width: 180,
-  height: 30,
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '0 9px',
-  fontSize: 12,
-};
+const inputStyle: React.CSSProperties = { ...TOOLBAR_CONTROL, flex: '1 1 190px' };
 
 const toolbarStyle: React.CSSProperties = {
   flexShrink: 0,
@@ -386,7 +378,7 @@ const toolbarStyle: React.CSSProperties = {
 };
 
 const toolbarTitleStyle: React.CSSProperties = {
-  fontSize: 12,
+  fontSize: 'var(--fs-secondary)',
   fontWeight: 600,
   color: 'var(--text-secondary)',
 };
@@ -395,7 +387,7 @@ const checkStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
   gap: 6,
-  fontSize: 12,
+  fontSize: 'var(--fs-secondary)',
   color: 'var(--text-secondary)',
 };
 
@@ -414,28 +406,13 @@ const fieldStyle: React.CSSProperties = {
   minWidth: 0,
 };
 
-const labelStyle: React.CSSProperties = {
-  fontSize: 11,
-  fontWeight: 600,
-  color: 'var(--text-secondary)',
-};
+const labelStyle: React.CSSProperties = FIELD_LABEL;
 
-const formInputStyle: React.CSSProperties = {
-  width: '100%',
-  minWidth: 0,
-  height: 34,
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '0 9px',
-  fontSize: 12,
-  boxSizing: 'border-box',
-};
+const formInputStyle: React.CSSProperties = FIELD_INPUT;
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13 }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
       {text}
     </div>
   );
