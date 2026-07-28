@@ -157,8 +157,15 @@ echo "本地版本: 1.3.0"
 > 你装的 findmapskills 版本是 **1.3.0**，平台上已经有更新。跑这条命令重装：
 >
 > ```bash
+> # 这一段必须自带宿主识别：换个 shell 跑时 $SKILLS_DIRS 是空的，
+> # for 循环会零次迭代然后正常退出——命令看着成功，技能一个没更新。
+> SKILLS_DIRS=""
+> for h in .claude .cursor .agents; do
+>   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+> done
+> [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
 > curl -sSLo /tmp/findmapskills.zip "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
->   && for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o /tmp/findmapskills.zip -d "$d"; done   # $SKILLS_DIRS 见「下载」一节的宿主识别
+>   && for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o /tmp/findmapskills.zip -d "$d"; done
 > ```
 
 后端 `OfficialSkillTemplates.cs` 的 `FindMapSkillsVersion` 常量是本技能版本的权威源。

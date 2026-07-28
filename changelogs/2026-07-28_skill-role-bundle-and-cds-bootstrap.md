@@ -68,3 +68,7 @@
 | refactor | prd-api | 标签发现抽成 OfficialSkillCatalog.DiscoverableTags，站内与开放接口共用一份 |
 | test | prd-api | 新增限流分桶守卫与套装标签发现用例 |
 | test | cds | 新增上游回源的缓存/单飞/体积上限/超时/时钟回拨五个用例 |
+| fix | cds | 技能代理的冷缓存回源补齐超时、流式体积上限与按 key 单飞，匿名并发不再能吃干连接与内存 |
+| fix | 技能 | findmapskills 的更新命令自带宿主识别，换个 shell 复制不再零次迭代静默不更新 |
+| refactor | cds | 流式限额读取抽成 readCappedBody，技能代理与引导路由共用一份实现 |
+| test | cds | 新增技能代理单飞/超时/流式中止用例、匿名白名单两处一致守卫、安装命令自包含守卫 |

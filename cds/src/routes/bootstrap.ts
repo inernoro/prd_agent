@@ -16,7 +16,7 @@ import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { SkillProxy, SkillProxyError, isSafeSkillKey } from '../services/skill-proxy.js';
+import { SkillProxy, SkillProxyError, isSafeSkillKey, readCappedBody } from '../services/skill-proxy.js';
 
 const execFileAsync = promisify(execFile);
 
@@ -190,29 +190,6 @@ const UPSTREAM_PACK_TIMEOUT_MS = 60_000;
 /** 上游副本的缓存时长。上游技能包变动很慢，短缓存足以吸收突发。 */
 const UPSTREAM_PACK_TTL_MS = 10 * 60_000;
 
-/**
- * 边读边计数地取回上游响应，超限立即中止。
- *
- * 不能直接 `await res.arrayBuffer()`：那是先把整个响应缓冲进堆再检查，
- * 上游若返回一个异常大的体（或被劫持），堆已经吃完了才轮到我们判断。
- */
-async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
-  const reader = res.body?.getReader();
-  if (!reader) throw new Error('上游响应没有可读流');
-  const chunks: Buffer[] = [];
-  let total = 0;
-  for (;;) {
-    const { done, value } = await reader.read();
-    if (done) break;
-    total += value.byteLength;
-    if (total > maxBytes) {
-      await reader.cancel().catch(() => {});
-      throw new Error(`上游响应超过 ${maxBytes} 字节上限`);
-    }
-    chunks.push(Buffer.from(value));
-  }
-  return Buffer.concat(chunks);
-}
 
 /**
  * 上游 CDS 技能包的缓存 + 单飞。
@@ -237,7 +214,7 @@ class UpstreamSkillPackCache {
       this.inflight = (async () => {
         const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(UPSTREAM_PACK_TIMEOUT_MS) });
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const body = await readCapped(res, UPSTREAM_PACK_MAX_BYTES);
+        const body = await readCappedBody(res, UPSTREAM_PACK_MAX_BYTES);
         if (body.byteLength === 0) throw new Error('上游返回空内容');
         this.cached = { body, at: this.now() };
         return body;

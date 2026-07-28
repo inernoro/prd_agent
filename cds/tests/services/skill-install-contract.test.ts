@@ -149,3 +149,59 @@ describe('引导脚本的退出码语义', () => {
     }
   });
 });
+
+describe('匿名路由白名单两处登记一致', () => {
+  // CDS 有两道各自独立的门：github 模式走 middleware/github-auth.ts 的 PUBLIC_PATHS，
+  // 其余走 server.ts 的 isPublicAccessRequestRoute。**两边都登记才真的匿名可达**，
+  // 只改一边的后果是「本地能跑、换个鉴权模式就 401」，而客户拿到的正是那条
+  // 「一条命令」——他打不开就整条路走不下去。两个文件都不导出判定函数，
+  // 故这里做源码级一致性断言（同 skill-install-contract 的跨语言守法）。
+  const authSrc = read('cds/src/middleware/github-auth.ts');
+  const serverSrc = read('cds/src/server.ts');
+
+  // 本 PR 引入的匿名入口：预设清单、现场生成的引导脚本、套装清单、技能包下载
+  const RULES: Array<[string, RegExp]> = [
+    ['预设清单', /'\/api\/bootstrap\/presets'/],
+    ['引导脚本（带预设名）', /\/\^\\\/api\\\/bootstrap\\\/\[a-z0-9-\]\+\$\//],
+    ['套装清单', /'\/api\/skills\/bundles'/],
+    ['技能包下载（带 key）', /\/\^\\\/api\\\/skills\\\/\[a-z0-9-\]\+\\\/download\$\//],
+  ];
+
+  it.each(RULES)('%s 在 github-auth 与 server 两处都登记', (_label, rule) => {
+    expect(rule.test(authSrc), 'github-auth.ts 的 PUBLIC_PATHS 缺这条').toBe(true);
+    expect(rule.test(serverSrc), 'server.ts 的 isPublicAccessRequestRoute 缺这条').toBe(true);
+  });
+
+  it('CDS 技能包路径确实能被下载规则命中（cds-pack 不是特例）', () => {
+    // 引导脚本第一步就打这个地址；它必须落进 [a-z0-9-]+/download 这条通配里
+    const downloadRule = /^\/api\/skills\/[a-z0-9-]+\/download$/;
+    expect(downloadRule.test('/api/skills/cds-pack/download')).toBe(true);
+    expect(downloadRule.test('/api/skills/pm-starter/download')).toBe(true);
+    // 不该放行的形态
+    expect(downloadRule.test('/api/skills/../secret/download')).toBe(false);
+  });
+});
+
+describe('每个可复制的安装/更新命令都自带宿主识别', () => {
+  // $SKILLS_DIRS 是循环变量的来源。文档里若把「识别宿主」和「解压」拆进两个代码块，
+  // 用户换个 shell 只复制后半段时，SKILLS_DIRS 为空 -> for 循环零次迭代 -> 命令
+  // 正常退出但一个技能都没装/没更新。这种「看着成功其实没做」最难自查，故逐块守。
+  const FILES = [
+    '.claude/skills/findmapskills/SKILL.md',
+    '.claude/skills/findmapskills/README.md',
+    '.claude/skills/sdd-init/reference/role-playbooks.md',
+    '.claude/rules/skill-install-contract.md',
+  ];
+
+  it.each(FILES)('%s 的每个代码块要么不用 $SKILLS_DIRS，要么自己初始化它', (rel) => {
+    // 先剥掉 blockquote 前缀：`> \`\`\`bash` 这种引用块同样是用户会复制的命令
+    const text = read(rel).split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
+    const blocks = [...text.matchAll(/```(?:bash|sh)\n([\s\S]*?)```/g)].map((m) => m[1]);
+
+    const offenders = blocks.filter(
+      (b) => b.includes('$SKILLS_DIRS') && !/SKILLS_DIRS=(""|\$\()/.test(b),
+    );
+    expect(offenders, `这些代码块用了 $SKILLS_DIRS 却没就近初始化：\n${offenders.join('\n---\n')}`)
+      .toEqual([]);
+  });
+});

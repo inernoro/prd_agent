@@ -303,3 +303,71 @@ describe('上游 CDS 技能包回源（自托管无本地技能树时的唯一�
     expect(calls).toBe(2);
   });
 });
+
+describe('技能包回源的边界保护（匿名路径，无全局限流）', () => {
+  let cacheDir: string;
+  beforeEach(() => { cacheDir = fs.mkdtempSync(path.join(os.tmpdir(), 'skill-proxy-bound-')); });
+  afterEach(() => { fs.rmSync(cacheDir, { recursive: true, force: true }); });
+
+  const proxyWith = (fetchImpl: typeof fetch): SkillProxy =>
+    new SkillProxy({ mapBase: 'https://map.test', cacheDir, fetchImpl });
+
+  it('同一 key 的并发回源合并成一次（单飞）', async () => {
+    let calls = 0;
+    const proxy = proxyWith((async () => {
+      calls += 1;
+      await new Promise((r) => setTimeout(r, 20));
+      return new Response(Buffer.alloc(512, 7), { status: 200 });
+    }) as typeof fetch);
+
+    const all = await Promise.all([
+      proxy.fetchSkill('pm-starter'),
+      proxy.fetchSkill('pm-starter'),
+      proxy.fetchSkill('pm-starter'),
+    ]);
+
+    expect(calls).toBe(1);
+    expect(all.every((r) => r.body.byteLength === 512)).toBe(true);
+  });
+
+  it('不同 key 各自回源，不会被单飞串起来', async () => {
+    let calls = 0;
+    const proxy = proxyWith((async () => {
+      calls += 1;
+      return new Response(Buffer.alloc(64, 1), { status: 200 });
+    }) as typeof fetch);
+
+    await Promise.all([proxy.fetchSkill('pm-starter'), proxy.fetchSkill('dev-starter')]);
+    expect(calls).toBe(2);
+  });
+
+  it('回源带超时信号，不会无限期挂住连接', async () => {
+    let sawSignal = false;
+    const proxy = proxyWith((async (_u: unknown, init?: RequestInit) => {
+      sawSignal = init?.signal instanceof AbortSignal;
+      return new Response(Buffer.alloc(32, 1), { status: 200 });
+    }) as typeof fetch);
+
+    await proxy.fetchSkill('pm-starter');
+    expect(sawSignal).toBe(true);
+  });
+
+  it('超限在流式读取中中止，而不是先把整个响应缓冲进堆', async () => {
+    // 用一个「永远吐数据」的流：如果实现是先 arrayBuffer 再判大小，这里会一直吃内存；
+    // 正确实现应在累计超过上限时立刻 cancel 并抛错。
+    let pushed = 0;
+    const endless = new ReadableStream<Uint8Array>({
+      pull(controller) {
+        pushed += 1;
+        controller.enqueue(new Uint8Array(1024 * 1024));
+        if (pushed > 200) controller.close();
+      },
+    });
+    const proxy = proxyWith((async () =>
+      new Response(endless, { status: 200 })) as typeof fetch);
+
+    await expect(proxy.fetchSkill('pm-starter')).rejects.toThrow();
+    // 128 MB 上限之内就该中止，不会把 200 MB 全读完
+    expect(pushed).toBeLessThanOrEqual(70);
+  });
+});

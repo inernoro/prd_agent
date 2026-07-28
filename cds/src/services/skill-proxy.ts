@@ -24,6 +24,34 @@ const CACHE_TTL_MS = 10 * 60 * 1000;
 /** 单个技能包体积上限，防止上游异常时把磁盘写爆。 */
 const MAX_SKILL_BYTES = 64 * 1024 * 1024;
 
+/** 回源超时：客户在等一条命令跑完，不能无限期挂着连接。 */
+const DOWNLOAD_TIMEOUT_MS = 60_000;
+
+/**
+ * 边读边计数地取回响应体，超限立即中止。
+ *
+ * 不能先 `await res.arrayBuffer()` 再判大小：那是把整个响应缓冲进堆之后才检查，
+ * 上游返回异常大的体时，堆已经吃完了才轮到我们说「超限」。这个函数是
+ * skill-proxy 与 bootstrap 两条匿名下载路径共用的唯一实现，别再写第二份。
+ */
+export async function readCappedBody(res: Response, maxBytes: number): Promise<Buffer> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('上游响应没有可读流');
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`上游响应超过 ${maxBytes} 字节上限`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
 export interface SkillProxyOptions {
   /** MAP 基址，来自 CDS 配置；自托管客户可指向自己的 MAP 实例。 */
   mapBase: string;
@@ -61,6 +89,12 @@ export class SkillProxy {
   private readonly cacheDir: string;
   private readonly fetchImpl: typeof fetch;
   private readonly now: () => number;
+  /**
+   * 按 key 的单飞表。冷缓存时并发的匿名下载会各自回源一次 ——
+   * 这些路由是匿名的且 CDS 没有全局限流，并发调用方能把连接、内存和上游带宽
+   * 一起吃干净。同一个 key 的并发请求共享一次回源。
+   */
+  private readonly inflight = new Map<string, Promise<Buffer>>();
 
   constructor(opts: SkillProxyOptions) {
     this.mapBase = opts.mapBase.replace(/\/+$/, '');
@@ -92,8 +126,7 @@ export class SkillProxy {
     }
 
     try {
-      const body = await this.download(this.upstreamUrlFor(key));
-      await this.writeCache(cachePath, body);
+      const body = await this.downloadOnce(key, cachePath);
       return { body, contentType: 'application/zip', stale: false, source: 'upstream' };
     } catch (err) {
       if (cached) {
@@ -126,12 +159,30 @@ export class SkillProxy {
     }
   }
 
+  /** 同一 key 的并发回源合并成一次，成功后落缓存。 */
+  private downloadOnce(key: string, cachePath: string): Promise<Buffer> {
+    const running = this.inflight.get(key);
+    if (running) return running;
+
+    const task = (async () => {
+      const body = await this.download(this.upstreamUrlFor(key));
+      await this.writeCache(cachePath, body);
+      return body;
+    })().finally(() => { this.inflight.delete(key); });
+
+    this.inflight.set(key, task);
+    return task;
+  }
+
   private async download(url: string): Promise<Buffer> {
-    const res = await this.fetchImpl(url, { method: 'GET' });
+    const res = await this.fetchImpl(url, {
+      method: 'GET',
+      // 没有超时的话，上游卡住就把这条连接（和调用方）无限期挂在这里
+      signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+    });
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
-    const buf = Buffer.from(await res.arrayBuffer());
+    const buf = await readCappedBody(res, MAX_SKILL_BYTES);
     if (buf.byteLength === 0) throw new Error('上游返回空内容');
-    if (buf.byteLength > MAX_SKILL_BYTES) throw new Error(`技能包超过上限 ${MAX_SKILL_BYTES} 字节`);
     return buf;
   }
 
