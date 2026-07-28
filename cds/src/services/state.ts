@@ -21,6 +21,12 @@ import {
   tickHeartbeat as tickActiveUpdateHeartbeat,
 } from '../updater/active-update-store.js';
 import { getAgentOperationContext } from './agent-operation-context.js';
+import {
+  appendDurationSample,
+  computeDurationEstimate,
+  DURATION_ESTIMATE_WINDOW,
+  DURATION_SAMPLES_MAX,
+} from './duration-samples.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -3415,11 +3421,16 @@ export class StateService {
   //   最近 N 条毫秒耗时；只在部署成功时追加。OperationLog 不能用作历史
   //   （per-branch 10 条上限 + build/run 混合 + 删分支即丢），故另立此台账。
 
-  /** 每个 (project, mode) 桶最多保留的样本数。窗口取近 30 次。 */
-  static readonly DEPLOY_DURATION_SAMPLES_MAX = 30;
+  /**
+   * 每个桶最多保留的样本数 / 估算窗口。
+   *
+   * 值本身在 duration-samples.ts（分支部署与生产发布两份台账共用同一口径），
+   * 这里只做转发别名——存量调用方与单测按 StateService.XXX 读，改名会白白制造
+   * 一次跨文件重命名。
+   */
+  static readonly DEPLOY_DURATION_SAMPLES_MAX = DURATION_SAMPLES_MAX;
 
-  /** 中位预计耗时基于"近 N 次"，UI 文案显示这个窗口大小。 */
-  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = 20;
+  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = DURATION_ESTIMATE_WINDOW;
 
   private deployDurationBucketKey(projectId: string, mode: import('../types.js').DeployDurationMode): string {
     return `${projectId || 'default'}::${mode}`;
@@ -3439,15 +3450,15 @@ export class StateService {
     ms: number,
     maxReasonableMs = 30 * 60 * 1000,
   ): void {
-    if (!Number.isFinite(ms) || ms <= 0) return;
-    if (Number.isFinite(maxReasonableMs) && maxReasonableMs > 0 && ms > maxReasonableMs) return;
     const store = this.state.deployDurationSamples || { buckets: {} };
     if (!store.buckets) store.buckets = {};
     const key = this.deployDurationBucketKey(projectId, mode);
-    const bucket = store.buckets[key] || [];
-    bucket.push(Math.round(ms));
-    while (bucket.length > StateService.DEPLOY_DURATION_SAMPLES_MAX) bucket.shift();
-    store.buckets[key] = bucket;
+    const next = appendDurationSample(store.buckets[key], ms, {
+      max: StateService.DEPLOY_DURATION_SAMPLES_MAX,
+      maxReasonableMs,
+    });
+    if (!next) return;
+    store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
       this.save();
@@ -3465,17 +3476,11 @@ export class StateService {
     projectId: string,
     mode: import('../types.js').DeployDurationMode,
   ): import('../types.js').DeployDurationEstimate {
-    const store = this.state.deployDurationSamples;
     const key = this.deployDurationBucketKey(projectId, mode);
-    const all = store?.buckets?.[key] || [];
-    const window = all.slice(-StateService.DEPLOY_DURATION_ESTIMATE_WINDOW);
-    if (window.length === 0) return { medianMs: null, sampleCount: 0 };
-    const sorted = [...window].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    const medianMs = sorted.length % 2 === 1
-      ? sorted[mid]
-      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-    return { medianMs, sampleCount: window.length };
+    return computeDurationEstimate(
+      this.state.deployDurationSamples?.buckets?.[key],
+      StateService.DEPLOY_DURATION_ESTIMATE_WINDOW,
+    );
   }
 
   /** 一次拿齐两种模式的预计耗时，供 BranchSummary 下发到分支卡片。 */
@@ -3488,6 +3493,53 @@ export class StateService {
       sourceMedianMs: source.medianMs,
       sourceSamples: source.sampleCount,
     };
+  }
+
+  // ── 2026-07-28 生产发布耗时样本台账 ── 发布中心在发布进行中只显示「已耗时」，
+  //   用户不知道还要等多久（发布是往生产机器 SSH 跑脚本，动辄好几分钟，比分支
+  //   构建更需要一个预计）。与上面那份分支部署台账**物理分开**：那边的
+  //   mode='release' 指分支容器跑编译产物，语义完全不同，合桶会互相污染
+  //   （事故值：极速版构建中位 42s vs 生产发布中位 8 分钟量级）。
+
+  /** 桶键用 targetId：同项目不同站点可能在不同机器跑不同脚本，合桶中位没有判别力。 */
+  private releaseDurationBucketKey(targetId: string): string {
+    return targetId || 'unknown';
+  }
+
+  /**
+   * 记录一次成功生产发布的耗时样本（毫秒，run.startedAt → finishedAt）。
+   *
+   * 口径由调用方把关（只有非回滚的 success 才该进来）；本方法只管合法性与落盘。
+   * 落盘失败不致命——顶多丢这条样本，绝不能反过来影响发布本身的终态。
+   */
+  recordReleaseDuration(targetId: string, ms: number, maxReasonableMs: number): void {
+    const store = this.state.releaseDurationSamples || { buckets: {} };
+    if (!store.buckets) store.buckets = {};
+    const key = this.releaseDurationBucketKey(targetId);
+    const next = appendDurationSample(store.buckets[key], ms, {
+      max: StateService.DEPLOY_DURATION_SAMPLES_MAX,
+      maxReasonableMs,
+    });
+    if (!next) return;
+    store.buckets[key] = next;
+    this.state.releaseDurationSamples = store;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
+    }
+  }
+
+  /**
+   * 某发布目标的历史中位发布耗时（p50，毫秒）+ 参与样本数。
+   * 无样本时 medianMs=null —— 发布中心据此显示「正在积累历史耗时数据」，不编造。
+   */
+  getReleaseEstimate(targetId: string): import('../types.js').DeployDurationEstimate {
+    const key = this.releaseDurationBucketKey(targetId);
+    return computeDurationEstimate(
+      this.state.releaseDurationSamples?.buckets?.[key],
+      StateService.DEPLOY_DURATION_ESTIMATE_WINDOW,
+    );
   }
 
   // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈

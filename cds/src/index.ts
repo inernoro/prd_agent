@@ -4309,6 +4309,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     state: {
       getAllBranches: () => stateService.getAllBranches(),
       getProject: (projectId: string) => stateService.getProject(projectId),
+      // 生产发布目标也纳入探测。不接这一行，发布中心以外就再没有任何生产健康
+      // 信号——「发完就失联」正是这条接线要治的病。
+      getReleaseTargets: () => stateService.getReleaseTargets(),
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },

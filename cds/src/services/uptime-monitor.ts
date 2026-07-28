@@ -35,9 +35,18 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project } from '../types.js';
+import type { BranchEntry, Project, ReleaseTarget } from '../types.js';
 import { isTrunkBranch } from './branch-protection.js';
 import { isRemoteExecutorOwned } from './executor-ownership.js';
+import {
+  isReleaseTargetProbeable,
+  releaseProbeSkipReason,
+  releaseProbeTargetId,
+  releaseProbeUrl,
+} from './release-probe-target.js';
+// 生产目标的探测必须与发布中心预检用同一个 HTTP 判定函数：两处各写一遍的结局是
+// 「预检说健康、状态页说宕机」（或反过来），用户无从判断该信哪个。
+import { probeHealthcheckStatus } from './release-service.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   DEFAULT_FAILURE_THRESHOLD,
@@ -61,19 +70,31 @@ import {
   type UptimeStatus,
 } from './uptime-metrics.js';
 
-/** 探测目标：一个分支的一个对外服务。 */
+/**
+ * 探测方式。`url` 是生产发布目标专用：它在 CDS 这边**没有容器、没有宿主端口**，
+ * 唯一可信的存活信号就是打它自己的 healthcheckUrl。绝不能把它并进 http/container
+ * 二分里——container 分支读的是 serviceStatus（控制面意图），生产站点整站挂掉时
+ * 那个值仍是「enabled」，状态页会全绿。
+ */
+export type ProbeKind = 'http' | 'container' | 'url';
+
+/** 探测目标：一个分支的一个对外服务，或一个生产发布目标。 */
 export interface ProbeTarget {
-  /** `${branchId}::${profileId}`，URL 里需 encodeURIComponent */
+  /** 分支目标为 `${branchId}::${profileId}`，发布目标为 `release@${targetId}`；URL 里需 encodeURIComponent */
   id: string;
   branchId: string;
   projectId: string;
   profileId: string;
-  /** 展示名，如 `feature-x / api` */
+  /** 展示名，如 `feature-x / api`、`生产 / 官网` */
   name: string;
-  /** 容器发布到宿主机的端口；0 表示没有可探测端口 */
+  /** 容器发布到宿主机的端口；0 表示没有可探测端口（url 型恒为 0） */
   hostPort: number;
-  /** http = 直连宿主机端口；container = 退化为容器状态判定 */
-  probeKind: 'http' | 'container';
+  /** http = 直连宿主机端口；container = 退化为容器状态判定；url = 打发布目标的上线地址 */
+  probeKind: ProbeKind;
+  /** url 型的探测地址（发布目标的 healthcheckUrl） */
+  url?: string;
+  /** url 型不可探测时的人话原因，来自 release-probe-target 这一个判定源 */
+  releaseSkipReason?: string;
   /**
    * 本轮是否应该探测。false = 分支被降温 / 未运行 / 正在构建，
    * 这不是故障，记 paused 且不产采样（时间桶留空，前端显示灰段）。
@@ -101,7 +122,9 @@ export interface UptimeTargetRecord {
   projectId: string;
   profileId: string;
   name: string;
-  probeKind: 'http' | 'container';
+  probeKind: ProbeKind;
+  /** url 型：本目标探的是哪个地址（状态页展示，便于确认探的是不是线上） */
+  probeUrl?: string;
   status: UptimeStatus;
   consecutiveFailures: number;
   consecutiveSuccesses: number;
@@ -158,6 +181,15 @@ export interface UptimeMonitorConfig {
    * 不是「今天开了多少条分支」。需要全量时设 CDS_UPTIME_SCOPE=all。
    */
   scope: 'trunk' | 'all';
+  /**
+   * 是否把生产发布目标纳入探测（`CDS_UPTIME_RELEASE_ENABLED`，默认开）。
+   *
+   * 逃生阀存在的理由：这一档把探测从「只打本机 127.0.0.1」变成「常态每
+   * intervalMs 对生产站点发一次外呼」。真出现被探端限流、计费、WAF 拦截时，
+   * 必须能只关这一类而不牵连分支监控。可选字段——不传即视为开启，避免既有
+   * 30+ 处 config 字面量全部要改。
+   */
+  releaseTargetsEnabled?: boolean;
   /** 落盘路径；空串表示只在内存里跑（测试用） */
   storePath: string;
 }
@@ -170,6 +202,10 @@ export interface UptimeStateSource {
    * 退化为 main/master 字面量兜底，行为仍正确，只是认不出自定义默认分支名。
    */
   getProject?(projectId: string): Project | null | undefined;
+  /**
+   * 读生产发布目标。可选——不接线时监控只盯分支，与本功能上线前行为一致。
+   */
+  getReleaseTargets?(): ReleaseTarget[];
 }
 
 export type ProbeFn = (target: ProbeTarget, timeoutMs: number) => Promise<Omit<UptimeSample, 't'>>;
@@ -225,13 +261,15 @@ export function matchExcludePattern(
   patterns: ReadonlyArray<string>,
 ): string | null {
   if (!patterns || patterns.length === 0) return null;
+  // 空字段必须剔除：发布目标没有 branchId（恒为空串），留着会让 `*` 之外的
+  // 空白规则意外命中，把一个正常的生产目标静默排除出监控。
   const fields = [
     candidate.id,
     candidate.profileId,
     candidate.branchId,
     `${candidate.projectId}/${candidate.profileId}`,
     candidate.name,
-  ];
+  ].filter((field) => field.length > 0);
   for (const pattern of patterns) {
     const re = patternToRegExp(pattern);
     if (fields.some((field) => re.test(field))) return pattern;
@@ -258,6 +296,7 @@ export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
     ),
     // 默认只监控主干；CDS_UPTIME_SCOPE=all 才纳入全部分支。
     scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'all' ? 'all' : 'trunk',
+    releaseTargetsEnabled: envFlag('CDS_UPTIME_RELEASE_ENABLED', true),
     storePath: path.join(repoRoot, '.cds', 'uptime-monitor.json'),
   };
 }
@@ -329,6 +368,69 @@ export function selectProbeTargets(
   return targets;
 }
 
+/**
+ * 从生产发布目标推导探测目标（纯函数）。
+ *
+ * 刻意**不复用** selectProbeTargets 的分支循环：那里每一条规则都是分支专用的
+ * （scope=trunk 收窄、远端 executor 归属、branchStatus/serviceStatus 活性），
+ * 套到发布目标上全是误伤——事故值：默认 scope=trunk 会把生产目标一刀 continue
+ * 掉，功能等于没做；集群部署下 executor 归属判定会让生产目标全体沉默。
+ *
+ * 「能不能探」只问 release-probe-target 那一个判定源，不在这里重写一遍。
+ */
+export function selectReleaseProbeTargets(
+  releaseTargets: ReadonlyArray<ReleaseTarget>,
+  excludePatterns: ReadonlyArray<string> = [],
+): ProbeTarget[] {
+  const targets: ProbeTarget[] = [];
+  for (const target of releaseTargets) {
+    if (!target) continue;
+    const id = releaseProbeTargetId(target);
+    const name = `生产 / ${target.name || target.id}`;
+    const skipReason = releaseProbeSkipReason(target);
+    const excludedBy = matchExcludePattern(
+      { id, branchId: '', projectId: target.projectId, profileId: target.id, name },
+      excludePatterns,
+    );
+    targets.push({
+      id,
+      branchId: '',
+      projectId: target.projectId,
+      profileId: target.id,
+      name,
+      hostPort: 0,
+      probeKind: 'url',
+      url: releaseProbeUrl(target),
+      active: !skipReason && !excludedBy,
+      // 发布目标没有分支，也没有 executor 归属这一维，别给它扣分支的帽子。
+      branchStatus: 'release-target',
+      serviceStatus: isReleaseTargetProbeable(target) ? 'enabled' : 'disabled',
+      excluded: Boolean(excludedBy),
+      excludedBy: excludedBy || undefined,
+      releaseSkipReason: skipReason || undefined,
+    });
+  }
+  return targets;
+}
+
+/**
+ * 两类目标合并成一轮探测清单。合并只此一处，避免调用方各自拼一份后漏掉某一类。
+ */
+export function selectAllProbeTargets(
+  branches: ReadonlyArray<BranchEntry>,
+  releaseTargets: ReadonlyArray<ReleaseTarget>,
+  excludePatterns: ReadonlyArray<string> = [],
+  options: {
+    scope?: 'trunk' | 'all';
+    getProject?: (projectId: string) => Project | null | undefined;
+    releaseTargetsEnabled?: boolean;
+  } = {},
+): ProbeTarget[] {
+  const branchTargets = selectProbeTargets(branches, excludePatterns, options);
+  if (options.releaseTargetsEnabled === false) return branchTargets;
+  return [...branchTargets, ...selectReleaseProbeTargets(releaseTargets, excludePatterns)];
+}
+
 /** paused 原因的人话文案（前端直接展示）。 */
 export function pausedReasonOf(target: ProbeTarget): string {
   if (target.excluded) {
@@ -336,6 +438,12 @@ export function pausedReasonOf(target: ProbeTarget): string {
   }
   if (target.remoteExecutor) {
     return '未纳入监控（容器在远端 executor，协调端探不到其宿主端口）';
+  }
+  // url 型必须在分支/服务状态之前结算：它的 branchStatus 是占位值 release-target，
+  // 落到下面的模板会输出「分支状态 release-target，暂不探测」——用户读到的是
+  // 一条根本不存在的分支，而真正的原因（目标已停用 / 没配上线地址）被吞掉。
+  if (target.probeKind === 'url') {
+    return target.releaseSkipReason || '发布目标暂不探测';
   }
   if (!LIVE_BRANCH_STATUSES.has(target.branchStatus)) {
     if (target.branchStatus === 'idle') return '分支已降温（调度器空闲回收），不计入故障';
@@ -345,12 +453,34 @@ export function pausedReasonOf(target: ProbeTarget): string {
 }
 
 /**
+ * 生产发布目标的探测：打它自己的上线地址。
+ *
+ * 走 release-service 的 probeHealthcheckStatus，与发布中心预检**同一把尺子**；
+ * 两处各写一份 fetch + 超时 + 判据的结局是两边对同一个站点给出不同结论。
+ */
+async function probeReleaseUrl(target: ProbeTarget, timeoutMs: number): Promise<Omit<UptimeSample, 't'>> {
+  const url = (target.url || '').trim();
+  if (!url) return { up: false, ms: 0, err: '发布目标未配置上线地址（healthcheckUrl）' };
+  const probe = await probeHealthcheckStatus(url, timeoutMs);
+  const up = probe.status === 'healthy';
+  return {
+    up,
+    ms: probe.responseTimeMs ?? 0,
+    err: up ? undefined : (probe.message || '上线地址探测失败'),
+  };
+}
+
+/**
  * 默认 HTTP 探测：直连 `127.0.0.1:<hostPort>`。
  *
  * 判定口径：拿到任何 < 500 的响应都算存活（401/404 说明进程在应答，
  * 只是没有那个路由）；5xx / 连接失败 / 超时算故障。
  */
 export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
+  // url 型必须在 hostPort 判定之前分派：它的 hostPort 恒为 0，落进下面的容器
+  // 兜底就会拿 serviceStatus 当结论 —— 那探的是「CDS 以为的目标开关」，不是
+  // 生产站点本身，站点整站挂掉时依然报 up。
+  if (target.probeKind === 'url') return await probeReleaseUrl(target, timeoutMs);
   if (target.hostPort <= 0) {
     // 退化路径：没有宿主机端口时，只能用调用方给的容器状态判定。
     const up = target.serviceStatus === 'running';
@@ -498,6 +628,7 @@ function emptyRecord(target: ProbeTarget, now: number): UptimeTargetRecord {
     profileId: target.profileId,
     name: target.name,
     probeKind: target.probeKind,
+    probeUrl: target.url,
     status: 'unknown',
     consecutiveFailures: 0,
     consecutiveSuccesses: 0,
@@ -516,7 +647,9 @@ export interface UptimeTargetSummary {
   branchId: string;
   projectId: string;
   profileId: string;
-  probeKind: 'http' | 'container';
+  probeKind: ProbeKind;
+  /** url 型：探测地址（状态页徽标 title 展示） */
+  probeUrl?: string;
   status: UptimeStatus;
   pausedReason?: string;
   /** 命中排除名单：状态页标「未纳入监控」，不参与故障统计 */
@@ -629,12 +762,14 @@ export class UptimeMonitorService {
     this.cycleRunning = true;
     try {
       const now = this.now();
-      const targets = selectProbeTargets(
+      const targets = selectAllProbeTargets(
         this.deps.state.getAllBranches(),
+        this.deps.state.getReleaseTargets?.() || [],
         this.deps.config.excludePatterns || [],
         {
           scope: this.deps.config.scope ?? 'trunk',
           getProject: this.deps.state.getProject?.bind(this.deps.state),
+          releaseTargetsEnabled: this.deps.config.releaseTargetsEnabled !== false,
         },
       );
       const liveIds = new Set(targets.map((t) => t.id));
@@ -660,6 +795,7 @@ export class UptimeMonitorService {
           : rawTarget;
         record.name = target.name;
         record.probeKind = target.probeKind;
+        record.probeUrl = target.url;
         record.projectId = target.projectId;
         record.excluded = target.excluded;
         this.records.set(target.id, record);
@@ -756,6 +892,10 @@ export class UptimeMonitorService {
    * 触发时把当次采样改判为容器状态结果，故障事件因此压根不会开出来。
    */
   private maybeDegrade(target: ProbeTarget, record: UptimeTargetRecord, sample: UptimeSample): UptimeSample {
+    // url 型永不降级（假绿防线）：降级后的判据是 serviceStatus，而生产站点在 CDS
+    // 这边根本没有容器，读到的是 ProbeTarget 上占位的 'enabled' → 恒为 up。
+    // 事故值：生产整站挂掉，连续拿到协议层错误，状态页反而从红转绿。
+    if (target.probeKind === 'url') return sample;
     if (sample.up) {
       record.protocolFailures = 0;
       if (target.probeKind === 'http') record.httpEverUp = true;
@@ -807,6 +947,7 @@ export class UptimeMonitorService {
         projectId: record.projectId,
         profileId: record.profileId,
         probeKind: record.probeKind,
+        probeUrl: record.probeUrl,
         status: record.status,
         pausedReason: record.pausedReason,
         excluded: Boolean(record.excluded),

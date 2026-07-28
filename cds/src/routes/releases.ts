@@ -9,7 +9,7 @@ import {
   releaseProjectIdentity,
   validateReleaseStrategy,
 } from '../services/release-strategy.js';
-import { releaseEvents } from '../services/release-events.js';
+import { releaseEvents, type ReleaseEventEnvelope } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { assertProjectAccess } from './projects.js';
 
@@ -514,26 +514,46 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, run.projectId)) return;
-    const afterSeq = Number(req.query.afterSeq || 0);
+    // 与分支部署流（routes/deployment-runs.ts）同一口径：显式 afterSeq 优先，没给才回落到
+    // Last-Event-ID。这个回落不是锦上添花 —— EventSource 断线自动重连时只会带这个请求头，
+    // 不会替调用方补 query，此前没有它的时候每次重连都从 seq 0 重放整份日志。
+    const afterSeq = clampSeq(req.query.afterSeq ?? req.headers['last-event-id']);
     res.writeHead(200, {
       'Content-Type': 'text/event-stream',
       'Cache-Control': 'no-cache',
       Connection: 'close',
       'X-Accel-Buffering': 'no',
     });
-    const send = (event: string, data: unknown): void => {
-      try { res.write(`event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
+    // id 行必须排在 event/data 之前：浏览器逐行解析，分发事件时读的是当前缓冲里的 id。
+    const send = (event: string, data: unknown, id?: number): void => {
+      const idLine = id === undefined ? '' : `id: ${id}\n`;
+      try { res.write(`${idLine}event: ${event}\ndata: ${JSON.stringify(data)}\n\n`); } catch { /* client gone */ }
     };
-    const handler = (envelope: any): void => {
+    let lastSentSeq = afterSeq;
+    const handler = (envelope: ReleaseEventEnvelope): void => {
       if (!envelope?.payload || envelope.payload.releaseId !== req.params.id) return;
-      send(envelope.type, envelope.payload);
+      if (envelope.type === 'release.log') {
+        const seq = envelope.payload.log.seq;
+        // 断点续传的语义闸：客户端已经拿到 seq 及以前的日志，重连后不该再收一遍。
+        if (seq <= lastSentSeq) return;
+        lastSentSeq = seq;
+        send(envelope.type, envelope.payload, seq);
+        return;
+      }
+      // 状态事件刻意不走上面那道 seq 闸：seq 只在追加日志时自增，状态变更（含步骤推进
+      // 复用的 release.status）根本不动它，按 seq 过滤会把状态更新整批丢掉。
+      // 仍带 id，取当前 seq，保证断点不会因为收到一条状态事件而倒退。
+      send(envelope.type, envelope.payload, envelope.payload.run.seq);
     };
+    // 先注册再取快照：两步之间是纯同步的，中间不可能插入事件；反过来先发快照会在
+    // 两步之间丢掉真实发生的日志 —— 重复可以靠 id 去重，丢失无法补救。
     releaseEvents.on('any', handler);
     const latestRun = deps.stateService.getReleaseRun(req.params.id) || run;
     send('snapshot', {
       run: latestRun,
       logs: latestRun.logs.filter((log) => log.seq > afterSeq),
     });
+    lastSentSeq = Math.max(lastSentSeq, latestRun.seq);
     const keepalive = setInterval(() => {
       try { res.write(':keepalive\n\n'); } catch { /* ignore */ }
     }, 10_000);
@@ -573,12 +593,28 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         canRollback: Boolean(rollbackDefaultReleaseId),
         successfulRuns: successfulRuns.slice(0, 20),
         rollbackDefaultReleaseId,
+        // 发布 ETA 的传输面。少了这一行，采样照常在攒、前端却恒为 undefined，
+        // 发布中心永远显示「正在积累历史耗时数据」——功能全链路建好却不可见。
       };
     }));
     res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50) });
   });
 
   return router;
+}
+
+/**
+ * SSE 续传游标解析。
+ *
+ * 必须容错到「任何脏值都退回 0」：Last-Event-ID 是客户端可控的裸字符串，代理也可能
+ * 把它变成数组。放任 NaN 流进 `log.seq > afterSeq` 会让比较恒 false，快照静默变空 ——
+ * 表现是「重连后一条日志都没有」，而不是报错。
+ */
+function clampSeq(value: unknown): number {
+  const raw = Array.isArray(value) ? value[0] : value;
+  const parsed = Number(typeof raw === 'string' ? raw.trim() : raw);
+  if (!Number.isFinite(parsed) || parsed <= 0) return 0;
+  return Math.min(Number.MAX_SAFE_INTEGER, Math.floor(parsed));
 }
 
 function requestProjectKey(req: Request): { projectId: string; keyId: string } | undefined {

@@ -15,6 +15,10 @@
  *   - 空状态给引导文案 + 「首批数据约 N 秒后出现」，不是「暂无数据」；
  *   - 主产物区 flex-1 min-h-0 填满（content-fills-canvas）；
  *   - 手机端柱条段数减半并允许横向滚动，页面本身绝不横向撑破。
+ *
+ * 目标有两类：分支预览服务（HTTP 探测宿主端口）与生产发布目标（URL 探测其
+ * healthcheckUrl）。两者的可用率含义完全不同——一个是临时环境，一个是线上承诺，
+ * 因此分组渲染 + 左侧强调条 + 探测方式徽标三重区分，绝不能让读者以为看的是同一种东西。
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
@@ -26,6 +30,7 @@ import { describeStatusLoadError, resolveStatusViewPhase } from '@/lib/statusVie
 
 type UptimeStatus = 'up' | 'down' | 'paused' | 'unknown';
 type BucketStatus = 'up' | 'down' | 'partial' | 'none';
+type ProbeKind = 'http' | 'container' | 'url';
 
 interface UptimeSample {
   t: number;
@@ -50,7 +55,9 @@ interface UptimeTargetSummary {
   branchId: string;
   projectId: string;
   profileId: string;
-  probeKind: 'http' | 'container';
+  probeKind: ProbeKind;
+  /** url 型（生产发布目标）探的是哪个地址 */
+  probeUrl?: string;
   status: UptimeStatus;
   pausedReason?: string;
   /** 命中 CDS_UPTIME_EXCLUDE：未纳入监控，不算故障 */
@@ -110,6 +117,18 @@ const STATUS_META: Record<UptimeStatus, { label: string; icon: typeof CheckCircl
   down: { label: '故障', icon: AlertTriangle, className: 'border-destructive/40 bg-destructive/10 text-destructive' },
   paused: { label: '已暂停', icon: PauseCircle, className: 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
   unknown: { label: '待确认', icon: HelpCircle, className: 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground' },
+};
+
+/**
+ * 探测方式文案。必须是三值映射，**不许**退回 `probeKind === 'http' ? A : B` 的
+ * 二分三元：那样生产目标（url）会被标成「按容器状态判定」，而生产站点在 CDS
+ * 这边根本没有容器——用户会把它读成「这条其实没真探」，或者反过来在它变绿时
+ * 以为看的是真实存活。守卫见 tests/web/status-page-release-targets.test.ts。
+ */
+const PROBE_KIND_LABEL: Record<ProbeKind, string> = {
+  http: 'HTTP 探测',
+  container: '按容器状态判定',
+  url: 'URL 探测（生产）',
 };
 
 function useIsNarrow(): boolean {
@@ -301,14 +320,22 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
     () => (target.buckets.length > segments ? target.buckets.slice(target.buckets.length - segments) : target.buckets),
     [target.buckets, segments],
   );
+  // 生产目标加一道左侧强调条：它和分支预览混在同一列表里，光靠名字前缀太弱，
+  // 用户扫一眼要能分清「这行说的是线上」还是「这行说的是某条分支」。
+  const production = target.probeKind === 'url';
   return (
-    <div className="rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3">
+    <div
+      className={`rounded-lg border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] p-3 ${production ? 'border-l-[3px] border-l-primary' : ''}`}
+    >
       <div className="flex flex-wrap items-center justify-between gap-2">
         <div className="flex min-w-0 items-center gap-2">
           <StatusPill status={target.status} excluded={target.excluded} />
           <span className="truncate text-sm font-medium">{target.name}</span>
-          <span className="hidden shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline">
-            {target.probeKind === 'http' ? 'HTTP 探测' : '按容器状态判定'}
+          <span
+            className="hidden shrink-0 rounded border border-[hsl(var(--hairline))] px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground sm:inline"
+            title={target.probeUrl}
+          >
+            {PROBE_KIND_LABEL[target.probeKind]}
           </span>
           {target.degraded ? (
             <span
@@ -355,6 +382,27 @@ function TargetRow({ target, segments }: { target: UptimeTargetSummary; segments
         ) : null}
       </div>
     </div>
+  );
+}
+
+/**
+ * 分组小节。生产发布目标与分支预览服务的可用率含义完全不同（一个是线上承诺，
+ * 一个是临时环境），混在一列里读者要逐行辨认名字才知道自己在看什么。
+ */
+function TargetSection({ title, hint, targets, segments }: {
+  title: string;
+  hint: string;
+  targets: UptimeTargetSummary[];
+  segments: number;
+}): JSX.Element {
+  return (
+    <section className="flex flex-col gap-2">
+      <div className="flex flex-wrap items-baseline gap-x-2 gap-y-0.5">
+        <h2 className="text-sm font-semibold">{title}</h2>
+        <span className="text-[11px] text-muted-foreground">{hint}</span>
+      </div>
+      {targets.map((target) => <TargetRow key={target.id} target={target} segments={segments} />)}
+    </section>
   );
 }
 
@@ -463,6 +511,14 @@ export function StatusPage(): JSX.Element {
   }, [load]);
 
   const hasTargets = (summary?.targets.length ?? 0) > 0;
+  const productionTargets = useMemo(
+    () => (summary?.targets || []).filter((target) => target.probeKind === 'url'),
+    [summary],
+  );
+  const branchTargets = useMemo(
+    () => (summary?.targets || []).filter((target) => target.probeKind !== 'url'),
+    [summary],
+  );
   // 三态互斥：只有 loading 才允许出现骨架，error（且无数据）走引导式错误卡片。
   const phase = resolveStatusViewPhase({ hasSummary: summary !== null, error });
 
@@ -510,16 +566,38 @@ export function StatusPage(): JSX.Element {
               <div className="min-h-0 flex-1 overflow-y-auto" style={{ overscrollBehavior: 'contain' }}>
                 <div className="flex flex-col gap-3 pb-2">
                   {hasTargets ? (
-                    summary.targets.map((target) => (
-                      <TargetRow key={target.id} target={target} segments={segments} />
-                    ))
+                    // 只有真的存在生产目标时才分组：没接发布目标的实例维持原样，
+                    // 不平白多出一个只有一节的标题。
+                    productionTargets.length > 0 ? (
+                      <>
+                        <TargetSection
+                          title="生产发布目标"
+                          hint="探测发布中心配置的上线地址（healthcheckUrl）"
+                          targets={productionTargets}
+                          segments={segments}
+                        />
+                        {branchTargets.length > 0 ? (
+                          <TargetSection
+                            title="分支预览服务"
+                            hint="直连容器宿主端口，不经预览代理"
+                            targets={branchTargets}
+                            segments={segments}
+                          />
+                        ) : null}
+                      </>
+                    ) : (
+                      branchTargets.map((target) => (
+                        <TargetRow key={target.id} target={target} segments={segments} />
+                      ))
+                    )
                   ) : (
                     <div className="flex flex-col items-center gap-2 rounded-lg border border-dashed border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-raised))] px-4 py-10 text-center">
                       <Activity className="h-6 w-6 text-muted-foreground" />
                       <div className="text-sm font-medium">还没有可监控的服务</div>
                       <div className="max-w-md text-xs leading-5 text-muted-foreground">
-                        存活监控只探测「正在运行」的分支服务。先在项目里部署一个分支，
-                        探测器每 {summary.intervalSeconds} 秒跑一轮，
+                        存活监控探测两类对象：「正在运行」的分支服务，以及发布中心里配好
+                        上线地址的生产发布目标。先部署一个分支、或给发布目标填上
+                        healthcheckUrl，探测器每 {summary.intervalSeconds} 秒跑一轮，
                         首批数据约 {summary.firstDataEtaSeconds} 秒后出现在这里。
                         分支被调度器降温期间会标记为「已暂停」，不计入故障。
                       </div>
@@ -537,7 +615,8 @@ export function StatusPage(): JSX.Element {
               </div>
 
               <div className="shrink-0 text-[11px] text-muted-foreground">
-                数据由 CDS 自建探测器采集（直连容器宿主端口，不经预览代理，因此不会影响分支的空闲降温）。
+                数据由 CDS 自建探测器采集：分支服务直连容器宿主端口（不经预览代理，因此不会影响分支的空闲降温），
+                生产发布目标请求其上线地址。
                 最近一轮探测：{summary.lastCycleAt ? formatClock(summary.lastCycleAt) : '尚未开始'}
                 {' · '}页面每 {POLL_INTERVAL_MS / 1000} 秒自动刷新
               </div>

@@ -1361,10 +1361,42 @@ export interface ReleaseTarget {
 }
 
 export interface ReleasePlanStep {
+  /**
+   * **连接键：step.id 必须等于执行器 emitLog 该步时用的 phase。**
+   *
+   * 这个键其实一直存在于日志里，只是从没被声明过——于是 ReleasePlan.steps 定义了却
+   * 端到端零消费，前端只能靠正则从日志 phase 反推步骤条，两边还各自漂移
+   * （ssh-script 模板写 4 步、执行器实际发 6 个 phase）。新增或改名步骤时必须同时改
+   * 执行器的 phase，判定逻辑统一在 services/release-steps.ts。
+   */
   id: string;
   title: string;
   kind: 'ssh' | 'healthcheck' | 'record' | 'manual';
   command?: string;
+}
+
+export type ReleaseRunStepState = 'pending' | 'running' | 'done' | 'failed';
+
+/** 某次运行里实际执行的一步。id 同 ReleasePlanStep.id，也同该步日志的 phase。 */
+export interface ReleaseRunStep {
+  id: string;
+  title: string;
+  kind: ReleasePlanStep['kind'];
+  state: ReleaseRunStepState;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+/**
+ * 本次运行的步骤快照。
+ *
+ * 刻意不存 index / total：两个数字与 steps 数组重复表达同一件事，必然漂移；
+ * 「第 N / 共 M 步」一律由 steps 推导（services/release-steps.ts::releaseStepOrdinal）。
+ */
+export interface ReleaseRunProgress {
+  planId: string;
+  steps: ReleaseRunStep[];
+  currentStepId?: string;
 }
 
 export interface ReleasePlan {
@@ -1456,6 +1488,12 @@ export interface ReleaseRun {
    * 让两条生命周期的失败展示与归因逻辑可以共用。
    */
   failure?: DeploymentFailure;
+  /**
+   * 本次运行的步骤快照（后端一等公民步骤模型）。
+   *
+   * 缺省代表阶段二之前入库的存量 run —— 前端必须优雅退化成通用骨架，不许白屏或报错。
+   */
+  progress?: ReleaseRunProgress;
   /** 本次运行实际执行策略的不可变快照，避免目标后改配置污染历史证据。 */
   executionSnapshot?: {
     mode: ReleaseExecutionMode;
@@ -1833,6 +1871,21 @@ export interface CdsState {
    * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
    */
   deployDurationSamples?: DeployDurationSamples;
+  /**
+   * 生产发布耗时样本台账（2026-07-28）。keyed by targetId，桶结构与
+   * deployDurationSamples 完全一致，但**刻意分成两个顶层字段**。
+   *
+   * 为什么不复用 deployDurationSamples 的 `${projectId}::${mode}` 桶：那里的
+   * mode='release' 指的是分支容器跑编译产物/极速版镜像（classifyDeployRuntime
+   * 的输出），与「往生产机器 SSH 执行发布脚本」毫无关系。事故值：极速版构建
+   * 中位 42s，真实生产发布中位 8 分钟量级 —— 混桶后两边互相拉扯，分支等待页
+   * 和发布中心拿到的都是没有判别力的数字。独立字段是键空间层面就不可能撞的
+   * 唯一零歧义隔离方式。
+   *
+   * 桶键用 targetId 而不是 projectId：同一个项目的两个站点可能部署在不同机器、
+   * 跑不同脚本，耗时能差一个数量级，合桶后中位同样失去判别力。
+   */
+  releaseDurationSamples?: DeployDurationSamples;
   /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts

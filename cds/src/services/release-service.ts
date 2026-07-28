@@ -1,10 +1,19 @@
 import crypto from 'node:crypto';
 import type { StateService } from './state.js';
-import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleaseRun, ReleaseRunStatus, ReleaseTarget, RemoteHost } from '../types.js';
+import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
+import {
+  advanceReleaseSteps,
+  buildReleaseRunProgress,
+  buildRollbackRunProgress,
+  completeReleaseSteps,
+  extractReleaseScriptPaths,
+  failReleaseSteps,
+  planDeployPhases,
+} from './release-steps.js';
 import {
   buildReleaseExecution,
   buildStrategyPreflightCommand,
@@ -13,6 +22,15 @@ import {
   releaseProjectIdentity,
   validateReleaseStrategy,
 } from './release-strategy.js';
+
+// 步骤/脚本判定的唯一定义在 release-steps.ts；这里只做转发，保住存量 import 路径。
+// 谁都不许在本文件里再写第二份 releaseScriptPhase —— 三份拷贝各自漂移正是这次要根治的病。
+export {
+  extractReleaseScriptPaths,
+  isDefaultScriptChain,
+  planDeployPhases,
+  releaseScriptPhase,
+} from './release-steps.js';
 
 type Ssh2Client = {
   connect(opts: Ssh2ConnectOptions): void;
@@ -298,6 +316,12 @@ export class ReleaseService {
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
   }
 
+  /**
+   * 计划模板。steps 的每个 id 必须逐一对上 runRelease 真实 emit 的 phase：
+   * connect → prepare → plan → deploy(可展开成多步) → healthcheck → record。
+   * 旧模板漏了 prepare / plan（ssh-script 更是连 prepare 都没有），执行器发了 6 个 phase、
+   * 模板只描述 4 步，正是「plan.steps 定义了却没人敢读」的根因。
+   */
   ensureDefaultPlans(projectId: string): ReleasePlan[] {
     const existing = this.stateService.getReleasePlans(projectId);
     const definitions: Array<Pick<ReleasePlan, 'id' | 'name' | 'template' | 'rollbackStrategy' | 'steps'>> = [
@@ -308,6 +332,8 @@ export class ReleaseService {
         rollbackStrategy: 'command',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
           { id: 'deploy', title: '执行项目发布命令', kind: 'ssh' },
           { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
           { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
@@ -320,8 +346,9 @@ export class ReleaseService {
         rollbackStrategy: 'previous-release',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
-          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
-          { id: 'deploy', title: '生成并执行 Compose 发布脚本', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
+          { id: 'deploy', title: '建立隔离 worktree 并执行 Compose 发布脚本', kind: 'ssh' },
           { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
           { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
         ],
@@ -333,7 +360,8 @@ export class ReleaseService {
         rollbackStrategy: 'previous-release',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
-          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
           { id: 'deploy', title: '构建并离线验证静态产物', kind: 'ssh' },
           { id: 'healthcheck', title: '验证页面与入口资源', kind: 'healthcheck' },
           { id: 'record', title: '记录 current、previous 与脚本哈希', kind: 'record' },
@@ -341,13 +369,18 @@ export class ReleaseService {
       },
     ];
     for (const definition of definitions) {
-      if (existing.some((plan) => plan.id === definition.id)) continue;
+      const current = existing.find((plan) => plan.id === definition.id);
+      // 存量项目在阶段二之前已经 seed 过残缺的 steps，而 plan 没有任何编辑入口，
+      // 「已存在就跳过」等于让老项目永远拿不到对齐后的步骤表。步骤不一致时就地纠正，
+      // createdAt 保留，不伪造成新计划。
+      if (current && JSON.stringify(current.steps) === JSON.stringify(definition.steps)) continue;
       this.stateService.upsertReleasePlan({
+        ...(current || {}),
         ...definition,
         projectId,
         targetType: 'ssh',
         failureStrategy: 'stop',
-        createdAt: new Date().toISOString(),
+        createdAt: current?.createdAt || new Date().toISOString(),
       });
     }
     return this.stateService.getReleasePlans(projectId);
@@ -618,6 +651,8 @@ export class ReleaseService {
       summary: execution.summary,
       strategy: effectiveReleaseStrategy(preflight.target),
     };
+    // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
+    run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
     this.stateService.addReleaseRun(run);
     this.emitLog(releaseId, 'info', 'release queued', 'queued');
     void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
@@ -674,10 +709,10 @@ export class ReleaseService {
       summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
       strategy: rollbackStrategy,
     };
+    const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
+    run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
     this.stateService.addReleaseRun(run);
-    const strategy = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand)
-      ? 'rollbackCommand'
-      : '重新发布历史版本';
+    const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
     return this.stateService.getReleaseRun(rollbackId)!;
@@ -869,25 +904,27 @@ export class ReleaseService {
     const target = this.stateService.getReleaseTarget(run.targetId);
     if (!target?.ssh) throw new Error('SSH target not found');
     this.patchStatus(releaseId, 'running');
-    this.emitLog(releaseId, 'info', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`, 'connect');
+    this.beginStep(releaseId, 'connect', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`);
     await this.sshExec(target, 'echo cds-release-connect-ok', releaseId, 'connect');
-    this.emitLog(releaseId, 'info', `进入站点目录 ${target.ssh.appPath || '.'}`, 'prepare');
+    this.beginStep(releaseId, 'prepare', `进入站点目录 ${target.ssh.appPath || '.'}`);
     const executionTarget = run.executionSnapshot?.strategy ? { ...target, strategy: run.executionSnapshot.strategy } : target;
     const execution = buildReleaseExecution(executionTarget, run);
     if (run.executionSnapshot && execution.scriptSha256 !== run.executionSnapshot.scriptSha256) {
       throw new Error('发布执行脚本与预检快照不一致，已拒绝执行');
     }
-    this.emitLog(releaseId, 'info', `${execution.summary} · sha256=${execution.scriptSha256}`, 'plan');
+    this.beginStep(releaseId, 'plan', `${execution.summary} · sha256=${execution.scriptSha256}`);
+    this.finishStep(releaseId, 'plan');
     await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
     this.patchStatus(releaseId, 'healthchecking');
-    this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
+    this.beginStep(releaseId, 'healthcheck', `健康检查 ${target.ssh.healthcheckUrl}`);
     try {
       await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
     } catch (err) {
       await this.restorePreviousAfterFailedProbe(releaseId, target, run, err);
       throw err;
     }
-    this.emitLog(releaseId, 'info', '标记成功', 'record');
+    this.finishStep(releaseId, 'healthcheck');
+    this.beginStep(releaseId, 'record', '标记成功');
     this.patchStatus(releaseId, 'success');
   }
 
@@ -899,19 +936,22 @@ export class ReleaseService {
     const rollbackCommand = ssh.rollbackCommand?.trim();
     const rollbackMode = rollbackRun.executionSnapshot?.mode || effectiveReleaseStrategy(target).mode;
     if (shouldUseCustomRollbackCommand(rollbackMode, rollbackCommand)) {
-      this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
+      this.beginStep(releaseId, 'rollback', `执行回滚命令，目标版本 ${previous.releaseId}`);
       await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
+      this.finishStep(releaseId, 'rollback');
     } else {
       const executionTarget = rollbackRun.executionSnapshot?.strategy
         ? { ...target, strategy: rollbackRun.executionSnapshot.strategy }
         : target;
       const execution = buildReleaseExecution(executionTarget, rollbackRun);
-      this.emitLog(releaseId, 'info', `重新发布历史成功版本 ${previous.releaseId}`, 'rollback');
+      this.beginStep(releaseId, 'rollback', `重新发布历史成功版本 ${previous.releaseId}`);
+      this.finishStep(releaseId, 'rollback');
       await this.runDeployCommand(releaseId, executionTarget, rollbackRun, execution.command);
     }
-    this.emitLog(releaseId, 'info', `健康检查 ${ssh.healthcheckUrl}`, 'healthcheck');
+    this.beginStep(releaseId, 'healthcheck', `健康检查 ${ssh.healthcheckUrl}`);
     await probeReleaseSurface(ssh.healthcheckUrl, rollbackMode);
-    this.emitLog(releaseId, 'info', '回滚成功', 'record');
+    this.finishStep(releaseId, 'healthcheck');
+    this.beginStep(releaseId, 'record', '回滚成功');
     this.patchStatus(releaseId, 'rollback_success');
   }
 
@@ -927,7 +967,10 @@ export class ReleaseService {
     const run = this.stateService.getReleaseRun(releaseId);
     if (!run || isReleaseRunTerminal(run.status)) return;
     const message = errorText(err);
-    const phase = run.logs[run.logs.length - 1]?.phase || 'error';
+    // 失败步以步骤快照的 currentStepId 为准。旧口径取「最后一条日志的 phase」，
+    // 而 SSH 的 stderr 是逐行当日志写进去的——最后一行常常是下一阶段的噪声，
+    // 归因经常挂到不相干的 phase 上。存量 run 没有快照时才回落到日志 phase。
+    const phase = run.progress?.currentStepId || run.logs[run.logs.length - 1]?.phase || 'error';
     this.emitLog(releaseId, 'error', message, 'error');
     const nextStatus = canTransitionReleaseRun(run.status, status)
       ? status
@@ -1008,14 +1051,57 @@ export class ReleaseService {
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     assertReleaseRunTransition(current.status, status);
     const at = this.nowIso();
+    // 终态时一并收束步骤快照。放在这里而不是各个调用点：取消、心跳收割、失败收尾都走
+    // patchStatus，散着写必然漏一条，漏掉的那条就会在 UI 上留一格永远转圈的 spinner。
+    const progress = this.settleProgress(current.progress, status, at, extra.progress);
     const run = this.stateService.patchReleaseRun(releaseId, {
       ...extra,
+      ...(progress ? { progress } : {}),
       status,
       heartbeatAt: at,
       ...(isReleaseRunTerminal(status) ? { finishedAt: extra.finishedAt || at } : {}),
     });
+    this.recordReleaseDurationSample(run);
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
     return run;
+  }
+
+  /**
+   * 成功发布的耗时进台账，供发布中心算「预计还需」。
+   *
+   * 挂在 patchStatus 而不是 runRelease 末尾：patchStatus 是状态机唯一写入口，
+   * 挂这里天然覆盖重试等同样走终态的路径，也不会被将来新增的成功路径绕过
+   * （旧代码散着写 status 的教训就在同一个方法的注释里）。
+   *
+   * 两类 run 被刻意排除，混进去中位就没有判别力：
+   *  - rollback_success：回滚往往是重放上一版本，耗时口径与正向发布不同；
+   *  - rollbackOf 非空：回滚 / 探测失败后的自动恢复补发的 run，同上。
+   */
+  private recordReleaseDurationSample(run: ReleaseRun): void {
+    try {
+      if (run.status !== 'success' || run.rollbackOf) return;
+      const startedAtMs = Date.parse(run.startedAt);
+      const finishedAtMs = Date.parse(run.finishedAt || '');
+      if (!Number.isFinite(startedAtMs) || !Number.isFinite(finishedAtMs)) return;
+      // 上界取执行超时的两倍：默认脚本链会被 planDeployPhases 拆成多条命令各自计时，
+      // 单条命令超时不代表整轮发布超时，按单条上限卡会误丢正常的长发布样本。
+      this.stateService.recordReleaseDuration(run.targetId, finishedAtMs - startedAtMs, this.execTimeoutMs * 2);
+    } catch {
+      /* 记账失败绝不能反过来把一次成功的发布带崩 */
+    }
+  }
+
+  /** 终态 → 步骤收束。成功全部 done，失败只把「当前那一步」标失败，后续保持 pending。 */
+  private settleProgress(
+    progress: ReleaseRunProgress | undefined,
+    status: ReleaseRunStatus,
+    at: string,
+    override?: ReleaseRunProgress,
+  ): ReleaseRunProgress | undefined {
+    const base = override || progress;
+    if (!base || !isReleaseRunTerminal(status)) return override;
+    if (status === 'success' || status === 'rollback_success') return completeReleaseSteps(base, at);
+    return failReleaseSteps(base, at);
   }
 
   /**
@@ -1036,23 +1122,58 @@ export class ReleaseService {
     return this.now().toISOString();
   }
 
+  /**
+   * 发布命令的实际执行。展开成哪几步一律问 planDeployPhases——它同时被
+   * buildReleaseRunProgress 用来生成步骤表，两边同源才不会出现「执行两条脚本、
+   * 步骤条只画一格」这种对不上号。
+   */
   private async runDeployCommand(releaseId: string, target: ReleaseTarget, run: ReleaseRun, rawCommand: string): Promise<void> {
-    const scripts = extractReleaseScriptPaths(rawCommand);
-    if (isDefaultScriptChain(rawCommand, scripts)) {
-      for (const script of scripts) {
-        const phase = releaseScriptPhase(script);
-        this.emitLog(releaseId, 'info', `执行 ${script}`, phase);
-        try {
-          await this.sshExec(target, buildReleaseCommand(target, run, script), releaseId, phase);
-        } catch (err) {
-          this.emitLog(releaseId, 'error', `脚本 ${script} 执行失败: ${(err as Error).message}`, phase);
-          throw err;
-        }
+    const deployTitle = this.stepTitle(releaseId, 'deploy');
+    for (const phase of planDeployPhases(rawCommand, deployTitle)) {
+      this.beginStep(releaseId, phase.id, phase.title);
+      try {
+        await this.sshExec(target, buildReleaseCommand(target, run, phase.command), releaseId, phase.id);
+      } catch (err) {
+        this.emitLog(releaseId, 'error', `${phase.title}失败: ${(err as Error).message}`, phase.id);
+        throw err;
       }
-      return;
+      this.finishStep(releaseId, phase.id);
     }
-    this.emitLog(releaseId, 'info', '执行发布命令', 'deploy');
-    await this.sshExec(target, buildReleaseCommand(target, run, rawCommand), releaseId, 'deploy');
+  }
+
+  /** 步骤标题以 run 快照为准（用户看到的第一屏就是它），快照缺失时回落到通用文案。 */
+  private stepTitle(releaseId: string, stepId: string, fallback = '执行发布命令'): string {
+    const run = this.stateService.getReleaseRun(releaseId);
+    return run?.progress?.steps.find((step) => step.id === stepId)?.title || fallback;
+  }
+
+  /**
+   * 开始一步：写一条该步的日志（phase = stepId，这是日志与步骤的连接键）+ 推进步骤快照。
+   * 两件事必须同一个入口做完，分开写迟早只更新一边。
+   */
+  private beginStep(releaseId: string, stepId: string, message: string): void {
+    this.emitLog(releaseId, 'info', message, stepId);
+    this.patchProgress(releaseId, (progress) => advanceReleaseSteps(progress, stepId, 'running', this.nowIso()));
+  }
+
+  private finishStep(releaseId: string, stepId: string): void {
+    this.patchProgress(releaseId, (progress) => advanceReleaseSteps(progress, stepId, 'done', this.nowIso()));
+  }
+
+  /**
+   * 步骤快照写入 + 推 SSE。
+   *
+   * 刻意复用 release.status 事件而不新增事件类型：两个前端的 release.status 处理器本来就是
+   * 「整体替换 run」，协议侧零改动就能拿到新的 progress；新增事件类型则要同步改
+   * 前端订阅、SSE 快照与 resolveApiLabel，收益为零。
+   */
+  private patchProgress(releaseId: string, mutate: (progress: ReleaseRunProgress) => ReleaseRunProgress): void {
+    const current = this.stateService.getReleaseRun(releaseId);
+    if (!current?.progress) return;
+    const next = mutate(current.progress);
+    if (next === current.progress) return;
+    const run = this.stateService.patchReleaseRun(releaseId, { progress: next });
+    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
   }
 
   private emitLog(releaseId: string, level: 'info' | 'warn' | 'error', message: string, phase?: string): void {
@@ -1204,20 +1325,6 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
   };
 }
 
-const RELEASE_SCRIPT_PATH_RE = /(?:\.\/|\/)[A-Za-z0-9._/@+-]+\.sh/g;
-
-export function extractReleaseScriptPaths(rawCommand: string): string[] {
-  const matches = rawCommand.match(RELEASE_SCRIPT_PATH_RE) || [];
-  return Array.from(new Set(matches));
-}
-
-export function isDefaultScriptChain(rawCommand: string, scripts = extractReleaseScriptPaths(rawCommand)): boolean {
-  return rawCommand.replace(/\s+/g, ' ').trim() === './fast.sh && ./exec_dep.sh'
-    && scripts.length === 2
-    && scripts[0] === './fast.sh'
-    && scripts[1] === './exec_dep.sh';
-}
-
 export function isLocalProdReleaseCommand(rawCommand: string): boolean {
   return extractReleaseScriptPaths(rawCommand)
     .some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh');
@@ -1252,10 +1359,6 @@ export function buildRemoteRepositoryCheckCommand(target: ReleaseTarget): string
 export function parseRemoteRepositoryIdentity(output: string): string {
   const line = output.split(/\r?\n/).find((item) => item.startsWith('CDS_REPO_ORIGIN='));
   return normalizeRepositoryIdentity(line?.slice('CDS_REPO_ORIGIN='.length));
-}
-
-export function releaseScriptPhase(script: string): string {
-  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {

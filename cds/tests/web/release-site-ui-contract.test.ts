@@ -126,8 +126,11 @@ describe('release site publishing UI contract', () => {
     expect(branchListSource).toContain('执行 ${scriptOne.replace');
     expect(branchListSource).toContain('执行 ${scriptTwo.replace');
     expect(branchListSource).toContain('releaseScriptPhase(scriptOne)');
-    expect(releaseCenterSource).toContain('执行本机生产发布');
-    expect(releaseCenterSource).toContain("phaseSet.has('deploy')");
+    // 发布中心的步骤条改由后端 run.progress 驱动：不再从日志 phase 反推，也不再有
+    // 「执行本机生产发布」这种按命令特判出来的标签（步骤标题一律来自 ReleasePlan）。
+    expect(releaseCenterSource).toContain('resolveReleaseSteps(');
+    expect(releaseCenterSource).toContain('第 {progress.currentIndex}/{progress.total} 步');
+    expect(releaseCenterSource).not.toContain("phaseSet.has('deploy')");
     expect(branchListSource).toContain('检查上线地址');
     expect(branchListSource).toContain('标记完成');
     expect(branchListSource).toContain('ReleaseRunStepList');
