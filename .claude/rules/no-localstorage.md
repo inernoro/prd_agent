@@ -12,11 +12,23 @@
 
 以下数据**绝对禁止**进 `localStorage`，必须走 `sessionStorage`（或干脆不缓存、每次从后端拉）：
 
-- **认证态**：token、登录凭证、刷新令牌
 - **服务器权威数据**：菜单、权限/角色、功能开关、用户画像等由后端下发、发版可能变更的数据
 - **任何「发版后用旧值会出错」的数据**
 
 红线的原因：`localStorage` 关浏览器仍保留，部署新版本后用户不刷新会用到旧缓存，导致串数据、菜单/权限不更新等部署后遗症。
+
+### 会话 token 的例外（2026-07-28，用户要求「超长登录期」）
+
+登录会话（access token / refresh token / 会话 cookie 载荷）**允许**进 `localStorage`，因为
+`sessionStorage` 关标签页即丢，物理上做不到「关浏览器再打开还在登录」。安全性不靠前端存储兜底：
+
+- token 本身有硬过期（MAP 7 天滑动会话；LLMGW 7 天 token）；
+- **每个请求服务端都会重新校验**撤销状态（MAP 查 tokenVersion，LLMGW 查 SecurityVersion / 成员版本 / 租户状态），
+  改密、踢下线、禁用会立即让本地残留的 token 失效；
+- 401 时前端立即清空本地会话。
+
+落地位置：`prd-admin/src/stores/authStore.ts`（含 sessionStorage → localStorage 迁移）、
+`llmgw/web/src/lib/api.ts` 的 `sessionStore`。仍然**禁止**把权限/菜单等服务器权威数据一起塞进去。
 
 ## 允许用 localStorage（例外清单）
 
@@ -30,3 +42,5 @@
 ## 历史背景
 
 最初本规则写成「无条件禁止 localStorage」，根因是早期把 token/菜单缓存进 localStorage 导致发版后串数据。但「无条件」误伤了排序/视图这类纯 UI 偏好——它们既不敏感，旧值也无害，用 sessionStorage 反而导致「关标签页就忘」的体验缺陷。2026-06-04 用户指出边界问题后改为「默认 session + 红线禁止 + 例外允许」三段式。
+
+2026-07-28 用户反馈「登录一下就过期了，需要超长的登录期，并且使用过后自动延长」。会话 token 留在 `sessionStorage` 与该诉求直接冲突（关标签页即掉登录），故把「认证态」从红线移到上面的显式例外，并写明它成立的前提是「服务端每请求校验撤销 + 硬过期」，避免后来人把这条例外误读成「什么都能进 localStorage」。

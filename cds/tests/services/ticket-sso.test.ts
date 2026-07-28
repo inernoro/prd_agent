@@ -154,6 +154,43 @@ describe('ticket SSO', () => {
     expect(sessions.get(session.token)).toBeNull();
   });
 
+  it('defaults the SSO session window to the project-wide 7 days', () => {
+    // SSO 是一条真实登录路径，不能比密码 / GitHub 会话短命（原来硬编码 12 小时）。
+    const sessions = new TicketSsoSessionStore();
+    const session = sessions.create({ subject: 'map:1', username: 'admin', displayName: 'Admin' });
+    const lifetimeMs = session.expiresAt.getTime() - Date.now();
+    expect(lifetimeMs).toBeGreaterThan(6.9 * 24 * 60 * 60 * 1000);
+    expect(lifetimeMs).toBeLessThanOrEqual(7 * 24 * 60 * 60 * 1000);
+  });
+
+  it('slides the SSO session forward only once it is past the renewal threshold', () => {
+    const ttlMs = 7 * 24 * 60 * 60 * 1000;
+    const sessions = new TicketSsoSessionStore(ttlMs);
+    const identity = { subject: 'map:1', username: 'admin', displayName: 'Admin' };
+    const session = sessions.create(identity);
+    const createdAt = Date.now();
+
+    // 刚登录：还剩满额，不该续期（也就不必重发 cookie）。
+    const fresh = sessions.touch(session.token, createdAt + 60_000);
+    expect(fresh?.renewed).toBe(false);
+    expect(fresh?.identity).toEqual(identity);
+
+    // 烧掉一半窗口后再访问：续满，并告诉调用方要重发 cookie。
+    const renewAt = createdAt + ttlMs * 0.6;
+    const renewed = sessions.touch(session.token, renewAt);
+    expect(renewed?.renewed).toBe(true);
+    expect(renewed!.expiresAt.getTime()).toBe(renewAt + ttlMs);
+
+    // 过期后不再复活。
+    expect(sessions.touch(session.token, renewAt + ttlMs + 1)).toBeNull();
+  });
+
+  it('returns null for an unknown SSO token', () => {
+    const sessions = new TicketSsoSessionStore();
+    expect(sessions.touch('nope')).toBeNull();
+    expect(sessions.touch(null)).toBeNull();
+  });
+
   it('overrides only explicitly supplied environment fields and can disable stored SSO', () => {
     const stateService = {
       getSsoConfig: () => config,

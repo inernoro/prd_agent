@@ -45,6 +45,14 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
+    /// <summary>access token 有效期（秒），由 Jwt:AccessTokenMinutes 决定，默认 7 天。</summary>
+    /// <remarks>归一化必须与 Program.cs 传给 JwtService 的口径一致，否则会出现
+    /// 「回报的 expiresIn 与 token 实际过期时间不符」——两边都走 AuthTokenLifetimes。</remarks>
+    private int AccessTokenExpiresInSeconds()
+        => AuthTokenLifetimes.EffectiveAccessTokenMinutes(
+            _cfg.GetValue<int>("Jwt:AccessTokenMinutes", AuthTokenLifetimes.DefaultAccessTokenMinutes),
+            _cfg.GetValue<int>("Auth:SessionSlidingDays", AuthTokenLifetimes.DefaultSessionSlidingDays)) * 60;
+
     private string GetRootUsername() =>
         (_cfg["ROOT_ACCESS_USERNAME"] ?? string.Empty).Trim();
 
@@ -202,7 +210,7 @@ public class AuthController : ControllerBase
                 RefreshToken = refreshTokenRoot,
                 SessionKey = sessionKeyRoot,
                 ClientType = ct,
-                ExpiresIn = 3600,
+                ExpiresIn = AccessTokenExpiresInSeconds(),
                 User = new UserInfo
                 {
                     UserId = rootUser.UserId,
@@ -266,7 +274,7 @@ public class AuthController : ControllerBase
             RefreshToken = refreshToken,
             SessionKey = sessionKey,
             ClientType = ct,
-            ExpiresIn = 3600, // access token 默认 60 分钟（由 Jwt:AccessTokenMinutes 控制）
+            ExpiresIn = AccessTokenExpiresInSeconds(),
             User = new UserInfo
             {
                 UserId = user.UserId,
@@ -360,7 +368,7 @@ public class AuthController : ControllerBase
                 RefreshToken = request.RefreshToken,
                 SessionKey = request.SessionKey,
                 ClientType = ct,
-                ExpiresIn = 3600,
+                ExpiresIn = AccessTokenExpiresInSeconds(),
                 User = new UserInfo
                 {
                     UserId = rootUser.UserId,
@@ -394,7 +402,7 @@ public class AuthController : ControllerBase
             RefreshToken = request.RefreshToken, // 本实现不旋转 refresh token（滑动续期已在 ValidateRefreshTokenAsync 中完成）
             SessionKey = request.SessionKey,
             ClientType = ct,
-            ExpiresIn = 3600,
+            ExpiresIn = AccessTokenExpiresInSeconds(),
             User = new UserInfo
             {
                 UserId = user.UserId,

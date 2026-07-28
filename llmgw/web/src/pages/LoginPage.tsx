@@ -1,4 +1,4 @@
-// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 sessionStorage → 跳控制台首页。
+// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 localStorage（7 天 + 用后自动续期）→ 跳控制台首页。
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
