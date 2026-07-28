@@ -8,6 +8,7 @@ import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
 import { healthChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_INPUT } from '@/lib/typography';
 
 const STRATEGY_LABEL: Record<number, string> = {
   0: '优先级', 1: '轮询', 2: '加权', 3: '最少连接', 4: '随机', 5: '故障转移',
@@ -1309,16 +1310,7 @@ function toStrategyType(value: string | undefined) {
   return parsed;
 }
 
-const inputStyle = {
-  width: '100%',
-  height: 30,
-  borderRadius: 'var(--radius-sm)',
-  border: '1px solid var(--border-subtle)',
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  padding: '0 8px',
-  fontSize: 'var(--fs-caption)',
-};
+const inputStyle = { ...FIELD_INPUT };
 
 const selectStyle = {
   ...inputStyle,
@@ -1336,8 +1328,8 @@ function smallInputStyle(width: number) {
   return {
     ...inputStyle,
     width,
-    height: 26,
-    padding: '0 6px',
+    height: 34,
+    padding: '0 8px',
   };
 }
 

@@ -271,26 +271,26 @@ export function ModelsPage() {
   const td = TABLE_CELL;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <section style={createCardStyle}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: 760 }}>
-            <h1 className="lg-title">模型管理</h1>
-            <p className="lg-subtitle" style={{ marginTop: 5 }}>
-              模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池；没有匹配用途的池保持原样。
-            </p>
-            <div style={{ marginTop: 6, ...HINT_TEXT }}>
-              不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
-            </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <header className="lg-page-heading">
+        <div style={{ maxWidth: 760 }}>
+          <h1>模型管理</h1>
+          <p>
+            模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池；没有匹配用途的池保持原样。
+          </p>
+          <div style={{ marginTop: 6, ...HINT_TEXT }}>
+            不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
           </div>
-          {canWrite && ownedPlatforms.length > 0 ? (
-            <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
-          ) : canWrite ? (
-            <a href="/platforms" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
-          ) : null}
         </div>
-        {showCreate && canWrite && ownedPlatforms.length > 0 ? (
-          <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+        {canWrite && ownedPlatforms.length > 0 ? (
+          <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
+        ) : canWrite ? (
+          <a href="/platforms" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
+        ) : null}
+      </header>
+      {showCreate && canWrite && ownedPlatforms.length > 0 ? (
+        <section style={createCardStyle}>
+          <form onSubmit={submitCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
             <label style={fieldStyle}>
               <span style={labelStyle}>Provider</span>
               <select required value={createDraft.platformId} onChange={(e) => setCreateDraft((value) => ({ ...value, platformId: e.target.value }))} style={formInputStyle}>
@@ -345,8 +345,8 @@ export function ModelsPage() {
               <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>模型 key 留空时会安全继承 Provider key。</span>
             </div>
           </form>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
       {!canWrite ? <ReadOnlyNotice /> : null}
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>

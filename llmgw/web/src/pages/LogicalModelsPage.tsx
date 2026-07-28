@@ -163,17 +163,17 @@ export function LogicalModelsPage() {
   if (items === null) return <SectionLoader text="正在加载逻辑模型目录" />;
 
   return (
-    <div style={{ display: 'flex', flexDirection: 'column', gap: 10, minHeight: 0 }}>
-      <Card style={{ padding: 16 }}>
-        <div style={{ display: 'flex', justifyContent: 'space-between', gap: 16, alignItems: 'flex-start', flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: 760 }}>
-            <h1 className="lg-title">逻辑模型目录</h1>
-            <p className="lg-subtitle" style={{ marginTop: 7 }}>
-              应用只选择稳定的模型标识。Provider、Endpoint、协议、密钥、限流和故障切换由其下的 Offering 维护；模型池只负责未指定模型时的默认与兜底。
-            </p>
-          </div>
-          {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button> : null}
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <header className="lg-page-heading">
+        <div style={{ maxWidth: 760 }}>
+          <h1>逻辑模型目录</h1>
+          <p>
+            应用只选择稳定的模型标识。Provider、Endpoint、协议、密钥、限流和故障切换由其下的 Offering 维护；模型池只负责未指定模型时的默认与兜底。
+          </p>
         </div>
+        {canWrite ? <Button variant="primary" size="sm" onClick={() => setCreateOpen((x) => !x)}>{createOpen ? '收起' : '添加逻辑模型'}</Button> : null}
+      </header>
+      <Card style={{ padding: 16, display: createOpen && canWrite ? undefined : 'none' }}>
         {createOpen && canWrite ? (
           <form onSubmit={submitLogical} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, marginTop: 14 }}>
             <label style={labelStyle}>公开模型标识<input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} /></label>
@@ -187,9 +187,10 @@ export function LogicalModelsPage() {
         ) : null}
       </Card>
 
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 10 }}>
       {!canWrite ? <ReadOnlyNotice /> : null}
       {error || notice ? <div style={{ padding: '8px 11px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: error ? 'var(--danger)' : 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>{error || notice}</div> : null}
-      {items.length === 0 ? <Card style={{ padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Card> : null}
+      {items.length === 0 ? <Card style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-body)' }}>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Card> : null}
 
       {items.map((item) => (
         <Card key={item.id} style={{ padding: 14 }}>
@@ -243,6 +244,7 @@ export function LogicalModelsPage() {
           </div>
         </Card>
       ))}
+      </div>
     </div>
   );
 }

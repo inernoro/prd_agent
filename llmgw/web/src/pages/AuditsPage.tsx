@@ -58,10 +58,12 @@ export function AuditsPage() {
 
   return (
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <div style={{ flexShrink: 0, padding: '10px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <h1 className="lg-title">操作审计</h1>
-        <p className="lg-subtitle" style={{ marginTop: 5 }}>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
-      </div>
+      <header className="lg-page-heading">
+        <div>
+          <h1>操作审计</h1>
+          <p>这里记录谁在什么时间修改了租户配置，以及改的是哪个对象。请求内容和提示词正文不会出现在这里；提示词策略只记录策略 id、版本和 hash，其他配置只展示排查所需的状态差异。</p>
+        </div>
+      </header>
       <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
         <input
           value={search}

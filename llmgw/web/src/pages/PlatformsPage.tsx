@@ -164,24 +164,24 @@ export function PlatformsPage() {
   const td = TABLE_CELL;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 8 }}>
-      <section style={createCardStyle}>
-        <div style={{ display: 'flex', gap: 12, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
-          <div style={{ maxWidth: 720 }}>
-            <h1 className="lg-title">Provider（模型供应方）</h1>
-            <p className="lg-subtitle" style={{ marginTop: 5 }}>
-              Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
-            </p>
-            <div style={{ marginTop: 6, ...HINT_TEXT }}>
-              第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
-            </div>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
+      <header className="lg-page-heading">
+        <div style={{ maxWidth: 720 }}>
+          <h1>Provider（模型供应方）</h1>
+          <p>
+            Provider 告诉网关“去哪里调用模型”。这里保存的是供应方地址和供应方通讯密钥；它不是给业务应用使用的 <code>gwk_</code> 接入密钥。
+          </p>
+          <div style={{ marginTop: 6, ...HINT_TEXT }}>
+            第一步添加 Provider，第二步到“模型管理”添加具体模型，第三步再生成应用接入 key。
           </div>
-          {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
-            {showCreate ? '收起配置' : '添加 Provider'}
-          </Button> : null}
         </div>
-        {showCreate && canWrite ? (
-          <form onSubmit={submitCreate} style={{ marginTop: 14, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
+        {canWrite ? <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>
+          {showCreate ? '收起配置' : '添加 Provider'}
+        </Button> : null}
+      </header>
+      {showCreate && canWrite ? (
+        <section style={createCardStyle}>
+          <form onSubmit={submitCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
             <label style={fieldStyle}>
               <span style={labelStyle}>名称</span>
               <input required value={draft.name} onChange={(e) => setDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程假上游" style={formInputStyle} />
@@ -215,11 +215,11 @@ export function PlatformsPage() {
             </label>
             <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
               <Button type="submit" variant="primary" size="sm" disabled={createBusy}>{createBusy ? '保存中…' : '保存并继续添加模型'}</Button>
-              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>保存后列表只显示“已配置”，不会回显密钥。</span>
+              <span style={HINT_TEXT}>保存后列表只显示“已配置”，不会回显密钥。</span>
             </div>
           </form>
-        ) : null}
-      </section>
+        </section>
+      ) : null}
       {!canWrite ? <ReadOnlyNotice /> : null}
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
