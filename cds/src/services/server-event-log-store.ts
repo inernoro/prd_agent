@@ -236,8 +236,10 @@ export function enrichServerEventRecord(
 export class ServerEventLogStore implements ServerEventLogSink {
   private client: MongoClient | null = null;
   private collection: Collection<ServerEventRecord> | null = null;
-  /** 索引是否已建全；false 时后续 init 会重试（不重连） */
+  /** 索引是否已建全；false 时由 scheduleIndexRetry 排程重试（不重连） */
   private indexesReady = false;
+  private indexRetryTimer: ReturnType<typeof setTimeout> | null = null;
+  private indexRetryAttempt = 0;
   private chain: Promise<void> = Promise.resolve();
   private writesSincePrune = 0;
   private lastPruneAt = 0;
@@ -288,15 +290,45 @@ export class ServerEventLogStore implements ServerEventLogSink {
     await this.tryEnsureIndexes(collection);
   }
 
-  /** 建索引，失败只告警不致命；成功才置 indexesReady，供后续 init 重试。 */
+  /**
+   * 建索引，失败只告警不致命，并**自行排程重试**（Codex PR #1275 十轮 P2）。
+   *
+   * 只靠「下次 init() 会重试」是空头支票：index.ts / forwarder-main.ts 都只在启动时
+   * 调一次 init()，进程活着期间不会再有第二次。于是索引失败后 indexesReady 永远是
+   * false —— 尤其 TTL 对账已经 drop 掉旧索引、重建又失败时，**保留期在重启前一直
+   * 是失效的**（日志无限增长，正是 2026-07-27 那类事故的燃料）。所以这里自己排一个
+   * 退避重试，直到建成为止。
+   *
+   * 定时器 unref：这是服务起来之后的后台维护，不该仅凭它把进程钉在事件循环里
+   *（与启动期那个**刻意不 unref** 的退避定时器相反 —— 那时没有别的 handle 撑着）。
+   */
   private async tryEnsureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
     try {
       await this.ensureIndexes(collection);
       this.indexesReady = true;
+      this.indexRetryAttempt = 0;
     } catch (err) {
       this.indexesReady = false;
-      console.warn(`[server-event-log-store] 索引建立失败（库仍可写，下次 init 会重试）: ${(err as Error)?.message || err}`);
+      const delayMs = this.scheduleIndexRetry(collection);
+      console.warn(
+        `[server-event-log-store] 索引建立失败（库仍可写，${Math.round(delayMs / 1000)}s 后自动重试）: `
+        + `${(err as Error)?.message || err}`,
+      );
     }
+  }
+
+  /** 排一次索引重试（指数退避，30 分钟封顶）；返回本次的等待毫秒数。 */
+  private scheduleIndexRetry(collection: Collection<ServerEventRecord>): number {
+    this.indexRetryAttempt += 1;
+    const delayMs = Math.min(30 * 60_000, 30_000 * 2 ** (this.indexRetryAttempt - 1));
+    if (this.indexRetryTimer) clearTimeout(this.indexRetryTimer);
+    const timer = setTimeout(() => {
+      this.indexRetryTimer = null;
+      if (this.collection) void this.tryEnsureIndexes(this.collection);
+    }, delayMs);
+    timer.unref?.();
+    this.indexRetryTimer = timer;
+    return delayMs;
   }
 
   private async ensureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
@@ -414,12 +446,17 @@ export class ServerEventLogStore implements ServerEventLogSink {
   }
 
   async close(): Promise<void> {
+    // 索引重试定时器必须一起收掉：它 unref 过不会钉住进程，但 close 之后
+    // collection 已置空，留着只会在下一次 tick 空转。
+    if (this.indexRetryTimer) { clearTimeout(this.indexRetryTimer); this.indexRetryTimer = null; }
     try {
       await this.flush();
     } finally {
       await this.client?.close();
       this.client = null;
       this.collection = null;
+      this.indexesReady = false;
+      this.indexRetryAttempt = 0;
     }
   }
 

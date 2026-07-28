@@ -74,6 +74,21 @@ describe('日志库：连接成功即可用，索引失败只告警', () => {
       expect(text).toMatch(/await client\.close\(\)\.catch\(/);
     });
 
+    it(`${file}: 索引失败会真的排程重试，而不是只承诺「下次 init 再说」（Codex 十轮 P2）`, () => {
+      const text = src(file);
+      // init() 只在启动时被调一次（index.ts / forwarder-main.ts 各一处），
+      // 「下次 init 会重试」等于永不重试 —— 尤其 TTL 已 drop、重建又失败时，
+      // 保留期在重启前一直失效。必须自己排定时器。
+      expect(text).toMatch(/private scheduleIndexRetry\(/);
+      expect(text).toMatch(/this\.indexRetryTimer = timer;/);
+      // 后台维护定时器要 unref（与启动期那个刻意不 unref 的相反）
+      expect(text).toMatch(/timer\.unref\?\.\(\)/);
+      // close() 要收掉定时器，别留着空转
+      expect(text).toMatch(/if \(this\.indexRetryTimer\) \{ clearTimeout\(this\.indexRetryTimer\)/);
+      // 成功后重置退避计数，否则下一次故障一上来就是 30 分钟
+      expect(text).toMatch(/this\.indexRetryAttempt = 0;/);
+    });
+
     it(`${file}: 索引逐条对账，一条失败不掩盖其余`, () => {
       const text = src(file);
       expect(text).toContain('ensureIndexWithReconcile(collection');

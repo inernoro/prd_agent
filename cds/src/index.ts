@@ -17,7 +17,7 @@ import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
-import { withBootRetry, diagnoseDiskForBootFailure } from './services/boot-retry.js';
+import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
@@ -82,6 +82,23 @@ import type { BranchEntry } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
+
+/**
+ * 启动依赖起不来时的磁盘诊断：**仓库盘与 docker 数据根都量**（Codex 十轮 P2）。
+ * mongo 的数据落在 docker 那侧，两者常不在同一个文件系统上；2026-07-27 撑爆的
+ * 正是 containerd（159GB），只量仓库盘会让这句提示恰好在真凶场景下不出现。
+ * 运行期 diskGuard 早就两处都量，但启动失败时进程走不到那里，故这里自己量全。
+ */
+function diagnoseBootDisks(): string | null {
+  const readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }> = [
+    { label: config.repoRoot, usage: defaultDiskUsage(config.repoRoot) },
+  ];
+  try {
+    const dockerRoot = resolveDockerDataRoot();
+    if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: defaultDiskUsage(dockerRoot) });
+  } catch { /* docker 不可用就只量仓库盘，不能因为诊断本身抛错吞掉真正的启动错误 */ }
+  return diagnoseDisksForBootFailure(readings);
+}
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
@@ -713,7 +730,7 @@ async function initStateService(): Promise<void> {
         `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败（已重试至上限）: ${msg}`,
       );
       // 指向真凶：满盘时明写出来，别让运维从数据库连接开始查（事故当天就是这样）
-      const diskHint = diagnoseDiskForBootFailure(defaultDiskUsage(config.repoRoot));
+      const diskHint = diagnoseBootDisks();
       if (diskHint) console.error(`  [storage] ${diskHint}`);
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
@@ -769,7 +786,7 @@ async function initStateService(): Promise<void> {
       `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
       + `但 mongo init 失败（已重试至上限）: ${msg}`,
     );
-    const diskHint = diagnoseDiskForBootFailure(defaultDiskUsage(config.repoRoot));
+    const diskHint = diagnoseBootDisks();
     if (diskHint) console.error(`  [storage] ${diskHint}`);
     console.error(
       `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`

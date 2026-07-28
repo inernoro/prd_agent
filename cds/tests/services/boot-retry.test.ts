@@ -10,8 +10,8 @@
 import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import {
-  bootRetryDelayMs, withBootRetry, diagnoseDiskForBootFailure,
-  DEFAULT_BOOT_RETRY_ATTEMPTS,
+  bootRetryDelayMs, withBootRetry, diagnoseDiskForBootFailure, diagnoseDisksForBootFailure,
+  bootRetryWindowMs, DEFAULT_BOOT_RETRY_ATTEMPTS,
 } from '../../src/services/boot-retry.js';
 
 describe('退避曲线', () => {
@@ -22,10 +22,68 @@ describe('退避曲线', () => {
     expect(bootRetryDelayMs(10)).toBe(30_000);
   });
 
-  it('默认忍耐窗口够覆盖一次容器重启（>= 60s）', () => {
+  it('默认忍耐窗口就是注释承诺的 90s，不多不少（Codex 十轮 P2）', () => {
+    // N 次尝试只有 N-1 段等待 —— 原先写 6 次实际只等 2+4+8+16+30 = 60s，
+    // 比承诺少整整一段 30s。mongo 恰在那 30s 内恢复时 CDS 已经退出，
+    // 正是本改动要消灭的 systemd 重启循环。这里用等号钉死，>= 挡不住这类漂移。
     let total = 0;
     for (let i = 1; i < DEFAULT_BOOT_RETRY_ATTEMPTS; i += 1) total += bootRetryDelayMs(i);
-    expect(total).toBeGreaterThanOrEqual(60_000);
+    expect(total).toBe(90_000);
+    expect(bootRetryWindowMs()).toBe(90_000);
+    expect(bootRetryWindowMs(6)).toBe(60_000); // 旧默认值的实际窗口，作对照
+  });
+});
+
+/**
+ * 磁盘诊断必须覆盖 **docker 数据根**（Codex 十轮 P2）。
+ * mongo 的数据落在 docker 那侧，与仓库盘常不是同一个文件系统；2026-07-27
+ * 撑爆的正是 containerd —— 只量仓库盘会让提示恰好在真凶场景下不出现。
+ */
+describe('多挂载点磁盘诊断', () => {
+  const full = { totalBytes: 100e9, freeBytes: 1e9 };
+  const roomy = { totalBytes: 100e9, freeBytes: 60e9 };
+
+  it('仓库盘宽裕但 docker 盘满 → 仍然给出提示，并指明是哪个路径', () => {
+    const hint = diagnoseDisksForBootFailure([
+      { label: '/srv/repo', usage: roomy },
+      { label: 'docker: /var/lib/docker', usage: full },
+    ]);
+    expect(hint).toBeTruthy();
+    expect(hint).toContain('docker: /var/lib/docker');
+    expect(hint).not.toContain('/srv/repo');
+  });
+
+  it('两个都满 → 都列出来', () => {
+    const hint = diagnoseDisksForBootFailure([
+      { label: '/srv/repo', usage: full },
+      { label: 'docker: /var/lib/docker', usage: full },
+    ]);
+    expect(hint).toContain('/srv/repo');
+    expect(hint).toContain('docker: /var/lib/docker');
+  });
+
+  it('都不满 → null，不误导排障方向', () => {
+    expect(diagnoseDisksForBootFailure([
+      { label: '/srv/repo', usage: roomy },
+      { label: 'docker: /var/lib/docker', usage: roomy },
+    ])).toBeNull();
+  });
+
+  it('读不到某个挂载点（null usage）不影响另一个的判定', () => {
+    const hint = diagnoseDisksForBootFailure([
+      { label: '/srv/repo', usage: null },
+      { label: 'docker: /var/lib/docker', usage: full },
+    ]);
+    expect(hint).toContain('docker: /var/lib/docker');
+  });
+
+  it('启动失败路径必须真的量了 docker 数据根（结构契约）', () => {
+    // 光有能力不够 —— index.ts 那两处失败诊断得真的调它。
+    const src = readFileSync(new URL('../../src/index.ts', import.meta.url), 'utf8');
+    expect(src).toMatch(/function diagnoseBootDisks\(\)/);
+    expect(src).toMatch(/resolveDockerDataRoot\(\)/);
+    expect(src, '两处 storage 启动失败诊断都要走 diagnoseBootDisks')
+      .not.toMatch(/diagnoseDiskForBootFailure\(defaultDiskUsage\(config\.repoRoot\)\)/);
   });
 });
 

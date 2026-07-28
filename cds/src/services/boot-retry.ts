@@ -23,8 +23,24 @@ export function bootRetryDelayMs(attempt: number, baseMs = 2_000, maxMs = 30_000
   return Math.min(maxMs, baseMs * 2 ** (attempt - 1));
 }
 
-/** 默认重试次数：约 2/4/8/16/30/30 = 90s 的忍耐窗口，足够覆盖容器重启。 */
-export const DEFAULT_BOOT_RETRY_ATTEMPTS = 6;
+/**
+ * 默认重试次数：2/4/8/16/30/30 = 90s 的忍耐窗口，足够覆盖容器重启。
+ *
+ * 注意是 **7 次尝试 = 6 段等待**（Codex PR #1275 十轮 P2）：循环只在两次尝试
+ * *之间* 睡，N 次尝试只有 N-1 段等待。原先写 6 实际只等 2+4+8+16+30 = 60s，
+ * 比注释承诺的 90s 少整整一段 30s —— 而 mongo 恰在最后那 30s 内恢复时，CDS
+ * 已经退出进了 systemd 重启循环，正是本改动要消灭的东西。
+ */
+export const DEFAULT_BOOT_RETRY_ATTEMPTS = 7;
+
+/** 给定尝试次数下实际的总忍耐窗口（毫秒）——注释里的数字由它算出，不靠手写。 */
+export function bootRetryWindowMs(attempts = DEFAULT_BOOT_RETRY_ATTEMPTS): number {
+  let total = 0;
+  for (let attempt = 1; attempt < Math.max(1, attempts); attempt += 1) {
+    total += bootRetryDelayMs(attempt);
+  }
+  return total;
+}
 
 export interface BootRetryOptions {
   attempts?: number;
@@ -70,4 +86,27 @@ export function diagnoseDiskForBootFailure(
   const freeMb = Math.max(0, Math.round(usage.freeBytes / 1024 / 1024));
   return `磁盘已用 ${usedPercent}%（剩余 ${freeMb}MB）——依赖起不来极可能是**磁盘写满**导致的，`
     + `请先清盘再重启，不要从数据库连接开始排查（2026-07-27 宕机即此因）。`;
+}
+
+/**
+ * 多挂载点版磁盘诊断（Codex PR #1275 十轮 P2）。
+ *
+ * 只量仓库目录是不够的：**mongo 的数据落在 docker 数据根**，两者常不在同一个
+ * 文件系统上。2026-07-27 撑爆的正是 containerd 那一侧（159GB），而仓库盘看着
+ * 还很宽裕 —— 于是这句本该直指真凶的提示恰好在真凶的场景下不出现。
+ * 运行期的 diskGuard 早就两个挂载点都量（index.ts 的 setProbe），但启动失败时
+ * 进程根本走不到那里，所以这条失败路径必须自己量全。
+ *
+ * 任一挂载点满即出提示，并标明是哪个路径满了（多处同时满就都列出来）。
+ */
+export function diagnoseDisksForBootFailure(
+  readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }>,
+  fullPercentThreshold = 95,
+): string | null {
+  const hints: string[] = [];
+  for (const { label, usage } of readings) {
+    const hint = diagnoseDiskForBootFailure(usage, fullPercentThreshold);
+    if (hint) hints.push(`[${label}] ${hint}`);
+  }
+  return hints.length > 0 ? hints.join(' ') : null;
 }
