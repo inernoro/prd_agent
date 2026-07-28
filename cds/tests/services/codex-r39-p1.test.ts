@@ -287,7 +287,8 @@ describe('P1-2 启动收敛不看心跳新鲜度', () => {
     tick!();
     expect(calls).toEqual([true, false, false]);
     handle.stop();
-  });
+    // 显式超时：本例要 import 整个 server.js（重模块），默认 5s 不够。
+  }, 30_000);
 });
 
 describe('临时文件不落库', () => {
@@ -370,5 +371,117 @@ describe('第四十轮 P2：截图没存下来必须说出来', () => {
     expect(body.status).toBe(201);
     expect(String(body.json.degradeReason || '')).toContain('关键截图.png');
     expect(String(body.json.degradeReason || '')).toMatch(/未能保存/);
+  });
+});
+
+describe('第四十一轮 P1：文本字段必须有界', () => {
+  it('超长 description / title / content 一律截断并留下标记', async () => {
+    const { normalizeBugReport } = await import('../../src/routes/bug-reports.js');
+    // 事故值：不带附件时 description 可以吃满接近 24MB 的 body，原样写进
+    // records.jsonl；按项目保留 200 条 → 单个项目 Key 就能把台账推向 GB 级，
+    // 而每次回收还要整文件读回来解析。
+    const huge = 'x'.repeat(500_000);
+    const out = normalizeBugReport({ description: huge, severity: 'trivial', title: huge, content: huge });
+    expect('report' in out).toBe(true);
+    const report = (out as { report: { title: string; description: string; content: string } }).report;
+    expect(report.title.length).toBeLessThanOrEqual(200);
+    expect(report.description.length).toBeLessThan(huge.length);
+    expect(report.description).toMatch(/已截断/);
+    expect(report.content.length).toBeLessThan(huge.length);
+    // 单条序列化后必须是 KB 量级，不是 MB 量级
+    expect(JSON.stringify(report).length).toBeLessThan(200_000);
+  });
+
+  it('正常长度的文本一字不动', async () => {
+    const { normalizeBugReport } = await import('../../src/routes/bug-reports.js');
+    const out = normalizeBugReport({ description: '点了保存没反应', severity: 'major' });
+    const report = (out as { report: { description: string } }).report;
+    expect(report.description).toBe('点了保存没反应');
+    expect(report.description).not.toMatch(/已截断/);
+  });
+});
+
+describe('第四十一轮 P2：降级说明必须落进账本', () => {
+  it('附件写盘失败时，后续 GET 读回来的记录也带着说明', async () => {
+    const express = (await import('express')).default;
+    const { createBugReportsRouter } = await import('../../src/routes/bug-reports.js');
+    const http = await import('node:http');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-degrade-'));
+    const realWrite = fs.writeFileSync;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: never, ...rest: never[]) => {
+      if (String(file).includes(`${path.sep}attachments${path.sep}`)) throw new Error('ENOSPC');
+      return (realWrite as never as (...a: never[]) => unknown)(file, ...rest);
+    }) as never);
+
+    const app = express();
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dir, readForwardConfig: () => null, resolveReporter: () => 'tester',
+    }));
+
+    const call = (method: string, pathname: string, payload?: unknown) =>
+      new Promise<{ status: number; json: Record<string, unknown> }>((resolve, reject) => {
+        const server = http.createServer(app).listen(0, () => {
+          const port = (server.address() as { port: number }).port;
+          const bodyText = payload === undefined ? undefined : JSON.stringify(payload);
+          const req = http.request({
+            port, method, path: pathname,
+            headers: bodyText
+              ? { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(bodyText) }
+              : {},
+          }, (res) => {
+            let text = '';
+            res.on('data', (c) => { text += c; });
+            res.on('end', () => { server.close(); resolve({ status: res.statusCode || 0, json: JSON.parse(text) }); });
+          });
+          req.on('error', (e) => { server.close(); reject(e); });
+          req.end(bodyText);
+        });
+      });
+
+    const posted = await call('POST', '/api/bug-reports', {
+      description: '账本也要带说明',
+      severity: 'trivial',
+      attachments: [{ name: '证据.png', mimeType: 'image/png', dataBase64: Buffer.alloc(64, 1).toString('base64') }],
+    });
+    spy.mockRestore();
+    expect(posted.status).toBe(201);
+    expect(String(posted.json.degradeReason || '')).toContain('证据.png');
+
+    // 事故值：degradeReason 是在 persist() append 之后才补上的，账本里存的仍是旧值，
+    // 于是列表接口读回来是「附件文件名为空且没有任何解释」。
+    const listed = await call('GET', '/api/bug-reports?limit=10');
+    const items = listed.json.items as Array<{ degradeReason?: string }>;
+    expect(items.length).toBeGreaterThan(0);
+    expect(String(items[0]!.degradeReason || '')).toContain('证据.png');
+  });
+});
+
+describe('第四十一轮 P2：存活监控保留时长必须跟着探测间隔走', () => {
+  it('10s 间隔要留满 24 小时的采样，而不是只留 1440 条（4 小时）', async () => {
+    const { samplesForDayAtInterval, MAX_SAMPLES_HARD_CEILING } =
+      await import('../../src/services/uptime-metrics.js');
+    // 事故值：写死 1440 条 → 10s 间隔只覆盖 4 小时，可 summary 仍按 24 小时口径
+    // 计算并标注 availability24h，前面 20 小时被当成「没有数据」。
+    expect(samplesForDayAtInterval(10_000)).toBe(8640);
+    expect(samplesForDayAtInterval(60_000)).toBe(1440);
+    // 上限仍然封死，不允许无限增长
+    expect(samplesForDayAtInterval(1)).toBe(MAX_SAMPLES_HARD_CEILING);
+    // 极慢间隔也保底若干条，不至于一条都留不下
+    expect(samplesForDayAtInterval(3_600_000)).toBeGreaterThanOrEqual(60);
+  });
+
+  it('配置解析真的按间隔给容量（默认 60s 与今天完全一致，零回归）', async () => {
+    const { uptimeConfigFromEnv } = await import('../../src/services/uptime-monitor.js');
+    const prev = process.env.CDS_UPTIME_INTERVAL_SECONDS;
+    try {
+      delete process.env.CDS_UPTIME_INTERVAL_SECONDS;
+      expect(uptimeConfigFromEnv('/tmp').maxSamples).toBe(1440);
+      process.env.CDS_UPTIME_INTERVAL_SECONDS = '10';
+      expect(uptimeConfigFromEnv('/tmp').maxSamples).toBe(8640);
+    } finally {
+      if (prev === undefined) delete process.env.CDS_UPTIME_INTERVAL_SECONDS;
+      else process.env.CDS_UPTIME_INTERVAL_SECONDS = prev;
+    }
   });
 });

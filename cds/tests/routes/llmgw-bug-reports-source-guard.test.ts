@@ -61,3 +61,52 @@ describe('llmgw POST /gw/bug-reports 源码守卫', () => {
     expect(postCode).toContain('BUG_REPORT_STORE_FAILED');
   });
 });
+
+describe('llmgw 提缺陷：附件与前端闸门（Codex PR #1273 第四十一轮 P2）', () => {
+  it('附件必须在 submit 之前上传到缺陷系统，不能只留文件名', () => {
+    // 事故值：只 create + submit，MAP 收到的是「说有截图但没有截图」的单子，
+    // 而 UI 照样报「已提交」。CDS 侧早就修了，网关这边一直漏着。
+    expect(postCode).toContain('/attachments');
+    expect(postCode).toContain('MultipartFormDataContent');
+    const uploadAt = postCode.indexOf('/attachments');
+    const submitAt = postCode.indexOf('/submit');
+    expect(uploadAt).toBeGreaterThan(-1);
+    expect(submitAt).toBeGreaterThan(-1);
+    // 顺序要紧：先传图再流转，否则单子已经流到下游才补图。
+    expect(uploadAt).toBeLessThan(submitAt);
+  });
+
+  it('附件上传失败要如实降级，且不覆盖 submit 的失败说明', () => {
+    expect(postCode).toContain('attachmentFailures');
+    expect(postCode).toMatch(/未能上传到缺陷系统/);
+    // 两条降级原因必须并存：后写的不能把前一条盖掉。
+    expect(postCode).toMatch(/string\.IsNullOrEmpty\(degradeReason\)\s*\?\s*submitIssue/);
+  });
+});
+
+describe('llmgw 前端总量闸必须与后端同口径（base64 字符数）', () => {
+  const CORE = path.join(
+    path.dirname(fileURLToPath(import.meta.url)),
+    '../../../llmgw/web/src/components/BugReportCore.ts',
+  );
+  const core = fs.readFileSync(CORE, 'utf-8');
+
+  it('校验按 base64 字符数，不是解码后字节数', () => {
+    // 事故值：按解码字节算 12MiB「通过」，转 base64 约 16MiB，后端按 base64
+    // 字符量的 12MiB 闸门必拒 —— 用户挑完图等完上传才被整单拒绝。
+    expect(core).toContain('MAX_TOTAL_ATTACHMENT_BASE64_CHARS');
+    expect(core).toContain('totalAttachmentBase64Chars');
+    expect(core).toMatch(/const totalChars = totalAttachmentBase64Chars\(attachments\);/);
+    expect(core).toMatch(/if \(totalChars > MAX_TOTAL_ATTACHMENT_BASE64_CHARS\)/);
+    // 闸门判定不得再拿解码字节口径去比
+    expect(core).not.toMatch(/if \(total > MAX_TOTAL_ATTACHMENT_BYTES\)/);
+  });
+
+  it('前端闸门常量与后端 BugReportMaxTotalBase64Chars 数值一致', () => {
+    const front = /MAX_TOTAL_ATTACHMENT_BASE64_CHARS = (\d+) \* 1024 \* 1024/.exec(core);
+    const back = /BugReportMaxTotalBase64Chars = (\d+)L \* 1024 \* 1024/.exec(source);
+    expect(front?.[1]).toBeTruthy();
+    expect(back?.[1]).toBeTruthy();
+    expect(front![1]).toBe(back![1]);
+  });
+});

@@ -71,8 +71,21 @@ export interface DebounceOptions {
 export const DEFAULT_FAILURE_THRESHOLD = 3;
 export const DEFAULT_RECOVERY_THRESHOLD = 1;
 
-/** 每个 target 的原始采样条数硬上限（60s 间隔 ≈ 24 小时）。 */
+/** 每个 target 的原始采样条数：默认 60s 间隔覆盖 24 小时。 */
 export const MAX_SAMPLES_PER_TARGET = 1440;
+/**
+ * 原始采样的绝对上限 = 最快支持档（10s 间隔）覆盖 24 小时。
+ * 环形缓冲的容量必须**按实际探测间隔**推导：写死 1440 条时，把间隔调到 10s
+ * 只剩最近 4 小时，可 summary 依旧按 24 小时口径计算并标注 availability24h，
+ * 前面 20 小时被当成「没有数据」既不画也不计入百分比（Codex PR #1273 P2）。
+ */
+export const MAX_SAMPLES_HARD_CEILING = 8640;
+
+/** 覆盖 24 小时所需的采样条数（按探测间隔推导，夹在 [60, 硬上限] 内）。 */
+export function samplesForDayAtInterval(intervalMs: number): number {
+  const needed = Math.ceil(86_400_000 / Math.max(1, intervalMs));
+  return Math.min(MAX_SAMPLES_HARD_CEILING, Math.max(60, needed));
+}
 /** 按天聚合的保留天数上限。 */
 export const MAX_DAILY_ROLLUPS = 30;
 /** 每个 target 保留的故障事件条数上限。 */

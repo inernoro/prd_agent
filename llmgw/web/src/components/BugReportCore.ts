@@ -167,11 +167,19 @@ export function validateBugReportDraft(draft: BugReportDraft): string | null {
   if (!BUG_SEVERITY_OPTIONS.some((opt) => opt.value === draft.severity)) return '严重程度取值非法';
   const attachments = draft.attachments ?? [];
   if (attachments.length > MAX_ATTACHMENT_COUNT) return `附件最多 ${MAX_ATTACHMENT_COUNT} 个`;
-  // 总量必须在前端就拦：4 个各 5MB 单独都合法，加起来却超过后端 12MB 的总量闸。
+  // 总量必须在前端就拦：4 个各 5MB 单独都合法，加起来却超过后端的总量闸。
   // 不拦的话用户挑完图、等完上传，才在服务端被整单拒绝（Codex PR #1273 P2）。
-  const total = totalAttachmentBytes(attachments);
-  if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
-    return `附件总大小 ${(total / 1024 / 1024).toFixed(1)} MB 超过上限 ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024} MB，请删掉几张或压缩后再传`;
+  //
+  // **口径必须是 base64 字符数，不是解码后字节数**：网关后端
+  // （BugReportMaxTotalBase64Chars）量的就是真正写进 MongoDB 文档的 base64 字符串。
+  // 按解码字节算 12MiB 时，base64 已经膨胀到约 16MiB，两端差了 4/3 倍——
+  // 两张 5MiB 的图解码后 10MiB「通过」，转成 base64 却是约 13.3MiB，提交后才被拒
+  // （Codex PR #1273 P2）。
+  const totalChars = totalAttachmentBase64Chars(attachments);
+  if (totalChars > MAX_TOTAL_ATTACHMENT_BASE64_CHARS) {
+    const shownMb = (totalAttachmentBytes(attachments) / 1024 / 1024).toFixed(1);
+    const limitMb = ((MAX_TOTAL_ATTACHMENT_BASE64_CHARS * 3) / 4 / 1024 / 1024).toFixed(1);
+    return `附件总大小 ${shownMb} MB 超过上限 ${limitMb} MB，请删掉几张或压缩后再传`;
   }
   return null;
 }
@@ -185,6 +193,15 @@ export function totalAttachmentBytes(
     const raw = item?.dataBase64 || '';
     if (raw) total += Math.ceil((raw.length * 3) / 4);
   }
+  return total;
+}
+
+/** 附件的 base64 字符总数 —— 这才是后端总量闸真正量的东西。 */
+export function totalAttachmentBase64Chars(
+  attachments: ReadonlyArray<{ dataBase64?: string }>,
+): number {
+  let total = 0;
+  for (const item of attachments) total += (item?.dataBase64 || '').length;
   return total;
 }
 
@@ -236,7 +253,13 @@ export function buildBugReportPayload(input: {
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 /** 附件数量上限。 */
 export const MAX_ATTACHMENT_COUNT = 4;
-/** 附件**总量**上限（与后端 BugReportMaxTotalBase64Chars 对齐，两端必须同口径）。 */
+/**
+ * 附件**总量**上限，单位是 **base64 字符数**，与后端 BugReportMaxTotalBase64Chars
+ * 逐字对齐——后端量的就是真正写进 MongoDB 文档的那串 base64。
+ * 换算成用户看得懂的「图有多大」约为 9 MB（12MiB base64 ÷ 4/3）。
+ */
+export const MAX_TOTAL_ATTACHMENT_BASE64_CHARS = 12 * 1024 * 1024;
+/** @deprecated 解码字节口径，只用于给用户展示「你选的图有多大」，不参与闸门判定。 */
 export const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 
 /** 提交结果的投递去向，决定 UI 说什么话（禁止假装成功）。 */

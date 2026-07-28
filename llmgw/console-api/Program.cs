@@ -11,6 +11,7 @@ using System.Text;
 using System.Text.Json;
 using System.Security.Cryptography;
 using System.Net;
+using System.Net.Http.Headers;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Authentication.JwtBearer;
 using Microsoft.AspNetCore.Mvc;
@@ -8416,6 +8417,50 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
                     reference = defectElement!.Value.TryGetProperty("defectNo", out var noEl)
                         ? noEl.GetString() ?? defectId
                         : defectId;
+
+                    // 附件必须在 submit 之前上传：正文里只有文件名，没有图。少了这一步，
+                    // 缺陷系统收到的是「说有截图但没有截图」的单子，而 UI 照样报「已提交」——
+                    // 典型的谎报成功。CDS 侧已修（forwardToMap 的 attachments 循环），
+                    // 网关这边一直漏着（Codex PR #1273 P2）。上传失败不推翻「已进单」的
+                    // 事实，但必须如实回传部分失败，让用户知道图没跟过去。
+                    var attachmentFailures = 0;
+                    for (var i = 0; i < attachmentDocs.Count; i++)
+                    {
+                        var doc = attachmentDocs[i].AsBsonDocument;
+                        try
+                        {
+                            var bytes = Convert.FromBase64String(doc.GetValue("DataBase64", "").AsString);
+                            // 不加 using：form 的所有权交给 uploadRequest，随它一起释放。
+                            var form = new MultipartFormDataContent();
+                            var fileContent = new ByteArrayContent(bytes);
+                            var mime = doc.GetValue("MimeType", "application/octet-stream").AsString;
+                            if (mime.Length == 0) mime = "application/octet-stream";
+                            fileContent.Headers.ContentType = new MediaTypeHeaderValue(mime);
+                            var fileName = doc.GetValue("Name", "").AsString;
+                            if (fileName.Length == 0) fileName = $"screenshot-{i + 1}";
+                            form.Add(fileContent, "file", fileName);
+                            form.Add(new StringContent("由网关控制台快捷提缺陷自动上传"), "description");
+                            using var uploadRequest = new HttpRequestMessage(
+                                HttpMethod.Post,
+                                $"{bugReportMapBaseUrl}/api/defect-agent/defects/{defectId}/attachments")
+                            {
+                                Content = form,
+                            };
+                            uploadRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
+                            using var uploadResponse = await bugReportHttp.SendAsync(uploadRequest, forwardToken);
+                            if (!uploadResponse.IsSuccessStatusCode) attachmentFailures++;
+                        }
+                        catch (Exception uploadError)
+                        {
+                            app.Logger.LogWarning(uploadError, "[bug-report] 附件上传失败");
+                            attachmentFailures++;
+                        }
+                    }
+                    if (attachmentFailures > 0)
+                    {
+                        degradeReason = $"缺陷已提交，但 {attachmentFailures} 个截图未能上传到缺陷系统（正文里只有文件名）";
+                    }
+
                     try
                     {
                         using var submitRequest = new HttpRequestMessage(
@@ -8432,7 +8477,9 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
                             // 必须回传给前端：只记日志的话 UI 会无条件说「已提交」，
                             // 而单子其实还躺在草稿态没人处理（Codex PR #1273 P2，
                             // CDS 侧已修，这里补齐同款）。
-                            degradeReason = $"缺陷已创建但提交流转失败（缺陷系统返回 HTTP {(int)submitResponse.StatusCode}），可能仍是草稿态";
+                            var submitIssue = $"缺陷已创建但提交流转失败（缺陷系统返回 HTTP {(int)submitResponse.StatusCode}），可能仍是草稿态";
+                            // 附件也失败时两条都要说，后写的不能把前一条盖掉。
+                            degradeReason = string.IsNullOrEmpty(degradeReason) ? submitIssue : $"{degradeReason}；{submitIssue}";
                         }
                     }
                     catch (Exception submitError)

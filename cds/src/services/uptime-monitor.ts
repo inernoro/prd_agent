@@ -44,7 +44,8 @@ import {
   DEFAULT_RECOVERY_THRESHOLD,
   MAX_DAILY_ROLLUPS,
   MAX_INCIDENTS_PER_TARGET,
-  MAX_SAMPLES_PER_TARGET,
+  MAX_SAMPLES_HARD_CEILING,
+  samplesForDayAtInterval,
   appendCapped,
   applyDailyRollup,
   applyIncidentTransition,
@@ -239,14 +240,21 @@ export function matchExcludePattern(
 
 /** 从环境变量解析配置。所有项都有安全默认，未配置即按默认跑。 */
 export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
+  const intervalMs = envInt('CDS_UPTIME_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS, 10, 3600) * 1000;
   return {
     enabled: envFlag('CDS_UPTIME_ENABLED', true),
     excludePatterns: parseExcludePatterns(process.env.CDS_UPTIME_EXCLUDE),
-    intervalMs: envInt('CDS_UPTIME_INTERVAL_SECONDS', DEFAULT_INTERVAL_SECONDS, 10, 3600) * 1000,
+    intervalMs,
     timeoutMs: envInt('CDS_UPTIME_TIMEOUT_MS', DEFAULT_TIMEOUT_MS, 500, 30_000),
     failureThreshold: envInt('CDS_UPTIME_FAILURE_THRESHOLD', DEFAULT_FAILURE_THRESHOLD, 1, 20),
     recoveryThreshold: envInt('CDS_UPTIME_RECOVERY_THRESHOLD', DEFAULT_RECOVERY_THRESHOLD, 1, 20),
-    maxSamples: envInt('CDS_UPTIME_MAX_SAMPLES', MAX_SAMPLES_PER_TARGET, 60, MAX_SAMPLES_PER_TARGET),
+    // 容量按实际间隔推导，保证任何支持的间隔都真的覆盖住对外宣称的 24 小时。
+    maxSamples: envInt(
+      'CDS_UPTIME_MAX_SAMPLES',
+      samplesForDayAtInterval(intervalMs),
+      60,
+      MAX_SAMPLES_HARD_CEILING,
+    ),
     // 默认只监控主干；CDS_UPTIME_SCOPE=all 才纳入全部分支。
     scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'all' ? 'all' : 'trunk',
     storePath: path.join(repoRoot, '.cds', 'uptime-monitor.json'),

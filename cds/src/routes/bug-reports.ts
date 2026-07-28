@@ -60,6 +60,22 @@ const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 const MAX_ATTACHMENT_COUNT = 4;
 
 /**
+ * 文本字段上限。没有它，一次不带附件的提交就能把接近 24MB 的 body 原样写进
+ * records.jsonl，而按项目保留 200 条 → 单个项目 Key 就能把台账推向 GB 级；
+ * 更糟的是每次回收都要整文件读回来解析，磁盘写满或进程 OOM 都会先于附件配额发生
+ * （Codex PR #1273 P1）。截断而不是拒收：用户辛苦写的复现步骤不该被整条丢掉，
+ * 但必须留下明确的截断标记，读单子的人一眼知道后面还有。
+ */
+const MAX_TITLE_CHARS = 200;
+const MAX_DESCRIPTION_CHARS = 20_000;
+const MAX_CONTENT_CHARS = 40_000;
+
+function clampText(value: string, max: number): string {
+  if (value.length <= max) return value;
+  return `${value.slice(0, max)}\n…（原文共 ${value.length} 字，超过 ${max} 字上限，已截断）`;
+}
+
+/**
  * 本路由自己的 JSON body 上限。必须大于「12MB 附件解码上限」经 base64 膨胀（4/3 倍，
  * 约 16MB）再加 JSON 包装的体积，否则合法请求会在 body-parser 阶段就被拒。
  * 全局解析器（默认 100kb）已在 server.ts 对 /api/bug-reports 跳过。
@@ -125,15 +141,16 @@ export function normalizeBugReport(
     }
   }
 
-  const title = asString(body.title).trim() || description.split('\n')[0]!.trim().slice(0, 100) || '未命名缺陷';
+  const rawTitle = asString(body.title).trim() || description.split('\n')[0]!.trim().slice(0, 100) || '未命名缺陷';
+  const title = rawTitle.slice(0, MAX_TITLE_CHARS);
 
   return {
     report: {
       source: asString(body.source, 'cds').slice(0, 40),
       title,
-      description,
+      description: clampText(description, MAX_DESCRIPTION_CHARS),
       severity,
-      content: asString(body.content).trim() || description,
+      content: clampText(asString(body.content).trim() || description, MAX_CONTENT_CHARS),
       environment,
       attachments,
     },
@@ -379,38 +396,41 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
   }
 
   /**
-   * 落盘。返回没能保存的附件名单——**不能咽下去**：数据卷写满时截图会静默丢失，
-   * 而接口照样 201 告诉用户「已记录」，用户以为截图在里面（Codex PR #1273 P2）。
-   * 调用方必须把它拼进 degradeReason 如实告知（见 .claude/rules/expectation-management.md）。
+   * 只写附件文件，返回没能保存的附件名单。**必须在 appendRecord 之前调用**：
+   * 调用方要拿这个名单补进 record.degradeReason，而记录一旦 append 进 jsonl 就定型了，
+   * 之后再改内存里的 record 只影响本次响应——后续 GET 读回来的仍是没有说明的旧值
+   * （Codex PR #1273 P2，正是上一轮修复留下的顺序问题）。
    */
-  function persist(
+  function writeAttachments(
     record: StoredBugReport,
     attachments: NormalizedBugReport['attachments'],
   ): { failedAttachments: string[] } {
-    const dir = baseDir();
-    fs.mkdirSync(dir, { recursive: true });
     const failedAttachments: string[] = [];
-    if (attachments.length > 0) {
-      const assetDir = path.join(dir, 'attachments');
-      fs.mkdirSync(assetDir, { recursive: true });
-      attachments.forEach((item, index) => {
-        const fileName = `${record.id}-${index + 1}.${extensionFor(item.mimeType)}`;
-        const full = path.join(assetDir, fileName);
-        try {
-          fs.writeFileSync(full, Buffer.from(item.dataBase64, 'base64'));
-          record.attachments[index]!.file = fileName;
-        } catch {
-          record.attachments[index]!.file = '';
-          failedAttachments.push(item.name || fileName);
-          // 写了一半的残片必须删掉：它不在 records 账本里，回收逻辑永远看不到它，
-          // 会变成永久占盘的孤儿文件。
-          try { fs.unlinkSync(full); } catch { /* 本来就没落地 */ }
-        }
-      });
-    }
+    if (attachments.length === 0) return { failedAttachments };
+    const assetDir = path.join(baseDir(), 'attachments');
+    fs.mkdirSync(assetDir, { recursive: true });
+    attachments.forEach((item, index) => {
+      const fileName = `${record.id}-${index + 1}.${extensionFor(item.mimeType)}`;
+      const full = path.join(assetDir, fileName);
+      try {
+        fs.writeFileSync(full, Buffer.from(item.dataBase64, 'base64'));
+        record.attachments[index]!.file = fileName;
+      } catch {
+        record.attachments[index]!.file = '';
+        failedAttachments.push(item.name || fileName);
+        // 写了一半的残片必须删掉：它不在 records 账本里，回收逻辑永远看不到它，
+        // 会变成永久占盘的孤儿文件。
+        try { fs.unlinkSync(full); } catch { /* 本来就没落地 */ }
+      }
+    });
+    return { failedAttachments };
+  }
+
+  /** 记录定型后落账本 + 跑回收。调用前 record 必须已经是最终形态。 */
+  function appendRecord(record: StoredBugReport): void {
+    fs.mkdirSync(baseDir(), { recursive: true });
     fs.appendFileSync(recordsFile(), `${JSON.stringify(record)}\n`, 'utf-8');
     pruneStore();
-    return { failedAttachments };
   }
 
   /**
@@ -608,13 +628,16 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     };
 
     try {
-      const { failedAttachments } = persist(record, report.attachments);
+      fs.mkdirSync(baseDir(), { recursive: true });
+      const { failedAttachments } = writeAttachments(record, report.attachments);
       if (failedAttachments.length > 0) {
         // 截图没存下来（盘满等）却回 201 说「已记录」，用户会以为图在里面。
         // 必须把丢了哪几张写进 degradeReason（Codex PR #1273 P2）。
         const lost = `以下截图未能保存：${failedAttachments.join('、')}`;
         record.degradeReason = record.degradeReason ? `${record.degradeReason}；${lost}` : lost;
       }
+      // 记录到此定型，再落账本 —— 顺序反了的话账本里存的是没有说明的旧 degradeReason。
+      appendRecord(record);
     } catch (e) {
       // 本地留存失败且没转发成功 = 这条 bug 彻底丢了，必须如实报错让用户重试。
       if (delivery === 'local') {
