@@ -3078,28 +3078,57 @@ export class ContainerService {
    *
    * 只在缺限额时打印，且失败一律吞掉 —— 体检绝不能影响复用语义。
    */
+  /**
+   * 复用已存在 infra 容器时的体检：**日志限额 + 保护标记两项都查**。
+   *
+   * 两项都只在 `docker run` 那条路径上生效，而升级过来的存量部署走的全是复用路径
+   * （容器早就在跑），docker 又无法给已存在容器补 label / 改 log-opt —— 唯一出路是
+   * 重建，而重建会断连，脚本不该自作主张。所以这里只体检 + 明示补救。
+   *
+   * 早期版本只查日志限额（Codex PR #1275 十一轮 P2）：一个已经有 max-size、却没有
+   * `cds.protected=true` 的老容器会**一声不吭地通过体检**，而运维手册里那条
+   * `--filter label!=cds.protected=true` 的安全清理命令照样能把它 prune 掉 ——
+   * 恰恰是这条标记要保护的东西。两项必须分别判、分别报。
+   */
   private async auditInfraLogLimit(service: InfraService): Promise<void> {
     try {
       const r = await this.shell.exec(
-        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}' ${service.containerName}`,
+        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .Config.Labels "cds.protected"}}' ${service.containerName}`,
       );
       if (r.exitCode !== 0) return;
-      const maxSize = (r.stdout || '').trim().replace(/^'|'$/g, '');
-      if (maxSize) return; // 已有限额
+      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
+      const [maxSizeRaw, protectedRaw] = raw.split('|');
+      const maxSize = (maxSizeRaw || '').trim();
+      // docker 对缺失的 label 会渲染成 `<no value>`（Go 模板 index 取空）
+      const protectedLabel = (protectedRaw || '').trim();
+      const hasProtection = protectedLabel === 'true';
+      const missing: string[] = [];
+      if (!maxSize) missing.push('日志限额（--log-opt max-size）');
+      if (!hasProtection) missing.push('保护标记（label cds.protected=true）');
+      if (missing.length === 0) return;
+      const consequences = [
+        !maxSize ? '容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一' : '',
+        !hasProtection ? '停止后会被运维手册里 label!=cds.protected=true 的清理命令误删' : '',
+      ].filter(Boolean).join('；');
       console.warn(
-        `[infra-log-limit] ${service.containerName} 没有日志限额（复用已存在的容器，docker 无法补改）。`
-        + ` 容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一。`
-        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可带上限额（会短暂断连）。`,
+        `[infra-audit] ${service.containerName} 缺少：${missing.join('、')}（复用已存在的容器，docker 无法补改）。`
+        + ` ${consequences}。`
+        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可补齐（会短暂断连）。`,
       );
       this.recordContainerEvent({
         severity: 'warn',
         source: 'cds-container-service',
-        action: 'infra.log-limit.missing',
-        message: `reused infra container has unbounded logs: ${service.containerName}`,
+        action: 'infra.protection-audit.missing',
+        message: `reused infra container missing ${missing.join(' + ')}: ${service.containerName}`,
         projectId: service.projectId,
         serviceId: service.id,
         containerName: service.containerName,
-        details: { remedy: `POST /api/infra/${service.id}/restart`, reason: 'docker 无法给已存在容器补 log-opt，只能重建' },
+        details: {
+          missingLogLimit: !maxSize,
+          missingProtectedLabel: !hasProtection,
+          remedy: `POST /api/infra/${service.id}/restart`,
+          reason: 'docker 无法给已存在容器补 label / log-opt，只能重建',
+        },
       });
     } catch {
       /* 体检失败不影响复用 */

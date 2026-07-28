@@ -129,6 +129,57 @@ describe('别名与真身成对判定（迁移遗留的符号链接）', () => {
   });
 });
 
+/**
+ * 断链别名必须能被回收（Codex PR #1275 十一轮 P2）。
+ *
+ * 成对回收是「先删真身、成功才删别名」。真身删掉、别名删失败（EBUSY 等）就会留下
+ * 一个断链。此前 realpathSync 抛错一律 `continue`，于是这个残骸：
+ *  - 永远进不了候选 → 再没有任何一轮 sweep 会重试删它；
+ *  - 不计入桶内容 → 已删项目的墓碑被当成「桶已空」摘掉，整个桶从此不再枚举；
+ *  - `WorktreeService.create()` 的 `test -d` 对断链为假也不会清它 → 同 slug 重建
+ *    撞上 `git worktree add` 的「目标已存在」。
+ */
+describe('断链的迁移别名（成对回收失败留下的残骸）', () => {
+  const dangling = () => path.join(base, 'default', 'prd-agent-main');
+  // 注意：断链的符号链接 `fs.existsSync` 返回 **false**（它会跟随链接），
+  // 用它当「平台支持符号链接吗」的门会让下面几条静默空跑 —— 必须用 lstat。
+  const linkExists = (): boolean => {
+    try { return fs.lstatSync(dangling()).isSymbolicLink(); } catch { return false; }
+  };
+
+  beforeEach(() => {
+    // 模拟「真身已删、别名还在」
+    fs.rmSync(path.join(base, 'prd-agent-main'), { recursive: true, force: true });
+  });
+
+  it('断链别名仍进候选（否则永远没人回收它）', async () => {
+    if (!linkExists()) return; // 平台不支持符号链接
+    const { dirs } = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
+    const paths = dirs.map((d) => d.path);
+    expect(paths).toContain(dangling().replace(/\\/g, '/'));
+  });
+
+  it('断链别名带得出 mtime（走 lstat），否则年龄护栏判不了、永远跳过', async () => {
+    if (!linkExists()) return;
+    const { dirs } = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
+    const entry = dirs.find((d) => d.path.endsWith('/prd-agent-main'));
+    expect(entry).toBeTruthy();
+    expect(Number.isFinite(entry?.mtimeMs)).toBe(true);
+    expect(entry?.realPath).toBeUndefined(); // 真身没了，不该编一个出来
+  });
+
+  it('临删复核对断链返回 mtime 而非 null（不能判成「已消失」而跳过）', async () => {
+    if (!linkExists()) return;
+    const mtime = await defaultOrphanWorktreeFs.statDirMtimeMs(dangling());
+    expect(mtime).not.toBeNull();
+    expect(Number.isFinite(mtime as number)).toBe(true);
+  });
+
+  it('真的不存在的路径仍然返回 null（别把「消失」也兜成有效）', async () => {
+    expect(await defaultOrphanWorktreeFs.statDirMtimeMs(path.join(base, 'nope'))).toBeNull();
+  });
+});
+
 describe('纯判定层的血缘兜底（枚举层万一再出岔子）', () => {
   const NOW = Date.parse('2026-07-28T12:00:00Z');
   const OLD = NOW - 24 * 60 * 60_000;

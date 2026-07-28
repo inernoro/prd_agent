@@ -258,6 +258,73 @@ describe('库名 key 的取用优先级', () => {
 });
 
 /**
+ * 连接串改写必须绑定到**选定的那个实例**（Codex PR #1275 十一轮 P1）。
+ *
+ * 只按「路径段等于源库」收 URL 是不够的：同一个 profile 可能有两条库名相同、
+ * 主机不同的 JDBC URL。克隆只发生在 target.infra 上，把另一台主机那条也改成
+ * 隔离库名，副本会连到一台根本没有这个库的服务器（或更糟：那台上恰好有同名库），
+ * 而控制面照报「隔离可用」。
+ */
+describe('关系型连接串按主机绑定到选定实例', () => {
+  it('两条同库名不同主机 → 只改指向选定实例的那条，另一条如实报进 unboundUrlKeys', () => {
+    addInfra('mysql', 'mysql:8');
+    addInfra('mysql-legacy', 'mysql:8');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        dependsOn: ['mysql'],
+        env: {
+          DB_NAME: 'appdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/appdb',
+          LEGACY_DATASOURCE_URL: 'jdbc:mysql://mysql-legacy:3306/appdb',
+        },
+      }),
+    );
+    expect(reason).toBeUndefined();
+    expect(Object.keys(target?.urlEnvValues || {})).toEqual(['SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toEqual(['LEGACY_DATASOURCE_URL']);
+  });
+
+  it('只有一个主机时全收：不为了治歧义误伤常规单实例配置（IMP 那种）', () => {
+    addInfra('mysql', 'mysql:8');
+    const { target } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        env: {
+          DB_NAME: 'impdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+          REPORT_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+        },
+      }),
+    );
+    expect(Object.keys(target?.urlEnvValues || {}).sort())
+      .toEqual(['REPORT_DATASOURCE_URL', 'SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toBeUndefined();
+  });
+
+  it('主机名走短别名（mysql-<项目> → mysql）也算指向选定实例', () => {
+    addInfra('mysql-demo', 'mysql:8');
+    addInfra('mysql-legacy', 'mysql:8');
+    const { target } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        dependsOn: ['mysql-demo'],
+        env: {
+          DB_NAME: 'appdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/appdb',
+          OTHER_URL: 'jdbc:mysql://10.0.0.9:3306/appdb',
+        },
+      }),
+    );
+    expect(Object.keys(target?.urlEnvValues || {})).toEqual(['SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toEqual(['OTHER_URL']);
+  });
+});
+
+/**
  * 来源层级压过引擎专属度（Codex PR #1275 九轮 P1）。
  *
  * 四轮那条修的是「项目级泛化 DB_NAME 压过 profile 自己的 MYSQL_DATABASE」，解法是

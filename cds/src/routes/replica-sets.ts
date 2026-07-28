@@ -210,7 +210,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       // 前端据此收敛动作目标与「已隔离 N/M」的分母。
       const dbIsolatable: Record<string, {
         ok: boolean; reason?: string;
-        plan?: { engine: string; dbNameKeys: string[]; urlKeys: string[] };
+        plan?: { engine: string; dbNameKeys: string[]; urlKeys: string[]; unboundUrlKeys?: string[] };
       }> = {};
       for (const p of deps.stateService.getEffectiveProfilesForBranch(branch)) {
         const { target, reason } = resolveReplicaDbTarget(
@@ -226,6 +226,9 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
               engine: target.engine,
               dbNameKeys: target.envKeys,
               urlKeys: Object.keys(target.urlEnvValues || {}),
+              // 主机不指向选定实例、因此**不会**被改写的连接串（Codex 十一轮 P1）。
+              // 隔离范围要可见：不列出来，用户会以为这条连接也被隔离了。
+              ...(target.unboundUrlKeys?.length ? { unboundUrlKeys: target.unboundUrlKeys } : {}),
             },
           }
           : { ok: false, reason };

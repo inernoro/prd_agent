@@ -327,16 +327,30 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
             // 只认解析后仍落在 base 之内的链接：指到 base 之外的一律不碰（不删别人的东西）
             if (resolved === base || resolved.startsWith(`${base}/`)) realPath = resolved;
             else continue;
-          } catch {
-            continue; // 断链/解析失败 → 不做判断，交给人工
+          } catch (err) {
+            if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {
+              // 解析失败但不是断链（EACCES / IO 抖动）→ 不做判断，但**必须记进
+              // unreadable**：否则「读不出来」会被上层当成「桶里已经空了」而摘掉
+              // 已删项目的墓碑，文件系统恢复后这些目录永远回收不了（六轮 P2 同族）。
+              unreadable.push(full);
+              continue;
+            }
+            // 断链（ENOENT）：真身已经删掉、别名没删成功 —— 正是成对回收失败留下的
+            // 残骸（Codex 十一轮 P2）。此前一律 continue，于是它既进不了候选（永远
+            // 不会被重试回收），又不计入桶内容（墓碑被误摘）；而 WorktreeService.create()
+            // 的 `test -d` 对断链为假也不会清它，同 slug 重建会撞上「目标已存在」。
+            // 留 realPath 为空，按普通候选走完整三道护栏后回收。
           }
         } else if (!slug.isDirectory()) {
           continue;
         }
         try {
-          out.push({ path: full, mtimeMs: fs.statSync(full).mtimeMs, ...(realPath ? { realPath } : {}) });
+          // lstat 兜底：断链的 statSync 会抛，用链接自身的 mtime 才拿得到年龄
+          let mtimeMs: number;
+          try { mtimeMs = fs.statSync(full).mtimeMs; } catch { mtimeMs = fs.lstatSync(full).mtimeMs; }
+          out.push({ path: full, mtimeMs, ...(realPath ? { realPath } : {}) });
         } catch {
-          // stat 失败 → 给一个「刚刚」的时间戳，纯函数据此判为过新并跳过
+          // 连 lstat 都失败 → 给 NaN，纯函数据此判为过新并跳过
           out.push({ path: full, mtimeMs: Number.NaN, ...(realPath ? { realPath } : {}) });
         }
       }
@@ -389,7 +403,10 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     try {
       return fs.statSync(dir).mtimeMs;
     } catch {
-      return null;
+      // 断链的符号链接：statSync 会抛，但它**确实还在**，只是指向已删的真身。
+      // 不用 lstat 兜底的话，临删复核会把它判成「目录已消失」而跳过 —— 于是
+      // 成对回收失败留下的残骸永远删不掉（Codex 十一轮 P2）。
+      try { return fs.lstatSync(dir).mtimeMs; } catch { return null; }
     }
   },
 };

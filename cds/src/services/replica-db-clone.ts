@@ -102,6 +102,40 @@ export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDb
   return found.length === 1 ? found[0] : null;
 }
 
+/**
+ * 关系型连接 URL 的主机名（小写，去端口去凭据）。解析不出返回 null。
+ * 复合 scheme（`jdbc:mysql://`）与带凭据的 authority（`user:pw@host:3306`）都要认。
+ */
+export function relationalUrlHost(url: string): string | null {
+  const m = /^[a-zA-Z][a-zA-Z0-9+.:-]*:\/\/([^/?#]*)/.exec((url || '').trim());
+  if (!m) return null;
+  let authority = m[1];
+  const at = authority.lastIndexOf('@');
+  if (at >= 0) authority = authority.slice(at + 1);
+  // IPv6 字面量 `[::1]:3306`
+  const v6 = /^\[([^\]]+)\]/.exec(authority);
+  const host = (v6 ? v6[1] : authority.replace(/:\d+$/, '')).toLowerCase();
+  return host || null;
+}
+
+/**
+ * 某个 infra 实例在容器网络里可能被写成的主机名集合。
+ *
+ * 与 `computeProfileAliases`（container.ts）同源语义：服务 id 本身、容器名，
+ * 以及去掉尾部项目标识后的短别名（`mysql-mdimp` → `mysql`）。这里刻意做得
+ * 宽松一点——判错方向只会让一条本该改写的 URL 落进 unboundUrlKeys（如实报出、
+ * 不改），比错改一条指向别的服务器的连接串安全得多。
+ */
+export function infraHostAliases(infra: InfraService): Set<string> {
+  const out = new Set<string>();
+  const id = (infra.id || '').toLowerCase();
+  if (id) out.add(id);
+  if (infra.containerName) out.add(infra.containerName.toLowerCase());
+  const dash = id.lastIndexOf('-');
+  if (dash > 0) out.add(id.slice(0, dash));
+  return out;
+}
+
 /** infra 服务镜像 → 引擎（三种受支持的数据库之一，否则 null）。 */
 function engineOfInfra(svc: InfraService): ReplicaDbEngine | null {
   const kind = detectInfraDataKind(svc.dockerImage);
@@ -210,6 +244,13 @@ export interface ReplicaDbTarget {
   connEnvKeys: string[];
   /** 关系型连接 URL 的 env key → 原值（库名段等于源库的那些，隔离时按新库名重写）。 */
   urlEnvValues?: Record<string, string>;
+  /**
+   * 库名段虽等于源库、但主机**不是**选定 infra 的连接串 key（Codex 十一轮 P1）。
+   * 这些不改写——克隆只发生在选定实例上，改了会把副本指向另一台服务器上的
+   * 同名隔离库（那里根本没有，或更糟：那里恰好有别的数据）。如实报出供 UI 展示，
+   * 让「哪些连接没被隔离」可见，而不是静默。
+   */
+  unboundUrlKeys?: string[];
   /** 克隆来源库名（已按 dbScope=per-branch 折算成运行时真实库名） */
   sourceDb: string;
   infra: InfraService;
@@ -409,15 +450,50 @@ export function resolveReplicaDbTarget(
   // 关系型连接 URL（Codex 第三十二轮 P1）：库名写死在 URL 路径里，必须一并覆写，
   // 否则改了 MYSQL_DATABASE 也没用——应用读的是 URL。只收「路径段确实等于源库」
   // 的那些，避免把指向别的库/别的实例的连接串误改。
+  //
+  // 但「路径段相等」还不够（Codex PR #1275 十一轮 P1）：同一个 profile 可能有两条
+  // 库名相同、**主机不同**的 JDBC URL（如主库与只读从库、或另一套环境的同名库）。
+  // 克隆只发生在 target.infra 上，若把另一台主机的那条也改成隔离库名，副本会连到
+  // 一台**根本没有这个库**的服务器（或更糟：那台上恰好有同名库，于是写进不该写的
+  // 数据），而控制面照报「隔离可用」。
+  //
+  // 绑定规则刻意分两档，避免为了治歧义反而误伤单主机的常规配置：
+  //  - 候选 URL 只有一个主机 → 无歧义，全收（保持既有行为，包括 IP / 外部主机 /
+  //    我们推不出来的别名形态，IMP 那种 `jdbc:mysql://mysql:3306/impdb` 即此档）；
+  //  - 出现两个及以上主机 → 只收主机名指向**选定 infra** 的那些，其余进
+  //    unboundUrlKeys 如实报出（不改也不静默 —— 隔离范围要可见）。
   const urlEnvValues: Record<string, string> = {};
+  const unboundUrlKeys: string[] = [];
   if (engine !== 'mongo') {
+    const candidates: Array<[string, string]> = [];
     for (const [key, value] of Object.entries(runtimeEnv)) {
       if (!isRelationalUrl(value)) continue;
-      if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) urlEnvValues[key] = value;
+      if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) candidates.push([key, value]);
+    }
+    const hosts = new Set(candidates.map(([, value]) => relationalUrlHost(value) || ''));
+    if (hosts.size <= 1) {
+      for (const [key, value] of candidates) urlEnvValues[key] = value;
+    } else {
+      const aliases = infraHostAliases(infra);
+      for (const [key, value] of candidates) {
+        const host = relationalUrlHost(value) || '';
+        if (aliases.has(host)) urlEnvValues[key] = value;
+        else unboundUrlKeys.push(key);
+      }
     }
   }
 
-  return { target: { engine, envKeys, connEnvKeys, urlEnvValues, sourceDb, infra } };
+  return {
+    target: {
+      engine,
+      envKeys,
+      connEnvKeys,
+      urlEnvValues,
+      ...(unboundUrlKeys.length > 0 ? { unboundUrlKeys } : {}),
+      sourceDb,
+      infra,
+    },
+  };
 }
 
 function detectInfraDataKindForEngine(svc: InfraService, engine: ReplicaDbEngine): boolean {
