@@ -35,7 +35,9 @@ for (const full of walk(SRC)) {
 
     const hits = [
       ...line.matchAll(/font-size:\s*(\d+)px/g),
-      ...line.matchAll(/fontSize:\s*(\d+)\b/g),
+      // React 内联样式两种写法都要抓：数值 fontSize: 18 与更常见的字符串 fontSize: '18px'。
+      // 只认数值形式会让 fontSize: '18px' 从守卫底下溜过去。
+      ...line.matchAll(/fontSize:\s*['"`]?(\d+(?:\.\d+)?)(?:px|rem|em)?['"`]?(?=\s*[,}\n]|$)/g),
       ...line.matchAll(/font:\s*(?:\d{3}\s+)?(\d+)px/g),
     ];
     for (const hit of hits) {

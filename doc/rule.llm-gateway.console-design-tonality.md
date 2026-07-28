@@ -99,7 +99,7 @@
 |---|---|---|---|
 | 档位 | `pnpm check:typography` | 只能用七档字号 | CI |
 | 角色 | 同上（第二条规则） | `th/td/labelStyle/inputStyle` 不许降到 caption/micro 档 | CI |
-| 结构 | `node e2e/llmgw-layout-drift.mjs` | 页头是否裸露、内容是否撑满、表头与单元格字号、单行行盒、控件高度 | 改版后手动 |
+| 结构 | `node e2e/llmgw-layout-drift.mjs` | 页头是否裸露、内容是否撑满、表头与单元格字号、单行行盒、控件高度、五类规格种类数 | 改版后手动（有漂移即非零退出，可直接接 CI） |
 
 ---
 

@@ -292,3 +292,5 @@ for (const [route, m] of Object.entries(data)) {
   drift += diffs.length;
 }
 console.log(`\n合计漂移项: ${drift}`);
+// 有漂移必须非零退出，否则任何按退出码判定的 CI / 本地校验都会把回归当通过。
+if (drift > 0) process.exitCode = 1;
