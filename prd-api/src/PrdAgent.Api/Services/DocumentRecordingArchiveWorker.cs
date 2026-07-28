@@ -15,9 +15,11 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
     internal const string DeferredTranscriptionRequiredMetadataKey = "deferredTranscriptionRequired";
     internal const string DeferredTranscriptionRunIdMetadataKey = "deferredTranscriptionRunId";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
+    private static readonly TimeSpan ExpiredCleanupInterval = TimeSpan.FromMinutes(10);
     private static readonly TimeSpan StaleLease = TimeSpan.FromMinutes(10);
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly ILogger<DocumentRecordingArchiveWorker> _logger;
+    private DateTime _nextExpiredCleanupAt = DateTime.MinValue;
 
     public DocumentRecordingArchiveWorker(
         IServiceScopeFactory scopeFactory,
@@ -66,6 +68,30 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             instanceId,
             now,
             CancellationToken.None);
+        if (now >= _nextExpiredCleanupAt)
+        {
+            // 清理失败不能阻断归档主队列，也不能每 15 秒无索引扫一次集合。先推进
+            // 下次时间，再独立捕获异常；重启会立即补扫，常驻实例每十分钟兜底一次。
+            _nextExpiredCleanupAt = now.Add(ExpiredCleanupInterval);
+            try
+            {
+                var cleaned = await CleanupExpiredArchivedSessionsAsync(
+                    db.DocumentRecordingUploadSessions,
+                    db.DocumentRecordingUploadChunks,
+                    now,
+                    CancellationToken.None);
+                if (cleaned > 0)
+                {
+                    _logger.LogInformation(
+                        "[recording-archive] Cleaned {Count} expired archived recording sessions",
+                        cleaned);
+                }
+            }
+            catch (Exception ex)
+            {
+                _logger.LogError(ex, "[recording-archive] Expired archive cleanup failed");
+            }
+        }
 
         var archiveLeaseId = Guid.NewGuid().ToString("N");
         var session = await ClaimOwnedArchiveSessionAsync(
@@ -168,29 +194,19 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 entryRequiresDeferredTranscription,
                 CancellationToken.None);
 
-            var deferredRun = BuildDeferredTranscriptionRun(
+            var deferredRun = await EnsureDeferredTranscriptionRunAsync(
+                db.DocumentStoreAgentRuns,
                 latestSession,
                 entry.Id,
                 instanceId,
-                entryRequiresDeferredTranscription);
+                entryRequiresDeferredTranscription,
+                CancellationToken.None);
             if (deferredRun != null)
             {
-                try
-                {
-                    await db.DocumentStoreAgentRuns.InsertOneAsync(
-                        deferredRun,
-                        cancellationToken: CancellationToken.None);
-                    _logger.LogInformation(
-                        "[recording-archive] Deferred transcription queued session={SessionId} run={RunId}",
-                        session.Id,
-                        deferredRun.Id);
-                }
-                catch (MongoWriteException ex)
-                    when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
-                {
-                    // Run ID 由 session ID 决定。崩溃重试只确认同一个任务已存在，
-                    // 不会创建第二条转录任务。
-                }
+                _logger.LogInformation(
+                    "[recording-archive] Deferred transcription ensured session={SessionId} run={RunId}",
+                    session.Id,
+                    deferredRun.Id);
             }
 
             var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -207,7 +223,20 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     .Set(s => s.UpdatedAt, DateTime.UtcNow)
                     .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
                 cancellationToken: CancellationToken.None);
-            if (completed.ModifiedCount == 1)
+            // 延迟转录可能已经开始读取 Mongo 分片。归档成功与转录读取并发时，只有
+            // 不需要延迟转录，或转录已经写出正文，才可释放分片。完成会话更新后必须
+            // 回读 run，不能使用 Ensure 返回的旧快照，否则恰好并发完成时仍会泄漏。
+            DocumentStoreAgentRun? completedDeferredRun = null;
+            if (completed.ModifiedCount == 1 && entryRequiresDeferredTranscription)
+            {
+                completedDeferredRun = await db.DocumentStoreAgentRuns
+                    .Find(r => r.Id == DeferredTranscriptionRunId(session.Id))
+                    .FirstOrDefaultAsync(CancellationToken.None);
+            }
+            if (completed.ModifiedCount == 1
+                && ShouldDeleteChunksAfterArchive(
+                    entryRequiresDeferredTranscription,
+                    completedDeferredRun))
             {
                 await db.DocumentRecordingUploadChunks.DeleteManyAsync(
                     c => c.SessionId == session.Id,
@@ -361,12 +390,129 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             UserId = session.UserId,
             OwnerInstanceId = ownerInstanceId,
             Status = DocumentStoreRunStatus.Queued,
-            Phase = "等待音频归档完成",
+            Phase = "等待完整录音转录",
         };
+    }
+
+    internal static async Task<DocumentStoreAgentRun?> EnsureDeferredTranscriptionRunAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentRecordingUploadSession session,
+        string entryId,
+        string ownerInstanceId,
+        bool entryRequiresDeferredTranscription,
+        CancellationToken cancellationToken)
+    {
+        var run = BuildDeferredTranscriptionRun(
+            session,
+            entryId,
+            ownerInstanceId,
+            entryRequiresDeferredTranscription);
+        if (run == null)
+            return null;
+
+        // 固定 run ID 让完成接口、归档 Worker、崩溃重试和用户手动重试共同收敛到
+        // 同一个任务。pending entry 建立后即可排队，处理器会直接读取 Mongo 分片；
+        // 不再把对象存储恢复当作转录的前置条件。
+        try
+        {
+            await runs.InsertOneAsync(run, cancellationToken: cancellationToken);
+            return run;
+        }
+        catch (MongoWriteException ex)
+            when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
+        {
+            // 固定任务可能在容器重启或主动取消时进入终态。后续 /complete、归档重试
+            // 或用户重试都代表再次提交同一份完整录音，应原子恢复为 queued；否则固定
+            // ID 虽避免了重复任务，却会把一次可恢复失败永久固化。Done/Running/Queued
+            // 保持幂等，不能重复执行已经完成或正在处理的任务。
+            var retryableTerminalFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, run.Id),
+                Builders<DocumentStoreAgentRun>.Filter.In(
+                    r => r.Status,
+                    [DocumentStoreRunStatus.Failed, DocumentStoreRunStatus.Cancelled]));
+            var requeued = await runs.FindOneAndUpdateAsync(
+                retryableTerminalFilter,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, run.Phase)
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.StartedAt, null)
+                    .Set(r => r.EndedAt, null)
+                    .Set(r => r.OwnerInstanceId, ownerInstanceId),
+                new FindOneAndUpdateOptions<DocumentStoreAgentRun>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                cancellationToken);
+            return requeued
+                   ?? await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
+        }
     }
 
     internal static string DeferredTranscriptionRunId(string sessionId)
         => $"recording-archive-transcribe-{sessionId}";
+
+    internal static bool ShouldDeleteChunksAfterArchive(
+        bool entryRequiresDeferredTranscription,
+        DocumentStoreAgentRun? deferredRun)
+        => !entryRequiresDeferredTranscription
+           || deferredRun?.Status == DocumentStoreRunStatus.Done
+           || !string.IsNullOrWhiteSpace(deferredRun?.OutputEntryId);
+
+    internal static async Task<bool> DeleteArchivedChunksAfterSuccessfulTranscriptionAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        IMongoCollection<DocumentRecordingUploadChunk> chunks,
+        DocumentEntry entry,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = entry.Metadata?.GetValueOrDefault("recordingUploadSessionId")?.Trim();
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return false;
+
+        var archiveCompleted = await sessions
+            .Find(s => s.Id == sessionId
+                       && s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed)
+            .AnyAsync(cancellationToken);
+        if (!archiveCompleted)
+            return false;
+
+        await chunks.DeleteManyAsync(
+            c => c.SessionId == sessionId,
+            cancellationToken: cancellationToken);
+        return true;
+    }
+
+    internal static async Task<int> CleanupExpiredArchivedSessionsAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        IMongoCollection<DocumentRecordingUploadChunk> chunks,
+        DateTime now,
+        CancellationToken cancellationToken,
+        int limit = 100)
+    {
+        var batchSize = Math.Clamp(limit, 1, 500);
+        var expiredSessionIds = await sessions
+            .Find(s => s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
+                       && s.ExpiresAt <= now)
+            .SortBy(s => s.ExpiresAt)
+            .Limit(batchSize)
+            .Project(s => s.Id)
+            .ToListAsync(cancellationToken);
+        if (expiredSessionIds.Count == 0)
+            return 0;
+
+        // 分片必须先删。若第一步失败，会话仍在，下一轮 Worker 可以重试；先删会话
+        // 会让残留分片失去可定位的父记录。只处理已归档会话，pending 音频绝不回收。
+        await chunks.DeleteManyAsync(
+            c => expiredSessionIds.Contains(c.SessionId),
+            cancellationToken: cancellationToken);
+        await sessions.DeleteManyAsync(
+            s => expiredSessionIds.Contains(s.Id)
+                 && s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
+                 && s.ExpiresAt <= now,
+            cancellationToken: cancellationToken);
+        return expiredSessionIds.Count;
+    }
 
     internal static string? DeferredTranscriptionRunIdForClient(
         bool archivePending,
@@ -414,23 +560,17 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 e => e.Metadata[DeferredTranscriptionRunIdMetadataKey],
                 DeferredTranscriptionRunId(session.Id)));
         }
+        string? completedLiveTranscript = null;
         if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(session.LiveTranscript))
         {
-            var transcript = session.LiveTranscript.Trim();
+            completedLiveTranscript = session.LiveTranscript.Trim();
             updates.Add(Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscriptStatus"],
                 DocumentLiveTranscriptStatus.Completed));
             updates.Add(Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscript"],
-                transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(
-                e => e.Summary,
-                transcript.Length > 200 ? transcript[..200] : transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(
-                e => e.ContentIndex,
-                transcript.Length > 2000 ? transcript[..2000] : transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now));
+                completedLiveTranscript));
             if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
             {
                 updates.Add(Builders<DocumentEntry>.Update.Set(
@@ -449,5 +589,28 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             e => e.Id == entryId,
             Builders<DocumentEntry>.Update.Combine(updates),
             cancellationToken: cancellationToken);
+
+        if (completedLiveTranscript != null)
+        {
+            // SaveContentAsync 会在同一次更新中写入 DocumentId、Summary 与 ContentIndex。
+            // 这里以 DocumentId 为空作为原子闸门：若完整录音转录已经生成正文，归档只能
+            // 补附件和实时原文 metadata，不能再用较短的实时原文覆盖正文索引；若转录在
+            // 本次条件更新之后完成，它自己的写入又会成为最后一次写，两个时序都安全。
+            await entries.UpdateOneAsync(
+                e => e.Id == entryId && e.DocumentId == null,
+                Builders<DocumentEntry>.Update
+                    .Set(
+                        e => e.Summary,
+                        completedLiveTranscript.Length > 200
+                            ? completedLiveTranscript[..200]
+                            : completedLiveTranscript)
+                    .Set(
+                        e => e.ContentIndex,
+                        completedLiveTranscript.Length > 2000
+                            ? completedLiveTranscript[..2000]
+                            : completedLiveTranscript)
+                    .Set(e => e.LastChangedAt, now),
+                cancellationToken: cancellationToken);
+        }
     }
 }
