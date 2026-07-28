@@ -298,18 +298,11 @@ export function ExchangesPage() {
     <div className="lg-exchange-page">
       <header className="lg-exchange-hero">
         <div>
-          <div className="lg-eyebrow">路由</div>
           <h1>Exchange 映射</h1>
           <p>当上游不是 OpenAI 或 Claude 标准协议时，用一条 Exchange 把目标地址、转换方式和模型标识连起来。</p>
         </div>
-        {canWrite ? <Button variant="primary" onClick={openCreate}><Plus size={15} /> 新建 Exchange</Button> : null}
+        {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>新建 Exchange</Button> : null}
       </header>
-
-      <section className="lg-exchange-steps" aria-label="Exchange 三步工作流">
-        <div><span>1</span><strong>创建映射</strong><p>填写上游地址、模型标识和通讯密钥。</p></div>
-        <div><span>2</span><strong>加入模型池</strong><p>把已启用模型加入对应用途的模型池。</p></div>
-        <div><span>3</span><strong>用 requestId 验证</strong><p>从 Quickstart 安全测试，再到审计定位变更。</p></div>
-      </section>
 
       {notice ? <div className="lg-inline-alert" role="status">{notice}</div> : null}
       {error ? <div className="lg-inline-alert">{error}</div> : null}
@@ -368,7 +361,13 @@ export function ExchangesPage() {
         <section className="lg-exchange-empty">
           <Route size={24} />
           <div><strong>还没有 Exchange 映射</strong><p>先创建第一条映射。保存只建立配置和审计，不会自动测试上游，也不会产生模型调用费用。</p></div>
-          {canWrite ? <Button variant="primary" onClick={openCreate}>创建第一条映射</Button> : null}
+          {/* 三步引导只在零数据时出现：有配置的人不需要每次进页面都被教一遍。 */}
+          <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
+            <li><strong>创建映射</strong><p>填写上游地址、模型标识和通讯密钥。</p></li>
+            <li><strong>加入模型池</strong><p>把已启用模型加入对应用途的模型池。</p></li>
+            <li><strong>用 requestId 验证</strong><p>从 Quickstart 安全测试，再到审计定位变更。</p></li>
+          </ol>
+          {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
         </section>
       ) : (
         <div className="lg-exchange-list">

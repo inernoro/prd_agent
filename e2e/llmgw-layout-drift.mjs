@@ -111,6 +111,44 @@ const measure = () => {
     bottomGap = Math.max(0, Math.round(vh - lowest));
   }
 
+  // 组件规格种类数：同一角色出现多套规格 = 手工拼凑感的主要来源。
+  const pads = new Set(), radii = new Set(), gaps = new Set(), chipSpecs = new Set(), primaryBtns = new Set();
+  for (const el of main.querySelectorAll('*')) {
+    const rect = el.getBoundingClientRect();
+    if (rect.width < 60 || rect.height < 20) continue;
+    const cs = getComputedStyle(el);
+    const boxed = num(cs.borderTopWidth) > 0
+      || (cs.backgroundColor !== 'rgba(0, 0, 0, 0)' && cs.backgroundColor !== 'transparent');
+    if (boxed && rect.width > 150) {
+      if (num(cs.paddingTop) > 0) pads.add(num(cs.paddingTop));
+      if (num(cs.borderTopLeftRadius) > 0) radii.add(num(cs.borderTopLeftRadius));
+    }
+    if (cs.display.includes('flex') || cs.display.includes('grid')) {
+      const g = num(cs.rowGap || cs.gap);
+      if (g > 0) gaps.add(g);
+    }
+  }
+  for (const el of main.querySelectorAll('span, small')) {
+    const cs = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    if (num(cs.borderTopLeftRadius) < 6 || rect.height < 14 || rect.height > 30 || rect.width > 160) continue;
+    if (cs.backgroundColor === 'rgba(0, 0, 0, 0)') continue;
+    chipSpecs.add(`h${Math.round(rect.height)}f${num(cs.fontSize)}`);
+  }
+  for (const el of main.querySelectorAll('button')) {
+    const cs = getComputedStyle(el);
+    const rect = el.getBoundingClientRect();
+    // 主操作 = 强调底色的按钮
+    if (!cs.backgroundColor.includes('rgb') || rect.width < 60) continue;
+    const bg = cs.backgroundColor;
+    if (bg === 'rgba(0, 0, 0, 0)' || bg === 'transparent') continue;
+    const accent = getComputedStyle(document.documentElement).getPropertyValue('--accent').trim();
+    if (!accent || !el.textContent?.trim()) continue;
+    if (cs.color === 'rgb(255, 255, 255)' || bg.startsWith('rgb(1') || bg.startsWith('rgb(9') || bg.startsWith('rgb(16')) {
+      primaryBtns.add(`h${Math.round(rect.height)}f${num(cs.fontSize)}`);
+    }
+  }
+
   const th = document.querySelector('th, .lg-log-table-head > div');
   const td = document.querySelector('tbody td, .lg-log-table-row > div');
   const tr = document.querySelector('tbody tr, .lg-log-table-row');
@@ -137,6 +175,11 @@ const measure = () => {
       return tr ? Math.round(tr.getBoundingClientRect().height) : null;
     })(),
     控件高度: [...new Set(controls.map((el) => Math.round(el.getBoundingClientRect().height)).filter(Boolean))].sort((a, b) => a - b),
+    卡片内边距种类: [...pads].sort((a, b) => a - b),
+    卡片圆角种类: [...radii].sort((a, b) => a - b),
+    容器间距种类: [...gaps].sort((a, b) => a - b),
+    chip规格种类: [...chipSpecs],
+    主操作按钮规格: [...primaryBtns],
     卡片内边距种类: [...paddings].sort((a, b) => a - b),
   };
 };
@@ -164,7 +207,12 @@ server.close();
 
 const baseline = data['/logs'];
 console.log('基准（请求记录页）:', JSON.stringify(baseline), '\n');
-const KEYS = ['标题字号', '标题被卡片包住', '内容底部空隙', '表头字号', '单元格字号', '单行行盒', '控件高度'];
+const KEYS = ['标题字号', '标题被卡片包住', '内容底部空隙', '表头字号', '单元格字号', '单行行盒', '控件高度',
+  '卡片内边距种类', '卡片圆角种类', '容器间距种类', 'chip规格种类', '主操作按钮规格'];
+// 规格种类数的上限来自基准页本身，而不是拍脑袋定一个理想值——
+// 检测器的职责是「不许比基准更乱」，把基准自己收得更紧是另一件事。
+// 见 doc/rule.llm-gateway.console-design-tonality.md
+const SPEC_KEYS = ['卡片内边距种类', '卡片圆角种类', '容器间距种类', 'chip规格种类', '主操作按钮规格'];
 let drift = 0;
 for (const [route, m] of Object.entries(data)) {
   if (route === '/logs') continue;
@@ -174,6 +222,13 @@ for (const [route, m] of Object.entries(data)) {
     const b = m[k];
     if (b === null || b === undefined) continue;
     if (k === '内容底部空隙') { if (b - a > 80) diffs.push(`${k} ${b}px（基准 ${a}px，下方留白过多）`); continue; }
+    if (SPEC_KEYS.includes(k)) {
+      const limit = Math.max(1, (Array.isArray(a) ? a.length : 0));
+      if (Array.isArray(b) && b.length > limit) {
+        diffs.push(`${k} ${b.length} 种 ${JSON.stringify(b)}（基准 ${limit} 种）`);
+      }
+      continue;
+    }
     if (k === '控件高度') {
       const real = b.filter((h) => h >= 24);
       const short = real.filter((h) => h < 34);

@@ -368,7 +368,7 @@
   display: flex;
   align-items: center;
   justify-content: space-between;
-  gap: 14px;
+  gap: 12px;
 }
 
 .lg-exchange-hero h1,
@@ -388,31 +388,37 @@
   line-height: 1.65;
 }
 
+/* 三步引导：只在空状态里出现，因此不再是三张独立卡片（那会多出一层盒子），
+   改为空状态卡内部的有序列表，序号走 CSS counter，不占额外的卡片边框。 */
 .lg-exchange-steps {
+  counter-reset: lg-step;
+  width: 100%;
   display: grid;
-  grid-template-columns: repeat(3, minmax(0, 1fr));
-  gap: 8px;
+  gap: 10px;
+  margin: 4px 0 2px;
+  padding: 0;
+  text-align: left;
+  list-style: none;
 }
 
-.lg-exchange-steps > div {
+.lg-exchange-steps > li {
   display: grid;
-  grid-template-columns: 28px 1fr;
-  gap: 2px 9px;
-  padding: 12px;
-  border: 1px solid var(--border-subtle);
-  border-radius: var(--radius);
-  background: var(--bg-surface);
+  grid-template-columns: 24px minmax(0, 1fr);
+  align-items: start;
+  gap: 4px 10px;
 }
 
-.lg-exchange-steps span {
+.lg-exchange-steps > li::before {
+  counter-increment: lg-step;
+  content: counter(lg-step);
   grid-row: 1 / span 2;
-  width: 26px;
-  height: 26px;
   display: grid;
+  width: 24px;
+  height: 24px;
   place-items: center;
   border-radius: 999px;
-  color: var(--text-primary);
   background: var(--accent-soft);
+  color: var(--text-primary);
   font-size: var(--fs-caption);
   font-weight: 700;
 }
@@ -420,7 +426,7 @@
 .lg-exchange-steps strong,
 .lg-exchange-empty strong,
 .lg-exchange-success strong { color: var(--text-primary); font-size: var(--fs-secondary); }
-.lg-exchange-steps p { margin: 2px 0 0; color: var(--text-muted); font-size: var(--fs-micro); line-height: 1.5; }
+.lg-exchange-steps p { margin: 2px 0 0; color: var(--text-muted); font-size: var(--fs-secondary); line-height: 1.55; }
 
 .lg-exchange-success {
   display: grid;
@@ -464,7 +470,7 @@
 .lg-exchange-model-row label {
   display: flex;
   flex-direction: column;
-  gap: 5px;
+  gap: 4px;
   color: var(--text-secondary);
   font-size: var(--fs-micro);
   font-weight: 600;
@@ -536,7 +542,7 @@
 .lg-exchange-advanced > div { margin: 0; padding: 0 12px 12px; }
 .lg-exchange-bulk { margin-top: 0; }
 .lg-exchange-bulk > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 12px 12px; }
-.lg-exchange-bulk label { display: inline-flex; align-items: center; gap: 5px; color: var(--text-secondary); font-size: var(--fs-micro); }
+.lg-exchange-bulk label { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: var(--fs-micro); }
 
 .lg-exchange-form-actions {
   margin-top: 12px;
@@ -551,12 +557,15 @@
 .lg-exchange-toolbar span { color: var(--text-muted); font-size: var(--fs-caption); }
 
 .lg-exchange-empty {
+  /* 零数据时要把「这是什么 + 怎么开始」讲清楚，所以改为单列纵向：
+     图标 → 标题与说明 → 三步引导 → 主操作，视线一条直线往下走。 */
   min-height: 220px;
   display: grid;
-  grid-template-columns: auto minmax(0, 520px) auto;
-  align-items: center;
+  grid-template-columns: minmax(0, 460px);
   justify-content: center;
-  gap: 14px;
+  justify-items: start;
+  align-content: center;
+  gap: 12px;
   padding: 24px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-lg);
@@ -575,7 +584,7 @@
 .lg-exchange-card-head > div { display: flex; min-width: 0; flex-direction: column; gap: 3px; }
 .lg-exchange-card-head > div > strong { color: var(--text-primary); font-size: var(--fs-body); }
 .lg-exchange-card-head code { overflow: hidden; color: var(--text-muted); font-size: var(--fs-micro); text-overflow: ellipsis; }
-.lg-exchange-card-head > span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 5px; }
+.lg-exchange-card-head > span { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 
 .lg-exchange-route {
   display: grid;
@@ -638,8 +647,8 @@
   .lg-exchange-model-row { grid-template-columns: 1fr; }
   .lg-exchange-model-row > button { width: 100%; justify-content: center; }
   .lg-exchange-form-actions > span { margin-right: 0; }
-  .lg-exchange-empty { grid-template-columns: auto minmax(0, 1fr); justify-content: stretch; }
-  .lg-exchange-empty button { grid-column: 1 / -1; width: 100%; justify-content: center; }
+  .lg-exchange-empty { grid-template-columns: minmax(0, 1fr); justify-content: stretch; }
+  .lg-exchange-empty button { width: 100%; justify-content: center; }
   .lg-exchange-list { grid-template-columns: 1fr; }
   .lg-exchange-card-head { align-items: flex-start; flex-direction: column; }
   .lg-exchange-card-head > span { justify-content: flex-start; }
@@ -3781,7 +3790,9 @@ a:focus-visible {
   top: -34px;
 }
 
-/* 汇总指标并进标题行：一排小字，不再占一整张卡片。 */
+/* 汇总指标并进标题行：一排小字，不再占一整张卡片。
+   通用类 .lg-summary-strip 供所有页面复用（模型池此前是 4 张只装一个数字的大卡片）。 */
+.lg-summary-strip,
 .lg-log-summary-strip {
   display: flex;
   flex-wrap: wrap;
@@ -3789,11 +3800,13 @@ a:focus-visible {
   gap: 4px 16px;
 }
 
+.lg-summary-strip strong,
 .lg-log-summary-strip strong {
   color: var(--text-primary);
   font-weight: var(--fw-strong);
 }
 
+.lg-summary-warn,
 .lg-log-summary-warn {
   color: var(--warn);
 }

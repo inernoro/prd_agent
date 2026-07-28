@@ -446,7 +446,7 @@ export function ModelsPage() {
                 return (
                   <tr key={m.id}>
                     <td style={td}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 2, minWidth: 180 }}>
+                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
                         <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
                         <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{m.modelName || m.id}</span>
                       </div>

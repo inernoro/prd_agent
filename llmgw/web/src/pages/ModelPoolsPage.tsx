@@ -9,6 +9,7 @@ import { healthChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { FIELD_INPUT } from '@/lib/typography';
+import { CARD_ACTIONS, CARD_PADDING, GAP, PAGE_GAP } from '@/lib/surface';
 
 const STRATEGY_LABEL: Record<number, string> = {
   0: '优先级', 1: '轮询', 2: '加权', 3: '最少连接', 4: '随机', 5: '故障转移',
@@ -397,31 +398,39 @@ export function ModelPoolsPage() {
   const attentionPools = pools.filter((pool) => pool.health === 'unavailable' || pool.health === 'empty').length;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 16 }}>
+    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: PAGE_GAP }}>
       <ParameterCapabilityOptions parameterMeta={parameterMeta} />
-      <section style={{ display: 'flex', gap: 16, alignItems: 'flex-start', justifyContent: 'space-between', flexWrap: 'wrap' }}>
+      <header className="lg-page-heading">
         <div style={{ maxWidth: 760 }}>
-          <h1 className="lg-title">模型池</h1>
-          <p className="lg-subtitle" style={{ marginTop: 7 }}>
+          <h1>模型池</h1>
+          <p>
             模型池把同一类业务需要的多个模型组织成一条稳定路由。先看它服务谁、承接多少请求和是否健康，需要调整时再进入详情。
           </p>
+          {/* 汇总指标走标题行小字：此前是 4 张只装一个数字的大卡片，白占 100px 高。 */}
+          <p className="lg-summary-strip">
+            <span>模型池 <strong className="tabular">{pools.length}</strong></span>
+            <span>业务路由 <strong className="tabular">{modelTypes.length}</strong> 类</span>
+            <span>已绑定 appCaller <strong className="tabular">{totalBoundAppCallers}</strong></span>
+            <span>近 7 天请求 <strong className="tabular">{totalRecentRequests}</strong></span>
+            {attentionPools ? <span className="lg-summary-warn">{attentionPools} 个池需要处理</span> : null}
+          </p>
         </div>
-        <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap' }}>
-          {canWrite ? <Button size="sm" variant="secondary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button> : null}
-          <Link to="/learn" style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-caption)', textDecoration: 'none' }}>了解模型池如何参与路由</Link>
+        <div style={CARD_ACTIONS}>
+          {canWrite ? <Button size="sm" variant="primary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button> : null}
+          <Link to="/learn"><Button size="sm" variant="ghost">了解路由机制</Button></Link>
         </div>
-      </section>
+      </header>
       {toast ? (
         <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
       ) : null}
-      <section style={{ display: 'flex', gap: 14, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+      <section style={{ display: 'flex', gap: GAP.normal, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
         <div>
           <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-body)' }}>程序池类型规则</strong>
           <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
             有则增加，无则不变：只创建缺失类型默认池，只向平台托管默认池追加兼容且未存在的模型，不覆盖、删除或重排已有成员。
           </p>
         </div>
-        <div style={{ display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap' }}>
+        <div style={{ ...CARD_ACTIONS, gap: GAP.normal }}>
           <Chip label={`${poolTypes?.total ?? 0} 类规则`} color="var(--accent)" bg="var(--accent-soft)" />
           <Chip label={`${poolTypes?.ready ?? 0} 已可用`} color="#3fb950" bg="rgba(63,185,80,0.14)" />
           <Chip label={`${poolTypes?.waiting ?? 0} 待补模型`} color="#d29922" bg="rgba(210,153,34,0.14)" />
@@ -431,12 +440,6 @@ export function ModelPoolsPage() {
         </div>
       </section>
       {!canWrite ? <ReadOnlyNotice>当前角色可以查看模型池、成员健康和路由使用情况，但不能修改平台配置。</ReadOnlyNotice> : null}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 180px), 1fr))', gap: 10 }}>
-        <PoolMetric label="模型池" value={String(pools.length)} hint={`${modelTypes.length} 类业务路由`} />
-        <PoolMetric label="已绑定 appCaller" value={String(totalBoundAppCallers)} hint="明确绑定到模型池的调用方" />
-        <PoolMetric label="近 7 天请求" value={String(totalRecentRequests)} hint="按当前租户请求记录统计" />
-        <PoolMetric label="需要处理" value={String(attentionPools)} hint={attentionPools ? '无可用成员或尚未配置成员' : '所有模型池均有可用成员'} tone={attentionPools ? '#d29922' : '#3fb950'} />
-      </section>
       {pools.length === 0 ? <Empty text={canWrite ? '暂无模型池，可先新建第一个模型池' : '当前租户暂无模型池，请联系 Owner 或 Admin 配置'} /> : null}
       <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))', gap: 12 }}>
         {pools.map((pool) => <PoolOverviewCard key={pool.id} pool={pool} busyId={busyId} canWrite={canWrite} onOpen={() => setDrawer({ kind: 'pool', poolId: pool.id })} onMakeDefault={() => void makeDefault(pool)} />)}
@@ -505,16 +508,13 @@ export function ModelPoolsPage() {
   );
 }
 
-function PoolMetric({ label, value, hint, tone = 'var(--text-primary)' }: { label: string; value: string; hint: string; tone?: string }) {
-  return <div style={{ padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{label}</div><div style={{ marginTop: 5, color: tone, fontSize: 'var(--fs-metric)', fontWeight: 'var(--fw-strong)' }}>{value}</div><div style={{ marginTop: 4, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', lineHeight: 1.5 }}>{hint}</div></div>;
-}
 
 function PoolOverviewCard({ pool, busyId, canWrite, onOpen, onMakeDefault }: { pool: ModelPool; busyId: string | null; canWrite: boolean; onOpen: () => void; onMakeDefault: () => void }) {
   const status = poolHealthChip(pool);
   const visibleModels = pool.models.slice().sort((a, b) => a.priority - b.priority).slice(0, 3);
   return (
     <article style={{ display: 'flex', flexDirection: 'column', gap: 13, padding: 16, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-      <div style={{ display: 'flex', alignItems: 'flex-start', gap: 10 }}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: GAP.normal }}>
         <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}><strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-heading)' }}>{pool.name}</strong><Chip label={pool.modelType || 'chat'} color="var(--accent)" bg="var(--accent-soft)" />{pool.isDefaultForType ? <Chip label="默认路由" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-elevated)" /> : null}</div><p style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.65, margin: '7px 0 0' }}>{poolPurpose(pool)}</p></div>
         <Chip label={status.label} color={status.color} bg={status.bg} />
       </div>
@@ -541,7 +541,7 @@ function CardStat({ label, value }: { label: string; value: string }) {
 
 function PoolDetailSummary({ pool }: { pool: ModelPool }) {
   const status = poolHealthChip(pool);
-  return <section style={{ display: 'flex', flexDirection: 'column', gap: 10, padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.65 }}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ color: '#d29922', fontSize: 'var(--fs-caption)' }}>尚无明确绑定的 appCaller。若它是默认池，仍可能承接同类型的自动路由流量。</div>}</section>;
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: 8, padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.65 }}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ color: '#d29922', fontSize: 'var(--fs-caption)' }}>尚无明确绑定的 appCaller。若它是默认池，仍可能承接同类型的自动路由流量。</div>}</section>;
 }
 
 function PoolMembers({ pool, busyId, canWrite, memberPriorities, memberParameterCaps, onPriorityChange, onParameterChange, onCurrencyChange, onSave, onDelete }: { pool: ModelPool; busyId: string | null; canWrite: boolean; memberPriorities: Record<string, string>; memberParameterCaps: Record<string, string>; onPriorityChange: (key: string, value: string) => void; onParameterChange: (key: string, value: string) => void; onCurrencyChange: (poolId: string, member: PoolModelInfo, value: string) => void; onSave: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onDelete: (pool: ModelPool, member: PoolModelInfo) => Promise<void> }) {
@@ -638,7 +638,7 @@ function PoolCreateBar({
         flexShrink: 0,
         display: 'flex',
         flexDirection: 'column',
-        gap: 10,
+        gap: 8,
         padding: 12,
         border: '1px solid var(--border-subtle)',
         borderRadius: 'var(--radius)',

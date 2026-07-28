@@ -66,7 +66,8 @@ export function Button({
   style,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: 'sm' | 'md'; children: ReactNode }) {
-  const h = size === 'sm' ? 30 : 36;
+  // 高度落在控件基准区间（32~38），字号走 --fs-secondary：按钮文字是要读的，不能用 12px 角标档。
+  const h = size === 'sm' ? 32 : 36;
   return (
     <button
       {...rest}
@@ -75,7 +76,7 @@ export function Button({
         height: h,
         padding: size === 'sm' ? '0 10px' : '0 14px',
         borderRadius: 'var(--radius-sm)',
-        fontSize: size === 'sm' ? 12 : 13,
+        fontSize: 'var(--fs-secondary)',
         fontWeight: 500,
         display: 'inline-flex',
         alignItems: 'center',
