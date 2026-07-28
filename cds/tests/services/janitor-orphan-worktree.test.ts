@@ -19,17 +19,23 @@ let removed: string[];
 let mounted: string[] | null;
 let removeError: string | null;
 
+let seenProjectIds: readonly string[] | null = null;
+
 const fsFake = (): OrphanWorktreeFs => ({
-  listWorktreeDirs: async () => [
-    { path: `${BASE}/proj/live`, mtimeMs: OLD },
-    { path: `${BASE}/proj/orphan`, mtimeMs: OLD },
-  ],
+  listWorktreeDirs: async (_base, knownProjectIds) => {
+    seenProjectIds = knownProjectIds;
+    return [
+      { path: `${BASE}/proj/live`, mtimeMs: OLD },
+      { path: `${BASE}/proj/orphan`, mtimeMs: OLD },
+    ];
+  },
   listMountedHostPaths: async () => mounted,
   removeDir: async (dir) => { if (removeError) return removeError; removed.push(dir); return null; },
 });
 
 const stateFake = (): StateService => ({
   getAllBranches: () => [{ id: 'b1', worktreePath: `${BASE}/proj/live` }],
+  getProjects: () => [{ id: 'proj' }],
   getDeploymentVersions: () => [],
   getDefaultBranchFor: () => null,
 } as unknown as StateService);
@@ -46,7 +52,7 @@ const mkJanitor = (): JanitorService => new JanitorService(
   fsFake(),
 );
 
-beforeEach(() => { removed = []; mounted = []; removeError = null; });
+beforeEach(() => { removed = []; mounted = []; removeError = null; seenProjectIds = null; });
 
 describe('janitor 孤儿 worktree 接线', () => {
   it('台账无人认领且无容器挂载 → 真的删掉', async () => {
@@ -69,6 +75,11 @@ describe('janitor 孤儿 worktree 接线', () => {
     const report = await mkJanitor().sweep();
     expect(removed).toEqual([]);
     expect(report.orphanWorktrees?.keptReasons[`${BASE}/proj/orphan`]).toContain('挂载');
+  });
+
+  it('只在已知项目桶下枚举：项目 id 白名单必须传给 fs 层（Codex PR #1275 二轮 P1）', async () => {
+    await mkJanitor().sweep();
+    expect(seenProjectIds).toEqual(['proj']);
   });
 
   it('删除失败进 errors，不静默吞掉', async () => {

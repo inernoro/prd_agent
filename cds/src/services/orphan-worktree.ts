@@ -82,12 +82,30 @@ export function computeOrphanWorktreePlan(input: OrphanWorktreeInput): OrphanWor
   // 故用前缀判定而不是相等判定。
   const isMounted = (dir: string): boolean =>
     mounted.some((m) => m === dir || m.startsWith(`${dir}/`));
+  /**
+   * 与台账路径**有血缘关系**就不许删（Codex PR #1275 二轮 P1 的兜底）。
+   *
+   * 只判相等是不够的：一旦枚举那一层出岔子（历史扁平布局的遗留 worktree 被误当成
+   * 项目桶，它的源码子目录就会被当成候选），候选路径会是某个在用 worktree 的
+   * **祖先或后代**，两者都与任何台账路径不相等，于是一路穿过所有护栏，删掉活的代码树。
+   * 这里把「祖先」「后代」一并挡掉：真正的孤儿与所有台账路径必然毫无包含关系。
+   */
+  const claimedList = [...claimed];
+  const relatedToClaimed = (dir: string): string | null => {
+    for (const c of claimedList) {
+      if (c === dir) return '台账中有分支正在使用';
+      if (c.startsWith(`${dir}/`)) return `是台账在用目录的上级（${c}）`;
+      if (dir.startsWith(`${c}/`)) return `是台账在用目录的子目录（${c}）`;
+    }
+    return null;
+  };
 
   for (const dir of input.diskDirs) {
     const p = normalizeWorktreePath(dir.path);
     if (!p) continue;
-    if (claimed.has(p)) {
-      keptReasons[p] = '台账中有分支正在使用';
+    const related = relatedToClaimed(p);
+    if (related) {
+      keptReasons[p] = related;
       continue;
     }
     if (isMounted(p)) {

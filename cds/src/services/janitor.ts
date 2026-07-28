@@ -227,8 +227,13 @@ export interface JanitorSweepReport {
 
 /** 孤儿 worktree 对账所需的磁盘读写（注入点：测试里换成假实现，不碰磁盘）。 */
 export interface OrphanWorktreeFs {
-  /** 枚举 `<base>/<projectId>/<slug>` 两层下的全部目录。 */
-  listWorktreeDirs: (base: string) => Promise<DiskWorktreeDir[]>;
+  /**
+   * 枚举 `<base>/<projectId>/<slug>` 两层下的全部目录。
+   *
+   * `knownProjectIds` 是**白名单**，不是提示：只有名字在其中的顶层目录才是项目桶，
+   * 其余一律整个跳过（既不当桶往下枚举，也不当候选）。见实现里的注释。
+   */
+  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<DiskWorktreeDir[]>;
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
@@ -236,8 +241,21 @@ export interface OrphanWorktreeFs {
 }
 
 export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
-  listWorktreeDirs: async (base) => {
+  listWorktreeDirs: async (base, knownProjectIds) => {
     const out: DiskWorktreeDir[] = [];
+    // 项目桶白名单（Codex PR #1275 二轮 P1）。此前是「顶层每个目录都当项目桶」，
+    // 在**从扁平布局迁移过来的存量部署**上会酿成删活代码：
+    // FU-04 的 migrateFlatLayoutIfNeeded 采用符号链接而非移动——原来的
+    // `<base>/<slug>` 真实 worktree **原地保留**，只在 `<base>/default/<slug>`
+    // 建一条指向它的符号链接，台账 worktreePath 改指嵌套路径。于是顶层同时存在
+    // 「default 这种真项目桶」和「一堆遗留的真 worktree 目录」。把后者当桶枚举，
+    // 吐出来的候选就是 `cds/` `prd-api/` `doc/` 这些**活代码树的源码子目录**：
+    // 它们不等于任何台账路径（台账指向嵌套的符号链接路径），挂载检查又是「后代」
+    // 语义（容器挂的是 worktree 根，不是这些子目录），两小时年龄线更是随便就过——
+    // 三道护栏一道都拦不住，直接递归删掉在跑的工作树。
+    // 白名单让这条路根本走不到：遗留 worktree 名字不在项目 id 里，整个跳过。
+    const allowed = new Set(knownProjectIds.map((s) => (s || '').trim()).filter(Boolean));
+    if (allowed.size === 0) return out; // 拿不到项目清单就不对账，宁可不清也不误删
     let projects: fs.Dirent[];
     try {
       projects = fs.readdirSync(base, { withFileTypes: true });
@@ -245,7 +263,9 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       return out; // base 不存在 = 没什么可对账的
     }
     for (const proj of projects) {
+      // isDirectory() 走 lstat 语义：顶层若是符号链接一律不认（只认真实项目桶）
       if (!proj.isDirectory()) continue;
+      if (!allowed.has(proj.name)) continue;
       const projDir = path.posix.join(base, proj.name);
       let slugs: fs.Dirent[];
       try {
@@ -438,7 +458,10 @@ export class JanitorService {
    * worktreePath，差集即孤儿（判定与护栏见 orphan-worktree.ts）。
    */
   private async runOrphanWorktreeReconcile(): Promise<NonNullable<JanitorSweepReport['orphanWorktrees']>> {
-    const diskDirs = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase);
+    // 只在**已知项目桶**下枚举：顶层的遗留扁平 worktree 不是桶，不许往里走（见
+    // defaultOrphanWorktreeFs.listWorktreeDirs 注释里的迁移布局说明）。
+    const knownProjectIds = this.stateService.getProjects().map((p) => p.id).filter(Boolean);
+    const diskDirs = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
     const claimedPaths = this.stateService.getAllBranches()
       .map((b) => b.worktreePath)
       .filter((p): p is string => !!p);

@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rewriteRelationalUrlDb, engineFromRelationalUrls } from '../../src/services/replica-db-clone.js';
+import { rewriteRelationalUrlDb, engineFromRelationalUrls, isRelationalUrl } from '../../src/services/replica-db-clone.js';
 
 /**
  * 关系型隔离必须重写连接 URL（Codex 第三十二轮 P1）。
@@ -89,5 +89,46 @@ describe('引擎中立库名 key 的引擎判定（2026-07-28 真机验收补）
   it('没有关系型 URL → null（mongo 项目不受影响，走它自己的 key 家族）', () => {
     expect(engineFromRelationalUrls({ MONGO_URI: 'mongodb://m:27017/d' })).toBeNull();
     expect(engineFromRelationalUrls({})).toBeNull();
+  });
+});
+
+/**
+ * 「能据此判引擎」与「要跟着改库名」必须是同一个答案（Codex PR #1275 二轮 P1）。
+ *
+ * 曾经是两条各写各的正则：探测认 jdbc:mariadb，改写集合却只列 jdbc:mysql /
+ * jdbc:postgresql。于是 DB_NAME + SPRING_DATASOURCE_URL=jdbc:mariadb://... 的
+ * Java 服务被判为可隔离，克隆照跑、库名 key 照改，但应用真正读的那条 JDBC URL
+ * 不在改写集合里 —— 副本流量继续打源库，控制面还报「隔离成功」。
+ */
+describe('引擎探测与 URL 改写必须同口径', () => {
+  const SCHEMES = [
+    'mysql://h:3306/d', 'mariadb://h:3306/d',
+    'postgres://h:5432/d', 'postgresql://h:5432/d',
+    'jdbc:mysql://h:3306/d', 'jdbc:mariadb://h:3306/d',
+    'jdbc:postgres://h:5432/d', 'jdbc:postgresql://h:5432/d',
+  ];
+
+  it('凡是能判出引擎的连接串，都必须被认成「要改写的 URL」', () => {
+    for (const url of SCHEMES) {
+      expect(engineFromRelationalUrls({ X: url })).not.toBeNull();
+      expect(isRelationalUrl(url)).toBe(true);
+    }
+  });
+
+  it('jdbc:mariadb 的库名段真的能改写（此前整条被漏掉）', () => {
+    expect(rewriteRelationalUrlDb('jdbc:mariadb://mysql:3306/impdb?useSSL=false', 'impdb', 'impdb_rs_x'))
+      .toBe('jdbc:mariadb://mysql:3306/impdb_rs_x?useSSL=false');
+  });
+
+  it('jdbc:postgres（不带 ql）同样不能漏', () => {
+    expect(rewriteRelationalUrlDb('jdbc:postgres://pg:5432/impdb', 'impdb', 'impdb_rs_x'))
+      .toBe('jdbc:postgres://pg:5432/impdb_rs_x');
+  });
+
+  it('非关系型的值一律不认（mongo 走自己的通道，别的字符串更不能碰）', () => {
+    expect(isRelationalUrl('mongodb://m:27017/d')).toBe(false);
+    expect(isRelationalUrl('redis://r:6379')).toBe(false);
+    expect(isRelationalUrl('')).toBe(false);
+    expect(isRelationalUrl(undefined)).toBe(false);
   });
 });

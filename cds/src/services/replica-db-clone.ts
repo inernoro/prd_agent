@@ -62,12 +62,33 @@ const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> 
  */
 const ENGINE_NEUTRAL_DB_ENV_PATTERN = /^(CDS_)?(DB|DATABASE)_{1,2}(NAME)$/i;
 
+/**
+ * 关系型连接 URL 的 scheme —— **识别与改写共用这一条**（Codex PR #1275 二轮 P1）。
+ *
+ * 曾经是两条各写各的：引擎探测认 `(jdbc:)?(mysql|mariadb|postgres(ql)?)`，而下游
+ * 决定「哪些 URL 要跟着改库名」的那条只列了 `mysql|mariadb|postgres|postgresql|
+ * jdbc:mysql|jdbc:postgresql`，漏掉 `jdbc:mariadb` 与 `jdbc:postgres`。后果是最坏的
+ * 那种：用 `DB_NAME` + `SPRING_DATASOURCE_URL=jdbc:mariadb://…` 的 Java 服务被判为
+ * 可隔离（探测认得），克隆照跑、库名 key 照改，但那条 JDBC URL 进不了改写集合——
+ * 应用读的正是它，于是副本流量继续打在源库上，控制面还报「隔离成功」。这正是
+ * 已经修过两轮的「隔离是假的」原样复活。合成一条 SSOT，从根上不给漂移留缝。
+ */
+const RELATIONAL_URL_SCHEME = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i;
+
+/**
+ * 这个值是不是关系型连接 URL —— 「能否据此判引擎」与「要不要跟着改库名」必须是
+ * 同一个答案，所以两处都调这个函数，不各自 test 各自的正则。
+ */
+export function isRelationalUrl(value: unknown): boolean {
+  return typeof value === 'string' && RELATIONAL_URL_SCHEME.test(value.trim());
+}
+
 /** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
 export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
   const found = new Set<ReplicaDbEngine>();
   for (const value of Object.values(env)) {
     if (typeof value !== 'string') continue;
-    const m = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i.exec(value.trim());
+    const m = RELATIONAL_URL_SCHEME.exec(value.trim());
     if (!m) continue;
     const scheme = m[2].toLowerCase();
     found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
@@ -145,8 +166,8 @@ export function rewriteRelationalUrlDb(url: string, sourceDb: string, isolatedDb
   return `${prefix}/${isolatedDb}${tail || ''}`;
 }
 
-/** 值看起来像关系型连接 URL（用于把它们纳入隔离覆写范围）。 */
-const RELATIONAL_URL_SCHEME = /^(mysql|mariadb|postgres|postgresql|jdbc:mysql|jdbc:postgresql):\/\//i;
+// 「值看起来像关系型连接 URL」的判定与引擎探测共用上面那条 RELATIONAL_URL_SCHEME，
+// 不再各写一份（两份漂移过一次，见该常量的注释）。
 
 /**
  * 隔离时的 env 覆写公共部分：库名 key + 关系型连接 URL 的库名段重写。
@@ -298,7 +319,7 @@ export function resolveReplicaDbTarget(
   const urlEnvValues: Record<string, string> = {};
   if (engine !== 'mongo') {
     for (const [key, value] of Object.entries(runtimeEnv)) {
-      if (typeof value !== 'string' || !RELATIONAL_URL_SCHEME.test(value)) continue;
+      if (!isRelationalUrl(value)) continue;
       if (rewriteRelationalUrlDb(value, sourceDb, 'probe') !== null) urlEnvValues[key] = value;
     }
   }
