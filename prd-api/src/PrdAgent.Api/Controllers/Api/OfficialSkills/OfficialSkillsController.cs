@@ -214,7 +214,9 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine("## 下一步");
         sb.AppendLine();
         sb.AppendLine(string.IsNullOrWhiteSpace(bundle.FirstStep)
-            ? "打开 Claude Code，输入 `/sdd-init`。"
+            // 安装支持 .claude / .cursor / .agents 三个宿主，这句兜底文案就不能钉死某一个 ——
+            // 只装了 Cursor 或 Codex 的用户会被指去一个他没有的工具。
+            ? "在你的 AI 编码工具里输入 `/sdd-init`。"
             : bundle.FirstStep);
         sb.AppendLine();
         sb.AppendLine("## 这套里都有什么");

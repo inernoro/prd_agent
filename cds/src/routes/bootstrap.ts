@@ -198,6 +198,17 @@ const UPSTREAM_PACK_TTL_MS = 10 * 60_000;
  * 超时也无体积上限、更没有缓存或单飞：上游一旦卡住或返回超大响应，并发调用方
  * 就能把连接和堆一起吃干净。本地分支的 CdsSkillPackCache 保护不到这里。
  */
+/**
+ * 上游返回的字节是不是 gzip（技能包是 .tar.gz）。
+ *
+ * 与 skill-proxy 的 looksLikeZip 同一件事、同一个理由：不校验的话，网关故障期
+ * 常见的「200 + HTML 错误页」会被当成技能包缓存住，客户侧 tar 解不开，且上游
+ * 恢复后仍要等缓存过期才自愈。魔数只挡「根本不是 gzip」，完整性由 tar 兜底。
+ */
+export function looksLikeGzip(buf: Buffer): boolean {
+  return buf.byteLength >= 2 && buf[0] === 0x1f && buf[1] === 0x8b;
+}
+
 class UpstreamSkillPackCache {
   private cached: { body: Buffer; at: number } | null = null;
   private inflight: Promise<Buffer> | null = null;
@@ -216,6 +227,8 @@ class UpstreamSkillPackCache {
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const body = await readCappedBody(res, UPSTREAM_PACK_MAX_BYTES);
         if (body.byteLength === 0) throw new Error('上游返回空内容');
+        // 入缓存前认一下，避免把错误页缓存成技能包（见 looksLikeGzip 注释）
+        if (!looksLikeGzip(body)) throw new Error('上游返回的不是 tar.gz（可能是错误页）');
         this.cached = { body, at: this.now() };
         return body;
       })().finally(() => { this.inflight = null; });

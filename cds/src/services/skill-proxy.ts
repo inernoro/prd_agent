@@ -55,6 +55,25 @@ export async function readCappedBody(res: Response, maxBytes: number): Promise<B
   return Buffer.concat(chunks);
 }
 
+/**
+ * 上游返回的字节到底是不是一个 zip。
+ *
+ * 不校验的后果不是「下载失败」而是「失败被缓存住」：MAP 前面挡了一层网关时，
+ * 故障期常见的是 200 + 一张 HTML 错误页，非空、够长、看着像正常响应。那份内容
+ * 会被当成技能包写进十分钟缓存，客户侧 unzip 报错，而且**MAP 恢复了也没用**——
+ * 得等缓存自己过期。所以要在落盘之前认出它。
+ *
+ * 只认魔数不解析目录：截断的 zip 同样以 PK\x03\x04 开头，这里挡的是「根本不是 zip」
+ * 这一类（HTML/JSON 错误页），完整性由下游 unzip 兜底。
+ */
+export function looksLikeZip(buf: Buffer): boolean {
+  if (buf.byteLength < 4) return false;
+  if (buf[0] !== 0x50 || buf[1] !== 0x4b) return false; // "PK"
+  // 本地文件头 / 空档案 / 分卷，三种合法起始
+  const c = buf[2], d = buf[3];
+  return (c === 0x03 && d === 0x04) || (c === 0x05 && d === 0x06) || (c === 0x07 && d === 0x08);
+}
+
 export interface SkillProxyOptions {
   /** MAP 基址，来自 CDS 配置；自托管客户可指向自己的 MAP 实例。 */
   mapBase: string;
@@ -209,6 +228,8 @@ export class SkillProxy {
     if (!res.ok) throw new Error(`HTTP ${res.status}`);
     const buf = await readCappedBody(res, MAX_SKILL_BYTES);
     if (buf.byteLength === 0) throw new Error('上游返回空内容');
+    // 落盘/入缓存前认一下：200 + HTML 错误页会被缓存十分钟，届时 MAP 恢复也救不回来
+    if (!looksLikeZip(buf)) throw new Error('上游返回的不是 zip（可能是错误页）');
     return buf;
   }
 
@@ -216,7 +237,11 @@ export class SkillProxy {
     try {
       const stat = fs.statSync(cachePath);
       if (!stat.isFile() || stat.size === 0) return null;
-      return { body: fs.readFileSync(cachePath), mtimeMs: stat.mtimeMs };
+      const body = fs.readFileSync(cachePath);
+      // 旧版本写进来的坏内容（校验是 2026-07-28 才加的）当成未命中，让它自愈回源，
+      // 而不是一直把错误页当作「陈旧但可用的副本」发下去
+      if (!looksLikeZip(body)) return null;
+      return { body, mtimeMs: stat.mtimeMs };
     } catch {
       return null;
     }

@@ -87,3 +87,8 @@
 | fix | 技能 | 分发技能里的可执行路径改为运行时探测宿主（.claude/.cursor/.agents），Cursor 与 Codex 项目不再拿到指向 .claude 的死路径 |
 | fix | cds | 「接入智能体」的引导命令改为先落盘再执行，端点不可达时退出码非零而不是静默成功并跑旧脚本 |
 | test | cds | 新增两条守卫：分发技能不得写死宿主路径、引导命令必须失败可见 |
+| fix | prd-api | 防滥用分桶（限流 + 下载去重）改用 GetAbuseControlClientIp：只在对端是我方反代时才采信 X-Real-IP，直连暴露时调用方无法每请求换个头换一份新配额 |
+| fix | cds | 技能包回源加档案魔数校验（zip / tar.gz），200 返回的 HTML 错误页不再被缓存成技能包、上游恢复后立即自愈 |
+| fix | prd-api | 套装 INSTALL.md 与 firstStep 文案去掉写死的 Claude Code，改为「你的 AI 编码工具」，只装 Cursor/Codex 的用户不再被指去一个没有的工具 |
+| test | prd-api | 分桶守卫改钉新口径并覆盖下载去重同源处；新增「对端是公网时不采信 X-Real-IP」用例 |
+| test | cds | 新增四个用例：代理与上游两条路径各自拒收错误页、磁盘坏缓存自愈、恢复后免等 TTL |

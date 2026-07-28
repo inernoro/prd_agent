@@ -108,6 +108,22 @@ public class SkillDownloadCounterTests
     }
 
     [Fact]
+    public void 对端是公网时不采信_X_Real_IP()
+    {
+        // Kestrel 直接暴露（或反代不覆盖该头）时，若无条件采信 X-Real-IP，
+        // 刷榜方每次换个头值就是一个新调用方，去重窗口形同虚设。
+        var cache = NewCache();
+
+        var a = HttpFrom("203.0.113.7");                 // 公网对端 = 不可信来源
+        a.Request.Headers["X-Real-IP"] = "198.51.100.1";
+        var b = HttpFrom("203.0.113.7");                 // 同一个人，换个伪造头
+        b.Request.Headers["X-Real-IP"] = "198.51.100.2";
+
+        SkillDownloadCounter.ShouldCount(cache, a, "skill-a", null).ShouldBeTrue();
+        SkillDownloadCounter.ShouldCount(cache, b, "skill-a", null).ShouldBeFalse();
+    }
+
+    [Fact]
     public void 匿名指纹不泄露原始_IP()
     {
         // 指纹只在内存里当去重键，但仍然哈希 —— 万一将来被打进日志也不该带出原始 IP

@@ -24,8 +24,13 @@ import {
   findPreset,
 } from '../../src/routes/bootstrap.js';
 
+/** 合法 zip 前缀（PK\x03\x04 本地文件头）+ 一个标记，用来分辨是哪一次回源的产物。 */
+function zipBytes(marker: string): Buffer {
+  return Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.from(marker)]);
+}
+
 function zipBody(marker: string): Response {
-  return new Response(Buffer.from(`PK-${marker}`), { status: 200 });
+  return new Response(zipBytes(marker), { status: 200 });
 }
 
 describe('SkillProxy', () => {
@@ -109,6 +114,46 @@ describe('SkillProxy', () => {
     });
     await expect(proxy.fetchSkill('pm-starter')).rejects.toBeInstanceOf(SkillProxyError);
     expect(fs.existsSync(path.join(cacheDir, 'pm-starter.zip'))).toBe(false);
+  });
+
+  it('上游 200 返回 HTML 错误页时不当成技能包，也不写进缓存', async () => {
+    // 这是「失败被缓存住」的形态：非空、够长、状态 200，但根本不是 zip。
+    // 一旦落缓存，客户侧 unzip 报错，且 MAP 恢复后仍要等缓存过期才自愈。
+    let calls = 0;
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      fetchImpl: async () => {
+        calls += 1;
+        if (calls === 1) {
+          return new Response(Buffer.from('<html><body>502 Bad Gateway</body></html>'), { status: 200 });
+        }
+        return zipBody('recovered');
+      },
+    });
+
+    await expect(proxy.fetchSkill('pm-starter')).rejects.toBeInstanceOf(SkillProxyError);
+    expect(fs.existsSync(path.join(cacheDir, 'pm-starter.zip'))).toBe(false);
+
+    // 上游恢复后立刻能拿到真包，不必等任何 TTL
+    const ok = await proxy.fetchSkill('pm-starter');
+    expect(ok.source).toBe('upstream');
+    expect(ok.body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+  });
+
+  it('磁盘上的坏缓存当作未命中，回源自愈而不是继续发错误页', async () => {
+    // 校验是 2026-07-28 才加的，此前写进去的坏内容必须能自己走掉
+    fs.writeFileSync(path.join(cacheDir, 'pm-starter.zip'), Buffer.from('<html>oops</html>'));
+
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      fetchImpl: async () => zipBody('fresh'),
+    });
+
+    const got = await proxy.fetchSkill('pm-starter');
+    expect(got.source).toBe('upstream');
+    expect(got.stale).toBe(false);
   });
 });
 
@@ -237,8 +282,12 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
 
 describe('上游 CDS 技能包回源（自托管无本地技能树时的唯一来源）', () => {
   const url = 'https://up.test/api/skills/cds-pack/download';
+  // 技能包是 .tar.gz，所以要带上 gzip 魔数，否则会被「不是 tar.gz」的校验挡下
   const okResponse = (bytes: number): Response =>
-    new Response(Buffer.alloc(bytes, 1), { status: 200 });
+    new Response(
+      Buffer.concat([Buffer.from([0x1f, 0x8b]), Buffer.alloc(Math.max(0, bytes - 2), 1)]),
+      { status: 200 },
+    );
 
   let originalFetch: typeof globalThis.fetch;
   beforeEach(() => { originalFetch = globalThis.fetch; });
@@ -288,6 +337,23 @@ describe('上游 CDS 技能包回源（自托管无本地技能树时的唯一�
     expect(__upstreamPackLimitsForTest.timeoutMs).toBeGreaterThan(0);
   });
 
+  it('上游 200 返回 HTML 错误页时不缓存，恢复后立刻自愈', async () => {
+    // 与 SkillProxy 同源的坑：不校验就会把错误页缓存成技能包，上游恢复也得等 TTL
+    let calls = 0;
+    globalThis.fetch = (async () => {
+      calls += 1;
+      if (calls === 1) return new Response(Buffer.from('<html>502</html>'), { status: 200 });
+      return okResponse(64);
+    }) as typeof globalThis.fetch;
+
+    const cache = new UpstreamSkillPackCache();
+    await expect(cache.get(url)).rejects.toThrow(/tar\.gz/);
+
+    const ok = await cache.get(url);
+    expect(ok.cached).toBe(false);
+    expect(ok.body.subarray(0, 2)).toEqual(Buffer.from([0x1f, 0x8b]));
+  });
+
   it('时钟回拨不会让缓存永不失效', async () => {
     let calls = 0;
     globalThis.fetch = (async () => { calls += 1; return okResponse(64); }) as typeof globalThis.fetch;
@@ -312,12 +378,16 @@ describe('技能包回源的边界保护（匿名路径，无全局限流）', (
   const proxyWith = (fetchImpl: typeof fetch): SkillProxy =>
     new SkillProxy({ mapBase: 'https://map.test', cacheDir, fetchImpl });
 
+  // 技能包是 zip，body 必须带 PK 魔数，否则会被「不是 zip」的校验挡下
+  const zipOf = (bytes: number): Buffer =>
+    Buffer.concat([Buffer.from([0x50, 0x4b, 0x03, 0x04]), Buffer.alloc(Math.max(0, bytes - 4), 7)]);
+
   it('同一 key 的并发回源合并成一次（单飞）', async () => {
     let calls = 0;
     const proxy = proxyWith((async () => {
       calls += 1;
       await new Promise((r) => setTimeout(r, 20));
-      return new Response(Buffer.alloc(512, 7), { status: 200 });
+      return new Response(zipOf(512), { status: 200 });
     }) as typeof fetch);
 
     const all = await Promise.all([
@@ -334,7 +404,7 @@ describe('技能包回源的边界保护（匿名路径，无全局限流）', (
     let calls = 0;
     const proxy = proxyWith((async () => {
       calls += 1;
-      return new Response(Buffer.alloc(64, 1), { status: 200 });
+      return new Response(zipOf(64), { status: 200 });
     }) as typeof fetch);
 
     await Promise.all([proxy.fetchSkill('pm-starter'), proxy.fetchSkill('dev-starter')]);
@@ -345,7 +415,7 @@ describe('技能包回源的边界保护（匿名路径，无全局限流）', (
     let sawSignal = false;
     const proxy = proxyWith((async (_u: unknown, init?: RequestInit) => {
       sawSignal = init?.signal instanceof AbortSignal;
-      return new Response(Buffer.alloc(32, 1), { status: 200 });
+      return new Response(zipOf(32), { status: 200 });
     }) as typeof fetch);
 
     await proxy.fetchSkill('pm-starter');

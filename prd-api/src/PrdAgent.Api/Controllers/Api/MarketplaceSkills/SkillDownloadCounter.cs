@@ -40,16 +40,19 @@ public static class SkillDownloadCounter
     /// <summary>
     /// 调用方标识：登录用户取 userId，匿名取客户端 IP 的哈希。
     ///
-    /// IP 必须走 <see cref="HttpRequestExtensions.GetRealClientIp"/> 而不是裸的
+    /// IP 走 <see cref="HttpRequestExtensions.GetAbuseControlClientIp"/> 而不是裸的
     /// <c>RemoteIpAddress</c>：生产是反代 + Docker 网络，裸取到的是上一跳的共享地址，
     /// 那样一个匿名用户下载之后，同一代理后面的所有人都会被压制十分钟，计数反而少记。
+    ///
+    /// 也不走 GetRealClientIp（无条件采信 X-Real-IP，只适合展示/统计）：这条闸是防刷，
+    /// 无条件采信等于让刷榜方每次换个头就绕过窗口。该方法只在对端是我方反代时才采信。
     ///
     /// 哈希后再用：只在内存里当去重键，不落库、不写日志，万一将来被打进日志也不该带出原始 IP。
     /// </summary>
     public static string Fingerprint(HttpContext http, string? userId)
     {
         if (!string.IsNullOrEmpty(userId)) return $"u:{userId}";
-        var ip = http.GetRealClientIp() ?? "unknown";
+        var ip = http.GetAbuseControlClientIp() ?? "unknown";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip));
         return $"a:{Convert.ToHexString(hash.AsSpan(0, 8))}";
     }

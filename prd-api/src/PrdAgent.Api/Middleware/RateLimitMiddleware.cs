@@ -81,11 +81,14 @@ public class RateLimitMiddleware
         if (!string.IsNullOrEmpty(userId))
             return $"user:{userId}";
 
-        // 必须走 GetRealClientIp：生产是 Nginx + Docker，裸的 RemoteIpAddress 是反代的
-        // 共享地址，所有匿名访客会被算成同一个 clientId 共用一个桶 —— 海鲜市场的读接口
-        // 2026-07-28 改匿名之后，一个忙碌客户端就能让所有人的列表/详情/标签/下载 429。
-        // GetRealClientIp 只信反代覆盖的 X-Real-IP，取不到时仍回落到 RemoteIpAddress。
-        var ip = context.GetRealClientIp() ?? "unknown";
+        // 走 GetAbuseControlClientIp 而不是裸的 RemoteIpAddress：生产是 Nginx + Docker，
+        // 裸取到的是反代共享地址，所有匿名访客共用一个桶 —— 海鲜市场的读接口 2026-07-28
+        // 改匿名之后，一个忙碌客户端就能让所有人的列表/详情/标签/下载 429。
+        //
+        // 也不走 GetRealClientIp（那条无条件采信 X-Real-IP，只适合展示/统计）：分桶是安全
+        // 控制，无条件采信等于让调用方自选桶键，每个请求换一个头就是一份新配额。
+        // GetAbuseControlClientIp 只在对端是回环/私网（即我方反代）时才采信该头。
+        var ip = context.GetAbuseControlClientIp() ?? "unknown";
         return $"ip:{ip}";
     }
 

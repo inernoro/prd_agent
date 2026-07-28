@@ -137,7 +137,7 @@
         "task-handoff-checklist",
         "laowang"
       ],
-      "firstStep": "解压后打开 Claude Code，输入 /sdd-init"
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
     },
     {
       "key": "dev-starter",
@@ -166,7 +166,7 @@
         "create-skill-file",
         "laowang"
       ],
-      "firstStep": "解压后打开 Claude Code，输入 /sdd-init"
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
     },
     {
       "key": "qa-starter",
@@ -193,7 +193,7 @@
         "task-handoff-checklist",
         "laowang"
       ],
-      "firstStep": "解压后打开 Claude Code，输入 /sdd-init"
+      "firstStep": "解压后在你的 AI 编码工具里输入 /sdd-init"
     }
   ]
 }
