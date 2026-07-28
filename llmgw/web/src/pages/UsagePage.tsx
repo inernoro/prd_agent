@@ -7,6 +7,7 @@ import { Button, Card, SectionLoader } from '@/components/ui';
 import { fmtCost, fmtCompact, fmtShortTime } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_LABEL } from '@/lib/typography';
 
 export function UsagePage() {
   const { tenant } = useAuth();
@@ -285,5 +286,5 @@ function reconciliationStatusMeta(status: string) {
   return { label: status || '未知状态', explanation: '状态尚未形成可比较差额', color: 'var(--text-muted)', background: 'var(--bg-elevated)' };
 }
 
-const labelStyle: React.CSSProperties = { display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' };
+const labelStyle: React.CSSProperties = FIELD_LABEL;
 const inputStyle: React.CSSProperties = { width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '8px 9px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };

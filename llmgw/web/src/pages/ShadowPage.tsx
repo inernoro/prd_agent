@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getLogsMeta, getShadowComparisons } from '@/lib/api';
 import type { ShadowData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 type QuickFilter = 'all' | 'critical' | 'httpFail';
 
@@ -71,22 +72,10 @@ export function ShadowPage() {
     return true;
   });
 
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--fs-caption)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
-  const selectStyle: React.CSSProperties = {
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-subtle)',
-    color: 'var(--text-secondary)',
-    borderRadius: 8,
-    height: 30,
-    padding: '0 8px',
-    fontSize: 'var(--fs-caption)',
-  };
-  const inputStyle: React.CSSProperties = {
-    ...selectStyle,
-    width: 180,
-    minWidth: 140,
-  };
+  const th = TABLE_HEAD_CELL;
+  const td = TABLE_CELL;
+  const selectStyle: React.CSSProperties = TOOLBAR_CONTROL;
+  const inputStyle: React.CSSProperties = TOOLBAR_CONTROL;
   const clearFilters = () => {
     setAppCaller('');
     setReleaseCommit('');
@@ -173,7 +162,7 @@ export function ShadowPage() {
         <Empty text={data.recent.length === 0 ? '暂无影子比对样本（Mode=shadow 或配了灰度白名单后开始积累）' : '当前快速筛选下暂无样本'} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
               <tr>
                 <th style={th}>时间</th>

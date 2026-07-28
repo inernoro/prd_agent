@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getOperationAudits } from '@/lib/api';
 import type { OperationAuditItem, OperationAuditsData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 const PAGE_SIZE = 50;
 const SINCE_OPTIONS = [
@@ -50,8 +51,8 @@ export function AuditsPage() {
   }, [page, action, targetType, actor, success, search, sinceHours]);
 
   const pages = useMemo(() => Math.max(1, Math.ceil((data?.total ?? 0) / PAGE_SIZE)), [data?.total]);
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 'var(--fs-caption)', color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
+  const th = TABLE_HEAD_CELL;
+  const td = TABLE_CELL;
 
   if (error) return <Empty text={error} />;
 
@@ -87,7 +88,7 @@ export function AuditsPage() {
 
       {!data ? <SectionLoader text="正在加载操作审计…" /> : data.items.length === 0 ? <Empty text="暂无操作审计" /> : (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
               <tr>
                 <th style={th}>时间</th>
@@ -237,12 +238,4 @@ function Empty({ text }: { text: string }) {
   );
 }
 
-const selectStyle: React.CSSProperties = {
-  height: 32,
-  background: 'var(--bg-input)',
-  color: 'var(--text-primary)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius-sm)',
-  padding: '0 9px',
-  fontSize: 'var(--fs-caption)',
-};
+const selectStyle: React.CSSProperties = TOOLBAR_CONTROL;

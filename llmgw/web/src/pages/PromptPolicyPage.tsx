@@ -3,6 +3,7 @@ import { Link, useParams } from 'react-router-dom';
 import { rollbackPromptPolicy, getPromptPolicy, previewPromptPolicy, savePromptPolicy } from '@/lib/api';
 import type { PromptPolicyData, PromptPolicyDraft, PromptPolicyPreview } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
 
 const VARIABLES = ['tenantId', 'teamId', 'appCallerCode', 'requestType', 'sourceSystem'];
 const emptyDraft: PromptPolicyDraft = { expectedVersion: 0, systemPromptPrefix: '', systemPromptSuffix: '', enabled: true, allowedVariables: [], maxChars: 8000 };
@@ -83,7 +84,7 @@ export function PromptPolicyPage() {
       <section style={card}><h2 style={heading}>预览</h2><TextArea label="示例请求 system prompt" value={sample} onChange={setSample} />
         {preview ? <div style={{ marginTop: 10 }}><div style={{ display: 'flex', gap: 7, flexWrap: 'wrap' }}><Chip label={`${preview.policyChars} 个本次生效字符`} color="#58a6ff" bg="rgba(88,166,255,.14)" /><Chip label={`${preview.mergedChars} 个合并后字符`} color="#58a6ff" bg="rgba(88,166,255,.14)" /><Chip label={`hash ${preview.policyHash.slice(0, 12)}`} color="var(--text-primary)" bg="var(--bg-elevated)" /></div><pre style={pre}>{preview.mergedSystemPrompt || '空 system prompt'}</pre></div> : <p style={hint}>修改草稿后点击预览；预览不保存、不调用付费模型。</p>}
       </section>
-      <section style={card}><h2 style={heading}>版本历史</h2><p style={hint}>回滚不会改写旧记录，而是以所选版本为内容创建一个新的版本。</p>{data?.versions.length ? <div style={{ overflowX: 'auto', marginTop: 8 }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['版本','状态','hash','模板字符','更新时间','操作'].map((x) => <th key={x} style={th}>{x}</th>)}</tr></thead><tbody>{data.versions.map((item) => <tr key={item.id}><td style={td}>v{item.version}</td><td style={td}>{item.enabled ? '启用' : '禁用'}</td><td style={td}><code>{item.policyHash.slice(0, 12)}</code></td><td style={td}>{item.policyChars}</td><td style={td}>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td><td style={td}><Button size="sm" variant="ghost" disabled={busy || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button></td></tr>)}</tbody></table></div> : <p style={hint}>暂无版本。</p>}</section>
+      <section style={card}><h2 style={heading}>版本历史</h2><p style={hint}>回滚不会改写旧记录，而是以所选版本为内容创建一个新的版本。</p>{data?.versions.length ? <div style={{ overflowX: 'auto', marginTop: 8 }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['版本','状态','hash','模板字符','更新时间','操作'].map((x) => <th key={x} style={th}>{x}</th>)}</tr></thead><tbody>{data.versions.map((item) => <tr key={item.id}><td style={td}>v{item.version}</td><td style={td}>{item.enabled ? '启用' : '禁用'}</td><td style={td}><code>{item.policyHash.slice(0, 12)}</code></td><td style={td}>{item.policyChars}</td><td style={td}>{item.updatedAt ? new Date(item.updatedAt).toLocaleString() : '—'}</td><td style={td}><Button size="sm" variant="ghost" disabled={busy || item.version === data.current?.version} onClick={() => void rollback(item.version)}>回滚</Button></td></tr>)}</tbody></table></div> : <p style={hint}>暂无版本。</p>}</section>
     </div>
   </div>;
 }
@@ -96,7 +97,7 @@ const inputStyle: React.CSSProperties = { height: 34, color: 'var(--text-primary
 const hint: React.CSSProperties = { margin: '6px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.55 };
 const heading: React.CSSProperties = { margin: '0 0 10px', fontSize: 'var(--fs-body)' };
 const pre: React.CSSProperties = { whiteSpace: 'pre-wrap', overflowWrap: 'anywhere', padding: 12, background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)', lineHeight: 1.55 };
-const th: React.CSSProperties = { textAlign: 'left', padding: 8, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
-const td: React.CSSProperties = { padding: 8, borderTop: '1px solid var(--border-subtle)', fontSize: 'var(--fs-caption)' };
+const th: React.CSSProperties = TABLE_HEAD_CELL;
+const td: React.CSSProperties = TABLE_CELL;
 const errorStyle: React.CSSProperties = { ...card, color: '#f85149', background: 'rgba(248,81,73,.08)' };
 const noticeStyle: React.CSSProperties = { ...card, color: '#3fb950', background: 'rgba(63,185,80,.08)' };

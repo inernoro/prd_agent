@@ -3285,16 +3285,35 @@ a:focus-visible {
 .lg-log-filters input {
   width: 100% !important;
   min-width: 0 !important;
-  height: 30px;
+  /* 筛选抽屉里的控件与工具条同档（13px/36px 高），不再比可见工具条更小一号。 */
+  height: 36px;
   padding: 0 8px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
   background: var(--bg-input);
   color: var(--text-secondary);
-  font-size: var(--fs-caption);
+  font-size: var(--fs-secondary);
 }
 
 /* .lg-logs-heading 的字号/对齐已并入上方页头 SSOT，这里不再重复定义。 */
+
+/* 页面数据表：与请求记录页表格同一套观感（表头底色 + 行分隔 + hover 高亮）。
+   字号/行高由 lib/typography.ts 的 TABLE_HEAD_CELL / TABLE_CELL 提供，这里只管 chrome。 */
+.lg-data-table thead th {
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  background: var(--bg-surface);
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lg-data-table tbody tr:hover > td {
+  background: var(--bg-hover);
+}
+
+.lg-data-table tbody tr:last-child > td {
+  border-bottom: 1px solid var(--border-subtle);
+}
 
 .lg-log-page-actions {
   display: flex;

@@ -46,8 +46,23 @@ for (const full of walk(SRC)) {
   });
 }
 
+// 规则二：角色档位。表格、表单、控件这些「要读的内容」不许降到 12/11px
+// ——档位对但角色错，页面照样会比请求记录页糊一档。统一从 lib/typography.ts 取。
+const ROLE_DECLS = /const\s+(th|td|labelStyle|inputStyle|selectStyle|formInputStyle|fieldStyle)\b/;
+const TOO_SMALL = /--fs-(caption|micro)/;
+
+for (const full of walk(SRC)) {
+  const rel = path.relative(SRC, full);
+  if (!/\.tsx?$/.test(rel) || rel === 'lib/typography.ts') continue;
+  fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
+    if (ROLE_DECLS.test(line) && TOO_SMALL.test(line)) {
+      violations.push(`${rel}:${i + 1}  表格/表单角色用了 caption/micro 档  ← 请 spread lib/typography.ts 的 TABLE_CELL / FIELD_LABEL 等角色常量`);
+    }
+  });
+}
+
 if (violations.length) {
-  console.error('字体阶梯守卫未通过，发现硬编码字号：\n');
+  console.error('字体阶梯守卫未通过：\n');
   for (const v of violations) console.error('  ' + v);
   console.error('\n档位：--fs-title 20 / --fs-metric 17 / --fs-heading 15 / --fs-body 14 / --fs-secondary 13 / --fs-caption 12 / --fs-micro 11');
   console.error('确有平台级例外时，请在 scripts/check-typography.mjs 的 EXCEPTIONS 里登记并写明原因。');

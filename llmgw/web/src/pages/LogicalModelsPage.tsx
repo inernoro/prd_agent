@@ -20,12 +20,12 @@ import type {
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_INPUT, FIELD_LABEL, TABLE_CELL_MUTED } from '@/lib/typography';
 
 const inputStyle: React.CSSProperties = {
-  width: '100%', height: 34, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)',
-  background: 'var(--bg-input)', color: 'var(--text-primary)', padding: '0 10px', fontSize: 'var(--fs-caption)',
+  ...FIELD_INPUT,
 };
-const labelStyle: React.CSSProperties = { display: 'grid', gap: 5, fontSize: 'var(--fs-micro)', color: 'var(--text-secondary)' };
+const labelStyle: React.CSSProperties = FIELD_LABEL;
 
 export function LogicalModelsPage() {
   const { tenant } = useAuth();
@@ -228,11 +228,11 @@ export function LogicalModelsPage() {
           ) : null}
 
           <div style={{ marginTop: 12, overflowX: 'auto' }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
-              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={{ textAlign: 'left', padding: '7px 9px', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', fontWeight: 600 }}>{x}</th>)}</tr></thead>
-              <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={{ padding: 14, color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', borderTop: '1px solid var(--border-subtle)' }}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
+            <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
+              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={{ textAlign: 'left', padding: '7px 9px', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>{x}</th>)}</tr></thead>
+              <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={{ padding: 14, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', borderTop: '1px solid var(--border-subtle)' }}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
                 <tr key={o.id}>
-                  <td style={td}><strong>{o.targetName}</strong><div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
+                  <td style={td}><strong>{o.targetName}</strong><div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>
                   <td style={td}>{o.targetKind}</td><td style={td}>{o.protocol || '继承目标'}</td><td style={td}>{o.priority} / {o.weight}</td>
                   <td style={td}>{o.healthStatus === 0 ? '健康' : o.healthStatus === 1 ? '降权' : '不可用'}{o.consecutiveFailures > 0 ? ` · 连续失败 ${o.consecutiveFailures}` : ''}</td>
                   <td style={td}>{o.maxConcurrency ? `并发 ${o.maxConcurrency}` : '继承上游'}{o.rateLimitPerMinute ? ` · ${o.rateLimitPerMinute}/分钟` : ''}</td>
@@ -247,4 +247,4 @@ export function LogicalModelsPage() {
   );
 }
 
-const td: React.CSSProperties = { padding: '8px 9px', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-secondary)', fontSize: 'var(--fs-micro)', verticalAlign: 'middle' };
+const td: React.CSSProperties = TABLE_CELL_MUTED;

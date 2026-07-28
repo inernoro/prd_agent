@@ -6,6 +6,7 @@ import { useAuth } from '@/lib/auth';
 import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 import { canCreateWildcardServiceKey, canUseCapability } from '@/lib/access';
+import { FIELD_INPUT, FIELD_LABEL, MONO_META, TABLE_CELL, TABLE_HEAD_CELL } from '@/lib/typography';
 
 const DEFAULT_PROTOCOLS = 'gw-native, openai-compatible, claude-compatible, gemini-compatible';
 const DEFAULT_SCOPES = 'invoke, stream:invoke, route:read';
@@ -282,7 +283,7 @@ export function ServiceKeysPage() {
             <div className="lg-service-key-advanced-grid">
               {isInternalTenant
                 ? <Field label="Source system" value={sourceSystem} onChange={updateSourceSystem} placeholder="external；内部 MAP 填 map" />
-                : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
+                : <label style={labelStyle}>Source system<input aria-label="Source system" value="external" readOnly style={inputStyle} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>外部租户身份由服务端固定，不能伪装为 MAP。</span></label>}
               <Field label="Client code" value={clientCode} onChange={setClientCode} placeholder="例如 content-agent" />
               <label style={labelStyle}>环境<select value={environment} onChange={(event) => setEnvironment(event.target.value)} style={inputStyle}><option value="development">开发</option><option value="test">测试</option><option value="staging">预发布</option><option value="production">生产</option></select></label>
               {isInternalTenant
@@ -298,7 +299,7 @@ export function ServiceKeysPage() {
           </details>
           {!purposeMatchesSource ? <div style={{ color: 'var(--danger)', fontSize: 'var(--fs-caption)' }}>MAP 只能使用 runtime、release-gate 或 canary；其他来源只能使用 external-platform。</div> : null}
           {usesWildcard && canCreateWildcard ? (
-            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)' }}>
+            <label style={{ display: 'flex', alignItems: 'flex-start', gap: 8, padding: 10, color: 'var(--danger)', background: 'color-mix(in srgb, var(--danger) 10%, transparent)', border: '1px solid var(--danger)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-secondary)' }}>
               <input type="checkbox" checked={confirmWildcardRisk} onChange={(event) => setConfirmWildcardRisk(event.target.checked)} />
               <span><strong>确认创建通配密钥</strong><br />该密钥的来源、appCaller、协议或 scope 含通配符，权限范围明显扩大。</span>
             </label>
@@ -310,11 +311,11 @@ export function ServiceKeysPage() {
 
       {error ? <div style={{ color: 'var(--danger)', fontSize: 'var(--fs-caption)' }}>{error}</div> : null}
       {items ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(220px, 1fr))', gap: 8 }}>
-        {isInternalTenant ? <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 'var(--fs-caption)' }}>MAP 生产 key 覆盖</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? '#3fb950' : '#f59e0b'} bg={item.ready ? 'rgba(63,185,80,0.12)' : 'rgba(245,158,11,0.12)'} />)}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>runtime、release-gate、canary 各用一把 production scoped key，不共享身份。</p></div> : null}
-        <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 'var(--fs-caption)' }}>外部平台独立身份</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-muted)" />) : <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>暂无外部平台 key</span>}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>每个 clientCode 与环境生成独立 key；一把 key 不能跨 purpose 或 environment。</p></div>
+        {isInternalTenant ? <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 'var(--fs-secondary)' }}>MAP 生产 key 覆盖</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{mapCoverage.map((item) => <Chip key={item.purpose} label={`${item.purpose} ${item.ready ? '已独立' : '缺失'}`} color={item.ready ? '#3fb950' : '#f59e0b'} bg={item.ready ? 'rgba(63,185,80,0.12)' : 'rgba(245,158,11,0.12)'} />)}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>runtime、release-gate、canary 各用一把 production scoped key，不共享身份。</p></div> : null}
+        <div style={{ padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}><strong style={{ fontSize: 'var(--fs-secondary)' }}>外部平台独立身份</strong><div style={{ display: 'flex', flexWrap: 'wrap', gap: 6, marginTop: 8 }}>{externalIdentities.length ? externalIdentities.map((item) => <Chip key={item} label={item} color="var(--text-secondary)" bg="var(--bg-muted)" />) : <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>暂无外部平台 key</span>}</div><p style={{ margin: '8px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>每个 clientCode 与环境生成独立 key；一把 key 不能跨 purpose 或 environment。</p></div>
       </div> : null}
       {legacy ? <details style={{ flexShrink: 0, padding: 12, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 'var(--fs-caption)' }}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
+        <summary style={{ cursor: 'pointer', fontWeight: 650, fontSize: 'var(--fs-secondary)' }}>Legacy shared key 收口 · {legacy.status} · 后继观测 {legacy.successorObservedCount}/{legacy.requiredSuccessorObservations}</summary>
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, marginTop: 12 }}>
           <label style={labelStyle}>截止时间<input type="datetime-local" value={legacyDeadline} onChange={(e) => setLegacyDeadline(e.target.value)} style={inputStyle} /></label>
           <label style={labelStyle}>状态<select value={legacyStatus} onChange={(e) => setLegacyStatus(e.target.value as typeof legacyStatus)} style={inputStyle}><option value="observing">观测中</option><option value="ready">待撤销</option><option value="revoked">已撤销</option></select></label>
@@ -325,7 +326,7 @@ export function ServiceKeysPage() {
         </div>
         <div style={{ marginTop: 10, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>外部来源使用 legacy key 永远拒绝；到达截止时间或状态为 revoked 后旧 key 返回 401。每把后继 key 必须是 production MAP runtime 身份，并完整覆盖调用方、四协议和运行时 scope；只有真实业务调用观测达标才能显式撤销。</div>
         <div style={{ marginTop: 6, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>必需协议：{legacy.requiredIngressProtocols.join(', ')}；必需 scope：{legacy.requiredScopes.join(', ')}</div>
-        {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: 10 }}><table style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
+        {legacy.usage.length ? <div style={{ overflowX: 'auto', marginTop: 10 }}><table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}><thead><tr>{['来源', 'appCaller', '协议', '允许', '拒绝', '最后出现', '决定'].map((label) => <th key={label} style={th}>{label}</th>)}</tr></thead><tbody>{legacy.usage.map((item) => <tr key={`${item.sourceSystem}-${item.appCallerCode}-${item.ingressProtocol}`}><td style={td}>{item.sourceSystem}</td><td style={td}>{item.appCallerCode || '缺失'}</td><td style={td}>{item.ingressProtocol}</td><td style={td}>{item.allowedCount}</td><td style={td}>{item.rejectedCount}</td><td style={td}>{formatTime(item.lastSeenAt)}</td><td style={td}>{item.lastDecision}</td></tr>)}</tbody></table></div> : null}
       </details> : null}
       {!items ? <SectionLoader text="正在加载接入密钥" /> : items.length === 0 ? (
         <div className="lg-service-key-empty">
@@ -338,7 +339,7 @@ export function ServiceKeysPage() {
       ) : (
         <>
         <div className="lg-service-key-desktop" style={{ flex: 1, minHeight: 0, overflow: 'auto', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table className="lg-service-key-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="lg-service-key-table lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}><tr>
               {['API Key', '客户端', 'AppCaller 与权限', '团队', '最后使用', '过期', '状态', ''].map((label) => <th key={label} style={th}>{label}</th>)}
             </tr></thead>
@@ -419,8 +420,8 @@ function rotationLabel(state: string) {
   } as Record<string, string>)[state] || state;
 }
 
-const labelStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
-const inputStyle: React.CSSProperties = { width: '100%', height: 34, boxSizing: 'border-box', padding: '0 9px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)' };
-const th: React.CSSProperties = { padding: '8px 10px', textAlign: 'left', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', fontWeight: 600, whiteSpace: 'nowrap' };
-const td: React.CSSProperties = { maxWidth: 260, padding: '9px 10px', borderTop: '1px solid var(--border-subtle)', color: 'var(--text-primary)', fontSize: 'var(--fs-caption)', verticalAlign: 'top', wordBreak: 'break-word' };
-const mutedMono: React.CSSProperties = { marginTop: 3, color: 'var(--text-muted)', fontFamily: 'var(--font-mono)', fontSize: 'var(--fs-micro)' };
+const labelStyle: React.CSSProperties = FIELD_LABEL;
+const inputStyle: React.CSSProperties = FIELD_INPUT;
+const th: React.CSSProperties = TABLE_HEAD_CELL;
+const td: React.CSSProperties = { ...TABLE_CELL, maxWidth: 260, verticalAlign: 'top', wordBreak: 'break-word' };
+const mutedMono: React.CSSProperties = { ...MONO_META, marginTop: 3 };

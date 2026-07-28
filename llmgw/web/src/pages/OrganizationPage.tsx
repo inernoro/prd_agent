@@ -15,6 +15,7 @@ import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from 
 import { useAuth } from '@/lib/auth';
 import { Button, Chip, SectionLoader } from '@/components/ui';
 import { canAccessPage, canUseCapability } from '@/lib/access';
+import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT } from '@/lib/typography';
 
 type MemberRole = CreateMemberRequest['role'];
 type MemberItem = OrganizationData['members'][number];
@@ -319,7 +320,7 @@ function MemberRow({ member, teams, currentRole, currentUsername, canManage, onC
 function TeamChoices({ teams, selected, onToggle }: { teams: TeamItem[]; selected: string[]; onToggle: (teamId: string) => void }) {
   return <fieldset style={fieldsetStyle}>
     <legend>所属团队</legend>
-    {teams.length === 0 ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>还没有团队，可先创建团队；Owner、Admin、Viewer 和 Billing 可以不选团队。</span> : <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>{teams.filter((team) => team.status === 'active' || selected.includes(team.id)).map((team) => <label key={team.id} style={checkStyle}><input type="checkbox" checked={selected.includes(team.id)} onChange={() => onToggle(team.id)} />{team.name}{team.status !== 'active' ? '（已停用，请取消）' : ''}</label>)}</div>}
+    {teams.length === 0 ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>还没有团队，可先创建团队；Owner、Admin、Viewer 和 Billing 可以不选团队。</span> : <div style={{ display: 'flex', gap: 10, flexWrap: 'wrap' }}>{teams.filter((team) => team.status === 'active' || selected.includes(team.id)).map((team) => <label key={team.id} style={checkStyle}><input type="checkbox" checked={selected.includes(team.id)} onChange={() => onToggle(team.id)} />{team.name}{team.status !== 'active' ? '（已停用，请取消）' : ''}</label>)}</div>}
   </fieldset>;
 }
 
@@ -337,9 +338,9 @@ const roleCardStyle: React.CSSProperties = { display: 'flex', flexDirection: 'co
 const boundaryNoteStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 4, marginTop: 9, padding: '9px 10px', color: 'var(--text-secondary)', background: 'var(--accent-soft)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-micro)', lineHeight: 1.55 };
 const headingStyle: React.CSSProperties = { display: 'flex', alignItems: 'center', gap: 7, margin: '0 0 5px', fontSize: 'var(--fs-secondary)' };
 const sectionHeadingRowStyle: React.CSSProperties = { display: 'flex', gap: 10, alignItems: 'flex-start', justifyContent: 'space-between' };
-const hintStyle: React.CSSProperties = { margin: '0', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', lineHeight: 1.55 };
-const fieldStyle: React.CSSProperties = { display: 'flex', flexDirection: 'column', gap: 5, minWidth: 0, color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
-const inputStyle: React.CSSProperties = { height: 34, minWidth: 0, padding: '0 9px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };
+const hintStyle: React.CSSProperties = { ...HINT_TEXT, margin: 0 };
+const fieldStyle: React.CSSProperties = FIELD_LABEL;
+const inputStyle: React.CSSProperties = FIELD_INPUT;
 const fieldsetStyle: React.CSSProperties = { margin: '10px 0', padding: 10, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' };
 const checkStyle: React.CSSProperties = { display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' };
 const errorStyle: React.CSSProperties = { color: 'var(--danger)', fontSize: 'var(--fs-caption)', padding: '9px 11px', background: 'rgba(248,81,73,0.08)', border: '1px solid rgba(248,81,73,0.26)', borderRadius: 'var(--radius-sm)' };

@@ -323,7 +323,7 @@ export function AppCallersPage() {
       ) : null}
 
       <div className="lg-app-caller-table-wrap">
-        <table style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
+        <table className="lg-data-table" style={{ width: '100%', tableLayout: 'fixed', borderCollapse: 'collapse' }}>
           <colgroup>
             <col style={{ width: 240 }} />
             <col style={{ width: 90 }} />
