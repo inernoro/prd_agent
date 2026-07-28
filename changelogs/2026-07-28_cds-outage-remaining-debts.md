@@ -43,3 +43,4 @@
 | fix | cds | 中立库名 key 的引擎判定先按 profile 的 dependsOn 收敛：多引擎项目里项目级 customEnv 灌下全部引擎连接串，全局 URL 判不出唯一引擎，DB_NAME 会在下游消歧跑到之前就被过滤掉，隔离入口对这类服务恒不可用 |
 | fix | cds | 日志库连上即可用：索引建立失败只告警不再把库判死，且后续 init 会重试索引；改保留天数导致的 ttl 索引选项冲突走 drop 再建对账，一条索引失败不掩盖其余 |
 | fix | cds | 库名 key 取用改为来源层级优先（profile > 分支 > 项目），同层再比引擎专属度：此前一律降档中立 key，导致项目级 MYSQL_DATABASE 压过服务自己的 DB_NAME，克隆 infra 默认库而应用连接串原地不动 |
+| docs | cds | 复制集债务台账补两条已知边界：同层多库名 key 无归属信息可判、多引擎项目中立 key 依赖 dependsOn 声明 |

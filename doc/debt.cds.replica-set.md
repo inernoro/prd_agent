@@ -65,3 +65,5 @@
 |---|------|------|------|
 | A | open | 物理克隆未在 IMP 真跑 | 解析层已在真实数据上验证；`mysqldump \| mysql` 那一段是跨项目验证过的既有机械，但**未在 IMP 上端到端跑过**。真跑会在别的团队的共享 MySQL 上产生 dump 负载，并留下一个按「保留语义」不自动删的库，需项目方知情后再做 |
 | B | open | 引擎中立 key 仅认 `DB_NAME` / `DATABASE_NAME` | 其它无引擎命名（如 `SCHEMA_NAME`）仍不认；等真实项目出现再按同样的「从连接串推引擎」路子扩 |
+| C | open | 同一来源层级内多个库名 key 指向不同库时无法判准 | 库名 key 取用现按「来源层级（profile > 分支 scope > 项目 customEnv）优先，同层再比引擎专属度」（Codex 九轮 P1）。若 `MYSQL_DATABASE` 与 `DB_NAME` **同在一层**且值不同，没有任何归属信息可依，只能按引擎专属度选前者——可能选错。唯一能判准的是「值等于同 env 某条关系型 URL 的库名段」，但 `dbScope=per-branch` 下 `applyPerBranchDbIsolation` 给白名单 key 追加 `_<slug>` 而**不改 URL**，该判据会稳定偏向未加后缀的 key，反引入新的错选。真实项目出现再处理（届时需连带解决 per-branch 不改 URL 这一前置缺口） |
+| D | open | 多引擎项目里中立库名 key 依赖 `dependsOn` 声明 | 中立 key 的引擎判定为「全 env URL 唯一引擎」，判不出时取「`dependsOn` 声明且在运行的 infra 引擎 ∩ URL 中出现的引擎」，仍不唯一即 fail-closed（Codex 八轮 P2）。因此**多引擎项目里没写 `dependsOn` 的 profile 用不了中立 key 隔离**——这是有意的保守，但对用户表现为「隔离入口不可用」，诊断文案已给出提示，长期应在 UI 上直接建议补 `dependsOn` |
