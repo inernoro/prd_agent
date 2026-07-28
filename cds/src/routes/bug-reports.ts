@@ -68,8 +68,13 @@ export const BUG_REPORT_BODY_LIMIT = '24mb';
 
 /** 本地留存的保留条数上限（超出从最旧的整条丢弃）。 */
 export const BUG_REPORT_MAX_RECORDS = 200;
-/** 本地留存的附件总量上限（超出从最旧的开始删附件文件，记录本身保留）。 */
+/** 本地留存的附件总量上限（磁盘硬顶；超出时总是先削当前占用最大的项目）。 */
 export const BUG_REPORT_MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024;
+/**
+ * 单个项目的附件上限。没有它，全局配额就是个公共池：一个项目猛提缺陷即可把别的
+ * 项目的截图挤没，而项目级 Key 就能触发（Codex PR #1273 P1）。
+ */
+export const BUG_REPORT_MAX_ATTACHMENT_BYTES_PER_PROJECT = 64 * 1024 * 1024;
 
 /** 转发缺陷系统的总预算（create + submit 合计），与前端「超过 10 秒转本地留存」文案一致。 */
 export const FORWARD_TOTAL_BUDGET_MS = 10_000;
@@ -320,6 +325,10 @@ export interface BugReportsRouterDeps {
   resolveReporter?: (req: Request) => string;
   /** JSON body 上限，默认 BUG_REPORT_BODY_LIMIT；仅测试需要调小。 */
   bodyLimit?: string;
+  /** 附件总量硬顶，默认 BUG_REPORT_MAX_ATTACHMENT_BYTES；仅测试需要调小。 */
+  maxAttachmentBytes?: number;
+  /** 单项目附件上限，默认 BUG_REPORT_MAX_ATTACHMENT_BYTES_PER_PROJECT；仅测试需要调小。 */
+  maxAttachmentBytesPerProject?: number;
 }
 
 function defaultResolveReporter(req: Request): string {
@@ -343,6 +352,10 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
   const resolveReporter = deps.resolveReporter ?? defaultResolveReporter;
   const fetchImpl = deps.fetchImpl
     ?? ((input, init) => (globalThis.fetch as unknown as FetchLike)(input, init));
+
+  const maxAttachmentBytes = deps.maxAttachmentBytes ?? BUG_REPORT_MAX_ATTACHMENT_BYTES;
+  const maxAttachmentBytesPerProject = deps.maxAttachmentBytesPerProject
+    ?? BUG_REPORT_MAX_ATTACHMENT_BYTES_PER_PROJECT;
 
   const baseDir = (): string => path.join(deps.getDataDir(), 'bug-reports');
   const recordsFile = (): string => path.join(baseDir(), 'records.jsonl');
@@ -420,27 +433,77 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
       // 落盘顺序必须回到时间正序（文件是 append-only 的 jsonl）。
       const kept = [...keptNewestFirst].reverse();
 
-      // 先按总量从最旧的记录开始摘附件，直到降到配额以下。
+      // 附件总量回收也必须按项目隔离（Codex PR #1273 P1）。
+      //
+      // 此前这里是一个**全局**按时间正序的列表，从最旧的开始删到总量达标——于是
+      // 一个项目猛提缺陷就能把别的项目的截图删光，而项目级 Key 就能触发它：
+      // 条数保留已经按项目分桶了，字节回收却还是全局且破坏性的，等于留了后门。
+      //
+      // 两层配额：
+      //   1. 每项目自有上限，各桶内部从最旧的删起——一个项目撑爆自己不影响别人；
+      //   2. 全局上限作为磁盘硬顶，超出时**总是从当前占用最大的桶**删一个最旧的，
+      //      让超量的那个项目先付账；占用低于公平份额的项目只有在所有桶都很大时
+      //      才会被动到。
+      type AttachmentFile = { path: string; size: number; rec: StoredBugReport; idx: number };
+      const bucketFiles = new Map<string, AttachmentFile[]>();
+      const bucketBytes = new Map<string, number>();
       let total = 0;
-      const files: Array<{ path: string; size: number; rec: StoredBugReport; idx: number }> = [];
+      let touchedFiles = 0;
+      // kept 是时间正序，所以每个桶内天然也是「最旧的在前」。
       kept.forEach((rec) => {
+        const key = rec.projectId || '__system__';
         (rec.attachments || []).forEach((att, idx) => {
           if (!att.file) return;
           const full = path.join(assetDir, att.file);
           let size = 0;
           try { size = fs.statSync(full).size; } catch { return; }
           total += size;
-          files.push({ path: full, size, rec, idx });
+          touchedFiles += 1;
+          bucketBytes.set(key, (bucketBytes.get(key) || 0) + size);
+          const list = bucketFiles.get(key);
+          if (list) list.push({ path: full, size, rec, idx });
+          else bucketFiles.set(key, [{ path: full, size, rec, idx }]);
         });
       });
-      for (const f of files) {
-        if (total <= BUG_REPORT_MAX_ATTACHMENT_BYTES) break;
+
+      const evictOldestOf = (key: string): boolean => {
+        const list = bucketFiles.get(key);
+        if (!list || list.length === 0) return false;
+        const f = list.shift()!;
         try { fs.unlinkSync(f.path); } catch { /* 已不在就算了 */ }
         total -= f.size;
+        bucketBytes.set(key, (bucketBytes.get(key) || 0) - f.size);
         f.rec.attachments[f.idx]!.file = '';
-      }
+        return true;
+      };
 
-      if (droppedIds.size > 0 || files.length > 0) {
+      // 第一层：每项目自有上限。
+      for (const key of [...bucketFiles.keys()]) {
+        while ((bucketBytes.get(key) || 0) > maxAttachmentBytesPerProject) {
+          if (!evictOldestOf(key)) break;
+        }
+      }
+      // 第二层：全局硬顶，永远先削当前最大的桶（超量者先付账）。
+      while (total > maxAttachmentBytes) {
+        let biggestKey: string | null = null;
+        let biggestBytes = -1;
+        for (const [key, list] of bucketFiles) {
+          if (list.length === 0) continue;
+          const bytes = bucketBytes.get(key) || 0;
+          // 同量时按 key 排序，保证行为确定、可回归。
+          if (bytes > biggestBytes || (bytes === biggestBytes && biggestKey !== null && key < biggestKey)) {
+            biggestBytes = bytes;
+            biggestKey = key;
+          }
+        }
+        if (biggestKey === null || !evictOldestOf(biggestKey)) break;
+      }
+      // 注意用**回收前**的文件总数做「要不要重写记录文件」的判据：evictOldestOf 会
+      // 把摘掉的项从桶里 shift 出去，拿回收后的剩余数会在「全被摘光」时判成 0，
+      // 于是 att.file='' 这些改动一条都落不了盘。
+      const attachmentFileCount = touchedFiles;
+
+      if (droppedIds.size > 0 || attachmentFileCount > 0) {
         // 被整条丢弃的记录，其附件文件一并清掉，避免孤儿文件永久占盘。
         if (droppedIds.size > 0) {
           try {

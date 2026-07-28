@@ -15,7 +15,8 @@ import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeplo
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, type DrainableRun,
+  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, collectDrainableRuns,
+  type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
@@ -2271,13 +2272,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
     if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
     const outcome = await drainInFlightDeploys({
-      listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
+      // 部署 + 发布一起排空（Codex PR #1273 P1）：deploy-drain 早就支持发布口径，
+      // 但这个唯一调用点只喂了部署 run，于是自更新会在预览部署落地后立刻重启，
+      // 把一条正在跑的生产发布 SSH 拦腰砍断——而发布被腰斩的代价比部署大得多
+      // （run 停在 running，在途守卫从此拒绝该目标的一切新发布）。
+      listRuns: () => collectDrainableRuns({
+        deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
+        releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
+      }),
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
       onWait: (pending, waitedMs) => {
         if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
-          console.log(`[self-update] 等待 ${pending.length} 个在途部署落地再重启（已等 ${Math.round(waitedMs / 1000)}s）`);
+          const releases = pending.filter((r) => r.kind === 'release').length;
+          const suffix = releases > 0 ? `（其中 ${releases} 个是生产发布）` : '';
+          console.log(`[self-update] 等待 ${pending.length} 个在途部署/发布落地再重启${suffix}（已等 ${Math.round(waitedMs / 1000)}s）`);
         }
       },
     });

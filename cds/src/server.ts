@@ -1431,9 +1431,21 @@ export interface ReleaseReconcileOutcome {
   reconciled: number;
 }
 
+export interface ReleaseReconcileOptions {
+  /**
+   * 启动收敛：把**所有**持久化的非终态 run 直接判失败，不看心跳新鲜度。
+   * 进程刚起来时不可能持有任何执行体，心跳是上一个已死进程打的，用它当活性证据
+   * 只会让刚打过心跳就被重启的发布继续堵住目标至少 15 分钟（Codex PR #1273 P1）。
+   */
+  assumeAllOrphaned?: boolean;
+}
+
 /** 跨轨道契约：ReleaseService 暴露的中断收敛入口（同步或异步均可）。 */
 export interface ReleaseRunReconciler {
-  reconcileInterruptedReleases(): ReleaseReconcileOutcome | Promise<ReleaseReconcileOutcome>;
+  reconcileInterruptedReleases(
+    now?: Date,
+    options?: ReleaseReconcileOptions,
+  ): ReleaseReconcileOutcome | Promise<ReleaseReconcileOutcome>;
 }
 
 /** 与部署侧收割周期同频（deployment-run 也是 5 分钟）。 */
@@ -1464,11 +1476,17 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
   }
 
   let busy = false;
-  const finish = (outcome: ReleaseReconcileOutcome | undefined) => {
+  // 第一轮 = 启动收敛：此刻本进程不可能有任何执行体，所有非终态 run 都已orphan，
+  // 不该再用「上一个已死进程打的心跳」当活性证据放它们过。之后的周期轮必须看心跳，
+  // 否则会误杀正在正常执行的发布。
+  let startupPass = true;
+  const finish = (outcome: ReleaseReconcileOutcome | undefined, wasStartup: boolean) => {
     busy = false;
     const count = Number(outcome?.reconciled ?? 0);
     if (count > 0) {
-      log(`[release-run] 周期收割：${count} 个心跳过期的发布已收敛为失败，对应发布目标已释放`);
+      log(wasStartup
+        ? `[release-run] 启动收敛：${count} 个被重启打断的发布已收敛为失败，对应发布目标已释放`
+        : `[release-run] 周期收割：${count} 个心跳过期的发布已收敛为失败，对应发布目标已释放`);
     }
   };
   const fail = (err: unknown) => {
@@ -1479,13 +1497,17 @@ export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunRea
   const reapNow = () => {
     if (busy) return;
     busy = true;
+    const wasStartup = startupPass;
+    startupPass = false;
     try {
-      const result = deps.service.reconcileInterruptedReleases();
+      const result = deps.service.reconcileInterruptedReleases(undefined, {
+        assumeAllOrphaned: wasStartup,
+      });
       if (result && typeof (result as Promise<ReleaseReconcileOutcome>).then === 'function') {
-        void (result as Promise<ReleaseReconcileOutcome>).then(finish, fail);
+        void (result as Promise<ReleaseReconcileOutcome>).then((o) => finish(o, wasStartup), fail);
         return;
       }
-      finish(result as ReleaseReconcileOutcome);
+      finish(result as ReleaseReconcileOutcome, wasStartup);
     } catch (err) {
       fail(err);
     }

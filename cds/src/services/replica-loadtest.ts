@@ -123,6 +123,14 @@ export interface LoadTestTargetMetrics {
   servedBy: Record<string, number>;
   /** 落点核对：响应头 X-CDS-Replica-Group 的实际值分布（是否打到了同一个 profile 的组） */
   servedGroups: Record<string, number>;
+  /**
+   * 落点核对：**成功**但没带 X-CDS-Replica 的响应数。
+   * 没有它，这类样本会从 servedBy 里彻底消失，却照样计入延迟/QPS/成功率——
+   * 90 条带标签 + 10 条无标签会被当成纯净落点通过核对（Codex PR #1273 P1）。
+   */
+  untaggedSuccess: number;
+  /** 落点核对：**成功**但没带 X-CDS-Replica-Group 的响应数（同上，组维度）。 */
+  untaggedGroupSuccess: number;
   /** 期望的组标识，与 servedGroups 比对，防止跨 profile 的同名成员被误判为核对通过 */
   expectedGroup: string;
   series: LoadTestSeriesPoint[];
@@ -514,6 +522,15 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
     // 压测路径若解析到了另一个启用复制集的 profile，只看成员 id 会误判为核对通过。
     const groups = groupsOf(t);
     if (groups.length > 0) anyEvidence = true;
+    // 无标签样本必须先拦：它们压根不进 servedBy / servedGroups，等于从核对视野里
+    // 蒸发，却照样计入延迟、QPS、成功率。于是「90 条打到 rs-a + 10 条走了非副本
+    // 路由」会被判成纯净落点通过核对，10% 的污染样本堂而皇之进 A/B 指标
+    // （Codex PR #1273 P1）。规则：一个落点只要拿到过标签，它的**每一条**成功响应
+    // 就都必须带标签；一条标签都没拿到的落点走下面的「无证据」档，不在这里拦。
+    if (groups.length > 0 && t.untaggedGroupSuccess > 0) {
+      routingIssue = `落点核对失败：${t.label} 有 ${t.untaggedGroupSuccess} 条成功响应没带副本组标识（疑似走了非副本路由），这部分样本已计入指标但无法核对`;
+      break;
+    }
     const badGroup = t.expectedGroup ? groups.find((g) => g !== t.expectedGroup) : undefined;
     if (badGroup) {
       routingIssue = groups.length > 1
@@ -525,6 +542,11 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
     const identities = identitiesOf(t);
     if (identities.length === 0) continue;
     anyEvidence = true;
+    // 同上，成员维度。
+    if (t.untaggedSuccess > 0) {
+      routingIssue = `落点核对失败：${t.label} 有 ${t.untaggedSuccess} 条成功响应没带副本标识（疑似走了非副本路由），这部分样本已计入指标但无法核对`;
+      break;
+    }
     // 混流：同一个落点的请求落到了不止一个实例上，指标已被污染，不能进对比。
     if (identities.length > 1) {
       routingIssue = `落点核对失败：${t.label} 的请求混着打到了多个实例（${identities.join(' / ')}），指标已被污染`;
@@ -630,6 +652,9 @@ interface TargetRuntime {
   errorCounts: Record<LoadTestErrorKind, number>;
   servedBy: Record<string, number>;
   servedGroups: Record<string, number>;
+  /** 成功但无 X-CDS-Replica / X-CDS-Replica-Group 的响应数，见 LoadTestTargetMetrics。 */
+  untaggedSuccess: number;
+  untaggedGroupSuccess: number;
 }
 
 interface LoadTestRun {
@@ -890,6 +915,8 @@ export class ReplicaLoadTestService {
         errorCounts: { timeout: 0, connect: 0, http5xx: 0, http4xx: 0, cancelled: 0, other: 0 },
         servedBy: {},
         servedGroups: {},
+        untaggedSuccess: 0,
+        untaggedGroupSuccess: 0,
       })),
       startedAtMs,
       startedAt: new Date(startedAtMs).toISOString(),
@@ -1042,7 +1069,9 @@ export class ReplicaLoadTestService {
         rt.errorCounts[kind ?? 'other'] += 1;
       }
       if (result.servedBy) rt.servedBy[result.servedBy] = (rt.servedBy[result.servedBy] || 0) + 1;
+      else if (ok) rt.untaggedSuccess += 1;
       if (result.servedGroup) rt.servedGroups[result.servedGroup] = (rt.servedGroups[result.servedGroup] || 0) + 1;
+      else if (ok) rt.untaggedGroupSuccess += 1;
       // 就地 O(1) 记账：不留原始采样数组，聚合成本与请求条数无关
       rt.latency.record(latency);
     }
@@ -1133,6 +1162,8 @@ export class ReplicaLoadTestService {
       errors: { ...rt.errorCounts },
       servedBy: { ...rt.servedBy },
       servedGroups: { ...rt.servedGroups },
+      untaggedSuccess: rt.untaggedSuccess,
+      untaggedGroupSuccess: rt.untaggedGroupSuccess,
       expectedGroup: rt.target.expectedGroup,
       series,
     };

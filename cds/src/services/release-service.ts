@@ -718,18 +718,37 @@ export class ReleaseService {
    * 这是阶段一最重要的一件事——CDS 自更新是日常操作，`void this.runRelease(...)`
    * 的执行体随进程消失后，run 永远停在 running，在途守卫会拒绝该目标的一切新发布，
    * 而此前既没有超时也没有取消，这个发布目标只能改库才能复活。
-   * 启动时与周期收割都调它（照抄 deployment-run.ts::reconcileInterrupted 的范式）。
+   * 启动时与周期收割都调它（照抄 deployment-run.ts::reconcileInterrupted 的范式），
+   * 但两者的判据**不同**，见 `assumeAllOrphaned`。
+   *
+   * @param options.assumeAllOrphaned 启动收敛专用。进程刚起来时本进程不可能持有
+   *   任何执行体，所以**每一条**持久化的非终态 run 都已经没有人能推进它——心跳
+   *   新鲜与否毫无意义（那个心跳是上一个已经死掉的进程打的）。若仍按 15 分钟阈值
+   *   放过，刚打过心跳就被重启的发布会继续堵住它的目标至少 15 分钟、最坏还要再等
+   *   一轮周期收割（Codex PR #1273 P1）。周期收割则必须保留心跳阈值，否则会把正在
+   *   正常执行的发布误杀。
    */
-  reconcileInterruptedReleases(now = this.now()): { reconciled: number } {
+  reconcileInterruptedReleases(
+    now = this.now(),
+    options: { assumeAllOrphaned?: boolean } = {},
+  ): { reconciled: number } {
     const nowMs = now.getTime();
+    const assumeAllOrphaned = options.assumeAllOrphaned === true;
     let reconciled = 0;
     for (const run of this.stateService.getReleaseRuns()) {
       if (isReleaseRunTerminal(run.status)) continue;
-      const beat = Date.parse(run.heartbeatAt || run.startedAt || '');
-      // 心跳字段缺失（存量 run）时 Date.parse 得到 NaN，一律按已过期处理：
-      // 存量在途 run 本来就是这次要清理掉的那批。
-      if (Number.isFinite(beat) && nowMs - beat < RELEASE_HEARTBEAT_STALE_MS) continue;
-      const message = '发布执行心跳已过期，CDS 重启导致执行体丢失，本次发布已收敛为失败';
+      // 本进程正握着执行体的 run 永远不收：它活着，正在推进。
+      // （启动收敛时这个表必然是空的，所以这条判断只在周期收割生效。）
+      if (this.inFlight.has(run.releaseId)) continue;
+      if (!assumeAllOrphaned) {
+        const beat = Date.parse(run.heartbeatAt || run.startedAt || '');
+        // 心跳字段缺失（存量 run）时 Date.parse 得到 NaN，一律按已过期处理：
+        // 存量在途 run 本来就是这次要清理掉的那批。
+        if (Number.isFinite(beat) && nowMs - beat < RELEASE_HEARTBEAT_STALE_MS) continue;
+      }
+      const message = assumeAllOrphaned
+        ? 'CDS 已重启，本次发布的执行体随上一个进程消失，已收敛为失败（发布目标已释放，可重试）'
+        : '发布执行心跳已过期，CDS 重启导致执行体丢失，本次发布已收敛为失败';
       try {
         // 本进程可能还挂着一个心跳已停但 SSH 仍连着的执行体，一并中止。
         const handle = this.inFlight.get(run.releaseId);
@@ -737,7 +756,13 @@ export class ReleaseService {
           handle.controller.abort(new Error(message));
           this.inFlight.delete(run.releaseId);
         }
-        this.emitLog(run.releaseId, 'error', message, 'reconcile');
+        // 日志是装饰，解锁才是目的：写日志失败绝不能挡住下面的状态收敛，否则
+        // 一次日志异常就让这个发布目标继续被永久锁死（收割器是最后一道闸）。
+        try {
+          this.emitLog(run.releaseId, 'error', message, 'reconcile');
+        } catch (logErr) {
+          console.warn(`[release] ${run.releaseId} 收敛日志写入失败（不影响收敛）: ${(logErr as Error).message}`);
+        }
         const nextStatus: ReleaseRunStatus = run.status === 'rollback_running' ? 'rollback_failed' : 'failed';
         const patch: Partial<ReleaseRun> = {
           errorMessage: message,
