@@ -8303,6 +8303,8 @@ const long BugReportMaxAttachmentBytes = 5L * 1024 * 1024;
 // 按解码后字节算 12MB 时，base64 恰好是 16MiB，正好顶穿 MongoDB 16MB 单文档硬上限，
 // 写库会直接抛异常，缺陷与截图全丢。这里留出文档其余字段与 BSON 开销的余量。
 const long BugReportMaxTotalBase64Chars = 12L * 1024 * 1024;
+/** 本地台账每租户保留条数上限（附件 base64 直接进文档，必须有回收）。 */
+const int BugReportRetainPerTenant = 100;
 const int BugReportMaxAttachmentCount = 4;
 // 转发缺陷系统（create + submit）的总预算，与前端「超过 10 秒转本地留存」文案一致：
 // 两段各给 10s 会让用户实际等到 20s。
@@ -8470,6 +8472,34 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
     try
     {
         await bugReports.InsertOneAsync(bugReportDoc, cancellationToken: CancellationToken.None);
+        // 保留策略：附件是 base64 直接进文档，单条最多约 12MB。没有上限的话，
+        // 一个拿到凭据的客户端（或不断重试的前端）反复提交就能把网关库撑爆，
+        // 且转发成功的记录也一样在长（Codex PR #1273 P1）。
+        // 按租户保留最近 N 条，超出的整条删除——本地台账是兜底证据，不是归档。
+        try
+        {
+            var tenantFilter = Builders<BsonDocument>.Filter.Eq("TenantId", access.TenantId);
+            var keepIds = await bugReports
+                .Find(tenantFilter)
+                .Sort(Builders<BsonDocument>.Sort.Descending("CreatedAt"))
+                .Limit(BugReportRetainPerTenant)
+                .Project(Builders<BsonDocument>.Projection.Include("_id"))
+                .ToListAsync(CancellationToken.None);
+            if (keepIds.Count >= BugReportRetainPerTenant)
+            {
+                var keep = keepIds.Select(d => d["_id"]).ToList();
+                await bugReports.DeleteManyAsync(
+                    Builders<BsonDocument>.Filter.And(
+                        tenantFilter,
+                        Builders<BsonDocument>.Filter.Nin("_id", keep)),
+                    CancellationToken.None);
+            }
+        }
+        catch (Exception pruneError)
+        {
+            // 回收失败不能影响「缺陷已收下」这件事本身。
+            app.Logger.LogWarning(pruneError, "[bug-report] 本地台账回收失败 tenant={Tenant}", access.TenantId);
+        }
     }
     catch (Exception storeError)
     {

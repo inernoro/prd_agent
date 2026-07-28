@@ -165,7 +165,27 @@ export function deriveTitleFromDescription(description: string): string {
 export function validateBugReportDraft(draft: BugReportDraft): string | null {
   if (!draft.description || !draft.description.trim()) return '请填写问题描述';
   if (!BUG_SEVERITY_OPTIONS.some((opt) => opt.value === draft.severity)) return '严重程度取值非法';
+  const attachments = draft.attachments ?? [];
+  if (attachments.length > MAX_ATTACHMENT_COUNT) return `附件最多 ${MAX_ATTACHMENT_COUNT} 个`;
+  // 总量必须在前端就拦：4 个各 5MB 单独都合法，加起来却超过后端 12MB 的总量闸。
+  // 不拦的话用户挑完图、等完上传，才在服务端被整单拒绝（Codex PR #1273 P2）。
+  const total = totalAttachmentBytes(attachments);
+  if (total > MAX_TOTAL_ATTACHMENT_BYTES) {
+    return `附件总大小 ${(total / 1024 / 1024).toFixed(1)} MB 超过上限 ${MAX_TOTAL_ATTACHMENT_BYTES / 1024 / 1024} MB，请删掉几张或压缩后再传`;
+  }
   return null;
+}
+
+/** 附件解码后的总字节数（与后端 normalizeBugReport 的口径一致：按 base64 长度换算）。 */
+export function totalAttachmentBytes(
+  attachments: ReadonlyArray<{ dataBase64?: string }>,
+): number {
+  let total = 0;
+  for (const item of attachments) {
+    const raw = item?.dataBase64 || '';
+    if (raw) total += Math.ceil((raw.length * 3) / 4);
+  }
+  return total;
 }
 
 /** 环境附录的中文标签，UI 与后端正文共用同一份口径。 */
@@ -216,6 +236,8 @@ export function buildBugReportPayload(input: {
 export const MAX_ATTACHMENT_BYTES = 5 * 1024 * 1024;
 /** 附件数量上限。 */
 export const MAX_ATTACHMENT_COUNT = 4;
+/** 附件**总量**上限（与后端 BugReportMaxTotalBase64Chars 对齐，两端必须同口径）。 */
+export const MAX_TOTAL_ATTACHMENT_BYTES = 12 * 1024 * 1024;
 
 /** 提交结果的投递去向，决定 UI 说什么话（禁止假装成功）。 */
 export type BugReportDelivery = 'forwarded' | 'local';
@@ -232,9 +254,13 @@ export interface BugReportSubmitResult {
 /** 依据投递结果给出用户可见的结论文案，绝不把本地留存说成已同步。 */
 export function describeSubmitResult(result: BugReportSubmitResult): string {
   if (result.delivery === 'forwarded') {
-    return result.reference
+    const base = result.reference
       ? `已提交到缺陷系统（${result.reference}）`
       : '已提交到缺陷系统';
+    // 转发成功但截图没跟过去 / submit 流转失败时，服务端会带 degradeReason。
+    // 丢掉它等于告诉用户「都好了」，而实际可能没有图、或单子还在草稿态
+    // （Codex PR #1273 P2）。
+    return result.degradeReason ? `${base}，但${result.degradeReason}` : base;
   }
   const reason = result.degradeReason ? `：${result.degradeReason}` : '';
   return `已记录到本地待办，未同步到缺陷系统${reason}`;

@@ -665,3 +665,52 @@ describe('落点核对必须连副本组一起判（跨 profile 同名成员会�
     expect(c.rows).toHaveLength(0);
   });
 });
+
+describe('混流必须拒绝出对比（只看多数会放过部分误路由，Codex PR #1273 P1）', () => {
+  const m = (memberId: string, label: string, servedBy: Record<string, number>, servedGroups: Record<string, number>) => ({
+    memberId, label, servedBy, servedGroups, expectedGroup: 'b1:api',
+    requests: 100, p95: 10, qps: 50, successRate: 1,
+    min: 1, max: 9, avg: 5, p50: 4, p90: 8, p99: 9, errors: {} as never, series: [],
+  }) as unknown as Parameters<typeof buildComparison>[0][number];
+
+  it('事故值：{rs-a:90, rs-b:10} 这种混流不得被当成纯净的 rs-a', () => {
+    const c = buildComparison([
+      m('primary', '主实例', {}, { 'b1:api': 100 }),
+      m('rs-a', '版本 A', { 'rs-a': 90, 'rs-b': 10 }, { 'b1:api': 100 }),
+    ])!;
+    expect(c.routingVerified).toBe(false);
+    expect(String(c.routingIssue)).toContain('多个实例');
+    expect(c.rows).toHaveLength(0);
+  });
+
+  it('组也混流时同样拒绝', () => {
+    const c = buildComparison([
+      m('primary', '主实例', {}, { 'b1:api': 95, 'b1:web': 5 }),
+      m('rs-a', '版本 A', { 'rs-a': 100 }, { 'b1:api': 100 }),
+    ])!;
+    expect(c.routingVerified).toBe(false);
+    expect(String(c.routingIssue)).toContain('多个副本组');
+  });
+
+  it('纯净落点仍照常出结论', () => {
+    const c = buildComparison([
+      m('primary', '主实例', {}, { 'b1:api': 100 }),
+      m('rs-a', '版本 A', { 'rs-a': 100 }, { 'b1:api': 100 }),
+    ])!;
+    expect(c.routingVerified).toBe(true);
+  });
+});
+
+describe('连接重置不得当成「这不是 HTTP 服务」的证据（Codex PR #1273 P1）', () => {
+  it('ECONNRESET / socket hang up 归类为 unreachable（真故障），不是 protocol', async () => {
+    const { classifyProbeFailure: classify } = await import('../../src/services/uptime-monitor.js');
+    expect(classify({ up: false, err: 'socket hang up' })).toBe('unreachable');
+    expect(classify({ up: false, err: 'read ECONNRESET' })).toBe('unreachable');
+  });
+
+  it('HTTP 解析错误仍归类为 protocol（这才是肯定性证据）', async () => {
+    const { classifyProbeFailure: classify } = await import('../../src/services/uptime-monitor.js');
+    expect(classify({ up: false, err: 'Parse Error: Expected HTTP/' })).toBe('protocol');
+    expect(classify({ up: false, err: 'HPE_INVALID_CONSTANT' })).toBe('protocol');
+  });
+});

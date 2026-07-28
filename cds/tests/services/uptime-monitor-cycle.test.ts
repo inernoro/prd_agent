@@ -400,8 +400,12 @@ describe('非 HTTP 响应自动降级为容器状态判定', () => {
     expect(classifyProbeFailure({ t: 1, up: true, ms: 5, code: 200 })).toBe('none');
     expect(classifyProbeFailure({ t: 1, up: false, ms: 5, code: 503, err: 'HTTP 503' })).toBe('http-status');
     expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'Parse Error: Expected HTTP/' })).toBe('protocol');
-    expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'socket hang up' })).toBe('protocol');
-    expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'read ECONNRESET' })).toBe('protocol');
+    // 连接重置**不再**算协议证据：正在崩溃 / OOM / 过载 / 还没起好的 HTTP 服务
+    // 同样会重置连接，当成「这不是 HTTP」会把它永久降级成按容器状态判定，
+    // 于是持续崩溃的服务显示为绿色（假绿）。见 Codex PR #1273 P1。
+    expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'socket hang up' })).toBe('unreachable');
+    expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'read ECONNRESET' })).toBe('unreachable');
+    expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'HPE_INVALID_CONSTANT' })).toBe('protocol');
     expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: 'connect ECONNREFUSED 127.0.0.1:10001' })).toBe('unreachable');
     expect(classifyProbeFailure({ t: 1, up: false, ms: 5, err: '探测超时（5000ms）' })).toBe('unreachable');
   });

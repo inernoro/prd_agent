@@ -428,14 +428,18 @@ export type ProbeFailureKind = 'none' | 'http-status' | 'protocol' | 'unreachabl
 
 /** 命中即认定「对面开着端口但不说 HTTP」（gRPC / 裸 TCP / TLS-only）。 */
 const PROTOCOL_ERROR_PATTERNS = [
+  // 只保留**明确证明「对面回的不是 HTTP」**的证据：HTTP 解析器报错、TLS 版本
+  // 不对等。这些是解析层给出的肯定性结论，不会被「服务崩了」制造出来。
   /parse error/i,
   /hpe_/i,
-  /socket hang up/i,
-  /econnreset/i,
-  /epipe/i,
   /invalid (http|response)/i,
   /wrong version number/i,
   /eproto/i,
+  // 刻意不含 ECONNRESET / socket hang up / EPIPE：
+  // 一个正在崩溃、OOM、过载或还没起好的**HTTP** 服务同样会重置连接。把它们
+  // 当成「这不是 HTTP 服务」的证据，会让该目标被永久降级为「按容器状态判定」，
+  // 而容器状态是控制面意图（running），于是一个持续崩溃的服务从此显示为绿色，
+  // 直到宿主端口变化为止——假绿比假红危险得多（Codex PR #1273 P1）。
 ];
 
 /**

@@ -500,31 +500,37 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
   // 只用**有证据**的落点做判定：forwarder 仅在命中副本路由时才回 X-CDS-Replica，
   // 主实例与部分部署形态本就没有这个头。没有证据不能当成有问题（那会让整个功能
   // 在这些形态下永远出不了结论），但也不能当成没问题——分两档处理。
-  const identityOf = (t: LoadTestTargetMetrics): string | null => {
-    const entries = Object.entries(t.servedBy || {});
-    if (entries.length === 0) return null;
-    return entries.sort((a, b) => b[1] - a[1])[0]![0];
-  };
+  // 取**全部**观测到的身份，不是只取占比最高的那个。只看多数会放过
+  // { rs-a: 90, rs-b: 10 } 这种「钉选间歇失效 / 副本中途被摘除」的分布：
+  // 100 个样本里混了 10 个打到别的版本，却照样当成纯净的 rs-a 进 A/B 指标
+  // （Codex PR #1273 P1）。混流一律拒绝出结论。
+  const identitiesOf = (t: LoadTestTargetMetrics): string[] => Object.keys(t.servedBy || {});
   const seen = new Map<string, string>();
   let routingIssue: string | null = null;
   let anyEvidence = false;
-  const groupOf = (t: LoadTestTargetMetrics): string | null => {
-    const entries = Object.entries(t.servedGroups || {});
-    if (entries.length === 0) return null;
-    return entries.sort((a, b) => b[1] - a[1])[0]![0];
-  };
+  const groupsOf = (t: LoadTestTargetMetrics): string[] => Object.keys(t.servedGroups || {});
   for (const t of usable) {
-    const observed = identityOf(t);
     // 组先于成员核对：成员 id 在不同 profile 之间会重名（primary / rs-1 都可能撞），
     // 压测路径若解析到了另一个启用复制集的 profile，只看成员 id 会误判为核对通过。
-    const observedGroup = groupOf(t);
-    if (observedGroup !== null && t.expectedGroup && observedGroup !== t.expectedGroup) {
-      routingIssue = `落点核对失败：${t.label} 期望由副本组 ${t.expectedGroup} 服务，实际观测到 ${observedGroup}（压测路径可能解析到了别的服务）`;
-      anyEvidence = true;
+    const groups = groupsOf(t);
+    if (groups.length > 0) anyEvidence = true;
+    const badGroup = t.expectedGroup ? groups.find((g) => g !== t.expectedGroup) : undefined;
+    if (badGroup) {
+      routingIssue = groups.length > 1
+        ? `落点核对失败：${t.label} 的请求混着打到了多个副本组（${groups.join(' / ')}），期望只有 ${t.expectedGroup}`
+        : `落点核对失败：${t.label} 期望由副本组 ${t.expectedGroup} 服务，实际观测到 ${badGroup}（压测路径可能解析到了别的服务）`;
       break;
     }
-    if (observed === null) continue;
+
+    const identities = identitiesOf(t);
+    if (identities.length === 0) continue;
     anyEvidence = true;
+    // 混流：同一个落点的请求落到了不止一个实例上，指标已被污染，不能进对比。
+    if (identities.length > 1) {
+      routingIssue = `落点核对失败：${t.label} 的请求混着打到了多个实例（${identities.join(' / ')}），指标已被污染`;
+      break;
+    }
+    const observed = identities[0]!;
     // 副本成员自报了家门就必须对得上。
     if (t.memberId !== 'primary' && observed !== t.memberId) {
       routingIssue = `落点核对失败：${t.label} 期望由副本 ${t.memberId} 服务，实际观测到 ${observed}`;

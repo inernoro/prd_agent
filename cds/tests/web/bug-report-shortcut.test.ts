@@ -252,3 +252,38 @@ describe.each(IMPLEMENTATIONS)('BugReportCore (%s)', (_name, core) => {
     });
   });
 });
+
+describe('前端必须自己拦附件总量（Codex PR #1273 P2）', () => {
+  for (const [name, mod] of [['cds', cdsCore], ['llmgw', llmgwCore]] as const) {
+    it(`${name}: 四个各 5MB 单独合法，但总量超 12MB 必须在前端就拒绝`, () => {
+      const big = 'A'.repeat(Math.floor((4.5 * 1024 * 1024 * 4) / 3)); // 约 4.5MB 解码
+      const draft = {
+        title: '', description: '测试', severity: 'minor',
+        attachments: Array.from({ length: 3 }, (_, i) => ({
+          name: `s${i}.png`, mimeType: 'image/png', size: 1, dataBase64: big,
+        })),
+      } as never;
+      const err = mod.validateBugReportDraft(draft);
+      expect(err).toBeTruthy();
+      expect(String(err)).toContain('总大小');
+    });
+
+    it(`${name}: 总量在限内照常通过`, () => {
+      const small = 'A'.repeat(1024);
+      const draft = {
+        title: '', description: '测试', severity: 'minor',
+        attachments: [{ name: 's.png', mimeType: 'image/png', size: 1, dataBase64: small }],
+      } as never;
+      expect(mod.validateBugReportDraft(draft)).toBeNull();
+    });
+
+    it(`${name}: 转发成功但有 degradeReason 时，结论文案必须带出来`, () => {
+      const text = mod.describeSubmitResult({
+        id: 'x', delivery: 'forwarded', reference: 'BUG-1',
+        degradeReason: '1/1 个截图上传失败，附件未跟随进入缺陷系统',
+      } as never);
+      expect(text).toContain('BUG-1');
+      expect(text).toContain('截图上传失败');
+    });
+  }
+});
