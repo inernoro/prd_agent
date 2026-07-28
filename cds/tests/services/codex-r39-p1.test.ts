@@ -645,3 +645,110 @@ describe('第四十三轮 P2：历史曲线与可用率必须共用同一个自�
     expect(monitor).not.toMatch(/const from = now - rangeMs;/);
   });
 });
+
+describe('第四十四轮：账目与降级的最后两个缺口', () => {
+  it('删附件失败时不许减账目，否则反复失败即可绕过配额', async () => {
+    const express = (await import('express')).default;
+    const { createBugReportsRouter } = await import('../../src/routes/bug-reports.js');
+    const http = await import('node:http');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-unlinkfail-'));
+    const app = express();
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dir, readForwardConfig: () => null, resolveReporter: () => 'tester',
+      maxAttachmentBytes: 12 * 1024, maxAttachmentBytesPerProject: 12 * 1024,
+    }));
+    const post = (desc: string) => new Promise<number>((resolve, reject) => {
+      const server = http.createServer(app).listen(0, () => {
+        const port = (server.address() as { port: number }).port;
+        const body = JSON.stringify({
+          description: desc, severity: 'trivial',
+          attachments: [{ name: `${desc}.png`, mimeType: 'image/png', dataBase64: Buffer.alloc(6 * 1024, 3).toString('base64') }],
+        });
+        const req = http.request({ port, method: 'POST', path: '/api/bug-reports',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+          res.resume();
+          res.on('end', () => { server.close(); resolve(res.statusCode || 0); });
+        });
+        req.on('error', (e) => { server.close(); reject(e); });
+        req.end(body);
+      });
+    });
+
+    expect(await post('a')).toBe(201);
+    expect(await post('b')).toBe(201);
+    // 让删除永远失败（EACCES 而非 ENOENT）——文件还占着盘
+    const realUnlink = fs.unlinkSync;
+    const spy = vi.spyOn(fs, 'unlinkSync').mockImplementation(((p2: never) => {
+      if (String(p2).includes(`${path.sep}attachments${path.sep}`)) {
+        const err = new Error('EACCES') as Error & { code?: string };
+        err.code = 'EACCES';
+        throw err;
+      }
+      return (realUnlink as never as (...a: never[]) => unknown)(p2);
+    }) as never);
+    expect(await post('c')).toBe(201);
+    spy.mockRestore();
+
+    // 事故值：删失败也照样减账目 + 清引用，文件留在盘上却从配额里消失。
+    const files = fs.readdirSync(path.join(dir, 'bug-reports', 'attachments'));
+    const raw = fs.readFileSync(path.join(dir, 'bug-reports', 'records.jsonl'), 'utf-8');
+    const kept = raw.split('\n').filter(Boolean).map((l) => JSON.parse(l) as { attachments: Array<{ file: string }> });
+    const stillReferenced = kept.flatMap((r) => r.attachments).filter((a) => a.file).length;
+    // 删不掉的文件必须仍被账本引用着（下次回收还能再试），不能变成账外孤儿
+    expect(stillReferenced).toBeGreaterThanOrEqual(files.length);
+  });
+
+  it('转发成功但账本写入失败时，如实降级并清掉账外附件', async () => {
+    const express = (await import('express')).default;
+    const { createBugReportsRouter } = await import('../../src/routes/bug-reports.js');
+    const http = await import('node:http');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-ledgerfail-'));
+    const realAppend = fs.appendFileSync;
+    const spy = vi.spyOn(fs, 'appendFileSync').mockImplementation(((f: never, ...rest: never[]) => {
+      if (String(f).includes('records.jsonl')) throw new Error('ENOSPC');
+      return (realAppend as never as (...a: never[]) => unknown)(f, ...rest);
+    }) as never);
+
+    const app = express();
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dir,
+      readForwardConfig: () => ({ baseUrl: 'https://map.test', token: 't' }),
+      // 转发全部成功
+      fetchImpl: (async () => ({
+        ok: true, status: 200,
+        text: async () => JSON.stringify({ data: { defect: { id: 'd1', defectNo: 'DEF-1' } } }),
+      })) as never,
+      resolveReporter: () => 'tester',
+    }));
+
+    const out = await new Promise<{ status: number; json: Record<string, unknown> }>((resolve, reject) => {
+      const server = http.createServer(app).listen(0, () => {
+        const port = (server.address() as { port: number }).port;
+        const body = JSON.stringify({
+          description: '账本写不进去', severity: 'trivial',
+          attachments: [{ name: '图.png', mimeType: 'image/png', dataBase64: Buffer.alloc(64, 5).toString('base64') }],
+        });
+        const req = http.request({ port, method: 'POST', path: '/api/bug-reports',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(body) } }, (res) => {
+          let text = '';
+          res.on('data', (c) => { text += c; });
+          res.on('end', () => { server.close(); resolve({ status: res.statusCode || 0, json: JSON.parse(text) }); });
+        });
+        req.on('error', (e) => { server.close(); reject(e); });
+        req.end(body);
+      });
+    });
+    spy.mockRestore();
+
+    // 缺陷确实进了 MAP，不该判 500
+    expect(out.status).toBe(201);
+    expect(out.json.delivery).toBe('forwarded');
+    // 事故值：静默返回无说明的 201，附件成为回收永远看不到的账外孤儿
+    expect(String(out.json.degradeReason || '')).toMatch(/本地台账写入失败/);
+    const attDir = path.join(dir, 'bug-reports', 'attachments');
+    const leftovers = fs.existsSync(attDir) ? fs.readdirSync(attDir) : [];
+    expect(leftovers).toEqual([]);
+  });
+});

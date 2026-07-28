@@ -127,9 +127,12 @@ describe('llmgw 文本字段必须有界（Codex PR #1273 第四十三轮 P1）'
     expect(postCode).toMatch(/title = title\[\.\.BugReportMaxTitleChars\]/);
   });
 
-  it('环境键与附件元数据也要截（同样来自客户端）', () => {
+  it('环境键、附件元数据与 source 也要截（同样来自客户端、同样原样落库）', () => {
     expect(postCode).toContain('BugReportMaxEnvKeyChars');
     expect(postCode).toContain('ClampBugReportName');
+    // 事故值：只截了标题/描述/正文，source 仍原样进文档，前面几个上限白加
+    expect(postCode).toContain('ClampBugReportSource');
+    expect(postCode).not.toMatch(/\{ "Source", \(body\?\.Source \?\? "llmgw"\)\.Trim\(\) \}/);
   });
 
   it('两端上限数值一致：同一个面板不该有两套口径', () => {

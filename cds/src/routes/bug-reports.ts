@@ -501,11 +501,25 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
         });
       });
 
+      /**
+       * 摘掉该桶最旧的一个附件。返回 false = 这个桶已经没有候选了（循环该停）。
+       *
+       * 账目只在**删成功**之后才减。删失败（盘只读、权限、瞬时 IO 错误）却照样
+       * 减字节 + 清引用的话，文件还占着盘，却从此在所有配额计算里消失——反复
+       * 失败就能同时绕过每项目上限与全局硬顶（Codex PR #1273 P2）。
+       * 失败时仍把它移出候选列表：否则外层 while 会对同一个删不掉的文件死循环；
+       * 移出后循环自然去试下一个，全删不掉时列表耗尽、返回 false 收场。
+       */
       const evictOldestOf = (key: string): boolean => {
         const list = bucketFiles.get(key);
         if (!list || list.length === 0) return false;
         const f = list.shift()!;
-        try { fs.unlinkSync(f.path); } catch { /* 已不在就算了 */ }
+        try {
+          fs.unlinkSync(f.path);
+        } catch (err) {
+          // ENOENT = 文件本来就不在，视同删成功（账目该减）。其余错误 = 还占着盘。
+          if ((err as { code?: string })?.code !== 'ENOENT') return true;
+        }
         total -= f.size;
         bucketBytes.set(key, (bucketBytes.get(key) || 0) - f.size);
         f.rec.attachments[f.idx]!.file = '';
@@ -639,11 +653,24 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
       // 记录到此定型，再落账本 —— 顺序反了的话账本里存的是没有说明的旧 degradeReason。
       appendRecord(record);
     } catch (e) {
+      const reason = e instanceof Error ? e.message : String(e);
       // 本地留存失败且没转发成功 = 这条 bug 彻底丢了，必须如实报错让用户重试。
       if (delivery === 'local') {
-        res.status(500).json({ error: `本地留存失败：${e instanceof Error ? e.message : String(e)}` });
+        res.status(500).json({ error: `本地留存失败：${reason}` });
         return;
       }
+      // 已经转发成功：缺陷在 MAP 里，不该判 500。但**不能就这么不吭声**
+      // （Codex PR #1273 P2）：
+      //   1. 附件文件可能已经落盘却没进账本，回收逻辑永远发现不了它们 → 永久占盘的
+      //      孤儿，所以这里就地删掉；
+      //   2. 用户有权知道「CDS 这边没留底」，否则他以为本地也能查到。
+      for (const att of record.attachments) {
+        if (!att.file) continue;
+        try { fs.unlinkSync(path.join(baseDir(), 'attachments', att.file)); } catch { /* 本来就没落地 */ }
+        att.file = '';
+      }
+      const ledgerIssue = `已提交到缺陷系统，但 CDS 本地台账写入失败（${reason}），本地查不到这条记录`;
+      record.degradeReason = record.degradeReason ? `${record.degradeReason}；${ledgerIssue}` : ledgerIssue;
     }
 
     res.status(201).json({

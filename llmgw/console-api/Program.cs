@@ -8318,11 +8318,19 @@ const int BugReportMaxTitleChars = 200;
 const int BugReportMaxDescriptionChars = 20_000;
 const int BugReportMaxContentChars = 40_000;
 const int BugReportMaxEnvKeyChars = 40;
+// source 同样来自客户端且原样落库，不设限就等于前面几个上限白加（Codex PR #1273 P1）。
+// 与 CDS 侧 `asString(body.source, 'cds').slice(0, 40)` 同口径。
+const int BugReportMaxSourceChars = 40;
 const int BugReportMaxAttachmentNameChars = 120;
 // 截断而不是拒收：用户辛苦写的复现步骤不该被整条丢掉，但必须留下明确标记。
 static string ClampBugReportText(string value, int max)
     => value.Length <= max ? value : $"{value[..max]}\n…（原文共 {value.Length} 字，超过 {max} 字上限，已截断）";
 // 附件元数据（文件名 / MIME）同样来自客户端，直接截断即可，不必留标记。
+static string ClampBugReportSource(string value)
+{
+    var v = value.Length == 0 ? "llmgw" : value;
+    return v.Length > 40 ? v[..40] : v;
+}
 static string ClampBugReportName(string value, string fallback)
 {
     var v = value.Length == 0 ? fallback : value;
@@ -8533,7 +8541,7 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
     {
         { "_id", Guid.NewGuid().ToString("N") },
         { "TenantId", access.TenantId },
-        { "Source", (body?.Source ?? "llmgw").Trim() },
+        { "Source", ClampBugReportSource((body?.Source ?? "llmgw").Trim()) },
         { "Reporter", access.Username },
         { "ReporterUserId", access.UserId },
         { "Title", title },
