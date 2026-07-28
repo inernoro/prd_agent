@@ -93,6 +93,38 @@ const DISPLAY_NAME = {
   'ui-ux-pro-max': 'UI/UX Pro Max · 设计智能',
 };
 
+// ── 中文一句话简介（key → 用途）───────────────────────────────────────
+// 为什么需要这张表：11 个上架技能的 frontmatter description 是英文，而它直接进
+// 市场卡片、CDS 技能市场栏、套装 INSTALL.md 和 sdd-init 生成的规则文件 ——
+// 给中文非技术用户看一段英文等于没写。这里只覆盖对外展示的 description，
+// **不动 frontmatter**（那是 harness 的触发依据，改了会影响技能识别准确度）。
+const DISPLAY_SUMMARY = {
+  'acceptance-checklist': '生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册',
+  'acceptance-test-design': '把 PR、提交或发布范围转成可执行的验收设计：风险假设、用户可见影响、证据要求',
+  'acceptance-scenario-orchestrator': '复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约',
+  'code-hygiene': '十个维度扫技术债：死代码、兼容垫片、命名残留、冗余参数、配置漂移',
+  'conflict-resolution': '把主分支合进当前分支，AI 分级解决冲突，产出预合并报告',
+  'create-skill-file': '按规范生成 SKILL.md 并打分，头部格式、渐进披露、触发词一并校验',
+  'create-visual-test-to-kb': '工业级视觉验收全流水线：模拟真人浏览器取证、双主题截图、报告归档出深链',
+  'doc-writer': '守护 doc/ 的命名与表头，自动套用七类标准文档模板',
+  'find-skills': '按你的能力需求搜索并推荐可安装的第三方技能',
+  'flow-trace': '从前端一路追到数据库的端到端链路图，含大白话版和技术版',
+  'human-verify': '四个角度模拟人工审查：魔鬼辩护、反向验证、边界测试、用户场景',
+  'laowang': '卡住时用米多解决问题五步法强制拆解，风格直率，副作用是可能给你加一项任务',
+  'phase0-guard': '项目底座阶段的护栏：拦住 AI 在定位没定清楚时就开始建表写接口，附六段式汇报规范',
+  'plan-first': '要动手之前先出方案：说清改什么、影响什么、有什么风险，等你确认才执行',
+  'product-document-generator': '按模板补全、优化、扩写产品文档，产出符合 AI 开发要求的 PRD',
+  'preview-url': '读取 CDS 实际发布的预览地址，多入口全部列出，禁止本地推算',
+  'remotion-scene-codegen': '提供 Remotion API 上下文，生成高质量视频场景代码',
+  'risk-matrix': '按 MECE 在六个不重叠维度评估风险，产出可决策的风险矩阵',
+  'sdd-init': '把刚装的技能套装落到你的项目：生成协作规则、七类文档骨架和下一步路线图',
+  'skill-validation': '需求上马前先验一遍：八种气味检测、与已有功能查重、七维度评分',
+  'task-handoff-checklist': '八个维度扫变更生成交接清单，让验收者零追问就能核对',
+  'theme-transition': '给前端加主题切换的圆形水波纹动效，含降级方案',
+  'ui-ux-pro-max': '设计智能：67 种风格、96 种配色、57 种字体搭配，覆盖 13 种技术栈',
+  'findmapskills': '搜索、下载、上传、订阅海鲜市场的技能包；搜索下载免凭据',
+};
+
 // ── tag 分类启发式 ────────────────────────────────────────────────────────
 // 与 prd-admin/src/lib/skillGlyphRegistry.ts 的 TAG_STYLE_GROUPS 对齐：
 //   工程/工具/运维 → 罗盘   创意/内容/设计 → 植物   分析/数据/报告 → 星图   精英 → 金色徽章
@@ -311,7 +343,8 @@ function main() {
       key,
       title,
       version: version || null,
-      description: shortDesc(description, title),
+      // 对外展示优先用中文一句话；没登记的才退回 frontmatter description
+      description: DISPLAY_SUMMARY[key] || shortDesc(description, title),
       tags: deriveTags(key, name, description),
       roles: skillRoles[key] || [],
       requires: skillRequires[key] || [],

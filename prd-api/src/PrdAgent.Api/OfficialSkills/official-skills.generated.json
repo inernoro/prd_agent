@@ -1,6 +1,6 @@
 {
   "version": 3,
-  "generatedAt": "2026-07-28T11:21:21.602Z",
+  "generatedAt": "2026-07-28T11:53:26.825Z",
   "count": 23,
   "roleLabels": {
     "pm": "产品经理",
@@ -12,7 +12,7 @@
       "key": "acceptance-checklist",
       "title": "acceptance-checklist · 真人验收清单",
       "version": "1.0.1",
-      "description": "Generates a step-by-step user acceptance test (UAT) checklist that a real human executes by hand, with expected results and failure playbooks at every checkpoint. Covers CLI + Web UI scenarios, sup…",
+      "description": "生成真人逐步打勾的验收清单，每步带预期结果和失败排查手册",
       "tags": [
         "分析"
       ],
@@ -43,7 +43,7 @@
       "key": "acceptance-scenario-orchestrator",
       "title": "acceptance-scenario-orchestrator · 验收场景编排",
       "version": "1.0.0",
-      "description": "识别每日验收、PR 验收、commit 验收、未发布分支验收、缺陷复测、视觉回归和发布前验收等场景，并为 create-visual-test-to-kb 生成测试范围、指差法步骤、预期结果、证据链、截图回读和报告结构。Use when the user asks to optimize or run visual acceptance across different scenarios,…",
+      "description": "复杂验收目标的范围编排：场景识别、结果映射、指差法清单、证据链契约",
       "tags": [
         "分析"
       ],
@@ -110,7 +110,7 @@
       "key": "acceptance-test-design",
       "title": "acceptance-test-design · 验收测试设计",
       "version": "1.0.0",
-      "description": "Convert PRs, commits, yesterday's changes, or release scope into a test-minded acceptance design before visual execution. Use when the user asks for daily acceptance, visual acceptance, PR/commit a…",
+      "description": "把 PR、提交或发布范围转成可执行的验收设计：风险假设、用户可见影响、证据要求",
       "tags": [
         "分析"
       ],
@@ -185,7 +185,7 @@
       "key": "code-hygiene",
       "title": "code-hygiene · 代码卫生体检",
       "version": "1.0.0",
-      "description": "Audits code for post-migration residue and technical debt across 10 dimensions (dead fields, dead branches, compat shims, naming artifacts, redundant params/types, stale comments, migration guards,…",
+      "description": "十个维度扫技术债：死代码、兼容垫片、命名残留、冗余参数、配置漂移",
       "tags": [
         "分析"
       ],
@@ -210,7 +210,7 @@
       "key": "conflict-resolution",
       "title": "conflict-resolution · Git 冲突解决",
       "version": "1.0.0",
-      "description": "PR 前将 main 分支合并进当前特性分支，由 AI 代替开发者分级解决冲突，产出预合并报告并保证零冲突提交。触发词：\"合并主分支\"、\"预合并\"、\"merge main\"、\"/resolve\"。",
+      "description": "把主分支合进当前分支，AI 分级解决冲突，产出预合并报告",
       "tags": [
         "工具"
       ],
@@ -230,7 +230,7 @@
       "key": "create-skill-file",
       "title": "create-skill-file · 技能文件生成",
       "version": "1.0.0",
-      "description": "Creates and evaluates Claude Code SKILL.md files following Anthropic best practices. Generates well-structured skills with correct frontmatter, progressive disclosure, and quality validation. Trigg…",
+      "description": "按规范生成 SKILL.md 并打分，头部格式、渐进披露、触发词一并校验",
       "tags": [
         "技能"
       ],
@@ -246,7 +246,7 @@
         },
         {
           "path": "reference/structure-guide.md",
-          "content": "# 技能结构详细规范\n\n> 被 SKILL.md 引用。包含 frontmatter 规范、目录组织、渐进式披露模式。\n\n## YAML Frontmatter 规范\n\n| 字段 | 要求 | 约束 |\n|------|------|------|\n| `name` | 必填 | 小写字母+数字+连字符, ≤64字符, 与目录名一致 |\n| `description` | 必填 | 纯文本, ≤1024字符, 无 XML 标签 |\n\n**name 禁忌**：\n- XML 标签、保留字 (`anthropic`, `claude`)\n- 模糊词 (`helper`, `utility`, `manager`)\n- 空格或下划线（用连字符 `-`）\n\n**description 技巧**：\n\n```yaml\n# ❌ 过于泛化\ndescription: Helps with code tasks\n\n# ✅ 具体+触发场景\ndescription: Analyzes Python code for security vulnerabilities using bandit. Activates when user mentions \"security audit\" or \"vulnerability scan\".\n\n# ✅ 中英双语触发词\ndescription: Audits code for post-migration residue. Trigger words: \"代码卫生\", \"hygiene\", \"/hygiene\".\n```\n\n## 目录组织模式\n\n### 简单技能（<200行）\n\n```\nskill-name/\n└── SKILL.md\n```\n\n### 标准技能（200-500行主文件）\n\n```\nskill-name/\n├── SKILL.md              # 主指令 + 摘要表 + 流程 + 示例\n└── reference/\n    ├── detailed-guide.md  # 详细检测/操作指南\n    └── templates.md       # 输出模板集合\n```\n\n### 复杂技能（需要脚本）\n\n```\nskill-name/\n├── SKILL.md\n├── reference/\n│   └── api-reference.md\n└── scripts/\n    ├── analyze.py         # 分析脚本\n    └── validate.py        # 验证脚本\n```\n\n## 渐进式披露三层模型\n\n```\nLayer 1: YAML frontmatter (name + description)\n  ↓ 始终加载到系统提示\n  ↓ Claude 用它决定是否激活技能\n\nLayer 2: SKILL.md body\n  ↓ 技能激活时加载\n  ↓ 包含执行指令、摘要、流程\n\nLayer 3: reference/*.md + scripts/\n  ↓ 按需加载\n  ↓ SKILL.md 中用相对路径引用\n```\n\n**关键原则**：\n- 引用层级 ≤ 1 层（SKILL.md → reference/xxx.md，不能再套一层）\n- 子文件 > 100 行时在开头加目录\n- 文件名要有语义（`form-validation-rules.md` 而非 `doc2.md`）\n\n## 内容编写原则\n\n### 只添加 Claude 不知道的信息\n\n```markdown\n# ❌ 过度详细（Claude 已知）\n1. 创建 Python 文件\n2. 导入必要的库\n3. 定义函数\n\n# ✅ 简洁有效（项目特有）\n使用 `scripts/api_client.py` 调用内部 API。\n请求头必须包含 `X-Internal-Token`（从环境变量获取）。\n```\n\n### 自由度匹配矩阵\n\n| 自由度 | 适用场景 | 编写方式 |\n|--------|---------|---------|\n| **高** | 创造性任务、多种解法 | 指导原则，不限定步骤 |\n| **中** | 有推荐模式但允许变化 | 参数化示例 + 默认流程 |\n| **低** | 容易出错、需严格执行 | 详细分步指令或脚本 |\n\n### 工作流 Checklist 模式\n\n复杂任务（3+ 步骤）必须提供可复制的 checklist：\n\n```markdown\n复制此 checklist 跟踪进度：\n\n```\nTask Progress:\n- [ ] Step 1: 分析输入\n- [ ] Step 2: 处理数据\n- [ ] Step 3: 验证结果\n- [ ] Step 4: 输出报告\n```\n```\n\n### 反馈循环模式\n\n关键操作后必须验证：\n\n```markdown\n1. 执行修改\n2. 运行验证：`tsc --noEmit` / `dotnet build`\n3. 如果失败 → 修复 → 回到步骤 2\n4. 验证通过 → 继续\n```\n\n## 项目特有规范\n\n本项目技能的额外要求：\n\n1. **注册到 CLAUDE.md**：在「技能速查表」添加一行\n2. **中英双语**：description 用英文（提升跨平台发现率），触发词包含中文\n3. **技能协作**：标明与其他技能的上下游关系\n4. **输出模板**：必须给出报告/结果的 Markdown 模板\n",
+          "content": "# 技能结构详细规范\n\n> 被 SKILL.md 引用。包含 frontmatter 规范、目录组织、渐进式披露模式。\n\n## YAML Frontmatter 规范\n\n| 字段 | 要求 | 约束 |\n|------|------|------|\n| `name` | 必填 | 小写字母+数字+连字符, ≤64字符, 与目录名一致 |\n| `description` | 必填 | 纯文本, ≤1024字符, 无 XML 标签 |\n\n**name 禁忌**：\n- XML 标签、保留字 (`anthropic`, `claude`)\n- 模糊词 (`helper`, `utility`, `manager`)\n- 空格或下划线（用连字符 `-`）\n\n**description 技巧**：\n\n```yaml\n# 反例 过于泛化\ndescription: Helps with code tasks\n\n# 正例 具体+触发场景\ndescription: Analyzes Python code for security vulnerabilities using bandit. Activates when user mentions \"security audit\" or \"vulnerability scan\".\n\n# 正例 中英双语触发词\ndescription: Audits code for post-migration residue. Trigger words: \"代码卫生\", \"hygiene\", \"/hygiene\".\n```\n\n## 目录组织模式\n\n### 简单技能（<200行）\n\n```\nskill-name/\n└── SKILL.md\n```\n\n### 标准技能（200-500行主文件）\n\n```\nskill-name/\n├── SKILL.md              # 主指令 + 摘要表 + 流程 + 示例\n└── reference/\n    ├── detailed-guide.md  # 详细检测/操作指南\n    └── templates.md       # 输出模板集合\n```\n\n### 复杂技能（需要脚本）\n\n```\nskill-name/\n├── SKILL.md\n├── reference/\n│   └── api-reference.md\n└── scripts/\n    ├── analyze.py         # 分析脚本\n    └── validate.py        # 验证脚本\n```\n\n## 渐进式披露三层模型\n\n```\nLayer 1: YAML frontmatter (name + description)\n  ↓ 始终加载到系统提示\n  ↓ Claude 用它决定是否激活技能\n\nLayer 2: SKILL.md body\n  ↓ 技能激活时加载\n  ↓ 包含执行指令、摘要、流程\n\nLayer 3: reference/*.md + scripts/\n  ↓ 按需加载\n  ↓ SKILL.md 中用相对路径引用\n```\n\n**关键原则**：\n- 引用层级 ≤ 1 层（SKILL.md → reference/xxx.md，不能再套一层）\n- 子文件 > 100 行时在开头加目录\n- 文件名要有语义（`form-validation-rules.md` 而非 `doc2.md`）\n\n## 内容编写原则\n\n### 只添加 Claude 不知道的信息\n\n```markdown\n# 反例 过度详细（Claude 已知）\n1. 创建 Python 文件\n2. 导入必要的库\n3. 定义函数\n\n# 正例 简洁有效（项目特有）\n使用 `scripts/api_client.py` 调用内部 API。\n请求头必须包含 `X-Internal-Token`（从环境变量获取）。\n```\n\n### 自由度匹配矩阵\n\n| 自由度 | 适用场景 | 编写方式 |\n|--------|---------|---------|\n| **高** | 创造性任务、多种解法 | 指导原则，不限定步骤 |\n| **中** | 有推荐模式但允许变化 | 参数化示例 + 默认流程 |\n| **低** | 容易出错、需严格执行 | 详细分步指令或脚本 |\n\n### 工作流 Checklist 模式\n\n复杂任务（3+ 步骤）必须提供可复制的 checklist：\n\n```markdown\n复制此 checklist 跟踪进度：\n\n```\nTask Progress:\n- [ ] Step 1: 分析输入\n- [ ] Step 2: 处理数据\n- [ ] Step 3: 验证结果\n- [ ] Step 4: 输出报告\n```\n```\n\n### 反馈循环模式\n\n关键操作后必须验证：\n\n```markdown\n1. 执行修改\n2. 运行验证：`tsc --noEmit` / `dotnet build`\n3. 如果失败 → 修复 → 回到步骤 2\n4. 验证通过 → 继续\n```\n\n## 项目特有规范\n\n本项目技能的额外要求：\n\n1. **注册到 CLAUDE.md**：在「技能速查表」添加一行\n2. **中英双语**：description 用英文（提升跨平台发现率），触发词包含中文\n3. **技能协作**：标明与其他技能的上下游关系\n4. **输出模板**：必须给出报告/结果的 Markdown 模板\n",
           "truncated": false
         }
       ]
@@ -255,7 +255,7 @@
       "key": "create-visual-test-to-kb",
       "title": "create-visual-test-to-kb · 视觉验收归档",
       "version": "1.0.0",
-      "description": "工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照…",
+      "description": "工业级视觉验收全流水线：模拟真人浏览器取证、双主题截图、报告归档出深链",
       "tags": [
         "分析"
       ],
@@ -354,12 +354,12 @@
         },
         {
           "path": "templates/report-template.md",
-          "content": "# {项目} · {YYYY-MM-DD HH:mm} · {验收目标}\n\n<!-- 注：H1 标题必须是正文第一行，禁止 YAML frontmatter 打头（见标准 §2.1，否则目录显示 ---）。\n     机读字段在文末 HTML 注释。archive_report.py 自动注入标题与文末 meta，手写本体时从下面的 Verdict 起即可。 -->\n\n> Verdict: **{通过 / 有条件通过 / 不通过}**\n> {一句话结论：这个功能能不能用、还差什么}\n\n| 项目 | 目标 | 分支 | commit | 预览 | 验收人 | 日期 | 缺陷 P0/P1/P2/P3 |\n|---|---|---|---|---|---|---|---|\n| {project} | {target} | {branch} | {sha} | {url} | {reviewer} | {date} | {0/0/0/0} |\n\n## 1. 目标与价值\n\n{做什么。为什么做 —— 解决的痛点 / 新增的能力 / 修复的意义。}\n\n## 2. 范围与不覆盖\n\n覆盖：{本轮测了什么}\n不覆盖：{明确没测的，后续波次}\n\n## 3. 验收路径（点击进入，非地址栏直达）\n\n{登录后首页 → 点击「X」导航 → 点击「Y」→ 到达目标页。证明走真人路径。}\n{若某入口点不到（未进菜单/导航）→ 记 P1。}\n\n## 4. 完成标准 DoD（CLAUDE #8）\n\n- [ ] 后端编译零错误（本地/CDS）\n- [ ] 前端预览域名可打开、正常渲染\n- [ ] 核心流程端到端跑通（非仅 CRUD）\n- [ ] 直连预览域名（headless 真实访问路径，非 container-exec）\n- [ ] 外部依赖已确认可用\n\n## 5. 自测路径（CLAUDE #8.1，至少一条 + 结论）\n\n{跑了哪几条：API 集成 / CDS 部署 / headless 浏览器 / 真实 HTTP。各自断言了什么，结论。}\n\n## 5.5 需求一一对应表（v2.1 强制）\n\n<!-- ★ 必填，与用户原始诉求逐条对应 ★\n     规则：\n     1) 用户提了 N 条诉求/问题/要求，本表必须有 N 行，绝不合并、绝不漏列；\n     2) 状态列只允许：已落地 / 部分落地 / 未做 / 同上（指向上一条）；\n     3) \"未做\"和\"部分落地\"必须在右侧\"说明/证据\"列写清原因（范围/风险/留待后续）；\n     4) \"已落地\"必须给出图片号或文件路径作为证据；\n     5) 用户没明确列点但对话中提到的隐含诉求也要补一行（标注\"隐含诉求\"）。\n     这一节先于第 6 节\"验收用例\"，让用户无需翻找就能一一核对，杜绝\"提了 10 个只验了 6 个\"的茫然。\n     与第 6 节用例表正交：本表回答\"做了几条\"，用例表回答\"做了的是否能用\"。 -->\n\n| # | 用户原始诉求（保留措辞） | 状态 | 实现/证据/原因 |\n|---|---|---|---|\n| 1 | {贴用户原话或精炼引述} | 已落地 | {图号 + 一句话证据} |\n| 2 | {...} | 部分落地 | {落地了 A 部分，B 部分原因 X 留后续} |\n| 3 | {...} | 未做 | {原因：超出范围 / 需独立 PR / 等用户决策} |\n\n## 6. 验收用例\n\n| # | Phase | 维度 | 操作 | 预期 | 实际 | 状态 | 严重级 | 证据 |\n|---|---|---|---|---|---|---|---|---|\n| 1 | 前置 | 功能适合性 | ... | ... | ... | pass | - | 图1 |\n| 2 | 执行 | 易用性 | ... | ... | ... | pass | - | 图2 |\n| 3 | 验证 | 功能适合性 | ... | ... | ... | pass | - | 图3 |\n\n## 7. 硬约束 + 截图标准核查\n\n- [ ] 走点击导航进入（非 goto 直达）\n- [ ] 关键断言区清晰入镜（toast/卡片/页签激活态）\n- [ ] 双主题各一张（应用支持时；不支持注明）\n- [ ] 项目前端硬约束（颜色走 token / 空状态有引导 / 全高布局 等，按改动类型勾）\n\n## 7.1 移动端验收\n\n- 真实移动端环境：{视口 390×844；isMobile=true；touchPoints=N}\n- 独立用户路径：{登录后首页 → 点击导航 → 核心动作 → 结果状态}\n- 触控与可达性：{主 CTA、菜单、弹窗/抽屉、软键盘、安全区结论}\n- 滚动与版式：{滚动归属、文档横向溢出、遮挡、裁切、固定元素结论}\n- 证据：{L1 至少 1 张；L2 至少 2 张，入口/操作与结果/状态分别取证}\n\n## 8. 缺陷清单（P0-P3）\n\n- **P0/P1/P2**：{无 / 逐条：现象 + 修复意义 + 注意点}\n- **P3（优化建议）**：{...}\n\n## 9. 证据 + 结论整改\n\n分支 `{branch}` · commit `{sha}` · 预览 {url}\n\n**{caption 图1}**\n\n![{caption}]({上传后URL})\n\n---\n\n**Verdict: {通过 / 有条件通过 / 不通过}。** {对照 §7 Verdict 规则的判定理由。}\n\n整改（非阻塞）：{P3 项 / 后续波次}。\n\n<!-- acceptance-meta\ntype: acceptance-report\nstandard: MAP-Acceptance-v2\nreport_id: acc-{PROJECT}-{YYYYMMDDHHMM}-{SLUG}\nverdict: {pass | conditional | fail}\ntier: {L0 | L1 | L2}\ntarget_ref: {PR# / commit / 路由 / 功能名}\npreview_url: {cdscli 产出}\nbranch: {分支}\ncommit: {短 sha}\n-->\n",
+          "content": "# {项目} · {YYYY-MM-DD HH:mm} · {验收目标}\n\n<!-- 注：H1 标题必须是正文第一行，禁止 YAML frontmatter 打头（见标准 §2.1，否则目录显示 ---）。\n     机读字段在文末 HTML 注释。archive_report.py 自动注入标题与文末 meta，手写本体时从下面的 Verdict 起即可。 -->\n\n> Verdict: **{通过 / 有条件通过 / 不通过}**\n> {一句话结论：这个功能能不能用、还差什么}\n\n| 项目 | 目标 | 分支 | commit | 预览 | 验收人 | 日期 | 缺陷 P0/P1/P2/P3 |\n|---|---|---|---|---|---|---|---|\n| {project} | {target} | {branch} | {sha} | {url} | {reviewer} | {date} | {0/0/0/0} |\n\n## 1. 目标与价值\n\n{做什么。为什么做 —— 解决的痛点 / 新增的能力 / 修复的意义。}\n\n## 2. 范围与不覆盖\n\n覆盖：{本轮测了什么}\n不覆盖：{明确没测的，后续波次}\n\n## 3. 验收路径（点击进入，非地址栏直达）\n\n{登录后首页 → 点击「X」导航 → 点击「Y」→ 到达目标页。证明走真人路径。}\n{若某入口点不到（未进菜单/导航）→ 记 P1。}\n\n## 4. 完成标准 DoD（CLAUDE #8）\n\n- [ ] 后端编译零错误（本地/CDS）\n- [ ] 前端预览域名可打开、正常渲染\n- [ ] 核心流程端到端跑通（非仅 CRUD）\n- [ ] 直连预览域名（headless 真实访问路径，非 container-exec）\n- [ ] 外部依赖已确认可用\n\n## 5. 自测路径（CLAUDE #8.1，至少一条 + 结论）\n\n{跑了哪几条：API 集成 / CDS 部署 / headless 浏览器 / 真实 HTTP。各自断言了什么，结论。}\n\n## 5.5 需求一一对应表（v2.1 强制）\n\n<!-- 必填，与用户原始诉求逐条对应\n     规则：\n     1) 用户提了 N 条诉求/问题/要求，本表必须有 N 行，绝不合并、绝不漏列；\n     2) 状态列只允许：已落地 / 部分落地 / 未做 / 同上（指向上一条）；\n     3) \"未做\"和\"部分落地\"必须在右侧\"说明/证据\"列写清原因（范围/风险/留待后续）；\n     4) \"已落地\"必须给出图片号或文件路径作为证据；\n     5) 用户没明确列点但对话中提到的隐含诉求也要补一行（标注\"隐含诉求\"）。\n     这一节先于第 6 节\"验收用例\"，让用户无需翻找就能一一核对，杜绝\"提了 10 个只验了 6 个\"的茫然。\n     与第 6 节用例表正交：本表回答\"做了几条\"，用例表回答\"做了的是否能用\"。 -->\n\n| # | 用户原始诉求（保留措辞） | 状态 | 实现/证据/原因 |\n|---|---|---|---|\n| 1 | {贴用户原话或精炼引述} | 已落地 | {图号 + 一句话证据} |\n| 2 | {...} | 部分落地 | {落地了 A 部分，B 部分原因 X 留后续} |\n| 3 | {...} | 未做 | {原因：超出范围 / 需独立 PR / 等用户决策} |\n\n## 6. 验收用例\n\n| # | Phase | 维度 | 操作 | 预期 | 实际 | 状态 | 严重级 | 证据 |\n|---|---|---|---|---|---|---|---|---|\n| 1 | 前置 | 功能适合性 | ... | ... | ... | pass | - | 图1 |\n| 2 | 执行 | 易用性 | ... | ... | ... | pass | - | 图2 |\n| 3 | 验证 | 功能适合性 | ... | ... | ... | pass | - | 图3 |\n\n## 7. 硬约束 + 截图标准核查\n\n- [ ] 走点击导航进入（非 goto 直达）\n- [ ] 关键断言区清晰入镜（toast/卡片/页签激活态）\n- [ ] 双主题各一张（应用支持时；不支持注明）\n- [ ] 项目前端硬约束（颜色走 token / 空状态有引导 / 全高布局 等，按改动类型勾）\n\n## 7.1 移动端验收\n\n- 真实移动端环境：{视口 390×844；isMobile=true；touchPoints=N}\n- 独立用户路径：{登录后首页 → 点击导航 → 核心动作 → 结果状态}\n- 触控与可达性：{主 CTA、菜单、弹窗/抽屉、软键盘、安全区结论}\n- 滚动与版式：{滚动归属、文档横向溢出、遮挡、裁切、固定元素结论}\n- 证据：{L1 至少 1 张；L2 至少 2 张，入口/操作与结果/状态分别取证}\n\n## 8. 缺陷清单（P0-P3）\n\n- **P0/P1/P2**：{无 / 逐条：现象 + 修复意义 + 注意点}\n- **P3（优化建议）**：{...}\n\n## 9. 证据 + 结论整改\n\n分支 `{branch}` · commit `{sha}` · 预览 {url}\n\n**{caption 图1}**\n\n![{caption}]({上传后URL})\n\n---\n\n**Verdict: {通过 / 有条件通过 / 不通过}。** {对照 §7 Verdict 规则的判定理由。}\n\n整改（非阻塞）：{P3 项 / 后续波次}。\n\n<!-- acceptance-meta\ntype: acceptance-report\nstandard: MAP-Acceptance-v2\nreport_id: acc-{PROJECT}-{YYYYMMDDHHMM}-{SLUG}\nverdict: {pass | conditional | fail}\ntier: {L0 | L1 | L2}\ntarget_ref: {PR# / commit / 路由 / 功能名}\npreview_url: {cdscli 产出}\nbranch: {分支}\ncommit: {短 sha}\n-->\n",
           "truncated": false
         },
         {
           "path": "templates/zz-report.md",
-          "content": "# {项目} · {YYYY-MM-DD HH:mm} · {验收目标}\n\n<!-- ZZ 照做风模板。规则(用户定死,见 standard-v2.md §6.3):\n     1 全是大标题(## 步骤N),没有小标题  2 一句话讲清一步,不用两句\n     3 讲流程不讲思想  4 同岗位照着做一定能复现  5 一条分支走完再讲下一条(写「续上一步」承接)\n     6 每步尽量配图  7 切换页面必截图  8 变化处必画框(harness box/stepClick 已自动)  9 文字在上图片在下({{IMG:}} 占位)\n     正文第一行必须是这行 H1(防 --- ,见 §2.1)。机读字段在文末注释。archive_report.py 自动注入标题+meta+把 {{IMG:name}} 换成截图。 -->\n\n> Verdict: **{通过 / 有条件通过 / 不通过}**\n> {一句话结论:这功能能不能用、还差什么}\n\n| 项目 | 目标 | 分支 | commit | 预览 | 验收人 | 日期 | 缺陷 P0/P1/P2/P3 |\n|---|---|---|---|---|---|---|---|\n| {project} | {target} | {branch} | {sha} | {url} | {reviewer} | {date} | {0/0/0/0} |\n\n## 步骤 1 · 登录后从首页点「{导航名}」进入\n\n{一句话:点哪、到哪。}\n\n{{IMG:01-nav}}\n\n## 步骤 2 · {这一步做什么}\n\n{一句话。框已由 harness 自动画在要点的地方。}\n\n{{IMG:02-action}}\n\n## 步骤 3 · {验证变化}\n\n{一句话:看到什么变化 = 成功。变化处已画框。}\n\n{{IMG:03-result}}\n\n## 需求一一对应表\n\n<!-- ★ 必填，与用户原始诉求逐条对应 ★\n     规则：\n     1) 用户提了 N 条诉求/问题/要求，本表必须有 N 行，绝不合并、绝不漏列；\n     2) 状态列只允许：已落地 / 部分落地 / 未做 / 同上（指向上一条）；\n     3) \"未做\"和\"部分落地\"必须在右侧\"说明/证据\"列写清原因（范围/风险/留待后续）；\n     4) \"已落地\"必须给出图片号或文件路径作为证据；\n     5) 用户没明确列点但对话中提到的隐含诉求也要补一行。\n     这一节先于\"验收用例一览\"，让用户无需翻找即可一一核对，杜绝\"提了 10 个只验了 6 个\"的茫然。 -->\n\n| # | 用户原始诉求（保留措辞） | 状态 | 实现/证据/原因 |\n|---|---|---|---|\n| 1 | {贴用户原话或精炼引述} | 已落地 | {图号 + 一句话证据} |\n| 2 | {...} | 已落地 | {图号 + ...} |\n| 3 | {...} | 部分落地 | {落地了哪部分；剩下部分为什么不在本次范围/排期} |\n| 4 | {...} | 未做 | {原因：超范围 / 需独立 PR / 等用户决策} |\n| ... | {...} | 同上 | （指向第 N 条同类处理） |\n\n## 验收用例一览\n\n<!-- 用例表测的是\"功能链路是否能跑通\"，与上面的需求对应表正交。\n     需求对应表回答\"用户提的有没有都做\"，用例表回答\"做了的是否真能用\"。两表都要有。 -->\n\n| # | 操作 | 预期 | 实际 | 状态 | 证据 |\n|---|---|---|---|---|---|\n| 1 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图1 |\n| 2 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图2 |\n| 3 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图3 |\n\n## 移动端验收\n\n视口：{390×844}；触控：{navigator.maxTouchPoints=N}；独立路径：{登录后首页 → 点击导航 → 执行核心动作 → 验证结果}。\n\n滚动与溢出：{页面滚动归属正确、无文档横向溢出 / 发现的问题}；遮挡与裁切：{顶部、底部固定元素、弹窗、抽屉、软键盘和安全区结论}。\n\n{{IMG:04-mobile-entry}}\n\n{{IMG:05-mobile-result}}\n\n## 缺陷清单\n\nP0/P1/P2:{无 / 逐条一句话:现象 + 为什么必须修}\nP3:{优化建议,一句话一条}\n\n## 结论\n\n{对照 Verdict 规则一句话定论。无 open P0/P1 + 用例全 pass = 通过。}\n\n<!-- acceptance-meta\ntype: acceptance-report\nstandard: MAP-Acceptance-v2\nreport_id: acc-{PROJECT}-{YYYYMMDDHHMM}-{SLUG}\nverdict: {pass | conditional | fail}\ntier: {L0 | L1 | L2}\ntarget_ref: {PR# / commit / 路由 / 功能名}\npreview_url: {cdscli 产出}\nbranch: {分支}\ncommit: {短 sha}\n-->\n",
+          "content": "# {项目} · {YYYY-MM-DD HH:mm} · {验收目标}\n\n<!-- ZZ 照做风模板。规则(用户定死,见 standard-v2.md §6.3):\n     1 全是大标题(## 步骤N),没有小标题  2 一句话讲清一步,不用两句\n     3 讲流程不讲思想  4 同岗位照着做一定能复现  5 一条分支走完再讲下一条(写「续上一步」承接)\n     6 每步尽量配图  7 切换页面必截图  8 变化处必画框(harness box/stepClick 已自动)  9 文字在上图片在下({{IMG:}} 占位)\n     正文第一行必须是这行 H1(防 --- ,见 §2.1)。机读字段在文末注释。archive_report.py 自动注入标题+meta+把 {{IMG:name}} 换成截图。 -->\n\n> Verdict: **{通过 / 有条件通过 / 不通过}**\n> {一句话结论:这功能能不能用、还差什么}\n\n| 项目 | 目标 | 分支 | commit | 预览 | 验收人 | 日期 | 缺陷 P0/P1/P2/P3 |\n|---|---|---|---|---|---|---|---|\n| {project} | {target} | {branch} | {sha} | {url} | {reviewer} | {date} | {0/0/0/0} |\n\n## 步骤 1 · 登录后从首页点「{导航名}」进入\n\n{一句话:点哪、到哪。}\n\n{{IMG:01-nav}}\n\n## 步骤 2 · {这一步做什么}\n\n{一句话。框已由 harness 自动画在要点的地方。}\n\n{{IMG:02-action}}\n\n## 步骤 3 · {验证变化}\n\n{一句话:看到什么变化 = 成功。变化处已画框。}\n\n{{IMG:03-result}}\n\n## 需求一一对应表\n\n<!-- 必填，与用户原始诉求逐条对应\n     规则：\n     1) 用户提了 N 条诉求/问题/要求，本表必须有 N 行，绝不合并、绝不漏列；\n     2) 状态列只允许：已落地 / 部分落地 / 未做 / 同上（指向上一条）；\n     3) \"未做\"和\"部分落地\"必须在右侧\"说明/证据\"列写清原因（范围/风险/留待后续）；\n     4) \"已落地\"必须给出图片号或文件路径作为证据；\n     5) 用户没明确列点但对话中提到的隐含诉求也要补一行。\n     这一节先于\"验收用例一览\"，让用户无需翻找即可一一核对，杜绝\"提了 10 个只验了 6 个\"的茫然。 -->\n\n| # | 用户原始诉求（保留措辞） | 状态 | 实现/证据/原因 |\n|---|---|---|---|\n| 1 | {贴用户原话或精炼引述} | 已落地 | {图号 + 一句话证据} |\n| 2 | {...} | 已落地 | {图号 + ...} |\n| 3 | {...} | 部分落地 | {落地了哪部分；剩下部分为什么不在本次范围/排期} |\n| 4 | {...} | 未做 | {原因：超范围 / 需独立 PR / 等用户决策} |\n| ... | {...} | 同上 | （指向第 N 条同类处理） |\n\n## 验收用例一览\n\n<!-- 用例表测的是\"功能链路是否能跑通\"，与上面的需求对应表正交。\n     需求对应表回答\"用户提的有没有都做\"，用例表回答\"做了的是否真能用\"。两表都要有。 -->\n\n| # | 操作 | 预期 | 实际 | 状态 | 证据 |\n|---|---|---|---|---|---|\n| 1 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图1 |\n| 2 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图2 |\n| 3 | {点了什么} | {该出现什么} | {真出现了什么} | pass | 图3 |\n\n## 移动端验收\n\n视口：{390×844}；触控：{navigator.maxTouchPoints=N}；独立路径：{登录后首页 → 点击导航 → 执行核心动作 → 验证结果}。\n\n滚动与溢出：{页面滚动归属正确、无文档横向溢出 / 发现的问题}；遮挡与裁切：{顶部、底部固定元素、弹窗、抽屉、软键盘和安全区结论}。\n\n{{IMG:04-mobile-entry}}\n\n{{IMG:05-mobile-result}}\n\n## 缺陷清单\n\nP0/P1/P2:{无 / 逐条一句话:现象 + 为什么必须修}\nP3:{优化建议,一句话一条}\n\n## 结论\n\n{对照 Verdict 规则一句话定论。无 open P0/P1 + 用例全 pass = 通过。}\n\n<!-- acceptance-meta\ntype: acceptance-report\nstandard: MAP-Acceptance-v2\nreport_id: acc-{PROJECT}-{YYYYMMDDHHMM}-{SLUG}\nverdict: {pass | conditional | fail}\ntier: {L0 | L1 | L2}\ntarget_ref: {PR# / commit / 路由 / 功能名}\npreview_url: {cdscli 产出}\nbranch: {分支}\ncommit: {短 sha}\n-->\n",
           "truncated": false
         }
       ]
@@ -368,7 +368,7 @@
       "key": "doc-writer",
       "title": "doc-writer · 七类文档模板",
       "version": null,
-      "description": "Guards document creation and modification in the doc/ directory, enforcing 7 standardized type templates (spec, design, plan, rule, guide, report, debt). Validates file naming, header format, and t…",
+      "description": "守护 doc/ 的命名与表头，自动套用七类标准文档模板",
       "tags": [
         "文档"
       ],
@@ -399,7 +399,7 @@
       "key": "find-skills",
       "title": "find-skills · 技能发现",
       "version": "1.0.0",
-      "description": "Helps users discover and install agent skills when they ask questions like \"how do I do X\", \"find a skill for X\", \"is there a skill that can...\", or express interest in extending capabilities. This…",
+      "description": "按你的能力需求搜索并推荐可安装的第三方技能",
       "tags": [
         "技能"
       ],
@@ -420,7 +420,7 @@
       "key": "findmapskills",
       "title": "findmapskills · 海鲜市场操作技能",
       "version": "1.3.0",
-      "description": "PrdAgent 海鲜市场（skill marketplace）操作技能。通过长效 API Key 搜索、下载、上传、订阅本平台的技能包。当用户说\"找个海鲜市场的技能做 X\"、\"从市场装个技能\"、\"把这个技能发布到市场\"、\"订阅新技能\"时触发。",
+      "description": "搜索、下载、上传、订阅海鲜市场的技能包；搜索下载免凭据",
       "tags": [
         "技能",
         "精英"
@@ -448,7 +448,7 @@
       "key": "flow-trace",
       "title": "flow-trace · 端到端链路追踪",
       "version": null,
-      "description": "对指定功能或模块做全链路追踪（数据流/控制流/错误流），从入口一路追到数据库或 LLM，产出非技术人员也能看懂的端到端路径图（含决策点、数据变换、降级路径）。触发词：\"/trace\"、\"路径追踪\"、\"追踪 XXX\"、\"这个功能是怎么跑的\"、\"数据是怎么流转的\"、\"flow trace\"。",
+      "description": "从前端一路追到数据库的端到端链路图，含大白话版和技术版",
       "tags": [
         "分析"
       ],
@@ -469,7 +469,7 @@
       "key": "human-verify",
       "title": "human-verify · 多视角人工验证",
       "version": "1.0.0",
-      "description": "Multi-perspective code verification that simulates human review. Combines adversarial debate (Devil's Advocate), reverse verification, boundary testing, and user scenario simulation to catch issues…",
+      "description": "四个角度模拟人工审查：魔鬼辩护、反向验证、边界测试、用户场景",
       "tags": [
         "分析"
       ],
@@ -486,7 +486,7 @@
         },
         {
           "path": "reference/methods.md",
-          "content": "# 验证方法详解\n\n> 被 SKILL.md Step 4 引用。按需阅读，无需全量加载。\n\n## 1. 逆向验证（Reverse Verification）\n\n从预期结果反推，代码是否能产生这个结果？\n\n**步骤**：\n1. 明确期望的输出/行为\n2. 从返回点反向追踪代码路径\n3. 检查是否有遗漏分支导致不同结果\n\n**模板**：\n```\n期望: {预期行为}\n追踪:\n- 返回点在哪？→ {函数:行号}\n- 调用链是否完整？→ {A → B → C}\n- 有遗漏分支吗？→ {检查结果}\n```\n\n## 2. 边界条件测试（Boundary Testing）\n\n故意输入\"刁难\"的数据。\n\n**检查清单**：\n- [ ] 空值 / null / undefined\n- [ ] 空字符串 vs null\n- [ ] 空数组 vs null vs 单元素数组\n- [ ] 数字: 0, -1, MAX_INT, 小数, NaN\n- [ ] 字符串: 超长, 特殊字符, emoji, 换行符\n- [ ] 日期: 时区边界, 闰年, epoch\n- [ ] 并发: 同时两个请求修改同一数据\n\n## 3. 用户场景模拟（User Scenario Simulation）\n\n假装自己是真实用户，按正常流程操作。\n\n**步骤**：\n1. 列出 3-5 个典型场景\n2. 对每个场景逐步追踪执行路径\n3. 检查用户在每一步会看到什么\n\n**模板**：\n```markdown\n## 场景: [名称]\n**角色**: [普通用户/管理员/新用户]\n**前置条件**: [状态]\n\n1. 用户执行 [操作] → 代码路径: [调用链] → 预期: [结果] → ✅/❌\n2. ...\n```\n\n## 4. 数据流追踪（Data Flow Tracing）\n\n追踪关键数据字段从入口到出口的完整路径。\n\n**模板**：\n```\n字段: {fieldName}\n入口 → Controller(request.field)\n       ↓ 类型一致？\n处理 → Service(field)\n       ↓ 转换正确？\n存储 → Repository.Insert(entity.field)\n       ↓ 赋值正确？\n输出 → Response { field }\n       ↓ 与输入一致？\n```\n\n## 5. 双向推导（Bidirectional Reasoning）\n\n分别从\"代码做了什么\"和\"需求是什么\"两边推导。\n\n**步骤**：\n1. **正向**：读代码，总结实际行为\n2. **反向**：读需求/注释，理解期望行为\n3. **对比**：标注差异（遗漏/多余/不一致）\n\n**输出**：\n```markdown\n| 行为 | 代码 | 需求 | 差异 |\n|------|------|------|------|\n| 参数校验 | 只校验 A | 校验 A 和 B | ⚠️ 遗漏 B |\n| 审计日志 | 无 | 需要 | ⚠️ 遗漏 |\n```\n\n## 6. API 契约验证（API Contract Verification）\n\n验证 API 的输入输出是否符合约定。\n\n**检查项**：\n- [ ] 请求参数是否都有验证？必填字段标记 [Required]？\n- [ ] 响应格式是否与类型定义一致？\n- [ ] 错误响应有正确的状态码和消息？\n- [ ] 是否处理了所有可能的异常？\n\n## 7. 状态机验证（State Machine Verification）\n\n验证状态转换是否完整。\n\n**步骤**：\n1. 列出所有可能的状态\n2. 绘制转换图\n3. 检查每个合法转换有对应代码\n4. 检查非法转换是否被阻止\n\n**模板**：\n```\n[Created] --submit--> [Pending] --approve--> [Approved]\n                                --reject-->  [Rejected]\n⚠️ [Created] 能直接到 [Approved] 吗？→ 不应该\n⚠️ [Rejected] 能重新提交吗？→ 确认需求\n```\n\n## 8. 行为对比验证（Behavior Comparison）\n\n适用于重构场景。\n\n**模板**：\n```markdown\n| 场景 | 重构前 | 重构后 | 一致？ |\n|------|-------|-------|--------|\n| 正常输入 | 返回 A | 返回 A | ✅ |\n| 空输入 | 返回 null | 抛异常 | ❌ |\n```\n\n## 9. Devil's Advocate（对抗式质疑）\n\n详见 SKILL.md Step 3。按优先级（正确性→错误处理→安全→性能→可维护性）逐级质疑，每级执行\"质疑→辩护→裁决\"三步。\n",
+          "content": "# 验证方法详解\n\n> 被 SKILL.md Step 4 引用。按需阅读，无需全量加载。\n\n## 1. 逆向验证（Reverse Verification）\n\n从预期结果反推，代码是否能产生这个结果？\n\n**步骤**：\n1. 明确期望的输出/行为\n2. 从返回点反向追踪代码路径\n3. 检查是否有遗漏分支导致不同结果\n\n**模板**：\n```\n期望: {预期行为}\n追踪:\n- 返回点在哪？→ {函数:行号}\n- 调用链是否完整？→ {A → B → C}\n- 有遗漏分支吗？→ {检查结果}\n```\n\n## 2. 边界条件测试（Boundary Testing）\n\n故意输入\"刁难\"的数据。\n\n**检查清单**：\n- [ ] 空值 / null / undefined\n- [ ] 空字符串 vs null\n- [ ] 空数组 vs null vs 单元素数组\n- [ ] 数字: 0, -1, MAX_INT, 小数, NaN\n- [ ] 字符串: 超长, 特殊字符, emoji, 换行符\n- [ ] 日期: 时区边界, 闰年, epoch\n- [ ] 并发: 同时两个请求修改同一数据\n\n## 3. 用户场景模拟（User Scenario Simulation）\n\n假装自己是真实用户，按正常流程操作。\n\n**步骤**：\n1. 列出 3-5 个典型场景\n2. 对每个场景逐步追踪执行路径\n3. 检查用户在每一步会看到什么\n\n**模板**：\n```markdown\n## 场景: [名称]\n**角色**: [普通用户/管理员/新用户]\n**前置条件**: [状态]\n\n1. 用户执行 [操作] → 代码路径: [调用链] → 预期: [结果] → 通过/未通过\n2. ...\n```\n\n## 4. 数据流追踪（Data Flow Tracing）\n\n追踪关键数据字段从入口到出口的完整路径。\n\n**模板**：\n```\n字段: {fieldName}\n入口 → Controller(request.field)\n       ↓ 类型一致？\n处理 → Service(field)\n       ↓ 转换正确？\n存储 → Repository.Insert(entity.field)\n       ↓ 赋值正确？\n输出 → Response { field }\n       ↓ 与输入一致？\n```\n\n## 5. 双向推导（Bidirectional Reasoning）\n\n分别从\"代码做了什么\"和\"需求是什么\"两边推导。\n\n**步骤**：\n1. **正向**：读代码，总结实际行为\n2. **反向**：读需求/注释，理解期望行为\n3. **对比**：标注差异（遗漏/多余/不一致）\n\n**输出**：\n```markdown\n| 行为 | 代码 | 需求 | 差异 |\n|------|------|------|------|\n| 参数校验 | 只校验 A | 校验 A 和 B | 警告 遗漏 B |\n| 审计日志 | 无 | 需要 | 警告 遗漏 |\n```\n\n## 6. API 契约验证（API Contract Verification）\n\n验证 API 的输入输出是否符合约定。\n\n**检查项**：\n- [ ] 请求参数是否都有验证？必填字段标记 [Required]？\n- [ ] 响应格式是否与类型定义一致？\n- [ ] 错误响应有正确的状态码和消息？\n- [ ] 是否处理了所有可能的异常？\n\n## 7. 状态机验证（State Machine Verification）\n\n验证状态转换是否完整。\n\n**步骤**：\n1. 列出所有可能的状态\n2. 绘制转换图\n3. 检查每个合法转换有对应代码\n4. 检查非法转换是否被阻止\n\n**模板**：\n```\n[Created] --submit--> [Pending] --approve--> [Approved]\n                                --reject-->  [Rejected]\n警告 [Created] 能直接到 [Approved] 吗？→ 不应该\n警告 [Rejected] 能重新提交吗？→ 确认需求\n```\n\n## 8. 行为对比验证（Behavior Comparison）\n\n适用于重构场景。\n\n**模板**：\n```markdown\n| 场景 | 重构前 | 重构后 | 一致？ |\n|------|-------|-------|--------|\n| 正常输入 | 返回 A | 返回 A | 通过 |\n| 空输入 | 返回 null | 抛异常 | 未通过 |\n```\n\n## 9. Devil's Advocate（对抗式质疑）\n\n详见 SKILL.md Step 3。按优先级（正确性→错误处理→安全→性能→可维护性）逐级质疑，每级执行\"质疑→辩护→裁决\"三步。\n",
           "truncated": false
         }
       ]
@@ -495,7 +495,7 @@
       "key": "laowang",
       "title": "老王 · 米多解决问题五步法",
       "version": "1.0.0",
-      "description": "老王智能体——米多文化的化身。当用户表达\"任务太难\"、\"卡住了\"、\"不知道怎么办\"、\"理不清头绪\"、\"任务太多搞不定\"、\"求助老王\"、\"找老王\"、\"老王帮我\"、\"/laowang\"等困境信号时主动触发， 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）帮用户拆解任务。 风格强硬直率，奉行\"回归常识、以终为始、贡献论英雄\"，坚决反对软骨病/玻璃心/巨…",
+      "description": "卡住时用米多解决问题五步法强制拆解，风格直率，副作用是可能给你加一项任务",
       "tags": [
         "精英"
       ],
@@ -517,7 +517,7 @@
       "key": "phase0-guard",
       "title": "phase0-guard · 底座阶段护栏",
       "version": null,
-      "description": "新项目底座阶段的护栏与沟通规范。防止 AI 在产品定位还没定清楚时就开始编数据库实体、业务 API 和调度器；同时把面向老板与产品经理的六段式回复、术语翻译和文档读者分层固化下来。触发词：\"/phase0\"、\"底座阶段\"、\"先别写业务\"、\"项目还在起步\"、\"怎么跟老板汇报\"。",
+      "description": "项目底座阶段的护栏：拦住 AI 在定位没定清楚时就开始建表写接口，附六段式汇报规范",
       "tags": [
         "需求",
         "精英"
@@ -540,7 +540,7 @@
       "key": "plan-first",
       "title": "plan-first · 先方案后动手",
       "version": null,
-      "description": "Use this skill whenever the user says \"给出方案\", \"先给方案\", \"方案\", \"给我方案\", \"方案确认后再动手\", \"先说思路\", \"给出你的思路和方案\", or any phrase asking Claude to plan before executing. Also trigger when the user asks Claude to …",
+      "description": "要动手之前先出方案：说清改什么、影响什么、有什么风险，等你确认才执行",
       "tags": [
         "需求"
       ],
@@ -561,7 +561,7 @@
       "key": "product-document-generator",
       "title": "product-document-generator · 产品文档生成",
       "version": null,
-      "description": "按照产品文档模板和要求补全、优化、扩写并整合输出符合AI开发要求的产品文档。当用户需要生成产品文档、完善PRD文档、优化产品需求描述或创建用于AI开发的产品文档时自动触发。触发词：\"生成产品文档\"、\"完善PRD\"、\"优化产品需求\"、\"写产品文档\"、\"product document\"。",
+      "description": "按模板补全、优化、扩写产品文档，产出符合 AI 开发要求的 PRD",
       "tags": [
         "文档"
       ],
@@ -601,7 +601,7 @@
       "key": "remotion-scene-codegen",
       "title": "remotion-scene-codegen · 视频场景代码生成",
       "version": "1.0.0",
-      "description": "Provides Remotion knowledge context for video scene code generation. Supplies the LLM Gateway with Remotion API references, animation utilities, reusable component libraries, and scene design princ…",
+      "description": "提供 Remotion API 上下文，生成高质量视频场景代码",
       "tags": [
         "创意"
       ],
@@ -621,7 +621,7 @@
       "key": "risk-matrix",
       "title": "risk-matrix · MECE 风险评估",
       "version": "1.0.0",
-      "description": "基于 MECE 分析法对功能变更做全维度风险评估，按概率与影响在六个不重叠维度（正确性/兼容性/性能容量/安全合规/运维部署/用户体验）打分，产出可决策的风险矩阵报告。触发词：\"风险评估\"、\"风险矩阵\"、\"risk matrix\"、\"这样改有什么风险\"、\"/risk\"。",
+      "description": "按 MECE 在六个不重叠维度评估风险，产出可决策的风险矩阵",
       "tags": [
         "分析"
       ],
@@ -643,7 +643,7 @@
       "key": "sdd-init",
       "title": "sdd-init · 项目骨架落地",
       "version": null,
-      "description": "把刚装好的角色技能套装落地到当前项目——探测现状、生成 CLAUDE.md 规则骨架、doc/ 七类文档骨架和角色路线图，并输出「已装什么 / 还缺什么 / 下一步做什么」的自检报告。让下载完技能的人不再面对一个空仓库发呆。触发词：\"/sdd-init\"、\"初始化项目\"、\"技能落地\"、\"装完技能怎么开始\"、\"搭工作方法\"。",
+      "description": "把刚装的技能套装落到你的项目：生成协作规则、七类文档骨架和下一步路线图",
       "tags": [
         "需求",
         "精英"
@@ -686,7 +686,7 @@
       "key": "skill-validation",
       "title": "skill-validation · 需求七维度评分",
       "version": "1.0.0",
-      "description": "Validates new feature requirements before development begins. Combines requirement smell detection (ambiguity, incompleteness, untestability), deduplication against existing features, and multi-dim…",
+      "description": "需求上马前先验一遍：八种气味检测、与已有功能查重、七维度评分",
       "tags": [
         "需求"
       ],
@@ -706,13 +706,14 @@
       "key": "task-handoff-checklist",
       "title": "task-handoff-checklist · 任务交接清单",
       "version": "1.0.1",
-      "description": "开发任务完成后自动扫描变更，从导航、文档、规则、工作流、测试、风险、代码质量、后续事项八个维度生成结构化交接报告，让验收者零追问即可核对。触发词：\"交接\"、\"验收\"、\"handoff\"、\"/handoff\"。",
+      "description": "八个维度扫变更生成交接清单，让验收者零追问就能核对",
       "tags": [
         "分析"
       ],
       "roles": [
         "pm",
-        "dev"
+        "dev",
+        "qa"
       ],
       "requires": [],
       "files": [
@@ -737,7 +738,7 @@
       "key": "theme-transition",
       "title": "theme-transition · 主题切换水波纹动效",
       "version": "1.0.0",
-      "description": "为任意前端项目添加主题切换圆形过渡动效（View Transition API + clip-path 水波纹扩散）。适用于 React/Vanilla/Tauri 等技术栈，含完整 CSS、JS 代码与降级方案。触发词：\"主题过渡\"、\"皮肤切换动效\"、\"theme transition\"、\"ripple theme\"、\"/theme-transition\"。",
+      "description": "给前端加主题切换的圆形水波纹动效，含降级方案",
       "tags": [
         "创意"
       ],
@@ -757,7 +758,7 @@
       "key": "ui-ux-pro-max",
       "title": "UI/UX Pro Max · 设计智能",
       "version": "1.0.0",
-      "description": "UI/UX design intelligence. 67 styles, 96 palettes, 57 font pairings, 25 charts, 13 stacks (React, Next.js, Vue, Svelte, SwiftUI, React Native, Flutter, Tailwind, shadcn/ui). Actions: plan, build, c…",
+      "description": "设计智能：67 种风格、96 种配色、57 种字体搭配，覆盖 13 种技术栈",
       "tags": [
         "创意"
       ],
@@ -939,6 +940,62 @@
         "risk-matrix",
         "flow-trace",
         "acceptance-checklist",
+        "task-handoff-checklist",
+        "laowang"
+      ],
+      "firstStep": "解压后打开 Claude Code，输入 /sdd-init"
+    },
+    {
+      "key": "dev-starter",
+      "title": "dev-starter · 开发入门套装",
+      "version": "1.0.0",
+      "description": "开发一条命令装齐：底座阶段护栏、方案先行、风险评估、多视角自查、代码卫生、Git 冲突解决、文档规范、交接对齐。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "tags": [
+        "套装",
+        "工具",
+        "精英"
+      ],
+      "roles": [
+        "dev"
+      ],
+      "includes": [
+        "sdd-init",
+        "phase0-guard",
+        "plan-first",
+        "risk-matrix",
+        "human-verify",
+        "code-hygiene",
+        "conflict-resolution",
+        "doc-writer",
+        "flow-trace",
+        "task-handoff-checklist",
+        "create-skill-file",
+        "laowang"
+      ],
+      "firstStep": "解压后打开 Claude Code，输入 /sdd-init"
+    },
+    {
+      "key": "qa-starter",
+      "title": "qa-starter · 测试与验收套装",
+      "version": "1.0.0",
+      "description": "测试一条命令装齐：验收测试设计、验收场景编排、真人验收清单、浏览器取证归档、多视角挑刺、风险排序。含 sdd-init，装完直接把工作方法落到你的项目里。",
+      "tags": [
+        "套装",
+        "分析",
+        "精英"
+      ],
+      "roles": [
+        "qa"
+      ],
+      "includes": [
+        "sdd-init",
+        "phase0-guard",
+        "acceptance-test-design",
+        "acceptance-scenario-orchestrator",
+        "acceptance-checklist",
+        "create-visual-test-to-kb",
+        "human-verify",
+        "risk-matrix",
         "task-handoff-checklist",
         "laowang"
       ],

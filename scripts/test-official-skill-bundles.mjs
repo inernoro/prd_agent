@@ -130,6 +130,16 @@ try {
     walk(dest);
     assert(dirty.length === 0, `[${bundle.key}] 分发内容无 emoji${dirty.length ? `（命中：${dirty.slice(0, 5).join(', ')}）` : ''}`);
 
+    // 4c-2. 对外展示的简介必须是中文：这段直接进市场卡片、CDS 市场栏、
+    // INSTALL.md 和 sdd-init 生成的规则文件，给中文非技术用户看英文等于没写。
+    const english = entries.filter((e) => {
+      const d = (e.description || '').slice(0, 60);
+      const en = (d.match(/[A-Za-z]/g) || []).length;
+      const cn = (d.match(/[\u4e00-\u9fff]/g) || []).length;
+      return en > cn * 2;
+    }).map((e) => e.key);
+    assert(english.length === 0, `[${bundle.key}] 对外简介均为中文${english.length ? `（仍是英文：${english.join(', ')}，请在 bundle-official-skills.mjs 的 DISPLAY_SUMMARY 补一行）` : ''}`);
+
     // 4d. 入口技能必须在（套装的价值全靠它把零件串起来）
     assert(
       entries.some((e) => e.key === 'sdd-init'),

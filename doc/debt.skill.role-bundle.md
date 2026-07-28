@@ -6,7 +6,7 @@
 
 | 编号 | 类型 | 描述 | 影响 | 状态 |
 |---|---|---|---|---|
-| D1 | 已知边界 | 只做了 `pm-starter` 一个套装，dev / qa 只有角色标签没有套装 | 开发和测试角色筛选出来的是散装技能，没有「一条命令装齐」 | 未偿 |
+| D1 | 已知边界 | 三个角色套装已齐（pm / dev / qa） | 无 | 已偿 |
 | D2 | 已知边界 | 套装内容是提交期静态声明，用户不能自选组合导出 | 想要「PM 套装去掉 laowang 加上 human-verify」的用户只能逐个下载 | 未偿 |
 | D3 | 已知边界 | `sdd-init` 的产物未在真实外部空仓库里跑过完整一轮 | 生成的 CLAUDE.md / doc 骨架可能有措辞或路径不贴合的地方 | 未偿 |
 | D4 | 未完成 | 对外产物 de-emoji 只治了 `acceptance-checklist` 的 2 个 reference | 其余上架技能的 reference 仍可能夹带 emoji，只是不在 pm-starter 里 | 部分偿还 |
@@ -14,12 +14,11 @@
 
 ## 明细
 
-### D1 只有 PM 一个套装
+### D1 三个角色套装（已偿）
 
-- **是什么**：`scripts/skill-bundles.json` 的 `bundles` 数组目前只有 `pm-starter`。
-- **为什么欠着**：首批交付范围由用户明确选定为「PM 套装 + sdd-init」，把一条链路做穿比铺三条半成品有价值。
-- **什么条件下必须还**：要给开发或测试角色交付时。补一个套装是往 JSON 加一个对象 + 重跑打包脚本，机制已经就位。
-- **不还的后果**：dev / qa 用户点角色筛选能看到相关技能，但要逐个下载，摩擦仍在。
+`pm-starter` / `dev-starter` / `qa-starter` 均已落地，对应 `pm-project` / `dev-project` /
+`qa-project` 三个初始化预设。补新角色仍是「往 `scripts/skill-bundles.json` 加一个对象 +
+重跑打包脚本」，机制不变。
 
 ### D2 套装不可自定义
 

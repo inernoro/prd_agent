@@ -54,6 +54,22 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     expect(oneLiner).not.toMatch(/\bif\b[\s\S]*&&[\s\S]*\belif\b/);
   });
 
+  it('ai-defect-resolve 内外两版的协议契约不漂移', () => {
+    // 这两版是**有意不同**的：仓库版 13KB 面向内部，后端内嵌版 5KB 是精简外发兜底包。
+    // 盲目合并会把内部文档整篇发给外部，所以不合并 —— 但协议契约（端点、scope、
+    // 状态字段）必须始终一致，否则外部 Agent 按外发版调用会打到不存在的接口。
+    const internal_ = read('.claude/skills/ai-defect-resolve/SKILL.md');
+    const templates = read('prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillTemplates.cs');
+    const external = /AiDefectResolveSkillMd\s*=\s*"""([\s\S]*?)\n""";/.exec(templates)?.[1] ?? '';
+    expect(external.length).toBeGreaterThan(1000);
+
+    const CONTRACT = /agent\/workflow\/[a-z-]+|defect-agent:[a-z-]+|defect-agent-workflow\.v\d|defect_resolution_traces|functionalVerdict|evidenceStatus|reportVerdict|hasNext/g;
+    const marks = (text: string): string[] => [...new Set(text.match(CONTRACT) ?? [])].sort();
+    // 外发版出现的每一个契约标记，仓库版都必须有
+    const drifted = marks(external).filter((m) => !marks(internal_).includes(m));
+    expect(drifted).toEqual([]);
+  });
+
   it('findmapskills 只有一份正文（后端不再内嵌第二份）', () => {
     const templates = read('prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillTemplates.cs');
     // 历史上这里内嵌过一份完整 SKILL.md，注释写着「两边都要改」，实测已开始漂移

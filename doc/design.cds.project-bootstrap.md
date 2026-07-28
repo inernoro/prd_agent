@@ -140,9 +140,10 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 |---|---|---|---|
 | `pm-project` | 产品经理或老板主导的新项目 | CDS 技能包 + `pm-starter` + `phase0-guard` | `/sdd-init` |
 | `cds-only` | 只想接 CDS，不要方法论 | CDS 技能包 | `cdscli connect` |
-| `dev-project` | 开发主导（待 dev 套装建成） | CDS 技能包 + dev 套装 + `phase0-guard` | `/sdd-init` |
+| `dev-project` | 开发主导的新项目 | CDS 技能包 + `dev-starter` | `/sdd-init` |
+| `qa-project` | 测试或验收主导的项目 | CDS 技能包 + `qa-starter` | `/sdd-init` |
 
-首版落 `pm-project` 和 `cds-only`；`dev-project` 等 dev 套装（见 `doc/debt.skill.role-bundle.md` D1）。
+四个预设已全部落地（`phase0-guard` 含在三个角色套装里）。
 
 ### 5.4 CDS 新栏交互
 
