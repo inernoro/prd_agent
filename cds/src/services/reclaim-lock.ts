@@ -39,6 +39,15 @@ export const RECLAIM_LOCK_STALE_MS = 30 * 60_000;
 export class ReclaimLock {
   private holder: string | null = null;
   private since: number | null = null;
+  /**
+   * 本次持有的身份令牌（Codex PR #1275 五轮 P2）。
+   *
+   * 没有它的话，「超时接管」和「无条件释放」会打架：一次回收跑过 30 分钟被后继者
+   * 接管，随后**它自己**跑完，finally 会把后继者的持有状态一并清掉——于是第三次
+   * 回收进得来，与仍在跑的后继者并发执行 docker / worktree 的破坏性清理，
+   * 而且后面每一次完成都会重复这个错误。释放前先认领牌，不是自己的就不动。
+   */
+  private token = 0;
 
   constructor(private readonly now: () => number = () => Date.now()) {}
 
@@ -49,6 +58,7 @@ export class ReclaimLock {
   /**
    * 跑一段回收动作；拿不到锁就跳过（返回 ReclaimSkip），不等待、不排队。
    * 无论成功还是抛错都会释放锁——漏放一次就等于永久停摆，这里不留侥幸。
+   * 但**只释放自己那一次**：被超时接管后再完成的旧持有者不许清掉后继者的状态。
    */
   async run<T>(holder: string, fn: () => Promise<T>): Promise<T | ReclaimSkip> {
     const nowMs = this.now();
@@ -62,13 +72,22 @@ export class ReclaimLock {
         `[reclaim-lock] 强制接管：持有者 ${this.holder} 已占用 ${Math.round(heldForMs / 60_000)} 分钟（疑似泄漏）`,
       );
     }
+    const myToken = ++this.token;
     this.holder = holder;
     this.since = nowMs;
     try {
       return await fn();
     } finally {
-      this.holder = null;
-      this.since = null;
+      // 只释放**自己**那一次持有：被接管之后，这里的 finally 属于一个已经出局的
+      // 旧持有者，清掉的会是后继者的状态（见 token 字段注释）。
+      if (this.token === myToken) {
+        this.holder = null;
+        this.since = null;
+      } else {
+        console.warn(
+          `[reclaim-lock] ${holder} 完成时锁已被接管（当前持有者 ${this.holder}），不释放他人的锁`,
+        );
+      }
     }
   }
 }

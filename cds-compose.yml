@@ -155,6 +155,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/console-api/**"
+        - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8090
@@ -186,6 +187,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/serving/**"
+        - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8091
@@ -225,6 +227,7 @@ x-cds-deploy-modes:
       # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
       buildScope:
         - "llmgw/web/**"
+        - "prd-api/**"
         - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 80

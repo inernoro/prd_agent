@@ -54,6 +54,55 @@ describe('ReclaimLock', () => {
   });
 });
 
+/**
+ * 被接管的旧持有者不许释放后继者的锁（Codex PR #1275 五轮 P2）。
+ *
+ * 超时接管本身是有意的（漏放一次锁就永久停摆），但接管之后旧持有者**仍在跑**，
+ * 它跑完时的 finally 若无条件清空状态，清掉的就是后继者的持有 —— 第三次回收因此
+ * 进得来，与仍在跑的后继者并发执行 docker / worktree 的破坏性清理。
+ */
+describe('超时接管后的释放归属', () => {
+  it('旧持有者完成时不清后继者的锁，第三方仍被挡在外面', async () => {
+    let now = 0;
+    const lock = new ReclaimLock(() => now);
+    let releaseOld: () => void = () => undefined;
+    const oldPass = lock.run('old', () => new Promise<string>((res) => { releaseOld = () => res('old-done'); }));
+
+    // 越过泄漏阈值 → 后继者接管
+    now += 31 * 60_000;
+    let releaseNew: () => void = () => undefined;
+    const newPass = lock.run('new', () => new Promise<string>((res) => { releaseNew = () => res('new-done'); }));
+    expect(lock.getState().holder).toBe('new');
+
+    // 旧持有者此刻才跑完：不得清掉 new 的持有
+    releaseOld();
+    expect(await oldPass).toBe('old-done');
+    expect(lock.getState().holder).toBe('new');
+
+    // 于是第三方仍然被挡（旧实现里这里会被放进来，与 new 并发跑破坏性清理）
+    const third = await lock.run('third', async () => 'third-ran');
+    expect(isReclaimSkip(third)).toBe(true);
+    expect((third as { heldBy: string }).heldBy).toBe('new');
+
+    releaseNew();
+    expect(await newPass).toBe('new-done');
+    expect(lock.getState().holder).toBeNull();
+  });
+
+  it('后继者跑完后锁正常释放，下一轮照常进入', async () => {
+    let now = 0;
+    const lock = new ReclaimLock(() => now);
+    let releaseOld: () => void = () => undefined;
+    const oldPass = lock.run('old', () => new Promise<string>((res) => { releaseOld = () => res('old-done'); }));
+    now += 31 * 60_000;
+    await lock.run('new', async () => 'new-done');
+    releaseOld();
+    await oldPass;
+    expect(lock.getState().holder).toBeNull();
+    expect(await lock.run('next', async () => 'next-ran')).toBe('next-ran');
+  });
+});
+
 describe('保护标记（cds.protected=true）', () => {
   // 事故当天 cds-infra-cds-state-mongo 被人工 docker container prune 连带删除，
   // CDS 状态库随之消失。名单式保护只护得住写死的名字，标记式对所有 infra 生效。

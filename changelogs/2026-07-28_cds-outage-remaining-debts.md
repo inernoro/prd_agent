@@ -28,3 +28,6 @@
 | fix | cds | 部署 run 与不可变版本改记「实际落地的 commit」：webhook 指定 A 而分支已前进到 B 时，entry.githubCommitSha 有意停在 A，run/version 却照抄它，审计挂在没被部署过的代码上，findReusable 还可能拿 A 的产物顶替 B |
 | fix | cds | isSourcePull 补认 profile 级 prebuiltImage：此前只认 deployModes.prebuilt，导致 tag 锁死 sha 的镜像部署被当成源码构建、台账贴成 pull 到的 HEAD |
 | chore | cds | MockShellExecutor 新增 addResponsePatternFirst（exec 首个命中即返回，用例覆盖通用桩只能插队首） |
+| fix | cds | 三个 llmgw 镜像的 buildScope 补上 prd-api/**：其 CI 触发条件含 api 变更、Dockerfile 也编译 prd-api 的 Core/Infrastructure，漏声明会在拉取失败时复用含旧 Core 代码的镜像 |
+| fix | cds | buildScope 对拍守卫改为解析 job 的 if 触发条件而非同名 filter：一个镜像可由多个 filter 触发，只按同名对拍会漏掉跨组件依赖 |
+| fix | cds | 回收锁释放加身份令牌：超时接管后旧持有者跑完会清掉后继者的持有状态，导致第三轮回收与后继者并发跑破坏性清理 |
