@@ -13,6 +13,7 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import { StateService } from '../../src/services/state.js';
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 import { computePreviewSlug } from '../../src/services/preview-slug.js';
@@ -585,5 +586,53 @@ describe('withReplicaPin：路径已带 __rs 时必须替换而不是追加（Co
 
   it('带 hash 时 hash 原样保留在末尾', () => {
     expect(withReplicaPin('/page?a=1#top', 'rs-1')).toBe('/page?a=1&__rs=rs-1#top');
+  });
+});
+
+describe('落点核对：无法证明打到各自版本时不得出对比结论（Codex PR #1273 P1）', () => {
+  const metric = (memberId: string, label: string, servedBy: Record<string, number>, p95: number) => ({
+    memberId, label, servedBy, requests: 100, p95, qps: 50, successRate: 1,
+    min: 1, max: 9, avg: 5, p50: 4, p90: 8, p99: 9,
+    errors: {} as never, series: [],
+  }) as unknown as Parameters<typeof buildComparison>[0][number];
+
+  it('落点各自对得上时照常出结论', () => {
+    const c = buildComparison([
+      metric('primary', '主实例', {}, 10),
+      metric('rs-a', '版本 A', { 'rs-a': 100 }, 20),
+    ])!;
+    expect(c.routingVerified).toBe(true);
+    expect(c.rows).toHaveLength(1);
+  });
+
+  it('事故值：两个落点被同一个实例服务时拒绝出结论（否则是拿同一版本跟自己比）', () => {
+    const c = buildComparison([
+      metric('primary', '主实例', { 'rs-a': 100 }, 10),
+      metric('rs-a', '版本 A', { 'rs-a': 100 }, 20),
+    ])!;
+    expect(c.routingVerified).toBe(false);
+    expect(c.rows).toHaveLength(0);
+    expect(c.summary).toContain('不给出版本对比结论');
+  });
+
+  it('副本落点实际由别的副本服务时拒绝出结论', () => {
+    const c = buildComparison([
+      metric('primary', '主实例', {}, 10),
+      metric('rs-a', '版本 A', { 'rs-b': 100 }, 20),
+    ])!;
+    expect(c.routingVerified).toBe(false);
+    expect(String(c.routingIssue)).toContain('rs-b');
+  });
+});
+
+describe('压测请求必须有挂钟死线（SSE 类端点不得永久占住全局槽位）', () => {
+  it('defaultRequestFn 用 setTimeout 挂钟死线而不是只靠 socket 空闲超时', () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/services/replica-loadtest.ts'),
+      'utf-8',
+    );
+    const fn = src.slice(src.indexOf('function defaultRequestFn'));
+    expect(fn).toContain('wallClock = setTimeout');
+    expect(fn).toContain('clearTimeout(wallClock)');
   });
 });

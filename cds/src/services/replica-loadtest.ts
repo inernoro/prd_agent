@@ -135,6 +135,13 @@ export interface LoadTestComparison {
   baselineLabel: string;
   rows: LoadTestComparisonRow[];
   summary: string;
+  /**
+   * 落点是否已核实。false = 观测到的 X-CDS-Replica 无法证明各落点真的打到了
+   * 各自的版本，此时 rows 为空、summary 说明原因——绝不给出「谁更快」的结论。
+   */
+  routingVerified: boolean;
+  /** 未通过核实时的人话原因 */
+  routingIssue?: string;
 }
 
 export interface LoadTestConfig {
@@ -475,6 +482,49 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
   const usable = targets.filter((t) => t.requests > 0);
   if (usable.length < 2) return undefined;
   const baseline = usable.find((t) => t.memberId === 'primary') || usable[0];
+
+  // 出结论之前先核实落点：forwarder 在 profile 级钉选不生效时（path 解析到了
+  // 别的服务、目标副本被摘除而回退到默认路由等）会把多个「名义上不同」的落点
+  // 全服务成同一份，而我们照样能收到 200 与延迟数据。这时若直接出「谁更快」的
+  // 对比，等于拿同一个版本跟自己比还煞有介事地贴标签——比不给结论更糟。
+  // 只用**有证据**的落点做判定：forwarder 仅在命中副本路由时才回 X-CDS-Replica，
+  // 主实例与部分部署形态本就没有这个头。没有证据不能当成有问题（那会让整个功能
+  // 在这些形态下永远出不了结论），但也不能当成没问题——分两档处理。
+  const identityOf = (t: LoadTestTargetMetrics): string | null => {
+    const entries = Object.entries(t.servedBy || {});
+    if (entries.length === 0) return null;
+    return entries.sort((a, b) => b[1] - a[1])[0]![0];
+  };
+  const seen = new Map<string, string>();
+  let routingIssue: string | null = null;
+  let anyEvidence = false;
+  for (const t of usable) {
+    const observed = identityOf(t);
+    if (observed === null) continue;
+    anyEvidence = true;
+    // 副本成员自报了家门就必须对得上。
+    if (t.memberId !== 'primary' && observed !== t.memberId) {
+      routingIssue = `落点核对失败：${t.label} 期望由副本 ${t.memberId} 服务，实际观测到 ${observed}`;
+      break;
+    }
+    const dup = seen.get(observed);
+    if (dup) {
+      routingIssue = `落点核对失败：${dup} 与 ${t.label} 被同一个实例（${observed}）服务，无法区分两者`;
+      break;
+    }
+    seen.set(observed, t.label);
+  }
+  // 硬失败：有证据且证据自相矛盾 —— 拿同一个版本跟自己比还贴标签，比不给结论更糟。
+  if (routingIssue) {
+    return {
+      baselineId: baseline.memberId,
+      baselineLabel: baseline.label,
+      rows: [],
+      routingVerified: false,
+      routingIssue,
+      summary: `${routingIssue}。本次不给出版本对比结论——请检查压测路径是否指向本服务、目标副本是否仍在运行。`,
+    };
+  }
   const rows: LoadTestComparisonRow[] = [];
   for (const t of usable) {
     if (t.memberId === baseline.memberId) continue;
@@ -496,7 +546,19 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
   const summary = fastest.memberId === steadiest.memberId
     ? `${fastest.label} 综合最优：p95 最低（${fastest.p95}ms）且成功率最高（${pct(fastest.successRate)}）。基线为 ${baseline.label}。`
     : `${fastest.label} 最快（p95 ${fastest.p95}ms），${steadiest.label} 最稳（成功率 ${pct(steadiest.successRate)}）。基线为 ${baseline.label}。`;
-  return { baselineId: baseline.memberId, baselineLabel: baseline.label, rows, summary };
+  // 软档：一条副本标识都没观测到，无法证明各落点真打到了不同版本。数据照给
+  // （它本身是真实测到的），但明确标注未核实，不让 UI 把它当成可信的 A/B 判定。
+  if (!anyEvidence) {
+    return {
+      baselineId: baseline.memberId,
+      baselineLabel: baseline.label,
+      rows,
+      routingVerified: false,
+      routingIssue: '未观测到任何副本标识（X-CDS-Replica），无法确认各落点真的打到了不同版本',
+      summary: `${summary}（注意：未观测到副本标识，无法确认各落点分别打到了不同版本，请谨慎解读该对比）`,
+    };
+  }
+  return { baselineId: baseline.memberId, baselineLabel: baseline.label, rows, summary, routingVerified: true };
 }
 
 function pct(rate: number): string {
@@ -1050,9 +1112,16 @@ function defaultRequestFn(): LoadTestRequestFn {
   const agent = new Agent({ keepAlive: true, maxSockets: LOADTEST_LIMITS.maxTotalConcurrency + 8 });
   return ({ port, host, path, method, headers, body, timeoutMs, signal }) => new Promise((resolve) => {
     let settled = false;
+    // 独立的挂钟死线。http.request 的 timeout 是**socket 空闲**超时：压到一个
+    // SSE / 持续分块输出的端点上时，对端每隔几秒发一个字节就能让它永不触发，
+    // 而 resp.on('end') 也永远不来 —— 这个 Promise 于是永久挂起，worker 卡在
+    // 这里不再检查 run 死线，整个压测占着全局唯一的槽位直到有人手动取消
+    // （Codex PR #1273 P2）。挂钟死线与活动无关，到点就拆连接。
+    let wallClock: NodeJS.Timeout | null = null;
     const done = (r: { status: number; errorKind?: LoadTestErrorKind; servedBy?: string }): void => {
       if (settled) return;
       settled = true;
+      if (wallClock) clearTimeout(wallClock);
       signal.removeEventListener('abort', onAbort);
       resolve(r);
     };
@@ -1082,6 +1151,7 @@ function defaultRequestFn(): LoadTestRequestFn {
         resp.on('error', () => done({ status: resp.statusCode || 0, errorKind: 'other', servedBy }));
       });
       signal.addEventListener('abort', onAbort, { once: true });
+      wallClock = setTimeout(() => { req?.destroy(); done({ status: 0, errorKind: 'timeout' }); }, timeoutMs);
       req.on('timeout', () => { req?.destroy(); done({ status: 0, errorKind: 'timeout' }); });
       req.on('error', (err: NodeJS.ErrnoException) => {
         const kind: LoadTestErrorKind = err?.code === 'ECONNREFUSED' || err?.code === 'ECONNRESET' || err?.code === 'EHOSTUNREACH'

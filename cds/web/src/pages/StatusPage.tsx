@@ -410,7 +410,14 @@ export function StatusPage(): JSX.Element {
   const [refreshing, setRefreshing] = useState(false);
   const mounted = useRef(true);
 
-  useEffect(() => () => { mounted.current = false; }, []);
+  // 必须在 setup 里把 ref 置回 true：React.StrictMode（dev）会跑
+  // setup → cleanup → setup 一整轮。只在 cleanup 里置 false 的话，第二次
+  // setup 之后 mounted 永远是 false，所有 /api/uptime/* 响应都被丢弃，
+  // /status 永远停在骨架屏上（Codex PR #1273 P2）。
+  useEffect(() => {
+    mounted.current = true;
+    return () => { mounted.current = false; };
+  }, []);
 
   const load = useCallback(async (): Promise<void> => {
     setRefreshing(true);
