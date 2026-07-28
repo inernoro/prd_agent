@@ -59,11 +59,18 @@ export class RealMongoHandle implements IMongoHandle {
     // mode fails fast and falls back to JSON when mongo is offline.
     // The default mongo driver retries for 30s which feels like a
     // hung startup to users.
-    this.client = new MongoClient(this.uri, {
+    // 同 mongo-split-handle：失败必须复位，否则重试永远短路（Codex PR #1275 P1）
+    const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
+    try {
+      await client.connect();
+    } catch (err) {
+      await client.close().catch(() => undefined);
+      throw err;
+    }
+    this.client = client;
     this.db = this.client.db(this.databaseName);
     this.collection = this.db.collection<StateDoc>(this.collectionName);
     this.fragmentCollectionRef = this.db.collection<StateFragmentDoc>(this.fragmentCollectionName);

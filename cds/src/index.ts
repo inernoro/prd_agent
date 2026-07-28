@@ -17,6 +17,7 @@ import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
@@ -81,6 +82,23 @@ import type { BranchEntry } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
+
+/**
+ * 启动依赖起不来时的磁盘诊断：**仓库盘与 docker 数据根都量**（Codex 十轮 P2）。
+ * mongo 的数据落在 docker 那侧，两者常不在同一个文件系统上；2026-07-27 撑爆的
+ * 正是 containerd（159GB），只量仓库盘会让这句提示恰好在真凶场景下不出现。
+ * 运行期 diskGuard 早就两处都量，但启动失败时进程走不到那里，故这里自己量全。
+ */
+function diagnoseBootDisks(): string | null {
+  const readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }> = [
+    { label: config.repoRoot, usage: defaultDiskUsage(config.repoRoot) },
+  ];
+  try {
+    const dockerRoot = resolveDockerDataRoot();
+    if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: defaultDiskUsage(dockerRoot) });
+  } catch { /* docker 不可用就只量仓库盘，不能因为诊断本身抛错吞掉真正的启动错误 */ }
+  return diagnoseDisksForBootFailure(readings);
+}
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
@@ -688,12 +706,32 @@ async function initStateService(): Promise<void> {
     const splitHandle = new RealMongoSplitHandle({ uri, databaseName: dbName });
     const splitStore = new MongoSplitStateBackingStore(splitHandle);
     try {
-      await splitStore.init();
+      // 退避重试（2026-07-27 宕机复盘 P1，事故本体）：mongo 起不来往往是暂时的
+      //（宿主正忙、容器正在重启、磁盘刚清出空间）。此前一次失败就 throw → 进程
+      // 退出 → systemd 重启 → 再抛，restart counter 一路到 58，35 分钟全站 502，
+      // 每次重启还要重跑一遍 boot，在一台已经着火的机器上继续浇油。
+      // 仍然不静默降级到 JSON —— 那会让 CDS 跑在过期状态上而真相在 mongo 里。
+      await withBootRetry(() => splitStore.init(), {
+        // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+        // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+        // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+        // systemd 重启循环，等于白改。
+        sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+        onAttemptFailed: (attempt, total, delayMs, err) => {
+          console.warn(
+            `  [storage] mongo-split init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+            + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+          );
+        },
+      });
     } catch (err) {
       const msg = (err as Error).message;
       console.error(
-        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败: ${msg}`,
+        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败（已重试至上限）: ${msg}`,
       );
+      // 指向真凶：满盘时明写出来，别让运维从数据库连接开始查（事故当天就是这样）
+      const diskHint = diagnoseBootDisks();
+      if (diskHint) console.error(`  [storage] ${diskHint}`);
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
     }
@@ -729,13 +767,27 @@ async function initStateService(): Promise<void> {
   const handle = new RealMongoHandle({ uri, databaseName: dbName });
   const mongoStore = new MongoStateBackingStore(handle);
   try {
-    await mongoStore.init();
+    await withBootRetry(() => mongoStore.init(), {
+      // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+      // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+      // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+      // systemd 重启循环，等于白改。
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [storage] mongo init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
   } catch (err) {
     const msg = (err as Error).message;
     console.error(
       `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
-      + `但 mongo init 失败: ${msg}`,
+      + `但 mongo init 失败（已重试至上限）: ${msg}`,
     );
+    const diskHint = diagnoseBootDisks();
+    if (diskHint) console.error(`  [storage] ${diskHint}`);
     console.error(
       `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
       + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
@@ -976,8 +1028,25 @@ async function initAuthStore(): Promise<void> {
     const { RealAuthMongoHandle } = await import('./infra/auth-store/mongo-handle.js');
     const { MongoAuthStore } = await import('./infra/auth-store/mongo-store.js');
 
-    const handle = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
-    await handle.connect();
+    // 与状态库同一条退避重试纪律（Codex PR #1275 七轮 P2）。此前只有 state store
+    // 享受启动容忍，鉴权连接一次失败就 throw 退出 —— 而标准安装 `exec_cds.sh init`
+    // 同时开 `CDS_STORAGE_MODE=mongo-split` 与 `CDS_AUTH_BACKEND=mongo`，指的还是**同一个**
+    // mongo。状态库连上之后它再抖一下，进程照样死，宣传的「约 90s 忍耐窗口」形同虚设。
+    // 每次重试都 new 一个 handle：连接失败的 handle 处于半开状态，复用它等于白重试
+    //（该 handle 自身的复位见 auth-store/mongo-handle.ts）。
+    const handle = await withBootRetry(async () => {
+      const h = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
+      await h.connect();
+      return h;
+    }, {
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [auth] mongo 连接第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
     activeAuthStore = new MongoAuthStore(handle);
     console.log(`  [auth] backend=mongo (db=${mongoDb})`);
   } else {
