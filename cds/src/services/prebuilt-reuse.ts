@@ -93,6 +93,22 @@ export interface PickReusableInput {
 }
 
 /**
+ * 本次要部署的目标 commit —— 复用等价性必须对着**它**比，不是对着 worktree HEAD
+ *（Codex PR #1275 P1）。
+ *
+ * 部署不总是「部署 HEAD」：锁定不可变版本、极速版锁 CI 就绪 SHA 时，目标 commit
+ * 与当下 HEAD 不同。对着 HEAD 比会得出错误结论——比如目标版本改了该组件、而更晚的
+ * HEAD 又把这个改动 revert 了，那么「候选 → HEAD」的 diff 是干净的，于是 CDS
+ * 会安静地拿旧镜像顶替用户点名要的版本。
+ *
+ * 目标 sha 就写在 intendedImage 的 tag 里（CI 按 commit 打的 `sha-<40hex>`），
+ * 直接取即可；取不到就没有可信的比较基准，一律不复用。
+ */
+export function targetShaOf(intendedImage: string): string | null {
+  return shaFromImageTag(intendedImage);
+}
+
+/**
  * 选出第一个「与本次代码等价」的候选。全部不等价（或没有候选）返回 null，
  * 调用方照旧走源码编译——本模块只做减法，绝不改变「实在不行就重编」的兜底。
  */

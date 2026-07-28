@@ -11,7 +11,7 @@
  */
 import { describe, it, expect } from 'vitest';
 import {
-  shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage,
+  shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
@@ -112,5 +112,32 @@ describe('复用判定', () => {
 
   it('没有候选时返回 null', () => {
     expect(pickReusableImage({ candidates: [], isComponentUnchanged: () => true })).toBeNull();
+  });
+});
+
+describe('比较基准是「目标 commit」而非 worktree HEAD（Codex PR #1275 P1）', () => {
+  it('目标 sha 取自本次要拉的那个镜像 tag', () => {
+    expect(targetShaOf(`${REPO}:sha-${SHA_A}`)).toBe(SHA_A);
+  });
+
+  it('浮动 tag 取不出目标 sha → 没有可信基准，调用方必须放弃复用', () => {
+    expect(targetShaOf(`${REPO}:latest`)).toBeNull();
+    expect(targetShaOf(REPO)).toBeNull();
+    expect(targetShaOf('')).toBeNull();
+  });
+
+  it('对着目标 sha 比，才不会被「改了又 revert」的更晚 HEAD 骗过去', () => {
+    // 场景：候选版本 B → 目标版本 A 之间改了该组件（有差异，不可复用）；
+    // 但 HEAD 上那个改动已被 revert，B → HEAD 是干净的。若基准取 HEAD，
+    // 旧镜像会被安静地当成用户点名的 A 发出去。
+    const cands = collectReuseCandidates({
+      intendedImage: `${REPO}:sha-${SHA_A}`,
+      runningImage: `${REPO}:sha-${SHA_B}`,
+    });
+    const unchangedAgainstHead = () => true;   // B..HEAD 干净（revert 后）
+    const unchangedAgainstTarget = () => false; // B..A 有差异（真实情况）
+
+    expect(pickReusableImage({ candidates: cands, isComponentUnchanged: unchangedAgainstHead })).not.toBeNull();
+    expect(pickReusableImage({ candidates: cands, isComponentUnchanged: unchangedAgainstTarget })).toBeNull();
   });
 });

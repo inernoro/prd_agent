@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
-import { collectReuseCandidates, type ReuseCandidate } from './prebuilt-reuse.js';
+import { collectReuseCandidates, targetShaOf, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
@@ -1126,7 +1126,7 @@ export class ContainerService {
        * 该组件（profile.workDir 子树）在 fromSha 与当前部署 commit 之间是否**没有**
        * 任何改动。由调用方在 worktree 里 git diff 判定；查不出来必须返回 false。
        */
-      isComponentUnchangedSince?: (fromSha: string, workDir: string) => Promise<boolean>;
+      isComponentUnchangedSince?: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1256,7 +1256,13 @@ export class ContainerService {
       //
       // 事故当天三个组件（admin/api/llmgw-web）全属前者，却全都被拉去宿主重编，
       // 同时打满 CPU 与磁盘——这段就是那一脚的止损点。
-      if (!pulledImage && context.isComponentUnchangedSince && profile.workDir) {
+      // 比较基准是**本次要部署的目标 commit**（intendedImage tag 里的 sha），
+      // 不是 worktree HEAD（Codex PR #1275 P1）：锁定版本 / 极速版锁 CI SHA 时
+      // 两者不同，对着 HEAD 比会在「目标版本改了、更晚的 HEAD 又 revert 了」这种
+      // 情形下得出「没变」的错误结论，安静地拿旧镜像顶替用户点名的版本。
+      // 取不到目标 sha 就没有可信基准，直接不复用。
+      const targetSha = targetShaOf(primary);
+      if (!pulledImage && context.isComponentUnchangedSince && profile.workDir && targetSha) {
         const reuseCands = collectReuseCandidates({
           intendedImage: primary,
           runningImage: service.deployedImage,
@@ -1264,7 +1270,7 @@ export class ContainerService {
         });
         let picked: ReuseCandidate | null = null;
         for (const cand of reuseCands) {
-          const unchanged = await context.isComponentUnchangedSince(cand.sha, profile.workDir)
+          const unchanged = await context.isComponentUnchangedSince(cand.sha, targetSha, profile.workDir)
             .catch(() => false);
           if (unchanged) { picked = cand; break; }
         }
@@ -1294,6 +1300,7 @@ export class ContainerService {
                 intendedImage: primary,
                 reusedImage: picked.image,
                 reusedFromSha: picked.sha,
+                comparedAgainstSha: targetSha,
                 origin: picked.origin,
                 workDir: profile.workDir,
                 reason: 'CI 因该组件无变更跳过构建；复用等价镜像，避免宿主全量重编',

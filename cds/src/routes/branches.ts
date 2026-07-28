@@ -1636,8 +1636,8 @@ interface RunServiceWithPortRetryOptions {
   onSourceCompileFallback?: () => Promise<void>;
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
-  /** 该组件子树自 fromSha 起有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
-  isComponentUnchangedSince?: (fromSha: string, workDir: string) => Promise<boolean>;
+  /** 该组件子树在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
+  isComponentUnchangedSince?: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
 }
 
 /**
@@ -1646,29 +1646,41 @@ interface RunServiceWithPortRetryOptions {
  * 判定逻辑本身在 services/prebuilt-reuse.ts（纯函数、可单测），这里只负责取数：
  *  - ledgerImages：版本台账里该分支该服务构建过的镜像，由新到旧；
  *  - isComponentUnchangedSince：在该分支的 worktree 里比「构建那一版的 commit」到
- *    当前 HEAD，该组件子树（profile.workDir）有没有改动。git 查不出来（sha 不在
- *    本地历史 / 仓库异常）一律返回 false —— 判不出来就当有变更，宁可多编一次，
- *    也绝不静默把旧代码当新代码发出去。
+ *    **本次要部署的那个 commit**（toSha，取自目标镜像 tag，不是 worktree HEAD），
+ *    该组件子树（profile.workDir）有没有改动。对着 HEAD 比是错的：部署可以锁定某个
+ *    不可变版本，若目标版本改了该组件、更晚的 HEAD 又把它 revert 回去，「候选 → HEAD」
+ *    的 diff 会是干净的，于是旧镜像被安静地当成用户点名的那一版发出去（Codex PR #1275 P1）。
+ *    git 查不出来（sha 不在本地历史 / 仓库异常）一律返回 false —— 判不出来就当有变更，
+ *    宁可多编一次，也绝不静默把旧代码当新代码发出去。
  */
 function buildPrebuiltReuseInputs(
   stateService: StateService,
   shell: IShellExecutor,
   entry: BranchEntry,
   profileId: string,
-): { ledgerImages: string[]; isComponentUnchangedSince: (fromSha: string, workDir: string) => Promise<boolean> } {
+): {
+  ledgerImages: string[];
+  isComponentUnchangedSince: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
+} {
   const ledgerImages = stateService.getDeploymentVersions()
     .filter((v) => v.branchId === entry.id)
     .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
     .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
     .filter((im): im is string => !!im);
 
-  const isComponentUnchangedSince = async (fromSha: string, workDir: string): Promise<boolean> => {
+  const isComponentUnchangedSince = async (
+    fromSha: string,
+    toSha: string,
+    workDir: string,
+  ): Promise<boolean> => {
     const dir = (workDir || '').trim();
     if (!dir || !entry.worktreePath) return false;
-    if (!/^[0-9a-f]{40}$/.test(fromSha)) return false;
+    // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
+    if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
+    if (fromSha === toSha) return false;
     // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
     const r = await shell.exec(
-      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} HEAD -- ${shellQuote(dir)}`,
+      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${shellQuote(dir)}`,
     ).catch(() => null);
     return !!r && r.exitCode === 0;
   };

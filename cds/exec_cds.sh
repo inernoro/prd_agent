@@ -276,6 +276,60 @@ sync_forwarder_if_needed() {
   fi
 }
 
+# audit_cds_mongo_protection: 已存在的状态库容器缺保护标记 / 日志限额时给出迁移命令。
+#
+# 2026-07-27 宕机复盘 P2 的补漏（Codex PR #1275 复审指出）：新建容器那条路已经带上
+# `cds.protected=true` 与日志限额，但**绝大多数现网部署的容器早就存在**，走的是「复用
+# 已有容器」那条路——docker 无法给运行中的容器补 label 或改 log-opt，于是这些容器
+# 至今仍然：
+#   - 不被运维手册里 `--filter "label!=cds.protected=true"` 的安全清理命令排除
+#     （事故当天它正是被人工 prune 连带删掉的）；
+#   - 日志无上限，继续往根盘写（事故的另一半原因就是根盘 100%）。
+#
+# 容器不能原地改，但数据在具名卷 `cds-state-mongo-data` 里，重建不丢数据。重建属于
+# 「会短暂中断 CDS 控制面」的动作，脚本不自作主张执行，只把可直接粘贴的命令打出来。
+audit_cds_mongo_protection() {
+  local c="$1"
+  [ -n "$c" ] || return 0
+  command -v docker >/dev/null 2>&1 || return 0
+
+  local labels log_max
+  labels="$(docker inspect --format '{{range $k,$v := .Config.Labels}}{{$k}}={{$v}} {{end}}' "$c" 2>/dev/null || printf '')"
+  log_max="$(docker inspect --format '{{index .HostConfig.LogConfig.Config "max-size"}}' "$c" 2>/dev/null || printf '')"
+
+  local missing_label=0 missing_log=0
+  case "$labels" in *"cds.protected=true"*) ;; *) missing_label=1 ;; esac
+  [ -n "$log_max" ] || missing_log=1
+  [ "$missing_label" = "1" ] || [ "$missing_log" = "1" ] || return 0
+
+  local port image vol
+  port="$(docker inspect --format '{{range $p,$b := .NetworkSettings.Ports}}{{range $b}}{{.HostIp}}:{{.HostPort}}{{end}}{{end}}' "$c" 2>/dev/null | head -1)"
+  [ -n "$port" ] || port="127.0.0.1:${CDS_MONGO_PORT:-27018}"
+  image="$(docker inspect --format '{{.Config.Image}}' "$c" 2>/dev/null)"
+  [ -n "$image" ] || image="mongo:7"
+  vol="$(docker inspect --format '{{range .Mounts}}{{if eq .Destination "/data/db"}}{{.Name}}{{end}}{{end}}' "$c" 2>/dev/null)"
+  [ -n "$vol" ] || vol="cds-state-mongo-data"
+
+  echo
+  if [ "$missing_label" = "1" ]; then
+    warn "状态库容器 $c 缺少 cds.protected=true 标记：运维手册里的安全清理命令排除不掉它，人工 prune 会连带删除 CDS 自己的状态库。"
+  fi
+  if [ "$missing_log" = "1" ]; then
+    warn "状态库容器 $c 没有日志限额：容器日志会无上限占用根盘。"
+  fi
+  echo "       docker 不能给已存在的容器补 label / 改日志限额，需要重建容器（数据在具名卷 $vol 里，重建不丢数据）。"
+  echo "       CDS 控制面会中断十几秒，请在低峰期执行："
+  echo
+  echo "         docker rm -f $c && \\"
+  echo "           docker run -d --name $c --restart unless-stopped \\"
+  echo "             --label cds.managed=true --label cds.type=cds-state --label cds.protected=true \\"
+  echo "             --log-opt max-size=50m --log-opt max-file=3 \\"
+  echo "             -p $port:27017 -v $vol:/data/db $image"
+  echo
+  echo "       执行后跑 ./exec_cds.sh restart 让 CDS 重连状态库。"
+  echo
+}
+
 # ensure_cds_mongo_running: 启动 CDS 前确保 cds-state-mongo 容器 running。
 #
 # 修复循环依赖：CDS 启动要连 Mongo，但 Mongo 容器记在 CDS state 里——
@@ -296,8 +350,9 @@ ensure_cds_mongo_running() {
   [ -n "${CDS_MONGO_CONTAINER:-}" ] || return 0
 
   local c="$CDS_MONGO_CONTAINER"
-  # 已 running：什么都不做
+  # 已 running：只做保护标记体检（复用已有容器时 label/日志限额补不上，见 audit 注释）
   if docker ps --format '{{.Names}}' 2>/dev/null | grep -qx "$c"; then
+    audit_cds_mongo_protection "$c"
     return 0
   fi
   # 存在但 stopped：start
@@ -305,6 +360,7 @@ ensure_cds_mongo_running() {
     info "MongoDB 容器 $c 未运行，正在启动…"
     if docker start "$c" >/dev/null 2>&1; then
       ok "MongoDB 容器已启动"
+      audit_cds_mongo_protection "$c"
       # 等 healthy（最多 15s）
       local i=0
       while [ "$i" -lt 15 ]; do
@@ -1991,6 +2047,8 @@ EOF
         && ok "MongoDB 容器已启动" \
         || { err "启动 MongoDB 容器失败，请检查 docker 状态"; exit 1; }
     fi
+    # 复用已有容器：补不上 label/日志限额，只能提示重建（见 audit_cds_mongo_protection）
+    audit_cds_mongo_protection "$MONGO_CONTAINER"
   else
     info "正在拉起 MongoDB 7 容器（首次可能需要拉取镜像，请稍候）…"
     # 保护标记 + 日志限额（2026-07-27 宕机复盘 P2）：

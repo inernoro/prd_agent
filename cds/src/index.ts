@@ -693,7 +693,11 @@ async function initStateService(): Promise<void> {
       // 每次重启还要重跑一遍 boot，在一台已经着火的机器上继续浇油。
       // 仍然不静默降级到 JSON —— 那会让 CDS 跑在过期状态上而真相在 mongo 里。
       await withBootRetry(() => splitStore.init(), {
-        sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+        // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+        // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+        // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+        // systemd 重启循环，等于白改。
+        sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
         onAttemptFailed: (attempt, total, delayMs, err) => {
           console.warn(
             `  [storage] mongo-split init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
@@ -745,7 +749,11 @@ async function initStateService(): Promise<void> {
   const mongoStore = new MongoStateBackingStore(handle);
   try {
     await withBootRetry(() => mongoStore.init(), {
-      sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+      // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+      // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+      // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+      // systemd 重启循环，等于白改。
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
       onAttemptFailed: (attempt, total, delayMs, err) => {
         console.warn(
           `  [storage] mongo init 第 ${attempt}/${total} 次失败：${(err as Error).message}`

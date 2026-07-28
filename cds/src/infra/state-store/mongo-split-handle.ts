@@ -134,11 +134,24 @@ export class RealMongoSplitHandle implements ISplitMongoHandle {
 
   async connect(): Promise<void> {
     if (this.client) return;
-    this.client = new MongoClient(this.uri, {
+    // 失败必须把 client 复位（Codex PR #1275 P1）：此前先赋值再 await connect()，
+    // 一旦连接失败，client 已挂在实例上而 db/collections 全空——下一次 connect()
+    // 被 `if (this.client) return` 直接短路，之后任何取集合都抛
+    // 「MongoSplitHandle not connected」。启动期退避重试因此完全失效：重试几次
+    // 都在同一个半死的 handle 上打转，mongo 就算恢复了也连不上。
+    const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
+    try {
+      await client.connect();
+    } catch (err) {
+      // 关掉半开的连接再抛，避免 socket 泄漏；实例状态保持「未连接」，
+      // 下一次 connect() 会真的再连一次。
+      await client.close().catch(() => undefined);
+      throw err;
+    }
+    this.client = client;
     this.db = this.client.db(this.databaseName);
     this.globalCol = this.db.collection<GlobalDoc>(this.globalName);
     this.projectsCol = this.db.collection<ProjectDoc>(this.projectsName);
