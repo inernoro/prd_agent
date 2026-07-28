@@ -12,11 +12,12 @@ import type { Request, Response } from 'express';
 import { createGithubAuthMiddleware } from '../../src/middleware/github-auth.js';
 
 function mockRes() {
-  const res: any = { statusCode: 0, body: undefined, redirectedTo: undefined };
+  const res: any = { statusCode: 0, body: undefined, redirectedTo: undefined, headers: {} as Record<string, string> };
   res.status = (c: number) => { res.statusCode = c; return res; };
   res.json = (b: unknown) => { res.body = b; return res; };
   res.redirect = (_c: number, url: string) => { res.redirectedTo = url; return res; };
-  return res as Response & { statusCode: number; body: any; redirectedTo?: string };
+  res.setHeader = (name: string, value: string) => { res.headers[name] = value; return res; };
+  return res as Response & { statusCode: number; body: any; redirectedTo?: string; headers: Record<string, string> };
 }
 
 function apiReq(headers: Record<string, string> = {}): Request {
@@ -73,6 +74,48 @@ describe('github auth middleware — agent key coexistence', () => {
     expect(next).toHaveBeenCalledOnce();
     expect(resolveAgentKey).not.toHaveBeenCalled();
     expect((req as any).cdsUser).toEqual({ id: 'u1' });
+  });
+
+  it('re-issues the session cookie when the session slid forward', async () => {
+    const expiresAt = new Date(Date.now() + 7 * 24 * 3600 * 1000).toISOString();
+    const authService = {
+      validateSession: vi.fn(async () => ({
+        user: { id: 'u1' },
+        session: { token: 'valid', expiresAt },
+        renewed: true,
+      })),
+    } as any;
+    const mw = createGithubAuthMiddleware({ authService, cookieSecure: true });
+    const req = apiReq({ cookie: 'cds_gh_session=valid' });
+    const res = mockRes();
+    const next = vi.fn();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    const cookie = res.headers['Set-Cookie'];
+    expect(cookie).toContain('cds_gh_session=valid');
+    expect(cookie).toContain('Secure');
+    expect(cookie).toContain(`Expires=${new Date(expiresAt).toUTCString()}`);
+  });
+
+  it('does not touch the cookie when the session was not renewed', async () => {
+    const authService = {
+      validateSession: vi.fn(async () => ({
+        user: { id: 'u1' },
+        session: { token: 'valid', expiresAt: new Date().toISOString() },
+        renewed: false,
+      })),
+    } as any;
+    const mw = createGithubAuthMiddleware({ authService });
+    const req = apiReq({ cookie: 'cds_gh_session=valid' });
+    const res = mockRes();
+    const next = vi.fn();
+
+    await mw(req, res, next);
+
+    expect(next).toHaveBeenCalledOnce();
+    expect(res.headers['Set-Cookie']).toBeUndefined();
   });
 
   it('stamps an SSO identity as a verified non-owner human session', async () => {
