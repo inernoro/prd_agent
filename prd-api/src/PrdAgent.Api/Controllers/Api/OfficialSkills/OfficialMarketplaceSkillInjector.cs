@@ -55,7 +55,10 @@ public static class OfficialMarketplaceSkillInjector
             previewHostedSiteId = (string?)null,
             tags = new List<string> { "精英", "技能", "开放接口" },
             kind = "skill",
-            roles = new List<string>(),
+            // 角色必须来自目录，不能写死空表 —— 写死的话用户一点「产品经理 / 开发 / 测试」
+            // 任一角色筛选，findmapskills 就整条消失，而它在 skill-bundles.json 里三个角色都挂着。
+            roles = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey)?.Roles?.ToList()
+                    ?? new List<string>(),
             zipUrl,
             zipSizeBytes = 0L,
             originalFileName = $"{OfficialSkillTemplates.FindMapSkillsKey}.zip",

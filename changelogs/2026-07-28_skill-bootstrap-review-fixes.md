@@ -18,3 +18,7 @@
 | test | cds | 安装约定守卫新增「装到所有存在宿主」断言，早期取第一个的写法回潮即红 |
 | fix | prd-api | 套装 INSTALL.md 的解压命令同步为遍历全部宿主，此前仍写单数 $SKILLS_DIR 导致按说明操作只装一个目录 |
 | test | prd-api | 三处安装约定断言改为校验「遍历宿主 + 兜底目录 + 遍历安装」，与多宿主契约对齐 |
+| fix | prd-api | 下载计数去重的查+写合成原子操作，并发重放不再全部绕过去重窗口 |
+| fix | prd-api | 匿名指纹改走 GetRealClientIp（反代 X-Real-IP），不再用上一跳地址把同一代理后的所有人连坐压制 |
+| fix | prd-api | findmapskills 市场条目的 roles 改为读目录，不再写死空表导致按角色筛选时整条消失 |
+| test | prd-api | 新增并发重放只计一次、真实客户端 IP 区分、findmapskills roles 与目录一致三个用例 |

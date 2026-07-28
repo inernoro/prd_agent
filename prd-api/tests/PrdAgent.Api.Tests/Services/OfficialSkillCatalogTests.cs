@@ -354,6 +354,24 @@ public class OfficialSkillCatalogTests
     }
 
     [Fact]
+    public void FindMapSkillsDto_CarriesRolesFromCatalog()
+    {
+        // 这条 DTO 是特判构造的（不走通用 catalog→DTO 路径），历史上把 roles 写死成空表。
+        // 结果是用户一点「产品经理 / 开发 / 测试」任一角色筛选，findmapskills 就整条消失，
+        // 而它在 skill-bundles.json 里三个角色都挂着。
+        var catalogRoles = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey)!.Roles;
+        Assert.NotEmpty(catalogRoles);
+
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+        var dto = OfficialMarketplaceSkillInjector.BuildDtoById(
+            OfficialMarketplaceSkillInjector.OfficialFindMapSkillsId, request, config, currentUserId: "user-1");
+        var roles = Read<List<string>>(dto!, "roles");
+
+        Assert.Equal(catalogRoles.OrderBy(r => r), roles.OrderBy(r => r));
+    }
+
+    [Fact]
     public void MarketplaceList_DoesNotShowFindMapSkillsTwice()
     {
         var request = BuildRequest("https://map.example.test");

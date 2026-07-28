@@ -68,12 +68,55 @@ public class SkillDownloadCounterTests
     }
 
     [Fact]
+    public void 并发重放只计一次()
+    {
+        // 「查了再写」两步之间有窗口：并发打进来时每个请求都可能读到「没命中」，
+        // 于是全部判为应当计数 —— 而并发重放正是这个闸要挡的攻击形态。
+        var cache = NewCache();
+        const int parallel = 64;
+        var counted = 0;
+
+        Parallel.For(0, parallel, _ =>
+        {
+            // 每个请求各建一个 HttpContext（真实并发下本就如此），指纹相同
+            if (SkillDownloadCounter.ShouldCount(cache, HttpFrom("203.0.113.7"), "skill-a", null))
+                Interlocked.Increment(ref counted);
+        });
+
+        counted.ShouldBe(1);
+    }
+
+    [Fact]
+    public void 匿名指纹走真实客户端_IP_而不是上一跳()
+    {
+        // 生产是反代 + Docker 网络：裸的 RemoteIpAddress 是共享的上一跳地址，
+        // 一个人下载完，同一代理后面所有人都被压制十分钟，计数反而少记。
+        var cache = NewCache();
+
+        var a = HttpFrom("172.18.0.1");          // 同一个反代
+        a.Request.Headers["X-Real-IP"] = "203.0.113.7";
+        var b = HttpFrom("172.18.0.1");          // 同一个反代，另一个真实访客
+        b.Request.Headers["X-Real-IP"] = "203.0.113.8";
+
+        SkillDownloadCounter.ShouldCount(cache, a, "skill-a", null).ShouldBeTrue();
+        SkillDownloadCounter.ShouldCount(cache, b, "skill-a", null).ShouldBeTrue();
+
+        // 同一个真实访客换一次连接仍算同一人
+        var aAgain = HttpFrom("172.18.0.9");
+        aAgain.Request.Headers["X-Real-IP"] = "203.0.113.7";
+        SkillDownloadCounter.ShouldCount(cache, aAgain, "skill-a", null).ShouldBeFalse();
+    }
+
+    [Fact]
     public void 匿名指纹不泄露原始_IP()
     {
         // 指纹只在内存里当去重键，但仍然哈希 —— 万一将来被打进日志也不该带出原始 IP
-        var fp = SkillDownloadCounter.Fingerprint(HttpFrom("203.0.113.7"), null);
+        var http = HttpFrom("172.18.0.1");
+        http.Request.Headers["X-Real-IP"] = "203.0.113.7";
+        var fp = SkillDownloadCounter.Fingerprint(http, null);
         fp.ShouldStartWith("a:");
         fp.ShouldNotContain("203.0.113.7");
+        fp.ShouldNotContain("172.18.0.1");
     }
 
     [Fact]

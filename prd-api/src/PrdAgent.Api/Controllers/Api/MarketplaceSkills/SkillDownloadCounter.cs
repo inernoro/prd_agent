@@ -2,6 +2,7 @@ using System.Security.Cryptography;
 using System.Text;
 using Microsoft.AspNetCore.Http;
 using Microsoft.Extensions.Caching.Memory;
+using PrdAgent.Api.Extensions;
 
 namespace PrdAgent.Api.Controllers.Api.MarketplaceSkills;
 
@@ -27,23 +28,41 @@ public static class SkillDownloadCounter
     public static readonly TimeSpan Window = TimeSpan.FromMinutes(10);
 
     /// <summary>
-    /// 调用方标识：登录用户取 userId，匿名取远端 IP 的哈希。
-    /// 只在内存里当去重键用，不落库、不写日志，所以哈希后即可，无需保留原始 IP。
+    /// 「查了再写」两步之间有窗口：同一客户端并发打进来时，每个请求都可能在任何人
+    /// 写入之前读到「没命中」，于是全部判为应当计数，去重形同虚设——而并发重放正是
+    /// 这个闸要挡的攻击形态。用一把锁把查+写合成原子操作。
+    ///
+    /// 锁内只做一次字典读写（纳秒级），且这条路径只在下载端点上，不存在争用问题；
+    /// 相比分段锁，一把全局锁更容易证明正确。
+    /// </summary>
+    private static readonly object Gate = new();
+
+    /// <summary>
+    /// 调用方标识：登录用户取 userId，匿名取客户端 IP 的哈希。
+    ///
+    /// IP 必须走 <see cref="HttpRequestExtensions.GetRealClientIp"/> 而不是裸的
+    /// <c>RemoteIpAddress</c>：生产是反代 + Docker 网络，裸取到的是上一跳的共享地址，
+    /// 那样一个匿名用户下载之后，同一代理后面的所有人都会被压制十分钟，计数反而少记。
+    ///
+    /// 哈希后再用：只在内存里当去重键，不落库、不写日志，万一将来被打进日志也不该带出原始 IP。
     /// </summary>
     public static string Fingerprint(HttpContext http, string? userId)
     {
         if (!string.IsNullOrEmpty(userId)) return $"u:{userId}";
-        var ip = http.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        var ip = http.GetRealClientIp() ?? "unknown";
         var hash = SHA256.HashData(Encoding.UTF8.GetBytes(ip));
         return $"a:{Convert.ToHexString(hash.AsSpan(0, 8))}";
     }
 
-    /// <summary>窗口内首次调用返回 true（应当计数），重复调用返回 false。</summary>
+    /// <summary>窗口内首次调用返回 true（应当计数），重复调用返回 false。线程安全。</summary>
     public static bool ShouldCount(IMemoryCache cache, HttpContext http, string skillId, string? userId)
     {
         var key = $"mkt:dl:{skillId}:{Fingerprint(http, userId)}";
-        if (cache.TryGetValue(key, out _)) return false;
-        cache.Set(key, true, Window);
-        return true;
+        lock (Gate)
+        {
+            if (cache.TryGetValue(key, out _)) return false;
+            cache.Set(key, true, Window);
+            return true;
+        }
     }
 }
