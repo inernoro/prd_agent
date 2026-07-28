@@ -239,7 +239,10 @@ scope.json -> design-brief -> execution-brief -> evidence-manifest -> report-met
 范围冻结必须早于测试设计和截图。每日验收必须先运行:
 
 ```bash
-python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
   --md-out /tmp/daily-scope.md

@@ -405,10 +405,16 @@ function ProjectInitTab(): JSX.Element {
   const origin = typeof window === 'undefined' ? '' : window.location.origin;
   const active = presets.find((p) => p.key === selected);
   const scriptUrl = active ? `${origin}/api/bootstrap/${active.key}` : '';
+  // 两处都必须让失败可见：
+  // - 两步版用 && 串起来，下载失败就不会去执行上一次留下的旧 cds-init.sh
+  // - 单行版不能用 `curl | sh`：管道的退出码取自 sh，而 sh 读到空输入会成功退出，
+  //   curl 失败反而被报成「初始化成功」。改为先落盘再执行，退出码如实反映失败。
   const twoStep = active
-    ? `curl -fsSL -o cds-init.sh "${scriptUrl}"\nless cds-init.sh   # 先看一眼再执行\nsh cds-init.sh`
+    ? `curl -fsSL -o cds-init.sh "${scriptUrl}" \\\n  && less cds-init.sh \\\n  && sh cds-init.sh`
     : '';
-  const oneLine = active ? `curl -fsSL "${scriptUrl}" | sh` : '';
+  const oneLine = active
+    ? `curl -fsSL -o cds-init.sh "${scriptUrl}" && sh cds-init.sh`
+    : '';
   const activeSkills = active
     ? bundles.filter((b) => active.marketplaceKeys.includes(b.key)).flatMap((b) => b.skills)
     : [];

@@ -182,6 +182,68 @@ describe('匿名路由白名单两处登记一致', () => {
   });
 });
 
+describe('分发技能里不出现写死的宿主路径', () => {
+  // 客户项目可能只有 .cursor 或只有 .agents。技能正文里写死
+  // `python3 .claude/skills/...` 的话，qa-starter 装上了但预览/归档命令当场找不到文件。
+  // 这些技能是随套装/技能包发出去的，必须按运行时解析出的技能根走。
+  const DISTRIBUTED = [
+    '.claude/skills/create-visual-test-to-kb',
+    '.claude/skills/acceptance-checklist',
+    '.claude/skills/acceptance-test-design',
+    '.claude/skills/acceptance-scenario-orchestrator',
+    '.claude/skills/task-handoff-checklist',
+    '.claude/skills/cds',
+    '.claude/skills/cds-project-scan',
+    '.claude/skills/cds-deploy-pipeline',
+    '.claude/skills/cds-release',
+    '.claude/skills/preview-url',
+  ];
+
+  const walkFiles = (dir: string): string[] => {
+    const abs = path.join(REPO_ROOT, dir);
+    if (!fs.existsSync(abs)) return [];
+    const out: string[] = [];
+    const rec = (d: string): void => {
+      for (const n of fs.readdirSync(d)) {
+        const p = path.join(d, n);
+        if (fs.statSync(p).isDirectory()) { rec(p); continue; }
+        if (/\.(md|json)$/i.test(n)) out.push(p);
+      }
+    };
+    rec(abs);
+    return out;
+  };
+
+  it.each(DISTRIBUTED)('%s 不写死 .claude/skills 的可执行路径', (dir) => {
+    const offenders: string[] = [];
+    for (const file of walkFiles(dir)) {
+      const text = fs.readFileSync(file, 'utf8');
+      // 只管「会被执行」的形态；纯文字描述技能装在哪里不算
+      if (/(python3?|bash|node)\s+\.claude\/skills\//.test(text) || /SKILL=\.claude\/skills\//.test(text)) {
+        offenders.push(path.relative(REPO_ROOT, file));
+      }
+    }
+    expect(offenders, `这些文件写死了 .claude/skills 可执行路径：\n${offenders.join('\n')}`).toEqual([]);
+  });
+
+  it.each(DISTRIBUTED)('%s 用到 $SKILLS_ROOT 的代码块自带解析', (dir) => {
+    const offenders: string[] = [];
+    for (const file of walkFiles(dir)) {
+      if (!file.endsWith('.md')) continue;
+      const text = fs.readFileSync(file, 'utf8').split('\n').map((l) => l.replace(/^>\s?/, '')).join('\n');
+      const blocks = [...text.matchAll(/```(?:bash|sh)\n([\s\S]*?)```/g)].map((m) => m[1]);
+      for (const b of blocks) {
+        // 没定义就是空路径，命令会去找 /cds/cli/... —— 比写死更难查
+        if (b.includes('$SKILLS_ROOT') && !b.includes('SKILLS_ROOT=')) {
+          offenders.push(path.relative(REPO_ROOT, file));
+          break;
+        }
+      }
+    }
+    expect(offenders, `这些文件的代码块用了 $SKILLS_ROOT 却没就近解析：\n${offenders.join('\n')}`).toEqual([]);
+  });
+});
+
 describe('每个可复制的安装/更新命令都自带宿主识别', () => {
   // $SKILLS_DIRS 是循环变量的来源。文档里若把「识别宿主」和「解压」拆进两个代码块，
   // 用户换个 shell 只复制后半段时，SKILLS_DIRS 为空 -> for 循环零次迭代 -> 命令

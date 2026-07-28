@@ -163,38 +163,23 @@ console.log('[4d] 全目录禁 emoji（覆盖单独分发的技能）');
   const emoji = /[\u{1F000}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}]/u;
   const scannable = /\.(md|txt|json|ya?ml|mjs|js|ts|py|sh)$/i;
 
-  // 显式豁免：从技能生态安装的第三方技能，正文由上游作者维护。逐字改写等于
-  // 开维护分叉，上游一升级就冲突；这些 emoji 位于 CSV 数据列与 Python 控制台
-  // 输出，不进入本系统的 UI 或文档。台账见 doc/debt.skill.role-bundle.md D6。
-  // 豁免必须写在这里、写明原因 —— 不允许靠「不扫它」来隐形通过。
-  const EXEMPT = new Map([
-    ['ui-ux-pro-max', '从技能生态 vendored 的第三方技能，emoji 在上游的 CSV 数据与控制台输出里'],
-  ]);
 
-  const bundleMembers = new Set(catalog.bundles.flatMap((b) => b.includes));
   const dirty = [];
   let scanned = 0;
   for (const skill of catalog.skills) {
-    if (EXEMPT.has(skill.key)) continue;
     for (const f of skill.files) {
       if (!scannable.test(f.path)) continue;
       scanned += 1;
       if (emoji.test(f.content)) dirty.push(`${skill.key}/${f.path}`);
     }
   }
+  // 没有豁免清单。规则 0 对分发内容是绝对的 —— 留口子等于把「守卫」变成
+  // 「守卫我记得扫的那部分」。vendored 的第三方技能同样要清干净再分发。
   assert(
     dirty.length === 0,
-    `全部 ${catalog.skills.length - EXEMPT.size} 个可分发技能（${scanned} 个文件）无 emoji` +
+    `全部 ${catalog.skills.length} 个可分发技能（${scanned} 个文件）无 emoji` +
       (dirty.length ? `（命中：${dirty.slice(0, 5).join(', ')}）` : ''),
   );
-
-  // 豁免项必须真实存在，否则是过期条目在白白扩大缺口
-  const staleExempt = [...EXEMPT.keys()].filter((k) => !catalog.skills.some((s) => s.key === k));
-  assert(staleExempt.length === 0, `豁免清单无过期条目${staleExempt.length ? `（已不存在：${staleExempt.join(', ')}）` : ''}`);
-
-  // 豁免项一旦进套装就必须先清干净：套装是「一条命令装齐」的主推路径
-  const exemptInBundle = [...EXEMPT.keys()].filter((k) => bundleMembers.has(k));
-  assert(exemptInBundle.length === 0, `豁免技能不在任何套装里${exemptInBundle.length ? `（已进套装，必须先 de-emoji：${exemptInBundle.join(', ')}）` : ''}`);
 }
 
 console.log('[5] 配置校验负向用例');

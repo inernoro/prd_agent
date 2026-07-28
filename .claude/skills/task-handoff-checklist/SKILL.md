@@ -142,7 +142,10 @@ git diff --stat main...HEAD 2>/dev/null || git diff --stat HEAD~10
 当测试矩阵中存在"需人工"的项目时，**只跑这一条命令**拿预览域名，**禁止**自己 slugify / 手写 `tr '/' '-'`：
 
 ```bash
-python3 .claude/skills/cds/cli/cdscli.py --human preview-url
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+python3 "$SKILLS_ROOT/cds/cli/cdscli.py" --human preview-url
 ```
 
 它只会从 `/api/branches` 读取 CDS 实际返回的 `previewUrl` / `previewUrls`。多入口时逐行输出全部地址；没有 CDS 项目凭据、API 失败或分支未发布时明确失败，禁止本地推算。
