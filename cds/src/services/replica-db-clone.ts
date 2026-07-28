@@ -47,18 +47,51 @@ const FRAMEWORK_DB_ENV_PATTERNS: Array<{ engine: ReplicaDbEngine; re: RegExp }> 
   { engine: 'postgres', re: /^(CDS_)?(POSTGRES(QL)?|PG)_{1,2}(DB|DATABASE)(_?NAME)?$/i },
 ];
 
-/** 判定某个 env key 是否为库名 key，并归类引擎（白名单 + 框架风格两路）。 */
-function classifyDbEnvKey(key: string): ReplicaDbEngine | null {
+/**
+ * 引擎中立的库名 key（2026-07-28 真机验收补）。
+ *
+ * Spring / 通用配置风格把库名写成 `DB_NAME` / `DATABASE_NAME` —— 名字里**不含引擎**。
+ * 上面那三条模式全靠 key 名带 MYSQL / POSTGRES / MONGO 才能归类，于是这类项目在
+ * 隔离入口就被判「环境变量里没有数据库名」，功能整个不可用。生产 CDS 上的标识中台
+ * (IMP) 正是如此：DB_NAME + SPRING_DATASOURCE_URL / *_DATASOURCE_URL / *_DB_URL，
+ * 六个服务全部 dbIsolatable.ok=false —— JDBC 改写修好了也永远走不到。
+ *
+ * 这类 key 的引擎不能猜，只能从同一份 env 里的**关系型连接 URL scheme** 读出来
+ *（`jdbc:mysql://…` 就是 mysql，明写在那里）。读不出唯一引擎时保持原样拒绝，
+ * 绝不臆断——克隆错引擎的库比不能隔离危险得多。
+ */
+const ENGINE_NEUTRAL_DB_ENV_PATTERN = /^(CDS_)?(DB|DATABASE)_{1,2}(NAME)$/i;
+
+/** 从一份 env 的关系型连接 URL 里读出唯一引擎；零个或多于一个都返回 null。 */
+export function engineFromRelationalUrls(env: Record<string, string>): ReplicaDbEngine | null {
+  const found = new Set<ReplicaDbEngine>();
+  for (const value of Object.values(env)) {
+    if (typeof value !== 'string') continue;
+    const m = /^(jdbc:)?(mysql|mariadb|postgres(ql)?):\/\//i.exec(value.trim());
+    if (!m) continue;
+    const scheme = m[2].toLowerCase();
+    found.add(scheme.startsWith('postgres') ? 'postgres' : 'mysql');
+  }
+  return found.size === 1 ? [...found][0] : null;
+}
+
+/**
+ * 判定某个 env key 是否为库名 key，并归类引擎（白名单 → 框架风格 → 引擎中立三路）。
+ * 引擎中立那一路必须由调用方提供 env 上下文，否则无从判断引擎，直接不认。
+ */
+function classifyDbEnvKey(key: string, neutralEngine?: ReplicaDbEngine | null): ReplicaDbEngine | null {
   if ((PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)) return engineForEnvKey(key);
   for (const { engine, re } of FRAMEWORK_DB_ENV_PATTERNS) {
     if (re.test(key)) return engine;
   }
+  if (neutralEngine && ENGINE_NEUTRAL_DB_ENV_PATTERN.test(key)) return neutralEngine;
   return null;
 }
 
 /** 框架风格 key（应用真正消费的配置）排在白名单 key 之前——两者值冲突时以应用视角为准。 */
-function isFrameworkDbKey(key: string): boolean {
-  return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key) && classifyDbEnvKey(key) !== null;
+function isFrameworkDbKey(key: string, neutralEngine?: ReplicaDbEngine | null): boolean {
+  return !(PER_BRANCH_DB_ENV_KEYS as readonly string[]).includes(key)
+    && classifyDbEnvKey(key, neutralEngine) !== null;
 }
 
 export interface ReplicaDbTarget {
@@ -144,10 +177,14 @@ export function resolveReplicaDbTarget(
   };
   const runtimeEnv = applyPerBranchDbIsolation(merged, profile.dbScope, branch.branch);
 
+  // 引擎中立 key（DB_NAME / DATABASE_NAME）的引擎从同 env 的关系型 URL scheme 读，
+  // 读不出唯一引擎就当它不是库名 key（fail-closed，见 ENGINE_NEUTRAL_DB_ENV_PATTERN）。
+  const neutralEngine = engineFromRelationalUrls(runtimeEnv);
   const presentKeys = Object.keys(runtimeEnv)
-    .filter((key) => classifyDbEnvKey(key) !== null && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
+    .filter((key) => classifyDbEnvKey(key, neutralEngine) !== null
+      && typeof runtimeEnv[key] === 'string' && runtimeEnv[key] !== '')
     // 框架风格 key 优先（应用真正读的配置）；同类内保持稳定序
-    .sort((a, b) => Number(isFrameworkDbKey(b)) - Number(isFrameworkDbKey(a)));
+    .sort((a, b) => Number(isFrameworkDbKey(b, neutralEngine)) - Number(isFrameworkDbKey(a, neutralEngine)));
   if (presentKeys.length === 0) {
     return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库' };
   }
@@ -158,7 +195,7 @@ export function resolveReplicaDbTarget(
   // 隔离克隆出来的就是别的引擎的生产数据。多引擎并存时按 dependsOn 声明或
   // CDS_<实例>_PORT/HOST 模板引用收敛；仍多义 → fail-closed。
   const enginesPresent = [...new Set(
-    presentKeys.map((k) => classifyDbEnvKey(k)).filter((e): e is ReplicaDbEngine => e !== null),
+    presentKeys.map((k) => classifyDbEnvKey(k, neutralEngine)).filter((e): e is ReplicaDbEngine => e !== null),
   )];
   let engine: ReplicaDbEngine | null = enginesPresent[0] ?? null;
   if (enginesPresent.length > 1) {
@@ -192,7 +229,7 @@ export function resolveReplicaDbTarget(
       }
     }
   }
-  const firstKey = presentKeys.find((k) => classifyDbEnvKey(k) === engine);
+  const firstKey = presentKeys.find((k) => classifyDbEnvKey(k, neutralEngine) === engine);
   const sourceDb = firstKey ? runtimeEnv[firstKey] : undefined;
   if (!engine || !sourceDb) {
     return { target: null, reason: '数据库 env key 无法归类到 mongo/mysql/postgres 引擎' };
@@ -202,7 +239,7 @@ export function resolveReplicaDbTarget(
   }
   // 只覆写「同引擎且指向同一个库」的 key——同引擎但值不同的 key（如 init 库 ≠ 应用库）
   // 不能一起改，否则会把无关库名静默改指到克隆库
-  const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key) === engine && runtimeEnv[key] === sourceDb);
+  const envKeys = presentKeys.filter((key) => classifyDbEnvKey(key, neutralEngine) === engine && runtimeEnv[key] === sourceDb);
 
   const infraCandidates = state.getInfraServicesForProject(branch.projectId)
     .filter((svc) => svc.status === 'running' && detectInfraDataKindForEngine(svc, engine));

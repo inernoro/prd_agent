@@ -1,5 +1,5 @@
 import { describe, it, expect } from 'vitest';
-import { rewriteRelationalUrlDb } from '../../src/services/replica-db-clone.js';
+import { rewriteRelationalUrlDb, engineFromRelationalUrls } from '../../src/services/replica-db-clone.js';
 
 /**
  * 关系型隔离必须重写连接 URL（Codex 第三十二轮 P1）。
@@ -56,5 +56,38 @@ describe('JDBC 复合 scheme（2026-07-27 真机核对）', () => {
 
   it('库名段对不上源库时仍然拒绝改写（不认识就不动的纪律不变）', () => {
     expect(rewriteRelationalUrlDb('jdbc:mysql://mysql:3306/otherdb', 'impdb', 'impdb_rs_x')).toBeNull();
+  });
+});
+
+describe('引擎中立库名 key 的引擎判定（2026-07-28 真机验收补）', () => {
+  // 生产 CDS 上标识中台(IMP)六个服务全部 dbIsolatable.ok=false，原因是库名写在
+  // DB_NAME 里——名字不含引擎，三条框架模式都归类不了，隔离在入口就不可用，
+  // JDBC 改写修好了也永远走不到。引擎只能从同 env 的连接 URL scheme 读。
+  it('jdbc:mysql 连接串 → mysql', () => {
+    expect(engineFromRelationalUrls({
+      DB_NAME: 'impdb',
+      SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb?useSSL=false',
+    })).toBe('mysql');
+  });
+
+  it('postgres 系各种写法都归到 postgres', () => {
+    expect(engineFromRelationalUrls({ X: 'jdbc:postgresql://pg:5432/d' })).toBe('postgres');
+    expect(engineFromRelationalUrls({ X: 'postgres://u:p@pg:5432/d' })).toBe('postgres');
+  });
+
+  it('mariadb 归到 mysql（同协议族）', () => {
+    expect(engineFromRelationalUrls({ X: 'mariadb://h:3306/d' })).toBe('mysql');
+  });
+
+  it('同时出现两种引擎 → null，绝不臆断（克隆错引擎比不能隔离危险得多）', () => {
+    expect(engineFromRelationalUrls({
+      A: 'jdbc:mysql://mysql:3306/d',
+      B: 'jdbc:postgresql://pg:5432/d',
+    })).toBeNull();
+  });
+
+  it('没有关系型 URL → null（mongo 项目不受影响，走它自己的 key 家族）', () => {
+    expect(engineFromRelationalUrls({ MONGO_URI: 'mongodb://m:27017/d' })).toBeNull();
+    expect(engineFromRelationalUrls({})).toBeNull();
   });
 });
