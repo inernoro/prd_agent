@@ -15,7 +15,7 @@ import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeplo
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, collectDrainableRuns,
+  drainInFlightDeploys, beginSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
@@ -2231,14 +2231,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(507).json({ error: 'disk_low', message: blocked });
       return;
     }
-    // 自更新排空窗口闸（Codex 第三十六轮 P1）：排空期间到达的新部署会被随后的
-    // 重启腰斩——那正是排空要消灭的现象。明说拒绝好过建到一半被杀。
-    const draining = selfUpdateDrainBlockReason(Date.now());
-    if (draining) {
-      res.setHeader('Retry-After', '60');
-      res.status(503).json({ error: 'self_update_draining', message: draining });
-      return;
-    }
+    // 自更新排空窗口闸已上移到 app 级中间件（server.ts + deploy-drain 的
+    // isDrainBlockedPath）：它同时罩住分支部署与生产发布两个路由器，路由器级只罩
+    // 得住自己那一半（Codex PR #1273 P1）。这里只留磁盘刹车。
     next();
   });
 

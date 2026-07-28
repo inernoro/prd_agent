@@ -218,6 +218,25 @@ export function selfUpdateDrainBlockReason(nowMs: number): string | null {
   return 'CDS 正在自更新重启，已暂停接受新的构建/部署请求（避免刚起的部署被重启腰斩）。重启通常在一分钟内完成，稍后重试即可；GitHub 侧可 push 新 commit 或在 PR 评论 /cds redeploy 重新触发。';
 }
 
+/**
+ * 排空期间必须拒绝的「会产出写操作」的入口路径（相对 /api）。
+ *
+ * **唯一判定源**。这道闸最初只写在某一个 handler 里，后来提到 branches 路由器级；
+ * 可生产发布是**另一个路由器**（createReleasesRouter）里的 /releases/*，从来不经过
+ * branches 的中间件——于是排空最后一次轮询之后到重启之前，仍能开启一次新发布，
+ * 然后被重启把 SSH 拦腰砍断，正是排空要消灭的那个现象（Codex PR #1273 P1）。
+ * 逐 handler 打补丁会漏，逐 router 打补丁一样会漏；判定收敛到这里 + 挂到 app 级。
+ */
+export function isDrainBlockedPath(method: string, pathname: string): boolean {
+  if (method !== 'POST') return false;
+  // 分支构建/部署
+  if (/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(pathname)) return true;
+  // 生产发布：发起 / 回滚 / 重试 —— 三个都会真的往目标机器跑 SSH
+  if (/^\/releases\/branches\/[^/]+\/runs\/?$/.test(pathname)) return true;
+  if (/^\/releases\/runs\/[^/]+\/(rollback|retry)\/?$/.test(pathname)) return true;
+  return false;
+}
+
 export interface DrainOutcome {
   /** 是否等到了全部落地（false = 超时后放弃，照常重启）。 */
   drained: boolean;

@@ -33,6 +33,7 @@ import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-s
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
+import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
@@ -3927,6 +3928,20 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
   }));
+  // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
+  //
+  // 必须挂在**所有**会产出写操作的路由器之前，且判定走 deploy-drain 的
+  // isDrainBlockedPath 这一个源：此前它只是 branches 路由器里的一段中间件，
+  // 而生产发布在另一个路由器（/releases/*）里，从来不经过它——排空最后一次轮询
+  // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
+  app.use('/api', (req, res, next) => {
+    if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    const draining = selfUpdateDrainBlockReason(Date.now());
+    if (!draining) { next(); return; }
+    res.setHeader('Retry-After', '60');
+    res.status(503).json({ error: 'self_update_draining', message: draining });
+  });
+
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
     config: deps.config,

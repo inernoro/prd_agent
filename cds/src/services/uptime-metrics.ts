@@ -257,6 +257,24 @@ export function availabilityFromDaily(
  * 于是 07-21 一整天（含窗口外的前半天）都被算进「最近 7 天」。
  * 取 `now - (N-1) 天` 才是**恰好 N 个自然日**（含今天这个尚未过完的当天）。
  */
+/**
+ * 跨天窗口的**自然日边界**（唯一判定源）。
+ *
+ * 跨天口径只有按天聚合可用（原始采样已被环形缓冲滚掉），所以窗口必然按自然日
+ * 对齐。但天数必须对得上标签：直接拿 `now - N天` 去 floor 到自然日，在 now 不是
+ * UTC 零点时会**多带出一整天**（7 月 28 日中午查 7d，起点落到 07-21，07-21..07-28
+ * 共 8 天，窗口外的前半天也被算进来）。取 `今天 - (N-1) 天` 才是恰好 N 个自然日。
+ *
+ * 两个消费方必须都走它：可用率（availabilityOverRange）与历史曲线
+ * （dailyRollupPoints 的调用方）。此前两处各算各的，修了可用率没修曲线
+ * ——判定分散必然漂移（Codex PR #1273 P1/P2 连续两轮同一病根）。
+ */
+export function calendarDayWindow(rangeMs: number, nowMs: number): { fromMs: number; days: number } {
+  const days = Math.max(1, Math.round(rangeMs / DAY_MS));
+  const startDayIndex = Math.floor(nowMs / DAY_MS) - (days - 1);
+  return { fromMs: startDayIndex * DAY_MS, days };
+}
+
 export function availabilityOverRange(
   target: { samples: ReadonlyArray<UptimeSample>; daily: ReadonlyArray<UptimeDailyRollup> },
   rangeMs: number,
@@ -265,8 +283,8 @@ export function availabilityOverRange(
   if (rangeMs <= DAY_MS) {
     return availabilityFromSamples(target.samples, nowMs - rangeMs, nowMs);
   }
-  const days = Math.max(1, Math.round(rangeMs / DAY_MS));
-  return availabilityFromDaily(target.daily, dayKey(nowMs - (days - 1) * DAY_MS), dayKey(nowMs));
+  const { fromMs } = calendarDayWindow(rangeMs, nowMs);
+  return availabilityFromDaily(target.daily, dayKey(fromMs), dayKey(nowMs));
 }
 
 /** 降采样后的一个时间桶。status=none 表示该桶内没有采样（灰段）。 */

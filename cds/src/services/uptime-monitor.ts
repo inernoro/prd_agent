@@ -50,6 +50,7 @@ import {
   applyDailyRollup,
   applyIncidentTransition,
   availabilityOverRange,
+  calendarDayWindow,
   bucketizeSamples,
   incidentDurationMs,
   nextDebounceState,
@@ -847,7 +848,10 @@ export class UptimeMonitorService {
     const record = this.records.get(targetId);
     if (!record) return null;
     const now = this.now();
-    const from = now - rangeMs;
+    // 跨天 range 的起点必须与按天聚合的桶边界一致，否则返回的 from 早于第一个桶
+    // （或桶多出一天），曲线上会出现「窗口外的那天」（Codex PR #1273 P2）。
+    // 自然日边界走 calendarDayWindow 这一个判定源，与 availabilityOverRange 同源。
+    const from = rangeMs > DAY_MS ? calendarDayWindow(rangeMs, now).fromMs : now - rangeMs;
     // 原始采样只留约 24 小时（环形缓冲），更早的历史在按天聚合里。跨天的 range
     // 若只 bucketize samples，7d/30d 会返回一整片空桶——看着像「那几天没监控」，
     // 实际是数据在另一个字段里（Codex PR #1273 P2）。

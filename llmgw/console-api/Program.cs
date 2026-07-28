@@ -8310,6 +8310,24 @@ const int BugReportMaxAttachmentCount = 4;
 // 转发缺陷系统（create + submit）的总预算，与前端「超过 10 秒转本地留存」文案一致：
 // 两段各给 10s 会让用户实际等到 20s。
 var bugReportForwardBudget = TimeSpan.FromSeconds(10);
+// 文本字段上限。没有它，一次不带附件的提交就能把多兆字节的 Description/Content
+// 原样写进每一份 MongoDB 文档；每租户 100 条的保留策略只管条数不管字节，
+// 反复提交仍能吃掉约 1GB/租户，并让转发与写库都变慢（Codex PR #1273 P1）。
+// 数值与 CDS 侧 bug-reports.ts 逐一对齐——同一个面板的两个后端不该有两套上限。
+const int BugReportMaxTitleChars = 200;
+const int BugReportMaxDescriptionChars = 20_000;
+const int BugReportMaxContentChars = 40_000;
+const int BugReportMaxEnvKeyChars = 40;
+const int BugReportMaxAttachmentNameChars = 120;
+// 截断而不是拒收：用户辛苦写的复现步骤不该被整条丢掉，但必须留下明确标记。
+static string ClampBugReportText(string value, int max)
+    => value.Length <= max ? value : $"{value[..max]}\n…（原文共 {value.Length} 字，超过 {max} 字上限，已截断）";
+// 附件元数据（文件名 / MIME）同样来自客户端，直接截断即可，不必留标记。
+static string ClampBugReportName(string value, string fallback)
+{
+    var v = value.Length == 0 ? fallback : value;
+    return v.Length > 120 ? v[..120] : v;
+}
 
 app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubmitRequest? body) =>
 {
@@ -8317,6 +8335,7 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
     var description = (body?.Description ?? string.Empty).Trim();
     if (description.Length == 0)
         return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_EMPTY", "请填写问题描述"), jsonOptions, 400);
+    description = ClampBugReportText(description, BugReportMaxDescriptionChars);
 
     var severity = (body?.Severity ?? string.Empty).Trim().ToLowerInvariant();
     if (!bugReportSeverities.Contains(severity, StringComparer.Ordinal))
@@ -8340,8 +8359,8 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
             return Json(ApiEnvelope<BugReportSubmitResult>.Fail("BUG_REPORT_ATTACHMENT_TOO_LARGE", "附件总量超出存储上限，请压缩截图后重试"), jsonOptions, 400);
         attachmentDocs.Add(new BsonDocument
         {
-            { "Name", (item.Name ?? "attachment").Trim() },
-            { "MimeType", (item.MimeType ?? "application/octet-stream").Trim() },
+            { "Name", ClampBugReportName((item.Name ?? "attachment").Trim(), "attachment") },
+            { "MimeType", ClampBugReportName((item.MimeType ?? "application/octet-stream").Trim(), "application/octet-stream") },
             { "Size", item.Size > 0 ? item.Size : estimated },
             { "DataBase64", data },
         });
@@ -8351,14 +8370,18 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
     var title = (body?.Title ?? string.Empty).Trim();
     if (title.Length == 0) title = firstLine.Length > 100 ? firstLine[..100] : firstLine;
     if (title.Length == 0) title = "未命名缺陷";
+    if (title.Length > BugReportMaxTitleChars) title = title[..BugReportMaxTitleChars];
     var content = (body?.Content ?? string.Empty).Trim();
     if (content.Length == 0) content = description;
+    content = ClampBugReportText(content, BugReportMaxContentChars);
 
     var environmentDoc = new BsonDocument();
     foreach (var pair in body?.Environment ?? new Dictionary<string, string>())
     {
         if (string.IsNullOrWhiteSpace(pair.Value)) continue;
-        environmentDoc[pair.Key] = pair.Value.Length > 500 ? pair.Value[..500] : pair.Value;
+        // key 也要截：环境字典的键来自客户端，不设限同样能把文档撑大。
+        var envKey = pair.Key.Length > BugReportMaxEnvKeyChars ? pair.Key[..BugReportMaxEnvKeyChars] : pair.Key;
+        environmentDoc[envKey] = pair.Value.Length > 500 ? pair.Value[..500] : pair.Value;
     }
 
     var delivery = "local";

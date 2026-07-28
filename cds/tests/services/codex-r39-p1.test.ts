@@ -583,3 +583,65 @@ describe('第四十二轮 P2：跨天可用率的天数必须对得上标签', (
     expect(out.ratio).toBe(1);
   });
 });
+
+describe('第四十三轮 P1：排空闸必须罩住所有写入口，不能只罩一个路由器', () => {
+  it('分支部署与生产发布三个入口都在闸内', async () => {
+    const { isDrainBlockedPath } = await import('../../src/services/deploy-drain.js');
+    // 分支侧（原本就罩着的）
+    expect(isDrainBlockedPath('POST', '/branches/b1/deploy')).toBe(true);
+    expect(isDrainBlockedPath('POST', '/branches/b1/deploy/api')).toBe(true);
+    expect(isDrainBlockedPath('POST', '/branches/b1/force-rebuild/api')).toBe(true);
+    // 事故值：这三条在另一个路由器里，从来不经过 branches 的中间件
+    expect(isDrainBlockedPath('POST', '/releases/branches/b1/runs')).toBe(true);
+    expect(isDrainBlockedPath('POST', '/releases/runs/rel_1/rollback')).toBe(true);
+    expect(isDrainBlockedPath('POST', '/releases/runs/rel_1/retry')).toBe(true);
+  });
+
+  it('只读与自救动作不许被闸住（磁盘满/排空时还得能停能查）', async () => {
+    const { isDrainBlockedPath } = await import('../../src/services/deploy-drain.js');
+    expect(isDrainBlockedPath('GET', '/releases/runs')).toBe(false);
+    expect(isDrainBlockedPath('POST', '/branches/b1/stop')).toBe(false);
+    expect(isDrainBlockedPath('POST', '/releases/runs/rel_1/cancel')).toBe(false);
+    expect(isDrainBlockedPath('POST', '/releases/targets')).toBe(false);
+  });
+
+  it('闸挂在 app 级且在两个路由器之前（源码守卫）', () => {
+    const server = fs.readFileSync(path.join(REPO, 'src/server.ts'), 'utf-8');
+    const gateAt = server.indexOf('isDrainBlockedPath(req.method, req.path)');
+    const releasesAt = server.indexOf('createReleasesRouter({');
+    const branchesAt = server.indexOf('createBranchRouter({');
+    expect(gateAt).toBeGreaterThan(-1);
+    expect(gateAt).toBeLessThan(releasesAt);
+    expect(gateAt).toBeLessThan(branchesAt);
+    // 路由器级那份必须撤掉，避免两处判定漂移
+    const branches = fs.readFileSync(path.join(REPO, 'src/routes/branches.ts'), 'utf-8');
+    expect(branches).not.toContain('selfUpdateDrainBlockReason(Date.now())');
+  });
+});
+
+describe('第四十三轮 P2：历史曲线与可用率必须共用同一个自然日边界', () => {
+  it('7d 曲线恰好 7 个桶，起点与返回的 from 一致', async () => {
+    const { calendarDayWindow } = await import('../../src/services/uptime-metrics.js');
+    const now = Date.parse('2026-07-28T12:00:00.000Z');
+    const DAY = 86_400_000;
+    const w = calendarDayWindow(7 * DAY, now);
+    expect(w.days).toBe(7);
+    // 事故值：now-7d = 07-21T12:00 → floor 到 07-21，于是 07-21..07-28 共 8 个桶
+    expect(new Date(w.fromMs).toISOString().slice(0, 10)).toBe('2026-07-22');
+    const buckets = Math.floor(now / DAY) - Math.floor(w.fromMs / DAY) + 1;
+    expect(buckets).toBe(7);
+  });
+
+  it('可用率与曲线走同一个判定源（防再次只修一边）', () => {
+    const metrics = fs.readFileSync(path.join(REPO, 'src/services/uptime-metrics.ts'), 'utf-8');
+    const monitor = fs.readFileSync(path.join(REPO, 'src/services/uptime-monitor.ts'), 'utf-8');
+    expect(metrics).toContain('export function calendarDayWindow(');
+    // 可用率侧
+    expect(metrics).toMatch(/const \{ fromMs \} = calendarDayWindow\(rangeMs, nowMs\);/);
+    // 曲线侧
+    expect(monitor).toMatch(/calendarDayWindow\(rangeMs, now\)\.fromMs/);
+    // 两边都不许再自己算边界
+    expect(metrics).not.toMatch(/dayKey\(nowMs - rangeMs\)/);
+    expect(monitor).not.toMatch(/const from = now - rangeMs;/);
+  });
+});

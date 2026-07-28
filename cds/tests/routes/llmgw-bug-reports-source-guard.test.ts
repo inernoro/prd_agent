@@ -114,3 +114,40 @@ describe('llmgw 前端总量闸必须与后端同口径（base64 字符数）', 
     expect(front![1]).toBe(back![1]);
   });
 });
+
+describe('llmgw 文本字段必须有界（Codex PR #1273 第四十三轮 P1）', () => {
+  it('description / title / content 都过截断，且与 CDS 侧同一套上限', () => {
+    // 事故值：只判空不判长，多兆字节的 Description/Content 原样进每份 Mongo 文档；
+    // 每租户 100 条只管条数不管字节，反复提交仍能吃掉约 1GB/租户。
+    expect(source).toContain('BugReportMaxDescriptionChars');
+    expect(source).toContain('BugReportMaxContentChars');
+    expect(source).toContain('BugReportMaxTitleChars');
+    expect(postCode).toContain('ClampBugReportText(description, BugReportMaxDescriptionChars)');
+    expect(postCode).toContain('ClampBugReportText(content, BugReportMaxContentChars)');
+    expect(postCode).toMatch(/title = title\[\.\.BugReportMaxTitleChars\]/);
+  });
+
+  it('环境键与附件元数据也要截（同样来自客户端）', () => {
+    expect(postCode).toContain('BugReportMaxEnvKeyChars');
+    expect(postCode).toContain('ClampBugReportName');
+  });
+
+  it('两端上限数值一致：同一个面板不该有两套口径', () => {
+    const cds = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes/bug-reports.ts'),
+      'utf-8',
+    );
+    const pairs: Array<[RegExp, RegExp]> = [
+      [/const MAX_TITLE_CHARS = (\d+);/, /BugReportMaxTitleChars = (\d+);/],
+      [/const MAX_DESCRIPTION_CHARS = ([\d_]+);/, /BugReportMaxDescriptionChars = ([\d_]+);/],
+      [/const MAX_CONTENT_CHARS = ([\d_]+);/, /BugReportMaxContentChars = ([\d_]+);/],
+    ];
+    for (const [cdsRe, gwRe] of pairs) {
+      const a = cdsRe.exec(cds)?.[1]?.replace(/_/g, '');
+      const b = gwRe.exec(source)?.[1]?.replace(/_/g, '');
+      expect(a).toBeTruthy();
+      expect(b).toBeTruthy();
+      expect(a).toBe(b);
+    }
+  });
+});
