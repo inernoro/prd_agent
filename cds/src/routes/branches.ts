@@ -18369,6 +18369,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const trunkSplit = partitionTrunkBranches(projectBranches);
         const keptTrunk = includeTrunk ? [] : trunkSplit.trunk;
         const branches = includeTrunk ? projectBranches : trunkSplit.rest;
+        // 保留主干 + 清空配置 = 僵尸态：分支条目与容器还在跑，但它依赖的
+        // buildProfiles / routingRules / 项目环境变量 / 基础设施全被清掉，既没法
+        // 重新部署，路由也已经断了，而响应还宣称「已保留主干」（Codex PR #1273 P1）。
+        // 与其造这种半吊子状态，不如把这个组合直接判为非法：要么显式确认连主干
+        // 一起清（confirmTrunk=1），要么先把主干处理掉再重置。
+        if (!includeTrunk && trunkSplit.trunk.length > 0) {
+          sendSSE(res, 'error', {
+            message: `该项目还有主干分支（${trunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+              + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+              + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+            trunkBranches: trunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+          });
+          res.end();
+          return;
+        }
+
         for (const entry of trunkSplit.trunk) {
           sendSSE(res, 'step', {
             step: 'reset',
@@ -18500,6 +18516,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const globalIncludeTrunk = factoryResetIncludesTrunk(req);
       const globalTrunkSplit = partitionTrunkBranches(Object.values(state.branches));
       const globalKeptTrunk = globalIncludeTrunk ? [] : globalTrunkSplit.trunk;
+
+      // 同上：保留主干但清空它依赖的全部配置会造出无法部署的僵尸分支，
+      // 这个组合直接判为非法（Codex PR #1273 P1）。
+      if (!globalIncludeTrunk && globalTrunkSplit.trunk.length > 0) {
+        sendSSE(res, 'error', {
+          message: `当前还有主干分支（${globalTrunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+            + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+            + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+          trunkBranches: globalTrunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+        });
+        res.end();
+        return;
+      }
       const branches = globalIncludeTrunk
         ? Object.values(state.branches)
         : globalTrunkSplit.rest;

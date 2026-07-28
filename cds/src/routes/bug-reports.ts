@@ -295,6 +295,8 @@ export async function forwardToMap(
 export interface StoredBugReport {
   id: string;
   createdAt: string;
+  /** 提交方项目（项目级 Key 提交时非空）。保留策略按它分桶。 */
+  projectId?: string | null;
   source: string;
   reporter: string;
   title: string;
@@ -399,8 +401,22 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
       // 注意 readRecords 返回的是**新在前**（它给列表 API 用，内部做了 reverse）。
       // 这里要保留的是「最新的 N 条」= 头部 N 条，slice(-N) 会反过来丢掉新记录。
       const newestFirst = readRecords(Number.MAX_SAFE_INTEGER);
-      const keptNewestFirst = newestFirst.slice(0, BUG_REPORT_MAX_RECORDS);
-      const droppedIds = new Set(newestFirst.slice(BUG_REPORT_MAX_RECORDS).map((r) => r.id));
+      // 按提交方项目分桶后各自保留最近 N 条：全局一刀切会让一个吵闹的项目
+      // （或一个不断重试的客户端）把别的项目的本地留存挤掉，而未配置 MAP 转发时
+      // 本地留存就是唯一副本（Codex PR #1273 P1）。
+      const perBucket = new Map<string, StoredBugReport[]>();
+      for (const rec of newestFirst) {
+        const key = rec.projectId || '__system__';
+        const bucket = perBucket.get(key);
+        if (bucket) bucket.push(rec);
+        else perBucket.set(key, [rec]);
+      }
+      const keepIds = new Set<string>();
+      for (const bucket of perBucket.values()) {
+        for (const rec of bucket.slice(0, BUG_REPORT_MAX_RECORDS)) keepIds.add(rec.id);
+      }
+      const keptNewestFirst = newestFirst.filter((r) => keepIds.has(r.id));
+      const droppedIds = new Set(newestFirst.filter((r) => !keepIds.has(r.id)).map((r) => r.id));
       // 落盘顺序必须回到时间正序（文件是 append-only 的 jsonl）。
       const kept = [...keptNewestFirst].reverse();
 
@@ -493,6 +509,9 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     const record: StoredBugReport = {
       id: crypto.randomUUID(),
       createdAt: new Date().toISOString(),
+      // 提交方的项目（项目级 cdsp_/cdsg_ Key 才有；人类/全局 Key 为 null）。
+      // 保留策略按它分桶，否则一个吵闹的项目会把别的项目的本地留存挤掉。
+      projectId: (req as unknown as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId ?? null,
       source: report.source,
       reporter: resolveReporter(req),
       title: report.title,

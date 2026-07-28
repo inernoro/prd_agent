@@ -17,6 +17,7 @@ import express from 'express';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { createBranchRouter } from '../../src/routes/branches.js';
 import { StateService } from '../../src/services/state.js';
@@ -298,18 +299,17 @@ describe('一键清理路径的主干保护（事故回归）', () => {
   // ── POST /api/factory-reset ──
 
   describe('POST /api/factory-reset', () => {
-    it('默认（不带 confirmTrunk）保留主干、清掉其余，并在响应里列明保留了谁', async () => {
+    it('存在主干且不带 confirmTrunk 时整体拒绝：不许留下「分支还在但配置被清空」的僵尸', async () => {
       addProject('acme', { gitDefaultBranch: 'main' });
       addBranch('acme-main', 'main', 'acme');
       addBranch('acme-feat', 'feat/login', 'acme');
 
       const res = await request(server, 'POST', '/api/factory-reset?project=acme');
 
-      expect(branchIds()).toEqual(['acme-main']);
-      const done = completeOf(res.raw);
-      expect(done.keptTrunkBranches).toEqual([{ branchId: 'acme-main', branchName: 'main' }]);
-      expect(done.removedTrunkBranches).toEqual([]);
-      expect(String(done.message)).toContain('confirmTrunk=1');
+      // 一个分支都不许动（拒绝必须发生在任何破坏性动作之前）
+      expect(branchIds().sort()).toEqual(['acme-feat', 'acme-main']);
+      expect(res.raw).toContain('confirmTrunk=1');
+      expect(res.raw).toContain('僵尸');
     });
 
     it('带 confirmTrunk=1 才连主干一起清空，且响应里列明将删除的主干', async () => {
@@ -325,7 +325,7 @@ describe('一键清理路径的主干保护（事故回归）', () => {
       expect(done.keptTrunkBranches).toEqual([]);
     });
 
-    it('全局恢复出厂：默认保留各项目主干，其余状态照常清空', async () => {
+    it('全局恢复出厂：存在主干且不带 confirmTrunk 时整体拒绝，状态一律不动', async () => {
       addProject('p1', { gitDefaultBranch: 'main' });
       addProject('p2');
       addBranch('p1-main', 'main', 'p1');
@@ -334,13 +334,10 @@ describe('一键清理路径的主干保护（事故回归）', () => {
 
       const res = await request(server, 'POST', '/api/factory-reset');
 
-      expect(branchIds()).toEqual(['p1-main', 'p2-master']);
-      const done = completeOf(res.raw);
-      expect((done.keptTrunkBranches as Array<{ branchId: string }>).map((b) => b.branchId).sort())
-        .toEqual(['p1-main', 'p2-master']);
-      // 其余状态（构建配置 / 路由 / 基础设施）仍被清空
-      expect(stateService.getState().buildProfiles).toEqual([]);
-      expect(stateService.getState().routingRules).toEqual([]);
+      expect(branchIds().sort()).toEqual(['p1-main', 'p2-feat', 'p2-master']);
+      expect(res.raw).toContain('confirmTrunk=1');
+      // 拒绝发生在清空之前：配置必须原封不动
+      expect(stateService.getState().branches['p1-main']).toBeTruthy();
     });
 
     it('全局恢复出厂带 confirmTrunk=1 时清空一切，包括主干', async () => {
@@ -353,5 +350,20 @@ describe('一键清理路径的主干保护（事故回归）', () => {
       expect(branchIds()).toEqual([]);
       expect((completeOf(res.raw).removedTrunkBranches as unknown[]).length).toBe(1);
     });
+  });
+});
+
+describe('恢复出厂设置不得留下僵尸主干（Codex PR #1273 P1）', () => {
+  it('源码守卫：存在主干且未带 confirmTrunk 时必须整体拒绝，而不是保留分支再清空它的配置', () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes/branches.ts'),
+      'utf-8',
+    );
+    // 两条路径（scoped / global）各有一道拒绝守卫
+    const guards = src.match(/恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施/g) || [];
+    expect(guards.length).toBe(2);
+    // 拒绝必须发生在「保留主干」的分支里
+    expect(src).toContain('if (!includeTrunk && trunkSplit.trunk.length > 0)');
+    expect(src).toContain('if (!globalIncludeTrunk && globalTrunkSplit.trunk.length > 0)');
   });
 });

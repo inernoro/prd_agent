@@ -482,3 +482,35 @@ describe('本地留存必须有保留策略（Codex PR #1273 P1）', () => {
     expect(lines[lines.length - 1]).toContain(`第 ${total - 1} 条`);
   });
 });
+
+describe('保留策略按项目分桶（Codex PR #1273 P1）', () => {
+  it('吵闹项目提交超限不得挤掉别的项目的本地留存', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-bucket-'));
+    const appFor = (projectId?: string) => {
+      const a = express();
+      a.use((req, _res, next) => {
+        if (projectId) (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = { projectId, keyId: 'k' };
+        next();
+      });
+      a.use('/api', createBugReportsRouter({
+        getDataDir: () => dir, readForwardConfig: () => null, resolveReporter: () => 'tester',
+      }));
+      return a;
+    };
+
+    // 安静项目先提交 2 条
+    for (let i = 0; i < 2; i++) {
+      await request(appFor('quiet'), 'POST', '/api/bug-reports', { description: `quiet-${i}`, severity: 'trivial' });
+    }
+    // 吵闹项目提交远超上限
+    for (let i = 0; i < BUG_REPORT_MAX_RECORDS + 20; i++) {
+      await request(appFor('noisy'), 'POST', '/api/bug-reports', { description: `noisy-${i}`, severity: 'trivial' });
+    }
+
+    const raw = fs.readFileSync(path.join(dir, 'bug-reports', 'records.jsonl'), 'utf-8');
+    expect(raw).toContain('quiet-0');
+    expect(raw).toContain('quiet-1');
+    const noisyKept = raw.split('\n').filter((l) => l.includes('"noisy"')).length;
+    expect(noisyKept).toBeLessThanOrEqual(BUG_REPORT_MAX_RECORDS);
+  });
+});
