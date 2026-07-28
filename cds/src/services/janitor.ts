@@ -4,6 +4,10 @@ import { execFile } from 'node:child_process';
 import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
+import {
+  computeOrphanWorktreePlan, DEFAULT_ORPHAN_WORKTREE_MAX_REMOVALS,
+  type DiskWorktreeDir, type OrphanWorktreePlan,
+} from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 
 /**
@@ -55,6 +59,16 @@ export interface JanitorConfig {
   imageKeepGenerations?: number;
   /** 单轮最多删几个镜像，避免一次 sweep 长时间占住 docker 与磁盘 IO。 */
   imageMaxRemovalsPerSweep?: number;
+  /**
+   * 孤儿 worktree 对账（2026-07-27 宕机复盘 P2）。默认开（undefined === true）。
+   *
+   * TTL 清理只看得见台账里还有记录的分支；磁盘上「目录还在、台账里没有」的
+   * worktree（删除半途失败 / 项目已删 / 创建时崩溃的残留）从来没人管——事故当天
+   * 宿主 .cds-worktrees 已 45.5GB，而按 TTL 够格删的分支只有 3 个。
+   */
+  orphanWorktrees?: boolean;
+  /** 单轮最多删几个孤儿 worktree 目录。 */
+  orphanWorktreeMaxRemovalsPerSweep?: number;
 }
 
 /** 一次 Docker 垃圾清理的结果。 */
@@ -177,6 +191,13 @@ export interface JanitorSweepReport {
     deferred: number;
     keepGenerations: number;
   } | null;
+  /** 孤儿 worktree 对账结果（磁盘有目录、台账无分支）。null = 本次未执行。 */
+  orphanWorktrees: {
+    removed: string[];
+    failed: Array<{ path: string; error: string }>;
+    keptReasons: Record<string, string>;
+    deferred: number;
+  } | null;
   /** 孤儿 infra 容器对账(在 Docker 里但不在 CDS 台账上,2026-07-09)。
    *  只报不删——infra 容器是项目级共享,误删代价高;删除决策留给运维。
    *  null = 本次未执行(未注入扫描函数)。 */
@@ -184,6 +205,66 @@ export interface JanitorSweepReport {
   /** Any errors encountered (non-fatal). */
   errors: string[];
 }
+
+/** 孤儿 worktree 对账所需的磁盘读写（注入点：测试里换成假实现，不碰磁盘）。 */
+export interface OrphanWorktreeFs {
+  /** 枚举 `<base>/<projectId>/<slug>` 两层下的全部目录。 */
+  listWorktreeDirs: (base: string) => Promise<DiskWorktreeDir[]>;
+  /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
+  listMountedHostPaths: () => Promise<string[] | null>;
+  /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
+  removeDir: (dir: string) => Promise<string | null>;
+}
+
+export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
+  listWorktreeDirs: async (base) => {
+    const out: DiskWorktreeDir[] = [];
+    let projects: fs.Dirent[];
+    try {
+      projects = fs.readdirSync(base, { withFileTypes: true });
+    } catch {
+      return out; // base 不存在 = 没什么可对账的
+    }
+    for (const proj of projects) {
+      if (!proj.isDirectory()) continue;
+      const projDir = path.posix.join(base, proj.name);
+      let slugs: fs.Dirent[];
+      try {
+        slugs = fs.readdirSync(projDir, { withFileTypes: true });
+      } catch {
+        continue;
+      }
+      for (const slug of slugs) {
+        if (!slug.isDirectory()) continue;
+        const full = path.posix.join(projDir, slug.name);
+        try {
+          out.push({ path: full, mtimeMs: fs.statSync(full).mtimeMs });
+        } catch {
+          // stat 失败 → 给一个「刚刚」的时间戳，纯函数据此判为过新并跳过
+          out.push({ path: full, mtimeMs: Number.NaN });
+        }
+      }
+    }
+    return out;
+  },
+  listMountedHostPaths: async () => {
+    // 一次 docker ps 拿到全部容器的挂载源；失败返回 null，调用方据此**整轮跳过**
+    // 删除（查不到占用情况就不许删，宁可这一轮什么都不清）。
+    const out = await execDocker(
+      ['ps', '-a', '--format', '{{range .Mounts}}{{.Source}}\n{{end}}'], 60_000,
+    );
+    if (out.startsWith('__ERR__')) return null;
+    return out.split('\n').map((l) => l.trim()).filter(Boolean);
+  },
+  removeDir: async (dir) => {
+    try {
+      fs.rmSync(dir, { recursive: true, force: true, maxRetries: 3, retryDelay: 100 });
+      return null;
+    } catch (err) {
+      return (err as Error).message;
+    }
+  },
+};
 
 /** Callback: 返回孤儿 infra 容器名列表(在 Docker 但不在 state 台账)。 */
 export type OrphanInfraScanFn = () => Promise<string[]>;
@@ -214,6 +295,8 @@ export interface JanitorSnapshot {
       deferred: number;
       keepGenerations: number;
     } | null;
+    /** 孤儿 worktree 对账摘要。null = 本次未执行。 */
+    orphanWorktrees: { removed: number; failed: number; deferred: number } | null;
     dockerPrune: string[] | null;
     errors: number;
   } | null;
@@ -302,7 +385,40 @@ export class JanitorService {
     private readonly dockerPrune: DockerPruneFn = defaultDockerPrune,
     /** 镜像回收所需的 docker 读写（可注入以便测试，不真的碰宿主）。 */
     private readonly imageDocker: ImageDockerFns = defaultImageDocker,
+    /** 孤儿 worktree 对账所需的磁盘读写（可注入以便测试，不真的碰磁盘）。 */
+    private readonly orphanWorktreeFs: OrphanWorktreeFs = defaultOrphanWorktreeFs,
   ) {}
+
+  /**
+   * 孤儿 worktree 对账：磁盘上的 `<base>/<项目>/<分支>` 目录 vs 台账里分支声明的
+   * worktreePath，差集即孤儿（判定与护栏见 orphan-worktree.ts）。
+   */
+  private async runOrphanWorktreeReconcile(): Promise<NonNullable<JanitorSweepReport['orphanWorktrees']>> {
+    const diskDirs = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase);
+    const claimedPaths = this.stateService.getAllBranches()
+      .map((b) => b.worktreePath)
+      .filter((p): p is string => !!p);
+    const mountedPaths = await this.orphanWorktreeFs.listMountedHostPaths();
+    // 查不到挂载占用 = 本轮不删（只报不删）：删一个还被容器挂着的目录，那个容器
+    // 当场瞎掉，代价远大于晚一轮回收。
+    const maxRemovals = mountedPaths === null
+      ? 0
+      : (this.config.orphanWorktreeMaxRemovalsPerSweep ?? DEFAULT_ORPHAN_WORKTREE_MAX_REMOVALS);
+    const plan: OrphanWorktreePlan = computeOrphanWorktreePlan({
+      diskDirs,
+      claimedPaths,
+      mountedPaths: mountedPaths ?? [],
+      nowMs: this.clock.now(),
+      maxRemovals,
+    });
+    const removed: string[] = [];
+    const failed: Array<{ path: string; error: string }> = [];
+    for (const dir of plan.remove) {
+      const err = await this.orphanWorktreeFs.removeDir(dir);
+      if (err) failed.push({ path: dir, error: err }); else removed.push(dir);
+    }
+    return { removed, failed, keptReasons: plan.keptReasons, deferred: plan.deferred };
+  }
 
   /**
    * per-SHA 部署镜像定向回收：台账（保留最近 N 代）+ 宿主镜像 + 在用镜像
@@ -461,6 +577,13 @@ export class JanitorService {
               keepGenerations: report.imageRetention.keepGenerations,
             }
             : null,
+          orphanWorktrees: report.orphanWorktrees
+            ? {
+              removed: report.orphanWorktrees.removed.length,
+              failed: report.orphanWorktrees.failed.length,
+              deferred: report.orphanWorktrees.deferred,
+            }
+            : null,
           dockerPrune: report.dockerPrune?.reclaimed ?? null,
           errors: report.errors.length,
         };
@@ -484,6 +607,7 @@ export class JanitorService {
       diskTier: 'ok',
       dockerPrune: null,
       imageRetention: null,
+      orphanWorktrees: null,
       orphanInfraContainers: null,
       errors: [],
     };
@@ -551,6 +675,28 @@ export class JanitorService {
         for (const f of r.failed) report.errors.push(`image rmi ${f.image}: ${f.error}`);
       } catch (err) {
         report.errors.push(`image retention: ${(err as Error).message}`);
+      }
+    }
+
+    // 1.65 孤儿 worktree 对账（2026-07-27 宕机复盘 P2）。
+    //      与 TTL 清理互补：TTL 只看得见台账里还有记录的分支，磁盘上「目录还在、
+    //      台账里没有」的 worktree 从来没人管——事故当天 45.5GB 就攒在这里。
+    //      与 enabled 解耦（同 dockerPrune）：那个开关管的是「删台账里的过期分支」，
+    //      而孤儿目录已经不属于任何分支，删它不涉及用户的分支资产。
+    if (this.config.orphanWorktrees !== false) {
+      try {
+        report.orphanWorktrees = await this.runOrphanWorktreeReconcile();
+        const o = report.orphanWorktrees;
+        if (o.removed.length || o.deferred || o.failed.length) {
+          console.log(
+            `[janitor] 孤儿 worktree 对账：删除 ${o.removed.length} 个`
+            + (o.deferred ? `，本轮上限截断 ${o.deferred} 个待下轮` : '')
+            + (o.failed.length ? `，失败 ${o.failed.length} 个` : ''),
+          );
+        }
+        for (const f of o.failed) report.errors.push(`orphan worktree rm ${f.path}: ${f.error}`);
+      } catch (err) {
+        report.errors.push(`orphan worktree reconcile: ${(err as Error).message}`);
       }
     }
 
