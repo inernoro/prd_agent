@@ -487,10 +487,18 @@ export class AuthService {
    * to /login".
    *
    * `renewed` is true when this call slid the session's expiry forward — the
-   * caller (auth gate) must then re-issue the cookie so the browser copy does
-   * not expire before the server-side session does.
+   * caller MUST then re-issue the cookie, otherwise the server-side session is
+   * extended while the browser copy still dies at the old deadline (and the
+   * fresh server expiry stops any later caller from renewing again).
+   *
+   * Callers that cannot set a cookie (e.g. logout, which is about to delete the
+   * session anyway) must pass `{ renew: false }` instead of silently dropping
+   * the flag.
    */
-  async validateSession(token: string | null): Promise<{
+  async validateSession(
+    token: string | null,
+    options: { renew?: boolean } = {},
+  ): Promise<{
     session: CdsSession;
     user: CdsUser;
     renewed: boolean;
@@ -504,7 +512,7 @@ export class AuthService {
     // Sliding renewal: an in-use session never runs out. Only refresh once the
     // remaining life has dropped below the threshold so we don't write on every
     // single request.
-    const renewed = await this.renewIfNeeded(session);
+    const renewed = options.renew === false ? null : await this.renewIfNeeded(session);
     return { session: renewed ?? session, user, renewed: renewed !== null };
   }
 

@@ -14,23 +14,43 @@ public class AuthSessionService : IAuthSessionService
 {
     /// <summary>默认滑动窗口：7 天（用户诉求「超长登录期 + 用后自动延长」）。</summary>
     public const int DefaultSlidingDays = 7;
+    /// <summary>默认 access token 时长（分钟）：7 天，与 <c>Jwt:AccessTokenMinutes</c> 默认值一致。</summary>
+    public const int DefaultAccessTokenMinutes = DefaultSlidingDays * 24 * 60;
     private const int MinSlidingDays = 1;
     private const int MaxSlidingDays = 90;
+    /// <summary>tokenVersion 相对 access token 生命周期多留的余量（时钟偏差 + 校验抖动）。</summary>
+    private static readonly TimeSpan TokenVersionSkew = TimeSpan.FromDays(1);
 
-    // 统一会话生命周期：Refresh Session 与 Token Version 共用同一个滑动窗口
+    // Refresh Session 走滑动窗口；tokenVersion 另算（见 _tokenVersionTtl）
     private readonly TimeSpan _sessionTtl;
+    private readonly TimeSpan _tokenVersionTtl;
     private readonly ICacheManager _cache;
     private readonly string _hmacSecret;
 
-    public AuthSessionService(ICacheManager cache, string hmacSecret, int slidingDays = DefaultSlidingDays)
+    public AuthSessionService(
+        ICacheManager cache,
+        string hmacSecret,
+        int slidingDays = DefaultSlidingDays,
+        int accessTokenMinutes = DefaultAccessTokenMinutes)
     {
         _cache = cache;
         _hmacSecret = string.IsNullOrWhiteSpace(hmacSecret) ? "default-secret" : hmacSecret;
         var days = slidingDays <= 0 ? DefaultSlidingDays : Math.Clamp(slidingDays, MinSlidingDays, MaxSlidingDays);
         _sessionTtl = TimeSpan.FromDays(days);
+
+        // tokenVersion 是撤销台账，**必须活得比它要撤销的 access token 久**：
+        // 会话窗口与 access token 时长是两个独立配置（窗口可配到 1 天，token 可配到 7 天），
+        // 一旦 tv 键先过期，GetTokenVersionAsync 退回默认值 1，
+        // 已被撤销的 v1 token 就会在剩余寿命里重新被放行。故取两者较大值再加时钟余量。
+        var accessMinutes = accessTokenMinutes <= 0 ? DefaultAccessTokenMinutes : accessTokenMinutes;
+        var accessTokenTtl = TimeSpan.FromMinutes(accessMinutes) + TokenVersionSkew;
+        _tokenVersionTtl = accessTokenTtl > _sessionTtl ? accessTokenTtl : _sessionTtl;
     }
 
     public TimeSpan SlidingTtl => _sessionTtl;
+
+    /// <summary>tokenVersion 台账的 TTL：max(会话窗口, access token 时长 + 时钟余量)。</summary>
+    public TimeSpan TokenVersionTtl => _tokenVersionTtl;
 
     private static string NormalizeClientType(string clientType)
     {
@@ -113,7 +133,7 @@ public class AuthSessionService : IAuthSessionService
         // tokenVersion 也跟着续期：access token 现在与会话窗口同为 7 天，若 tv 键先过期，
         // GetTokenVersionAsync 会退回默认值 1，让「被踢过一次（tv>=2）的用户」手里仍然有效的
         // token 被误判成已撤销 → 平白掉登录。键不存在时 RefreshExpiry 是 no-op，不会凭空复活撤销记录。
-        await _cache.RefreshExpiryAsync(CacheKeys.ForAuthTokenVersion(uid, ctNorm), _sessionTtl);
+        await _cache.RefreshExpiryAsync(CacheKeys.ForAuthTokenVersion(uid, ctNorm), _tokenVersionTtl);
     }
 
     public async Task RemoveAllRefreshSessionsAsync(string userId, string clientType, CancellationToken ct = default)
@@ -146,8 +166,9 @@ public class AuthSessionService : IAuthSessionService
         var key = CacheKeys.ForAuthTokenVersion(uid, ctNorm);
         var current = await GetTokenVersionAsync(uid, ctNorm, ct);
         var next = current + 1;
-        // tokenVersion 需要比 Access Token 生命周期更长，否则版本过期后会误判为已撤销
-        await _cache.SetAsync(key, next, expiry: _sessionTtl);
+        // tokenVersion 必须活得比 access token 久：短了会让已撤销的旧版本 token 重新被放行，
+        // 也会让版本过期后的合法 token 被误判成已撤销。TTL 口径见 _tokenVersionTtl。
+        await _cache.SetAsync(key, next, expiry: _tokenVersionTtl);
         return next;
     }
 }

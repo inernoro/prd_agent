@@ -990,7 +990,9 @@ builder.Services.AddSingleton<IAuthSessionService>(sp =>
     var config = sp.GetRequiredService<IConfiguration>();
     var secret = config["Jwt:Secret"] ?? "default-secret";
     var slidingDays = config.GetValue<int>("Auth:SessionSlidingDays", AuthSessionService.DefaultSlidingDays);
-    return new AuthSessionService(cache, secret, slidingDays);
+    // 把 access token 时长也传进去：tokenVersion（撤销台账）必须活得比它要撤销的 token 久，
+    // 否则会话窗口被配得比 token 短时，已撤销的旧版本 token 会在剩余寿命里重新被放行。
+    return new AuthSessionService(cache, secret, slidingDays, jwtAccessTokenMinutes);
 });
 
 // 注册 HTTP 日志处理程序

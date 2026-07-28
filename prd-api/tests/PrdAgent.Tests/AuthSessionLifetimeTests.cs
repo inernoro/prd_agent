@@ -5,8 +5,9 @@ using Xunit;
 namespace PrdAgent.Tests;
 
 /// <summary>
-/// MAP 登录有效期：会话滑动窗口默认 7 天，每次访问 Touch 即续满（「只要在用就不会掉登录」），
-/// 且 refresh 会话 / tokenVersion 共用同一个窗口，避免二者过期时间打架把人提前踢下线。
+/// MAP 登录有效期：会话滑动窗口默认 7 天，每次访问 Touch 即续满（「只要在用就不会掉登录」）；
+/// tokenVersion 作为撤销台账单独算 TTL —— 必须同时长过会话窗口和 access token，
+/// 否则要么放行已撤销的旧 token，要么把合法 token 误判成已撤销。
 /// </summary>
 public class AuthSessionLifetimeTests
 {
@@ -65,7 +66,7 @@ public class AuthSessionLifetimeTests
 
         // tv 键若先于 access token 过期，GetTokenVersionAsync 退回默认 1，
         // 手里 tv=2 的有效 token 会被误判成已撤销 → 平白掉登录。所以 Touch 必须一起续。
-        Assert.Equal(TimeSpan.FromDays(7), cache.Expirations[tvKey]);
+        Assert.Equal(service.TokenVersionTtl, cache.Expirations[tvKey]);
         Assert.Equal(2, await service.GetTokenVersionAsync("u1", "admin"));
     }
 
@@ -83,16 +84,29 @@ public class AuthSessionLifetimeTests
     }
 
     [Fact]
-    public async Task TokenVersion_SharesTheSessionWindow()
+    public async Task TokenVersion_OutlivesTheAccessToken()
     {
         var cache = new FakeCache();
         var service = new AuthSessionService(cache, Secret, slidingDays: 7);
 
         await service.BumpTokenVersionAsync("u1", "admin");
 
-        // tokenVersion 比 access token 活得久是踢下线能立刻生效的前提；
-        // 它若先于会话过期，旧 token 会被误判成「已撤销」而提前掉登录。
-        Assert.Equal(TimeSpan.FromDays(7), cache.Expirations[CacheKeys.ForAuthTokenVersion("u1", "admin")]);
+        // tokenVersion 是撤销台账，必须活得比它要撤销的 access token 久：
+        // 短了会让已撤销的旧版本 token 在剩余寿命里重新被放行，也会让合法 token 被误判成已撤销。
+        Assert.True(service.TokenVersionTtl > TimeSpan.FromDays(7));
+        Assert.Equal(service.TokenVersionTtl, cache.Expirations[CacheKeys.ForAuthTokenVersion("u1", "admin")]);
+    }
+
+    [Theory]
+    [InlineData(1, 7 * 24 * 60)]    // 会话窗口被配得比 access token 短 —— 最危险的组合
+    [InlineData(7, 7 * 24 * 60)]    // 默认组合
+    [InlineData(30, 60)]            // 会话窗口远长于 access token
+    public void TokenVersionTtl_NeverShorterThanEitherWindow(int slidingDays, int accessTokenMinutes)
+    {
+        var service = new AuthSessionService(new FakeCache(), Secret, slidingDays, accessTokenMinutes);
+
+        Assert.True(service.TokenVersionTtl >= service.SlidingTtl);
+        Assert.True(service.TokenVersionTtl > TimeSpan.FromMinutes(accessTokenMinutes));
     }
 
     /// <summary>只记录「键 → 值 / TTL」的内存缓存，用来断言过期时间，不依赖 Redis。</summary>

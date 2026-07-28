@@ -299,8 +299,11 @@ export class MongoAuthStore implements AuthStore {
     }
 
     // Touch lastSeenAt (fire-and-forget — don't block the response).
+    // Field-level $set, never a full-document replace: this write is unawaited, so a
+    // replace carrying the document we read could land *after* extendSession() and
+    // roll `expiresAt` back to the old deadline — silently un-renewing the session.
     sessions
-      .replaceOne({ token }, { ...session, lastSeenAt: now.toISOString() })
+      .updateOne({ token }, { $set: { lastSeenAt: now.toISOString() } })
       .catch(() => { /* non-critical — ignore write errors for lastSeenAt */ });
 
     return { ...session, lastSeenAt: now.toISOString() };
@@ -322,11 +325,15 @@ export class MongoAuthStore implements AuthStore {
       expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
       lastSeenAt: now.toISOString(),
     };
-    // Filter on the observed expiry (and never upsert) so a concurrent logout or a
-    // competing renewal can't be resurrected/clobbered — a non-matching replace is
-    // simply a no-op. The returned value is only used for the cookie expiry; if the
-    // session did vanish, the next request fails validation and bounces to /login.
-    await sessions.replaceOne({ token, expiresAt: session.expiresAt }, updated);
+    // Field-level $set filtered on the observed expiry (and never upsert): a concurrent
+    // logout or a competing renewal turns this into a no-op instead of resurrecting or
+    // clobbering the session, and touching only these two fields means an in-flight
+    // lastSeenAt write cannot drag `expiresAt` back. The returned value is only used for
+    // the cookie expiry; if the session did vanish, the next request bounces to /login.
+    await sessions.updateOne(
+      { token, expiresAt: session.expiresAt },
+      { $set: { expiresAt: updated.expiresAt, lastSeenAt: updated.lastSeenAt } },
+    );
     return updated;
   }
 

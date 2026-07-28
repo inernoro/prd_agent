@@ -130,15 +130,20 @@ export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBas
  */
 const sessionStore: Storage = localStorage;
 
-// 老会话（存在 sessionStorage 里）平滑迁移，避免本次升级把在线用户踢下线。
+/**
+ * 老会话（存在 sessionStorage 里）平滑迁移，避免本次升级把在线用户踢下线。
+ * 搬完必须把 sessionStorage 里的原件删干净：留着的话，登出/401 清掉 localStorage 后
+ * 同一个标签页一刷新又会把旧 token 迁回来，等于登出失效、还可能卡在过期 token 的登录循环里。
+ */
 (function migrateLegacySessionStorage() {
   try {
-    if (sessionStore.getItem(TOKEN_KEY)) return;
-    const legacyToken = sessionStorage.getItem(TOKEN_KEY);
-    if (!legacyToken) return;
+    const hasLegacy = sessionStorage.getItem(TOKEN_KEY) !== null;
+    if (!hasLegacy) return;
+    const alreadyMigrated = sessionStore.getItem(TOKEN_KEY) !== null;
     for (const key of SESSION_KEYS) {
       const value = sessionStorage.getItem(key);
-      if (value !== null) sessionStore.setItem(key, value);
+      if (!alreadyMigrated && value !== null) sessionStore.setItem(key, value);
+      sessionStorage.removeItem(key);
     }
   } catch {
     /* 存储不可用（隐私模式等）时忽略，走重新登录 */
@@ -201,10 +206,16 @@ export function applyChangePasswordResult(result: ChangePasswordResult) {
 }
 
 export function clearSession() {
-  sessionStore.removeItem(TOKEN_KEY);
-  sessionStore.removeItem(USER_KEY);
-  sessionStore.removeItem(TENANT_KEY);
-  sessionStore.removeItem(MCP_KEY);
+  for (const key of SESSION_KEYS) {
+    sessionStore.removeItem(key);
+    // 双保险：迁移逻辑已删过 sessionStorage 原件，这里再清一次，
+    // 保证登出后没有任何一处残留能把会话「复活」。
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      /* 存储不可用时忽略 */
+    }
+  }
 }
 
 export function exportSessionSnapshot(): SessionSnapshot | null {

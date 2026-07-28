@@ -351,6 +351,30 @@ describe('AuthService', () => {
       expect(remainingMs).toBeGreaterThan(ttlMs * 0.9);
     });
 
+    it('skips renewal when the caller cannot reissue the cookie (renew: false)', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      // 压到阈值以下：默认会续期，但显式 renew:false 的调用方（logout）必须原样放过，
+      // 否则服务端过期时间被推后、cookie 却没重发，反而害用户在原时间点掉登录。
+      await store.extendSession(result.session.token, 24 * 60 * 60 * 1000);
+      const before = (await store.findSessionByToken(result.session.token))!.expiresAt;
+
+      const validated = await service.validateSession(result.session.token, { renew: false });
+
+      expect(validated?.renewed).toBe(false);
+      expect(validated?.session.expiresAt).toBe(before);
+      expect((await store.findSessionByToken(result.session.token))!.expiresAt).toBe(before);
+    });
+
     it('does not renew an expired session', async () => {
       const ttlMs = 7 * 24 * 60 * 60 * 1000;
       const { service, store } = buildService({ sessionTtlMs: ttlMs });

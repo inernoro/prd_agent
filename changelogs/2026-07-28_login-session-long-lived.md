@@ -6,3 +6,7 @@
 | test | prd-api | 新增 MAP 会话滑动窗口与网关会话续期回归测试（默认时长、配置收敛、短会话不被拉长、续期保留身份 claim） |
 | test | cds | 新增会话滑动续期与 cookie 重发回归测试 |
 | rule | docs | no-localstorage 规则补充「认证态可进 localStorage」的显式例外与前提条件 |
+| fix | llmgw | 会话迁移搬完即删除 sessionStorage 原件，登出/401 后同标签页刷新不再把旧 token 迁回来（Codex P1） |
+| fix | cds | /api/me 触发的滑动续期同步重发 cookie（该路由挂在鉴权中间件之前），登出路径显式不续期（Codex P1） |
+| fix | cds | 会话写库改字段级 $set，避免 lastSeenAt 的异步写回把刚续期的 expiresAt 覆盖回旧值（Codex P1） |
+| fix | prd-api | tokenVersion TTL 改为 max(会话窗口, access token 时长 + 时钟余量)，防止会话窗口配得比 token 短时已撤销的旧 token 复活（Codex P1） |
