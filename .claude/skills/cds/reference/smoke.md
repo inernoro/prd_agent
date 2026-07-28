@@ -19,7 +19,10 @@ CLI 封装：`cdscli smoke <branchId>` 一次性跑完三层。
 **唯一可执行入口**：
 
 ```bash
-PREVIEW_URL=$(python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1 | sed 's:/$::')
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+PREVIEW_URL=$(python3 "$SKILLS_ROOT/cds/cli/cdscli.py" --human preview-url | head -1 | sed 's:/$::')
 ```
 
 零参数，从 git + `/api/branches` 自动检测；与 `cds/src/services/preview-slug.ts:computePreviewSlug` 永不漂。

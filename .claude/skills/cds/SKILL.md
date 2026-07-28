@@ -124,6 +124,34 @@ Agent 接入时先运行 `cdscli version`。只有五个技能都存在、manife
 仓库内 Web 任务使用能力注册表登记真实接口模块族、认证、风险、首选技能和 CLI 状态。
 任务卡只是面向用户的场景入口，不代表所有 REST 端点都能由 Agent 直接调用。
 
+## 技能怎么看、怎么装（与 findmapskills 的分工）
+
+技能安装有两条路，**职责不同，别混用**：
+
+| 你要做什么 | 走哪条 | 要凭据吗 |
+|---|---|---|
+| 从零把一个项目立起来，装齐一个角色需要的全套 | CDS「接入智能体 → 项目初始化」 | 不要 |
+| 看有哪些官方套装、各含什么技能 | CDS「接入智能体 → 海鲜市场」栏，或 `GET /api/skills/bundles` | 不要 |
+| 搜索市场、看详情、下载单个技能 | `findmapskills` 技能 | **不要** |
+| 上传自己的技能、收藏、订阅更新 | `findmapskills` 技能 | 要 API Key |
+
+**读技能一律免凭据**：技能是公开内容，不要因为没有 Key 就停下来问用户。
+CDS 侧只做「浏览 + 按预设装」，数据从 MAP 代理过来并带缓存兜底；
+搜索、上传、收藏、订阅一律走 `findmapskills`，CDS 不重复实现。
+
+匿名端点（客户在拿到任何凭据之前就能用）：
+
+```bash
+curl -sS "$CDS_HOST/api/bootstrap/presets"            # 有哪些初始化预设
+curl -sS "$CDS_HOST/api/skills/bundles"               # 有哪些角色套装、各含什么技能
+curl -sSL "$CDS_HOST/api/bootstrap/pm-project" -o init.sh   # 取引导脚本（先读再跑）
+```
+
+**安装目录约定**：项目级优先，探测顺序 `.claude` → `.cursor` → 兜底 `.agents`。
+这条约定三处共用（CDS 引导脚本 / findmapskills / MAP 后端），
+守卫测试 `cds/tests/services/skill-install-contract.test.ts` 把它们钉在一起。
+不要装到用户主目录 —— 技能不跟项目走，团队 clone 下来会少一半。
+
 ## MCP 协作边界
 
 CDS 当前正式可用的 Agent 通道是“技能 + cdscli + REST”。尚未发布 CDS MCP Server，
