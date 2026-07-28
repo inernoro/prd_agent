@@ -44,6 +44,12 @@ export interface BuildProfile {
   dockerImage: string;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
+  /**
+   * CI 构建该组件镜像的输入路径（语义见 DeployModeOverride.buildScope）。
+   * 由 resolveEffectiveProfile 从激活的部署模式带上来，**不是** workDir 的同义词：
+   * workDir 是运行时挂载目录（常为整仓 `.`），这里是 CI path-filter 口径。
+   */
+  buildScope?: string[];
   /** Working directory inside the container (from compose `working_dir`, default: '/app'). */
   containerWorkDir?: string;
   /**
@@ -416,6 +422,23 @@ export interface DeployModeOverride {
    * 单字符串视为只有一个回退。支持模板变量(${CDS_BRANCH_SLUG} 等)。
    */
   fallbackImage?: string | string[];
+  /**
+   * 2026-07-28 宕机复盘补 —— **CI 构建这个镜像时的输入路径**（对齐工作流里的
+   * path-filter，如 `['prd-api/**', '.github/workflows/branch-image.yml']`）。
+   *
+   * 用途只有一个：per-SHA 镜像拉不到时，判断「CI 是因为该组件没变才跳过构建」
+   * 还是「CI 没跑完 / 失败」。前者可以安全复用上一版镜像，省掉一次宿主全量重编
+   *（正是 2026-07-27 宕机的临门一脚）；后者复用就是静默发旧代码。
+   *
+   * 为什么不能用 `workDir` 代替：compose 里服务常写 `.:/repo`（整仓挂载，编译脚本
+   * 自己 cd 到子目录），workDir 因此是 `.`，拿它比等于比整个仓库，判定永远是
+   * 「变了」，复用一次都不会发生（Codex PR #1275 三轮 P1）。
+   *
+   * 不声明 = 不复用（fail-closed）。声明得比 CI 实际输入**窄**会让 CDS 把旧镜像
+   * 当新代码发出去，所以务必与工作流的 filters 逐条对齐。
+   * cds-compose 中通过 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 声明。
+   */
+  buildScope?: string[];
 }
 
 /**
@@ -1534,6 +1557,23 @@ export interface ContainerTeardownTombstone {
   removeVolumes?: boolean;
 }
 
+/**
+ * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
+ *
+ * 删项目会 cascade 掉项目与分支记录，但**不删磁盘上的 worktree 目录**。孤儿对账
+ * 为了不误删「迁移自扁平布局的遗留 worktree」，只在**已知项目桶**下枚举；项目一删，
+ * 它的 id 就从清单里消失，那个桶从此再也不会被枚举 —— 里面的 worktree 永久占盘，
+ * 而它们恰恰是最该回收的（已经没有任何分支认领）。
+ *
+ * 墓碑保住「这个 id 曾经是项目桶」这一事实，让对账还能进去。桶里所有 worktree
+ * 回收干净后墓碑自动消失。
+ */
+export interface DeletedProjectWorktreeTombstone {
+  projectId: string;
+  /** 墓碑写入时刻（ISO），审计用。 */
+  requestedAt: string;
+}
+
 export interface CdsState {
   /** Routing rules */
   routingRules: RoutingRule[];
@@ -1739,6 +1779,11 @@ export interface CdsState {
    * 收割器补偿成功 / 发现同名容器已属后继项目时逐条移除。旧状态可缺省。
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
+  /**
+   * 已删项目的 worktree 桶墓碑（见 DeletedProjectWorktreeTombstone 注释）。
+   * 孤儿对账把这些 id 并入「已知项目桶」白名单，桶清空后自动摘除。
+   */
+  deletedProjectWorktreeBuckets?: DeletedProjectWorktreeTombstone[];
   /**
    * 共享实例隔离库的待清理台账（Codex 第二十五轮 P1）：分支删除时 mysql/pg
    * 隔离库 drop 失败没有容器可写墓碑，branch.replicaDbSnapshots 又随分支状态

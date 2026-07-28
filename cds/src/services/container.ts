@@ -7,7 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
-import { collectReuseCandidates, targetShaOf, type ReuseCandidate } from './prebuilt-reuse.js';
+import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
@@ -210,6 +210,8 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
       // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
       ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
+      // CI 构建输入范围随模式带出（镜像是哪个模式产的，范围就归哪个模式）。
+      ...(override.buildScope !== undefined ? { buildScope: override.buildScope } : {}),
     };
   }
   // 极速版(prebuilt)不跑 hot reload watcher —— 镜像里是编译产物,没有源码可 watch。
@@ -1126,7 +1128,7 @@ export class ContainerService {
        * 该组件（profile.workDir 子树）在 fromSha 与当前部署 commit 之间是否**没有**
        * 任何改动。由调用方在 worktree 里 git diff 判定；查不出来必须返回 false。
        */
-      isComponentUnchangedSince?: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
+      isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1261,8 +1263,19 @@ export class ContainerService {
       // 两者不同，对着 HEAD 比会在「目标版本改了、更晚的 HEAD 又 revert 了」这种
       // 情形下得出「没变」的错误结论，安静地拿旧镜像顶替用户点名的版本。
       // 取不到目标 sha 就没有可信基准，直接不复用。
+      // 比的是 **CI 构建输入范围**（buildScope），不是运行时挂载目录（workDir）。
+      // 本仓库 compose 里 api/admin/llmgw 全写 `.:/repo` → workDir 恒为 `.`，
+      // 拿它 `git diff -- .` 等于比整个仓库：那次只改 cds/** 的提交照样"有差异"，
+      // 判定为组件变了 → 不复用 → 照旧三个组件同时在宿主重编。也就是说，不修这条
+      // 本 PR 的止损点在真实配置下**一次都不会触发**（Codex PR #1275 三轮 P1）。
+      // 未声明 buildScope 一律不复用（fail-closed）：范围声明得太窄会把旧镜像当新
+      // 代码发出去，比多编译一次危险得多。
       const targetSha = targetShaOf(primary);
-      if (!pulledImage && context.isComponentUnchangedSince && profile.workDir && targetSha) {
+      const buildScope = normalizeBuildScope(profile.buildScope);
+      if (!pulledImage && targetSha && !buildScope) {
+        onOutput?.('── 该组件未声明 CI 构建范围（buildScope），不做「无变更复用上一版镜像」判断，按原路径继续 ──\n');
+      }
+      if (!pulledImage && context.isComponentUnchangedSince && buildScope && targetSha) {
         const reuseCands = collectReuseCandidates({
           intendedImage: primary,
           runningImage: service.deployedImage,
@@ -1270,7 +1283,7 @@ export class ContainerService {
         });
         let picked: ReuseCandidate | null = null;
         for (const cand of reuseCands) {
-          const unchanged = await context.isComponentUnchangedSince(cand.sha, targetSha, profile.workDir)
+          const unchanged = await context.isComponentUnchangedSince(cand.sha, targetSha, buildScope)
             .catch(() => false);
           if (unchanged) { picked = cand; break; }
         }
@@ -1285,7 +1298,7 @@ export class ContainerService {
           }
           if (usable) {
             pulledImage = picked.image;
-            onOutput?.(`── 本组件此次无代码变更（${profile.workDir} 与 ${picked.sha.slice(0, 7)} 一致），复用上一版镜像 ${picked.image}，不在宿主重编 ──\n`);
+            onOutput?.(`── 本组件此次无代码变更（${buildScope.join(' ')} 在 ${picked.sha.slice(0, 7)}..${targetSha.slice(0, 7)} 间无差异），复用上一版镜像 ${picked.image}，不在宿主重编 ──\n`);
             this.recordContainerEvent({
               severity: 'info',
               source: 'cds-container-service',
@@ -1302,7 +1315,7 @@ export class ContainerService {
                 reusedFromSha: picked.sha,
                 comparedAgainstSha: targetSha,
                 origin: picked.origin,
-                workDir: profile.workDir,
+                buildScope,
                 reason: 'CI 因该组件无变更跳过构建；复用等价镜像，避免宿主全量重编',
               },
             });

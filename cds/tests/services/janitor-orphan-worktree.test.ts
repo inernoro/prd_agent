@@ -36,6 +36,8 @@ const fsFake = (): OrphanWorktreeFs => ({
 const stateFake = (): StateService => ({
   getAllBranches: () => [{ id: 'b1', worktreePath: `${BASE}/proj/live` }],
   getProjects: () => [{ id: 'proj' }],
+  getDeletedProjectWorktreeBuckets: () => [],
+  removeDeletedProjectWorktreeBucket: () => undefined,
   getDeploymentVersions: () => [],
   getDefaultBranchFor: () => null,
 } as unknown as StateService);

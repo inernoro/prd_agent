@@ -12,6 +12,7 @@
 import { describe, it, expect } from 'vitest';
 import {
   shaFromImageTag, imageRepositoryOf, collectReuseCandidates, pickReusableImage, targetShaOf,
+  normalizeBuildScope,
 } from '../../src/services/prebuilt-reuse.js';
 
 const SHA_A = 'a'.repeat(40);
@@ -139,5 +140,48 @@ describe('比较基准是「目标 commit」而非 worktree HEAD（Codex PR #127
 
     expect(pickReusableImage({ candidates: cands, isComponentUnchanged: unchangedAgainstHead })).not.toBeNull();
     expect(pickReusableImage({ candidates: cands, isComponentUnchanged: unchangedAgainstTarget })).toBeNull();
+  });
+});
+
+/**
+ * 比较范围必须是 CI 构建输入，不是运行时挂载目录（Codex PR #1275 三轮 P1）。
+ *
+ * 本仓库 cds-compose.yml 里 api/admin/llmgw 都写 `.:/repo`，compose-parser 给出的
+ * workDir 因此是 `.`。拿它 `git diff -- .` 等于比整个仓库：那次只改 cds/** 的提交
+ * 照样「有差异」→ 判定组件变了 → 不复用 → 照旧三个组件同时在宿主重编。
+ * 也就是说，不修这条，本 PR 的止损点在真实配置下一次都不会触发。
+ */
+describe('CI 构建范围（buildScope）的规整与拒绝', () => {
+  it('正常的组件范围原样保留并去重', () => {
+    expect(normalizeBuildScope(['prd-api/**', '.github/workflows/branch-image.yml', 'prd-api/**']))
+      .toEqual(['prd-api/**', '.github/workflows/branch-image.yml']);
+  });
+
+  it('前导 ./ 归一化', () => {
+    expect(normalizeBuildScope(['./prd-admin/**'])).toEqual(['prd-admin/**']);
+  });
+
+  it('仓库根等价物一律拒绝（这正是 workDir 的形态，比了等于没比）', () => {
+    for (const bad of ['.', './', '/', '*', '**', '**/']) {
+      expect(normalizeBuildScope([bad]), bad).toBeNull();
+    }
+  });
+
+  it('一条是根等价物就整体拒绝，不许「掺一条根」把范围悄悄放大到全仓', () => {
+    expect(normalizeBuildScope(['prd-api/**', '.'])).toBeNull();
+  });
+
+  it('绝对路径与 .. 拒绝（会跳出 worktree）', () => {
+    expect(normalizeBuildScope(['/etc'])).toBeNull();
+    expect(normalizeBuildScope(['../other-repo/**'])).toBeNull();
+    expect(normalizeBuildScope(['prd-api/../../etc'])).toBeNull();
+  });
+
+  it('未声明 / 空 / 非数组 → null，调用方据此 fail-closed 不复用', () => {
+    expect(normalizeBuildScope(undefined)).toBeNull();
+    expect(normalizeBuildScope(null)).toBeNull();
+    expect(normalizeBuildScope([])).toBeNull();
+    expect(normalizeBuildScope(['', '   '])).toBeNull();
+    expect(normalizeBuildScope('prd-api/**' as unknown as string[])).toBeNull();
   });
 });

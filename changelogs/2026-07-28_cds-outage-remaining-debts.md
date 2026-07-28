@@ -21,3 +21,6 @@
 | fix | cds | 孤儿 worktree 只在已知项目桶下枚举：迁移自扁平布局的存量部署里，顶层遗留 worktree 曾被当成项目桶，其源码子目录会被当孤儿递归删除（三道护栏均拦不住） |
 | fix | cds | 孤儿判定加血缘兜底：候选若是台账在用目录的上级或子目录一律保留，只有毫无包含关系才算孤儿 |
 | fix | cds | 关系型 URL 的引擎探测与库名改写合并为同一条 scheme SSOT：此前 jdbc:mariadb / jdbc:postgres 能判引擎却不进改写集合，这类 Java 服务隔离后流量仍打源库而控制面报成功 |
+| fix | cds | 镜像复用的等价性改比 CI 构建输入范围（新增 buildScope，对齐工作流 path-filter），不再比运行时挂载目录：compose 里服务普遍挂整仓 `.`，旧口径等于比整个仓库，复用一次都不会触发，本次止损点在真实配置下形同虚设 |
+| feat | cds | cds-compose 支持 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 声明 CI 构建输入路径；未声明即不复用（fail-closed），新增 CI filter 对拍守卫测试防两处漂移 |
+| fix | cds | 删项目时落 worktree 桶墓碑：项目 id 从台账消失后，其桶不再被孤儿对账枚举，里面无人认领的 worktree 会永久占盘；墓碑并入白名单，桶清空后自动摘除 |

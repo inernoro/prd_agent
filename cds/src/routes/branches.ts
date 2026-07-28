@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -1636,8 +1637,8 @@ interface RunServiceWithPortRetryOptions {
   onSourceCompileFallback?: () => Promise<void>;
   /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
   ledgerImages?: readonly string[];
-  /** 该组件子树在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
-  isComponentUnchangedSince?: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
+  /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
+  isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
 }
 
 /**
@@ -1660,7 +1661,7 @@ function buildPrebuiltReuseInputs(
   profileId: string,
 ): {
   ledgerImages: string[];
-  isComponentUnchangedSince: (fromSha: string, toSha: string, workDir: string) => Promise<boolean>;
+  isComponentUnchangedSince: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
 } {
   const ledgerImages = stateService.getDeploymentVersions()
     .filter((v) => v.branchId === entry.id)
@@ -1671,16 +1672,21 @@ function buildPrebuiltReuseInputs(
   const isComponentUnchangedSince = async (
     fromSha: string,
     toSha: string,
-    workDir: string,
+    scopePaths: readonly string[],
   ): Promise<boolean> => {
-    const dir = (workDir || '').trim();
-    if (!dir || !entry.worktreePath) return false;
+    // scopePaths 是 CI 的 path-filter 口径（buildScope），**不是**运行时挂载目录：
+    // compose 里服务常写 `.:/repo`，workDir 因此是 `.`，比整仓等于永远「变了」，
+    // 复用一次都不会发生（Codex PR #1275 三轮 P1）。规整与拒绝规则见
+    // prebuilt-reuse.normalizeBuildScope，这里只做最后一道防线式的复核。
+    const paths = normalizeBuildScope(scopePaths as string[]);
+    if (!paths || !entry.worktreePath) return false;
     // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
     if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
     if (fromSha === toSha) return false;
     // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
+    const pathArgs = paths.map((p) => shellQuote(p)).join(' ');
     const r = await shell.exec(
-      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${shellQuote(dir)}`,
+      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${pathArgs}`,
     ).catch(() => null);
     return !!r && r.exitCode === 0;
   };

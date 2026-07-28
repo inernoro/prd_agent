@@ -83,6 +83,8 @@ interface ComposeFile {
     containerPort?: number;
     /** 2026-06-23 极速版：本 commit 无该组件镜像时的有序回退链（先 :branch-<slug> 再 :branch-main）。 */
     fallbackImage?: string | string[];
+    /** 2026-07-28：CI 构建该镜像的输入路径（对齐工作流 path-filter），用于「组件没变就复用上一版」。 */
+    buildScope?: string[];
   }>>;
 }
 
@@ -591,6 +593,9 @@ function parseStandardCompose(doc: ComposeFile): CdsComposeConfig {
           ...(mode.prebuilt !== undefined ? { prebuilt: mode.prebuilt === true || (mode.prebuilt as unknown) === 'true' } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: Number(mode.containerPort) } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
+          // CI 构建输入范围：不是运行时挂载目录（后者常是整仓 `.`，见
+          // prebuilt-reuse.normalizeBuildScope 的注释）。未声明即不复用。
+          ...(Array.isArray(mode.buildScope) ? { buildScope: mode.buildScope.map(String) } : {}),
         };
       }
       bp.deployModes = parsed;
@@ -806,6 +811,9 @@ export function toCdsCompose(
           ...(mode.prebuilt ? { prebuilt: true } : {}),
           ...(mode.containerPort !== undefined ? { containerPort: mode.containerPort } : {}),
           ...(mode.fallbackImage ? { fallbackImage: mode.fallbackImage } : {}),
+          // CI 构建输入范围：不是运行时挂载目录（后者常是整仓 `.`，见
+          // prebuilt-reuse.normalizeBuildScope 的注释）。未声明即不复用。
+          ...(Array.isArray(mode.buildScope) ? { buildScope: mode.buildScope.map(String) } : {}),
         };
       }
       deployModesOut[p.id] = modes;

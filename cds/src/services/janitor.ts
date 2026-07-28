@@ -5,7 +5,7 @@ import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
 import {
-  computeOrphanWorktreePlan, DEFAULT_ORPHAN_WORKTREE_MAX_REMOVALS,
+  computeOrphanWorktreePlan, normalizeWorktreePath, DEFAULT_ORPHAN_WORKTREE_MAX_REMOVALS,
   type DiskWorktreeDir, type OrphanWorktreePlan,
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
@@ -460,7 +460,13 @@ export class JanitorService {
   private async runOrphanWorktreeReconcile(): Promise<NonNullable<JanitorSweepReport['orphanWorktrees']>> {
     // 只在**已知项目桶**下枚举：顶层的遗留扁平 worktree 不是桶，不许往里走（见
     // defaultOrphanWorktreeFs.listWorktreeDirs 注释里的迁移布局说明）。
-    const knownProjectIds = this.stateService.getProjects().map((p) => p.id).filter(Boolean);
+    //
+    // 「已知」= 在册项目 + 已删项目的墓碑（Codex PR #1275 三轮 P2）。删项目会 cascade
+    // 掉项目与分支记录却**不删磁盘目录**，若只认在册项目，被删项目那个桶从此再也进不去，
+    // 里面已经无人认领的 worktree 永久占盘 —— 而它们恰恰是最该回收的。
+    const liveProjectIds = this.stateService.getProjects().map((p) => p.id).filter(Boolean);
+    const tombstones = this.stateService.getDeletedProjectWorktreeBuckets();
+    const knownProjectIds = [...new Set([...liveProjectIds, ...tombstones.map((t) => t.projectId)])];
     const diskDirs = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
     const claimedPaths = this.stateService.getAllBranches()
       .map((b) => b.worktreePath)
@@ -483,6 +489,24 @@ export class JanitorService {
     for (const dir of plan.remove) {
       const err = await this.orphanWorktreeFs.removeDir(dir);
       if (err) failed.push({ path: dir, error: err }); else removed.push(dir);
+    }
+    // 已删项目的桶清空了就摘墓碑：桶里一个 worktree 都不剩，就没必要再让对账进去。
+    // 判据用「本轮枚举到的目录」而不是另跑一次 readdir —— 少一次磁盘往返，也避免
+    // 两次读之间的竞态。删失败的目录仍算「还在」，墓碑留到下一轮继续。
+    if (tombstones.length) {
+      const stillThere = new Set<string>();
+      const removedSet = new Set(removed);
+      for (const d of diskDirs) {
+        if (removedSet.has(normalizeWorktreePath(d.path))) continue;
+        const rel = normalizeWorktreePath(d.path).slice(normalizeWorktreePath(this.worktreeBase).length + 1);
+        const bucket = rel.split('/')[0];
+        if (bucket) stillThere.add(bucket);
+      }
+      for (const t of tombstones) {
+        if (!stillThere.has(t.projectId)) {
+          this.stateService.removeDeletedProjectWorktreeBucket(t.projectId);
+        }
+      }
     }
     return { removed, failed, keptReasons: plan.keptReasons, deferred: plan.deferred };
   }

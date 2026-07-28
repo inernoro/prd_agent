@@ -109,6 +109,40 @@ export function targetShaOf(intendedImage: string): string | null {
 }
 
 /**
+ * 「该组件变没变」要比的路径集合 —— 必须是 **CI 构建这个镜像时的输入范围**，
+ * 不是容器运行时挂载的目录（Codex PR #1275 三轮 P1）。
+ *
+ * 两者常常不是一回事，而且默认就不是：本仓库 `cds-compose.yml` 里 api / admin /
+ * llmgw 等服务都写 `volumes: - .:/repo`（整仓挂进容器，编译脚本自己 cd 到子目录），
+ * 于是 compose-parser 给出的 `workDir` 是 `.`。拿它去 `git diff -- .` 等于比**整个
+ * 仓库**：那次只改了 `cds/**` 的提交照样"有差异" → 判定为组件变了 → 不复用 →
+ * 回落宿主源码编译。也就是说，本 PR 的止损点在真实配置下**一次都不会触发**，
+ * 而 CI 的 path-filter 明明正确地跳过了这些组件的构建。
+ *
+ * 所以范围必须由 **CI 的 path-filter 口径**显式声明（`x-cds-deploy-modes.<svc>.
+ * <mode>.buildScope`，与 `.github/workflows/*.yml` 的 filters 对齐），拿不到就
+ * **不复用**——沿用原来的宿主编译路径。这是刻意的 fail-closed：范围声明得太窄会
+ * 让 CDS 把旧镜像当新代码发出去，比多编译一次危险得多，所以宁可不省。
+ */
+export function normalizeBuildScope(scope: readonly string[] | undefined | null): string[] | null {
+  if (!Array.isArray(scope)) return null;
+  const out: string[] = [];
+  for (const raw of scope) {
+    if (typeof raw !== 'string') continue;
+    const s = raw.trim();
+    if (!s) continue;
+    // 仓库根等价物（'.' / './' / '/' / '*' / '**'）不构成「组件范围」：它比的是整个
+    // 仓库，任何无关改动都会让判定失效，等于没有声明。拒绝掉，避免给出「声明了
+    // 范围」的错觉。
+    if (/^\.?\/?$/.test(s) || /^\*{1,2}\/?$/.test(s)) return null;
+    // 绝对路径与 `..` 会跳出 worktree，一律不接受（也堵住路径穿越）。
+    if (s.startsWith('/') || s.split('/').includes('..')) return null;
+    out.push(s.replace(/^\.\//, ''));
+  }
+  return out.length > 0 ? [...new Set(out)] : null;
+}
+
+/**
  * 选出第一个「与本次代码等价」的候选。全部不等价（或没有候选）返回 null，
  * 调用方照旧走源码编译——本模块只做减法，绝不改变「实在不行就重编」的兜底。
  */
