@@ -13,7 +13,7 @@ export function Chip({ label, color, bg, title }: { label: string; color: string
         borderRadius: 999,
         padding: '0 6px',
         height: 17,
-        fontSize: 10,
+        fontSize: 'var(--fs-micro)',
         fontWeight: 600,
         flexShrink: 0,
         color,
@@ -42,7 +42,7 @@ export function SectionLoader({ text }: { text?: string }) {
         gap: 10,
         padding: 40,
         color: 'var(--text-muted)',
-        fontSize: 12,
+        fontSize: 'var(--fs-caption)',
       }}
     >
       <Spinner size={22} />
@@ -66,7 +66,8 @@ export function Button({
   style,
   ...rest
 }: ButtonHTMLAttributes<HTMLButtonElement> & { variant?: BtnVariant; size?: 'sm' | 'md'; children: ReactNode }) {
-  const h = size === 'sm' ? 30 : 36;
+  // 高度落在控件基准区间（32~38），字号走 --fs-secondary：按钮文字是要读的，不能用 12px 角标档。
+  const h = size === 'sm' ? 32 : 36;
   return (
     <button
       {...rest}
@@ -75,7 +76,7 @@ export function Button({
         height: h,
         padding: size === 'sm' ? '0 10px' : '0 14px',
         borderRadius: 'var(--radius-sm)',
-        fontSize: size === 'sm' ? 12 : 13,
+        fontSize: 'var(--fs-secondary)',
         fontWeight: 500,
         display: 'inline-flex',
         alignItems: 'center',
@@ -111,7 +112,7 @@ export function Card({ children, style, className }: { children: ReactNode; styl
 
 export function ReadOnlyNotice({ children = '当前角色可以查看这些配置，但不能修改。需要变更时请联系 Owner 或 Admin。' }: { children?: ReactNode }) {
   return (
-    <div role="status" style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}>
+    <div role="status" style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
       {children}
     </div>
   );
@@ -139,7 +140,7 @@ export function TabBar<K extends string>({
               border: 'none',
               minHeight: 44,
               padding: '10px 14px',
-              fontSize: 14,
+              fontSize: 'var(--fs-body)',
               fontWeight: active ? 600 : 500,
               color: active ? 'var(--accent)' : 'var(--text-secondary)',
               borderBottom: active ? '2px solid var(--accent)' : '2px solid transparent',

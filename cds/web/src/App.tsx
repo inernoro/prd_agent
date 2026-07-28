@@ -7,6 +7,8 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 // 首次进控制台立即渲染 chrome,只有页面内容走 lazy —— 这是"切页不卡"的另一半。
 import { ConsoleLayout } from '@/components/layout/AppShell';
 import { GlobalAgentAccess } from '@/components/GlobalAgentAccess';
+// 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
+import { BugReportDialog } from '@/components/BugReportDialog';
 
 const AgentRequestsPage = lazy(() => import('@/pages/AgentRequestsPage').then((m) => ({ default: m.AgentRequestsPage })));
 const BranchDetailPage = lazy(() => import('@/pages/BranchDetailPage').then((m) => ({ default: m.BranchDetailPage })));
@@ -22,6 +24,7 @@ const ProjectListPage = lazy(() => import('@/pages/ProjectListPage').then((m) =>
 const ProjectSettingsPage = lazy(() => import('@/pages/ProjectSettingsPage').then((m) => ({ default: m.ProjectSettingsPage })));
 const ReleaseCenterPage = lazy(() => import('@/pages/ReleaseCenterPage').then((m) => ({ default: m.ReleaseCenterPage })));
 const ReportsPage = lazy(() => import('@/pages/ReportsPage').then((m) => ({ default: m.ReportsPage })));
+const StatusPage = lazy(() => import('@/pages/StatusPage').then((m) => ({ default: m.StatusPage })));
 const TaskSchedulePage = lazy(() => import('@/pages/TaskSchedulePage').then((m) => ({ default: m.TaskSchedulePage })));
 
 /**
@@ -240,6 +243,7 @@ function shouldAutoReloadAfterChunkFailure(): boolean {
  *   /branch-topology        Project service topology
  *   /release-center         Release targets, runs, logs and rollback
  *   /reports                CDS self-hosted acceptance reports (HTML / Markdown)
+ *   /status                 自建存活监控状态页（探测 / 可用率柱条 / 故障时间线）
  *   /task-schedule          Project scheduled jobs
  *   /settings/:projectId    Project settings
  */
@@ -250,6 +254,7 @@ export function App(): JSX.Element {
           就绪前保留上一页(不闪骨架),就绪后一次性切换,消除切页卡顿感。 */}
       <BrowserRouter future={{ v7_startTransition: true }}>
         <GlobalAgentAccess />
+        <BugReportDialog />
         <Suspense fallback={<RouteFallback />}>
           <Routes>
             {/* 独立页面:营销首页 / 登录 / 预览过渡 / 基建演示,不带控制台外壳。 */}
@@ -270,6 +275,7 @@ export function App(): JSX.Element {
               <Route path="/branch-topology" element={<BranchTopologyPage />} />
               <Route path="/release-center" element={<ReleaseCenterPage />} />
               <Route path="/reports" element={<ReportsPage />} />
+              <Route path="/status" element={<StatusPage />} />
               <Route path="/task-schedule" element={<TaskSchedulePage />} />
               <Route path="/settings/:projectId" element={<ProjectSettingsPage />} />
               <Route path="/agent-requests/:projectId" element={<AgentRequestsPage />} />

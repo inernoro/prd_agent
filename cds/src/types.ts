@@ -1404,6 +1404,24 @@ export interface AgentOperatorIdentitySummary {
   invalidFields?: string[];
 }
 
+/**
+ * ReleaseRun 的持久化状态机。
+ * 终态：success / failed / rollback_success / rollback_failed。
+ *
+ * 历史上还有一个 'prechecking'，但全仓从未被任何代码赋值过——预检是 startRelease
+ * 之前的同步前置动作，不落 run。它只出现在「在途状态字面量数组」里，反而让状态机
+ * 表要为一个永不出现的状态表态。2026-07-28 阶段一止血时删除。
+ */
+export type ReleaseRunStatus =
+  | 'queued'
+  | 'running'
+  | 'healthchecking'
+  | 'success'
+  | 'failed'
+  | 'rollback_running'
+  | 'rollback_success'
+  | 'rollback_failed';
+
 export interface ReleaseRun {
   releaseId: string;
   projectId: string;
@@ -1412,18 +1430,15 @@ export interface ReleaseRun {
   artifact: ReleaseArtifact;
   targetId: string;
   planId: string;
-  status:
-    | 'queued'
-    | 'prechecking'
-    | 'running'
-    | 'healthchecking'
-    | 'success'
-    | 'failed'
-    | 'rollback_running'
-    | 'rollback_success'
-    | 'rollback_failed';
+  status: ReleaseRunStatus;
   startedAt: string;
   finishedAt?: string;
+  /**
+   * 执行心跳（ISO）。与分支侧 DeploymentRun.heartbeatAt 同口径：执行期周期刷新，
+   * SSH 长静默阶段也照常打点。心跳过期即代表执行体已随进程消失（CDS 自更新 /
+   * 重启），由 ReleaseService.reconcileInterruptedReleases 收敛为失败并释放目标。
+   */
+  heartbeatAt?: string;
   operator?: string;
   logs: ReleaseLogEntry[];
   seq: number;
@@ -1433,7 +1448,14 @@ export interface ReleaseRun {
   agentIdentity?: AgentOperatorIdentitySummary;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
+  /** 人类可读的失败摘要。保留给存量 UI；结构化事实一律读 failure。 */
   errorMessage?: string;
+  /**
+   * 结构化失败事实。刻意复用分支侧的 DeploymentFailure 结构（code / owner /
+   * retryable / evidenceRefs / suggestedAction），不另发明一套字段名，
+   * 让两条生命周期的失败展示与归因逻辑可以共用。
+   */
+  failure?: DeploymentFailure;
   /** 本次运行实际执行策略的不可变快照，避免目标后改配置污染历史证据。 */
   executionSnapshot?: {
     mode: ReleaseExecutionMode;

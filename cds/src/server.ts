@@ -11,6 +11,7 @@ import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -27,10 +28,12 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createBugReportsRouter } from './routes/bug-reports.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
+import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
@@ -109,6 +112,7 @@ import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
 import { ManagedProjectService } from './services/managed-project.js';
+import { ReleaseService } from './services/release-service.js';
 import {
   DeploymentDiagnosisService,
   GatewayDeploymentExplanationProvider,
@@ -739,6 +743,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/accept': '接受配对请求',
     // 项目级资源占用排行（系统级运维视图，2026-06-23）
     'GET /cds-system/resource-usage': '查看资源占用',
+    // 自建存活监控 / 状态页（2026-07-27）
+    'GET /uptime/summary': '查看存活总览',
+    'GET /uptime/incidents': '列出存活故障',
+    // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
+    'POST /bug-reports': '提交缺陷反馈',
+    'GET /bug-reports': '列出缺陷反馈',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -757,6 +767,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /releases/runs': '列出发布记录',
     'GET /releases/runs/:id': '查看发布记录',
     'POST /releases/runs/:id/rollback': '回滚发布记录',
+    'POST /releases/runs/:id/retry': '重试发布记录',
+    // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
+    'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
@@ -975,12 +988,28 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
     [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
+    // 发布控制面：staticMap 里的 `:id` 条目只够 auditApiLabels（它拿 express 路由
+    // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
+    // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
+    // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
+    [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
+    [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
+    [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
+    [/^PATCH \/releases\/targets\/[^/]+$/, '更新发布目标'],
+    [/^DELETE \/releases\/targets\/[^/]+$/, '删除发布目标'],
+    [/^POST \/releases\/branches\/[^/]+\/preflight$/, '执行发布前检查'],
+    [/^POST \/releases\/branches\/[^/]+\/runs$/, '启动分支发布'],
+    [/^POST \/releases\/projects\/[^/]+\/discover$/, '检测项目可用发布策略'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
     [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
@@ -991,6 +1020,12 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^PATCH \/branches\/(.+)\/replica-plans\/(.+)$/, '调整执行顺序'],
     [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/steps\/(.+)\/skip$/, '跳过计划步骤'],
     [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/cancel$/, '取消执行计划'],
+    // 复制集压测（2026-07-27）。cancel 必须排在单段 runId 之前，否则会被后者吞掉；
+    // regex 本身用 [^/]+ 保持 segment-safe，不依赖数组顺序也不会误命中。
+    [/^POST \/branches\/[^/]+\/replica-loadtests\/[^/]+\/cancel$/, '取消压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests\/[^/]+$/, '查看压测报告'],
+    [/^POST \/branches\/[^/]+\/replica-loadtests$/, '发起压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests$/, '列出压测记录'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolate$/, '复制隔离数据库'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/revert-db$/, '回切主库'],
     [/^POST \/branches\/(.+)\/db-guard$/, '启动数据库保护罩'],
@@ -1382,6 +1417,115 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * 发布中断收敛的启动 + 周期接线（阶段一 · 止血）
+ *
+ * 分支部署那条链路已经有这套东西了（deploymentRunService.reconcileInterrupted +
+ * 每 5 分钟收割）；生产发布这条一直没有，代价更大：CDS 自更新/重启把在途发布的
+ * 执行体带走后，ReleaseRun 永远停在 running，在途守卫会因此拒绝该目标的一切新
+ * 发布——这个发布目标从此发不出去，只能改库。自更新是 CDS 的日常操作。
+ *
+ * 收割器自身不许拖垮主流程：同步抛错、异步 reject 一律吞掉并落一条 warn；
+ * 上一轮没跑完就跳过这一轮（不叠加）。
+ * ------------------------------------------------------------------ */
+
+export interface ReleaseReconcileOutcome {
+  /** 本轮收敛的发布 run 数量。 */
+  reconciled: number;
+}
+
+export interface ReleaseReconcileOptions {
+  /**
+   * 启动收敛：把**所有**持久化的非终态 run 直接判失败，不看心跳新鲜度。
+   * 进程刚起来时不可能持有任何执行体，心跳是上一个已死进程打的，用它当活性证据
+   * 只会让刚打过心跳就被重启的发布继续堵住目标至少 15 分钟（Codex PR #1273 P1）。
+   */
+  assumeAllOrphaned?: boolean;
+}
+
+/** 跨轨道契约：ReleaseService 暴露的中断收敛入口（同步或异步均可）。 */
+export interface ReleaseRunReconciler {
+  reconcileInterruptedReleases(
+    now?: Date,
+    options?: ReleaseReconcileOptions,
+  ): ReleaseReconcileOutcome | Promise<ReleaseReconcileOutcome>;
+}
+
+/** 与部署侧收割周期同频（deployment-run 也是 5 分钟）。 */
+export const RELEASE_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+
+export interface ReleaseRunReaperDeps {
+  service: ReleaseRunReconciler;
+  intervalMs?: number;
+  /** 便于注入假定时器做回归；默认 setInterval。 */
+  setTimer?: (fn: () => void, ms: number) => { unref?: () => void };
+  clearTimer?: (handle: { unref?: () => void }) => void;
+  log?: (message: string) => void;
+}
+
+export interface ReleaseRunReaperHandle {
+  /** 立刻收一轮（启动时先跑的就是它）。 */
+  reapNow: () => void;
+  stop: () => void;
+}
+
+export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunReaperHandle {
+  const log = deps.log ?? ((message: string) => console.warn(message));
+  const reconcile = deps.service?.reconcileInterruptedReleases;
+  if (typeof reconcile !== 'function') {
+    // 契约被改名/漏实现时必须出声：静默跳过等于把「发布目标锁死」这个故障留在原地。
+    log('[release-run] ReleaseService 未提供 reconcileInterruptedReleases，发布中断收敛未启用');
+    return { reapNow: () => {}, stop: () => {} };
+  }
+
+  let busy = false;
+  // 第一轮 = 启动收敛：此刻本进程不可能有任何执行体，所有非终态 run 都已orphan，
+  // 不该再用「上一个已死进程打的心跳」当活性证据放它们过。之后的周期轮必须看心跳，
+  // 否则会误杀正在正常执行的发布。
+  let startupPass = true;
+  const finish = (outcome: ReleaseReconcileOutcome | undefined, wasStartup: boolean) => {
+    busy = false;
+    const count = Number(outcome?.reconciled ?? 0);
+    if (count > 0) {
+      log(wasStartup
+        ? `[release-run] 启动收敛：${count} 个被重启打断的发布已收敛为失败，对应发布目标已释放`
+        : `[release-run] 周期收割：${count} 个心跳过期的发布已收敛为失败，对应发布目标已释放`);
+    }
+  };
+  const fail = (err: unknown) => {
+    busy = false;
+    log(`[release-run] 周期收割失败: ${(err as Error)?.message ?? String(err)}`);
+  };
+
+  const reapNow = () => {
+    if (busy) return;
+    busy = true;
+    const wasStartup = startupPass;
+    startupPass = false;
+    try {
+      const result = deps.service.reconcileInterruptedReleases(undefined, {
+        assumeAllOrphaned: wasStartup,
+      });
+      if (result && typeof (result as Promise<ReleaseReconcileOutcome>).then === 'function') {
+        void (result as Promise<ReleaseReconcileOutcome>).then((o) => finish(o, wasStartup), fail);
+        return;
+      }
+      finish(result as ReleaseReconcileOutcome, wasStartup);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  // 启动先收一轮：重启正是执行体丢失的时刻，不能等满一个周期才发现。
+  reapNow();
+
+  const setTimer = deps.setTimer ?? ((fn, ms) => setInterval(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((handle) => clearInterval(handle as unknown as NodeJS.Timeout));
+  const timer = setTimer(reapNow, deps.intervalMs ?? RELEASE_RECONCILE_INTERVAL_MS);
+  timer?.unref?.();
+  return { reapNow, stop: () => clearTimer(timer) };
+}
+
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const deploymentRunService = new DeploymentRunService(deps.stateService);
@@ -1424,6 +1568,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }, 5 * 60 * 1000);
     runReaper.unref?.();
   }
+  // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
+  // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
+  const releaseReconciler: ReleaseRunReconciler = new ReleaseService(deps.stateService);
+  startReleaseRunReaper({ service: releaseReconciler });
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -1447,11 +1595,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
-  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
-  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
-  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
-  // /api/reports 不需要。
+  // 全局 JSON body 解析器（默认上限 100kb）。以下路径例外，各自在路由内挂更大的解析器：
+  //   - /api/reports：验收报告正文可达数 MB（HTML/Markdown 粘贴），路由自带 12mb 解析器
+  //     （修复 PR #865 codex P2「大粘贴报告绕不过全局 JSON 解析器」）。
+  //   - /api/bug-reports：快捷提 bug 允许 4 个 x 5MB 截图（base64 后更大），路由自带 16mb
+  //     解析器；不跳过的话截图附件会在 body-parser 阶段就被全局 100kb 上限 413 掉，
+  //     且响应是 HTML 不是 JSON，前端只能显示一段读不懂的报错。
+  // rawBody 仅签名校验类路由（GitHub webhook）需要，上述两个路径都不需要。
   const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
@@ -1459,6 +1609,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -3177,7 +3328,7 @@ export function createServer(deps: ServerDeps): express.Express {
         for (const b of Object.values(state.branches || {})) {
           // Skip branches owned by a remote executor — they're counted
           // via that executor's own heartbeat.
-          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          if (isRemoteExecutorOwned(b.executorId)) continue;
           for (const svc of Object.values(b.services || {})) {
             if (svc?.status === 'running') localRunning++;
           }
@@ -3804,6 +3955,20 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
   }));
+  // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
+  //
+  // 必须挂在**所有**会产出写操作的路由器之前，且判定走 deploy-drain 的
+  // isDrainBlockedPath 这一个源：此前它只是 branches 路由器里的一段中间件，
+  // 而生产发布在另一个路由器（/releases/*）里，从来不经过它——排空最后一次轮询
+  // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
+  app.use('/api', (req, res, next) => {
+    if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    const draining = selfUpdateDrainBlockReason(Date.now());
+    if (!draining) { next(); return; }
+    res.setHeader('Retry-After', '60');
+    res.status(503).json({ error: 'self_update_draining', message: draining });
+  });
+
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
     config: deps.config,
@@ -3992,6 +4157,12 @@ export function createServer(deps: ServerDeps): express.Express {
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
 
+  // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
+  // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
+  app.use('/api', createBugReportsRouter({
+    getDataDir: () => path.dirname(deps.stateService.getCacheBase()),
+  }));
+
   app.use('/api', createDeploymentRunsRouter({
     deploymentRunService,
     deploymentDiagnosisService,
@@ -4049,8 +4220,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // 离线/registry 不可用）时**保守视为远端**，绝不在 master 本机替离线执行器
     // 物化副本（错 docker 网络错端口的分裂宿主副本）。
     isRemoteBranch: (branch) => {
-      if (!branch.executorId) return false;
-      if (branch.executorId.startsWith('master-')) return false;
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
       const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
       return !node || node.role !== 'embedded';
     },

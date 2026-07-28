@@ -60,7 +60,7 @@ export function ChangePasswordPage() {
     border: 'none',
     outline: 'none',
     color: 'var(--text-primary)',
-    fontSize: 14,
+    fontSize: 'var(--fs-body)',
   };
 
   return (
@@ -100,8 +100,8 @@ export function ChangePasswordPage() {
             <KeyRound size={20} />
           </span>
           <div>
-            <div style={{ fontSize: 17, fontWeight: 700, color: 'var(--text-primary)' }}>设置新口令</div>
-            <div style={{ fontSize: 12, color: 'var(--text-muted)' }}>
+            <div style={{ fontSize: 'var(--fs-metric)', fontWeight: 700, color: 'var(--text-primary)' }}>设置新口令</div>
+            <div style={{ fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>
               {user?.username ? `账号 ${user.username}` : '首次登录'} · 需修改初始口令后才能继续
             </div>
           </div>
@@ -113,7 +113,7 @@ export function ChangePasswordPage() {
             alignItems: 'flex-start',
             gap: 8,
             marginTop: 14,
-            fontSize: 12,
+            fontSize: 'var(--fs-caption)',
             color: 'var(--text-secondary)',
             background: 'var(--accent-soft)',
             borderRadius: 'var(--radius-sm)',
@@ -163,7 +163,7 @@ export function ChangePasswordPage() {
           {error ? (
             <div
               style={{
-                fontSize: 12,
+                fontSize: 'var(--fs-caption)',
                 color: 'var(--err)',
                 background: 'var(--err-bg)',
                 borderRadius: 'var(--radius-sm)',
