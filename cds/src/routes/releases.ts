@@ -3,7 +3,7 @@ import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { CdsConfig, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
-import { ReleaseService, probeHealthcheckStatus } from '../services/release-service.js';
+import { ReleaseService, isReleaseRunTerminal, probeHealthcheckStatus } from '../services/release-service.js';
 import {
   discoverReleaseStrategies,
   releaseProjectIdentity,
@@ -384,6 +384,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectBranchAndTargetMismatch(req, res, deps.stateService, req.params.branchId, body.targetId.trim())) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     try {
       const run = await service.startRelease({
         branchId: req.params.branchId,
@@ -426,6 +427,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     try {
       const body = (req.body || {}) as Record<string, unknown>;
       const targetReleaseId = typeof body.targetReleaseId === 'string' && body.targetReleaseId.trim()
@@ -453,6 +455,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     if (rejectProjectMismatch(req, res, source.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
     try {
       const run = await service.startRelease({
         branchId: source.branchId,
@@ -464,6 +467,44 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
     }
+  });
+
+  /**
+   * 取消一次在途发布。
+   *
+   * 终态语义选「幂等成功」而不是 409，三条理由：
+   *   1. 取消表达的是「让它停下」这个意图，run 已经停了就等于意图已达成，
+   *      把它判成冲突会逼调用方去区分「取消失败」和「本来就停了」两种噪声；
+   *   2. 终态判定的 SSOT 在 release-service（RELEASE_STATUS_TERMINAL + cancelRelease
+   *      自身已对终态 run 幂等返回 ok），路由再判一次冲突就会在两处复制状态机；
+   *   3. 前端与 AI 都可能重试（网络抖动 / 用户连点），幂等才让重试安全。
+   * 是否真的掐断了执行体由响应体的 cancelled / alreadyTerminal 如实告知，信息不丢。
+   */
+  router.post('/releases/runs/:id/cancel', (req, res) => {
+    const existing = deps.stateService.getReleaseRun(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'ReleaseRun not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
+    const alreadyTerminal = isReleaseRunTerminal(existing.status);
+    let result;
+    try {
+      result = service.cancelRelease(req.params.id, resolveActorFromRequest(req));
+    } catch (err) {
+      res.status(409).json({ error: (err as Error).message });
+      return;
+    }
+    if (!result.ok) {
+      res.status(409).json({ error: result.reason || '取消发布失败' });
+      return;
+    }
+    res.json({
+      run: deps.stateService.getReleaseRun(req.params.id) || existing,
+      cancelled: !alreadyTerminal,
+      alreadyTerminal,
+    });
   });
 
   router.get('/releases/runs/:id/stream', (req, res) => {
@@ -551,12 +592,18 @@ function rejectProjectMismatch(req: Request, res: Response, projectId: string | 
   return true;
 }
 
+/**
+ * 全局 AI key 不得写入或执行项目发布。
+ *
+ * 除配置类端点外，执行类端点（发起发布 / 回滚 / 重试 / 取消）同样必须过这道门：
+ * 它们能直接改动生产，权限不该比改一行发布目标配置还松。
+ */
 function rejectUnscopedAiMutation(req: Request, res: Response): boolean {
   const actor = resolveActorFromRequest(req);
   if (!(actor === 'ai' || actor.startsWith('ai:')) || requestProjectKey(req)) return false;
   res.status(403).json({
     error: 'project_key_required',
-    message: 'AI 配置发布目标必须使用项目级 Agent Key，禁止用全局 AI key 写入项目发布配置。',
+    message: 'AI 操作项目发布必须使用项目级 Agent Key，禁止用全局 AI key 配置或执行项目发布。',
   });
   return true;
 }

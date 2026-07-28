@@ -800,7 +800,10 @@
     @apply grid h-screen overflow-hidden;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
-    grid-template-columns: 72px minmax(0, 1fr);
+    /* rail 宽度是 SSOT：任何贴左边的浮层都要用它让开常驻栏，
+       否则会盖住导航图标（本文件 .cds-bottom-left-dock 即消费方）。 */
+    --cds-rail-w: 72px;
+    grid-template-columns: var(--cds-rail-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
   }
 
@@ -2386,12 +2389,19 @@
     color: hsl(var(--primary));
   }
 
+  /*
+   * 「接入 Agent」浮动入口。只出现在 STANDALONE_PATHS（/、/login、/hello 等
+   * 不渲染 AppShell 的页面），那里既没有常驻 rail 也没有左下角坞，所以自己 fixed
+   * 是对的——不要照搬 CommitInbox 改portal 进坞，那些页面查不到坞，入口会整个消失。
+   * 限宽是为了窄屏不溢出右边（cds/.claude/rules/mobile-layout-fallback.md §5）。
+   */
   .cds-agent-access-floating {
     position: fixed;
     left: 1rem;
     bottom: 1rem;
     z-index: 190;
     display: inline-flex;
+    max-width: calc(100vw - 2rem);
     min-height: 44px;
     align-items: center;
     gap: 0.625rem;
@@ -2406,6 +2416,12 @@
     font-size: 0.875rem;
     font-weight: 600;
     transition: border-color 180ms ease, background-color 180ms ease, transform 180ms ease;
+  }
+
+  .cds-agent-access-floating > span {
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
   }
 
   .cds-agent-access-floating svg {
@@ -2424,6 +2440,7 @@
     outline-offset: 3px;
   }
 
+  /* 子预览实例：抬高一截，避开宿主 CDS 同位置的入口。 */
   .cds-agent-access-floating[data-preview-instance='true'] {
     bottom: 4.75rem;
   }
@@ -2434,29 +2451,64 @@
     }
   }
 
-  .cds-global-action-stack {
+  /*
+   * 底部浮层带 —— 左右两个坞的唯一定位者（2026-07-28 用户反馈的三处问题同根）。
+   *
+   * 此前左右坞各自 `position: fixed` 贴角，谁都不知道对方和常驻 rail 的存在：
+   *   - 贴 left:1rem 的坞压在 72px 宽 rail 的导航图标上（遮挡一）；
+   *   - 右坞 width 只减 2rem，窄视口下一路铺到最左，更新徽章同样压住 rail（边缘问题）；
+   *   - 两坞在窄视口下横向撞在一起（几何必然，谁后渲染谁盖住谁）。
+   * 现在由本带统一持有「让开 rail + 两侧留白」，两个坞退化成带内的 flex 项：
+   * 宽屏一左一右，窄屏 flex-wrap 自动折行错开，永远不会重叠也不会溢出。
+   */
+  .cds-bottom-docks {
     position: fixed;
+    left: calc(var(--cds-rail-w, 0px) + 1rem);
     right: 1rem;
     bottom: 1rem;
     z-index: 200;
     display: flex;
-    width: min(420px, calc(100vw - 2rem));
     max-height: calc(100dvh - 2rem);
-    flex-direction: column;
-    align-items: stretch;
+    flex-wrap: wrap;
+    align-items: flex-end;
+    justify-content: space-between;
     gap: 0.75rem;
-    overflow-y: auto;
     pointer-events: none;
     transition: opacity 150ms ease, visibility 150ms ease;
   }
 
-  .cds-global-action-stack > * {
+  /* 右下角坞：站内提醒 / 导入审批 / 更新徽章 / 提交缺陷入口。 */
+  .cds-global-action-stack {
+    display: flex;
+    width: min(420px, 100%);
+    max-height: calc(100dvh - 2rem);
+    flex-direction: column;
+    align-items: stretch;
+    gap: 0.75rem;
+    margin-left: auto;
+    overflow-y: auto;
+    pointer-events: none;
+  }
+
+  /* 左下角坞：CommitInbox 等贴左的常驻浮层。定位由 .cds-bottom-docks 统一负责。 */
+  .cds-bottom-left-dock {
+    display: flex;
+    max-width: 100%;
+    max-height: calc(100dvh - 2rem);
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 0.75rem;
+    pointer-events: none;
+  }
+
+  .cds-global-action-stack > *,
+  .cds-bottom-left-dock > * {
     max-width: 100%;
     flex: none;
     pointer-events: auto;
   }
 
-  .cds-app-shell[data-nav-open='true'] .cds-global-action-stack {
+  .cds-app-shell[data-nav-open='true'] .cds-bottom-docks {
     visibility: hidden;
     opacity: 0;
     pointer-events: none;
@@ -2490,6 +2542,11 @@
 
     .cds-rail {
       display: none;
+    }
+
+    /* rail 收进抽屉后不再占位，贴左浮层不必再让开。 */
+    .cds-app-shell {
+      --cds-rail-w: 0px;
     }
   }
 

@@ -25,6 +25,7 @@ import { AppShell, Crumb, TopBar, Workspace } from '@/components/layout/AppShell
 import { DisclosurePanel } from '@/components/ui/disclosure-panel';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from '@/components/ui/tabs';
 import { fetchAuthPublicStatus, type CdsAuthPublicStatus } from '@/lib/api';
+import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 const AccessKeysTab = lazy(() => import('@/pages/cds-settings/tabs/AccessKeysTab').then((m) => ({ default: m.AccessKeysTab })));
 const AuthTab = lazy(() => import('@/pages/cds-settings/tabs/AuthTab').then((m) => ({ default: m.AuthTab })));
@@ -325,7 +326,8 @@ export function CdsSettingsPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
+            className="fixed z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
+            style={bottomRightToastStyle}
             role="status"
           >
             {toast}

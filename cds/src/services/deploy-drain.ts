@@ -17,14 +17,31 @@
  * bug 的），可经 `CDS_SELFUPDATE_DRAIN_TIMEOUT_MS` 调整，设 0 关闭。
  *
  * 判定做成纯函数，便于把「什么算在途」「什么时候该放弃等待」写成回归测试。
+ *
+ * 2026-07-28（发布系统阶段一·止血）：排空口径扩展到生产发布（ReleaseRun）。
+ * 自更新此前只排空分支部署，压根不知道发布存在——而发布被腰斩的代价更大：run
+ * 永远停在 running，在途守卫会因此拒绝该目标的一切新发布，这个发布目标从此发不
+ * 出去。两条生命周期的状态语义不同（发布侧 running 是在途，部署侧 running 是成功
+ * 终态），所以 run 上带 kind 区分，各走各的穷尽式终态表。
  */
 
-import type { DeploymentRunStatus } from '../types.js';
+import type { DeploymentRunStatus, ReleaseRun } from '../types.js';
 
-/** 部署 run 里本模块关心的最小形状。 */
+/**
+ * 两条生命周期：分支预览部署（DeploymentRun）与生产发布（ReleaseRun）。
+ *
+ * 必须显式区分，因为同一个字面量 `running` 在两边语义**相反**：
+ * 部署侧 `running` 是成功终态（历史语义），发布侧 `running` 是正在执行。
+ * 单张按字符串取值的表会把在途发布判成终态，排空又变回半开的门。
+ */
+export type DrainableRunKind = 'deployment' | 'release';
+
+/** run 里本模块关心的最小形状（部署与发布共用）。 */
 export interface DrainableRun {
   id: string;
   status: string;
+  /** 属于哪条生命周期；缺省按 'deployment' 处理（历史调用方不带该字段）。 */
+  kind?: DrainableRunKind;
   branchId?: string;
   /** 心跳时间（ISO）；用于识别「早已死掉但状态还挂在 running」的僵尸 run。 */
   heartbeatAt?: string;
@@ -53,10 +70,45 @@ const RUN_STATUS_TERMINAL: Record<DeploymentRunStatus, boolean> = {
   cancelled: true,
 };
 
+/**
+ * 排空口径覆盖的发布状态集合。
+ *
+ * types.ts 把发布状态写成 `ReleaseRun` 的内联联合、没有导出具名类型，所以这里
+ * 从字段类型推导，避免在本文件复制一份必然漂移的字面量清单。额外并上两个
+ * 「过渡期成员」：`cancelled`（取消能力落地后会进入联合）与 `prechecking`
+ * （计划中要清掉的死状态）。并集不削弱穷尽性——联合里任何新成员仍必须在下表
+ * 出现，否则 TS 直接报错；只是让两侧可以各自先落地，不至于卡在编译错误上。
+ */
+type DrainableReleaseStatus = ReleaseRun['status'] | 'cancelled' | 'prechecking';
+
+/**
+ * 全量发布状态 → 是否终态。**照搬部署侧的穷尽式 `Record` 写法**（第三十六轮 P1
+ * 的教训）：新增状态时编译期就报错，而不是运行期悄悄漏判。
+ *
+ * 注意与部署侧的语义差：发布侧 `running` / `healthchecking` / `rollback_running`
+ * 都是**在途**，`success` / `failed` / `rollback_success` / `rollback_failed` /
+ * `cancelled` 才是终态。`queued` 也算在途——它随时会被执行体接走，重启同样会把
+ * 它连同守卫一起弄丢。
+ */
+const RELEASE_STATUS_TERMINAL: Record<DrainableReleaseStatus, boolean> = {
+  queued: false,
+  prechecking: false,
+  running: false,
+  healthchecking: false,
+  rollback_running: false,
+  success: true,
+  failed: true,
+  rollback_success: true,
+  rollback_failed: true,
+  cancelled: true,
+};
+
 export function isRunInFlight(run: DrainableRun): boolean {
-  const status = String(run.status || '').toLowerCase() as DeploymentRunStatus;
-  if (!status) return false; // 连状态都没有的记录没什么可等的
-  const terminal = RUN_STATUS_TERMINAL[status];
+  const raw = String(run.status || '').toLowerCase();
+  if (!raw) return false; // 连状态都没有的记录没什么可等的
+  const terminal = run.kind === 'release'
+    ? RELEASE_STATUS_TERMINAL[raw as DrainableReleaseStatus]
+    : RUN_STATUS_TERMINAL[raw as DeploymentRunStatus];
   // 不认识的状态按在途处理：本轮的漏洞就是「没登记 = 当成终态 = 不等」，
   // 保守一侧代价只是最多多等一个超时窗口，激进一侧代价是杀掉在途部署。
   return terminal !== true;
@@ -78,6 +130,50 @@ export function isRunAlive(run: DrainableRun, nowMs: number): boolean {
 /** 当前仍值得等待的 run（在途且心跳新鲜）。 */
 export function pendingRunsToDrain(runs: readonly DrainableRun[], nowMs: number): DrainableRun[] {
   return runs.filter((r) => isRunAlive(r, nowMs));
+}
+
+/* ------------------------------------------------------------------ *
+ * 发布（ReleaseRun）接入排空
+ *
+ * 自更新重启把在途**发布**的执行体一并杀掉，而发布侧的在途守卫会因此拒绝该目标
+ * 的一切新发布——比部署侧那次「PR check 变红、人工重触发」严重一个量级：这个发布
+ * 目标从此发不出去。所以排空的等待对象必须同时包含发布 run，而不只是部署 run。
+ * ------------------------------------------------------------------ */
+
+/** 发布 run 里排空关心的最小形状（结构化取形，避免与 types.ts 的演进耦合）。 */
+export interface DrainableReleaseRunSource {
+  releaseId: string;
+  status: string;
+  branchId?: string;
+  heartbeatAt?: string;
+  startedAt?: string;
+}
+
+/** 把发布 run 归一成排空口径（打上 kind，让 `running` 走发布语义）。 */
+export function toDrainableReleaseRuns(runs: readonly DrainableReleaseRunSource[]): DrainableRun[] {
+  return runs.map((run) => ({
+    id: run.releaseId,
+    status: run.status,
+    kind: 'release' as const,
+    branchId: run.branchId,
+    heartbeatAt: run.heartbeatAt,
+    startedAt: run.startedAt,
+  }));
+}
+
+/**
+ * 排空的等待源：部署 + 发布。调用方（自更新重启前）应当用它组装 `listRuns`，
+ * 少传一路就等于对那条生命周期不设防。
+ */
+export function collectDrainableRuns(sources: {
+  deploymentRuns?: readonly DrainableRun[];
+  releaseRuns?: readonly DrainableReleaseRunSource[];
+}): DrainableRun[] {
+  const deployments = (sources.deploymentRuns ?? []).map((run) => ({
+    ...run,
+    kind: run.kind ?? ('deployment' as const),
+  }));
+  return [...deployments, ...toDrainableReleaseRuns(sources.releaseRuns ?? [])];
 }
 
 /* ------------------------------------------------------------------ *
@@ -120,6 +216,25 @@ export function isSelfUpdateDraining(nowMs: number): boolean {
 export function selfUpdateDrainBlockReason(nowMs: number): string | null {
   if (!isSelfUpdateDraining(nowMs)) return null;
   return 'CDS 正在自更新重启，已暂停接受新的构建/部署请求（避免刚起的部署被重启腰斩）。重启通常在一分钟内完成，稍后重试即可；GitHub 侧可 push 新 commit 或在 PR 评论 /cds redeploy 重新触发。';
+}
+
+/**
+ * 排空期间必须拒绝的「会产出写操作」的入口路径（相对 /api）。
+ *
+ * **唯一判定源**。这道闸最初只写在某一个 handler 里，后来提到 branches 路由器级；
+ * 可生产发布是**另一个路由器**（createReleasesRouter）里的 /releases/*，从来不经过
+ * branches 的中间件——于是排空最后一次轮询之后到重启之前，仍能开启一次新发布，
+ * 然后被重启把 SSH 拦腰砍断，正是排空要消灭的那个现象（Codex PR #1273 P1）。
+ * 逐 handler 打补丁会漏，逐 router 打补丁一样会漏；判定收敛到这里 + 挂到 app 级。
+ */
+export function isDrainBlockedPath(method: string, pathname: string): boolean {
+  if (method !== 'POST') return false;
+  // 分支构建/部署
+  if (/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(pathname)) return true;
+  // 生产发布：发起 / 回滚 / 重试 —— 三个都会真的往目标机器跑 SSH
+  if (/^\/releases\/branches\/[^/]+\/runs\/?$/.test(pathname)) return true;
+  if (/^\/releases\/runs\/[^/]+\/(rollback|retry)\/?$/.test(pathname)) return true;
+  return false;
 }
 
 export interface DrainOutcome {

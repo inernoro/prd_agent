@@ -211,9 +211,11 @@ export function CommitInbox(): JSX.Element | null {
 
   return (
     <div
-      className={`fixed bottom-4 left-4 z-[190] select-none transition-[width] duration-200 ${
-        open ? 'w-[min(520px,calc(100vw-2rem))]' : 'w-[min(390px,calc(100vw-2rem))]'
-      }`}
+      // 不自己定位：本组件是 .cds-bottom-left-dock 的一员，让开常驻 rail、两侧
+      // 留白、窄屏折行全由 .cds-bottom-docks 负责（index.css）。此前直接写
+      // `fixed bottom-4 left-4` 会盖住 rail 上的导航图标。
+      className={`w-[min(var(--commit-inbox-w),100%)] select-none transition-[width] duration-200`}
+      style={{ ['--commit-inbox-w' as string]: open ? '520px' : '390px' }}
     >
       <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button

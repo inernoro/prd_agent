@@ -66,6 +66,7 @@
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
+- [CDS 复制集压测（A/B 负载对比台） · 设计](./design.cds.replica-loadtest.md) `design.cds.replica-loadtest`
 - [CDS 复制集模式（一个入口多版本并排） · 设计](./design.cds.replica-set.md) `design.cds.replica-set`
 - [CDS 容量预算与故障隔离设计 · 设计](./design.cds.resilience.md) `design.cds.resilience`
 - [CDS Self-Hosting（CDS 托管 CDS）· 技术设计 · 设计](./design.cds.self-hosting.md) `design.cds.self-hosting`
@@ -241,6 +242,7 @@
 - [CDS Agent 官方 SDK 商业闭环 · 计划](./plan.cds.agent.official-sdk-migration.md) `plan.cds.agent.official-sdk-migration`
 - [CDS 未完成事项矩阵 · 计划](./plan.cds.backlog-matrix.md) `plan.cds.backlog-matrix`
 - [CDS 多项目剩余交付 · 计划](./plan.cds.multi-project-phases.md) `plan.cds.multi-project-phases`
+- [CDS 发布系统改进 · 计划](./plan.cds.release-system.md) `plan.cds.release-system`
 - [CDS 高可用运行验证 · 计划](./plan.cds.resilience-rollout.md) `plan.cds.resilience-rollout`
 - [CDS 当前工作看板 · 计划](./plan.cds.status.md) `plan.cds.status`
 - [CDS Legacy 前端退场 · 计划](./plan.cds.web-migration.md) `plan.cds.web-migration`
@@ -284,6 +286,7 @@
 - [CDS 自更新极速版（预构建产物） · 债务台账](./debt.cds.selfupdate-prebuilt.md) `debt.cds.selfupdate-prebuilt`
 - [CDS state.json 影子存储 · 债务台账](./debt.cds.state-json.md) `debt.cds.state-json`
 - [CDS 教程 · 债务台账](./debt.cds.tutorial.md) `debt.cds.tutorial`
+- [CDS 存活监控（uptime-monitor） · 债务台账](./debt.cds.uptime-monitor.md) `debt.cds.uptime-monitor`
 - [CDS 绝对可视化一键部署 · 工程债务与待补台账 · 债务台账](./debt.cds.visual-deploy.md) `debt.cds.visual-deploy`
 - [小技巧与首页提醒过时机制 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
 - [每日小贴士新手引导 · 债务台账](./debt.daily-tips.onboarding.md) `debt.daily-tips.onboarding`
