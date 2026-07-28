@@ -93,6 +93,11 @@
     ],
     "create-visual-test-to-kb": [
       "qa"
+    ],
+    "findmapskills": [
+      "pm",
+      "dev",
+      "qa"
     ]
   },
   "skillRequires": {

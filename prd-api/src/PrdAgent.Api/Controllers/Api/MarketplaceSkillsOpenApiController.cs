@@ -1,5 +1,6 @@
 using System.Text.Json;
 using System.Text.RegularExpressions;
+using Microsoft.AspNetCore.Authentication;
 using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Bson;
@@ -16,8 +17,12 @@ namespace PrdAgent.Api.Controllers.Api;
 /// <summary>
 /// 海鲜市场技能开放接口 —— 专供外部 AI / Agent 调用。
 ///
-/// 鉴权：`Authorization: Bearer sk-ak-xxxx`（AgentApiKey）。
-/// 权限：读操作需 scope `marketplace.skills:read`，写操作需 `marketplace.skills:write`。
+/// 鉴权分层（2026-07-28 起）：
+/// - **读取匿名**：列表、详情、标签、下载（fork）都不需要凭据。技能是公开内容，
+///   把它挡在 API Key 后面等于要求客户先注册才能拿技能，与「CDS 作为中介、
+///   客户接不进 MAP」的定位直接冲突。查询只返回 `IsPublic == true` 的条目。
+/// - **写入要凭据**：上传需 scope `marketplace.skills:write`；
+///   收藏/取消收藏需 `marketplace.skills:read` —— 它们要绑定到具体用户，不是「读技能」。
 ///
 /// 与 <see cref="MarketplaceSkillsController"/> 的区别：
 /// - 本 Controller 是 AI 友好的简化版，只走 AgentApiKey 鉴权
@@ -62,7 +67,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     // ======================================================================
 
     [HttpGet]
-    [RequireScope(ScopeRead)]
+    [AllowAnonymous]
     public async Task<IActionResult> List(
         [FromQuery] string? keyword,
         [FromQuery] string? sort,
@@ -70,7 +75,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         [FromQuery] int limit,
         CancellationToken ct)
     {
-        var userId = GetBoundUserId();
+        var userId = await TryGetBoundUserIdAsync();
         var builder = Builders<MarketplaceSkill>.Filter;
         var filter = builder.Eq(x => x.IsPublic, true);
 
@@ -111,10 +116,10 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     }
 
     [HttpGet("{id}")]
-    [RequireScope(ScopeRead)]
+    [AllowAnonymous]
     public async Task<IActionResult> GetById(string id, CancellationToken ct)
     {
-        var userId = GetBoundUserId();
+        var userId = await TryGetBoundUserIdAsync();
 
         // 官方虚拟条目：按 id 解析具体技能，内存构造 DTO，不查 DB
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
@@ -132,7 +137,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     }
 
     [HttpGet("tags")]
-    [RequireScope(ScopeRead)]
+    [AllowAnonymous]
     public async Task<IActionResult> Tags(CancellationToken ct)
     {
         var allTags = await _db.MarketplaceSkills
@@ -158,10 +163,10 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     // ======================================================================
 
     [HttpPost("{id}/fork")]
-    [RequireScope(ScopeRead)]
+    [AllowAnonymous]
     public async Task<IActionResult> Fork(string id, CancellationToken ct)
     {
-        var userId = GetBoundUserId();
+        var userId = await TryGetBoundUserIdAsync();
 
         // 官方虚拟条目：返回官方下载 URL（按 id 解析具体技能），不 +1 count、不查 DB
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
@@ -514,12 +519,33 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
     /// 从 AgentApiKey 鉴权结果中取得绑定用户。
     /// 失败直接抛 <see cref="UnauthorizedAccessException"/>，由 ExceptionMiddleware 转 401。
     /// </summary>
+    /// <summary>写路径用：这些端点仍要求凭据，没有绑定用户就是异常。</summary>
     private string GetBoundUserId()
     {
         var id = User.FindFirst("boundUserId")?.Value;
         if (string.IsNullOrWhiteSpace(id))
             throw new UnauthorizedAccessException("Missing boundUserId claim");
         return id;
+    }
+
+    /// <summary>
+    /// 读路径用：匿名调用没有 boundUserId，返回空串。
+    /// 影响的只有 `isFavoritedByCurrentUser` 这类「跟我有关」的字段，匿名时恒为 false。
+    ///
+    /// 为什么还要手动 AuthenticateAsync：读端点标了 [AllowAnonymous]，ApiKey 这个
+    /// 非默认 scheme 就不会自动跑，于是**带着 Key 的 AI 客户端也会被当成匿名**，
+    /// 收藏状态静默变成 false。带了 Authorization 头就补跑一次认证，避免这个退化；
+    /// 认证失败不报错——读取本来就允许匿名。
+    /// </summary>
+    private async Task<string> TryGetBoundUserIdAsync()
+    {
+        var id = User.FindFirst("boundUserId")?.Value;
+        if (!string.IsNullOrWhiteSpace(id)) return id;
+        if (!Request.Headers.ContainsKey("Authorization")) return string.Empty;
+        var result = await HttpContext.AuthenticateAsync("ApiKey");
+        return result.Succeeded
+            ? result.Principal?.FindFirst("boundUserId")?.Value ?? string.Empty
+            : string.Empty;
     }
 
     private static List<string> ParseTags(string? tagsJson)

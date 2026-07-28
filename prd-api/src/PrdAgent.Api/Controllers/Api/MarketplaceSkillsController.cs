@@ -25,6 +25,9 @@ namespace PrdAgent.Api.Controllers.Api;
 /// </summary>
 [ApiController]
 [Route("api/marketplace/skills")]
+// 读技能不需要登录（2026-07-28 用户决策）：技能是公开内容，把浏览和下载挡在
+// 登录后面等于要求客户先注册。查询恒带 IsPublic 过滤。
+// 需要身份的操作（收藏、上传、分享、我的收藏）仍要登录。
 [Authorize]
 public class MarketplaceSkillsController : ControllerBase
 {
@@ -76,13 +79,16 @@ public class MarketplaceSkillsController : ControllerBase
     // ======================================================================
 
     [HttpGet]
+    [AllowAnonymous]
     public async Task<IActionResult> List(
         [FromQuery] string? keyword,
         [FromQuery] string? sort,
         [FromQuery] string? tag,
         CancellationToken ct)
     {
-        var userId = this.GetRequiredUserId();
+        // 匿名可读：userId 只用于 isFavoritedByCurrentUser 这类「跟我有关」的字段，
+        // 未登录时为空串，这些字段恒为 false。查询本身恒带 IsPublic 过滤。
+        var userId = this.GetUserIdOrNull() ?? string.Empty;
 
         var builder = Builders<MarketplaceSkill>.Filter;
         var filter = builder.Eq(x => x.IsPublic, true);
@@ -140,6 +146,7 @@ public class MarketplaceSkillsController : ControllerBase
     }
 
     [HttpGet("tags")]
+    [AllowAnonymous]
     public async Task<IActionResult> Tags(CancellationToken ct)
     {
         var allTags = await _db.MarketplaceSkills
@@ -177,6 +184,7 @@ public class MarketplaceSkillsController : ControllerBase
     /// 仅供预览场景的 JSZip 解压使用,不替代 zipUrl 字段。
     /// </summary>
     [HttpGet("{id}/zip-content")]
+    [AllowAnonymous]
     public async Task<IActionResult> ZipContent(string id, CancellationToken ct)
     {
         var skill = await _db.MarketplaceSkills
@@ -695,9 +703,11 @@ public class MarketplaceSkillsController : ControllerBase
     // ======================================================================
 
     [HttpPost("{id}/fork")]
+    [AllowAnonymous]
     public async Task<IActionResult> Fork(string id, CancellationToken ct)
     {
-        var userId = this.GetRequiredUserId();
+        // 下载不需要登录（技能是公开内容）；userId 只用于回包里的「跟我有关」字段
+        var userId = this.GetUserIdOrNull() ?? string.Empty;
 
         // 官方虚拟条目特判：不查 DB、不 +1 count，直接返回官方下载 URL（按 id 解析具体技能）
         if (OfficialMarketplaceSkillInjector.IsOfficialId(id))

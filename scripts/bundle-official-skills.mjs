@@ -35,9 +35,12 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // ── 精选 INCLUDE 白名单（用户敲定：只放真正可移植、外部用户能跑的技能）─────────
 // 不在表里的不进市场（文件保留，Claude Code 仍用）。新增可对外技能往这里加 key。
 // 排除原则：绑死本仓库基础设施（CDS/cdscli/本平台 API/本仓库开发流程）的一律不放。
-// 注：findmapskills 不在此列 —— 它由 OfficialSkillTemplates 特殊处理（版本号 +
-// {{BASE_URL}} 占位替换），catalog 只管其余可移植技能，避免重复/降低改动风险。
+// findmapskills 自 2026-07-28 起也走 catalog：它的 SKILL.md 是唯一事实源，
+// 后端不再内嵌第二份（原先 OfficialSkillTemplates.FindMapSkillsSkillMd 与本文件
+// 需要人工同步，已经开始漂移）。下载时只做一处替换：把 PRD_AGENT_BASE
+// 的默认值设为该实例地址。
 const INCLUDE = new Set([
+  'findmapskills',           // 海鲜市场操作技能（AI bootstrap 入口）
   'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
   'phase0-guard',            // 底座阶段护栏 + 面向老板/PM 的六段式沟通规范
   'plan-first',              // 通用先方案后动手
@@ -82,6 +85,7 @@ const DISPLAY_NAME = {
   'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
   'risk-matrix': 'risk-matrix · MECE 风险评估',
   'phase0-guard': 'phase0-guard · 底座阶段护栏',
+  'findmapskills': 'findmapskills · 海鲜市场操作技能',
   'sdd-init': 'sdd-init · 项目骨架落地',
   'skill-validation': 'skill-validation · 需求七维度评分',
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',

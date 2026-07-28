@@ -298,6 +298,117 @@ public class OfficialSkillCatalogTests
         }
     }
 
+    // ======================================================================
+    // findmapskills 单一事实源（2026-07-28 合并，原先后端内嵌第二份）
+    // ======================================================================
+
+    [Fact]
+    public void FindMapSkills_IsServedFromCatalogNotAnEmbeddedCopy()
+    {
+        var entry = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey);
+
+        Assert.NotNull(entry);
+        Assert.Contains(entry!.Files, f => f.Path == "SKILL.md");
+        Assert.Contains(entry.Files, f => f.Path == "README.md");
+        // 版本号来自技能文件的 frontmatter，后端不再单独维护一份常量
+        Assert.Equal(entry.Version, OfficialSkillTemplates.FindMapSkillsVersion);
+    }
+
+    [Fact]
+    public void FindMapSkillsDownload_InjectsThisInstanceAsDefaultBaseUrl()
+    {
+        var controller = BuildOfficialSkillsController();
+
+        var result = controller.Download(OfficialSkillTemplates.FindMapSkillsKey);
+        var file = Assert.IsType<FileContentResult>(result);
+
+        using var ms = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        var skillMd = ReadZipText(zip, $"{OfficialSkillTemplates.FindMapSkillsKey}/SKILL.md");
+
+        // 用户拿到即用：base URL 已预置成本实例地址，同时保留 env 覆盖能力
+        Assert.Contains("${PRD_AGENT_BASE:=https://map.example.test}", skillMd);
+        Assert.DoesNotContain("缺 base URL", skillMd);
+    }
+
+    [Fact]
+    public void FindMapSkillsSkill_InstallsIntoProjectLevelDirectory()
+    {
+        var entry = OfficialSkillCatalog.Find(OfficialSkillTemplates.FindMapSkillsKey)!;
+        var skillMd = entry.Files.Single(f => f.Path == "SKILL.md").Content;
+
+        // 装到用户主目录的话技能不跟项目走，团队 clone 下来少一半
+        Assert.DoesNotContain("-d ~/.claude/skills", skillMd);
+        Assert.Contains(".claude/skills", skillMd);
+        Assert.Contains(".cursor/skills", skillMd);
+        Assert.Contains(".agents/skills", skillMd);
+    }
+
+    [Fact]
+    public void MarketplaceList_DoesNotShowFindMapSkillsTwice()
+    {
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+
+        var dtos = OfficialMarketplaceSkillInjector.BuildAllDtos(
+            request, config, currentUserId: "user-1",
+            keyword: null, tag: null, includeCatalogWhenUnfiltered: true);
+
+        // findmapskills 既有专属特判 DTO，又进了 catalog —— 不去重就会出现两条同名条目
+        var ids = dtos.Select(d => d.GetType().GetProperty("Id")?.GetValue(d) as string).ToList();
+        Assert.Single(ids, id => id == OfficialMarketplaceSkillInjector.OfficialFindMapSkillsId);
+        Assert.Equal(ids.Count, ids.Distinct().Count());
+    }
+
+    [Fact]
+    public void BundleInstallCommand_UsesProjectLevelDetection()
+    {
+        var controller = BuildOfficialSkillsController();
+
+        var result = controller.ListBundles(role: null);
+        var ok = Assert.IsType<OkObjectResult>(result);
+        var payload = ReadObject(ok.Value!, "Data");
+        var items = (System.Collections.IEnumerable)ReadObject(payload, "items");
+        var first = items.Cast<object>().First();
+        var command = Read<string>(first, "installCommand");
+
+        Assert.Contains(".agents/skills", command);
+        Assert.DoesNotContain("~/.claude/skills", command);
+    }
+
+    // ======================================================================
+    // 读技能免凭据（2026-07-28 用户决策：技能是公开内容，只有上传才要验证）
+    // ======================================================================
+
+    [Theory]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsOpenApiController), "List")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsOpenApiController), "GetById")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsOpenApiController), "Tags")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsOpenApiController), "Fork")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsController), "List")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsController), "Tags")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsController), "Fork")]
+    [InlineData(typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsController), "ZipContent")]
+    public void SkillReadEndpoints_AreAnonymous(Type controller, string action)
+    {
+        var method = controller.GetMethod(action);
+        Assert.NotNull(method);
+        // 把浏览和下载挡在凭据后面 = 要求客户先注册才能拿技能，与「CDS 作为中介」的定位冲突
+        Assert.NotEmpty(method!.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute), false));
+    }
+
+    [Theory]
+    [InlineData("Upload")]
+    [InlineData("Favorite")]
+    [InlineData("Unfavorite")]
+    public void SkillWriteEndpoints_StillRequireCredentials(string action)
+    {
+        var method = typeof(PrdAgent.Api.Controllers.Api.MarketplaceSkillsOpenApiController).GetMethod(action);
+        Assert.NotNull(method);
+        // 写入与「绑定到人」的操作必须留着凭据要求
+        Assert.Empty(method!.GetCustomAttributes(typeof(Microsoft.AspNetCore.Authorization.AllowAnonymousAttribute), false));
+    }
+
     private static HttpRequest BuildRequest(string origin)
     {
         var uri = new Uri(origin);

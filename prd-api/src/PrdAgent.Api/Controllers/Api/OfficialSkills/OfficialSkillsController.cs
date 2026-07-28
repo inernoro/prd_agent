@@ -39,14 +39,15 @@ public class OfficialSkillsController : ControllerBase
     {
         var baseUrl = ResolveBaseUrl();
 
-        // 模板类官方技能（findmapskills / ai-defect-resolve）：占位替换 + SKILL.md/README
-        if (skillKey == OfficialSkillTemplates.FindMapSkillsKey || skillKey == OfficialSkillTemplates.AiDefectResolveKey)
+        // 模板类官方技能（当前只剩 ai-defect-resolve）：占位替换 + SKILL.md/README。
+        // findmapskills 已于 2026-07-28 迁到 catalog 通道 —— 它的技能文件是唯一事实源，
+        // 后端不再内嵌第二份（原先两处内容靠人工同步，实测已开始漂移）。
+        if (skillKey == OfficialSkillTemplates.AiDefectResolveKey)
         {
-            var isDefect = skillKey == OfficialSkillTemplates.AiDefectResolveKey;
-            var version = isDefect ? OfficialSkillTemplates.AiDefectResolveVersion : OfficialSkillTemplates.FindMapSkillsVersion;
-            var releaseDate = isDefect ? OfficialSkillTemplates.AiDefectResolveReleaseDate : OfficialSkillTemplates.FindMapSkillsReleaseDate;
-            var skillTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveSkillMd : OfficialSkillTemplates.FindMapSkillsSkillMd;
-            var readmeTemplate = isDefect ? OfficialSkillTemplates.AiDefectResolveReadme : OfficialSkillTemplates.FindMapSkillsReadme;
+            var version = OfficialSkillTemplates.AiDefectResolveVersion;
+            var releaseDate = OfficialSkillTemplates.AiDefectResolveReleaseDate;
+            var skillTemplate = OfficialSkillTemplates.AiDefectResolveSkillMd;
+            var readmeTemplate = OfficialSkillTemplates.AiDefectResolveReadme;
 
             string Subst(string template) => template
                 .Replace("{{BASE_URL}}", baseUrl)
@@ -85,7 +86,14 @@ public class OfficialSkillsController : ControllerBase
                 $"官方技能 {entry.Key} 缺少依赖技能: {string.Join(", ", missing)}"));
         }
 
-        var bytes2 = PackSkills(entries, extraFiles: null);
+        // findmapskills 的技能文件用 $PRD_AGENT_BASE 写成（本地开发可直接跑）。
+        // 下发时把它的默认值设成本实例地址，用户拿到即用、又保留 env 覆盖能力。
+        // 这是「唯一事实源 + 一处替换」的全部内容 —— 不再有第二份需要同步的正文。
+        var bytes2 = entry.Key == OfficialSkillTemplates.FindMapSkillsKey
+            ? PackSkills(entries, extraFiles: null, transform: text => text.Replace(
+                "${PRD_AGENT_BASE:?缺 base URL。导出 PRD_AGENT_BASE=https://your-platform}",
+                $"${{PRD_AGENT_BASE:={baseUrl}}}"))
+            : PackSkills(entries, extraFiles: null);
         Response.Headers.Append("Cache-Control", "no-store");
         var fileCount = entries.Sum(e => e.Files.Count);
         _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Files} 文件 {Bytes} bytes", skillKey, fileCount, bytes2.Length);
@@ -128,8 +136,10 @@ public class OfficialSkillsController : ControllerBase
                 skillCount = expanded.Count,
                 skills = expanded.Select(e => new { key = e.Key, title = e.Title, description = e.Description }).ToList(),
                 downloadUrl = $"{baseUrl}/api/official-skills/{b.Key}/download",
-                installCommand =
-                    $"curl -sSLo /tmp/{b.Key}.zip \"{baseUrl}/api/official-skills/{b.Key}/download\" && unzip -o /tmp/{b.Key}.zip -d ~/.claude/skills/",
+                // 项目级 + 三宿主探测：与 findmapskills 和 CDS 初始化脚本同一套约定。
+                // 装到用户主目录的话技能不跟项目走，团队 clone 下来少一半。
+                installCommand = SkillInstallContract.BuildInstallCommand(
+                    $"{baseUrl}/api/official-skills/{b.Key}/download", $"{b.Key}.zip"),
             };
         }).ToList();
 
@@ -189,11 +199,14 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("## 解压到哪");
         sb.AppendLine();
+        sb.AppendLine("装到**项目级**技能目录，不是用户主目录 —— 技能跟着项目的版本库走，团队每个人 clone 下来都有。");
+        sb.AppendLine();
         sb.AppendLine("```bash");
-        sb.AppendLine("unzip -o <本 zip> -d ~/.claude/skills/");
+        sb.AppendLine(SkillInstallContract.DetectSnippet);
+        sb.AppendLine("unzip -o <本 zip> -d \"$SKILLS_DIR\"");
         sb.AppendLine("```");
         sb.AppendLine();
-        sb.AppendLine($"解压后 `~/.claude/skills/` 下会多出 {entries.Count} 个技能目录，重开 Claude Code 即可识别。");
+        sb.AppendLine($"解压后该目录下会多出 {entries.Count} 个技能目录，重开 AI 编程工具即可识别。");
         sb.AppendLine();
         sb.AppendLine("## 下一步");
         sb.AppendLine();
@@ -218,7 +231,8 @@ public class OfficialSkillsController : ControllerBase
     /// <summary>把技能目录打成 zip：每个技能落在 `{key}/` 下，解压即 `~/.claude/skills/{key}/`。</summary>
     private static byte[] PackSkills(
         IReadOnlyList<OfficialSkillCatalog.SkillEntry> entries,
-        IReadOnlyDictionary<string, string>? extraFiles)
+        IReadOnlyDictionary<string, string>? extraFiles,
+        Func<string, string>? transform = null)
     {
         using var ms = new MemoryStream();
         using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
@@ -226,7 +240,7 @@ public class OfficialSkillsController : ControllerBase
             foreach (var packagedEntry in entries)
             {
                 foreach (var f in packagedEntry.Files)
-                    WriteEntry(zip, $"{packagedEntry.Key}/{f.Path}", f.Content);
+                    WriteEntry(zip, $"{packagedEntry.Key}/{f.Path}", transform?.Invoke(f.Content) ?? f.Content);
             }
             foreach (var kv in extraFiles ?? new Dictionary<string, string>())
                 WriteEntry(zip, kv.Key, kv.Value);

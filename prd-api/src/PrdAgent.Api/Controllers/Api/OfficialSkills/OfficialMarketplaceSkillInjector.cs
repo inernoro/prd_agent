@@ -8,7 +8,7 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 /// 把官方 findmapskills 技能包虚拟注入到海鲜市场列表。
 ///
 /// 为什么虚拟注入、不入库：
-/// - 内容随 `OfficialSkillTemplates.FindMapSkillsSkillMd` 走，部署即更新，
+/// - 内容随 `.claude/skills/findmapskills/` 走（经打包脚本进 catalog），部署即更新，
 ///   不用维护 DB 迁移、seeder、上传 COS 的一堆幺蛾子
 /// - 官方 ID 固定 `official-findmapskills`；用户上传的 ID 是 32 位 hex，不会撞
 /// - Fork 直接重定向到 `/api/official-skills/findmapskills/download`，
@@ -57,7 +57,7 @@ public static class OfficialMarketplaceSkillInjector
             roles = new List<string>(),
             zipUrl,
             zipSizeBytes = 0L,
-            originalFileName = "findmapskills.zip",
+            originalFileName = $"{OfficialSkillTemplates.FindMapSkillsKey}.zip",
             hasSkillMd = true,
             downloadCount = 0,
             favoriteCount = 0,
@@ -256,6 +256,9 @@ public static class OfficialMarketplaceSkillInjector
         }
         foreach (var e in OfficialSkillCatalog.All)
         {
+            // findmapskills 上面已按特判注入（它有专属的标题/描述/图标），
+            // catalog 里那条要跳过，否则市场列表会出现两条同名条目。
+            if (e.Key == OfficialSkillTemplates.FindMapSkillsKey) continue;
             if (CatalogMatches(e, keyword, tag, includeCatalogWhenUnfiltered))
                 list.Add(BuildCatalogDto(e, baseUrl));
         }
