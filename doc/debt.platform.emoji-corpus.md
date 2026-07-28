@@ -28,7 +28,7 @@ CLAUDE.md / AGENTS.md §0 禁止任何 emoji。但仓库**存量语料**里仍�
    （直接消除对外暴露 + 止住 Codex 复发）。
 
    **进度（2026-07-28，部分偿还）**：角色套装 PR 把 `acceptance-checklist` 的两个 reference 文件
-   de-emoji（`☐` → `[ ]`，对勾/叉号/红绿圆点/票据/灯泡 → 文案分级），并在
+   de-emoji（空心方框 U+2610 改为 `[ ]`，对勾/叉号/红绿圆点/票据/灯泡改为文案分级），并在
    `scripts/test-official-skill-bundles.mjs` 加了守卫——**但守卫只扫角色套装的成员技能**，
    不在套装里的上架技能尚未覆盖。新增套装会自然扩大守卫范围；要一次清完仍需专项排期。
    跟踪见 `doc/debt.skill.role-bundle.md` 的 D4。

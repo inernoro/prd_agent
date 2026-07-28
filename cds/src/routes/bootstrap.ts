@@ -293,8 +293,11 @@ if [ "$INCLUDE_CDS_SKILLS" = "1" ]; then
   done
   if [ -n "$got" ]; then
     tar -xzf "$cds_pack" -C "$TMP_DIR"
-    pack_skills=$(find "$TMP_DIR" -type d -name skills -maxdepth 3 | head -n 1)
-    if [ -n "$pack_skills" ]; then
+    # 直接用固定布局，不要 find -maxdepth：那是 GNU 扩展，macOS 的 BSD find 上
+    # 行为不一致，配合 set -e 会让脚本在解压成功后当场退出、一个技能都没装。
+    # 这个包的结构由 CDS 自己产出，恒为 skills/<key>/。
+    pack_skills="$TMP_DIR/skills"
+    if [ -d "$pack_skills" ]; then
       for d in "$pack_skills"/*/; do
         [ -d "$d" ] || continue
         install_skill "$d" "$(basename "$d")"
