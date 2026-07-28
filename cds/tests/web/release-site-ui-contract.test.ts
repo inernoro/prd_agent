@@ -120,17 +120,31 @@ describe('release site publishing UI contract', () => {
   });
 
   it('shows release run progress as business steps, not raw logs only', () => {
-    expect(branchListSource).toContain('连接服务器');
-    expect(branchListSource).toContain('cds-release-connect-ok');
-    expect(branchListSource).toContain('进入站点目录');
-    expect(branchListSource).toContain('执行 ${scriptOne.replace');
-    expect(branchListSource).toContain('执行 ${scriptTwo.replace');
-    expect(branchListSource).toContain('releaseScriptPhase(scriptOne)');
-    expect(releaseCenterSource).toContain('执行本机生产发布');
-    expect(releaseCenterSource).toContain("phaseSet.has('deploy')");
-    expect(branchListSource).toContain('检查上线地址');
-    expect(branchListSource).toContain('标记完成');
+    // 两个发布界面（发布中心、分支侧向导）的步骤条都由后端 run.progress 驱动：
+    // 不再从日志 phase 反推，也不再有「执行本机生产发布」这种按命令特判出的标签。
+    //
+    // 本用例此前断言的是**旧实现**——要求 BranchListPage 里出现
+    // `执行 ${scriptOne.replace` 与 `releaseScriptPhase(scriptOne)`，也就是
+    // 逐字要求那份带 './fast.sh' 兜底的拷贝存在。测试写成这样，等于把 bug 焊死：
+    // 谁去掉硬编码谁的 CI 就红。改成断言「走共享判定源」。
+    expect(releaseCenterSource).toContain('resolveReleaseSteps(');
+    expect(releaseCenterSource).toContain('第 {progress.currentIndex}/{progress.total} 步');
+    expect(releaseCenterSource).not.toContain("phaseSet.has('deploy')");
+
+    expect(branchListSource).toContain('resolveReleaseSteps(');
     expect(branchListSource).toContain('ReleaseRunStepList');
+    // 「第 N/M 步 · 标题」也要在分支侧出现，两个界面对同一次发布说同一句话。
+    expect(branchListSource).toContain('releaseCurrentStepText(');
+    expect(branchListSource).not.toContain('releaseStepsForRun(');
+
+    // 步骤标题的实际文案落在共享渲染源的退化骨架与后端计划模板里。
+    const stepsLib = fs.readFileSync(
+      path.resolve(process.cwd(), '../cds/web/src/lib/releaseSteps.ts'),
+      'utf8',
+    );
+    for (const label of ['连接服务器', '进入站点目录', '执行发布命令', '检查上线地址', '标记完成']) {
+      expect(stepsLib).toContain(label);
+    }
   });
 
   it('splits the branch release dialog into wizard stages so live status is never buried', () => {

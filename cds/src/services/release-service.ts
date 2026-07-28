@@ -1,18 +1,64 @@
 import crypto from 'node:crypto';
 import type { StateService } from './state.js';
-import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleaseRun, ReleaseRunStatus, ReleaseTarget, RemoteHost } from '../types.js';
+import type { BranchEntry, DeploymentFailure, ReleaseArtifact, ReleaseExecutionMode, ReleasePlan, ReleasePreflightCheck, ReleasePreflightRecord, ReleaseRun, ReleaseRunProgress, ReleaseRunStatus, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
 import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
 import {
+  advanceReleaseSteps,
+  buildReleaseRunProgress,
+  buildRollbackRunProgress,
+  completeReleaseSteps,
+  extractReleaseScriptPaths,
+  failReleaseSteps,
+  planDeployPhases,
+} from './release-steps.js';
+import {
   buildReleaseExecution,
   buildStrategyPreflightCommand,
   effectiveReleaseStrategy,
   normalizeRepositoryIdentity,
+  projectIdentityFingerprint,
   releaseProjectIdentity,
   validateReleaseStrategy,
 } from './release-strategy.js';
+
+import {
+  canReuseReleasePreflight,
+  isReleaseRunInFlight,
+  isReleaseRunTerminal,
+  isSuccessfulReleaseRun,
+  RELEASE_PREFLIGHT_REUSE_TTL_MS,
+  type ReleasePreflightReuseKey,
+} from './release-retention.js';
+
+import { releaseTargetConfigFingerprint } from './release-target-history.js';
+import { acquireReleaseTargetLock, peekReleaseTargetLock } from './release-target-lock.js';
+import {
+  buildReleaseInventoryCommand,
+  buildReleaseReclaimCommand,
+  computeReleaseArtifactRetentionPlan,
+  detectReleaseRemoteDrift,
+  isSameRemoteDirectory,
+  parseRemoteReclaimOutcome,
+  parseRemoteReleaseInventory,
+  type ReleaseRemoteDrift,
+  type RemoteReleaseInventory,
+} from './release-artifact-retention.js';
+
+// 步骤/脚本判定的唯一定义在 release-steps.ts；这里只做转发，保住存量 import 路径。
+// 谁都不许在本文件里再写第二份 releaseScriptPhase —— 三份拷贝各自漂移正是这次要根治的病。
+export {
+  extractReleaseScriptPaths,
+  isDefaultScriptChain,
+  planDeployPhases,
+  releaseScriptPhase,
+} from './release-steps.js';
+
+// 终态 / 在途判定搬到 release-retention.ts —— 保留策略必须知道「谁还在途」，
+// 而 state 层不能反向依赖本文件（会成环）。这里只转发，保住存量 import 路径。
+export { isReleaseRunInFlight, isReleaseRunTerminal } from './release-retention.js';
 
 type Ssh2Client = {
   connect(opts: Ssh2ConnectOptions): void;
@@ -35,13 +81,8 @@ interface Ssh2ConnectOptions {
   readyTimeout?: number;
 }
 
-export interface ReleasePreflightCheck {
-  id: string;
-  label: string;
-  status: 'pass' | 'warn' | 'fail';
-  message: string;
-  blocking: boolean;
-}
+// 结论结构的 SSOT 在 types.ts（落库要用同一份），这里转发保住存量 import 路径。
+export type { ReleasePreflightCheck } from '../types.js';
 
 export interface ReleasePreflightResult {
   ok: boolean;
@@ -50,6 +91,13 @@ export interface ReleasePreflightResult {
   target?: ReleaseTarget;
   plan?: ReleasePlan;
   previousRelease?: ReleaseRun;
+  /**
+   * 本次结论的落库 id。前端把它随发布请求带回来，就能证明「用户看的那份」
+   * 与「放行发布的那份」是同一份；不带也能工作（服务端按 key 再找一次）。
+   */
+  preflightId?: string;
+  /** true = 本次结论直接复用了落库记录，没有重新打 SSH / HTTP 探测。 */
+  reused?: boolean;
 }
 
 export interface ReleaseStartInput {
@@ -57,6 +105,35 @@ export interface ReleaseStartInput {
   targetId: string;
   operator?: string;
   previewUrl?: string;
+  /** 向导那次预检的落库 id。缺省时服务端按 (分支,目标,预览地址,操作人) 再找一次。 */
+  preflightId?: string;
+}
+
+/** 一次远端现场只读盘点的结果。inventory 缺省 = 读不回来（readError 说明原因）。 */
+export interface ReleaseRemoteStateResult {
+  targetId: string;
+  projectId: string;
+  mode: ReleaseExecutionMode;
+  inventory?: RemoteReleaseInventory;
+  drift: ReleaseRemoteDrift;
+  readError?: string;
+  readAt: string;
+}
+
+export interface ReleaseArtifactReclaimResult {
+  targetId: string;
+  projectId: string;
+  mode: ReleaseExecutionMode;
+  drift: ReleaseRemoteDrift;
+  removedWorktrees: string[];
+  removedVersions: string[];
+  keptReasons: Record<string, string>;
+  /** 满足条件却被单轮上限截断的数量。不报出去，「跑过了」会被读成「清干净了」。 */
+  deferred: number;
+  /** 整轮被安全边界拦下的原因；有值时 removed* 恒为空。 */
+  skippedReason?: string;
+  readError?: string;
+  dryRun: boolean;
 }
 
 export interface ReleaseHealthProbe {
@@ -99,22 +176,6 @@ export const RELEASE_EXEC_TIMEOUT_MS = 30 * 60_000;
  */
 export const RELEASE_PREFLIGHT_EXEC_TIMEOUT_MS = 60_000;
 
-/**
- * 全量状态 → 是否终态。写成穷尽式 Record（同 deploy-drain.ts 的 RUN_STATUS_TERMINAL）：
- * 以后新增 ReleaseRunStatus 时这里少一个键 TS 直接报错，不会再有「新状态被静默
- * 当成终态、于是在途守卫放行两个并发发布」这种漏项。
- */
-const RELEASE_STATUS_TERMINAL: Record<ReleaseRunStatus, boolean> = {
-  queued: false,
-  running: false,
-  healthchecking: false,
-  rollback_running: false,
-  success: true,
-  failed: true,
-  rollback_success: true,
-  rollback_failed: true,
-};
-
 /** 合法状态转移表。照抄 deployment-run.ts 的 ALLOWED_TRANSITIONS 写法。 */
 const ALLOWED_RELEASE_TRANSITIONS: Record<ReleaseRunStatus, ReadonlySet<ReleaseRunStatus>> = {
   queued: new Set<ReleaseRunStatus>(['running', 'failed']),
@@ -127,10 +188,6 @@ const ALLOWED_RELEASE_TRANSITIONS: Record<ReleaseRunStatus, ReadonlySet<ReleaseR
   rollback_failed: new Set<ReleaseRunStatus>(),
 };
 
-export function isReleaseRunTerminal(status: ReleaseRunStatus): boolean {
-  return RELEASE_STATUS_TERMINAL[status] === true;
-}
-
 export function canTransitionReleaseRun(from: ReleaseRunStatus, to: ReleaseRunStatus): boolean {
   return ALLOWED_RELEASE_TRANSITIONS[from]?.has(to) === true;
 }
@@ -139,11 +196,6 @@ export function assertReleaseRunTransition(from: ReleaseRunStatus, to: ReleaseRu
   if (!canTransitionReleaseRun(from, to)) {
     throw new Error(`Invalid ReleaseRun transition: ${from} -> ${to}`);
   }
-}
-
-/** 在途 = 非终态。在途守卫、排空判定都从终态表取反推导，不再手写字面量数组。 */
-export function isReleaseRunInFlight(run: Pick<ReleaseRun, 'status'>): boolean {
-  return !isReleaseRunTerminal(run.status);
 }
 
 /**
@@ -298,6 +350,12 @@ export class ReleaseService {
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
   }
 
+  /**
+   * 计划模板。steps 的每个 id 必须逐一对上 runRelease 真实 emit 的 phase：
+   * connect → prepare → plan → deploy(可展开成多步) → healthcheck → record。
+   * 旧模板漏了 prepare / plan（ssh-script 更是连 prepare 都没有），执行器发了 6 个 phase、
+   * 模板只描述 4 步，正是「plan.steps 定义了却没人敢读」的根因。
+   */
   ensureDefaultPlans(projectId: string): ReleasePlan[] {
     const existing = this.stateService.getReleasePlans(projectId);
     const definitions: Array<Pick<ReleasePlan, 'id' | 'name' | 'template' | 'rollbackStrategy' | 'steps'>> = [
@@ -308,6 +366,8 @@ export class ReleaseService {
         rollbackStrategy: 'command',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
           { id: 'deploy', title: '执行项目发布命令', kind: 'ssh' },
           { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
           { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
@@ -320,8 +380,9 @@ export class ReleaseService {
         rollbackStrategy: 'previous-release',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
-          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
-          { id: 'deploy', title: '生成并执行 Compose 发布脚本', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
+          { id: 'deploy', title: '建立隔离 worktree 并执行 Compose 发布脚本', kind: 'ssh' },
           { id: 'healthcheck', title: '验证最终入口', kind: 'healthcheck' },
           { id: 'record', title: '记录版本与脚本哈希', kind: 'record' },
         ],
@@ -333,7 +394,8 @@ export class ReleaseService {
         rollbackStrategy: 'previous-release',
         steps: [
           { id: 'connect', title: '连接目标', kind: 'ssh' },
-          { id: 'prepare', title: '建立 commit 隔离 worktree', kind: 'ssh' },
+          { id: 'prepare', title: '进入站点目录', kind: 'ssh' },
+          { id: 'plan', title: '核对执行脚本哈希', kind: 'record' },
           { id: 'deploy', title: '构建并离线验证静态产物', kind: 'ssh' },
           { id: 'healthcheck', title: '验证页面与入口资源', kind: 'healthcheck' },
           { id: 'record', title: '记录 current、previous 与脚本哈希', kind: 'record' },
@@ -341,13 +403,18 @@ export class ReleaseService {
       },
     ];
     for (const definition of definitions) {
-      if (existing.some((plan) => plan.id === definition.id)) continue;
+      const current = existing.find((plan) => plan.id === definition.id);
+      // 存量项目在阶段二之前已经 seed 过残缺的 steps，而 plan 没有任何编辑入口，
+      // 「已存在就跳过」等于让老项目永远拿不到对齐后的步骤表。步骤不一致时就地纠正，
+      // createdAt 保留，不伪造成新计划。
+      if (current && JSON.stringify(current.steps) === JSON.stringify(definition.steps)) continue;
       this.stateService.upsertReleasePlan({
+        ...(current || {}),
         ...definition,
         projectId,
         targetType: 'ssh',
         failureStrategy: 'stop',
-        createdAt: new Date().toISOString(),
+        createdAt: current?.createdAt || new Date().toISOString(),
       });
     }
     return this.stateService.getReleasePlans(projectId);
@@ -570,7 +637,7 @@ export class ReleaseService {
     const artifact = branch && commitSha
       ? buildArtifact(branch, commitSha, previewUrl)
       : undefined;
-    return {
+    const result: ReleasePreflightResult = {
       ok: checks.every((check) => !check.blocking || check.status !== 'fail'),
       checks,
       artifact,
@@ -578,10 +645,100 @@ export class ReleaseService {
       plan,
       previousRelease,
     };
+    // 落库放在返回之前：这一份就是待会儿真正放行发布的那一份，不能只是发给前端看看。
+    const record: ReleasePreflightRecord = {
+      id: `pfl_${crypto.randomBytes(8).toString('hex')}`,
+      projectId,
+      branchId: input.branchId,
+      targetId: input.targetId,
+      previewUrl,
+      operator: input.operator,
+      ok: result.ok,
+      checks,
+      artifact,
+      artifactCommitSha: commitSha || undefined,
+      // 结论只对「当时那个配置的目标」成立。指纹一变就是另一台机器 / 另一套脚本。
+      targetConfigFingerprint: releaseTargetConfigFingerprint(target),
+      // 预检里的 project-identity / remote-repository 两项验的是**项目**的仓库身份，
+      // 不是目标。项目改了 gitRepoUrl 而目标没动时，只比目标指纹会漏（Codex P1）。
+      projectIdentityFingerprint: projectIdentityFingerprint(project),
+      planId: plan?.id,
+      previousReleaseId: previousRelease?.releaseId,
+      createdAt: this.nowIso(),
+    };
+    this.stateService.addReleasePreflight(record);
+    return { ...result, preflightId: record.id };
+  }
+
+  /**
+   * 复用落库结论，实在没有才重跑。
+   *
+   * 事故值：`startRelease` 第一句曾经是无条件 `await this.preflight(input)` ——
+   * 用户在向导里点完「确认发布」，SSH 连通性 / 远端仓库身份 / 脚本可执行 / 健康探测
+   * 会被**完整地再打一遍**，两轮探测彼此独立。真正放行发布的是第二份结论，
+   * 而用户据以决策的是第一份；两份不一致时用户完全无从察觉。
+   */
+  private async resolvePreflight(input: ReleaseStartInput): Promise<ReleasePreflightResult> {
+    return this.findReusablePreflight(input) ?? this.preflight(input);
+  }
+
+  /**
+   * 找一份还能用的落库结论并还原成可执行的 ReleasePreflightResult。
+   *
+   * 复用只跳过**探测**，不跳过判定：target / plan / branch 全部从当前状态重新取，
+   * 目标在这 2 分钟里被禁用、归档，或分支不再 running，一律回落重跑而不是盲信旧结论。
+   */
+  private findReusablePreflight(input: ReleaseStartInput): ReleasePreflightResult | undefined {
+    const branch = this.stateService.getBranch(input.branchId);
+    const key: ReleasePreflightReuseKey = {
+      branchId: input.branchId,
+      targetId: input.targetId,
+      previewUrl: input.previewUrl,
+      operator: input.operator,
+      commitSha: resolveCommitSha(branch),
+      // 取**当前**目标配置的指纹与落库那份比：运维在复用窗口里改了 host / 凭据 /
+      // appPath / 发布命令 / healthcheckUrl，这里就对不上，自动回落重跑（Codex P1）。
+      targetConfigFingerprint: releaseTargetConfigFingerprint(
+        this.stateService.getReleaseTarget(input.targetId),
+      ),
+      // 同理取**当前**项目身份：`PUT /projects/:id` 改掉 gitRepoUrl 后，目标指纹不变，
+      // 而复用路径不会重跑 project-identity / remote-repository —— 一次全新预检本该
+      // 拒绝的仓库身份不一致会被直接放行。
+      projectIdentityFingerprint: projectIdentityFingerprint(
+        branch ? this.stateService.getProject(branch.projectId) : undefined,
+      ),
+    };
+    const nowMs = this.now().getTime();
+    const candidates = input.preflightId
+      ? [this.stateService.getReleasePreflight(input.preflightId)].filter(Boolean) as ReleasePreflightRecord[]
+      : this.stateService.getReleasePreflights({ targetId: input.targetId, branchId: input.branchId });
+    const record = candidates.find((item) => canReuseReleasePreflight(item, key, nowMs, RELEASE_PREFLIGHT_REUSE_TTL_MS));
+    if (!record) return undefined;
+
+    const target = this.stateService.getReleaseTarget(record.targetId);
+    const plan = record.planId ? this.stateService.getReleasePlan(record.planId) : undefined;
+    if (!record.artifact || !target || !plan) return undefined;
+    if (!target.isEnabled || target.lifecycle === 'archived' || target.type !== 'ssh' || !target.ssh) return undefined;
+    if (!branch || branch.status !== 'running' || branch.projectId !== target.projectId) return undefined;
+
+    return {
+      ok: true,
+      checks: record.checks,
+      artifact: record.artifact,
+      target,
+      plan,
+      // 「上一成功版本」必须**现取**，不能还原落库时那一份：若 TTL 内同目标另一条
+      // 发布刚成功，旧值会让新 run 跳过那个最新版本 —— 后续健康检查失败时自动恢复
+      // 会把更旧的版本推上生产，回滚链也跟着断（Codex P1）。
+      // 预检结论里 rollback-version 那条是非阻塞信息项，刷新它不改变放行判定。
+      previousRelease: this.stateService.getLatestSuccessfulReleaseRun(target.id),
+      preflightId: record.id,
+      reused: true,
+    };
   }
 
   async startRelease(input: ReleaseStartInput): Promise<ReleaseRun> {
-    const preflight = await this.preflight(input);
+    const preflight = await this.resolvePreflight(input);
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
@@ -607,6 +764,7 @@ export class ReleaseService {
       startedAt,
       heartbeatAt: startedAt,
       operator: input.operator,
+      preflightId: preflight.preflightId,
       previousReleaseId: preflight.previousRelease?.releaseId,
       logs: [],
       seq: 0,
@@ -618,8 +776,21 @@ export class ReleaseService {
       summary: execution.summary,
       strategy: effectiveReleaseStrategy(preflight.target),
     };
+    // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
+    run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
     this.stateService.addReleaseRun(run);
     this.emitLog(releaseId, 'info', 'release queued', 'queued');
+    // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
+    if (preflight.preflightId) {
+      this.emitLog(
+        releaseId,
+        'info',
+        preflight.reused
+          ? `复用发布前检查结论 ${preflight.preflightId}（向导那次的同一份）`
+          : `发布前检查结论 ${preflight.preflightId}`,
+        'queued',
+      );
+    }
     void this.execute(releaseId, () => this.runRelease(releaseId), 'failed');
     return this.stateService.getReleaseRun(releaseId)!;
   }
@@ -638,7 +809,9 @@ export class ReleaseService {
         : this.stateService.getLatestSuccessfulReleaseRun(current.targetId, current.releaseId);
     if (!previous) throw new Error('没有可回滚的上一版本');
     if (previous.targetId !== current.targetId) throw new Error('回滚目标版本不属于当前发布目标');
-    if (!['success', 'rollback_success'].includes(previous.status)) throw new Error('只能回滚到成功版本');
+    // 与保留策略 / 版本下拉共用同一个成功判定：这三处一旦分裂，就会出现
+    // 「下拉里看得见、点下去说不是成功版本」或「保留策略以为没用而删掉」的错位。
+    if (!isSuccessfulReleaseRun(previous)) throw new Error('只能回滚到成功版本');
 
     // 回滚同样是往目标机器跑 SSH 写操作，必须过与发布同一道并发闸：
     // 此前这里一道闸都没有，取消后紧接着回滚会和尚未退出的老执行体并发写
@@ -674,10 +847,16 @@ export class ReleaseService {
       summary: `回滚到 ${previous.releaseId}: ${rollbackExecution.summary}`,
       strategy: rollbackStrategy,
     };
-    this.stateService.addReleaseRun(run);
-    const strategy = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand)
-      ? 'rollbackCommand'
-      : '重新发布历史版本';
+    const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
+    run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
+    const persisted = this.stateService.addReleaseRun(run);
+    const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
+    // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
+    // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件
+    // 是 release.rolled-back / release.failed，「正在回滚」这个状态根本观测不到
+    // （Codex P2）。这里补发一次 release.status，走的仍是同一条投影链路
+    // （release-events 按 status 映射 + 去重），不另造事件类型。
+    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId: rollbackId, run: persisted } });
     this.emitLog(rollbackId, 'info', `rollback queued to ${previous.releaseId} via ${strategy}`, 'rollback');
     void this.execute(rollbackId, () => this.runRollback(rollbackId, target, previous), 'rollback_failed');
     return this.stateService.getReleaseRun(rollbackId)!;
@@ -800,6 +979,175 @@ export class ReleaseService {
   }
 
   /**
+   * 读回远端发布现场（只读，一次 SSH 往返同时拿盘点与漂移输入）。
+   *
+   * 三条纪律：
+   *  - **只读**：不下发任何写命令。漂移只告警不自愈——线上被人手工改过时自动纠正
+   *    等于毁灭现场证据（计划第六节）。
+   *  - **不传 releaseId**：走预检那档 60 秒短超时，不打 run 心跳、不写 run 日志，
+   *    避免一条运维读命令污染某次发布的日志流。
+   *  - **安全失败**：SSH 不通 / 目录不存在一律收敛成 unknown 并把原因带出来，
+   *    绝不抛给调用方——它跑在定时器或 HTTP 请求里，炸出去会拖累别的目标。
+   */
+  async readRemoteReleaseState(target: ReleaseTarget): Promise<ReleaseRemoteStateResult> {
+    const strategy = effectiveReleaseStrategy(target);
+    const mode = strategy.mode;
+    const runs = this.stateService.getReleaseRuns({ targetId: target.id });
+    const expectedReleaseId = runs.find(isSuccessfulReleaseRun)?.releaseId || '';
+    const previousByReleaseId: Record<string, string | undefined> = {};
+    for (const run of runs) previousByReleaseId[run.releaseId] = run.previousReleaseId;
+
+    const command = buildReleaseInventoryCommand(target, strategy);
+    let inventory: RemoteReleaseInventory | undefined;
+    let readError: string | undefined;
+    if (command) {
+      try {
+        inventory = parseRemoteReleaseInventory(await this.sshExec(target, command));
+      } catch (err) {
+        readError = errorText(err);
+      }
+    }
+    const drift = detectReleaseRemoteDrift({
+      mode,
+      inventory,
+      readError,
+      expectedReleaseId,
+      knownReleaseIds: runs.map((run) => run.releaseId),
+      previousByReleaseId,
+    });
+    return { targetId: target.id, projectId: target.projectId, mode, inventory, drift, readError, readAt: this.nowIso() };
+  }
+
+  /**
+   * 回收远端发布产物（worktree 与 static 成品）。
+   *
+   * 顺序不可颠倒：**先只读盘点 + 判漂移，再算计划，最后才下发唯一一条删除命令**。
+   * 反过来（先按台账算再去删）就会砍掉 current —— 探测失败后的自动恢复目录
+   * `rel_xxxx-auto-restore` 从未进过台账，却完全可能正是线上正在服务的那一份。
+   *
+   * 安全边界全部落在 computeReleaseArtifactRetentionPlan 这个纯函数里（便于回归断言）；
+   * 这里只补一条运行时的：在途判定走**同一道并发闸** assertTargetFree，且必须在盘点
+   * 之后重新问一次（盘点期间可能有人点了发布）。回收与发布/回滚一样会对同一台机器
+   * 写同一批目录，绕开那道闸自己内联一份判定，正是「只补一边」的老病。
+   */
+  async reclaimRemoteReleaseArtifacts(
+    target: ReleaseTarget,
+    options: { maxRemovals?: number; dryRun?: boolean } = {},
+  ): Promise<ReleaseArtifactReclaimResult> {
+    // 锁必须在**盘点之前**拿、在删除之后才放：盘点与删除之间的那段窗口正是
+    // 「检查通过了、发布随后启动、删除才真正执行」的事故形状（Codex P2）。
+    // 拿不到就整轮跳过，不排队 —— 回收是周期性的，等下一轮就行。
+    const releaseLock = acquireReleaseTargetLock(target.id, '产物回收');
+    if (!releaseLock) {
+      const holder = peekReleaseTargetLock(target.id);
+      return {
+        targetId: target.id,
+        projectId: target.projectId,
+        mode: effectiveReleaseStrategy(target).mode,
+        drift: { status: 'unknown', message: '本轮跳过回收：该目标正被占用' },
+        removedWorktrees: [],
+        removedVersions: [],
+        keptReasons: {},
+        deferred: 0,
+        skippedReason: `该发布目标正在${holder?.kind || '其他操作'}，本轮跳过回收`,
+        dryRun: options.dryRun === true,
+      };
+    }
+    try {
+      return await this.reclaimRemoteReleaseArtifactsLocked(target, options);
+    } finally {
+      releaseLock();
+    }
+  }
+
+  private async reclaimRemoteReleaseArtifactsLocked(
+    target: ReleaseTarget,
+    options: { maxRemovals?: number; dryRun?: boolean } = {},
+  ): Promise<ReleaseArtifactReclaimResult> {
+    const state = await this.readRemoteReleaseState(target);
+    const strategy = effectiveReleaseStrategy(target);
+    const runs = this.stateService.getReleaseRuns({ targetId: target.id });
+    let busyReason: string | undefined;
+    try {
+      this.assertTargetFree(target.id, '产物回收', { holdsTargetLock: true });
+    } catch (err) {
+      busyReason = errorText(err);
+    }
+    const plan = computeReleaseArtifactRetentionPlan({
+      mode: state.mode,
+      inventory: state.inventory,
+      ledgerRuns: runs,
+      hasInFlightRun: Boolean(busyReason),
+      drift: state.drift.status,
+      maxRemovals: options.maxRemovals,
+      publicDirectoryShared: this.isPublicDirectoryShared(target, strategy),
+    });
+
+    const base: ReleaseArtifactReclaimResult = {
+      targetId: target.id,
+      projectId: target.projectId,
+      mode: state.mode,
+      drift: state.drift,
+      removedWorktrees: [],
+      removedVersions: [],
+      keptReasons: plan.keptReasons,
+      deferred: plan.deferred,
+      skippedReason: plan.skippedReason,
+      readError: state.readError,
+      dryRun: options.dryRun === true,
+    };
+    const command = buildReleaseReclaimCommand(target, strategy, plan);
+    if (!command || options.dryRun) {
+      return {
+        ...base,
+        // dry-run 要让调用方看见「本来会删哪些」，否则预演毫无意义。
+        ...(options.dryRun ? { removedWorktrees: plan.removeWorktrees, removedVersions: plan.removeVersions } : {}),
+      };
+    }
+    try {
+      const output = await this.sshExec(target, command);
+      // 只认远端复核过「目录真的没了」的那些。把计划清单当结果返回会在删除失败时
+      // 产出假证据：报告已回收、盘上还在、磁盘继续涨（Codex P2）。
+      const outcome = parseRemoteReclaimOutcome(output);
+      const failed = [...outcome.failedWorktrees, ...outcome.failedVersions];
+      return {
+        ...base,
+        removedWorktrees: outcome.removedWorktrees,
+        removedVersions: outcome.removedVersions,
+        ...(failed.length > 0
+          ? { skippedReason: `${failed.length} 份产物删除失败仍留在盘上（${failed.slice(0, 5).join('、')}${failed.length > 5 ? ' 等' : ''}），下一轮重试` }
+          : {}),
+      };
+    } catch (err) {
+      // 删除失败不算事故：产物还在，下一轮再来。绝不能把异常抛出去打断整轮巡检。
+      return { ...base, skippedReason: `回收命令执行失败：${errorText(err)}` };
+    }
+  }
+
+  /**
+   * generated-static 的 publicDirectory 是否与同 CDS 内其他启用目标共用。
+   *
+   * worktree 路径带 targetId 天然隔离，`.releases` 不带 —— 两个目标配了同一个
+   * publicDirectory 时，各自扫出的成品目录里混着对方的版本，互删就把对方的现场清了。
+   * 共用时退化为「只删本目标台账里的 id」（判定在纯函数侧）。
+   */
+  private isPublicDirectoryShared(target: ReleaseTarget, strategy: ReleaseStrategy): boolean {
+    const publicDirectory = (strategy.publicDirectory || '').trim();
+    if (strategy.mode !== 'generated-static' || !publicDirectory) return false;
+    return this.stateService.getReleaseTargets().some((candidate) => {
+      if (candidate.id === target.id || !candidate.isEnabled) return false;
+      // 判据是「同一台机器上的同一个目录」：只比路径会把两台服务器上同名的
+      // /var/www/app 判成共用（回收从此不敢删，磁盘无界增长），不规范化路径又会把
+      // /opt/site 与 /opt/site/ 判成不共用（去删对方目标的生产产物）。
+      // 两个方向都栽过，判据统一走 release-artifact-retention 那一份。
+      return isSameRemoteDirectory(
+        { host: candidate.ssh?.host, port: candidate.ssh?.port, path: effectiveReleaseStrategy(candidate).publicDirectory || '' },
+        { host: target.ssh?.host, port: target.ssh?.port, path: publicDirectory },
+      );
+    });
+  }
+
+  /**
    * 统一的执行体包装：登记在途句柄（供取消/收割中止）、兜住异常、结束后摘牌。
    * 句柄必须在返回调用方之前**同步**登记，否则「点了发布立刻点取消」会取消不掉。
    */
@@ -813,7 +1161,16 @@ export class ReleaseService {
    *   - run 状态非终态 = 明面上还在跑；
    *   - 执行体未退出 = run 已终态（比如刚被取消）但 SSH/探测还在飞。
    */
-  private assertTargetFree(targetId: string, action: '发布' | '回滚'): void {
+  /**
+   * @param options.holdsTargetLock 调用方**自己**已经持有该目标的锁（回收路径）。
+   *   不给这个出口就会自锁：回收先 acquire、再走本闸，本闸看见自己那把锁判「目标忙」，
+   *   于是回收永远跳过自己。既有用例第一时间抓到，值得留个显式参数而不是靠巧合。
+   */
+  private assertTargetFree(
+    targetId: string,
+    action: '发布' | '回滚' | '产物回收',
+    options: { holdsTargetLock?: boolean } = {},
+  ): void {
     const inFlight = this.stateService
       .getReleaseRuns({ targetId })
       .find((r) => isReleaseRunInFlight(r));
@@ -823,6 +1180,13 @@ export class ReleaseService {
     const settling = this.findSettlingExecution(targetId);
     if (settling) {
       throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起${action}`);
+    }
+    // 产物回收不建 run、不留台账痕迹，上面两条判据都看不见它；而它正在远端跑
+    // `git worktree remove` / `prune` / `rm -rf`，与发布抢同一个 git 仓库和同一批目录。
+    // 这把锁是进程级的，因此巡检器与路由各自 new 的 ReleaseService 也拦得住（debt #6）。
+    const lock = options.holdsTargetLock ? null : peekReleaseTargetLock(targetId);
+    if (lock) {
+      throw new Error(`该发布目标正在${lock.kind}（远端目录正在变更），请稍候再发起${action}`);
     }
   }
 
@@ -860,6 +1224,9 @@ export class ReleaseService {
       })
       .finally(() => {
         if (this.inFlight.get(releaseId) === handle) this.inFlight.delete(releaseId);
+        // 日志是攒批落盘的。终态那次 patchStatus 通常已经把尾巴带出去，但取消 / 收尾
+        // 异常等路径未必走到状态迁移，这里补一刀，保证发布结束时内存里不留未落盘的行。
+        try { this.stateService.flushPendingReleaseLogs(); } catch { /* 收尾落盘失败不该反过来炸掉发布 */ }
       });
   }
 
@@ -869,25 +1236,27 @@ export class ReleaseService {
     const target = this.stateService.getReleaseTarget(run.targetId);
     if (!target?.ssh) throw new Error('SSH target not found');
     this.patchStatus(releaseId, 'running');
-    this.emitLog(releaseId, 'info', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`, 'connect');
+    this.beginStep(releaseId, 'connect', `连接目标 ${target.ssh.user}@${target.ssh.host}:${target.ssh.port}`);
     await this.sshExec(target, 'echo cds-release-connect-ok', releaseId, 'connect');
-    this.emitLog(releaseId, 'info', `进入站点目录 ${target.ssh.appPath || '.'}`, 'prepare');
+    this.beginStep(releaseId, 'prepare', `进入站点目录 ${target.ssh.appPath || '.'}`);
     const executionTarget = run.executionSnapshot?.strategy ? { ...target, strategy: run.executionSnapshot.strategy } : target;
     const execution = buildReleaseExecution(executionTarget, run);
     if (run.executionSnapshot && execution.scriptSha256 !== run.executionSnapshot.scriptSha256) {
       throw new Error('发布执行脚本与预检快照不一致，已拒绝执行');
     }
-    this.emitLog(releaseId, 'info', `${execution.summary} · sha256=${execution.scriptSha256}`, 'plan');
+    this.beginStep(releaseId, 'plan', `${execution.summary} · sha256=${execution.scriptSha256}`);
+    this.finishStep(releaseId, 'plan');
     await this.runDeployCommand(releaseId, executionTarget, run, execution.command);
     this.patchStatus(releaseId, 'healthchecking');
-    this.emitLog(releaseId, 'info', `健康检查 ${target.ssh.healthcheckUrl}`, 'healthcheck');
+    this.beginStep(releaseId, 'healthcheck', `健康检查 ${target.ssh.healthcheckUrl}`);
     try {
       await probeReleaseSurface(target.ssh.healthcheckUrl, execution.mode);
     } catch (err) {
       await this.restorePreviousAfterFailedProbe(releaseId, target, run, err);
       throw err;
     }
-    this.emitLog(releaseId, 'info', '标记成功', 'record');
+    this.finishStep(releaseId, 'healthcheck');
+    this.beginStep(releaseId, 'record', '标记成功');
     this.patchStatus(releaseId, 'success');
   }
 
@@ -899,19 +1268,22 @@ export class ReleaseService {
     const rollbackCommand = ssh.rollbackCommand?.trim();
     const rollbackMode = rollbackRun.executionSnapshot?.mode || effectiveReleaseStrategy(target).mode;
     if (shouldUseCustomRollbackCommand(rollbackMode, rollbackCommand)) {
-      this.emitLog(releaseId, 'info', `执行回滚命令，目标版本 ${previous.releaseId}`, 'rollback');
+      this.beginStep(releaseId, 'rollback', `执行回滚命令，目标版本 ${previous.releaseId}`);
       await this.sshExec(target, buildReleaseCommand(target, rollbackRun, rollbackCommand), releaseId, 'rollback');
+      this.finishStep(releaseId, 'rollback');
     } else {
       const executionTarget = rollbackRun.executionSnapshot?.strategy
         ? { ...target, strategy: rollbackRun.executionSnapshot.strategy }
         : target;
       const execution = buildReleaseExecution(executionTarget, rollbackRun);
-      this.emitLog(releaseId, 'info', `重新发布历史成功版本 ${previous.releaseId}`, 'rollback');
+      this.beginStep(releaseId, 'rollback', `重新发布历史成功版本 ${previous.releaseId}`);
+      this.finishStep(releaseId, 'rollback');
       await this.runDeployCommand(releaseId, executionTarget, rollbackRun, execution.command);
     }
-    this.emitLog(releaseId, 'info', `健康检查 ${ssh.healthcheckUrl}`, 'healthcheck');
+    this.beginStep(releaseId, 'healthcheck', `健康检查 ${ssh.healthcheckUrl}`);
     await probeReleaseSurface(ssh.healthcheckUrl, rollbackMode);
-    this.emitLog(releaseId, 'info', '回滚成功', 'record');
+    this.finishStep(releaseId, 'healthcheck');
+    this.beginStep(releaseId, 'record', '回滚成功');
     this.patchStatus(releaseId, 'rollback_success');
   }
 
@@ -927,7 +1299,10 @@ export class ReleaseService {
     const run = this.stateService.getReleaseRun(releaseId);
     if (!run || isReleaseRunTerminal(run.status)) return;
     const message = errorText(err);
-    const phase = run.logs[run.logs.length - 1]?.phase || 'error';
+    // 失败步以步骤快照的 currentStepId 为准。旧口径取「最后一条日志的 phase」，
+    // 而 SSH 的 stderr 是逐行当日志写进去的——最后一行常常是下一阶段的噪声，
+    // 归因经常挂到不相干的 phase 上。存量 run 没有快照时才回落到日志 phase。
+    const phase = run.progress?.currentStepId || run.logs[run.logs.length - 1]?.phase || 'error';
     this.emitLog(releaseId, 'error', message, 'error');
     const nextStatus = canTransitionReleaseRun(run.status, status)
       ? status
@@ -984,10 +1359,25 @@ export class ReleaseService {
     };
     const executionTarget = { ...target, strategy };
     const execution = buildReleaseExecution(executionTarget, restoreRun, { preservePrevious: true });
+    // 探测失败时刻 = 故障窗口的起点。必须单独落一个字段，不能用 run 的 finishedAt 顶替：
+    // 本函数跑在 failRun **之前**（调用方是 `catch { await restore...; throw err; }`），
+    // finishedAt 要等异常冒泡到 failRun 才写，因此恒晚于自动恢复完成的时刻。
+    // 上一版修复拿 autoRestoredAt 与 finishedAt 比大小，条件恒为 false，整条修复是空转
+    // （Codex P2 第二轮）。而当时的用例之所以是绿的，是因为它手写了一个现实中
+    // 不可能出现的时间顺序 —— 编码了假设而不是真实时序。
+    const autoRestoreStartedAt = new Date().toISOString();
+    this.stateService.patchReleaseRun(releaseId, { autoRestoreStartedAt });
     this.emitLog(releaseId, 'warn', `最终入口探测失败，正在自动恢复 ${previous.releaseId}: ${(probeError as Error).message}`, 'auto-restore');
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
       await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
+      // 自动恢复此前**只写日志**：没有 run、没有时间戳，原 run 仍是 failed。
+      // 于是 DORA 的恢复配对在这条失败之后找不到任何恢复者，把它算成「进行中故障」
+      // 一直挂到下一次成功发布为止 —— 恢复时长 p50 与 ongoingCount 双双失真，
+      // 而生产其实几秒内就已经回到上一版本了（Codex P2）。
+      // 不新建一条 run 而是在失败 run 上盖时间戳：这次恢复不是一次「发布」，
+      // 造一条假 run 会同时污染发布频率与变更失败率两个分母。
+      this.stateService.patchReleaseRun(releaseId, { autoRestoredAt: new Date().toISOString() });
       this.emitLog(releaseId, 'warn', `已恢复上一成功版本 ${previous.releaseId}`, 'auto-restore');
     } catch (restoreError) {
       this.emitLog(releaseId, 'error', `自动恢复失败: ${(restoreError as Error).message}`, 'auto-restore');
@@ -1008,14 +1398,57 @@ export class ReleaseService {
     if (!current) throw new Error(`ReleaseRun not found: ${releaseId}`);
     assertReleaseRunTransition(current.status, status);
     const at = this.nowIso();
+    // 终态时一并收束步骤快照。放在这里而不是各个调用点：取消、心跳收割、失败收尾都走
+    // patchStatus，散着写必然漏一条，漏掉的那条就会在 UI 上留一格永远转圈的 spinner。
+    const progress = this.settleProgress(current.progress, status, at, extra.progress);
     const run = this.stateService.patchReleaseRun(releaseId, {
       ...extra,
+      ...(progress ? { progress } : {}),
       status,
       heartbeatAt: at,
       ...(isReleaseRunTerminal(status) ? { finishedAt: extra.finishedAt || at } : {}),
     });
+    this.recordReleaseDurationSample(run);
     releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
     return run;
+  }
+
+  /**
+   * 成功发布的耗时进台账，供发布中心算「预计还需」。
+   *
+   * 挂在 patchStatus 而不是 runRelease 末尾：patchStatus 是状态机唯一写入口，
+   * 挂这里天然覆盖重试等同样走终态的路径，也不会被将来新增的成功路径绕过
+   * （旧代码散着写 status 的教训就在同一个方法的注释里）。
+   *
+   * 两类 run 被刻意排除，混进去中位就没有判别力：
+   *  - rollback_success：回滚往往是重放上一版本，耗时口径与正向发布不同；
+   *  - rollbackOf 非空：回滚 / 探测失败后的自动恢复补发的 run，同上。
+   */
+  private recordReleaseDurationSample(run: ReleaseRun): void {
+    try {
+      if (run.status !== 'success' || run.rollbackOf) return;
+      const startedAtMs = Date.parse(run.startedAt);
+      const finishedAtMs = Date.parse(run.finishedAt || '');
+      if (!Number.isFinite(startedAtMs) || !Number.isFinite(finishedAtMs)) return;
+      // 上界取执行超时的两倍：默认脚本链会被 planDeployPhases 拆成多条命令各自计时，
+      // 单条命令超时不代表整轮发布超时，按单条上限卡会误丢正常的长发布样本。
+      this.stateService.recordReleaseDuration(run.targetId, finishedAtMs - startedAtMs, this.execTimeoutMs * 2);
+    } catch {
+      /* 记账失败绝不能反过来把一次成功的发布带崩 */
+    }
+  }
+
+  /** 终态 → 步骤收束。成功全部 done，失败只把「当前那一步」标失败，后续保持 pending。 */
+  private settleProgress(
+    progress: ReleaseRunProgress | undefined,
+    status: ReleaseRunStatus,
+    at: string,
+    override?: ReleaseRunProgress,
+  ): ReleaseRunProgress | undefined {
+    const base = override || progress;
+    if (!base || !isReleaseRunTerminal(status)) return override;
+    if (isSuccessfulReleaseRun({ status })) return completeReleaseSteps(base, at);
+    return failReleaseSteps(base, at);
   }
 
   /**
@@ -1036,23 +1469,58 @@ export class ReleaseService {
     return this.now().toISOString();
   }
 
+  /**
+   * 发布命令的实际执行。展开成哪几步一律问 planDeployPhases——它同时被
+   * buildReleaseRunProgress 用来生成步骤表，两边同源才不会出现「执行两条脚本、
+   * 步骤条只画一格」这种对不上号。
+   */
   private async runDeployCommand(releaseId: string, target: ReleaseTarget, run: ReleaseRun, rawCommand: string): Promise<void> {
-    const scripts = extractReleaseScriptPaths(rawCommand);
-    if (isDefaultScriptChain(rawCommand, scripts)) {
-      for (const script of scripts) {
-        const phase = releaseScriptPhase(script);
-        this.emitLog(releaseId, 'info', `执行 ${script}`, phase);
-        try {
-          await this.sshExec(target, buildReleaseCommand(target, run, script), releaseId, phase);
-        } catch (err) {
-          this.emitLog(releaseId, 'error', `脚本 ${script} 执行失败: ${(err as Error).message}`, phase);
-          throw err;
-        }
+    const deployTitle = this.stepTitle(releaseId, 'deploy');
+    for (const phase of planDeployPhases(rawCommand, deployTitle)) {
+      this.beginStep(releaseId, phase.id, phase.title);
+      try {
+        await this.sshExec(target, buildReleaseCommand(target, run, phase.command), releaseId, phase.id);
+      } catch (err) {
+        this.emitLog(releaseId, 'error', `${phase.title}失败: ${(err as Error).message}`, phase.id);
+        throw err;
       }
-      return;
+      this.finishStep(releaseId, phase.id);
     }
-    this.emitLog(releaseId, 'info', '执行发布命令', 'deploy');
-    await this.sshExec(target, buildReleaseCommand(target, run, rawCommand), releaseId, 'deploy');
+  }
+
+  /** 步骤标题以 run 快照为准（用户看到的第一屏就是它），快照缺失时回落到通用文案。 */
+  private stepTitle(releaseId: string, stepId: string, fallback = '执行发布命令'): string {
+    const run = this.stateService.getReleaseRun(releaseId);
+    return run?.progress?.steps.find((step) => step.id === stepId)?.title || fallback;
+  }
+
+  /**
+   * 开始一步：写一条该步的日志（phase = stepId，这是日志与步骤的连接键）+ 推进步骤快照。
+   * 两件事必须同一个入口做完，分开写迟早只更新一边。
+   */
+  private beginStep(releaseId: string, stepId: string, message: string): void {
+    this.emitLog(releaseId, 'info', message, stepId);
+    this.patchProgress(releaseId, (progress) => advanceReleaseSteps(progress, stepId, 'running', this.nowIso()));
+  }
+
+  private finishStep(releaseId: string, stepId: string): void {
+    this.patchProgress(releaseId, (progress) => advanceReleaseSteps(progress, stepId, 'done', this.nowIso()));
+  }
+
+  /**
+   * 步骤快照写入 + 推 SSE。
+   *
+   * 刻意复用 release.status 事件而不新增事件类型：两个前端的 release.status 处理器本来就是
+   * 「整体替换 run」，协议侧零改动就能拿到新的 progress；新增事件类型则要同步改
+   * 前端订阅、SSE 快照与 resolveApiLabel，收益为零。
+   */
+  private patchProgress(releaseId: string, mutate: (progress: ReleaseRunProgress) => ReleaseRunProgress): void {
+    const current = this.stateService.getReleaseRun(releaseId);
+    if (!current?.progress) return;
+    const next = mutate(current.progress);
+    if (next === current.progress) return;
+    const run = this.stateService.patchReleaseRun(releaseId, { progress: next });
+    releaseEvents.emitEvent({ type: 'release.status', payload: { releaseId, run } });
   }
 
   private emitLog(releaseId: string, level: 'info' | 'warn' | 'error', message: string, phase?: string): void {
@@ -1204,20 +1672,6 @@ function buildArtifact(branch: BranchEntry, commitSha: string, previewUrl: strin
   };
 }
 
-const RELEASE_SCRIPT_PATH_RE = /(?:\.\/|\/)[A-Za-z0-9._/@+-]+\.sh/g;
-
-export function extractReleaseScriptPaths(rawCommand: string): string[] {
-  const matches = rawCommand.match(RELEASE_SCRIPT_PATH_RE) || [];
-  return Array.from(new Set(matches));
-}
-
-export function isDefaultScriptChain(rawCommand: string, scripts = extractReleaseScriptPaths(rawCommand)): boolean {
-  return rawCommand.replace(/\s+/g, ' ').trim() === './fast.sh && ./exec_dep.sh'
-    && scripts.length === 2
-    && scripts[0] === './fast.sh'
-    && scripts[1] === './exec_dep.sh';
-}
-
 export function isLocalProdReleaseCommand(rawCommand: string): boolean {
   return extractReleaseScriptPaths(rawCommand)
     .some((script) => script.endsWith('/local-prod-release.sh') || script === './local-prod-release.sh');
@@ -1252,10 +1706,6 @@ export function buildRemoteRepositoryCheckCommand(target: ReleaseTarget): string
 export function parseRemoteRepositoryIdentity(output: string): string {
   const line = output.split(/\r?\n/).find((item) => item.startsWith('CDS_REPO_ORIGIN='));
   return normalizeRepositoryIdentity(line?.slice('CDS_REPO_ORIGIN='.length));
-}
-
-export function releaseScriptPhase(script: string): string {
-  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
 }
 
 export function buildReleaseCommand(target: ReleaseTarget, run: ReleaseRun, rawCommand: string, releaseIdOverride?: string): string {

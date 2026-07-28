@@ -228,7 +228,10 @@ describe('源码守卫：createServer 真的接了收割器', () => {
     const body = serverSrc.slice(createServerIdx);
     expect(body).toContain('new ReleaseService(deps.stateService)');
     // 类型标注即契约：方法被改名会在编译期报错，而不是运行期静默不收割。
-    expect(body).toMatch(/const releaseReconciler: ReleaseRunReconciler = new ReleaseService\(/);
+    // 实例自 2026-07-28 起由收割器与漂移巡检共用（同一个 ReleaseService），
+    // 故构造与标注不再同行；两件事仍必须都在，缺哪一半都退回「空壳收割器」。
+    expect(body).toMatch(/const releaseService = new ReleaseService\(deps\.stateService\)/);
+    expect(body).toMatch(/const releaseReconciler: ReleaseRunReconciler = releaseService/);
   });
 });
 

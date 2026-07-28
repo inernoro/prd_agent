@@ -27,6 +27,12 @@ import {
   normalizeProductionOrigin,
   rememberReleaseCenterProject,
 } from '@/lib/releaseCenter';
+import { resolveReleaseSteps } from '@/lib/releaseSteps';
+import type { ReleaseRunProgressLike } from '@/lib/releaseSteps';
+import { releaseEtaText } from '@/lib/releaseEta';
+import type { ReleaseEtaEstimate } from '@/lib/releaseEta';
+import { describeReleaseDora } from '@/lib/releaseDora';
+import type { ReleaseDoraMetrics } from '@/lib/releaseDora';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ReleaseTarget {
@@ -118,6 +124,8 @@ interface ReleaseRun {
   previousReleaseId?: string;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
+  /** 后端一等公民步骤模型。存量 run 没有这个字段，步骤条会退化成通用骨架。 */
+  progress?: ReleaseRunProgressLike;
   logs: ReleaseLogEntry[];
 }
 
@@ -151,11 +159,21 @@ interface CenterRow {
   canRollback: boolean;
   successfulRuns?: ReleaseRun[];
   rollbackDefaultReleaseId?: string;
+  /**
+   * 该发布目标的历史中位发布耗时。字段可缺省：跑旧构建的 CDS 不下发它，
+   * 此时按「无样本」退化成诚实文案，绝不因为少一个字段就白屏或编造数字。
+   */
+  releaseEstimate?: ReleaseEtaEstimate;
 }
 
 interface CenterResponse {
   rows: CenterRow[];
   runs: ReleaseRun[];
+  /**
+   * DORA 四项。字段可缺省：跑旧构建的 CDS 不下发它，此时四项一律退化成
+   * 「样本不足」而不是白屏，更不是编一个 0 出来（describeReleaseDora 负责这件事）。
+   */
+  dora?: ReleaseDoraMetrics;
 }
 
 interface TargetsResponse {
@@ -231,6 +249,7 @@ interface SiteView {
   releaseMethod: string;
   projectLabel: string;
   isCanonical: boolean;
+  releaseEstimate?: ReleaseEtaEstimate;
 }
 
 interface RollbackState {
@@ -244,9 +263,13 @@ interface ArchiveState {
 }
 
 const DEFAULT_SITE_PATH = '/opt/{project}-prod';
-const DEFAULT_DEPLOY_COMMAND = './fast.sh && ./exec_dep.sh';
+/**
+ * 发布命令没有默认值：CDS 是通用产品，此前这里预填的是本仓库自己那条两段式脚本链，
+ * 任何别的项目建站点都会被预填一条根本不存在的命令。留空 + placeholder，真正的候选值
+ * 交给 releaseModeDefinitions 背后的策略探测给。
+ */
+const DEFAULT_DEPLOY_COMMAND = '';
 const DEFAULT_HEALTH_PATH = '/api/health';
-const SCRIPT_LABELS = ['./fast.sh', './exec_dep.sh'];
 
 function emptyDraft(projectId: string): SiteDraft {
   return {
@@ -586,6 +609,9 @@ export function ReleaseCenterPage(): JSX.Element {
                   ))}
                 </section>
               )}
+              {/* 整条发布线的健康度，不属于任何单个站点卡（放进 SiteCard 会重复 N 份，
+                  且与站点自身信息抢视觉）。摆在发布记录之上：先看总体，再往下钻明细。 */}
+              <ReleaseDoraPanel metrics={state.center.dora} />
               <ReleaseRecords runs={runs} onOpen={setLogRun} />
               <ArchivedTargets targets={archivedTargets} />
             </>
@@ -613,6 +639,7 @@ export function ReleaseCenterPage(): JSX.Element {
       />
       <ReleaseLogDialog
         run={logRun}
+        estimate={sites.find((site) => site.id === logRun?.targetId)?.releaseEstimate}
         retryingRunId={retryingRunId}
         canRollback={Boolean(logRun && sites.some((site) => site.id === logRun.targetId && site.successfulRuns.length > 0))}
         onClose={() => setLogRun(null)}
@@ -655,6 +682,24 @@ function EmptySitesState({ hostCount, onAdd }: { hostCount: number; onAdd: () =>
   );
 }
 
+/**
+ * 每秒 tick 的当前时间，只在需要时开表。
+ *
+ * 为什么非要自己 tick：发布进行中的「已耗时 / 预计还需」只有 SSE 状态事件才会
+ * 触发重渲染，而相邻两次状态事件之间可能几分钟没有一条——秒数一旦定住，用户
+ * 会以为页面卡死。历史样本不足时更是只剩这个走动的计时能证明系统还活着。
+ */
+function useNowTick(active: boolean): number {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    if (!active) return undefined;
+    setNow(Date.now());
+    const timer = window.setInterval(() => setNow(Date.now()), 1_000);
+    return () => window.clearInterval(timer);
+  }, [active]);
+  return now;
+}
+
 function SiteCard({
   site,
   onLogs,
@@ -668,6 +713,9 @@ function SiteCard({
   onConfigure: () => void;
   onArchive: () => void;
 }): JSX.Element {
+  const inFlight = Boolean(site.latestRun && !isTerminal(site.latestRun.status));
+  const nowMs = useNowTick(inFlight);
+  const etaText = inFlight ? releaseEtaText(site.latestRun?.startedAt, site.releaseEstimate, nowMs) : '';
   return (
     <article className="cds-surface-raised cds-hairline flex min-h-[360px] flex-col p-4">
       <header className="flex items-start justify-between gap-3">
@@ -729,8 +777,16 @@ function SiteCard({
       </div>
 
       <div className="mt-auto flex flex-wrap items-center justify-between gap-2 pt-4">
-        <div className="text-xs text-muted-foreground">
-          {site.latestRun ? `最近记录 ${site.latestRun.releaseId.slice(0, 12)} · ${statusLabel(site.latestRun.status)}` : '还没有发布记录'}
+        <div className="min-w-0 text-xs text-muted-foreground">
+          <div>
+            {site.latestRun ? `最近记录 ${site.latestRun.releaseId.slice(0, 12)} · ${statusLabel(site.latestRun.status)}` : '还没有发布记录'}
+          </div>
+          {etaText ? (
+            <div className="mt-1 flex items-center gap-1.5 text-primary">
+              <Loader2 className="h-3 w-3 shrink-0 animate-spin" />
+              <span>{etaText}</span>
+            </div>
+          ) : null}
         </div>
         <div className="flex flex-wrap gap-2">
           <Button asChild size="sm">
@@ -979,6 +1035,49 @@ function SiteWizardDialog({
   );
 }
 
+/**
+ * DORA 四项面板。
+ *
+ * 颜色全部走主题 token（cds-surface-raised / hairline / muted-foreground），
+ * 不写任何暗色字面量——白天主题下必须照样看得清，见 .claude/rules/cds-theme-tokens.md。
+ * 「样本不足」的卡片弱化成 muted 而不是隐藏：藏起来用户会以为功能坏了，
+ * 摆着并写清为什么没有数字，才是诚实的预期管理。
+ */
+function ReleaseDoraPanel({ metrics }: { metrics?: ReleaseDoraMetrics }): JSX.Element {
+  const cards = describeReleaseDora(metrics);
+  const windowDays = metrics?.windowDays ?? 30;
+  return (
+    <section className="cds-surface-raised cds-hairline p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">交付效能（DORA）</h2>
+        <span className="text-xs text-muted-foreground">
+          统计窗口：最近 {windowDays} 天 · 仅统计本项目的生产发布
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <article
+            key={card.key}
+            className="cds-hairline rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-3"
+          >
+            <div className="text-xs text-muted-foreground">{card.label}</div>
+            <div
+              className={
+                card.insufficient
+                  ? 'mt-1 text-base font-medium text-muted-foreground'
+                  : 'mt-1 text-xl font-semibold text-foreground'
+              }
+            >
+              {card.value}
+            </div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{card.hint}</div>
+          </article>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 function ReleaseRecords({ runs, onOpen }: { runs: ReleaseRun[]; onOpen: (run: ReleaseRun) => void }): JSX.Element {
   return (
     <section className="cds-surface-raised cds-hairline overflow-hidden">
@@ -1151,6 +1250,7 @@ function RollbackDialog({
 
 function ReleaseLogDialog({
   run,
+  estimate,
   retryingRunId,
   canRollback,
   onClose,
@@ -1158,6 +1258,7 @@ function ReleaseLogDialog({
   onRollback,
 }: {
   run: ReleaseRun | null;
+  estimate?: ReleaseEtaEstimate;
   retryingRunId: string;
   canRollback: boolean;
   onClose: () => void;
@@ -1184,7 +1285,10 @@ function ReleaseLogDialog({
     });
     return () => source.close();
   }, [run]);
-  const steps = current ? releaseSteps(current) : [];
+  const progress = resolveReleaseSteps(current);
+  const inFlight = Boolean(current && !isTerminal(current.status));
+  const nowMs = useNowTick(inFlight);
+  const etaText = inFlight ? releaseEtaText(current?.startedAt, estimate, nowMs) : '';
   const canActOnFailure = Boolean(current && (current.status === 'failed' || current.status === 'rollback_failed'));
   return (
     <Dialog open={!!run} onOpenChange={(open) => { if (!open) onClose(); }}>
@@ -1194,14 +1298,22 @@ function ReleaseLogDialog({
         </DialogHeader>
         <div className="flex flex-wrap items-center justify-between gap-2 text-sm">
           <StatusPill status={current?.status || 'unknown'} />
+          {etaText ? <span className="min-w-0 text-xs text-primary">{etaText}</span> : null}
           <span className="text-muted-foreground">{formatDate(current?.startedAt)}</span>
         </div>
+        {progress.total > 0 ? (
+          <div className="flex flex-wrap items-center gap-2 text-sm">
+            <span className="font-medium">第 {progress.currentIndex}/{progress.total} 步</span>
+            {progress.currentLabel ? <span className="text-muted-foreground">· {progress.currentLabel}</span> : null}
+            {progress.degraded ? <span className="text-xs text-muted-foreground">（历史记录，仅按日志还原大致阶段）</span> : null}
+          </div>
+        ) : null}
         <div className="grid gap-2">
-          {steps.map((step) => (
+          {progress.steps.map((step, index) => (
             <div key={step.id} className="flex items-center gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-sm">
               {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 text-emerald-500" /> : step.state === 'failed' ? <XCircle className="h-4 w-4 text-red-500" /> : step.state === 'running' ? <Loader2 className="h-4 w-4 animate-spin text-sky-500" /> : <Circle className="h-4 w-4 text-muted-foreground" />}
-              <span className="font-medium">{step.label}</span>
-              {step.detail ? <span className="min-w-0 truncate text-xs text-muted-foreground">{step.detail}</span> : null}
+              <span className="shrink-0 font-mono text-xs text-muted-foreground">{index + 1}/{progress.total}</span>
+              <span className="min-w-0 truncate font-medium">{step.label}</span>
             </div>
           ))}
         </div>
@@ -1402,6 +1514,7 @@ function toSiteView(row: CenterRow): SiteView {
       ? `${target.projectIdentity.projectSlug} · ${target.projectIdentity.repository}`
       : target.projectIdentity?.projectSlug || target.projectId,
     isCanonical: target.isCanonical === true,
+    releaseEstimate: row.releaseEstimate,
   };
 }
 
@@ -1470,65 +1583,17 @@ function splitHealthUrl(value: string): { publicUrl: string; healthPath: string 
   }
 }
 
+/**
+ * 站点卡片上「这个目标会跑什么」的展示。按 && / ; 切成可读的几段即可——
+ * 此前这里只保留本仓库那两个脚本名，任何其他项目的命令都会被整段丢掉，
+ * 只剩一个笼统兜底。步骤条本身已改由后端 run.progress 驱动，与这里无关。
+ */
 function scriptsFromCommand(command: string): string[] {
-  if (!command.trim()) return SCRIPT_LABELS;
-  if (command.includes('local-prod-release.sh')) return ['本机生产发布'];
-  const normalized = command.replace(/&&/g, '\n').replace(/;/g, '\n');
-  const found = normalized.split('\n').map((item) => item.trim()).filter(Boolean)
-    .filter((item) => item.includes('fast.sh') || item.includes('exec_dep.sh'));
-  if (found.length > 0) return found.map((item) => item.replace(/^\.?\//, './'));
-  return [command.trim()];
-}
-
-interface StepState {
-  id: string;
-  label: string;
-  state: 'pending' | 'running' | 'done' | 'failed';
-  detail?: string;
-}
-
-function releaseSteps(run: ReleaseRun): StepState[] {
-  const failed = run.status.includes('failed');
-  const phaseSet = new Set(run.logs.map((log) => log.phase).filter(Boolean));
-  const failedPhase = [...run.logs].reverse().find((log) => log.level === 'error')?.phase;
-  const fastPhase = releaseScriptPhase('./fast.sh');
-  const execPhase = releaseScriptPhase('./exec_dep.sh');
-  const fastSeen = phaseSet.has(fastPhase);
-  const execSeen = phaseSet.has(execPhase);
-  const customDeploySeen = phaseSet.has('deploy') && !fastSeen && !execSeen;
-  const healthSeen = phaseSet.has('healthcheck');
-  const success = run.status === 'success' || run.status === 'rollback_success';
-  const base: StepState[] = customDeploySeen ? [
-    { id: 'connect', label: '连接服务器', state: phaseSet.has('connect') ? 'done' : 'pending' },
-    { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || customDeploySeen || healthSeen || success ? 'done' : 'pending' },
-    { id: 'deploy', label: '执行本机生产发布', state: failedPhase === 'deploy' ? 'failed' : healthSeen || success ? 'done' : customDeploySeen ? 'running' : 'pending' },
-    { id: 'health', label: '检查上线地址', state: failedPhase === 'healthcheck' ? 'failed' : healthSeen ? (failed ? 'failed' : 'done') : 'pending' },
-    { id: 'record', label: '标记完成', state: success ? 'done' : 'pending' },
-  ] : [
-    { id: 'connect', label: '连接服务器', state: phaseSet.has('connect') ? 'done' : 'pending' },
-    { id: 'path', label: '进入站点目录', state: phaseSet.has('prepare') || fastSeen || execSeen || healthSeen || success ? 'done' : 'pending' },
-    { id: 'fast', label: '执行 fast.sh', state: failedPhase === fastPhase ? 'failed' : execSeen || healthSeen || success ? 'done' : fastSeen ? 'running' : 'pending' },
-    { id: 'exec', label: '执行 exec_dep.sh', state: failedPhase === execPhase ? 'failed' : healthSeen || success ? 'done' : execSeen ? 'running' : 'pending' },
-    { id: 'health', label: '检查上线地址', state: failedPhase === 'healthcheck' ? 'failed' : healthSeen ? (failed ? 'failed' : 'done') : 'pending' },
-    { id: 'record', label: '标记完成', state: success ? 'done' : 'pending' },
-  ];
-  if (failed) {
-    const hasLocatedFailure = base.some((step) => step.state === 'failed');
-    if (!hasLocatedFailure) {
-      const lastDone = [...base].reverse().find((step) => step.state === 'done');
-      const next = base.find((step) => step.state === 'running' || step.state === 'pending');
-      if (next) next.state = 'failed';
-      if (!next && lastDone) lastDone.state = 'failed';
-    }
-  } else if (!isTerminal(run.status)) {
-    const next = base.find((step) => step.state === 'running' || step.state === 'pending');
-    if (next) next.state = 'running';
-  }
-  return base;
-}
-
-function releaseScriptPhase(script: string): string {
-  return `script:${script.replace(/^\.\//, '').replace(/[^A-Za-z0-9._-]/g, '-')}`;
+  const trimmed = command.trim();
+  if (!trimmed) return ['未配置发布命令'];
+  const parts = trimmed.replace(/&&/g, '\n').replace(/;/g, '\n')
+    .split('\n').map((item) => item.trim()).filter(Boolean);
+  return parts.length > 0 ? parts : [trimmed];
 }
 
 function dedupeLogs(items: ReleaseLogEntry[]): ReleaseLogEntry[] {

@@ -1384,10 +1384,42 @@ export interface ReleaseTarget {
 }
 
 export interface ReleasePlanStep {
+  /**
+   * **连接键：step.id 必须等于执行器 emitLog 该步时用的 phase。**
+   *
+   * 这个键其实一直存在于日志里，只是从没被声明过——于是 ReleasePlan.steps 定义了却
+   * 端到端零消费，前端只能靠正则从日志 phase 反推步骤条，两边还各自漂移
+   * （ssh-script 模板写 4 步、执行器实际发 6 个 phase）。新增或改名步骤时必须同时改
+   * 执行器的 phase，判定逻辑统一在 services/release-steps.ts。
+   */
   id: string;
   title: string;
   kind: 'ssh' | 'healthcheck' | 'record' | 'manual';
   command?: string;
+}
+
+export type ReleaseRunStepState = 'pending' | 'running' | 'done' | 'failed';
+
+/** 某次运行里实际执行的一步。id 同 ReleasePlanStep.id，也同该步日志的 phase。 */
+export interface ReleaseRunStep {
+  id: string;
+  title: string;
+  kind: ReleasePlanStep['kind'];
+  state: ReleaseRunStepState;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+/**
+ * 本次运行的步骤快照。
+ *
+ * 刻意不存 index / total：两个数字与 steps 数组重复表达同一件事，必然漂移；
+ * 「第 N / 共 M 步」一律由 steps 推导（services/release-steps.ts::releaseStepOrdinal）。
+ */
+export interface ReleaseRunProgress {
+  planId: string;
+  steps: ReleaseRunStep[];
+  currentStepId?: string;
 }
 
 export interface ReleasePlan {
@@ -1408,6 +1440,59 @@ export interface ReleaseLogEntry {
   level: 'info' | 'warn' | 'error';
   message: string;
   phase?: string;
+}
+
+/** 发布前检查的单条结论。blocking 的 fail 才拦发布，warn 一律放行只做提示。 */
+export interface ReleasePreflightCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail';
+  message: string;
+  blocking: boolean;
+}
+
+/**
+ * 落库的发布前检查结论。
+ *
+ * 病根：预检结论此前只是个内存对象直接 res.json 出去，`startRelease` 第一句又
+ * 无条件重跑一遍 `preflight()` —— 一次「向导确认后立刻发布」要打两轮独立的
+ * SSH + HTTP 探测，而**用户在向导里看到并据以决策的那一份，不是真正把关的那一份**。
+ * 落库之后，向导那次的结论被 run 显式引用，两者是同一份。
+ *
+ * 复用不等于盲信：这里刻意存了 `createdAt` 与 `artifactCommitSha` ——
+ * 结论过期、或分支 commit 已经变了（产物换了），就必须重跑而不是拿旧结论顶。
+ * 判据见 release-retention.ts::canReuseReleasePreflight。
+ */
+export interface ReleasePreflightRecord {
+  id: string;
+  projectId: string;
+  branchId: string;
+  targetId: string;
+  previewUrl?: string;
+  operator?: string;
+  ok: boolean;
+  checks: ReleasePreflightCheck[];
+  /** 本次结论所依据的产物（含 commitSha）。复用时按它比对现分支 commit。 */
+  artifact?: ReleaseArtifact;
+  artifactCommitSha?: string;
+  /**
+   * 结论生成时目标配置的指纹（releaseTargetConfigFingerprint）。
+   *
+   * 复用键只带 targetId 是不够的：运维在两分钟复用窗口里改了 host / 凭据 / appPath /
+   * 发布命令 / healthcheckUrl，targetId 不变，旧结论会被套到一台连通性、仓库身份、
+   * 脚本都没验证过的机器上（Codex P1）。缺省 = 阶段三早期入库的存量记录，
+   * 一律**不允许复用**（宁可多跑一次预检，也不拿证明不了的结论放行）。
+   */
+  targetConfigFingerprint?: string;
+  /**
+   * 结论生成时**项目**身份的指纹。预检的 project-identity / remote-repository
+   * 两项验的是项目仓库身份，不是目标：改 gitRepoUrl 时目标指纹不变，只比目标会漏。
+   * 缺省 = 早期存量记录，一律不许复用。
+   */
+  projectIdentityFingerprint?: string;
+  planId?: string;
+  previousReleaseId?: string;
+  createdAt: string;
 }
 
 /**
@@ -1465,6 +1550,37 @@ export interface ReleaseRun {
   operator?: string;
   logs: ReleaseLogEntry[];
   seq: number;
+  /**
+   * 当前 logs 窗口里最早那条的 seq。logs 有上限（500 条），超出即从头部丢弃，
+   * 客户端拿着 afterSeq 续传时必须能看出「你要的那段已经没了」。
+   *
+   * 存量 run 没有这个字段，被持久化层应急压缩过的历史 run 更是「头部已丢却无标记」。
+   * 所以读侧一律走 release-log-buffer.ts::resolveReleaseFirstEventSeq 从 logs[0].seq
+   * 推导，本字段只做空日志时的兜底，绝不能被当成可信真相直接读。
+   */
+  firstEventSeq?: number;
+  /**
+   * 本次发布依据的预检记录 id。缺省 = 阶段三之前入库的存量 run（当时预检不落库）。
+   * 有它才能回答「这次发布放行的依据是哪一份结论、什么时候做的」。
+   */
+  preflightId?: string;
+  /**
+   * 最终入口探测失败后，自动恢复上一版本**成功完成**的时刻。
+   *
+   * 它是这条失败 run 的「恢复时刻」：生产在这一刻已经回到上一版本了，尽管本次 run
+   * 终态仍是 failed。DORA 的恢复配对必须认它，否则会把一次几秒就自愈的失败算成
+   * 「进行中故障」，一直挂到下一次成功发布，恢复时长与 ongoingCount 双双失真。
+   * 刻意不为自动恢复新建 run —— 那不是一次「发布」，造假 run 会污染发布频率与
+   * 变更失败率的分母。
+   */
+  autoRestoredAt?: string;
+  /**
+   * 最终入口探测失败、开始自动恢复的时刻 = 故障窗口的**起点**。
+   *
+   * 不能用 `finishedAt` 当起点：自动恢复跑在 failRun 之前，`finishedAt` 恒晚于
+   * `autoRestoredAt`，用它配对会得到负数并被守卫整条丢掉（这正是上一版修复空转的原因）。
+   */
+  autoRestoreStartedAt?: string;
   previousReleaseId?: string;
   requestId?: string;
   operationId?: string;
@@ -1479,6 +1595,12 @@ export interface ReleaseRun {
    * 让两条生命周期的失败展示与归因逻辑可以共用。
    */
   failure?: DeploymentFailure;
+  /**
+   * 本次运行的步骤快照（后端一等公民步骤模型）。
+   *
+   * 缺省代表阶段二之前入库的存量 run —— 前端必须优雅退化成通用骨架，不许白屏或报错。
+   */
+  progress?: ReleaseRunProgress;
   /** 本次运行实际执行策略的不可变快照，避免目标后改配置污染历史证据。 */
   executionSnapshot?: {
     mode: ReleaseExecutionMode;
@@ -1615,6 +1737,12 @@ export interface CdsState {
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
   releasePlans?: Record<string, ReleasePlan>;
+  /**
+   * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
+   * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
+   * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
+   */
+  releasePreflights?: Record<string, ReleasePreflightRecord>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
@@ -1878,6 +2006,21 @@ export interface CdsState {
    * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
    */
   deployDurationSamples?: DeployDurationSamples;
+  /**
+   * 生产发布耗时样本台账（2026-07-28）。keyed by targetId，桶结构与
+   * deployDurationSamples 完全一致，但**刻意分成两个顶层字段**。
+   *
+   * 为什么不复用 deployDurationSamples 的 `${projectId}::${mode}` 桶：那里的
+   * mode='release' 指的是分支容器跑编译产物/极速版镜像（classifyDeployRuntime
+   * 的输出），与「往生产机器 SSH 执行发布脚本」毫无关系。事故值：极速版构建
+   * 中位 42s，真实生产发布中位 8 分钟量级 —— 混桶后两边互相拉扯，分支等待页
+   * 和发布中心拿到的都是没有判别力的数字。独立字段是键空间层面就不可能撞的
+   * 唯一零歧义隔离方式。
+   *
+   * 桶键用 targetId 而不是 projectId：同一个项目的两个站点可能部署在不同机器、
+   * 跑不同脚本，耗时能差一个数量级，合桶后中位同样失去判别力。
+   */
+  releaseDurationSamples?: DeployDurationSamples;
   /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts
