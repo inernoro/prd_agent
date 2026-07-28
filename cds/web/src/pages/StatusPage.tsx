@@ -106,6 +106,14 @@ interface UptimeIncidentView {
   durationMs: number;
   cause: string;
   ongoing: boolean;
+  /**
+   * 疑似引入本次故障的发布。后端 uptime API 一直返回这两个字段，前端却没声明也没渲染 ——
+   * 于是「是哪次发布引入的」这条能力记录了但对用户不可见（Codex P2）。
+   * 无归因时后端不下发，这里保持可选：编一个出来比不显示更糟。
+   */
+  releaseId?: string;
+  /** 该次发布完成 → 故障判定之间隔了多久 */
+  releaseAgeMs?: number;
 }
 
 const DESKTOP_SEGMENTS = 90;
@@ -458,6 +466,17 @@ function IncidentTimeline({ incidents }: { incidents: UptimeIncidentView[] }): J
           <span className="text-muted-foreground">{formatClock(incident.startedAt)}</span>
           <span className="text-muted-foreground">持续 {formatDuration(incident.durationMs)}</span>
           <span className="min-w-0 truncate text-muted-foreground">{incident.cause}</span>
+          {incident.releaseId ? (
+            // 归因只是「时间上最近的那次发布」，不是因果证明，所以文案用「疑似」。
+            // 说死了会让人拿它当结论，反而误导排障方向。
+            <span
+              className="inline-flex shrink-0 items-center gap-1 rounded-full border border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] px-2 py-0.5 font-mono text-[11px] text-muted-foreground"
+              title={`故障判定发生在发布 ${incident.releaseId} 完成之后 ${formatDuration(incident.releaseAgeMs ?? 0)}`}
+            >
+              疑似 {incident.releaseId}
+              {typeof incident.releaseAgeMs === 'number' ? ` 后 ${formatDuration(incident.releaseAgeMs)}` : ''}
+            </span>
+          ) : null}
         </li>
       ))}
     </ol>

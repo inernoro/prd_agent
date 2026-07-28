@@ -4,13 +4,12 @@ using System.IdentityModel.Tokens.Jwt;
 namespace PrdAgent.Api.Middleware;
 
 /// <summary>
-/// 对已鉴权请求做“3天滑动过期”（now+72h）：按端独立（clientType + sessionKey）。
+/// 对已鉴权请求做滑动过期（默认 7 天，见 <c>Auth:SessionSlidingDays</c>）：按端独立（clientType + sessionKey）。
 /// </summary>
 public class AuthSlidingExpirationMiddleware
 {
     private readonly RequestDelegate _next;
     private readonly ILogger<AuthSlidingExpirationMiddleware> _logger;
-    private static readonly TimeSpan ClientBindingTtl = TimeSpan.FromDays(3);
 
     public AuthSlidingExpirationMiddleware(RequestDelegate next, ILogger<AuthSlidingExpirationMiddleware> logger)
     {
@@ -43,12 +42,14 @@ public class AuthSlidingExpirationMiddleware
                 if (!string.IsNullOrWhiteSpace(clientId))
                 {
                     var key = CacheKeys.ForAuthClientBinding(userId, clientType, sessionKey);
+                    // 客户端绑定与会话共用同一个滑动窗口，避免绑定先于会话过期。
+                    var clientBindingTtl = authSessionService.SlidingTtl;
                     try
                     {
                         var existing = await cache.GetAsync<string>(key);
                         if (string.IsNullOrWhiteSpace(existing))
                         {
-                            await cache.SetAsync(key, clientId, ClientBindingTtl);
+                            await cache.SetAsync(key, clientId, clientBindingTtl);
                         }
                         else if (!string.Equals(existing, clientId, StringComparison.Ordinal))
                         {

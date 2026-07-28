@@ -136,13 +136,29 @@ export function selectReleasePreflightsToPrune(input: {
   nowMs: number;
   maxPerTarget?: number;
   retentionMs?: number;
+  /**
+   * 仍被保留 run 引用的 preflightId。这些记录**一条都不许删**。
+   *
+   * 事故值（Codex P2）：裁剪只按条数与时间窗，不看 `ReleaseRun.preflightId`。
+   * 同一个目标再做 20 次预检，就能把某条在途 / 保留 run 依据的那份结论删掉，
+   * 留下一个指向空气的审计链接 —— 而「这次发布依据的是哪份结论」正是预检落库
+   * 的全部意义。缺了它，落库只是换个地方浪费磁盘。
+   *
+   * 保护是无上限的：引用数天然被 run 保留策略封顶（每目标 100 条），
+   * 不会因为这条保护把预检记录撑爆。
+   */
+  referencedIds?: Iterable<string>;
 }): string[] {
   const maxPerTarget = Math.max(1, input.maxPerTarget ?? MAX_RELEASE_PREFLIGHTS_PER_TARGET);
   const retentionMs = input.retentionMs ?? RELEASE_PREFLIGHT_RETENTION_MS;
+  const referenced = new Set(input.referencedIds ?? []);
   const oldestFirst = input.records.slice().sort((a, b) => a.createdAt.localeCompare(b.createdAt));
-  let overflow = oldestFirst.length - maxPerTarget;
+  // 条数闸只对「没人引用的」记账：被引用的那些不占淘汰名额，否则它们会把
+  // overflow 顶着不动，反而连累后面可删的记录活下来（上限形同虚设）。
+  let overflow = oldestFirst.filter((record) => !referenced.has(record.id)).length - maxPerTarget;
   const doomed: string[] = [];
   for (const record of oldestFirst) {
+    if (referenced.has(record.id)) continue;
     if (overflow > 0) {
       doomed.push(record.id);
       overflow -= 1;

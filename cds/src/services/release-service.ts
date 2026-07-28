@@ -37,6 +37,7 @@ import {
   buildReleaseReclaimCommand,
   computeReleaseArtifactRetentionPlan,
   detectReleaseRemoteDrift,
+  isSameRemoteDirectory,
   parseRemoteReleaseInventory,
   type ReleaseRemoteDrift,
   type RemoteReleaseInventory,
@@ -1066,7 +1067,9 @@ export class ReleaseService {
     if (strategy.mode !== 'generated-static' || !publicDirectory) return false;
     return this.stateService.getReleaseTargets().some((candidate) => {
       if (candidate.id === target.id || !candidate.isEnabled) return false;
-      return (effectiveReleaseStrategy(candidate).publicDirectory || '').trim() === publicDirectory;
+      // 裸字符串比较会把 `/opt/site` 与 `/opt/site/` 判成不共用，进而关掉共用保护、
+      // 删掉对方目标的成品。判据统一走 release-artifact-retention 那一份。
+      return isSameRemoteDirectory(effectiveReleaseStrategy(candidate).publicDirectory || '', publicDirectory);
     });
   }
 

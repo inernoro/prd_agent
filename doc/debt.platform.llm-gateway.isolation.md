@@ -4,8 +4,8 @@
 
 > 进度：波1 + 波2 跨进程 + 波2.5 影子/灰度/命名子域 已落地；生产翻 http = T12 待拍板。
 > 负责人：AI / 待用户拍板（合并到 main + 翻 http 时机）
-> 关联设计：`doc/design.llm-gateway-physical-isolation.md`；旧路径清理与发布门禁：`doc/plan.llm-gateway.full-cutover.md`；
-> 验收面包屑：`doc/guide.llm-gateway.acceptance-breadcrumbs.md`
+> 关联设计：`doc/design.platform.llm-gateway.physical-isolation.md`；旧路径清理与发布门禁：`doc/plan.platform.llm-gateway.full-cutover.md`；
+> 验收面包屑：`doc/guide.platform.llm-gateway.acceptance-breadcrumbs.md`
 
 AI 大模型网关从 MAP 剥离的工程债务台账。记录「已做 / 待用户 / 已知边界 / 后续」。
 
@@ -101,7 +101,7 @@ CDS 合并多容器能力（PR #951）后，serving 网关在 `claude/llm-schedu
 
 ## 真实环境 MECE 冒烟矩阵：表 + B/C 层 CI 真跑通过
 
-- `doc/spec.llm-gateway-test-matrix.md`：14 维 MECE 矩阵（入口×流式×档位×协议×think位置×工具×token/cache×图片×
+- `doc/spec.platform.llm-gateway.test-matrix.md`：14 维 MECE 矩阵（入口×流式×档位×协议×think位置×工具×token/cache×图片×
   上下文×环境×中断×负载×演示×一平台多协议）+ 4 层分工（A 解析/B 协议保真/C 跨进程/D 真机）+ 每层 canary。
 - **B 层** `GatewayProtocolFidelityTests`（14 用例，CI 真跑绿）：喂 canned payload 给真实
   `OpenAIGatewayAdapter`/`ClaudeGatewayAdapter`/`ThinkTagStripper`，断言 think 三形态

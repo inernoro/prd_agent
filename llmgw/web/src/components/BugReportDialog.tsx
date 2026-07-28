@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { Bug, ImagePlus, Paperclip, X } from 'lucide-react';
 
-import { API_BASE, getToken } from '@/lib/api';
+import { API_BASE, applyRenewedToken, getToken } from '@/lib/api';
 import { Spinner } from '@/components/ui';
 import {
   BUG_SEVERITY_OPTIONS,
@@ -231,6 +231,10 @@ export function BugReportDialog() {
         },
         body: JSON.stringify(payload),
       });
+      // 这条是绕开 apiRequest 的裸 fetch（要保留自定义错误处理），但它同样是已鉴权请求：
+      // 服务端可能在这次响应里换发新 token。不接住的话，「只提缺陷、不做别的」的用户
+      // 永远滑不动会话，会在最初那个 7 天期限上掉登录。
+      applyRenewedToken(res, token);
       const text = await res.text();
       let parsed: unknown = null;
       if (text) {
@@ -275,7 +279,7 @@ export function BugReportDialog() {
         border: '1px solid var(--border-subtle)',
         background: 'var(--bg-surface)',
         color: 'var(--text-secondary)',
-        fontSize: 12,
+        fontSize: 'var(--fs-caption)',
       }}
     >
       <Bug size={16} />
@@ -287,7 +291,7 @@ export function BugReportDialog() {
           background: 'var(--bg-elevated)',
           border: '1px solid var(--border-subtle)',
           color: 'var(--text-muted)',
-          fontSize: 10,
+          fontSize: 'var(--fs-micro)',
         }}
       >
         {hint}
@@ -338,7 +342,7 @@ export function BugReportDialog() {
             borderBottom: '1px solid var(--border-subtle)',
           }}
         >
-          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 14, fontWeight: 600 }}>
+          <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8, fontSize: 'var(--fs-body)', fontWeight: 600 }}>
             <Bug size={18} style={{ color: 'var(--accent)' }} />
             提交缺陷
             <span
@@ -348,7 +352,7 @@ export function BugReportDialog() {
                 background: 'var(--bg-elevated)',
                 border: '1px solid var(--border-subtle)',
                 color: 'var(--text-muted)',
-                fontSize: 10,
+                fontSize: 'var(--fs-micro)',
                 fontWeight: 500,
               }}
             >
@@ -387,15 +391,15 @@ export function BugReportDialog() {
                 borderRadius: 'var(--radius-sm)',
                 border: `1px solid ${result.delivery === 'forwarded' ? 'var(--ok)' : 'var(--border-subtle)'}`,
                 background: result.delivery === 'forwarded' ? 'var(--ok-bg)' : 'var(--bg-elevated)',
-                fontSize: 13,
+                fontSize: 'var(--fs-secondary)',
               }}
             >
               <div style={{ color: 'var(--text-primary)', fontWeight: 500 }}>{describeSubmitResult(result)}</div>
-              <div style={{ color: 'var(--text-muted)', fontSize: 12, marginTop: 4 }}>编号 {result.id}</div>
+              <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', marginTop: 4 }}>编号 {result.id}</div>
             </div>
           ) : null}
 
-          <label htmlFor="llmgw-bug-report-description" style={{ color: 'var(--text-muted)', fontSize: 12 }}>
+          <label htmlFor="llmgw-bug-report-description" style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>
             问题描述（第一行会作为标题；可直接 Ctrl+V 粘贴截图）
           </label>
           <textarea
@@ -415,13 +419,13 @@ export function BugReportDialog() {
               background: 'var(--bg-input)',
               color: 'var(--text-primary)',
               fontFamily: 'inherit',
-              fontSize: 13,
+              fontSize: 'var(--fs-secondary)',
               lineHeight: 1.6,
             }}
           />
 
           <div style={{ display: 'flex', flexWrap: 'wrap', alignItems: 'center', gap: 8 }}>
-            <span style={{ color: 'var(--text-muted)', fontSize: 12 }}>严重程度</span>
+            <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>严重程度</span>
             {BUG_SEVERITY_OPTIONS.map((option) => {
               const active = severity === option.value;
               return (
@@ -433,7 +437,7 @@ export function BugReportDialog() {
                     height: 28,
                     padding: '0 10px',
                     borderRadius: 'var(--radius-sm)',
-                    fontSize: 12,
+                    fontSize: 'var(--fs-caption)',
                     border: `1px solid ${active ? 'transparent' : 'var(--border-subtle)'}`,
                     background: active ? 'var(--accent)' : 'var(--bg-input)',
                     color: active ? 'var(--accent-contrast)' : 'var(--text-secondary)',
@@ -459,7 +463,7 @@ export function BugReportDialog() {
                     border: '1px solid var(--border-subtle)',
                     background: 'var(--bg-input)',
                     color: 'var(--text-muted)',
-                    fontSize: 12,
+                    fontSize: 'var(--fs-caption)',
                   }}
                 >
                   {item.previewUrl ? (
@@ -499,7 +503,7 @@ export function BugReportDialog() {
                 border: '1px solid var(--border-subtle)',
                 background: 'var(--bg-elevated)',
                 color: 'var(--text-muted)',
-                fontSize: 12,
+                fontSize: 'var(--fs-caption)',
               }}
             >
               <Spinner size={14} />
@@ -516,7 +520,7 @@ export function BugReportDialog() {
                 border: '1px solid var(--err)',
                 background: 'var(--err-bg)',
                 color: 'var(--err)',
-                fontSize: 12,
+                fontSize: 'var(--fs-caption)',
               }}
             >
               {errorText}
@@ -559,7 +563,7 @@ export function BugReportDialog() {
               border: '1px solid var(--border-subtle)',
               background: 'var(--bg-input)',
               color: 'var(--text-secondary)',
-              fontSize: 12,
+              fontSize: 'var(--fs-caption)',
             }}
           >
             <ImagePlus size={14} />
@@ -576,7 +580,7 @@ export function BugReportDialog() {
               border: '1px solid var(--border-subtle)',
               background: 'var(--bg-input)',
               color: 'var(--text-secondary)',
-              fontSize: 12,
+              fontSize: 'var(--fs-caption)',
             }}
           >
             {result ? '关闭' : '取消'}
@@ -595,7 +599,7 @@ export function BugReportDialog() {
               border: '1px solid transparent',
               background: 'var(--accent)',
               color: 'var(--accent-contrast)',
-              fontSize: 12,
+              fontSize: 'var(--fs-caption)',
               opacity: submitting || (!result && !description.trim()) ? 0.5 : 1,
               cursor: submitting || (!result && !description.trim()) ? 'not-allowed' : 'pointer',
             }}

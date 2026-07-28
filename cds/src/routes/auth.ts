@@ -37,7 +37,11 @@ function parseCookie(cookieHeader: string | undefined, name: string): string | u
   return match ? decodeURIComponent(match[1]) : undefined;
 }
 
-function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
+/**
+ * Session cookie with the same expiry as the server-side session. Exported so the
+ * auth gate can re-issue it when a session slides forward (see github-auth.ts).
+ */
+export function buildSessionCookie(token: string, expiresAt: string, secure: boolean): string {
   const maxAgeSec = Math.max(0, Math.floor((new Date(expiresAt).getTime() - Date.now()) / 1000));
   const parts = [
     `${GH_SESSION_COOKIE}=${encodeURIComponent(token)}`,
@@ -119,7 +123,8 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
     if (token) {
       // Resolve the user before destroying the session so we can attribute the
       // logout activity record.
-      const current = await authService.validateSession(token);
+      // 会话马上要被删掉，不必也不该在这里滑动续期（更不可能重发 cookie）。
+      const current = await authService.validateSession(token, { renew: false });
       await authService.logout(token);
       if (current) {
         await authService.recordActivity({
@@ -179,6 +184,12 @@ export function createAuthRouter(deps: AuthRouterDeps): Router {
       return;
     }
     const { user, session } = result;
+    // 本 router 挂在鉴权中间件之前，所以 /api/me 触发的续期必须自己重发 cookie。
+    // 漏掉的话：服务端过期时间被推后（后续中间件看到「还很新鲜」就不再续期），
+    // 而浏览器那份 cookie 仍在原时间点死掉 —— 用户照样掉登录。
+    if (result.renewed && token) {
+      res.setHeader('Set-Cookie', buildSessionCookie(token, session.expiresAt, cookieSecure));
+    }
     res.json({
       user: {
         id: user.id,

@@ -1,4 +1,6 @@
-// 独立 API 客户端：JWT 存 sessionStorage（no-localStorage 规则：认证态禁止进 localStorage）。
+// 独立 API 客户端：JWT 存 localStorage（超长登录期诉求：关浏览器再打开仍保持登录；
+// 撤销由服务端每请求校验 SecurityVersion / 成员版本兜底，详见 sessionStore 注释）。
+// 服务端滑动续期会通过 X-Gw-Token 响应头换发新 token，本文件在每次响应里自动接住。
 // base 优先走 import.meta.env.VITE_LLMGW_API_BASE；未配置时按运行路径选择 /gw 或 /llmgw/gw。
 //
 // 后端端点约定（后端另做，stub 即可）：
@@ -104,25 +106,143 @@ import { getDefaultApiBase } from './runtimeBase';
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
 const TENANT_KEY = 'llmgw.tenant';
-// 首登强制改密标记（认证态，遵守 no-localStorage 规则走 sessionStorage）。
+// 首登强制改密标记。
 const MCP_KEY = 'llmgw.mustChangePwd';
+// 会话到期时间（后端签发的 expiresAt），用于主动过期而不是干等下一次 401。
+const EXPIRES_KEY = 'llmgw.expiresAt';
+const SESSION_KEYS = [TOKEN_KEY, USER_KEY, TENANT_KEY, MCP_KEY, EXPIRES_KEY];
+// 滑动续期：服务端在会话被自动延长时用这两个响应头下发新 token 与新的到期时间
+// （见 GwSessionHeaders）。到期时间必须跟着换，否则主动过期定时器会按旧时间把人踢下线。
+const RENEWED_TOKEN_HEADER = 'X-Gw-Token';
+const RENEWED_EXPIRES_HEADER = 'X-Gw-Token-Expires-At';
 const mapSsoExchanges = new Map<string, Promise<ApiResponse<LoginResult>>>();
+
+// 匿名端点：这些接口本来就允许未登录调用，它们返回 401 表示「这次凭据不对」，
+// 不代表「当前会话过期」，不得据此清会话或把用户踢去登录页。
+const ANONYMOUS_PATHS = ['/auth/login', '/auth/map-sso', '/healthz'];
+
+export const SESSION_EXPIRED_MESSAGE = '登录已失效，请重新登录';
+
+/**
+ * 会话失效原因：
+ *  - expired：token 过期或被服务端拒绝；
+ *  - revoked：服务端返回 TENANT_SESSION_INVALID，即成员关系/角色被改动或管理员强制重新登录。
+ */
+export type SessionExpiredReason = 'expired' | 'revoked';
+
+/** 服务端「会话被作废」的错误码（console-api 租户门返回，见 Program.cs 的 TenantAccess 中间件）。 */
+const REVOKED_ERROR_CODES = new Set(['TENANT_SESSION_INVALID', 'TENANT_ACCESS_DENIED']);
+
+/** 失效事件带上「失效的是哪个 token」，跨标签页广播时用来区分自己是不是同一个会话。 */
+export type SessionExpiredEvent = { reason: SessionExpiredReason; token: string | null };
+
+type SessionExpiredListener = (event: SessionExpiredEvent) => void;
+
+type SessionRenewedListener = () => void;
+
+const sessionRenewedListeners = new Set<SessionRenewedListener>();
+
+/**
+ * 订阅「会话被服务端滑动续期」事件。AuthProvider 借此按新的到期时间重排主动过期定时器，
+ * 否则定时器还按签发时的旧时间点排着，续期等于白续。
+ */
+export function onSessionRenewed(listener: SessionRenewedListener): () => void {
+  sessionRenewedListeners.add(listener);
+  return () => {
+    sessionRenewedListeners.delete(listener);
+  };
+}
+
+const sessionExpiredListeners = new Set<SessionExpiredListener>();
+/** 同一次失效只广播一次，避免并发请求同时 401 时把订阅者刷屏。 */
+let sessionExpiredNotified = false;
+
+/**
+ * 订阅「会话已失效」事件。AuthProvider 借此把 authed 翻成 false，
+ * 路由守卫随即把用户送回登录页——不再停留在「登录已失效，请重新登录」的死页面上。
+ */
+export function onSessionExpired(listener: SessionExpiredListener): () => void {
+  sessionExpiredListeners.add(listener);
+  return () => {
+    sessionExpiredListeners.delete(listener);
+  };
+}
+
+/**
+ * 清会话并广播失效事件（幂等：会话已空时不重复广播）。
+ *
+ * failedToken：本次失败请求当时用的 token。若它与当前 token 不一致，说明会话已经轮换过
+ * （典型场景：改密换发新 token，而用旧 token 发出的并发请求此刻才回来报 401），
+ * 这种迟到的 401 不能拿来作废已经生效的新会话。
+ */
+export function expireSession(reason: SessionExpiredReason = 'expired', failedToken?: string | null) {
+  const token = getToken();
+  // 显式传了「本次失败请求用的 token」就必须与当前会话严格一致才作废。
+  // 注意 failedToken 为 null（请求发出时本标签页还没登录）同样算不一致：
+  // 会话现在共享 localStorage，别的标签页刚登录成功的会话不能被这条 401 清掉。
+  if (failedToken !== undefined && token !== failedToken) return;
+  clearSession();
+  if (!token || sessionExpiredNotified) return;
+  sessionExpiredNotified = true;
+  for (const listener of [...sessionExpiredListeners]) listener({ reason, token });
+}
+
+/**
+ * 接管「别的标签页刚建立的会话」时必须重置失效闩。
+ *
+ * sessionExpiredNotified 是模块级的，只在本标签页登录 / 改密 / 导入快照时清零。
+ * 若本标签页此前已经历过一次失效（闩=true），随后 A 标签页登录、本标签页靠 storage 事件
+ * 变回已登录，闩仍是 true —— 等这个新会话将来撞 401，expireSession 会清掉存储却不再广播，
+ * React 状态就永远停在「已登录但没有 token」，只能刷新页面才能恢复。
+ */
+export function adoptStoredSession(): void {
+  sessionExpiredNotified = false;
+}
 
 export type SessionSnapshot = {
   token: string;
   user: { username?: string; displayName?: string; identityProvider?: string } | null;
   tenant: import('./types').TenantSession | null;
   mustChangePassword: boolean;
+  expiresAt: string | null;
 };
 
 export const API_BASE = (import.meta.env.VITE_LLMGW_API_BASE || getDefaultApiBase()).replace(/\/$/, '');
 
+/**
+ * 会话存储走 localStorage：关掉浏览器再打开仍然保持登录（sessionStorage 做不到，
+ * 一关标签页就得重登，正是「一下就过期」的主因之一）。
+ * 安全性不靠前端存储兜底：token 有 7 天硬过期，且每个已鉴权请求都会在服务端重新校验
+ * 用户 SecurityVersion / 成员版本 / 租户状态，改密、禁用、踢出成员会立即让旧 token 失效。
+ */
+const sessionStore: Storage = localStorage;
+
+/**
+ * 老会话（存在 sessionStorage 里）平滑迁移，避免本次升级把在线用户踢下线。
+ * 搬完必须把 sessionStorage 里的原件删干净：留着的话，登出/401 清掉 localStorage 后
+ * 同一个标签页一刷新又会把旧 token 迁回来，等于登出失效、还可能卡在过期 token 的登录循环里。
+ */
+(function migrateLegacySessionStorage() {
+  try {
+    const hasLegacy = sessionStorage.getItem(TOKEN_KEY) !== null;
+    if (!hasLegacy) return;
+    const alreadyMigrated = sessionStore.getItem(TOKEN_KEY) !== null;
+    for (const key of SESSION_KEYS) {
+      const value = sessionStorage.getItem(key);
+      if (!alreadyMigrated && value !== null) sessionStore.setItem(key, value);
+      sessionStorage.removeItem(key);
+    }
+  } catch {
+    /* 存储不可用（隐私模式等）时忽略，走重新登录 */
+  }
+})();
+
 export function getToken(): string | null {
-  return sessionStorage.getItem(TOKEN_KEY);
+  return sessionStore.getItem(TOKEN_KEY);
 }
 
 export function getStoredUser(): { username?: string; displayName?: string; identityProvider?: string } | null {
-  const raw = sessionStorage.getItem(USER_KEY);
+  const raw = sessionStore.getItem(USER_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -132,7 +252,7 @@ export function getStoredUser(): { username?: string; displayName?: string; iden
 }
 
 export function getStoredTenant(): import('./types').TenantSession | null {
-  const raw = sessionStorage.getItem(TENANT_KEY);
+  const raw = sessionStore.getItem(TENANT_KEY);
   if (!raw) return null;
   try {
     return JSON.parse(raw);
@@ -141,9 +261,28 @@ export function getStoredTenant(): import('./types').TenantSession | null {
   }
 }
 
+export function getSessionExpiresAt(): number | null {
+  const raw = sessionStore.getItem(EXPIRES_KEY);
+  if (!raw) return null;
+  const ts = Date.parse(raw);
+  return Number.isFinite(ts) ? ts : null;
+}
+
+/** 本地判定会话是否已过期（后端仍是权威，这里只用于主动登出与快照交接）。 */
+export function isSessionExpired(now: number = Date.now()): boolean {
+  const expiresAt = getSessionExpiresAt();
+  return expiresAt !== null && now >= expiresAt;
+}
+
+function writeExpiresAt(expiresAt?: string | null) {
+  if (expiresAt) sessionStore.setItem(EXPIRES_KEY, expiresAt);
+  else sessionStore.removeItem(EXPIRES_KEY);
+}
+
 export function setSession(result: LoginResult) {
-  sessionStorage.setItem(TOKEN_KEY, result.token);
-  sessionStorage.setItem(
+  sessionExpiredNotified = false;
+  sessionStore.setItem(TOKEN_KEY, result.token);
+  sessionStore.setItem(
     USER_KEY,
     JSON.stringify({
       username: result.username ?? undefined,
@@ -151,16 +290,19 @@ export function setSession(result: LoginResult) {
       identityProvider: result.identityProvider ?? undefined,
     }),
   );
-  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
-  else sessionStorage.removeItem(TENANT_KEY);
-  if (result.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
-  else sessionStorage.removeItem(MCP_KEY);
+  if (result.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(result.tenant));
+  else sessionStore.removeItem(TENANT_KEY);
+  if (result.mustChangePassword) sessionStore.setItem(MCP_KEY, '1');
+  else sessionStore.removeItem(MCP_KEY);
+  writeExpiresAt(result.expiresAt);
 }
 
 // 改密成功后，用重新签发的 token 替换会话并清除强制改密标记。
 export function applyChangePasswordResult(result: ChangePasswordResult) {
-  sessionStorage.setItem(TOKEN_KEY, result.token);
-  sessionStorage.setItem(
+  sessionExpiredNotified = false;
+  sessionStore.setItem(TOKEN_KEY, result.token);
+  writeExpiresAt(result.expiresAt);
+  sessionStore.setItem(
     USER_KEY,
     JSON.stringify({
       username: result.username ?? undefined,
@@ -168,44 +310,84 @@ export function applyChangePasswordResult(result: ChangePasswordResult) {
       identityProvider: result.identityProvider ?? undefined,
     }),
   );
-  if (result.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(result.tenant));
-  sessionStorage.removeItem(MCP_KEY);
+  if (result.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(result.tenant));
+  sessionStore.removeItem(MCP_KEY);
 }
 
 export function clearSession() {
-  sessionStorage.removeItem(TOKEN_KEY);
-  sessionStorage.removeItem(USER_KEY);
-  sessionStorage.removeItem(TENANT_KEY);
-  sessionStorage.removeItem(MCP_KEY);
+  for (const key of SESSION_KEYS) {
+    sessionStore.removeItem(key);
+    // 双保险：迁移逻辑已删过 sessionStorage 原件，这里再清一次，
+    // 保证登出后没有任何一处残留能把会话「复活」。
+    try {
+      sessionStorage.removeItem(key);
+    } catch {
+      /* 存储不可用时忽略 */
+    }
+  }
 }
 
 export function exportSessionSnapshot(): SessionSnapshot | null {
   const token = getToken();
-  if (!token) return null;
+  // 已过期的会话不再交接给新标签页，否则新标签页会先「假登录」再被 401 踢出，白闪一下。
+  if (!token || isSessionExpired()) return null;
   return {
     token,
     user: getStoredUser(),
     tenant: getStoredTenant(),
     mustChangePassword: mustChangePassword(),
+    expiresAt: sessionStore.getItem(EXPIRES_KEY),
   };
 }
 
-export function importSessionSnapshot(snapshot: SessionSnapshot) {
-  sessionStorage.setItem(TOKEN_KEY, snapshot.token);
-  if (snapshot.user) sessionStorage.setItem(USER_KEY, JSON.stringify(snapshot.user));
-  else sessionStorage.removeItem(USER_KEY);
-  if (snapshot.tenant) sessionStorage.setItem(TENANT_KEY, JSON.stringify(snapshot.tenant));
-  else sessionStorage.removeItem(TENANT_KEY);
-  if (snapshot.mustChangePassword) sessionStorage.setItem(MCP_KEY, '1');
-  else sessionStorage.removeItem(MCP_KEY);
+/** 导入其他标签页的会话快照；快照已过期则拒绝导入，返回 false。 */
+export function importSessionSnapshot(snapshot: SessionSnapshot): boolean {
+  if (snapshot.expiresAt) {
+    const ts = Date.parse(snapshot.expiresAt);
+    if (Number.isFinite(ts) && Date.now() >= ts) return false;
+  }
+  sessionExpiredNotified = false;
+  sessionStore.setItem(TOKEN_KEY, snapshot.token);
+  writeExpiresAt(snapshot.expiresAt);
+  if (snapshot.user) sessionStore.setItem(USER_KEY, JSON.stringify(snapshot.user));
+  else sessionStore.removeItem(USER_KEY);
+  if (snapshot.tenant) sessionStore.setItem(TENANT_KEY, JSON.stringify(snapshot.tenant));
+  else sessionStore.removeItem(TENANT_KEY);
+  if (snapshot.mustChangePassword) sessionStore.setItem(MCP_KEY, '1');
+  else sessionStore.removeItem(MCP_KEY);
+  return true;
 }
 
 export function isAuthed(): boolean {
-  return !!getToken();
+  return !!getToken() && !isSessionExpired();
 }
 
 export function mustChangePassword(): boolean {
-  return sessionStorage.getItem(MCP_KEY) === '1';
+  return sessionStore.getItem(MCP_KEY) === '1';
+}
+
+/**
+ * 接住服务端滑动续期换发的新 token。
+ *
+ * 只替换「发起本次请求的那一把 token」：请求在途期间用户可能已登出、或换了另一个账号登录
+ * （会话现在存 localStorage，跨标签页共享，这种交叉更容易发生）。此时本地存的是新账号的
+ * token，若无条件覆盖，就会让新账号的用户/租户信息配上旧账号的凭据。本地 token 已经不是
+ * 请求时那把（含已登出为空）时一律跳过，最坏结果只是这次不续期。
+ */
+export function applyRenewedToken(res: Response, requestToken: string | null): void {
+  const renewed = res.headers.get(RENEWED_TOKEN_HEADER);
+  if (!renewed || !requestToken) return;
+  try {
+    if (sessionStore.getItem(TOKEN_KEY) !== requestToken) return;
+    sessionStore.setItem(TOKEN_KEY, renewed);
+    // 到期时间必须跟着新 token 走：留着旧的，主动过期定时器会在旧时间点把已经续过期的
+    // 会话踢下线（新 token 明明还有效），用户看到的就是「刚用着就掉登录」。
+    const renewedExpiresAt = res.headers.get(RENEWED_EXPIRES_HEADER);
+    if (renewedExpiresAt) writeExpiresAt(renewedExpiresAt);
+    for (const listener of [...sessionRenewedListeners]) listener();
+  } catch {
+    /* 存储不可用时忽略：本次请求已成功，下次再续 */
+  }
 }
 
 type RequestOptions = {
@@ -229,7 +411,14 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   const url = `${API_BASE}${path}${buildQuery(options.query)}`;
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   const token = getToken();
+  const anonymous = ANONYMOUS_PATHS.some((p) => path === p || path.startsWith(`${p}?`));
   if (token) headers.Authorization = `Bearer ${token}`;
+
+  // token 已到期就不再发这一枪：直接失效并让守卫接管，省掉一次注定 401 的往返。
+  if (token && !anonymous && isSessionExpired()) {
+    expireSession('expired', token);
+    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: SESSION_EXPIRED_MESSAGE } };
+  }
 
   let res: Response;
   try {
@@ -246,10 +435,10 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
     };
   }
 
-  if (res.status === 401) {
-    clearSession();
-    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '登录已失效，请重新登录' } };
-  }
+  // 滑动续期：服务端换发了新 token 就地替换，用户无感继续用（无需重登、无需轮询）。
+  // 401 的处理仍走下面 expireSession 那条唯一路径（它自带「只作废本次请求那把 token」的判断）。
+  applyRenewedToken(res, token);
+
 
   let payload: unknown = null;
   const text = await res.text();
@@ -260,11 +449,28 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
       payload = null;
     }
   }
+  const envelope = payload && typeof payload === 'object' && 'success' in (payload as Record<string, unknown>)
+    ? (payload as ApiResponse<T>)
+    : null;
+
+  if (res.status === 401) {
+    // 带着会话去调业务接口却被 401 → 会话确实失效：清会话 + 广播，路由守卫会把用户送回登录页。
+    // 匿名接口（登录 / 一键登录）的 401 只是这次凭据不对，保留服务端原文，别误伤已有会话。
+    if (token && !anonymous) {
+      const code = envelope?.error?.code || 'UNAUTHORIZED';
+      expireSession(REVOKED_ERROR_CODES.has(code) ? 'revoked' : 'expired', token);
+      return {
+        success: false,
+        data: null,
+        error: { code, message: envelope?.error?.message || SESSION_EXPIRED_MESSAGE },
+      };
+    }
+    if (envelope) return envelope;
+    return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: '身份校验未通过，请重新登录' } };
+  }
 
   // 优先认后端的 { success, data, error } 信封；否则按 HTTP 状态包装。
-  if (payload && typeof payload === 'object' && 'success' in (payload as Record<string, unknown>)) {
-    return payload as ApiResponse<T>;
-  }
+  if (envelope) return envelope;
 
   if (!res.ok) {
     return {

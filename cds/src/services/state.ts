@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -1655,6 +1655,45 @@ export class StateService {
     return [...(this.state.pendingContainerTeardowns || [])];
   }
 
+  /**
+   * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
+   *
+   * 删项目不删磁盘上的 worktree 目录，而孤儿对账为了不误删「迁移自扁平布局的遗留
+   * worktree」只在已知项目桶下枚举 —— 项目 id 一消失，那个桶就永远进不去了，里面
+   * 已经无人认领的 worktree 从此不可回收。墓碑保住桶的身份，等里面清空再自动摘除。
+   * 与容器墓碑同理，必须**先于** removeProject 落库。
+   */
+  addDeletedProjectWorktreeBucket(projectId: string): void {
+    const id = (projectId || '').trim();
+    if (!id) return;
+    const list = this.state.deletedProjectWorktreeBuckets || [];
+    if (list.some((t) => t.projectId === id)) return;
+    list.push({ projectId: id, requestedAt: new Date().toISOString() });
+    // 与容器墓碑同样的 ring-buffer 上限，防极端情况下无限膨胀；本次写入不被挤掉。
+    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) {
+      const idx = list.findIndex((t) => t.projectId !== id);
+      if (idx === -1) break;
+      list.splice(idx, 1);
+    }
+    this.state.deletedProjectWorktreeBuckets = list;
+    this.save();
+  }
+
+  getDeletedProjectWorktreeBuckets(): DeletedProjectWorktreeTombstone[] {
+    return [...(this.state.deletedProjectWorktreeBuckets || [])];
+  }
+
+  /** 桶里已经没有 worktree 了 → 摘墓碑（对账不必再进这个桶）。 */
+  removeDeletedProjectWorktreeBucket(projectId: string): void {
+    const list = this.state.deletedProjectWorktreeBuckets;
+    if (!list?.length) return;
+    this.state.deletedProjectWorktreeBuckets = list.filter((t) => t.projectId !== projectId);
+    if (this.state.deletedProjectWorktreeBuckets.length === 0) {
+      delete this.state.deletedProjectWorktreeBuckets;
+    }
+    this.save();
+  }
+
   /** 共享实例隔离库待清理台账（Codex 第二十五轮 P1）：drop 失败入队，收敛循环重试。 */
   addPendingReplicaDbDrop(item: { snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }): void {
     const list = this.state.pendingReplicaDbDrops || [];
@@ -2267,7 +2306,13 @@ export class StateService {
   private pruneReleasePreflights(targetId: string): void {
     if (!targetId || !this.state.releasePreflights) return;
     const records = Object.values(this.state.releasePreflights).filter((item) => item.targetId === targetId);
-    for (const id of selectReleasePreflightsToPrune({ records, nowMs: Date.now() })) {
+    // 仍被保留 run 引用的结论不许删，否则 run 上那条审计链接指向空气。
+    // 引用集从当前 releaseRuns 现算：run 保留策略先跑、preflight 裁剪后跑，
+    // 被淘汰的 run 自然不在这里，不会把它的结论永久钉住。
+    const referencedIds = Object.values(this.state.releaseRuns || {})
+      .filter((run) => run.targetId === targetId && run.preflightId)
+      .map((run) => run.preflightId as string);
+    for (const id of selectReleasePreflightsToPrune({ records, nowMs: Date.now(), referencedIds })) {
       delete this.state.releasePreflights[id];
     }
   }

@@ -2,7 +2,7 @@
 """D 层真机冒烟：对已部署的 serving 网关 /gw/v1/* 按 MECE 矩阵抽样真打。
 
 仅在 CDS 起来（单分支多容器 + 导入审批）后跑。桩 + 适配器 + 跨进程层由 CI 的 dotnet test 覆盖；
-本脚本覆盖"真网关 + 真/桩上游"那一层（doc/spec.llm-gateway-test-matrix.md D 层）。
+本脚本覆盖"真网关 + 真/桩上游"那一层（doc/spec.platform.llm-gateway.test-matrix.md D 层）。
 
 用法:
   GW_BASE=https://<preview>/gw/v1 GW_KEY=dev-llmgw-serve-key python3 scripts/gw-smoke.py

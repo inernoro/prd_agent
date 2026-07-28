@@ -2278,7 +2278,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--require-owner-uid 0", workflow);
         Assert.Contains("production-evidence-baseline-audit.json", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
-        Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
+        Assert.Contains("default branch", ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ \"$allow_missing_map_logs\" != \"true\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
@@ -2887,7 +2887,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Restore rollout evidence for completion", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains(".llmgw-release-evidence/", workflow);
-        Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
+        Assert.Contains("default branch", ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md"));
         Assert.Contains("completion mode requires rollout_evidence_run_id", workflow);
         Assert.Contains("completion mode could not find .llmgw-release-evidence/rollout-ledger.jsonl after artifact restore", workflow);
         Assert.Contains("logs:read access", workflow);
@@ -2966,7 +2966,7 @@ public class GatewayDataDomainGuardTests
     public void MapShadowSeed_CoversVisualVideoRawGate()
     {
         var script = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
-        var plan = ReadRepoFile("doc/plan.llm-gateway.full-cutover.md");
+        var plan = ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md");
 
         Assert.Contains("--include-desktop-chat-run", script);
         Assert.Contains("--include-open-platform", script);
@@ -3488,7 +3488,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
-        Assert.Contains("font-size: 14px;", theme);
+        // 字号已收敛为 :root 的七档 token（doc/rule.platform.llm-gateway.console-design-tonality.md）。
+        // 契约不变——日志表格正文仍是 14px——但要断言「body 档是 14px」+「表格确实消费该档」，
+        // 而不是像以前那样只要文件里任意位置出现过 14px 就算通过。
+        Assert.Contains("--fs-body: 14px;", theme);
+        Assert.Matches(@"(?s)\.lg-log-table\s*\{[^}]*font-size:\s*var\(--fs-body\)", theme);
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
         Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*450", theme);
@@ -3504,7 +3508,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("日志观测 · 非配置关系", entityDetails);
         Assert.Contains("--bg-page: #03080a", theme);
         Assert.Contains("--text-primary: #fcfcfe", theme);
-        Assert.Matches(@"(?s)\.lg-logs-heading h1\s*\{[^}]*font-weight:\s*700", theme);
+        // 页头已并入共享 SSOT 规则（.lg-page-heading / .lg-logs-heading / .lg-title 共用一条），
+        // 字重走 --fw-title。契约不变——页面标题仍是 700——断言改为「token 是 700」+「日志页头消费该 token」。
+        Assert.Contains("--fw-title: 700;", theme);
+        Assert.Matches(@"(?s)\.lg-logs-heading h1,[^{]*\{[^}]*font-weight:\s*var\(--fw-title\)", theme);
         Assert.Matches(@"(?s)@media[^}]*max-width:\s*680px.*?\.lg-log-table-head > div:first-child,[^}]*left:\s*10px", theme);
 
         var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");

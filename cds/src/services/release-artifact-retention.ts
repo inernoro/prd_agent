@@ -55,6 +55,48 @@ export function isReleaseArtifactId(name: string): boolean {
 }
 
 /**
+ * 远端目录路径的规范化身份 —— 「两个目标是不是指着同一个目录」的**唯一判据**。
+ *
+ * 事故值（Codex P1）：共用检测原本是 `a.trim() === b.trim()` 的裸字符串比较。
+ * `/opt/site` 与 `/opt/site/` 都能通过 `validateReleaseStrategy`，却被判为「不共用」，
+ * 于是共用保护被关掉，回收把**另一个目标**台账里的成品当孤儿删掉 —— 直接砍到别人的生产。
+ * `/opt//site`、`/opt/site/.` 、`/opt/x/../site` 同理。
+ *
+ * 只做词法规范化，不解析符号链接：路径在远端，本机 realpath 无从谈起。因此这是
+ * 「必要不充分」的判据 —— 它能认出所有词法上的同一目录，认不出软链指向同一处的两个路径。
+ * 后者留在 debt 里；词法这一层至少不能自己先漏。
+ */
+export function normalizeRemoteDirectoryIdentity(raw: string): string {
+  const trimmed = (raw || '').trim();
+  if (!trimmed) return '';
+  const absolute = trimmed.startsWith('/');
+  const segments: string[] = [];
+  for (const segment of trimmed.split('/')) {
+    if (!segment || segment === '.') continue;
+    if (segment === '..') {
+      // 绝对路径在根部吃掉多余的 `..`（`/..` 就是 `/`）；相对路径必须保留，
+      // 否则 `../a` 与 `a` 会被判成同一个目录。
+      if (segments.length > 0 && segments[segments.length - 1] !== '..') segments.pop();
+      else if (!absolute) segments.push('..');
+      continue;
+    }
+    segments.push(segment);
+  }
+  const joined = segments.join('/');
+  return absolute ? `/${joined}` : joined;
+}
+
+/**
+ * 两个远端目录是否是同一个。空路径一律判 false —— 「都没配」不构成共用，
+ * 那会把所有未配 publicDirectory 的目标互相绑定，共用保护反而误伤到不相干的目标。
+ */
+export function isSameRemoteDirectory(a: string, b: string): boolean {
+  const left = normalizeRemoteDirectoryIdentity(a);
+  const right = normalizeRemoteDirectoryIdentity(b);
+  return Boolean(left) && left === right;
+}
+
+/**
  * 剥掉自动恢复后缀。剥出来的是**那次失败发布**的 id，不是线上真正在跑的版本 ——
  * 真正在跑的是它的 previousReleaseId。漂移判定不剥这一层，一次正常的自动恢复
  * 就会被报成生产漂移（假阳性），告警响几次人就学会忽略了。

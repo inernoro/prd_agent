@@ -219,3 +219,198 @@ describe('envOverrideFromSnapshot 统一战线同库复用（2026-07-25）', () 
     expect(env.DATABASE_URL).toBeUndefined();
   });
 });
+
+/**
+ * 引擎中立 key 只能兜底，不许压过自带引擎的 key（Codex PR #1275 四轮 P1）。
+ *
+ * 项目级 customEnv 会把一个泛化的 DB_NAME 灌给全部服务。若它与 profile 自己的
+ * MYSQL_DATABASE 并列，而排序只按「框架 key 优先」，两者同档 → 退化成 merged env
+ * 的插入顺序（project → branch → profile），项目级那个先进来就赢：sourceDb 取到
+ * 与本服务无关的库名 → 克隆错库；应用连接串路径段对不上这个值 → urlEnvValues
+ * 漏掉它 → 副本仍打源库，控制面还报「隔离成功」。
+ */
+describe('库名 key 的取用优先级', () => {
+  it('自带引擎的 MYSQL_DATABASE 压过项目级泛化 DB_NAME', () => {
+    addInfra('mysql', 'mysql:8');
+    // 项目级先灌一个与本服务无关的 DB_NAME，profile 自己声明真正的库
+    state.setCustomEnv({ DB_NAME: 'unrelated_project_db', DATABASE_URL: 'mysql://h:3306/appdb' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({ env: { MYSQL_DATABASE: 'appdb' } }),
+    );
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('appdb');
+    // 应用真正读的连接串必须进改写集合（路径段与 sourceDb 对得上）
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('DATABASE_URL');
+  });
+
+  it('没有自带引擎的 key 时，中立 DB_NAME 仍然照常兜底（不能因为加了优先级就失效）', () => {
+    addInfra('mysql', 'mysql:8');
+    state.setCustomEnv({ DB_NAME: 'impdb', SPRING_DATASOURCE_URL: 'jdbc:mysql://h:3306/impdb' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('impdb');
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+});
+
+/**
+ * 连接串改写必须绑定到**选定的那个实例**（Codex PR #1275 十一轮 P1）。
+ *
+ * 只按「路径段等于源库」收 URL 是不够的：同一个 profile 可能有两条库名相同、
+ * 主机不同的 JDBC URL。克隆只发生在 target.infra 上，把另一台主机那条也改成
+ * 隔离库名，副本会连到一台根本没有这个库的服务器（或更糟：那台上恰好有同名库），
+ * 而控制面照报「隔离可用」。
+ */
+describe('关系型连接串按主机绑定到选定实例', () => {
+  it('两条同库名不同主机 → 只改指向选定实例的那条，另一条如实报进 unboundUrlKeys', () => {
+    addInfra('mysql', 'mysql:8');
+    addInfra('mysql-legacy', 'mysql:8');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        dependsOn: ['mysql'],
+        env: {
+          DB_NAME: 'appdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/appdb',
+          LEGACY_DATASOURCE_URL: 'jdbc:mysql://mysql-legacy:3306/appdb',
+        },
+      }),
+    );
+    expect(reason).toBeUndefined();
+    expect(Object.keys(target?.urlEnvValues || {})).toEqual(['SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toEqual(['LEGACY_DATASOURCE_URL']);
+  });
+
+  it('只有一个主机时全收：不为了治歧义误伤常规单实例配置（IMP 那种）', () => {
+    addInfra('mysql', 'mysql:8');
+    const { target } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        env: {
+          DB_NAME: 'impdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+          REPORT_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+        },
+      }),
+    );
+    expect(Object.keys(target?.urlEnvValues || {}).sort())
+      .toEqual(['REPORT_DATASOURCE_URL', 'SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toBeUndefined();
+  });
+
+  it('主机名走短别名（mysql-<项目> → mysql）也算指向选定实例', () => {
+    addInfra('mysql-demo', 'mysql:8');
+    addInfra('mysql-legacy', 'mysql:8');
+    const { target } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({
+        dependsOn: ['mysql-demo'],
+        env: {
+          DB_NAME: 'appdb',
+          SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/appdb',
+          OTHER_URL: 'jdbc:mysql://10.0.0.9:3306/appdb',
+        },
+      }),
+    );
+    expect(Object.keys(target?.urlEnvValues || {})).toEqual(['SPRING_DATASOURCE_URL']);
+    expect(target?.unboundUrlKeys).toEqual(['OTHER_URL']);
+  });
+});
+
+/**
+ * 来源层级压过引擎专属度（Codex PR #1275 九轮 P1）。
+ *
+ * 四轮那条修的是「项目级泛化 DB_NAME 压过 profile 自己的 MYSQL_DATABASE」，解法是
+ * 一律把中立 key 降档 —— 在反方向上就错了：infra 预设常把 `MYSQL_DATABASE` 放在
+ * 项目级 env，而服务自己用 `DB_NAME` + JDBC URL。按专属度排会选中项目级那个默认库，
+ * 克隆错库、应用的 DB_NAME 与 URL 原地不动，控制面照报隔离成功。
+ */
+describe('库名 key 的来源层级优先于引擎专属度', () => {
+  it('profile 自己的中立 DB_NAME 压过项目级的 MYSQL_DATABASE', () => {
+    addInfra('mysql', 'mysql:8');
+    // 项目级灌一个 infra 预设默认库；服务自己声明 DB_NAME 且 JDBC URL 指向它
+    state.setCustomEnv({ MYSQL_DATABASE: 'infra_default' }, 'proj');
+    const { target, reason } = resolveReplicaDbTarget(
+      state,
+      branch(),
+      profile({ env: { DB_NAME: 'app', SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/app' } }),
+    );
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('app');
+    // 应用真正读的连接串必须进改写集合（路径段与 sourceDb 对得上）
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+
+  it('分支 scope 的库名 key 压过项目级', () => {
+    addInfra('mysql', 'mysql:8');
+    state.setCustomEnv({ MYSQL_DATABASE: 'infra_default' }, 'proj');
+    state.setCustomEnv({ DB_NAME: 'branch_db', DATABASE_URL: 'mysql://mysql:3306/branch_db' }, 'proj-main');
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target?.sourceDb).toBe('branch_db');
+  });
+
+  it('同一来源层级内，引擎专属度仍然说了算（四轮那条不能被覆盖）', () => {
+    addInfra('mysql', 'mysql:8');
+    // 两个 key 都来自项目级 —— 此时 MYSQL_DATABASE 必须压过泛化 DB_NAME
+    state.setCustomEnv(
+      { DB_NAME: 'unrelated_project_db', MYSQL_DATABASE: 'appdb', DATABASE_URL: 'mysql://h:3306/appdb' },
+      'proj',
+    );
+    const { target } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target?.sourceDb).toBe('appdb');
+  });
+});
+
+/**
+ * 中立库名 key 的引擎判定必须先按 profile 自己的 dependsOn 收敛（Codex PR #1275 八轮 P2）。
+ *
+ * 项目级 customEnv 会把**所有**引擎的连接串灌给每个服务，多引擎项目里 URL 集合恒为
+ * {mysql, postgres} → 判不出唯一引擎 → DB_NAME 被当成不可归类的 key 过滤掉 →
+ * presentKeys 空 → 直接「没有数据库名」返回。下游那套 dependsOn 消歧此刻永远轮不到。
+ */
+describe('多引擎项目里中立库名 key 的引擎收敛', () => {
+  beforeEach(() => {
+    addInfra('mysql', 'mysql:8');
+    addInfra('pg', 'postgres:16');
+    // 项目级把两种引擎的连接串一起灌下来 —— 单看 URL 集合判不出唯一引擎
+    state.setCustomEnv({
+      DB_NAME: 'impdb',
+      SPRING_DATASOURCE_URL: 'jdbc:mysql://mysql:3306/impdb',
+      PG_URL: 'postgres://pg:5432/otherdb',
+    }, 'proj');
+  });
+
+  it('dependsOn 唯一指向一个引擎 → 中立 DB_NAME 照常可隔离', () => {
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql'] }));
+    expect(reason).toBeUndefined();
+    expect(target?.engine).toBe('mysql');
+    expect(target?.sourceDb).toBe('impdb');
+    // 应用真正读的那条 JDBC 连接串必须进改写集合，否则隔离仍是假的
+    expect(Object.keys(target?.urlEnvValues || {})).toContain('SPRING_DATASOURCE_URL');
+  });
+
+  it('没有 dependsOn → 仍然 fail-closed，不瞎猜引擎', () => {
+    const { target, reason } = resolveReplicaDbTarget(state, branch(), profile());
+    expect(target).toBeNull();
+    expect(reason).toContain('没有数据库名');
+  });
+
+  it('dependsOn 同时声明两种引擎 → 依旧判不出唯一引擎，fail-closed', () => {
+    const { target } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql', 'pg'] }));
+    expect(target).toBeNull();
+  });
+
+  it('dependsOn 指向的实例未运行 → 不算数，fail-closed', () => {
+    addInfra('mysql-stopped', 'mysql:8', {}, 'stopped');
+    const { target } = resolveReplicaDbTarget(state, branch(), profile({ dependsOn: ['mysql-stopped'] }));
+    expect(target).toBeNull();
+  });
+});

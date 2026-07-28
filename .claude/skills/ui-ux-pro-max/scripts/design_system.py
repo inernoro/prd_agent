@@ -768,16 +768,16 @@ def format_master_md(design_system: dict) -> str:
         anti_list = [a.strip() for a in anti_patterns.split("+")]
         for anti in anti_list:
             if anti:
-                lines.append(f"- ❌ {anti}")
+                lines.append(f"- [NO] {anti}")
     lines.append("")
     lines.append("### Additional Forbidden Patterns")
     lines.append("")
-    lines.append("- ❌ **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)")
-    lines.append("- ❌ **Missing cursor:pointer** — All clickable elements must have cursor:pointer")
-    lines.append("- ❌ **Layout-shifting hovers** — Avoid scale transforms that shift layout")
-    lines.append("- ❌ **Low contrast text** — Maintain 4.5:1 minimum contrast ratio")
-    lines.append("- ❌ **Instant state changes** — Always use transitions (150-300ms)")
-    lines.append("- ❌ **Invisible focus states** — Focus states must be visible for a11y")
+    lines.append("- [NO] **Emojis as icons** — Use SVG icons (Heroicons, Lucide, Simple Icons)")
+    lines.append("- [NO] **Missing cursor:pointer** — All clickable elements must have cursor:pointer")
+    lines.append("- [NO] **Layout-shifting hovers** — Avoid scale transforms that shift layout")
+    lines.append("- [NO] **Low contrast text** — Maintain 4.5:1 minimum contrast ratio")
+    lines.append("- [NO] **Instant state changes** — Always use transitions (150-300ms)")
+    lines.append("- [NO] **Invisible focus states** — Focus states must be visible for a11y")
     lines.append("")
     
     # Pre-Delivery Checklist
@@ -819,7 +819,7 @@ def format_page_override_md(design_system: dict, page_name: str, page_query: str
     lines.append(f"> **Generated:** {timestamp}")
     lines.append(f"> **Page Type:** {page_overrides.get('page_type', 'General')}")
     lines.append("")
-    lines.append("> ⚠️ **IMPORTANT:** Rules in this file **override** the Master file (`design-system/MASTER.md`).")
+    lines.append("> [CAUTION]️ **IMPORTANT:** Rules in this file **override** the Master file (`design-system/MASTER.md`).")
     lines.append("> Only deviations from the Master are documented here. For all other rules, refer to the Master.")
     lines.append("")
     lines.append("---")

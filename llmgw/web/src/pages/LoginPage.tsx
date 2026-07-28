@@ -1,4 +1,4 @@
-// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 sessionStorage → 跳控制台首页。
+// 独立登录页：用户名/密码 → POST /gw/auth/login → JWT 存 localStorage（7 天 + 用后自动续期）→ 跳控制台首页。
 import { useEffect, useState } from 'react';
 import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
@@ -10,7 +10,7 @@ import { Button } from '@/components/ui';
 export { resolveMapHomeHref } from '@/lib/mapNavigation';
 
 export function LoginPage() {
-  const { login } = useAuth();
+  const { login, sessionExpiredReason } = useAuth();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from || '/';
@@ -20,6 +20,12 @@ export function LoginPage() {
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [healthState, setHealthState] = useState<'checking' | 'ok' | 'unavailable'>('checking');
+  // 被动踢回登录页时说清原因和去向，用户不会以为自己「被莫名其妙登出」。
+  const expiredNotice = sessionExpiredReason === 'revoked'
+    ? '账号的租户成员关系或角色已变更，原登录状态已作废，请重新登录。'
+    : sessionExpiredReason === 'expired'
+      ? '登录状态已过期，请重新登录。登录后会回到你刚才的页面。'
+      : null;
 
   useEffect(() => {
     let active = true;
@@ -121,6 +127,10 @@ export function LoginPage() {
                 onChange={(e) => setPassword(e.target.value)}
               />
             </div>
+
+            {!error && expiredNotice ? (
+              <div className="lg-login-notice" role="status">{expiredNotice}</div>
+            ) : null}
 
             {error ? (
               <div className="lg-login-error" role="alert">{error}</div>

@@ -167,11 +167,21 @@ export class RealAuthMongoHandle implements IAuthMongoHandle {
 
   async connect(): Promise<void> {
     if (this.client) return;
-    this.client = new MongoClient(this.uri, {
+    // 失败必须复位（Codex PR #1275 七轮 P2，与状态库两个 handle 同一个坑）：
+    // 先赋值再 await connect()，一旦连接失败，client 已挂在实例上而 db 为空 ——
+    // 下一次 connect() 被 `if (this.client) return` 直接短路，之后每次取集合都抛
+    // 「AuthMongoHandle not connected」。启动期退避重试因此在同一个半死 handle 上打转。
+    const client = new MongoClient(this.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
+    try {
+      await client.connect();
+    } catch (err) {
+      await client.close().catch(() => undefined);
+      throw err;
+    }
+    this.client = client;
     this.db = this.client.db(this.databaseName);
   }
 

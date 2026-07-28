@@ -92,6 +92,15 @@ const quote = (s: string): string => `'${String(s).replace(/'/g, `'\\''`)}'`;
  */
 const PROTECTED_CONTAINER_NAMES = new Set(['cds-infra-cds-state-mongo']);
 
+/**
+ * 保护标记（2026-07-27 宕机复盘 P2）：带 `cds.protected=true` 的容器一律不收割。
+ * 名单式保护只能护住写死的那几个名字，标记式保护对**所有** infra 容器与将来新增的
+ * 关键容器自动生效——事故当天被误删的正是这一类（装着数据、停掉就出大事）。
+ */
+export function isProtectedByLabel(labels: string): boolean {
+  return /(^|,)cds\.protected=true(,|$)/.test((labels || '').trim());
+}
+
 interface DiscoveredContainer {
   name: string;
   running: boolean;
@@ -348,7 +357,7 @@ export async function sweepOrphanCdsContainers(opts: {
   };
 
   for (const c of infraContainers) {
-    if (PROTECTED_CONTAINER_NAMES.has(c.name)) continue;
+    if (PROTECTED_CONTAINER_NAMES.has(c.name) || isProtectedByLabel(c.labels)) continue;
     if (belongsToOtherInstance(c)) continue;
     if (knownInfraNames.has(c.name)) continue;
     if (withinGracePeriod(c, nowMs)) continue;

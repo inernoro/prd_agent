@@ -208,12 +208,30 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       // 失败即停策略下后面的服务就再也隔离不了，「一次覆盖全部」的承诺无法兑现。
       // 与隔离执行路径同一个 SSOT（resolveReplicaDbTarget + resolveEffectiveProfile），
       // 前端据此收敛动作目标与「已隔离 N/M」的分母。
-      const dbIsolatable: Record<string, { ok: boolean; reason?: string }> = {};
+      const dbIsolatable: Record<string, {
+        ok: boolean; reason?: string;
+        plan?: { engine: string; dbNameKeys: string[]; urlKeys: string[]; unboundUrlKeys?: string[] };
+      }> = {};
       for (const p of deps.stateService.getEffectiveProfilesForBranch(branch)) {
         const { target, reason } = resolveReplicaDbTarget(
           deps.stateService, branch, resolveEffectiveProfile(p, branch),
         );
-        dbIsolatable[p.id] = target ? { ok: true } : { ok: false, reason };
+        // 隔离会改写哪些变量，点之前就说清（预期管理；也是唯一能在不真跑克隆的
+        // 前提下核实「关系型连接串确实进了改写集合」的证据面）。
+        // **只报 key 名不报值**——连接串里带凭据。
+        dbIsolatable[p.id] = target
+          ? {
+            ok: true,
+            plan: {
+              engine: target.engine,
+              dbNameKeys: target.envKeys,
+              urlKeys: Object.keys(target.urlEnvValues || {}),
+              // 主机不指向选定实例、因此**不会**被改写的连接串（Codex 十一轮 P1）。
+              // 隔离范围要可见：不列出来，用户会以为这条连接也被隔离了。
+              ...(target.unboundUrlKeys?.length ? { unboundUrlKeys: target.unboundUrlKeys } : {}),
+            },
+          }
+          : { ok: false, reason };
       }
       // 存量分支（模式面世前的副本）按容器级报告：与 startPlan 的默认钉住兜底口径一致
       const totalMembers = Object.values(branch.replicaSets ?? {}).reduce((s, rs) => s + rs.members.length, 0);

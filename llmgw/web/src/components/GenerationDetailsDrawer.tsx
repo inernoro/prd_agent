@@ -24,9 +24,9 @@ function MetricCard({ title, value, note, icon }: { title: string; value: string
         background: 'var(--bg-input)',
       }}
     >
-      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 13, color: 'var(--text-muted)' }}>{icon}{title}</div>
-      <div className="tabular" style={{ marginTop: 4, fontSize: 15, fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
-      {note ? <div style={{ fontSize: 12, marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
+      <div style={{ display: 'flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>{icon}{title}</div>
+      <div className="tabular" style={{ marginTop: 4, fontSize: 'var(--fs-heading)', fontWeight: 650, color: 'var(--text-primary)' }}>{value}</div>
+      {note ? <div style={{ fontSize: 'var(--fs-caption)', marginTop: 3, color: 'var(--text-muted)' }}>{note}</div> : null}
     </div>
   );
 }
@@ -44,14 +44,14 @@ function Row({ k, v, mono, copy }: { k: string; v?: string | null; mono?: boolea
         borderBottom: '1px solid var(--border-subtle)',
       }}
     >
-      <span style={{ fontSize: 14, flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
+      <span style={{ fontSize: 'var(--fs-body)', flexShrink: 0, color: 'var(--text-muted)' }}>{k}</span>
       <span
         style={{
-          fontSize: 14,
+          fontSize: 'var(--fs-body)',
           textAlign: 'right',
           wordBreak: 'break-all',
           color: 'var(--text-secondary)',
-          fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+          fontFamily: mono ? 'var(--font-mono)' : undefined,
         }}
       >
         {val}
@@ -79,7 +79,7 @@ function CodeBlock({ body, empty = '暂无数据' }: { body?: string | null; emp
         overflow: 'auto',
         whiteSpace: 'pre-wrap',
         wordBreak: 'break-word',
-        fontSize: 13,
+        fontSize: 'var(--fs-secondary)',
         lineHeight: 1.55,
         color: body ? 'var(--text-secondary)' : 'var(--text-muted)',
         background: 'var(--bg-base)',
@@ -172,13 +172,13 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
     >
       <div style={{ display: 'flex', justifyContent: 'space-between', gap: 12, alignItems: 'center', marginBottom: 10 }}>
         <div>
-          <div style={{ fontSize: 14, fontWeight: 600, color: 'var(--text-primary)' }}>路由过程</div>
-          <div style={{ marginTop: 2, fontSize: 11, color: 'var(--text-muted)' }}>
+          <div style={{ fontSize: 'var(--fs-body)', fontWeight: 600, color: 'var(--text-primary)' }}>路由过程</div>
+          <div style={{ marginTop: 2, fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>
             {trace?.mode || detail.modelResolutionType || 'unknown'} · {trace?.transport || detail.transport || 'unknown transport'}
           </div>
         </div>
         {trace?.isFallback || detail.isFallback ? (
-          <span style={{ borderRadius: 999, padding: '2px 8px', fontSize: 10, fontWeight: 650, color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>
+          <span style={{ borderRadius: 999, padding: '2px 8px', fontSize: 'var(--fs-micro)', fontWeight: 650, color: '#f59e0b', background: 'rgba(245,158,11,0.15)' }}>
             fallback
           </span>
         ) : null}
@@ -201,9 +201,9 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
           const warning = step.status === 'warning' || step.stage === 'fallback';
           return (
             <div key={`${step.order}-${step.stage}-${step.label}`} style={{ display: 'grid', gridTemplateColumns: '78px 120px minmax(0, 1fr)', gap: 8, alignItems: 'start' }}>
-              <span style={{ fontSize: 10, color: 'var(--text-muted)', textTransform: 'uppercase' }}>{step.stage}</span>
-              <span style={{ fontSize: 11, color: warning ? '#f59e0b' : 'var(--text-secondary)' }}>{step.label}</span>
-              <span style={{ fontSize: 11, color: 'var(--text-primary)', wordBreak: 'break-word', fontFamily: 'ui-monospace, SFMono-Regular, Menlo, monospace' }}>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)', textTransform: 'uppercase' }}>{step.stage}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: warning ? '#f59e0b' : 'var(--text-secondary)' }}>{step.label}</span>
+              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-primary)', wordBreak: 'break-word', fontFamily: 'var(--font-mono)' }}>
                 {step.value || DASH}
               </span>
             </div>
@@ -211,7 +211,7 @@ function RouterTracePanel({ detail }: { detail: LlmLogDetail }) {
         })}
       </div>
       {trace?.fallbackReason || detail.fallbackReason ? (
-        <div style={{ marginTop: 10, fontSize: 11, color: '#f59e0b', wordBreak: 'break-word' }}>
+        <div style={{ marginTop: 10, fontSize: 'var(--fs-micro)', color: '#f59e0b', wordBreak: 'break-word' }}>
           {trace?.fallbackReason || detail.fallbackReason}
         </div>
       ) : null}
@@ -239,7 +239,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
   const maxDuration = Math.max(1, ...attempts.map((attempt) => attempt.durationMs ?? 0));
   return (
     <section>
-      <div style={{ fontSize: 13, fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
+      <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-primary)', marginBottom: 6 }}>上游响应</div>
       <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
         {attempts.map((attempt) => {
           const warning = attempt.status === 'skipped' || attempt.status === 'failed';
@@ -260,7 +260,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
                 border: '1px solid var(--border-subtle)',
               }}
             >
-              <span style={{ fontSize: 13, color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
+              <span style={{ fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>#{attempt.order || 1}</span>
               <span className="lg-provider-response-main">
                 <span className="lg-provider-response-provider">{provider}</span>
                 <span className="lg-provider-response-model">{attempt.model || DASH}</span>
@@ -277,7 +277,7 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
                   </span>
                 ) : null}
               </span>
-              <span className="tabular" style={{ fontSize: 13, color: 'var(--text-muted)', textAlign: 'right', whiteSpace: 'nowrap' }}>
+              <span className="tabular" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)', textAlign: 'right', whiteSpace: 'nowrap' }}>
                 {attempt.statusCode ? `HTTP ${attempt.statusCode}` : attempt.status || '待响应'}
                 <span style={{ display: 'block', marginTop: 2 }}>{attempt.durationMs == null ? DASH : fmtMs(attempt.durationMs)}</span>
               </span>
@@ -292,14 +292,14 @@ function ProviderResponses({ detail }: { detail: LlmLogDetail }) {
 function TraceMini({ label, value, mono }: { label: string; value?: string | null; mono?: boolean }) {
   return (
     <div style={{ border: '1px solid var(--border-subtle)', background: 'var(--bg-input)', borderRadius: 'var(--radius-sm)', padding: '7px 8px', minWidth: 0 }}>
-      <div style={{ fontSize: 10, color: 'var(--text-muted)' }}>{label}</div>
+      <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{label}</div>
       <div
         style={{
           marginTop: 2,
-          fontSize: 11,
+          fontSize: 'var(--fs-micro)',
           color: 'var(--text-secondary)',
           wordBreak: 'break-word',
-          fontFamily: mono ? 'ui-monospace, SFMono-Regular, Menlo, monospace' : undefined,
+          fontFamily: mono ? 'var(--font-mono)' : undefined,
         }}
       >
         {value || DASH}
@@ -467,20 +467,20 @@ export function GenerationDetailsDrawer({
         >
           <div>
             {isPage ? (
-              <h1 style={{ margin: 0, fontSize: 20, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h1>
+              <h1 style={{ margin: 0, fontSize: 'var(--fs-title)', fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h1>
             ) : (
-              <h2 style={{ margin: 0, fontSize: 16, fontWeight: 650, color: 'var(--text-primary)' }}>请求详情</h2>
+              <h2 style={{ margin: 0, fontSize: 'var(--fs-metric)', fontWeight: 'var(--fw-strong)', color: 'var(--text-primary)' }}>请求详情</h2>
             )}
             {detail ? <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: 6, marginTop: 5 }}>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 13 }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}><ModelEntityIcon model={detail.logicalModelPublicId || detail.model} />{detail.logicalModelPublicId || detail.model || DASH}</span>
-              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><ProviderEntityIcon provider={detail.platformName || detail.provider} />{detail.platformName || detail.provider || DASH}</span>
-              {detail.appCallerCode ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 13 }}><AppEntityIcon app={generationAppName(detail)} sourceSystem={detail.sourceSystem} />{generationAppName(detail)}</span> : null}
-              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 13 }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
-            </div> : <div style={{ marginTop: 3, fontSize: 13, color: 'var(--text-muted)' }}>{logId}</div>}
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-primary)', fontSize: 'var(--fs-secondary)' }} title={detail.logicalModelPublicId ? `实际上游模型：${detail.model}` : undefined}><ModelEntityIcon model={detail.logicalModelPublicId || detail.model} />{detail.logicalModelPublicId || detail.model || DASH}</span>
+              <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}><ProviderEntityIcon provider={detail.platformName || detail.provider} />{detail.platformName || detail.provider || DASH}</span>
+              {detail.appCallerCode ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 6, padding: '2px 8px', border: '1px solid var(--border-subtle)', borderRadius: 999, color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}><AppEntityIcon app={generationAppName(detail)} sourceSystem={detail.sourceSystem} />{generationAppName(detail)}</span> : null}
+              <span className="tabular" style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{new Date(detail.startedAt).toLocaleString('zh-CN', { hour12: false })}</span>
+            </div> : <div style={{ marginTop: 3, fontSize: 'var(--fs-secondary)', color: 'var(--text-muted)' }}>{logId}</div>}
           </div>
           <div className="lg-generation-header-actions">
             {!isPage ? <Link to={`/logs/${encodeURIComponent(logId)}`} title="在独立页面打开">独立页面<ArrowUpRight size={14} /></Link> : null}
-            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 13 }}>
+            <button aria-label={isPage ? '返回请求记录' : '关闭详情'} onClick={onClose} style={{ width: isPage ? 'auto' : 44, minWidth: 44, height: 44, padding: isPage ? '0 10px' : 0, gap: 7, display: 'inline-flex', alignItems: 'center', justifyContent: 'center', background: 'none', border: isPage ? '1px solid var(--border-subtle)' : 'none', borderRadius: 'var(--radius-sm)', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}>
               {isPage ? <><ArrowLeft size={16} />返回请求记录</> : <X size={18} />}
             </button>
           </div>
@@ -491,8 +491,8 @@ export function GenerationDetailsDrawer({
             <SectionLoader text="正在加载详情…" />
           ) : loadError || !detail ? (
             <div className="lg-generation-load-error" role="alert">
-              <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>无法打开这条生成记录</div>
-              <div style={{ marginTop: 6, fontSize: 14, color: 'var(--text-muted)' }}>{loadError || '这条记录不存在，或当前租户无权查看。'}</div>
+              <div style={{ fontSize: 'var(--fs-heading)', fontWeight: 600, color: 'var(--text-primary)' }}>无法打开这条生成记录</div>
+              <div style={{ marginTop: 6, fontSize: 'var(--fs-body)', color: 'var(--text-muted)' }}>{loadError || '这条记录不存在，或当前租户无权查看。'}</div>
               <button type="button" onClick={onClose}>返回请求记录</button>
             </div>
           ) : (
@@ -510,7 +510,7 @@ export function GenerationDetailsDrawer({
                         borderRadius: 999,
                         padding: '0 8px',
                         height: 22,
-                        fontSize: 11,
+                        fontSize: 'var(--fs-micro)',
                         fontWeight: 600,
                         color: lc.color,
                         background: lc.bg,
@@ -531,7 +531,7 @@ export function GenerationDetailsDrawer({
                       borderRadius: 999,
                       padding: '0 8px',
                       height: 22,
-                      fontSize: 11,
+                      fontSize: 'var(--fs-micro)',
                       fontWeight: 600,
                       color: c.color,
                       background: c.bg,
@@ -597,7 +597,7 @@ export function GenerationDetailsDrawer({
                     />
                   </div>
                   <section>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>本次生成</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>本次生成</div>
                     <Row k="实际模型" v={detail.model} mono copy />
                     <Row k="期望模型" v={detail.expectedModel} mono />
                     <Row k="Provider" v={detail.platformName || detail.provider} />
@@ -619,7 +619,7 @@ export function GenerationDetailsDrawer({
               {viewTab === 'content' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <section>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>请求身份</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>请求身份</div>
                     <Row k="应用" v={generationAppName(detail)} />
                     <Row k="接入密钥" v={detail.serviceKeyPrefix || detail.serviceKeyId} mono copy />
                     <Row k="Request ID" v={detail.requestId} mono copy />
@@ -669,7 +669,7 @@ export function GenerationDetailsDrawer({
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <RouterTracePanel detail={detail} />
                   <section>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>治理策略</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>治理策略</div>
                     <Row k="模型策略" v={detail.modelPolicy} />
                     <Row k="请求模型池" v={detail.modelPoolId} mono />
                     <Row k="解析原因" v={detail.resolutionReason} />
@@ -684,7 +684,7 @@ export function GenerationDetailsDrawer({
               {viewTab === 'audit' ? (
                 <div className="lg-generation-tab-panel" role="tabpanel">
                   <section>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>费用与对账</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>费用与对账</div>
                     <Row k="价格币种" v={detail.priceCurrency} />
                     <Row k="输入价格 / 1M" v={detail.inputPricePerMillion == null ? null : String(detail.inputPricePerMillion)} />
                     <Row k="输出价格 / 1M" v={detail.outputPricePerMillion == null ? null : String(detail.outputPricePerMillion)} />
@@ -699,7 +699,7 @@ export function GenerationDetailsDrawer({
                     <Row k="价格快照 hash" v={detail.priceSnapshotHash} mono copy />
                   </section>
                   <section>
-                    <div style={{ fontSize: 13, fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>身份与时间</div>
+                    <div style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, marginBottom: 4, color: 'var(--text-primary)' }}>身份与时间</div>
                     <Row k="appCallerCode" v={detail.appCallerCode} mono />
                     <Row k="业务标题" v={detail.appCallerTitle || detail.appCallerCodeDisplayName} />
                     <Row k="团队" v={detail.teamId} mono />

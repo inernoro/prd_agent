@@ -26,11 +26,34 @@ export function fmtCompact(n?: number | null): string {
   return `${(n / 1_000_000).toFixed(1)}m`;
 }
 
+const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', EUR: '€' };
+
+/** 去掉小数尾部无意义的 0；带指数的科学计数法原样返回，避免裁掉指数位。 */
+function trimZeros(text: string): string {
+  if (text.includes('e') || text.includes('E')) return text;
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}
+
+/**
+ * 费用格式：符号前缀 + 有效位截断，而不是定长 8 位小数。
+ * `USD 0.00509750`(14 字符) → `$0.005098`(9 字符)——列宽直接省一半，且小数位不再淹没量级。
+ */
 export function fmtCost(value?: number | null, currency?: string | null): string {
   if (value == null || !isFinite(value)) return DASH;
-  const prefix = currency?.trim().toUpperCase() || '';
-  const amount = Math.abs(value) >= 1 ? value.toFixed(4) : value.toFixed(8);
-  return prefix ? `${prefix} ${amount}` : amount;
+  const code = currency?.trim().toUpperCase() || '';
+  const symbol = CURRENCY_SYMBOL[code] ?? (code ? `${code} ` : '');
+  const abs = Math.abs(value);
+  let amount: string;
+  if (abs === 0) amount = '0';
+  else if (abs >= 1) amount = value.toFixed(2);
+  else if (abs >= 0.01) amount = trimZeros(value.toFixed(4));
+  else {
+    // 小额：保留 4 位有效数字，去掉尾部无意义的 0（0.00509750 → 0.005098）。
+    // toPrecision 在极小值（如 1e-10）下会输出科学计数法 1.000e-10，
+    // 此时绝不能裁尾零——那会把指数的 0 也吃掉，1.000e-10 变成 1.000e-1，金额差 9 个数量级。
+    amount = trimZeros(value.toPrecision(4));
+  }
+  return `${symbol}${amount}`;
 }
 
 export function fmtShortTime(iso?: string | null): string {
@@ -102,19 +125,24 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '140px', required: true },
-  { key: 'generation', label: '请求 ID', width: '180px', defaultVisible: false },
-  { key: 'model', label: '模型', width: '180px' },
-  { key: 'provider', label: 'Provider', width: '170px' },
-  { key: 'app', label: 'App', width: '320px', tip: '点击查看 appCaller 摘要与治理入口' },
-  { key: 'input', label: '输入', width: '104px', align: 'right' },
-  { key: 'output', label: '输出', width: '104px', align: 'right' },
-  { key: 'cost', label: '费用', width: '116px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
-  { key: 'usage', label: '用途', width: '100px' },
-  { key: 'speed', label: '速度', width: '104px', align: 'right', tip: '文本为输出 Token / 秒；图片为平均每张生成耗时' },
-  { key: 'finish', label: '结束原因', width: '122px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
-  { key: 'user', label: '客户端用户', width: '170px' },
-  { key: 'status', label: '状态', width: '60px', align: 'center', required: true },
+  // 列宽 = minmax(内容下限, 按下限等比的 fr)。
+  // 关键在 fr 权重与下限成正比：宽屏多出来的空间按比例摊给每一列，
+  // 于是每列都有 30~50% 的均匀富余（OpenRouter 那一屏就是这个比例），
+  // 而不是把余量全塞进某一列、在表格中间撑出一个空洞。
+  // 全部左对齐——右对齐 + 富余会在每列中间再撑出一条空白山谷。
+  { key: 'date', label: '时间', width: 'minmax(104px, 1.04fr)', required: true },
+  { key: 'generation', label: '请求 ID', width: 'minmax(150px, 1.5fr)', defaultVisible: false },
+  { key: 'model', label: '模型', width: 'minmax(158px, 1.58fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(140px, 1.4fr)' },
+  { key: 'app', label: 'App', width: 'minmax(190px, 1.9fr)', tip: '点击查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: 'minmax(72px, 0.72fr)' },
+  { key: 'output', label: '输出', width: 'minmax(72px, 0.72fr)' },
+  { key: 'cost', label: '费用', width: 'minmax(88px, 0.88fr)' },
+  { key: 'usage', label: '用途', width: 'minmax(84px, 0.84fr)', defaultVisible: false },
+  { key: 'speed', label: '速度', width: 'minmax(88px, 0.88fr)' },
+  { key: 'finish', label: '结束原因', width: 'minmax(88px, 0.88fr)', defaultVisible: false },
+  { key: 'user', label: '客户端用户', width: 'minmax(120px, 1.2fr)', defaultVisible: false },
+  { key: 'status', label: '状态', width: '52px', align: 'center', required: true },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [

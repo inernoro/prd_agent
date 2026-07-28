@@ -65,7 +65,7 @@ timeline
 
 - 第一阶段（PR #488）：先做 8 轮战术性补丁——Controller 强制 DirectModel、AsyncLocal 跨调用栈传递、装饰器拦截、debug 端点写 `_diag_resolver_calls`、实例字段方案——全部失败，最终 commit message 留下完整的失败链。
 - 第二阶段（PR #490）：从战术补丁切到架构治理。新增 `SendRawWithResolutionAsync` 接收已解析结果不再二次 Resolve、`ExpectedModelRespectingResolver` 装饰器整体删除、`ResolverDebugController` test-chain/simulate-worker 端点删除、`OpenAIImageClient` 改用单次 Resolve 路径、`OpenRouterVideoClient` 缓存 Submit 解析结果消除轮询重复。
-- 沉淀：`.claude/rules/compute-then-send.md` 规则上线 + `.claude/skills/llm-call-trace/` 技能上线 + `doc/design.platform.llm-gateway-refactor.md` 状态文档。
+- 沉淀：`.claude/rules/compute-then-send.md` 规则上线 + `.claude/skills/llm-call-trace/` 技能上线 + `doc/design.platform.llm-gateway.refactor.md` 状态文档。
 - 修复 `GatewayModelResolution` 凭据泄露 + `OriginalPool` 字段丢失。
 - 相关 PR：#488（10 commits）、#490（10 commits）。
 
@@ -251,7 +251,7 @@ timeline
 | P0 GitHub 自动部署进入真实仓库规模验证         | 显著落地。本周 #457 / #466 / #467 在 webhook 噪声过滤、PR 评论模板自定义、一键跳转 Review Agent 三个方向把 GitHub 自动部署体验产品化；#459 三层就绪兜底消灭 Cloudflare 502 让"刚 push 立刻访问"的瞬态体验过关。 |
 | P0 Mongo 单后端运维跑通                 | 本周未在 PR 中显式推进 Mongo backup/restore/failover runbook。建议下周补。            |
 | P1 周报 / 视频 / 百宝箱 / 公开页做体验回归      | 大幅落地。周报 4 个 PR 落地浅色 + Markdown 导入 + IssueList + 多团队权限；视频走 Remotion 系统 Chromium 收尾；百宝箱 #479 修可见性；移动端 #477 大改首页。 |
-| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill.marketplace-open-api / design.platform.external-authorization / design.platform.llm-gateway-refactor / debt.video-agent / rule.cds.project-isolation-audit 等关键架构文档）。 |
+| P1 多项目 + GitHub + 技能同步文档化        | 显著落地。新增 14 篇文档（含 design.skill.marketplace-open-api / design.platform.external-authorization / design.platform.llm-gateway.refactor / debt.video-agent / rule.cds.project-isolation-audit 等关键架构文档）。 |
 | P2 更新中心、公开市场和公开页形成数据闭环           | 部分推进。更新中心 #455 / #462 / #468 接入 AI 总结 + NEW 徽标 + GitHub 时间 + 知识库选择，形成"消费视角"。海鲜市场 #463 / #470 / #473 把"技能"开放为可下载/可订阅的数据流。公开页统计回流尚未推进。 |
 
 ---

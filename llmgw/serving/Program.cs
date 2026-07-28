@@ -327,7 +327,7 @@ var jsonOpts = new JsonSerializerOptions
 };
 
 // 密钥门 + 全部 /gw/v1/* 端点由可复用扩展装配（SSOT：集成自测 host 复用同一份映射，
-// 见 GatewayHttpEndpoints.cs / doc/design.llm-gateway-physical-isolation.md）。
+// 见 GatewayHttpEndpoints.cs / doc/design.platform.llm-gateway.physical-isolation.md）。
 const string DevServeKey = "dev-llmgw-serve-key"; // 仓库已知 dev 默认值，生产禁用
 var gwApiKey = builder.Configuration["LlmGwServe:ApiKey"];
 if (builder.Environment.IsProduction() && (string.IsNullOrWhiteSpace(gwApiKey) || gwApiKey == DevServeKey))
@@ -348,7 +348,7 @@ app.Run();
 
 
 // ─────────────────────── serving 侧平台密钥完整性自检 ───────────────────────
-// 对齐 design.llm-gateway-physical-isolation §3.4「PlatformKeyIntegrityWorker 须在网关侧也跑」。
+// 对齐 design.platform.llm-gateway.physical-isolation §3.4「PlatformKeyIntegrityWorker 须在网关侧也跑」。
 // 与 api 侧 PlatformKeyIntegrityWorker 的区别：只读、仅告警、不做旧密文重加密（避免两进程双写）。
 sealed class ServingKeyIntegrityCheck : BackgroundService
 {

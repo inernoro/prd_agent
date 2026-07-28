@@ -20,6 +20,8 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createBootstrapRouter } from './routes/bootstrap.js';
+import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -52,9 +54,11 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import {
+  TICKET_SSO_COOKIE,
+  buildTicketSsoSessionCookie,
   createTicketSsoConfigRouter,
   createTicketSsoPublicRouter,
-  ticketSsoIdentity,
+  ticketSsoSession,
 } from './routes/ticket-sso.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -845,6 +849,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/rename-default': '迁移 default 项目',
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
+    'GET /bootstrap/presets': '列出初始化预设',
+    'GET /skills/bundles': '列出角色套装',
+    'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
@@ -991,6 +998,8 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
+    [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
@@ -1324,6 +1333,13 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
+  // 项目初始化（2026-07-28）：发引导脚本与技能 zip，只读、不签发凭据。
+  // 客户拿到任何 CDS 凭据之前就要能装技能，所以必须匿名可达。
+  // 与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/bootstrap/presets') return true;
+  if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
+  if (method === 'GET' && path === '/api/skills/bundles') return true;
+  if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -2023,8 +2039,12 @@ export function createServer(deps: ServerDeps): express.Express {
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://');
+  // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
+  // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
+  const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
+  const sessionTtlMs = sessionTtlDays * 24 * 60 * 60 * 1000;
   const ticketSsoStateStore = new TicketSsoStateStore();
-  const ticketSsoSessionStore = new TicketSsoSessionStore();
+  const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
@@ -2045,11 +2065,22 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
-  app.use((req, _res, next) => {
-    const identity = ticketSsoIdentity(req, ticketSsoSessionStore);
-    if (identity) {
+  app.use((req, res, next) => {
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    const identity = ssoSession?.identity ?? null;
+    if (identity && ssoSession) {
       const now = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const expiresAt = ssoSession.expiresAt.toISOString();
+      // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
+      if (ssoSession.renewed) {
+        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        if (ssoToken) {
+          res.setHeader(
+            'Set-Cookie',
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+          );
+        }
+      }
       const request = req as typeof req & {
         cdsSsoIdentity?: typeof identity;
         _cdsCookieAuth?: boolean;
@@ -2198,10 +2229,11 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
+    // 登录有效期走上面那份统一策略（默认 7 天 + 用后自动延长，CDS_SESSION_TTL_DAYS 可调）。
     const authService = new AuthService({
       store: authStore,
       github: githubClient,
-      config: { allowedOrgs },
+      config: { allowedOrgs, sessionTtlMs },
     });
 
     app.use(
@@ -2226,6 +2258,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
+      cookieSecure,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -2252,7 +2286,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
+        res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2769,6 +2803,13 @@ export function createServer(deps: ServerDeps): express.Express {
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const token = cookieToken || headerToken;
       if (token === validToken) {
+        // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
+        // 只能靠「每次带 cookie 的已鉴权请求重发一次 cookie」来续。不这么做的话，
+        // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
+        // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
+        if (cookieToken === validToken) {
+          res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
         // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
@@ -3893,6 +3934,16 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
+  // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
+  app.use('/api', createBootstrapRouter({
+    skillProxy: new SkillProxy({
+      mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+    }),
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+    repoRoot: deps.config.repoRoot,
+  }));
   app.use('/api', createScheduledJobsRouter({
     stateService: deps.stateService,
     scheduledJobService,
@@ -4700,6 +4751,15 @@ export function installSpaFallback(
       message: `Unknown API endpoint: ${req.method} /api${req.path}`,
     });
   });
+}
+
+/**
+ * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
+ * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
+ */
+function basicSessionCookie(token: string, ttlMs: number): string {
+  const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
+  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

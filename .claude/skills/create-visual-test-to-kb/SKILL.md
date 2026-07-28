@@ -70,7 +70,10 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 每日/昨日自动验收必须先跑机器盘点:
 
 ```bash
-python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
   --md-out /tmp/daily-scope.md
@@ -113,7 +116,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 每日验收开始取证前必须证明被测预览环境真的可测:
 
-- 预览域名和 branch 信息只能来自 `python3 .claude/skills/cds/cli/cdscli.py --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
+- 预览域名和 branch 信息只能来自 `python3 "$SKILLS_ROOT/cds/cli/cdscli.py" --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
 - 必须检查目标 branch 的部署状态和 smoke 结果。状态为 building、starting、stopped、error、missing,或 smoke 非 0 时,最多每 30 秒重试一次,总等待不超过 15 分钟。
 - 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
 - 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
@@ -293,7 +296,10 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 `scripts/example-driver.mjs` 是可直接改的取证脚本骨架。完整一轮:
 
 ```bash
-SKILL=.claude/skills/create-visual-test-to-kb
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILL="$SKILLS_ROOT/create-visual-test-to-kb"
 export PWPATH=$(npm root -g)/playwright
 export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'
 

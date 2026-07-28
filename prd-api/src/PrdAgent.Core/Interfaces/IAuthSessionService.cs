@@ -11,7 +11,13 @@ public interface IAuthSessionService
     /// <summary>验证 refreshToken 是否匹配且会话存在</summary>
     Task<bool> ValidateRefreshTokenAsync(string userId, string clientType, string sessionKey, string refreshToken, CancellationToken ct = default);
 
-    /// <summary>滑动续期：将 refresh 会话 TTL 重置为 now+72h</summary>
+    /// <summary>
+    /// 会话滑动窗口长度（默认 7 天，由 <c>Auth:SessionSlidingDays</c> 配置）。
+    /// refresh 会话、tokenVersion、客户端绑定共用同一个窗口，避免三者过期时间打架。
+    /// </summary>
+    TimeSpan SlidingTtl { get; }
+
+    /// <summary>滑动续期：将 refresh 会话 TTL 重置为 now + <see cref="SlidingTtl"/></summary>
     Task TouchAsync(string userId, string clientType, string sessionKey, CancellationToken ct = default);
 
     /// <summary>删除指定用户在指定端的全部 refresh 会话</summary>

@@ -218,9 +218,17 @@ export class TicketSsoSessionStore {
     expiresAt: number;
   }>();
   private readonly ttlMs: number;
+  private readonly renewThreshold: number;
 
-  constructor(ttlMs = 12 * 60 * 60 * 1000) {
+  /**
+   * `ttlMs` defaults to the project-wide 7 day login window; callers should pass the
+   * deployment's configured policy so ticket SSO does not silently expire earlier than
+   * password/GitHub sessions. `renewThreshold` mirrors AuthService: once less than that
+   * fraction of the window is left, `touch()` slides the session back to a full TTL.
+   */
+  constructor(ttlMs = 7 * 24 * 60 * 60 * 1000, renewThreshold = 0.5) {
     this.ttlMs = ttlMs;
+    this.renewThreshold = renewThreshold > 0 && renewThreshold < 1 ? renewThreshold : 0.5;
   }
 
   create(identity: TicketSsoIdentity): { token: string; expiresAt: Date } {
@@ -236,6 +244,39 @@ export class TicketSsoSessionStore {
     if (!token) return null;
     const session = this.sessions.get(token);
     return session?.identity || null;
+  }
+
+  /**
+   * Look up a session and slide its expiry forward when it is past the renewal
+   * threshold — the "keep using it and it never expires" contract the GitHub/local
+   * sessions already have. `renewed` tells the caller to re-issue the browser cookie;
+   * without that the cookie would still die at the original deadline.
+   */
+  touch(token: string | null | undefined, now = Date.now()): {
+    identity: TicketSsoIdentity;
+    expiresAt: Date;
+    renewed: boolean;
+  } | null {
+    this.gc();
+    if (!token) return null;
+    const session = this.sessions.get(token);
+    if (!session) return null;
+
+    // Expired sessions are never renewed back to life — gc() sweeps on the real clock,
+    // so check the caller's clock explicitly instead of relying on it.
+    if (session.expiresAt <= now) {
+      this.sessions.delete(token);
+      return null;
+    }
+
+    const remainingMs = session.expiresAt - now;
+    if (remainingMs > this.ttlMs * this.renewThreshold) {
+      return { identity: session.identity, expiresAt: new Date(session.expiresAt), renewed: false };
+    }
+
+    const expiresAt = now + this.ttlMs;
+    this.sessions.set(token, { identity: session.identity, expiresAt });
+    return { identity: session.identity, expiresAt: new Date(expiresAt), renewed: true };
   }
 
   delete(token: string | null | undefined): void {

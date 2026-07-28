@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -14,6 +15,7 @@ import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
+import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
 import {
   drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
@@ -1641,6 +1643,63 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
+  ledgerImages?: readonly string[];
+  /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
+  isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+}
+
+/**
+ * 「组件没变就复用上一版镜像」所需的两份数据（2026-07-27 宕机复盘 P1）。
+ *
+ * 判定逻辑本身在 services/prebuilt-reuse.ts（纯函数、可单测），这里只负责取数：
+ *  - ledgerImages：版本台账里该分支该服务构建过的镜像，由新到旧；
+ *  - isComponentUnchangedSince：在该分支的 worktree 里比「构建那一版的 commit」到
+ *    **本次要部署的那个 commit**（toSha，取自目标镜像 tag，不是 worktree HEAD），
+ *    该组件子树（profile.workDir）有没有改动。对着 HEAD 比是错的：部署可以锁定某个
+ *    不可变版本，若目标版本改了该组件、更晚的 HEAD 又把它 revert 回去，「候选 → HEAD」
+ *    的 diff 会是干净的，于是旧镜像被安静地当成用户点名的那一版发出去（Codex PR #1275 P1）。
+ *    git 查不出来（sha 不在本地历史 / 仓库异常）一律返回 false —— 判不出来就当有变更，
+ *    宁可多编一次，也绝不静默把旧代码当新代码发出去。
+ */
+function buildPrebuiltReuseInputs(
+  stateService: StateService,
+  shell: IShellExecutor,
+  entry: BranchEntry,
+  profileId: string,
+): {
+  ledgerImages: string[];
+  isComponentUnchangedSince: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+} {
+  const ledgerImages = stateService.getDeploymentVersions()
+    .filter((v) => v.branchId === entry.id)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
+    .filter((im): im is string => !!im);
+
+  const isComponentUnchangedSince = async (
+    fromSha: string,
+    toSha: string,
+    scopePaths: readonly string[],
+  ): Promise<boolean> => {
+    // scopePaths 是 CI 的 path-filter 口径（buildScope），**不是**运行时挂载目录：
+    // compose 里服务常写 `.:/repo`，workDir 因此是 `.`，比整仓等于永远「变了」，
+    // 复用一次都不会发生（Codex PR #1275 三轮 P1）。规整与拒绝规则见
+    // prebuilt-reuse.normalizeBuildScope，这里只做最后一道防线式的复核。
+    const paths = normalizeBuildScope(scopePaths as string[]);
+    if (!paths || !entry.worktreePath) return false;
+    // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
+    if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
+    if (fromSha === toSha) return false;
+    // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
+    const pathArgs = paths.map((p) => shellQuote(p)).join(' ');
+    const r = await shell.exec(
+      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${pathArgs}`,
+    ).catch(() => null);
+    return !!r && r.exitCode === 0;
+  };
+
+  return { ledgerImages, isComponentUnchangedSince };
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
@@ -1661,6 +1720,8 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          ledgerImages: options.ledgerImages,
+          isComponentUnchangedSince: options.isComponentUnchangedSince,
         },
       );
       return;
@@ -12287,13 +12348,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         detail: pullResult as unknown as Record<string, unknown>,
         timestamp: new Date().toISOString(),
       });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-      });
-
       // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
       // （Codex P2: refresh prebuilt SHA after pulling latest code）。
@@ -12307,7 +12361,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pulledSha = parsePulledSha(pullResult);
       // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
       // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
-      const isSourcePull = !branchUsesPrebuiltMode(profiles, entry)
+      // 「是否真的从源码构建」必须把**两种**极速版形态都排掉（Codex PR #1275 四轮 P2
+      // 修复时发现）：branchUsesPrebuiltMode 只认 deployModes.<mode>.prebuilt，认不出
+      // profile 级的 prebuiltImage=true。后者部署的是 tag 锁死在某个 sha 的镜像，
+      // 落地的 commit 就是那个 sha，与 worktree 刚拉到的 HEAD 无关；漏判会把 opLog /
+      // run / version 全部贴成 pulledSha。单 profile 部署路径本来就是按 profile 的
+      // prebuiltImage 判的，这里对齐它。
+      const usesPrebuilt = branchUsesPrebuiltMode(profiles, entry)
+        || profiles.some((p) => resolveEffectiveProfile(p, entry).prebuiltImage === true);
+      const isSourcePull = !usesPrebuilt
         && !(pullResult as { skipped?: boolean }).skipped
         && !!pulledSha;
       if (!requestCommitSha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
@@ -12321,6 +12383,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
+      // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
+      // 上面那段只在 `!requestCommitSha` 时才把 entry.githubCommitSha 跟到 HEAD —— 这是
+      // 有意的（该字段被 check-run/release 复用）。但 webhook 带 requestCommitSha=A 而
+      // origin 已前进到 B 时，pull 硬 reset 落地的是 B，entry 上却仍是 A：opLog 已经用
+      // pulledSha 记对了，run 与 version 却照抄 entry，于是部署审计挂在一份**没有被部署过**
+      // 的代码上，findReusable 还可能据此复用 A 的构建产物顶替 B。这里统一取实际落地值。
+      // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
+      // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
+      // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
+      // 用 let：极速版镜像拉不到时 runService 会**自动回退源码编译**（container.ts 的
+      // sourceFallbackProfile 分支），那一刻实际落地的就从「镜像锁定的 sha」变成了
+      // 刚 pull 到的 HEAD。回退发生在这句之后，所以只能由回调回来修正
+      //（Codex PR #1275 六轮 P2）。
+      let deployedCommitSha = selectedDeploymentVersion?.commitSha
+        ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
+      // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
+      // 原先它在刷新之前，于是 run 上盖的是**触发时**缓存的 entry.githubCommitSha，
+      // 而这次构建实际落地的是 pull 之后的 HEAD —— run 写着一个 sha、构建用的却是
+      // 另一份代码。宕机复盘期间就被这个误导过一次（以为 worktree 没拉新代码）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
+        operationId: branchOperationLease?.operationId,
+        commitSha: deployedCommitSha,
+      });
+
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit && !selectedDeploymentVersion) {
@@ -12457,7 +12545,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      if (!selectedDeploymentVersion && deploymentVersionService && entry.githubCommitSha) {
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
         const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
         deploymentConfigHash = deploymentVersionService.computeConfigHash(
           refreshedEffectiveProfiles,
@@ -12466,7 +12556,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const reusable = deploymentVersionService.findReusable({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash: deploymentConfigHash,
         });
         if (reusable) {
@@ -12785,7 +12875,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
                 if (!buildSlot) buildSlot = await acquireGateSlot();
+                // 回退成源码编译 = 这台服务实际跑的是 worktree 当前 HEAD，不再是
+                // 镜像 tag 锁定的那个 sha。后续 run 流转 / 版本记录必须跟着改口径，
+                // 否则审计又挂在一份没被部署过的代码上（Codex 六轮 P2）。
+                if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) {
+                  deployedCommitSha = pulledSha;
+                  Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
+                }
               },
+              // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -12961,7 +13060,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         phase: 'ready',
         message: '服务构建与启动阶段结束，开始汇总就绪结果',
         operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
+        commitSha: deployedCommitSha,
       });
       //
       // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
@@ -13140,7 +13239,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && deploymentVersionService
         && deploymentRun
         && deploymentConfigHash
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
@@ -13148,7 +13247,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
-            commitSha: entry.githubCommitSha,
+            commitSha: deployedCommitSha,
             configHash: deploymentConfigHash,
             profiles: versionProfiles,
             branch: entry,
@@ -13260,7 +13359,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { smokeOk },
         });
       }
@@ -13548,19 +13647,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: `源码准备完成，开始构建 ${profile.name}`,
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-        detail: { profileId },
-      });
-
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
       // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
+      // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
+      let deployedCommitSha: string | undefined = entry.githubCommitSha;
+      // pull 到的裸 SHA 也提到块外：极速版回退源码编译时要用它改口径（见下方钩子）。
+      let fallbackPulledSha: string | undefined;
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
@@ -13577,7 +13672,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (isSourcePull) {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
+        // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
+        // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
+        deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
+        if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) fallbackPulledSha = pulledSha;
       }
+      // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
+      // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: `源码准备完成，开始构建 ${profile.name}`,
+        operationId: branchOperationLease?.operationId,
+        commitSha: deployedCommitSha,
+        detail: { profileId },
+      });
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
@@ -13753,7 +13861,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
+            // 同主路径：回退源码编译后，实际落地的是 pull 到的 HEAD（Codex 六轮 P2）。
+            if (fallbackPulledSha) {
+              deployedCommitSha = fallbackPulledSha;
+              Object.assign(opLog, deriveCommitMeta(entry, fallbackPulledSha));
+            }
           },
+          // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
@@ -13907,7 +14022,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status === 'running'
         && deploymentVersionService
         && deploymentRun
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
         && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
       ) {
@@ -13919,7 +14034,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const version = deploymentVersionService.create({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash,
           profiles: versionProfiles,
           branch: entry,
@@ -13971,7 +14086,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: `${profile.name} 部署完成并通过就绪检查`,
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { profileId, hostPort: svc.hostPort },
         });
       } else {

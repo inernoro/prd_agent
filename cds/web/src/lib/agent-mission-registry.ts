@@ -153,6 +153,7 @@ const CDS_AGENT_CAPABILITY_SEEDS = [
   ['auth-local', '本地账号与用户管理', 'auth-local.ts', 'system', 'human-only', 'write', 'guided', 'cds', '', '密码和用户管理不得经对话或普通 Agent 工具传递'],
   ['auth-session', '会话与 GitHub 登录', 'auth.ts', 'system', 'human-only', 'protocol', 'protocol-only', 'cds', '', 'OAuth 回调和浏览器会话不是普通 Agent 工具'],
   ['branches', '分支、构建、资源与数据工作台', 'branches.ts', 'project', 'project', 'write', 'direct', 'cds-deploy-pipeline', 'branch', '写查询、恢复、清空和删除资源必须单独升级为破坏性审批'],
+  ['bootstrap', '项目初始化与技能分发', 'bootstrap.ts', 'system', 'public', 'read-only', 'direct', 'cds', '', '匿名只读：发引导脚本与代理 MAP 技能包，不签发凭据也不碰项目数据'],
   ['bug-reports', '快捷提 bug 与缺陷转发', 'bug-reports.ts', 'system', 'system', 'write', 'direct', 'cds', '', '缺陷系统凭据只在服务端读取；未配置转发时只做本地留存，不得声称已同步'],
   ['bridge', '页面 Bridge 与导航握手', 'bridge.ts', 'project', 'protocol-token', 'protocol', 'protocol-only', 'cds', '', '使用 Bridge 会话令牌和页面批准，不作为万能浏览器控制接口'],
   ['cache', '缓存状态、导入导出与修复', 'cache.ts', 'system', 'system', 'destructive', 'guided', 'cds', '', 'repair、import 和 purge 需要快照、影响说明和人工批准'],

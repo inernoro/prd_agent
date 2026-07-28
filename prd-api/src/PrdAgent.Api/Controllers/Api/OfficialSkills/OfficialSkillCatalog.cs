@@ -27,7 +27,35 @@ public static class OfficialSkillCatalog
         public string? Version { get; set; }
         public string Description { get; set; } = string.Empty;
         public List<string> Tags { get; set; } = new();
+
+        /// <summary>角色归属（pm / dev / qa …），供海鲜市场按角色筛选；空表示不归任何角色。</summary>
+        public List<string> Roles { get; set; } = new();
+
+        /// <summary>硬依赖的其他技能 key —— 下载本技能时自动一并打包（递归展开）。</summary>
+        public List<string> Requires { get; set; } = new();
+
         public List<SkillFile> Files { get; set; } = new();
+    }
+
+    /// <summary>
+    /// 角色套装：一条 curl 装齐某个角色需要的全部技能。
+    /// 与 <see cref="SkillEntry"/> 共用 `official-{key}` 下载命名空间，
+    /// 打包脚本已保证 key 不与技能 key 相撞。
+    /// </summary>
+    public sealed class BundleEntry
+    {
+        public string Key { get; set; } = string.Empty;
+        public string Title { get; set; } = string.Empty;
+        public string? Version { get; set; }
+        public string Description { get; set; } = string.Empty;
+        public List<string> Tags { get; set; } = new();
+        public List<string> Roles { get; set; } = new();
+
+        /// <summary>套装包含的技能 key（不含它们各自的 Requires，打包时再递归展开）。</summary>
+        public List<string> Includes { get; set; } = new();
+
+        /// <summary>装完第一步该干什么（写进 zip 里的 INSTALL.md）。</summary>
+        public string? FirstStep { get; set; }
     }
 
     private sealed class CatalogFile
@@ -35,27 +63,80 @@ public static class OfficialSkillCatalog
         public int Version { get; set; }
         public string? GeneratedAt { get; set; }
         public int Count { get; set; }
+        public Dictionary<string, string> RoleLabels { get; set; } = new();
         public List<SkillEntry> Skills { get; set; } = new();
+        public List<BundleEntry> Bundles { get; set; } = new();
     }
 
-    private static readonly Lazy<IReadOnlyList<SkillEntry>> _entries = new(Load);
+    private static readonly Lazy<CatalogFile> _catalog = new(Load);
 
-    public static IReadOnlyList<SkillEntry> All => _entries.Value;
+    public static IReadOnlyList<SkillEntry> All => _catalog.Value.Skills;
+
+    public static IReadOnlyList<BundleEntry> AllBundles => _catalog.Value.Bundles;
+
+    /// <summary>
+    /// 官方目录里所有可被「按标签筛选」命中的 tag：散装技能 + 角色套装 + 三个固定 tag。
+    ///
+    /// 为什么要抽出来：站内与开放接口两个 /tags 端点都得返回同一套标签云。此前开放接口
+    /// 只汇总数据库里的 tag，于是套装专属的「套装」这类标签在 findmapskills 的标签发现里
+    /// 永远查不到，可按该标签筛列表却又确实能筛出套装——查不到但能用，最难自查的那种不一致。
+    /// </summary>
+    public static IEnumerable<string> DiscoverableTags() =>
+        All.SelectMany(e => e.Tags ?? new List<string>())
+           .Concat(AllBundles.SelectMany(b => b.Tags ?? new List<string>()))
+           .Concat(new[] { "精英", "技能", "开放接口" });
+
+    /// <summary>角色 key → 中文名（如 pm → 产品经理）。</summary>
+    public static IReadOnlyDictionary<string, string> RoleLabels => _catalog.Value.RoleLabels;
 
     public static SkillEntry? Find(string key) =>
-        _entries.Value.FirstOrDefault(e => string.Equals(e.Key, key, StringComparison.OrdinalIgnoreCase));
+        _catalog.Value.Skills.FirstOrDefault(e => string.Equals(e.Key, key, StringComparison.OrdinalIgnoreCase));
 
-    private static IReadOnlyList<SkillEntry> Load()
+    public static BundleEntry? FindBundle(string key) =>
+        _catalog.Value.Bundles.FirstOrDefault(b => string.Equals(b.Key, key, StringComparison.OrdinalIgnoreCase));
+
+    /// <summary>
+    /// 把一组技能 key 递归展开成「自己 + 全部依赖」，去重且保持稳定顺序。
+    /// 依赖环由打包脚本挡在提交期（禁止自依赖），这里仍用 visited 兜底防死循环。
+    /// </summary>
+    public static List<SkillEntry> ExpandWithRequires(IEnumerable<string> keys, out List<string> missing)
+    {
+        var ordered = new List<SkillEntry>();
+        var seen = new HashSet<string>(StringComparer.OrdinalIgnoreCase);
+        var notFound = new List<string>();
+
+        void Visit(string key)
+        {
+            if (!seen.Add(key)) return;
+            var entry = Find(key);
+            if (entry == null)
+            {
+                notFound.Add(key);
+                return;
+            }
+            ordered.Add(entry);
+            foreach (var dep in entry.Requires ?? new List<string>())
+                Visit(dep);
+        }
+
+        foreach (var k in keys)
+            Visit(k);
+
+        missing = notFound;
+        return ordered;
+    }
+
+    private static CatalogFile Load()
     {
         try
         {
             var asm = Assembly.GetExecutingAssembly();
             var resName = asm.GetManifestResourceNames()
                 .FirstOrDefault(n => n.EndsWith("official-skills.generated.json", StringComparison.OrdinalIgnoreCase));
-            if (resName == null) return Array.Empty<SkillEntry>();
+            if (resName == null) return new CatalogFile();
 
             using var stream = asm.GetManifestResourceStream(resName);
-            if (stream == null) return Array.Empty<SkillEntry>();
+            if (stream == null) return new CatalogFile();
             using var reader = new StreamReader(stream);
             var json = reader.ReadToEnd();
 
@@ -63,12 +144,12 @@ public static class OfficialSkillCatalog
             {
                 PropertyNameCaseInsensitive = true,
             });
-            return doc?.Skills ?? new List<SkillEntry>();
+            return doc ?? new CatalogFile();
         }
         catch
         {
             // 解析失败不致命：官方目录退化为空，市场仍展示 findmapskills + 用户技能
-            return Array.Empty<SkillEntry>();
+            return new CatalogFile();
         }
     }
 }

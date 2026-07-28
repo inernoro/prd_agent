@@ -7,6 +7,7 @@ import { spawn } from 'node:child_process';
 import type { IShellExecutor, CdsConfig, BuildProfile, BranchEntry, ServiceState, InfraService, DeployModeOverride, BuildProfileOverride, ReadinessProbe, ExecResult } from '../types.js';
 import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
+import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
 import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
@@ -209,6 +210,8 @@ export function resolveProfileWithMode(profile: BuildProfile): BuildProfile {
       // 极速版「逐组件回退主分支」:把本模式的 fallbackImage 一并带出,供 runService 在
       // 本 commit 无该组件镜像时回退（path-filter 只构建改动组件,某些 commit 缺镜像）。
       ...(override.fallbackImage !== undefined ? { fallbackImage: override.fallbackImage } : {}),
+      // CI 构建输入范围随模式带出（镜像是哪个模式产的，范围就归哪个模式）。
+      ...(override.buildScope !== undefined ? { buildScope: override.buildScope } : {}),
     };
   }
   // 极速版(prebuilt)不跑 hot reload watcher —— 镜像里是编译产物,没有源码可 watch。
@@ -1115,6 +1118,17 @@ export class ContainerService {
        * 失败风暴让编译绕过闸门（2026-07-16 队列堵死复盘）。
        */
       onSourceCompileFallback?: () => Promise<void>;
+      /**
+       * 版本台账里该分支该服务的历史构建镜像（由新到旧）。预构建镜像拉不到时，
+       * 用来找「上一版可复用镜像」，避免明明组件没改却在宿主全量重编
+       *（2026-07-27 宕机的临门一脚，见 services/prebuilt-reuse.ts）。
+       */
+      ledgerImages?: readonly string[];
+      /**
+       * 该组件（profile.workDir 子树）在 fromSha 与当前部署 commit 之间是否**没有**
+       * 任何改动。由调用方在 worktree 里 git diff 判定；查不出来必须返回 false。
+       */
+      isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
     } = {},
   ): Promise<void> {
     const network = this.getNetworkForProject(entry.projectId);
@@ -1232,6 +1246,80 @@ export class ContainerService {
           lastDetail = (pull.stderr || pull.stdout || '').trim();
           const hasNext = i < candidates.length - 1;
           onOutput?.(`── 拉取失败: ${lastDetail}${hasNext ? `（改用下一个回退镜像 ${candidates[i + 1].image}）` : ''} ──\n`);
+        }
+      }
+
+      // 复用上一版镜像（2026-07-27 宕机复盘 P1，判定见 services/prebuilt-reuse.ts）。
+      //
+      // 拉不到 per-SHA 镜像 = CI 没为这个 sha 构建过该组件，只有两种可能：组件本次
+      // 没变（path filter 跳过），或 CI 未完成/失败。前者复用上一版**逐字节等价**且
+      // 免掉一次宿主重编；后者复用就是静默发旧代码。用 git 在 worktree 里比该组件
+      // 子树有无差异来区分，判不出来一律当作有变更、照旧重编。
+      //
+      // 事故当天三个组件（admin/api/llmgw-web）全属前者，却全都被拉去宿主重编，
+      // 同时打满 CPU 与磁盘——这段就是那一脚的止损点。
+      // 比较基准是**本次要部署的目标 commit**（intendedImage tag 里的 sha），
+      // 不是 worktree HEAD（Codex PR #1275 P1）：锁定版本 / 极速版锁 CI SHA 时
+      // 两者不同，对着 HEAD 比会在「目标版本改了、更晚的 HEAD 又 revert 了」这种
+      // 情形下得出「没变」的错误结论，安静地拿旧镜像顶替用户点名的版本。
+      // 取不到目标 sha 就没有可信基准，直接不复用。
+      // 比的是 **CI 构建输入范围**（buildScope），不是运行时挂载目录（workDir）。
+      // 本仓库 compose 里 api/admin/llmgw 全写 `.:/repo` → workDir 恒为 `.`，
+      // 拿它 `git diff -- .` 等于比整个仓库：那次只改 cds/** 的提交照样"有差异"，
+      // 判定为组件变了 → 不复用 → 照旧三个组件同时在宿主重编。也就是说，不修这条
+      // 本 PR 的止损点在真实配置下**一次都不会触发**（Codex PR #1275 三轮 P1）。
+      // 未声明 buildScope 一律不复用（fail-closed）：范围声明得太窄会把旧镜像当新
+      // 代码发出去，比多编译一次危险得多。
+      const targetSha = targetShaOf(primary);
+      const buildScope = normalizeBuildScope(profile.buildScope);
+      if (!pulledImage && targetSha && !buildScope) {
+        onOutput?.('── 该组件未声明 CI 构建范围（buildScope），不做「无变更复用上一版镜像」判断，按原路径继续 ──\n');
+      }
+      if (!pulledImage && context.isComponentUnchangedSince && buildScope && targetSha) {
+        const reuseCands = collectReuseCandidates({
+          intendedImage: primary,
+          runningImage: service.deployedImage,
+          ledgerImages: context.ledgerImages,
+        });
+        let picked: ReuseCandidate | null = null;
+        for (const cand of reuseCands) {
+          const unchanged = await context.isComponentUnchangedSince(cand.sha, targetSha, buildScope)
+            .catch(() => false);
+          if (unchanged) { picked = cand; break; }
+        }
+        if (picked) {
+          // 在跑的那一版镜像本机一定有；台账里的历史版本可能已被镜像回收清掉，
+          // 故仍要确认本地存在或能拉到，拉不到就继续往下走源码编译。
+          const localHit = await this.shell.exec(`docker image inspect ${this.shellQuote(picked.image)}`);
+          let usable = localHit.exitCode === 0;
+          if (!usable) {
+            const rePull = await this.shell.exec(`docker pull ${this.shellQuote(picked.image)}`);
+            usable = rePull.exitCode === 0;
+          }
+          if (usable) {
+            pulledImage = picked.image;
+            onOutput?.(`── 本组件此次无代码变更（${buildScope.join(' ')} 在 ${picked.sha.slice(0, 7)}..${targetSha.slice(0, 7)} 间无差异），复用上一版镜像 ${picked.image}，不在宿主重编 ──\n`);
+            this.recordContainerEvent({
+              severity: 'info',
+              source: 'cds-container-service',
+              action: 'app.pull.reuse-previous-image',
+              message: `component unchanged, reused previous image ${picked.image} instead of host source-build`,
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: profile.id,
+              requestId: context.requestId ?? undefined,
+              operationId: context.operationId ?? undefined,
+              details: {
+                intendedImage: primary,
+                reusedImage: picked.image,
+                reusedFromSha: picked.sha,
+                comparedAgainstSha: targetSha,
+                origin: picked.origin,
+                buildScope,
+                reason: 'CI 因该组件无变更跳过构建；复用等价镜像，避免宿主全量重编',
+              },
+            });
+          }
         }
       }
 
@@ -2441,6 +2529,11 @@ export class ContainerService {
     return [
       '--label cds.managed=true',
       '--label cds.type=infra',
+      // 保护标记（2026-07-27 宕机复盘 P2）：infra 容器装的是项目数据（mongo/mysql/
+      // redis…），误删代价远高于应用容器——事故当天 CDS 自己的状态库就是被人工
+      // `docker container prune` 连带删掉的。运维手册的安全清理命令据此排除它们：
+      // `docker container prune --filter "label!=cds.protected=true"`。
+      '--label cds.protected=true',
       `--label cds.instance=${computeCdsInstanceId(this.config.repoRoot)}`,
       `--label cds.project.id=${service.projectId || '_legacy'}`,
       `--label cds.service.id=${service.id}`,
@@ -2525,6 +2618,7 @@ export class ContainerService {
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.auditInfraLogLimit(service);
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2543,6 +2637,7 @@ export class ContainerService {
       if (startResult.exitCode === 0) {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.auditInfraLogLimit(service);
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
@@ -2968,6 +3063,78 @@ export class ContainerService {
    *   - 其它失败 → 仅 console.warn,不抛 — infra reuse 路径必须保持
    *     "默认共享数据库不动" 的语义,失败也别 break 上层 deploy。
    */
+  /**
+   * 复用已存在的 infra 容器时，体检它有没有日志限额（Codex PR #1275 六轮 P2）。
+   *
+   * 日志限额只在 `docker run` 创建那条路径上加得了。而 infra 是**共享长生命周期**
+   * 容器，绝大多数部署走的都是「已在跑 → 直接复用」或「stopped → docker start 唤醒」
+   * 两条早返回路径 —— 于是现网那些跑了几个月的 mongo / redis / mysql 至今仍是
+   * 无上限的 json-file 日志，正是把根盘写满的那个根因，本 PR 若只管新建容器就等于没治。
+   *
+   * docker 不能给存量容器改 log-opt，唯一出路是重建；而重建共享数据库会断掉所有连接，
+   * 绝不能由 deploy 流程自作主张。所以这里只做**可执行的告警**：报出是哪个容器、
+   * 后果是什么、以及一条明确的迁移指令（走 CDS 自己的重启接口，它会 stop+rm 后按当前
+   * 定义重建，从而带上限额），让运维在低峰期一条命令搞定。
+   *
+   * 只在缺限额时打印，且失败一律吞掉 —— 体检绝不能影响复用语义。
+   */
+  /**
+   * 复用已存在 infra 容器时的体检：**日志限额 + 保护标记两项都查**。
+   *
+   * 两项都只在 `docker run` 那条路径上生效，而升级过来的存量部署走的全是复用路径
+   * （容器早就在跑），docker 又无法给已存在容器补 label / 改 log-opt —— 唯一出路是
+   * 重建，而重建会断连，脚本不该自作主张。所以这里只体检 + 明示补救。
+   *
+   * 早期版本只查日志限额（Codex PR #1275 十一轮 P2）：一个已经有 max-size、却没有
+   * `cds.protected=true` 的老容器会**一声不吭地通过体检**，而运维手册里那条
+   * `--filter label!=cds.protected=true` 的安全清理命令照样能把它 prune 掉 ——
+   * 恰恰是这条标记要保护的东西。两项必须分别判、分别报。
+   */
+  private async auditInfraLogLimit(service: InfraService): Promise<void> {
+    try {
+      const r = await this.shell.exec(
+        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}|{{index .Config.Labels "cds.protected"}}' ${service.containerName}`,
+      );
+      if (r.exitCode !== 0) return;
+      const raw = (r.stdout || '').trim().replace(/^'|'$/g, '');
+      const [maxSizeRaw, protectedRaw] = raw.split('|');
+      const maxSize = (maxSizeRaw || '').trim();
+      // docker 对缺失的 label 会渲染成 `<no value>`（Go 模板 index 取空）
+      const protectedLabel = (protectedRaw || '').trim();
+      const hasProtection = protectedLabel === 'true';
+      const missing: string[] = [];
+      if (!maxSize) missing.push('日志限额（--log-opt max-size）');
+      if (!hasProtection) missing.push('保护标记（label cds.protected=true）');
+      if (missing.length === 0) return;
+      const consequences = [
+        !maxSize ? '容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一' : '',
+        !hasProtection ? '停止后会被运维手册里 label!=cds.protected=true 的清理命令误删' : '',
+      ].filter(Boolean).join('；');
+      console.warn(
+        `[infra-audit] ${service.containerName} 缺少：${missing.join('、')}（复用已存在的容器，docker 无法补改）。`
+        + ` ${consequences}。`
+        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可补齐（会短暂断连）。`,
+      );
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'cds-container-service',
+        action: 'infra.protection-audit.missing',
+        message: `reused infra container missing ${missing.join(' + ')}: ${service.containerName}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        details: {
+          missingLogLimit: !maxSize,
+          missingProtectedLabel: !hasProtection,
+          remedy: `POST /api/infra/${service.id}/restart`,
+          reason: 'docker 无法给已存在容器补 label / log-opt，只能重建',
+        },
+      });
+    } catch {
+      /* 体检失败不影响复用 */
+    }
+  }
+
   private async ensureInfraOnNetwork(
     containerName: string,
     aliases: string[],

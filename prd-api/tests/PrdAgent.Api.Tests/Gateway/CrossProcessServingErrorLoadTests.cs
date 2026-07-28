@@ -23,7 +23,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// cell 全集见 Gateway/fixtures/transport-cells.json（scripts/gen-gw-matrix-report.py 生成，
 /// 与 doc/report.gw-test-matrix.md 第 4 节同源）。覆盖 方法{send,stream,raw,pools,resolve,client-stream}
 /// × 上游{echo,failing,throwing,empty} × 鉴权{对,错key} × 负载{单,并发}。
-/// 对应 doc/spec.llm-gateway-test-matrix.md C 层 + D11/D12/E15/E17。
+/// 对应 doc/spec.platform.llm-gateway.test-matrix.md C 层 + D11/D12/E15/E17。
 ///
 /// 4 个 stub 上游各起一个常驻 Kestrel host（IClassFixture 复用），避免每 cell 重启。
 /// </summary>

@@ -15,7 +15,7 @@ namespace PrdAgent.Tests;
 /// 上的真实解析结果快照），对每条 code 断言「当前解析出的模型 == 记录值」。
 ///
 /// P1 协议下沉重构的安全网：重构前后各跑一次，与本基准逐行 diff。全一致 = 对外行为零变化。
-/// 详见 doc/design.llm-gateway-unification.md §11 + fixtures/README.md。
+/// 详见 doc/design.platform.llm-gateway.unification.md §11 + fixtures/README.md。
 ///
 /// 运行方式（CDS / 集成环境，需要 live main 数据）：
 ///   PRD_TEST_API_BASE=https://...           接口根域名

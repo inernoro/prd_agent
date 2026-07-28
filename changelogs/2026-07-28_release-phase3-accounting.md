@@ -9,3 +9,7 @@
 | feat | cds | 存活监控故障挂发布记录，能回答「是哪次发布引入的」 |
 | test | cds | 新增阶段三回归约 200 例，含远端回收的**对抗性**边界套件（让保护对象恰好落在最该淘汰的位置上，确认仍活着）与多条「一行接线掉了不会红」的源码守卫 |
 | fix | cds | 修掉三处「建好却没接上」：`buildReleaseLogSnapshot` 全 src 无人调用（SSE 仍手搓 filter）、`release-remote-watcher` 整个模块无人 import（定时器从不启动，漂移告警达成度实为 0）、漂移告警出口未注册（退化成 console.warn）——三者全量测试都是绿的，属于典型的静默退化 |
+| fix | cds | 共用目录判据补规范化（Codex P1）：`/opt/site` 与 `/opt/site/` 此前被裸字符串比较判成不共用，共用保护被关掉，远端回收会把另一个目标台账里的成品当孤儿删掉——直接砍到别人的生产；判据抽成 `isSameRemoteDirectory` 并加守卫 |
+| fix | cds | 预检裁剪保住被 run 引用的结论（Codex P2）：此前只按条数与时间窗淘汰，同一目标再做 20 次预检就能把在途 run 依据的那份删掉，留下指向空气的审计链接；被引用的记录同时不占淘汰名额，否则条数上限形同虚设 |
+| fix | cds | 故障归因上状态页（Codex P2）：后端 uptime API 一直返回 `releaseId` / `releaseAgeMs`，前端既没声明也没渲染，「是哪次发布引入的」记录了但用户看不到；文案用「疑似」，不把时间相邻说成因果 |
+| rule | doc | 新增 `.claude/rules/predicate-and-wiring-discipline.md`：把 25+ 条 review 意见归纳成四种形状（判据太窄 / 链路只建到一半 / 判据分裂漂移 / 测试反向锁死 bug 或静默空跑）与五条机械自查，核心判据是「改动删掉后测试仍全绿 = 需要一条守卫」 |

@@ -164,7 +164,7 @@ timeline
 
 | 优先级 | 方向 | 建议动作 | 依据 |
 |--------|------|----------|------|
-| P0 | 网关正式发布 Gate 全绿验证 | 对照 `extraction-readiness-gate.md` 的可发布 Gate 七判据逐条核对（默认 Mode、棘轮 A 类问题=0、配置面迁移、影子样本量/diff 率、容器解密/401 健康、全量回归、真视觉验收），把本周收口的正式发布链路（#1255/#1256/#1260）拉到"全绿才放行"，并把结论挂回 `plan.llm-gateway.full-cutover.md` 看板 | `extraction-readiness-gate.md` / `living-status-board.md`：正式发布是硬闸门，收口后必须有可机器核对的 Gate 结论而非"差不多能发" |
+| P0 | 网关正式发布 Gate 全绿验证 | 对照 `extraction-readiness-gate.md` 的可发布 Gate 七判据逐条核对（默认 Mode、棘轮 A 类问题=0、配置面迁移、影子样本量/diff 率、容器解密/401 健康、全量回归、真视觉验收），把本周收口的正式发布链路（#1255/#1256/#1260）拉到"全绿才放行"，并把结论挂回 `plan.platform.llm-gateway.full-cutover.md` 看板 | `extraction-readiness-gate.md` / `living-status-board.md`：正式发布是硬闸门，收口后必须有可机器核对的 Gate 结论而非"差不多能发" |
 | P0 | 网关观测台真视觉验收闭环 | 对重构后的请求日志台（信息密度/实体悬浮卡/独立详情页/OpenRouter 图片观测/Exchange 跳转）走真人路径 + 双主题 + 最新 sha 取证，闭环到"每一次调用都能看清"，避免断头验收 | `real-visual-acceptance.md` / `closed-loop-acceptance.md`：观测台是用户直接操作面，重构后需真人验收留证 |
 | P1 | CDS 正式发布端到端取证 | 对 #1213 重构后的正式发布页走一次真实项目端到端（clone → 托管构建 → 正式发布 → 回滚），确认 deploy phase 识别、in-flight 守卫、增量快照、SSE 不断流在真实链路成立，补最终入口公网证据 | `production-release-safety.md` / CLAUDE.md §8：正式发布重构后需真实项目跑通而非单测绿即宣布完成 |
 | P1 | 安全边界回归确认 | 本周 5 条 security（项目级 Key 隔离 #1212、公开预览域名 #1221、外部 WSS #1218、canary 密钥隔离、SSO 边界收紧）逐条补涟漪审计与回归守卫，确认身份/域名/密钥隔离在多项目多分支下无穿透 | `cross-project-isolation.md`：安全边界收紧后必须验证每个消费方仍成立，防隔离穿透 |
