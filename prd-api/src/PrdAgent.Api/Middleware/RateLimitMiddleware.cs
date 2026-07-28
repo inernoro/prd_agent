@@ -1,5 +1,6 @@
 using System.Net;
 using System.Text.Json;
+using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Json;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -80,7 +81,11 @@ public class RateLimitMiddleware
         if (!string.IsNullOrEmpty(userId))
             return $"user:{userId}";
 
-        var ip = context.Connection.RemoteIpAddress?.ToString() ?? "unknown";
+        // 必须走 GetRealClientIp：生产是 Nginx + Docker，裸的 RemoteIpAddress 是反代的
+        // 共享地址，所有匿名访客会被算成同一个 clientId 共用一个桶 —— 海鲜市场的读接口
+        // 2026-07-28 改匿名之后，一个忙碌客户端就能让所有人的列表/详情/标签/下载 429。
+        // GetRealClientIp 只信反代覆盖的 X-Real-IP，取不到时仍回落到 RemoteIpAddress。
+        var ip = context.GetRealClientIp() ?? "unknown";
         return $"ip:{ip}";
     }
 

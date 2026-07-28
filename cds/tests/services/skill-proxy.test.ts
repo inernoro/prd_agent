@@ -15,7 +15,14 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { SkillProxy, SkillProxyError, isSafeSkillKey } from '../../src/services/skill-proxy.js';
-import { BOOTSTRAP_PRESETS, CdsSkillPackCache, buildBootstrapScript, findPreset } from '../../src/routes/bootstrap.js';
+import {
+  BOOTSTRAP_PRESETS,
+  CdsSkillPackCache,
+  UpstreamSkillPackCache,
+  __upstreamPackLimitsForTest,
+  buildBootstrapScript,
+  findPreset,
+} from '../../src/routes/bootstrap.js';
 
 function zipBody(marker: string): Response {
   return new Response(Buffer.from(`PK-${marker}`), { status: 200 });
@@ -225,5 +232,74 @@ describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
     const second = await cache.get(root);
     expect(second?.cached).toBe(false);
     expect(second?.body).not.toBe(first?.body);
+  });
+});
+
+describe('上游 CDS 技能包回源（自托管无本地技能树时的唯一来源）', () => {
+  const url = 'https://up.test/api/skills/cds-pack/download';
+  const okResponse = (bytes: number): Response =>
+    new Response(Buffer.alloc(bytes, 1), { status: 200 });
+
+  let originalFetch: typeof globalThis.fetch;
+  beforeEach(() => { originalFetch = globalThis.fetch; });
+  afterEach(() => { globalThis.fetch = originalFetch; });
+
+  it('第二次命中缓存，不再打上游', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls += 1; return okResponse(1024); }) as typeof globalThis.fetch;
+
+    const cache = new UpstreamSkillPackCache();
+    const first = await cache.get(url);
+    const second = await cache.get(url);
+
+    expect(first.cached).toBe(false);
+    expect(second.cached).toBe(true);
+    expect(calls).toBe(1);
+  });
+
+  it('并发请求共享同一次回源（单飞）', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls += 1; return okResponse(1024); }) as typeof globalThis.fetch;
+
+    const cache = new UpstreamSkillPackCache();
+    const results = await Promise.all([cache.get(url), cache.get(url), cache.get(url)]);
+
+    expect(calls).toBe(1);
+    expect(results[0].body).toBe(results[1].body);
+  });
+
+  it('上游响应超过体积上限时中止，不把堆吃干净', async () => {
+    globalThis.fetch = (async () =>
+      okResponse(__upstreamPackLimitsForTest.maxBytes + 1)) as typeof globalThis.fetch;
+
+    const cache = new UpstreamSkillPackCache();
+    await expect(cache.get(url)).rejects.toThrow(/上限/);
+  });
+
+  it('回源带超时，不会无限期挂住连接', async () => {
+    let sawSignal = false;
+    globalThis.fetch = (async (_u: unknown, init?: RequestInit) => {
+      sawSignal = init?.signal instanceof AbortSignal;
+      return okResponse(16);
+    }) as typeof globalThis.fetch;
+
+    await new UpstreamSkillPackCache().get(url);
+    expect(sawSignal).toBe(true);
+    expect(__upstreamPackLimitsForTest.timeoutMs).toBeGreaterThan(0);
+  });
+
+  it('时钟回拨不会让缓存永不失效', async () => {
+    let calls = 0;
+    globalThis.fetch = (async () => { calls += 1; return okResponse(64); }) as typeof globalThis.fetch;
+
+    // 第一次写入时刻很晚，之后时钟回拨 -> 龄期为负，必须当成过期而不是新鲜
+    const clock = [10_000_000, 0, 0];
+    let i = 0;
+    const cache = new UpstreamSkillPackCache(() => clock[Math.min(i++, clock.length - 1)]);
+    await cache.get(url);
+    const second = await cache.get(url);
+
+    expect(second.cached).toBe(false);
+    expect(calls).toBe(2);
   });
 });

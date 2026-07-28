@@ -372,6 +372,25 @@ public class OfficialSkillCatalogTests
     }
 
     [Fact]
+    public void DiscoverableTags_IncludesBundleOnlyTags()
+    {
+        // 套装专属 tag（如「套装」）必须出现在标签发现里：站内和开放接口两个 /tags
+        // 端点都消费这一份。此前开放接口只汇总数据库 tag，导致「查不到但能按它筛」。
+        var tags = OfficialSkillCatalog.DiscoverableTags().ToHashSet();
+
+        var bundleTags = OfficialSkillCatalog.AllBundles.SelectMany(b => b.Tags ?? new List<string>()).ToList();
+        Assert.NotEmpty(bundleTags);
+        foreach (var tag in bundleTags)
+            Assert.Contains(tag, tags);
+
+        // 散装技能的 tag 也要在
+        var skillTags = OfficialSkillCatalog.All.SelectMany(e => e.Tags ?? new List<string>()).ToList();
+        Assert.NotEmpty(skillTags);
+        foreach (var tag in skillTags)
+            Assert.Contains(tag, tags);
+    }
+
+    [Fact]
     public void MarketplaceList_DoesNotShowFindMapSkillsTwice()
     {
         var request = BuildRequest("https://map.example.test");

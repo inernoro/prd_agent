@@ -183,6 +183,78 @@ export class CdsSkillPackCache {
 
 export const cdsSkillPackCache = new CdsSkillPackCache();
 
+/** CDS 技能包的体积上限：本体只有几百 KB，10 MB 已经是三个数量级的余量。 */
+const UPSTREAM_PACK_MAX_BYTES = 10 * 1024 * 1024;
+/** 上游回源超时：客户在等一条命令跑完，不能无限期挂着。 */
+const UPSTREAM_PACK_TIMEOUT_MS = 60_000;
+/** 上游副本的缓存时长。上游技能包变动很慢，短缓存足以吸收突发。 */
+const UPSTREAM_PACK_TTL_MS = 10 * 60_000;
+
+/**
+ * 边读边计数地取回上游响应，超限立即中止。
+ *
+ * 不能直接 `await res.arrayBuffer()`：那是先把整个响应缓冲进堆再检查，
+ * 上游若返回一个异常大的体（或被劫持），堆已经吃完了才轮到我们判断。
+ */
+async function readCapped(res: Response, maxBytes: number): Promise<Buffer> {
+  const reader = res.body?.getReader();
+  if (!reader) throw new Error('上游响应没有可读流');
+  const chunks: Buffer[] = [];
+  let total = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    total += value.byteLength;
+    if (total > maxBytes) {
+      await reader.cancel().catch(() => {});
+      throw new Error(`上游响应超过 ${maxBytes} 字节上限`);
+    }
+    chunks.push(Buffer.from(value));
+  }
+  return Buffer.concat(chunks);
+}
+
+/**
+ * 上游 CDS 技能包的缓存 + 单飞。
+ *
+ * 自托管实例没有本地技能树时，**每个**匿名请求都会走这条回源分支。此前它既无
+ * 超时也无体积上限、更没有缓存或单飞：上游一旦卡住或返回超大响应，并发调用方
+ * 就能把连接和堆一起吃干净。本地分支的 CdsSkillPackCache 保护不到这里。
+ */
+class UpstreamSkillPackCache {
+  private cached: { body: Buffer; at: number } | null = null;
+  private inflight: Promise<Buffer> | null = null;
+
+  constructor(private readonly now: () => number = () => Date.now()) {}
+
+  async get(url: string): Promise<{ body: Buffer; cached: boolean }> {
+    const age = this.cached ? this.now() - this.cached.at : Number.POSITIVE_INFINITY;
+    // age >= 0 守时钟回拨：负龄期不能当成「新鲜」，否则缓存永不失效
+    if (this.cached && age >= 0 && age < UPSTREAM_PACK_TTL_MS) {
+      return { body: this.cached.body, cached: true };
+    }
+    if (!this.inflight) {
+      this.inflight = (async () => {
+        const res = await fetch(url, { method: 'GET', signal: AbortSignal.timeout(UPSTREAM_PACK_TIMEOUT_MS) });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const body = await readCapped(res, UPSTREAM_PACK_MAX_BYTES);
+        if (body.byteLength === 0) throw new Error('上游返回空内容');
+        this.cached = { body, at: this.now() };
+        return body;
+      })().finally(() => { this.inflight = null; });
+    }
+    return { body: await this.inflight, cached: false };
+  }
+}
+
+export const upstreamSkillPackCache = new UpstreamSkillPackCache();
+export const __upstreamPackLimitsForTest = {
+  maxBytes: UPSTREAM_PACK_MAX_BYTES,
+  timeoutMs: UPSTREAM_PACK_TIMEOUT_MS,
+  ttlMs: UPSTREAM_PACK_TTL_MS,
+};
+export { UpstreamSkillPackCache };
+
 /** shell 单引号转义：把 `'` 换成 `'\''`，杜绝生成脚本被注入。 */
 function shq(value: string): string {
   return `'${value.replace(/'/g, "'\\''")}'`;
@@ -428,14 +500,11 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
 
     const upstream = `${deps.cdsUpstream.replace(/\/+$/, '')}/api/skills/cds-pack/download`;
     try {
-      const upstreamRes = await fetch(upstream, { method: 'GET' });
-      if (!upstreamRes.ok) throw new Error(`HTTP ${upstreamRes.status}`);
-      const body = Buffer.from(await upstreamRes.arrayBuffer());
-      if (body.byteLength === 0) throw new Error('上游返回空内容');
+      const hit = await upstreamSkillPackCache.get(upstream);
       res.setHeader('Cache-Control', 'no-store');
       res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
-      res.setHeader('X-Skill-Cache', 'upstream');
-      res.type('application/gzip').send(body);
+      res.setHeader('X-Skill-Cache', hit.cached ? 'upstream-cached' : 'upstream');
+      res.type('application/gzip').send(hit.body);
     } catch (err) {
       res.status(502).json({
         error: '无法获取 CDS 技能包',

@@ -150,8 +150,11 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             .Project(x => x.Tags)
             .ToListAsync(ct);
 
+        // 必须并上官方目录（含角色套装）的 tag：只汇总数据库的话，「套装」这类
+        // 套装专属标签在标签发现里永远查不到，而按它筛列表又确实能筛出套装。
         var distinct = allTags
             .SelectMany(x => x ?? new List<string>())
+            .Concat(OfficialSkillCatalog.DiscoverableTags())
             .Where(t => !string.IsNullOrWhiteSpace(t))
             .Select(t => t.Trim())
             .GroupBy(t => t)

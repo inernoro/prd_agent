@@ -74,6 +74,18 @@ public static class OfficialSkillCatalog
 
     public static IReadOnlyList<BundleEntry> AllBundles => _catalog.Value.Bundles;
 
+    /// <summary>
+    /// 官方目录里所有可被「按标签筛选」命中的 tag：散装技能 + 角色套装 + 三个固定 tag。
+    ///
+    /// 为什么要抽出来：站内与开放接口两个 /tags 端点都得返回同一套标签云。此前开放接口
+    /// 只汇总数据库里的 tag，于是套装专属的「套装」这类标签在 findmapskills 的标签发现里
+    /// 永远查不到，可按该标签筛列表却又确实能筛出套装——查不到但能用，最难自查的那种不一致。
+    /// </summary>
+    public static IEnumerable<string> DiscoverableTags() =>
+        All.SelectMany(e => e.Tags ?? new List<string>())
+           .Concat(AllBundles.SelectMany(b => b.Tags ?? new List<string>()))
+           .Concat(new[] { "精英", "技能", "开放接口" });
+
     /// <summary>角色 key → 中文名（如 pm → 产品经理）。</summary>
     public static IReadOnlyDictionary<string, string> RoleLabels => _catalog.Value.RoleLabels;
 
