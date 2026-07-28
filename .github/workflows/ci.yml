@@ -37,6 +37,13 @@ jobs:
               # GatewayDataDomainGuardTests 直接读取 llmgw/web 源码并校验跨模块产品契约。
               - 'llmgw/web/**'
               - 'llmgw/serving/**'
+              # 官方技能目录新鲜度自测跑在 server-build 里，它的输入是这三处。
+              # 不登记的话，「只改技能不改 prd-api」的 PR 会整个跳过这道闸 ——
+              # 而那恰好就是这道闸要防的场景（改了技能忘重新生成，分发旧内容）。
+              - '.claude/skills/**'
+              - 'scripts/skill-bundles.json'
+              - 'scripts/bundle-official-skills.mjs'
+              - 'scripts/test-official-skill-bundles.mjs'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'

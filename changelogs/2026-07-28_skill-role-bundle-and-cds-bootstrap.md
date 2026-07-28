@@ -77,3 +77,6 @@
 | fix | 技能 | findmapskills README 用法表按凭据拆行，读免凭据不再被误写成整条流程都要 API Key |
 | docs | 文档 | 角色套装债务台账用码位描述替代被禁字面量 |
 | ci | 构建 | server-build job 新增官方技能目录新鲜度自测，改了技能忘了重新生成时 CI 直接红 |
+| ci | 构建 | server 路径过滤补上技能源目录，只改技能的 PR 不再整个跳过目录新鲜度闸 |
+| fix | prd-api | 开放接口列表的官方条目也服从调用方 limit，不再出现 limit=1 却返回十条 |
+| test | prd-api | 新增用例钉住裁剪前提：单个 tag 可命中 9 条官方条目 |

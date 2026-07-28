@@ -108,6 +108,11 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         // Open API（AI）：无搜索词时不注入目录技能，避免 list/分页/轮询被官方占满 budget、
         // 翻不到社区技能；只有 keyword/tag 命中时官方才出现（保证可被搜到）。findmapskills 仍 bootstrap。
         var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: false);
+        // 官方条目本身也要服从 limit：只把 DB 查询减到 0 是不够的，官方 DTO 仍会被整批插进去。
+        // 例如 ?tag=分析&limit=1 命中十条官方条目时会返回十条，既违背调用方的 limit，
+        // 也把 AI 的响应体积撑大。先裁官方，再算 DB 还能取几条。
+        if (officialDtos.Count > resolvedLimit)
+            officialDtos = officialDtos.Take(resolvedLimit).ToList();
         var dbLimit = Math.Max(resolvedLimit - officialDtos.Count, 0);
 
         var items = dbLimit > 0

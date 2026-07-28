@@ -122,8 +122,13 @@ public class MarketplaceSkillsController : ControllerBase
         // 官方条目（findmapskills + 目录技能，按 keyword/tag 过滤）永远置顶
         // Web：无搜索词也展示全部官方（前端归到「官方推荐」独立行，不挤社区瀑布流）
         var officialDtos = OfficialMarketplaceSkillInjector.BuildAllDtos(Request, _config, userId, keyword, tag, includeCatalogWhenUnfiltered: true);
-        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限
-        var dbLimit = Math.Max(200 - officialDtos.Count, 0);
+        // 官方占位 → 从 DB 少查对应条数，保证总长 <= 200 硬上限。
+        // 官方条目自身也要裁：只减 DB 条数的话，官方条目一旦超过 200 总长就会破上限。
+        // 现在离 200 还远，但按构造正确比靠「现在还不到」可靠。
+        const int webHardLimit = 200;
+        if (officialDtos.Count > webHardLimit)
+            officialDtos = officialDtos.Take(webHardLimit).ToList();
+        var dbLimit = Math.Max(webHardLimit - officialDtos.Count, 0);
 
         var items = await query.Limit(dbLimit).ToListAsync(ct);
         var shareCounts = await LoadActiveShareCountsAsync(items.Select(x => x.Id), ct);

@@ -354,6 +354,33 @@ public class OfficialSkillCatalogTests
     }
 
     [Fact]
+    public void OfficialDtos_CanExceedASmallCallerLimit_SoTrimmingIsRequired()
+    {
+        // 这条钉住「为什么必须裁官方条目」：按 tag 过滤时官方命中数可以远大于
+        // 调用方给的 limit=1。只把 DB 查询减到 0 不够——官方 DTO 会被整批插进去，
+        // 返回条数超过调用方要求，同时把 AI 的响应体积撑大。
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+
+        // 取一个真实存在、被多个官方技能共用的 tag
+        var sharedTag = OfficialSkillCatalog.All
+            .SelectMany(e => e.Tags ?? new List<string>())
+            .GroupBy(x => x)
+            .Where(g => g.Count() > 1)
+            .OrderByDescending(g => g.Count())
+            .Select(g => g.Key)
+            .FirstOrDefault();
+        Assert.NotNull(sharedTag);
+
+        var official = OfficialMarketplaceSkillInjector.BuildAllDtos(
+            request, config, currentUserId: "user-1", keyword: null, tag: sharedTag,
+            includeCatalogWhenUnfiltered: false);
+
+        Assert.True(official.Count > 1,
+            $"tag `{sharedTag}` 应命中多于 1 条官方条目（实际 {official.Count}），否则本用例失去意义");
+    }
+
+    [Fact]
     public void FindMapSkillsDto_CarriesRolesFromCatalog()
     {
         // 这条 DTO 是特判构造的（不走通用 catalog→DTO 路径），历史上把 roles 写死成空表。
