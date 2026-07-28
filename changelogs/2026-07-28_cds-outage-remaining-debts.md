@@ -11,3 +11,4 @@
 | fix | cds | 隔离支持引擎中立库名 key（DB_NAME / DATABASE_NAME），引擎从同 env 的关系型 URL scheme 读；Spring 风格项目此前隔离入口即不可用 |
 | fix | cds | 孤儿 worktree 的挂载枚举改走 docker inspect：docker ps 的 .Mounts 是字符串，对它 range 会让命令失败，导致对账永远降级成只报不删（生产实测 66 个孤儿一个没删） |
 | fix | cds | 隔离不可用时的原因改为可诊断：报出疑似数据库变量名与引擎能否从连接串推断，不再只留一句「没有数据库名」 |
+| feat | cds | 隔离可用性接口额外返回「将改写哪些变量」（引擎 + 库名 key + 连接串 key，只报名不报值），点之前就知道会动什么 |
