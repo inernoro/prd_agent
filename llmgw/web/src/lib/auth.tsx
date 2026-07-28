@@ -56,6 +56,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // 用来把「到期定时器」重新排一次——改密会换发新 token，旧到期时间必须作废。
   const [sessionEpoch, setSessionEpoch] = useState(0);
   const channelRef = useRef<BroadcastChannel | null>(null);
+  // 当前会话用的 token：storage 事件里据此判断「是不是换了另一把」，
+  // 换了就要重排到期定时器（见下面的 syncFromStorage）。
+  const activeTokenRef = useRef<string | null>(getToken());
 
   // 会话失效的唯一落地点：翻 authed → 路由守卫立刻把用户送回登录页。
   // 以前这里没有订阅，api 层清了 sessionStorage 但 React 状态还停在「已登录」，
@@ -177,6 +180,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   // storage 事件只在「其它标签页」触发，本标签页的登录/登出仍走上面的 setState 分支。
   useEffect(() => {
     const syncFromStorage = () => {
+      const nextToken = getToken();
       const nextAuthed = isAuthed();
       // 接管别的标签页建立的会话：顺带重置失效闩，否则这个新会话将来失效时不会广播，
       // 本标签页会卡在「已登录但没有 token」的死状态（见 adoptStoredSession 注释）。
@@ -187,6 +191,13 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       setMustChange(nextAuthed ? readMustChangePassword() : false);
       setAuthed(nextAuthed);
       setInitializing(false);
+      // 换了另一把 token（别的标签页切账号）时，authed 仍是 true，到期定时器的 deps
+      // 不变就不会重排——旧定时器绑的是上一把 token，触发时被 expireSession 的
+      // token 比对挡掉，等于新会话根本没有定时器。必须自增 epoch 强制按新到期时间重排。
+      if (nextToken !== activeTokenRef.current) {
+        activeTokenRef.current = nextToken;
+        setSessionEpoch((v) => v + 1);
+      }
     };
 
     window.addEventListener('storage', syncFromStorage);
