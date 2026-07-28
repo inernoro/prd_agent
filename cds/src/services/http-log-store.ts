@@ -454,20 +454,37 @@ export class HttpLogStore {
 
   async init(): Promise<void> {
     if (this.client) return;
-    this.client = new MongoClient(this.opts.uri, {
+    // 失败必须复位（Codex PR #1275 七轮 P2 同族）：先赋值再连，一旦 connect 或
+    // createIndex 抛错，client 已挂在实例上而 collection 为空 —— init() 之后被
+    // `if (this.client) return` 永久短路，record() 又只在有 collection 时才写，
+    // 于是这个日志库**静默死掉、再也不会重试**。而这个 PR 的排障恰恰依赖它。
+    const client = new MongoClient(this.opts.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
-    this.collection = this.client.db(this.databaseName).collection<HttpLogRecord>(this.collectionName);
+    try {
+      await client.connect();
+      const collection = client.db(this.databaseName).collection<HttpLogRecord>(this.collectionName);
+      await this.ensureIndexes(collection);
+      this.client = client;
+      this.collection = collection;
+    } catch (err) {
+      await client.close().catch(() => undefined);
+      this.client = null;
+      this.collection = null;
+      throw err;
+    }
+  }
+
+  private async ensureIndexes(collection: Collection<HttpLogRecord>): Promise<void> {
     await Promise.all([
-      this.collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
-      this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1' }),
-      this.collection.createIndex({ host: 1, ts: -1 }, { name: 'host_ts_desc' }),
-      this.collection.createIndex({ status: 1, ts: -1 }, { name: 'status_ts_desc' }),
-      this.collection.createIndex({ requestKind: 1, durationMs: -1, ts: -1 }, { name: 'kind_duration_ts_desc' }),
-      this.collection.createIndex({ durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
-      this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
+      collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
+      collection.createIndex({ requestId: 1 }, { name: 'requestId_1' }),
+      collection.createIndex({ host: 1, ts: -1 }, { name: 'host_ts_desc' }),
+      collection.createIndex({ status: 1, ts: -1 }, { name: 'status_ts_desc' }),
+      collection.createIndex({ requestKind: 1, durationMs: -1, ts: -1 }, { name: 'kind_duration_ts_desc' }),
+      collection.createIndex({ durationMs: -1, ts: -1 }, { name: 'duration_ts_desc' }),
+      collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
 

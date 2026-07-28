@@ -254,26 +254,43 @@ export class ServerEventLogStore implements ServerEventLogSink {
 
   async init(): Promise<void> {
     if (this.client) return;
-    this.client = new MongoClient(this.opts.uri, {
+    // 失败必须复位（Codex PR #1275 七轮 P2 同族）：先赋值再连，一旦 connect 或
+    // createIndex 抛错，client 已挂在实例上而 collection 为空 —— init() 之后被
+    // `if (this.client) return` 永久短路，record() 又只在有 collection 时才写，
+    // 于是这个日志库**静默死掉、再也不会重试**。而这个 PR 的排障恰恰依赖它。
+    const client = new MongoClient(this.opts.uri, {
       serverSelectionTimeoutMS: this.connectTimeoutMs,
       connectTimeoutMS: this.connectTimeoutMs,
     });
-    await this.client.connect();
-    this.collection = this.client.db(this.databaseName).collection<ServerEventRecord>(this.collectionName);
+    try {
+      await client.connect();
+      const collection = client.db(this.databaseName).collection<ServerEventRecord>(this.collectionName);
+      await this.ensureIndexes(collection);
+      this.client = client;
+      this.collection = collection;
+    } catch (err) {
+      await client.close().catch(() => undefined);
+      this.client = null;
+      this.collection = null;
+      throw err;
+    }
+  }
+
+  private async ensureIndexes(collection: Collection<ServerEventRecord>): Promise<void> {
     await Promise.all([
-      this.collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
-      this.collection.createIndex({ category: 1, ts: -1 }, { name: 'category_ts_desc' }),
-      this.collection.createIndex({ severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
-      this.collection.createIndex({ containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
-      this.collection.createIndex({ branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
-      this.collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
-      this.collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
-      this.collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
-      this.collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
-      this.collection.createIndex({ operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
-      this.collection.createIndex({ operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
-      this.collection.createIndex({ commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
-      this.collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
+      collection.createIndex({ ts: -1 }, { name: 'ts_desc' }),
+      collection.createIndex({ category: 1, ts: -1 }, { name: 'category_ts_desc' }),
+      collection.createIndex({ severity: 1, ts: -1 }, { name: 'severity_ts_desc' }),
+      collection.createIndex({ containerName: 1, ts: -1 }, { name: 'container_ts_desc' }),
+      collection.createIndex({ branchId: 1, ts: -1 }, { name: 'branch_ts_desc' }),
+      collection.createIndex({ profileId: 1, ts: -1 }, { name: 'profile_ts_desc', sparse: true }),
+      collection.createIndex({ requestId: 1 }, { name: 'requestId_1', sparse: true }),
+      collection.createIndex({ operationId: 1, ts: -1 }, { name: 'operationId_ts_desc', sparse: true }),
+      collection.createIndex({ 'details.operationId': 1, ts: -1 }, { name: 'details_operationId_ts_desc', sparse: true }),
+      collection.createIndex({ operationTrigger: 1, ts: -1 }, { name: 'operationTrigger_ts_desc', sparse: true }),
+      collection.createIndex({ operationActor: 1, ts: -1 }, { name: 'operationActor_ts_desc', sparse: true }),
+      collection.createIndex({ commitSha: 1, ts: -1 }, { name: 'commitSha_ts_desc', sparse: true }),
+      collection.createIndex({ ts: 1 }, { name: 'ttl_ts', expireAfterSeconds: this.retentionDays * 86400 }),
     ]);
   }
 

@@ -37,3 +37,5 @@
 | ops | cds | 复用已存在的 infra 容器时体检日志限额，缺失则告警并给出重建指令：限额只在 docker run 路径生效，现网长生命周期的 mongo/redis 至今仍是无上限日志 |
 | fix | cds | 孤儿 worktree 删除前加临删复核：判定与删除之间同 slug 分支可能被重建（create 先删残留再 checkout、落台账更在其后），拿陈旧计划会删掉刚拉出来的新工作树 |
 | fix | cds | 鉴权 mongo 连接纳入启动退避重试，且失败复位 handle：标准安装下状态库与鉴权指向同一个 mongo，此前后者一次失败即退出，忍耐窗口形同虚设 |
+| fix | cds | 事件日志库与 HTTP 日志库同样修掉「先赋值再连」：连接或建索引失败后 init 被永久短路，日志静默死掉再也不会自愈 |
+| test | cds | 新增 lint 守卫：禁止 this.x = new MongoClient(...) 先赋值再连，并要求失败路径 close 半开连接（同一个坑已出现 5 次） |
