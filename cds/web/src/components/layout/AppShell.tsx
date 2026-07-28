@@ -379,14 +379,20 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
       <OperatorApprovalModal />
-      {/* 右下角是唯一的系统提醒区域。需要用户决策的授权在最上方展开，
-          导入审批居中，版本更新固定在底部，多个提醒不会再互相遮挡。 */}
-      <div className="cds-global-action-stack">
-        <AccessRequestInbox />
-        <PendingImportInbox />
-        <GlobalUpdateBadge />
+      {/* 底部浮层带：左右两个坞的唯一定位者（index.css .cds-bottom-docks）。
+          它统一让开常驻 rail 并在窄视口自动折行，两个坞不会互相重叠、也不会压住
+          导航图标。右下角是唯一的系统提醒区域：需要用户决策的授权在最上方展开，
+          导入审批居中，版本更新与提交缺陷入口固定在底部。 */}
+      <div className="cds-bottom-docks">
+        <div className="cds-bottom-left-dock">
+          <CommitInbox />
+        </div>
+        <div className="cds-global-action-stack">
+          <AccessRequestInbox />
+          <PendingImportInbox />
+          <GlobalUpdateBadge />
+        </div>
       </div>
-      <CommitInbox />
     </div>
     </MobileNavContext.Provider>
   );

@@ -19,7 +19,6 @@ import { useLocation } from 'react-router-dom';
 import { Bug, ImagePlus, Loader2, Paperclip, X } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
-import { bugPillAnchorStyle } from '@/lib/overlayOffsets';
 import {
   BUG_SEVERITY_OPTIONS,
   MAX_ATTACHMENT_BYTES,
@@ -34,6 +33,7 @@ import {
   type BugReportSubmitResult,
   type BugSeverity,
 } from '@/components/BugReportCore';
+import { useOverlayDock } from '@/lib/useOverlayDock';
 
 /** 其它组件可派发该事件打开面板（可携带预填描述）。 */
 export const OPEN_BUG_REPORT_EVENT = 'cds:open-bug-report';
@@ -59,6 +59,10 @@ function readAsBase64(file: File): Promise<string> {
 }
 
 export function BugReportDialog(): JSX.Element | null {
+  // 坞解析走共享 hook（lib/useOverlayDock），不在这里内联一份 querySelector——
+  // 两个坞、多个消费方各写一遍必然漂移。
+  const actionStackEl = useOverlayDock('.cds-global-action-stack');
+
   const location = useLocation();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
@@ -248,8 +252,10 @@ export function BugReportDialog(): JSX.Element | null {
       onClick={() => setOpen(true)}
       title={`提交缺陷（${hint}）`}
       aria-label={`提交缺陷，快捷键 ${hint}`}
-      className="fixed inline-flex items-center gap-2 rounded-full border border-border bg-card px-3 py-2 text-xs text-card-foreground shadow-lg transition-colors hover:bg-accent"
-      style={{ ...bugPillAnchorStyle, zIndex: 120 }}
+      // 不再自己 fixed 定位：入口是 .cds-global-action-stack（AppShell 的右下角
+      // 唯一系统提醒区）的一员，由那个坞统一竖向排布。此前自己贴 bottom-4 right-4
+      // 与坞里的更新徽章几何重合、被压住半句（用户 2026-07-28 反馈的遮挡之一）。
+      className="pointer-events-auto inline-flex w-max items-center gap-2 self-end rounded-full border border-border bg-card px-3 py-2 text-xs text-card-foreground shadow-lg transition-colors hover:bg-accent"
     >
       <Bug className="size-4" />
       <span>提交缺陷</span>
@@ -423,11 +429,17 @@ export function BugReportDialog(): JSX.Element | null {
   ) : null;
 
   if (typeof document === 'undefined') return null;
-  return createPortal(
+  // 入口与弹窗挂到**不同**的宿主：
+  //   - 入口 pill 进 .cds-global-action-stack（右下角唯一系统提醒区），由那个坞
+  //     统一竖向排布，天然不会和更新徽章 / 导入审批 / 授权请求互相遮挡；
+  //   - 弹窗仍按模态三硬约束 portal 到 body（坞有 overflow-y:auto，模态挂进去会被裁）。
+  // 坞还没挂上时（登录页等不渲染 AppShell 的路由）入口就不显示——那些页面本来
+  // 也不该有常驻入口。
+  const dock = actionStackEl;
+  return (
     <>
-      {launcher}
-      {dialog}
-    </>,
-    document.body,
+      {dock ? createPortal(launcher, dock) : null}
+      {createPortal(dialog, document.body)}
+    </>
   );
 }

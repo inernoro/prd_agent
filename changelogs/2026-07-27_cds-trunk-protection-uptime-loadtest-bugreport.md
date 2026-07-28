@@ -76,3 +76,9 @@
 | docs | cds | 新增发布系统改进方案 doc/plan.cds.release-system.md（生命周期与可观测性四阶段计划） |
 | fix | cds | 修复内嵌 master 持有的本地分支（executorId 为 master-*）被误判为远端而永久排除出存活监控；分支归属判定收敛为唯一判定源 executor-ownership，此前散在三处内联字面量正是这次漂移的根源 |
 | fix | llmgw | console-api 缺陷转发 submit 返非 2xx 时如实回传「可能仍是草稿态」，不再只记日志而让 UI 无条件说「已提交」 |
+| fix | cds | 修复左下角提交记录浮层压住常驻导航栏的图标：它裸贴 left-4，而桌面常驻 rail 宽 72px，正好盖在导航图标上 |
+| fix | cds | 修复右下角更新徽章压住提交缺陷入口：入口此前自成一套 fixed 定位，与右下角唯一提醒区几何重合且层级更低，被压住半句 |
+| fix | cds | 修复窄视口下右下角提醒区一路铺到屏幕最左压住导航图标：宽度只减两侧留白、没有减去常驻 rail |
+| refactor | cds | 底部左右两个浮层坞收敛到唯一定位者 .cds-bottom-docks：由它统一让开 rail、两侧留白并在窄视口自动折行，两个坞退化成带内 flex 项，不再各自贴角、互相不知道对方存在 |
+| refactor | cds | 浮层坞元素解析抽出共享 hook lib/useOverlayDock（effect + MutationObserver），消费方不再各自内联 querySelector |
+| test | cds | 新增底部浮层带守卫用例，并修正一条把缺陷写进契约的旧断言（原本要求 CommitInbox 必须自己 fixed bottom-4 left-4，那正是本次遮挡的成因） |
