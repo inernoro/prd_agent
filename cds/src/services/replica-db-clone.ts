@@ -186,7 +186,25 @@ export function resolveReplicaDbTarget(
     // 框架风格 key 优先（应用真正读的配置）；同类内保持稳定序
     .sort((a, b) => Number(isFrameworkDbKey(b, neutralEngine)) - Number(isFrameworkDbKey(a, neutralEngine)));
   if (presentKeys.length === 0) {
-    return { target: null, reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库' };
+    // 可诊断的失败原因（2026-07-28 真机验收补）：只说「没有数据库名」等于把人挡在
+    // 门外还不告诉他差什么——生产上标识中台六个服务全是这条，光看文案根本判断不出
+    // 是「真没配」还是「配了但 CDS 不认」。这里把**看到了什么**如实报出来：
+    // 疑似库名 key（只报 key 名，不报值，值可能含凭据）、以及引擎能否从连接 URL 推出。
+    // 用户据此一眼知道该补 URL 还是该改 key 名；排障也不必再去猜。
+    const suspects = Object.keys(runtimeEnv).filter(
+      (k) => /(^|_)(DB|DATABASE)(_|$)/i.test(k) || /DATASOURCE|JDBC/i.test(k),
+    );
+    const detail = suspects.length > 0
+      ? `。检测到疑似数据库相关变量：${suspects.slice(0, 12).join(', ')}`
+        + (neutralEngine
+          ? `；已从连接串推断引擎=${neutralEngine}，但其中没有能识别的库名 key（引擎中立库名 key 仅认 DB_NAME / DATABASE_NAME）`
+          : '；且**未能从任何连接串推断出引擎**（需要形如 mysql:// 或 jdbc:mysql:// 的 URL），因此 DB_NAME 这类不含引擎的 key 无法归类')
+      : '';
+    return {
+      target: null,
+      reason: '该服务的环境变量里没有数据库名（MYSQL_DATABASE / POSTGRES_DB / MONGO_INITDB_DATABASE / MongoDB__DatabaseName 等家族），无法定位要隔离的库'
+        + detail,
+    };
   }
 
   // 引擎判定（Codex P1）：项目级 customEnv 会把**所有**引擎的库名 key 都灌进来
