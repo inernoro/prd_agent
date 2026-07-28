@@ -293,17 +293,53 @@ export class MongoAuthStore implements AuthStore {
     if (!session) return null;
 
     // Enforce expiry eagerly — delete the session and report as missing.
+    // Filter on the expiry we observed: a concurrent request can renew the session
+    // between our read and this delete, and a token-only delete would wipe that
+    // perfectly valid, just-extended session.
     if (new Date(session.expiresAt).getTime() <= now.getTime()) {
-      await sessions.deleteOne({ token });
+      await sessions.deleteOne({ token, expiresAt: session.expiresAt });
       return null;
     }
 
     // Touch lastSeenAt (fire-and-forget — don't block the response).
+    // Field-level $set, never a full-document replace: this write is unawaited, so a
+    // replace carrying the document we read could land *after* extendSession() and
+    // roll `expiresAt` back to the old deadline — silently un-renewing the session.
     sessions
-      .replaceOne({ token }, { ...session, lastSeenAt: now.toISOString() })
+      .updateOne({ token }, { $set: { lastSeenAt: now.toISOString() } })
       .catch(() => { /* non-critical — ignore write errors for lastSeenAt */ });
 
     return { ...session, lastSeenAt: now.toISOString() };
+  }
+
+  async extendSession(token: string, ttlMs: number, now = new Date()): Promise<CdsSession | null> {
+    if (!token) return null;
+    const sessions = this.handle.sessionsCollection();
+    const session = await sessions.findOne({ token });
+    if (!session) return null;
+
+    // Same guard as findSessionByToken: never delete on a token-only filter, or a
+    // sibling request that renewed this session first would lose it.
+    if (new Date(session.expiresAt).getTime() <= now.getTime()) {
+      await sessions.deleteOne({ token, expiresAt: session.expiresAt });
+      return null;
+    }
+
+    const updated: CdsSession = {
+      ...session,
+      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+      lastSeenAt: now.toISOString(),
+    };
+    // Field-level $set filtered on the observed expiry (and never upsert): a concurrent
+    // logout or a competing renewal turns this into a no-op instead of resurrecting or
+    // clobbering the session, and touching only these two fields means an in-flight
+    // lastSeenAt write cannot drag `expiresAt` back. The returned value is only used for
+    // the cookie expiry; if the session did vanish, the next request bounces to /login.
+    await sessions.updateOne(
+      { token, expiresAt: session.expiresAt },
+      { $set: { expiresAt: updated.expiresAt, lastSeenAt: updated.lastSeenAt } },
+    );
+    return updated;
   }
 
   async deleteSession(token: string): Promise<void> {

@@ -64,6 +64,11 @@ export interface AuthStore {
     ipAddress: string | null;
   }, now?: Date): Promise<CdsSession>;
   findSessionByToken(token: string, now?: Date): Promise<CdsSession | null>;
+  /**
+   * Sliding renewal: push a live session's expiry out to `now + ttlMs`.
+   * Returns the updated session, or null when the token is unknown/expired.
+   */
+  extendSession(token: string, ttlMs: number, now?: Date): Promise<CdsSession | null>;
   deleteSession(token: string): Promise<void>;
   deleteSessionsForUser(userId: string): Promise<number>;
 
@@ -128,8 +133,12 @@ export function localPlaceholderGithubId(): number {
   return -(Math.floor(Math.random() * 9_000_000_000_000_000) + 1);
 }
 
-/** Default session TTL in milliseconds. 30 days. */
-export const DEFAULT_SESSION_TTL_MS = 30 * 24 * 60 * 60 * 1000;
+/**
+ * Default session TTL in milliseconds. 7 days — the project-wide login window
+ * (MAP and the gateway console use the same figure). Sessions slide forward on
+ * use, so 7 days is "7 days of inactivity", not "7 days since login".
+ */
+export const DEFAULT_SESSION_TTL_MS = 7 * 24 * 60 * 60 * 1000;
 
 /** Max user-activity records kept in the in-memory ring buffer. */
 export const ACTIVITY_RING_CAPACITY = 1000;
@@ -328,6 +337,22 @@ export class MemoryAuthStore implements AuthStore {
     }
     // Touch lastSeenAt so the session stays "live".
     const updated: CdsSession = { ...session, lastSeenAt: now.toISOString() };
+    this.sessionsByToken.set(token, updated);
+    return updated;
+  }
+
+  async extendSession(token: string, ttlMs: number, now = new Date()): Promise<CdsSession | null> {
+    const session = this.sessionsByToken.get(token);
+    if (!session) return null;
+    if (new Date(session.expiresAt).getTime() <= now.getTime()) {
+      this.sessionsByToken.delete(token);
+      return null;
+    }
+    const updated: CdsSession = {
+      ...session,
+      expiresAt: new Date(now.getTime() + ttlMs).toISOString(),
+      lastSeenAt: now.toISOString(),
+    };
     this.sessionsByToken.set(token, updated);
     return updated;
   }

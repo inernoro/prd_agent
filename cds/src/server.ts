@@ -52,9 +52,11 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import {
+  TICKET_SSO_COOKIE,
+  buildTicketSsoSessionCookie,
   createTicketSsoConfigRouter,
   createTicketSsoPublicRouter,
-  ticketSsoIdentity,
+  ticketSsoSession,
 } from './routes/ticket-sso.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -2003,8 +2005,12 @@ export function createServer(deps: ServerDeps): express.Express {
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://');
+  // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
+  // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
+  const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
+  const sessionTtlMs = sessionTtlDays * 24 * 60 * 60 * 1000;
   const ticketSsoStateStore = new TicketSsoStateStore();
-  const ticketSsoSessionStore = new TicketSsoSessionStore();
+  const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
@@ -2025,11 +2031,22 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
-  app.use((req, _res, next) => {
-    const identity = ticketSsoIdentity(req, ticketSsoSessionStore);
-    if (identity) {
+  app.use((req, res, next) => {
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    const identity = ssoSession?.identity ?? null;
+    if (identity && ssoSession) {
       const now = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const expiresAt = ssoSession.expiresAt.toISOString();
+      // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
+      if (ssoSession.renewed) {
+        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        if (ssoToken) {
+          res.setHeader(
+            'Set-Cookie',
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+          );
+        }
+      }
       const request = req as typeof req & {
         cdsSsoIdentity?: typeof identity;
         _cdsCookieAuth?: boolean;
@@ -2178,10 +2195,11 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
+    // 登录有效期走上面那份统一策略（默认 7 天 + 用后自动延长，CDS_SESSION_TTL_DAYS 可调）。
     const authService = new AuthService({
       store: authStore,
       github: githubClient,
-      config: { allowedOrgs },
+      config: { allowedOrgs, sessionTtlMs },
     });
 
     app.use(
@@ -2206,6 +2224,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
+      cookieSecure,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -2232,7 +2252,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
+        res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2749,6 +2769,13 @@ export function createServer(deps: ServerDeps): express.Express {
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const token = cookieToken || headerToken;
       if (token === validToken) {
+        // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
+        // 只能靠「每次带 cookie 的已鉴权请求重发一次 cookie」来续。不这么做的话，
+        // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
+        // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
+        if (cookieToken === validToken) {
+          res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
         // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
@@ -4680,6 +4707,15 @@ export function installSpaFallback(
       message: `Unknown API endpoint: ${req.method} /api${req.path}`,
     });
   });
+}
+
+/**
+ * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
+ * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
+ */
+function basicSessionCookie(token: string, ttlMs: number): string {
+  const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
+  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

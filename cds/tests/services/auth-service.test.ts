@@ -1,5 +1,5 @@
 import { describe, it, expect, beforeEach } from 'vitest';
-import { MemoryAuthStore } from '../../src/infra/auth-store/memory-store.js';
+import { MemoryAuthStore, DEFAULT_SESSION_TTL_MS } from '../../src/infra/auth-store/memory-store.js';
 import { AuthService, AuthServiceError } from '../../src/services/auth-service.js';
 import { GitHubOAuthClient, type FetchLike } from '../../src/services/github-oauth-client.js';
 
@@ -67,6 +67,7 @@ function stubFetch(overrides: Partial<{
 function buildService(config: {
   allowedOrgs?: string[];
   fetchImpl?: FetchLike;
+  sessionTtlMs?: number;
 } = {}) {
   const store = new MemoryAuthStore();
   const github = new GitHubOAuthClient({
@@ -79,7 +80,10 @@ function buildService(config: {
   const service = new AuthService({
     store,
     github,
-    config: { allowedOrgs: config.allowedOrgs ?? ['inernoro'] },
+    config: {
+      allowedOrgs: config.allowedOrgs ?? ['inernoro'],
+      ...(config.sessionTtlMs !== undefined ? { sessionTtlMs: config.sessionTtlMs } : {}),
+    },
   });
   return { store, github, service };
 }
@@ -279,6 +283,24 @@ describe('AuthService', () => {
     });
   });
 
+  it('defaults to the project-wide 7 day login window', async () => {
+    // 全系统统一口径：MAP / 网关控制台 / CDS 都是 7 天（滑动，用后自动续满）。
+    expect(DEFAULT_SESSION_TTL_MS).toBe(7 * 24 * 60 * 60 * 1000);
+
+    const { service } = buildService();
+    const { state } = service.startLogin('https://x/cb', '/projects.html');
+    const result = await service.handleCallback({
+      code: 'code',
+      state,
+      redirectUri: 'https://x/cb',
+      userAgent: null,
+      ipAddress: null,
+    });
+
+    const lifetimeMs = new Date(result.session.expiresAt).getTime() - new Date(result.session.createdAt).getTime();
+    expect(lifetimeMs).toBe(DEFAULT_SESSION_TTL_MS);
+  });
+
   describe('validateSession', () => {
     it('returns null for missing token', async () => {
       const { service } = buildService();
@@ -298,6 +320,75 @@ describe('AuthService', () => {
 
       const validated = await service.validateSession(result.session.token);
       expect(validated?.user.id).toBe(result.user.id);
+    });
+
+    it('slides the expiry forward once a session is past the renewal threshold', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      // 刚登录：还剩满额，不该写库（renewed=false，过期时间不变）。
+      const fresh = await service.validateSession(result.session.token);
+      expect(fresh?.renewed).toBe(false);
+      expect(fresh?.session.expiresAt).toBe(result.session.expiresAt);
+
+      // 手动把过期时间挪到只剩 1 天（低于 50% 阈值），下一次访问应续满。
+      const nearlyExpired = new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString();
+      await store.extendSession(result.session.token, 24 * 60 * 60 * 1000);
+      expect(new Date((await store.findSessionByToken(result.session.token))!.expiresAt).getTime())
+        .toBeLessThanOrEqual(new Date(nearlyExpired).getTime() + 5_000);
+
+      const renewed = await service.validateSession(result.session.token);
+      expect(renewed?.renewed).toBe(true);
+      const remainingMs = new Date(renewed!.session.expiresAt).getTime() - Date.now();
+      expect(remainingMs).toBeGreaterThan(ttlMs * 0.9);
+    });
+
+    it('skips renewal when the caller cannot reissue the cookie (renew: false)', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      // 压到阈值以下：默认会续期，但显式 renew:false 的调用方（logout）必须原样放过，
+      // 否则服务端过期时间被推后、cookie 却没重发，反而害用户在原时间点掉登录。
+      await store.extendSession(result.session.token, 24 * 60 * 60 * 1000);
+      const before = (await store.findSessionByToken(result.session.token))!.expiresAt;
+
+      const validated = await service.validateSession(result.session.token, { renew: false });
+
+      expect(validated?.renewed).toBe(false);
+      expect(validated?.session.expiresAt).toBe(before);
+      expect((await store.findSessionByToken(result.session.token))!.expiresAt).toBe(before);
+    });
+
+    it('does not renew an expired session', async () => {
+      const ttlMs = 7 * 24 * 60 * 60 * 1000;
+      const { service, store } = buildService({ sessionTtlMs: ttlMs });
+      const { state } = service.startLogin('https://x/cb', '/projects.html');
+      const result = await service.handleCallback({
+        code: 'code',
+        state,
+        redirectUri: 'https://x/cb',
+        userAgent: null,
+        ipAddress: null,
+      });
+
+      await store.extendSession(result.session.token, -1000);
+      expect(await service.validateSession(result.session.token)).toBeNull();
     });
 
     it('returns null for disabled users', async () => {

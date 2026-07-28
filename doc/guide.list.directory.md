@@ -313,6 +313,7 @@
 - [更新中心（终身存储 + 推送） · 债务台账](./debt.platform.changelog-center.md) `debt.platform.changelog-center`
 - [历史 emoji 语料清理 · 债务台账](./debt.platform.emoji-corpus.md) `debt.platform.emoji-corpus`
 - [登录后首页（Agent 启动页） · 债务台账](./debt.platform.home-launcher.md) `debt.platform.home-launcher`
+- [登录会话（超长登录期） · 债务台账](./debt.platform.login-session.md) `debt.platform.login-session`
 - [MAP MCP 连接器 · 债务台账](./debt.platform.map-mcp-connector.md) `debt.platform.map-mcp-connector`
 - [工程债务台账：系统级跨节点互传（Peer Sync） · 债务台账](./debt.platform.peer-sync.md) `debt.platform.peer-sync`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
