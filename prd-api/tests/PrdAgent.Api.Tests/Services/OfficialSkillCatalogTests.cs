@@ -180,6 +180,124 @@ public class OfficialSkillCatalogTests
         Assert.Contains("acceptance-scenario-orchestrator/references/rules/manifest.json", names);
     }
 
+    // ======================================================================
+    // 角色套装（bundle）—— 外部用户「一条 curl 装齐一个角色」的入口
+    // ======================================================================
+
+    [Fact]
+    public void PmStarterBundle_IsRegisteredWithEntrySkillAndRole()
+    {
+        var bundle = OfficialSkillCatalog.FindBundle("pm-starter");
+
+        Assert.NotNull(bundle);
+        Assert.Contains("pm", bundle!.Roles);
+        // sdd-init 是把零件串成工作方法的入口技能，套装里缺了它等于只发了一堆散装命令
+        Assert.Contains("sdd-init", bundle.Includes);
+        Assert.Contains("skill-validation", bundle.Includes);
+        Assert.Contains("product-document-generator", bundle.Includes);
+        Assert.Equal("产品经理", OfficialSkillCatalog.RoleLabels["pm"]);
+    }
+
+    [Fact]
+    public void BundleKeys_DoNotCollideWithSkillKeys()
+    {
+        // 两者共用 official-{key} 下载命名空间，撞了会让下载路由指错东西
+        foreach (var bundle in OfficialSkillCatalog.AllBundles)
+            Assert.Null(OfficialSkillCatalog.Find(bundle.Key));
+    }
+
+    [Fact]
+    public void EveryBundledSkill_ExistsInCatalog()
+    {
+        foreach (var bundle in OfficialSkillCatalog.AllBundles)
+        {
+            OfficialSkillCatalog.ExpandWithRequires(bundle.Includes, out var missing);
+            Assert.Empty(missing);
+        }
+    }
+
+    [Fact]
+    public void PmStarterBundleDownload_PacksEverySkillPlusInstallGuide()
+    {
+        var controller = BuildOfficialSkillsController();
+
+        var result = controller.Download("pm-starter");
+        var file = Assert.IsType<FileContentResult>(result);
+        Assert.Equal("pm-starter.zip", file.FileDownloadName);
+
+        using var ms = new MemoryStream(file.FileContents);
+        using var zip = new ZipArchive(ms, ZipArchiveMode.Read);
+        var names = zip.Entries.Select(e => e.FullName).ToHashSet(StringComparer.Ordinal);
+
+        var bundle = OfficialSkillCatalog.FindBundle("pm-starter")!;
+        foreach (var key in bundle.Includes)
+            Assert.Contains($"{key}/SKILL.md", names);
+
+        // 顶层两份说明：用户解压后看到的第一份文档 + 机器可读清单
+        Assert.Contains("INSTALL.md", names);
+        Assert.Contains("bundle.manifest.json", names);
+
+        var install = ReadZipText(zip, "INSTALL.md");
+        Assert.Contains("~/.claude/skills/", install);
+        Assert.Contains("/sdd-init", install);
+    }
+
+    [Fact]
+    public void BundleFork_ReturnsBundleDownloadUrl()
+    {
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+
+        var response = OfficialMarketplaceSkillInjector.BuildForkResponseById(
+            "official-pm-starter",
+            request,
+            config,
+            currentUserId: "user-1");
+
+        Assert.NotNull(response);
+        Assert.Equal(
+            "https://map.example.test/api/official-skills/pm-starter/download",
+            Read<string>(response!, "downloadUrl"));
+        Assert.Equal("pm-starter.zip", Read<string>(response!, "fileName"));
+
+        var item = ReadObject(response!, "item");
+        Assert.Equal("official-pm-starter", Read<string>(item, "Id"));
+        Assert.Equal("bundle", Read<string>(item, "kind"));
+    }
+
+    [Fact]
+    public void MarketplaceList_PutsBundlesAheadOfIndividualSkills()
+    {
+        var request = BuildRequest("https://map.example.test");
+        var config = new ConfigurationBuilder().Build();
+
+        var dtos = OfficialMarketplaceSkillInjector.BuildAllDtos(
+            request, config, currentUserId: "user-1",
+            keyword: null, tag: null, includeCatalogWhenUnfiltered: true);
+
+        var kinds = dtos.Select(d => d.GetType().GetProperty("kind")?.GetValue(d) as string).ToList();
+        var firstBundle = kinds.IndexOf("bundle");
+        var lastSkill = kinds.LastIndexOf("skill");
+
+        Assert.True(firstBundle >= 0, "官方套装未注入市场列表");
+        Assert.True(lastSkill >= 0, "官方技能未注入市场列表");
+        // 套装排在散装技能之前：让用户先看到「一条命令装齐」，而不是从二十张卡里自己挑
+        Assert.True(firstBundle < lastSkill, "套装应排在散装技能之前");
+    }
+
+    [Fact]
+    public void PmStarterSkills_CarryPmRoleForMarketplaceFiltering()
+    {
+        var bundle = OfficialSkillCatalog.FindBundle("pm-starter")!;
+        foreach (var key in bundle.Includes)
+        {
+            var entry = OfficialSkillCatalog.Find(key);
+            Assert.NotNull(entry);
+            // 套装成员必须带 pm 角色，否则市场按「产品经理」筛选时套装点开是空的
+            Assert.Contains("pm", entry!.Roles);
+        }
+    }
+
     private static HttpRequest BuildRequest(string origin)
     {
         var uri = new Uri(origin);

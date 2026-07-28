@@ -21,20 +21,6 @@ namespace PrdAgent.Api.Controllers.Api.OfficialSkills;
 [Route("api/official-skills")]
 public class OfficialSkillsController : ControllerBase
 {
-    private static readonly IReadOnlyDictionary<string, string[]> BundledSkillDependencies =
-        new Dictionary<string, string[]>(StringComparer.OrdinalIgnoreCase)
-        {
-            ["create-visual-test-to-kb"] =
-            [
-                "acceptance-test-design",
-                "acceptance-scenario-orchestrator",
-            ],
-            ["acceptance-scenario-orchestrator"] =
-            [
-                "acceptance-test-design",
-            ],
-        };
-
     private readonly IConfiguration _config;
     private readonly ILogger<OfficialSkillsController> _logger;
 
@@ -81,45 +67,171 @@ public class OfficialSkillsController : ControllerBase
             return File(bytes, "application/zip", $"{skillKey}.zip");
         }
 
+        // 角色套装：一条 curl 装齐一个角色的全部技能（成员技能各自的 Requires 一并展开）
+        var bundle = OfficialSkillCatalog.FindBundle(skillKey);
+        if (bundle != null)
+            return BuildBundleZip(bundle);
+
         // 其余官方技能：从内嵌目录打完整 zip（含 reference/ scripts/ 等全部文本文件）
         var entry = OfficialSkillCatalog.Find(skillKey);
         if (entry == null)
             return NotFound(ApiResponse<object>.Fail(ErrorCodes.NOT_FOUND, $"未找到官方技能: {skillKey}"));
 
-        var entries = new List<OfficialSkillCatalog.SkillEntry> { entry };
-        if (BundledSkillDependencies.TryGetValue(entry.Key, out var dependencyKeys))
+        var entries = OfficialSkillCatalog.ExpandWithRequires([entry.Key], out var missing);
+        if (missing.Count > 0)
         {
-            foreach (var dependencyKey in dependencyKeys)
-            {
-                var dependency = OfficialSkillCatalog.Find(dependencyKey);
-                if (dependency == null)
-                {
-                    return StatusCode(500, ApiResponse<object>.Fail(
-                        ErrorCodes.INTERNAL_ERROR,
-                        $"官方技能 {entry.Key} 缺少依赖技能: {dependencyKey}"));
-                }
-
-                entries.Add(dependency);
-            }
+            return StatusCode(500, ApiResponse<object>.Fail(
+                ErrorCodes.INTERNAL_ERROR,
+                $"官方技能 {entry.Key} 缺少依赖技能: {string.Join(", ", missing)}"));
         }
 
-        using var ms2 = new MemoryStream();
-        using (var zip = new ZipArchive(ms2, ZipArchiveMode.Create, leaveOpen: true))
-        {
-            foreach (var packagedEntry in entries)
-            {
-                foreach (var f in packagedEntry.Files)
-                {
-                    // zip 内统一放在 {key}/ 目录下，解压即 ~/.claude/skills/{key}/
-                    WriteEntry(zip, $"{packagedEntry.Key}/{f.Path}", f.Content);
-                }
-            }
-        }
-        var bytes2 = ms2.ToArray();
+        var bytes2 = PackSkills(entries, extraFiles: null);
         Response.Headers.Append("Cache-Control", "no-store");
         var fileCount = entries.Sum(e => e.Files.Count);
         _logger.LogInformation("[OfficialSkills] 下发 {SkillKey} 技能包 {Files} 文件 {Bytes} bytes", skillKey, fileCount, bytes2.Length);
         return File(bytes2, "application/zip", $"{entry.Key}.zip");
+    }
+
+    /// <summary>
+    /// 列出角色套装（匿名可访问）。
+    /// GET /api/official-skills/bundles[?role=pm]
+    ///
+    /// 这是「还没有账号的人」的入口：拿到 downloadUrl 就能一条 curl 装齐，
+    /// 不需要注册、不需要 AgentApiKey（那只在往市场上传时才需要）。
+    /// </summary>
+    [HttpGet("bundles")]
+    public IActionResult ListBundles([FromQuery] string? role)
+    {
+        var baseUrl = ResolveBaseUrl().TrimEnd('/');
+        var bundles = OfficialSkillCatalog.AllBundles.AsEnumerable();
+        if (!string.IsNullOrWhiteSpace(role))
+        {
+            var r = role.Trim();
+            bundles = bundles.Where(b => b.Roles.Any(x => string.Equals(x, r, StringComparison.OrdinalIgnoreCase)));
+        }
+
+        var items = bundles.Select(b =>
+        {
+            var expanded = OfficialSkillCatalog.ExpandWithRequires(b.Includes, out _);
+            return new
+            {
+                key = b.Key,
+                title = b.Title,
+                version = b.Version,
+                description = b.Description,
+                tags = b.Tags,
+                roles = b.Roles,
+                roleLabels = b.Roles
+                    .Select(x => OfficialSkillCatalog.RoleLabels.TryGetValue(x, out var label) ? label : x)
+                    .ToList(),
+                firstStep = b.FirstStep,
+                skillCount = expanded.Count,
+                skills = expanded.Select(e => new { key = e.Key, title = e.Title, description = e.Description }).ToList(),
+                downloadUrl = $"{baseUrl}/api/official-skills/{b.Key}/download",
+                installCommand =
+                    $"curl -sSLo /tmp/{b.Key}.zip \"{baseUrl}/api/official-skills/{b.Key}/download\" && unzip -o /tmp/{b.Key}.zip -d ~/.claude/skills/",
+            };
+        }).ToList();
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            roleLabels = OfficialSkillCatalog.RoleLabels,
+            items,
+        }));
+    }
+
+    private IActionResult BuildBundleZip(OfficialSkillCatalog.BundleEntry bundle)
+    {
+        var entries = OfficialSkillCatalog.ExpandWithRequires(bundle.Includes, out var missing);
+        if (missing.Count > 0)
+        {
+            return StatusCode(500, ApiResponse<object>.Fail(
+                ErrorCodes.INTERNAL_ERROR,
+                $"角色套装 {bundle.Key} 缺少技能: {string.Join(", ", missing)}"));
+        }
+
+        var manifest = System.Text.Json.JsonSerializer.Serialize(new
+        {
+            kind = "bundle",
+            key = bundle.Key,
+            title = bundle.Title,
+            version = bundle.Version,
+            roles = bundle.Roles,
+            skills = entries.Select(e => new { key = e.Key, title = e.Title, version = e.Version }).ToList(),
+        }, new System.Text.Json.JsonSerializerOptions { WriteIndented = true });
+
+        var extra = new Dictionary<string, string>
+        {
+            ["INSTALL.md"] = BuildBundleInstallMd(bundle, entries),
+            ["bundle.manifest.json"] = manifest,
+        };
+
+        var bytes = PackSkills(entries, extra);
+        Response.Headers.Append("Cache-Control", "no-store");
+        _logger.LogInformation(
+            "[OfficialSkills] 下发角色套装 {BundleKey} 含 {Skills} 个技能 {Bytes} bytes",
+            bundle.Key, entries.Count, bytes.Length);
+        return File(bytes, "application/zip", $"{bundle.Key}.zip");
+    }
+
+    /// <summary>
+    /// 套装 zip 顶层的 INSTALL.md —— 解压后用户看到的第一份说明。
+    /// 必须回答三件事：装到哪了、下一句说什么、这套东西都有什么。
+    /// </summary>
+    private static string BuildBundleInstallMd(
+        OfficialSkillCatalog.BundleEntry bundle,
+        IReadOnlyList<OfficialSkillCatalog.SkillEntry> entries)
+    {
+        var sb = new StringBuilder();
+        sb.AppendLine($"# {bundle.Title}");
+        sb.AppendLine();
+        sb.AppendLine($"> {bundle.Description}");
+        sb.AppendLine();
+        sb.AppendLine("## 解压到哪");
+        sb.AppendLine();
+        sb.AppendLine("```bash");
+        sb.AppendLine("unzip -o <本 zip> -d ~/.claude/skills/");
+        sb.AppendLine("```");
+        sb.AppendLine();
+        sb.AppendLine($"解压后 `~/.claude/skills/` 下会多出 {entries.Count} 个技能目录，重开 Claude Code 即可识别。");
+        sb.AppendLine();
+        sb.AppendLine("## 下一步");
+        sb.AppendLine();
+        sb.AppendLine(string.IsNullOrWhiteSpace(bundle.FirstStep)
+            ? "打开 Claude Code，输入 `/sdd-init`。"
+            : bundle.FirstStep);
+        sb.AppendLine();
+        sb.AppendLine("## 这套里都有什么");
+        sb.AppendLine();
+        sb.AppendLine("| 技能 | 用途 |");
+        sb.AppendLine("|---|---|");
+        foreach (var e in entries)
+        {
+            var desc = (e.Description ?? string.Empty).Replace("|", "/").Replace("\n", " ");
+            if (desc.Length > 120) desc = desc[..117] + "...";
+            sb.AppendLine($"| `{e.Key}` | {desc} |");
+        }
+        sb.AppendLine();
+        return sb.ToString();
+    }
+
+    /// <summary>把技能目录打成 zip：每个技能落在 `{key}/` 下，解压即 `~/.claude/skills/{key}/`。</summary>
+    private static byte[] PackSkills(
+        IReadOnlyList<OfficialSkillCatalog.SkillEntry> entries,
+        IReadOnlyDictionary<string, string>? extraFiles)
+    {
+        using var ms = new MemoryStream();
+        using (var zip = new ZipArchive(ms, ZipArchiveMode.Create, leaveOpen: true))
+        {
+            foreach (var packagedEntry in entries)
+            {
+                foreach (var f in packagedEntry.Files)
+                    WriteEntry(zip, $"{packagedEntry.Key}/{f.Path}", f.Content);
+            }
+            foreach (var kv in extraFiles ?? new Dictionary<string, string>())
+                WriteEntry(zip, kv.Key, kv.Value);
+        }
+        return ms.ToArray();
     }
 
     /// <summary>

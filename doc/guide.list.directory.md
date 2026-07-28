@@ -124,6 +124,7 @@
 - [产品评审员技术 · 设计](./design.review-agent.md) `design.review-agent`
 - [苹果快捷指令集成 · 设计](./design.shortcuts-agent.apple.md) `design.shortcuts-agent.apple`
 - [海鲜市场技能开放接口设计 (Skill Marketplace Open API) · 设计](./design.skill.marketplace-open-api.md) `design.skill.marketplace-open-api`
+- [角色技能套装 · 设计](./design.skill.role-bundle.md) `design.skill.role-bundle`
 - [技能系统统一设计 · 设计](./design.skill.unified-skill-system.md) `design.skill.unified-skill-system`
 - [演讲智能体 · 设计](./design.speech-agent.md) `design.speech-agent`
 - [团队动态（工作日志时间线）设计 · 设计](./design.team-activity.md) `design.team-activity`
@@ -318,6 +319,7 @@
 - [周报 Agent 日报能力 · 债务台账](./debt.report-agent.daily.md) `debt.report-agent.daily`
 - [周报 Agent 详情页 · 债务台账](./debt.report-agent.detail.md) `debt.report-agent.detail`
 - [快捷指令 Agent · 债务台账](./debt.shortcuts-agent.md) `debt.shortcuts-agent`
+- [角色技能套装 · 债务台账](./debt.skill.role-bundle.md) `debt.skill.role-bundle`
 - [演讲智能体 · 债务台账](./debt.speech-agent.md) `debt.speech-agent`
 - [团队动态 · 债务台账](./debt.team-activity.md) `debt.team-activity`
 - [团队动态团队能力 · 债务台账](./debt.team-activity.team-feature.md) `debt.team-activity.team-feature`

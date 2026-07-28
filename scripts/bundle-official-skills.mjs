@@ -9,7 +9,13 @@
 // 运行：node scripts/bundle-official-skills.mjs
 // 产物：prd-api/src/PrdAgent.Api/OfficialSkills/official-skills.generated.json
 //
-// 技能内容有变 / 新增技能时重跑本脚本并提交产物。
+// 技能内容有变 / 新增技能 / 改角色套装（scripts/skill-bundles.json）时重跑本脚本并提交产物。
+//
+// 产物 schema v3：
+//   { version, generatedAt, count, roleLabels, skills[], bundles[] }
+//   skills[i]  += roles[]（角色归属，市场按角色筛选）、requires[]（硬依赖，下载时自动带上）
+//   bundles[]   角色套装：一条 curl 装齐一个角色的全部技能（key/title/roles/includes/...）
+// 角色与套装的事实源是 scripts/skill-bundles.json，本脚本只做校验 + 合并。
 
 import { readFileSync, writeFileSync, readdirSync, existsSync, statSync } from 'node:fs';
 import { dirname, join, relative } from 'node:path';
@@ -18,6 +24,7 @@ import { fileURLToPath } from 'node:url';
 const __dirname = dirname(fileURLToPath(import.meta.url));
 const ROOT = join(__dirname, '..');
 const SKILLS_DIR = join(ROOT, '.claude', 'skills');
+const BUNDLES_FILE = join(ROOT, 'scripts', 'skill-bundles.json');
 const OUT_FILE = join(ROOT, 'prd-api', 'src', 'PrdAgent.Api', 'OfficialSkills', 'official-skills.generated.json');
 
 // 单文件上限（超大文本截断防 JSON 爆）
@@ -31,6 +38,11 @@ const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.
 // 注：findmapskills 不在此列 —— 它由 OfficialSkillTemplates 特殊处理（版本号 +
 // {{BASE_URL}} 占位替换），catalog 只管其余可移植技能，避免重复/降低改动风险。
 const INCLUDE = new Set([
+  'sdd-init',                // 骨架落地：把套装变成一套能用的工作方法（角色套装的入口技能）
+  'plan-first',              // 通用先方案后动手
+  'product-document-generator', // 通用产品文档生成
+  'doc-writer',              // 通用七类文档模板
+  'flow-trace',              // 通用端到端链路追踪（大白话版）
   'laowang',                 // 精英·米多文化人格
   'ui-ux-pro-max',           // 通用 UI/UX 设计智能
   'risk-matrix',             // 通用风险评估
@@ -59,11 +71,16 @@ const DISPLAY_NAME = {
   'conflict-resolution': 'conflict-resolution · Git 冲突解决',
   'create-skill-file': 'create-skill-file · 技能文件生成',
   'create-visual-test-to-kb': 'create-visual-test-to-kb · 视觉验收归档',
+  'doc-writer': 'doc-writer · 七类文档模板',
   'find-skills': 'find-skills · 技能发现',
+  'flow-trace': 'flow-trace · 端到端链路追踪',
   'human-verify': 'human-verify · 多视角人工验证',
   'laowang': '老王 · 米多解决问题五步法',
+  'plan-first': 'plan-first · 先方案后动手',
+  'product-document-generator': 'product-document-generator · 产品文档生成',
   'remotion-scene-codegen': 'remotion-scene-codegen · 视频场景代码生成',
   'risk-matrix': 'risk-matrix · MECE 风险评估',
+  'sdd-init': 'sdd-init · 项目骨架落地',
   'skill-validation': 'skill-validation · 需求七维度评分',
   'task-handoff-checklist': 'task-handoff-checklist · 任务交接清单',
   'theme-transition': 'theme-transition · 主题切换水波纹动效',
@@ -91,6 +108,17 @@ const TAG_OVERRIDE = {
   findmapskills: ['技能', '精英'],
   'acceptance-test-design': ['分析'],
   'acceptance-scenario-orchestrator': ['分析'],
+  // 下面 5 条是修启发式误判（曾把 conflict-resolution 标成「周报」、risk-matrix 标成「部署」）
+  'conflict-resolution': ['工具'],
+  'risk-matrix': ['分析'],
+  'acceptance-checklist': ['分析'],
+  'create-visual-test-to-kb': ['分析'],
+  'skill-validation': ['需求'],
+  'sdd-init': ['需求', '精英'],
+  'plan-first': ['需求'],
+  'product-document-generator': ['文档'],
+  'doc-writer': ['文档'],
+  'flow-trace': ['分析'],
   'feature-emerge': ['创意'],
   'release-version': ['部署'],
   bridge: ['工具'],
@@ -192,6 +220,63 @@ function shortDesc(description, fallbackName) {
   return oneLine.length > 200 ? oneLine.slice(0, 197) + '…' : oneLine;
 }
 
+/**
+ * 读取角色/套装事实源，并对齐技能白名单做强校验。
+ * 校验失败直接 exit(1) —— 生成物是要编进镜像的，宁可现在红，不要上线后 404。
+ */
+function loadBundleConfig(skillKeys) {
+  if (!existsSync(BUNDLES_FILE)) {
+    console.warn(`[bundle-official-skills] 警告：找不到 ${BUNDLES_FILE}，本次不产出角色与套装`);
+    return { roleLabels: {}, skillRoles: {}, skillRequires: {}, bundles: [] };
+  }
+  const cfg = JSON.parse(readFileSync(BUNDLES_FILE, 'utf8'));
+  const roleLabels = cfg.roleLabels || {};
+  const skillRoles = cfg.skillRoles || {};
+  const skillRequires = cfg.skillRequires || {};
+  const bundles = cfg.bundles || [];
+  const known = new Set(skillKeys);
+  const errors = [];
+
+  const checkRoles = (roles, where) => {
+    for (const r of roles || []) {
+      if (!roleLabels[r]) errors.push(`${where} 引用了未定义的角色 "${r}"（请在 roleLabels 补一行）`);
+    }
+  };
+
+  for (const [key, roles] of Object.entries(skillRoles)) {
+    if (!known.has(key)) errors.push(`skillRoles 引用了未上架的技能 "${key}"（不在 INCLUDE 白名单或目录不存在）`);
+    checkRoles(roles, `skillRoles["${key}"]`);
+  }
+  for (const [key, reqs] of Object.entries(skillRequires)) {
+    if (!known.has(key)) errors.push(`skillRequires 引用了未上架的技能 "${key}"`);
+    for (const r of reqs) {
+      if (!known.has(r)) errors.push(`skillRequires["${key}"] 依赖了未上架的技能 "${r}"`);
+      if (r === key) errors.push(`skillRequires["${key}"] 依赖了自己`);
+    }
+  }
+
+  const bundleKeys = new Set();
+  for (const b of bundles) {
+    if (!b.key) { errors.push('bundles 里有条目缺 key'); continue; }
+    // 套装 key 与技能 key 共用 official-{key} 命名空间，撞了会让下载路由指错东西
+    if (known.has(b.key)) errors.push(`套装 key "${b.key}" 与技能同名，会撞 official-{key} 下载路径`);
+    if (bundleKeys.has(b.key)) errors.push(`套装 key "${b.key}" 重复`);
+    bundleKeys.add(b.key);
+    if (!b.includes?.length) errors.push(`套装 "${b.key}" 的 includes 为空`);
+    for (const k of b.includes || []) {
+      if (!known.has(k)) errors.push(`套装 "${b.key}" 引用了未上架的技能 "${k}"`);
+    }
+    checkRoles(b.roles, `套装 "${b.key}"`);
+  }
+
+  if (errors.length) {
+    console.error('[bundle-official-skills] scripts/skill-bundles.json 校验失败：');
+    for (const e of errors) console.error(`  - ${e}`);
+    process.exit(1);
+  }
+  return { roleLabels, skillRoles, skillRequires, bundles };
+}
+
 function main() {
   if (!existsSync(SKILLS_DIR)) {
     console.error(`[bundle-official-skills] 找不到 ${SKILLS_DIR}`);
@@ -206,6 +291,8 @@ function main() {
   const missing = [...INCLUDE].filter((d) => !dirs.includes(d));
   if (missing.length) console.warn(`[bundle-official-skills] 警告：INCLUDE 里这些技能目录不存在，已跳过: ${missing.join(', ')}`);
 
+  const { roleLabels, skillRoles, skillRequires, bundles } = loadBundleConfig(dirs);
+
   const skills = [];
   for (const key of dirs) {
     const skillDir = join(SKILLS_DIR, key);
@@ -219,21 +306,42 @@ function main() {
       version: version || null,
       description: shortDesc(description, title),
       tags: deriveTags(key, name, description),
+      roles: skillRoles[key] || [],
+      requires: skillRequires[key] || [],
       files, // 完整目录（含 SKILL.md + reference/ + scripts/ 等文本文件）
     });
   }
 
   const out = {
-    version: 2,
+    version: 3,
     generatedAt: new Date().toISOString(),
     count: skills.length,
+    roleLabels,
     skills,
+    bundles: bundles.map((b) => ({
+      key: b.key,
+      title: b.title || b.key,
+      version: b.version || null,
+      description: shortDesc(b.description, b.title || b.key),
+      tags: b.tags || ['套装'],
+      roles: b.roles || [],
+      includes: b.includes,
+      firstStep: b.firstStep || null,
+    })),
   };
   writeFileSync(OUT_FILE, JSON.stringify(out, null, 2) + '\n', 'utf8');
-  console.log(`[bundle-official-skills] 写出 ${skills.length} 个官方技能 → ${OUT_FILE}`);
+  console.log(`[bundle-official-skills] 写出 ${skills.length} 个官方技能 + ${out.bundles.length} 个角色套装 → ${OUT_FILE}`);
   for (const s of skills) {
     const trunc = s.files.filter((f) => f.truncated).length;
-    console.log(`  ${s.key.padEnd(24)} [${s.tags.join(', ')}]  ${s.files.length} 文件${trunc ? ` (${trunc} 截断)` : ''}  ${s.title}`);
+    const roles = s.roles.length ? ` <${s.roles.join('/')}>` : ' <无角色>';
+    console.log(`  ${s.key.padEnd(28)} [${s.tags.join(', ')}]${roles}  ${s.files.length} 文件${trunc ? ` (${trunc} 截断)` : ''}  ${s.title}`);
+  }
+  for (const b of out.bundles) {
+    console.log(`  套装 ${b.key.padEnd(23)} <${b.roles.join('/')}>  ${b.includes.length} 个技能  ${b.title}`);
+  }
+  const orphan = skills.filter((s) => !s.roles.length).map((s) => s.key);
+  if (orphan.length) {
+    console.warn(`[bundle-official-skills] 提示：这些技能没有角色归属，按角色筛选时看不到：${orphan.join(', ')}`);
   }
 }
 

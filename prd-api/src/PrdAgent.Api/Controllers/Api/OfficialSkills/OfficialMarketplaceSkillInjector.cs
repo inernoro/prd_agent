@@ -53,6 +53,8 @@ public static class OfficialMarketplaceSkillInjector
             previewSource = (string?)null,
             previewHostedSiteId = (string?)null,
             tags = new List<string> { "精英", "技能", "开放接口" },
+            kind = "skill",
+            roles = new List<string>(),
             zipUrl,
             zipSizeBytes = 0L,
             originalFileName = "findmapskills.zip",
@@ -147,6 +149,8 @@ public static class OfficialMarketplaceSkillInjector
             previewSource = (string?)null,
             previewHostedSiteId = (string?)null,
             tags = e.Tags ?? new List<string>(),
+            kind = "skill",
+            roles = e.Roles ?? new List<string>(),
             zipUrl,
             zipSizeBytes = 0L,
             originalFileName = $"{e.Key}.zip",
@@ -165,16 +169,66 @@ public static class OfficialMarketplaceSkillInjector
         };
     }
 
-    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag, bool includeWhenUnfiltered)
+    /// <summary>
+    /// 角色套装 DTO。形状与技能 DTO 对齐（前端卡片不用分叉渲染），
+    /// 靠 `kind = "bundle"` + `includes` 区分：套装下载的是一整包，不是单个技能。
+    /// </summary>
+    private static object BuildBundleDto(OfficialSkillCatalog.BundleEntry b, string baseUrl)
     {
+        var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{b.Key}/download";
+        var expanded = OfficialSkillCatalog.ExpandWithRequires(b.Includes, out _);
+        return new
+        {
+            Id = OfficialIdFor(b.Key),
+            Title = b.Title,
+            version = b.Version,
+            Description = string.IsNullOrWhiteSpace(b.Version)
+                ? b.Description
+                : $"官方套装 · v{b.Version} · {b.Description}",
+            iconEmoji = "✦",
+            coverImageUrl = (string?)null,
+            previewUrl = (string?)null,
+            previewSource = (string?)null,
+            previewHostedSiteId = (string?)null,
+            tags = b.Tags ?? new List<string>(),
+            kind = "bundle",
+            roles = b.Roles ?? new List<string>(),
+            includes = expanded.Select(e => e.Key).ToList(),
+            skillCount = expanded.Count,
+            firstStep = b.FirstStep,
+            zipUrl,
+            zipSizeBytes = 0L,
+            originalFileName = $"{b.Key}.zip",
+            hasSkillMd = true,
+            downloadCount = 0,
+            favoriteCount = 0,
+            isFavoritedByCurrentUser = false,
+            forkCount = 0,
+            ownerUserId = "official",
+            ownerUserName = "PrdAgent 官方",
+            ownerUserAvatar = (string?)null,
+            createdAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+            updatedAt = OfficialSkillTemplates.FindMapSkillsReleaseDateUtc,
+        };
+    }
+
+    private static bool CatalogMatches(OfficialSkillCatalog.SkillEntry e, string? keyword, string? tag, bool includeWhenUnfiltered)
+        => Matches(e.Title, e.Description, e.Tags, keyword, tag, includeWhenUnfiltered);
+
+    private static bool BundleMatches(OfficialSkillCatalog.BundleEntry b, string? keyword, string? tag, bool includeWhenUnfiltered)
+        => Matches(b.Title, b.Description, b.Tags, keyword, tag, includeWhenUnfiltered);
+
+    private static bool Matches(string? title, string? description, List<string>? tags, string? keyword, string? tag, bool includeWhenUnfiltered)
+    {
+        var tagList = tags ?? new List<string>();
         if (!string.IsNullOrWhiteSpace(tag))
-            return (e.Tags ?? new List<string>()).Any(t => string.Equals(t, tag.Trim(), StringComparison.OrdinalIgnoreCase));
+            return tagList.Any(t => string.Equals(t, tag.Trim(), StringComparison.OrdinalIgnoreCase));
         if (!string.IsNullOrWhiteSpace(keyword))
         {
             var k = keyword.Trim();
-            return (e.Title ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
-                || (e.Description ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
-                || (e.Tags ?? new List<string>()).Any(t => t.Contains(k, StringComparison.OrdinalIgnoreCase));
+            return (title ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
+                || (description ?? "").Contains(k, StringComparison.OrdinalIgnoreCase)
+                || tagList.Any(t => t.Contains(k, StringComparison.OrdinalIgnoreCase));
         }
         // 无 keyword/tag：Web 浏览全展示；Open API（AI）不注入，避免每次列表/轮询被官方淹没
         return includeWhenUnfiltered;
@@ -194,6 +248,12 @@ public static class OfficialMarketplaceSkillInjector
         var list = new List<object>();
         if (ShouldInject(keyword, tag))
             list.Add(BuildFindMapSkillsDto(baseUrl, currentUserId));
+        // 套装排在散装技能之前：让用户先看到「一条命令装齐」，而不是从二十张卡里自己挑
+        foreach (var b in OfficialSkillCatalog.AllBundles)
+        {
+            if (BundleMatches(b, keyword, tag, includeCatalogWhenUnfiltered))
+                list.Add(BuildBundleDto(b, baseUrl));
+        }
         foreach (var e in OfficialSkillCatalog.All)
         {
             if (CatalogMatches(e, keyword, tag, includeCatalogWhenUnfiltered))
@@ -210,6 +270,8 @@ public static class OfficialMarketplaceSkillInjector
         var baseUrl = request.ResolveServerUrl(config);
         if (key == OfficialSkillTemplates.FindMapSkillsKey)
             return BuildFindMapSkillsDto(baseUrl, currentUserId);
+        var bundle = OfficialSkillCatalog.FindBundle(key);
+        if (bundle != null) return BuildBundleDto(bundle, baseUrl);
         var entry = OfficialSkillCatalog.Find(key);
         return entry == null ? null : BuildCatalogDto(entry, baseUrl);
     }
@@ -222,6 +284,16 @@ public static class OfficialMarketplaceSkillInjector
         var baseUrl = request.ResolveServerUrl(config);
         if (key == OfficialSkillTemplates.FindMapSkillsKey)
             return BuildForkResponse(baseUrl, currentUserId);
+        var bundle = OfficialSkillCatalog.FindBundle(key);
+        if (bundle != null)
+        {
+            return new
+            {
+                downloadUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{bundle.Key}/download",
+                fileName = $"{bundle.Key}.zip",
+                item = BuildBundleDto(bundle, baseUrl),
+            };
+        }
         var entry = OfficialSkillCatalog.Find(key);
         if (entry == null) return null;
         var zipUrl = $"{baseUrl.TrimEnd('/')}/api/official-skills/{entry.Key}/download";
