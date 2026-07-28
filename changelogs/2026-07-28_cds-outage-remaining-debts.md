@@ -9,3 +9,4 @@
 | fix | cds | 启动期 mongo 不可用改为退避重试（约 90s 忍耐窗口）而非一次失败即退出，消除 systemd 重启风暴；放弃前做磁盘诊断直指真凶 |
 | docs | cds | 宕机债务台账逐条标注偿还状态，补「安全的 Docker 清理命令」运维须知 |
 | fix | cds | 隔离支持引擎中立库名 key（DB_NAME / DATABASE_NAME），引擎从同 env 的关系型 URL scheme 读；Spring 风格项目此前隔离入口即不可用 |
+| fix | cds | 孤儿 worktree 的挂载枚举改走 docker inspect：docker ps 的 .Mounts 是字符串，对它 range 会让命令失败，导致对账永远降级成只报不删（生产实测 66 个孤儿一个没删） |

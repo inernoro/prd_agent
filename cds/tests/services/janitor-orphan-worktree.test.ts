@@ -77,3 +77,21 @@ describe('janitor 孤儿 worktree 接线', () => {
     expect(report.errors.some((e) => e.includes('orphan worktree rm'))).toBe(true);
   });
 });
+
+describe('挂载枚举必须走 docker inspect（2026-07-28 生产实测定位）', () => {
+  // 生产第一轮：找到 66 个孤儿目录、removed 0 / deferred 66 —— 护栏正确地降级成
+  // 只报不删，但功能等于没生效。根因是 `docker ps --format` 里的 .Mounts 是
+  // 逗号分隔**字符串**，对它 {{range}} 会让 Go 模板报错、整条命令非零退出。
+  // inspect 的 .Mounts 才是数组。这里把「用哪条命令」钉死。
+  it('默认实现用 docker inspect 而不是 docker ps 取挂载源', async () => {
+    const calls: string[][] = [];
+    const mod = await import('../../src/services/janitor.js');
+    // 只做静态断言：实现里不允许再出现对 ps 输出 range .Mounts 的写法
+    const src = await import('node:fs').then((fs) => fs.readFileSync(
+      new URL('../../src/services/janitor.ts', import.meta.url), 'utf8'));
+    expect(src).not.toMatch(/'ps',\s*'-a',\s*'--format',\s*'\{\{range \.Mounts\}\}/);
+    expect(src).toMatch(/'inspect',\s*'--format',\s*'\{\{range \.Mounts\}\}/);
+    expect(mod.defaultOrphanWorktreeFs.listMountedHostPaths).toBeTypeOf('function');
+    void calls;
+  });
+});

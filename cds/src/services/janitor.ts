@@ -249,13 +249,31 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     return out;
   },
   listMountedHostPaths: async () => {
-    // 一次 docker ps 拿到全部容器的挂载源；失败返回 null，调用方据此**整轮跳过**
-    // 删除（查不到占用情况就不许删，宁可这一轮什么都不清）。
-    const out = await execDocker(
-      ['ps', '-a', '--format', '{{range .Mounts}}{{.Source}}\n{{end}}'], 60_000,
-    );
-    if (out.startsWith('__ERR__')) return null;
-    return out.split('\n').map((l) => l.trim()).filter(Boolean);
+    // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
+    // `docker ps --format` 里的 .Mounts 是**逗号分隔的字符串**，对它 `{{range}}`
+    // 会让 Go 模板报错 → 整条命令非零退出 → 这里返回 null → 对账降级成只报不删。
+    // 生产第一轮就是这样：找到 66 个孤儿目录、一个都没敢删（护栏起作用了，
+    // 但功能等于没生效）。inspect 的 .Mounts 才是真正的数组。
+    const ids = await execDocker(['ps', '-aq'], 60_000);
+    if (ids.startsWith('__ERR__')) return null;
+    const idList = ids.split('\n').map((l) => l.trim()).filter(Boolean);
+    if (idList.length === 0) return [];
+    const paths: string[] = [];
+    // 分批，避免容器多时超出单条命令的参数长度上限
+    for (let i = 0; i < idList.length; i += 100) {
+      const batch = idList.slice(i, i + 100);
+      const out = await execDocker(
+        ['inspect', '--format', '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}', ...batch], 60_000,
+      );
+      // 任何一批失败都整体返回 null：拿到半份挂载清单比拿不到更危险，
+      // 缺失的那半会被当成「没人挂载」而删掉。
+      if (out.startsWith('__ERR__')) return null;
+      for (const line of out.split('\n')) {
+        const t = line.trim();
+        if (t) paths.push(t);
+      }
+    }
+    return paths;
   },
   removeDir: async (dir) => {
     try {
