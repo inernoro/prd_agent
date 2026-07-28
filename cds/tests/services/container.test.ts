@@ -309,6 +309,9 @@ describe('ContainerService', () => {
         trigger: 'webhook',
       });
 
+      const staleListCommand = mock.commands.find(c => c.startsWith('docker ps -a --filter "label=cds.managed=true"'));
+      expect(staleListCommand).toContain("--filter 'label=cds.branch.id=feature-a'");
+      expect(staleListCommand).toContain("--filter 'label=cds.profile.id=api'");
       const rmCommands = mock.commands.filter(c => c.includes('docker rm -f'));
       expect(rmCommands.some(c => c.includes("'cds-feature-a-api-old'"))).toBe(true);
       expect(rmCommands.some(c => c.includes("'cds-other-branch-api'"))).toBe(false);

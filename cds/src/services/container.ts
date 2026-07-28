@@ -988,7 +988,9 @@ export class ContainerService {
     };
 
     const list = await this.shell.exec(
-      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" --format "{{.Names}}"`,
+      `docker ps -a --filter "label=cds.managed=true" --filter "label=cds.type=app" ` +
+      `--filter ${this.shellQuote(`label=cds.branch.id=${entry.id}`)} ` +
+      `--filter ${this.shellQuote(`label=cds.profile.id=${profile.id}`)} --format "{{.Names}}"`,
     );
     const aliasSet = new Set(aliases);
 
