@@ -30,3 +30,4 @@
 | fix | llmgw | 字体阶梯守卫接入 pnpm build，必跑的前端校验现在真的会执行它 |
 | fix | llmgw | 排版漂移检测脚本改为从 checkout 推导路径、由 Playwright 自行解析浏览器，不再依赖作者机器的绝对路径 |
 | test | llmgw | 更新 GatewayDataDomainGuardTests：字号/字重契约改为断言 token 定义 + 消费方，替代原来的裸 px 字面量匹配 |
+| fix | llmgw | 漂移检测的「卡片内边距种类」有重复键，窄口径测量覆盖了宽口径，导致无 lg-card 类的卡片（如模型池卡）改内边距不会被发现；删除遗留窄口径测量 |

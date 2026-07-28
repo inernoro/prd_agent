@@ -163,12 +163,6 @@ const measure = () => {
   const tr = document.querySelector('tbody tr, .lg-log-table-row');
   const controls = [...document.querySelectorAll('select, input:not([type=checkbox]):not([type=radio])')]
     .filter((el) => el.offsetParent !== null && el.getBoundingClientRect().height > 0);
-  const paddings = new Set();
-  for (const el of document.querySelectorAll('.lg-console-content section, .lg-console-content .lg-card, .lg-console-content > div > div')) {
-    const p = num(getComputedStyle(el).paddingTop);
-    if (p > 0) paddings.add(p);
-  }
-
   return {
     标题字号: h1 ? num(getComputedStyle(h1).fontSize) : null,
     标题被卡片包住: headingBoxed,
@@ -189,7 +183,6 @@ const measure = () => {
     容器间距种类: [...gaps].sort((a, b) => a - b),
     chip规格种类: [...chipSpecs],
     主操作按钮规格: [...primaryBtns],
-    卡片内边距种类: [...paddings].sort((a, b) => a - b),
   };
 };
 
@@ -251,6 +244,7 @@ for (const [route, m] of Object.entries(data)) {
     if (k === '标题被卡片包住') { if (b !== a) diffs.push(`${k}=${b}（基准 ${a}）`); continue; }
     if (typeof a === 'number' && typeof b === 'number' && Math.abs(a - b) > 2) diffs.push(`${k} ${b}（基准 ${a}）`);
   }
+  if (process.env.VERBOSE) console.log(`${route.padEnd(17)} 内边距${JSON.stringify(m.卡片内边距种类)} 圆角${JSON.stringify(m.卡片圆角种类)} 间距${JSON.stringify(m.容器间距种类)} chip${JSON.stringify(m.chip规格种类)}`);
   console.log(`${route.padEnd(17)} ${diffs.length ? '漂移: ' + diffs.join('；') : '与基准一致'}`);
   drift += diffs.length;
 }
