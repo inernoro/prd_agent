@@ -1400,6 +1400,103 @@ public sealed class DocumentRecordingArchiveWorkerTests
             run => run.Id == first.Id)).ShouldBe(1);
     }
 
+    [Theory]
+    [InlineData(DocumentStoreRunStatus.Failed)]
+    [InlineData(DocumentStoreRunStatus.Cancelled)]
+    public async Task EnsureDeferredTranscriptionRun_ShouldRequeueRetryableTerminalRun(
+        string terminalStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = $"session-retry-{terminalStatus}",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
+        };
+        var runId = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(new DocumentStoreAgentRun
+        {
+            Id = runId,
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = session.StoreId,
+            UserId = session.UserId,
+            OwnerInstanceId = "old-instance",
+            Status = terminalStatus,
+            Phase = "失败",
+            Progress = 73,
+            ErrorMessage = "服务重启，任务被中断",
+            StartedAt = DateTime.UtcNow.AddMinutes(-2),
+            EndedAt = DateTime.UtcNow.AddMinutes(-1),
+        });
+
+        var requeued = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            session,
+            "entry-1",
+            "new-instance",
+            entryRequiresDeferredTranscription: true,
+            CancellationToken.None);
+
+        requeued.ShouldNotBeNull();
+        requeued!.Id.ShouldBe(runId);
+        requeued.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        requeued.Phase.ShouldBe("等待完整录音转录");
+        requeued.Progress.ShouldBe(0);
+        requeued.ErrorMessage.ShouldBeNull();
+        requeued.StartedAt.ShouldBeNull();
+        requeued.EndedAt.ShouldBeNull();
+        requeued.OwnerInstanceId.ShouldBe("new-instance");
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+            run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task EnsureDeferredTranscriptionRun_ShouldNotRequeueCompletedRun()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-already-done",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+        };
+        var runId = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(new DocumentStoreAgentRun
+        {
+            Id = runId,
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = session.StoreId,
+            UserId = session.UserId,
+            OwnerInstanceId = "instance-1",
+            Status = DocumentStoreRunStatus.Done,
+            Phase = "完成",
+            Progress = 100,
+            EndedAt = DateTime.UtcNow,
+        });
+
+        var existing = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            session,
+            "entry-1",
+            "instance-1",
+            entryRequiresDeferredTranscription: true,
+            CancellationToken.None);
+
+        existing.ShouldNotBeNull();
+        existing!.Status.ShouldBe(DocumentStoreRunStatus.Done);
+        existing.Progress.ShouldBe(100);
+        existing.EndedAt.ShouldNotBeNull();
+    }
+
     [Fact]
     public async Task PendingRecordingAudio_ShouldLoadCompleteMongoChunksWithoutAssetUrl()
     {
@@ -1600,6 +1697,58 @@ public sealed class DocumentRecordingArchiveWorkerTests
         updated.LastChangedAt.ShouldNotBeNull();
         DocumentRecordingArchiveWorker.HasCompletedLiveTranscript(updated).ShouldBeTrue();
         DocumentRecordingArchiveWorker.RequiresDeferredTranscription(updated).ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task FinalizeArchivedEntry_ShouldPreserveCompletedDeferredTranscriptionContent()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var entry = new DocumentEntry
+        {
+            Id = "entry-archive-after-transcription",
+            StoreId = "store-1",
+            Title = "recording.webm",
+            DocumentId = "document-generated-by-transcription",
+            Summary = "完整录音转录生成的摘要",
+            ContentIndex = "完整录音转录生成的正文索引",
+            Metadata = new Dictionary<string, string>
+            {
+                ["audioArchiveStatus"] = DocumentRecordingArchiveStatus.Pending,
+                ["generated_kind"] = "transcribe",
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-archive-after-transcription",
+            StoreId = "store-1",
+            UserId = "user-1",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = "较短的实时转写原文",
+            LiveTranscriptProvider = "provider-1",
+            LiveTranscriptModel = "model-1",
+        };
+
+        await DocumentRecordingArchiveWorker.FinalizeArchivedEntryAsync(
+            fixture.Db.DocumentEntries,
+            entry.Id,
+            "attachment-1",
+            session,
+            entryRequiresDeferredTranscription: true,
+            cancellationToken: CancellationToken.None);
+
+        var updated = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        updated.AttachmentId.ShouldBe("attachment-1");
+        updated.DocumentId.ShouldBe(entry.DocumentId);
+        updated.Summary.ShouldBe(entry.Summary);
+        updated.ContentIndex.ShouldBe(entry.ContentIndex);
+        updated.Metadata["audioArchiveStatus"].ShouldBe(DocumentRecordingArchiveStatus.Completed);
+        updated.Metadata["liveTranscriptStatus"].ShouldBe(DocumentLiveTranscriptStatus.Completed);
+        updated.Metadata["liveTranscript"].ShouldBe(session.LiveTranscript);
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey]
+            .ShouldBe("true");
     }
 
     private static DocumentRecordingUploadChunk Chunk(int index, byte[] data)

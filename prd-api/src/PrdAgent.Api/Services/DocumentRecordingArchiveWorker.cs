@@ -387,7 +387,32 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         catch (MongoWriteException ex)
             when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            return await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
+            // 固定任务可能在容器重启或主动取消时进入终态。后续 /complete、归档重试
+            // 或用户重试都代表再次提交同一份完整录音，应原子恢复为 queued；否则固定
+            // ID 虽避免了重复任务，却会把一次可恢复失败永久固化。Done/Running/Queued
+            // 保持幂等，不能重复执行已经完成或正在处理的任务。
+            var retryableTerminalFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, run.Id),
+                Builders<DocumentStoreAgentRun>.Filter.In(
+                    r => r.Status,
+                    [DocumentStoreRunStatus.Failed, DocumentStoreRunStatus.Cancelled]));
+            var requeued = await runs.FindOneAndUpdateAsync(
+                retryableTerminalFilter,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, run.Phase)
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.StartedAt, null)
+                    .Set(r => r.EndedAt, null)
+                    .Set(r => r.OwnerInstanceId, ownerInstanceId),
+                new FindOneAndUpdateOptions<DocumentStoreAgentRun>
+                {
+                    ReturnDocument = ReturnDocument.After,
+                },
+                cancellationToken);
+            return requeued
+                   ?? await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
         }
     }
 
@@ -444,23 +469,17 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 e => e.Metadata[DeferredTranscriptionRunIdMetadataKey],
                 DeferredTranscriptionRunId(session.Id)));
         }
+        string? completedLiveTranscript = null;
         if (session.LiveTranscriptStatus == DocumentLiveTranscriptStatus.Completed
             && !string.IsNullOrWhiteSpace(session.LiveTranscript))
         {
-            var transcript = session.LiveTranscript.Trim();
+            completedLiveTranscript = session.LiveTranscript.Trim();
             updates.Add(Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscriptStatus"],
                 DocumentLiveTranscriptStatus.Completed));
             updates.Add(Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscript"],
-                transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(
-                e => e.Summary,
-                transcript.Length > 200 ? transcript[..200] : transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(
-                e => e.ContentIndex,
-                transcript.Length > 2000 ? transcript[..2000] : transcript));
-            updates.Add(Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now));
+                completedLiveTranscript));
             if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
             {
                 updates.Add(Builders<DocumentEntry>.Update.Set(
@@ -479,5 +498,28 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             e => e.Id == entryId,
             Builders<DocumentEntry>.Update.Combine(updates),
             cancellationToken: cancellationToken);
+
+        if (completedLiveTranscript != null)
+        {
+            // SaveContentAsync 会在同一次更新中写入 DocumentId、Summary 与 ContentIndex。
+            // 这里以 DocumentId 为空作为原子闸门：若完整录音转录已经生成正文，归档只能
+            // 补附件和实时原文 metadata，不能再用较短的实时原文覆盖正文索引；若转录在
+            // 本次条件更新之后完成，它自己的写入又会成为最后一次写，两个时序都安全。
+            await entries.UpdateOneAsync(
+                e => e.Id == entryId && e.DocumentId == null,
+                Builders<DocumentEntry>.Update
+                    .Set(
+                        e => e.Summary,
+                        completedLiveTranscript.Length > 200
+                            ? completedLiveTranscript[..200]
+                            : completedLiveTranscript)
+                    .Set(
+                        e => e.ContentIndex,
+                        completedLiveTranscript.Length > 2000
+                            ? completedLiveTranscript[..2000]
+                            : completedLiveTranscript)
+                    .Set(e => e.LastChangedAt, now),
+                cancellationToken: cancellationToken);
+        }
     }
 }
