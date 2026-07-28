@@ -29,4 +29,21 @@ public static class AuthTokenLifetimes
         => configuredDays <= 0
             ? DefaultSessionSlidingDays
             : Math.Clamp(configuredDays, MinSessionSlidingDays, MaxSessionSlidingDays);
+
+    /// <summary>
+    /// 实际生效的 access token 分钟数：**不得长于会话滑动窗口**。
+    ///
+    /// JWT 校验只看签名、有效期和 tokenVersion，**不查 refresh 会话是否还在**。所以 token
+    /// 一旦比窗口活得久，「N 天不用就掉登录」这条策略就没有执行点：用户闲置到窗口过期后回来，
+    /// Redis 里的会话键早没了，但手里的 JWT 仍然有效，照样畅通无阻。两个配置项各自独立
+    /// （窗口可配 1 天、token 可配 7 天），必须在这里收口，让策略在构造上可执行。
+    ///
+    /// 默认配置下两者同为 7 天，此方法等价于 <see cref="NormalizeAccessTokenMinutes"/>。
+    /// </summary>
+    public static int EffectiveAccessTokenMinutes(int configuredMinutes, int configuredSlidingDays)
+    {
+        var minutes = NormalizeAccessTokenMinutes(configuredMinutes);
+        var windowMinutes = NormalizeSessionSlidingDays(configuredSlidingDays) * 24 * 60;
+        return Math.Min(minutes, windowMinutes);
+    }
 }

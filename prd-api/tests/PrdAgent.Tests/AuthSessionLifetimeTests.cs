@@ -135,9 +135,39 @@ public class AuthSessionLifetimeTests
         {
             var source = ReadRepoFile(relativePath);
             Assert.True(
-                source.Contains("AuthTokenLifetimes.NormalizeAccessTokenMinutes", StringComparison.Ordinal),
-                $"{relativePath} 读取 Jwt:AccessTokenMinutes 时必须走 AuthTokenLifetimes.NormalizeAccessTokenMinutes");
+                source.Contains("AuthTokenLifetimes.EffectiveAccessTokenMinutes", StringComparison.Ordinal),
+                $"{relativePath} 读取 Jwt:AccessTokenMinutes 时必须走 AuthTokenLifetimes.EffectiveAccessTokenMinutes");
         }
+    }
+
+    [Theory]
+    [InlineData(7 * 24 * 60, 7, 7 * 24 * 60)]   // 默认组合：不受影响
+    [InlineData(7 * 24 * 60, 1, 24 * 60)]       // 窗口 1 天 < token 7 天 → 收敛到 1 天
+    [InlineData(60, 7, 60)]                     // token 本来就短：保持不变
+    [InlineData(0, 1, 24 * 60)]                 // 非法值先回落默认，再受窗口约束
+    public void EffectiveAccessTokenMinutes_NeverOutlivesTheInactivityWindow(
+        int configuredMinutes, int slidingDays, int expectedMinutes)
+    {
+        // JWT 校验不查 refresh 会话是否还在，只看 tokenVersion。token 若比窗口活得久，
+        // 「N 天不用就掉登录」这条策略就没有执行点：闲置超窗回来照样畅通。
+        Assert.Equal(expectedMinutes, AuthTokenLifetimes.EffectiveAccessTokenMinutes(configuredMinutes, slidingDays));
+    }
+
+    [Fact]
+    public async Task RefreshingToken_AlsoExtendsTheVersionLedger()
+    {
+        var cache = new FakeCache();
+        var service = new AuthSessionService(cache, Secret, slidingDays: 7);
+        var (sessionKey, refreshToken) = await service.CreateRefreshSessionAsync("u1", "admin");
+        var tvKey = CacheKeys.ForAuthTokenVersion("u1", "admin");
+
+        await service.BumpTokenVersionAsync("u1", "admin");   // 被踢过一次 → tv=2
+        cache.Expirations[tvKey] = TimeSpan.FromMinutes(1);   // 台账临近过期
+
+        // refresh 走未鉴权路径、不经过 TouchAsync；台账若不在这里续，
+        // 新签发的 tv=2 token 会在台账过期后被 GetTokenVersionAsync（退回 1）判成已撤销。
+        Assert.True(await service.ValidateRefreshTokenAsync("u1", "admin", sessionKey, refreshToken));
+        Assert.Equal(service.TokenVersionTtl, cache.Expirations[tvKey]);
     }
 
     private static string ReadRepoFile(string relativePath)

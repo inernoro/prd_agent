@@ -113,6 +113,10 @@ public class AuthSessionService : IAuthSessionService
 
         // 验证成功即视为活跃：刷新 TTL
         await _cache.RefreshExpiryAsync(key, _sessionTtl);
+        // tokenVersion 台账也要跟着续：refresh 走的是未鉴权路径，不经过 TouchAsync。
+        // 被踢过的用户（tv>=2）在台账临近过期时刷新，会拿到一枚 tv=2 的新 token，
+        // 而台账随后过期 → GetTokenVersionAsync 退回 1 → 这枚刚签发的合法 token 反被判成已撤销。
+        await _cache.RefreshExpiryAsync(CacheKeys.ForAuthTokenVersion(uid, ctNorm), _tokenVersionTtl);
         return true;
     }
 

@@ -20,3 +20,6 @@
 | fix | cds | 过期会话的删除也带上「读到的过期时间」作条件，避免并发续期成功的会话被另一条请求删掉（Codex P2） |
 | fix | llmgw | 续期换发新 token 时同步更新本地到期时间并重排主动过期定时器，避免续期后仍按旧时间掉登录 |
 | fix | llmgw | BugReportDialog 硬编码字号改用字体阶梯 token，修复 main 上「新增弹窗 + 字体守卫」双分支合流后 web 镜像构建失败 |
+| fix | prd-api | access token 时长受会话滑动窗口约束，避免窗口配得比 token 短时「N 天不用就掉登录」失去执行点（Codex P2） |
+| fix | prd-api | refresh 成功时同步续 tokenVersion 台账，避免被踢过的用户刷新后新 token 反被判成已撤销（Codex P2） |
+| fix | llmgw | 跨标签页接管会话时重置失效闩，避免新会话失效后本标签页卡在「已登录但没有 token」（Codex P2） |

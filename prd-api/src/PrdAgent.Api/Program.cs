@@ -979,8 +979,13 @@ builder.Services.AddSingleton<IPromptManager, PromptManager>();
 // 不削弱撤销能力，却能消灭「离开一会儿回来就 401」的体感。
 // 归一化一次再用：0 / 负值若原样传给 JwtService，会签出「已经过期」的 token，
 // 而 Controller 那边按默认值回报 expiresIn，登录立刻 401。口径 SSOT 见 AuthTokenLifetimes。
-var jwtAccessTokenMinutes = AuthTokenLifetimes.NormalizeAccessTokenMinutes(
-    builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", AuthTokenLifetimes.DefaultAccessTokenMinutes));
+// 同时受会话滑动窗口约束：token 比窗口活得久的话，「N 天不用就掉登录」没有执行点
+// （JWT 校验不查会话是否还在），详见 EffectiveAccessTokenMinutes 注释。
+var jwtSessionSlidingDays = builder.Configuration.GetValue<int>(
+    "Auth:SessionSlidingDays", AuthTokenLifetimes.DefaultSessionSlidingDays);
+var jwtAccessTokenMinutes = AuthTokenLifetimes.EffectiveAccessTokenMinutes(
+    builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", AuthTokenLifetimes.DefaultAccessTokenMinutes),
+    jwtSessionSlidingDays);
 builder.Services.AddSingleton<IJwtService>(sp => 
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtAccessTokenMinutes));
 

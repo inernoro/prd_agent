@@ -3,6 +3,7 @@
 import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  adoptStoredSession,
   applyChangePasswordResult,
   changePassword as apiChangePassword,
   clearSession,
@@ -177,6 +178,9 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   useEffect(() => {
     const syncFromStorage = () => {
       const nextAuthed = isAuthed();
+      // 接管别的标签页建立的会话：顺带重置失效闩，否则这个新会话将来失效时不会广播，
+      // 本标签页会卡在「已登录但没有 token」的死状态（见 adoptStoredSession 注释）。
+      if (nextAuthed) adoptStoredSession();
       // 整体一次性对齐，避免出现「已登录但身份还是上一个账号」的中间态。
       setUser(nextAuthed ? getStoredUser() : null);
       setTenant(nextAuthed ? getStoredTenant() : null);

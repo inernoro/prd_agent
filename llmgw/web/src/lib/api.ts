@@ -187,6 +187,18 @@ export function expireSession(reason: SessionExpiredReason = 'expired', failedTo
   for (const listener of [...sessionExpiredListeners]) listener({ reason, token });
 }
 
+/**
+ * 接管「别的标签页刚建立的会话」时必须重置失效闩。
+ *
+ * sessionExpiredNotified 是模块级的，只在本标签页登录 / 改密 / 导入快照时清零。
+ * 若本标签页此前已经历过一次失效（闩=true），随后 A 标签页登录、本标签页靠 storage 事件
+ * 变回已登录，闩仍是 true —— 等这个新会话将来撞 401，expireSession 会清掉存储却不再广播，
+ * React 状态就永远停在「已登录但没有 token」，只能刷新页面才能恢复。
+ */
+export function adoptStoredSession(): void {
+  sessionExpiredNotified = false;
+}
+
 export type SessionSnapshot = {
   token: string;
   user: { username?: string; displayName?: string; identityProvider?: string } | null;
