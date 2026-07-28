@@ -6,7 +6,7 @@ import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
 import {
   computeOrphanWorktreePlan, normalizeWorktreePath, DEFAULT_ORPHAN_WORKTREE_MAX_REMOVALS,
-  type DiskWorktreeDir, type OrphanWorktreePlan,
+  type DiskWorktreeDir, type OrphanWorktreePlan, type WorktreeEnumeration,
 } from './orphan-worktree.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
 import { reclaimLock, isReclaimSkip } from './reclaim-lock.js';
@@ -260,7 +260,7 @@ export interface OrphanWorktreeFs {
    * `knownProjectIds` 是**白名单**，不是提示：只有名字在其中的顶层目录才是项目桶，
    * 其余一律整个跳过（既不当桶往下枚举，也不当候选）。见实现里的注释。
    */
-  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<DiskWorktreeDir[]>;
+  listWorktreeDirs: (base: string, knownProjectIds: readonly string[]) => Promise<WorktreeEnumeration>;
   /** 当前被任何容器（含已停止）bind-mount 的宿主路径。查不到时返回 null。 */
   listMountedHostPaths: () => Promise<string[] | null>;
   /** 递归删除一个目录；成功返回 null，失败返回错误文本（不抛，单个失败不中断整轮）。 */
@@ -270,6 +270,7 @@ export interface OrphanWorktreeFs {
 export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
   listWorktreeDirs: async (base, knownProjectIds) => {
     const out: DiskWorktreeDir[] = [];
+    const unreadable: string[] = [];
     // 项目桶白名单（Codex PR #1275 二轮 P1）。此前是「顶层每个目录都当项目桶」，
     // 在**从扁平布局迁移过来的存量部署**上会酿成删活代码：
     // FU-04 的 migrateFlatLayoutIfNeeded 采用符号链接而非移动——原来的
@@ -282,12 +283,15 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     // 三道护栏一道都拦不住，直接递归删掉在跑的工作树。
     // 白名单让这条路根本走不到：遗留 worktree 名字不在项目 id 里，整个跳过。
     const allowed = new Set(knownProjectIds.map((s) => (s || '').trim()).filter(Boolean));
-    if (allowed.size === 0) return out; // 拿不到项目清单就不对账，宁可不清也不误删
+    if (allowed.size === 0) return { dirs: out, unreadable }; // 拿不到项目清单就不对账
     let projects: fs.Dirent[];
     try {
       projects = fs.readdirSync(base, { withFileTypes: true });
-    } catch {
-      return out; // base 不存在 = 没什么可对账的
+    } catch (err) {
+      // base 读不出来：可能真不存在（没什么可对账），也可能是 EACCES / IO / 挂载抖动。
+      // 后者必须如实上报——把它当成「都空了」会让调用方摘掉墓碑（Codex 六轮 P2）。
+      if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(base);
+      return { dirs: out, unreadable };
     }
     for (const proj of projects) {
       // isDirectory() 走 lstat 语义：顶层若是符号链接一律不认（只认真实项目桶）
@@ -297,21 +301,38 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       let slugs: fs.Dirent[];
       try {
         slugs = fs.readdirSync(projDir, { withFileTypes: true });
-      } catch {
+      } catch (err) {
+        if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(projDir);
         continue;
       }
       for (const slug of slugs) {
-        if (!slug.isDirectory()) continue;
+        // 桶内条目认两种形态：真实目录，以及**指向真实 worktree 的符号链接**——
+        // 扁平布局迁移留下的 `<base>/default/<slug>` 正是后者（Codex 六轮 P2）。
+        // 此前 isDirectory() 一票否决把别名整个漏掉，而它的真身在顶层又被项目桶
+        // 白名单挡住，于是迁移过的分支一旦丢了台账记录，两边都回收不到。
         const full = path.posix.join(projDir, slug.name);
+        let realPath: string | undefined;
+        if (slug.isSymbolicLink()) {
+          try {
+            const resolved = fs.realpathSync(full);
+            // 只认解析后仍落在 base 之内的链接：指到 base 之外的一律不碰（不删别人的东西）
+            if (resolved === base || resolved.startsWith(`${base}/`)) realPath = resolved;
+            else continue;
+          } catch {
+            continue; // 断链/解析失败 → 不做判断，交给人工
+          }
+        } else if (!slug.isDirectory()) {
+          continue;
+        }
         try {
-          out.push({ path: full, mtimeMs: fs.statSync(full).mtimeMs });
+          out.push({ path: full, mtimeMs: fs.statSync(full).mtimeMs, ...(realPath ? { realPath } : {}) });
         } catch {
           // stat 失败 → 给一个「刚刚」的时间戳，纯函数据此判为过新并跳过
-          out.push({ path: full, mtimeMs: Number.NaN });
+          out.push({ path: full, mtimeMs: Number.NaN, ...(realPath ? { realPath } : {}) });
         }
       }
     }
-    return out;
+    return { dirs: out, unreadable };
   },
   listMountedHostPaths: async () => {
     // 必须走 docker inspect，不能走 docker ps（2026-07-28 生产实测定位）：
@@ -494,7 +515,8 @@ export class JanitorService {
     const liveProjectIds = this.stateService.getProjects().map((p) => p.id).filter(Boolean);
     const tombstones = this.stateService.getDeletedProjectWorktreeBuckets();
     const knownProjectIds = [...new Set([...liveProjectIds, ...tombstones.map((t) => t.projectId)])];
-    const diskDirs = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
+    const enumeration = await this.orphanWorktreeFs.listWorktreeDirs(this.worktreeBase, knownProjectIds);
+    const diskDirs = enumeration.dirs;
     const claimedPaths = this.stateService.getAllBranches()
       .map((b) => b.worktreePath)
       .filter((p): p is string => !!p);
@@ -513,14 +535,35 @@ export class JanitorService {
     });
     const removed: string[] = [];
     const failed: Array<{ path: string; error: string }> = [];
+    // 别名 → 真身：删掉迁移遗留的符号链接后，必须把它指向的真实 worktree 一并收掉，
+    // 否则真身留在顶层、不在项目桶白名单里，从此再没人枚举得到（Codex 六轮 P2）。
+    const realPathOf = new Map(
+      diskDirs.filter((d) => d.realPath).map((d) => [normalizeWorktreePath(d.path), d.realPath as string]),
+    );
     for (const dir of plan.remove) {
       const err = await this.orphanWorktreeFs.removeDir(dir);
-      if (err) failed.push({ path: dir, error: err }); else removed.push(dir);
+      if (err) { failed.push({ path: dir, error: err }); continue; }
+      removed.push(dir);
+      const real = realPathOf.get(dir);
+      if (real) {
+        // 走到这里说明别名与真身都已通过认领/挂载/年龄三道护栏（判定时是成对做的）
+        const realErr = await this.orphanWorktreeFs.removeDir(real);
+        if (realErr) failed.push({ path: real, error: realErr }); else removed.push(real);
+      }
     }
     // 已删项目的桶清空了就摘墓碑：桶里一个 worktree 都不剩，就没必要再让对账进去。
     // 判据用「本轮枚举到的目录」而不是另跑一次 readdir —— 少一次磁盘往返，也避免
     // 两次读之间的竞态。删失败的目录仍算「还在」，墓碑留到下一轮继续。
-    if (tombstones.length) {
+    // 枚举失败 = 状态未知，绝不能据此摘墓碑（Codex 六轮 P2）：EACCES / IO 抖动会让
+    // 桶「看起来是空的」，摘掉墓碑后该桶永远落在项目 id 白名单之外，文件系统恢复也回不来。
+    const enumerationBroken = enumeration.unreadable.length > 0;
+    if (enumerationBroken) {
+      console.warn(
+        `[janitor] 孤儿 worktree 枚举有 ${enumeration.unreadable.length} 处读失败，`
+        + `本轮保留全部已删项目墓碑：${enumeration.unreadable.slice(0, 3).join(', ')}`,
+      );
+    }
+    if (tombstones.length && !enumerationBroken) {
       const stillThere = new Set<string>();
       const removedSet = new Set(removed);
       for (const d of diskDirs) {

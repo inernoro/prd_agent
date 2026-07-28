@@ -19,6 +19,28 @@ export interface DiskWorktreeDir {
   path: string;
   /** 目录最后修改时间（毫秒）。用于「太新的不碰」这条竞态护栏。 */
   mtimeMs: number;
+  /**
+   * 若该条目是符号链接，这里是它解析后的真实路径（Codex PR #1275 六轮 P2）。
+   *
+   * 扁平布局迁移把原 `<base>/<slug>` 留在原地，只在 `<base>/default/<slug>` 建了指向
+   * 它的符号链接。别名与真身**必须成对判定**：判活性时任一被认领/被挂载就都不能动，
+   * 回收时则要两个一起收，否则删掉别名会留下一个再也没人枚举得到的真身（顶层不在
+   * 项目桶白名单里）。
+   */
+  realPath?: string;
+}
+
+/** 一轮枚举的结果：目录清单 + **读失败**的位置（两者必须分开，见下）。 */
+export interface WorktreeEnumeration {
+  dirs: DiskWorktreeDir[];
+  /**
+   * 枚举失败的路径（base 本身或某个项目桶）。EACCES / IO 错误 / 挂载抖动都会走这里。
+   *
+   * 关键区分（Codex PR #1275 六轮 P2）：**「读不出来」不等于「里面是空的」**。
+   * 此前 readdir 抛错一律吞成空数组，已删项目的桶因此被判为「已清空」而摘掉墓碑；
+   * 文件系统恢复后那些目录永远落在项目 id 白名单之外，再也回收不了。
+   */
+  unreadable: string[];
 }
 
 export interface OrphanWorktreeInput {
@@ -103,12 +125,15 @@ export function computeOrphanWorktreePlan(input: OrphanWorktreeInput): OrphanWor
   for (const dir of input.diskDirs) {
     const p = normalizeWorktreePath(dir.path);
     if (!p) continue;
-    const related = relatedToClaimed(p);
+    // 别名与真身成对判定：符号链接场景下台账记的可能是任一侧，容器挂的通常是**真身**
+    // （docker inspect 给出的是解析后的宿主路径）。任一侧被认领或被挂载，两边都不许动。
+    const real = normalizeWorktreePath(dir.realPath || '');
+    const related = relatedToClaimed(p) || (real ? relatedToClaimed(real) : null);
     if (related) {
       keptReasons[p] = related;
       continue;
     }
-    if (isMounted(p)) {
+    if (isMounted(p) || (real && isMounted(real))) {
       keptReasons[p] = '有容器正挂载该目录（先收割容器再回收目录）';
       continue;
     }

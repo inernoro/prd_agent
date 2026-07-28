@@ -31,3 +31,7 @@
 | fix | cds | 三个 llmgw 镜像的 buildScope 补上 prd-api/**：其 CI 触发条件含 api 变更、Dockerfile 也编译 prd-api 的 Core/Infrastructure，漏声明会在拉取失败时复用含旧 Core 代码的镜像 |
 | fix | cds | buildScope 对拍守卫改为解析 job 的 if 触发条件而非同名 filter：一个镜像可由多个 filter 触发，只按同名对拍会漏掉跨组件依赖 |
 | fix | cds | 回收锁释放加身份令牌：超时接管后旧持有者跑完会清掉后继者的持有状态，导致第三轮回收与后继者并发跑破坏性清理 |
+| fix | cds | 孤儿枚举读失败不再谎报为空：EACCES/IO 抖动会让已删项目的桶「看起来已清空」而摘掉墓碑，文件系统恢复后那些目录永远回收不了 |
+| fix | cds | 迁移遗留的符号链接别名纳入回收并与真身成对判定：此前别名因 isDirectory 为假被漏掉、真身又被项目桶白名单挡住，两边都收不回；任一侧被认领或挂载则都不动，回收时一并收 |
+| fix | cds | 极速版自动回退源码编译后修正落地 commit 口径：回退发生在 SHA 选定之后，不修正会把 run/version/opLog 记成镜像锁定的 sha 而非实际编译的 HEAD |
+| ops | cds | 复用已存在的 infra 容器时体检日志限额，缺失则告警并给出重建指令：限额只在 docker run 路径生效，现网长生命周期的 mongo/redis 至今仍是无上限日志 |

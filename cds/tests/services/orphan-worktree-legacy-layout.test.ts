@@ -51,7 +51,7 @@ afterEach(() => {
 
 describe('迁移后的扁平遗留 worktree', () => {
   it('遗留 worktree 不被当成项目桶，其源码子目录不进候选', async () => {
-    const dirs = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
+    const { dirs } = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
     const paths = dirs.map((d) => d.path);
     for (const sub of ['cds', 'prd-api', 'prd-admin', 'doc']) {
       expect(paths.some((p) => p.endsWith(`/prd-agent-main/${sub}`))).toBe(false);
@@ -60,13 +60,72 @@ describe('迁移后的扁平遗留 worktree', () => {
     expect(paths.some((p) => p.endsWith('/default/dead-branch'))).toBe(true);
   });
 
-  it('符号链接形态的桶内条目不进候选（只认真实目录）', async () => {
-    const dirs = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
-    expect(dirs.map((d) => d.path).some((p) => p.endsWith('/default/prd-agent-main'))).toBe(false);
+  it('桶内的迁移别名（符号链接）要进候选，并带上解析后的真身（Codex 六轮 P2）', async () => {
+    // 此前 isDirectory() 一票否决把别名整个漏掉，而真身在顶层又被白名单挡住，
+    // 于是迁移过的分支一旦丢了台账记录，别名和真身两边都回收不到。
+    const { dirs } = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
+    const alias = dirs.find((d) => d.path.endsWith('/default/prd-agent-main'));
+    expect(alias, '别名必须出现在候选里').toBeTruthy();
+    expect(alias?.realPath, '必须带上解析后的真身路径').toBe(fs.realpathSync(path.join(base, 'prd-agent-main')));
+  });
+
+  it('指向 base 之外的符号链接一律不碰（不删别人的东西）', async () => {
+    const outside = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-outside-'));
+    try {
+      fs.symlinkSync(outside, path.join(base, 'default', 'external-alias'), 'dir');
+    } catch {
+      return; // 平台不支持符号链接
+    }
+    const { dirs } = await defaultOrphanWorktreeFs.listWorktreeDirs(base, ['default']);
+    expect(dirs.map((d) => d.path).some((p) => p.endsWith('/default/external-alias'))).toBe(false);
+    fs.rmSync(outside, { recursive: true, force: true });
   });
 
   it('拿不到项目清单时整轮不枚举（宁可不清也不误删）', async () => {
-    expect(await defaultOrphanWorktreeFs.listWorktreeDirs(base, [])).toEqual([]);
+    expect(await defaultOrphanWorktreeFs.listWorktreeDirs(base, [])).toEqual({ dirs: [], unreadable: [] });
+  });
+
+  it('base 读不出来（非 ENOENT）时如实上报 unreadable，而不是谎报空', async () => {
+    const gone = path.join(base, 'nope');
+    // ENOENT 是「本来就没有」，不算读失败
+    expect(await defaultOrphanWorktreeFs.listWorktreeDirs(gone, ['default']))
+      .toEqual({ dirs: [], unreadable: [] });
+  });
+});
+
+describe('别名与真身成对判定（迁移遗留的符号链接）', () => {
+  const NOW = Date.parse('2026-07-28T12:00:00Z');
+  const OLD = NOW - 24 * 60 * 60_000;
+
+  it('真身被台账认领 → 别名也不许删', () => {
+    const plan = computeOrphanWorktreePlan({
+      diskDirs: [{ path: '/srv/wt/default/main', mtimeMs: OLD, realPath: '/srv/wt/main' }],
+      claimedPaths: ['/srv/wt/main'],
+      mountedPaths: [],
+      nowMs: NOW,
+    });
+    expect(plan.remove).toEqual([]);
+  });
+
+  it('容器挂的是真身（docker inspect 给的是解析后路径）→ 别名也不许删', () => {
+    const plan = computeOrphanWorktreePlan({
+      diskDirs: [{ path: '/srv/wt/default/main', mtimeMs: OLD, realPath: '/srv/wt/main' }],
+      claimedPaths: [],
+      mountedPaths: ['/srv/wt/main/prd-api'],
+      nowMs: NOW,
+    });
+    expect(plan.remove).toEqual([]);
+    expect(plan.keptReasons['/srv/wt/default/main']).toContain('挂载');
+  });
+
+  it('两侧都无人认领无人挂载 → 别名可回收（调用方会连真身一起收）', () => {
+    const plan = computeOrphanWorktreePlan({
+      diskDirs: [{ path: '/srv/wt/default/dead', mtimeMs: OLD, realPath: '/srv/wt/dead' }],
+      claimedPaths: ['/srv/wt/default/other'],
+      mountedPaths: [],
+      nowMs: NOW,
+    });
+    expect(plan.remove).toEqual(['/srv/wt/default/dead']);
   });
 });
 

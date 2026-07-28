@@ -12392,7 +12392,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
       // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
       // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
-      const deployedCommitSha = selectedDeploymentVersion?.commitSha
+      // 用 let：极速版镜像拉不到时 runService 会**自动回退源码编译**（container.ts 的
+      // sourceFallbackProfile 分支），那一刻实际落地的就从「镜像锁定的 sha」变成了
+      // 刚 pull 到的 HEAD。回退发生在这句之后，所以只能由回调回来修正
+      //（Codex PR #1275 六轮 P2）。
+      let deployedCommitSha = selectedDeploymentVersion?.commitSha
         ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
       // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
       // 原先它在刷新之前，于是 run 上盖的是**触发时**缓存的 entry.githubCommitSha，
@@ -12871,6 +12875,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
                 if (!buildSlot) buildSlot = await acquireGateSlot();
+                // 回退成源码编译 = 这台服务实际跑的是 worktree 当前 HEAD，不再是
+                // 镜像 tag 锁定的那个 sha。后续 run 流转 / 版本记录必须跟着改口径，
+                // 否则审计又挂在一份没被部署过的代码上（Codex 六轮 P2）。
+                if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) {
+                  deployedCommitSha = pulledSha;
+                  Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
+                }
               },
               // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
               ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
@@ -13643,6 +13654,8 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // 用本 profile 的 prebuiltImage 判定是否极速版。
       // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
       let deployedCommitSha: string | undefined = entry.githubCommitSha;
+      // pull 到的裸 SHA 也提到块外：极速版回退源码编译时要用它改口径（见下方钩子）。
+      let fallbackPulledSha: string | undefined;
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
@@ -13662,6 +13675,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
         // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
         deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
+        if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) fallbackPulledSha = pulledSha;
       }
       // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
       // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
@@ -13847,6 +13861,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
+            // 同主路径：回退源码编译后，实际落地的是 pull 到的 HEAD（Codex 六轮 P2）。
+            if (fallbackPulledSha) {
+              deployedCommitSha = fallbackPulledSha;
+              Object.assign(opLog, deriveCommitMeta(entry, fallbackPulledSha));
+            }
           },
           // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
           ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),

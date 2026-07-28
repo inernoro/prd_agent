@@ -2618,6 +2618,7 @@ export class ContainerService {
         // 老 infra 容器仍连在老 network 上,profile 容器解析 nacos/redis 拿到
         // NXDOMAIN。这里 best-effort connect → 已连返回非零(已存在)幂等可忽略。
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.auditInfraLogLimit(service);
         this.recordContainerEvent({
           severity: 'info',
           source: 'cds-container-service',
@@ -2636,6 +2637,7 @@ export class ContainerService {
       if (startResult.exitCode === 0) {
         // 同样:wake 后保证 network attach
         await this.ensureInfraOnNetwork(service.containerName, desiredAliases, network);
+        await this.auditInfraLogLimit(service);
         const diagnostics = await this.captureContainerDiagnostics(service.containerName, 120);
         this.recordContainerEvent({
           severity: 'info',
@@ -3061,6 +3063,49 @@ export class ContainerService {
    *   - 其它失败 → 仅 console.warn,不抛 — infra reuse 路径必须保持
    *     "默认共享数据库不动" 的语义,失败也别 break 上层 deploy。
    */
+  /**
+   * 复用已存在的 infra 容器时，体检它有没有日志限额（Codex PR #1275 六轮 P2）。
+   *
+   * 日志限额只在 `docker run` 创建那条路径上加得了。而 infra 是**共享长生命周期**
+   * 容器，绝大多数部署走的都是「已在跑 → 直接复用」或「stopped → docker start 唤醒」
+   * 两条早返回路径 —— 于是现网那些跑了几个月的 mongo / redis / mysql 至今仍是
+   * 无上限的 json-file 日志，正是把根盘写满的那个根因，本 PR 若只管新建容器就等于没治。
+   *
+   * docker 不能给存量容器改 log-opt，唯一出路是重建；而重建共享数据库会断掉所有连接，
+   * 绝不能由 deploy 流程自作主张。所以这里只做**可执行的告警**：报出是哪个容器、
+   * 后果是什么、以及一条明确的迁移指令（走 CDS 自己的重启接口，它会 stop+rm 后按当前
+   * 定义重建，从而带上限额），让运维在低峰期一条命令搞定。
+   *
+   * 只在缺限额时打印，且失败一律吞掉 —— 体检绝不能影响复用语义。
+   */
+  private async auditInfraLogLimit(service: InfraService): Promise<void> {
+    try {
+      const r = await this.shell.exec(
+        `docker inspect --format='{{index .HostConfig.LogConfig.Config "max-size"}}' ${service.containerName}`,
+      );
+      if (r.exitCode !== 0) return;
+      const maxSize = (r.stdout || '').trim().replace(/^'|'$/g, '');
+      if (maxSize) return; // 已有限额
+      console.warn(
+        `[infra-log-limit] ${service.containerName} 没有日志限额（复用已存在的容器，docker 无法补改）。`
+        + ` 容器日志会无上限占用根盘 —— 这正是 2026-07-27 根盘写满的根因之一。`
+        + ` 低峰期执行 POST /api/infra/${service.id}/restart 让 CDS 按当前定义重建即可带上限额（会短暂断连）。`,
+      );
+      this.recordContainerEvent({
+        severity: 'warn',
+        source: 'cds-container-service',
+        action: 'infra.log-limit.missing',
+        message: `reused infra container has unbounded logs: ${service.containerName}`,
+        projectId: service.projectId,
+        serviceId: service.id,
+        containerName: service.containerName,
+        details: { remedy: `POST /api/infra/${service.id}/restart`, reason: 'docker 无法给已存在容器补 log-opt，只能重建' },
+      });
+    } catch {
+      /* 体检失败不影响复用 */
+    }
+  }
+
   private async ensureInfraOnNetwork(
     containerName: string,
     aliases: string[],

@@ -29,9 +29,24 @@ function blockAfter(anchor: string, span = 420): string {
 
 describe('部署 run / version 记录实际落地的 SHA', () => {
   it('两条部署路径都算出了 deployedCommitSha', () => {
-    expect(src).toContain('const deployedCommitSha = selectedDeploymentVersion?.commitSha');
+    // 必须是 let：极速版拉不到镜像时 runService 会自动回退源码编译，那一刻落地的
+    // commit 从「镜像锁定的 sha」变成 pull 到的 HEAD，只能事后由回调修正（六轮 P2）。
+    expect(src).toContain('let deployedCommitSha = selectedDeploymentVersion?.commitSha');
     expect(src).toContain('deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;');
     expect(src).toContain('let deployedCommitSha: string | undefined = entry.githubCommitSha;');
+  });
+
+  it('自动回退源码编译时，两条路径都会把 deployedCommitSha 改口径（六轮 P2）', () => {
+    // 回退发生在 runService 内部（container.ts 的 sourceFallbackProfile 分支），
+    // 路由侧只能靠 onSourceCompileFallback 回调得知；不改口径的话，run/version/opLog
+    // 会记成镜像锁定的 sha，而实际编译部署的是 worktree HEAD。
+    const hooks = src.split('onSourceCompileFallback: async () => {').slice(1);
+    expect(hooks.length, '两条部署路径各有一个回退钩子').toBe(2);
+    for (const body of hooks) {
+      const block = body.slice(0, 600);
+      expect(block).toContain('deployedCommitSha =');
+      expect(block).toContain('deriveCommitMeta(entry,');
+    }
   });
 
   const runAnchors = [

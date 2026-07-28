@@ -21,14 +21,18 @@ let removed: string[];
 let seenProjectIds: readonly string[];
 let droppedTombstones: string[];
 let deadBucketDirs: string[];
+let enumerationBroken = false;
 
 const fsFake = (): OrphanWorktreeFs => ({
   listWorktreeDirs: async (_base, knownProjectIds) => {
     seenProjectIds = knownProjectIds;
     // 只有在白名单里的桶才吐目录 —— 与真实实现同构
-    return deadBucketDirs
-      .filter((d) => knownProjectIds.includes(d.split('/')[3]))
-      .map((path) => ({ path, mtimeMs: OLD }));
+    return {
+      dirs: deadBucketDirs
+        .filter((d) => knownProjectIds.includes(d.split('/')[3]))
+        .map((path) => ({ path, mtimeMs: OLD })),
+      unreadable: enumerationBroken ? [`${BASE}/gone-proj`] : [],
+    };
   },
   listMountedHostPaths: async () => [],
   removeDir: async (dir) => { removed.push(dir); deadBucketDirs = deadBucketDirs.filter((d) => d !== dir); return null; },
@@ -61,6 +65,7 @@ beforeEach(() => {
   droppedTombstones = [];
   seenProjectIds = [];
   deadBucketDirs = [`${BASE}/gone-proj/branch-a`, `${BASE}/gone-proj/branch-b`];
+  enumerationBroken = false;
 });
 
 describe('已删项目的 worktree 桶', () => {
@@ -97,6 +102,15 @@ describe('已删项目的 worktree 桶', () => {
     const report = await j.sweep();
     expect(report.orphanWorktrees?.removed).toHaveLength(1);
     expect(report.orphanWorktrees?.deferred).toBe(1);
+    expect(droppedTombstones).toEqual([]);
+  });
+
+  it('枚举读失败时保留墓碑：读不出来不等于桶已空（Codex 六轮 P2）', async () => {
+    // EACCES / IO 抖动 / 挂载失败 → 桶「看起来是空的」。若据此摘墓碑，文件系统恢复后
+    // 那些目录永远落在项目 id 白名单之外，再也回收不了。
+    deadBucketDirs = [];
+    enumerationBroken = true;
+    await mkJanitor().sweep();
     expect(droppedTombstones).toEqual([]);
   });
 });

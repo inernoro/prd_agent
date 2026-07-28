@@ -24,10 +24,13 @@ let seenProjectIds: readonly string[] | null = null;
 const fsFake = (): OrphanWorktreeFs => ({
   listWorktreeDirs: async (_base, knownProjectIds) => {
     seenProjectIds = knownProjectIds;
-    return [
-      { path: `${BASE}/proj/live`, mtimeMs: OLD },
-      { path: `${BASE}/proj/orphan`, mtimeMs: OLD },
-    ];
+    return {
+      dirs: [
+        { path: `${BASE}/proj/live`, mtimeMs: OLD },
+        { path: `${BASE}/proj/orphan`, mtimeMs: OLD },
+      ],
+      unreadable: [],
+    };
   },
   listMountedHostPaths: async () => mounted,
   removeDir: async (dir) => { if (removeError) return removeError; removed.push(dir); return null; },
