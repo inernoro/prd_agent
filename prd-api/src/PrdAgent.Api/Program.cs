@@ -977,7 +977,10 @@ builder.Services.AddSingleton<IPromptManager, PromptManager>();
 // Access Token 默认 7 天（10080 分钟），与会话滑动窗口同长：用户要的就是「7 天有效」。
 // 踢下线由每次请求校验 tokenVersion 保证（见 OnTokenValidated），因此拉长 access token
 // 不削弱撤销能力，却能消灭「离开一会儿回来就 401」的体感。
-var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 10080);
+// 归一化一次再用：0 / 负值若原样传给 JwtService，会签出「已经过期」的 token，
+// 而 Controller 那边按默认值回报 expiresIn，登录立刻 401。口径 SSOT 见 AuthTokenLifetimes。
+var jwtAccessTokenMinutes = AuthTokenLifetimes.NormalizeAccessTokenMinutes(
+    builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", AuthTokenLifetimes.DefaultAccessTokenMinutes));
 builder.Services.AddSingleton<IJwtService>(sp => 
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtAccessTokenMinutes));
 
@@ -989,7 +992,7 @@ builder.Services.AddSingleton<IAuthSessionService>(sp =>
     var cache = sp.GetRequiredService<ICacheManager>();
     var config = sp.GetRequiredService<IConfiguration>();
     var secret = config["Jwt:Secret"] ?? "default-secret";
-    var slidingDays = config.GetValue<int>("Auth:SessionSlidingDays", AuthSessionService.DefaultSlidingDays);
+    var slidingDays = config.GetValue<int>("Auth:SessionSlidingDays", AuthTokenLifetimes.DefaultSessionSlidingDays);
     // 把 access token 时长也传进去：tokenVersion（撤销台账）必须活得比它要撤销的 token 久，
     // 否则会话窗口被配得比 token 短时，已撤销的旧版本 token 会在剩余寿命里重新被放行。
     return new AuthSessionService(cache, secret, slidingDays, jwtAccessTokenMinutes);

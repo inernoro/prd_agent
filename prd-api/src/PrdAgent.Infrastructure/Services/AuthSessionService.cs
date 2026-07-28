@@ -12,12 +12,10 @@ namespace PrdAgent.Infrastructure.Services;
 /// </summary>
 public class AuthSessionService : IAuthSessionService
 {
-    /// <summary>默认滑动窗口：7 天（用户诉求「超长登录期 + 用后自动延长」）。</summary>
-    public const int DefaultSlidingDays = 7;
+    /// <summary>默认滑动窗口：7 天（用户诉求「超长登录期 + 用后自动延长」）。口径 SSOT 见 AuthTokenLifetimes。</summary>
+    public const int DefaultSlidingDays = AuthTokenLifetimes.DefaultSessionSlidingDays;
     /// <summary>默认 access token 时长（分钟）：7 天，与 <c>Jwt:AccessTokenMinutes</c> 默认值一致。</summary>
-    public const int DefaultAccessTokenMinutes = DefaultSlidingDays * 24 * 60;
-    private const int MinSlidingDays = 1;
-    private const int MaxSlidingDays = 90;
+    public const int DefaultAccessTokenMinutes = AuthTokenLifetimes.DefaultAccessTokenMinutes;
     /// <summary>tokenVersion 相对 access token 生命周期多留的余量（时钟偏差 + 校验抖动）。</summary>
     private static readonly TimeSpan TokenVersionSkew = TimeSpan.FromDays(1);
 
@@ -35,14 +33,13 @@ public class AuthSessionService : IAuthSessionService
     {
         _cache = cache;
         _hmacSecret = string.IsNullOrWhiteSpace(hmacSecret) ? "default-secret" : hmacSecret;
-        var days = slidingDays <= 0 ? DefaultSlidingDays : Math.Clamp(slidingDays, MinSlidingDays, MaxSlidingDays);
-        _sessionTtl = TimeSpan.FromDays(days);
+        _sessionTtl = TimeSpan.FromDays(AuthTokenLifetimes.NormalizeSessionSlidingDays(slidingDays));
 
         // tokenVersion 是撤销台账，**必须活得比它要撤销的 access token 久**：
         // 会话窗口与 access token 时长是两个独立配置（窗口可配到 1 天，token 可配到 7 天），
         // 一旦 tv 键先过期，GetTokenVersionAsync 退回默认值 1，
         // 已被撤销的 v1 token 就会在剩余寿命里重新被放行。故取两者较大值再加时钟余量。
-        var accessMinutes = accessTokenMinutes <= 0 ? DefaultAccessTokenMinutes : accessTokenMinutes;
+        var accessMinutes = AuthTokenLifetimes.NormalizeAccessTokenMinutes(accessTokenMinutes);
         var accessTokenTtl = TimeSpan.FromMinutes(accessMinutes) + TokenVersionSkew;
         _tokenVersionTtl = accessTokenTtl > _sessionTtl ? accessTokenTtl : _sessionTtl;
     }

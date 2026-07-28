@@ -1,4 +1,5 @@
 using PrdAgent.Core.Interfaces;
+using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Services;
 using Xunit;
 
@@ -107,6 +108,61 @@ public class AuthSessionLifetimeTests
 
         Assert.True(service.TokenVersionTtl >= service.SlidingTtl);
         Assert.True(service.TokenVersionTtl > TimeSpan.FromMinutes(accessTokenMinutes));
+    }
+
+    [Theory]
+    [InlineData(0, AuthTokenLifetimes.DefaultAccessTokenMinutes)]   // 未配置
+    [InlineData(-30, AuthTokenLifetimes.DefaultAccessTokenMinutes)] // 配错成负数
+    [InlineData(60, 60)]
+    public void NormalizeAccessTokenMinutes_FallsBackOnIllegalValues(int configured, int expected)
+    {
+        // 0 / 负值必须在「构造 JwtService」和「回报 expiresIn」两处得到同一个归一化结果，
+        // 否则会签出立刻过期的 token 却宣称有效 7 天，登录即 401。
+        Assert.Equal(expected, AuthTokenLifetimes.NormalizeAccessTokenMinutes(configured));
+    }
+
+    [Fact]
+    public void AccessTokenLifetime_IsReadThroughTheSharedHelperEverywhere()
+    {
+        // 三个读取点（构造 JwtService / 登录回报 expiresIn / SSO 登录）必须共用同一套归一化，
+        // 各写各的兜底一定会漂移 —— 这正是本条守卫要拦的回归。
+        foreach (var relativePath in new[]
+                 {
+                     "prd-api/src/PrdAgent.Api/Program.cs",
+                     "prd-api/src/PrdAgent.Api/Controllers/AuthController.cs",
+                     "prd-api/src/PrdAgent.Api/Controllers/MiduoPlanetSsoController.cs",
+                 })
+        {
+            var source = ReadRepoFile(relativePath);
+            Assert.True(
+                source.Contains("AuthTokenLifetimes.NormalizeAccessTokenMinutes", StringComparison.Ordinal),
+                $"{relativePath} 读取 Jwt:AccessTokenMinutes 时必须走 AuthTokenLifetimes.NormalizeAccessTokenMinutes");
+        }
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var fullPath = Path.Combine(LocateRepoRoot(), relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(fullPath), $"找不到文件: {fullPath}");
+        return File.ReadAllText(fullPath);
+    }
+
+    // 与 RateLimitPipelineOrderTests 同一套定位方式，避免两处走不同的仓库根判定。
+    private static string LocateRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AGENTS.md"))
+                && Directory.Exists(Path.Combine(directory.FullName, "prd-api")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        return Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
     }
 
     /// <summary>只记录「键 → 值 / TTL」的内存缓存，用来断言过期时间，不依赖 Redis。</summary>

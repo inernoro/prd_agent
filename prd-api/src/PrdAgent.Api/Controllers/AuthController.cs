@@ -46,13 +46,11 @@ public class AuthController : ControllerBase
     }
 
     /// <summary>access token 有效期（秒），由 Jwt:AccessTokenMinutes 决定，默认 7 天。</summary>
+    /// <remarks>归一化必须与 Program.cs 传给 JwtService 的口径一致，否则会出现
+    /// 「回报的 expiresIn 与 token 实际过期时间不符」——两边都走 AuthTokenLifetimes。</remarks>
     private int AccessTokenExpiresInSeconds()
-    {
-        const int defaultMinutes = 7 * 24 * 60;
-        var minutes = _cfg.GetValue<int>("Jwt:AccessTokenMinutes", defaultMinutes);
-        if (minutes <= 0) minutes = defaultMinutes;
-        return minutes * 60;
-    }
+        => AuthTokenLifetimes.NormalizeAccessTokenMinutes(
+            _cfg.GetValue<int>("Jwt:AccessTokenMinutes", AuthTokenLifetimes.DefaultAccessTokenMinutes)) * 60;
 
     private string GetRootUsername() =>
         (_cfg["ROOT_ACCESS_USERNAME"] ?? string.Empty).Trim();

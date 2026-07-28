@@ -248,14 +248,18 @@ export function mustChangePassword(): boolean {
 }
 
 /**
- * 接住服务端滑动续期换发的新 token。只在本地还持有会话时替换，避免把已登出的
- * 标签页重新「复活」成登录态。
+ * 接住服务端滑动续期换发的新 token。
+ *
+ * 只替换「发起本次请求的那一把 token」：请求在途期间用户可能已登出、或换了另一个账号登录
+ * （会话现在存 localStorage，跨标签页共享，这种交叉更容易发生）。此时本地存的是新账号的
+ * token，若无条件覆盖，就会让新账号的用户/租户信息配上旧账号的凭据。本地 token 已经不是
+ * 请求时那把（含已登出为空）时一律跳过，最坏结果只是这次不续期。
  */
-export function applyRenewedToken(res: Response): void {
+export function applyRenewedToken(res: Response, requestToken: string | null): void {
   const renewed = res.headers.get(RENEWED_TOKEN_HEADER);
-  if (!renewed) return;
+  if (!renewed || !requestToken) return;
   try {
-    if (!sessionStore.getItem(TOKEN_KEY)) return;
+    if (sessionStore.getItem(TOKEN_KEY) !== requestToken) return;
     sessionStore.setItem(TOKEN_KEY, renewed);
   } catch {
     /* 存储不可用时忽略：本次请求已成功，下次再续 */
@@ -301,7 +305,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
   }
 
   // 滑动续期：服务端换发了新 token 就地替换，用户无感继续用（无需重登、无需轮询）。
-  applyRenewedToken(res);
+  applyRenewedToken(res, token);
 
   if (res.status === 401) {
     clearSession();
