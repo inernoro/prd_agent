@@ -201,12 +201,15 @@ public class OfficialSkillsController : ControllerBase
         sb.AppendLine();
         sb.AppendLine("装到**项目级**技能目录，不是用户主目录 —— 技能跟着项目的版本库走，团队每个人 clone 下来都有。");
         sb.AppendLine();
+        sb.AppendLine("项目里存在几个 Agent 宿主目录（`.claude` / `.cursor` / `.agents`）就装几份：");
+        sb.AppendLine("只装其中一个的话，从另一个 Agent 打开这个项目会一个技能都看不见。");
+        sb.AppendLine();
         sb.AppendLine("```bash");
         sb.AppendLine(SkillInstallContract.DetectSnippet);
-        sb.AppendLine("unzip -o <本 zip> -d \"$SKILLS_DIR\"");
+        sb.AppendLine("for d in $SKILLS_DIRS; do unzip -o <本 zip> -d \"$d\"; done");
         sb.AppendLine("```");
         sb.AppendLine();
-        sb.AppendLine($"解压后该目录下会多出 {entries.Count} 个技能目录，重开 AI 编程工具即可识别。");
+        sb.AppendLine($"解压后每个技能目录下会多出 {entries.Count} 个技能，重开 AI 编程工具即可识别。");
         sb.AppendLine();
         sb.AppendLine("## 下一步");
         sb.AppendLine();
@@ -228,7 +231,7 @@ public class OfficialSkillsController : ControllerBase
         return sb.ToString();
     }
 
-    /// <summary>把技能目录打成 zip：每个技能落在 `{key}/` 下，解压即 `~/.claude/skills/{key}/`。</summary>
+    /// <summary>把技能目录打成 zip：每个技能落在 `{key}/` 下，解压到宿主目录即 `<宿主>/skills/{key}/`。</summary>
     private static byte[] PackSkills(
         IReadOnlyList<OfficialSkillCatalog.SkillEntry> entries,
         IReadOnlyDictionary<string, string>? extraFiles,

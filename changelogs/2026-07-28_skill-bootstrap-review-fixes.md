@@ -16,3 +16,5 @@
 | refactor | prd-api | 下载计数去重抽成共享 SkillDownloadCounter，站内与开放接口两个 controller 共用一份 |
 | test | prd-api | 新增 SkillDownloadCounterTests：同调用方只计一次、不同技能/来源独立、登录按用户去重、指纹不含原始 IP、窗口长度有界 |
 | test | cds | 安装约定守卫新增「装到所有存在宿主」断言，早期取第一个的写法回潮即红 |
+| fix | prd-api | 套装 INSTALL.md 的解压命令同步为遍历全部宿主，此前仍写单数 $SKILLS_DIR 导致按说明操作只装一个目录 |
+| test | prd-api | 三处安装约定断言改为校验「遍历宿主 + 兜底目录 + 遍历安装」，与多宿主契约对齐 |
