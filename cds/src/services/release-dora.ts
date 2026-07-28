@@ -180,10 +180,27 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
    * 反过来同理：窗口内的失败发布可能在窗口结束后才被回滚。
    */
   const rolledBackIds = new Set<string>();
+  /**
+   * 被回滚的发布 → **最早那次回滚的发起时刻**。
+   *
+   * 事故值（Codex P2）：一次成功发布若在 9 天后才被回滚，它会被归为 failed，
+   * 而恢复时钟的起点取的是它自己的完成时刻 —— 于是「恢复时长」把回滚发起之前
+   * 那 9 天正常服务的时间全算了进去，MTTR 被系统性夸大；更糟的是那 9 天里
+   * 任何一次成功发布都可能被选成它的「恢复者」，配对本身就是错的。
+   * 故障是从**有人按下回滚**那一刻才开始被承认的，起点应该取回滚 run 的 startedAt。
+   */
+  const rollbackStartedAtByTarget = new Map<string, number>();
   for (const run of scoped) {
     // 回滚失败也算「这次发布被判定为坏的」——有人按下了回滚按钮，
     // 判据是「发布引入了问题」，不是「补救动作成没成功」。
-    if (run.rollbackOf) rolledBackIds.add(run.rollbackOf);
+    if (!run.rollbackOf) continue;
+    rolledBackIds.add(run.rollbackOf);
+    const at = parseMs(run.startedAt);
+    if (at === null) continue;
+    const known = rollbackStartedAtByTarget.get(run.rollbackOf);
+    // 同一次发布可能被回滚多次（第一次没成功），取最早那次：故障是从第一次
+    // 按下回滚开始的，取最晚会把中间的抢修时间漏掉。
+    if (known === undefined || at < known) rollbackStartedAtByTarget.set(run.rollbackOf, at);
   }
 
   const terminalRuns: Array<{ run: T; at: number }> = [];
@@ -257,8 +274,15 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
       }
       continue;
     }
+    // 「被事后回滚」的发布，故障时钟从**回滚发起**那一刻起算，不是它自己完成那一刻。
+    // 否则一次跑了九天才被回滚的发布会报出九天恢复时长，中间那些正常发布还会被
+    // 误选成它的恢复者（Codex P2）。自身就是 failed 的发布仍用它的终态时刻。
+    const rollbackAt = rollbackStartedAtByTarget.get(failure.run.releaseId);
+    const failedAt = failure.run.status === 'failed'
+      ? failure.at
+      : (rollbackAt ?? failure.at);
     const restored = terminalRuns.find((item) => (
-      item.at > failure.at
+      item.at > failedAt
       && item.run.targetId === failure.run.targetId
       && isRecoveryRun(item.run)
     ));
@@ -266,7 +290,7 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
       ongoingCount += 1;
       continue;
     }
-    recoveryDurations.push(restored.at - failure.at);
+    recoveryDurations.push(restored.at - failedAt);
   }
   recoveryDurations.sort((a, b) => a - b);
   const recovery: ReleaseDoraRecovery = {

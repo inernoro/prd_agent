@@ -622,3 +622,110 @@ describe('Codex 第五轮：回收全程持锁、删除失败不谎报、回滚�
     expect(window).toContain("releaseEvents.emitEvent({ type: 'release.status'");
   });
 });
+
+describe('Codex 第六轮：被事后回滚的发布，故障时钟从回滚发起算起', () => {
+  function run(over: Partial<ReleaseDoraRunLike> & { releaseId: string }): ReleaseDoraRunLike {
+    return { targetId: 'target-prod', status: 'success', startedAt: '', ...over };
+  }
+
+  it('九天后才被回滚：恢复时长按回滚发起→回滚成功，不含前面九天正常服务', () => {
+    // 事故值：起点取被回滚发布**自己的完成时刻**，于是一次跑了九天才被回滚的发布
+    // 报出九天恢复时长，MTTR 被系统性夸大。
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_bad',
+        status: 'success',
+        startedAt: '2026-07-01T00:00:00.000Z',
+        finishedAt: '2026-07-01T00:10:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_rb',
+        status: 'rollback_success',
+        rollbackOf: 'rel_bad',
+        startedAt: '2026-07-10T00:00:00.000Z',
+        finishedAt: '2026-07-10T00:20:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-20T00:00:00.000Z'), windowDays: 90 });
+
+    expect(metrics.changeFailure.failed).toBe(1);
+    expect(metrics.recovery.sampleCount).toBe(1);
+    // 20 分钟 = 回滚发起 → 回滚完成；不是九天。
+    expect(metrics.recovery.p50Ms).toBe(20 * 60_000);
+  });
+
+  it('回滚发起前的正常发布不会被误选成它的恢复者', () => {
+    // 事故值：起点是九天前，于是这中间任何一次成功发布都比它「晚」，
+    // 会被 find 选中当恢复者 —— 配对本身就是错的。
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_bad',
+        status: 'success',
+        startedAt: '2026-07-01T00:00:00.000Z',
+        finishedAt: '2026-07-01T00:10:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_mid',
+        status: 'success',
+        startedAt: '2026-07-05T00:00:00.000Z',
+        finishedAt: '2026-07-05T00:10:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_rb',
+        status: 'rollback_success',
+        rollbackOf: 'rel_bad',
+        startedAt: '2026-07-10T00:00:00.000Z',
+        finishedAt: '2026-07-10T00:20:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-20T00:00:00.000Z'), windowDays: 90 });
+
+    // 若误选 rel_mid 当恢复者，时长会是 4 天而不是 20 分钟。
+    expect(metrics.recovery.p50Ms).toBe(20 * 60_000);
+  });
+
+  it('同一次发布被回滚多次时取最早那次（抢修时间不许漏算）', () => {
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_bad',
+        status: 'success',
+        startedAt: '2026-07-01T00:00:00.000Z',
+        finishedAt: '2026-07-01T00:10:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_rb1',
+        status: 'rollback_failed',
+        rollbackOf: 'rel_bad',
+        startedAt: '2026-07-10T00:00:00.000Z',
+        finishedAt: '2026-07-10T00:05:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_rb2',
+        status: 'rollback_success',
+        rollbackOf: 'rel_bad',
+        startedAt: '2026-07-10T01:00:00.000Z',
+        finishedAt: '2026-07-10T01:10:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-20T00:00:00.000Z'), windowDays: 90 });
+
+    // 起点是第一次按下回滚（10:00:00），终点是第二次回滚成功（01:10） → 70 分钟。
+    expect(metrics.recovery.p50Ms).toBe(70 * 60_000);
+  });
+
+  it('自身就是 failed 的发布仍用它自己的终态时刻（没有回滚可依据）', () => {
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_fail',
+        status: 'failed',
+        startedAt: '2026-07-01T00:00:00.000Z',
+        finishedAt: '2026-07-01T00:10:00.000Z',
+      }),
+      run({
+        releaseId: 'rel_fix',
+        status: 'success',
+        startedAt: '2026-07-01T00:30:00.000Z',
+        finishedAt: '2026-07-01T00:40:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-20T00:00:00.000Z'), windowDays: 90 });
+
+    expect(metrics.recovery.p50Ms).toBe(30 * 60_000);
+  });
+});
