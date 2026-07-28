@@ -51,3 +51,4 @@
 - **什么条件下必须还**：把它纳入任一角色套装之前（那一刻自测守卫会直接红），或决定 fork 该技能自行维护时。
 - **不还的后果**：客户单独下载该技能时会拿到带 emoji 的数据文件。
 - **本次已做**：`scripts/test-official-skill-bundles.mjs` 的 emoji 正则下界从 `U+1F300` 放宽到 `U+1F000`（此前漏掉 `U+1F198` 这类字符，导致 `acceptance-checklist` 两个 reference 文件的 emoji 标题混过守卫），并修掉了那两处。
+- **二次补漏**：自测的 emoji 遍历此前只扫 `.md/.txt/.json/.ya?ml`，脚本文件不在范围内，于是 `create-visual-test-to-kb/scripts/harness.mjs` 控制台输出里的两处 `U+26A0` 一路混到分发包。遍历已扩到 `.mjs/.js/.ts/.py/.sh`，那两处改为文案 `[警告]`。真验证方式是从分支预览下载 qa-starter 真解压再全量扫，纸面 review 看不出来。

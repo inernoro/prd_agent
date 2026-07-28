@@ -541,7 +541,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   //    整体观感/全局布局图无单一重点 → 调用方显式传 opts.overview=true 豁免。
   const annotated = await page.evaluate(() => document.querySelectorAll('.__acc_box').length > 0).catch(() => false);
   if (!annotated && !overview) {
-    console.log(`  ⚠ ${name} 未画框/圈：指向性证据必须标注(stepClick/stepShot(highlight)/box)，整体图请传 {overview:true}`);
+    console.log(`  [警告] ${name} 未画框/圈：指向性证据必须标注(stepClick/stepShot(highlight)/box)，整体图请传 {overview:true}`);
   }
 
   const viewport = page.viewportSize();
@@ -569,7 +569,7 @@ export async function shot(page, outDir, name, caption, opts = {}) {
   };
   shots.push(rec);
   if (warnings.length > 0) {
-    console.log(`  ⚠ 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
+    console.log(`  [警告] 截图 ${name} | ${caption} | 仍有警告: ${warnings.join(' | ')}`);
   } else {
     console.log(`  截图 ${name} | ${caption}${annotated ? '' : overview ? ' (overview 豁免标注)' : ' (未标注!)'}`);
   }

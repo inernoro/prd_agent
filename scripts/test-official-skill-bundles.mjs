@@ -123,7 +123,8 @@ try {
       for (const n of readdirSync(d)) {
         const p = join(d, n);
         if (statSync(p).isDirectory()) { walk(p); continue; }
-        if (!/\.(md|txt|json|ya?ml)$/i.test(n)) continue;
+        // 脚本文件同样是对外分发内容：控制台输出里的 emoji 一样会落到客户屏幕上
+        if (!/\.(md|txt|json|ya?ml|mjs|js|ts|py|sh)$/i.test(n)) continue;
         if (emoji.test(readFileSync(p, 'utf8'))) dirty.push(p.slice(dest.length + 1));
       }
     };
