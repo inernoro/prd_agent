@@ -6,3 +6,5 @@
 | feat | cds | 新增全局回收互斥：CDS 侧回收路径同一时刻只允许一个，拿不到锁跳过本轮不排队；持锁超时视为泄漏可被接管 |
 | security | cds | 关键容器打 cds.protected=true（CDS 状态库 mongo + 全部 infra），孤儿收割器按标记豁免，运维安全清理命令可据此过滤 |
 | fix | cds | CDS 状态库 mongo 容器补日志限额（全仓唯一漏网的 docker run） |
+| fix | cds | 启动期 mongo 不可用改为退避重试（约 90s 忍耐窗口）而非一次失败即退出，消除 systemd 重启风暴；放弃前做磁盘诊断直指真凶 |
+| docs | cds | 宕机债务台账逐条标注偿还状态，补「安全的 Docker 清理命令」运维须知 |

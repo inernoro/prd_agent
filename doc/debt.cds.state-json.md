@@ -6,7 +6,7 @@
 
 | 指标 | 当前值 |
 |------|--------|
-| open | 3（#3 / #4 / #5） |
+| open | 3（#3 / #4 / #5，#5 已部分偿还） |
 | in-progress | 0 |
 | paid | 2（#1 / #2，2026-07-09） |
 
@@ -90,17 +90,35 @@ install 默认走 mongo。但代码层面 `state.json` 仍然是 in-memory state
 
 **暴露的结构性债务（按优先级，均对照 `cds/src/services/janitor.ts` 现状核对过）**：
 
-| P | 债务 | 现状（代码事实） | 偿还方向 |
-|---|---|---|---|
-| P0 | **janitor 清不掉 CDS 自己造的镜像**——磁盘打满的真正引擎 | `defaultDockerPrune` 只跑 `image prune -f`（**仅悬空**）+ `builder prune --keep-storage 10GB`。而 CDS 按 `sha-<40hex>` 给每个部署版本打 tag，台账里有 **414 条 deployment version**；这些镜像**有 tag 故永不悬空**，janitor 每小时跑一次也一个都清不掉 → 宿主 5099 个镜像 / containerd 159GB | 按 CDS **自己的版本台账**做保留策略：每个 profile 保留最近 N 版（建议 3–5）+ 当前运行版，超出者显式 `docker rmi`。不能靠 docker 的悬空判定，也不能用 `image prune -af`（会连回滚镜像一起清） |
-| P0 | 磁盘只告警不刹车 | `sweep()` 里 `usedPercent >= diskWarnPercent(80)` 只 `console.warn`，无任何升级动作 | 三档阈值：75% 提示 / 85% 主动回收（升级保留策略、清依赖卷）/ 90% **暂停新分支构建与部署派发**，并写站内告警而非只打 console |
-| P1 | 组件未变更却回落宿主源码构建（本次的临门一脚） | CI 因组件代码未变而跳过镜像构建是**正确**的；错在 CDS 把「按 SHA 拉镜像扑空」一律当成「需要在宿主全量重编」 | 拉取失败时先复用「该组件最近一次有镜像的版本 / 当前正在跑的镜像」，只有组件代码确实变更且镜像缺失才允许宿主源码构建；宿主源码构建串行化 + 并发闸，禁止三个重编同时打满 |
-| P1 | 容器日志无上限 | 全仓 `docker run` 参数中**没有任何** `--log-opt max-size/max-file` | 所有托管容器统一加 `--log-opt max-size=50m --log-opt max-file=3`（`/var/lib/docker/containers` 现已 3.5GB） |
-| P1 | （#5 本体）master 把自用 mongo 当强依赖 | mongo 死亡 → state persist 失败 → master 反复启动失败（restart counter 58），35 分钟无自愈 | state persist 失败降级为「内存态 + json fallback + 告警」而非放任 master 死亡；关键前置检查磁盘余量，满盘时进只读保命模式 |
-| P2 | janitor 看不见孤儿 worktree 与依赖卷 | sweep 只遍历 `stateService.getAllBranches()`；孤儿 infra 容器**只报不删**；`cds-nm-*` 依赖卷、319 个 dangling 卷完全不在清理范围。生产 55 个分支全部无 `executorId`，按 TTL 只有 3 个够格删——而宿主 `.cds-worktrees` 已 45.5GB | 增加「磁盘上的 worktree 目录 ↔ 台账分支」双向对账（目录无对应分支 = 孤儿，可删）；`cds-nm-*` 依赖卷纳入 dangling 回收 |
-| P2 | 无全局 prune 互斥 | janitor 内部是串行 for，但与人工/其他路径无锁——人工恢复时即撞上 `a prune operation is already running` | 全局 prune 锁（同一时刻只允许一个回收操作） |
-| P2 | 关键容器无保护标记 | janitor 自身**安全**（不跑 `container prune` / `volume prune`），但 `cds-infra-cds-state-mongo` 停止后被人工 `docker container prune` 连带删除 | 给关键容器/卷打 `cds.protected=true`，并在运维手册明确「禁止裸跑 container/volume prune」 |
-| P2 | 中断派发不自动补发 | 机制已存在但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关闭 | 与 `doc/debt.cds.selfupdate-prebuilt.md` 开放债务 #1 合并偿还，评估默认开启 |
+| P | 债务 | 现状（代码事实） | 偿还方向 | 状态 |
+|---|---|---|---|---|
+| P0 | **janitor 清不掉 CDS 自己造的镜像**——磁盘打满的真正引擎 | `defaultDockerPrune` 只跑 `image prune -f`（**仅悬空**）+ `builder prune --keep-storage 10GB`。而 CDS 按 `sha-<40hex>` 给每个部署版本打 tag，台账里有 **414 条 deployment version**；这些镜像**有 tag 故永不悬空**，janitor 每小时跑一次也一个都清不掉 → 宿主 5099 个镜像 / containerd 159GB | 按 CDS **自己的版本台账**做保留策略：每个 profile 保留最近 N 版（建议 3–5）+ 当前运行版，超出者显式 `docker rmi`。不能靠 docker 的悬空判定，也不能用 `image prune -af`（会连回滚镜像一起清） | **已偿还**（2026-07-27）：`image-retention.ts` 按台账保留最近 N 代 + 在用镜像回收其余；生产实测 deferred 4598 → 0，磁盘回到 37% |
+| P0 | 磁盘只告警不刹车 | `sweep()` 里 `usedPercent >= diskWarnPercent(80)` 只 `console.warn`，无任何升级动作 | 三档阈值：75% 提示 / 85% 主动回收（升级保留策略、清依赖卷）/ 90% **暂停新分支构建与部署派发**，并写站内告警而非只打 console | **已偿还**（2026-07-27）：`disk-guard.ts` 四档（ok/notice/reclaim/freeze），freeze 拒绝构建部署派发，回收强度随档位上调 |
+| P1 | 组件未变更却回落宿主源码构建（本次的临门一脚） | CI 因组件代码未变而跳过镜像构建是**正确**的；错在 CDS 把「按 SHA 拉镜像扑空」一律当成「需要在宿主全量重编」 | 拉取失败时先复用「该组件最近一次有镜像的版本 / 当前正在跑的镜像」，只有组件代码确实变更且镜像缺失才允许宿主源码构建；宿主源码构建串行化 + 并发闸，禁止三个重编同时打满 | **已偿还**（2026-07-28）：`prebuilt-reuse.ts` —— 拉不到镜像时先按 git diff 判该组件子树有无变更，无变更复用上一版镜像，判不出来才重编 |
+| P1 | 容器日志无上限 | 全仓 `docker run` 参数中**没有任何** `--log-opt max-size/max-file` | 所有托管容器统一加 `--log-opt max-size=50m --log-opt max-file=3`（`/var/lib/docker/containers` 现已 3.5GB） | **已偿还**：托管容器统一 `--log-opt max-size=50m --log-opt max-file=3`；2026-07-28 补上 bootstrap 建的 CDS 状态库 mongo（全仓最后一个漏网） |
+| P1 | （#5 本体）master 把自用 mongo 当强依赖 | mongo 死亡 → state persist 失败 → master 反复启动失败（restart counter 58），35 分钟无自愈 | state persist 失败降级为「内存态 + json fallback + 告警」而非放任 master 死亡；关键前置检查磁盘余量，满盘时进只读保命模式 | **部分偿还**（2026-07-28）：`boot-retry.ts` 启动期退避重试（约 90s 忍耐窗口）+ 放弃前磁盘诊断直指真凶，systemd 重启风暴消除。**仍欠**：运行期 persist 失败的只读保命模式（写失败已不杀进程，但没有显式只读态与 UI 提示） |
+| P2 | janitor 看不见孤儿 worktree 与依赖卷 | sweep 只遍历 `stateService.getAllBranches()`；孤儿 infra 容器**只报不删**；`cds-nm-*` 依赖卷、319 个 dangling 卷完全不在清理范围。生产 55 个分支全部无 `executorId`，按 TTL 只有 3 个够格删——而宿主 `.cds-worktrees` 已 45.5GB | 增加「磁盘上的 worktree 目录 ↔ 台账分支」双向对账（目录无对应分支 = 孤儿，可删）；`cds-nm-*` 依赖卷纳入 dangling 回收 | **部分偿还**（2026-07-28）：`orphan-worktree.ts` 磁盘目录 ↔ 台账 worktreePath 双向对账，三重护栏（够老 / 无容器挂载 / 单轮上限）。**仍欠**：`cds-nm-*` 依赖卷纳入回收 |
+| P2 | 无全局 prune 互斥 | janitor 内部是串行 for，但与人工/其他路径无锁——人工恢复时即撞上 `a prune operation is already running` | 全局 prune 锁（同一时刻只允许一个回收操作） | **已偿还**（2026-07-28）：`reclaim-lock.ts` CDS 侧回收互斥，拿不到锁跳过本轮不排队。边界：管不到宿主上的人工 prune |
+| P2 | 关键容器无保护标记 | janitor 自身**安全**（不跑 `container prune` / `volume prune`），但 `cds-infra-cds-state-mongo` 停止后被人工 `docker container prune` 连带删除 | 给关键容器/卷打 `cds.protected=true`，并在运维手册明确「禁止裸跑 container/volume prune」 | **已偿还**（2026-07-28）：CDS 状态库 mongo + 全部 infra 打 `cds.protected=true`，孤儿收割器按标记豁免；安全清理命令见下方运维须知 |
+| P2 | 中断派发不自动补发 | 机制已存在但被 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关闭 | 与 `doc/debt.cds.selfupdate-prebuilt.md` 开放债务 #1 合并偿还，评估默认开启 | **已偿还**（2026-07-27，走事前避免而非事后补偿）：`deploy-drain.ts` 自更新重启前排空在途部署 + 排空期间关闭部署入口；刻意不打开 `CDS_DEPLOY_DISPATCH_RETRY_ENABLED`（那道闸是治重试风暴关的） |
+
+## 运维须知：安全的 Docker 清理命令（2026-07-28 补）
+
+事故当天 `cds-infra-cds-state-mongo` 停止后被人工 `docker container prune` 连带删除，
+CDS 状态库随之消失。关键容器现已打上 `cds.protected=true`，人工清理请一律带过滤：
+
+```bash
+# 清停止容器：排除受保护的（CDS 状态库、全部 infra）
+docker container prune --filter "label!=cds.protected=true"
+
+# 清卷：CDS 自己从不跑 volume prune，人工执行前务必确认没有受保护容器正在使用
+docker volume ls --filter "dangling=true"
+```
+
+裸跑 `docker container prune` / `docker volume prune` 一律禁止。
+CDS 侧的回收（悬空镜像 / per-SHA 镜像 / 孤儿 worktree）已有进程内互斥锁，
+但那把锁管不到宿主上的人——人工清理与 janitor 仍可能撞上 docker 的全局 prune 锁，
+撞到时等一分钟重试即可，不要强行反复执行。
 
 ## 相关
 

@@ -17,6 +17,7 @@ import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { withBootRetry, diagnoseDiskForBootFailure } from './services/boot-retry.js';
 import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
@@ -686,12 +687,28 @@ async function initStateService(): Promise<void> {
     const splitHandle = new RealMongoSplitHandle({ uri, databaseName: dbName });
     const splitStore = new MongoSplitStateBackingStore(splitHandle);
     try {
-      await splitStore.init();
+      // 退避重试（2026-07-27 宕机复盘 P1，事故本体）：mongo 起不来往往是暂时的
+      //（宿主正忙、容器正在重启、磁盘刚清出空间）。此前一次失败就 throw → 进程
+      // 退出 → systemd 重启 → 再抛，restart counter 一路到 58，35 分钟全站 502，
+      // 每次重启还要重跑一遍 boot，在一台已经着火的机器上继续浇油。
+      // 仍然不静默降级到 JSON —— 那会让 CDS 跑在过期状态上而真相在 mongo 里。
+      await withBootRetry(() => splitStore.init(), {
+        sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+        onAttemptFailed: (attempt, total, delayMs, err) => {
+          console.warn(
+            `  [storage] mongo-split init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+            + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+          );
+        },
+      });
     } catch (err) {
       const msg = (err as Error).message;
       console.error(
-        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败: ${msg}`,
+        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败（已重试至上限）: ${msg}`,
       );
+      // 指向真凶：满盘时明写出来，别让运维从数据库连接开始查（事故当天就是这样）
+      const diskHint = diagnoseDiskForBootFailure(defaultDiskUsage(config.repoRoot));
+      if (diskHint) console.error(`  [storage] ${diskHint}`);
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
     }
@@ -727,13 +744,23 @@ async function initStateService(): Promise<void> {
   const handle = new RealMongoHandle({ uri, databaseName: dbName });
   const mongoStore = new MongoStateBackingStore(handle);
   try {
-    await mongoStore.init();
+    await withBootRetry(() => mongoStore.init(), {
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [storage] mongo init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
   } catch (err) {
     const msg = (err as Error).message;
     console.error(
       `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
-      + `但 mongo init 失败: ${msg}`,
+      + `但 mongo init 失败（已重试至上限）: ${msg}`,
     );
+    const diskHint = diagnoseDiskForBootFailure(defaultDiskUsage(config.repoRoot));
+    if (diskHint) console.error(`  [storage] ${diskHint}`);
     console.error(
       `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
       + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
