@@ -246,7 +246,10 @@ for key in $MARKETPLACE_KEYS; do
   fi
   extract_dir="$TMP_DIR/x-$key"
   mkdir -p "$extract_dir"
-  unzip -qo "$zip_path" -d "$extract_dir"
+  if ! unzip -qo "$zip_path" -d "$extract_dir"; then
+    skipped="$skipped $key(解压失败)"
+    continue
+  fi
   for d in "$extract_dir"/*/; do
     [ -d "$d" ] || continue
     name=$(basename "$d")
@@ -270,13 +273,21 @@ cat > .cds/bootstrap.json <<JSON
 JSON
 
 # ── 6. 告诉用户下一步（不是「安装完成」四个字了事）──────────────────
+# 只要有必需包没装上就以非零码退出：半装的项目不能被当成装好了继续往下走，
+# 否则 CI / 一键脚本会静默带着残缺技能集跑下去。
 echo ""
+if [ -n "$skipped" ]; then
+  echo "[初始化] 安装未完成。技能目录: $SKILLS_DIR" >&2
+  [ -n "$installed" ] && echo "  已安装:$installed" >&2
+  echo "  未安装:$skipped" >&2
+  echo "" >&2
+  echo "  上面这些是本预设的必需包，缺了功能不完整。" >&2
+  echo "  检查网络（能否访问 $CDS_ORIGIN）后重新运行本脚本即可补齐，已装的会跳过重复下载之外的副作用。" >&2
+  exit 1
+fi
+
 say "安装完成。技能目录: $SKILLS_DIR"
 [ -n "$installed" ] && echo "  已安装:$installed"
-if [ -n "$skipped" ]; then
-  echo "  未安装:$skipped" >&2
-  echo "  上面这些没装上，功能会不完整。检查网络后重新运行本脚本即可补齐。" >&2
-fi
 echo ""
 echo "下一步: 在当前目录打开你的 AI 编程工具，输入"
 echo ""

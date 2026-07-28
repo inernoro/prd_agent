@@ -176,12 +176,18 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(accessIndex).toBeGreaterThan(stackIndex);
     expect(pendingIndex).toBeGreaterThan(accessIndex);
     expect(updateIndex).toBeGreaterThan(pendingIndex);
-    expect(styles).toMatch(/\.cds-global-action-stack\s*\{[\s\S]*?right:\s*1rem;[\s\S]*?bottom:\s*1rem;/);
+    // 2026-07-28：定位从两个坞各自贴角，收敛到唯一的 .cds-bottom-docks 底部带
+    // （它让开常驻 rail 并在窄视口折行）。右下角消息栈的成员与顺序契约不变。
+    expect(styles).toMatch(/\.cds-bottom-docks\s*\{[\s\S]*?right:\s*1rem;[\s\S]*?bottom:\s*1rem;/);
     expect(shellSource).toContain("data-nav-open={navOpen ? 'true' : 'false'}");
-    expect(styles).toContain(".cds-app-shell[data-nav-open='true'] .cds-global-action-stack");
+    expect(styles).toContain(".cds-app-shell[data-nav-open='true'] .cds-bottom-docks");
     expect(updateSource).not.toContain('fixed bottom-4 left-4');
     expect(pendingImportSource).not.toContain('fixed bottom-4 right-4');
-    expect(commitInboxSource).toContain('fixed bottom-4 left-4');
+    // 曾经断言 CommitInbox **必须**自己 `fixed bottom-4 left-4` —— 那正是用户
+    // 2026-07-28 反馈的遮挡：它压在 72px 宽 rail 的导航图标上。现在改由
+    // AppShell 把它放进 .cds-bottom-left-dock，组件自身不许再定位。
+    expect(commitInboxSource).not.toMatch(/className[^\n]*fixed bottom-4 left-4/);
+    expect(shellSource).toMatch(/cds-bottom-left-dock[\s\S]{0,200}<CommitInbox \/>/);
     expect(commitInboxSource).not.toContain('updateBadgeVisible');
   });
 

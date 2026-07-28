@@ -834,6 +834,20 @@ def _severity_class(severity):
     return ""
 
 
+def _plain_cell_text(value):
+    """把表格单元格里的 markdown 标记压成纯文本。
+
+    重点卡直接把整行单元格拼给读者，若保留 `[图05](#fig-05-defect)` 这类原始语法，
+    卡片上就会出现一串未渲染的方括号和井号，观感等同于半成品。锚点由调用方
+    在压平之前从原始行里取，这里只负责显示层。
+    """
+    text = re.sub(r"!\[([^\]]*)\]\([^)]*\)", r"\1", value or "")
+    text = re.sub(r"\[([^\]]+)\]\([^)]*\)", r"\1", text)
+    text = re.sub(r"\*\*([^*]+)\*\*", r"\1", text)
+    text = text.replace("`", "")
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def _collect_problem_items(markdown, manifest):
     items = []
     seen = set()
@@ -910,8 +924,14 @@ def _collect_problem_items(markdown, manifest):
         symptom = cells[symptom_index].strip() if 0 <= symptom_index < len(cells) else ""
         page = cells[page_index].strip() if 0 <= page_index < len(cells) else ""
         title_parts = [part for part in (defect_id, symptom or page or "缺陷") if part]
-        row_text = "；".join(cell for cell in cells if cell)
-        anchor_m = re.search(r"#(fig-[a-z0-9-]+)", row_text, re.I)
+        anchor_m = re.search(r"#(fig-[a-z0-9-]+)", "；".join(cells), re.I)
+        # 标题已经带上编号和现象，明细里再重复一遍只是噪声；同时压平 markdown 语法。
+        skip = {defect_id.strip(), severity.strip(), (symptom or "").strip()}
+        row_text = "；".join(
+            _plain_cell_text(cell)
+            for cell in cells
+            if cell.strip() and cell.strip() not in skip and _plain_cell_text(cell)
+        )
         add(
             severity.upper(),
             " · ".join(title_parts),
@@ -928,7 +948,6 @@ def _collect_problem_items(markdown, manifest):
     gap_id_index = column_index(gap_headers, r"^(?:id|编号|缺口|缺口编号)$")
     gap_title_index = column_index(gap_headers, r"未覆盖|缺口|内容|事项|项目")
     for cells in gap_rows:
-        row_text = "；".join(cell for cell in cells if cell)
         gap_id = cells[gap_id_index].strip() if 0 <= gap_id_index < len(cells) else ""
         if not re.fullmatch(r"(?:G\d+|GAP[-_ ]?\d+)", gap_id, re.I):
             gap_id = next(
@@ -945,6 +964,11 @@ def _collect_problem_items(markdown, manifest):
             cells[gap_title_index].strip()
             if 0 <= gap_title_index < len(cells) and cells[gap_title_index].strip() != gap_id
             else next((cell.strip() for cell in cells if cell.strip() and cell.strip() != gap_id), "未覆盖项")
+        )
+        row_text = "；".join(
+            _plain_cell_text(cell)
+            for cell in cells
+            if cell.strip() and cell.strip() not in {gap_id, gap_title} and _plain_cell_text(cell)
         )
         add("P3", f"{gap_id} · {gap_title}", row_text, badge=gap_id)
 
@@ -1124,8 +1148,16 @@ def _decorate_problem_figures(body_html, problem_anchors):
     return body_html
 
 
-def _decorate_figure_backlinks(body_html, manifest):
-    """Append one return-to-gallery control after every manifest image."""
+def _wrap_body_figures(body_html, manifest, figure_srcs=None):
+    """把正文里的「锚点 + 图片段落」升级成档案图版（figure）。
+
+    旧版正文只有裸 `<p><img></p>`：没有图号、没有图注、失败标签靠
+    `.figure-problem-banner + p::before` 取 `attr(data-label)`，而属性写在 banner 上、
+    伪元素挂在段落上，渲染出来是一个没有文字的色块。这里改成显式结构：
+    图注（图号 + 说明 + 状态标签 + 放大入口）在上，图版在下，底部给返回证据列表入口。
+    放大入口本身是指向图片地址的普通链接，禁用 JS 时仍可直接打开原图。
+    """
+    figure_srcs = dict(figure_srcs or {})
     for shot in manifest or []:
         key = _figure_key(shot.get("name"))
         anchor = _figure_anchor(key)
@@ -1135,22 +1167,58 @@ def _decorate_figure_backlinks(body_html, manifest):
         marker_at = body_html.find(marker)
         if marker_at < 0:
             continue
-        next_anchor = body_html.find('<span id="fig-', marker_at + len(marker))
+        cursor = marker_at + len(marker)
+        banner = ""
+        banner_match = re.match(
+            r'\s*<div class="figure-problem-banner[^>]*>.*?</div>',
+            body_html[cursor:],
+            re.S,
+        )
+        if banner_match:
+            banner = banner_match.group(0).strip()
+            cursor += banner_match.end()
+        next_anchor = body_html.find('<span id="fig-', cursor)
         search_end = next_anchor if next_anchor >= 0 else len(body_html)
-        image_at = body_html.find("<img ", marker_at + len(marker), search_end)
+        image_at = body_html.find("<img ", cursor, search_end)
         if image_at < 0:
             continue
-        paragraph_end = body_html.find("</p>", image_at, search_end)
-        if paragraph_end < 0:
+        para_start = body_html.rfind("<p>", cursor, image_at)
+        if para_start < 0:
             continue
-        insert_at = paragraph_end + len("</p>")
+        para_end = body_html.find("</p>", image_at, search_end)
+        if para_end < 0:
+            continue
+        para_end += len("</p>")
+        plate = body_html[para_start + len("<p>"):para_end - len("</p>")]
         num = (_figure_number(shot.get("name")) or key).upper()
-        backlink = (
-            f'<a class="figure-back-link" data-return-evidence="true" '
-            f'href="#evidence-gallery" aria-label="图{html.escape(num)}返回证据列表">'
-            f'返回证据列表</a>'
+        caption = html.escape(shot.get("caption") or shot.get("name") or f"图{num}")
+        src = html.escape(figure_srcs.get(anchor, ""), quote=True)
+        status = ""
+        if 'is-fail' in banner:
+            status = "fail"
+        elif 'is-risk' in banner:
+            status = "risk"
+        zoom = (
+            f'<a class="shot-zoom" href="{src}" target="_blank" rel="noopener noreferrer" '
+            f'data-lb-open="{html.escape(anchor, quote=True)}">放大查看</a>'
+            if src else ""
         )
-        body_html = body_html[:insert_at] + backlink + body_html[insert_at:]
+        figure_class = f"shot is-{status}" if status else "shot"
+        figure_html = (
+            f'<figure class="{figure_class}" data-lb-src="{src}" '
+            f'data-lb-no="图{html.escape(num, quote=True)}" data-lb-cap="{caption}">'
+            f'<figcaption class="shot-head">'
+            f'<span class="shot-no">图 {html.escape(num)}</span>'
+            f'<span class="shot-cap">{caption}</span>'
+            f'{banner}{zoom}</figcaption>'
+            f'<div class="shot-frame">{plate}</div>'
+            f'<div class="shot-foot">'
+            f'<a class="figure-back-link" data-return-evidence="true" '
+            f'href="#evidence-gallery" aria-label="图{html.escape(num, quote=True)}返回证据列表">'
+            f'返回证据列表</a></div>'
+            f'</figure>'
+        )
+        body_html = body_html[:marker_at] + marker + figure_html + body_html[para_end:]
     return body_html
 
 
@@ -1176,16 +1244,19 @@ def build_interactive_html(
             "cn": "MAP 验收档案", "en": "ACCEPTANCE DOSSIER",
             "accent": "#0f766e", "accent_soft": "rgba(15,118,110,0.08)",
             "byline": "验收智能体 · 自动编档",
+            "section_label": "档案",
         },
         "daily": {
             "cn": "每日巡检特刊", "en": "DAILY PATROL EDITION",
             "accent": "#3b5f8a", "accent_soft": "rgba(59,95,138,0.08)",
             "byline": "每日全量巡检 · 自动编档",
+            "section_label": "巡检",
         },
     }
     fl = _FLAVORS.get(flavor) or _FLAVORS["acceptance"]
     flavor_cn, flavor_en = fl["cn"], fl["en"]
     accent, accent_soft, byline = fl["accent"], fl["accent_soft"], fl["byline"]
+    section_label = fl["section_label"]
     report_version = (report_version or "v0.9").strip()
     if not re.fullmatch(r"v\d+\.\d+", report_version):
         raise RuntimeError(f"报告版本号格式非法：{report_version!r}，应为 v<主版本>.<次版本>")
@@ -1200,7 +1271,7 @@ def build_interactive_html(
         if it.get("anchor")
     }
     body_html = _decorate_problem_figures(markdown_to_html(markdown_content), problem_anchors)
-    body_html = _decorate_figure_backlinks(body_html, manifest)
+    body_html = _wrap_body_figures(body_html, manifest, figure_srcs)
     section_navigation = _collect_section_navigation(markdown_content, problem_items)
     verdict_cn, verdict_class = {
         "pass": ("通过", "pass"),
@@ -1212,7 +1283,7 @@ def build_interactive_html(
     row_gap_count = _coverage_gap_count(markdown_content)
     report_time = _extract_report_time(markdown_content)
     report_time_html = (
-        f'<time>报告时间 · {html.escape(report_time)}</time>' if report_time else ""
+        f'<time class="dl-item">报告时间 · {html.escape(report_time)}</time>' if report_time else ""
     )
     table_count = len(re.findall(r"^\|.+\|$", markdown_content, re.M))
     figures = []
@@ -1270,16 +1341,19 @@ def build_interactive_html(
             f'<span><small>{index:02d}</small>{html.escape(section["title"])}</span>{marker}</a>'
         )
     directory_html = "".join(directory_items) or '<p class="section-nav-empty">正文没有二级目录</p>'
+    # 指标条按语义上色：0 个阻断项是好消息（绿），有阻断项必须红，缺口用墨色弱化。
     summary_cards = [
-        ("证据图", str(len(manifest)), "可点击跳转"),
-        ("P0 定位项", str(row_fail_count), "阻断证据"),
-        ("P1-P2 风险", str(row_risk_count), "风险定位"),
-        ("缺口", str(row_gap_count), "未覆盖与弱相关"),
-        ("表格行", str(table_count), "原始审计数据"),
+        ("证据图", str(len(manifest)), "可点击跳转", "accent" if manifest else "gap"),
+        ("P0 定位项", str(row_fail_count), "阻断证据", "fail" if row_fail_count else "pass"),
+        ("P1-P2 风险", str(row_risk_count), "风险定位", "risk" if row_risk_count else "pass"),
+        ("缺口", str(row_gap_count), "未覆盖与弱相关", "gap" if row_gap_count else "pass"),
+        ("表格行", str(table_count), "原始审计数据", ""),
     ]
     summary_html = "".join(
-        f'<div class="metric"><span>{html.escape(label)}</span><strong>{html.escape(value)}</strong><small>{html.escape(note)}</small></div>'
-        for label, value, note in summary_cards
+        f'<div class="metric{(" is-" + tone) if tone else ""}">'
+        f'<span>{html.escape(label)}</span><strong>{html.escape(value)}</strong>'
+        f'<small>{html.escape(note)}</small></div>'
+        for label, value, note, tone in summary_cards
     )
     problem_html = ""
     if problem_items or verdict in {"conditional", "fail"}:
@@ -1289,7 +1363,7 @@ def build_interactive_html(
                 sev = html.escape(item.get("badge") or item.get("severity") or "")
                 cls = _severity_class(item.get("severity") or "") or "gap"
                 title_text = html.escape(item.get("title") or "未通过项")
-                detail = html.escape(item.get("detail") or "")
+                detail = html.escape(item.get("detail") or "明细见正文对应表格")
                 if item.get("anchor"):
                     href = f' href="#{html.escape(item["anchor"], quote=True)}"'
                     link_label = "查看证据图"
@@ -1329,6 +1403,12 @@ def build_interactive_html(
             f'<div class="problem-grid">{cards_html}</div>'
             f'</section>'
         )
+    evidence_count = len(manifest or [])
+    gallery_html = "".join(gallery_cards) or (
+        '<p class="empty-note">本报告未附截图证据。验收标准 v2 要求真人路径取证，'
+        '出现这种形态说明取证环节被跳过，结论不可直接采信。</p>'
+    )
+    nav_html = "".join(figures) or '<p class="nav-empty">未附截图证据</p>'
     result = f"""<!doctype html>
 <!-- map-acceptance-template: interactive-html-v2 -->
 <html lang="zh-CN" data-template="map-acceptance-interactive-html-v2" data-skin="miduo-press-dossier">
@@ -1349,16 +1429,22 @@ def build_interactive_html(
 --sans:-apple-system,"PingFang SC","HarmonyOS Sans SC","Microsoft YaHei","Helvetica Neue",sans-serif;
 --mono:"SF Mono","JetBrains Mono",Consolas,monospace}}
 *{{box-sizing:border-box}}
-body{{margin:0;background:var(--paper);color:var(--ink);font:14.5px/1.75 var(--sans);-webkit-font-smoothing:antialiased;
+body{{margin:0;background:var(--paper);color:var(--ink);font:15px/1.78 var(--sans);-webkit-font-smoothing:antialiased;
 background-image:radial-gradient(ellipse 80% 40% at 50% -6%,{accent_soft},transparent),repeating-linear-gradient(0deg,rgba(33,29,24,.016) 0 1px,transparent 1px 3px)}}
-.layout{{display:grid;grid-template-columns:minmax(240px,300px) minmax(0,1fr);min-height:100vh}}
+.layout{{display:grid;grid-template-columns:minmax(232px,288px) minmax(0,1fr);min-height:100vh}}
 aside{{position:sticky;top:0;height:100vh;overflow:auto;border-right:2px solid var(--ink);background:var(--side);color:var(--side-text);padding:18px}}
-.side-mast{{display:flex;align-items:center;gap:10px;padding-bottom:12px;margin-bottom:14px;border-bottom:1px solid var(--side-line)}}
+.side-mast{{display:flex;align-items:center;gap:10px;padding-bottom:12px;margin-bottom:12px;border-bottom:1px solid var(--side-line)}}
 .side-mast .side-stamp{{width:34px;height:34px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:12px;box-shadow:2px 2px 0 rgba(0,0,0,.5)}}
 .side-mast b{{font-family:var(--serif);font-size:14.5px;font-weight:700;display:block;letter-spacing:.02em;color:var(--side-text)}}
 .edition-version{{display:inline-block;margin-left:6px;padding:1px 5px;border:1px solid currentColor;border-radius:2px;font-family:var(--mono);font-size:9px;font-weight:700;vertical-align:2px;letter-spacing:.04em}}
 aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .side-mast i{{font-style:normal;font-family:var(--mono);font-size:8.5px;letter-spacing:.22em;color:var(--side-muted);display:block;margin-top:2px}}
+.side-verdict{{display:flex;align-items:baseline;gap:8px;margin:0 0 12px;padding:8px 10px;border:1px solid var(--side-line);border-left:4px solid var(--side-muted);border-radius:2px;background:rgba(255,255,255,.04)}}
+.side-verdict b{{font-family:var(--serif);font-size:14px;color:#fff}}
+.side-verdict small{{font-family:var(--mono);font-size:9px;letter-spacing:.16em;color:var(--side-muted)}}
+.side-verdict.is-pass{{border-left-color:#4fb477}}
+.side-verdict.is-conditional{{border-left-color:#d5a03f}}
+.side-verdict.is-fail{{border-left-color:#e0604c}}
 .nav-title{{font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--side-muted);margin:0 0 10px}}
 .side-tabs{{display:grid;grid-template-columns:1fr 1fr;gap:4px;margin:0 0 12px;padding:3px;border:1px solid var(--side-line);border-radius:3px;background:rgba(0,0,0,.22)}}
 .side-tab{{min-width:0;border:0;background:transparent;color:var(--side-muted);padding:8px 6px;text-align:left;box-shadow:none}}
@@ -1369,11 +1455,13 @@ aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .side-drawer-toggle{{display:none}}
 .side-panel{{display:none}}
 .side-panel.active{{display:block}}
+.nav-empty{{color:var(--side-muted);font-size:12px}}
 .evidence-nav{{display:flex;flex-direction:column;gap:8px;margin-bottom:18px}}
-.evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:var(--side-text);border:1px solid var(--side-line);background:rgba(255,255,255,.03);border-radius:3px;padding:7px;min-height:64px}}
+.evidence-nav a{{display:grid;grid-template-columns:76px minmax(0,1fr);gap:9px;align-items:start;text-decoration:none;color:var(--side-text);border:1px solid var(--side-line);background:rgba(255,255,255,.03);border-radius:3px;padding:7px;min-height:64px;transition:border-color .15s ease,background .15s ease}}
 .evidence-nav a.is-fail{{border:2px solid #e0604c;background:rgba(180,35,24,.20);box-shadow:0 0 0 1px rgba(224,96,76,.25)}}
 .evidence-nav a.is-risk{{border-color:#d5a03f;background:rgba(154,103,0,.16)}}
-.evidence-nav a:hover{{border-color:rgba(243,234,217,.55)}}
+.evidence-nav a:hover{{border-color:rgba(243,234,217,.55);background:rgba(255,255,255,.08)}}
+.evidence-nav a.is-current{{border-color:var(--accent);background:rgba(255,255,255,.10)}}
 .evidence-nav .nav-thumb{{width:76px;aspect-ratio:16/9;object-fit:cover;border:1px solid var(--side-line);border-radius:2px;background:rgba(0,0,0,.35)}}
 .nav-copy{{min-width:0}}
 .evidence-nav span{{display:block;font-family:var(--mono);font-size:11px;font-weight:700;margin:0 0 3px;color:#fff}}
@@ -1381,6 +1469,7 @@ aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .section-nav{{display:flex;flex-direction:column;gap:5px;margin-bottom:18px}}
 .section-nav-item{{display:flex;gap:8px;align-items:flex-start;justify-content:space-between;text-decoration:none;color:var(--side-text);border:1px solid transparent;border-left:3px solid var(--side-line);border-radius:2px;padding:8px;background:rgba(255,255,255,.025)}}
 .section-nav-item:hover{{border-color:rgba(243,234,217,.45)}}
+.section-nav-item.is-current{{border-left-color:var(--accent);background:rgba(255,255,255,.10)}}
 .section-nav-item.is-fail{{border:2px solid #e0604c;background:rgba(180,35,24,.20)}}
 .section-nav-item.is-risk{{border-color:#d5a03f;border-left-width:4px;background:rgba(154,103,0,.18)}}
 .section-nav-item.is-gap{{border-color:rgba(243,234,217,.28);border-left-width:4px;background:rgba(255,255,255,.06)}}
@@ -1390,86 +1479,105 @@ aside p{{color:var(--side-muted);margin:0;font-size:12.5px}}
 .section-nav-badge.risk{{background:var(--warn)}}
 .section-nav-badge.gap{{background:rgba(243,234,217,.30);color:var(--side-text)}}
 .section-nav-empty{{color:var(--side-muted);font-size:12px}}
-main{{min-width:0;width:100%;max-width:none;padding:0 34px 72px}}
-.hero{{padding:24px 0 0}}
+main{{min-width:0;width:100%;max-width:1520px;margin:0 auto;padding:0 clamp(18px,3vw,40px) 0}}
+.hero{{padding:26px 0 0}}
 .masthead{{display:flex;align-items:center;gap:14px;padding-bottom:12px;border-bottom:3px solid var(--ink);position:relative}}
 .masthead::after{{content:"";position:absolute;left:0;right:0;bottom:-6px;height:1px;background:var(--ink)}}
-.masthead .stamp{{width:40px;height:40px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:13px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
-.masthead .t b{{font-family:var(--serif);font-size:20px;font-weight:700;display:block;letter-spacing:.02em}}
+.masthead .stamp{{width:44px;height:44px;flex-shrink:0;background:var(--accent);color:#fff7ee;border-radius:3px;display:grid;place-items:center;font-family:var(--serif);font-weight:700;font-size:14px;box-shadow:3px 3px 0 rgba(33,29,24,.82)}}
+.masthead .t b{{font-family:var(--serif);font-size:clamp(19px,2.2vw,24px);font-weight:700;display:block;letter-spacing:.02em}}
 .masthead .t span{{font-family:var(--mono);font-size:9.5px;color:var(--ink-3);letter-spacing:.3em}}
 .masthead .r{{margin-left:auto;text-align:right;font-family:var(--mono);font-size:10px;color:var(--ink-3);letter-spacing:.12em;line-height:1.8}}
-.masthead .r span,.masthead .r time{{display:block}}
-.masthead .r time{{font-style:normal;color:var(--ink-2);font-weight:600}}
-.title-row{{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;margin:20px 0 4px}}
-.title{{margin:0;font-family:var(--serif);font-size:clamp(21px,3vw,29px);line-height:1.45;font-weight:650;flex:1;min-width:min(100%,300px);text-wrap:balance}}
-.badge{{flex-shrink:0;align-self:flex-start;display:inline-block;padding:9px 16px;border:2.5px solid currentColor;border-radius:4px;background:var(--paper-2);color:var(--ink-3);font-family:var(--serif);font-weight:700;font-size:15px;letter-spacing:.18em;transform:rotate(-4deg);box-shadow:2px 2px 0 rgba(33,29,24,.18);position:relative;margin-top:4px}}
+.masthead .r span{{display:block}}
+.dateline{{display:flex;flex-wrap:wrap;align-items:center;gap:0 18px;margin:14px 0 0;padding:7px 0;border-bottom:1px solid var(--line-2);font-family:var(--mono);font-size:10.5px;letter-spacing:.1em;color:var(--ink-3)}}
+.dl-item{{font-style:normal;white-space:nowrap}}
+.dateline time{{color:var(--ink-2);font-weight:600}}
+.dl-verdict{{margin-left:auto;padding:2px 8px;border:1px solid currentColor;border-radius:2px;font-weight:700;letter-spacing:.12em}}
+.dl-verdict.pass{{color:var(--pass)}}.dl-verdict.conditional{{color:var(--warn)}}.dl-verdict.fail{{color:var(--fail)}}
+.title-row{{display:flex;align-items:flex-start;gap:20px;flex-wrap:wrap;margin:22px 0 4px}}
+.title{{margin:0;font-family:var(--serif);font-size:clamp(23px,3.1vw,33px);line-height:1.4;font-weight:650;flex:1;min-width:min(100%,300px);text-wrap:balance}}
+.badge{{flex-shrink:0;align-self:flex-start;display:inline-flex;flex-direction:column;align-items:center;gap:2px;padding:10px 18px;border:2.5px solid currentColor;border-radius:4px;background:var(--paper-2);color:var(--ink-3);font-family:var(--serif);font-weight:700;font-size:17px;letter-spacing:.18em;transform:rotate(-4deg);box-shadow:3px 3px 0 rgba(33,29,24,.16);position:relative;margin-top:6px}}
 .badge::after{{content:"";position:absolute;inset:3px;border:1px solid currentColor;border-radius:2px;opacity:.55}}
+.badge i{{font-style:normal;font-family:var(--mono);font-size:8px;letter-spacing:.3em;opacity:.75;font-weight:700}}
 .badge.pass{{color:var(--pass)}}.badge.conditional{{color:var(--warn)}}.badge.fail{{color:var(--fail)}}
-.metric-grid{{display:flex;flex-wrap:wrap;margin:20px 0 0;border:1px solid var(--line);border-radius:3px;background:rgba(255,253,248,.6);overflow:hidden}}
-.metric{{flex:1 1 110px;padding:12px 8px;text-align:center;border-right:1px solid var(--line)}}
+.metric-grid{{display:flex;flex-wrap:wrap;margin:22px 0 0;border:1.5px solid var(--ink);border-radius:3px;background:var(--paper-2);overflow:hidden;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
+.metric{{flex:1 1 118px;padding:13px 8px 12px;text-align:center;border-right:1px solid var(--line);position:relative}}
 .metric:last-child{{border-right:none}}
 .metric span{{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.08em;color:var(--ink-3)}}
-.metric strong{{display:block;font-family:var(--serif);font-size:24px;line-height:1.15;margin:4px 0;color:var(--ink)}}
+.metric strong{{display:block;font-family:var(--serif);font-size:30px;line-height:1.1;margin:5px 0 3px;color:var(--ink)}}
 .metric small{{display:block;font-size:10.5px;color:var(--ink-3)}}
-.failure-focus{{margin:22px 0 18px;border:1.5px solid var(--fail);border-radius:3px;background:var(--paper-2);box-shadow:5px 5px 0 rgba(180,35,24,.12);padding:16px 18px}}
-.failure-focus.is-conditional{{border-color:var(--warn);background:rgba(154,103,0,.045);box-shadow:5px 5px 0 rgba(154,103,0,.16)}}
+.metric.is-accent strong{{color:var(--accent)}}
+.metric.is-pass strong{{color:var(--pass)}}
+.metric.is-risk strong{{color:var(--warn)}}
+.metric.is-fail strong{{color:var(--fail)}}
+.metric.is-fail::before,.metric.is-risk::before{{content:"";position:absolute;left:0;right:0;top:0;height:3px;background:var(--fail)}}
+.metric.is-risk::before{{background:var(--warn)}}
+.failure-focus{{margin:24px 0 18px;border:1.5px solid var(--fail);border-radius:3px;background:var(--paper-2);box-shadow:6px 6px 0 rgba(180,35,24,.14);padding:16px 18px}}
+.failure-focus.is-conditional{{border-color:var(--warn);background:rgba(154,103,0,.045);box-shadow:6px 6px 0 rgba(154,103,0,.16)}}
 .focus-kicker{{font-family:var(--mono);font-size:10.5px;letter-spacing:.22em;color:var(--fail);font-weight:600}}
 .failure-focus.is-conditional .focus-kicker{{color:var(--warn)}}
-.failure-focus h2{{margin:6px 0 12px;padding:0;border:none;font-family:var(--serif);font-size:20px;color:var(--ink)}}
-.problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:12px}}
-.problem-card{{position:relative;border:1px solid var(--line-2);border-left:5px solid var(--ink-3);border-radius:3px;background:var(--paper-2);padding:12px}}
+.failure-focus h2{{margin:6px 0 12px;padding:0;border:none;font-family:var(--serif);font-size:21px;color:var(--ink)}}
+.problem-grid{{display:grid;grid-template-columns:repeat(auto-fit,minmax(268px,1fr));gap:12px}}
+.problem-card{{position:relative;border:1px solid var(--line-2);border-left:5px solid var(--ink-3);border-radius:3px;background:var(--paper-2);padding:12px 13px;box-shadow:2px 2px 0 rgba(33,29,24,.07)}}
 .problem-card.is-fail{{border-left-color:var(--fail);background:rgba(180,35,24,.05)}}
 .problem-card.is-risk{{border-left-color:var(--warn);background:rgba(154,103,0,.06)}}
 .problem-card.is-gap{{border-left-color:var(--ink-3);background:rgba(33,29,24,.04)}}
-.problem-card strong{{display:block;font-size:14px;line-height:1.5;color:var(--ink)}}
-.problem-card strong span{{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:2px;background:var(--fail);color:#fff7ee;font-family:var(--mono);font-size:11px;font-weight:700}}
+.problem-card strong{{display:block;font-size:14.5px;line-height:1.5;color:var(--ink)}}
+.problem-card strong span{{display:inline-block;margin-right:7px;padding:2px 7px;border-radius:2px;background:var(--fail);color:#fff7ee;font-family:var(--mono);font-size:11px;font-weight:700;box-shadow:2px 2px 0 rgba(33,29,24,.22)}}
 .problem-card.is-risk strong span{{background:var(--warn)}}
 .problem-card.is-gap strong span{{background:var(--ink-3)}}
-.problem-card p{{border:0;box-shadow:none;background:transparent;margin:7px 0 8px;padding:0;color:var(--ink-2);font-size:13px;line-height:1.55}}
-.problem-card a{{font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none}}
+.problem-card p{{border:0;box-shadow:none;background:transparent;margin:8px 0 9px;padding:0;color:var(--ink-2);font-size:13px;line-height:1.6;max-width:none}}
+.problem-card a{{font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none;border-bottom:1px solid currentColor;padding-bottom:1px}}
 .method-note{{margin:14px 0 0;border:1px solid var(--line-2);border-left:4px solid var(--accent);border-radius:3px;background:var(--accent-soft);color:var(--ink-2);padding:10px 12px;font-size:13px;line-height:1.6}}
 .method-note strong{{color:var(--ink)}}
 .method-note a{{font-weight:700;text-decoration:none}}
 .method-note span{{color:var(--ink-3)}}
-.toolbar{{background:var(--paper-2);border:1px solid var(--line-2);border-radius:3px;padding:10px;margin:18px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:3px 3px 0 rgba(33,29,24,.08)}}
-.toolbar input{{min-width:220px;flex:1;border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink)}}
+.toolbar{{position:sticky;top:0;z-index:14;background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;padding:9px 10px;margin:20px 0;display:flex;gap:8px;flex-wrap:wrap;align-items:center;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
+.toolbar input{{min-width:200px;flex:1;border:1px solid var(--line-2);border-radius:2px;padding:8px 10px;font:inherit;background:#fff;color:var(--ink)}}
+.filter-count{{font-family:var(--mono);font-size:10.5px;color:var(--ink-3);letter-spacing:.06em;margin-left:auto;white-space:nowrap}}
 button{{border:1px solid var(--ink);background:var(--paper-2);border-radius:2px;padding:7px 12px;font-family:var(--mono);font-size:12px;color:var(--ink-2);cursor:pointer;transition:background .16s ease,border-color .16s ease,color .16s ease}}
 button:hover{{background:var(--ink);color:var(--paper)}}
 button.active{{background:var(--accent);border-color:var(--accent);color:#fff7ee;font-weight:700}}
 button:focus-visible,input:focus-visible,a:focus-visible{{outline:2px solid var(--accent);outline-offset:2px}}
-.gallery-title{{font-family:var(--serif);font-size:18px;font-weight:700;margin:26px 0 0;padding-bottom:10px;border-bottom:2px solid var(--ink)}}
-#evidence-gallery{{scroll-margin-top:24px}}
-.evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:14px;margin:16px 0 22px}}
-.evidence-card{{position:relative;display:block;text-decoration:none;color:var(--ink);background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;overflow:hidden;box-shadow:4px 4px 0 rgba(33,29,24,.10);transition:transform .15s ease,box-shadow .15s ease}}
-.evidence-card:hover{{transform:translate(-1px,-1px);box-shadow:5px 5px 0 rgba(33,29,24,.16)}}
-.evidence-card.is-fail{{border-color:var(--fail);box-shadow:4px 4px 0 rgba(180,35,24,.28)}}
-.evidence-card.is-risk{{border-color:var(--warn);box-shadow:4px 4px 0 rgba(154,103,0,.22)}}
-.evidence-card img,.thumb-placeholder{{width:100%;aspect-ratio:16/9;object-fit:cover;border:0;border-radius:0;border-bottom:1.5px solid var(--ink);background:rgba(33,29,24,.05)}}
+.gallery-head{{margin:26px 0 0;padding-bottom:10px;border-bottom:2px solid var(--ink);display:flex;align-items:baseline;gap:12px;flex-wrap:wrap}}
+.gallery-kicker{{display:block;font-family:var(--mono);font-size:10px;letter-spacing:.24em;color:var(--accent);font-weight:600;width:100%}}
+.gallery-title{{font-family:var(--serif);font-size:19px;font-weight:700;margin:0}}
+.gallery-hint{{font-size:12px;color:var(--ink-3);margin-left:auto}}
+#evidence-gallery{{scroll-margin-top:82px}}
+.evidence-gallery{{display:grid;grid-template-columns:repeat(auto-fill,minmax(248px,1fr));gap:16px;margin:18px 0 24px}}
+.evidence-card{{position:relative;display:block;text-decoration:none;color:var(--ink);background:var(--paper-2);border:1.5px solid var(--ink);border-radius:3px;overflow:hidden;box-shadow:5px 5px 0 rgba(33,29,24,.12);transition:transform .15s ease,box-shadow .15s ease}}
+.evidence-card:hover{{transform:translate(-2px,-2px);box-shadow:7px 7px 0 rgba(33,29,24,.18)}}
+.evidence-card.is-hidden{{display:none}}
+.evidence-card.is-fail{{border-color:var(--fail);box-shadow:5px 5px 0 rgba(180,35,24,.28)}}
+.evidence-card.is-risk{{border-color:var(--warn);box-shadow:5px 5px 0 rgba(154,103,0,.24)}}
+.evidence-card img,.thumb-placeholder{{width:100%;aspect-ratio:16/9;object-fit:cover;object-position:top center;border:0;border-radius:0;border-bottom:1.5px solid var(--ink);background:rgba(33,29,24,.05)}}
 .thumb-placeholder{{display:grid;place-items:center;color:var(--ink-3);font-size:13px}}
 .card-badge{{position:absolute;top:8px;left:8px;z-index:2;padding:2px 8px;border-radius:2px;background:var(--fail);color:#fff7ee;font-style:normal;font-family:var(--mono);font-size:11px;font-weight:700;box-shadow:2px 2px 0 rgba(33,29,24,.4)}}
 .card-badge.risk{{background:var(--warn)}}
 .card-badge.gap{{background:var(--ink-3)}}
-.evidence-card strong,.evidence-card span{{display:block;padding:0 10px}}
-.evidence-card strong{{padding-top:9px;font-family:var(--mono);font-size:11.5px;color:var(--accent)}}
-.evidence-card span{{font-size:12.5px;color:var(--ink-2);line-height:1.5;padding-top:2px;padding-bottom:10px}}
-#reportBody{{display:block}}
+.evidence-card strong,.evidence-card span{{display:block;padding:0 11px}}
+.evidence-card strong{{padding-top:10px;font-family:var(--mono);font-size:11.5px;color:var(--accent)}}
+.evidence-card span{{font-size:12.5px;color:var(--ink-2);line-height:1.5;padding-top:3px;padding-bottom:11px}}
+.empty-note{{border:1px dashed var(--line-2);border-radius:3px;background:var(--paper-2);padding:14px 16px;color:var(--ink-3);font-size:13px;max-width:none}}
+#reportBody{{display:block;counter-reset:sec}}
 #reportBody>h1{{display:none}}
-h1,h2,h3{{scroll-margin-top:24px}}
-#reportBody h2{{font-family:var(--serif);font-size:20px;font-weight:700;line-height:1.4;margin:36px 0 14px;padding:0 0 10px;border-bottom:2px solid var(--ink);color:var(--ink)}}
-#reportBody h3{{font-family:var(--serif);font-size:16px;font-weight:700;margin:20px 0 8px}}
-p,ul,ol{{background:transparent;border:0;box-shadow:none;margin:0 0 12px;padding:0;font-size:14px;line-height:1.95;color:var(--ink-2)}}
+h1,h2,h3{{scroll-margin-top:82px}}
+#reportBody h2{{font-family:var(--serif);font-size:21px;font-weight:700;line-height:1.4;margin:38px 0 14px;padding:0 0 10px;border-bottom:2px solid var(--ink);color:var(--ink)}}
+#reportBody h2::before{{counter-increment:sec;content:"{section_label} " counter(sec,decimal-leading-zero);display:block;margin-bottom:5px;font-family:var(--mono);font-size:10px;font-weight:600;letter-spacing:.24em;color:var(--accent)}}
+#reportBody h3{{font-family:var(--serif);font-size:17px;font-weight:700;margin:22px 0 8px}}
+p,ul,ol{{background:transparent;border:0;box-shadow:none;margin:0 0 13px;padding:0;font-size:14.5px;line-height:1.95;color:var(--ink-2)}}
+#reportBody>p,#reportBody>ul,#reportBody>ol,#reportBody>blockquote{{max-width:76ch}}
 ul,ol{{padding-left:1.5em}}
 li{{margin:3px 0}}
 b,strong{{color:var(--ink)}}
-blockquote{{margin:0 0 12px;padding:10px 14px;border:0;border-left:3px solid var(--accent);border-radius:0 3px 3px 0;background:var(--accent-soft);color:var(--ink-2);box-shadow:none}}
+blockquote{{margin:0 0 13px;padding:11px 15px;border:0;border-left:3px solid var(--accent);border-radius:0 3px 3px 0;background:var(--accent-soft);color:var(--ink-2);box-shadow:none}}
 a{{color:var(--accent)}}
 code{{background:rgba(33,29,24,.07);border:1px solid var(--line);border-radius:2px;padding:1px 5px;font-family:var(--mono);font-size:.9em}}
-pre{{margin:0 0 12px;padding:12px 14px;background:#241f19;color:#efe6d8;border:1px solid var(--ink);border-radius:3px;overflow:auto;box-shadow:3px 3px 0 rgba(33,29,24,.12);font-size:12.5px;line-height:1.7}}
+pre{{margin:0 0 13px;padding:12px 14px;background:#241f19;color:#efe6d8;border:1px solid var(--ink);border-radius:3px;overflow:auto;box-shadow:3px 3px 0 rgba(33,29,24,.12);font-size:12.5px;line-height:1.7}}
 pre code{{background:transparent;border:0;padding:0;color:inherit}}
-.table-wrap{{overflow-x:auto;margin:0 0 16px;border:1px solid var(--line-2);border-radius:3px;background:var(--paper-2);box-shadow:3px 3px 0 rgba(33,29,24,.06)}}
-table{{border-collapse:collapse;width:100%;font-size:13px;background:transparent}}
-th{{background:var(--ink);color:#f3ead9;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:600;padding:9px 12px;text-align:left;white-space:nowrap}}
-td{{border-bottom:1px dotted var(--line);padding:9px 12px;text-align:left;vertical-align:top;color:var(--ink-2)}}
+.table-wrap{{overflow-x:auto;margin:0 0 18px;border:1.5px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:4px 4px 0 rgba(33,29,24,.08)}}
+table{{border-collapse:collapse;width:100%;font-size:13.5px;background:transparent}}
+th{{background:var(--ink);color:#f3ead9;font-family:var(--mono);font-size:10.5px;letter-spacing:.06em;font-weight:600;padding:10px 12px;text-align:left;white-space:nowrap}}
+td{{border-bottom:1px dotted var(--line);padding:10px 12px;text-align:left;vertical-align:top;color:var(--ink-2)}}
 tr:last-child td{{border-bottom:0}}
 tbody tr:hover td{{background:rgba(33,29,24,.03)}}
 tr.row-fail td{{background:rgba(180,35,24,.06)}}
@@ -1480,34 +1588,67 @@ tr.filter-empty-row{{display:none}}
 tr.filter-empty-row td{{background:rgba(33,29,24,.035);color:var(--ink-3);font-style:italic}}
 .table-wrap.has-filter-empty tr.filter-empty-row{{display:table-row}}
 figure{{margin:18px 0 28px}}
+.shot{{margin:16px 0 30px;border:1.5px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:6px 6px 0 rgba(33,29,24,.12);overflow:hidden}}
+.shot.is-fail{{border-color:var(--fail);box-shadow:6px 6px 0 rgba(180,35,24,.22)}}
+.shot.is-risk{{border-color:var(--warn);box-shadow:6px 6px 0 rgba(154,103,0,.20)}}
+.shot-head{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;padding:9px 12px;background:var(--ink);color:#f3ead9;border-bottom:1.5px solid var(--ink)}}
+.shot.is-fail .shot-head{{background:var(--fail)}}
+.shot.is-risk .shot-head{{background:var(--warn)}}
+.shot-no{{flex-shrink:0;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.12em;color:#fff;padding:2px 8px;border:1px solid rgba(255,255,255,.42);border-radius:2px}}
+.shot-cap{{min-width:0;flex:1;font-size:13px;line-height:1.5;color:#f3ead9}}
+.shot-zoom{{flex-shrink:0;font-family:var(--mono);font-size:11px;font-weight:700;color:#fff;text-decoration:none;border:1px solid rgba(255,255,255,.5);border-radius:2px;padding:3px 9px}}
+.shot-zoom:hover{{background:rgba(255,255,255,.16)}}
+.shot-frame{{display:flex;justify-content:center;padding:14px;background:repeating-linear-gradient(135deg,rgba(33,29,24,.045) 0 8px,rgba(33,29,24,.02) 8px 16px)}}
+.shot-frame p{{margin:0;max-width:none}}
+.shot-frame img{{display:block;margin:0 auto;max-width:100%;max-height:min(76vh,780px);width:auto;height:auto;border:1px solid var(--line-2);border-radius:2px;box-shadow:4px 4px 0 rgba(33,29,24,.14);cursor:zoom-in;background:#fff}}
+.shot-foot{{display:flex;align-items:center;gap:10px;padding:8px 12px;border-top:1px dotted var(--line-2);background:var(--paper-2)}}
 img{{max-width:100%;height:auto;border:1.5px solid var(--ink);border-radius:3px;display:block;box-shadow:4px 4px 0 rgba(33,29,24,.10)}}
 figcaption{{color:var(--ink-3);font-size:12.5px;margin-top:8px;line-height:1.7}}
-.figure-problem-banner{{display:none}}
-.figure-problem-banner + p{{position:relative;display:inline-block;max-width:100%}}
-.figure-problem-banner + p::before{{content:attr(data-label);position:absolute;left:10px;top:10px;z-index:2;padding:5px 10px;background:var(--fail);color:#fff7ee;border:2px solid #fff7ee;border-radius:2px;font-family:var(--mono);font-size:12px;font-weight:800;letter-spacing:.06em;box-shadow:2px 2px 0 rgba(33,29,24,.45)}}
-.figure-problem-banner.is-risk + p::before{{background:var(--warn)}}
-.figure-problem-banner + p img{{border:4px solid var(--fail);box-shadow:0 0 0 3px rgba(180,35,24,.20),4px 4px 0 rgba(33,29,24,.10)}}
-.figure-problem-banner.is-risk + p img{{border-color:var(--warn);box-shadow:0 0 0 3px rgba(154,103,0,.18),4px 4px 0 rgba(33,29,24,.10)}}
-.figure-back-link{{display:inline-flex;align-items:center;margin:-14px 0 26px;padding:6px 10px;border:1px solid var(--line-2);border-radius:2px;background:var(--paper-2);color:var(--accent);font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none;box-shadow:2px 2px 0 rgba(33,29,24,.08)}}
-.figure-back-link:hover{{border-color:var(--accent);background:var(--accent-soft)}}
-.section-toggle{{float:right;font-size:11px;padding:3px 8px}}
+.shot figcaption{{color:inherit;font-size:inherit;margin-top:0}}
+.figure-problem-banner{{flex-shrink:0;display:inline-block;padding:2px 9px;border:1px solid rgba(255,255,255,.7);border-radius:2px;background:rgba(0,0,0,.28);color:#fff;font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.06em}}
+.figure-back-link{{display:inline-flex;align-items:center;color:var(--accent);font-family:var(--mono);font-size:11.5px;font-weight:700;text-decoration:none}}
+.figure-back-link::before{{content:"";display:inline-block;width:14px;height:1px;background:currentColor;margin-right:7px}}
+.figure-back-link:hover{{color:var(--ink)}}
+.section-toggle{{float:right;font-size:10.5px;padding:2px 8px;border-color:var(--line-2);color:var(--ink-3);background:transparent;box-shadow:none}}
 .figure-anchor{{display:block;scroll-margin-top:96px;height:1px}}
+.colophon{{margin:44px 0 0;padding:18px 0 40px;border-top:3px solid var(--ink);text-align:center;font-family:var(--mono);font-size:10.5px;letter-spacing:.14em;color:var(--ink-3);line-height:2}}
+.colophon::before{{content:"";display:block;height:1px;background:var(--ink);margin:-14px 0 14px}}
+.colophon b{{color:var(--ink);font-family:var(--serif);letter-spacing:.04em}}
+.colophon p{{margin:0;font-size:10.5px;color:var(--ink-3);max-width:none}}
+.to-top{{position:fixed;right:20px;bottom:20px;z-index:120;display:none;align-items:center;background:var(--ink);color:var(--paper);border-color:var(--ink);box-shadow:3px 3px 0 rgba(33,29,24,.30)}}
+.to-top:hover{{background:var(--accent);border-color:var(--accent);color:#fff7ee}}
+.to-top.is-on{{display:inline-flex}}
+.lightbox{{position:fixed;inset:0;z-index:300;display:flex;align-items:center;justify-content:center;padding:18px}}
+.lightbox[hidden]{{display:none}}
+.lb-backdrop{{position:absolute;inset:0;background:rgba(20,17,13,.86);border:0}}
+.lb-frame{{position:relative;display:flex;flex-direction:column;min-height:0;width:min(1280px,96vw);margin:0;border:2px solid var(--ink);border-radius:3px;background:var(--paper-2);box-shadow:8px 8px 0 rgba(0,0,0,.45);overflow:hidden}}
+.lb-bar{{display:flex;align-items:center;gap:10px;flex-wrap:wrap;flex-shrink:0;margin:0;padding:9px 12px;background:var(--ink);color:#f3ead9}}
+.lb-no{{font-family:var(--mono);font-size:11px;font-weight:700;letter-spacing:.12em;padding:2px 8px;border:1px solid rgba(255,255,255,.42);border-radius:2px;color:#fff}}
+.lb-cap{{min-width:0;flex:1;color:#f3ead9;font-size:13px;font-weight:400;line-height:1.5}}
+.lb-count{{font-family:var(--mono);font-size:10.5px;color:rgba(243,234,217,.66);letter-spacing:.1em}}
+.lb-bar button{{background:transparent;color:#f3ead9;border-color:rgba(243,234,217,.42);padding:4px 10px}}
+.lb-bar button:hover{{background:#f3ead9;color:var(--ink)}}
+.lb-stage{{min-height:0;flex:1;display:flex;align-items:center;justify-content:center;padding:16px;background:repeating-linear-gradient(135deg,rgba(33,29,24,.06) 0 8px,rgba(33,29,24,.02) 8px 16px);overflow:auto;overscroll-behavior:contain}}
+.lb-stage img{{max-width:100%;max-height:100%;width:auto;height:auto;border:1px solid var(--line-2);border-radius:2px;box-shadow:4px 4px 0 rgba(33,29,24,.22);background:#fff}}
 :target{{outline:3px solid var(--accent);outline-offset:3px;border-radius:3px}}
 @media(prefers-reduced-motion:reduce){{*{{scroll-behavior:auto!important;transition:none!important}}}}
 @media(max-width:980px){{
 .layout{{display:block}}
-aside{{position:sticky;top:0;z-index:20;height:auto;max-height:238px;padding:12px 16px;border-right:0;border-bottom:2px solid var(--ink);box-shadow:0 6px 18px rgba(33,29,24,.16)}}
+aside{{position:sticky;top:0;z-index:20;height:auto;max-height:214px;padding:12px 16px;border-right:0;border-bottom:2px solid var(--ink);box-shadow:0 6px 18px rgba(33,29,24,.16)}}
 .side-mast{{margin-bottom:8px}}
+.side-verdict{{margin-bottom:8px;padding:6px 9px}}
 .side-tabs{{margin-bottom:8px}}
-.side-panel{{max-height:132px;overflow:auto}}
+.side-panel{{max-height:116px;overflow:auto}}
+.evidence-nav small{{-webkit-line-clamp:2}}
 .evidence-nav{{flex-direction:row;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
 .evidence-nav a{{flex:0 0 210px}}
 .section-nav{{display:flex;gap:7px;overflow-x:auto;padding-bottom:6px;-webkit-overflow-scrolling:touch}}
 .section-nav-item{{flex:0 0 220px;margin:0}}
-main{{padding:0 16px 60px}}
+main{{padding:0 16px 0}}
 .hero{{padding-top:18px}}
 .metric{{flex:1 1 32%;border-bottom:1px solid var(--line)}}
-.toolbar{{top:0}}
+.toolbar{{position:static}}
+.figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:226px}}
 }}
 @media(max-width:640px){{
 html,body{{overflow-x:clip}}
@@ -1516,6 +1657,7 @@ aside{{max-height:none;padding:8px 10px;overflow:visible}}
 .side-mast .side-stamp{{width:28px;height:28px;font-size:10px}}
 .side-mast b{{font-size:12.5px}}
 .side-mast i{{display:none}}
+.side-verdict{{display:none}}
 .side-controls{{display:grid;grid-template-columns:minmax(0,1fr) auto;gap:6px;align-items:stretch}}
 .side-tabs{{margin:0}}
 .side-tab{{padding:6px 7px}}
@@ -1529,12 +1671,22 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 .evidence-nav,.section-nav{{display:flex;flex-direction:column;gap:6px;overflow:visible;padding:0;margin:0}}
 .evidence-nav a,.section-nav-item{{flex:none;width:100%;margin:0}}
 .evidence-nav a{{grid-template-columns:68px minmax(0,1fr);min-height:58px}}
-.evidence-nav .nav-thumb{{width:68px}}
 .figure-anchor,#evidence-gallery,h1,h2,h3{{scroll-margin-top:118px}}
 .masthead .r{{display:none}}
+.masthead .stamp{{width:36px;height:36px;font-size:12px}}
+.dateline{{gap:0 12px;font-size:9.5px}}
+.dl-verdict{{margin-left:0}}
 .title-row{{gap:12px}}
-.badge{{font-size:13px;padding:7px 12px}}
+.badge{{font-size:14px;padding:8px 13px}}
 .metric{{flex:1 1 48%}}
+.metric strong{{font-size:25px}}
+.evidence-gallery{{grid-template-columns:repeat(auto-fill,minmax(190px,1fr));gap:12px}}
+.shot-frame{{padding:9px}}
+.shot-frame img{{max-height:none}}
+.filter-count{{margin-left:0;width:100%}}
+.to-top{{right:12px;bottom:12px}}
+.lightbox{{padding:8px}}
+.lb-frame{{width:100%}}
 }}
 </style>
 </head>
@@ -1542,6 +1694,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
 <div class="layout">
 <aside id="report-navigation">
   <div class="side-mast"><span class="side-stamp">MAP</span><div><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><i>{flavor_en}</i></div></div>
+  <div class="side-verdict is-{verdict_class}"><b>{html.escape(verdict_cn)}</b><small>VERDICT · 证据 {evidence_count}</small></div>
   <div class="side-controls">
     <div class="side-tabs" role="tablist" aria-label="报告导航">
       <button class="side-tab active" type="button" role="tab" aria-selected="true" aria-controls="side-panel-evidence" data-side-tab="evidence"><span>证据导航</span><small>EVIDENCE</small></button>
@@ -1550,7 +1703,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     <button class="side-drawer-toggle" type="button" aria-expanded="false" aria-controls="mobile-nav-drawer" data-mobile-nav-toggle>展开导航</button>
   </div>
   <div id="mobile-nav-drawer" class="side-drawer" aria-hidden="false">
-    <div id="side-panel-evidence" class="side-panel active" role="tabpanel"><div class="evidence-nav">{''.join(figures) or '<p>无截图证据</p>'}</div></div>
+    <div id="side-panel-evidence" class="side-panel active" role="tabpanel"><div class="evidence-nav">{nav_html}</div></div>
     <div id="side-panel-contents" class="side-panel" role="tabpanel"><nav class="section-nav" aria-label="报告目录">{directory_html}</nav></div>
   </div>
 </aside>
@@ -1559,9 +1712,16 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     <div class="masthead">
       <div class="stamp">MAP</div>
       <div class="t"><b>{flavor_cn}<small class="edition-version">{html.escape(report_version)}</small></b><span>{flavor_en}</span></div>
-      <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span>{report_time_html}</div>
+      <div class="r"><span>MAP 验收标准 v2 · 真人路径取证</span><span>{byline}</span></div>
     </div>
-    <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}">{html.escape(verdict_cn)}</span></div>
+    <div class="dateline">
+      <i class="dl-item">{flavor_en}</i>
+      <i class="dl-item">证据 {evidence_count} 张</i>
+      <i class="dl-item">表格 {table_count} 行</i>
+      {report_time_html}
+      <i class="dl-verdict {verdict_class}">判定 · {html.escape(verdict_cn)}</i>
+    </div>
+    <div class="title-row"><h1 class="title">{html.escape(title)}</h1><span class="badge {verdict_class}"><i>VERDICT</i>{html.escape(verdict_cn)}</span></div>
     <div class="metric-grid">{summary_html}</div>
   </header>
   {problem_html}
@@ -1571,10 +1731,31 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     <button data-filter="fail">未通过/P0</button>
     <button data-filter="risk">有缺陷/P1</button>
     <button data-filter="gap">未覆盖</button>
+    <span class="filter-count" id="filterCount"></span>
   </div>
-  <section id="evidence-gallery" class="evidence-gallery-wrap"><div class="gallery-title">证据缩略图</div><div class="evidence-gallery">{''.join(gallery_cards) or '<p>无截图证据</p>'}</div></section>
+  <section id="evidence-gallery" class="evidence-gallery-wrap"><div class="gallery-head"><span class="gallery-kicker">证据版面 · EVIDENCE PLATES</span><div class="gallery-title">证据缩略图</div><span class="gallery-hint">点缩略图跳到正文对应位置，点正文图片可放大查看</span></div><div class="evidence-gallery">{gallery_html}</div></section>
   <article id="reportBody">{body_html}</article>
+  <footer class="colophon">
+    <p><b>{flavor_cn}</b> · {flavor_en} · {html.escape(report_version)}</p>
+    <p>{byline} · 证据 {evidence_count} 张 · 表格 {table_count} 行 · 判定 {html.escape(verdict_cn)}</p>
+    <p>MIDUO PRESS · 归档于 CDS 验收中心 · 证据链与结论一一对应</p>
+  </footer>
 </main>
+</div>
+<button class="to-top" type="button" data-to-top>回到顶部</button>
+<div class="lightbox" id="evidence-lightbox" hidden aria-hidden="true" role="dialog" aria-modal="true" aria-label="证据大图">
+  <button class="lb-backdrop" type="button" data-lb-close aria-label="关闭大图"></button>
+  <figure class="lb-frame" style="max-height:94vh">
+    <figcaption class="lb-bar">
+      <span class="lb-no" data-lb-no></span>
+      <b class="lb-cap" data-lb-cap></b>
+      <span class="lb-count" data-lb-count></span>
+      <button type="button" data-lb-prev>上一张</button>
+      <button type="button" data-lb-next>下一张</button>
+      <button type="button" data-lb-close>关闭</button>
+    </figcaption>
+    <div class="lb-stage"><img data-lb-image alt=""/></div>
+  </figure>
 </div>
 <script>
 (function(){{
@@ -1622,15 +1803,20 @@ aside.mobile-nav-open .side-drawer{{display:block}}
   else if(mobileNavQuery.addListener) mobileNavQuery.addListener(syncMobileNavigation);
   syncMobileNavigation();
   var filterInput=document.getElementById('reportFilter');
+  var filterCount=document.getElementById('filterCount');
   var mode='all';
   function applyFilter(){{
     var q=(filterInput.value||'').toLowerCase();
+    var totalRows=0,visibleRows=0;
     document.querySelectorAll('tbody tr').forEach(function(row){{
       if(row.classList.contains('filter-empty-row')) return;
+      totalRows+=1;
       var text=row.textContent.toLowerCase();
       var modeOk=mode==='all'||(mode==='fail'&&/\\bp0\\b|未通过|\\bfail\\b|阻断/i.test(text))||(mode==='risk'&&/p1|有缺陷|conditional|风险/i.test(text))||(mode==='gap'&&/未覆盖|not-run|未深测|弱相关|无关/i.test(text));
       var queryOk=!q||text.indexOf(q)>=0;
-      row.classList.toggle('is-hidden', !(modeOk&&queryOk));
+      var show=modeOk&&queryOk;
+      if(show) visibleRows+=1;
+      row.classList.toggle('is-hidden', !show);
     }});
     document.querySelectorAll('.table-wrap table').forEach(function(table){{
       var tbody=table.querySelector('tbody');
@@ -1650,6 +1836,28 @@ aside.mobile-nav-open .side-drawer{{display:block}}
       }});
       table.closest('.table-wrap').classList.toggle('has-filter-empty', !visible);
     }});
+    var totalCards=0,visibleCards=0;
+    document.querySelectorAll('.evidence-card').forEach(function(card){{
+      totalCards+=1;
+      var text=card.textContent.toLowerCase();
+      var severityOk=mode==='fail'?card.classList.contains('is-fail')
+        :mode==='risk'?card.classList.contains('is-risk'):true;
+      var show=severityOk&&(!q||text.indexOf(q)>=0);
+      if(show) visibleCards+=1;
+      card.classList.toggle('is-hidden', !show);
+    }});
+    document.querySelectorAll('.problem-card').forEach(function(card){{
+      var text=card.textContent.toLowerCase();
+      var severityOk=mode==='fail'?card.classList.contains('is-fail')
+        :mode==='risk'?card.classList.contains('is-risk')
+        :mode==='gap'?card.classList.contains('is-gap'):true;
+      card.classList.toggle('is-hidden', !(severityOk&&(!q||text.indexOf(q)>=0)));
+    }});
+    if(filterCount){{
+      filterCount.textContent=(mode==='all'&&!q)
+        ?('共 '+totalRows+' 行 · 证据 '+totalCards+' 张')
+        :('命中 '+visibleRows+'/'+totalRows+' 行 · 证据 '+visibleCards+'/'+totalCards+' 张');
+    }}
   }}
   filterInput.addEventListener('input', applyFilter);
   document.querySelectorAll('button[data-filter]').forEach(function(btn){{
@@ -1660,6 +1868,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
       applyFilter();
     }});
   }});
+  applyFilter();
   function expandSectionForTarget(target){{
     if(!target) return;
     var h=target.previousElementSibling;
@@ -1703,7 +1912,7 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     expandSectionForTarget(t);
     var scroll=function(){{
       t.scrollIntoView({{block:'start'}});
-      if(history&&history.replaceState) history.replaceState(null,'',hash);
+      try{{if(history&&history.replaceState) history.replaceState(null,'',hash);}}catch(error){{}}
     }};
     if(isMobileNavigation()){{
       setMobileNavOpen(false);
@@ -1724,6 +1933,82 @@ aside.mobile-nav-open .side-drawer{{display:block}}
     var t=targetForHash(location.hash);
     expandSectionForTarget(t);
   }});
+  // 证据大图：正文图版点击即放大，禁用 JS 时「放大查看」退化为直接打开原图链接。
+  var lightbox=document.getElementById('evidence-lightbox');
+  var lbImage=lightbox.querySelector('[data-lb-image]');
+  var lbNo=lightbox.querySelector('[data-lb-no]');
+  var lbCap=lightbox.querySelector('[data-lb-cap]');
+  var lbCount=lightbox.querySelector('[data-lb-count]');
+  var plates=Array.prototype.slice.call(document.querySelectorAll('.shot[data-lb-src]'));
+  var lbIndex=-1;
+  var lastFocus=null;
+  function renderLightbox(){{
+    var plate=plates[lbIndex];
+    if(!plate) return;
+    lbImage.setAttribute('src',plate.getAttribute('data-lb-src')||'');
+    lbImage.setAttribute('alt',plate.getAttribute('data-lb-cap')||'');
+    lbNo.textContent=plate.getAttribute('data-lb-no')||'';
+    lbCap.textContent=plate.getAttribute('data-lb-cap')||'';
+    lbCount.textContent=(lbIndex+1)+' / '+plates.length;
+  }}
+  function openLightbox(index){{
+    if(!plates.length) return;
+    lbIndex=(index+plates.length)%plates.length;
+    lastFocus=document.activeElement;
+    renderLightbox();
+    lightbox.hidden=false;
+    lightbox.setAttribute('aria-hidden','false');
+    document.body.style.overflow='hidden';
+    var close=lightbox.querySelector('[data-lb-next]');
+    if(close&&close.focus) close.focus();
+  }}
+  function closeLightbox(){{
+    lightbox.hidden=true;
+    lightbox.setAttribute('aria-hidden','true');
+    document.body.style.overflow='';
+    if(lastFocus&&lastFocus.focus) lastFocus.focus();
+  }}
+  function stepLightbox(delta){{
+    if(!plates.length) return;
+    lbIndex=(lbIndex+delta+plates.length)%plates.length;
+    renderLightbox();
+  }}
+  plates.forEach(function(plate,index){{
+    var image=plate.querySelector('.shot-frame img');
+    if(image) image.addEventListener('click',function(){{openLightbox(index);}});
+    var zoom=plate.querySelector('.shot-zoom');
+    if(zoom) zoom.addEventListener('click',function(ev){{ev.preventDefault();openLightbox(index);}});
+  }});
+  lightbox.querySelectorAll('[data-lb-close]').forEach(function(btn){{
+    btn.addEventListener('click',closeLightbox);
+  }});
+  var prevBtn=lightbox.querySelector('[data-lb-prev]');
+  var nextBtn=lightbox.querySelector('[data-lb-next]');
+  if(prevBtn) prevBtn.addEventListener('click',function(){{stepLightbox(-1);}});
+  if(nextBtn) nextBtn.addEventListener('click',function(){{stepLightbox(1);}});
+  document.addEventListener('keydown',function(ev){{
+    if(lightbox.hidden) return;
+    if(ev.key==='Escape'){{ev.preventDefault();closeLightbox();}}
+    else if(ev.key==='ArrowLeft') stepLightbox(-1);
+    else if(ev.key==='ArrowRight') stepLightbox(1);
+  }});
+  // 回到顶部与「读到哪一段」高亮：长档案不必回侧栏找位置。
+  var toTop=document.querySelector('[data-to-top]');
+  var navLinks=Array.prototype.slice.call(document.querySelectorAll('.section-nav-item,.evidence-nav a'));
+  function syncReadingState(){{
+    if(toTop) toTop.classList.toggle('is-on',window.scrollY>560);
+    var current='';
+    document.querySelectorAll('#reportBody h2,.figure-anchor').forEach(function(node){{
+      if(node.getBoundingClientRect().top<=140&&node.id) current=node.id;
+    }});
+    navLinks.forEach(function(link){{
+      var href=link.getAttribute('href')||'';
+      link.classList.toggle('is-current',current!==''&&href==='#'+current);
+    }});
+  }}
+  if(toTop) toTop.addEventListener('click',function(){{window.scrollTo({{top:0,behavior:'smooth'}});}});
+  window.addEventListener('scroll',syncReadingState,{{passive:true}});
+  syncReadingState();
   if(location.hash){{setTimeout(function(){{jumpToTarget(location.hash);}},50);}}
 }})();
 </script>

@@ -12,7 +12,9 @@
  */
 import { describe, it, expect } from 'vitest';
 import fs from 'node:fs';
+import os from 'node:os';
 import path from 'node:path';
+import { spawnSync } from 'node:child_process';
 
 import { buildBootstrapScript, findPreset } from '../../src/routes/bootstrap.js';
 
@@ -76,5 +78,47 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     expect(templates).not.toContain('FindMapSkillsSkillMd');
     expect(templates).not.toContain('FindMapSkillsReadme');
     expect(templates).not.toContain('两边都要改');
+  });
+});
+
+describe('引导脚本的退出码语义', () => {
+  const PRESETS = ['pm-project', 'dev-project', 'qa-project', 'cds-only'];
+
+  it.each(PRESETS)('%s: 必需包没装上时以非零码退出', (key) => {
+    // 半装的项目不能被当成装好了：脚本以前只打一行 warning 就 exit 0，
+    // 一键脚本 / CI 会带着残缺技能集继续往下跑，等到用不了才发现。
+    // 这里用一个必定连不上的地址跑真脚本，断言退出码非零。
+    const script = buildBootstrapScript(findPreset(key)!, 'http://127.0.0.1:1', 'http://127.0.0.1:1');
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bootstrap-'));
+    try {
+      const file = path.join(dir, 'bootstrap.sh');
+      fs.writeFileSync(file, script);
+      const r = spawnSync('sh', [file], { cwd: dir, encoding: 'utf8', timeout: 120_000 });
+      const err = r.stderr ?? '';
+      // 环境本身缺 curl/unzip/tar 时脚本会走依赖自检分支，那不是本用例要测的路径
+      if (err.includes('缺少这些命令')) return;
+      expect(r.status).not.toBe(0);
+      expect(err).toContain('未安装');
+      expect(err).toContain('安装未完成');
+      // 失败时不许再喊「安装完成」
+      expect(r.stdout ?? '').not.toContain('安装完成');
+    } finally {
+      fs.rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it('全部装上时正常退出（脚本本身语法合法）', () => {
+    for (const key of PRESETS) {
+      const script = buildBootstrapScript(findPreset(key)!, 'https://cds.test', 'https://up.test');
+      const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bootstrap-syn-'));
+      try {
+        const file = path.join(dir, 'bootstrap.sh');
+        fs.writeFileSync(file, script);
+        const r = spawnSync('sh', ['-n', file], { encoding: 'utf8' });
+        expect({ key, status: r.status, stderr: r.stderr }).toEqual({ key, status: 0, stderr: '' });
+      } finally {
+        fs.rmSync(dir, { recursive: true, force: true });
+      }
+    }
   });
 });

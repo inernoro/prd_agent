@@ -3,7 +3,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
+import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, GitCompare, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -18,6 +18,7 @@ import { ReportTableSectionView } from './components/ReportTableSectionView';
 import { RightRailPanel } from './components/RightRailPanel';
 import { ReportSelectionCommentLayer } from './components/ReportSelectionCommentLayer';
 import { underlineStroke, type ReportCommentAnchor } from './components/reportCommentAnchor';
+import { ReportCommentComposer, ReportCommentAttachmentGrid } from './components/ReportCommentComposer';
 import { useDataTheme } from './hooks/useDataTheme';
 import { useStatusChipConfig } from './hooks/useStatusChipConfig';
 
@@ -68,7 +69,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
-  const [commentText, setCommentText] = useState('');
   /** 正文容器（划词评论层的定位坐标系） */
   const contentRef = useRef<HTMLDivElement>(null);
   /** 点击下划线角标后短暂标亮的目标评论 */
@@ -168,15 +168,16 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     [navigate, onSelectSiblingProp, reportId, searchParams, siblings]
   );
 
-  const handleCreateComment = async () => {
-    if (!replyTo || !commentText.trim() || !reportId) return;
+  const handleCreateComment = async (content: string, attachmentIds: string[]) => {
+    if (!replyTo || (!content && attachmentIds.length === 0) || !reportId) return;
     setSubmitting(true);
     const anchor = !replyTo.parentId ? replyTo.anchor : undefined;
     const res = await createComment({
       reportId,
       sectionIndex: replyTo.sectionIndex,
-      content: commentText.trim(),
+      content,
       parentCommentId: replyTo.parentId,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       selectedText: anchor?.selectedText,
       contextBefore: anchor?.contextBefore,
       contextAfter: anchor?.contextAfter,
@@ -185,7 +186,6 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     });
     setSubmitting(false);
     if (res.success) {
-      setCommentText('');
       setReplyTo(null);
       await loadComments();
     } else {
@@ -219,17 +219,13 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     return false;
   }, [reportId, loadComments]);
 
+  // 切换评论目标时依赖 composer 的 key 变化自动重置草稿（文本 + 待发图片）
   const openCommentInput = (sectionIndex: number, parentId?: string) => {
-    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId && !replyTo?.anchor;
-    if (!isSameTarget) {
-      setCommentText('');
-    }
     setReplyTo({ sectionIndex, parentId });
   };
 
   /** 划词后点「评论」：带锚点打开该段落的评论输入框 */
   const handleSelectionComment = useCallback((sectionIndex: number, anchor: ReportCommentAnchor) => {
-    setCommentText('');
     setReplyTo({ sectionIndex, anchor });
   }, []);
 
@@ -622,23 +618,13 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                             )
                             : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="flex-1 text-[12px] px-3 py-2 rounded-lg"
-                          style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                          placeholder="输入评论..."
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
-                          autoFocus
-                        />
-                        <Button variant="primary" size="sm" onClick={handleCreateComment} disabled={submitting || !commentText.trim()}>
-                          <Send size={12} />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => { setReplyTo(null); setCommentText(''); }}>
-                          <X size={12} />
-                        </Button>
-                      </div>
+                      <ReportCommentComposer
+                        key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
+                        reportId={reportId ?? ''}
+                        submitting={submitting}
+                        onSubmit={handleCreateComment}
+                        onCancel={() => setReplyTo(null)}
+                      />
                     </div>
                   )}
                 </div>
@@ -922,9 +908,14 @@ function CommentItem({
             </div>
           </div>
         ) : (
-          <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
-            {comment.content}
-          </div>
+          <>
+            {comment.content && (
+              <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
+                {comment.content}
+              </div>
+            )}
+            <ReportCommentAttachmentGrid attachments={comment.attachments} />
+          </>
         )}
       </div>
       {!editing && (

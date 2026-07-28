@@ -2,7 +2,7 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Activity, Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
 import { CommitInbox } from '@/components/CommitInbox';
 import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
@@ -135,6 +135,7 @@ const preloadCdsSettingsPage = (): void => { void import('@/pages/CdsSettingsPag
 const preloadReleaseCenterPage = (): void => { void import('@/pages/ReleaseCenterPage'); };
 const preloadReportsPage = (): void => { void import('@/pages/ReportsPage'); };
 const preloadTaskSchedulePage = (): void => { void import('@/pages/TaskSchedulePage'); };
+const preloadStatusPage = (): void => { void import('@/pages/StatusPage'); };
 
 function shellLoginHref(mode?: string): string {
   const path = mode === 'github' ? '/api/auth/github/login' : '/login';
@@ -157,6 +158,7 @@ function activeNavKeyFor(pathname: string): AppNavKey {
   if (pathname.startsWith('/release-center')) return 'release-center';
   if (pathname.startsWith('/task-schedule')) return 'task-schedule';
   if (pathname.startsWith('/reports')) return 'reports';
+  if (pathname.startsWith('/status')) return 'status';
   return 'projects';
 }
 
@@ -377,14 +379,20 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
       <OperatorApprovalModal />
-      {/* 右下角是唯一的系统提醒区域。需要用户决策的授权在最上方展开，
-          导入审批居中，版本更新固定在底部，多个提醒不会再互相遮挡。 */}
-      <div className="cds-global-action-stack">
-        <AccessRequestInbox />
-        <PendingImportInbox />
-        <GlobalUpdateBadge />
+      {/* 底部浮层带：左右两个坞的唯一定位者（index.css .cds-bottom-docks）。
+          它统一让开常驻 rail 并在窄视口自动折行，两个坞不会互相重叠、也不会压住
+          导航图标。右下角是唯一的系统提醒区域：需要用户决策的授权在最上方展开，
+          导入审批居中，版本更新与提交缺陷入口固定在底部。 */}
+      <div className="cds-bottom-docks">
+        <div className="cds-bottom-left-dock">
+          <CommitInbox />
+        </div>
+        <div className="cds-global-action-stack">
+          <AccessRequestInbox />
+          <PendingImportInbox />
+          <GlobalUpdateBadge />
+        </div>
       </div>
-      <CommitInbox />
     </div>
     </MobileNavContext.Provider>
   );
@@ -493,6 +501,19 @@ function RailNav({
         >
           <ClipboardCheck />
           <span>Reports</span>
+        </Link>
+        <Link
+          to="/status"
+          className="cds-rail-item"
+          data-active={active === 'status' ? 'true' : 'false'}
+          aria-label="存活状态"
+          title="存活状态（自建探测 / 可用率柱条 / 故障时间线）"
+          onClick={onNavigate}
+          onMouseEnter={preloadStatusPage}
+          onFocus={preloadStatusPage}
+        >
+          <Activity />
+          <span>Status</span>
         </Link>
       </div>
       <div className="flex-1" />

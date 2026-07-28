@@ -27,8 +27,14 @@ const SKILLS_DIR = join(ROOT, '.claude', 'skills');
 const BUNDLES_FILE = join(ROOT, 'scripts', 'skill-bundles.json');
 const OUT_FILE = join(ROOT, 'prd-api', 'src', 'PrdAgent.Api', 'OfficialSkills', 'official-skills.generated.json');
 
-// 单文件上限（超大文本截断防 JSON 爆）
-const MAX_FILE_BYTES = 96 * 1024;
+// 散文类单文件上限（超大文本截断防 JSON 爆）。**只对散文生效**。
+const MAX_PROSE_BYTES = 96 * 1024;
+// 可执行/源码文件的硬上限：**绝不截断**，超了直接 fail 让人来处理。
+// 血泪：archive_report.py 有 162KB，被 96KB 截断后还追加了一句中文说明，
+// 下发给 QA 用户的是语法坏掉的 Python —— 编译过、测试过，用户跑起来才炸。
+const MAX_CODE_BYTES = 512 * 1024;
+// 截断会毁掉可执行性的扩展名：这些一律不截断
+const CODE_EXT = new Set(['.py', '.sh', '.mjs', '.js', '.ts', '.tsx', '.json', '.yml', '.yaml']);
 // 只打包文本文件（其余跳过；技能目前全是文本）
 const TEXT_EXT = new Set(['.md', '.markdown', '.txt', '.py', '.csv', '.json', '.yml', '.yaml', '.sh', '.ts', '.tsx', '.js', '.mjs', '.gitignore']);
 
@@ -192,8 +198,17 @@ function collectFiles(skillDir, skillKey) {
       if (!isText) continue;
       let content = readFileSync(full, 'utf8');
       let truncated = false;
-      if (Buffer.byteLength(content, 'utf8') > MAX_FILE_BYTES) {
-        content = content.slice(0, MAX_FILE_BYTES) + '\n\n…(已截断，完整版见仓库)';
+      const bytes = Buffer.byteLength(content, 'utf8');
+      if (CODE_EXT.has(ext)) {
+        // 源码只允许原样或报错，不允许截断 —— 半截脚本比缺文件更糟：
+        // 用户以为装到了，跑起来才是 SyntaxError。
+        if (bytes > MAX_CODE_BYTES) {
+          console.error(`[bundle-official-skills] ${skillKey}/${rel} 为 ${bytes} 字节，超过源码上限 ${MAX_CODE_BYTES}。`);
+          console.error('  源码文件不允许截断。请拆分该文件，或把它移出对外分发范围（EXCLUDE_FILES_BY_SKILL）。');
+          process.exit(1);
+        }
+      } else if (bytes > MAX_PROSE_BYTES) {
+        content = content.slice(0, MAX_PROSE_BYTES) + '\n\n…(已截断，完整版见仓库)';
         truncated = true;
       }
       out.push({ path: rel, content, truncated });

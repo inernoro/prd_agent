@@ -148,7 +148,11 @@ describe('引导脚本', () => {
 
   it('装不全时如实报出未安装项，不假装成功', () => {
     expect(script).toContain('未安装');
-    expect(script).toContain('功能会不完整');
+    expect(script).toContain('安装未完成');
+    expect(script).toContain('缺了功能不完整');
+    // 光打 warning 还 exit 0 等于骗调用方：必须以非零码退出（行为断言见
+    // skill-install-contract.test.ts「引导脚本的退出码语义」）
+    expect(script).toMatch(/未安装:\$skipped[\s\S]{0,400}exit 1/);
   });
 
   it('结尾明确给出下一句该说什么', () => {

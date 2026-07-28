@@ -43,3 +43,11 @@
 
 - **是什么**：`pm-starter` 当前 10 个技能 24 个文件，体积很小。但成员增加后没有任何体积告警或上限。
 - **什么条件下必须还**：单个套装超过 5 MB 时。可在打包脚本加一条阈值断言。
+
+### D6 ui-ux-pro-max 是外部 vendored 技能，仍带上游 emoji
+
+- **是什么**：`ui-ux-pro-max` 从技能生态安装而来（非本仓库原创），其 `data/*.csv` 与 `scripts/{design_system,search}.py` 里带有上游作者写的 emoji。它不在任何角色套装里（套装分发内容已由自测断言零 emoji），但作为单个技能仍可从海鲜市场下载。
+- **为什么欠着**：把 vendored 第三方技能逐字改写等于开一个维护分叉，上游一升级就冲突；而这些 emoji 位于 CSV 数据列和 Python 控制台输出，不进入本系统的 UI 或文档。
+- **什么条件下必须还**：把它纳入任一角色套装之前（那一刻自测守卫会直接红），或决定 fork 该技能自行维护时。
+- **不还的后果**：客户单独下载该技能时会拿到带 emoji 的数据文件。
+- **本次已做**：`scripts/test-official-skill-bundles.mjs` 的 emoji 正则下界从 `U+1F300` 放宽到 `U+1F000`（此前漏掉 `U+1F198` 这类字符，导致 `acceptance-checklist` 两个 reference 文件的 emoji 标题混过守卫），并修掉了那两处。

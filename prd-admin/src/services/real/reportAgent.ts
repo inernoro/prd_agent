@@ -30,6 +30,7 @@ import type {
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
+  UploadReportCommentImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -375,7 +376,11 @@ export const updateWeeklyReportReal: UpdateWeeklyReportContract = async (input) 
   );
 };
 
-export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
+/**
+ * 图片表单上传共用实现（FormData 不能走 apiRequest，会被 JSON 序列化）：
+ * 首次 401 时刷新 token 重试一次。富文本图/日报图/评论图三个入口共用。
+ */
+const uploadReportImageForm = async (path: string, file: File): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
   const buildHeaders = (token: string | null | undefined) => {
     const headers: Record<string, string> = { Accept: 'application/json' };
     if (token) headers.Authorization = `Bearer ${token}`;
@@ -383,7 +388,7 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
   };
   const createFormData = () => {
     const fd = new FormData();
-    fd.append('file', input.file);
+    fd.append('file', file);
     return fd;
   };
 
@@ -397,7 +402,6 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
   };
 
   const rawBase = getApiBaseUrl();
-  const path = api.reportAgent.reports.richTextImages(encodeURIComponent(input.id));
   const url = rawBase ? `${rawBase}${path}` : path;
 
   try {
@@ -430,59 +434,16 @@ export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = 
   }
 };
 
+export const uploadReportRichTextImageReal: UploadReportRichTextImageContract = async (input) => {
+  return await uploadReportImageForm(api.reportAgent.reports.richTextImages(encodeURIComponent(input.id)), input.file);
+};
+
 export const uploadDailyLogImageReal: UploadDailyLogImageContract = async (input) => {
-  const buildHeaders = (token: string | null | undefined) => {
-    const headers: Record<string, string> = { Accept: 'application/json' };
-    if (token) headers.Authorization = `Bearer ${token}`;
-    return headers;
-  };
-  const createFormData = () => {
-    const fd = new FormData();
-    fd.append('file', input.file);
-    return fd;
-  };
+  return await uploadReportImageForm(api.reportAgent.dailyLogs.uploadImage(), input.file);
+};
 
-  const parseResponse = async (res: Response): Promise<ApiResponse<ReportRichTextImageUploadData>> => {
-    const text = await res.text();
-    try {
-      return JSON.parse(text) as ApiResponse<ReportRichTextImageUploadData>;
-    } catch {
-      return { success: false, error: { code: 'PARSE_ERROR', message: text || '上传失败' } } as ApiResponse<ReportRichTextImageUploadData>;
-    }
-  };
-
-  const rawBase = getApiBaseUrl();
-  const path = api.reportAgent.dailyLogs.uploadImage();
-  const url = rawBase ? `${rawBase}${path}` : path;
-
-  try {
-    const firstRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    const firstParsed = await parseResponse(firstRes);
-    const firstUnauthorized = firstRes.status === 401 || firstParsed.error?.code === 'UNAUTHORIZED';
-    if (!firstUnauthorized) return firstParsed;
-
-    const refreshed = await tryRefreshAdminTokenForUpload();
-    if (!refreshed) return firstParsed;
-
-    const retryRes = await fetch(url, {
-      method: 'POST',
-      headers: buildHeaders(useAuthStore.getState().token),
-      body: createFormData(),
-    });
-    return await parseResponse(retryRes);
-  } catch (error) {
-    return {
-      success: false,
-      error: {
-        code: 'NETWORK_ERROR',
-        message: error instanceof Error ? error.message : '网络错误，上传失败',
-      },
-    } as ApiResponse<ReportRichTextImageUploadData>;
-  }
+export const uploadReportCommentImageReal: UploadReportCommentImageContract = async (input) => {
+  return await uploadReportImageForm(api.reportAgent.reports.commentImages(encodeURIComponent(input.reportId)), input.file);
 };
 
 export const deleteWeeklyReportReal: DeleteWeeklyReportContract = async (input) => {

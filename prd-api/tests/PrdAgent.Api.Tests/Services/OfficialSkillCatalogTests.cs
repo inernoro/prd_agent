@@ -238,7 +238,11 @@ public class OfficialSkillCatalogTests
         Assert.Contains("bundle.manifest.json", names);
 
         var install = ReadZipText(zip, "INSTALL.md");
-        Assert.Contains("~/.claude/skills/", install);
+        // 装项目级不装用户主目录：技能跟着项目版本库走，团队 clone 下来都有
+        Assert.Contains(".claude/skills", install);
+        Assert.Contains(".cursor/skills", install);
+        Assert.Contains(".agents/skills", install);
+        Assert.DoesNotContain("~/.claude/skills", install);
         Assert.Contains("/sdd-init", install);
     }
 

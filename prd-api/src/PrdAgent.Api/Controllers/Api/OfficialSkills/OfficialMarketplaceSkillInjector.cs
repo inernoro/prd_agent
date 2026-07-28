@@ -47,7 +47,8 @@ public static class OfficialMarketplaceSkillInjector
             Title = "findmapskills · 海鲜市场操作技能",
             version = OfficialSkillTemplates.FindMapSkillsVersion,
             Description = $"官方内置 · v{OfficialSkillTemplates.FindMapSkillsVersion} · AI 装上这一个就能搜索/下载/上传/订阅海鲜市场",
-            iconEmoji = "🛡️",
+            // 不下发 emoji / dingbat（CLAUDE.md 规则 0）：卡片视觉由前端 SkillGlyph 按 seed 出 SVG
+            iconEmoji = string.Empty,
             coverImageUrl = (string?)null,
             previewUrl = (string?)null,
             previewSource = (string?)null,
@@ -143,7 +144,7 @@ public static class OfficialMarketplaceSkillInjector
             Description = string.IsNullOrWhiteSpace(e.Version)
                 ? e.Description
                 : $"官方内置 · v{e.Version} · {e.Description}",
-            iconEmoji = "✦",
+            iconEmoji = string.Empty, // 同上：视觉走 SkillGlyph，不下发字形
             coverImageUrl = (string?)null,
             previewUrl = (string?)null,
             previewSource = (string?)null,
@@ -185,7 +186,7 @@ public static class OfficialMarketplaceSkillInjector
             Description = string.IsNullOrWhiteSpace(b.Version)
                 ? b.Description
                 : $"官方套装 · v{b.Version} · {b.Description}",
-            iconEmoji = "✦",
+            iconEmoji = string.Empty, // 同上：视觉走 SkillGlyph，不下发字形
             coverImageUrl = (string?)null,
             previewUrl = (string?)null,
             previewSource = (string?)null,

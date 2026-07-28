@@ -15,12 +15,20 @@ import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeplo
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, selfUpdateDrainBlockReason, type DrainableRun,
+  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
+import {
+  resolveBranchProtection,
+  describeBranchProtectionReason,
+  isTrunkBranch,
+  type BranchProtectionReason,
+} from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -2223,14 +2231,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
       res.status(507).json({ error: 'disk_low', message: blocked });
       return;
     }
-    // 自更新排空窗口闸（Codex 第三十六轮 P1）：排空期间到达的新部署会被随后的
-    // 重启腰斩——那正是排空要消灭的现象。明说拒绝好过建到一半被杀。
-    const draining = selfUpdateDrainBlockReason(Date.now());
-    if (draining) {
-      res.setHeader('Retry-After', '60');
-      res.status(503).json({ error: 'self_update_draining', message: draining });
-      return;
-    }
+    // 自更新排空窗口闸已上移到 app 级中间件（server.ts + deploy-drain 的
+    // isDrainBlockedPath）：它同时罩住分支部署与生产发布两个路由器，路由器级只罩
+    // 得住自己那一半（Codex PR #1273 P1）。这里只留磁盘刹车。
     next();
   });
 
@@ -2247,6 +2250,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
    * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
    */
+  /**
+   * 重启后多久仍活着就判定「重启没生效」，提前放开排空闸。
+   * 取值要大于 `scheduleDetachedCdsRestart` 里 1 秒的 process.exit 延迟，
+   * 又要远小于闸自身的 fail-open 窗口（timeoutMs + 60s，默认 6 分钟）。
+   */
+  const RESTART_GATE_RELEASE_MS = 15_000;
+
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
     branch?: string;
@@ -2264,13 +2274,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
     if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
     const outcome = await drainInFlightDeploys({
-      listRuns: () => stateService.getDeploymentRuns() as unknown as DrainableRun[],
+      // 部署 + 发布一起排空（Codex PR #1273 P1）：deploy-drain 早就支持发布口径，
+      // 但这个唯一调用点只喂了部署 run，于是自更新会在预览部署落地后立刻重启，
+      // 把一条正在跑的生产发布 SSH 拦腰砍断——而发布被腰斩的代价比部署大得多
+      // （run 停在 running，在途守卫从此拒绝该目标的一切新发布）。
+      listRuns: () => collectDrainableRuns({
+        deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
+        releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
+      }),
       now: () => Date.now(),
       sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
       timeoutMs,
       onWait: (pending, waitedMs) => {
         if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
-          console.log(`[self-update] 等待 ${pending.length} 个在途部署落地再重启（已等 ${Math.round(waitedMs / 1000)}s）`);
+          const releases = pending.filter((r) => r.kind === 'release').length;
+          const suffix = releases > 0 ? `（其中 ${releases} 个是生产发布）` : '';
+          console.log(`[self-update] 等待 ${pending.length} 个在途部署/发布落地再重启${suffix}（已等 ${Math.round(waitedMs / 1000)}s）`);
         }
       },
     });
@@ -2364,6 +2383,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           `CDS restart requested by ${input.source}`,
           input.source,
         );
+        // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
+        // 只有「重启没真的发生」（spawn 静默失败、上层提前返回）时它才会跑到，
+        // 把排空闸提前放掉。否则闸要等满 timeoutMs+60s（默认 6 分钟）才 fail-open，
+        // 这期间每一次 webhook 部署都拿 503 + 红灯 CI —— 2026-07-28 本 PR 实际中招
+        // 一次：一次 fast-forward 自更新没重启进程，随后的部署被闸了。
+        setTimeout(() => {
+          endSelfUpdateDrain();
+          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+        }, RESTART_GATE_RELEASE_MS).unref?.();
         setTimeout(() => process.exit(0), 1000);
       } catch (spawnErr) {
         try {
@@ -2377,6 +2405,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             input.source,
           );
           setTimeout(() => process.exit(1), 1000);
+        } else {
+          // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
+          endSelfUpdateDrain();
         }
       }
     };
@@ -5159,6 +5190,86 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // ── 一键删除类操作的分支保护（2026-07-27 P0 收尾）──
+  //
+  // 判定本身**不在这里写**，一律走 `branch-protection.ts` 的 SSOT（janitor /
+  // scheduler / GitHub delete webhook 消费的是同一份）。P0 事故的根因正是「同一件事
+  // 在多处各写一份且互不一致」：`/cleanup` 只比对全局 `state.defaultBranch === b.id`，
+  // 多项目部署下项目 B 的 main，其 CDS 分支 id 根本不等于那个全局值 —— 运维在 UI
+  // 点一次「清理」并选中项目 B，循环走到 main 就会停容器、删 worktree、删 state 条目，
+  // 与定时 janitor 删掉 main 的后果逐字相同，只是触发者换成了一次点击。
+  //
+  // 因此凡是「会成批删分支」的路径（cleanup / cleanup-orphans / cleanup-stopped）
+  // 一律先过 partitionProtectedBranches()，并把「保住了谁、凭什么保住」回传给
+  // 响应与 SSE —— 与 janitor 报表的 skippedProtected 同口径，保护必须可见。
+  type ProtectedBranchNote = {
+    branchId: string;
+    /** git 分支名：主干判定靠的就是它，回传给用户时必须能看到。 */
+    branchName: string;
+    reason: BranchProtectionReason;
+    /** 中文说明，运维不必回查枚举就知道「凭什么保住它」。 */
+    reasonText: string;
+  };
+
+  function noteBranchProtection(entry: BranchEntry): ProtectedBranchNote | null {
+    // 第三个参数必须传：只配在 scheduler 那侧的固定名单同样要挡住批量清理，
+    // 否则「按文档 pin 住」的非主干分支挡得住降温与 janitor，却会被
+    // /cleanup、/cleanup-orphans、cleanup-stopped 删掉（Codex PR #1273 P1）。
+    const protection = resolveBranchProtection(entry, stateService, deps.config?.scheduler?.pinnedBranches ?? []);
+    let reason = protection.reason;
+    // 额外一道兜底：旧的全局 state.defaultBranch。SSOT 的 default-branch 判定走
+    // getDefaultBranchFor(projectId)，若项目上显式写了 defaultBranch: null，就不会
+    // 再回落到这个全局值。这里保留 /cleanup 的历史行为，方向只会更保守（少删）。
+    if (!reason && stateService.getState().defaultBranch === entry.id) reason = 'default-branch';
+    if (!reason) return null;
+    return {
+      branchId: entry.id,
+      branchName: entry.branch,
+      reason,
+      reasonText: describeBranchProtectionReason(reason),
+    };
+  }
+
+  /** 把一批分支拆成「可删」与「受保护（含原因）」两堆。 */
+  function partitionProtectedBranches(entries: BranchEntry[]): {
+    deletable: BranchEntry[];
+    skippedProtected: ProtectedBranchNote[];
+  } {
+    const deletable: BranchEntry[] = [];
+    const skippedProtected: ProtectedBranchNote[] = [];
+    for (const entry of entries) {
+      const note = noteBranchProtection(entry);
+      if (note) skippedProtected.push(note);
+      else deletable.push(entry);
+    }
+    return { deletable, skippedProtected };
+  }
+
+  /**
+   * 只按「主干分支」拆分（恢复出厂设置专用，见该路由的注释）。
+   * 不含 pinnedByUser / isColorMarked —— 那些是用户临时标记，本就该被出厂重置清掉。
+   */
+  function partitionTrunkBranches(entries: BranchEntry[]): { trunk: BranchEntry[]; rest: BranchEntry[] } {
+    const trunk: BranchEntry[] = [];
+    const rest: BranchEntry[] = [];
+    for (const entry of entries) {
+      const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      if (isTrunkBranch(entry, project)) trunk.push(entry);
+      else rest.push(entry);
+    }
+    return { trunk, rest };
+  }
+
+  /** 恢复出厂设置是否被显式授权连主干一起删（?confirmTrunk=1 或 body.confirmTrunk=true）。 */
+  function factoryResetIncludesTrunk(req: Request): boolean {
+    const raw = String(
+      (req.query?.confirmTrunk as string | undefined)
+      ?? ((req.body as Record<string, unknown> | undefined)?.confirmTrunk as string | boolean | undefined)
+      ?? '',
+    ).trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes';
+  }
+
   // 判定一个分支是否「已停止」（2026-06-21 Bug B2）。
   //
   // 注意：BranchEntry.status 没有字面量 'stopped'——分支停掉后状态回落到
@@ -5208,9 +5319,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);
-    const branches = Object.values(stateService.getState().branches).filter(
+    const stoppedCandidates = Object.values(stateService.getState().branches).filter(
       (b) => (!projectFilter || (b.projectId || 'default') === projectFilter) && isStoppedBranch(b),
     );
+    // 主干保护（2026-07-27 P0 收尾）：停掉的 main 依然是 main，一键「清理已停止分支」
+    // 不得把它连 worktree 带 state 条目一起删。判定走 branch-protection.ts 的 SSOT。
+    const { deletable: branches, skippedProtected } = partitionProtectedBranches(stoppedCandidates);
 
     const removed: Array<{ branchId: string; branch: string; projectId: string }> = [];
     const skippedBusy: Array<{ branchId: string; reason: string }> = [];
@@ -5295,15 +5409,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       action: 'app.stopped-branches.cleanup',
       message: `cleaned ${removed.length} stopped branch(es)${projectFilter ? ` for project ${projectFilter}` : ''}`,
       projectId: projectFilter || null,
-      details: { removed, skippedBusy },
+      details: { removed, skippedBusy, skippedProtected },
     });
 
     res.json({
       ok: true,
       removedCount: removed.length,
       skippedBusyCount: skippedBusy.length,
+      // 保护要可见：只报「删了几个」而不报「保住了谁、凭什么保住」，运维无从确认
+      // 主干保护到底有没有生效（同 janitor 报表的 skippedProtected 口径）。
+      skippedProtectedCount: skippedProtected.length,
       removed,
       skippedBusy,
+      skippedProtected,
     });
   });
 
@@ -11669,7 +11787,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const desiredIds = new Set(profiles.map((p) => p.id));
       const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
       // executorId 以 'master-' 开头 = 内嵌 master（本地）；其余非空值 = 远端归属（与 server.ts 心跳口径一致）。
-      const remoteAttributed = !!entry.executorId && !entry.executorId.startsWith('master-');
+      const remoteAttributed = isRemoteExecutorOwned(entry.executorId);
       if (droppedExisting.length > 0 && remoteAttributed) {
         const onlineRemoteNode = registry
           ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded' && n.status === 'online')
@@ -17868,11 +17986,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
 
       const state = stateService.getState();
-      const toRemove = Object.values(state.branches).filter((b) => {
-        if (b.id === state.defaultBranch) return false;
+      const scopedBranches = Object.values(state.branches).filter((b) => {
         if (projectFilter && (b.projectId || 'default') !== projectFilter) return false;
         return true;
       });
+      // 2026-07-27 P0 收尾：此前这里只比对 `b.id === state.defaultBranch`（一个**全局**值），
+      // 既没有 per-project 判定、也没有按 git 分支名的主干判定。多项目部署下项目 B 的 main
+      // 其 CDS 分支 id 不等于该全局值 —— 运维点一次「清理」并选中项目 B，循环走到 main
+      // 就会停容器、删 worktree、删 state 条目，把 P0 事故原样复现一遍。现在统一过 SSOT。
+      const { deletable: toRemove, skippedProtected } = partitionProtectedBranches(scopedBranches);
+      for (const note of skippedProtected) {
+        sendSSE(res, 'step', {
+          step: 'cleanup',
+          status: 'info',
+          title: `已保护 ${note.branchName}（${note.branchId}）：${note.reasonText}`,
+        });
+      }
       let removedCount = 0;
       const skippedBusy: Array<{ branchId: string; reason: string }> = [];
       for (const entry of toRemove) {
@@ -17939,10 +18068,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.save();
-      const msg = projectFilter
+      const protectedSuffix = skippedProtected.length > 0
+        ? `，已保护 ${skippedProtected.length} 个分支（${skippedProtected.map((n) => `${n.branchName}:${n.reasonText}`).join('、')}）`
+        : '';
+      const msg = (projectFilter
         ? `已清理项目 ${projectFilter} 的 ${removedCount} 个分支`
-        : `已清理 ${removedCount} 个分支`;
-      sendSSE(res, 'complete', { message: msg, removedCount, scope: projectFilter || '_all', skippedBusy });
+        : `已清理 ${removedCount} 个分支`) + protectedSuffix;
+      sendSSE(res, 'complete', {
+        message: msg,
+        removedCount,
+        scope: projectFilter || '_all',
+        skippedBusy,
+        skippedProtected,
+      });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -17977,6 +18115,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // A project whose clone isn't ready (cloneStatus !== 'ready')
       // is skipped — it has no remote to check against.
       const allOrphans: BranchEntry[] = [];
+      /** 受保护而不参与孤儿清理的分支（含原因），回传给用户。 */
+      const skippedProtected: ProtectedBranchNote[] = [];
+      /** 因 fetch 异常（远端分支集合为空）被整体中止的项目。 */
+      const abortedProjects: Array<{ projectId: string; projectName: string; reason: string }> = [];
       for (const project of projects) {
         if (project.cloneStatus && project.cloneStatus !== 'ready') {
           sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
@@ -18001,16 +18143,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const remoteBranches = new Set(
           result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
         );
+        // fetch 异常守卫（2026-07-27 P0 收尾）：孤儿判定完全依赖这个远端集合，
+        // 「远端一个分支都没有」绝不能被解释成「本地全都是孤儿」——远端默认分支刚改名、
+        // fetch 部分失败但 exec 未抛、仓库处于异常状态，都会让集合为空，而后果是
+        // 该项目**全部分支（含 main）**被整批删除。空集合一律判为异常并中止该项目。
+        if (remoteBranches.size === 0) {
+          const reason = `${project.name}: 远端分支列表为空，判定为 fetch 异常（远端默认分支刚改名 / fetch 部分失败 / 仓库状态异常都会这样），已中止该项目的孤儿清理，未删除任何分支`;
+          sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'error', title: reason });
+          abortedProjects.push({ projectId: project.id, projectName: project.name, reason });
+          continue;
+        }
         const projectBranches = stateService.getBranchesForProject(project.id);
-        const projectOrphans = projectBranches.filter(b => !remoteBranches.has(b.branch));
-        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个` });
+        const orphanCandidates = projectBranches.filter(b => !remoteBranches.has(b.branch));
+        // 主干保护走 SSOT：远端改名/远端已删主干这类场景下 main 会被算成孤儿，
+        // 而它恰恰是最不能删的那一条。
+        const partitioned = partitionProtectedBranches(orphanCandidates);
+        const projectOrphans = partitioned.deletable;
+        for (const note of partitioned.skippedProtected) {
+          skippedProtected.push(note);
+          sendSSE(res, 'step', {
+            step: `fetch-${project.id}`,
+            status: 'info',
+            title: `已保护 ${note.branchName}（${note.branchId}）：${note.reasonText}`,
+          });
+        }
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个, 受保护 ${partitioned.skippedProtected.length} 个` });
         allOrphans.push(...projectOrphans);
       }
 
       const orphans = allOrphans;
 
       if (orphans.length === 0) {
-        sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
+        const message = abortedProjects.length > 0
+          ? `已中止 ${abortedProjects.length} 个项目的孤儿清理（fetch 异常），未删除任何分支`
+          : '没有发现孤儿分支，一切正常';
+        sendSSE(res, 'complete', { message, orphanCount: 0, skippedProtected, abortedProjects });
         res.end();
         return;
       }
@@ -18094,7 +18261,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const cleaned = cleanedOrphans.length;
 
       stateService.save();
-      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned, skippedBusy });
+      sendSSE(res, 'complete', {
+        message: `已清理 ${cleaned} 个孤儿分支`
+          + (skippedProtected.length > 0 ? `，已保护 ${skippedProtected.length} 个分支` : '')
+          + (abortedProjects.length > 0 ? `，${abortedProjects.length} 个项目因 fetch 异常被中止` : ''),
+        orphanCount: cleaned,
+        skippedBusy,
+        skippedProtected,
+        abortedProjects,
+      });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -18206,8 +18381,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
 
         // 1. Stop + remove that project's branches
-        const branches = Object.values(state.branches)
+        //
+        // 主干的处置（2026-07-27 P0 收尾）：与 /cleanup 那类「回收垃圾」的语义不同，
+        // 「恢复出厂设置」的语义确实是「清空一切、回到空白装机态」，主干在语义之内。
+        // 所以这里不硬拦，而是要求**显式确认**：不带 confirmTrunk 时保留主干（其余照清），
+        // 带 confirmTrunk=1 才连主干一并删除。两种情况都把主干逐条列进 SSE 与响应 ——
+        // 「这次会不会动 main」永远是明写出来的，不靠读代码猜，也不会因为一次点击
+        // 就把主干的 worktree 与 state 条目悄悄吃掉。
+        const includeTrunk = factoryResetIncludesTrunk(req);
+        const projectBranches = Object.values(state.branches)
           .filter((b) => (b.projectId || 'default') === projectFilter);
+        const trunkSplit = partitionTrunkBranches(projectBranches);
+        const keptTrunk = includeTrunk ? [] : trunkSplit.trunk;
+        const branches = includeTrunk ? projectBranches : trunkSplit.rest;
+        // 保留主干 + 清空配置 = 僵尸态：分支条目与容器还在跑，但它依赖的
+        // buildProfiles / routingRules / 项目环境变量 / 基础设施全被清掉，既没法
+        // 重新部署，路由也已经断了，而响应还宣称「已保留主干」（Codex PR #1273 P1）。
+        // 与其造这种半吊子状态，不如把这个组合直接判为非法：要么显式确认连主干
+        // 一起清（confirmTrunk=1），要么先把主干处理掉再重置。
+        if (!includeTrunk && trunkSplit.trunk.length > 0) {
+          sendSSE(res, 'error', {
+            message: `该项目还有主干分支（${trunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+              + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+              + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+            trunkBranches: trunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+          });
+          res.end();
+          return;
+        }
+
+        for (const entry of trunkSplit.trunk) {
+          sendSSE(res, 'step', {
+            step: 'reset',
+            status: includeTrunk ? 'warning' : 'info',
+            title: includeTrunk
+              ? `将删除主干分支 ${entry.branch}（${entry.id}）：已带 confirmTrunk 显式确认`
+              : `已保留主干分支 ${entry.branch}（${entry.id}）：如需一并清除，请带 confirmTrunk=1 重试`,
+          });
+        }
         for (const entry of branches) {
           const branchOperationLease = beginSilentBranchOperation(req, entry, {
             kind: 'factory-reset',
@@ -18300,11 +18511,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
 
         sendSSE(res, 'complete', {
-          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`,
+          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`
+            + (keptTrunk.length > 0
+              ? `已保留 ${keptTrunk.length} 个主干分支（${keptTrunk.map((b) => b.branch).join('、')}），如需一并清除请带 confirmTrunk=1 重试。`
+              : '')
+            + (includeTrunk && trunkSplit.trunk.length > 0
+              ? `其中主干分支 ${trunkSplit.trunk.map((b) => b.branch).join('、')} 已按 confirmTrunk 一并删除。`
+              : ''),
           scope: projectFilter,
           removedBranches: branches.length,
           removedInfra: infra.length,
           removedProfiles,
+          /** 本次保留的主干分支（未带 confirmTrunk 时非空）。 */
+          keptTrunkBranches: keptTrunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+          /** 本次删除的主干分支（带 confirmTrunk 时非空）。 */
+          removedTrunkBranches: includeTrunk
+            ? trunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch }))
+            : [],
         });
         return;
       }
@@ -18312,7 +18535,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // ── Global factory-reset (all projects) — pre-feature path ──
 
       // 1. Stop and remove all branch containers + worktrees
-      const branches = Object.values(state.branches);
+      //
+      // 主干处置同上（scoped 路径的长注释）：默认保留各项目主干，带 confirmTrunk=1
+      // 才连主干一起清空；无论哪种都在响应里逐条列明。
+      const globalIncludeTrunk = factoryResetIncludesTrunk(req);
+      const globalTrunkSplit = partitionTrunkBranches(Object.values(state.branches));
+      const globalKeptTrunk = globalIncludeTrunk ? [] : globalTrunkSplit.trunk;
+
+      // 同上：保留主干但清空它依赖的全部配置会造出无法部署的僵尸分支，
+      // 这个组合直接判为非法（Codex PR #1273 P1）。
+      if (!globalIncludeTrunk && globalTrunkSplit.trunk.length > 0) {
+        sendSSE(res, 'error', {
+          message: `当前还有主干分支（${globalTrunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+            + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+            + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+          trunkBranches: globalTrunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+        });
+        res.end();
+        return;
+      }
+      const branches = globalIncludeTrunk
+        ? Object.values(state.branches)
+        : globalTrunkSplit.rest;
+      for (const entry of globalTrunkSplit.trunk) {
+        sendSSE(res, 'step', {
+          step: 'reset',
+          status: globalIncludeTrunk ? 'warning' : 'info',
+          title: globalIncludeTrunk
+            ? `将删除主干分支 ${entry.branch}（${entry.id}）：已带 confirmTrunk 显式确认`
+            : `已保留主干分支 ${entry.branch}（${entry.id}）：如需一并清除，请带 confirmTrunk=1 重试`,
+        });
+      }
       for (const entry of branches) {
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'factory-reset',
@@ -18374,13 +18627,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)
+      //    未带 confirmTrunk 时，被保留的主干分支条目必须原样留在 state 里 ——
+      //    容器还在跑、worktree 还在盘上，条目一删就成了没人认领的幽灵。
+      const keptBranchMap: Record<string, BranchEntry> = {};
+      for (const entry of globalKeptTrunk) keptBranchMap[entry.id] = entry;
+      const removedInfraCount = (state.infraServices || []).length;
       const freshState: typeof state = {
         routingRules: [],
         buildProfiles: [],
-        branches: {},
-        nextPortIndex: 0,
+        branches: keptBranchMap,
+        // 保留了分支就不能把端口游标归零，否则后续分配会和保留分支已占用的端口撞车。
+        nextPortIndex: globalKeptTrunk.length > 0 ? state.nextPortIndex : 0,
         logs: {},
-        defaultBranch: null,
+        defaultBranch: globalKeptTrunk.length > 0 ? (state.defaultBranch ?? null) : null,
         customEnv: { _global: {} },
         infraServices: [],
       };
@@ -18388,7 +18647,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       sendSSE(res, 'complete', {
-        message: `已恢复出厂设置：清除 ${branches.length} 个分支、${state.infraServices.length} 个基础设施服务、所有配置。Docker 数据卷已保留。`,
+        message: `已恢复出厂设置：清除 ${branches.length} 个分支、${removedInfraCount} 个基础设施服务、所有配置。Docker 数据卷已保留。`
+          + (globalKeptTrunk.length > 0
+            ? `已保留 ${globalKeptTrunk.length} 个主干分支（${globalKeptTrunk.map((b) => b.branch).join('、')}），如需一并清除请带 confirmTrunk=1 重试。`
+            : '')
+          + (globalIncludeTrunk && globalTrunkSplit.trunk.length > 0
+            ? `其中主干分支 ${globalTrunkSplit.trunk.map((b) => b.branch).join('、')} 已按 confirmTrunk 一并删除。`
+            : ''),
+        removedBranches: branches.length,
+        keptTrunkBranches: globalKeptTrunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+        removedTrunkBranches: globalIncludeTrunk
+          ? globalTrunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch }))
+          : [],
       });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });

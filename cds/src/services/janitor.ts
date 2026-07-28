@@ -5,6 +5,11 @@ import type { BranchEntry } from '../types.js';
 import type { StateService } from './state.js';
 import { computeImageRetentionPlan, type ImageRetentionPlan } from './image-retention.js';
 import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTier, type DiskTier } from './disk-guard.js';
+import {
+  resolveBranchProtection,
+  describeBranchProtectionReason,
+  type BranchProtectionReason,
+} from './branch-protection.js';
 
 /**
  * JanitorService — Phase 2 of the CDS resilience plan.
@@ -16,7 +21,9 @@ import { diskGuard, imageKeepGenerationsFor, imageMaxRemovalsFor, describeDiskTi
  * The janitor runs a periodic sweep that:
  *   - Identifies branches whose latest lifecycle timestamp is older than
  *     `worktreeTTLDays`
- *   - Skips any branch that is pinned (pinnedByUser / defaultBranch / isColorMarked)
+ *   - Skips any protected branch — 判定统一走 `branch-protection.ts` 的 SSOT
+ *     (pinnedByUser / isColorMarked / per-project defaultBranch / 主干分支)，
+ *     与 scheduler 共用同一份，杜绝「一处保护、另一处照删」的漂移
  *   - Returns a report for the caller to act on (list → stop → delete)
  *   - Checks disk usage and emits a warning when > `diskWarnPercent`
  *
@@ -35,6 +42,13 @@ export interface JanitorConfig {
   diskWarnPercent: number;
   /** How often (in seconds) to run the sweep. */
   sweepIntervalSeconds: number;
+  /**
+   * 固定名单（分支 id），与 `SchedulerConfig.pinnedBranches` 同语义。
+   *
+   * 2026-07-27 P0 收尾：此前 janitor 压根不认这份名单——运维在调度器里钉住的分支，
+   * 降温不会碰它，janitor 却照删。留空即旧行为；由启动装配把调度器那份名单透进来即可。
+   */
+  pinnedBranches?: string[];
   /**
    * Prune unused Docker build junk each sweep. Default on (undefined === true).
    * 只清理"绝对安全"的垃圾——悬空(untagged)镜像 + 构建缓存，**绝不**碰容器
@@ -146,6 +160,19 @@ export interface JanitorSweepReport {
   removedBranches: string[];
   /** Branches that would have been removed but were pinned. */
   skippedPinned: string[];
+  /**
+   * 已过期但因受保护而**没有被删**的分支（含原因）。2026-07-27 P0（main 被回收）
+   * 之后新增：保护必须可见 —— 只有「删了什么」的记录、没有「保住了什么、凭什么保住」
+   * 的记录，运维就无法确认主干保护到底有没有在生效。
+   */
+  skippedProtected: Array<{
+    branchId: string;
+    /** git 分支名（判定主干靠的就是它，报表里必须能看到）。 */
+    branchName: string;
+    reason: BranchProtectionReason;
+    /** 中文说明，直接可读，不必回查枚举。 */
+    reasonText: string;
+  }>;
   /** Branches owned by remote executors. Coordinator cleanup must proxy these. */
   skippedRemote: string[];
   /** Disk usage at sweep time. null = stat failed. */
@@ -189,6 +216,10 @@ export interface JanitorSnapshot {
     at: string;
     diskTier: DiskTier;
     removedBranches: number;
+    /** 本轮因受保护而免于删除的过期分支数（2026-07-27 P0 后新增，保护要可见）。 */
+    skippedProtected: number;
+    /** 其中按「主干分支」保住的分支 id —— 主干保护是否生效，看这一项。 */
+    protectedTrunkBranches: string[];
     imageRetention: {
       removed: number;
       failed: number;
@@ -236,19 +267,6 @@ export function defaultDiskUsage(targetPath: string): { totalBytes: number; free
   }
 }
 
-/**
- * Determine whether a branch is protected from janitor cleanup.
- * Mirrors SchedulerService.isPinned but is independent (janitor may run
- * without the scheduler being enabled).
- */
-export function isBranchProtected(branch: BranchEntry, defaultBranchId: string | null, configPinned: string[] = []): boolean {
-  if (branch.pinnedByUser) return true;
-  if (branch.isColorMarked) return true;
-  if (defaultBranchId === branch.id) return true;
-  if (configPinned.includes(branch.id)) return true;
-  return false;
-}
-
 function branchExpiryAnchorMs(branch: BranchEntry): number {
   const candidates = [
     branch.lastAccessedAt,
@@ -275,6 +293,15 @@ export class JanitorService {
   private sweepInFlight: Promise<JanitorSweepReport> | null = null;
   private removeFn: RemoveBranchFn | null = null;
   private orphanInfraScan: OrphanInfraScanFn | null = null;
+  /**
+   * 上一轮「保护跳过」的 `分支id::原因` 集合，用于只在**状态变化**时打日志。
+   *
+   * 主干天然长期不被访问且永久受保护，逐轮复读同一条中文日志会永久累积
+   * （多项目实例是 项目数 × 每轮），把真正需要注意的一次性事件淹没在稳态噪声里。
+   * 「保护是否生效」这件事已由报表字段 `skippedProtected` 与快照
+   * `protectedTrunkBranches` 承担，日志只负责报「变化」。
+   */
+  private loggedProtectedKeys = new Set<string>();
 
   constructor(
     private readonly stateService: StateService,
@@ -422,6 +449,10 @@ export class JanitorService {
           at: report.timestamp,
           diskTier: report.diskTier,
           removedBranches: report.removedBranches.length,
+          skippedProtected: report.skippedProtected.length,
+          protectedTrunkBranches: report.skippedProtected
+            .filter((s) => s.reason === 'trunk-branch')
+            .map((s) => s.branchId),
           imageRetention: report.imageRetention
             ? {
               removed: report.imageRetention.removed.length,
@@ -450,6 +481,7 @@ export class JanitorService {
       timestamp: new Date(this.clock.now()).toISOString(),
       removedBranches: [],
       skippedPinned: [],
+      skippedProtected: [],
       skippedRemote: [],
       disk: null,
       diskWarning: false,
@@ -544,15 +576,39 @@ export class JanitorService {
     const now = this.clock.now();
     const ttlMs = this.config.worktreeTTLDays * 24 * 60 * 60 * 1000;
     const branches = this.stateService.getAllBranches();
+    /** 本轮的「保护跳过」键集合；与上一轮比对，只有新增/原因变化才落日志。 */
+    const protectedLogKeys = new Set<string>();
 
     for (const branch of branches) {
-      // per-project default：项目级值优先，未设回落到旧 state.defaultBranch
-      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
-      const protectedReason = isBranchProtected(branch, branchDefault, []);
-      if (protectedReason) {
+      // 保护判定走 branch-protection.ts 的 SSOT（与 scheduler 同一份）。
+      // 2026-07-27 P0：此前 janitor 自己写了一份，只比对 defaultBranchId===branch.id，
+      // 漏了「主干分支按 git 分支名判定」那一条 —— 项目 defaultBranch 未配置/不匹配时，
+      // main 就被当成过期分支，连 state 条目带 worktree 一起删掉。
+      const protection = resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []);
+      if (protection.protected) {
         // We still track pinned stale branches so the operator can see them.
         if (branch.lastAccessedAt && (now - Date.parse(branch.lastAccessedAt)) > ttlMs) {
           report.skippedPinned.push(branch.id);
+        }
+        // 「本可以删、因为受保护而没删」才是真正需要被看见的事实：按与删除同一套
+        // 口径（生命周期锚点）判过期，避免只看 lastAccessedAt 漏报从未访问过的分支。
+        const protectedAnchorMs = branchExpiryAnchorMs(branch);
+        if (protectedAnchorMs > 0 && (now - protectedAnchorMs) > ttlMs) {
+          const reason = protection.reason as BranchProtectionReason;
+          const reasonText = describeBranchProtectionReason(reason);
+          report.skippedProtected.push({
+            branchId: branch.id,
+            branchName: branch.branch,
+            reason,
+            reasonText,
+          });
+          // 只在状态变化时打日志（新出现的受保护分支，或保护原因变了），
+          // 避免主干这种「永久受保护」的分支每轮 sweep 复读同一行，把有效信号淹掉。
+          const logKey = `${branch.id}::${reason}`;
+          protectedLogKeys.add(logKey);
+          if (!this.loggedProtectedKeys.has(logKey)) {
+            console.log(`[janitor] 保护跳过分支 "${branch.id}"（git 分支 ${branch.branch}）：${reasonText}`);
+          }
         }
         continue;
       }
@@ -579,6 +635,10 @@ export class JanitorService {
       }
     }
 
+    // 只有真的跑完了分支循环才滚动基线；提前 return（TTL 清理关闭）时保持原样，
+    // 否则重新开启后会把「其实没变」的保护当成新增再打一遍。
+    this.loggedProtectedKeys = protectedLogKeys;
+
     return report;
   }
 
@@ -598,8 +658,8 @@ export class JanitorService {
       const idleMs = now - anchorMs;
       if (idleMs <= ttlMs) continue;
 
-      const branchDefault = this.stateService.getDefaultBranchFor(branch.projectId);
-      if (branch.executorId || isBranchProtected(branch, branchDefault, [])) {
+      // 与 runSweep 同一套保护判定（SSOT），否则 dryRun 会预告一次它其实不会做的删除。
+      if (branch.executorId || resolveBranchProtection(branch, this.stateService, this.config.pinnedBranches ?? []).protected) {
         wouldSkip.push(branch.id);
       } else {
         wouldRemove.push(branch.id);

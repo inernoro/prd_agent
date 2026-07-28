@@ -117,7 +117,7 @@ try {
     assert(nameMismatch.length === 0, `[${bundle.key}] 所有 SKILL.md 的 frontmatter name 等于目录名${nameMismatch.length ? `（不符：${nameMismatch.join(', ')}）` : ''}`);
 
     // 4c. 禁 emoji（CLAUDE.md 规则 0）—— 对外分发的内容尤其不能夹带
-    const emoji = /[\u{1F300}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}]/u;
+    const emoji = /[\u{1F000}-\u{1FAFF}\u{2700}-\u{27BF}\u{2600}-\u{26FF}]/u;
     const dirty = [];
     const walk = (d) => {
       for (const n of readdirSync(d)) {

@@ -75,6 +75,7 @@ import {
 import { statusRailClass } from '@/lib/statusStyle';
 import { ErrorBlock, MetricTile } from '@/pages/cds-settings/components';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
+import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
   id: string;
@@ -3950,7 +3951,8 @@ export function BranchListPage(): JSX.Element {
 
         {toast ? (
           <div
-            className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
+            className="fixed z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg"
+            style={bottomRightToastStyle}
             role="status"
           >
             {toast}

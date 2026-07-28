@@ -25,6 +25,7 @@ import { branchEvents, nowIso } from './branch-events.js';
 import path from 'node:path';
 import { StateService as StateServiceClass } from './state.js';
 import { analyzeChangeImpact } from './change-impact-analyzer.js';
+import { isTrunkBranch } from './branch-protection.js';
 import { branchUsesPrebuiltMode, applyDefaultDeployModesToBranch } from './deploy-runtime.js';
 
 /**
@@ -719,6 +720,20 @@ export class GitHubWebhookDispatcher {
       return { action: 'ignored-event', message: `branch deleted on GitHub but not tracked by CDS: ${canonicalId}` };
     }
     const branchId = entry.id;
+    // 主干兜底（2026-07-27 P0：CDS 把 main 回收删掉）：GitHub 上删除主干是极端事件，
+    // 更常见的是 webhook 误判（ref 实为 tag、分支名匹配错、仓库刚改过默认分支）。
+    // 任何情况下都不允许由一条 webhook 自动删掉主干预览 —— 拒绝停容器 + 拒绝删 entry，
+    // 只留一条可读的日志（webhook 投递记录里的 dispatchReason 就是这条 message）。
+    // 真要删主干，走 CDS UI 的手动删除，由人确认。
+    // 这里刻意也不写墓碑：墓碑语义是「该分支已放弃」，而我们恰恰在拒绝放弃它，
+    // 写了会让 gone 页/历史台账把还活着的主干标成已放弃。
+    if (isTrunkBranch(entry, project)) {
+      return {
+        action: 'ignored-event',
+        message: `拒绝自动删除主干分支 "${entry.branch}"（CDS 分支 ${branchId}）：主干受保护，webhook 不会停容器也不会删除分支条目。如确需删除请在 CDS 手动操作。`,
+        branchId,
+      };
+    }
     // 墓碑（gone 页用的「已放弃」元数据）独立于 delete「自动清容器」策略，任何删除都记。
     // 否则 delete 策略关闭时不写墓碑 → 过期预览仍落泛化「启动失败」而非「已放弃」（Bugbot）。
     // 与 PR-close 路径一致：reason 固定 abandoned（delete 事件无合并语义），若此前 PR 合并
