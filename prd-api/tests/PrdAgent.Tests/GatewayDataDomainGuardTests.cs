@@ -3488,7 +3488,11 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
-        Assert.Contains("font-size: 14px;", theme);
+        // 字号已收敛为 :root 的七档 token（doc/rule.llm-gateway.console-design-tonality.md）。
+        // 契约不变——日志表格正文仍是 14px——但要断言「body 档是 14px」+「表格确实消费该档」，
+        // 而不是像以前那样只要文件里任意位置出现过 14px 就算通过。
+        Assert.Contains("--fs-body: 14px;", theme);
+        Assert.Matches(@"(?s)\.lg-log-table\s*\{[^}]*font-size:\s*var\(--fs-body\)", theme);
         Assert.Contains("subtitle=\"会话主要模型\"", logs);
         Assert.Contains("lg-truncate lg-log-model-name", logs);
         Assert.Matches(@"(?s)\.lg-log-model-name\s*\{[^}]*font-weight:\s*450", theme);
@@ -3504,7 +3508,10 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("日志观测 · 非配置关系", entityDetails);
         Assert.Contains("--bg-page: #03080a", theme);
         Assert.Contains("--text-primary: #fcfcfe", theme);
-        Assert.Matches(@"(?s)\.lg-logs-heading h1\s*\{[^}]*font-weight:\s*700", theme);
+        // 页头已并入共享 SSOT 规则（.lg-page-heading / .lg-logs-heading / .lg-title 共用一条），
+        // 字重走 --fw-title。契约不变——页面标题仍是 700——断言改为「token 是 700」+「日志页头消费该 token」。
+        Assert.Contains("--fw-title: 700;", theme);
+        Assert.Matches(@"(?s)\.lg-logs-heading h1,[^{]*\{[^}]*font-weight:\s*var\(--fw-title\)", theme);
         Assert.Matches(@"(?s)@media[^}]*max-width:\s*680px.*?\.lg-log-table-head > div:first-child,[^}]*left:\s*10px", theme);
 
         var imageBackground = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/LLM/LlmRequestLogBackground.cs");

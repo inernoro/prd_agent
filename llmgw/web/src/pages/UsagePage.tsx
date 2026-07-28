@@ -7,6 +7,7 @@ import { Button, Card, SectionLoader } from '@/components/ui';
 import { fmtCost, fmtCompact, fmtShortTime } from '@/lib/logsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { FIELD_LABEL } from '@/lib/typography';
 
 export function UsagePage() {
   const { tenant } = useAuth();
@@ -146,7 +147,7 @@ export function UsagePage() {
           <label style={labelStyle}>租户总月预算（USD）<input type="number" min="0" step="any" value={monthlyBudget} onChange={(e) => setMonthlyBudget(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
           <label style={labelStyle}>单请求原子预占（USD）<input type="number" min="0" step="any" value={budgetReservation} onChange={(e) => setBudgetReservation(e.target.value)} style={inputStyle} placeholder="总预算启用时必填" /></label>
           <label style={labelStyle}>租户每分钟总请求数<input type="number" min="0" step="1" value={tenantRateLimit} onChange={(e) => setTenantRateLimit(e.target.value)} style={inputStyle} placeholder="留空表示不限制" /></label>
-          <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>清空三项并保存可关闭租户总限制；已有 appCaller 与 Service Key 限制不会被修改。</span><Button variant="primary" disabled={governanceSaving || (!!monthlyBudget !== !!budgetReservation)} onClick={() => void saveTenantGovernance()}>{governanceSaving ? '保存中' : '保存硬限制'}</Button></div>
+          <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>清空三项并保存可关闭租户总限制；已有 appCaller 与 Service Key 限制不会被修改。</span><Button variant="primary" disabled={governanceSaving || (!!monthlyBudget !== !!budgetReservation)} onClick={() => void saveTenantGovernance()}>{governanceSaving ? '保存中' : '保存硬限制'}</Button></div>
         </div> : <div className="lg-trust-explanation"><strong>只读</strong><span>Owner 或 Admin 可修改租户总限制；当前角色仍可查看实时使用量。</span></div>}
       </section>
       <div className="lg-usage-grid">
@@ -167,7 +168,7 @@ export function UsagePage() {
         </div>
       </section>
       {showImport && canImportActual ? <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 8, padding: 14, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 12, lineHeight: 1.6 }}><strong>先选一种匹配方式：</strong>供应商给了请求编号，就按单条请求对账；没有编号，就选择账单时间范围。系统只会查当前租户的数据，找不到、命中多条或时间范围重叠都会拒绝写入。</div>
+        <div style={{ gridColumn: '1 / -1', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}><strong>先选一种匹配方式：</strong>供应商给了请求编号，就按单条请求对账；没有编号，就选择账单时间范围。系统只会查当前租户的数据，找不到、命中多条或时间范围重叠都会拒绝写入。</div>
         <label style={labelStyle}>供应商名称<input value={provider} onChange={(e) => setProvider(e.target.value)} style={inputStyle} placeholder="例如 OpenRouter" /></label>
         <label style={labelStyle}>供应商账单唯一流水号<input value={externalRecordId} onChange={(e) => setExternalRecordId(e.target.value)} style={inputStyle} placeholder="用于防止重复导入" /></label>
         <label style={labelStyle}>供应商请求编号（有则填）<input value={providerRequestId} onChange={(e) => setProviderRequestId(e.target.value)} style={inputStyle} placeholder="填写后按单条请求对账" /></label>
@@ -177,7 +178,7 @@ export function UsagePage() {
         <label style={labelStyle}>供应商实际币种<input value={actualCurrency} onChange={(e) => setActualCurrency(e.target.value)} style={inputStyle} maxLength={3} /></label>
         <label style={labelStyle}>汇率凭证编号<input value={fxSnapshotId} onChange={(e) => setFxSnapshotId(e.target.value)} style={inputStyle} placeholder="跨币种时必填" /></label>
         <label style={labelStyle}>实际币种换算到估算币种的汇率<input type="number" min="0" step="any" value={fxRate} onChange={(e) => setFxRate(e.target.value)} style={inputStyle} placeholder="跨币种时必填" /></label>
-        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>供应商账单唯一流水号不是 Gateway requestId。CNY 与 USD 不会直接相加；没有汇率凭证时只分别展示，不计算差额。</span><Button variant="primary" disabled={importing || !provider.trim() || !externalRecordId.trim() || !actualCost || (!providerRequestId.trim() && (!windowFrom || !windowTo))} onClick={() => void submitActual()}>{importing ? '导入中' : '确认导入'}</Button></div>
+        <div style={{ gridColumn: '1 / -1', display: 'flex', justifyContent: 'space-between', alignItems: 'center', gap: 12 }}><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>供应商账单唯一流水号不是 Gateway requestId。CNY 与 USD 不会直接相加；没有汇率凭证时只分别展示，不计算差额。</span><Button variant="primary" disabled={importing || !provider.trim() || !externalRecordId.trim() || !actualCost || (!providerRequestId.trim() && (!windowFrom || !windowTo))} onClick={() => void submitActual()}>{importing ? '导入中' : '确认导入'}</Button></div>
       </div> : null}
       {importResult ? <ImportResult item={importResult} canReadLogs={canReadLogs} /> : null}
       <div className="lg-trust-explanation"><strong>可信度规则</strong><span>估算费用来自请求完成时保存的价格快照，实际费用来自供应商响应或账单导入，两者不会互相覆盖。缺价格保持“未知”，不会显示成 0；CNY 与 USD 只有在提供汇率凭证编号和明确汇率时才计算差额。</span></div>
@@ -285,5 +286,5 @@ function reconciliationStatusMeta(status: string) {
   return { label: status || '未知状态', explanation: '状态尚未形成可比较差额', color: 'var(--text-muted)', background: 'var(--bg-elevated)' };
 }
 
-const labelStyle: React.CSSProperties = { display: 'grid', gap: 5, color: 'var(--text-muted)', fontSize: 12 };
+const labelStyle: React.CSSProperties = FIELD_LABEL;
 const inputStyle: React.CSSProperties = { width: '100%', minWidth: 0, boxSizing: 'border-box', padding: '8px 9px', color: 'var(--text-primary)', background: 'var(--bg-input)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' };

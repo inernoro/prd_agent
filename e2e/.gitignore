@@ -3,4 +3,7 @@ test-results/
 playwright-report/
 playwright/.cache/
 results.json
+# 排版漂移检测 / 基准调试脚本的截图产物，属于一次性证据，不入库
+.shots/
+*.local.mjs
 *.log

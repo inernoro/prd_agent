@@ -154,7 +154,7 @@ export function ConsoleLayout() {
           <input aria-label="按 requestId 搜索" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="按 requestId 定位请求" />
           <kbd>Enter</kbd>
           <button type="submit" aria-label="搜索请求"><Search size={14} /></button>
-        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 12 }}>当前角色仅查看用量</span></div>}
+        </form> : <div className="lg-global-search" aria-label="当前角色不提供请求搜索"><Search size={15} /><span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>当前角色仅查看用量</span></div>}
 
         <div className="lg-header-actions">
           {canSearchRequests ? (

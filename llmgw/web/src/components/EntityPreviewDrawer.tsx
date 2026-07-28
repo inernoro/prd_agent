@@ -103,7 +103,7 @@ export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary,
 
             <div style={scrollStyle}>
               <section style={summaryStyle}>
-                <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 13, lineHeight: 1.7 }}>{summary}</p>
+                <p style={{ margin: 0, color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', lineHeight: 1.7 }}>{summary}</p>
                 {status.length ? (
                   <div style={{ display: 'flex', gap: 6, flexWrap: 'wrap', marginTop: 11 }}>
                     {status.map((item, statusIndex) => <span key={`${item.label}-${statusIndex}`} style={statusStyle(item.tone)}>{item.label}</span>)}
@@ -131,8 +131,8 @@ export function EntityPreviewDrawer({ buttonLabel, title, kicker, icon, summary,
               ))}
 
               <section style={securityStyle}>
-                <strong style={{ color: 'var(--text-primary)', fontSize: 12 }}>安全边界</strong>
-                <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 11, lineHeight: 1.6 }}>
+                <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-caption)' }}>安全边界</strong>
+                <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', lineHeight: 1.6 }}>
                   密钥明文不会在预览中显示。这里读取的是当前租户已经有权查看的配置摘要，不会发起上游请求，也不会改变路由。
                 </p>
               </section>
@@ -156,7 +156,7 @@ const triggerStyle: React.CSSProperties = {
   color: 'var(--accent)',
   cursor: 'pointer',
   font: 'inherit',
-  fontSize: 11,
+  fontSize: 'var(--fs-micro)',
   lineHeight: 1.4,
   textDecoration: 'underline',
   textDecorationColor: 'color-mix(in srgb, var(--accent) 38%, transparent)',
@@ -204,7 +204,7 @@ const headerStyle: React.CSSProperties = {
 
 const kickerStyle: React.CSSProperties = {
   color: 'var(--accent)',
-  fontSize: 10,
+  fontSize: 'var(--fs-micro)',
   fontWeight: 700,
   letterSpacing: '0.08em',
   textTransform: 'uppercase',
@@ -213,7 +213,7 @@ const kickerStyle: React.CSSProperties = {
 const titleStyle: React.CSSProperties = {
   margin: '5px 0 0',
   color: 'var(--text-primary)',
-  fontSize: 19,
+  fontSize: 'var(--fs-metric)',
   overflowWrap: 'anywhere',
 };
 
@@ -264,13 +264,13 @@ const sectionStyle: React.CSSProperties = {
 const sectionTitleStyle: React.CSSProperties = {
   margin: 0,
   color: 'var(--text-primary)',
-  fontSize: 13,
+  fontSize: 'var(--fs-secondary)',
 };
 
 const sectionDescriptionStyle: React.CSSProperties = {
   margin: '5px 0 0',
   color: 'var(--text-muted)',
-  fontSize: 11,
+  fontSize: 'var(--fs-micro)',
   lineHeight: 1.6,
 };
 
@@ -291,13 +291,13 @@ const fieldStyle: React.CSSProperties = {
 
 const fieldLabelStyle: React.CSSProperties = {
   color: 'var(--text-muted)',
-  fontSize: 10,
+  fontSize: 'var(--fs-micro)',
 };
 
 const fieldValueStyle: React.CSSProperties = {
   margin: '5px 0 0',
   color: 'var(--text-primary)',
-  fontSize: 12,
+  fontSize: 'var(--fs-caption)',
   lineHeight: 1.55,
   overflowWrap: 'anywhere',
 };
@@ -305,7 +305,7 @@ const fieldValueStyle: React.CSSProperties = {
 const fieldHintStyle: React.CSSProperties = {
   margin: '4px 0 0',
   color: 'var(--text-muted)',
-  fontSize: 10,
+  fontSize: 'var(--fs-micro)',
   lineHeight: 1.5,
 };
 
@@ -327,7 +327,7 @@ function statusStyle(tone: 'neutral' | 'good' | 'warning' = 'neutral'): React.CS
     ...colors,
     padding: '4px 7px',
     borderRadius: 999,
-    fontSize: 10,
+    fontSize: 'var(--fs-micro)',
     fontWeight: 650,
   };
 }
