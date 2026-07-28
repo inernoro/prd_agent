@@ -12,7 +12,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// 解析快照（actualModel/平台/协议）由 doc/report.gw-test-matrix.md 第 2 节渲染的 golden 夹具承载
 /// （需 Mongo，CI 标 Integration 跳过）；本测试只校验「每个入口注册合法 + ModelType 合法 + 命名规范」。
 ///
-/// 对应 doc/spec.llm-gateway-test-matrix.md D1/D3/E18/E19。
+/// 对应 doc/spec.platform.llm-gateway.test-matrix.md D1/D3/E18/E19。
 /// </summary>
 public class GwResolutionMatrixTests
 {

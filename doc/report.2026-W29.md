@@ -198,7 +198,7 @@ timeline
 
 | 优先级 | 方向 | 建议动作 | 依据 |
 |--------|------|----------|------|
-| P0 | 网关运营化真视觉验收闭环 | 对租户自助接入（Provider/模型自助配置、四协议 Quickstart、三步接入）+ 费用对账 + 调用观测台走真人路径 + 双主题 + 最新 sha 取证，挂回 `plan.llm-gateway.full-cutover.md` 与运营化验收门 | `real-visual-acceptance.md` / `extraction-readiness-gate.md`：网关已"可运营"，需闭环证明外部租户真能自助接入且费用可信 |
+| P0 | 网关运营化真视觉验收闭环 | 对租户自助接入（Provider/模型自助配置、四协议 Quickstart、三步接入）+ 费用对账 + 调用观测台走真人路径 + 双主题 + 最新 sha 取证，挂回 `plan.platform.llm-gateway.full-cutover.md` 与运营化验收门 | `real-visual-acceptance.md` / `extraction-readiness-gate.md`：网关已"可运营"，需闭环证明外部租户真能自助接入且费用可信 |
 | P0 | 构建队列根治的常态回归看护 | 对 #1160 的并发闸五件套（可取消 / 有身份 / 只锁真实资源 / 周期收敛 / 健康不变量）补足事故值必红的 CI 断言 + 看门狗 + 探针定时探测，确认三层拦截长期有效，防止堵死复发 | `concurrency-gate-discipline.md`：队列堵死是已发生的生产事故，根治后必须有常态回归防退化 |
 | P1 | CDS 项目隔离正式发布端到端 | 对 #1180 的项目隔离正式发布系统走一次真实项目端到端（clone → 托管构建 → 正式发布 → 回滚），确认项目级 Key、身份锁定、最终入口验证、回滚证据齐全 | `production-release-safety.md` / CLAUDE.md §8：正式发布是新体系，需真实项目跑通而非单测绿即宣布完成 |
 | P1 | 知识库跨节点同步涟漪确认 | #1181 修复丢文档 + 换行错乱后，全栈回归所有同步入口（合并同步 / 发送到 / 批量），确认多节点场景下无静默丢失，并补集成测试守卫 | `cross-project-isolation.md`：跨节点同步是共享数据高风险面，需涟漪审计 + 回归兜底 |

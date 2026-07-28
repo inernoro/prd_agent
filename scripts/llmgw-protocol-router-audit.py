@@ -100,8 +100,8 @@ def _write_markdown(path: str, payload: dict[str, Any]) -> None:
 
 
 def build_report() -> dict[str, Any]:
-    target_doc = _read("doc/design.llm-gateway-physical-isolation.md")
-    full_cutover_doc = _read("doc/plan.llm-gateway.full-cutover.md")
+    target_doc = _read("doc/design.platform.llm-gateway.physical-isolation.md")
+    full_cutover_doc = _read("doc/plan.platform.llm-gateway.full-cutover.md")
     brief = _read("assets/prototypes/llmgw-architecture-drawing-brief.md")
     html = _read("assets/prototypes/llmgw-architecture-map.html")
     request = _read("prd-api/src/PrdAgent.Infrastructure/LlmGateway/GatewayRequest.cs")
@@ -151,7 +151,7 @@ def build_report() -> dict[str, Any]:
         "physical_isolation_design_declares_protocol_chain",
         ok,
         detail,
-        ["doc/design.llm-gateway-physical-isolation.md"],
+        ["doc/design.platform.llm-gateway.physical-isolation.md"],
     ))
 
     ok, detail = _contains_all(
@@ -424,7 +424,7 @@ def build_report() -> dict[str, Any]:
             "scripts/llmgw-prod-stage.sh",
             "scripts/llmgw-rollout-ledger.py",
             "scripts/llmgw-protocol-canary.py",
-            "doc/plan.llm-gateway.full-cutover.md",
+            "doc/plan.platform.llm-gateway.full-cutover.md",
         ],
     ))
 

@@ -63,4 +63,4 @@
 - `doc/design.ai-toolbox.md`
 - `doc/design.web-hosting.md`
 - `doc/rule.platform.app-identity.md`
-- `doc/design.llm-gateway-physical-isolation.md`
+- `doc/design.platform.llm-gateway.physical-isolation.md`

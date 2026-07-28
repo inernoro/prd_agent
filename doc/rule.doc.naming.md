@@ -16,7 +16,7 @@ doc/{type}.{topic}.md
 |------|------|-----------|------|
 | `spec.` | 产品规格 | 产品规格、Agent 产品文档、用户故事 | `spec.srs.md`, `spec.report-agent.v2.md` |
 | `design.` | 技术设计 | 技术设计、技术分析 | `design.platform.server-authority.md`, `design.video-agent.remotion-gap.md` |
-| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.llm-gateway.full-cutover.md` |
+| `plan.` | 实施计划 | 开发计划、迁移计划 | `plan.platform.llm-gateway.full-cutover.md` |
 | `rule.` | 规范约定 | 长期规则、约束与门禁 | `rule.platform.app-identity.md`, `rule.frontend.streaming-text.md` |
 | `guide.` | 操作指南 | 指南、教程、运行手册 | `guide.platform.quickstart.md`, `guide.platform.e2e-tests.md` |
 | `report.` | 周报 | 周报 | `report.2026-W09.md` |
@@ -64,7 +64,9 @@ doc/{type}.{topic}.md
 appname 第一段**只能从下面四类里选，禁止自创**。新增应用 Agent 必须同步 `rule.platform.app-identity.md` 的 appKey。
 
 - **一、应用 Agent**（对齐 `app-identity` appKey；新 Agent 文档加这一类）：`visual-agent` `literary-agent` `defect-agent` `report-agent` `video-agent` `review-agent` `pr-review` `workflow-agent` `product-agent` `speech-agent` `shortcuts-agent` `front-end-agent` `channel-agent` `ccas-agent` `page-agent` `prd-agent` `agent-universe` `emergence` `marketplace` `open-platform` `knowledge-base` `web-hosting` `daily-tips` `team-activity` `ai-toolbox` `arena` `md-to-ppt` `submission-gallery` `executive-dashboard` `admin` `desktop` `infra-sandbox-agent` `acceptance`
-- **二、平台基础设施**：`cds`（云开发套件）、`platform`（鉴权 / 网关 / 模型池 / 存储等系统级）
+- **二、平台基础设施**：`cds`（云开发套件）、`platform`（鉴权 / 网关 / 模型池 / 存储等系统级）。
+  网关不是独立 appname：LLM 网关文档一律走 `platform.llm-gateway.*`（如 `plan.platform.llm-gateway.full-cutover.md`），
+  **禁止**写成 `llm-gateway.*` 或 `platform.llm-gateway-xxx`（后者用 `-` 把 appname 与子模块黏死，违反点分层级）。
 - **三、跨切面保留域**：`frontend`（布局 / 模态 / 动效）、`skill`（技能体系）、`doc`（文档体系）
 - **四、顶层产品**（无 appname 段，保留概念名）：`prd` `srs` `project-vision`
 
@@ -175,7 +177,7 @@ appname 第一段**只能从下面四类里选，禁止自创**。新增应用 A
 
 技术债务台账遵循与其他类型**相同的「appname 优先 + 点分层级」格式**（见 §topic 命名）：`debt.{appname}[.{子模块}].md`。按债务的分散程度选层级：
 
-- **债务少的模块** → 一个 `debt.{appname}.md` 汇总（如 `debt.video-agent.md`、`debt.workflow-agent.md`、`debt.llm-gateway.md`）。
+- **债务少的模块** → 一个 `debt.{appname}.md` 汇总（如 `debt.video-agent.md`、`debt.workflow-agent.md`、`debt.platform.llm-gateway.md`）。
 - **债务多、话题分散的大模块** → 按子模块拆成 `debt.{appname}.{子模块}.md`，避免单文件臃肿（如 `debt.cds.agent.md`、`debt.cds.selfupdate-prebuilt.md`、`debt.knowledge-base.galaxy-vs-universe.md`、`debt.frontend.mobile-light-theme.md`、`debt.platform.production-release.md`）。
 
 > 现状（2026-07-15）：66 个 debt 文件中 51 个已是子模块级——**子模块拆分是既定实践**。本节据此更正 v3.1「一个模块一个文件」的过窄表述，与通用格式（`[.{子模块}]`）对齐；`debt.*` 不是特例，一样走 appname 优先点分层级。

@@ -1,6 +1,6 @@
 // AI 大模型网关 —— 独立观测/登录后端（与 MAP 物理隔离）。
 //
-// 设计意图（见 doc/design.llm-gateway-physical-isolation.md）：
+// 设计意图（见 doc/design.platform.llm-gateway.physical-isolation.md）：
 //   - 本服务与 prd-api 完全解耦，不引用任何 PrdAgent.* 项目，仅依赖 NuGet 包。
 //   - MAP 继续负责 MAP 自己的业务日志；GW 控制台账号、登录审计等自有状态落独立数据库 llm_gateway。
 //   - 控制台读取 GW 自有 llmrequestlogs / shadow / 审计作为权威观测；MAP 业务日志只作为跨系统关联来源。
@@ -3555,7 +3555,7 @@ app.MapGet("/gw/runtime-gates", async (HttpContext http) =>
         "retained",
         false,
         "inproc/legacy 代码保留到 full-http 稳定窗口后再删；这不是当前切换阻塞项。",
-        "doc/plan.llm-gateway.full-cutover.md stability window",
+        "doc/plan.platform.llm-gateway.full-cutover.md stability window",
         "full-http 稳定至少 7 天后再开启删除计划。");
 
     var passed = items.Count(x => x.Status == "pass");

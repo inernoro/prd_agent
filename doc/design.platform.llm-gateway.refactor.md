@@ -91,5 +91,5 @@
 ## 关联文档
 
 - `design.platform.llm-gateway.md`：Gateway 总体架构。
-- `plan.llm-gateway.full-cutover.md`：Gateway 旧路径清理与生产门禁。
+- `plan.platform.llm-gateway.full-cutover.md`：Gateway 旧路径清理与生产门禁。
 - `.claude/rules/compute-then-send.md`：所有外部模型调用共用的计算与发送边界。

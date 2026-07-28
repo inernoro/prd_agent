@@ -2278,7 +2278,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("--require-owner-uid 0", workflow);
         Assert.Contains("production-evidence-baseline-audit.json", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
-        Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
+        Assert.Contains("default branch", ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md"));
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ -z \"$map_base\" ]", workflow);
         Assert.Contains("[ \"$stage\" != \"rollback-inproc\" ] && [ \"$stage\" != \"rollback-rehearsal\" ] && [ \"$stage\" != \"config-authority\" ] && [ \"$allow_missing_map_logs\" != \"true\" ] && [ -z \"$(printf '%s' \"${PRD_AGENT_API_KEY:-}\" | xargs)\" ]", workflow);
         Assert.Contains("stage $stage requires rollout_evidence_run_id so prior rollout ledger evidence is restored", workflow);
@@ -2887,7 +2887,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Restore rollout evidence for completion", workflow);
         Assert.Contains("llmgw-prod-stage-{0}", workflow);
         Assert.Contains(".llmgw-release-evidence/", workflow);
-        Assert.Contains("default branch", ReadRepoFile("doc/plan.llm-gateway.full-cutover.md"));
+        Assert.Contains("default branch", ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md"));
         Assert.Contains("completion mode requires rollout_evidence_run_id", workflow);
         Assert.Contains("completion mode could not find .llmgw-release-evidence/rollout-ledger.jsonl after artifact restore", workflow);
         Assert.Contains("logs:read access", workflow);
@@ -2966,7 +2966,7 @@ public class GatewayDataDomainGuardTests
     public void MapShadowSeed_CoversVisualVideoRawGate()
     {
         var script = ReadRepoFile("scripts/llmgw-map-shadow-seed.py");
-        var plan = ReadRepoFile("doc/plan.llm-gateway.full-cutover.md");
+        var plan = ReadRepoFile("doc/plan.platform.llm-gateway.full-cutover.md");
 
         Assert.Contains("--include-desktop-chat-run", script);
         Assert.Contains("--include-open-platform", script);
@@ -3488,7 +3488,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("<details className=\"lg-log-filters lg-log-filter-menu\">", logs);
         Assert.DoesNotContain("fontSize: 10", logs);
         Assert.Contains(".lg-log-table {", theme);
-        // 字号已收敛为 :root 的七档 token（doc/rule.llm-gateway.console-design-tonality.md）。
+        // 字号已收敛为 :root 的七档 token（doc/rule.platform.llm-gateway.console-design-tonality.md）。
         // 契约不变——日志表格正文仍是 14px——但要断言「body 档是 14px」+「表格确实消费该档」，
         // 而不是像以前那样只要文件里任意位置出现过 14px 就算通过。
         Assert.Contains("--fs-body: 14px;", theme);

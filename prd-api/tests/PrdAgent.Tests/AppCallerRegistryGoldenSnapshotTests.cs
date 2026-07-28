@@ -19,7 +19,7 @@ namespace PrdAgent.Tests;
 ///   - 改动某 code 的 ModelTypes → 快照变化 → 即红。
 ///
 /// golden 文件由「反射当前注册表的真实结果」生成后落盘，保证首次即绿。
-/// 对照基准见 doc/design.llm-gateway-unification.md §11.1。
+/// 对照基准见 doc/design.platform.llm-gateway.unification.md §11.1。
 /// </summary>
 public class AppCallerRegistryGoldenSnapshotTests
 {
