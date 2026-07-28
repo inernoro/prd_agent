@@ -142,6 +142,24 @@ function execDocker(args: string[], timeoutMs = 120_000): Promise<string> {
 }
 
 /**
+ * 同 execDocker，但**同时**返回退出状态与已产出的 stdout。
+ *
+ * `docker inspect a b c` 里只要有一个 id 已经消失就整体非零退出，可它照样把找得到的
+ * 那些打了出来。丢掉这份 stdout 会让调用方误以为「什么都没查到」——生产实测正是
+ * 如此：容器在 ps 与 inspect 之间不断增删，挂载枚举恒定失败，孤儿回收永远停在
+ * 「找到 66 个、一个不删」。
+ */
+function execDockerDetailed(
+  args: string[], timeoutMs = 120_000,
+): Promise<{ ok: boolean; stdout: string; error: string }> {
+  return new Promise((resolve) => {
+    execFile('docker', args, { timeout: timeoutMs }, (err, stdout, stderr) => {
+      resolve({ ok: !err, stdout: (stdout || '').trim(), error: (stderr || (err as Error | null)?.message || '').trim() });
+    });
+  });
+}
+
+/**
  * 默认 Docker 清理实现：只回收"无主"垃圾。
  *  - `docker image prune -f`：悬空(untagged，多为旧 build 的中间层)镜像。
  *  - `docker builder prune -f --keep-storage 10GB`：BuildKit 构建缓存，保留近 10GB 加速下次构建。
@@ -262,13 +280,16 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
     // 分批，避免容器多时超出单条命令的参数长度上限
     for (let i = 0; i < idList.length; i += 100) {
       const batch = idList.slice(i, i + 100);
-      const out = await execDocker(
+      const r = await execDockerDetailed(
         ['inspect', '--format', '{{range .Mounts}}{{.Source}}{{"\n"}}{{end}}', ...batch], 60_000,
       );
-      // 任何一批失败都整体返回 null：拿到半份挂载清单比拿不到更危险，
-      // 缺失的那半会被当成「没人挂载」而删掉。
-      if (out.startsWith('__ERR__')) return null;
-      for (const line of out.split('\n')) {
+      // 非零退出**不代表查不到**：只要有一个 id 在 ps 与 inspect 之间消失，docker 就
+      // 整体非零，但找得到的那些照样打了出来。而消失的容器本就不可能挂着任何目录，
+      // 忽略它完全安全。真正危险的是「一条都没查到却当成没人挂载」——那种情况下
+      // stdout 为空，下面按失败处理返回 null，调用方整轮只报不删。
+      //（生产实测：容器持续增删，此前恒定走 null 分支，孤儿回收一直停在 0/66。）
+      if (!r.ok && !r.stdout) return null;
+      for (const line of r.stdout.split('\n')) {
         const t = line.trim();
         if (t) paths.push(t);
       }
