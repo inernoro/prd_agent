@@ -4394,18 +4394,31 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
   // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：
   // 守卫测试 release-observability-wiring-guard 盯着它，免得被静默摘掉。
-  setReleaseHealthSource((probeTargetId) => {
-    const record = uptimeMonitor.getRecord(probeTargetId);
-    if (!record) return undefined;
-    return {
-      status: record.status,
-      probeUrl: record.probeUrl,
-      lastSample: record.lastSample,
-      pausedReason: record.pausedReason,
-      excluded: record.excluded,
-      intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
-    };
-  });
+  // 监控被关掉时**不注册 source**，改传关闭原因：注册了也永远拿不到记录，
+  // 发布中心会永久显示「稍后自动开始探测」这个不会兑现的承诺，而实时探测已经拿掉了
+  // ——那一列就永远在骗人（Codex P2）。两个开关分开说，别把「整个监控关了」
+  // 和「只是没监控发布目标」混成一句话。
+  const releaseProbeDisabledReason = !uptimeMonitor.config.enabled
+    ? '存活监控已按 CDS_UPTIME_ENABLED=0 关闭，发布中心没有生产健康数据来源'
+    : uptimeMonitor.config.releaseTargetsEnabled === false
+      ? '生产目标探测已按 CDS_UPTIME_RELEASE_ENABLED=0 关闭，状态页与发布中心都不会有该目标的健康数据'
+      : '';
+  if (releaseProbeDisabledReason) {
+    setReleaseHealthSource(null, releaseProbeDisabledReason);
+  } else {
+    setReleaseHealthSource((probeTargetId) => {
+      const record = uptimeMonitor.getRecord(probeTargetId);
+      if (!record) return undefined;
+      return {
+        status: record.status,
+        probeUrl: record.probeUrl,
+        lastSample: record.lastSample,
+        pausedReason: record.pausedReason,
+        excluded: record.excluded,
+        intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
+      };
+    });
+  }
   uptimeMonitor.start();
   console.log(
     uptimeMonitor.config.enabled

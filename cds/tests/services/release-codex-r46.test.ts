@@ -6,7 +6,7 @@
  *  - P2 用条数与时间窗当「这条预检还有没有用」的判据 —— 窄在没看引用；
  *  - P2 后端算出了归因却没有前端消费 —— 窄在链路只建到一半。
  */
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -15,6 +15,11 @@ import {
   normalizeRemoteDirectoryIdentity,
 } from '../../src/services/release-artifact-retention.js';
 import { selectReleasePreflightsToPrune } from '../../src/services/release-retention.js';
+import { computeReleaseDora, type ReleaseDoraRunLike } from '../../src/services/release-dora.js';
+import {
+  readReleaseHealthSnapshot,
+  setReleaseHealthSource,
+} from '../../src/services/release-health-snapshot.js';
 import type { ReleasePreflightRecord } from '../../src/types.js';
 
 const CDS_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../..');
@@ -129,5 +134,89 @@ describe('P2 故障归因必须在状态页可见', () => {
 
   it('归因文案是「疑似」，不把时间相邻说成因果', () => {
     expect(statusPage).toContain('疑似 ');
+  });
+});
+
+describe('P2 自动恢复必须计入恢复时长', () => {
+  function run(over: Partial<ReleaseDoraRunLike> & { releaseId: string }): ReleaseDoraRunLike {
+    return { targetId: 'target-prod', status: 'success', startedAt: '', ...over };
+  }
+
+  it('探测失败但自动恢复成功：算恢复，不算「进行中故障」', () => {
+    // 事故值：自动恢复只写日志、不落 run，原 run 仍是 failed。恢复配对找不到恢复者，
+    // 这次几秒就自愈的失败被算成进行中故障，一直挂到下一次成功发布为止。
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_fail',
+        status: 'failed',
+        startedAt: '2026-07-28T10:00:00.000Z',
+        finishedAt: '2026-07-28T10:05:00.000Z',
+        autoRestoredAt: '2026-07-28T10:05:30.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
+
+    expect(metrics.recovery.ongoingCount).toBe(0);
+    expect(metrics.recovery.sampleCount).toBe(1);
+    expect(metrics.recovery.p50Ms).toBe(30_000);
+  });
+
+  it('没有自动恢复也没有后续成功发布时，仍如实算进行中故障', () => {
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_fail',
+        status: 'failed',
+        startedAt: '2026-07-28T10:00:00.000Z',
+        finishedAt: '2026-07-28T10:05:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
+
+    expect(metrics.recovery.ongoingCount).toBe(1);
+    expect(metrics.recovery.sampleCount).toBe(0);
+  });
+
+  it('自动恢复时间戳早于失败时刻（脏数据）不许算成负的恢复时长', () => {
+    const metrics = computeReleaseDora([
+      run({
+        releaseId: 'rel_fail',
+        status: 'failed',
+        startedAt: '2026-07-28T10:00:00.000Z',
+        finishedAt: '2026-07-28T10:05:00.000Z',
+        autoRestoredAt: '2026-07-28T09:00:00.000Z',
+      }),
+    ], { nowMs: Date.parse('2026-07-28T12:00:00.000Z'), windowDays: 30 });
+
+    // 早于失败时刻的时间戳不可信，一律不当恢复用：否则会往样本里塞一个负数，
+    // 把 p50 拉成「恢复发生在故障之前」这种自相矛盾的数字。
+    expect(metrics.recovery.sampleCount).toBe(0);
+    expect(metrics.recovery.ongoingCount).toBe(1);
+    expect(metrics.recovery.p50Ms).toBeNull();
+  });
+});
+
+describe('P2 监控关闭时发布中心必须说实话', () => {
+  const target = {
+    id: 'rt_1',
+    type: 'ssh' as const,
+    isEnabled: true,
+    ssh: { healthcheckUrl: 'https://prod.example.test/health' },
+  } as unknown as Parameters<typeof readReleaseHealthSnapshot>[0];
+
+  afterEach(() => setReleaseHealthSource(null));
+
+  it('传了关闭原因时如实报出来，不再说「稍后自动开始探测」', () => {
+    // 事故值：监控关掉后 source 照常注册但记录永远建不出来，健康列永久显示
+    // 「稍后自动开始探测」——一个不会兑现的承诺，而实时探测已经拿掉了。
+    setReleaseHealthSource(null, '存活监控已按 CDS_UPTIME_ENABLED=0 关闭，发布中心没有生产健康数据来源');
+    const health = readReleaseHealthSnapshot(target);
+    expect(health.status).toBe('unknown');
+    expect(health.message).toContain('CDS_UPTIME_ENABLED=0');
+    expect(health.message).not.toContain('稍后自动开始探测');
+  });
+
+  it('bootstrap 在两个开关任一关闭时都不注册 source', () => {
+    const index = fs.readFileSync(path.join(CDS_ROOT, 'src/index.ts'), 'utf8');
+    expect(index).toContain('CDS_UPTIME_ENABLED=0');
+    expect(index).toContain('CDS_UPTIME_RELEASE_ENABLED=0');
+    expect(index).toContain('setReleaseHealthSource(null, releaseProbeDisabledReason)');
   });
 });

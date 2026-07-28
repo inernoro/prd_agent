@@ -33,10 +33,19 @@ export interface ReleaseHealthSnapshot {
 export type ReleaseHealthSource = (probeTargetId: string) => ReleaseHealthSnapshot | undefined;
 
 let source: ReleaseHealthSource | null = null;
+let disabledReason = '';
 
-/** 由 index.ts 在存活监控构造完成后调用。重复调用以最后一次为准（测试会用到）。 */
-export function setReleaseHealthSource(next: ReleaseHealthSource | null): void {
+/**
+ * 由 index.ts 在存活监控构造完成后调用。重复调用以最后一次为准（测试会用到）。
+ *
+ * `reason` 用于「监控被关掉了」这种确定性状态：此时**不要注册 source**，而是把原因传进来。
+ * 事故值（Codex P2）：`CDS_UPTIME_ENABLED=0` / `CDS_UPTIME_RELEASE_ENABLED=0` 时 source
+ * 照常注册，但记录永远建不出来，`getRecord` 恒为 undefined，于是发布中心永久显示
+ * 「稍后自动开始探测」—— 一个永远不会兑现的承诺。而实时探测已经拿掉了，这一列就永远在骗人。
+ */
+export function setReleaseHealthSource(next: ReleaseHealthSource | null, reason = ''): void {
   source = next;
+  disabledReason = next ? '' : reason.trim();
 }
 
 /**
@@ -55,7 +64,12 @@ export function readReleaseHealthSnapshot(target: ReleaseTarget): ReleaseHealthP
   }
 
   if (!source) {
-    return { status: 'unknown', url, checkedAt: now, message: '存活监控未启用，发布中心不再实时探测生产' };
+    return {
+      status: 'unknown',
+      url,
+      checkedAt: now,
+      message: disabledReason || '存活监控未启用，发布中心不再实时探测生产',
+    };
   }
 
   const record = source(releaseProbeTargetId(target));

@@ -1549,6 +1549,16 @@ export interface ReleaseRun {
    * 有它才能回答「这次发布放行的依据是哪一份结论、什么时候做的」。
    */
   preflightId?: string;
+  /**
+   * 最终入口探测失败后，自动恢复上一版本**成功完成**的时刻。
+   *
+   * 它是这条失败 run 的「恢复时刻」：生产在这一刻已经回到上一版本了，尽管本次 run
+   * 终态仍是 failed。DORA 的恢复配对必须认它，否则会把一次几秒就自愈的失败算成
+   * 「进行中故障」，一直挂到下一次成功发布，恢复时长与 ongoingCount 双双失真。
+   * 刻意不为自动恢复新建 run —— 那不是一次「发布」，造假 run 会污染发布频率与
+   * 变更失败率的分母。
+   */
+  autoRestoredAt?: string;
   previousReleaseId?: string;
   requestId?: string;
   operationId?: string;

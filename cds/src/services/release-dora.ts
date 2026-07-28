@@ -27,6 +27,8 @@ export interface ReleaseDoraRunLike {
   finishedAt?: string;
   /** 非空 = 这是一次回滚运行，它指向被回滚的那次发布 */
   rollbackOf?: string;
+  /** 非空 = 探测失败后自动恢复上一版本成功完成的时刻，即这条失败的真实恢复时刻 */
+  autoRestoredAt?: string;
 }
 
 export interface ReleaseDoraFrequency {
@@ -223,6 +225,15 @@ export function computeReleaseDora<T extends ReleaseDoraRunLike>(
   const recoveryDurations: number[] = [];
   let ongoingCount = 0;
   for (const failure of failedDeploys) {
+    // 自动恢复优先：探测失败后 restorePreviousAfterFailedProbe 把上一版本推回去，
+    // 生产在那一刻就已经好了，但它**不产生任何 run**（那不是一次发布）。
+    // 只按 run 找恢复者会把这种几秒自愈的失败算成「进行中故障」，一直挂到下一次
+    // 成功发布为止 —— 恢复时长偏长、ongoingCount 虚高（Codex P2）。
+    const autoRestoredAt = Date.parse(failure.run.autoRestoredAt || '');
+    if (Number.isFinite(autoRestoredAt) && autoRestoredAt >= failure.at) {
+      recoveryDurations.push(autoRestoredAt - failure.at);
+      continue;
+    }
     const restored = terminalRuns.find((item) => (
       item.at > failure.at
       && item.run.targetId === failure.run.targetId

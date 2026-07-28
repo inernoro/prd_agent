@@ -1273,6 +1273,13 @@ export class ReleaseService {
     try {
       await this.runDeployCommand(releaseId, executionTarget, restoreRun, execution.command);
       await probeReleaseSurface(target.ssh!.healthcheckUrl, execution.mode);
+      // 自动恢复此前**只写日志**：没有 run、没有时间戳，原 run 仍是 failed。
+      // 于是 DORA 的恢复配对在这条失败之后找不到任何恢复者，把它算成「进行中故障」
+      // 一直挂到下一次成功发布为止 —— 恢复时长 p50 与 ongoingCount 双双失真，
+      // 而生产其实几秒内就已经回到上一版本了（Codex P2）。
+      // 不新建一条 run 而是在失败 run 上盖时间戳：这次恢复不是一次「发布」，
+      // 造一条假 run 会同时污染发布频率与变更失败率两个分母。
+      this.stateService.patchReleaseRun(releaseId, { autoRestoredAt: new Date().toISOString() });
       this.emitLog(releaseId, 'warn', `已恢复上一成功版本 ${previous.releaseId}`, 'auto-restore');
     } catch (restoreError) {
       this.emitLog(releaseId, 'error', `自动恢复失败: ${(restoreError as Error).message}`, 'auto-restore');
