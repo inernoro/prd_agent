@@ -47,9 +47,12 @@ public interface IExchangeTransformer
 ///
 /// 流程：
 /// 1. Gateway 发送 submit 请求（TransformRequest 转换后的 body）
-/// 2. 检查 submit 响应是否需要轮询（IsTaskPending）
-/// 3. 如需轮询，构建 query 请求（BuildQueryRequest）并循环调用
+/// 2. submit 未失败即视为任务已受理，构建 query 请求（BuildQueryRequest）
+/// 3. 循环 query，并只在 query 响应上判断 Pending / Complete
 /// 4. 直到 IsTaskComplete 或 IsTaskFailed，最后用 TransformResponse 转换最终结果
+///
+/// submit 的成功码不能当作任务完成码。部分上游（如豆包大模型 ASR）在 submit 和
+/// query 完成时都返回同一个成功码，但 submit body 尚不包含业务结果。
 /// </summary>
 public interface IAsyncExchangeTransformer : IExchangeTransformer
 {
@@ -60,13 +63,13 @@ public interface IAsyncExchangeTransformer : IExchangeTransformer
     int MaxPollAttempts => 300;
 
     /// <summary>
-    /// 判断 submit/query 响应是否表示任务仍在处理中。
+    /// 判断 query 响应是否表示任务仍在处理中。
     /// 返回 true 则继续轮询。
     /// </summary>
     bool IsTaskPending(int httpStatus, Dictionary<string, string> responseHeaders, string? responseBody);
 
     /// <summary>
-    /// 判断任务是否已完成（成功）。
+    /// 判断 query 任务是否已完成（成功）。
     /// </summary>
     bool IsTaskComplete(int httpStatus, Dictionary<string, string> responseHeaders, string? responseBody);
 

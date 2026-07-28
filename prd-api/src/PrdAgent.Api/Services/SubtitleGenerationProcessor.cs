@@ -70,12 +70,20 @@ public class SubtitleGenerationProcessor
 
         // 没有实时原文时才要求正式文件 URL，通过 Attachment 间接取。
         string? fileUrl = null;
+        byte[]? pendingRecordingAudio = null;
         if (liveTranscript == null && !string.IsNullOrEmpty(entry.AttachmentId))
         {
             var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
             fileUrl = att?.Url;
         }
-        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl))
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && isAudio)
+        {
+            pendingRecordingAudio = await LoadPendingRecordingAudioAsync(
+                db,
+                entry,
+                CancellationToken.None);
+        }
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
             throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
@@ -85,7 +93,13 @@ public class SubtitleGenerationProcessor
         if (isAudio || isVideo)
         {
             var segments = liveTranscript == null
-                ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl!, isVideo)
+                ? await TranscribeAudioOrVideoAsync(
+                    run,
+                    db,
+                    runStore,
+                    fileUrl,
+                    isVideo,
+                    pendingRecordingAudio)
                 : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
             subtitleMd = SubtitleFormatter.FormatAsrSegments(entry.Title, segments);
         }
@@ -184,12 +198,20 @@ public class SubtitleGenerationProcessor
         var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
 
         string? fileUrl = null;
+        byte[]? pendingRecordingAudio = null;
         if (liveTranscript == null && !string.IsNullOrEmpty(entry.AttachmentId))
         {
             var att = await db.Attachments.Find(a => a.AttachmentId == entry.AttachmentId).FirstOrDefaultAsync();
             fileUrl = att?.Url;
         }
-        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl))
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && isAudio)
+        {
+            pendingRecordingAudio = await LoadPendingRecordingAudioAsync(
+                db,
+                entry,
+                CancellationToken.None);
+        }
+        if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
             throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
@@ -199,7 +221,13 @@ public class SubtitleGenerationProcessor
         if (liveTranscript != null)
             await UpdateProgressAsync(db, runStore, run, 50, "实时转写已完成");
         var segments = liveTranscript == null
-            ? await TranscribeAudioOrVideoAsync(run, db, runStore, fileUrl!, isVideo)
+            ? await TranscribeAudioOrVideoAsync(
+                run,
+                db,
+                runStore,
+                fileUrl,
+                isVideo,
+                pendingRecordingAudio)
             : new List<SubtitleSegment> { new(0, 0, liveTranscript) };
         var transcriptPlain = string.Join("\n", segments
             .Where(s => !string.IsNullOrWhiteSpace(s.Text))
@@ -434,13 +462,25 @@ public class SubtitleGenerationProcessor
         DocumentStoreAgentRun run,
         MongoDbContext db,
         IRunEventStore runStore,
-        string fileUrl,
-        bool isVideo)
+        string? fileUrl,
+        bool isVideo,
+        byte[]? pendingRecordingAudio = null)
     {
-        await UpdateProgressAsync(db, runStore, run, 20, "下载素材");
-        var http = _httpClientFactory.CreateClient("DocStoreAgent");
-        http.Timeout = TimeSpan.FromMinutes(5);
-        var bytes = await http.GetByteArrayAsync(fileUrl);
+        byte[] bytes;
+        if (pendingRecordingAudio != null)
+        {
+            await UpdateProgressAsync(db, runStore, run, 20, "读取安全录音");
+            bytes = pendingRecordingAudio;
+        }
+        else
+        {
+            if (string.IsNullOrWhiteSpace(fileUrl))
+                throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
+            await UpdateProgressAsync(db, runStore, run, 20, "下载素材");
+            var http = _httpClientFactory.CreateClient("DocStoreAgent");
+            http.Timeout = TimeSpan.FromMinutes(5);
+            bytes = await http.GetByteArrayAsync(fileUrl);
+        }
 
         await UpdateProgressAsync(db, runStore, run, 35, isVideo ? "提取音轨" : "解析音频");
 
@@ -488,6 +528,31 @@ public class SubtitleGenerationProcessor
                 run,
                 50,
                 total > 1 ? $"识别中（方案 {attempt}/{total}）" : "识别中"));
+    }
+
+    internal static async Task<byte[]?> LoadPendingRecordingAudioAsync(
+        MongoDbContext db,
+        DocumentEntry entry,
+        CancellationToken cancellationToken)
+    {
+        var sessionId = entry.Metadata?.GetValueOrDefault("recordingUploadSessionId")?.Trim();
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return null;
+
+        var session = await db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId && s.EntryId == entry.Id)
+            .FirstOrDefaultAsync(cancellationToken);
+        if (session == null)
+            return null;
+
+        var chunks = await db.DocumentRecordingUploadChunks
+            .Find(c => c.SessionId == session.Id)
+            .SortBy(c => c.Index)
+            .ToListAsync(cancellationToken);
+        return DocumentRecordingArchiveWorker.AssembleChunks(
+            chunks,
+            session.NextChunkIndex,
+            session.UploadedBytes);
     }
 
     private async Task<List<SubtitleSegment>> TranscribeWithFallbackAsync(

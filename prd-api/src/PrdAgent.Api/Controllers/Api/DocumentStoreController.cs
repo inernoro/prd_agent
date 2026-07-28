@@ -2112,6 +2112,10 @@ public class DocumentStoreController : ControllerBase
                         InstanceIdentity.Get(_config),
                         CancellationToken.None);
                 }
+                if (archivePending)
+                {
+                    await EnsurePendingRecordingTranscriptionRunAsync(session, completedEntry);
+                }
                 return Ok(ApiResponse<object>.Ok(new
                 {
                     entry = completedEntry,
@@ -2174,6 +2178,10 @@ public class DocumentStoreController : ControllerBase
                             userId,
                             InstanceIdentity.Get(_config),
                             CancellationToken.None);
+                    }
+                    if (archivePending)
+                    {
+                        await EnsurePendingRecordingTranscriptionRunAsync(fresh, reusedEntry);
                     }
                     return Ok(ApiResponse<object>.Ok(new
                     {
@@ -2361,6 +2369,7 @@ public class DocumentStoreController : ControllerBase
                     ErrorCodes.INVALID_FORMAT,
                     "录音完成租约已更新，请稍候查询结果"));
             }
+            await EnsurePendingRecordingTranscriptionRunAsync(claimed, recoveredEntry);
             return Ok(ApiResponse<object>.Ok(new
             {
                 entry = recoveredEntry,
@@ -2423,6 +2432,7 @@ public class DocumentStoreController : ControllerBase
                     ErrorCodes.INVALID_FORMAT,
                     "录音完成租约已更新，请稍候查询结果"));
             }
+            await EnsurePendingRecordingTranscriptionRunAsync(claimed, pendingEntry);
             _logger.LogError(
                 ex,
                 "[document-store] 录音对象存储暂时不可用，已转入 Mongo 耐久队列 session={SessionId} entry={EntryId}",
@@ -2932,6 +2942,19 @@ public class DocumentStoreController : ControllerBase
             DateTime.UtcNow,
             CancellationToken.None);
         return true;
+    }
+
+    private async Task EnsurePendingRecordingTranscriptionRunAsync(
+        DocumentRecordingUploadSession session,
+        DocumentEntry entry)
+    {
+        await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            _db.DocumentStoreAgentRuns,
+            session,
+            entry.Id,
+            InstanceIdentity.Get(_config),
+            DocumentRecordingArchiveWorker.RequiresDeferredTranscription(entry),
+            CancellationToken.None);
     }
 
     internal static string PendingRecordingEntryId(string sessionId)

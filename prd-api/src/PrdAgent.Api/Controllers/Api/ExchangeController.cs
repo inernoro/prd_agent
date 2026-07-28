@@ -514,7 +514,9 @@ public class ExchangeController : ControllerBase
                     }));
                 }
 
-                if (asyncTx.IsTaskPending(httpStatus, respHeaders, rawResponseBody))
+                // submit 成功只表示异步任务已受理。豆包 submit 与 query 完成都可能返回
+                // 20000000，不能在 submit 响应上调用 IsTaskComplete 后跳过 query。
+                if (response.IsSuccessStatusCode)
                 {
                     var (queryUrl, queryBody, queryExtraHeaders) = asyncTx.BuildQueryRequest(
                         actualTargetUrl, httpStatus, respHeaders, rawResponseBody, exchange.TransformerConfig);
@@ -525,6 +527,7 @@ public class ExchangeController : ControllerBase
                         submitRequestId = reqIds.FirstOrDefault();
 
                     var maxAttempts = Math.Min(asyncTx.MaxPollAttempts, 120); // 测试模式最多 120 次
+                    var taskCompleted = false;
                     for (var i = 0; i < maxAttempts; i++)
                     {
                         await Task.Delay(asyncTx.PollIntervalMs, ct);
@@ -548,7 +551,10 @@ public class ExchangeController : ControllerBase
                             qHeaders[h.Key] = string.Join(", ", h.Value);
 
                         if (asyncTx.IsTaskComplete(httpStatus, qHeaders, rawResponseBody))
+                        {
+                            taskCompleted = true;
                             break;
+                        }
 
                         if (asyncTx.IsTaskFailed(httpStatus, qHeaders, rawResponseBody, out var qErr))
                         {
@@ -565,6 +571,21 @@ public class ExchangeController : ControllerBase
                                 isAsync = true
                             }));
                         }
+                    }
+                    if (!taskCompleted)
+                    {
+                        durationMs = (long)(DateTime.UtcNow - startedAt).TotalMilliseconds;
+                        return Ok(ApiResponse<object>.Ok(new
+                        {
+                            standardRequest = standardBody.ToJsonString(IndentedJsonOptions),
+                            transformedRequest = transformedJson,
+                            rawResponse = rawResponseBody,
+                            transformedResponse = (string?)null,
+                            error = $"异步任务超时，已轮询 {maxAttempts} 次",
+                            httpStatus = (int?)408,
+                            durationMs = (long?)durationMs,
+                            isAsync = true
+                        }));
                     }
                 }
             }
