@@ -39,3 +39,7 @@
 | fix | llmgw | 模型池页内边距与间距归一到 surface.ts（卡片 16/12→14、指标块 9→10、间距 13/7/5→12/6），补齐上一条 fixture 修好后暴露出的 2 项真实漂移 |
 | fix | llmgw | 排版漂移检测有漂移时非零退出：此前只打印「合计漂移项: N」仍以 0 退出，按退出码判定的 CI/本地校验会把回归当通过 |
 | fix | llmgw | 字体阶梯守卫补上 React 字符串写法：此前正则只认 fontSize: 18，fontSize: '18px' 这种更常见的写法能从守卫底下溜过去 |
+| fix | llmgw | 会话到期定时器绑定它排给的那个 token：改密换发新 token 时，旧回调若赶在 effect 清理前跑到会清掉新会话 |
+| fix | llmgw | 漂移检测补齐 app-callers / exchanges / logical-models 三条路由的有数据 fixture；顺带修正 /exchanges/meta 的错形状（旧桩写 protocols/targetKinds/models，因页面恒空从未暴露） |
+| fix | llmgw | Exchange 卡片规格归一：卡片 13→14、路由块 9→10、模型行 8→10、列表间距 10→12、路由块间距 7→6、批量行间距 10→8 |
+| fix | llmgw | 逻辑模型页表头改用 TABLE_HEAD_CELL 角色常量（此前就地写 7px/9px + fs-secondary，比基准页表头糊一档）；卡片/间距归一到 surface.ts |

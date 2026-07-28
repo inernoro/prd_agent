@@ -541,7 +541,7 @@
 }
 .lg-exchange-advanced > div { margin: 0; padding: 0 12px 12px; }
 .lg-exchange-bulk { margin-top: 0; }
-.lg-exchange-bulk > div { display: flex; align-items: center; flex-wrap: wrap; gap: 10px; padding: 0 12px 12px; }
+.lg-exchange-bulk > div { display: flex; align-items: center; flex-wrap: wrap; gap: 8px; padding: 0 12px 12px; }
 .lg-exchange-bulk label { display: inline-flex; align-items: center; gap: 4px; color: var(--text-secondary); font-size: var(--fs-micro); }
 
 .lg-exchange-form-actions {
@@ -573,10 +573,10 @@
   color: var(--text-muted);
 }
 
-.lg-exchange-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); gap: 10px; }
+.lg-exchange-list { display: grid; grid-template-columns: repeat(auto-fit, minmax(min(100%, 540px), 1fr)); gap: 12px; }
 .lg-exchange-card {
   min-width: 0;
-  padding: 13px;
+  padding: 14px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius);
   background: var(--bg-surface);
@@ -590,9 +590,9 @@
   display: grid;
   grid-template-columns: auto auto minmax(0, 1fr);
   align-items: center;
-  gap: 7px;
-  margin: 11px 0;
-  padding: 9px 10px;
+  gap: 6px;
+  margin: 12px 0;
+  padding: 10px;
   border-radius: var(--radius-sm);
   background: var(--bg-elevated);
   color: var(--text-secondary);
@@ -606,7 +606,7 @@
   grid-template-columns: minmax(130px, .9fr) minmax(150px, 1.2fr) auto;
   align-items: center;
   gap: 8px;
-  padding: 8px 9px;
+  padding: 10px;
   border: 1px solid var(--border-subtle);
   border-radius: var(--radius-sm);
 }
@@ -614,7 +614,7 @@
 .lg-exchange-models span { overflow: hidden; color: var(--text-muted); font-family: var(--font-mono); font-size: var(--fs-micro); text-overflow: ellipsis; }
 .lg-exchange-models p { margin: 0; color: var(--warn); font-size: var(--fs-micro); }
 
-.lg-exchange-card-footer { margin-top: 11px; padding-top: 10px; border-top: 1px solid var(--border-subtle); align-items: flex-start; }
+.lg-exchange-card-footer { margin-top: 12px; padding-top: 10px; border-top: 1px solid var(--border-subtle); align-items: flex-start; }
 .lg-exchange-card-footer > span { color: var(--text-muted); font-size: var(--fs-micro); line-height: 1.55; }
 .lg-exchange-card-footer > div { display: flex; flex-wrap: wrap; justify-content: flex-end; gap: 4px; }
 

@@ -139,7 +139,10 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     const expiresAt = getSessionExpiresAt();
     if (expiresAt === null) return undefined;
 
-    const fire = () => expireSession('expired');
+    // 定时器绑定它当时排给哪个 token：改密等换发场景下，
+    // 旧 token 的回调可能在本 effect 清理之前跑到，不带 token 就会把新会话一并清掉。
+    const scheduledToken = getToken();
+    const fire = () => expireSession('expired', scheduledToken);
     const delay = expiresAt - Date.now();
     if (delay <= 0) {
       fire();

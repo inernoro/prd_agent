@@ -20,7 +20,8 @@ import type {
 import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT, FIELD_LABEL, TABLE_CELL_MUTED } from '@/lib/typography';
+import { FIELD_INPUT, FIELD_LABEL, TABLE_CELL_MUTED, TABLE_HEAD_CELL } from '@/lib/typography';
+import { CARD_PADDING, GAP, INSET_PADDING } from '@/lib/surface';
 
 const inputStyle: React.CSSProperties = {
   ...FIELD_INPUT,
@@ -175,7 +176,7 @@ export function LogicalModelsPage() {
       </header>
       <Card style={{ padding: 16, display: createOpen && canWrite ? undefined : 'none' }}>
         {createOpen && canWrite ? (
-          <form onSubmit={submitLogical} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: 10, marginTop: 14 }}>
+          <form onSubmit={submitLogical} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(190px, 1fr))', gap: GAP.normal, marginTop: 14 }}>
             <label style={labelStyle}>公开模型标识<input required value={draft.publicId} onChange={(e) => setDraft((x) => ({ ...x, publicId: e.target.value }))} placeholder="例如 image2" style={inputStyle} /></label>
             <label style={labelStyle}>显示名称<input required value={draft.name} onChange={(e) => setDraft((x) => ({ ...x, name: e.target.value }))} placeholder="例如 GPT Image 2" style={inputStyle} /></label>
             <label style={labelStyle}>模型类型<select value={draft.modelType} onChange={(e) => setDraft((x) => ({ ...x, modelType: e.target.value }))} style={inputStyle}><option value="generation">generation</option><option value="vision">vision</option><option value="chat">chat</option><option value="video-gen">video-gen</option></select></label>
@@ -187,16 +188,16 @@ export function LogicalModelsPage() {
         ) : null}
       </Card>
 
-      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: 10 }}>
+      <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: GAP.section }}>
       {!canWrite ? <ReadOnlyNotice /> : null}
       {error || notice ? <div style={{ padding: '8px 11px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: error ? 'var(--danger)' : 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>{error || notice}</div> : null}
       {items.length === 0 ? <Card style={{ flex: 1, display: 'grid', placeItems: 'center', padding: 28, textAlign: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-body)' }}>尚无逻辑模型。先创建模型，再把一个或多个上游模型或 Exchange 绑定为 Offering。</Card> : null}
 
       {items.map((item) => (
-        <Card key={item.id} style={{ padding: 14 }}>
-          <div style={{ display: 'flex', gap: 10, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
+        <Card key={item.id} style={{ padding: CARD_PADDING }}>
+          <div style={{ display: 'flex', gap: GAP.section, justifyContent: 'space-between', alignItems: 'flex-start', flexWrap: 'wrap' }}>
             <div>
-              <div style={{ display: 'flex', gap: 7, alignItems: 'center', flexWrap: 'wrap' }}>
+              <div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}>
                 <strong style={{ fontSize: 'var(--fs-body)' }}>{item.name}</strong>
                 <code style={{ fontSize: 'var(--fs-micro)', color: 'var(--accent)' }}>{item.publicId}</code>
                 <Chip label={item.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
@@ -213,7 +214,7 @@ export function LogicalModelsPage() {
           </div>
 
           {offeringFor === item.id && canWrite ? (
-            <form onSubmit={(e) => submitOffering(e, item)} style={{ marginTop: 12, padding: 11, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: 9 }}>
+            <form onSubmit={(e) => submitOffering(e, item)} style={{ marginTop: 12, padding: INSET_PADDING, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: GAP.normal }}>
               <label style={labelStyle}>目标类型<select disabled={editingOfferingId !== null} value={offeringDraft.targetKind} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetKind: e.target.value as 'model' | 'exchange', targetId: '' }))} style={inputStyle}><option value="model">Provider 模型</option><option value="exchange">Exchange</option></select></label>
               <label style={labelStyle}>上游目标<select disabled={editingOfferingId !== null} required value={offeringDraft.targetId} onChange={(e) => setOfferingDraft((x) => ({ ...x, targetId: e.target.value }))} style={inputStyle}><option value="">请选择</option>{targets.map((x) => <option key={x.id} value={x.id}>{x.label}</option>)}</select></label>
               <label style={labelStyle}>上游模型标识，可覆盖<input value={offeringDraft.upstreamModelId || ''} onChange={(e) => setOfferingDraft((x) => ({ ...x, upstreamModelId: e.target.value }))} style={inputStyle} /></label>
@@ -230,7 +231,7 @@ export function LogicalModelsPage() {
 
           <div style={{ marginTop: 12, overflowX: 'auto' }}>
             <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse', minWidth: 700 }}>
-              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={{ textAlign: 'left', padding: '7px 9px', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>{x}</th>)}</tr></thead>
+              <thead><tr>{['上游', '目标类型', '协议', '优先级 / 权重', '健康', '治理', '操作'].map((x) => <th key={x} style={TABLE_HEAD_CELL}>{x}</th>)}</tr></thead>
               <tbody>{item.offerings.length === 0 ? <tr><td colSpan={7} style={{ padding: 14, color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', borderTop: '1px solid var(--border-subtle)' }}>还没有可用上游，当前逻辑模型不会承接请求。</td></tr> : item.offerings.map((o) => (
                 <tr key={o.id}>
                   <td style={td}><strong>{o.targetName}</strong><div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>{o.providerName || o.upstreamModelId || o.targetId}</div></td>

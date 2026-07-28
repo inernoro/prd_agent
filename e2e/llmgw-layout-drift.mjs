@@ -77,6 +77,58 @@ const POOLS = [
     managedByRegistry: true, appendOnly: true, poolRole: 'fallback',
   }),
 ];
+const APP_CALLERS = [
+  row({
+    id: 'ac1', teamId: 'team-1', appCallerCode: 'demo.chat::chat', requestType: 'chat',
+    sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime',
+    ingressProtocol: 'openai', observedIngressProtocols: ['openai'], title: '演示对话',
+    status: 'active', modelPoolId: 'pool-1', modelPolicy: null, parameterPolicy: null,
+    owner: 'demo', monthlyBudgetUsd: 50, rateLimitPerMinute: 60, notes: null,
+    totalSeen: 128, firstSeenAt: nowIso, lastSeenAt: nowIso, rotationState: 'none',
+  }),
+  row({
+    id: 'ac2', teamId: null, appCallerCode: 'demo.vision::vision', requestType: 'vision',
+    sourceSystem: 'external', clientCode: 'partner', environment: 'staging', purpose: 'canary',
+    ingressProtocol: 'anthropic', observedIngressProtocols: [], title: null,
+    status: 'pending', modelPoolId: null, owner: null, totalSeen: 3,
+    firstSeenAt: nowIso, lastSeenAt: nowIso, rotationState: 'none',
+  }),
+];
+const EXCHANGES = [
+  row({
+    id: 'ex1', name: '教程转换器', modelAlias: 'demo-chat', modelAliases: ['demo-chat'],
+    models: [{ modelId: 'demo-chat', displayName: '演示对话', modelType: 'chat', description: null, enabled: true }],
+    targetUrl: 'https://provider.example.com/v1/chat/completions', targetAuthScheme: 'bearer',
+    transformerType: 'openai', description: '把 OpenAI 协议转成上游私有协议', hasKey: true,
+    sourceCollection: 'exchanges', claimedAt: nowIso, version: 2,
+  }),
+  row({
+    id: 'ex2', name: '备用转换器', modelAlias: 'demo-vision', modelAliases: ['demo-vision', 'demo-vision-hd'],
+    models: [{ modelId: 'demo-vision', displayName: null, modelType: 'vision', description: null, enabled: false }],
+    targetUrl: 'https://backup.example.com/v1/messages', targetAuthScheme: 'x-api-key',
+    transformerType: 'anthropic', description: null, hasKey: false,
+    sourceCollection: 'exchanges', claimedAt: null, version: 1,
+  }),
+];
+const offering = (over) => ({
+  id: 'of1', logicalModelId: 'lm1', targetKind: 'model', targetId: 'm1', targetName: 'demo-chat',
+  providerName: '教程假上游', upstreamModelId: 'demo/chat-1', protocol: 'openai', endpointPath: null,
+  priority: 10, weight: 100, enabled: true, healthStatus: 0, consecutiveFailures: 0,
+  consecutiveSuccesses: 9, maxConcurrency: 10, rateLimitPerMinute: null, notes: null, ...over,
+});
+const LOGICAL_MODELS = [
+  row({
+    id: 'lm1', publicId: 'gw-chat-standard', name: '标准对话', modelType: 'chat',
+    capabilities: ['tools', 'streaming'], allowedAppCallerCodes: ['demo.chat::chat'],
+    routingStrategy: 'priority', displayOrder: 1, description: '对外暴露的标准对话模型',
+    offerings: [offering({}), offering({ id: 'of2', targetKind: 'exchange', targetId: 'ex1', targetName: '教程转换器', priority: 20, healthStatus: 1 })],
+  }),
+  row({
+    id: 'lm2', publicId: 'gw-vision-standard', name: '标准视觉', modelType: 'vision',
+    capabilities: ['vision'], allowedAppCallerCodes: [], routingStrategy: 'weighted',
+    displayOrder: 2, description: null, offerings: [offering({ id: 'of3', logicalModelId: 'lm2', targetId: 'm3', targetName: 'demo-vision' })],
+  }),
+];
 const LIST = { items: [], total: 2, page: 1, pageSize: 20 };
 const STUBS = {
   '/auth/tenants': [],
@@ -89,7 +141,7 @@ const STUBS = {
   '/logs/timeseries': { items: Array.from({ length: 14 }, (_, i) => ({ date: `2026-07-${String(i + 1).padStart(2, '0')}`, count: 3 + ((i * 7) % 11) })) },
   '/service-keys': [row({ id: 'k1', name: 'runtime-key', keyPrefix: 'gwk_demo', teamId: null, createdByUsername: 'demo', sourceSystem: 'map', clientCode: 'demo', environment: 'production', purpose: 'runtime', appCallerCodes: ['demo.chat::chat'], ingressProtocols: ['openai'], scopes: ['chat'], allowedCidrs: [] })],
   '/audits': { ...LIST, items: [row({ id: 'a1', action: 'pool.update', targetType: 'pool', targetId: 'pool-1', actorUsername: 'demo', success: true, summary: '更新模型池优先级', detail: null })] },
-  '/app-callers': { ...LIST, items: [], statuses: [], sourceSystems: [], ingressProtocols: [], requestTypes: [] },
+  '/app-callers': { ...LIST, items: APP_CALLERS, statuses: ['active', 'pending'], sourceSystems: ['map', 'external'], ingressProtocols: ['openai', 'anthropic'], requestTypes: ['chat', 'vision'] },
   '/pools': { ...LIST, items: POOLS, pools: POOLS },
   '/pool-types': {
     items: [
@@ -99,9 +151,24 @@ const STUBS = {
     total: 2, ready: 1, waiting: 1,
   },
   '/parameter-capabilities/meta': { items: [], templates: [] },
-  '/logical-models': { items: [], total: 0 },
-  '/exchanges': { ...LIST, items: [], exchanges: [] },
-  '/exchanges/meta': { protocols: [], targetKinds: [], models: [] },
+  '/logical-models': { items: LOGICAL_MODELS, total: LOGICAL_MODELS.length },
+  '/exchanges': { ...LIST, items: EXCHANGES, exchanges: EXCHANGES },
+  // 形状必须对齐 ExchangeMetaData —— 旧桩写的是 protocols/targetKinds/models，
+  // 因为 exchanges 恒空、渲染分支从没走到，这个错形状一直没暴露。
+  '/exchanges/meta': {
+    transformerTypes: [
+      { value: 'openai', label: 'OpenAI 兼容', description: '直接透传 OpenAI 协议' },
+      { value: 'anthropic', label: 'Anthropic Messages', description: '转换为 Anthropic Messages 协议' },
+    ],
+    authSchemes: [
+      { value: 'bearer', label: 'Bearer Token', description: 'Authorization: Bearer <key>' },
+      { value: 'x-api-key', label: 'X-Api-Key', description: '自定义头透传' },
+    ],
+    modelTypes: [
+      { value: 'chat', label: '对话', description: null },
+      { value: 'vision', label: '视觉', description: null },
+    ],
+  },
   '/healthz': { status: 'ok' },
 };
 const stubFor = (api) => STUBS[api.split('?')[0]] ?? { ...LIST, items: [] };
