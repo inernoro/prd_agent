@@ -90,10 +90,14 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 | 产物 | 来源模板 | 说明 |
 |---|---|---|
 | `CLAUDE.md` / `AGENTS.md` | `reference/claude-md-template.md` | 八条核心规则 + 项目信息 + 技能索引 |
-| `doc/rule.doc.naming.md` | `reference/doc-naming-rule.md` | 文档命名规范，SDD 的地基 |
-| `doc/guide.list.directory.md` | 见下方「文档索引怎么写」 | 人类可读的文档清单 |
+| `{{DOC_DIR}}/rule.doc.naming.md` | `reference/doc-naming-rule.md` | 文档命名规范，SDD 的地基 |
+| `{{DOC_DIR}}/guide.list.directory.md` | 见下方「文档索引怎么写」 | 人类可读的文档清单 |
 | `changelogs/.gitkeep` | 空文件 | 变更记录碎片目录 |
-| `doc/spec.<项目名>.md` | `reference/doc-templates.md` 的 spec 模板 | 第一份文档，让用户有地方下笔 |
+| `{{DOC_DIR}}/spec.<项目名>.md` | `reference/doc-templates.md` 的 spec 模板 | 第一份文档，让用户有地方下笔 |
+
+**`{{DOC_DIR}}` 是第二步定下的那个目录，不是固定的 `doc`**：项目已经在用 `docs/`
+时用户会选它，这时全部骨架都必须落进 `docs/`。写死 `doc/` 会在人家旁边另起一棵
+文档树，把「增量补齐」变成「制造两套文档」——初始化第一件事就是给项目添乱。
 
 生成 `CLAUDE.md` 时要做的替换：
 
@@ -108,9 +112,9 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
   3. **frontmatter 是 YAML 折叠标量时要读完整块**。`description: >` 或 `|` 后面跟的缩进行才是正文，直接取冒号后那一段会得到一个 `>` 字符。
   4. **按用途分两组**：「日常工作」放方法论技能（需求、方案、风险、文档、验收、交接），「平台工具」放 CDS 部署运维类。产品经理在第一组里找东西，不该被部署排障技能淹没。
 
-### 文档索引怎么写（`doc/guide.list.directory.md`）
+### 文档索引怎么写（`{{DOC_DIR}}/guide.list.directory.md`）
 
-**不要生成 `doc/README.md`**。`doc/rule.doc.naming.md`（同一次初始化就装进去了）规定该目录下每个 `.md`
+**不要生成 `README.md`**。同一次初始化装进去的 `{{DOC_DIR}}/rule.doc.naming.md` 规定该目录下每个 `.md`
 都得带七种前缀之一，`README.md` 当场就违规——初始化产出的骨架自己破自己的规矩，用户第一天就学到
 「规则是可以不遵守的」。索引本身是一份操作指南，走 `guide.` 前缀。
 
@@ -142,9 +146,9 @@ SDD 初始化完成
 
 【已生成】
   CLAUDE.md                     8 条核心规则 + 项目信息
-  doc/rule.doc.naming.md        文档命名规范
-  doc/guide.list.directory.md   文档索引
-  doc/spec.<项目>.md             第一份需求文档（骨架）
+  <DOC_DIR>/rule.doc.naming.md        文档命名规范
+  <DOC_DIR>/guide.list.directory.md   文档索引
+  <DOC_DIR>/spec.<项目>.md             第一份需求文档（骨架）
   changelogs/                   变更记录目录
 
 【已跳过】（文件已存在，未覆盖）

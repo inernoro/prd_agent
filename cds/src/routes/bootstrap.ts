@@ -332,31 +332,32 @@ skipped=""
 if [ "$INCLUDE_CDS_SKILLS" = "1" ]; then
   cds_pack="$TMP_DIR/cds-skills.tar.gz"
   got=""
+  # 「下到了」不等于「下对了」：本实例可能 200 回一个 HTML 代理错误页或半截包。
+  # 所以校验放在循环内 —— 校验不过就换下一个源，而不是认定它成功、到循环外
+  # 才被 tar 失败 + set -e 打死，白白放着健康的上游不用。
   for base in "$CDS_ORIGIN" "$CDS_UPSTREAM"; do
     [ -n "$base" ] || continue
     # 走匿名的 cds-pack 端点：客户在拿到任何 CDS 凭据之前就得装上 cdscli，
     # 否则连「运行 connect 申请授权」都做不了。/api/export-skill 需要登录，用不了。
-    if curl -fsSL --max-time 120 -o "$cds_pack" "$base/api/skills/cds-pack/download" 2>/dev/null; then
-      got="$base"; break
-    fi
-  done
-  if [ -n "$got" ]; then
-    tar -xzf "$cds_pack" -C "$TMP_DIR"
+    curl -fsSL --max-time 120 -o "$cds_pack" "$base/api/skills/cds-pack/download" 2>/dev/null || continue
+    # 先只列表不解压：能列出来才是合法 tar.gz
+    tar -tzf "$cds_pack" >/dev/null 2>&1 || continue
+    rm -rf "$TMP_DIR/skills"
+    tar -xzf "$cds_pack" -C "$TMP_DIR" 2>/dev/null || continue
     # 直接用固定布局，不要 find -maxdepth：那是 GNU 扩展，macOS 的 BSD find 上
     # 行为不一致，配合 set -e 会让脚本在解压成功后当场退出、一个技能都没装。
     # 这个包的结构由 CDS 自己产出，恒为 skills/<key>/。
-    pack_skills="$TMP_DIR/skills"
-    if [ -d "$pack_skills" ]; then
-      for d in "$pack_skills"/*/; do
-        [ -d "$d" ] || continue
-        install_skill "$d" "$(basename "$d")"
-      done
-      say "已安装 CDS 技能包 (来源 $got)"
-    else
-      skipped="$skipped cds-skills(技能包结构异常)"
-    fi
+    [ -d "$TMP_DIR/skills" ] || continue
+    got="$base"; break
+  done
+  if [ -n "$got" ]; then
+    for d in "$TMP_DIR/skills"/*/; do
+      [ -d "$d" ] || continue
+      install_skill "$d" "$(basename "$d")"
+    done
+    say "已安装 CDS 技能包 (来源 $got)"
   else
-    skipped="$skipped cds-skills(下载失败)"
+    skipped="$skipped cds-skills(所有来源都取不到可用技能包)"
   fi
 fi
 
