@@ -37,7 +37,14 @@ pwd; git rev-parse --show-toplevel 2>/dev/null || echo "非 git 仓库"
 ls -d CLAUDE.md AGENTS.md doc docs .claude/rules changelogs 2>/dev/null
 
 # 3. 装了哪些技能（判断用户拿的是哪个角色套装）
-ls ~/.claude/skills/ 2>/dev/null; ls .claude/skills/ 2>/dev/null
+#    三个宿主目录都要看：Claude Code 用 .claude、Cursor 用 .cursor、
+#    通用 Agent Skills / Codex 用 .agents。引导脚本装到哪个是按项目现状探测的，
+#    只看 .claude 会把 Codex 项目误判成「一个技能都没装」，接着写错规则文件名、
+#    生成空技能索引。
+for d in .claude/skills .cursor/skills .agents/skills; do
+  [ -d "$d" ] && { echo "== $d"; ls "$d"; }
+done
+cat .cds/bootstrap.json 2>/dev/null   # 引导脚本留的种子：预设、技能目录、装了什么
 
 # 4. 项目类型（决定 CLAUDE.md 里写什么构建命令）
 ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln *.csproj 2>/dev/null
@@ -84,7 +91,7 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 |---|---|---|
 | `CLAUDE.md` / `AGENTS.md` | `reference/claude-md-template.md` | 八条核心规则 + 项目信息 + 技能索引 |
 | `doc/rule.doc.naming.md` | `reference/doc-naming-rule.md` | 文档命名规范，SDD 的地基 |
-| `doc/README.md` | 见下方「文档索引」 | 人类可读的文档清单 |
+| `doc/guide.list.directory.md` | 见下方「文档索引怎么写」 | 人类可读的文档清单 |
 | `changelogs/.gitkeep` | 空文件 | 变更记录碎片目录 |
 | `doc/spec.<项目名>.md` | `reference/doc-templates.md` 的 spec 模板 | 第一份文档，让用户有地方下笔 |
 
@@ -101,6 +108,31 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
   3. **frontmatter 是 YAML 折叠标量时要读完整块**。`description: >` 或 `|` 后面跟的缩进行才是正文，直接取冒号后那一段会得到一个 `>` 字符。
   4. **按用途分两组**：「日常工作」放方法论技能（需求、方案、风险、文档、验收、交接），「平台工具」放 CDS 部署运维类。产品经理在第一组里找东西，不该被部署排障技能淹没。
 
+### 文档索引怎么写（`doc/guide.list.directory.md`）
+
+**不要生成 `doc/README.md`**。`doc/rule.doc.naming.md`（同一次初始化就装进去了）规定该目录下每个 `.md`
+都得带七种前缀之一，`README.md` 当场就违规——初始化产出的骨架自己破自己的规矩，用户第一天就学到
+「规则是可以不遵守的」。索引本身是一份操作指南，走 `guide.` 前缀。
+
+内容是一张表 + 一段怎么加新文档的说明：
+
+```markdown
+# 文档目录
+
+> 本目录的命名规范见 `rule.doc.naming.md`。新增文档前先读它。
+
+| 文件 | 类型 | 说明 |
+|---|---|---|
+| `rule.doc.naming.md` | 规范 | 文档命名规范 |
+| `spec.<项目名>.md` | 规格 | 产品要做什么 |
+
+## 新增文档
+
+1. 选前缀：spec / design / plan / rule / guide / report / debt
+2. 命名 `{前缀}.{应用名}[.{子模块}].md`
+3. 建完回来在上表加一行
+```
+
 ## 第四步：输出自检报告（必须，这是交付物）
 
 生成完必须输出下面这张表，用户靠它知道自己现在站在哪：
@@ -109,10 +141,11 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 SDD 初始化完成
 
 【已生成】
-  CLAUDE.md              8 条核心规则 + 项目信息
-  doc/rule.doc.naming.md 文档命名规范
-  doc/spec-<项目>.md      第一份需求文档（骨架）
-  changelogs/            变更记录目录
+  CLAUDE.md                     8 条核心规则 + 项目信息
+  doc/rule.doc.naming.md        文档命名规范
+  doc/guide.list.directory.md   文档索引
+  doc/spec.<项目>.md             第一份需求文档（骨架）
+  changelogs/                   变更记录目录
 
 【已跳过】（文件已存在，未覆盖）
   <逐条列出>

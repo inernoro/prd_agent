@@ -106,9 +106,11 @@ function resolveSkillsRoot(repoRoot: string): string | null {
  * 「运行 connect 申请授权」这一步都做不了 —— 鸡生蛋问题。
  * 内容是技能说明与 CLI 源码（同款内容早已在海鲜市场公开），不含任何凭据。
  */
-async function packCdsSkills(skillsRoot: string): Promise<Buffer | null> {
+async function buildCdsSkillPack(skillsRoot: string): Promise<Buffer | null> {
+  // 必须五个齐全才认本地包：少一个就是半成品，客户装完会缺部署或预览命令，
+  // 而且脚本看到合法的 skills/ 目录就认为装好了，不会再回源上游。宁可回源。
   const present = CDS_SKILL_KEYS.filter((k) => fs.existsSync(path.join(skillsRoot, k)));
-  if (present.length === 0) return null;
+  if (present.length !== CDS_SKILL_KEYS.length) return null;
 
   const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cds-skill-pack-'));
   try {
@@ -124,6 +126,62 @@ async function packCdsSkills(skillsRoot: string): Promise<Buffer | null> {
     await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
   }
 }
+
+/**
+ * 技能内容签名：五个技能目录里所有文件的数量与最新 mtime。
+ * 只 stat 不读内容，够便宜；技能一改签名就变，缓存自然失效。
+ */
+async function skillPackSignature(skillsRoot: string): Promise<string> {
+  let files = 0;
+  let newest = 0;
+  const walk = async (dir: string): Promise<void> => {
+    const entries = await fs.promises.readdir(dir, { withFileTypes: true });
+    for (const e of entries) {
+      const p = path.join(dir, e.name);
+      if (e.isDirectory()) { await walk(p); continue; }
+      files += 1;
+      const st = await fs.promises.stat(p);
+      if (st.mtimeMs > newest) newest = st.mtimeMs;
+    }
+  };
+  for (const key of CDS_SKILL_KEYS) {
+    const dir = path.join(skillsRoot, key);
+    if (fs.existsSync(dir)) await walk(dir);
+  }
+  return `${files}:${Math.round(newest)}`;
+}
+
+/**
+ * 带缓存与单飞的 CDS 技能包。
+ *
+ * 为什么必须缓存：这个端点是匿名的（客户拿到凭据之前就要能装），CDS 全局没有
+ * 限流中间件。每次请求都递归 cp 一遍技能树再 spawn 一个 tar，匿名并发就能把
+ * CPU、进程槽和临时盘吃干净。缓存 + 单飞把「每请求一次构建」变成「内容变了才
+ * 构建一次」，并发请求共享同一次构建，天然封住这条放大路径。
+ */
+export class CdsSkillPackCache {
+  private cached: { signature: string; body: Buffer } | null = null;
+  private inflight: Promise<Buffer | null> | null = null;
+
+  async get(skillsRoot: string): Promise<{ body: Buffer; cached: boolean } | null> {
+    const signature = await skillPackSignature(skillsRoot);
+    if (this.cached && this.cached.signature === signature) {
+      return { body: this.cached.body, cached: true };
+    }
+    if (!this.inflight) {
+      this.inflight = buildCdsSkillPack(skillsRoot)
+        .then((body) => {
+          if (body) this.cached = { signature, body };
+          return body;
+        })
+        .finally(() => { this.inflight = null; });
+    }
+    const body = await this.inflight;
+    return body ? { body, cached: false } : null;
+  }
+}
+
+export const cdsSkillPackCache = new CdsSkillPackCache();
 
 /** shell 单引号转义：把 `'` 换成 `'\''`，杜绝生成脚本被注入。 */
 function shq(value: string): string {
@@ -341,12 +399,12 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     const skillsRoot = resolveSkillsRoot(deps.repoRoot);
     if (skillsRoot) {
       try {
-        const body = await packCdsSkills(skillsRoot);
-        if (body) {
+        const hit = await cdsSkillPackCache.get(skillsRoot);
+        if (hit) {
           res.setHeader('Cache-Control', 'no-store');
           res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
-          res.setHeader('X-Skill-Cache', 'local');
-          res.type('application/gzip').send(body);
+          res.setHeader('X-Skill-Cache', hit.cached ? 'local-cached' : 'local');
+          res.type('application/gzip').send(hit.body);
           return;
         }
       } catch (err) {

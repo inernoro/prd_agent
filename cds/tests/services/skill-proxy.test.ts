@@ -15,7 +15,7 @@ import os from 'node:os';
 import path from 'node:path';
 
 import { SkillProxy, SkillProxyError, isSafeSkillKey } from '../../src/services/skill-proxy.js';
-import { BOOTSTRAP_PRESETS, buildBootstrapScript, findPreset } from '../../src/routes/bootstrap.js';
+import { BOOTSTRAP_PRESETS, CdsSkillPackCache, buildBootstrapScript, findPreset } from '../../src/routes/bootstrap.js';
 
 function zipBody(marker: string): Response {
   return new Response(Buffer.from(`PK-${marker}`), { status: 200 });
@@ -164,5 +164,59 @@ describe('引导脚本', () => {
     const injected = buildBootstrapScript(preset, "https://evil.test'; rm -rf /; echo '", 'https://cds.upstream.test');
     expect(injected).not.toContain("rm -rf /; echo ''");
     expect(injected).toContain("'\\''");
+  });
+});
+
+describe('CDS 技能包缓存（匿名端点的放大防护）', () => {
+  let root: string;
+
+  const mkSkill = (base: string, key: string): void => {
+    fs.mkdirSync(path.join(base, key), { recursive: true });
+    fs.writeFileSync(path.join(base, key, 'SKILL.md'), `# ${key}\n`);
+  };
+  const ALL = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'];
+
+  beforeEach(() => {
+    root = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-skills-root-'));
+  });
+  afterEach(() => {
+    fs.rmSync(root, { recursive: true, force: true });
+  });
+
+  it('技能不齐时拒发本地包（半成品会让脚本以为装好了、不再回源）', async () => {
+    for (const k of ALL.slice(0, 3)) mkSkill(root, k);
+    const cache = new CdsSkillPackCache();
+    expect(await cache.get(root)).toBeNull();
+  });
+
+  it('五个齐全时出包，第二次命中缓存不再重新构建', async () => {
+    for (const k of ALL) mkSkill(root, k);
+    const cache = new CdsSkillPackCache();
+    const first = await cache.get(root);
+    expect(first?.cached).toBe(false);
+    expect((first?.body.byteLength ?? 0)).toBeGreaterThan(0);
+
+    const second = await cache.get(root);
+    expect(second?.cached).toBe(true);
+    expect(second?.body).toBe(first?.body);
+  });
+
+  it('并发请求共享同一次构建（单飞），不会各 spawn 一个 tar', async () => {
+    for (const k of ALL) mkSkill(root, k);
+    const cache = new CdsSkillPackCache();
+    const results = await Promise.all([cache.get(root), cache.get(root), cache.get(root)]);
+    const bodies = results.map((r) => r?.body);
+    expect(bodies[0]).toBe(bodies[1]);
+    expect(bodies[1]).toBe(bodies[2]);
+  });
+
+  it('技能内容变了缓存失效，重新构建', async () => {
+    for (const k of ALL) mkSkill(root, k);
+    const cache = new CdsSkillPackCache();
+    const first = await cache.get(root);
+    fs.writeFileSync(path.join(root, 'cds', 'NEW.md'), 'changed\n');
+    const second = await cache.get(root);
+    expect(second?.cached).toBe(false);
+    expect(second?.body).not.toBe(first?.body);
   });
 });
