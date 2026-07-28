@@ -109,6 +109,7 @@ import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
 import { ManagedProjectService } from './services/managed-project.js';
+import { ReleaseService } from './services/release-service.js';
 import {
   DeploymentDiagnosisService,
   GatewayDeploymentExplanationProvider,
@@ -763,6 +764,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'GET /releases/runs': '列出发布记录',
     'GET /releases/runs/:id': '查看发布记录',
     'POST /releases/runs/:id/rollback': '回滚发布记录',
+    'POST /releases/runs/:id/retry': '重试发布记录',
+    // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
+    'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
@@ -988,6 +992,21 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
+    // 发布控制面：staticMap 里的 `:id` 条目只够 auditApiLabels（它拿 express 路由
+    // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
+    // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
+    // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
+    [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
+    [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
+    [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
+    [/^PATCH \/releases\/targets\/[^/]+$/, '更新发布目标'],
+    [/^DELETE \/releases\/targets\/[^/]+$/, '删除发布目标'],
+    [/^POST \/releases\/branches\/[^/]+\/preflight$/, '执行发布前检查'],
+    [/^POST \/releases\/branches\/[^/]+\/runs$/, '启动分支发布'],
+    [/^POST \/releases\/projects\/[^/]+\/discover$/, '检测项目可用发布策略'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
     [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
     [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
@@ -1395,6 +1414,93 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * 发布中断收敛的启动 + 周期接线（阶段一 · 止血）
+ *
+ * 分支部署那条链路已经有这套东西了（deploymentRunService.reconcileInterrupted +
+ * 每 5 分钟收割）；生产发布这条一直没有，代价更大：CDS 自更新/重启把在途发布的
+ * 执行体带走后，ReleaseRun 永远停在 running，在途守卫会因此拒绝该目标的一切新
+ * 发布——这个发布目标从此发不出去，只能改库。自更新是 CDS 的日常操作。
+ *
+ * 收割器自身不许拖垮主流程：同步抛错、异步 reject 一律吞掉并落一条 warn；
+ * 上一轮没跑完就跳过这一轮（不叠加）。
+ * ------------------------------------------------------------------ */
+
+export interface ReleaseReconcileOutcome {
+  /** 本轮收敛的发布 run 数量。 */
+  reconciled: number;
+}
+
+/** 跨轨道契约：ReleaseService 暴露的中断收敛入口（同步或异步均可）。 */
+export interface ReleaseRunReconciler {
+  reconcileInterruptedReleases(): ReleaseReconcileOutcome | Promise<ReleaseReconcileOutcome>;
+}
+
+/** 与部署侧收割周期同频（deployment-run 也是 5 分钟）。 */
+export const RELEASE_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+
+export interface ReleaseRunReaperDeps {
+  service: ReleaseRunReconciler;
+  intervalMs?: number;
+  /** 便于注入假定时器做回归；默认 setInterval。 */
+  setTimer?: (fn: () => void, ms: number) => { unref?: () => void };
+  clearTimer?: (handle: { unref?: () => void }) => void;
+  log?: (message: string) => void;
+}
+
+export interface ReleaseRunReaperHandle {
+  /** 立刻收一轮（启动时先跑的就是它）。 */
+  reapNow: () => void;
+  stop: () => void;
+}
+
+export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunReaperHandle {
+  const log = deps.log ?? ((message: string) => console.warn(message));
+  const reconcile = deps.service?.reconcileInterruptedReleases;
+  if (typeof reconcile !== 'function') {
+    // 契约被改名/漏实现时必须出声：静默跳过等于把「发布目标锁死」这个故障留在原地。
+    log('[release-run] ReleaseService 未提供 reconcileInterruptedReleases，发布中断收敛未启用');
+    return { reapNow: () => {}, stop: () => {} };
+  }
+
+  let busy = false;
+  const finish = (outcome: ReleaseReconcileOutcome | undefined) => {
+    busy = false;
+    const count = Number(outcome?.reconciled ?? 0);
+    if (count > 0) {
+      log(`[release-run] 周期收割：${count} 个心跳过期的发布已收敛为失败，对应发布目标已释放`);
+    }
+  };
+  const fail = (err: unknown) => {
+    busy = false;
+    log(`[release-run] 周期收割失败: ${(err as Error)?.message ?? String(err)}`);
+  };
+
+  const reapNow = () => {
+    if (busy) return;
+    busy = true;
+    try {
+      const result = deps.service.reconcileInterruptedReleases();
+      if (result && typeof (result as Promise<ReleaseReconcileOutcome>).then === 'function') {
+        void (result as Promise<ReleaseReconcileOutcome>).then(finish, fail);
+        return;
+      }
+      finish(result as ReleaseReconcileOutcome);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  // 启动先收一轮：重启正是执行体丢失的时刻，不能等满一个周期才发现。
+  reapNow();
+
+  const setTimer = deps.setTimer ?? ((fn, ms) => setInterval(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((handle) => clearInterval(handle as unknown as NodeJS.Timeout));
+  const timer = setTimer(reapNow, deps.intervalMs ?? RELEASE_RECONCILE_INTERVAL_MS);
+  timer?.unref?.();
+  return { reapNow, stop: () => clearTimer(timer) };
+}
+
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const deploymentRunService = new DeploymentRunService(deps.stateService);
@@ -1437,6 +1543,10 @@ export function createServer(deps: ServerDeps): express.Express {
     }, 5 * 60 * 1000);
     runReaper.unref?.();
   }
+  // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
+  // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
+  const releaseReconciler: ReleaseRunReconciler = new ReleaseService(deps.stateService);
+  startReleaseRunReaper({ service: releaseReconciler });
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,

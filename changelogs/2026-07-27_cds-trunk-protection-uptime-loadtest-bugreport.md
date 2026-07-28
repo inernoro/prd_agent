@@ -82,3 +82,11 @@
 | refactor | cds | 底部左右两个浮层坞收敛到唯一定位者 .cds-bottom-docks：由它统一让开 rail、两侧留白并在窄视口自动折行，两个坞退化成带内 flex 项，不再各自贴角、互相不知道对方存在 |
 | refactor | cds | 浮层坞元素解析抽出共享 hook lib/useOverlayDock（effect + MutationObserver），消费方不再各自内联 querySelector |
 | test | cds | 新增底部浮层带守卫用例，并修正一条把缺陷写进契约的旧断言（原本要求 CommitInbox 必须自己 fixed bottom-4 left-4，那正是本次遮挡的成因） |
+| fix | cds | 修复生产发布被 CDS 重启腰斩后永久锁死发布目标：run 停在 running，在途守卫据此拒绝该目标的一切新发布，只能改库才能恢复；新增执行心跳（30s 打点，覆盖 SSH 长静默阶段）+ 启动收一轮 + 每 5 分钟周期收割，与分支部署侧 15 分钟过期口径一致 |
+| fix | cds | 自更新排空口径扩展到生产发布：此前只排空分支部署、压根不知道发布存在；两条生命周期的 running 语义相反（部署侧是成功终态、发布侧是在途），故 run 带 kind 区分，各走各的穷尽式终态表 |
+| fix | cds | 发布状态终态判定改为穷尽式 Record：漏判会让在途守卫放行两个并发发布，改后新增状态在编译期即报错 |
+| fix | cds | 发布命令补执行超时（默认 30 分钟，CDS_RELEASE_EXEC_TIMEOUT_MS 可覆盖）：SSH 的 10 秒是连接超时，远端脚本挂住时流不会 close，run 永不终态、目标被永久锁死；预检类探测另用短超时，不占 HTTP 生命周期 |
+| feat | cds | 发布失败落结构化事实 failure（复用分支侧 DeploymentFailure 的 code/owner/retryable/evidenceRefs/suggestedAction，不另发明字段）；新增发布链路特有的失败规则（SSH 传输 / 健康探测 / 执行超时），其余委派给既有分类器 |
+| fix | cds | 删除从未被赋值过的 ReleaseRun 状态 prechecking，并把状态联合提取为具名类型 ReleaseRunStatus |
+| fix | cds | 补齐发布控制面 12 条 Activity Monitor 中文 label 的动态路由 pattern：staticMap 的 :id 条目只够启动自检，真实调用带具体 id 时整条发布链路在面板上都是裸 URL；一律用 segment-safe 匹配，子路径排在裸 id 之前 |
+| test | cds | 新增发布生命周期 53 例回归：心跳过期收敛、状态怪异的存量 run 强制终态化、收割器不叠加不拖垮主流程、排空区分两条生命周期、终态表穷尽性 |
