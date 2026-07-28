@@ -72,3 +72,8 @@
 | fix | 技能 | findmapskills 的更新命令自带宿主识别，换个 shell 复制不再零次迭代静默不更新 |
 | refactor | cds | 流式限额读取抽成 readCappedBody，技能代理与引导路由共用一份实现 |
 | test | cds | 新增技能代理单飞/超时/流式中止用例、匿名白名单两处一致守卫、安装命令自包含守卫 |
+| fix | prd-api | 重新生成内嵌官方技能目录，客户下载到的 findmapskills 不再是静默不更新的旧版 |
+| fix | cds | 套装清单回源补齐超时、单飞与短缓存，MAP 慢时匿名并发不再把出站请求堆到超时 |
+| fix | 技能 | findmapskills README 用法表按凭据拆行，读免凭据不再被误写成整条流程都要 API Key |
+| docs | 文档 | 角色套装债务台账用码位描述替代被禁字面量 |
+| ci | 构建 | server-build job 新增官方技能目录新鲜度自测，改了技能忘了重新生成时 CI 直接红 |

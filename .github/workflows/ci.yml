@@ -118,6 +118,14 @@ jobs:
           restore-keys: |
             ${{ runner.os }}-nuget-
 
+      # 官方技能目录是 EmbeddedResource：改了 .claude/skills 却忘了重新生成，
+      # 后端会继续分发旧内容，而编译和单测都不会红（2026-07-28 真实踩过：
+      # findmapskills 的更新命令在源文件已修，客户下载到的仍是静默不更新的旧版）。
+      # 这条自测同时校验生成物新鲜度、分发产物完整性与零 emoji。
+      - name: Official skill catalog freshness and bundle self-test
+        working-directory: ${{ github.workspace }}
+        run: node scripts/test-official-skill-bundles.mjs
+
       - name: Restore dependencies
         run: dotnet restore PrdAgent.sln
 

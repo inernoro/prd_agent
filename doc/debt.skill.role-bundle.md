@@ -35,7 +35,7 @@
 
 ### D4 对外产物 de-emoji 只做了一部分
 
-- **是什么**：`doc/debt.platform.emoji-corpus.md` 的清理方案第一步是「先治对外产物」。本次因为把 `acceptance-checklist` 放进 PM 套装，顺带把它的 2 个 reference 文件 de-emoji 了（`☐` → `[ ]`，对勾/叉号/圆点 → 文案），并在 `scripts/test-official-skill-bundles.mjs` 里加了守卫——但守卫只覆盖**套装成员**，不在套装里的上架技能没扫。
+- **是什么**：`doc/debt.platform.emoji-corpus.md` 的清理方案第一步是「先治对外产物」。本次因为把 `acceptance-checklist` 放进 PM 套装，顺带把它的 2 个 reference 文件 de-emoji 了（空心方框 U+2610 改为 `[ ]`，对勾/叉号/圆点改为文案），并在 `scripts/test-official-skill-bundles.mjs` 里加了守卫——但守卫只覆盖**套装成员**，不在套装里的上架技能没扫。
 - **什么条件下必须还**：新增套装（会把更多技能纳入守卫范围）时自然推进；或按原债务文档专项排期一次性清完。
 - **关联**：`doc/debt.platform.emoji-corpus.md`
 

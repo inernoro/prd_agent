@@ -27,6 +27,9 @@ const MAX_SKILL_BYTES = 64 * 1024 * 1024;
 /** 回源超时：客户在等一条命令跑完，不能无限期挂着连接。 */
 const DOWNLOAD_TIMEOUT_MS = 60_000;
 
+/** 套装清单的缓存时长。清单体积小、变动慢，短缓存足以吸收突发又不至于发太旧。 */
+const BUNDLES_TTL_MS = 60_000;
+
 /**
  * 边读边计数地取回响应体，超限立即中止。
  *
@@ -95,6 +98,9 @@ export class SkillProxy {
    * 一起吃干净。同一个 key 的并发请求共享一次回源。
    */
   private readonly inflight = new Map<string, Promise<Buffer>>();
+  /** 套装清单的短缓存与单飞（同 inflight，挡住匿名并发把出站请求堆起来）。 */
+  private bundlesCache: { value: unknown; at: number } | null = null;
+  private bundlesInflight: Promise<unknown> | null = null;
 
   constructor(opts: SkillProxyOptions) {
     this.mapBase = opts.mapBase.replace(/\/+$/, '');
@@ -143,13 +149,33 @@ export class SkillProxy {
     }
   }
 
-  /** 取角色套装清单（JSON 直接透传，不落缓存 —— 体积小且需要实时）。 */
+  /**
+   * 取角色套装清单。
+   *
+   * 这条也是匿名路由且 CDS 没有全局限流：MAP 慢或不可达时，每个请求都各自发一次
+   * 上游 fetch，并发调用方会把出站请求和连接堆到网络客户端的完整超时为止。
+   * 与下载路径同样处理 —— 超时 + 单飞 + 短缓存（清单体积小、变动慢）。
+   */
   async fetchBundles(): Promise<unknown> {
     const url = `${this.mapBase}/api/official-skills/bundles`;
+    const age = this.bundlesCache ? this.now() - this.bundlesCache.at : Number.POSITIVE_INFINITY;
+    // age >= 0 守时钟回拨：负龄期不能当成新鲜，否则缓存永不失效
+    if (this.bundlesCache && age >= 0 && age < BUNDLES_TTL_MS) return this.bundlesCache.value;
+
     try {
-      const res = await this.fetchImpl(url, { method: 'GET' });
-      if (!res.ok) throw new Error(`HTTP ${res.status}`);
-      return await res.json();
+      if (!this.bundlesInflight) {
+        this.bundlesInflight = (async () => {
+          const res = await this.fetchImpl(url, {
+            method: 'GET',
+            signal: AbortSignal.timeout(DOWNLOAD_TIMEOUT_MS),
+          });
+          if (!res.ok) throw new Error(`HTTP ${res.status}`);
+          const value = await res.json();
+          this.bundlesCache = { value, at: this.now() };
+          return value;
+        })().finally(() => { this.bundlesInflight = null; });
+      }
+      return await this.bundlesInflight;
     } catch (err) {
       throw new SkillProxyError(
         `无法从 ${this.mapBase} 获取套装清单`,
