@@ -306,6 +306,27 @@ export class LatencyDigest {
   }
 }
 
+/**
+ * 给压测路径钉上 `__rs=<member>`，**替换**掉调用方路径里已有的 `__rs`。
+ *
+ * 为什么必须替换而不是追加：forwarder（forwarder-main.ts）用
+ * `URLSearchParams.get('__rs')` 取值，只认**第一个**。用户如果直接粘了一条
+ * 已经钉过副本的预览 URL 当压测路径，追加写法会让所有 A/B 落点实际全打到
+ * 用户钉的那一个副本上，而报告仍按不同成员分别标注、给出「谁更快」的结论——
+ * 得到一份看起来正常、实则完全错误的对比（Codex PR #1273 P1）。
+ */
+export function withReplicaPin(rawPath: string, member: string): string {
+  const hashAt = rawPath.indexOf('#');
+  const hash = hashAt >= 0 ? rawPath.slice(hashAt) : '';
+  const noHash = hashAt >= 0 ? rawPath.slice(0, hashAt) : rawPath;
+  const queryAt = noHash.indexOf('?');
+  const pathname = queryAt >= 0 ? noHash.slice(0, queryAt) : noHash;
+  const params = new URLSearchParams(queryAt >= 0 ? noHash.slice(queryAt + 1) : '');
+  params.delete('__rs');
+  params.append('__rs', member);
+  return `${pathname}?${params.toString()}${hash}`;
+}
+
 function round2(n: number): number {
   return Math.round(n * 100) / 100;
 }
@@ -864,8 +885,7 @@ export class ReplicaLoadTestService {
   private async worker(run: LoadTestRun, rt: TargetRuntime, port: number, deadline: number, budget: { remaining: number }): Promise<void> {
     const { config } = run;
     const signal = run.abort.signal;
-    const sep = config.path.includes('?') ? '&' : '?';
-    const pinnedPath = `${config.path}${sep}__rs=${encodeURIComponent(rt.target.pinned)}`;
+    const pinnedPath = withReplicaPin(config.path, rt.target.pinned);
     for (;;) {
       if (signal.aborted) return;
       const now = this.now();

@@ -1908,7 +1908,10 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 }
 const janitorService = new JanitorService(
   stateService,
-  config.janitor,
+  // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
+  // 同样要认它——否则「按文档 pin 住的非主干分支」只挡得住降温、挡不住 TTL 到期
+  // 被 janitor 删掉，两套保护看起来统一实则漏一半（Codex PR #1273 P1）。
+  { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
 );
 // 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时

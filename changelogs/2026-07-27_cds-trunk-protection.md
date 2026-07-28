@@ -9,3 +9,4 @@
 | feat | cds | 清理类接口回传 skippedProtected（保住了谁、凭什么保住），与 janitor 报表同口径，保护可见 |
 | perf | cds | janitor 保护跳过日志改为仅状态变化时输出，主干等永久受保护分支不再每轮 sweep 复读同一行淹没有效信号 |
 | test | cds | 新增一键清理路径主干保护回归（cds/tests/routes/trunk-protection-cleanup.test.ts，10 例事故值用例）与 janitor 日志去噪回归 |
+| fix | cds | 修复 scheduler 的固定名单没传进 janitor：按文档 pin 住的非主干分支只挡得住降温，TTL 到期仍被 janitor 删除，两套保护看似统一实则漏一半 |

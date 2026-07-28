@@ -28,6 +28,7 @@ import {
   isHostAllowedForBranch,
   normalizeLoadTestConfig,
   percentile,
+  withReplicaPin,
   type LoadTestRequestFn,
   type LoadTestTargetMetrics,
 } from '../../src/services/replica-loadtest.js';
@@ -559,5 +560,30 @@ describe('A/B 对比结论', () => {
     expect(cmp?.baselineId).toBe('res-1');
     expect(cmp?.rows[0].p95DeltaPct).toBe(-50);
     expect(cmp?.summary).toContain('副本 2');
+  });
+});
+
+describe('withReplicaPin：路径已带 __rs 时必须替换而不是追加（Codex PR #1273 P1）', () => {
+  it('干净路径直接钉上', () => {
+    expect(withReplicaPin('/health', 'rs-abc')).toBe('/health?__rs=rs-abc');
+  });
+
+  it('已有其他 query 时保留，并追加 __rs', () => {
+    const out = withReplicaPin('/api?x=1', 'rs-abc');
+    expect(out).toContain('x=1');
+    expect(new URLSearchParams(out.split('?')[1]).getAll('__rs')).toEqual(['rs-abc']);
+  });
+
+  it('事故值：用户粘了已钉副本的预览 URL，必须替换掉旧 __rs（否则 A/B 全打到同一个副本）', () => {
+    const out = withReplicaPin('/api?__rs=rs-USER&x=1', 'rs-target');
+    const params = new URLSearchParams(out.split('?')[1]);
+    // forwarder 用 .get() 取第一个——只能有一个值，且必须是本次落点
+    expect(params.getAll('__rs')).toEqual(['rs-target']);
+    expect(params.get('__rs')).toBe('rs-target');
+    expect(params.get('x')).toBe('1');
+  });
+
+  it('带 hash 时 hash 原样保留在末尾', () => {
+    expect(withReplicaPin('/page?a=1#top', 'rs-1')).toBe('/page?a=1&__rs=rs-1#top');
   });
 });

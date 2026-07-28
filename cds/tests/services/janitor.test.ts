@@ -1,6 +1,7 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
 import { JanitorService, type JanitorConfig, type JanitorClock, type DiskUsageFn } from '../../src/services/janitor.js';
@@ -599,5 +600,18 @@ describe('JanitorService', () => {
       expect(last!.imageRetention).toBeNull();
       expect(last!.dockerPrune).toBeNull();
     });
+  });
+});
+
+describe('装配接线：scheduler 的固定名单必须传进 janitor（Codex PR #1273 P1）', () => {
+  it('index.ts 构造 JanitorService 时把 scheduler.pinnedBranches 透进 janitor config', () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/index.ts'),
+      'utf-8',
+    );
+    const ctor = src.slice(src.indexOf('new JanitorService('), src.indexOf('new JanitorService(') + 500);
+    // 只配在 scheduler 那侧的 pin，必须同时挡住降温与 janitor 删除；
+    // 少了这行接线，按文档 pin 住的分支 TTL 到期照样被删。
+    expect(ctor).toContain('config.scheduler?.pinnedBranches');
   });
 });
