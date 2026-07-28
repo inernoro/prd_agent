@@ -1,5 +1,5 @@
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
-import { X, MessageSquare, CornerDownRight, Trash2, Send, GitCompare } from 'lucide-react';
+import { X, MessageSquare, CornerDownRight, Trash2, GitCompare } from 'lucide-react';
 import { formatWeekDateRange } from '../utils/weekRange';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
@@ -15,6 +15,7 @@ import { ReportLikeBar } from './ReportLikeBar';
 import { useDataTheme } from '../hooks/useDataTheme';
 import { ReportSelectionCommentLayer } from './ReportSelectionCommentLayer';
 import { underlineStroke, type ReportCommentAnchor } from './reportCommentAnchor';
+import { ReportCommentComposer, ReportCommentAttachmentGrid } from './ReportCommentComposer';
 
 interface Props {
   reportId: string;
@@ -42,7 +43,6 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
   const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
-  const [commentText, setCommentText] = useState('');
   const [submitting, setSubmitting] = useState(false);
   const currentUserId = useAuthStore((s) => s.user?.userId);
   /** 正文容器（划词评论层的定位坐标系） */
@@ -64,15 +64,16 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
     if (res.success && res.data) setComments(res.data.items);
   };
 
-  const handleCreateComment = async () => {
-    if (!replyTo || !commentText.trim()) return;
+  const handleCreateComment = async (content: string, attachmentIds: string[]) => {
+    if (!replyTo || (!content && attachmentIds.length === 0)) return;
     setSubmitting(true);
     const anchor = !replyTo.parentId ? replyTo.anchor : undefined;
     const res = await createComment({
       reportId,
       sectionIndex: replyTo.sectionIndex,
-      content: commentText.trim(),
+      content,
       parentCommentId: replyTo.parentId,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
       selectedText: anchor?.selectedText,
       contextBefore: anchor?.contextBefore,
       contextAfter: anchor?.contextAfter,
@@ -81,7 +82,6 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
     });
     setSubmitting(false);
     if (res.success) {
-      setCommentText('');
       setReplyTo(null);
       await loadComments();
     } else {
@@ -98,17 +98,13 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
     }
   };
 
+  // 切换评论目标时依赖 composer 的 key 变化自动重置草稿（文本 + 待发图片）
   const openCommentInput = (sectionIndex: number, parentId?: string) => {
-    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId && !replyTo?.anchor;
-    if (!isSameTarget) {
-      setCommentText('');
-    }
     setReplyTo({ sectionIndex, parentId });
   };
 
   /** 划词后点「评论」：带锚点打开该段落的评论输入框 */
   const handleSelectionComment = useCallback((sectionIndex: number, anchor: ReportCommentAnchor) => {
-    setCommentText('');
     setReplyTo({ sectionIndex, anchor });
   }, []);
 
@@ -386,23 +382,13 @@ export function ReportDetailPanel({ reportId, onClose, onReview, onReturn }: Pro
                               )
                               : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
                         </div>
-                        <div className="flex items-center gap-2">
-                          <input
-                            className="flex-1 text-[12px] px-3 py-2 rounded-lg"
-                            style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                            placeholder="输入评论..."
-                            value={commentText}
-                            onChange={(e) => setCommentText(e.target.value)}
-                            onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
-                            autoFocus
-                          />
-                          <Button variant="primary" size="sm" onClick={handleCreateComment} disabled={submitting || !commentText.trim()}>
-                            <Send size={12} />
-                          </Button>
-                          <Button variant="ghost" size="sm" onClick={() => { setReplyTo(null); setCommentText(''); }}>
-                            <X size={12} />
-                          </Button>
-                        </div>
+                        <ReportCommentComposer
+                          key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
+                          reportId={reportId}
+                          submitting={submitting}
+                          onSubmit={handleCreateComment}
+                          onCancel={() => setReplyTo(null)}
+                        />
                       </div>
                     )}
                   </div>
@@ -487,7 +473,10 @@ function CommentItem({
             </span>
           </div>
         )}
-        <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
+        {comment.content && (
+          <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>{comment.content}</div>
+        )}
+        <ReportCommentAttachmentGrid attachments={comment.attachments} />
       </div>
       <div className="opacity-0 group-hover:opacity-100 flex items-center gap-0.5 transition-opacity">
         <button className="p-0.5 rounded hover:bg-[var(--bg-tertiary)]" onClick={onReply} title="回复">

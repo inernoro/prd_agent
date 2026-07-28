@@ -710,6 +710,7 @@ export const api = {
       generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
       comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      commentImages: (id: string) => `/api/report-agent/reports/${id}/comments/images`,
       likes: (id: string) => `/api/report-agent/reports/${id}/likes`,
       views: (id: string) => `/api/report-agent/reports/${id}/views`,
       viewsSummary: (id: string) => `/api/report-agent/reports/${id}/views-summary`,
