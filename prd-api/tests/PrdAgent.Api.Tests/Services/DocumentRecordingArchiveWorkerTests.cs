@@ -1554,16 +1554,152 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .Length.ShouldBe(5);
     }
 
-    [Theory]
-    [InlineData(true, false)]
-    [InlineData(false, true)]
-    public void ArchivedChunks_ShouldRemainAvailableUntilDeferredTranscriptionFinishes(
-        bool entryRequiresDeferredTranscription,
-        bool expectedImmediateDeletion)
+    [Fact]
+    public void ArchivedChunks_ShouldRemainAvailableUntilDeferredTranscriptionFinishes()
     {
-        DocumentRecordingArchiveWorker.ShouldDeleteChunksImmediatelyAfterArchive(
-                entryRequiresDeferredTranscription)
-            .ShouldBe(expectedImmediateDeletion);
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: false,
+                deferredRun: null)
+            .ShouldBeTrue();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                deferredRun: null)
+            .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun { Status = DocumentStoreRunStatus.Queued })
+            .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun { Status = DocumentStoreRunStatus.Failed })
+            .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun
+                {
+                    Status = DocumentStoreRunStatus.Running,
+                    OutputEntryId = "entry-1",
+                })
+            .ShouldBeTrue();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun { Status = DocumentStoreRunStatus.Done })
+            .ShouldBeTrue();
+    }
+
+    [Fact]
+    public async Task SuccessfulTranscriptionCleanup_ShouldWaitForArchiveThenDeleteChunks()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        const string sessionId = "session-transcription-cleanup";
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = sessionId,
+            StoreId = "store-1",
+            UserId = "user-1",
+            EntryId = "entry-1",
+            ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
+        };
+        var entry = new DocumentEntry
+        {
+            Id = session.EntryId,
+            StoreId = session.StoreId,
+            Metadata = new Dictionary<string, string>
+            {
+                ["recordingUploadSessionId"] = sessionId,
+            },
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+        [
+            Chunk(sessionId, 0, [1, 2]),
+            Chunk(sessionId, 1, [3, 4]),
+        ]);
+
+        (await DocumentRecordingArchiveWorker.DeleteArchivedChunksAfterSuccessfulTranscriptionAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentRecordingUploadChunks,
+                entry,
+                CancellationToken.None))
+            .ShouldBeFalse();
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == sessionId)).ShouldBe(2);
+
+        await fixture.Db.DocumentRecordingUploadSessions.UpdateOneAsync(
+            s => s.Id == sessionId,
+            Builders<DocumentRecordingUploadSession>.Update.Set(
+                s => s.ArchiveStatus,
+                DocumentRecordingArchiveStatus.Completed));
+
+        (await DocumentRecordingArchiveWorker.DeleteArchivedChunksAfterSuccessfulTranscriptionAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentRecordingUploadChunks,
+                entry,
+                CancellationToken.None))
+            .ShouldBeTrue();
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == sessionId)).ShouldBe(0);
+    }
+
+    [Fact]
+    public async Task ExpiredArchiveCleanup_ShouldRunWithoutNewRecordingAndKeepPendingAudio()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        if (fixture == null) return;
+
+        var now = DateTime.UtcNow;
+        var sessions = new[]
+        {
+            new DocumentRecordingUploadSession
+            {
+                Id = "expired-archived",
+                StoreId = "store-1",
+                UserId = "user-1",
+                ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+                ExpiresAt = now.AddMinutes(-1),
+            },
+            new DocumentRecordingUploadSession
+            {
+                Id = "future-archived",
+                StoreId = "store-1",
+                UserId = "user-1",
+                ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+                ExpiresAt = now.AddMinutes(1),
+            },
+            new DocumentRecordingUploadSession
+            {
+                Id = "expired-pending",
+                StoreId = "store-1",
+                UserId = "user-1",
+                ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
+                ExpiresAt = now.AddMinutes(-1),
+            },
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync(sessions);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+            sessions.Select(session => Chunk(session.Id, 0, [1, 2])));
+
+        (await DocumentRecordingArchiveWorker.CleanupExpiredArchivedSessionsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentRecordingUploadChunks,
+                now,
+                CancellationToken.None))
+            .ShouldBe(1);
+
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == "expired-archived")).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == "expired-archived")).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == "future-archived")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == "future-archived")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == "expired-pending")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == "expired-pending")).ShouldBe(1);
     }
 
     [Fact]

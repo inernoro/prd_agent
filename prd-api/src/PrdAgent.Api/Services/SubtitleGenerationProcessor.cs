@@ -312,6 +312,26 @@ public class SubtitleGenerationProcessor
                 .Set(r => r.Progress, 95),
             cancellationToken: CancellationToken.None);
 
+        // 若对象归档先完成，转录就是最后一个分片读取者，应立即释放 Mongo 音频。
+        // 若归档仍在进行则保留；归档端完成后会回读本 run 的 OutputEntryId 并清理。
+        try
+        {
+            await DocumentRecordingArchiveWorker.DeleteArchivedChunksAfterSuccessfulTranscriptionAsync(
+                db.DocumentRecordingUploadSessions,
+                db.DocumentRecordingUploadChunks,
+                entry,
+                CancellationToken.None);
+        }
+        catch (Exception ex)
+        {
+            // 正文已经成功落库，临时分片清理不能反向把业务任务标成失败；独立过期
+            // 扫描会再次回收。这里只保留可观测告警，不触发整段 ASR 重跑。
+            _logger.LogWarning(
+                ex,
+                "[doc-store-agent] Archived recording chunk cleanup deferred entry={EntryId}",
+                entry.Id);
+        }
+
         _logger.LogInformation(
             "[doc-store-agent] Transcript written in place for {EntryId}, transcript={TLen} chars summary={SLen} chars",
             entry.Id, transcriptPlain.Length, summary.Length);
