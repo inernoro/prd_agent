@@ -66,6 +66,11 @@ const MAX_ATTACHMENT_COUNT = 4;
  */
 export const BUG_REPORT_BODY_LIMIT = '24mb';
 
+/** 本地留存的保留条数上限（超出从最旧的整条丢弃）。 */
+export const BUG_REPORT_MAX_RECORDS = 200;
+/** 本地留存的附件总量上限（超出从最旧的开始删附件文件，记录本身保留）。 */
+export const BUG_REPORT_MAX_ATTACHMENT_BYTES = 256 * 1024 * 1024;
+
 /** 转发缺陷系统的总预算（create + submit 合计），与前端「超过 10 秒转本地留存」文案一致。 */
 export const FORWARD_TOTAL_BUDGET_MS = 10_000;
 
@@ -375,6 +380,67 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
       });
     }
     fs.appendFileSync(recordsFile(), `${JSON.stringify(record)}\n`, 'utf-8');
+    pruneStore();
+  }
+
+  /**
+   * 本地留存的保留策略。没有它，每次提交最多写 12MB 附件到 CDS 数据卷且**永不回收**：
+   * 一个拿到 Key 的客户端（或一个不断重试的前端）反复调用就能把盘写满，而部署侧的
+   * 磁盘刹车罩不到这条路由（Codex PR #1273 P1）。
+   *
+   * 双闸：条数上限（旧记录整条丢弃）+ 附件总量上限（从最旧的开始删文件）。
+   * 只删附件文件不删记录正文时，记录里的 file 字段会被置空，列表仍看得到这条缺陷，
+   * 只是图没了——比整条消失更可查。
+   */
+  function pruneStore(): void {
+    try {
+      const dir = baseDir();
+      const assetDir = path.join(dir, 'attachments');
+      // 注意 readRecords 返回的是**新在前**（它给列表 API 用，内部做了 reverse）。
+      // 这里要保留的是「最新的 N 条」= 头部 N 条，slice(-N) 会反过来丢掉新记录。
+      const newestFirst = readRecords(Number.MAX_SAFE_INTEGER);
+      const keptNewestFirst = newestFirst.slice(0, BUG_REPORT_MAX_RECORDS);
+      const droppedIds = new Set(newestFirst.slice(BUG_REPORT_MAX_RECORDS).map((r) => r.id));
+      // 落盘顺序必须回到时间正序（文件是 append-only 的 jsonl）。
+      const kept = [...keptNewestFirst].reverse();
+
+      // 先按总量从最旧的记录开始摘附件，直到降到配额以下。
+      let total = 0;
+      const files: Array<{ path: string; size: number; rec: StoredBugReport; idx: number }> = [];
+      kept.forEach((rec) => {
+        (rec.attachments || []).forEach((att, idx) => {
+          if (!att.file) return;
+          const full = path.join(assetDir, att.file);
+          let size = 0;
+          try { size = fs.statSync(full).size; } catch { return; }
+          total += size;
+          files.push({ path: full, size, rec, idx });
+        });
+      });
+      for (const f of files) {
+        if (total <= BUG_REPORT_MAX_ATTACHMENT_BYTES) break;
+        try { fs.unlinkSync(f.path); } catch { /* 已不在就算了 */ }
+        total -= f.size;
+        f.rec.attachments[f.idx]!.file = '';
+      }
+
+      if (droppedIds.size > 0 || files.length > 0) {
+        // 被整条丢弃的记录，其附件文件一并清掉，避免孤儿文件永久占盘。
+        if (droppedIds.size > 0) {
+          try {
+            for (const name of fs.readdirSync(assetDir)) {
+              const owner = name.replace(/-\d+\.[^.]+$/, '');
+              if (droppedIds.has(owner)) {
+                try { fs.unlinkSync(path.join(assetDir, name)); } catch { /* ignore */ }
+              }
+            }
+          } catch { /* attachments 目录还不存在 */ }
+        }
+        fs.writeFileSync(recordsFile(), kept.map((r) => `${JSON.stringify(r)}\n`).join(''), 'utf-8');
+      }
+    } catch {
+      // 保留策略失败不能影响「缺陷已收下」这件事本身。
+    }
   }
 
   router.get('/bug-reports', (req, res) => {

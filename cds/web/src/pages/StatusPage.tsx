@@ -419,11 +419,14 @@ export function StatusPage(): JSX.Element {
     return () => { mounted.current = false; };
   }, []);
 
+  // segments 进依赖：窄屏要的是「把同样的 24 小时重新分成 40 段」，
+  // 而不是「拿 90 段砍掉最早的 50 段」——后者只覆盖约 10.7 小时，
+  // 却仍标注「覆盖最近 24 小时」，是会误导人的可用率图（Codex PR #1273 P2）。
   const load = useCallback(async (): Promise<void> => {
     setRefreshing(true);
     try {
       const [next, incidentPayload] = await Promise.all([
-        apiRequest<UptimeSummary>(`/api/uptime/summary?segments=${DESKTOP_SEGMENTS}`),
+        apiRequest<UptimeSummary>(`/api/uptime/summary?segments=${segments}`),
         apiRequest<{ incidents: UptimeIncidentView[] }>('/api/uptime/incidents?limit=30'),
       ]);
       if (!mounted.current) return;
@@ -436,7 +439,7 @@ export function StatusPage(): JSX.Element {
     } finally {
       if (mounted.current) setRefreshing(false);
     }
-  }, []);
+  }, [segments]);
 
   useEffect(() => {
     void load();

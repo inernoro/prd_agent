@@ -588,3 +588,39 @@ describe('探测不得等 body 结束（SSE 类端点会锁死整个监控）', 
     expect(fn).toContain('res.destroy()');
   });
 });
+
+describe('跨天 history 必须用按天聚合（Codex PR #1273 P2）', () => {
+  it('7d 范围不再返回一整片空桶，而是用 daily 铺出每天一个点', async () => {
+    const b = branch();
+    let clock = Date.UTC(2026, 6, 27, 12, 0, 0);
+    const monitor = makeMonitor({
+      branches: [b], probe: async () => ({ up: true, ms: 8, code: 200 }), now: () => clock,
+    });
+    await monitor.runCycle();
+    const rec = monitor.getRecord('proj-feat-a::api')!;
+    // 造三天历史聚合（真实场景由 applyDailyRollup 长期累积）
+    rec.daily = [
+      { day: '2026-07-24', up: 100, down: 0, sumMs: 1000, msCount: 100 },
+      { day: '2026-07-25', up: 90, down: 10, sumMs: 900, msCount: 90 },
+      { day: '2026-07-26', up: 0, down: 50, sumMs: 0, msCount: 0 },
+    ] as never;
+
+    const history = monitor.getHistory('proj-feat-a::api', 7 * 24 * 3600 * 1000, 90)!;
+    const nonEmpty = history.points.filter((p) => p.status !== 'none');
+    expect(nonEmpty.length).toBeGreaterThanOrEqual(3);
+    expect(nonEmpty.some((p) => p.status === 'up')).toBe(true);
+    expect(nonEmpty.some((p) => p.status === 'partial')).toBe(true);
+    expect(nonEmpty.some((p) => p.status === 'down')).toBe(true);
+  });
+
+  it('24h 范围仍走原始采样（不退化成一天一个点）', async () => {
+    const b = branch();
+    let clock = Date.UTC(2026, 6, 27, 12, 0, 0);
+    const monitor = makeMonitor({
+      branches: [b], probe: async () => ({ up: true, ms: 8, code: 200 }), now: () => clock,
+    });
+    for (let i = 0; i < 5; i++) { clock += MIN; await monitor.runCycle(); }
+    const history = monitor.getHistory('proj-feat-a::api', 24 * 3600 * 1000, 90)!;
+    expect(history.points.length).toBe(90);
+  });
+});

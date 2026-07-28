@@ -23,6 +23,7 @@ import { fileURLToPath } from 'node:url';
 import {
   buildMapDefectBody,
   createBugReportsRouter,
+  BUG_REPORT_MAX_RECORDS,
   forwardToMap,
   normalizeBugReport,
   resolveForwardConfig,
@@ -451,5 +452,33 @@ describe('MAP submit 非 2xx 必须如实告知（Codex PR #1273 P2）', () => {
     expect(result.ok).toBe(true);
     expect(String(result.partialReason)).toContain('草稿态');
     expect(String(result.partialReason)).toContain('500');
+  });
+});
+
+describe('本地留存必须有保留策略（Codex PR #1273 P1）', () => {
+  it('超过条数上限时从最旧的整条丢弃，附件文件一并回收', async () => {
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-prune-'));
+    const app = express();
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dir,
+      readForwardConfig: () => null,
+      resolveReporter: () => 'tester',
+    }));
+
+    const total = BUG_REPORT_MAX_RECORDS + 5;
+    for (let i = 0; i < total; i++) {
+      const res = await request(app, 'POST', '/api/bug-reports', {
+        description: `第 ${i} 条`, severity: 'trivial',
+      });
+      expect(res.status).toBe(201);
+    }
+    const listed = await request(app, 'GET', '/api/bug-reports?limit=1000');
+    expect(listed.body.items.length).toBeLessThanOrEqual(BUG_REPORT_MAX_RECORDS);
+
+    const lines = fs.readFileSync(path.join(dir, 'bug-reports', 'records.jsonl'), 'utf-8')
+      .split('\n').filter(Boolean);
+    expect(lines.length).toBe(BUG_REPORT_MAX_RECORDS);
+    // 最新那条必须还在（丢的是最旧的）
+    expect(lines[lines.length - 1]).toContain(`第 ${total - 1} 条`);
   });
 });

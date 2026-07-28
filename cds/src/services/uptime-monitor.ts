@@ -54,6 +54,7 @@ import {
   type UptimeDailyRollup,
   type UptimeIncident,
   type UptimeSample,
+  type UptimeBucket,
   type UptimeStatus,
 } from './uptime-metrics.js';
 
@@ -387,6 +388,40 @@ export const defaultHttpProbe: ProbeFn = async (target, timeoutMs) => {
     req.end();
   });
 };
+
+
+/** 一天的毫秒数（按天聚合与 range 判定共用）。 */
+const DAY_MS = 24 * 3600 * 1000;
+
+/**
+ * 用按天聚合铺出跨天时序：一天一个桶，覆盖整个 range，缺的那天给 status='none'。
+ * 与 bucketizeSamples 返回同一种 UptimeBucket，前端无需分支。
+ */
+function dailyRollupPoints(record: UptimeTargetRecord, fromMs: number, toMs: number): UptimeBucket[] {
+  const byDay = new Map(record.daily.map((d) => [d.day, d]));
+  const points: UptimeBucket[] = [];
+  const startDay = Math.floor(fromMs / DAY_MS);
+  const endDay = Math.floor(toMs / DAY_MS);
+  for (let d = startDay; d <= endDay; d++) {
+    const from = d * DAY_MS;
+    const to = Math.min(toMs, from + DAY_MS);
+    const key = new Date(from).toISOString().slice(0, 10);
+    const roll = byDay.get(key);
+    if (!roll || (roll.up === 0 && roll.down === 0)) {
+      points.push({ from, to, up: 0, down: 0, avgLatencyMs: null, status: 'none' });
+      continue;
+    }
+    points.push({
+      from,
+      to,
+      up: roll.up,
+      down: roll.down,
+      avgLatencyMs: roll.msCount > 0 ? Math.round(roll.sumMs / roll.msCount) : null,
+      status: roll.down === 0 ? 'up' : roll.up === 0 ? 'down' : 'partial',
+    });
+  }
+  return points;
+}
 
 /** 探测失败的分类。降级只认 protocol，unreachable 是真故障不许吞。 */
 export type ProbeFailureKind = 'none' | 'http-status' | 'protocol' | 'unreachable';
@@ -794,7 +829,15 @@ export class UptimeMonitorService {
     if (!record) return null;
     const now = this.now();
     const from = now - rangeMs;
-    const points = bucketizeSamples(record.samples, from, now, bucketCount);
+    // 原始采样只留约 24 小时（环形缓冲），更早的历史在按天聚合里。跨天的 range
+    // 若只 bucketize samples，7d/30d 会返回一整片空桶——看着像「那几天没监控」，
+    // 实际是数据在另一个字段里（Codex PR #1273 P2）。
+    // 判据只看 range 本身，不看当前采样跨度：刚起的监控只有几分钟采样，若按
+    // 「range 超过采样跨度」判，24h 也会被推去走按天聚合，退化成一天一个点。
+    const needsRollup = rangeMs > DAY_MS;
+    const points = needsRollup
+      ? dailyRollupPoints(record, from, now)
+      : bucketizeSamples(record.samples, from, now, bucketCount);
     return { id: record.id, name: record.name, from, to: now, bucketCount: points.length, points };
   }
 

@@ -651,6 +651,8 @@ interface LoadTestRun {
 
 export interface LoadTestHolder {
   runId: string;
+  /** 供路由层按调用方项目脱敏——项目级 Key 不该看见别的项目在压什么 */
+  projectId: string;
   branchId: string;
   profileId: string;
   startedAt: string;
@@ -694,6 +696,7 @@ export class ReplicaLoadTestService {
       .filter((r) => r.holdsSlot)
       .map((r) => ({
         runId: r.id,
+        projectId: r.projectId,
         branchId: r.branchId,
         profileId: r.profileId,
         startedAt: r.startedAt,
@@ -839,9 +842,15 @@ export class ReplicaLoadTestService {
     const holders = this.activeHolders();
     if (holders.length >= LOADTEST_LIMITS.maxRunning) {
       const h = holders[0];
+      // 占位者属于别的项目时只说「被占用 + 已跑多久」，不泄漏对方的分支/服务/任务 id
+      // （项目级 Key 不该借这条报错枚举别人的运行态，Codex PR #1273 P1）。
+      const sameProject = h.projectId === branch.projectId;
+      const who = sameProject
+        ? `（${h.branchId}/${h.profileId}，已跑 ${h.elapsedSec}s，任务 ${h.runId}）`
+        : `（另一个项目的压测占用中，已跑 ${h.elapsedSec}s）`;
       throw new LoadTestError(
         409,
-        `已有压测在进行中（${h.branchId}/${h.profileId}，已跑 ${h.elapsedSec}s，任务 ${h.runId}）。`
+        `已有压测在进行中${who}。`
         + '同时只允许一个压测任务，请等它结束或先取消——并发压测会互相污染结果，也会把宿主压垮。',
       );
     }

@@ -9,7 +9,7 @@ import { connect as tcpConnect } from 'node:net';
 import type { DeploymentVersion, DeploymentVersionProfile } from '../types.js';
 import type { StateService } from '../services/state.js';
 import { ReplicaSetError, REPLICA_MEMBER_LIMIT, REPLICA_PLAN_MAX_STEPS, type ReplicaSetService } from '../services/replica-set.js';
-import { LoadTestError, LOADTEST_LIMITS, ReplicaLoadTestService } from '../services/replica-loadtest.js';
+import { LoadTestError, LOADTEST_LIMITS, ReplicaLoadTestService, type LoadTestHolder } from '../services/replica-loadtest.js';
 import { resolveReplicaDbTarget } from '../services/replica-db-clone.js';
 import { diskGuard } from '../services/disk-guard.js';
 import { buildServiceGraph } from '../services/service-graph.js';
@@ -105,6 +105,25 @@ export interface ReplicaSetsRouterDeps {
 
 export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
   const router = Router();
+
+  /**
+   * 压测占位者按项目脱敏。压测服务是全局单例（同时只允许一个任务），所以
+   * activeHolders() 天然含别的项目的 branchId / profileId / runId / 起始时刻。
+   * 项目级 Key 只该知道「共享槽位被占了、占了多久」，不该借此枚举别人的运行态
+   * （Codex PR #1273 P1）。人类 cookie / 全局 Key（无 cdsProjectKey）照看全量。
+   */
+  const redactHolders = (
+    req: Request,
+    holders: LoadTestHolder[],
+    branchProjectId: string | undefined,
+  ): { active: LoadTestHolder[]; activeOtherProjects?: number } => {
+    const scope = (req as unknown as { cdsProjectKey?: { projectId: string } }).cdsProjectKey?.projectId
+      ?? null;
+    if (!scope) return { active: holders };
+    const own = holders.filter((h) => h.projectId === scope || h.projectId === branchProjectId);
+    const others = holders.length - own.length;
+    return others > 0 ? { active: own, activeOtherProjects: others } : { active: own };
+  };
 
   const guard = (req: Request, branchId: string): { status: number; body: unknown } | null => {
     const branch = deps.stateService.getBranch(branchId);
@@ -363,12 +382,15 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
     const access = guard(req, req.params.branchId);
     if (access) { res.status(access.status).json(access.body); return; }
     try {
-      withReap(() => res.json({
-        runs: loadTests.list(req.params.branchId),
-        limits: LOADTEST_LIMITS,
-        active: loadTests.activeHolders(),
-        health: loadTests.health(),
-      }));
+      withReap(() => {
+        const branch = deps.stateService.getBranch(req.params.branchId);
+        res.json({
+          runs: loadTests.list(req.params.branchId),
+          limits: LOADTEST_LIMITS,
+          ...redactHolders(req, loadTests.activeHolders(), branch?.projectId),
+          health: loadTests.health(),
+        });
+      });
     } catch (err) { respondError(res, err); }
   });
 
