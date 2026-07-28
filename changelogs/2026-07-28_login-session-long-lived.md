@@ -15,3 +15,5 @@
 | fix | cds | ticket SSO 会话纳入统一 7 天策略并支持滑动续期 + 重发 cookie（原硬编码 12 小时且不续期）（Codex P1） |
 | fix | llmgw | 401 只清「发起本次请求的那把 token」，避免请求在途期间换账号后把新会话一起踢下线（Codex P1） |
 | fix | llmgw | 监听 storage 事件同步鉴权上下文，修复跨标签页登出/换账号后界面身份与实际凭据不一致（Codex P1） |
+| fix | cds | basic 模式 cds_token 纳入统一 7 天策略并在已鉴权请求上重发实现滑动续期（原写死 30 天且不续期）（Codex P1） |
+| fix | llmgw | 401 清会话改严格相等判断，无凭据请求的 401 不再清掉别的标签页刚登录的会话（Codex P2） |

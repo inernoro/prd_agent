@@ -2101,7 +2101,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
+        res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2618,6 +2618,13 @@ export function createServer(deps: ServerDeps): express.Express {
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const token = cookieToken || headerToken;
       if (token === validToken) {
+        // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
+        // 只能靠「每次带 cookie 的已鉴权请求重发一次 cookie」来续。不这么做的话，
+        // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
+        // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
+        if (cookieToken === validToken) {
+          res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
         // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
@@ -4530,6 +4537,15 @@ export function installSpaFallback(
       message: `Unknown API endpoint: ${req.method} /api${req.path}`,
     });
   });
+}
+
+/**
+ * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
+ * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
+ */
+function basicSessionCookie(token: string, ttlMs: number): string {
+  const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
+  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

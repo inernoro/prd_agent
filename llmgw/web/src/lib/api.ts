@@ -232,7 +232,9 @@ export function clearSessionIfCurrent(requestToken: string | null): boolean {
   })();
   // 本地已无会话：无所谓清不清，按「就是当前会话失效」处理，让调用方照常提示重新登录。
   if (!current) return true;
-  if (requestToken && current !== requestToken) return false;
+  // 严格相等比较：requestToken 为 null（本标签页发请求时还没登录）也必须算「不是同一把」，
+  // 否则另一个标签页刚登录成功的会话会被这条无凭据请求的 401 清掉。
+  if (current !== requestToken) return false;
   clearSession();
   return true;
 }
