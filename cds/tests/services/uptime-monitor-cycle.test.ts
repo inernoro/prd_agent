@@ -47,6 +47,9 @@ function testConfig(overrides: Partial<UptimeMonitorConfig> = {}): UptimeMonitor
     recoveryThreshold: 1,
     maxSamples: MAX_SAMPLES_PER_TARGET,
     excludePatterns: [],
+    // 既有用例测的是探测机制本身（fixture 是 feat/a 特性分支），
+    // 与「默认只看主干」的范围收窄正交，这里显式 opt-in 全量。
+    scope: 'all',
     storePath: '', // 空串 = 只在内存跑，测试不落盘
     ...overrides,
   };
@@ -68,7 +71,7 @@ function makeMonitor(opts: {
 
 describe('selectProbeTargets 目标推导', () => {
   it('running 分支的 running 服务 → active 的 HTTP 探测目标', () => {
-    const targets = selectProbeTargets([branch()]);
+    const targets = selectProbeTargets([branch()], [], { scope: 'all' });
     expect(targets).toHaveLength(1);
     expect(targets[0]).toMatchObject({
       id: 'proj-feat-a::api',
@@ -80,23 +83,23 @@ describe('selectProbeTargets 目标推导', () => {
   });
 
   it('降温 / 构建中的分支 → active=false（不是故障，只是暂停）', () => {
-    const cold = selectProbeTargets([branch({ status: 'idle' })]);
+    const cold = selectProbeTargets([branch({ status: 'idle' })], [], { scope: 'all' });
     expect(cold[0].active).toBe(false);
     expect(pausedReasonOf(cold[0])).toContain('降温');
 
-    const building = selectProbeTargets([branch({ status: 'building' })]);
+    const building = selectProbeTargets([branch({ status: 'building' })], [], { scope: 'all' });
     expect(building[0].active).toBe(false);
   });
 
   it('没有 hostPort 时退化为 container 探测', () => {
     const targets = selectProbeTargets([branch({
       services: { api: { profileId: 'api', containerName: 'c', hostPort: 0, status: 'running' } },
-    } as Partial<BranchEntry>)]);
+    } as Partial<BranchEntry>)], [], { scope: 'all' });
     expect(targets[0].probeKind).toBe('container');
   });
 
   it('删除中的分支整个跳过', () => {
-    expect(selectProbeTargets([branch({ deleting: true })])).toHaveLength(0);
+    expect(selectProbeTargets([branch({ deleting: true })], [], { scope: 'all' })).toHaveLength(0);
   });
 });
 
@@ -328,7 +331,7 @@ describe('排除名单（逃生阀）', () => {
         grpc: { profileId: 'grpc', containerName: 'c-grpc', hostPort: 10002, status: 'running' },
       },
     } as Partial<BranchEntry>);
-    const targets = selectProbeTargets([b], ['grpc']);
+    const targets = selectProbeTargets([b], ['grpc'], { scope: 'all' });
     const grpc = targets.find((t) => t.profileId === 'grpc')!;
     expect(grpc.excluded).toBe(true);
     expect(grpc.active).toBe(false);
@@ -520,5 +523,52 @@ describe('状态页展示排序：值得看的排前面', () => {
     const sorted = [mk('b', 'up'), mk('a', 'up'), mk('c', 'up')]
       .sort(compareTargetsForDisplay).map((t) => t.name);
     expect(sorted).toEqual(['a', 'b', 'c']);
+  });
+});
+
+describe('集群：远端 executor 上的分支不得用协调端地址探测', () => {
+  const branch = (over: Record<string, unknown> = {}) => ({
+    id: 'b1', projectId: 'p1', branch: 'feat/x', status: 'running',
+    services: { api: { status: 'running', hostPort: 31000 } },
+    ...over,
+  }) as unknown as BranchEntry;
+
+  it('远端 executor 的分支不纳入监控（避免误判 down 或撞上本机同端口的无关容器）', () => {
+    const t = selectProbeTargets([branch({ executorId: 'node-2' })], [], { scope: 'all' })[0]!;
+    expect(t.active).toBe(false);
+    expect(t.remoteExecutor).toBe(true);
+    expect(pausedReasonOf(t)).toContain('远端 executor');
+  });
+
+  it('embedded executor 与无 executorId 的分支照常探测', () => {
+    expect(selectProbeTargets([branch({ executorId: 'embedded' })], [], { scope: 'all' })[0]!.active).toBe(true);
+    expect(selectProbeTargets([branch()], [], { scope: 'all' })[0]!.active).toBe(true);
+  });
+});
+
+describe('监控范围默认只看主干（用户 2026-07-28 反馈「监控的有点多了」）', () => {
+  const b = (id: string, name: string, projectId = 'p1') => ({
+    id, projectId, branch: name, status: 'running',
+    services: { api: { status: 'running', hostPort: 30000 } },
+  }) as unknown as BranchEntry;
+
+  const all = [b('p1-main', 'main'), b('p1-feat', 'feat/x'), b('p1-master', 'master', 'p2')];
+
+  it('默认 scope=trunk：只产主干目标，特性分支根本不进列表', () => {
+    const ids = selectProbeTargets(all, []).map((t) => t.branchId);
+    expect(ids).toEqual(['p1-main', 'p1-master']);
+  });
+
+  it('scope=all 时恢复全量（逃生阀）', () => {
+    expect(selectProbeTargets(all, [], { scope: 'all' })).toHaveLength(3);
+  });
+
+  it('认得项目自定义的默认分支名（gitDefaultBranch）', () => {
+    const targets = selectProbeTargets(
+      [b('p1-trunk', 'develop')],
+      [],
+      { scope: 'trunk', getProject: () => ({ gitDefaultBranch: 'develop' } as never) },
+    );
+    expect(targets).toHaveLength(1);
   });
 });

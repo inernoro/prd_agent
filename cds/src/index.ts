@@ -4303,7 +4303,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   // 降温彻底废掉。详见 services/uptime-monitor.ts 顶部纪律 1。
   // CDS_UPTIME_ENABLED=0 可一刀关停（start() 变 no-op）。
   const uptimeMonitor = new UptimeMonitorService({
-    state: { getAllBranches: () => stateService.getAllBranches() },
+    state: {
+      getAllBranches: () => stateService.getAllBranches(),
+      getProject: (projectId: string) => stateService.getProject(projectId),
+    },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
   });

@@ -35,7 +35,8 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry } from '../types.js';
+import type { BranchEntry, Project } from '../types.js';
+import { isTrunkBranch } from './branch-protection.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   DEFAULT_FAILURE_THRESHOLD,
@@ -74,6 +75,11 @@ export interface ProbeTarget {
    * 这不是故障，记 paused 且不产采样（时间桶留空，前端显示灰段）。
    */
   active: boolean;
+  /**
+   * 容器是否跑在远端 executor 上。true = 协调端探不到（hostPort 属于那台机器），
+   * 一律不纳入监控，避免误判 down 或撞上本机同端口的无关容器报出假绿。
+   */
+  remoteExecutor?: boolean;
   /** 分支当前状态，供 paused 原因展示 */
   branchStatus: string;
   /** 服务当前状态 */
@@ -139,6 +145,15 @@ export interface UptimeMonitorConfig {
    *   - 展示名：`feat/a / grpc`
    */
   excludePatterns: string[];
+  /**
+   * 监控范围。默认 `trunk` —— 只盯各项目的主干分支。
+   *
+   * 为什么默认只看主干：特性分支是「今天开、明天删」的临时物，天然大量处于
+   * 降温/构建/已停止态，全量纳入会让状态页变成一屏噪声（生产实测 139 个目标里
+   * 103 个是暂停态），真故障反而被淹没。状态页要回答的是「我的服务好不好」，
+   * 不是「今天开了多少条分支」。需要全量时设 CDS_UPTIME_SCOPE=all。
+   */
+  scope: 'trunk' | 'all';
   /** 落盘路径；空串表示只在内存里跑（测试用） */
   storePath: string;
 }
@@ -146,6 +161,11 @@ export interface UptimeMonitorConfig {
 /** 监控只需要读分支台账，不需要整个 StateService（也就无从写回 state）。 */
 export interface UptimeStateSource {
   getAllBranches(): BranchEntry[];
+  /**
+   * 查项目（只为判主干：gitDefaultBranch）。可选——不传时 isTrunkBranch
+   * 退化为 main/master 字面量兜底，行为仍正确，只是认不出自定义默认分支名。
+   */
+  getProject?(projectId: string): Project | null | undefined;
 }
 
 export type ProbeFn = (target: ProbeTarget, timeoutMs: number) => Promise<Omit<UptimeSample, 't'>>;
@@ -225,6 +245,8 @@ export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
     failureThreshold: envInt('CDS_UPTIME_FAILURE_THRESHOLD', DEFAULT_FAILURE_THRESHOLD, 1, 20),
     recoveryThreshold: envInt('CDS_UPTIME_RECOVERY_THRESHOLD', DEFAULT_RECOVERY_THRESHOLD, 1, 20),
     maxSamples: envInt('CDS_UPTIME_MAX_SAMPLES', MAX_SAMPLES_PER_TARGET, 60, MAX_SAMPLES_PER_TARGET),
+    // 默认只监控主干；CDS_UPTIME_SCOPE=all 才纳入全部分支。
+    scope: (process.env.CDS_UPTIME_SCOPE || '').trim().toLowerCase() === 'all' ? 'all' : 'trunk',
     storePath: path.join(repoRoot, '.cds', 'uptime-monitor.json'),
   };
 }
@@ -242,10 +264,18 @@ export function uptimeConfigFromEnv(repoRoot: string): UptimeMonitorConfig {
 export function selectProbeTargets(
   branches: ReadonlyArray<BranchEntry>,
   excludePatterns: ReadonlyArray<string> = [],
+  options: {
+    scope?: 'trunk' | 'all';
+    getProject?: (projectId: string) => Project | null | undefined;
+  } = {},
 ): ProbeTarget[] {
+  const scope = options.scope ?? 'trunk';
   const targets: ProbeTarget[] = [];
   for (const branch of branches) {
     if (!branch || branch.deleting) continue;
+    // 非主干分支在 trunk 范围下**根本不产 target**（而不是产一个 paused 的），
+    // 否则状态页仍要滚过上百条灰条才看得到主干——那等于没收窄。
+    if (scope === 'trunk' && !isTrunkBranch(branch, options.getProject?.(branch.projectId))) continue;
     const services = branch.services || {};
     for (const profileId of Object.keys(services).sort()) {
       const svc = services[profileId];
@@ -259,7 +289,13 @@ export function selectProbeTargets(
         { id, branchId: branch.id, projectId: branch.projectId, profileId, name },
         excludePatterns,
       );
-      const active = branchLive && serviceLive && !excludedBy;
+      // 集群：分支容器跑在远端 executor 上时，hostPort 是**那台机器**的端口，
+      // 协调端的 127.0.0.1:<hostPort> 根本不是同一个服务。轻则常年误判 down，
+      // 重则撞上协调端某个复用同一端口的无关容器、把它的健康当成本服务的健康
+      // （假绿比假红更危险）。在补上分布式探测之前，远端 executor 拥有的分支
+      // 一律不纳入监控，而不是用错误的地址去探（Codex PR #1273 P1）。
+      const remoteExecutor = Boolean(branch.executorId && branch.executorId !== 'embedded');
+      const active = branchLive && serviceLive && !excludedBy && !remoteExecutor;
       targets.push({
         id,
         branchId: branch.id,
@@ -273,6 +309,7 @@ export function selectProbeTargets(
         serviceStatus: svc.status,
         excluded: Boolean(excludedBy),
         excludedBy: excludedBy || undefined,
+        remoteExecutor: remoteExecutor || undefined,
       });
     }
   }
@@ -283,6 +320,9 @@ export function selectProbeTargets(
 export function pausedReasonOf(target: ProbeTarget): string {
   if (target.excluded) {
     return `未纳入监控（命中排除规则 ${target.excludedBy}，可在 CDS_UPTIME_EXCLUDE 里移除）`;
+  }
+  if (target.remoteExecutor) {
+    return '未纳入监控（容器在远端 executor，协调端探不到其宿主端口）';
   }
   if (!LIVE_BRANCH_STATUSES.has(target.branchStatus)) {
     if (target.branchStatus === 'idle') return '分支已降温（调度器空闲回收），不计入故障';
@@ -533,6 +573,10 @@ export class UptimeMonitorService {
       const targets = selectProbeTargets(
         this.deps.state.getAllBranches(),
         this.deps.config.excludePatterns || [],
+        {
+          scope: this.deps.config.scope ?? 'trunk',
+          getProject: this.deps.state.getProject?.bind(this.deps.state),
+        },
       );
       const liveIds = new Set(targets.map((t) => t.id));
 

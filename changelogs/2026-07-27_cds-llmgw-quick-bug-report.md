@@ -10,3 +10,5 @@
 | fix | llmgw | 修复 POST /gw/bug-reports 违反 server-authority：转发与落库改用与请求生命周期解耦的独立超时/CancellationToken.None，用户切页不再导致 MAP 已建缺陷而网关无记录 |
 | fix | llmgw | 修复附件可能顶穿 MongoDB 16MB 单文档上限：总量闸改按 base64 字符长度计，并给 InsertOneAsync 套 try/catch，失败返回中文原因而不是裸 500 |
 | test | cds | 新增生产同款 body 解析装配的 413/大附件用例、压测端点 label 守卫、右下角浮层不重叠守卫、llmgw 提 bug 端点源码守卫 |
+| security | cds | 修复项目级 Key 可读取全部项目缺陷台账（正文含页面地址与 query、提交人、环境信息）：缺陷是 CDS 系统级数据且无项目维度可过滤，按既有约定拒绝项目级凭据 |
+| fix | cds | 修复转发到缺陷系统时截图从未上传：此前只 create+submit，正文里仅有文件名，UI 却报「已提交」；改为 submit 前逐个上传附件，部分失败如实回传而非谎报成功 |

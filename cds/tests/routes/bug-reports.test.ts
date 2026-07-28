@@ -354,3 +354,81 @@ describe('POST /api/bug-reports', () => {
     expect(res.body.items.map((item: { title: string }) => item.title)).toEqual(['第二条', '第一条']);
   });
 });
+
+describe('Codex PR #1273 复审修复', () => {
+  const dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-review-'));
+
+  /** 带 cdsProjectKey 盖章的 app（模拟项目级 cdsp_ key 走全局门后的状态）。 */
+  function buildScopedApp(projectKey?: { projectId: string; keyId: string }) {
+    const app = express();
+    app.use((req, _res, next) => {
+      if (projectKey) (req as unknown as { cdsProjectKey?: unknown }).cdsProjectKey = projectKey;
+      next();
+    });
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dataDir,
+      readForwardConfig: () => null,
+      resolveReporter: () => 'tester',
+    }));
+    return app;
+  }
+
+  it('P1：项目级 Key 读缺陷台账必须 403（跨项目读取正文属数据泄漏）', async () => {
+    const res = await request(buildScopedApp({ projectId: 'proj-a', keyId: 'k1' }), 'GET', '/api/bug-reports');
+    expect(res.status).toBe(403);
+    expect(String(res.body.error)).toContain('系统级');
+  });
+
+  it('P1：管理员 / 全局凭据（无 cdsProjectKey）照常可读', async () => {
+    const res = await request(buildScopedApp(undefined), 'GET', '/api/bug-reports');
+    expect(res.status).toBe(200);
+    expect(Array.isArray(res.body.items)).toBe(true);
+  });
+
+  it('P2：转发时必须在 submit 之前把截图上传到缺陷系统', async () => {
+    const calls: string[] = [];
+    const fetchImpl = (async (url: string) => {
+      calls.push(String(url));
+      if (String(url).endsWith('/defects')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, data: { defect: { id: 'd1', defectNo: 'BUG-1' } } }) };
+      }
+      return { ok: true, status: 200, text: async () => '{}' };
+    }) as unknown as FetchLike;
+
+    const result = await forwardToMap(
+      {
+        title: 't', description: 'd', severity: 'minor', environment: {}, reporter: 'tester',
+        attachments: [{ name: 'a.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') }],
+      } as Parameters<typeof forwardToMap>[0],
+      { baseUrl: 'https://map.example', token: 'tok' } as Parameters<typeof forwardToMap>[1],
+      fetchImpl,
+    );
+
+    expect(result.ok).toBe(true);
+    const attachIdx = calls.findIndex((u) => u.includes('/attachments'));
+    const submitIdx = calls.findIndex((u) => u.includes('/submit'));
+    expect(attachIdx).toBeGreaterThan(-1);
+    expect(submitIdx).toBeGreaterThan(attachIdx);
+  });
+
+  it('P2：附件上传失败时不得谎报完全成功，要如实回传部分失败', async () => {
+    const fetchImpl = (async (url: string) => {
+      if (String(url).endsWith('/defects')) {
+        return { ok: true, status: 200, text: async () => JSON.stringify({ success: true, data: { defect: { id: 'd1' } } }) };
+      }
+      if (String(url).includes('/attachments')) return { ok: false, status: 413, text: async () => '' };
+      return { ok: true, status: 200, text: async () => '{}' };
+    }) as unknown as FetchLike;
+
+    const result = await forwardToMap(
+      {
+        title: 't', description: 'd', severity: 'minor', environment: {}, reporter: 'tester',
+        attachments: [{ name: 'a.png', mimeType: 'image/png', size: 3, dataBase64: Buffer.from('abc').toString('base64') }],
+      } as Parameters<typeof forwardToMap>[0],
+      { baseUrl: 'https://map.example', token: 'tok' } as Parameters<typeof forwardToMap>[1],
+      fetchImpl,
+    );
+    expect(result.ok).toBe(true);
+    expect(String(result.partialReason)).toContain('上传失败');
+  });
+});

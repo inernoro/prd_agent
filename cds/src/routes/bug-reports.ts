@@ -170,7 +170,8 @@ export function buildMapDefectBody(
 export type FetchLike = (input: string, init?: {
   method?: string;
   headers?: Record<string, string>;
-  body?: string;
+  // 附件走 multipart 上传，body 可能是 FormData（不只是 JSON 字符串）。
+  body?: string | FormData;
   signal?: AbortSignal;
 }) => Promise<{ ok: boolean; status: number; text: () => Promise<string> }>;
 
@@ -179,6 +180,8 @@ export interface ForwardResult {
   ok: boolean;
   reference?: string;
   reason?: string;
+  /** 转发整体成功、但附件没能全部跟过去时的如实说明（仍算 forwarded）。 */
+  partialReason?: string;
 }
 
 /**
@@ -226,6 +229,36 @@ export async function forwardToMap(
     return { ok: false, reason: `无法连接缺陷系统：${e instanceof Error ? e.message : String(e)}` };
   }
 
+  // 附件必须在 submit 之前上传：正文里只有文件名，没有图。少了这一步，
+  // 缺陷系统收到的是「说有截图但没有截图」的单子，而 UI 却报「已提交」——
+  // 属于典型的谎报成功（Codex PR #1273 P2）。上传失败不推翻「已进单」的事实，
+  // 但必须如实回传部分失败，让用户知道图没跟过去。
+  let attachmentFailures = 0;
+  const attachments = report.attachments || [];
+  for (const [index, item] of attachments.entries()) {
+    try {
+      const form = new FormData();
+      const bytes = Buffer.from(item.dataBase64, 'base64');
+      form.append(
+        'file',
+        new Blob([new Uint8Array(bytes)], { type: item.mimeType || 'application/octet-stream' }),
+        item.name || `screenshot-${index + 1}`,
+      );
+      form.append('description', '由 CDS 快捷提缺陷自动上传');
+      const res = await fetchImpl(`${config.baseUrl}/api/defect-agent/defects/${created.id}/attachments`, {
+        method: 'POST',
+        // 不要带 Content-Type：交给 FormData 自己生成含 boundary 的头，
+        // 手写会让服务端解析不出 multipart。
+        headers: { Authorization: headers.Authorization },
+        body: form,
+        signal: budget,
+      });
+      if (!res.ok) attachmentFailures += 1;
+    } catch {
+      attachmentFailures += 1;
+    }
+  }
+
   try {
     await fetchImpl(`${config.baseUrl}/api/defect-agent/defects/${created.id}/submit`, {
       method: 'POST',
@@ -236,7 +269,13 @@ export async function forwardToMap(
   } catch {
     // 已创建成功，提交环节失败只影响状态流转，不改变「已进入缺陷系统」的事实。
   }
-  return { ok: true, reference: created.defectNo || created.id };
+  return {
+    ok: true,
+    reference: created.defectNo || created.id,
+    partialReason: attachmentFailures > 0
+      ? `缺陷已提交，但 ${attachmentFailures}/${attachments.length} 个截图上传失败，附件未跟随进入缺陷系统`
+      : undefined,
+  };
 }
 
 /** 落盘后的记录（GET 列表返回的形状，不含 base64）。 */
@@ -331,6 +370,17 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
   }
 
   router.get('/bug-reports', (req, res) => {
+    // 本地留存的缺陷是 CDS 系统级台账（正文含页面地址与 query、提交人、环境信息），
+    // 且提交时没有项目维度可供过滤。项目级 cdsp_/cdsg_ key 一旦能读，等于跨项目
+    // 拿到别的项目的缺陷正文——按 CDS 既有约定（无 cdsProjectKey 即管理员，
+    // 见 cds-events.ts 的同款守卫）直接拒绝项目级凭据（Codex PR #1273 P1）。
+    const projectKey = (req as unknown as { cdsProjectKey?: { projectId: string } }).cdsProjectKey;
+    if (projectKey) {
+      res.status(403).json({
+        error: '缺陷台账是 CDS 系统级数据，项目级 Key 无权读取，请用管理员登录或全局 Key',
+      });
+      return;
+    }
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
     const items = readRecords(limit).map((item) => ({ ...item, attachments: item.attachments || [] }));
@@ -359,6 +409,8 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
       if (forwarded.ok) {
         delivery = 'forwarded';
         reference = forwarded.reference ?? null;
+        // 附件部分失败：仍是 forwarded，但把「图没跟过去」如实带给用户。
+        degradeReason = forwarded.partialReason ?? null;
       } else {
         degradeReason = forwarded.reason ?? '转发缺陷系统失败';
       }
