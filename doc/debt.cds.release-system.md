@@ -28,6 +28,8 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 | 3 | 健康探测窗口无心跳 | 心跳只在 `sshExec` 执行期打点；健康探测与自动恢复窗口（≤8s 量级）没有心跳。远低于 15 分钟阈值故当前安全，但若未来引入长探测需补打点 | 当前无影响；引入长探测时必须同步补 |
 | 4 | 预检跑两遍 | 向导调一次 `preflight`，`startRelease` 内部再跑一次。重复的 SSH 探测与健康检查，收敛属阶段三 | 发起一次发布多几秒；无正确性问题 |
 | 5 | 结构化失败未上 UI | `run.failure` 已带 `owner` / `retryable` / `suggestedAction` / `code`，但前端仍只展示 `errorMessage` 摘要。暴露属阶段二 | 用户拿不到「该谁修、能不能重试、下一步做什么」 |
+| 8 | 发布健康快照有一个探测间隔的滞后 | 发布中心不再实时探测生产，改读存活监控台账（`release-health-snapshot.ts`）。代价是健康显示最旧可能滞后一个探测间隔（默认 60s），且刚建的目标在首轮探测前只能显示「等待首次探测」 | 用不再放大请求换来的确定性延迟；比「每次打开页面都打生产、结果还不记账」划算。要即时结果就去状态页看采样曲线 |
+| 9 | 无告警外发（与存活监控同一笔债） | 发布 started / succeeded / failed / rolled-back 已上 `cds-events-bus`，`isAlertCdsEvent` 也已把 failed / rolled-back 标成告警级；但 CDS 至今没有任何外发通道（站内通知 / Webhook / 邮件），见 `doc/debt.cds.uptime-monitor.md` 债务 2-1 | 关掉页面后发布失败**能被记录、能被订阅**，但不会主动叫醒人。接通道时只需 `subscribe` + `isAlertCdsEvent`，不许再判一遍事件名 |
 | 6 | 收割器实例与执行实例不同 | `server.ts` 的周期收割用的是**独立 new 出来的** `ReleaseService`，与路由里执行发布的不是同一个实例，故其 `inFlight` 恒为空。当前靠心跳阈值判定，行为正确；但 `reconcileInterruptedReleases` 里那句 `this.inFlight.has(...)` 对收割器而言是死代码 | 无行为影响；语义容易误导后来人 |
 | 7 | `DrainableReleaseStatus` 并了两个过渡期成员 | 类型并上 `cancelled`（取消能力落地后可能进联合）与 `prechecking`（已删的死状态），让两侧独立演进不互相卡编译。并集不削弱穷尽性 | 仅可读性 |
 
@@ -47,11 +49,19 @@ PR #1273 落地了**阶段一（止血）**：心跳 + 中断收敛 + 执行超�
 复现方式（本机起 sshd，CI 上没有则整套自动跳过）：
 
 ```bash
+mkdir -p ~/.cds-release-e2e
 ssh-keygen -t ed25519 -N '' -f <dir>/hostkey -q
-ssh-keygen -t ed25519 -N '' -f <dir>/clientkey -q
-cat <dir>/clientkey.pub >> ~/.ssh/authorized_keys
+ssh-keygen -t ed25519 -N '' -f ~/.cds-release-e2e/clientkey -q
+cat ~/.cds-release-e2e/clientkey.pub >> ~/.ssh/authorized_keys
 /usr/sbin/sshd -f <dir>/sshd_config   # Port 2222, ListenAddress 127.0.0.1
+cd cds && pnpm vitest run tests/routes/release-ssh-e2e.test.ts
 ```
+
+私钥路径可用 `CDS_RELEASE_E2E_SSH_KEY` 覆盖，端口用 `CDS_RELEASE_E2E_SSH_PORT`。
+**判断有没有真跑**看耗时：真连 sshd 是秒级（约 3.5s），7ms 那种是跳过。
+默认路径最初写成了一个 session 级的 scratchpad 绝对路径，换一次会话目录就没了，
+`existsSync` 失败即静默跳过，整套变成三个空跑的绿灯——而本节正引用它当证据。
+**一个不会红的证据比没有证据更糟**，所以跳过时现在会打印到底是缺 key 还是没 sshd。
 
 两个时序细节值得记（都是写测试时踩出来的，不是猜的）：
 

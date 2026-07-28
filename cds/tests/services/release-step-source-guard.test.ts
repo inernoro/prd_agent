@@ -43,11 +43,12 @@ function walk(relativeDir: string, extensions: string[]): string[] {
 /**
  * 尚未迁到共享 lib 的前端文件。
  *
- * BranchListPage 属于另一条工作流，本轮不动它；列在这里是为了让守卫**现在就生效**
- * （任何新文件再抄一份判定立刻红），同时把这笔欠款显式记账。清掉之后从本表删除即可，
- * 守卫只做子集断言，不会因为少一条而变红。
+ * 曾经列着 BranchListPage（分支侧发布向导）——它是这套判定的第三份拷贝，带着
+ * `scriptOne = scripts[0] || './fast.sh'` 这种兜底。2026-07-28 已迁到 resolveReleaseSteps，
+ * 表清空。**保留这个空表是有意的**：下一个人要缓迁某个文件时，得显式往这里加一行
+ * 并写明原因，而不是顺手把断言注释掉。
  */
-const PENDING_MIGRATION = ['web/src/pages/BranchListPage.tsx'];
+const PENDING_MIGRATION: string[] = [];
 
 describe('发布步骤判定只有一个源', () => {
   it('releaseScriptPhase 在后端只有 release-steps.ts 一处定义', () => {
@@ -100,6 +101,18 @@ describe('CDS 通用产品里不许长本仓库的脚本名', () => {
     expect(source).toContain('resolveReleaseSteps(');
     expect(source).not.toMatch(/phaseSet/);
     expect(source).not.toMatch(/reverse\(\)\.find\(\(log\)/);
+  });
+
+  it('分支侧发布向导也没有仓库脚本名，且走共享判定源', () => {
+    const source = read('web/src/pages/BranchListPage.tsx');
+
+    // 事故值：`scripts[0] || './fast.sh'`、`scripts[1] || './exec_dep.sh'`、
+    // 以及「执行计划」chips 兜底成 './fast.sh && ./exec_dep.sh'——换个项目就在展示
+    // 三个根本不会执行的脚本。注释里可以留这段历史，代码里不许再有。
+    const code = source.replace(/\/\*[\s\S]*?\*\//g, '').replace(/^\s*\/\/.*$/gm, '');
+    expect(code).not.toContain('fast.sh');
+    expect(code).not.toContain('exec_dep.sh');
+    expect(source).toContain('resolveReleaseSteps(');
   });
 
   it('共享渲染源本身不含仓库脚本名，退化骨架也是通用文案', () => {

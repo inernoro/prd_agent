@@ -3,7 +3,8 @@ import path from 'node:path';
 import { Router, type Request, type Response } from 'express';
 import type { StateService } from '../services/state.js';
 import type { CdsConfig, ReleaseStrategy, ReleaseTarget, RemoteHost } from '../types.js';
-import { ReleaseService, isReleaseRunTerminal, probeHealthcheckStatus } from '../services/release-service.js';
+import { ReleaseService, isReleaseRunTerminal } from '../services/release-service.js';
+import { readReleaseHealthSnapshot } from '../services/release-health-snapshot.js';
 import {
   discoverReleaseStrategies,
   releaseProjectIdentity,
@@ -578,9 +579,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       const rollbackDefaultReleaseId = latestIsSuccessful && latest
         ? deps.stateService.getLatestSuccessfulReleaseRun(target.id, latest.releaseId)?.releaseId || ''
         : successfulRuns[0]?.releaseId || '';
-      const health = target.ssh?.healthcheckUrl
-        ? await probeHealthcheckStatus(target.ssh.healthcheckUrl, 2_500)
-        : { status: 'unknown' as const, url: '', checkedAt: new Date().toISOString(), message: '未配置健康检查 URL' };
+      // 读存活监控的快照，不在这里打生产。理由见 release-health-snapshot.ts 顶部：
+      // 「打开发布中心」是纯读动作，不该按目标数放大成一串对生产的外呼。
+      const health = readReleaseHealthSnapshot(target);
       return {
         target,
         currentVersion: current?.releaseId || '',
@@ -595,6 +596,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         rollbackDefaultReleaseId,
         // 发布 ETA 的传输面。少了这一行，采样照常在攒、前端却恒为 undefined，
         // 发布中心永远显示「正在积累历史耗时数据」——功能全链路建好却不可见。
+        releaseEstimate: deps.stateService.getReleaseEstimate(target.id),
       };
     }));
     res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50) });

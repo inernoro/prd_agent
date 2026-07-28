@@ -33,6 +33,7 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -4317,6 +4318,22 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
   });
   app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
+  // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
+  // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：
+  // 守卫测试 release-observability-wiring-guard 盯着它，免得被静默摘掉。
+  setReleaseHealthSource((probeTargetId) => {
+    const record = uptimeMonitor.getRecord(probeTargetId);
+    if (!record) return undefined;
+    return {
+      status: record.status,
+      probeUrl: record.probeUrl,
+      lastSample: record.lastSample,
+      pausedReason: record.pausedReason,
+      excluded: record.excluded,
+      intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
+    };
+  });
   uptimeMonitor.start();
   console.log(
     uptimeMonitor.config.enabled

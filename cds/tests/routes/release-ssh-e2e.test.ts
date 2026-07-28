@@ -31,8 +31,16 @@ import { isDrainBlockedPath, beginSelfUpdateDrain, endSelfUpdateDrain, selfUpdat
 import type { ReleaseTarget } from '../../src/types.js';
 
 const SSH_HOST = '127.0.0.1';
-const SSH_PORT = 2222;
-const SSH_KEY = path.join(os.tmpdir(), 'claude-0/-home-user-prd-agent/6335caf6-77a2-5ce5-81e9-efc08841c3d8/scratchpad/sshtest/clientkey');
+const SSH_PORT = Number(process.env.CDS_RELEASE_E2E_SSH_PORT || 2222);
+/**
+ * 客户端私钥路径。默认值曾经是一个 **session 级的 scratchpad 绝对路径**——换一次
+ * 会话那个目录就没了，`sshReachable()` 因 `existsSync` 失败静默返回 false，整套
+ * e2e 变成三个空跑的绿灯。而债务台账正引用这套用例当「真实环境证据」，
+ * 一个不会红的证据比没有证据更糟。改成 env 覆盖 + 仓库外的稳定默认路径，
+ * 并且**跳过时把原因打出来**（下面的 warn 会说明是缺 key 还是没 sshd）。
+ */
+const SSH_KEY = process.env.CDS_RELEASE_E2E_SSH_KEY
+  || path.join(os.homedir(), '.cds-release-e2e', 'clientkey');
 
 /** 本机 sshd 是否可用（不可用则整套跳过，CI 上没有 sshd 是正常的）。 */
 function sshReachable(): Promise<boolean> {
@@ -247,7 +255,10 @@ afterAll(async () => {
 describe('生产发布 · 真 SSH 端到端', () => {
   it('本机 sshd 可用（不可用则本套件跳过）', () => {
     if (!available) {
-      console.warn('[release-e2e] 本机 127.0.0.1:2222 无 sshd，整套跳过');
+      const why = fs.existsSync(SSH_KEY)
+        ? `${SSH_HOST}:${SSH_PORT} 连不上（sshd 没起？）`
+        : `客户端私钥不存在：${SSH_KEY}（用 CDS_RELEASE_E2E_SSH_KEY 指定）`;
+      console.warn(`[release-e2e] 整套跳过 —— ${why}`);
     }
     expect(true).toBe(true);
   });
