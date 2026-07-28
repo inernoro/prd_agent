@@ -123,7 +123,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 
 1. **依赖自检**：`curl` / `unzip` / `tar`。缺失时给 Debian、RHEL、macOS 三种安装命令让用户复制，不是丢一句「请安装」。
 2. **探测宿主技能目录**：有 `.claude/` 用 `.claude/skills`；有 `.cursor/` 用 `.cursor/skills`；否则 `.agents/skills`。可用 `--skills-dir` 覆盖。**默认项目级**——装到用户级的话，人一走团队什么都没有。
-3. **装 CDS 技能包**（5 个）
+3. **装 CDS 技能包**（5 个，走匿名的 `cds-pack` 端点——已有的 `export-skill` 需要登录，而客户此刻还没有凭据）
 4. **装方法论套装**（按预设）
 5. **写种子文件** `.cds/bootstrap.json`：预设、CDS 主机、技能目录、安装时间、装了哪些技能。`sdd-init` 读它来判断角色和上下文。
 6. **打印下一步**：明确告诉用户下一句对 AI 说什么。
@@ -160,6 +160,7 @@ AGENTS.md / CLAUDE.md + doc 七类骨架 + changelogs + 新人引导路线图
 | `GET /api/bootstrap/presets` | 匿名 | 预设清单，供 UI 渲染 |
 | `GET /api/skills/{key}/download` | 匿名 | 代理 MAP 技能/套装，带缓存与陈旧标记 |
 | `GET /api/skills/bundles` | 匿名 | 代理 MAP 角色套装清单 |
+| `GET /api/skills/cds-pack/download` | 匿名 | CDS 自己的五个技能，本地优先、缺失回源上游公共 CDS |
 
 匿名是有意的：客户在拿到任何凭据之前就要能装技能。真正需要授权的是 CDS 项目绑定，那一步仍走页面批准，不因为这里匿名而放宽。
 

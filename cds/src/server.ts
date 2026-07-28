@@ -829,6 +829,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/rename-default': '迁移 default 项目',
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
+    'GET /bootstrap/presets': '列出初始化预设',
+    'GET /skills/bundles': '列出角色套装',
+    'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
@@ -975,6 +978,8 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
+    [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
@@ -3739,6 +3744,7 @@ export function createServer(deps: ServerDeps): express.Express {
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
     }),
     cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+    repoRoot: deps.config.repoRoot,
   }));
   app.use('/api', createScheduledJobsRouter({
     stateService: deps.stateService,

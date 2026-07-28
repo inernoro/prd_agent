@@ -11,7 +11,17 @@
  * 详见 doc/design.cds.project-bootstrap.md。
  */
 import { Router } from 'express';
+import { execFile } from 'node:child_process';
+import fs from 'node:fs';
+import os from 'node:os';
+import path from 'node:path';
+import { promisify } from 'node:util';
 import { SkillProxy, SkillProxyError, isSafeSkillKey } from '../services/skill-proxy.js';
+
+const execFileAsync = promisify(execFile);
+
+/** CDS 自己的技能：操作 CDS 必需，缺一个就等于装了个半成品。 */
+const CDS_SKILL_KEYS = ['cds', 'cds-project-scan', 'cds-deploy-pipeline', 'cds-release', 'preview-url'] as const;
 
 export interface BootstrapPreset {
   key: string;
@@ -55,6 +65,46 @@ export interface BootstrapRouterDeps {
   skillProxy: SkillProxy;
   /** 上游公共 CDS，供自托管实例在本地技能目录缺失时兜底取 CDS 技能包。 */
   cdsUpstream: string;
+  /** CDS 仓库根，用于定位 `.claude/skills`。 */
+  repoRoot: string;
+}
+
+/** 定位 CDS 技能源目录；CDS 部署为子目录时回退到父级。 */
+function resolveSkillsRoot(repoRoot: string): string | null {
+  for (const candidate of [
+    path.join(repoRoot, '.claude', 'skills'),
+    path.join(repoRoot, '..', '.claude', 'skills'),
+  ]) {
+    if (fs.existsSync(candidate)) return candidate;
+  }
+  return null;
+}
+
+/**
+ * 打包 CDS 自己的 5 个技能为 tar.gz。
+ *
+ * 为什么需要这个而不是复用已有的 `/api/export-skill`：那个端点要登录。
+ * 客户在拿到任何 CDS 凭据之前就得装上 cdscli 和 preview-url，否则连
+ * 「运行 connect 申请授权」这一步都做不了 —— 鸡生蛋问题。
+ * 内容是技能说明与 CLI 源码（同款内容早已在海鲜市场公开），不含任何凭据。
+ */
+async function packCdsSkills(skillsRoot: string): Promise<Buffer | null> {
+  const present = CDS_SKILL_KEYS.filter((k) => fs.existsSync(path.join(skillsRoot, k)));
+  if (present.length === 0) return null;
+
+  const tmpDir = await fs.promises.mkdtemp(path.join(os.tmpdir(), 'cds-skill-pack-'));
+  try {
+    const stageDir = path.join(tmpDir, 'skills');
+    await fs.promises.mkdir(stageDir, { recursive: true });
+    for (const key of present) {
+      await fs.promises.cp(path.join(skillsRoot, key), path.join(stageDir, key), { recursive: true });
+    }
+    const outFile = path.join(tmpDir, 'cds-skills.tar.gz');
+    await execFileAsync('tar', ['-czf', outFile, '-C', tmpDir, 'skills']);
+    return await fs.promises.readFile(outFile);
+  } finally {
+    await fs.promises.rm(tmpDir, { recursive: true, force: true }).catch(() => {});
+  }
 }
 
 /** shell 单引号转义：把 `'` 换成 `'\''`，杜绝生成脚本被注入。 */
@@ -143,7 +193,9 @@ if [ "$INCLUDE_CDS_SKILLS" = "1" ]; then
   got=""
   for base in "$CDS_ORIGIN" "$CDS_UPSTREAM"; do
     [ -n "$base" ] || continue
-    if curl -fsSL --max-time 120 -o "$cds_pack" "$base/api/export-skill" 2>/dev/null; then
+    # 走匿名的 cds-pack 端点：客户在拿到任何 CDS 凭据之前就得装上 cdscli，
+    # 否则连「运行 connect 申请授权」都做不了。/api/export-skill 需要登录，用不了。
+    if curl -fsSL --max-time 120 -o "$cds_pack" "$base/api/skills/cds-pack/download" 2>/dev/null; then
       got="$base"; break
     fi
   done
@@ -250,6 +302,46 @@ export function createBootstrapRouter(deps: BootstrapRouterDeps): Router {
     res.setHeader('Cache-Control', 'no-store');
     res.setHeader('Content-Disposition', `inline; filename="cds-bootstrap-${preset.key}.sh"`);
     res.type('text/x-shellscript; charset=utf-8').send(script);
+  });
+
+  /**
+   * CDS 技能包（匿名）。本地技能目录缺失时（自托管实例不带 CDS 源码）
+   * 回源到上游公共 CDS 的同名端点。
+   */
+  router.get('/skills/cds-pack/download', async (_req, res) => {
+    const skillsRoot = resolveSkillsRoot(deps.repoRoot);
+    if (skillsRoot) {
+      try {
+        const body = await packCdsSkills(skillsRoot);
+        if (body) {
+          res.setHeader('Cache-Control', 'no-store');
+          res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
+          res.setHeader('X-Skill-Cache', 'local');
+          res.type('application/gzip').send(body);
+          return;
+        }
+      } catch (err) {
+        // eslint-disable-next-line no-console
+        console.warn('[bootstrap] 本地打包 CDS 技能失败，尝试回源上游', { error: String(err) });
+      }
+    }
+
+    const upstream = `${deps.cdsUpstream.replace(/\/+$/, '')}/api/skills/cds-pack/download`;
+    try {
+      const upstreamRes = await fetch(upstream, { method: 'GET' });
+      if (!upstreamRes.ok) throw new Error(`HTTP ${upstreamRes.status}`);
+      const body = Buffer.from(await upstreamRes.arrayBuffer());
+      if (body.byteLength === 0) throw new Error('上游返回空内容');
+      res.setHeader('Cache-Control', 'no-store');
+      res.setHeader('Content-Disposition', 'attachment; filename="cds-skills.tar.gz"');
+      res.setHeader('X-Skill-Cache', 'upstream');
+      res.type('application/gzip').send(body);
+    } catch (err) {
+      res.status(502).json({
+        error: '无法获取 CDS 技能包',
+        hint: '本实例没有本地技能目录，上游 CDS 也不可达。方法论技能仍可安装，但操作 CDS 的命令行技能会缺失。',
+      });
+    }
   });
 
   router.get('/skills/bundles', async (_req, res) => {
