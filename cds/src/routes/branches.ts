@@ -12212,13 +12212,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         detail: pullResult as unknown as Record<string, unknown>,
         timestamp: new Date().toISOString(),
       });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-      });
-
       // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
       // （Codex P2: refresh prebuilt SHA after pulling latest code）。
@@ -12246,6 +12239,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
+      // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
+      // 原先它在刷新之前，于是 run 上盖的是**触发时**缓存的 entry.githubCommitSha，
+      // 而这次构建实际落地的是 pull 之后的 HEAD —— run 写着一个 sha、构建用的却是
+      // 另一份代码。宕机复盘期间就被这个误导过一次（以为 worktree 没拉新代码）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
+        operationId: branchOperationLease?.operationId,
+        commitSha: entry.githubCommitSha,
+      });
+
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit && !selectedDeploymentVersion) {
@@ -13475,14 +13479,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: `源码准备完成，开始构建 ${profile.name}`,
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-        detail: { profileId },
-      });
-
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
@@ -13505,6 +13501,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
       }
+      // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
+      // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: `源码准备完成，开始构建 ${profile.name}`,
+        operationId: branchOperationLease?.operationId,
+        commitSha: entry.githubCommitSha,
+        detail: { profileId },
+      });
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
