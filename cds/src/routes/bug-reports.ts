@@ -69,6 +69,12 @@ const MAX_ATTACHMENT_COUNT = 4;
 const MAX_TITLE_CHARS = 200;
 const MAX_DESCRIPTION_CHARS = 20_000;
 const MAX_CONTENT_CHARS = 40_000;
+/**
+ * 环境字典的**条目数**上限。只截键和值是不够的：条目数不设限时，几万个不同的键
+ * 照样能拼出一份多兆字节的无附件文档，把「按条数保留」的存储上限架空
+ * （Codex PR #1273 P1，llmgw 与 CDS 两侧同病）。浏览器侧实际只采集约 10 个字段。
+ */
+const MAX_ENV_ENTRIES = 40;
 
 function clampText(value: string, max: number): string {
   if (value.length <= max) return value;
@@ -137,6 +143,7 @@ export function normalizeBugReport(
   const rawEnv = body.environment;
   if (rawEnv && typeof rawEnv === 'object') {
     for (const [key, value] of Object.entries(rawEnv as Record<string, unknown>)) {
+      if (Object.keys(environment).length >= MAX_ENV_ENTRIES) break;
       if (typeof value === 'string' && value) environment[key.slice(0, 40)] = value.slice(0, 500);
     }
   }

@@ -252,15 +252,26 @@ function OverallBanner({ summary }: { summary: UptimeSummary }): JSX.Element {
   const excludedCount = overall.excluded ?? 0;
   const tone = overall.down > 0
     ? 'border-destructive/40 bg-destructive/10 text-destructive'
-    : overall.up > 0
-      ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
-      : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
-  const Icon = overall.down > 0 ? AlertTriangle : overall.up > 0 ? CheckCircle2 : Activity;
+    : overall.unknown > 0
+      // 有目标还没确认（首轮探测中、或连续失败还没到去抖阈值）时不许报「全部正常」：
+      // 绿色横幅会盖住正在成形的故障，而它下面一行就写着「待确认 N」，自相矛盾
+      // （Codex PR #1273 P2）。用中性的「确认中」档，颜色也不给绿。
+      ? 'border-amber-500/40 bg-amber-500/10 text-amber-700 dark:text-amber-300'
+      : overall.up > 0
+        ? 'border-emerald-500/40 bg-emerald-500/10 text-emerald-700 dark:text-emerald-300'
+        : 'border-[hsl(var(--hairline-strong))] bg-[hsl(var(--surface-sunken))] text-muted-foreground';
+  const Icon = overall.down > 0
+    ? AlertTriangle
+    : overall.unknown > 0
+      ? Activity
+      : overall.up > 0 ? CheckCircle2 : Activity;
   const headline = overall.down > 0
     ? `${overall.down} 个服务异常`
-    : overall.up > 0
-      ? '全部服务正常'
-      : '尚未探测到运行中的服务';
+    : overall.unknown > 0
+      ? `${overall.unknown} 个服务状态确认中`
+      : overall.up > 0
+        ? '全部服务正常'
+        : '尚未探测到运行中的服务';
   return (
     <div className={`flex flex-col gap-2 rounded-lg border px-4 py-3 sm:flex-row sm:items-center sm:justify-between ${tone}`}>
       <div className="flex items-center gap-2">

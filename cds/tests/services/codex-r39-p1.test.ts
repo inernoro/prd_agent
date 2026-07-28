@@ -775,3 +775,30 @@ describe('排空闸必须在「重启没生效」时提前放开（2026-07-28 �
     expect(source).toContain('RESTART_GATE_RELEASE_MS');
   });
 });
+
+describe('第四十五轮：环境字典条目数与状态横幅', () => {
+  it('环境字典条目数必须封顶（只截键值不够）', async () => {
+    const { normalizeBugReport } = await import('../../src/routes/bug-reports.js');
+    // 事故值：只截 key/value 不限条数，几万个不同的键照样拼出多兆字节文档，
+    // 把「按条数保留」的存储上限整个架空。
+    const env: Record<string, string> = {};
+    for (let i = 0; i < 5_000; i += 1) env[`k${i}`] = 'v'.repeat(500);
+    const out = normalizeBugReport({ description: 'x', severity: 'trivial', environment: env });
+    const report = (out as { report: { environment: Record<string, string> } }).report;
+    expect(Object.keys(report.environment).length).toBeLessThanOrEqual(40);
+    expect(JSON.stringify(report).length).toBeLessThan(100_000);
+  });
+
+  it('状态横幅在有「待确认」目标时不许报全部正常', () => {
+    const src = fs.readFileSync(path.join(REPO, 'web/src/pages/StatusPage.tsx'), 'utf-8');
+    // 事故值：down===0 && up>0 就直接绿 + 「全部服务正常」，
+    // 而同一张卡下面写着「待确认 N」——首轮探测中或去抖未到阈值的故障被绿灯盖住。
+    expect(src).toContain('状态确认中');
+    expect(src).toMatch(/overall\.unknown > 0/);
+    // 绿色分支必须排在 unknown 判定之后
+    const unknownAt = src.indexOf('overall.unknown > 0');
+    const greenAt = src.indexOf("'全部服务正常'");
+    expect(unknownAt).toBeGreaterThan(-1);
+    expect(unknownAt).toBeLessThan(greenAt);
+  });
+});

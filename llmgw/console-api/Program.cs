@@ -8321,6 +8321,9 @@ const int BugReportMaxEnvKeyChars = 40;
 // source 同样来自客户端且原样落库，不设限就等于前面几个上限白加（Codex PR #1273 P1）。
 // 与 CDS 侧 `asString(body.source, 'cds').slice(0, 40)` 同口径。
 const int BugReportMaxSourceChars = 40;
+// 环境字典的**条目数**上限：只截键和值不够，几万个不同的键照样能拼出多兆字节的
+// 无附件文档，把「每租户 100 条」的存储上限架空（Codex PR #1273 P1）。
+const int BugReportMaxEnvEntries = 40;
 const int BugReportMaxAttachmentNameChars = 120;
 // 截断而不是拒收：用户辛苦写的复现步骤不该被整条丢掉，但必须留下明确标记。
 static string ClampBugReportText(string value, int max)
@@ -8386,6 +8389,7 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
     var environmentDoc = new BsonDocument();
     foreach (var pair in body?.Environment ?? new Dictionary<string, string>())
     {
+        if (environmentDoc.ElementCount >= BugReportMaxEnvEntries) break;
         if (string.IsNullOrWhiteSpace(pair.Value)) continue;
         // key 也要截：环境字典的键来自客户端，不设限同样能把文档撑大。
         var envKey = pair.Key.Length > BugReportMaxEnvKeyChars ? pair.Key[..BugReportMaxEnvKeyChars] : pair.Key;
@@ -8603,7 +8607,11 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
                 500);
         }
         // 已经转发到 MAP 的情况下，本地记录只是台账，缺失不改变「缺陷已进入系统」的事实。
-        degradeReason = "缺陷已提交到缺陷系统，但网关本地台账写入失败";
+        // 但**不能覆盖**前面已经攒下的降级说明（截图没传上去 / 可能仍是草稿态）：
+        // 直接赋值会把那两条抹掉，用户只看到「台账写入失败」，完全不知道图也丢了
+        // （Codex PR #1273 P2，与两个 submit 分支同一个病根）。
+        const string ledgerIssue = "缺陷已提交到缺陷系统，但网关本地台账写入失败";
+        degradeReason = string.IsNullOrEmpty(degradeReason) ? ledgerIssue : $"{degradeReason}；{ledgerIssue}";
     }
 
     return Json(ApiEnvelope<BugReportSubmitResult>.Ok(new BugReportSubmitResult

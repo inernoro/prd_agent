@@ -127,6 +127,17 @@ describe('llmgw 文本字段必须有界（Codex PR #1273 第四十三轮 P1）'
     expect(postCode).toMatch(/title = title\[\.\.BugReportMaxTitleChars\]/);
   });
 
+  it('环境字典条目数也要封顶（只截键值不够）', () => {
+    expect(postCode).toContain('BugReportMaxEnvEntries');
+    expect(postCode).toMatch(/environmentDoc\.ElementCount >= BugReportMaxEnvEntries/);
+  });
+
+  it('本地台账写入失败不许覆盖前面的降级说明', () => {
+    // 事故值：直接赋值，会把「截图没传上去」「可能仍是草稿态」抹掉
+    expect(postCode).not.toMatch(/degradeReason = "缺陷已提交到缺陷系统，但网关本地台账写入失败";/);
+    expect(postCode).toMatch(/string\.IsNullOrEmpty\(degradeReason\) \? ledgerIssue/);
+  });
+
   it('环境键、附件元数据与 source 也要截（同样来自客户端、同样原样落库）', () => {
     expect(postCode).toContain('BugReportMaxEnvKeyChars');
     expect(postCode).toContain('ClampBugReportName');
