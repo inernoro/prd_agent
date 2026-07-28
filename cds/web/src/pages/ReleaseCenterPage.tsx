@@ -31,6 +31,8 @@ import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import type { ReleaseRunProgressLike } from '@/lib/releaseSteps';
 import { releaseEtaText } from '@/lib/releaseEta';
 import type { ReleaseEtaEstimate } from '@/lib/releaseEta';
+import { describeReleaseDora } from '@/lib/releaseDora';
+import type { ReleaseDoraMetrics } from '@/lib/releaseDora';
 import { ErrorBlock, LoadingBlock } from '@/pages/cds-settings/components';
 
 interface ReleaseTarget {
@@ -167,6 +169,11 @@ interface CenterRow {
 interface CenterResponse {
   rows: CenterRow[];
   runs: ReleaseRun[];
+  /**
+   * DORA 四项。字段可缺省：跑旧构建的 CDS 不下发它，此时四项一律退化成
+   * 「样本不足」而不是白屏，更不是编一个 0 出来（describeReleaseDora 负责这件事）。
+   */
+  dora?: ReleaseDoraMetrics;
 }
 
 interface TargetsResponse {
@@ -602,6 +609,9 @@ export function ReleaseCenterPage(): JSX.Element {
                   ))}
                 </section>
               )}
+              {/* 整条发布线的健康度，不属于任何单个站点卡（放进 SiteCard 会重复 N 份，
+                  且与站点自身信息抢视觉）。摆在发布记录之上：先看总体，再往下钻明细。 */}
+              <ReleaseDoraPanel metrics={state.center.dora} />
               <ReleaseRecords runs={runs} onOpen={setLogRun} />
               <ArchivedTargets targets={archivedTargets} />
             </>
@@ -1022,6 +1032,49 @@ function SiteWizardDialog({
         </div>
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * DORA 四项面板。
+ *
+ * 颜色全部走主题 token（cds-surface-raised / hairline / muted-foreground），
+ * 不写任何暗色字面量——白天主题下必须照样看得清，见 .claude/rules/cds-theme-tokens.md。
+ * 「样本不足」的卡片弱化成 muted 而不是隐藏：藏起来用户会以为功能坏了，
+ * 摆着并写清为什么没有数字，才是诚实的预期管理。
+ */
+function ReleaseDoraPanel({ metrics }: { metrics?: ReleaseDoraMetrics }): JSX.Element {
+  const cards = describeReleaseDora(metrics);
+  const windowDays = metrics?.windowDays ?? 30;
+  return (
+    <section className="cds-surface-raised cds-hairline p-4">
+      <div className="flex flex-wrap items-baseline justify-between gap-2">
+        <h2 className="text-sm font-semibold">交付效能（DORA）</h2>
+        <span className="text-xs text-muted-foreground">
+          统计窗口：最近 {windowDays} 天 · 仅统计本项目的生产发布
+        </span>
+      </div>
+      <div className="mt-3 grid gap-3 sm:grid-cols-2 xl:grid-cols-4">
+        {cards.map((card) => (
+          <article
+            key={card.key}
+            className="cds-hairline rounded-md bg-[hsl(var(--surface-sunken))] px-3 py-3"
+          >
+            <div className="text-xs text-muted-foreground">{card.label}</div>
+            <div
+              className={
+                card.insufficient
+                  ? 'mt-1 text-base font-medium text-muted-foreground'
+                  : 'mt-1 text-xl font-semibold text-foreground'
+              }
+            >
+              {card.value}
+            </div>
+            <div className="mt-1 text-xs leading-relaxed text-muted-foreground">{card.hint}</div>
+          </article>
+        ))}
+      </div>
+    </section>
   );
 }
 

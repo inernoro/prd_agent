@@ -4313,6 +4313,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
       // 生产发布目标也纳入探测。不接这一行，发布中心以外就再没有任何生产健康
       // 信号——「发完就失联」正是这条接线要治的病。
       getReleaseTargets: () => stateService.getReleaseTargets(),
+      // 故障归因到发布。少了这一行，生产站点宕机时状态页只会说「宕了」，
+      // 答不出「是哪次发布引入的」——而这是排障时第一个要问的问题。
+      getReleaseRuns: (targetId: string) => stateService.getReleaseRuns({ targetId }),
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },

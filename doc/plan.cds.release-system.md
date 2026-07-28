@@ -5,14 +5,17 @@
 ## 〇、状态看板
 
 > 最后更新：2026-07-28 | 轨道：单轨（claude/workflow-issues-verification-8pkmcq）
-> **距离可发布**：阶段一二已合入 main（PR #1273 + 后续提交），发布不再卡死、过程可见；
-> 阶段三（记账）进行中，其中「日志每行一次落盘」是唯一还会影响线上体验的存量问题。
+> **距离可发布**：阶段一二三均已达成各自判据。阶段三引入了本仓库唯一一处
+> **默认开启、无人值守、在生产机器上执行删除**的路径（远端产物回收），安全边界与
+> 对抗性回归见 `doc/debt.cds.release-system.md` 债务 10；真出事的逃生阀是
+> `CDS_RELEASE_ARTIFACT_RETENTION=0`（只巡检不回收，改环境变量重启即可，不必发版）。
+> 阶段四需单独立项，理由见下方判断。
 
 | 阶段 | 进度% | 状态 | 当前 blocker | 下一步 | 验收证据 |
 | --- | --- | --- | --- | --- | --- |
 | 一 止血 | 100 | 已验收 | 无 | — | PR #1273（Codex 七轮 20+ 条逐条修复）；真 sshd 端到端四条行为 A/B/C/D 逐条红绿闭环，见 `doc/debt.cds.release-system.md`「真实环境证据」 |
 | 二 可见 | 100 | 已验收 | 无 | — | 四条判据逐条核过：`第 N/M 步 · 标题` + ETA 同屏（`ReleaseCenterPage.tsx`）；事件上 `cds-events-bus` 且 `isAlertCdsEvent` 收敛告警判定；状态页生产目标独立分组出 24h 柱条；发布中心实时探测数 = 0（`tests/routes/releases-center-health-snapshot.test.ts`，红检确认改回实时探测即红） |
-| 三 记账 | 0 | 未开始 | 无 | 预检落库 / 日志有界批量落盘 / run 保留 / 远端产物回收 / 目标配置历史 / 漂移检测 / DORA / incident 关联 | — |
+| 三 记账 | 100 | 已验收 | 无 | — | 四条判据逐条实测：落盘 1200 行从 1200 次降到 24 次（红检确认改回每行一落即 1200）；200 条 run 入库后按目标收敛到 100 且回滚链完整；`GET /releases/center` 带 DORA 四项且无样本恒 `null`；漂移告警 `release.drift-detected` 已上总线且 `isAlertCdsEvent` 为 true。远端回收另有对抗性套件 `tests/services/release-reclaim-adversarial.test.ts`（6 例，红检确认摘掉符号链接保护即红 4 例） |
 | 四 架构升级 | 0 | 未开始（需单独立项） | 依赖不可变产物链路改造，工作量大 | 见本节下方「阶段四判断」 | — |
 
 **阶段四判断**：不在本轮做，也不建议顺手起个头。它要把发布从「在生产机重新构建」改成「消费预览阶段已验证的

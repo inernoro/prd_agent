@@ -35,7 +35,9 @@
 import fs from 'node:fs';
 import http from 'node:http';
 import path from 'node:path';
-import type { BranchEntry, Project, ReleaseTarget } from '../types.js';
+import type { BranchEntry, Project, ReleaseRun, ReleaseTarget } from '../types.js';
+// 故障归因到发布的时间窗判定只有这一处，发布中心将来要展示同款关联必须复用它。
+import { linkIncidentToRelease, releaseIncidentLinkWindowMs } from './release-incident-link.js';
 import { isTrunkBranch } from './branch-protection.js';
 import { isRemoteExecutorOwned } from './executor-ownership.js';
 import {
@@ -206,6 +208,12 @@ export interface UptimeStateSource {
    * 读生产发布目标。可选——不接线时监控只盯分支，与本功能上线前行为一致。
    */
   getReleaseTargets?(): ReleaseTarget[];
+  /**
+   * 读某个发布目标的发布记录，用于把新开的故障归因到「哪次发布引入的」。
+   * 可选——不接线就退化成无归因（incident 照常开，只是不带 releaseId），
+   * 绝不因为少接一行而报错或漏掉故障本身。
+   */
+  getReleaseRuns?(targetId: string): ReleaseRun[];
 }
 
 export type ProbeFn = (target: ProbeTarget, timeoutMs: number) => Promise<Omit<UptimeSample, 't'>>;
@@ -695,7 +703,22 @@ export interface UptimeSummary {
   targets: UptimeTargetSummary[];
 }
 
-export interface UptimeIncidentView extends UptimeIncident {
+/**
+ * 带发布归因的故障事件。
+ *
+ * 字段挂在 incident 本体上（而不是另起一份归因账本），是因为归因是**创建那一刻的
+ * 确定事实**，必须和 incident 同生命周期、同一份文件落盘、同一次读出来。
+ * 两个字段都是可选的：存量 incident 与「没接 getReleaseRuns」的部署一律无归因，
+ * 显示成「无归因」而不是编一个出来。
+ */
+export interface ReleaseLinkedIncident extends UptimeIncident {
+  /** 疑似引入本次故障的发布 */
+  releaseId?: string;
+  /** 该次发布完成 → 故障判定之间隔了多久，用于「发布后 8 分钟出故障」这种文案 */
+  releaseAgeMs?: number;
+}
+
+export interface UptimeIncidentView extends ReleaseLinkedIncident {
   targetName: string;
   branchId: string;
   projectId: string;
@@ -875,6 +898,37 @@ export class UptimeMonitorService {
       at: sample.t,
       cause: sample.err || (sample.code ? `HTTP ${sample.code}` : '探测连续失败'),
     }, MAX_INCIDENTS_PER_TARGET);
+    if (next.transition === 'to-down') this.attachReleaseAttribution(target, record, sample.t);
+  }
+
+  /**
+   * 给刚开出来的故障打上「疑似由哪次发布引入」。
+   *
+   * 只对 url 型（生产发布目标）做：分支预览没有发布这一说，套上去只会把分支抖动
+   * 记成某次生产发布的锅。目标 id 走 target.profileId 而不是切 `release@` 前缀 ——
+   * 前缀是 releaseProbeTargetId 的实现细节，在这里再解析一遍就是第二个判定源。
+   */
+  private attachReleaseAttribution(target: ProbeTarget, record: UptimeTargetRecord, atMs: number): void {
+    if (target.probeKind !== 'url' || !target.profileId) return;
+    const readRuns = this.deps.state.getReleaseRuns;
+    if (!readRuns) return;
+    let link: ReturnType<typeof linkIncidentToRelease> = null;
+    try {
+      link = linkIncidentToRelease(atMs, readRuns.call(this.deps.state, target.profileId), {
+        windowMs: releaseIncidentLinkWindowMs(),
+      });
+    } catch (err) {
+      // 归因是锦上添花，读 state 出任何问题都不能把「记录故障」这件正事带塌。
+      this.deps.logger?.warn?.(`[uptime] 故障归因失败（保留无归因故障）: ${(err as Error).message}`);
+      return;
+    }
+    if (!link) return;
+    // 刚刚这一轮开出来的那条：未结束 + 起始时刻正是本次采样时刻。
+    const opened = record.incidents.find((i) => i.endedAt === null && i.startedAt === atMs) as
+      ReleaseLinkedIncident | undefined;
+    if (!opened) return;
+    opened.releaseId = link.releaseId;
+    opened.releaseAgeMs = link.ageMs;
   }
 
   /**

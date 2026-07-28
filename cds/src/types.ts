@@ -1419,6 +1419,44 @@ export interface ReleaseLogEntry {
   phase?: string;
 }
 
+/** 发布前检查的单条结论。blocking 的 fail 才拦发布，warn 一律放行只做提示。 */
+export interface ReleasePreflightCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail';
+  message: string;
+  blocking: boolean;
+}
+
+/**
+ * 落库的发布前检查结论。
+ *
+ * 病根：预检结论此前只是个内存对象直接 res.json 出去，`startRelease` 第一句又
+ * 无条件重跑一遍 `preflight()` —— 一次「向导确认后立刻发布」要打两轮独立的
+ * SSH + HTTP 探测，而**用户在向导里看到并据以决策的那一份，不是真正把关的那一份**。
+ * 落库之后，向导那次的结论被 run 显式引用，两者是同一份。
+ *
+ * 复用不等于盲信：这里刻意存了 `createdAt` 与 `artifactCommitSha` ——
+ * 结论过期、或分支 commit 已经变了（产物换了），就必须重跑而不是拿旧结论顶。
+ * 判据见 release-retention.ts::canReuseReleasePreflight。
+ */
+export interface ReleasePreflightRecord {
+  id: string;
+  projectId: string;
+  branchId: string;
+  targetId: string;
+  previewUrl?: string;
+  operator?: string;
+  ok: boolean;
+  checks: ReleasePreflightCheck[];
+  /** 本次结论所依据的产物（含 commitSha）。复用时按它比对现分支 commit。 */
+  artifact?: ReleaseArtifact;
+  artifactCommitSha?: string;
+  planId?: string;
+  previousReleaseId?: string;
+  createdAt: string;
+}
+
 /**
  * 渐进式 Agent 操作者声明。第一阶段仅采集，不参与鉴权或强制拦截。
  * `declared` 只代表调用方提供了通过格式校验的字段，绝不等同 `verified`。
@@ -1474,6 +1512,20 @@ export interface ReleaseRun {
   operator?: string;
   logs: ReleaseLogEntry[];
   seq: number;
+  /**
+   * 当前 logs 窗口里最早那条的 seq。logs 有上限（500 条），超出即从头部丢弃，
+   * 客户端拿着 afterSeq 续传时必须能看出「你要的那段已经没了」。
+   *
+   * 存量 run 没有这个字段，被持久化层应急压缩过的历史 run 更是「头部已丢却无标记」。
+   * 所以读侧一律走 release-log-buffer.ts::resolveReleaseFirstEventSeq 从 logs[0].seq
+   * 推导，本字段只做空日志时的兜底，绝不能被当成可信真相直接读。
+   */
+  firstEventSeq?: number;
+  /**
+   * 本次发布依据的预检记录 id。缺省 = 阶段三之前入库的存量 run（当时预检不落库）。
+   * 有它才能回答「这次发布放行的依据是哪一份结论、什么时候做的」。
+   */
+  preflightId?: string;
   previousReleaseId?: string;
   requestId?: string;
   operationId?: string;
@@ -1613,6 +1665,12 @@ export interface CdsState {
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
   releasePlans?: Record<string, ReleasePlan>;
+  /**
+   * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
+   * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
+   * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
+   */
+  releasePreflights?: Record<string, ReleasePreflightRecord>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */

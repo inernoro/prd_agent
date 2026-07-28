@@ -345,6 +345,9 @@ describe('防再修一边：可探测性只有一份判定', () => {
         getProject: () => ({ id: 'proj', slug: 'proj', name: 'proj' }),
         getLatestSuccessfulReleaseRun: () => ({ releaseId: 'rel-old', commitSha: 'b'.repeat(40) }),
         getRemoteHost: () => ({ id: 'host-prod', sshPrivateKeyFingerprint: 'fp' }),
+        // 阶段三起预检结论要落库（消掉「向导跑一次、startRelease 再跑一次」的重复探测）。
+        // 本用例只关心 healthcheck 那条 check 的文案，落库存哪儿无所谓，给个空实现即可。
+        addReleasePreflight: (record: unknown) => record,
       } as never;
       const service = new ReleaseService(stateService, { sshExecutor: async () => 'cds-release-connect-ok' });
       const result = await service.preflight({

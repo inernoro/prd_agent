@@ -59,6 +59,11 @@ export type CdsEventType =
   | 'release.succeeded'
   | 'release.failed'
   | 'release.rolled-back'
+  // 2026-07-28:生产现场漂移。远端 current 指向的版本与 CDS 台账认知不一致,
+  // 意味着有人绕过 CDS 直接动了线上 —— 此时 CDS 面板上显示的「当前版本」是假的,
+  // 照着它做回滚会滚到一个根本不在线上的版本。只告警不自愈(计划第六节)。
+  | 'release.drift-detected'
+  | 'release.drift-cleared'
   | 'heartbeat';
 
 export interface CdsEventEnvelope<T = unknown> {
@@ -115,6 +120,10 @@ const CDS_EVENT_ALERT_CLASS: Record<CdsEventType, boolean> = {
   'release.failed': true,
   // 回滚成功意味着系统已自愈,但「生产回退过一次」本身就是必须有人知道的事实。
   'release.rolled-back': true,
+  // 线上被人绕过 CDS 手改过版本,是「面板在撒谎」级别的事实,必须叫醒人。
+  'release.drift-detected': true,
+  // 漂移解除是「已自愈」,不叫醒人;但发生过必须留痕,否则复盘时看不到它响过又停了。
+  'release.drift-cleared': false,
   heartbeat: false,
 };
 

@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -27,6 +27,15 @@ import {
   DURATION_ESTIMATE_WINDOW,
   DURATION_SAMPLES_MAX,
 } from './duration-samples.js';
+import {
+  appendBoundedReleaseLog,
+  shouldPersistReleaseLog,
+} from './release-log-buffer.js';
+import {
+  isSuccessfulReleaseRun,
+  selectReleasePreflightsToPrune,
+  selectReleaseRunsToPrune,
+} from './release-retention.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -184,6 +193,7 @@ function emptyState(): CdsState {
     releaseTargets: {},
     releasePlans: {},
     releaseRuns: {},
+    releasePreflights: {},
     previewMode: 'multi',
     activityLogs: {},
     resourceExternalAccess: {},
@@ -247,6 +257,13 @@ export class StateService {
   private backingStore: StateBackingStore;
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
+  /**
+   * 自上次落盘以来攒下的发布日志行数。任何一次 save() 都会把它们写出去，
+   * 所以计数在 save() 里统一归零 —— 只在 appendReleaseRunLog 里减会漏算其他写路径，
+   * 结果是明明刚落过盘还按「攒够 50 行」再落一次。
+   */
+  private pendingReleaseLogLines = 0;
+  private lastReleaseLogSaveAtMs = 0;
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -321,6 +338,8 @@ export class StateService {
       if (!this.state.releaseTargets) this.state.releaseTargets = {};
       if (!this.state.releasePlans) this.state.releasePlans = {};
       if (!this.state.releaseRuns) this.state.releaseRuns = {};
+      // 阶段三新增：存量状态里没有这个键，漏了这句所有预检读处都会 Object.values(undefined) 炸掉。
+      if (!this.state.releasePreflights) this.state.releasePreflights = {};
       if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
@@ -807,6 +826,8 @@ export class StateService {
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
     this.backingStore.save(this.state, hints);
+    // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
+    this.pendingReleaseLogLines = 0;
 
     // Notify listeners (this is *not* part of the backing store contract
     // because listeners are a StateService concern — they run after
@@ -2134,6 +2155,7 @@ export class StateService {
       agentIdentity: run.agentIdentity ?? context?.identity,
     };
     this.state.releaseRuns[run.releaseId] = enriched;
+    this.pruneReleaseRuns(enriched.targetId);
     this.save(HINT_GLOBAL);
     return enriched;
   }
@@ -2143,12 +2165,31 @@ export class StateService {
       throw new Error(`ReleaseRun not found: ${id}`);
     }
     const current = this.state.releaseRuns[id];
-    const merged = { ...current, ...fields, releaseId: id, logs: current.logs };
+    // logs 与 firstEventSeq 必须成对锁死在 current 上：patch 从不改日志，
+    // 却能被传进一个 firstEventSeq: undefined 把截断标记冲掉，客户端从此收不到「已截断」。
+    const merged = {
+      ...current,
+      ...fields,
+      releaseId: id,
+      logs: current.logs,
+      firstEventSeq: current.firstEventSeq,
+    };
     this.state.releaseRuns[id] = merged;
     this.save(HINT_GLOBAL);
     return merged;
   }
 
+  /**
+   * 追加一条发布日志。**内存永远同步更新，落盘攒批。**
+   *
+   * 事故值：这里曾经每行一次 save()。SSH 输出按 chunk 逐行 emit，一次发布上千行，
+   * 而 releaseRuns 属 global rest —— 每次 flush 都要把全部 run 的全部日志整份序列化 /
+   * structuredClone，于是单次发布的持久化开销是平方级（1200 行 = 1200 次全量快照）。
+   *
+   * SSE 与 afterSeq 回放读的都是内存里的 run.logs，攒批不影响实时性；
+   * 尾巴由状态迁移兜底：patchStatus / patchReleaseRun 每次都整份 save，
+   * 终态、步骤推进、心跳都会把攒下的行一并落盘。
+   */
   appendReleaseRunLog(
     id: string,
     entry: Omit<ReleaseLogEntry, 'seq' | 'at'> & { at?: string },
@@ -2157,24 +2198,85 @@ export class StateService {
       throw new Error(`ReleaseRun not found: ${id}`);
     }
     const run = this.state.releaseRuns[id];
-    const nextSeq = (run.seq || 0) + 1;
-    run.logs.push({
-      seq: nextSeq,
-      at: entry.at || new Date().toISOString(),
+    appendBoundedReleaseLog(run, entry);
+    this.pendingReleaseLogLines += 1;
+    // 时钟以日志自身时间戳为准：调用方给了 at 就用它，测试据此可以在不真等一秒的
+    // 前提下断言落盘节奏，生产路径不给 at 则退回真实时钟。
+    const parsedAt = entry.at ? Date.parse(entry.at) : Number.NaN;
+    const nowMs = Number.isFinite(parsedAt) ? parsedAt : Date.now();
+    if (shouldPersistReleaseLog({
+      pendingLines: this.pendingReleaseLogLines,
+      lastSaveAtMs: this.lastReleaseLogSaveAtMs,
+      nowMs,
       level: entry.level,
-      message: entry.message,
-      phase: entry.phase,
-    });
-    run.seq = nextSeq;
-    // 发布日志逐行 append 是高频路径：releaseRuns 属 global rest，hint 让
-    // mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
-    this.save(HINT_GLOBAL);
+    })) {
+      this.lastReleaseLogSaveAtMs = nowMs;
+      // hint 让 mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
+      this.save(HINT_GLOBAL);
+    }
     return run;
+  }
+
+  /** 强制把攒批中的发布日志落盘。发布执行体收尾时调用，保证不丢尾巴。 */
+  flushPendingReleaseLogs(): void {
+    if (this.pendingReleaseLogLines <= 0) return;
+    this.lastReleaseLogSaveAtMs = Date.now();
+    this.save(HINT_GLOBAL);
+  }
+
+  /**
+   * 发布 run 保留策略。淘汰判据（含「谁绝不能删」）在 release-retention.ts，
+   * 这里只负责删除与记账 —— 保留策略是破坏性动作，必须留下一条谁在什么时候删了多少的痕迹，
+   * 否则用户回头找不到历史发布记录时没人说得清是被谁清掉的。
+   */
+  private pruneReleaseRuns(targetId: string): void {
+    if (!targetId || !this.state.releaseRuns) return;
+    const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
+    const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
+    if (doomed.length === 0) return;
+    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
+    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+  }
+
+  // ── 发布前检查结论（阶段三记账）──
+  //
+  // 结论落库是为了让「向导里看到的那份」与「真正放行发布的那份」是同一份，
+  // 而不是两次独立的 SSH + HTTP 探测。复用判据见 release-retention.ts。
+
+  getReleasePreflight(id: string): ReleasePreflightRecord | undefined {
+    return this.state.releasePreflights?.[id];
+  }
+
+  /** 按目标列出预检记录，最新在前。存量状态没有 releasePreflights 键，一律 `?.` 兜底。 */
+  getReleasePreflights(filter: { targetId?: string; branchId?: string } = {}): ReleasePreflightRecord[] {
+    if (!this.state.releasePreflights) return [];
+    return Object.values(this.state.releasePreflights)
+      .filter((record) => !filter.targetId || record.targetId === filter.targetId)
+      .filter((record) => !filter.branchId || record.branchId === filter.branchId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  addReleasePreflight(record: ReleasePreflightRecord): ReleasePreflightRecord {
+    if (!this.state.releasePreflights) this.state.releasePreflights = {};
+    this.state.releasePreflights[record.id] = record;
+    this.pruneReleasePreflights(record.targetId);
+    this.save(HINT_GLOBAL);
+    return record;
+  }
+
+  private pruneReleasePreflights(targetId: string): void {
+    if (!targetId || !this.state.releasePreflights) return;
+    const records = Object.values(this.state.releasePreflights).filter((item) => item.targetId === targetId);
+    for (const id of selectReleasePreflightsToPrune({ records, nowMs: Date.now() })) {
+      delete this.state.releasePreflights[id];
+    }
   }
 
   getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
     const runs = this.getReleaseRuns({ targetId })
-      .filter((run) => run.status === 'success' || run.status === 'rollback_success');
+      // 「哪些 run 算成功版本」与保留策略的保护集必须是同一个判据：
+      // 这里放宽一点、那边收紧一点，就会出现「下拉里有、点下去说没有」。
+      .filter(isSuccessfulReleaseRun);
     if (!beforeReleaseId) return runs[0];
     const current = this.getReleaseRun(beforeReleaseId);
     const beforeTs = current?.startedAt;

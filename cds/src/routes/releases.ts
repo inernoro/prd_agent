@@ -12,16 +12,53 @@ import {
 } from '../services/release-strategy.js';
 import { releaseEvents, type ReleaseEventEnvelope } from '../services/release-events.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
+import {
+  ReleaseTargetHistoryStore,
+  recordReleaseTargetUpsert,
+} from '../services/release-target-history.js';
+import { ReleaseCommitClock } from '../services/release-commit-clock.js';
+import { computeReleaseDora, clampDoraWindowDays, DEFAULT_DORA_WINDOW_DAYS } from '../services/release-dora.js';
+import { isSuccessfulReleaseRun, KEEP_SUCCESSFUL_RELEASE_RUNS } from '../services/release-retention.js';
+import { buildReleaseLogSnapshot } from '../services/release-log-buffer.js';
 import { assertProjectAccess } from './projects.js';
 
 export interface ReleasesRouterDeps {
   stateService: StateService;
-  config?: Pick<CdsConfig, 'worktreeBase'>;
+  /**
+   * repoRoot 只用来定位两个旁路台账文件（变更历史 / commit 时间），故意做成可选：
+   * 既有单测只传 worktreeBase，加成必填会把它们全部编译红，而这两个台账缺了
+   * 也只是「历史空着」，不影响发布本身。
+   */
+  config?: Pick<CdsConfig, 'worktreeBase'> & Partial<Pick<CdsConfig, 'repoRoot'>>;
 }
 
 export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   const router = Router();
   const service = new ReleaseService(deps.stateService);
+  // 没有 repoRoot（单测 / 嵌入式用法）就只在内存里跑，绝不回落到 process.cwd()：
+  // 那是别人的目录，往里写审计流水会让每次跑测试都在开发者仓库里留一份垃圾。
+  // 生产走 server.ts 传进来的完整 CdsConfig，repoRoot 必然有值。
+  const stateRoot = deps.config?.repoRoot;
+  const history = new ReleaseTargetHistoryStore({
+    storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-target-history.json') : undefined,
+    logger: { warn: (m) => console.warn(m) },
+  });
+  const commitClock = new ReleaseCommitClock({
+    storePath: stateRoot ? path.join(stateRoot, '.cds', 'release-commit-times.json') : undefined,
+    logger: { warn: (m) => console.warn(m) },
+  });
+
+  /**
+   * 发布发起后把本次 commit 的提交时间记下来（DORA 变更前置时间的唯一来源）。
+   * 尽力而为：worktree 已回收 / git 不可用一律静默跳过，绝不能让一条统计口径
+   * 的旁路动作把「发布已经启动」这个既成事实变成 500。
+   */
+  const rememberCommitTime = (run: { projectId: string; commitSha: string; branchId: string }): void => {
+    try {
+      const branch = deps.stateService.getBranch(run.branchId);
+      commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath);
+    } catch { /* 统计旁路，不影响发布 */ }
+  };
 
   router.post('/releases/projects/:projectId/discover', (req, res) => {
     const projectId = req.params.projectId;
@@ -135,7 +172,13 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     };
     try {
       service.ensureDefaultPlans(target.projectId);
-      res.status(201).json({ target: deps.stateService.upsertReleaseTarget(target) });
+      res.status(201).json({
+        target: recordReleaseTargetUpsert(
+          { state: deps.stateService, history },
+          target,
+          { actor: resolveActorFromRequest(req) },
+        ),
+      });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
     }
@@ -225,7 +268,13 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     };
     try {
       service.ensureDefaultPlans(target.projectId);
-      res.status(201).json({ target: deps.stateService.upsertReleaseTarget(target) });
+      res.status(201).json({
+        target: recordReleaseTargetUpsert(
+          { state: deps.stateService, history },
+          target,
+          { actor: resolveActorFromRequest(req) },
+        ),
+      });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
     }
@@ -305,9 +354,73 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       },
     };
     try {
-      res.json({ target: deps.stateService.upsertReleaseTarget(updated) });
+      res.json({
+        target: recordReleaseTargetUpsert(
+          { state: deps.stateService, history },
+          updated,
+          { actor: resolveActorFromRequest(req) },
+        ),
+      });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * 目标配置变更历史。用来回答「健康检查地址是谁、什么时候改成现在这个值的」。
+   * 归档路由已有的 archivedBy / archiveReason 只覆盖归档一件事，这里覆盖全部字段。
+   */
+  router.get('/releases/targets/:id/changes', (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    const limit = Number(req.query.limit);
+    res.json({ changes: history.list(req.params.id, Number.isFinite(limit) ? limit : undefined) });
+  });
+
+  /**
+   * 远端发布现场：读回 current / previous 指向的真实版本并与 CDS 台账比对。
+   * 纯只读 —— 巡检每 5 分钟自己跑一轮，这个端点是「我现在就想看一眼」的入口。
+   */
+  router.get('/releases/targets/:id/remote-state', async (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    try {
+      res.json(await service.readRemoteReleaseState(existing));
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  /**
+   * 回收远端超期产物。这是往生产机器上 rm -rf 的写操作，比任何配置类端点都危险，
+   * 所以 rejectUnscopedAiMutation 必须在（无 scope 的 AI key 不许碰）。
+   * dryRun 是默认建议路径：先看回收计划，再决定要不要真删。
+   */
+  router.post('/releases/targets/:id/reclaim', async (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    if (rejectUnscopedAiMutation(req, res)) return;
+    const body = (req.body || {}) as Record<string, unknown>;
+    const maxRemovals = Number(body.maxRemovals);
+    try {
+      res.json(await service.reclaimRemoteReleaseArtifacts(existing, {
+        dryRun: body.dryRun === true,
+        ...(Number.isFinite(maxRemovals) ? { maxRemovals } : {}),
+      }));
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
     }
   });
 
@@ -328,6 +441,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       res.status(404).json({ error: 'release target not found' });
       return;
     }
+    // 目标没了，它那桶变更历史也必须清掉：每桶自身有条数上限，但桶的数量没有，
+    // 只删目标不删桶就是另一种无界增长。
+    history.forget(req.params.id);
     res.status(204).end();
   });
 
@@ -346,15 +462,19 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       return;
     }
     const actor = resolveActorFromRequest(req);
-    const archived = deps.stateService.upsertReleaseTarget({
-      ...existing,
-      lifecycle: 'archived',
-      isEnabled: false,
-      isCanonical: false,
-      archivedAt: new Date().toISOString(),
-      archivedBy: actor,
-      archiveReason: reason,
-    });
+    const archived = recordReleaseTargetUpsert(
+      { state: deps.stateService, history },
+      {
+        ...existing,
+        lifecycle: 'archived',
+        isEnabled: false,
+        isCanonical: false,
+        archivedAt: new Date().toISOString(),
+        archivedBy: actor,
+        archiveReason: reason,
+      },
+      { actor, reason },
+    );
     res.json({ target: archived });
   });
 
@@ -393,6 +513,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         previewUrl: typeof body.previewUrl === 'string' ? body.previewUrl : '',
         operator: resolveActorFromRequest(req),
       });
+      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -464,6 +585,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         previewUrl: source.artifact?.previewUrl || '',
         operator: resolveActorFromRequest(req),
       });
+      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -550,10 +672,10 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     // 两步之间丢掉真实发生的日志 —— 重复可以靠 id 去重，丢失无法补救。
     releaseEvents.on('any', handler);
     const latestRun = deps.stateService.getReleaseRun(req.params.id) || run;
-    send('snapshot', {
-      run: latestRun,
-      logs: latestRun.logs.filter((log) => log.seq > afterSeq),
-    });
+    // 快照必须带截断语义：日志有上限（RELEASE_MAX_LOGS）后，客户端拿着旧 afterSeq 重连时
+    // 它要的那一段可能已经被丢掉了。只发 filter 出来的 logs 等于让客户端以为自己收全了，
+    // 静默缺一段 —— 与分支侧 deployment-runs 的 getEventsAfter 同口径，truncated 必须如实说。
+    send('snapshot', { run: latestRun, ...buildReleaseLogSnapshot(latestRun, afterSeq) });
     lastSentSeq = Math.max(lastSentSeq, latestRun.seq);
     const keepalive = setInterval(() => {
       try { res.write(':keepalive\n\n'); } catch { /* ignore */ }
@@ -572,10 +694,12 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
     const rows = await Promise.all(targets.map(async (target) => {
       const targetRuns = runs.filter((run) => run.targetId === target.id);
-      const successfulRuns = targetRuns.filter((run) => run.status === 'success' || run.status === 'rollback_success');
+      // 成功判定与保留策略共用 isSuccessfulReleaseRun：两边一旦分裂，UI 上还看得见的
+      // 版本会被淘汰器当成可删的，点下去直接「没有可回滚的上一版本」。
+      const successfulRuns = targetRuns.filter(isSuccessfulReleaseRun);
       const current = successfulRuns[0];
       const latest = targetRuns[0];
-      const latestIsSuccessful = latest ? ['success', 'rollback_success'].includes(latest.status) : false;
+      const latestIsSuccessful = latest ? isSuccessfulReleaseRun(latest) : false;
       const rollbackDefaultReleaseId = latestIsSuccessful && latest
         ? deps.stateService.getLatestSuccessfulReleaseRun(target.id, latest.releaseId)?.releaseId || ''
         : successfulRuns[0]?.releaseId || '';
@@ -592,14 +716,23 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         healthStatus: health.status,
         lastOperator: latest?.operator || '',
         canRollback: Boolean(rollbackDefaultReleaseId),
-        successfulRuns: successfulRuns.slice(0, 20),
+        // 下拉给出的版本数必须 = 保留策略保住的成功 run 数，不许再拍一个字面量。
+        successfulRuns: successfulRuns.slice(0, KEEP_SUCCESSFUL_RELEASE_RUNS),
         rollbackDefaultReleaseId,
         // 发布 ETA 的传输面。少了这一行，采样照常在攒、前端却恒为 undefined，
         // 发布中心永远显示「正在积累历史耗时数据」——功能全链路建好却不可见。
         releaseEstimate: deps.stateService.getReleaseEstimate(target.id),
       };
     }));
-    res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50) });
+    // DORA 四项的传输面。少了这一行，聚合照常能算、前端却恒为 undefined，
+    // 发布中心永远显示「暂无指标」——同 releaseEstimate 那次的静默退化。
+    // 刻意挂在 center 而不是新开端点：这个 handler 手里已经有全量 runs，
+    // 零新增外呼、零新 API label，也保证指标和它下面那张发布记录表同源。
+    const dora = computeReleaseDora(runs, {
+      windowDays: clampDoraWindowDays(req.query.doraDays ?? DEFAULT_DORA_WINDOW_DAYS),
+      resolveCommitAt: (run) => commitClock.get(run.projectId, run.commitSha),
+    });
+    res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50), dora });
   });
 
   return router;
