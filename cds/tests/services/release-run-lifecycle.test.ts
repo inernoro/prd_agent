@@ -419,4 +419,79 @@ describe('ReleaseService 阶段一止血', () => {
     expect(compile.code).toBe('build.compile.csharp');
     expect(compile.owner).toBe('code');
   });
+  // ── 取消后的收尾必须完整（Codex PR #1273 第四十轮 P1） ──────────────────
+  //
+  // 病根：cancelRelease 一边 abort 一边**立刻摘牌 + 把 run 打成终态**。可执行体
+  // 不一定听 abort —— 最终入口探测就是普通 HTTP 请求，取消时它还在飞。于是目标
+  // 被判为空闲，下一次发布马上放行；等那个老探测失败，runRelease 仍会走自动恢复，
+  // 用 SSH 把「上一版本」推上去，正好盖掉刚开始的新发布。
+
+  it('取消后执行体还没退出时，同一目标不许开始新发布', async () => {
+    // 模拟「不听 abort 的执行体」：只有测试放闸才结束，abort 对它无效。
+    let releaseGate: (() => void) | null = null;
+    const stuck = new Promise<string>((resolve) => { releaseGate = () => resolve('done'); });
+    const { service } = createService(() => stuck);
+
+    const run = await start(service);
+    await waitFor(() => stateService.getReleaseRun(run.releaseId)?.status === 'running');
+
+    service.cancelRelease(run.releaseId, 'tester');
+    // run 立刻是终态（用户看到「已取消」是对的）……
+    expect(isReleaseRunTerminal(stateService.getReleaseRun(run.releaseId)!.status)).toBe(true);
+    // ……但执行体还在飞，目标必须继续被占着。
+    await expect(start(service)).rejects.toThrow(/执行体尚未退出/);
+
+    // 执行体真的退出后，目标才释放。
+    releaseGate!();
+    await waitFor(() => {
+      try { return true; } finally { /* 等 finally 摘牌 */ }
+    });
+    await new Promise((r) => setTimeout(r, 20));
+    const next = await start(service);
+    expect(next.releaseId).not.toBe(run.releaseId);
+  });
+
+  it('取消之后不再执行自动恢复：不许把上一版本 SSH 推回去盖掉别人', async () => {
+    // 健康检查服务器两段行为：部署命令跑完之前照常 200（预检要用），部署之后
+    // 挂住不答，直到测试放闸再返回 500 —— 精确复刻「取消时探测还在飞，之后才失败」。
+    await new Promise<void>((resolve) => healthServer.close(() => resolve()));
+    let holding = false;
+    let probeGate: (() => void) | null = null;
+    const probeHeld = new Promise<void>((resolve) => { probeGate = () => resolve(); });
+    healthServer = http.createServer((_req, res) => {
+      if (!holding) { res.writeHead(200); res.end('ok'); return; }
+      void probeHeld.then(() => { res.writeHead(500); res.end('down'); });
+    });
+    await new Promise<void>((resolve) => healthServer.listen(0, '127.0.0.1', resolve));
+    const url = `http://127.0.0.1:${(healthServer.address() as AddressInfo).port}/healthz`;
+    stateService.upsertReleaseTarget(releaseTarget(url));
+
+    // 有一个可回滚的上一版本 —— 没有它自动恢复本来就不触发，测不出问题。
+    seedRun({
+      releaseId: 'rel_prev_ok',
+      status: 'success',
+      startedAt: new Date(Date.now() - 3_600_000).toISOString(),
+      executionSnapshot: {
+        mode: 'generated-compose',
+        scriptSha256: 'x'.repeat(64),
+        summary: 'prev',
+        strategy: 'compose',
+      },
+    } as never);
+
+    const { service, calls } = createService(async () => { holding = true; return 'deployed'; });
+    const run = await start(service);
+    expect(stateService.getReleaseRun(run.releaseId)?.previousReleaseId).toBe('rel_prev_ok');
+    await waitFor(() => stateService.getReleaseRun(run.releaseId)?.status === 'healthchecking');
+    expect(calls.filter((c) => isDeployCommand(c.command)).length).toBe(1);
+
+    service.cancelRelease(run.releaseId, 'tester');
+    probeGate!();
+    await new Promise((r) => setTimeout(r, 300));
+
+    // 事故值：自动恢复照跑，calls 里会多出第二条部署命令（把上一版本推回去）。
+    expect(calls.filter((c) => isDeployCommand(c.command)).length).toBe(1);
+    const logs = stateService.getReleaseRun(run.releaseId)?.logs ?? [];
+    expect(logs.some((l) => String(l.message).includes('跳过自动恢复'))).toBe(true);
+  }, 20_000);
 });

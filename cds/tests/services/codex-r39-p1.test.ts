@@ -10,7 +10,7 @@
  * 每个 it 都先写清「事故值」，改回旧行为必须红。
  */
 
-import { describe, it, expect } from 'vitest';
+import { describe, it, expect, vi } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
 import os from 'node:os';
@@ -296,5 +296,79 @@ describe('临时文件不落库', () => {
     const stray = fs.readdirSync(dir).filter((n) => n.startsWith('__tmp'));
     expect(stray).toEqual([]);
     expect(os.type()).toBeTruthy();
+  });
+});
+
+describe('第四十轮 P1：主实例身份也必须核对', () => {
+  it('主实例被摘除、请求落到未被选中的 rs-a，不许当成通过', () => {
+    // 事故分布：primary 落点实际由 rs-a 服务（forwarder 主路由打的是
+    // replicaMemberId:'primary'，所以观测到 rs-a 只可能是钉选没生效）。
+    // 旧判据豁免 primary，两个落点身份不同、组也对 → routingVerified: true，
+    // 于是「primary 那一行」其实是 rs-a，A/B 结论的标签是错的。
+    const result = buildComparison([
+      metrics({ memberId: 'primary', label: '主实例', servedBy: { 'rs-a': 100 }, servedGroups: { grp: 100 } }),
+      metrics({ memberId: 'rs-b', label: '副本 B', servedBy: { 'rs-b': 100 }, servedGroups: { grp: 100 } }),
+    ]);
+    expect(result?.routingVerified).toBe(false);
+    expect(result?.routingIssue).toMatch(/主实例/);
+    expect(result?.rows).toEqual([]);
+  });
+
+  it('主实例自报 primary 且对得上 → 照常出结论', () => {
+    const result = buildComparison([
+      metrics({ memberId: 'primary', label: '主实例', servedBy: { primary: 100 }, servedGroups: { grp: 100 } }),
+      metrics({ memberId: 'rs-b', label: '副本 B', servedBy: { 'rs-b': 100 }, servedGroups: { grp: 100 } }),
+    ]);
+    expect(result?.routingVerified).toBe(true);
+  });
+});
+
+describe('第四十轮 P2：截图没存下来必须说出来', () => {
+  it('附件写盘失败时 degradeReason 点名丢了哪张，不再只回「已记录」', async () => {
+    const express = (await import('express')).default;
+    const { createBugReportsRouter } = await import('../../src/routes/bug-reports.js');
+    const http = await import('node:http');
+
+    const dir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bugreport-attfail-'));
+    // 事故形态：目录建得出来、账本也写得进去，唯独附件那一次 writeFileSync 失败
+    // （典型成因是数据卷在中途写满）。只打这一枪，才测得到「部分失败」这条路径。
+    const realWrite = fs.writeFileSync;
+    const spy = vi.spyOn(fs, 'writeFileSync').mockImplementation(((file: never, ...rest: never[]) => {
+      if (String(file).includes(`${path.sep}attachments${path.sep}`)) throw new Error('ENOSPC: no space left on device');
+      return (realWrite as never as (...a: never[]) => unknown)(file, ...rest);
+    }) as never);
+
+    const app = express();
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dir,
+      readForwardConfig: () => null,
+      resolveReporter: () => 'tester',
+    }));
+
+    const body = await new Promise<{ status: number; json: Record<string, unknown> }>((resolve, reject) => {
+      const server = http.createServer(app).listen(0, () => {
+        const port = (server.address() as { port: number }).port;
+        const payload = JSON.stringify({
+          description: '写盘失败也要如实说',
+          severity: 'trivial',
+          attachments: [{ name: '关键截图.png', mimeType: 'image/png', dataBase64: Buffer.alloc(64, 1).toString('base64') }],
+        });
+        const req = http.request({
+          port, method: 'POST', path: '/api/bug-reports',
+          headers: { 'Content-Type': 'application/json', 'Content-Length': Buffer.byteLength(payload) },
+        }, (res) => {
+          let text = '';
+          res.on('data', (c) => { text += c; });
+          res.on('end', () => { server.close(); resolve({ status: res.statusCode || 0, json: JSON.parse(text) }); });
+        });
+        req.on('error', (e) => { server.close(); reject(e); });
+        req.end(payload);
+      });
+    });
+    spy.mockRestore();
+
+    expect(body.status).toBe(201);
+    expect(String(body.json.degradeReason || '')).toContain('关键截图.png');
+    expect(String(body.json.degradeReason || '')).toMatch(/未能保存/);
   });
 });

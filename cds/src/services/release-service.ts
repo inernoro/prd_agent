@@ -598,6 +598,13 @@ export class ReleaseService {
     if (inFlight) {
       throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起`);
     }
+    // 光看 run 状态不够：被取消的 run 立刻是终态，但它的执行体（不接 abort 的 HTTP
+    // 探测、已发出的 SSH 命令）可能还在飞，还会走自动恢复往目标机器写东西。
+    // 目标必须一直被占着，直到 execute() 的 finally 摘牌为止（Codex PR #1273 P1）。
+    const settling = this.findSettlingExecution(preflight.target.id);
+    if (settling) {
+      throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起`);
+    }
     const releaseId = `rel_${crypto.randomBytes(8).toString('hex')}`;
     const startedAt = this.nowIso();
     const run: ReleaseRun = {
@@ -701,7 +708,13 @@ export class ReleaseService {
     if (handle) {
       handle.cancelledBy = operator;
       handle.controller.abort(new Error(message));
-      this.inFlight.delete(releaseId);
+      // 关键：**不**在这里摘牌。abort 只是「请你停」，不是「你已经停了」——
+      // 最终入口探测（probeReleaseSurface）是普通 HTTP 请求，不接 abort 信号，
+      // 取消时它还在飞。若此刻就摘牌 + 把 run 打成终态，在途守卫会认为该目标空闲，
+      // 下一次发布立刻放行；等那个老探测最终失败，runRelease 仍会走
+      // restorePreviousAfterFailedProbe，用 SSH 把「上一版本」推上去，
+      // 正好覆盖掉刚开始的新发布（Codex PR #1273 P1）。
+      // 摘牌统一交给 execute() 的 finally——执行体真的退出了才算释放。
     }
     if (isReleaseRunTerminal(run.status)) return { ok: true };
     this.emitLog(releaseId, 'warn', message, 'cancel');
@@ -796,6 +809,21 @@ export class ReleaseService {
    * 统一的执行体包装：登记在途句柄（供取消/收割中止）、兜住异常、结束后摘牌。
    * 句柄必须在返回调用方之前**同步**登记，否则「点了发布立刻点取消」会取消不掉。
    */
+  /** 该发布目标上是否还有「已终态但执行体没退出」的 run；有则返回它的 releaseId。 */
+  private findSettlingExecution(targetId: string): string | undefined {
+    for (const releaseId of this.inFlight.keys()) {
+      const run = this.stateService.getReleaseRun(releaseId);
+      if (run?.targetId === targetId) return releaseId;
+    }
+    return undefined;
+  }
+
+  /** 这次发布是否已被取消（handle 还在、但已 abort）。自动恢复等副作用必须先问它。 */
+  private isCancelled(releaseId: string): boolean {
+    const handle = this.inFlight.get(releaseId);
+    return handle ? handle.controller.signal.aborted : false;
+  }
+
   private execute(
     releaseId: string,
     fn: () => Promise<void>,
@@ -915,6 +943,13 @@ export class ReleaseService {
     failedRun: ReleaseRun,
     probeError: unknown,
   ): Promise<void> {
+    // 已取消就不要再往目标机器上写任何东西。取消之后的自动恢复是纯粹的越权副作用：
+    // 用户已经喊停，它却把「上一版本」SSH 推上去，可能正好盖掉别人刚发的新版本
+    // （Codex PR #1273 P1）。
+    if (this.isCancelled(releaseId)) {
+      this.emitLog(releaseId, 'warn', '发布已被取消，跳过自动恢复（不再对目标机器做任何写操作）', 'auto-restore');
+      return;
+    }
     if (failedRun.executionSnapshot?.mode === 'existing-script' || !failedRun.previousReleaseId) return;
     const previous = this.stateService.getReleaseRun(failedRun.previousReleaseId);
     if (!previous) return;

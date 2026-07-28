@@ -553,9 +553,16 @@ export function buildComparison(targets: LoadTestTargetMetrics[]): LoadTestCompa
       break;
     }
     const observed = identities[0]!;
-    // 副本成员自报了家门就必须对得上。
-    if (t.memberId !== 'primary' && observed !== t.memberId) {
-      routingIssue = `落点核对失败：${t.label} 期望由副本 ${t.memberId} 服务，实际观测到 ${observed}`;
+    // 自报了家门就必须对得上——**主实例也不例外**。
+    // 曾经这里豁免 primary，理由是「主实例可能没有这个头」；但没有头的情况上面
+    // 已经被 identities.length === 0 挡掉了，走到这里就是**有头**。而 forwarder 的
+    // 主路由是明确打了 replicaMemberId: 'primary' 的（forwarder-route-publisher），
+    // 所以有头却不是 primary，只有一种解释：钉选没生效、落到了别的成员上。
+    // 豁免会放过这种分布：主实例被摘除 → resolver 回落到未被选中的 rs-a，
+    // 而对照组是 rs-b，两个落点身份不同、组也对，于是核对通过、A/B 结论照出，
+    // 但「primary 那一行」其实是 rs-a——标签是错的（Codex PR #1273 P1）。
+    if (observed !== t.memberId) {
+      routingIssue = `落点核对失败：${t.label} 期望由 ${t.memberId} 服务，实际观测到 ${observed}（钉选未生效或该成员已被摘除）`;
       break;
     }
     const dup = seen.get(observed);

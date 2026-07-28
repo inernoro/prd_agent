@@ -378,24 +378,39 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     }
   }
 
-  function persist(record: StoredBugReport, attachments: NormalizedBugReport['attachments']): void {
+  /**
+   * 落盘。返回没能保存的附件名单——**不能咽下去**：数据卷写满时截图会静默丢失，
+   * 而接口照样 201 告诉用户「已记录」，用户以为截图在里面（Codex PR #1273 P2）。
+   * 调用方必须把它拼进 degradeReason 如实告知（见 .claude/rules/expectation-management.md）。
+   */
+  function persist(
+    record: StoredBugReport,
+    attachments: NormalizedBugReport['attachments'],
+  ): { failedAttachments: string[] } {
     const dir = baseDir();
     fs.mkdirSync(dir, { recursive: true });
+    const failedAttachments: string[] = [];
     if (attachments.length > 0) {
       const assetDir = path.join(dir, 'attachments');
       fs.mkdirSync(assetDir, { recursive: true });
       attachments.forEach((item, index) => {
         const fileName = `${record.id}-${index + 1}.${extensionFor(item.mimeType)}`;
+        const full = path.join(assetDir, fileName);
         try {
-          fs.writeFileSync(path.join(assetDir, fileName), Buffer.from(item.dataBase64, 'base64'));
+          fs.writeFileSync(full, Buffer.from(item.dataBase64, 'base64'));
           record.attachments[index]!.file = fileName;
         } catch {
           record.attachments[index]!.file = '';
+          failedAttachments.push(item.name || fileName);
+          // 写了一半的残片必须删掉：它不在 records 账本里，回收逻辑永远看不到它，
+          // 会变成永久占盘的孤儿文件。
+          try { fs.unlinkSync(full); } catch { /* 本来就没落地 */ }
         }
       });
     }
     fs.appendFileSync(recordsFile(), `${JSON.stringify(record)}\n`, 'utf-8');
     pruneStore();
+    return { failedAttachments };
   }
 
   /**
@@ -593,7 +608,13 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     };
 
     try {
-      persist(record, report.attachments);
+      const { failedAttachments } = persist(record, report.attachments);
+      if (failedAttachments.length > 0) {
+        // 截图没存下来（盘满等）却回 201 说「已记录」，用户会以为图在里面。
+        // 必须把丢了哪几张写进 degradeReason（Codex PR #1273 P2）。
+        const lost = `以下截图未能保存：${failedAttachments.join('、')}`;
+        record.degradeReason = record.degradeReason ? `${record.degradeReason}；${lost}` : lost;
+      }
     } catch (e) {
       // 本地留存失败且没转发成功 = 这条 bug 彻底丢了，必须如实报错让用户重试。
       if (delivery === 'local') {
