@@ -37,6 +37,19 @@ export interface MarketplaceSkillDto {
   /** 若 previewSource=hosted_site，对应的 HostedSite.id */
   previewHostedSiteId?: string | null;
   tags: string[];
+  /**
+   * 条目形态：`skill` 单个技能 / `bundle` 角色套装（一条命令装齐一个角色的全部技能）。
+   * 仅官方注入条目会带；用户上传的技能不带该字段，按 `skill` 处理。
+   */
+  kind?: 'skill' | 'bundle';
+  /** 角色归属（pm / dev / qa），供市场按角色筛选；用户上传技能暂不带角色 */
+  roles?: string[];
+  /** kind=bundle 时：套装包含的技能 key（已递归展开依赖） */
+  includes?: string[];
+  /** kind=bundle 时：套装含多少个技能 */
+  skillCount?: number;
+  /** kind=bundle 时：装完第一步该做什么 */
+  firstStep?: string | null;
   zipUrl: string;
   zipSizeBytes: number;
   originalFileName: string;

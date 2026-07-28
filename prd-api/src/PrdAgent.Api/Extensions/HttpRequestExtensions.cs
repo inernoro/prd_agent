@@ -35,6 +35,54 @@ public static class HttpRequestExtensions
         return NormalizeIp(context.Connection.RemoteIpAddress?.ToString());
     }
 
+    /// <summary>
+    /// 取用于「防滥用分桶」的客户端 IP（限流、下载计数去重等）。
+    ///
+    /// 与 <see cref="GetRealClientIp"/> 的区别在信任模型，不在取值顺序：
+    /// 展示/统计用途里，X-Real-IP 被伪造顶多把统计打歪；而分桶是安全控制 ——
+    /// 一旦允许调用方自己指定桶键，每个请求换一个 X-Real-IP 就能拿到一个全新配额，
+    /// 限流等于没有。故这里只在「socket 对端本身是反代」时才采信该头：
+    ///   - 对端是回环 / 私网 / 链路本地（Nginx + Docker 的实际拓扑）→ 采信 X-Real-IP
+    ///   - 对端是公网地址（Kestrel 直接暴露，或反代不覆盖该头）→ 一律用 RemoteIpAddress
+    ///
+    /// 代价：若反代部署在另一台公网主机上（云 LB 走公网回源），这里会退化成按 LB 分桶。
+    /// 这是有意的取舍 —— 分桶宁可粗（大家共用一个桶）也不能被调用方自选（等于无限配额）。
+    /// </summary>
+    public static string? GetAbuseControlClientIp(this HttpContext context)
+    {
+        var peer = context.Connection.RemoteIpAddress;
+        if (peer != null && IsTrustedProxyPeer(peer))
+        {
+            var xRealIp = context.Request.Headers["X-Real-IP"].FirstOrDefault();
+            if (!string.IsNullOrWhiteSpace(xRealIp))
+                return NormalizeIp(xRealIp.Trim());
+        }
+
+        return NormalizeIp(peer?.ToString());
+    }
+
+    /// <summary>对端是否为「本机 / 内网」——只有这种对端才可能是我方反代。</summary>
+    private static bool IsTrustedProxyPeer(IPAddress addr)
+    {
+        if (IPAddress.IsLoopback(addr)) return true;
+
+        if (addr.IsIPv4MappedToIPv6) addr = addr.MapToIPv4();
+
+        if (addr.AddressFamily == System.Net.Sockets.AddressFamily.InterNetwork)
+        {
+            var b = addr.GetAddressBytes();
+            if (b[0] == 10) return true;                              // 10.0.0.0/8
+            if (b[0] == 172 && b[1] >= 16 && b[1] <= 31) return true; // 172.16.0.0/12
+            if (b[0] == 192 && b[1] == 168) return true;              // 192.168.0.0/16
+            if (b[0] == 169 && b[1] == 254) return true;              // 169.254.0.0/16
+            return false;
+        }
+
+        if (addr.IsIPv6LinkLocal || addr.IsIPv6SiteLocal) return true;
+        // fc00::/7 唯一本地地址（ULA）
+        return (addr.GetAddressBytes()[0] & 0xFE) == 0xFC;
+    }
+
     // ::ffff:1.2.3.4 -> 1.2.3.4；其余原样返回
     private static string? NormalizeIp(string? ip)
     {

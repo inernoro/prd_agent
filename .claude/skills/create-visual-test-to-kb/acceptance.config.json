@@ -1,9 +1,8 @@
 {
   "_comment": "验收技能配置（项目无关——别的仓库改本文件即可复用）。职责分离：验收报告默认归 CDS 验收中心，技能不再分流到 MAP 知识库。密码/密钥一律走 env 变量名引用，禁止写明文。",
   "project": "prd-agent",
-  "previewUrlCmd": "python3 .claude/skills/cds/cli/cdscli.py --human preview-url | head -1",
+  "previewUrlCmd": "SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d \"$h/skills\" ] && { echo \"$h/skills\"; break; }; done); python3 \"$SKILLS_ROOT/cds/cli/cdscli.py\" --human preview-url | head -1",
   "previewUrlOverride": "",
-
   "auth": {
     "browser": {
       "_comment": "headless 浏览器登录（取证用，被验收应用本身）。走表单，不注入 token。",
@@ -16,7 +15,6 @@
       "loggedInWhen": "leave-login-path"
     }
   },
-
   "report": {
     "_comment": "归档目标。默认 cds（验收中心，按项目归类）。无 CDS / 离线时把 mode 改 local，落本地 md + 截图目录。",
     "mode": "cds",
@@ -32,7 +30,6 @@
     "localOutDir": "/tmp/map-acceptance-local",
     "_docStoreNote": "旧 MAP 知识库归档（mode=doc-store）已下线为非默认。若确需向后兼容，需在本块补回 apiBasePath/storeName/templateKey/isPublic + auth.api（agentKeyEnv 等）字段并显式设 mode=doc-store；新仓库不要用此路径。"
   },
-
   "screenshot": {
     "width": 1440,
     "height": 900,
@@ -42,7 +39,6 @@
     "themeAttr": "data-theme",
     "outDir": "/tmp/acc_shots"
   },
-
   "navigation": {
     "_comment": "模拟人类：禁止 goto 直达业务页。gotoByClick 从首页点击导航进入。sidebarItemSelector 用于按可见文本点击侧边导航。",
     "homePath": "/",

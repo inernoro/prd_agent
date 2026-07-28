@@ -9,6 +9,30 @@ import { api } from '@/services/api';
 export const OFFICIAL_SKILL_FINDMAPSKILLS = 'findmapskills';
 
 /**
+ * 角色 key → 中文名（如 pm → 产品经理）。
+ * 事实源在后端 `scripts/skill-bundles.json` → catalog `roleLabels`，
+ * 前端只负责展示，**不得**自己维护一份映射表（见 frontend-architecture 规则）。
+ */
+export type OfficialSkillRoleLabels = Record<string, string>;
+
+/**
+ * 拉角色标签（顺带拿到角色套装清单）。匿名端点，未登录也能调。
+ * 失败返回空对象——角色筛选行会自动隐藏，不阻塞市场主流程。
+ */
+export async function fetchOfficialSkillRoleLabels(): Promise<OfficialSkillRoleLabels> {
+  const rawBase = ((import.meta.env.VITE_API_BASE_URL as string | undefined) ?? '').trim().replace(/\/+$/, '');
+  const path = api.officialSkills.bundles();
+  try {
+    const res = await fetch(rawBase ? `${rawBase}${path}` : path, { method: 'GET' });
+    if (!res.ok) return {};
+    const json = (await res.json()) as { success?: boolean; data?: { roleLabels?: OfficialSkillRoleLabels } };
+    return json?.data?.roleLabels ?? {};
+  } catch {
+    return {};
+  }
+}
+
+/**
  * 官方技能包直链 —— 给"复制给智能体"的提示词用，AI 会用 curl 下载。
  * 在浏览器里不走这个 helper，走下面的 fetch+blob。
  */

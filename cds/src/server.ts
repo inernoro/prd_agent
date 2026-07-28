@@ -20,6 +20,8 @@ import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createBootstrapRouter } from './routes/bootstrap.js';
+import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -842,6 +844,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/rename-default': '迁移 default 项目',
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
+    'GET /bootstrap/presets': '列出初始化预设',
+    'GET /skills/bundles': '列出角色套装',
+    'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
@@ -988,6 +993,8 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
+    [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
     [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
@@ -1318,6 +1325,13 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
+  // 项目初始化（2026-07-28）：发引导脚本与技能 zip，只读、不签发凭据。
+  // 客户拿到任何 CDS 凭据之前就要能装技能，所以必须匿名可达。
+  // 与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/bootstrap/presets') return true;
+  if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
+  if (method === 'GET' && path === '/api/skills/bundles') return true;
+  if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -3900,6 +3914,16 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
+  // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
+  app.use('/api', createBootstrapRouter({
+    skillProxy: new SkillProxy({
+      mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+    }),
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+    repoRoot: deps.config.repoRoot,
+  }));
   app.use('/api', createScheduledJobsRouter({
     stateService: deps.stateService,
     scheduledJobService,

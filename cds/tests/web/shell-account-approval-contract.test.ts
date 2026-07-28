@@ -106,7 +106,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
-    expect(agentDialogSource).toContain('grid grid-cols-3');
+    // 4 列：项目初始化 / 自动接入 / 手动安装 / 海鲜市场。
+    // 2026-07-28 新增「项目初始化」并排在第一位，tab 数从 3 变 4。
+    expect(agentDialogSource).toContain('grid grid-cols-4');
     expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
     expect(agentDialogSource).toContain('resolveAgentMissionContextForTarget(');
     expect(agentDialogSource).toContain('连接已有项目');

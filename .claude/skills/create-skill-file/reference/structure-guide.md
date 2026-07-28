@@ -17,13 +17,13 @@
 **description 技巧**：
 
 ```yaml
-# ❌ 过于泛化
+# 反例 过于泛化
 description: Helps with code tasks
 
-# ✅ 具体+触发场景
+# 正例 具体+触发场景
 description: Analyzes Python code for security vulnerabilities using bandit. Activates when user mentions "security audit" or "vulnerability scan".
 
-# ✅ 中英双语触发词
+# 正例 中英双语触发词
 description: Audits code for post-migration residue. Trigger words: "代码卫生", "hygiene", "/hygiene".
 ```
 
@@ -84,12 +84,12 @@ Layer 3: reference/*.md + scripts/
 ### 只添加 Claude 不知道的信息
 
 ```markdown
-# ❌ 过度详细（Claude 已知）
+# 反例 过度详细（Claude 已知）
 1. 创建 Python 文件
 2. 导入必要的库
 3. 定义函数
 
-# ✅ 简洁有效（项目特有）
+# 正例 简洁有效（项目特有）
 使用 `scripts/api_client.py` 调用内部 API。
 请求头必须包含 `X-Internal-Token`（从环境变量获取）。
 ```
