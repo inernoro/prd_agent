@@ -628,3 +628,23 @@ describe('跨天 history 必须用按天聚合（Codex PR #1273 P2）', () => {
     expect(history.points.length).toBe(90);
   });
 });
+
+describe('本地 master-* 分支必须照常纳入监控（Codex PR #1273 P2）', () => {
+  const b = (executorId?: string) => ({
+    id: 'p1-main', projectId: 'p1', branch: 'main', status: 'running',
+    services: { api: { status: 'running', hostPort: 30001 } },
+    ...(executorId ? { executorId } : {}),
+  }) as unknown as BranchEntry;
+
+  it('事故值：executorId=master-xxx 是本机内嵌 master，必须探测而不是标为远端暂停', () => {
+    const t = selectProbeTargets([b('master-abc')], [], { scope: 'all' })[0]!;
+    expect(t.remoteExecutor).toBeUndefined();
+    expect(t.active).toBe(true);
+  });
+
+  it('真正的远端 executor 仍然不纳入监控', () => {
+    const t = selectProbeTargets([b('node-2')], [], { scope: 'all' })[0]!;
+    expect(t.remoteExecutor).toBe(true);
+    expect(t.active).toBe(false);
+  });
+});

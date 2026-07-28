@@ -73,3 +73,6 @@
 | security | llmgw | console-api 缺陷本地台账补按租户保留上限：附件 base64 直接进 Mongo 文档且无 TTL/配额/回收，反复提交可撑爆网关库 |
 | fix | cds | 恢复出厂设置不再留下僵尸主干：保留分支条目却清空它依赖的构建配置/路由/环境变量/基础设施，会让主干既无法部署路由也已断，而响应仍宣称「已保留」；改为存在主干且未带 confirmTrunk 时整体拒绝并说明两条出路 |
 | security | cds | 缺陷本地留存的保留策略改为按提交方项目分桶：全局一刀切会让一个吵闹的项目挤掉别的项目的本地留存，而未配置 MAP 转发时本地留存是唯一副本 |
+| docs | cds | 新增发布系统改进方案 doc/plan.cds.release-system.md（生命周期与可观测性四阶段计划） |
+| fix | cds | 修复内嵌 master 持有的本地分支（executorId 为 master-*）被误判为远端而永久排除出存活监控；分支归属判定收敛为唯一判定源 executor-ownership，此前散在三处内联字面量正是这次漂移的根源 |
+| fix | llmgw | console-api 缺陷转发 submit 返非 2xx 时如实回传「可能仍是草稿态」，不再只记日志而让 UI 无条件说「已提交」 |

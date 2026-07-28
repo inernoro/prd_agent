@@ -8427,12 +8427,20 @@ app.MapPost("/gw/bug-reports", async (HttpContext http, [FromBody] BugReportSubm
                         submitRequest.Headers.TryAddWithoutValidation("Authorization", $"Bearer {bugReportMapToken}");
                         using var submitResponse = await bugReportHttp.SendAsync(submitRequest, forwardToken);
                         if (!submitResponse.IsSuccessStatusCode)
+                        {
                             app.Logger.LogWarning("[bug-report] 缺陷已创建但 submit 返回 {Status}", (int)submitResponse.StatusCode);
+                            // 必须回传给前端：只记日志的话 UI 会无条件说「已提交」，
+                            // 而单子其实还躺在草稿态没人处理（Codex PR #1273 P2，
+                            // CDS 侧已修，这里补齐同款）。
+                            degradeReason = $"缺陷已创建但提交流转失败（缺陷系统返回 HTTP {(int)submitResponse.StatusCode}），可能仍是草稿态";
+                        }
                     }
                     catch (Exception submitError)
                     {
-                        // 缺陷已经落在 MAP 里，提交环节失败只影响状态流转，不改变投递结论。
+                        // 缺陷已经落在 MAP 里，提交环节失败只影响状态流转，不改变投递结论，
+                        // 但同样要如实告知用户「可能仍是草稿态」。
                         app.Logger.LogWarning(submitError, "[bug-report] 缺陷已创建但 submit 失败");
+                        degradeReason = $"缺陷已创建但提交流转失败（{submitError.Message}），可能仍是草稿态";
                     }
                 }
             }

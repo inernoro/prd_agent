@@ -21,6 +21,7 @@ import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBr
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
   resolveBranchProtection,
   describeBranchProtectionReason,
@@ -11762,7 +11763,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const desiredIds = new Set(profiles.map((p) => p.id));
       const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
       // executorId 以 'master-' 开头 = 内嵌 master（本地）；其余非空值 = 远端归属（与 server.ts 心跳口径一致）。
-      const remoteAttributed = !!entry.executorId && !entry.executorId.startsWith('master-');
+      const remoteAttributed = isRemoteExecutorOwned(entry.executorId);
       if (droppedExisting.length > 0 && remoteAttributed) {
         const onlineRemoteNode = registry
           ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded' && n.status === 'online')

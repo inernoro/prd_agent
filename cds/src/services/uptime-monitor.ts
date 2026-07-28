@@ -37,6 +37,7 @@ import http from 'node:http';
 import path from 'node:path';
 import type { BranchEntry, Project } from '../types.js';
 import { isTrunkBranch } from './branch-protection.js';
+import { isRemoteExecutorOwned } from './executor-ownership.js';
 import {
   DEFAULT_BAR_SEGMENTS,
   DEFAULT_FAILURE_THRESHOLD,
@@ -295,7 +296,9 @@ export function selectProbeTargets(
       // 重则撞上协调端某个复用同一端口的无关容器、把它的健康当成本服务的健康
       // （假绿比假红更危险）。在补上分布式探测之前，远端 executor 拥有的分支
       // 一律不纳入监控，而不是用错误的地址去探（Codex PR #1273 P1）。
-      const remoteExecutor = Boolean(branch.executorId && branch.executorId !== 'embedded');
+      // 归属判定走 SSOT：executorId 以 master- 开头的是内嵌 master 自己持有的
+      // 本地分支，容器就在本机，必须照常探测（Codex PR #1273 P2）。
+      const remoteExecutor = isRemoteExecutorOwned(branch.executorId);
       const active = branchLive && serviceLive && !excludedBy && !remoteExecutor;
       targets.push({
         id,

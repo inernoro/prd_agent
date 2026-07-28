@@ -11,6 +11,7 @@ import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
 import { createReplicaSetsRouter } from './routes/replica-sets.js';
 import { ReplicaSetService } from './services/replica-set.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
 import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
 import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
@@ -3167,7 +3168,7 @@ export function createServer(deps: ServerDeps): express.Express {
         for (const b of Object.values(state.branches || {})) {
           // Skip branches owned by a remote executor — they're counted
           // via that executor's own heartbeat.
-          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          if (isRemoteExecutorOwned(b.executorId)) continue;
           for (const svc of Object.values(b.services || {})) {
             if (svc?.status === 'running') localRunning++;
           }
@@ -4045,8 +4046,7 @@ export function createServer(deps: ServerDeps): express.Express {
     // 离线/registry 不可用）时**保守视为远端**，绝不在 master 本机替离线执行器
     // 物化副本（错 docker 网络错端口的分裂宿主副本）。
     isRemoteBranch: (branch) => {
-      if (!branch.executorId) return false;
-      if (branch.executorId.startsWith('master-')) return false;
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
       const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
       return !node || node.role !== 'embedded';
     },
