@@ -45,11 +45,12 @@ public class AuthController : ControllerBase
         _logger = logger;
     }
 
-    /// <summary>access token 有效期（秒），由 Jwt:AccessTokenMinutes 决定，默认 24 小时。</summary>
+    /// <summary>access token 有效期（秒），由 Jwt:AccessTokenMinutes 决定，默认 7 天。</summary>
     private int AccessTokenExpiresInSeconds()
     {
-        var minutes = _cfg.GetValue<int>("Jwt:AccessTokenMinutes", 1440);
-        if (minutes <= 0) minutes = 1440;
+        const int defaultMinutes = 7 * 24 * 60;
+        var minutes = _cfg.GetValue<int>("Jwt:AccessTokenMinutes", defaultMinutes);
+        if (minutes <= 0) minutes = defaultMinutes;
         return minutes * 60;
     }
 

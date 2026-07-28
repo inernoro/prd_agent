@@ -9,7 +9,7 @@
 
 | 端 | 凭据存放 | 硬过期 | 续期方式 | 撤销手段 |
 |---|---|---|---|---|
-| MAP（prd-admin） | localStorage（zustand persist） | access token 24h；会话滑动窗口 7 天 | 每次已鉴权请求 `AuthSlidingExpirationMiddleware` Touch 续满窗口；access token 过期后 401 → refresh → 重试 | 每请求校验 tokenVersion（`/api/auth-ops/force-expire*` 立即生效） |
+| MAP（prd-admin） | localStorage（zustand persist） | access token 7 天；会话滑动窗口 7 天 | 每次已鉴权请求 `AuthSlidingExpirationMiddleware` Touch 续满窗口（含 tokenVersion 键）；access token 过期后 401 → refresh → 重试 | 每请求校验 tokenVersion（`/api/auth-ops/force-expire*` 立即生效） |
 | 网关控制台（llmgw/web） | localStorage | token 7 天 | 用满 12h 的 token 在租户校验通过后由服务端换发，走 `X-Gw-Token` 响应头，前端在响应里接住 | 每请求 `TenantAccess.ResolveAsync` 重校验 SecurityVersion / 成员版本 / 租户状态 |
 | CDS | `cds_gh_session` cookie | 30 天（`CDS_SESSION_TTL_DAYS`，下限 7 天） | 剩余不足一半时下一次请求续满并重发 cookie | 会话表删除（logout / 禁用用户） |
 
@@ -18,8 +18,8 @@
 ### 1. MAP 没有服务端 logout，退出登录只清本地
 
 `AuthController` 没有 logout 端点，前端 `authStore.logout()` 只清本地存储。access token 从 60 分钟拉长到
-24 小时后，**已泄露 token 的可利用窗口从 1 小时变成最多 24 小时**（refresh token 因为本地被清、
-且泄露方通常拿不到 sessionKey，不受影响）。
+7 天后，**已泄露 token 的可利用窗口从 1 小时变成最多 7 天**（refresh token 因为本地被清、
+且泄露方通常拿不到 sessionKey，不受影响）。用户 2026-07-28 明确要求「7 天有效」，此为其知情取舍。
 
 - 缓解：管理端 `/api/auth-ops/force-expire` 可立即吊销（bump tokenVersion），每请求校验。
 - 待补：加 `POST /api/auth/logout`，按 `(userId, clientType, sessionKey)` 删除该端 refresh 会话并

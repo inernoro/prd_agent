@@ -51,6 +51,38 @@ public class AuthSessionLifetimeTests
     }
 
     [Fact]
+    public async Task Touch_AlsoRenewsExistingTokenVersionKey()
+    {
+        var cache = new FakeCache();
+        var service = new AuthSessionService(cache, Secret, slidingDays: 7);
+        var (sessionKey, _) = await service.CreateRefreshSessionAsync("u1", "admin");
+        var tvKey = CacheKeys.ForAuthTokenVersion("u1", "admin");
+
+        await service.BumpTokenVersionAsync("u1", "admin");   // 用户被踢过一次 → tv=2
+        cache.Expirations[tvKey] = TimeSpan.FromMinutes(1);   // 模拟 tv 键即将过期
+
+        await service.TouchAsync("u1", "admin", sessionKey);
+
+        // tv 键若先于 access token 过期，GetTokenVersionAsync 退回默认 1，
+        // 手里 tv=2 的有效 token 会被误判成已撤销 → 平白掉登录。所以 Touch 必须一起续。
+        Assert.Equal(TimeSpan.FromDays(7), cache.Expirations[tvKey]);
+        Assert.Equal(2, await service.GetTokenVersionAsync("u1", "admin"));
+    }
+
+    [Fact]
+    public async Task Touch_DoesNotCreateTokenVersionKeyWhenAbsent()
+    {
+        var cache = new FakeCache();
+        var service = new AuthSessionService(cache, Secret, slidingDays: 7);
+        var (sessionKey, _) = await service.CreateRefreshSessionAsync("u1", "admin");
+
+        await service.TouchAsync("u1", "admin", sessionKey);
+
+        // 从没被踢过的用户不该凭空多出一条撤销记录（Redis 对不存在的键 EXPIRE 也是 no-op）。
+        Assert.False(cache.Expirations.ContainsKey(CacheKeys.ForAuthTokenVersion("u1", "admin")));
+    }
+
+    [Fact]
     public async Task TokenVersion_SharesTheSessionWindow()
     {
         var cache = new FakeCache();

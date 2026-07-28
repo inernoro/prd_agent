@@ -109,6 +109,11 @@ public class AuthSessionService : IAuthSessionService
         var key = CacheKeys.ForAuthRefresh(uid, ctNorm, sk);
         // 仅刷新 TTL（O(1)），不强制读写 value，降低每次请求开销
         await _cache.RefreshExpiryAsync(key, _sessionTtl);
+
+        // tokenVersion 也跟着续期：access token 现在与会话窗口同为 7 天，若 tv 键先过期，
+        // GetTokenVersionAsync 会退回默认值 1，让「被踢过一次（tv>=2）的用户」手里仍然有效的
+        // token 被误判成已撤销 → 平白掉登录。键不存在时 RefreshExpiry 是 no-op，不会凭空复活撤销记录。
+        await _cache.RefreshExpiryAsync(CacheKeys.ForAuthTokenVersion(uid, ctNorm), _sessionTtl);
     }
 
     public async Task RemoveAllRefreshSessionsAsync(string userId, string clientType, CancellationToken ct = default)

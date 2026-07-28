@@ -974,9 +974,10 @@ builder.Services.AddSingleton<IMarkdownParser, MarkdownParser>();
 builder.Services.AddSingleton<IPromptManager, PromptManager>();
 
 // 注册 JWT 服务
-// Access Token 默认 24 小时：踢下线由每次请求校验 tokenVersion 保证（见 OnTokenValidated），
-// 因此拉长 access token 不会削弱撤销能力，却能显著减少「离开一会儿回来就 401」的体感。
-var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 1440);
+// Access Token 默认 7 天（10080 分钟），与会话滑动窗口同长：用户要的就是「7 天有效」。
+// 踢下线由每次请求校验 tokenVersion 保证（见 OnTokenValidated），因此拉长 access token
+// 不削弱撤销能力，却能消灭「离开一会儿回来就 401」的体感。
+var jwtAccessTokenMinutes = builder.Configuration.GetValue<int>("Jwt:AccessTokenMinutes", 10080);
 builder.Services.AddSingleton<IJwtService>(sp => 
     new JwtService(jwtSecret, jwtIssuer, jwtAudience, jwtAccessTokenMinutes));
 
