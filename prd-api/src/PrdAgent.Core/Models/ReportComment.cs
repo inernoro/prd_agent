@@ -1,3 +1,4 @@
+using MongoDB.Bson.Serialization.Attributes;
 using PrdAgent.Core.Attributes;
 
 namespace PrdAgent.Core.Models;
@@ -28,8 +29,15 @@ public class ReportComment
     /// <summary>评论作者显示名（冗余）</summary>
     public string AuthorDisplayName { get; set; } = string.Empty;
 
-    /// <summary>评论内容</summary>
+    /// <summary>评论内容（允许为空：纯图片评论）</summary>
     public string Content { get; set; } = string.Empty;
+
+    /// <summary>评论图片附件 ID 列表（图文评论：图片统一挂在文字下方，null 表示纯文字评论）</summary>
+    public List<string>? AttachmentIds { get; set; }
+
+    /// <summary>附件详情（仅接口返回时按 AttachmentIds 批量解析填充，不落库）</summary>
+    [BsonIgnore]
+    public List<ReportCommentAttachmentInfo>? Attachments { get; set; }
 
     /// <summary>
     /// 划词锚定：被选中的原文片段（null 表示传统段落级评论，无正文定位）。
@@ -52,4 +60,15 @@ public class ReportComment
 
     public DateTime CreatedAt { get; set; } = DateTime.UtcNow;
     public DateTime? UpdatedAt { get; set; }
+}
+
+/// <summary>
+/// 周报评论附件返回信息（接口层由 Attachment 集合解析而来）
+/// </summary>
+public class ReportCommentAttachmentInfo
+{
+    public string AttachmentId { get; set; } = string.Empty;
+    public string Url { get; set; } = string.Empty;
+    public string FileName { get; set; } = string.Empty;
+    public string MimeType { get; set; } = string.Empty;
 }

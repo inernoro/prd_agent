@@ -1,5 +1,6 @@
 import { ChevronLeft, ChevronRight, X } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { glassPanel } from '@/lib/glassStyles';
 
 interface ImageItem {
@@ -42,9 +43,12 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
 
   const currentImage = images[currentIndex];
 
-  return (
-    <div 
-      className="fixed inset-0 z-[200] flex items-center justify-center"
+  // createPortal 挂 body：脱离祖先 stacking context（GlassCard 的 backdrop-filter/transform 会把
+  // fixed 层困在卡片内，被右侧栏等兄弟层遮挡）。z-[10000] 与 ImageLightbox 对齐：大图查看永远
+  // 盖在 modal/drawer 之上（frontend-modal.md 硬约束）
+  const overlay = (
+    <div
+      className="fixed inset-0 z-[10000] flex items-center justify-center"
       style={{ background: 'rgba(0, 0, 0, 0.9)' }}
       onClick={onClose}
     >
@@ -150,4 +154,6 @@ export function ImagePreviewDialog({ images, initialIndex, open, onClose }: Imag
       </div>
     </div>
   );
+
+  return createPortal(overlay, document.body);
 }

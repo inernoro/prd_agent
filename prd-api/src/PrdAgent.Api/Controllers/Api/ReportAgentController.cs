@@ -27,6 +27,8 @@ public class ReportAgentController : ControllerBase
 {
     private const string AppKey = "report-agent";
     private const long MaxRichTextImageBytes = 5 * 1024 * 1024;
+    /// <summary>单条评论最多携带的图片数</summary>
+    private const int MaxCommentImages = 9;
     private const int MaxDailyLogCustomTagCount = 20;
     private const int MaxDailyLogCustomTagLength = 16;
     private const string DailyLogTodoPlanWeekInvalidMessage = "Todo 标签必须提供有效的 ISO 周（planWeekYear + planWeekNumber）";
@@ -3759,7 +3761,47 @@ public class ReportAgentController : ControllerBase
             }
         }
 
+        await PopulateCommentAttachmentsAsync(comments);
+
         return Ok(ApiResponse<object>.Ok(new { items = comments }));
+    }
+
+    /// <summary>
+    /// 按 AttachmentIds 批量解析附件详情，填充到评论的 Attachments（仅接口返回，不落库）。
+    /// 附件已被清理时静默跳过该图，评论文字仍正常展示。
+    /// </summary>
+    private async Task PopulateCommentAttachmentsAsync(List<ReportComment> comments)
+    {
+        var allIds = comments
+            .Where(c => c.AttachmentIds is { Count: > 0 })
+            .SelectMany(c => c.AttachmentIds!)
+            .Distinct()
+            .ToList();
+        if (allIds.Count == 0) return;
+
+        var attachments = await _db.Attachments
+            .Find(a => allIds.Contains(a.AttachmentId))
+            .ToListAsync();
+        var map = attachments.ToDictionary(a => a.AttachmentId, a => a);
+
+        foreach (var comment in comments)
+        {
+            if (comment.AttachmentIds is not { Count: > 0 }) continue;
+            comment.Attachments = comment.AttachmentIds
+                .Where(map.ContainsKey)
+                .Select(aid =>
+                {
+                    var a = map[aid];
+                    return new ReportCommentAttachmentInfo
+                    {
+                        AttachmentId = a.AttachmentId,
+                        Url = a.Url,
+                        FileName = a.FileName,
+                        MimeType = a.MimeType
+                    };
+                })
+                .ToList();
+        }
     }
 
     /// <summary>
@@ -3783,8 +3825,28 @@ public class ReportAgentController : ControllerBase
             !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
             return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权评论该周报"));
 
-        if (string.IsNullOrWhiteSpace(req.Content))
+        // 图片附件：去重清洗 + 数量上限 + 归属校验（只能引用自己上传的图片附件）
+        var attachmentIds = (req.AttachmentIds ?? new List<string>())
+            .Where(a => !string.IsNullOrWhiteSpace(a))
+            .Select(a => a.Trim())
+            .Distinct()
+            .ToList();
+
+        if (string.IsNullOrWhiteSpace(req.Content) && attachmentIds.Count == 0)
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", "评论内容不能为空"));
+
+        if (attachmentIds.Count > MaxCommentImages)
+            return BadRequest(ApiResponse<object>.Fail("TOO_MANY_IMAGES", $"每条评论最多 {MaxCommentImages} 张图片"));
+
+        if (attachmentIds.Count > 0)
+        {
+            var ownedAttachments = await _db.Attachments
+                .Find(a => attachmentIds.Contains(a.AttachmentId))
+                .ToListAsync();
+            if (ownedAttachments.Count != attachmentIds.Count ||
+                ownedAttachments.Any(a => a.UploaderId != userId || a.Type != AttachmentType.Image))
+                return BadRequest(ApiResponse<object>.Fail("INVALID_ATTACHMENT", "存在无效的评论图片附件"));
+        }
 
         // 获取段落标题快照
         var sectionTitle = req.SectionIndex >= 0 && req.SectionIndex < report.Sections.Count
@@ -3811,7 +3873,8 @@ public class ReportAgentController : ControllerBase
             ParentCommentId = string.IsNullOrEmpty(req.ParentCommentId) ? null : req.ParentCommentId,
             AuthorUserId = userId,
             AuthorDisplayName = authorDisplayName,
-            Content = req.Content.Trim(),
+            Content = (req.Content ?? string.Empty).Trim(),
+            AttachmentIds = attachmentIds.Count > 0 ? attachmentIds : null,
             SelectedText = selectedText,
             ContextBefore = selectedText == null ? null : Truncate(req.ContextBefore, 100),
             ContextAfter = selectedText == null ? null : Truncate(req.ContextAfter, 100),
@@ -3820,7 +3883,70 @@ public class ReportAgentController : ControllerBase
         };
 
         await _db.ReportComments.InsertOneAsync(comment);
+        await PopulateCommentAttachmentsAsync(new List<ReportComment> { comment });
         return Ok(ApiResponse<object>.Ok(new { comment }));
+    }
+
+    /// <summary>
+    /// 上传评论图片（有权查看该周报即可上传，评论者通常是审阅人/团队成员，不限周报作者与状态）
+    /// </summary>
+    [HttpPost("reports/{id}/comments/images")]
+    [RequestSizeLimit(MaxRichTextImageBytes)]
+    public async Task<IActionResult> UploadCommentImage(string id, [FromForm] IFormFile file, CancellationToken ct)
+    {
+        var userId = GetUserId();
+        var report = await _db.WeeklyReports.Find(r => r.Id == id).FirstOrDefaultAsync(ct);
+        if (report == null)
+            return NotFound(ApiResponse<object>.Fail("NOT_FOUND", "周报不存在"));
+
+        if (report.UserId != userId &&
+            !await IsTeamMember(report.TeamId, userId) &&
+            !HasPermission(AdminPermissionCatalog.ReportAgentViewAll))
+            return StatusCode(403, ApiResponse<object>.Fail("PERMISSION_DENIED", "无权评论该周报"));
+
+        if (file == null || file.Length == 0)
+            return BadRequest(ApiResponse<object>.Fail("INVALID_FILE", "请选择图片文件"));
+
+        if (file.Length > MaxRichTextImageBytes)
+            return BadRequest(ApiResponse<object>.Fail("FILE_TOO_LARGE", "图片大小不能超过 5MB"));
+
+        var mimeType = file.ContentType?.Trim().ToLowerInvariant() ?? "application/octet-stream";
+        if (!AllowedRichTextImageMimeTypes.Contains(mimeType))
+            return BadRequest(ApiResponse<object>.Fail("UNSUPPORTED_TYPE", $"不支持的图片类型: {mimeType}"));
+
+        byte[] bytes;
+        await using (var ms = new MemoryStream())
+        {
+            await file.CopyToAsync(ms, ct);
+            bytes = ms.ToArray();
+        }
+
+        var stored = await _assetStorage.SaveAsync(
+            bytes,
+            mimeType,
+            ct,
+            domain: AppDomainPaths.DomainPrdAgent,
+            type: AppDomainPaths.TypeImg);
+        var attachment = new Attachment
+        {
+            UploaderId = userId,
+            FileName = file.FileName,
+            MimeType = mimeType,
+            Size = file.Length,
+            Url = stored.Url,
+            Type = AttachmentType.Image,
+            UploadedAt = DateTime.UtcNow
+        };
+        await _db.Attachments.InsertOneAsync(attachment, cancellationToken: ct);
+
+        return Ok(ApiResponse<object>.Ok(new
+        {
+            attachmentId = attachment.AttachmentId,
+            url = attachment.Url,
+            fileName = attachment.FileName,
+            mimeType = attachment.MimeType,
+            size = attachment.Size
+        }));
     }
 
     /// <summary>
@@ -5383,6 +5509,9 @@ public class CreateCommentRequest
     public int SectionIndex { get; set; }
     public string Content { get; set; } = string.Empty;
     public string? ParentCommentId { get; set; }
+
+    /// <summary>评论图片附件 ID 列表（先经 comments/images 上传，最多 9 张；有图时允许 Content 为空）</summary>
+    public List<string>? AttachmentIds { get; set; }
 
     // 划词锚定（可选）：仅顶级评论生效，回复不携带锚点
     public string? SelectedText { get; set; }
