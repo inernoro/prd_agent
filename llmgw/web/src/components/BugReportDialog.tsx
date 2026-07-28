@@ -15,7 +15,7 @@ import { createPortal } from 'react-dom';
 import { useLocation } from 'react-router-dom';
 import { Bug, ImagePlus, Paperclip, X } from 'lucide-react';
 
-import { API_BASE, getToken } from '@/lib/api';
+import { API_BASE, applyRenewedToken, getToken } from '@/lib/api';
 import { Spinner } from '@/components/ui';
 import {
   BUG_SEVERITY_OPTIONS,
@@ -231,6 +231,10 @@ export function BugReportDialog() {
         },
         body: JSON.stringify(payload),
       });
+      // 这条是绕开 apiRequest 的裸 fetch（要保留自定义错误处理），但它同样是已鉴权请求：
+      // 服务端可能在这次响应里换发新 token。不接住的话，「只提缺陷、不做别的」的用户
+      // 永远滑不动会话，会在最初那个 7 天期限上掉登录。
+      applyRenewedToken(res, token);
       const text = await res.text();
       let parsed: unknown = null;
       if (text) {

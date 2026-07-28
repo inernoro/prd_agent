@@ -313,6 +313,7 @@
 - [LLM 网关物理剥离 · 债务台账](./debt.platform.llm-gateway.isolation.md) `debt.platform.llm-gateway.isolation`
 - [LLM Gateway 协议保真 · 债务台账](./debt.platform.llm-gateway.protocol-fidelity.md) `debt.platform.llm-gateway.protocol-fidelity`
 - [LLM 网关与模型池 · 债务台账](./debt.platform.llm-gateway.md) `debt.platform.llm-gateway`
+- [登录会话（超长登录期） · 债务台账](./debt.platform.login-session.md) `debt.platform.login-session`
 - [MAP MCP 连接器 · 债务台账](./debt.platform.map-mcp-connector.md) `debt.platform.map-mcp-connector`
 - [工程债务台账：系统级跨节点互传（Peer Sync） · 债务台账](./debt.platform.peer-sync.md) `debt.platform.peer-sync`
 - [生产发布安全 · 债务台账](./debt.platform.production-release.md) `debt.platform.production-release`
