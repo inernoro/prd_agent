@@ -275,18 +275,83 @@ function ManualTab(): JSX.Element {
   );
 }
 
+/**
+ * 技能市场：在 CDS 内直接浏览可安装的技能。
+ *
+ * 为什么不能只给一个跳 MAP 的外链：客户接不进 MAP（那是内部平台），
+ * 点过去撞登录墙。CDS 是中介，得自己把「有什么技能」摆出来 —— 数据走
+ * 代理端点，内容事实源仍在 MAP，不产生第二份。
+ */
 function MarketplaceTab(): JSX.Element {
+  const [bundles, setBundles] = useState<BundleView[]>([]);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/skills/bundles')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { data?: { items?: BundleView[] } }) => {
+        if (!alive) return;
+        setBundles(data?.data?.items || []);
+        setState('ready');
+      })
+      .catch(() => { if (alive) setState('error'); });
+    return () => { alive = false; };
+  }, []);
+
+  if (state === 'loading') {
+    return <p className="text-sm text-muted-foreground">正在读取技能清单…</p>;
+  }
+  if (state === 'error') {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>技能来源当前不可达，清单暂时列不出来。「项目初始化」里的安装命令仍可使用（会走本地缓存）。</p>
+        <Button asChild variant="outline">
+          <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
+            <ExternalLink className="h-4 w-4" />
+            在浏览器打开来源站点
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-3 text-sm text-muted-foreground">
-      <p>也可以从 PrdAgent 海鲜市场获取 CDS 技能。安装完成后仍使用“自动接入”中的页面批准流程。</p>
-      <Button asChild>
-        <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-          <ExternalLink className="h-4 w-4" />
-          打开海鲜市场
-        </a>
-      </Button>
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        按角色打包的技能套装。选好之后到「项目初始化」拿安装命令，不需要注册账号。
+      </p>
+      <div className="space-y-2">
+        {bundles.map((b) => (
+          <div key={b.key} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">{b.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {b.roleLabels.join('、')} · {b.skillCount} 个技能
+              </span>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {b.skills.map((sk) => (
+                <li key={sk.key} className="text-xs leading-relaxed">
+                  <code className="text-foreground">{sk.key}</code>
+                  <span className="text-muted-foreground"> — {sk.description}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
     </div>
   );
+}
+
+interface BundleSkillView { key: string; title: string; description: string }
+interface BundleView {
+  key: string;
+  title: string;
+  roleLabels: string[];
+  skillCount: number;
+  skills: BundleSkillView[];
 }
 
 interface BootstrapPresetView {
@@ -307,6 +372,10 @@ interface BootstrapPresetView {
  */
 function ProjectInitTab(): JSX.Element {
   const [presets, setPresets] = useState<BootstrapPresetView[]>([]);
+  // 技能清单实时从代理端点拉：客户接不进 MAP，CDS 必须自己能把「这套装里有什么」
+  // 摆出来，而不是只显示一个套装名让人猜。
+  const [bundles, setBundles] = useState<BundleView[]>([]);
+  const [showSkills, setShowSkills] = useState(false);
   const [selected, setSelected] = useState<string>('');
   const [loadError, setLoadError] = useState<string>('');
   const [showPipe, setShowPipe] = useState(false);
@@ -323,6 +392,13 @@ function ProjectInitTab(): JSX.Element {
         setSelected((prev) => prev || list[0]?.key || '');
       })
       .catch(() => { if (alive) setLoadError('预设清单暂时读不到，请稍后重试。'); });
+    fetch('/api/skills/bundles')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { data?: { items?: BundleView[] } }) => {
+        if (alive) setBundles(data?.data?.items || []);
+      })
+      // 技能清单拉不到不阻塞安装：命令照给，只是列不出明细
+      .catch(() => { if (alive) setBundles([]); });
     return () => { alive = false; };
   }, []);
 
@@ -333,6 +409,9 @@ function ProjectInitTab(): JSX.Element {
     ? `curl -fsSL -o cds-init.sh "${scriptUrl}"\nless cds-init.sh   # 先看一眼再执行\nsh cds-init.sh`
     : '';
   const oneLine = active ? `curl -fsSL "${scriptUrl}" | sh` : '';
+  const activeSkills = active
+    ? bundles.filter((b) => active.marketplaceKeys.includes(b.key)).flatMap((b) => b.skills)
+    : [];
 
   const copy = async (text: string, tag: string): Promise<void> => {
     try {
@@ -433,13 +512,41 @@ function ProjectInitTab(): JSX.Element {
             </div>
           </div>
 
+          {activeSkills.length > 0 ? (
+            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]">
+              <button
+                type="button"
+                onClick={() => setShowSkills((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs"
+              >
+                <span className="text-foreground">
+                  这套会装 {activeSkills.length + (active.includeCdsSkills ? 5 : 0)} 个技能
+                </span>
+                <span className="text-muted-foreground">{showSkills ? '收起' : '看看都有什么'}</span>
+              </button>
+              {showSkills ? (
+                <div className="max-h-56 overflow-y-auto border-t border-[hsl(var(--hairline))] px-3 py-2">
+                  <ul className="space-y-1.5">
+                    {activeSkills.map((sk) => (
+                      <li key={sk.key} className="text-xs leading-relaxed">
+                        <code className="text-foreground">{sk.key}</code>
+                        <span className="text-muted-foreground"> — {sk.description}</span>
+                      </li>
+                    ))}
+                    {active.includeCdsSkills ? (
+                      <li className="text-xs text-muted-foreground">
+                        另含 CDS 的五个技能：部署、扫描、排障、发布、预览地址
+                      </li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
           <p className="text-xs text-muted-foreground">
             会装到当前项目的技能目录（自动识别 .claude / .cursor / .agents），跟着项目的版本库走，
             团队每个人拉下来都有。
-            {active.includeCdsSkills ? ' 包含 CDS 的五个技能。' : ''}
-            {active.marketplaceKeys.length > 0
-              ? ` 方法论套装：${active.marketplaceKeys.join('、')}。`
-              : ''}
           </p>
         </>
       ) : null}

@@ -70,9 +70,19 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 
 按下面清单逐个生成。**已存在的文件一律跳过并在报告里标注「已存在，跳过」，绝不覆盖用户已有内容。**
 
+**规则文件叫什么，取决于宿主**（第一步探测到的技能目录决定，不要一律写 `CLAUDE.md`）：
+
+| 探测到的技能目录 | 规则文件名 |
+|---|---|
+| `.claude/skills` | `CLAUDE.md` |
+| `.cursor/skills` | `AGENTS.md` |
+| `.agents/skills`（通用 Agent Skills / Codex） | `AGENTS.md` |
+
+两种都存在时两个文件都生成，内容相同。下表的 `CLAUDE.md` 按此规则替换成实际文件名。
+
 | 产物 | 来源模板 | 说明 |
 |---|---|---|
-| `CLAUDE.md` | `reference/claude-md-template.md` | 八条核心规则 + 项目信息 + 技能索引 |
+| `CLAUDE.md` / `AGENTS.md` | `reference/claude-md-template.md` | 八条核心规则 + 项目信息 + 技能索引 |
 | `doc/rule.doc.naming.md` | `reference/doc-naming-rule.md` | 文档命名规范，SDD 的地基 |
 | `doc/README.md` | 见下方「文档索引」 | 人类可读的文档清单 |
 | `changelogs/.gitkeep` | 空文件 | 变更记录碎片目录 |
@@ -84,7 +94,12 @@ ls package.json pyproject.toml requirements.txt go.mod Cargo.toml pom.xml *.sln 
 - `{{PROJECT_ONE_LINER}}` → 第二步问到的一句话
 - `{{DOC_DIR}}` → `doc` 或 `docs`
 - `{{BUILD_COMMANDS}}` → 从 `package.json` scripts / `pyproject.toml` 探测出的真实命令；探测不到就写「（待补：本项目的构建/测试命令）」，**不要编造**
-- `{{SKILL_INDEX}}` → 用第一步探测到的技能列表生成表格，每行「技能名 | 触发词 | 一句话用途」，用途从各技能 `SKILL.md` 的 frontmatter `description` 首句取
+- `{{SKILL_INDEX}}` → 用第一步探测到的技能列表生成表格，每行「技能名 | 触发词 | 一句话用途」。这张表是用户认识自己手上有什么的唯一入口，四条硬要求：
+
+  1. **触发词从 SKILL.md 正文头部那行 `**触发**：` 取**，不要用技能目录名去猜。猜出来一半是错的——`preview-url` 的触发词是 `/preview` 不是 `/preview-url`，`risk-matrix` 是 `/risk`，`doc-writer` 是 `/doc`，`flow-trace` 是 `/trace`。正文里找不到才退回 frontmatter `description` 里的触发词，再找不到才用 `/{目录名}`。
+  2. **用途必须是中文**。有些技能的 `description` 是英文，直接抄进去等于没写——用一句中文概括它做什么，别原样粘英文。
+  3. **frontmatter 是 YAML 折叠标量时要读完整块**。`description: >` 或 `|` 后面跟的缩进行才是正文，直接取冒号后那一段会得到一个 `>` 字符。
+  4. **按用途分两组**：「日常工作」放方法论技能（需求、方案、风险、文档、验收、交接），「平台工具」放 CDS 部署运维类。产品经理在第一组里找东西，不该被部署排障技能淹没。
 
 ## 第四步：输出自检报告（必须，这是交付物）
 
