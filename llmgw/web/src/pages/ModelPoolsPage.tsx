@@ -1,7 +1,7 @@
 // 模型池：每个池一张卡，展示策略/类型/默认标记 + 池内每个模型的健康 chip。
 // 「默认池」可就地切换：GW 权威池写 llm_gateway，MAP 来源池写旧集合。
 import { useEffect, useState } from 'react';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
@@ -21,6 +21,7 @@ type PriceCurrencyCalibrationDraft = { modelType: string; targetCurrency: string
 
 export function ModelPoolsPage() {
   const { tenant } = useAuth();
+  const navigate = useNavigate();
   const canWrite = canUseCapability(tenant?.role, 'configWrite');
   const [pools, setPools] = useState<ModelPool[] | null>(null);
   const [poolTypes, setPoolTypes] = useState<PoolTypesData | null>(null);
@@ -417,7 +418,7 @@ export function ModelPoolsPage() {
         </div>
         <div style={CARD_ACTIONS}>
           {canWrite ? <Button size="sm" variant="primary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button> : null}
-          <Link to="/learn"><Button size="sm" variant="ghost">了解路由机制</Button></Link>
+          <Button size="sm" variant="ghost" onClick={() => navigate('/learn')}>了解路由机制</Button>
         </div>
       </header>
       {toast ? (

@@ -31,3 +31,6 @@
 | fix | llmgw | 排版漂移检测脚本改为从 checkout 推导路径、由 Playwright 自行解析浏览器，不再依赖作者机器的绝对路径 |
 | test | llmgw | 更新 GatewayDataDomainGuardTests：字号/字重契约改为断言 token 定义 + 消费方，替代原来的裸 px 字面量匹配 |
 | fix | llmgw | 漂移检测的「卡片内边距种类」有重复键，窄口径测量覆盖了宽口径，导致无 lg-card 类的卡片（如模型池卡）改内边距不会被发现；删除遗留窄口径测量 |
+| fix | llmgw | 费用格式化修复科学计数法被裁尾零：极小额（如 1e-10）此前显示为 $1.000e-1，金额虚报 9 个数量级 |
+| fix | llmgw | 同标签页 token 轮换期间的迟到 401 不再作废新会话：expireSession 携带失败请求当时的 token 并与当前 token 比对 |
+| fix | llmgw | 模型池「了解路由机制」按钮不再嵌在链接里（button 套 a 是非法 HTML 且产生两个重叠的键盘焦点目标），改为按钮自身 navigate |

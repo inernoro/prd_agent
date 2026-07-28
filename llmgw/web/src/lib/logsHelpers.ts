@@ -28,6 +28,12 @@ export function fmtCompact(n?: number | null): string {
 
 const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', EUR: '€' };
 
+/** 去掉小数尾部无意义的 0；带指数的科学计数法原样返回，避免裁掉指数位。 */
+function trimZeros(text: string): string {
+  if (text.includes('e') || text.includes('E')) return text;
+  return text.includes('.') ? text.replace(/0+$/, '').replace(/\.$/, '') : text;
+}
+
 /**
  * 费用格式：符号前缀 + 有效位截断，而不是定长 8 位小数。
  * `USD 0.00509750`(14 字符) → `$0.005098`(9 字符)——列宽直接省一半，且小数位不再淹没量级。
@@ -40,10 +46,12 @@ export function fmtCost(value?: number | null, currency?: string | null): string
   let amount: string;
   if (abs === 0) amount = '0';
   else if (abs >= 1) amount = value.toFixed(2);
-  else if (abs >= 0.01) amount = value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  else if (abs >= 0.01) amount = trimZeros(value.toFixed(4));
   else {
-    // 小额：保留 4 位有效数字，去掉尾部无意义的 0（0.00509750 → 0.005098）
-    amount = value.toPrecision(4).replace(/0+$/, '').replace(/\.$/, '');
+    // 小额：保留 4 位有效数字，去掉尾部无意义的 0（0.00509750 → 0.005098）。
+    // toPrecision 在极小值（如 1e-10）下会输出科学计数法 1.000e-10，
+    // 此时绝不能裁尾零——那会把指数的 0 也吃掉，1.000e-10 变成 1.000e-1，金额差 9 个数量级。
+    amount = trimZeros(value.toPrecision(4));
   }
   return `${symbol}${amount}`;
 }

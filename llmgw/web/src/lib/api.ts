@@ -146,9 +146,16 @@ export function onSessionExpired(listener: SessionExpiredListener): () => void {
   };
 }
 
-/** 清会话并广播失效事件（幂等：会话已空时不重复广播）。 */
-export function expireSession(reason: SessionExpiredReason = 'expired') {
+/**
+ * 清会话并广播失效事件（幂等：会话已空时不重复广播）。
+ *
+ * failedToken：本次失败请求当时用的 token。若它与当前 token 不一致，说明会话已经轮换过
+ * （典型场景：改密换发新 token，而用旧 token 发出的并发请求此刻才回来报 401），
+ * 这种迟到的 401 不能拿来作废已经生效的新会话。
+ */
+export function expireSession(reason: SessionExpiredReason = 'expired', failedToken?: string | null) {
   const token = getToken();
+  if (failedToken && token && failedToken !== token) return;
   clearSession();
   if (!token || sessionExpiredNotified) return;
   sessionExpiredNotified = true;
@@ -315,7 +322,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
 
   // token 已到期就不再发这一枪：直接失效并让守卫接管，省掉一次注定 401 的往返。
   if (token && !anonymous && isSessionExpired()) {
-    expireSession('expired');
+    expireSession('expired', token);
     return { success: false, data: null, error: { code: 'UNAUTHORIZED', message: SESSION_EXPIRED_MESSAGE } };
   }
 
@@ -352,7 +359,7 @@ async function apiRequest<T>(path: string, options: RequestOptions = {}): Promis
     // 匿名接口（登录 / 一键登录）的 401 只是这次凭据不对，保留服务端原文，别误伤已有会话。
     if (token && !anonymous) {
       const code = envelope?.error?.code || 'UNAUTHORIZED';
-      expireSession(REVOKED_ERROR_CODES.has(code) ? 'revoked' : 'expired');
+      expireSession(REVOKED_ERROR_CODES.has(code) ? 'revoked' : 'expired', token);
       return {
         success: false,
         data: null,
