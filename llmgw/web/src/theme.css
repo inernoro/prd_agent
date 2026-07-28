@@ -3744,6 +3744,69 @@ a:focus-visible {
   to { opacity: 1; transform: translateY(0); }
 }
 
+/* 请求趋势：坐在表头正上方的「余光信息」——无边框、无标题、无坐标轴，只留一个折叠箭头。
+   此前它是「带边框卡片 + 标题」外加一张独立指标卡，两个盒子吃掉首屏 224px 高度。 */
+.lg-log-trend {
+  position: relative;
+  flex-shrink: 0;
+  padding: 18px 16px 0;
+  border-bottom: 1px solid var(--border-subtle);
+}
+
+.lg-log-trend.is-collapsed {
+  padding: 0;
+  border-bottom: 0;
+}
+
+.lg-log-trend-toggle {
+  position: absolute;
+  top: 6px;
+  right: 10px;
+  display: grid;
+  width: 26px;
+  height: 26px;
+  place-items: center;
+  border: 0;
+  border-radius: var(--radius-sm);
+  background: transparent;
+  color: var(--text-muted);
+}
+
+.lg-log-trend-toggle:hover {
+  background: var(--bg-hover);
+  color: var(--text-primary);
+}
+
+.lg-log-trend.is-collapsed .lg-log-trend-toggle {
+  top: -34px;
+}
+
+/* 汇总指标并进标题行：一排小字，不再占一整张卡片。 */
+.lg-log-summary-strip {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 16px;
+}
+
+.lg-log-summary-strip strong {
+  color: var(--text-primary);
+  font-weight: var(--fw-strong);
+}
+
+.lg-log-summary-warn {
+  color: var(--warn);
+}
+
+/* 只有异常行才需要视觉噪音：整行左侧一道色条，成功行保持干净（替代原来每行都有的状态圆点）。 */
+.lg-log-table-row.is-error > div:first-child {
+  box-shadow: inset 3px 0 0 var(--err);
+}
+
+.lg-log-table-row.is-running > div:first-child {
+  box-shadow: inset 3px 0 0 var(--info);
+}
+
 .lg-log-insights {
   height: 112px;
   min-height: 112px;

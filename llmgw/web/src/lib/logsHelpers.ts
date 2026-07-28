@@ -26,11 +26,26 @@ export function fmtCompact(n?: number | null): string {
   return `${(n / 1_000_000).toFixed(1)}m`;
 }
 
+const CURRENCY_SYMBOL: Record<string, string> = { USD: '$', CNY: '¥', EUR: '€' };
+
+/**
+ * 费用格式：符号前缀 + 有效位截断，而不是定长 8 位小数。
+ * `USD 0.00509750`(14 字符) → `$0.005098`(9 字符)——列宽直接省一半，且小数位不再淹没量级。
+ */
 export function fmtCost(value?: number | null, currency?: string | null): string {
   if (value == null || !isFinite(value)) return DASH;
-  const prefix = currency?.trim().toUpperCase() || '';
-  const amount = Math.abs(value) >= 1 ? value.toFixed(4) : value.toFixed(8);
-  return prefix ? `${prefix} ${amount}` : amount;
+  const code = currency?.trim().toUpperCase() || '';
+  const symbol = CURRENCY_SYMBOL[code] ?? (code ? `${code} ` : '');
+  const abs = Math.abs(value);
+  let amount: string;
+  if (abs === 0) amount = '0';
+  else if (abs >= 1) amount = value.toFixed(2);
+  else if (abs >= 0.01) amount = value.toFixed(4).replace(/0+$/, '').replace(/\.$/, '');
+  else {
+    // 小额：保留 4 位有效数字，去掉尾部无意义的 0（0.00509750 → 0.005098）
+    amount = value.toPrecision(4).replace(/0+$/, '').replace(/\.$/, '');
+  }
+  return `${symbol}${amount}`;
 }
 
 export function fmtShortTime(iso?: string | null): string {
@@ -102,19 +117,23 @@ export interface ColumnDef {
 }
 
 export const GENERATIONS_COLUMNS: ColumnDef[] = [
-  { key: 'date', label: '时间', width: '140px', required: true },
-  { key: 'generation', label: '请求 ID', width: '180px', defaultVisible: false },
-  { key: 'model', label: '模型', width: '180px' },
-  { key: 'provider', label: 'Provider', width: '170px' },
-  { key: 'app', label: 'App', width: '320px', tip: '点击查看 appCaller 摘要与治理入口' },
-  { key: 'input', label: '输入', width: '104px', align: 'right' },
-  { key: 'output', label: '输出', width: '104px', align: 'right' },
-  { key: 'cost', label: '费用', width: '116px', align: 'right', tip: '来自价格快照与本次 token 或按次费用的估算成本；缺价格显示 —' },
-  { key: 'usage', label: '用途', width: '100px' },
-  { key: 'speed', label: '速度', width: '104px', align: 'right', tip: '文本为输出 Token / 秒；图片为平均每张生成耗时' },
-  { key: 'finish', label: '结束原因', width: '122px', tip: '上游返回的 finish_reason；旧记录未采集时显示 —' },
-  { key: 'user', label: '客户端用户', width: '170px' },
-  { key: 'status', label: '状态', width: '60px', align: 'center', required: true },
+  // 列宽内容驱动：文本列用 minmax(下限, N fr) 吃掉剩余空间，数值列贴着内容给。
+  // 全部左对齐（对齐 OpenRouter 的做法）——右对齐 + 过宽列会在每列中间撑出一条空白山谷。
+  { key: 'date', label: '时间', width: '104px', required: true },
+  { key: 'generation', label: '请求 ID', width: '150px', defaultVisible: false },
+  // fr 权重刻意不均：宽屏多出来的空间主要给 App（唯一的长文本列），
+  // 模型/Provider 只留一点弹性——否则它们会被撑到 300px 却只装 156px 内容。
+  { key: 'model', label: '模型', width: 'minmax(158px, 0.35fr)' },
+  { key: 'provider', label: 'Provider', width: 'minmax(140px, 0.25fr)' },
+  { key: 'app', label: 'App', width: 'minmax(190px, 2.4fr)', tip: '点击查看 appCaller 摘要与治理入口' },
+  { key: 'input', label: '输入', width: '72px' },
+  { key: 'output', label: '输出', width: '72px' },
+  { key: 'cost', label: '费用', width: '88px' },
+  { key: 'usage', label: '用途', width: '84px', defaultVisible: false },
+  { key: 'speed', label: '速度', width: '88px' },
+  { key: 'finish', label: '结束原因', width: '88px', defaultVisible: false },
+  { key: 'user', label: '客户端用户', width: 'minmax(120px, 1fr)', defaultVisible: false },
+  { key: 'status', label: '状态', width: '52px', align: 'center', required: true },
 ];
 
 export const UPSTREAM_COLUMNS: ColumnDef[] = [
