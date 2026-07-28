@@ -50,16 +50,42 @@ for (const full of walk(SRC)) {
 
 // 规则二：角色档位。表格、表单、控件这些「要读的内容」不许降到 12/11px
 // ——档位对但角色错，页面照样会比请求记录页糊一档。统一从 lib/typography.ts 取。
-const ROLE_DECLS = /const\s+(th|td|labelStyle|inputStyle|selectStyle|formInputStyle|fieldStyle)\b/;
+const ROLE_DECLS = /(?:const|let)\s+(th|td|labelStyle|inputStyle|selectStyle|formInputStyle|fieldStyle)\b[^=]*=/;
 const TOO_SMALL = /--fs-(caption|micro)/;
+
+/**
+ * 从声明行起按花括号配平取出整个声明块。
+ * 只比对声明行本身会漏掉最常见的写法——
+ *   const th = {
+ *     fontSize: 'var(--fs-caption)',   // 在后面几行，单行比对永远匹配不上
+ *   };
+ * 未出现 `{` 的单行声明（如 const td = TABLE_CELL_MUTED;）就只返回那一行。
+ */
+function declarationBlock(lines, start) {
+  const first = lines[start];
+  const open = first.indexOf('{');
+  if (open === -1) return first;
+  let depth = 0;
+  const chunk = [];
+  for (let i = start; i < lines.length; i += 1) {
+    chunk.push(lines[i]);
+    for (const ch of i === start ? first.slice(open) : lines[i]) {
+      if (ch === '{') depth += 1;
+      else if (ch === '}') depth -= 1;
+    }
+    if (depth <= 0) break;
+  }
+  return chunk.join('\n');
+}
 
 for (const full of walk(SRC)) {
   const rel = path.relative(SRC, full);
   if (!/\.tsx?$/.test(rel) || rel === 'lib/typography.ts') continue;
-  fs.readFileSync(full, 'utf8').split('\n').forEach((line, i) => {
-    if (ROLE_DECLS.test(line) && TOO_SMALL.test(line)) {
-      violations.push(`${rel}:${i + 1}  表格/表单角色用了 caption/micro 档  ← 请 spread lib/typography.ts 的 TABLE_CELL / FIELD_LABEL 等角色常量`);
-    }
+  const lines = fs.readFileSync(full, 'utf8').split('\n');
+  lines.forEach((line, i) => {
+    if (!ROLE_DECLS.test(line)) return;
+    if (!TOO_SMALL.test(declarationBlock(lines, i))) return;
+    violations.push(`${rel}:${i + 1}  表格/表单角色用了 caption/micro 档  ← 请 spread lib/typography.ts 的 TABLE_CELL / FIELD_LABEL 等角色常量`);
   });
 }
 

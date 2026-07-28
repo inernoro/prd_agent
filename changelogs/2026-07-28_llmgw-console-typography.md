@@ -43,3 +43,5 @@
 | fix | llmgw | 漂移检测补齐 app-callers / exchanges / logical-models 三条路由的有数据 fixture；顺带修正 /exchanges/meta 的错形状（旧桩写 protocols/targetKinds/models，因页面恒空从未暴露） |
 | fix | llmgw | Exchange 卡片规格归一：卡片 13→14、路由块 9→10、模型行 8→10、列表间距 10→12、路由块间距 7→6、批量行间距 10→8 |
 | fix | llmgw | 逻辑模型页表头改用 TABLE_HEAD_CELL 角色常量（此前就地写 7px/9px + fs-secondary，比基准页表头糊一档）；卡片/间距归一到 surface.ts |
+| fix | llmgw | 字体守卫的角色规则改为按花括号配平取整个声明块比对：此前 const th = { 换行后再写 fontSize: 'var(--fs-caption)' 永远匹配不上，规则形同虚设 |
+| docs | llmgw | 风格调性文档头部补齐 doc 规范：H1 加「· 规则」后缀、改用 blockquote 版本/日期/状态、状态改为枚举内的「已落地」 |

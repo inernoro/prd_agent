@@ -1,12 +1,12 @@
-# LLM Gateway 控制台风格调性
+# LLM Gateway 控制台风格调性 · 规则
+
+> **版本**：v1.1 | **日期**：2026-07-28 | **状态**：已落地
 
 | 项 | 值 |
 |---|---|
-| 类型 | rule（为什么不能那样做） |
-| 状态 | active |
 | 适用 | `llmgw/web/src/**` 全部页面 |
 | 基准页 | 请求记录 `/logs` —— 一切对齐它，它变了其余页面跟着变 |
-| 检测工具 | `llmgw/web/scripts/check-typography.mjs`、`e2e/llmgw-layout-drift.mjs` |
+| 检测工具 | `llmgw/web/scripts/check-typography.mjs`（接进 `pnpm build`）、`e2e/llmgw-layout-drift.mjs`（有漂移即非零退出） |
 
 ---
 
@@ -97,8 +97,8 @@
 
 | 层 | 工具 | 管什么 | 何时跑 |
 |---|---|---|---|
-| 档位 | `pnpm check:typography` | 只能用七档字号 | CI |
-| 角色 | 同上（第二条规则） | `th/td/labelStyle/inputStyle` 不许降到 caption/micro 档 | CI |
+| 档位 | `pnpm check:typography` | 只能用七档字号（数值 `fontSize: 18` 与字符串 `fontSize: '18px'` 都抓） | CI（已接进 `pnpm build`） |
+| 角色 | 同上（第二条规则） | `th/td/labelStyle/inputStyle` 不许降到 caption/micro 档；按花括号配平取整个声明块比对，不是只看声明行 | CI（同上） |
 | 结构 | `node e2e/llmgw-layout-drift.mjs` | 页头是否裸露、内容是否撑满、表头与单元格字号、单行行盒、控件高度、五类规格种类数 | 改版后手动（有漂移即非零退出，可直接接 CI） |
 
 ---
