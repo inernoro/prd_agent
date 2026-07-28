@@ -752,3 +752,26 @@ describe('第四十四轮：账目与降级的最后两个缺口', () => {
     expect(leftovers).toEqual([]);
   });
 });
+
+describe('排空闸必须在「重启没生效」时提前放开（2026-07-28 本 PR 实际中招）', () => {
+  it('闸的 fail-open 窗口存在，但不该是唯一的解闸手段', async () => {
+    const drain = await import('../../src/services/deploy-drain.js');
+    const t0 = 1_000_000;
+    drain.beginSelfUpdateDrain(t0, 60_000);
+    expect(drain.selfUpdateDrainBlockReason(t0 + 1_000)).toBeTruthy();
+    // 显式开闸必须真的有效——它此前是**从未被调用过的死代码**，
+    // 于是一次没重启成功的自更新会把部署晾满整个 fail-open 窗口（默认 6 分钟），
+    // 期间每次 webhook 部署都拿 503 + 红灯 CI。
+    drain.endSelfUpdateDrain();
+    expect(drain.selfUpdateDrainBlockReason(t0 + 1_000)).toBeNull();
+  });
+
+  it('重启路径里接上了显式开闸（源码守卫）', () => {
+    const source = fs.readFileSync(path.join(REPO, 'src/routes/branches.ts'), 'utf-8');
+    // 事故值：只 import 了 begin，从不 end
+    expect(source).toContain('endSelfUpdateDrain');
+    // 两处：spawn 失败且不退出时立刻开闸；重启没生效时由看门狗定时器开闸
+    expect((source.match(/endSelfUpdateDrain\(\)/g) || []).length).toBeGreaterThanOrEqual(2);
+    expect(source).toContain('RESTART_GATE_RELEASE_MS');
+  });
+});

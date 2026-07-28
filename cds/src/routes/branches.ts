@@ -15,7 +15,7 @@ import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeplo
 import { diskGuard } from '../services/disk-guard.js';
 import { settleMemberAfterStop } from '../services/replica-stop.js';
 import {
-  drainInFlightDeploys, beginSelfUpdateDrain, collectDrainableRuns,
+  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
   type DrainableRun, type DrainableReleaseRunSource,
 } from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
@@ -2250,6 +2250,13 @@ export function createBranchRouter(deps: RouterDeps): Router {
    * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
    * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
    */
+  /**
+   * 重启后多久仍活着就判定「重启没生效」，提前放开排空闸。
+   * 取值要大于 `scheduleDetachedCdsRestart` 里 1 秒的 process.exit 延迟，
+   * 又要远小于闸自身的 fail-open 窗口（timeoutMs + 60s，默认 6 分钟）。
+   */
+  const RESTART_GATE_RELEASE_MS = 15_000;
+
   async function drainDeploysBeforeSelfUpdateRestart(context: {
     trigger: string;
     branch?: string;
@@ -2376,6 +2383,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           `CDS restart requested by ${input.source}`,
           input.source,
         );
+        // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
+        // 只有「重启没真的发生」（spawn 静默失败、上层提前返回）时它才会跑到，
+        // 把排空闸提前放掉。否则闸要等满 timeoutMs+60s（默认 6 分钟）才 fail-open，
+        // 这期间每一次 webhook 部署都拿 503 + 红灯 CI —— 2026-07-28 本 PR 实际中招
+        // 一次：一次 fast-forward 自更新没重启进程，随后的部署被闸了。
+        setTimeout(() => {
+          endSelfUpdateDrain();
+          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+        }, RESTART_GATE_RELEASE_MS).unref?.();
         setTimeout(() => process.exit(0), 1000);
       } catch (spawnErr) {
         try {
@@ -2389,6 +2405,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             input.source,
           );
           setTimeout(() => process.exit(1), 1000);
+        } else {
+          // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
+          endSelfUpdateDrain();
         }
       }
     };
