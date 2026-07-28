@@ -6,8 +6,13 @@
 下载缺失技能的通用命令（`<BASE>` 换成分发平台域名，`<KEY>` 换成技能名）：
 
 ```bash
+# 装项目级：技能跟着对方的 git 走，全队 clone 下来都有。
+# 装到用户主目录的话，人一走团队什么都不剩。
+SKILLS_DIR=$([ -d .claude ] && echo .claude/skills \
+  || { [ -d .cursor ] && echo .cursor/skills || echo .agents/skills; })
+mkdir -p "$SKILLS_DIR"
 curl -sSLo /tmp/<KEY>.zip "<BASE>/api/official-skills/<KEY>/download" \
-  && unzip -o /tmp/<KEY>.zip -d ~/.claude/skills/
+  && unzip -o /tmp/<KEY>.zip -d "$SKILLS_DIR"
 ```
 
 ---

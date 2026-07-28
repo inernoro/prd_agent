@@ -8,3 +8,5 @@
 | fix | cds | 本地 CDS 技能包必须五个技能齐全才发布，缺任一个回源上游，杜绝半成品被当成装好了 |
 | fix | 技能 | sdd-init 探测扩到 .cursor/.agents 两个宿主目录并读取引导种子，Codex/Cursor 项目不再被误判成没装技能 |
 | fix | 技能 | sdd-init 产出 doc/guide.list.directory.md 取代 doc/README.md，不再违反自己刚装进去的文档命名规范 |
+| fix | 技能 | sdd-init 的角色手册安装命令与开篇描述改为项目级三宿主探测，清掉最后两处用户主目录残留 |
+| test | cds | 安装约定守卫把 sdd-init 的 SKILL.md 与 role-playbooks.md 纳入探测顺序断言 |

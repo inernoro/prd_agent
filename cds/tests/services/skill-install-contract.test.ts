@@ -30,6 +30,10 @@ describe('技能安装约定（跨 CDS / MAP / 技能文件）', () => {
     ['findmapskills SKILL.md', read('.claude/skills/findmapskills/SKILL.md')],
     ['findmapskills README.md', read('.claude/skills/findmapskills/README.md')],
     ['MAP SkillInstallContract', read('prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/SkillInstallContract.cs')],
+    // sdd-init 是引导脚本的下一棒：它探测技能目录来决定角色、技能索引和规则文件名
+    // （CLAUDE.md vs AGENTS.md）。只看 .claude 会把 Codex/Cursor 项目判成「没装技能」。
+    ['sdd-init SKILL.md', read('.claude/skills/sdd-init/SKILL.md')],
+    ['sdd-init role-playbooks.md', read('.claude/skills/sdd-init/reference/role-playbooks.md')],
   ];
 
   it.each(sources)('%s 使用同一套宿主探测顺序', (_label, text) => {
