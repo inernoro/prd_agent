@@ -9,6 +9,7 @@ import {
   publishedEntrypointsEnv,
   publishedServiceLabels,
   resolveBranchEntrypointsEnv,
+  resolveServiceLandingPath,
   subdomainWithLegacyAliases,
 } from '../../src/services/preview-entrypoints.js';
 import { resolveProfileRuntimeEnvWithProvenance } from '../../src/services/env-provenance.js';
@@ -270,5 +271,33 @@ describe('同一分支内规范名与历史别名撞车（Codex P1）', () => {
   it('只声明 llmgw 时别名照常发布（改名兼容不受影响）', () => {
     const r = buildPublishedEntrypoints({ previewSlug: SLUG, previewHost: HOST, subdomains: ['llmgw'] });
     expect(Object.keys(r.serviceUrls).sort()).toEqual(['llmgw', 'llmgw-web']);
+  });
+});
+
+describe('resolveServiceLandingPath — 落点看 profile 的声明，不看子域名字（Codex P2）', () => {
+  it('声明了就绪路径就照抄：叫 llmgw 的 API 子域不会被改判成落根', () => {
+    // 这正是回归本体：2026-07-29 把 llmgw 改判成控制台后，存量项目里仍把 llmgw
+    // 当后端 API 用的 profile 被一起改成落 `/`，而那些服务在根路径 404。
+    expect(resolveServiceLandingPath('llmgw', '/gw/healthz')).toBe('/gw/healthz');
+    expect(resolveServiceLandingPath('llmgw-serve', '/gw/v1/healthz')).toBe('/gw/v1/healthz');
+    expect(resolveServiceLandingPath('anything', '/health/ready')).toBe('/health/ready');
+  });
+
+  it('本仓库的控制台 profile 声明 /，落点即根（改名前后都成立）', () => {
+    expect(resolveServiceLandingPath('llmgw', '/')).toBe('/');
+    expect(resolveServiceLandingPath('llmgw-web', '/')).toBe('/');
+  });
+
+  it('没声明就绪路径时才走名字表兜底', () => {
+    expect(resolveServiceLandingPath('llmgw')).toBe('/');
+    expect(resolveServiceLandingPath('llmgw-web')).toBe('/');
+    expect(resolveServiceLandingPath('LLMGW-Serve')).toBe('/gw/v1/healthz');
+    expect(resolveServiceLandingPath('some-app')).toBe('/');
+  });
+
+  it('脏就绪路径（空串 / 不以 / 开头）不当落点用', () => {
+    expect(resolveServiceLandingPath('llmgw-serve', '   ')).toBe('/gw/v1/healthz');
+    expect(resolveServiceLandingPath('llmgw-serve', 'gw/v1/healthz')).toBe('/gw/v1/healthz');
+    expect(resolveServiceLandingPath('some-app', 'health')).toBe('/');
   });
 });

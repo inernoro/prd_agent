@@ -183,6 +183,33 @@ export function buildPublishedEntrypoints(opts: {
 }
 
 /**
+ * 命名子域入口在面板上该落到哪个路径。
+ *
+ * **判据是 profile 自己声明的就绪路径，不是子域的名字。** 就绪路径是该服务对
+ * 「我哪个路径是活的」的第一手声明，也是唯一不依赖命名约定的信号：API-only 的服务
+ * 声明 `/gw/healthz`，SPA 声明 `/`，落点直接照抄即可。
+ *
+ * 此前反过来——先查一张写死的名字表、就绪路径只做兜底。于是 2026-07-29 把 `llmgw`
+ * 从「后端 API」改名成「控制台」时，表里那一行被整个改判成落 `/`，所有仍把 `llmgw`
+ * 当 API 子域用的存量项目跟着遭殃：它们的服务在根路径 404，而面板链接指的正是根路径，
+ * 且此前显式写出的 `/gw/healthz` 被名字表压掉、连兜底都轮不上（Codex P2）。
+ * 这就是「改了机制没回头看依赖它的东西」——名字表是全局共享的，改一行等于替所有项目改。
+ *
+ * 名字表因此降级为兜底，只服务「声明了子域却没声明就绪路径」的 profile。
+ */
+export function resolveServiceLandingPath(subdomain: string, readinessPath?: string): string {
+  const declared = (readinessPath ?? '').trim();
+  if (declared.startsWith('/')) return declared;
+  const sub = (subdomain || '').trim().toLowerCase();
+  // 控制台是 Vite SPA，nginx 对任何非 /gw/* 路径回落 index.html，落根即进登录页。
+  // `llmgw` 是 2026-07-29 起的规范名，`llmgw-web` 是发布器继续服务的历史别名。
+  if (sub === 'llmgw' || sub === 'llmgw-web') return '/';
+  // serving 引擎 API-only，挂在 /gw/v1/* 下，裸根 404。
+  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
+  return '/';
+}
+
+/**
  * 平台独占的 env key。项目 / profile 在这些 key 上写什么都不算数 ——
  * 注入前会先被清掉（见 env-provenance 第 4.6 层）。表为空时更要清:
  * 那正是「CDS 说这里没有这条路由」，项目却留着一个地址才最危险。

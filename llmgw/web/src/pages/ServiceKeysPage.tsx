@@ -160,6 +160,10 @@ export function ServiceKeysPage() {
       setError(res.error?.message || '撤销接入密钥失败');
       return;
     }
+    // 撤销和签发是同一份事实的两个方向：撤掉最后一把可用密钥后，新人清单的
+    // 「签一把密钥」必须重新亮起、老手轨的前缀必须消失。此前只在创建路径失效，
+    // 于是撤销后 60 秒内回到 Quickstart 仍显示已撤销的前缀（Codex P2）。
+    invalidateOnboardingCache(tenant?.id);
     await load();
   };
 

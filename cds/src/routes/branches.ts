@@ -29,6 +29,7 @@ import {
   namedServiceLabel,
   publishedServiceLabels,
   resolveBranchEntrypointsEnv,
+  resolveServiceLandingPath,
 } from '../services/preview-entrypoints.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
@@ -311,21 +312,6 @@ function isSyntheticCdsManagedRuntimeBranch(
  * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
  * would 404 despite a valid host (Codex P2).
  */
-function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
-  const sub = subdomain.toLowerCase();
-  // Gateway console: a standalone Vite SPA whose nginx falls back to index.html for
-  // any non-/gw/* path, so land on the console root — clicking it opens the real
-  // login → LLM logs UI, not a health JSON. This is the entry we want most prominent
-  // in the panel. `llmgw` is the canonical subdomain since 2026-07-29; `llmgw-web` is
-  // the legacy alias the publisher keeps serving so existing links don't break.
-  if (sub === 'llmgw' || sub === 'llmgw-web') return '/';
-  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
-  // bare root, so land on its health endpoint.
-  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
-  const trimmed = (readinessPath ?? '').trim();
-  if (trimmed && trimmed.startsWith('/')) return trimmed;
-  return '/';
-}
 
 function githubLoginFromCommitEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase();
@@ -15211,7 +15197,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       //      and 404 at the bare root, so land on their health endpoint explicitly.
       //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
       //      the container root, so honor the profile's readiness path when set, else land at '/'.
-      const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
+      const landingPath = resolveServiceLandingPath(sub, profile?.readinessProbe?.path);
       gatewayUrls.push({
         subdomain: sub,
         name: profileId,
