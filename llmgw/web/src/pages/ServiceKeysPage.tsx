@@ -17,6 +17,7 @@ import { Check, Copy, KeyRound, Plus, RefreshCw, X } from 'lucide-react';
 import { Link } from 'react-router-dom';
 import { confirmServiceKeyClientCutover, createServiceKey, getGatewayAppCallers, getLegacyKeyCutover, getServiceKeys, revokeServiceKey, updateLegacyKeyCutover } from '@/lib/api';
 import { useAuth } from '@/lib/auth';
+import { invalidateOnboardingCache } from '@/lib/onboarding';
 import type { CreatedServiceKey, LegacyKeyCutoverData, ServiceKeyItem } from '@/lib/types';
 import { Button, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
@@ -134,6 +135,9 @@ export function ServiceKeysPage() {
       return;
     }
     setCreated(res.data);
+    // 新人清单的「签一把密钥」与老手轨的密钥前缀都读缓存，签发成功必须主动失效，
+    // 否则已挂载的组件会一直显示旧事实（60 秒 TTL 只在下次加载才被查）。
+    invalidateOnboardingCache(tenant?.id);
     setShowCreate(false);
     setName('');
     setClientCode('');

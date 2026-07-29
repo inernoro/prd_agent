@@ -27,6 +27,7 @@ import {
   branchEntrypointDepsFromState,
   isPublishableNamedLabel,
   namedServiceLabel,
+  publishedServiceLabels,
   resolveBranchEntrypointsEnv,
 } from '../services/preview-entrypoints.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
@@ -15222,6 +15223,31 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return gatewayUrls;
   }
 
+  /**
+   * 该分支**实际被发布出去的全部命名 host**（含历史别名），用于跨分支撞名判定。
+   *
+   * 与 computeBranchGatewayUrls 的区别：那个是给面板看的「入口清单」，刻意只列规范名，
+   * 免得同一个服务出现两行。撞名判定要的是「谁已经占了哪些 host」，别名同样占着，
+   * 漏算就会放行一个与别的分支重复的别名（Codex P1）。两者共用 publishedServiceLabels
+   * 作为发布口径，不各自拼。
+   */
+  function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
+    const project = stateService.getProject(entry.projectId);
+    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    if (!slug) return [];
+    const hosts: string[] = [];
+    const seen = new Set<string>();
+    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+      const sub = resolveEffectiveProfile(bp, entry).subdomain;
+      if (!sub || seen.has(sub)) continue;
+      seen.add(sub);
+      for (const label of publishedServiceLabels(slug, sub)) {
+        hosts.push(`${label}.${root}`.toLowerCase());
+      }
+    }
+    return hosts;
+  }
+
   const findPreviewHostCollisions = (
     candidateDomains: string[],
   ): Array<{ domain: string; conflictWith: string; reason: 'preview' | 'alias' | 'service-subdomain' }> => {
@@ -15250,8 +15276,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
 
-        for (const gateway of computeBranchGatewayUrls(other, root)) {
-          const host = new URL(gateway.url).host.toLowerCase();
+        // 必须用「实际发布的全部 host」而不是面板入口清单：历史别名同样被发布、同样占位，
+        // 只比规范名会放行一个与别的分支重复的别名（Codex P1）。
+        for (const host of computeBranchPublishedServiceHosts(other, root)) {
           if (candidates.has(host)) {
             conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
           }

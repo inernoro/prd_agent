@@ -16,10 +16,11 @@ import { GAP, INSET_BLOCK } from '@/lib/surface';
 import { BODY_TEXT, HINT_TEXT } from '@/lib/typography';
 
 export function OnboardingChecklist() {
-  const { loading, complete, steps } = useOnboardingState();
+  const { loading, complete, unavailable, steps } = useOnboardingState();
 
   // 加载中也不占位：清单是提示不是内容，闪一下骨架比不显示更吵。
-  if (loading || complete) return null;
+  // unavailable = 这轮没读到事实。宁可不显示，也不把读取失败画成「四步全没做」。
+  if (loading || complete || unavailable) return null;
 
   return (
     <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.tight }}>

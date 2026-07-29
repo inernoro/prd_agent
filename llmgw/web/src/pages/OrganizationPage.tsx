@@ -25,6 +25,7 @@ import {
 } from '@/lib/api';
 import type { CreateMemberRequest, OrganizationData, UpdateMemberRequest } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
+import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { Button, Card, Chip, InlineAlert, SectionLoader } from '@/components/ui';
 import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { canUseCapability } from '@/lib/access';
@@ -101,6 +102,7 @@ export function OrganizationPage() {
       return;
     }
     setTeamName('');
+    invalidateOnboardingCache(sessionTenant?.id);
     setNotice(`团队“${response.data.name}”已创建`);
     await load();
   };
@@ -318,6 +320,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
       });
       setBusy(false);
       if (!response.success) { onError(response.error.message); return; }
+      invalidateOnboardingCache();
       await onDone(response.data.idempotentReplay
         ? '该成员已存在，现有成员关系保持不变'
         : `新成员账号 ${response.data.username} 已创建；首次登录时必须设置自己的密码`);

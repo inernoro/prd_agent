@@ -32,7 +32,7 @@ import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
-import { isPublishableNamedLabel, namedServiceLabel, subdomainWithLegacyAliases } from './preview-entrypoints.js';
+import { namedServiceLabel, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -442,21 +442,23 @@ export class ForwarderRoutePublisher {
         if (!sub) continue;
         if (writtenSubdomains.has(sub)) continue;
         writtenSubdomains.add(sub);
-        // 规范名 + 历史别名一起发（preview-entrypoints.LEGACY_SUBDOMAIN_ALIASES）：
+        // 规范名 + 历史别名一起发（preview-entrypoints.publishedServiceLabels）：
         // 子域改名（llmgw-web → llmgw）时别的分支还挂在旧地址上，只发新名会让那些
         // 链接一起失效。两个 host 指同一个上游，旧链接照常可达。
-        for (const name of subdomainWithLegacyAliases(sub)) {
-          // DNS label 上限守卫(Codex P2):命名 host 第一标签 `<previewSlug>-<sub>` 必须 ≤63 octet
-          // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
-          // 对长分支名**静默失效**。namedServiceLabel 已按段截断 + 摘要压到上限内;仍超限
-          // (subdomain 自身过长)时跳过并 warn —— 服务仍可经主域名的路径访问,不受影响。
-          const namedLabel = namedServiceLabel(previewSlug, name);
-          if (!isPublishableNamedLabel(namedLabel)) {
-            this.opts.logger?.warn?.(
-              `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
-            );
-            continue;
-          }
+        //
+        // DNS label 上限守卫(Codex P2):命名 host 第一标签必须 ≤63 octet(RFC 1035),否则
+        // 无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL 对长分支名**静默失效**。
+        // namedServiceLabel 已按段截断 + 摘要压到上限内;仍超限(subdomain 自身过长)的由
+        // publishedServiceLabels 过滤掉,这里对被滤掉的名字 warn —— 服务仍可经主域名的路径访问。
+        const publishable = publishedServiceLabels(previewSlug, sub);
+        for (const dropped of subdomainWithLegacyAliases(sub)) {
+          const label = namedServiceLabel(previewSlug, dropped);
+          if (publishable.includes(label)) continue;
+          this.opts.logger?.warn?.(
+            `[forwarder-publisher] 跳过命名子域路由 ${label}.*（第一 DNS 标签 ${label.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+          );
+        }
+        for (const namedLabel of publishable) {
           for (const root of this.opts.rootDomains) {
             // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
             //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的

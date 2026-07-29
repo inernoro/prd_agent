@@ -115,6 +115,23 @@ export function subdomainWithLegacyAliases(subdomain: string): string[] {
 }
 
 /**
+ * 一个 profile 的 subdomain **实际会被发布出去的全部第一 DNS 标签**（含历史别名，已过发布判据）。
+ *
+ * 这是「发布了哪些 host」的唯一枚举口径。凡是要跟发布结果对齐的地方都必须走它：
+ * 发布器本身、跨分支撞名检查、两处 SSRF 白名单。
+ *
+ * 为什么单列出来：2026-07-29 加历史别名时只接了发布器一处，另外三处仍只算规范名，
+ * 于是 ① 别的分支可以把别名 host 当自己的子域别名占走而撞名检查发现不了；
+ * ② 探测/压测打自己发布的别名 host 会被自家 SSRF 闸 403 挡掉。
+ * 这正是 `.claude/rules/predicate-and-wiring-discipline.md` 形状 3（判据分裂）。
+ */
+export function publishedServiceLabels(previewSlug: string, subdomain: string): string[] {
+  return subdomainWithLegacyAliases(subdomain)
+    .map((name) => namedServiceLabel(previewSlug, name))
+    .filter(isPublishableNamedLabel);
+}
+
+/**
  * 这个第一标签能不能作为命名子域发布。
  *
  * 超过 RFC 1035 单标签上限时:既无法可靠解析,单标签通配证书 `*.<root>` 也不覆盖。

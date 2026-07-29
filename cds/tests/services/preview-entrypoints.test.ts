@@ -6,6 +6,7 @@ import {
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedEntrypointsEnv,
+  publishedServiceLabels,
   resolveBranchEntrypointsEnv,
   subdomainWithLegacyAliases,
 } from '../../src/services/preview-entrypoints.js';
@@ -173,5 +174,34 @@ describe('子域改名不许打断存量链接', () => {
 
   it('没有别名的子域原样返回', () => {
     expect(subdomainWithLegacyAliases('llmgw-serve')).toEqual(['llmgw-serve']);
+  });
+});
+
+describe('publishedServiceLabels 是「发布了哪些 host」的唯一枚举口径', () => {
+  const SLUG = 'demo-claude-prd-agent';
+
+  it('规范名与历史别名都在内（撞名检查与 SSRF 白名单靠它对齐发布结果）', () => {
+    expect(publishedServiceLabels(SLUG, 'llmgw')).toEqual([
+      `${SLUG}-llmgw`,
+      `${SLUG}-llmgw-web`,
+    ]);
+  });
+
+  it('压不进 63 的名字不算已发布（不能把发不出去的 host 放进白名单）', () => {
+    const labels = publishedServiceLabels('s', 'x'.repeat(80));
+    expect(labels).toEqual([]);
+  });
+
+  it('与发布器实际写出的 host 集合逐条一致', () => {
+    // 这条是本轮 Codex P1 的回归点：发布器展开了别名，撞名检查与两处 SSRF 白名单
+    // 却只算规范名 —— 于是别的分支能占走别名 host，探测打自己的别名会被 403。
+    // 判据只有一份，谁再各拼一遍，这里就对不上。
+    const published = new Set(publishedServiceLabels(SLUG, 'llmgw'));
+    const enumerated = new Set(
+      subdomainWithLegacyAliases('llmgw')
+        .map((name) => namedServiceLabel(SLUG, name))
+        .filter(isPublishableNamedLabel),
+    );
+    expect([...published].sort()).toEqual([...enumerated].sort());
   });
 });

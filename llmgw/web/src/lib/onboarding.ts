@@ -26,6 +26,25 @@ type CacheKind = 'organization' | 'serviceKeys' | 'requests';
 
 const CACHE = new Map<string, { at: number; promise: Promise<unknown> }>();
 
+/**
+ * 「这次没读到」——与「确实没有」必须分开。
+ * 前者不缓存、不渲染清单；后者才是可以拿去告诉用户的事实。
+ */
+export class OnboardingFactsUnavailable extends Error {
+  constructor(readonly source: CacheKind) {
+    super(`onboarding facts unavailable: ${source}`);
+    this.name = 'OnboardingFactsUnavailable';
+  }
+}
+
+/** 失效订阅者。清缓存本身不会让已挂载的 hook 重跑，必须显式通知（Codex P2）。 */
+const INVALIDATION_LISTENERS = new Set<() => void>();
+
+function subscribeInvalidation(listener: () => void): () => void {
+  INVALIDATION_LISTENERS.add(listener);
+  return () => { INVALIDATION_LISTENERS.delete(listener); };
+}
+
 /** 模块级缓存：同一租户 60 秒内只打一次；失败不缓存，避免把一次网络抖动钉死一分钟。 */
 function cached<T>(kind: CacheKind, tenantId: string, load: () => Promise<T>): Promise<T> {
   const key = `${kind}::${tenantId}`;
@@ -40,15 +59,21 @@ function cached<T>(kind: CacheKind, tenantId: string, load: () => Promise<T>): P
   return promise;
 }
 
-/** 供签发密钥、创建团队等写操作之后主动刷新（不传租户则清空全部）。 */
+/**
+ * 供签发密钥、创建团队等写操作之后主动刷新（不传租户则清空全部）。
+ *
+ * 光清 map 不够：60 秒 TTL 只在下次加载时才被查，已挂载的清单不会自己重跑，
+ * 于是刚建完团队的用户会一直看着「建一个团队」没变绿。所以清完必须通知订阅者。
+ */
 export function invalidateOnboardingCache(tenantId?: string) {
   if (!tenantId) {
     CACHE.clear();
-    return;
+  } else {
+    for (const key of [...CACHE.keys()]) {
+      if (key.endsWith(`::${tenantId}`)) CACHE.delete(key);
+    }
   }
-  for (const key of [...CACHE.keys()]) {
-    if (key.endsWith(`::${tenantId}`)) CACHE.delete(key);
-  }
+  for (const listener of [...INVALIDATION_LISTENERS]) listener();
 }
 
 type TeamFacts = { hasTeam: boolean; hasMember: boolean };
@@ -56,7 +81,9 @@ type TeamFacts = { hasTeam: boolean; hasMember: boolean };
 function loadTeamFacts(tenantId: string): Promise<TeamFacts> {
   return cached('organization', tenantId, async () => {
     const response = await getOrganization();
-    if (!response.success) return { hasTeam: false, hasMember: false };
+    // 失败必须抛：resolve 一个「都没有」会被 cached() 当成事实钉死 60 秒，
+    // 一次瞬时 500 就会让配置齐全的租户被告知去建团队、拉成员（Codex P2）。
+    if (!response.success) throw new OnboardingFactsUnavailable('organization');
     return {
       hasTeam: response.data.teams.length > 0,
       hasMember: response.data.members.length > 1,
@@ -70,7 +97,7 @@ export type ServiceKeyDigest = { total: number; activePrefix: string | null };
 function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
   return cached('serviceKeys', tenantId, async () => {
     const response = await getServiceKeys();
-    if (!response.success) return { total: 0, activePrefix: null };
+    if (!response.success) throw new OnboardingFactsUnavailable('serviceKeys');
     const items = response.data;
     const usable = items.find((item) => item.enabled);
     return { total: items.length, activePrefix: usable?.keyPrefix ?? null };
@@ -82,7 +109,8 @@ function loadHasRequests(tenantId: string): Promise<boolean> {
     const to = new Date();
     const from = new Date(to.getTime() - REQUEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
     const response = await getLogsSummary({ from: from.toISOString(), to: to.toISOString(), pageSize: 1 });
-    return response.success && response.data.total > 0;
+    if (!response.success) throw new OnboardingFactsUnavailable('requests');
+    return response.data.total > 0;
   });
 }
 
@@ -104,6 +132,11 @@ export type OnboardingState = {
   loading: boolean;
   /** 四步都成立（读不到的步骤不阻塞）——组件据此整体消失。 */
   complete: boolean;
+  /**
+   * 这一轮没读到事实（接口失败）。此时**什么都不要渲染**：
+   * 把读取失败画成「四步全没做」，等于对着配置齐全的租户胡说八道。
+   */
+  unavailable: boolean;
   steps: OnboardingStep[];
 };
 
@@ -141,10 +174,15 @@ export function useOnboardingState(): OnboardingState {
 
   const [facts, setFacts] = useState<Facts>(EMPTY_FACTS);
   const [loading, setLoading] = useState(true);
+  const [unavailable, setUnavailable] = useState(false);
+  // 写操作后由 invalidateOnboardingCache 触发重算：+1 进 effect 依赖。
+  const [revision, setRevision] = useState(0);
+  useEffect(() => subscribeInvalidation(() => setRevision((n) => n + 1)), []);
 
   useEffect(() => {
     if (!tenantId) {
       setFacts(EMPTY_FACTS);
+      setUnavailable(false);
       setLoading(false);
       return;
     }
@@ -157,15 +195,18 @@ export function useOnboardingState(): OnboardingState {
     ]).then(([team, keys, hasRequests]) => {
       if (cancelled) return;
       setFacts({ team: team.hasTeam, member: team.hasMember, key: keys.total > 0, request: hasRequests });
+      setUnavailable(false);
       setLoading(false);
     }).catch(() => {
       if (cancelled) return;
+      // 读不到就沉默：不假装「一步都没做」（Codex P2）。
       setFacts(EMPTY_FACTS);
+      setUnavailable(true);
       setLoading(false);
     });
     return () => { cancelled = true; };
-    // 三个权限位进依赖：切租户或换角色都会重算。
-  }, [tenantId, canReadOrganization, canReadKeys, canReadLogs]);
+    // 三个权限位进依赖：切租户或换角色都会重算；revision 让写操作后立刻重算。
+  }, [tenantId, canReadOrganization, canReadKeys, canReadLogs, revision]);
 
   const readableOf: Record<OnboardingStepId, boolean> = {
     team: canReadOrganization,
@@ -188,6 +229,7 @@ export function useOnboardingState(): OnboardingState {
     loading,
     // 读不到的步骤不计入未完成——否则 viewer / billing 会永远盯着一条完不成的清单。
     complete: steps.every((step) => step.done || !step.readable),
+    unavailable,
     steps,
   };
 }
@@ -199,6 +241,8 @@ export function usePrimaryServiceKey(): { loading: boolean; canRead: boolean; ke
   const canRead = canAccessPage(tenant, 'serviceKeys');
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
+  const [revision, setRevision] = useState(0);
+  useEffect(() => subscribeInvalidation(() => setRevision((n) => n + 1)), []);
 
   useEffect(() => {
     if (!tenantId || !canRead) {
@@ -218,7 +262,7 @@ export function usePrimaryServiceKey(): { loading: boolean; canRead: boolean; ke
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [tenantId, canRead]);
+  }, [tenantId, canRead, revision]);
 
   return { loading, canRead, keyPrefix };
 }
