@@ -1,6 +1,43 @@
 # 分类、排序与分析规则
 
 > 被 SKILL.md Phase 4 引用。分析和分类 PR/commit 时按需读取。
+>
+> **v2 提醒**：下面的「功能分类」是**工程侧中间产物**，只用于附录 B 的分类列。
+> 正文（业务价值看板）必须走本文件第一节的「技术脉络 → 业务能力」翻译，不能直接把分类当标题。
+
+## 技术脉络翻译成业务能力（v2 核心，Phase 4.0）
+
+聚完类之后**必须**再做一次翻译，否则产出的是工程视角、业务读者看不懂。
+
+### 翻译模板
+
+> **谁**（内部团队 / 外部客户 / 运维 / 产品）现在**能做什么**（以前不能做，或以前很麻烦），
+> **因此**（省了什么 / 赚了什么 / 避免了什么风险）。
+
+### 六段式写法（正文每条业务能力都按这个骨架）
+
+| 段 | 写什么 | 反面示例 |
+|----|--------|---------|
+| 标题 | 业务能力名，用业务语言 | 「llmgw maintenance release shadow gate 收口」 |
+| 谁受益 | 内部团队 / 外部客户 / 运维 / 产品，四选一或多选 | 留空 |
+| 以前 | 以前不能做，或很麻烦，要具体 | 「以前有问题」 |
+| 现在 | 现在能做什么 | 「重构了 X 模块」 |
+| 意味着 | 省了什么 / 赚了什么 / 避免了什么风险 | 「代码更优雅」 |
+| 验收背书 | 通过 / 有条件通过 / 未通过 / 本周未验收 + 报告名 | 省略不写 |
+| 技术出处 | PR 号列表，指向附录 B | 把 PR 细节写进正文 |
+
+### 翻译不出来怎么办
+
+翻译不出业务价值的脉络（纯重构 / 纯清理 / 纯文档 / 纯测试），**不要硬凑**——归入正文末尾的
+「地基工作」一段合并带过（一句话 + PR 号），不占独立篇幅，但必须在附录 B 保留。
+
+### 条数控制
+
+正文 5~8 条业务能力为宜。业务读者记不住 8~15 条技术脉络；多出来的合并进「地基工作」。
+
+### 交叉验证
+
+翻译结果要与本周日报的「新增功能」段对照：**日报讲过的用户可见变化，周报正文不能漏**。
 
 ## 功能分类表
 
@@ -8,19 +45,19 @@
 
 | 类别 | 关键词信号 | 报告标签 |
 |------|-----------|----------|
-| 新功能 | feat, add, implement, 新增, 实现 | ✨ 新功能 |
-| 更新/增强 | enhance, improve, update, 优化, 改进 | 🔄 更新 |
-| Bug 修复 | fix, bugfix, hotfix, 修复 | 🐛 Bug 修复 |
-| 重构/架构 | refactor, restructure, simplify, 重构 | 🏗️ 架构 |
-| 性能优化 | perf, performance, optimize | ⚡ 性能 |
-| UI/UX | ui, style, layout, design, 样式 | 🎨 UI/UX |
-| 移动端 | mobile, responsive, 移动端 | 📱 移动端 |
-| 桌面端 | desktop, tauri, 桌面 | 🖥️ 桌面端 |
-| DevOps/测试 | test, ci, deploy, build, script | 🔧 DevOps |
-| 文档 | docs, readme, 文档 | 📝 文档 |
-| 安全/权限 | auth, permission, security, rbac | 🔐 权限 |
-| AI 能力 | llm, model, gateway, thinking | 🧠 AI 能力 |
-| 工作流 | workflow, automation, 工作流 | ⚙️ 工作流 |
+| 新功能 | feat, add, implement, 新增, 实现 | 新功能 |
+| 更新/增强 | enhance, improve, update, 优化, 改进 | 更新/增强 |
+| Bug 修复 | fix, bugfix, hotfix, 修复 | Bug 修复 |
+| 重构/架构 | refactor, restructure, simplify, 重构 | 重构/架构 |
+| 性能优化 | perf, performance, optimize | 性能优化 |
+| UI/UX | ui, style, layout, design, 样式 | UI/UX |
+| 移动端 | mobile, responsive, 移动端 | 移动端 |
+| 桌面端 | desktop, tauri, 桌面 | 桌面端 |
+| DevOps/测试 | test, ci, deploy, build, script | DevOps/测试 |
+| 文档 | docs, readme, 文档 | 文档 |
+| 安全/权限 | auth, permission, security, rbac | 安全/权限 |
+| AI 能力 | llm, model, gateway, thinking | AI 能力 |
+| 工作流 | workflow, automation, 工作流 | 工作流 |
 
 ## 提交类型标准
 

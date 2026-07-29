@@ -352,6 +352,43 @@ describe('MongoSplitStateBackingStore', () => {
     expect(handle.global.replaceWrites).toHaveLength(1);
   });
 
+  it('does not clone every tick while a Mongo write is in flight', async () => {
+    const handle = new FakeSplitHandle();
+    const store = new MongoSplitStateBackingStore(handle);
+    await store.init();
+
+    const state = emptyState();
+    state.branches = {
+      a: { id: 'a', projectId: 'prd-agent', branch: 'a', worktreePath: '/a', services: {}, status: 'idle', createdAt: 't' },
+    };
+    store.save(state);
+    await store.flush();
+
+    let release!: () => void;
+    handle.branches.bulkWriteGate = new Promise<void>((resolve) => { release = resolve; });
+    const cloneSpy = vi.spyOn(globalThis, 'structuredClone');
+    const callsBefore = cloneSpy.mock.calls.length;
+
+    state.branches.a.status = 'building';
+    store.save(state);
+    await new Promise<void>((resolve) => setImmediate(resolve));
+
+    for (let i = 0; i < 8; i++) {
+      state.branches.a.updatedAt = `tick-${i}`;
+      store.save(state);
+      await new Promise<void>((resolve) => setImmediate(resolve));
+    }
+
+    // Only the snapshot already being persisted may be cloned. The eight later
+    // ticks remain as one dirty live reference until the blocked write finishes.
+    expect(cloneSpy.mock.calls.length - callsBefore).toBe(1);
+
+    release();
+    await store.flush();
+    expect(handle.branches.docs.get('a')?.doc.updatedAt).toBe('tick-7');
+    cloneSpy.mockRestore();
+  });
+
   it('upgrades a queued partial to full when the in-flight write fails (Codex P1, PR #1213)', async () => {
     // 场景:partial A 在写库途中失败,期间又有 partial B 排队。旧行为:finally
     // 立即把 B 以 partial 落库 → persistedGeneration 越过失败代次,flush() 谎报

@@ -160,6 +160,27 @@ def _is_external(url):
     return u.startswith("http://") or u.startswith("https://") or u.startswith("//")
 
 
+# URL 里的 ASCII 制表/换行会被浏览器整串剔除后再解析协议，首尾 C0 控制符与空格也会被剥掉
+# （URL Standard 的 href 解析前置步骤）。HTMLParser 会把 `java&#9;script:` 实体解成真 tab，
+# 若不先归一化，正则就认不出协议，`javascript:` 这类会带着 target/rel 大摇大摆过闸——
+# 而报告可能被下载到无沙箱环境打开。所以判协议前必须先按浏览器口径归一化。
+_URL_INNER_WS = re.compile(r"[\t\n\r\f]")
+
+
+_URL_TRIM = "".join(chr(c) for c in range(0x00, 0x21))   # C0 控制符 + 空格
+
+
+def _normalize_url(raw):
+    """按浏览器口径归一化：内部 tab/换行整串剔除，首尾 C0 控制符与空格剥掉。"""
+    return _URL_INNER_WS.sub("", raw or "").strip(_URL_TRIM)
+
+
+# 交给系统外部处理器、不会导航当前 frame 的协议（白名单豁免）
+_EXTERNAL_HANDLER_SCHEMES = {"mailto", "tel", "sms", "mms", "callto", "facetime", "geo", "skype"}
+# 会在当前浏览上下文内导航或执行的协议，自包含报告一律禁用
+_BLOCKED_SCHEMES = {"javascript", "data", "vbscript", "blob", "filesystem", "about"}
+
+
 class _ReportScanner(HTMLParser):
     """自包含守卫的属性级扫描器（终结正则猫鼠游戏的实现，Codex P2 六轮后重写）。
 
@@ -233,6 +254,92 @@ class _ReportScanner(HTMLParser):
                 self._check_load_url(tag, n, v)
             if n == "style" and v:
                 self.css_chunks.append(v)
+        if tag in ("a", "area"):
+            self._check_nav_anchor(tag, attrs)
+
+    def _check_nav_anchor(self, tag, attrs):
+        """导航锚点必须开新标签。
+
+        知识库把正文渲染在**自增高的 sandbox iframe** 里（prd-admin 的 FilePreview）。
+        缺 target 的 http(s) 链接点下去会在该 iframe 内导航到整个 SPA，SPA 的 100vh
+        布局与自增高逻辑互相喂高，ResizeObserver 每帧触发、主线程被打满、整页卡死
+        （2026-07-29 实测 210 条 "ResizeObserver loop completed"）。
+        阅读器侧已有父页点击拦截兜底，但报告会被下载、被别处嵌入，那些场景没有兜底，
+        所以在发布闸这里硬校验——不能只把它写成文档里的一句话。
+        只管 http(s)：mailto/tel/自定义协议与页内锚点不会导航本 frame。"""
+        # 重复属性必须按**浏览器口径取首个**：HTMLParser 会把两个都给出来，
+        # dict 推导式却保留最后一个 —— <a href="javascript:.." href="#safe"> 于是
+        # 以「片段链接」的面目过闸，而浏览器点击时用的是第一个 javascript: URL。
+        # 同理重复 target 能把 _self 藏在后面。既取首个，也直接拒收重复的导航属性。
+        d, dup = {}, set()
+        for k, v in attrs:
+            k = k.lower()
+            if k in d:
+                dup.add(k)
+                continue                 # 保留首个，与浏览器一致
+            d[k] = (v or "").strip()
+        for k in ("href", "xlink:href", "target", "rel"):
+            if k in dup:
+                self._err(f"<{tag}> 出现重复的 {k} 属性——浏览器取首个而校验易取到后者，"
+                          "自包含报告禁止重复导航属性")
+                return
+        # href 三种写法都要认：HTML/SVG2 的 href、SVG1.1 遗留的 xlink:href。
+        # 覆盖 <a> 与 <area>（图像映射热区导航语义与 a 相同）。
+        # 必须区分「没有 href 属性」与「有 href 但是空串」：前者不是链接，后者是**空相对
+        # 引用**，会按文档 base URL 解析并真的导航。知识库把正文渲染在 srcdoc iframe 里，
+        # 而 srcdoc 的 base URL 继承自父页——href="" 解析出的就是宿主 SPA 地址，点了就
+        # 把 frame 导航过去。当成 no-op 放行，等于给这条路径开了后门。
+        # SVG2 起 href 优先于 xlink:href，两者都在时取 href（与浏览器一致），
+        # 不能用 `d.get("href") or d.get("xlink:href")`——空串是 falsy，会串到后者。
+        if "href" in d:
+            href = _normalize_url(d["href"])
+        elif "xlink:href" in d:
+            href = _normalize_url(d["xlink:href"])
+        else:
+            return                       # 无导航属性，不是链接
+        if href.startswith("#"):
+            return                       # 页内锚点，不导航
+        if not href:
+            self._err(f'<{tag} href=""> 空 href 会按文档 base URL 解析并导航当前 frame'
+                      "（srcdoc 的 base 继承自宿主页），不是 no-op；请删除该属性或填真实地址")
+            return
+        # 判「会不会把所在 frame 导航走」而不是「像不像 http 链接」：
+        # 文档相对（report.html / ../a / ?entry=x）、根相对（/a）、协议相对（//host/a）
+        # 统统会导航，必须校验。
+        # 协议一律**白名单豁免**：只有交给系统外部处理器的协议才放行。凡是走排除法
+        # （「不在黑名单就放行」）都会漏——data:/about:/blob: 是一批，file:/ftp: 又是一批。
+        m = re.match(r"^([a-z][a-z0-9+.\-]*):", href, re.I)
+        scheme = m.group(1).lower() if m else ""
+        if scheme in _BLOCKED_SCHEMES:
+            self._err(f'<{tag} href="{scheme}:..."> 使用 {scheme}: 协议——'
+                      "会在当前浏览上下文内导航/执行，自包含报告禁用")
+            return
+        if scheme in _EXTERNAL_HANDLER_SCHEMES:
+            return                       # 交给系统处理器，不动本 frame
+        # download 只在同源时被浏览器真正当下载；跨源 http(s) 会退化成普通导航。
+        # 报告最终落在哪个源不可知，故只对**相对 URL**（构造上必同源）豁免。
+        # 反斜杠必须先按浏览器口径折成斜杠再判：URL 标准规定 special scheme（http/https/
+        # ws/wss/ftp/file）下 `\` 等价于 `/`，所以 `\\evil.example/file` 浏览器解析成
+        # `//evil.example/file` —— 跨源。照字面判「不以 // 开头」会把它当同源相对下载放行，
+        # 而浏览器对跨源忽略 download、直接导航本 frame，正好绕过本闸门要防的那件事。
+        rel_probe = href.replace("\\", "/")
+        if "download" in d and not scheme and not rel_probe.startswith("//"):
+            return
+        if (d.get("target") or "").lower() != "_blank":
+            self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'
+                      "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "
+                      "ResizeObserver 正反馈循环把页面卡死；导航链接一律新标签打开")
+        # rel 只能按 **HTML ASCII whitespace** 切词（空格/Tab/LF/FF/CR）。
+        # Python 的 str.split() 连 Unicode 空白也切，`rel="noopener\u00a0noreferrer"`
+        # 在这里会被切成两个合法 token 而过闸；浏览器却只看到一个不认识的整体 token，
+        # noreferrer 根本不生效——闸门放行了一个实际不成立的契约。
+        rel = [x for x in re.split(r"[ \t\n\f\r]+", (d.get("rel") or "").lower()) if x]
+        missing = [x for x in ("noopener", "noreferrer") if x not in rel]
+        if missing:
+            self._err(f'<{tag} href="{href[:60]}"> 缺 rel="{" ".join(missing)}"——'
+                      "noopener 防新标签拿到 window.opener（tabnabbing），"
+                      "noreferrer 防把报告地址当 referrer 带出去；"
+                      '契约要求写全 rel="noopener noreferrer"')
 
     def _check_load_url(self, tag, attr, url):
         """加载型 URL 的统一判定：外链与 data:image 两条禁令对所有加载位置一视同仁。
