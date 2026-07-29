@@ -1,65 +1,55 @@
 <!DOCTYPE html>
 <!--
-  周刊版周报模板（米多智能体周刊）— weekly-update-summary 格式二选项之 html。
+  周刊版周报模板 v2（米多智能体周刊）— weekly-update-summary 的读者交付产物。
 
-  使用方法：整页复制，替换周次/日期/统计等具体值与各栏目正文。
-  下方正文是 2026-W27 期的真实成稿，作「写成什么样」的对照样例。
+  使用方法：整页复制，替换周次/统计/各栏目正文。下方正文是 2026-W30 期的真实成稿，
+  作「写成什么样」的对照样例。
 
-  刊系归属（.claude/rules/report-design-system.md「米多刊系」）：
-  - 与日报（报纸版）同族：暖纸底 + 油墨黑 + 衬线大标题 + 等宽小标 + 硬投影
-  - 本刊身份色为靛蓝 --indigo（日报为赭红 --terra），版式取「周刊杂志」气质：
-    封面故事 + 一周脉络时间轴 + 深度报道 + 数据版 + 落地对照 + 下周优先级
+  ===== v2 与 v1 的根本差别（读者变了，勿回退）=====
+  读者是老板 / 产品经理 / 业务经理，不是工程师。因此：
+  1. 章节顺序 = 优先级：封面故事 -> 质量闸 -> 业务价值看板 -> 一周脉络 -> 落地对照
+     -> 下周优先级 -> 术语表 -> 附录(验收表/PR表/工程数据)。技术数字一律降到附录 C。
+  2. 「质量闸」必须排在业务内容之前（SKILL.md 纪律 10）：给出验收份数、功能验收通过率、
+     整体通过率、未通过数、缺陷、线上发布次数，并逐条列出未通过与有条件通过 + 下一步。
+     数据来自 scripts/collect_week_context.py，禁止手编。
+  3. 「业务价值看板」用 .cap 卡片，每条按「谁受益 / 以前 / 现在 / 意味着 / 验收背书 / 技术出处」
+     六段写（SKILL.md 纪律 11）。禁止按模块或 PR 组织，禁止正文出现未翻译的内部代号。
+  4. 「一周脉络」每一天必须挂当天日报的可点击深链（SKILL.md 纪律 9）；缺日报的天要显式说明。
+  5. 「术语表」必填，按本刊实际出现的内部说法裁剪。
 
-  硬约束（publish.py --report-html 会校验，与日报同一套）：
+  ===== 刊系归属（.claude/rules/report-design-system.md「米多刊系」）=====
+  与日报（报纸版）同族：暖纸底 + 油墨黑 + 衬线大标题 + 等宽小标 + 硬投影。
+  本刊身份色为靛蓝 --indigo（日报为赭红 --terra）。
+  verdict 三色：--green 通过 / --amber 有条件 / --red 未通过，是 v2 新增的语义色，勿改。
+
+  ===== 硬约束（publish.py --report-html 会校验）=====
   1. 自包含：内联 CSS，无外部 http 资源；图片仅允许知识库 upload 返回的站内 URL
   2. 禁 script 标签：知识库沙箱 iframe 不给 allow-scripts，动效一律纯 CSS
-  3. 必带 meta viewport：否则移动端按 980px 桌面视口缩放、整页变小
-  4. 禁 data:image：后端知识库正文有防破图守卫会直接拒存；纹理用纯 CSS 渐变，
-     插图用内联 <svg> 标签（合法）
+  3. 必带 meta viewport；表格一律包 .table-scroll 保证移动端横滚不破版
+  4. 禁 data:image；插图用内联 <svg>
   5. 禁 emoji（CLAUDE.md 规则 0）
+  注：<a href> 导航链接是允许的（不是加载型资源），日报深链与验收报告深链都靠它。
 
-  配图纪律：
-  A. 封面故事必须配图，二选一：
-     - 首选：真实 UI 截图（{{IMG:<name>}} 占位，publish.py 回填 figure）
-     - 兜底：版画风内联 SVG 示意图（下方 figure.art 样例：靛蓝/油墨双色 + hatch
-       纹理，描边为主），并在刊尾「取证说明」注明截图待补原因
-  B. 「数据版」每期必做，全部从 git 真实数据生成（周报纪律 5：数字不许编）：
-     - 一周行情：7 根竖条的每日提交分布（.vchart，峰值日用 .peak 靛蓝）
-     - 提交成分：横向堆积条 + 图例（.stack，按类型着色）
-     - 与上周对比：.delta 表，涨跌用文字 +/− 前缀着色，不用箭头符号
-  C. 时间轴（一周脉络）替代 md 版的 mermaid timeline，纯 CSS，逐日列脉络
-
-  其他：内容结构与 reference/report-template.md（md 版）对应；期号 = ISO 周号；
-  星期用中文；表格一律包 .table-scroll 容器保证移动端横滚不破版
-
-  防漏数据硬性要求（成稿前逐项核对，见 SKILL.md 纪律 8 对账清单）：
-  1. 附录 PR 表必须列全本周全部 PR（行数 = 头部 PR 收口数），禁止节选；
-     带「分类」列（feat/fix/polish/docs/ops/refactor 文字分级），表下注明归属口径
-  2. 提交成分 legend 每项带占比%（如「fix 140 · 39%」），与 md 版类型分布表同数
-  3. 下周优先级每条写成「动作——依据」两段式（依据 = 引用规则/数据/临界点）
-  4. baseline 行允许多行：第二行放口径异常说明（如「行变更含跨 PR 合并副作用」）；
-     纪律 3.5 基线漂移 / 纪律 7 历史版本对照触发时追加一行
-     「基线漂移：OLD_SHA 推进到 NEW_SHA，新增 N commit 影响本周统计」
-  5. md 底稿「本周完成」的每个分类段都必须映射到 深度报道 或 一周简讯，
-     不得因版面取舍丢分类段；每日「重点方向」由一周脉络时间轴逐日承载
+  ===== 成稿前对账清单（任一不过不许发布）=====
+  1. 附录 A 行数 = 头部验收份数；附录 B 行数 = 头部 PR 收口数（禁止节选）
+  2. 质量闸每个数字都能在 collect_week_context.py 输出里找到出处
+  3. 一周脉络 7 天齐全，每天有日报链接或明确的「无日报」说明
+  4. 每条业务能力都标了验收背书（通过/有条件/未通过/本周未验收），未验收的要显著标注
+  5. 正文无未翻译的英文缩写、文件名、类名；出现的内部代号都在术语表里
+  6. baseline 行含统计基线 SHA + 采集时间 + 四源可用性说明
 -->
 <html lang="zh-CN">
 <head>
 <meta charset="UTF-8">
 <meta name="viewport" content="width=device-width, initial-scale=1.0">
-<title>周报-2026-W27-本周纵深</title>
+<title>周报-2026-W30-本周纵深</title>
 <style>
   :root {
-    --paper: #f7f1e8;
-    --paper-2: #fffdf8;
-    --ink: #211d18;
-    --ink-2: rgba(33,29,24,0.74);
-    --ink-3: rgba(33,29,24,0.48);
-    --line: rgba(33,29,24,0.14);
-    --line-2: rgba(33,29,24,0.30);
-    --indigo: #4f46e5;
-    --indigo-soft: rgba(79,70,229,0.08);
-    --terra: #c05b3c;
+    --paper: #f7f1e8; --paper-2: #fffdf8;
+    --ink: #211d18; --ink-2: rgba(33,29,24,0.74); --ink-3: rgba(33,29,24,0.48);
+    --line: rgba(33,29,24,0.14); --line-2: rgba(33,29,24,0.30);
+    --indigo: #4f46e5; --indigo-soft: rgba(79,70,229,0.08);
+    --terra: #c05b3c; --green: #1a7f37; --amber: #9a6700; --red: #b42318;
     --serif: "Source Serif 4", "Songti SC", "Noto Serif SC", "STSong", Georgia, serif;
     --sans: -apple-system, "PingFang SC", "HarmonyOS Sans SC", "Microsoft YaHei", "Helvetica Neue", sans-serif;
     --mono: "SF Mono", "JetBrains Mono", Consolas, monospace;
@@ -74,187 +64,118 @@
   }
   .paper { max-width: 980px; margin: 0 auto; padding: 26px 34px 60px; }
   @media (max-width: 640px) { .paper { padding: 18px 16px 44px; } }
+  a { color: var(--indigo); text-decoration: none; border-bottom: 1px solid rgba(79,70,229,0.35); }
+  a:hover { border-bottom-color: var(--indigo); }
 
-  /* ══ 刊头 ══ */
+  /* 刊头 */
   .masthead { display: flex; align-items: center; gap: 16px; padding-bottom: 14px; border-bottom: 3px solid var(--ink); position: relative; }
   .masthead::after { content: ""; position: absolute; left: 0; right: 0; bottom: -7px; height: 1px; background: var(--ink); }
-  .stamp {
-    width: 46px; height: 46px; flex-shrink: 0;
-    background: var(--indigo); color: #f2f1ff; border-radius: 4px;
-    display: grid; place-items: center;
-    font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
-    box-shadow: 3px 3px 0 rgba(33,29,24,0.82);
-  }
+  .stamp { width: 46px; height: 46px; flex-shrink: 0; background: var(--indigo); color: #f2f1ff; border-radius: 4px;
+    display: grid; place-items: center; font-family: var(--serif); font-weight: 700; font-size: 15px; letter-spacing: 0.04em;
+    box-shadow: 3px 3px 0 rgba(33,29,24,0.82); }
   .masthead .t b { font-family: var(--serif); font-size: 25px; font-weight: 700; letter-spacing: 0.02em; display: block; }
   .masthead .t span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.34em; }
   .masthead .r { margin-left: auto; text-align: right; font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.14em; line-height: 1.9; }
-  .dateline {
-    display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap;
-    padding: 13px 0 9px; border-bottom: 1px solid var(--line);
-    font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em;
-  }
+  .dateline { display: flex; justify-content: space-between; gap: 12px; flex-wrap: wrap; padding: 13px 0 9px;
+    border-bottom: 1px solid var(--line); font-family: var(--mono); font-size: 11px; color: var(--ink-3); letter-spacing: 0.1em; }
   .dateline b { color: var(--indigo); font-weight: 600; }
-  .baseline {
-    padding: 8px 0; border-bottom: 1px solid var(--line);
-    font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; line-height: 1.8;
-  }
+  .baseline { padding: 8px 0; border-bottom: 1px solid var(--line); font-family: var(--mono);
+    font-size: 10px; color: var(--ink-3); letter-spacing: 0.06em; line-height: 1.8; }
 
-  /* ══ 封面故事 ══ */
+  /* 封面 */
   .cover { margin-top: 30px; }
   .kicker { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.22em; color: var(--indigo); margin-bottom: 10px; }
-  .kicker.alt { color: var(--terra); }
-  .cover-grid { display: grid; grid-template-columns: 1.15fr 0.85fr; gap: 30px; align-items: start; }
-  @media (max-width: 760px) { .cover-grid { grid-template-columns: 1fr; } }
-  .cover h1 { font-family: var(--serif); font-size: clamp(26px, 4.2vw, 40px); font-weight: 650; line-height: 1.32; text-wrap: balance; }
+  .cover h1 { font-family: var(--serif); font-size: clamp(25px, 4vw, 38px); font-weight: 650; line-height: 1.34; text-wrap: balance; }
   .cover h1 em { font-style: normal; position: relative; white-space: nowrap; }
   .cover h1 em::after { content: ""; position: absolute; left: -1%; right: -1%; bottom: 7%; height: 0.3em; background: rgba(79,70,229,0.16); z-index: -1; transform: skewX(-8deg); }
   .standfirst { margin-top: 14px; font-family: var(--serif); font-size: 16.5px; line-height: 1.85; color: var(--ink-2); }
-  .cover .prose { margin-top: 14px; font-size: 14px; line-height: 2.0; color: var(--ink-2); text-align: justify; }
-  .prose b { color: var(--ink); font-weight: 600; }
-  .prose .q { color: var(--indigo); font-weight: 600; }
   .cover-facts { display: flex; flex-wrap: wrap; gap: 8px; margin-top: 16px; }
-  .cover-facts span {
-    font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-2);
-    border: 1px solid var(--line-2); border-radius: 2px; padding: 4px 9px; background: var(--paper-2);
-  }
+  .cover-facts span { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.08em; color: var(--ink-2);
+    border: 1px solid var(--line-2); border-radius: 2px; padding: 4px 9px; background: var(--paper-2); }
   .cover-facts span b { color: var(--indigo); font-weight: 700; }
-  figure.art { margin: 0; }
-  figure.art .frame {
-    border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
-    box-shadow: 4px 4px 0 rgba(33,29,24,0.12); padding: 10px;
-  }
-  figure.art svg { display: block; width: 100%; height: auto; }
-  figure.art figcaption, .story figcaption { margin-top: 9px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
-  figure.art figcaption::before, .story figcaption::before {
-    content: "图"; font-family: var(--mono); font-size: 9.5px; color: var(--indigo);
-    border: 1px solid var(--indigo); border-radius: 2px; padding: 1px 5px; margin-right: 8px; letter-spacing: 0.1em;
-  }
-  figure { margin: 14px 0 4px; }
-  figure img { width: 100%; border: 1.5px solid var(--ink); border-radius: 3px; box-shadow: 4px 4px 0 rgba(33,29,24,0.10); display: block; }
-  figcaption { margin-top: 8px; font-size: 12px; color: var(--ink-3); line-height: 1.7; }
 
-  /* 引语大字 */
-  .pull {
-    margin: 24px 0 4px; padding: 4px 0 14px 0;
-    border-top: 2px solid var(--ink); border-bottom: 1px solid var(--line);
-    font-family: var(--serif); font-size: 19px; font-weight: 600; line-height: 1.7; color: var(--ink);
-  }
-  .pull .qt::before { content: "「"; color: var(--indigo); }
-  .pull .qt::after { content: "」"; color: var(--indigo); }
-  .pull .by { display: block; margin-top: 6px; font-family: var(--mono); font-size: 10px; letter-spacing: 0.2em; color: var(--ink-3); }
-
-  /* ══ 栏目通用 ══ */
+  /* 栏目头 */
   .col-head { display: flex; align-items: baseline; gap: 12px; margin: 42px 0 6px; padding-bottom: 10px; border-bottom: 2px solid var(--ink); }
   .col-head h2 { font-family: var(--serif); font-size: 20px; font-weight: 700; }
   .col-head span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.24em; color: var(--ink-3); }
   .col-head .w { margin-left: auto; font-family: var(--mono); font-size: 10.5px; color: var(--indigo); letter-spacing: 0.1em; }
+  .lede { margin-top: 12px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); }
+  .lede b { color: var(--ink); font-weight: 600; }
 
-  /* ══ 一周脉络（时间轴，替代 mermaid） ══ */
-  .week-line { margin-top: 8px; }
-  .day { display: grid; grid-template-columns: 118px 1fr; gap: 0; }
-  @media (max-width: 640px) { .day { grid-template-columns: 84px 1fr; } }
-  .day .dhead { padding: 16px 14px 16px 0; text-align: right; border-right: 2px solid var(--line-2); position: relative; }
-  .day .dhead::after {
-    content: ""; position: absolute; right: -5px; top: 22px; width: 8px; height: 8px;
-    background: var(--paper); border: 2px solid var(--indigo); border-radius: 50%;
-  }
+  /* 质量闸 */
+  .gate-hero { display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px; margin-top: 14px; }
+  @media (max-width: 760px) { .gate-hero { grid-template-columns: repeat(2, 1fr); } }
+  .gate-hero > div { border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2);
+    box-shadow: 4px 4px 0 rgba(33,29,24,0.10); padding: 13px 14px; }
+  .gate-hero .k { font-family: var(--mono); font-size: 9.5px; letter-spacing: 0.16em; color: var(--ink-3); }
+  .gate-hero .v { font-family: var(--serif); font-size: 30px; font-weight: 700; line-height: 1.2; margin-top: 5px; }
+  .gate-hero .d { font-size: 11.5px; color: var(--ink-3); line-height: 1.7; margin-top: 3px; }
+  .gate-hero .up { color: var(--green); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .down { color: var(--terra); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .flat { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
+  .gate-hero .good .v { color: var(--green); }
+  .gate-hero .warn .v { color: var(--amber); }
+
+  table.tb { width: 100%; border-collapse: collapse; margin-top: 6px; }
+  table.tb th, table.tb td { padding: 9px 10px; text-align: left; border-bottom: 1px dotted var(--line); font-size: 12.5px; line-height: 1.75; vertical-align: top; }
+  table.tb th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); font-weight: 400; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
+  table.tb tr:last-child td { border-bottom: none; }
+  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--paper-2); margin-top: 12px; }
+  .table-scroll table.tb { min-width: 620px; }
+
+  .vd { font-family: var(--mono); font-size: 10px; letter-spacing: 0.06em; border-radius: 2px; padding: 2px 7px; white-space: nowrap; display: inline-block; }
+  .vd-pass { background: var(--green); color: #f2fff5; }
+  .vd-cond { border: 1px solid var(--amber); color: var(--amber); background: var(--paper-2); }
+  .vd-fail { background: var(--red); color: #fff5f4; }
+
+  .callout { margin-top: 16px; padding: 13px 16px; border-left: 3px solid var(--red); background: rgba(180,35,24,0.06);
+    font-size: 13px; line-height: 1.9; color: var(--ink-2); }
+  .callout b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--red); display: block; margin-bottom: 4px; }
+
+  /* 业务能力卡 */
+  .cap { padding: 20px 0 14px; border-bottom: 1px solid var(--line); }
+  .cap:last-of-type { border-bottom: none; }
+  .cap h3 { font-family: var(--serif); font-size: clamp(18px, 2.4vw, 23px); font-weight: 650; line-height: 1.45; }
+  .cap .who { display: flex; flex-wrap: wrap; gap: 7px; margin-top: 9px; }
+  .cap .who span { font-family: var(--mono); font-size: 10px; letter-spacing: 0.08em; color: var(--ink-2);
+    border: 1px solid var(--line-2); border-radius: 999px; padding: 2px 9px; background: var(--paper-2); }
+  .cap dl { margin-top: 12px; }
+  .cap dt { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--indigo); margin-top: 9px; }
+  .cap dd { font-size: 13.5px; line-height: 1.9; color: var(--ink-2); margin-top: 2px; }
+  .cap .ev { margin-top: 12px; padding: 10px 14px; border-left: 3px solid var(--indigo); background: var(--indigo-soft);
+    font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
+  .cap .ev b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.18em; color: var(--indigo); display: block; margin-bottom: 3px; }
+  .cap .src { margin-top: 9px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); line-height: 1.8; }
+
+  /* 一周脉络 */
+  .day { display: grid; grid-template-columns: 110px 1fr; }
+  @media (max-width: 640px) { .day { grid-template-columns: 76px 1fr; } }
+  .day .dhead { padding: 15px 14px 15px 0; text-align: right; border-right: 2px solid var(--line-2); position: relative; }
+  .day .dhead::after { content: ""; position: absolute; right: -5px; top: 21px; width: 8px; height: 8px;
+    background: var(--paper); border: 2px solid var(--indigo); border-radius: 50%; }
   .day.heavy .dhead::after { background: var(--indigo); }
   .day .dhead b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; display: block; }
   .day .dhead span { font-family: var(--mono); font-size: 10px; color: var(--ink-3); letter-spacing: 0.08em; display: block; margin-top: 3px; }
-  .day .dhead i {
-    font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--indigo);
-    border: 1px solid var(--indigo); border-radius: 999px; padding: 1px 8px; display: inline-block; margin-top: 6px;
-  }
-  .day .dbody { padding: 14px 0 14px 20px; border-bottom: 1px dotted var(--line); }
+  .day .dhead i { font-style: normal; font-family: var(--mono); font-size: 10px; color: var(--indigo);
+    border: 1px solid var(--indigo); border-radius: 999px; padding: 1px 8px; display: inline-block; margin-top: 6px; }
+  .day .dbody { padding: 13px 0 13px 20px; border-bottom: 1px dotted var(--line); }
   .day:last-child .dbody { border-bottom: none; }
-  .day .dbody p { font-size: 13px; line-height: 1.9; color: var(--ink-2); padding: 3px 0; }
+  .day .dbody p { font-size: 13px; line-height: 1.9; color: var(--ink-2); }
   .day .dbody p b { color: var(--ink); font-weight: 600; }
-  .day .dbody p .pr { font-family: var(--mono); font-size: 10.5px; color: var(--ink-3); }
+  .day .dbody .lk { margin-top: 5px; font-size: 12px; }
 
-  /* ══ 深度报道 ══ */
-  .feature { padding: 22px 0 10px; border-bottom: 1px solid var(--line); }
-  .feature:last-of-type { border-bottom: none; }
-  .feature h3 { font-family: var(--serif); font-size: clamp(19px, 2.6vw, 25px); font-weight: 650; line-height: 1.45; margin-top: 4px; }
-  .feature .prose { margin-top: 12px; font-size: 13.5px; line-height: 1.95; color: var(--ink-2); text-align: justify; }
-  .value {
-    margin-top: 14px; padding: 12px 16px; border-left: 3px solid var(--indigo);
-    background: var(--indigo-soft); font-size: 13px; line-height: 1.9; color: var(--ink-2);
-  }
-  .value b { font-family: var(--mono); font-size: 10.5px; letter-spacing: 0.18em; color: var(--indigo); display: block; margin-bottom: 3px; }
-  .feature ul.points { list-style: none; margin-top: 12px; }
-  .feature ul.points li { display: flex; gap: 12px; padding: 7px 0; font-size: 13px; line-height: 1.85; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
-  .feature ul.points li:last-child { border-bottom: none; }
-  .feature ul.points li::before { content: "—"; color: var(--indigo); flex-shrink: 0; }
-  .feature ul.points b { color: var(--ink); font-weight: 600; }
-
-  /* 简讯双栏 */
-  .briefs { display: grid; grid-template-columns: 1fr 1fr; gap: 0; }
-  .briefs > section { min-width: 0; padding: 4px 0; }
-  .briefs > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
-  .briefs > section:last-child { padding-left: 26px; }
-  @media (max-width: 760px) {
-    .briefs { grid-template-columns: 1fr; }
-    .briefs > section:first-child { border-right: none; padding-right: 0; }
-    .briefs > section:last-child { padding-left: 0; }
-  }
-  .brief { padding: 13px 0; border-bottom: 1px dotted var(--line); }
-  .brief:last-child { border-bottom: none; }
-  .brief b { font-family: var(--serif); font-size: 14.5px; font-weight: 700; display: block; }
-  .brief p { margin-top: 4px; font-size: 12.5px; line-height: 1.85; color: var(--ink-2); }
-  .brief .pr { font-family: var(--mono); font-size: 10px; color: var(--ink-3); }
-
-  /* ══ 数据版 ══ */
-  .data-grid { display: grid; grid-template-columns: 1.1fr 1fr; gap: 0; }
-  .data-grid > section { min-width: 0; padding: 18px 0 6px; }
-  .data-grid > section:first-child { border-right: 1px solid var(--line); padding-right: 26px; }
-  .data-grid > section:last-child { padding-left: 26px; }
-  @media (max-width: 760px) {
-    .data-grid { grid-template-columns: 1fr; }
-    .data-grid > section:first-child { border-right: none; padding-right: 0; }
-    .data-grid > section:last-child { padding-left: 0; }
-  }
-  .chart-title { font-family: var(--serif); font-size: 14.5px; font-weight: 700; margin-bottom: 4px; }
-  .chart-sub { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); margin-bottom: 14px; }
-  .vchart { display: flex; align-items: flex-end; gap: 8px; height: 130px; border-bottom: 1.5px solid var(--ink); padding: 0 2px; }
-  .vchart .vb { flex: 1; display: flex; flex-direction: column; justify-content: flex-end; align-items: center; height: 100%; min-width: 0; }
-  .vchart .vb i { display: block; width: 100%; max-width: 46px; background: rgba(33,29,24,0.72); border: 1px solid var(--ink); border-bottom: none; }
-  .vchart .vb.peak i { background: var(--indigo); border-color: var(--indigo); }
-  .vchart .vb b { font-family: var(--mono); font-size: 10px; font-weight: 400; color: var(--ink-3); margin-bottom: 4px; }
-  .vlabels { display: flex; gap: 8px; padding: 6px 2px 0; }
-  .vlabels span { flex: 1; text-align: center; font-family: var(--mono); font-size: 9.5px; color: var(--ink-3); letter-spacing: 0.02em; }
-  .stack { display: flex; height: 20px; border: 1px solid var(--ink); margin-top: 4px; }
-  .stack i { display: block; height: 100%; }
-  .stack .sfix { background: var(--ink); }
-  .stack .sfeat { background: var(--indigo); }
-  .stack .spol { background: rgba(79,70,229,0.30); }
-  .stack .sdoc { background: rgba(33,29,24,0.24); }
-  .stack .setc { background: rgba(33,29,24,0.08); }
-  .legend { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 12px; font-family: var(--mono); font-size: 10.5px; color: var(--ink-2); }
-  .legend span { display: inline-flex; align-items: center; gap: 6px; }
-  .legend i { width: 10px; height: 10px; border: 1px solid var(--line-2); }
-  .byline-row { margin-top: 14px; padding-top: 10px; border-top: 1px dotted var(--line); font-size: 12px; color: var(--ink-3); line-height: 1.8; }
-
-  /* 与上周对比 */
-  .delta { width: 100%; border-collapse: collapse; margin-top: 6px; }
-  .delta th, .delta td { padding: 9px 8px; text-align: left; border-bottom: 1px dotted var(--line); font-size: 12.5px; }
-  .delta th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); font-weight: 400; border-bottom: 1px solid var(--line-2); }
-  .delta td b { font-family: var(--serif); font-size: 15px; font-weight: 700; }
-  .delta .up { color: var(--indigo); font-family: var(--mono); font-size: 11px; }
-  .delta .down { color: var(--terra); font-family: var(--mono); font-size: 11px; }
-  .delta .flat { color: var(--ink-3); font-family: var(--mono); font-size: 11px; }
-
-  /* ══ 上周方向落地对照 ══ */
+  /* 落地对照 */
   .ledger { list-style: none; }
   .ledger li { display: grid; grid-template-columns: 92px 1fr; gap: 14px; padding: 12px 0; border-bottom: 1px dotted var(--line); align-items: start; }
   .ledger li:last-child { border-bottom: none; }
   .tag { font-family: var(--mono); font-size: 10px; letter-spacing: 0.1em; text-align: center; border-radius: 2px; padding: 3px 0; margin-top: 3px; }
   .tag.done { background: var(--indigo); color: #f2f1ff; }
   .tag.part { border: 1px solid var(--indigo); color: var(--indigo); background: var(--paper-2); }
-  .tag.todo { border: 1px solid var(--line-2); color: var(--ink-3); background: var(--paper-2); }
+  .tag.todo { border: 1px solid var(--red); color: var(--red); background: var(--paper-2); }
   .ledger p { font-size: 13px; line-height: 1.85; color: var(--ink-2); }
   .ledger p b { color: var(--ink); font-weight: 600; }
 
-  /* ══ 下周优先级 ══ */
+  /* 下周优先级 */
   .prio { display: grid; grid-template-columns: repeat(3, 1fr); gap: 14px; margin-top: 14px; }
   @media (max-width: 760px) { .prio { grid-template-columns: 1fr; } }
   .prio > div { border: 1.5px solid var(--ink); border-radius: 3px; background: var(--paper-2); box-shadow: 4px 4px 0 rgba(33,29,24,0.10); }
@@ -264,387 +185,420 @@
   .prio > div:first-child .ph { background: var(--indigo); }
   .prio > div:first-child .ph b, .prio > div:first-child .ph span { color: #f2f1ff; }
   .prio ul { list-style: none; padding: 6px 14px 10px; }
-  .prio li { display: flex; gap: 10px; padding: 7px 0; font-size: 12.5px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
+  .prio li { padding: 8px 0; font-size: 12.5px; line-height: 1.8; color: var(--ink-2); border-bottom: 1px dotted var(--line); }
   .prio li:last-child { border-bottom: none; }
-  .prio li::before { content: "—"; color: var(--indigo); flex-shrink: 0; }
+  .prio li b { display: block; color: var(--ink); font-weight: 600; margin-bottom: 2px; }
 
-  /* ══ 附录表 ══ */
-  .table-scroll { overflow-x: auto; border: 1px solid var(--line); border-radius: 3px; background: var(--paper-2); margin-top: 12px; }
-  .prtable { width: 100%; border-collapse: collapse; min-width: 560px; }
-  .prtable th, .prtable td { padding: 8px 12px; text-align: left; font-size: 12px; line-height: 1.7; border-bottom: 1px dotted var(--line); }
-  .prtable th { font-family: var(--mono); font-size: 10px; letter-spacing: 0.14em; color: var(--ink-3); font-weight: 400; border-bottom: 1px solid var(--line-2); white-space: nowrap; }
-  .prtable td:first-child { font-family: var(--mono); font-size: 11px; color: var(--indigo); white-space: nowrap; }
-  .prtable td:nth-child(2) { font-family: var(--mono); font-size: 11px; color: var(--ink-3); white-space: nowrap; }
-  .prtable tr:last-child td { border-bottom: none; }
   .appendix-note { margin-top: 10px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
-
-  /* ══ 数据页脚 ══ */
   .stat-row { display: flex; margin-top: 34px; border: 1px solid var(--line); border-radius: 3px; overflow: hidden; background: rgba(255,253,248,0.6); }
   .stat-row div { flex: 1; padding: 14px 6px; text-align: center; border-right: 1px solid var(--line); }
   .stat-row div:last-child { border-right: none; }
   .stat-row b { font-family: var(--serif); font-size: 22px; font-weight: 700; display: block; }
   .stat-row span { font-size: 10.5px; color: var(--ink-3); letter-spacing: 0.04em; }
   @media (max-width: 640px) { .stat-row { flex-wrap: wrap; } .stat-row div { flex: 1 1 33%; border-bottom: 1px solid var(--line); } }
-  .colophon {
-    margin-top: 26px; padding-top: 12px; border-top: 3px solid var(--ink);
-    display: flex; justify-content: space-between; gap: 10px; flex-wrap: wrap;
-    font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3);
-  }
-  .note { margin-top: 14px; font-size: 12px; color: var(--ink-3); line-height: 1.8; }
-  .note b { font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--indigo); }
+  .colophon { margin-top: 26px; padding-top: 12px; border-top: 3px solid var(--ink); display: flex;
+    justify-content: space-between; gap: 10px; flex-wrap: wrap; font-family: var(--mono); font-size: 10px; letter-spacing: 0.16em; color: var(--ink-3); }
 </style>
 </head>
 <body>
 <div class="paper">
 
-  <!-- 刊头 -->
   <header class="masthead">
     <div class="stamp">MAP</div>
-    <div class="t">
-      <b>米多智能体周刊</b>
-      <span>MIDUO AGENT WEEKLY</span>
-    </div>
+    <div class="t"><b>米多智能体周刊</b><span>MIDUO AGENT WEEKLY</span></div>
     <div class="r">一周纵深读本<br>周报智能体 · 自动编印</div>
   </header>
   <div class="dateline">
-    <span>2026 年第 <b>27</b> 周 · 06-29 至 07-05 · 总第 <b>W27</b> 期</span>
-    <span>主干落地 <b>356</b> 次提交 · <b>44</b> 个 PR 收口 · 695 个文件 · 4 个署名</span>
+    <span>2026 年第 <b>30</b> 周 · 07-20 至 07-26 · 总第 <b>W30</b> 期</span>
+    <span>功能验收通过率 <b>90.9%</b> · 线上发布 <b>8</b> 次 · PR 收口 <b>47</b> 个</span>
   </div>
   <div class="baseline">
-    统计基线 origin/main @ c228927（采集 2026-07-05）· 口径：仅主干、按提交日期文本过滤、PR 以本周实际落地主干的 merge/squash commit 为准（不信 GitHub mergedAt）· 与上次同周报告无基线漂移<br>
-    口径说明：文件 / 行变更为 git diff --shortstat FIRST^..LAST，含跨 PR 合并副作用（本周大头来自网关剥离新增 serving 工程与首页/CDS 视觉重构资产）
-    <!-- 纪律 3.5 基线漂移 / 纪律 7 历史版本对照触发时，在此追加一行，如：
-         基线漂移：c228927 推进到 a3be597，新增 N 个 commit 影响本周统计 -->
+    统计基线 origin/main @ 6aec8ef（采集 2026-07-29 03:10 UTC）· 数据来源：git 主干 + 日报知识库(7 篇) + 验收中心(25 份) + 缺陷台账 + 部署版本，四源齐全<br>
+    口径：仅主干、按提交日期文本过滤；PR 以本周实际落地主干的 merge/squash commit 为准（不信 GitHub mergedAt）。基线 HEAD #1225 提交日期 07-27 属 W31，已排除。日报的每日提交数口径与本刊不同（日报含 PR 分支内提交），数字不一致属正常
   </div>
 
   <!-- 封面故事 -->
   <section class="cover">
     <div class="kicker">封面故事 · COVER STORY</div>
-    <div class="cover-grid">
-      <div>
-        <h1>剥离落地周：LLM 网关<em>物理独立</em>，双出口拓扑补齐成可用。</h1>
-        <p class="standfirst">
-          W25/W26 铺的架构本周真正落地——大模型调用、日志、调度、模型池剥成独立可部署、
-          可被别人调用的 serving 服务；MAP 侧方法签名逐字节不变，对线上零风险。
-        </p>
-        <p class="prose">
-          <b>#965</b> 落下主刀：跨进程 serving 引擎 + <span class="q">shadow 影子比对</span> + 灰度白名单 +
-          CDS 命名子域 + 独立观测前端一次配齐，flag <b>Mode=inproc|http|shadow</b> 默认 inproc，
-          生产翻转留给影子证据收敛后单独拍板。随后 #971 到 #985 七个 PR 把「双出口拓扑」在 CDS
-          面板补到可用：主应用入口与网关入口并列成图标卡片，真实控制台 llmgw/web 开箱可登录、
-          可看 LLM 日志、Mongo Console 受控写，直连守卫棘轮 + no-key 401 契约常开测试兜底。
-        </p>
-        <div class="cover-facts">
-          <span>本线 PR <b>9</b> 个</span>
-          <span>对齐规则 <b>extraction-readiness-gate</b></span>
-          <span>对齐规则 <b>cds-dual-exit-topology</b></span>
-          <span>线上风险 <b>零</b>（默认 inproc）</span>
-        </div>
-      </div>
-      <figure class="art">
-        <div class="frame">
-        <svg viewBox="0 0 400 300" xmlns="http://www.w3.org/2000/svg" role="img" aria-label="网关物理剥离版画示意">
-          <defs>
-            <pattern id="whatch" width="6" height="6" patternUnits="userSpaceOnUse" patternTransform="rotate(45)">
-              <line x1="0" y1="0" x2="0" y2="6" stroke="#211d18" stroke-width="1" opacity="0.35"/>
-            </pattern>
-            <pattern id="whatchI" width="5" height="5" patternUnits="userSpaceOnUse" patternTransform="rotate(-45)">
-              <line x1="0" y1="0" x2="0" y2="5" stroke="#4f46e5" stroke-width="1.2" opacity="0.5"/>
-            </pattern>
-          </defs>
-          <circle cx="66" cy="54" r="34" fill="url(#whatchI)" stroke="#4f46e5" stroke-width="1.5"/>
-          <rect x="26" y="112" width="150" height="150" rx="6" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
-          <line x1="26" y1="140" x2="176" y2="140" stroke="#211d18" stroke-width="2"/>
-          <text x="42" y="131" font-family="Consolas,monospace" font-size="10" fill="#211d18" opacity="0.6">MAP</text>
-          <rect x="42" y="154" width="118" height="14" fill="url(#whatch)" stroke="#211d18" stroke-width="1.5"/>
-          <rect x="42" y="178" width="118" height="14" fill="none" stroke="#211d18" stroke-width="1.5"/>
-          <rect x="42" y="202" width="76" height="14" fill="none" stroke="#211d18" stroke-width="1.5"/>
-          <text x="42" y="246" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">ILlmGateway UNCHANGED</text>
-          <path d="M176 176 H 224" stroke="#4f46e5" stroke-width="2.5"/>
-          <path d="M217 170 L 227 176 L 217 182 Z" fill="#4f46e5"/>
-          <path d="M224 208 H 176" stroke="#211d18" stroke-width="1.8" stroke-dasharray="5 4"/>
-          <path d="M183 202 L 173 208 L 183 214 Z" fill="#211d18"/>
-          <text x="200" y="164" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#4f46e5">HTTP</text>
-          <text x="200" y="228" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">SHADOW</text>
-          <rect x="226" y="96" width="150" height="182" rx="6" fill="#fffdf8" stroke="#211d18" stroke-width="2.5"/>
-          <line x1="226" y1="124" x2="376" y2="124" stroke="#211d18" stroke-width="2"/>
-          <circle cx="242" cy="110" r="4" fill="#4f46e5"/>
-          <circle cx="256" cy="110" r="4" fill="none" stroke="#211d18" stroke-width="1.5"/>
-          <text x="366" y="114" text-anchor="end" font-family="Consolas,monospace" font-size="9" fill="#211d18" opacity="0.6">PRD-LLMGW</text>
-          <rect x="242" y="138" width="118" height="54" fill="url(#whatch)" stroke="#211d18" stroke-width="1.8"/>
-          <polyline points="248,184 264,170 280,176 296,156 312,164 328,148 344,154 356,142" fill="none" stroke="#4f46e5" stroke-width="2.5" stroke-linejoin="round" stroke-linecap="round"/>
-          <rect x="242" y="202" width="54" height="16" fill="#4f46e5" opacity="0.85"/>
-          <rect x="306" y="202" width="54" height="16" fill="none" stroke="#211d18" stroke-width="1.5"/>
-          <rect x="242" y="228" width="54" height="16" fill="none" stroke="#211d18" stroke-width="1.5"/>
-          <rect x="306" y="228" width="54" height="16" fill="url(#whatch)"/>
-          <text x="301" y="264" text-anchor="middle" font-family="Consolas,monospace" font-size="8" fill="#211d18" opacity="0.55">POOL / LOG / CONSOLE</text>
-        </svg>
-        </div>
-        <figcaption>版画示意：网关从 MAP 剥成独立 serving（右），实线为新的 HTTP 调用链路，虚线为影子比对回流。</figcaption>
-      </figure>
+    <h1>模型网关走完<em>能对外卖</em>的最后一公里，本周首次有 8 个版本真正发到线上。</h1>
+    <p class="standfirst">
+      更值得记的是质量线：功能验收通过率从上周的 63% 升到 <b>90.9%</b>，本周<b>没有一个功能验收未通过</b>。
+      5 条未通过全部来自机器人每天做的全站例行巡检——那是待清的毛刺，不是产品故障。
+    </p>
+    <div class="cover-facts">
+      <span>功能验收 <b>11</b> 份 · 通过 <b>10</b></span>
+      <span>发布验收 <b>4</b> 份 · 全通过</span>
+      <span>线上不可变版本 <b>8</b> 个</span>
+      <span>未关缺陷 <b>80</b>（未改善）</span>
     </div>
-    <blockquote class="pull"><span class="qt">剥完之后网关有自己的入口、自己的控制台、自己的数据面——MAP 只是它的一个调用方。</span><span class="by">—— 本期封面要义</span></blockquote>
   </section>
 
+  <!-- 质量闸 -->
+  <div class="col-head"><h2>质量闸</h2><span>QUALITY GATE</span><span class="w">先看这个</span></div>
+  <p class="lede">这一节回答：<b>这周做完的东西，验没验过？能不能放心用？</b></p>
+  <div class="gate-hero">
+    <div class="good">
+      <div class="k">功能验收通过率</div>
+      <div class="v">90.9%</div>
+      <div class="d">11 份中通过 10 <span class="up">上周 63.2%</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">整体通过率</div>
+      <div class="v">60.0%</div>
+      <div class="d">含每日例行巡检 <span class="up">上周 48.6%</span></div>
+    </div>
+    <div class="good">
+      <div class="k">线上发布</div>
+      <div class="v">8</div>
+      <div class="d">不可变版本 <span class="up">上周 0</span></div>
+    </div>
+    <div class="warn">
+      <div class="k">未关缺陷</div>
+      <div class="v">80</div>
+      <div class="d">总 148 <span class="flat">与上周持平</span></div>
+    </div>
+  </div>
+
+  <p class="lede" style="margin-top:20px">
+    <b>怎么读这两个通过率。</b>验收分五类，其中<b>每日巡检</b>是机器人每天对全站做一次全量扫描，只要任何一处有瑕疵就整份判未通过，天然容易红，不代表产品坏了。
+    所以：看<b>功能验收通过率（90.9%）</b>判断「本周做的东西靠不靠谱」；看<b>整体通过率（60.0%）</b>判断「全站还有多少毛刺没扫干净」。
+  </p>
+
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>验收类别</th><th>份数</th><th>通过</th><th>有条件</th><th>未通过</th><th>怎么读</th></tr>
+      <tr><td>功能验收</td><td>11</td><td>10</td><td>1</td><td>0</td><td>本周做的功能，无一未通过</td></tr>
+      <tr><td>发布验收</td><td>4</td><td>4</td><td>0</td><td>0</td><td>发布链路全部通过</td></tr>
+      <tr><td>PR 验收</td><td>1</td><td>1</td><td>0</td><td>0</td><td>-</td></tr>
+      <tr><td>缺陷复测</td><td>1</td><td>0</td><td>1</td><td>0</td><td>复测有保留意见待确认</td></tr>
+      <tr><td>每日巡检</td><td>8</td><td>0</td><td>3</td><td>5</td><td>全站例行扫描，红灯集中在这里</td></tr>
+    </table>
+  </div>
+
+  <div class="col-head" style="margin-top:30px"><h2>未通过与有条件通过</h2><span>NOT PASSED</span><span class="w">10 条 · 逐条给下一步</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>结论</th><th>验收项</th><th>影响</th><th>下一步</th></tr>
+      <tr><td><span class="vd vd-fail">未通过</span></td><td>每日全量巡检 · 07-19 复验（2 份，同日重复归档）</td><td>全站扫描发现残留瑕疵，未定位到具体功能故障</td><td>人工过一遍巡检报告，把真问题转成缺陷单</td></tr>
+      <tr><td><span class="vd vd-fail">未通过</span></td><td>每日全量巡检 · 07-23（2 份，同日重复归档）</td><td>同上</td><td>同上</td></tr>
+      <tr><td><span class="vd vd-fail">未通过</span></td><td>每日全量巡检 · 07-26</td><td>同上</td><td>同上</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>每日全量巡检 · 07-21 / 07-22 / 07-25（3 份）</td><td>有已知瑕疵但不阻断</td><td>归入巡检待办，随迭代顺带修</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>部署平台 · 数据库复制集模式（07-23）</td><td>高可用数据库模式可用但有限制</td><td>下周正式发布端到端取证时一并确认</td></tr>
+      <tr><td><span class="vd vd-cond">有条件</span></td><td>缺陷复测 · 团队副负责人添加成员（07-25）</td><td>修复生效但复测有保留意见</td><td>缺陷负责人确认后关单</td></tr>
+    </table>
+  </div>
+
+  <div class="callout">
+    <b>本周最该注意的一条</b>
+    每日巡检连续 5 天出现未通过或有条件通过，且同一天出现重复归档（07-19、07-23 各两份内容相同的报告）。
+    这说明<b>巡检机器人在报警，但没人把报警转成待办</b>。建议下周指定一人负责「巡检报警转缺陷单」，否则红灯常态化后就没人看了。
+  </div>
+
+  <!-- 业务价值看板 -->
+  <div class="col-head"><h2>本周做成了什么</h2><span>WHAT SHIPPED</span><span class="w">按「谁能多做什么」写</span></div>
+
+  <article class="cap">
+    <h3>1. 模型网关具备对外发布条件</h3>
+    <div class="who"><span>外部客户 / 合作方</span><span>内部各产品线</span></div>
+    <dl>
+      <dt>以前</dt><dd>网关只能内部用。正式对外发布需要的检查项（发布前冒烟、灰度密钥隔离、费用账本核对、发布阶段报告）没打通，不敢往外发。</dd>
+      <dt>现在</dt><dd>正式发布链路全部收口——发布前自动冒烟（连不收费的通道也纳入）、灰度试探用独立密钥（不再借用业务密钥）、账本与阶段报告逐项校验、正式环境的字体与文件上传路径修好。</dd>
+      <dt>意味着</dt><dd>模型网关从「内部工具」变成「可以对外交付的产品」，具备售卖与接入谈判的前提。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>通过 · 发布验收「模型网关三项能力与日志体验」(07-23)、「日志与三项能力生产闭环」(07-26)</div>
+    <p class="src">技术出处：#1218 #1239 #1241 #1242 #1248 #1249 #1252 #1253 #1254 #1255 #1256 #1260</p>
+  </article>
+
+  <article class="cap">
+    <h3>2. 每一次 AI 调用都能逐条查清</h3>
+    <div class="who"><span>运维</span><span>客户成功</span><span>财务对账</span></div>
+    <dl>
+      <dt>以前</dt><dd>调用日志一行行挤在一起看不清，想查某次调用要翻代码或问研发。</dd>
+      <dt>现在</dt><dd>日志表重排成高信息密度，鼠标悬停就能看到相关对象，点进去有独立详情页；图片类调用也补上了同级别观测数据；手机上也能看。</dd>
+      <dt>意味着</dt><dd>客户问「我这次为什么失败 / 为什么这么贵」当场能答，不用等研发排期查日志。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>通过 ×4 · 日志控制台与独立详情、请求记录信息密度与下钻、日志实体悬浮卡与详情页、请求记录信息密度与正式发布</div>
+    <p class="src">技术出处：#1224 #1229 #1234 #1238 #1240 #1245 #1244 #1251</p>
+  </article>
+
+  <article class="cap">
+    <h3>3. 部署平台的正式发布不再卡住、不再认错项目</h3>
+    <div class="who"><span>所有研发团队</span><span>运维</span></div>
+    <dl>
+      <dt>以前</dt><dd>正式发布页会卡住不动、排队越积越多、实时日志会断；同一个代码仓库用不同写法（带不带 https、走不走代理）会被当成两个不同项目。</dd>
+      <dt>现在</dt><dd>发布阶段能被正确识别、排队有守卫不再堆积、日志不再断流；仓库地址不管怎么写都归成同一个项目身份。</dd>
+      <dt>意味着</dt><dd>发布这件事从「要盯着、可能要重来」变成「点了就能走完」。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>有条件通过 · 部署平台「数据库复制集模式」(07-23)</div>
+    <p class="src">技术出处：#1213 #1208 #1209 #1235 #1223</p>
+  </article>
+
+  <article class="cap">
+    <h3>4. 多项目、多租户之间的数据不再串门</h3>
+    <div class="who"><span>所有客户</span><span>合规</span></div>
+    <dl>
+      <dt>以前</dt><dd>项目级密钥能列出别的项目；预览地址会连内部备用域名一起暴露；外部长连接地址没有限制。</dd>
+      <dt>现在</dt><dd>项目密钥只能看到自己项目；对外只暴露公开预览域名；外部长连接地址收紧；灰度密钥与业务密钥隔离；单点登录边界收紧。</dd>
+      <dt>意味着</dt><dd>把「一个客户看到另一个客户的数据」这类事故的入口逐个堵上，是对外售卖前的必要条件。</dd>
+    </dl>
+    <div class="ev" style="border-left-color:var(--red);background:rgba(180,35,24,0.06)"><b style="color:var(--red)">验收背书</b>本周未单独验收——这批安全改动缺独立证据，是当前最大的证据空白，已列入下周 P1</div>
+    <p class="src">技术出处：#1212 #1221 #1218，以及周初「生产更新防护」与周末「收紧单点登录边界」两次主干提交</p>
+  </article>
+
+  <article class="cap">
+    <h3>5. 录音转笔记真正好用了</h3>
+    <div class="who"><span>内部团队（会议纪要）</span><span>产品用户</span></div>
+    <dl>
+      <dt>以前</dt><dd>录音上传会产生重复条目，转写不是实时的，快捷录音会重复启动。</dd>
+      <dt>现在</dt><dd>录音有保护机制、会议纪要能自动整理、重复条目问题修掉、转写实时出字、录音可交互播放。</dd>
+      <dt>意味着</dt><dd>开完会直接出纪要这条路走通了。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>通过 ×5 · 录音交互式播放、录音转笔记单文档体验、快捷录音与同页转录、快捷录音防重复启动、录音实时转写</div>
+    <p class="src">技术出处：#1206 #1211</p>
+  </article>
+
+  <article class="cap">
+    <h3>6. 全站白天／夜间两套配色统一，首页工作台重做</h3>
+    <div class="who"><span>所有用户</span></div>
+    <dl>
+      <dt>以前</dt><dd>部分页面在浅色模式下会出现白底浮暗卡、文字看不清。</dd>
+      <dt>现在</dt><dd>双配色覆盖成体系，首页重做为工作台形态。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>通过 · 主题系统「首页主题与文字清晰度」(07-20)</div>
+    <p class="src">技术出处：#1219 #1233 #1204</p>
+  </article>
+
+  <article class="cap">
+    <h3>7. 底层 AI 模型升级到 GPT-5.6</h3>
+    <div class="who"><span>所有用户</span></div>
+    <dl>
+      <dt>现在</dt><dd>全站模型基线迁到 GPT-5.6 系列；视觉创作可选用网关提供的图片模型；某个模型出问题时能自动切到备用模型。</dd>
+    </dl>
+    <div class="ev"><b>验收背书</b>通过 · 视觉创作「多图片模型选择器」(07-20，#1199)</div>
+    <p class="src">技术出处：#1201 #1202 #1199 #1207</p>
+  </article>
+
+  <article class="cap">
+    <h3>8. 验收体系自身变严</h3>
+    <div class="who"><span>产品</span><span>测试</span></div>
+    <dl>
+      <dt>现在</dt><dd>手机端验收设为强制门槛、报告缺口统计口径统一并显示时间、九类验收报告有了说明文档、验收证据完整性检查补漏。</dd>
+      <dt>意味着</dt><dd>以后「验收通过」这四个字的含金量更高。</dd>
+    </dl>
+    <p class="src">技术出处：#1205 #1215 #1216 #1230 #1231 #1232 #1250</p>
+  </article>
+
+  <article class="cap">
+    <h3>地基工作</h3>
+    <p class="src" style="font-family:var(--sans);font-size:13px;color:var(--ink-2);line-height:1.9">
+      不直接对用户可见，但决定后续速度：评审限流与断流恢复（#1228）、团队副负责人搜索成员修复（#1217，对应缺陷 DEF-2026-0188）、密钥撤销确认修复（#1220）、修复器写入围栏（#1237），以及每日熵减巡检的文档台账对账。
+    </p>
+  </article>
+
   <!-- 一周脉络 -->
-  <div class="col-head"><h2>一周脉络</h2><span>THE WEEK</span><span class="w">逐日 · 按主干落地日期</span></div>
-  <div class="week-line">
+  <div class="col-head"><h2>一周脉络</h2><span>THE WEEK</span><span class="w">每天挂当天日报</span></div>
+  <div>
     <div class="day">
-      <div class="dhead"><b>周一</b><span>06-29</span><i>40 commit</i></div>
-      <div class="dbody">
-        <p><b>W26 周报归档</b>，128 个 changelog 碎片合并 <span class="pr">#943</span></p>
-        <p><b>米多星球 SSO 登录</b>接入 <span class="pr">#949</span>；CDS compose 自检 + 调度动作 <span class="pr">#946 #947</span></p>
-      </div>
+      <div class="dhead"><b>周一</b><span>07-20</span><i>17 提交</i></div>
+      <div class="dbody"><p>底层模型升级到 <b>GPT-5.6</b>；部署平台加生产更新防护</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/KgS9aXBog_k6?entry=afcc62a9703c4b6890e8dff25cc69384">看当天日报</a></p></div>
     </div>
     <div class="day heavy">
-      <div class="dhead"><b>周二</b><span>06-30</span><i>85 commit</i></div>
-      <div class="dbody">
-        <p><b>CDS 分支级隔离体系</b>：网络隔离 + 临时额外服务 + 极速版等待页 <span class="pr">#951</span></p>
-        <p>CDS 稳定性收口三连 <span class="pr">#956 #959 #960</span>；文档星系触摸板旋转 <span class="pr">#952 #961</span>；网页托管卡片操作区 <span class="pr">#963</span></p>
-      </div>
+      <div class="dhead"><b>周二</b><span>07-21</span><i>41 提交</i></div>
+      <div class="dbody"><p>首页配色刷新、<b>手机端验收设硬门</b>；录音保护与会议纪要整理</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/a0mw1AphsBhT?entry=69246d33e9ad4cc396bdcbdb29edc5fd">看当天日报</a></p></div>
     </div>
     <div class="day">
-      <div class="dhead"><b>周三</b><span>07-01</span><i>61 commit</i></div>
-      <div class="dbody">
-        <p><b>LLM 网关物理剥离主刀</b>：serving + 影子比对 + 命名子域 <span class="pr">#965</span>；网关安全基座 <span class="pr">#971</span></p>
-        <p><b>邮件模板智能体</b>上线 <span class="pr">#968</span>；禁用密码登录 <span class="pr">#969</span>；每日验收模板 <span class="pr">#966 #970</span></p>
-      </div>
+      <div class="dhead"><b>周三</b><span>07-22</span><i>30 提交</i></div>
+      <div class="dbody"><p>部署平台<b>正式发布页重构</b>；网关生产闭环；项目密钥隔离</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-BIX-nM0Z6Ld?entry=a063eafd98194f9b848a40a81f1bb02c">看当天日报</a></p></div>
     </div>
     <div class="day heavy">
-      <div class="dhead"><b>周四</b><span>07-02</span><i>88 commit</i></div>
-      <div class="dbody">
-        <p><b>网关双出口补齐</b>：抽屉多出口 + 图标卡片列 + 真实控制台 <span class="pr">#972 #973 #974 #975</span></p>
-        <p>用户通知推送订阅（Bark 协议）<span class="pr">#962</span>；不可变生产发布 <span class="pr">#983</span>；知识星球 3D 星系 v2 <span class="pr">#988</span></p>
-      </div>
+      <div class="dhead"><b>周四</b><span>07-23</span><i>51 提交</i></div>
+      <div class="dbody"><p>全站双配色完成；<b>网关日志台重构</b>（本周最忙一天）</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/rw56ilBAOMF9?entry=7070aef02cab4bc994b367c71b816f27">看当天日报</a></p></div>
+    </div>
+    <div class="day heavy">
+      <div class="dhead"><b>周五</b><span>07-24</span><i>44 提交</i></div>
+      <div class="dbody"><p><b>网关正式发布收口集中落地</b>；图片调用观测补齐</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-fbRp8VOPsLQ?entry=9a5c08b6ccf241d39459aed722552c1a">看当天日报</a></p></div>
     </div>
     <div class="day">
-      <div class="dhead"><b>周五</b><span>07-03</span><i>15 commit</i></div>
-      <div class="dbody">
-        <p><b>网关控制台</b>可登录 / 可观测 / 可配置 <span class="pr">#985</span>；Stub 密钥误告警修复 <span class="pr">#987</span></p>
-      </div>
+      <div class="dhead"><b>周六</b><span>07-25</span><i>1 提交</i></div>
+      <div class="dbody"><p>仅例行文档台账对账，无功能改动</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/cmn0dHnbajYX?entry=2b6ffeadf0c14c04b457efb707e76eef">看当天日报</a></p></div>
     </div>
     <div class="day">
-      <div class="dhead"><b>周六</b><span>07-04</span><i>35 commit</i></div>
-      <div class="dbody">
-        <p><b>日报报纸版 HTML</b> 二选项落地 <span class="pr">#991</span>；移动端热点页面优化 <span class="pr">#979</span>；验收报告内链修复 <span class="pr">#992</span></p>
-      </div>
-    </div>
-    <div class="day">
-      <div class="dhead"><b>周日</b><span>07-05</span><i>32 commit</i></div>
-      <div class="dbody">
-        <p><b>首页工作台重构</b>：继续上次 + 统一设计语言 + 极光氛围 <span class="pr">#996</span></p>
-        <p>CDS 品牌 / 布局归一 <span class="pr">#995</span>；涌现探索器流式生长节点 <span class="pr">#997</span></p>
-      </div>
+      <div class="dhead"><b>周日</b><span>07-26</span><i>12 提交</i></div>
+      <div class="dbody"><p>正式发布冒烟与<b>灰度密钥隔离</b>收尾</p>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/02Fi0Q2l3au8?entry=f78a51afc78f4eb79b6e63e8cc5df813">看当天日报</a></p></div>
     </div>
   </div>
+  <p class="appendix-note">本周日报逐日齐全，7 天无缺。</p>
 
-  <!-- 深度报道 -->
-  <div class="col-head"><h2>深度报道</h2><span>FEATURES</span><span class="w">本周 3 条主线</span></div>
-
-  <article class="feature">
-    <div class="kicker">主线一 · PRD-LLMGW</div>
-    <h3>网关剥离从「架构图」变成「可登录的控制台」</h3>
-    <div class="value">
-      <b>价值</b>
-      把大模型调用/日志/调度/模型池剥成独立可部署、可被别人调用的 serving 服务；
-      网关有自己的 HTTPS 入口、观测控制台和数据面，MAP 只是它的一个调用方，且对线上零风险。
-    </div>
-    <ul class="points">
-      <li><b>物理剥离落架构（#965）</b>：跨进程 serving + shadow 双跑比对落 llmshadow_comparisons + 灰度 HttpAppCallerAllowlist + 独立观测前端</li>
-      <li><b>双出口面板补齐（#972-#975）</b>：滑入抽屉并列展示主应用入口与网关入口，图标卡片列取代拥挤等宽文本；网关入口直开真实控制台</li>
-      <li><b>控制台三级推进（#978 #985）</b>：开箱 admin/admin 登录、LLM 日志观测、配置面开放；Mongo Console 受控写</li>
-    </ul>
-  </article>
-
-  <article class="feature">
-    <div class="kicker">主线二 · 视觉语言归一</div>
-    <h3>首页、登录页、CDS 品牌收敛成一套设计语言</h3>
-    <div class="value">
-      <b>价值</b>
-      首页从「一堆入口」重构成有「继续上次」、有极光氛围、有性能兜底的工作台；
-      CDS 换代宝石六芒品牌标、顶部导航贯穿、布局架构归一。对齐 content-fills-canvas 等三条体验规则。
-    </div>
-    <ul class="points">
-      <li><b>首页工作台重构（#996）</b>：继续上次 + 统一设计语言 + 极光氛围 + 落地页性能修复</li>
-      <li><b>CDS 品牌换代（#995）</b>：宝石六芒标 + 顶部导航贯穿 + 布局架构归一</li>
-      <li><b>知识星球 3D 星系 v2（#988）</b>：深空穹顶 + 星场 + 星云 + 热核着色 + 光路编排</li>
-    </ul>
-  </article>
-
-  <article class="feature">
-    <div class="kicker">主线三 · 身份与触达</div>
-    <h3>米多星球 SSO 收口，通知推送打通 Bark 协议</h3>
-    <ul class="points">
-      <li><b>SSO 三连（#949 #954 #969）</b>：接入米多星球单点登录、修边界、支持禁用账密登录</li>
-      <li><b>推送订阅（#962）</b>：用户通知推送订阅 + Bark 协议直达手机</li>
-      <li><b>邮件模板智能体（#968）</b>：模板库 + 一键复制 + AI 起草润色</li>
-    </ul>
-  </article>
-
-  <!-- 简讯 -->
-  <div class="col-head"><h2>一周简讯</h2><span>IN BRIEF</span></div>
-  <div class="briefs">
-    <section>
-      <div class="brief"><b>CDS 稳定性深挖</b><p>分支级网络隔离与极速版等待页之外，docker 网络跨创建路径回收、空项目网络回收一并收口。<span class="pr">#951 #981 #982</span></p></div>
-      <div class="brief"><b>不可变生产发布</b><p>生产发布支持不可变产物，随后修复发布评论问题，链路闭环。<span class="pr">#983 #986</span></p></div>
-      <div class="brief"><b>涌现探索器流式生长</b><p>流式 JSON 实时解析为正在生长的节点卡，等待期即产物。<span class="pr">#997</span></p></div>
-    </section>
-    <section>
-      <div class="brief"><b>快捷短视频解析</b><p>打通快捷指令短视频解析入队。<span class="pr">#984</span></p></div>
-      <div class="brief"><b>网页托管体验</b><p>公开快捷位改分享、卡片操作区优化。<span class="pr">#955 #963</span></p></div>
-      <div class="brief"><b>海鲜市场卡片密度</b><p>半高卡片提高单屏信息密度。<span class="pr">#977</span></p></div>
-    </section>
-  </div>
-
-  <!-- 数据版 -->
-  <div class="col-head"><h2>数据版</h2><span>BY THE NUMBERS</span><span class="w">全部来自 git 主干</span></div>
-  <div class="data-grid">
-    <section>
-      <div class="chart-title">一周行情</div>
-      <div class="chart-sub">每日主干落地提交数 · 峰值日着色</div>
-      <div class="vchart">
-        <div class="vb"><b>40</b><i style="height:45%"></i></div>
-        <div class="vb"><b>85</b><i style="height:97%"></i></div>
-        <div class="vb"><b>61</b><i style="height:69%"></i></div>
-        <div class="vb peak"><b>88</b><i style="height:100%"></i></div>
-        <div class="vb"><b>15</b><i style="height:17%"></i></div>
-        <div class="vb"><b>35</b><i style="height:40%"></i></div>
-        <div class="vb"><b>32</b><i style="height:36%"></i></div>
-      </div>
-      <div class="vlabels"><span>一</span><span>二</span><span>三</span><span>四</span><span>五</span><span>六</span><span>日</span></div>
-      <div class="chart-title" style="margin-top:22px">提交成分</div>
-      <div class="chart-sub">356 次提交 · 按类型</div>
-      <div class="stack">
-        <i class="sfix" style="width:39.3%"></i><i class="spol" style="width:10.1%"></i><i class="sfeat" style="width:9.0%"></i><i class="sdoc" style="width:5.6%"></i><i class="setc" style="width:36.0%"></i>
-      </div>
-      <div class="legend">
-        <span><i style="background:var(--ink)"></i>fix 140 · 39%</span>
-        <span><i style="background:rgba(79,70,229,0.30)"></i>polish 36 · 10%</span>
-        <span><i style="background:var(--indigo)"></i>feat 32 · 9%</span>
-        <span><i style="background:rgba(33,29,24,0.24)"></i>docs 20 · 6%</span>
-        <span><i style="background:rgba(33,29,24,0.08)"></i>其他 128 · 36%</span>
-      </div>
-      <p class="byline-row">fix 占 39%——典型的「大功能落地 + 密集收口」周型；周四 88 次提交为本周峰值，主战场是网关双出口。</p>
-    </section>
-    <section>
-      <div class="chart-title">与上周对比</div>
-      <div class="chart-sub">W27 vs W26</div>
-      <table class="delta">
-        <tr><th>指标</th><th>W26</th><th>W27</th><th>变化</th></tr>
-        <tr><td>主干提交</td><td>414</td><td><b>356</b></td><td><span class="down">−58</span></td></tr>
-        <tr><td>PR 收口</td><td>30</td><td><b>44</b></td><td><span class="up">+14</span></td></tr>
-        <tr><td>文件变更</td><td>512</td><td><b>695</b></td><td><span class="up">+183</span></td></tr>
-        <tr><td>新增行</td><td>+31,204</td><td><b>+58,261</b></td><td><span class="up">+27,057</span></td></tr>
-        <tr><td>删除行</td><td>−9,880</td><td><b>−7,043</b></td><td><span class="flat">−2,837</span></td></tr>
-      </table>
-      <p class="byline-row">提交量回落但 PR 数上涨：节奏从「少数大 PR 深挖」转向「多线并进、小步收口」。</p>
-      <p class="byline-row">署名：InerNoro/inernoro 215 · Claude 133 · Cursor Agent 6 · weixisheng-miduo 2</p>
-    </section>
-  </div>
-
-  <!-- 上周方向落地 -->
-  <div class="col-head"><h2>上周方向落地</h2><span>FOLLOW-UP</span><span class="w">对照 W26 优先级建议</span></div>
+  <!-- 上周落地 -->
+  <div class="col-head"><h2>上周说要做的，做到了吗</h2><span>FOLLOW-UP</span><span class="w">对照 W29 优先级</span></div>
   <ul class="ledger">
-    <li><span class="tag done">已落地</span><p><b>网关物理剥离进入部署态</b> —— #965 主刀 + 七个收口 PR，双出口拓扑可用，控制台可登录可观测。</p></li>
-    <li><span class="tag done">已落地</span><p><b>首页工作台重构</b> —— #996 收口：继续上次、统一设计语言、极光氛围、性能修复一次配齐。</p></li>
-    <li><span class="tag part">推进中</span><p><b>影子比对证据收敛</b> —— shadow 模式已可跑，样本量与 diff 率尚未达 Gate 阈值，生产翻转待拍板。</p></li>
-    <li><span class="tag todo">未启动</span><p><b>像素级视觉回归基线</b> —— 受沙箱代理限制顺延，看板已注明以功能验收 + serving 自检证据代替。</p></li>
+    <li><span class="tag part">推进中</span><p><b>网关运营化验收闭环</b> —— 日志台重构 + 三项能力验收挂门 + 正式发布冒烟，4 份发布验收全部通过。全量双主题取证仍缺。</p></li>
+    <li><span class="tag part">推进中</span><p><b>构建队列常态回归看护</b> —— 正式发布页重构里补了排队守卫与幂等前置（#1213）。事故值必红的自动断言仍未补。</p></li>
+    <li><span class="tag part">推进中</span><p><b>部署平台正式发布端到端</b> —— 发布页重构 + 仓库身份归一 + 项目密钥隔离；本周有 8 次真实线上发布。完整链路取证仍缺。</p></li>
+    <li><span class="tag todo">未启动</span><p><b>知识库跨节点同步确认</b> —— 本周知识库精力全在录音链路，同步专项未启动。<b>已连续第 2 周顺延</b>，下周要么排期要么明确放弃。</p></li>
+    <li><span class="tag part">推进中</span><p><b>移动端双配色存量清扫</b> —— 双配色覆盖 + 风险治理收口 + 网关观测台移动端打磨。</p></li>
   </ul>
 
   <!-- 下周优先级 -->
-  <div class="col-head"><h2>下周优先级</h2><span>NEXT WEEK</span></div>
+  <div class="col-head"><h2>下周打算做什么</h2><span>NEXT WEEK</span></div>
   <div class="prio">
     <div>
       <div class="ph"><b>P0 必须做</b><span>MUST</span></div>
       <ul>
-        <li>影子比对攒样本，Gate 全绿后评估生产翻 http——依据 extraction-readiness-gate 记分卡：样本量与 diff 率是仅剩红灯项</li>
-        <li>网关控制台配置面从只读放开第一批可写项——依据本周 #985 已把登录/观测/配置三级铺到只读，可写是自然下一刀</li>
+        <li><b>巡检报警转待办机制</b>让每日巡检的红灯有人认领、能转成缺陷单——本周 5 条未通过全在巡检且无人跟进，还出现重复归档，红灯常态化会让整套验收失去意义</li>
+        <li><b>模型网关正式发布放行核对</b>给出「能不能对外发」的明确结论——发布链路本周已收口且 4 份发布验收全通过，现在缺一次逐条核对的放行判定</li>
       </ul>
     </div>
     <div>
       <div class="ph"><b>P1 应该做</b><span>SHOULD</span></div>
       <ul>
-        <li>CDS _global 环境变量注入 llmgw 容器问题跟进——依据 W27 计划与遗留：等基建侧修复后补真机取证</li>
-        <li>周报 HTML 周刊版首刊试发并双端走查——依据本周日报报纸版（#991）已验证同链路可行</li>
+        <li><b>安全边界回归确认</b>本周 5 处安全收紧各自补回归证据——这批改动本周没有独立验收报告，是当前最大的证据空白</li>
+        <li><b>发布端到端取证</b>用一个真实项目跑通拉取到发布再到回滚并留证——本周已有 8 次真实发布，但缺完整链路取证</li>
       </ul>
     </div>
     <div>
       <div class="ph"><b>P2 可以做</b><span>COULD</span></div>
       <ul>
-        <li>知识星球 3D 星系移动端性能档位——依据 #988 桌面端已到艺术级，移动端帧率未测</li>
-        <li>每日熵减 W28 批次：索引补录 + changelog 到 doc 补录——依据熵清理台账 D2/D3/D6 三项未清</li>
+        <li><b>知识库跨节点同步（或明确放弃）</b>连续两周顺延，不能再无限挂着</li>
+        <li><b>缺陷积压清理</b>让 80 条未关缺陷开始下降——这是本周唯一零改善的指标</li>
       </ul>
     </div>
   </div>
 
-  <!-- 附录（硬性要求：必须列全本周全部 PR，行数 = 头部 PR 收口数，禁止节选） -->
-  <div class="col-head"><h2>附录 · 本周落地 PR</h2><span>APPENDIX</span><span class="w">44 个 · 全量</span></div>
+  <!-- 术语表 -->
+  <div class="col-head"><h2>术语表</h2><span>GLOSSARY</span><span class="w">本刊出现的内部说法</span></div>
   <div class="table-scroll">
-    <table class="prtable">
-      <tr><th>PR</th><th>落地日</th><th>标题</th><th>分类</th></tr>
-      <tr><td>#941</td><td>07-01</td><td>新增系统原则速查表（命名原则索引）</td><td>docs</td></tr>
-      <tr><td>#943</td><td>06-29</td><td>新增 2026-W26 周报 + 归档 128 个 changelog 碎片</td><td>docs</td></tr>
-      <tr><td>#946</td><td>06-29</td><td>修复 CDS compose 自动检测与技能链接补齐</td><td>fix</td></tr>
-      <tr><td>#947</td><td>06-29</td><td>CDS 任务调度动作步骤</td><td>feat</td></tr>
-      <tr><td>#949</td><td>06-29</td><td>接入米多星球 SSO 登录</td><td>feat</td></tr>
-      <tr><td>#951</td><td>06-30</td><td>CDS 分支级隔离体系：网络隔离 + 临时额外服务 + 极速版等待页</td><td>feat</td></tr>
-      <tr><td>#952</td><td>06-30</td><td>调整文档星系触摸板旋转手势</td><td>fix</td></tr>
-      <tr><td>#953</td><td>06-30</td><td>修复首页背景柔光与 CDS 预览生成</td><td>fix</td></tr>
-      <tr><td>#954</td><td>06-30</td><td>修复米多星球 SSO 边界问题</td><td>fix</td></tr>
-      <tr><td>#955</td><td>06-30</td><td>网页托管公开快捷位改为分享</td><td>polish</td></tr>
-      <tr><td>#956</td><td>06-30</td><td>修复热重启等待计时锚点</td><td>fix</td></tr>
-      <tr><td>#959</td><td>06-30</td><td>修复发布步骤状态误判</td><td>fix</td></tr>
-      <tr><td>#960</td><td>06-30</td><td>修复删除分支残留误报</td><td>fix</td></tr>
-      <tr><td>#961</td><td>06-30</td><td>优化文档星系触摸板与聚焦动效</td><td>fix</td></tr>
-      <tr><td>#962</td><td>07-02</td><td>新增用户通知推送订阅（Bark 协议）</td><td>feat</td></tr>
-      <tr><td>#963</td><td>06-30</td><td>优化网页托管卡片操作区</td><td>polish</td></tr>
-      <tr><td>#964</td><td>07-01</td><td>优化同步中心心智与方向保护</td><td>polish</td></tr>
-      <tr><td>#965</td><td>07-01</td><td>LLM 网关从 MAP 物理剥离（跨进程 serving + shadow 影子比对 + CDS 命名子域）</td><td>feat</td></tr>
-      <tr><td>#966</td><td>07-01</td><td>修复首页资源卡与背景配置</td><td>fix</td></tr>
-      <tr><td>#968</td><td>07-01</td><td>新增邮件模板智能体（模板库 + 一键复制 + AI 起草润色）</td><td>feat</td></tr>
-      <tr><td>#969</td><td>07-01</td><td>支持禁用密码登录</td><td>feat</td></tr>
-      <tr><td>#970</td><td>07-01</td><td>优化每日验收 HTML 报告模板</td><td>polish</td></tr>
-      <tr><td>#971</td><td>07-01</td><td>网关切换安全基座（CDS 多出口面板 + 观测标记 + 直连守卫棘轮 + MECE 测试）</td><td>feat</td></tr>
-      <tr><td>#972</td><td>07-02</td><td>分支详情抽屉补齐网关多出口（主应用入口 + 网关入口并列）</td><td>feat</td></tr>
-      <tr><td>#973</td><td>07-02</td><td>分支详情抽屉入口区重设计为图标卡片列</td><td>polish</td></tr>
-      <tr><td>#974</td><td>07-02</td><td>网关入口打开真实控制台 llmgw/web（替换心跳落地）</td><td>feat</td></tr>
-      <tr><td>#975</td><td>07-02</td><td>导入 / 配置校验豁免预构建镜像站点的 command 必填</td><td>fix</td></tr>
-      <tr><td>#977</td><td>07-02</td><td>优化海鲜市场半高卡片</td><td>polish</td></tr>
-      <tr><td>#978</td><td>07-02</td><td>网关控制台登录简化为开箱 admin/admin + upsert + 交接文档</td><td>fix</td></tr>
-      <tr><td>#979</td><td>07-04</td><td>优化移动端热点页面体验</td><td>polish</td></tr>
-      <tr><td>#980</td><td>07-02</td><td>cdscli 支持口令创建任务调度</td><td>feat</td></tr>
-      <tr><td>#981</td><td>07-02</td><td>跨创建路径回收 docker 网络</td><td>fix</td></tr>
-      <tr><td>#982</td><td>07-02</td><td>回收空项目 docker 网络</td><td>fix</td></tr>
-      <tr><td>#983</td><td>07-02</td><td>支持生产不可变产物发布</td><td>ops</td></tr>
-      <tr><td>#984</td><td>07-02</td><td>打通快捷指令短视频解析入队</td><td>fix</td></tr>
-      <tr><td>#985</td><td>07-03</td><td>网关剥离推进：控制台可登录 / 可观测 / 可配置 + CDS Mongo Console 受控写</td><td>feat</td></tr>
-      <tr><td>#986</td><td>07-03</td><td>修复不可变发布评论问题</td><td>fix</td></tr>
-      <tr><td>#987</td><td>07-03</td><td>修复 Stub 平台密钥误告警</td><td>fix</td></tr>
-      <tr><td>#988</td><td>07-02</td><td>知识星球 3D 星系视觉艺术升级 v2（深空穹顶 + 星场 + 星云 + 热核着色 + 光路编排）</td><td>polish</td></tr>
-      <tr><td>#991</td><td>07-04</td><td>日报报纸版 HTML 二选项 + 知识库 HTML 阅读滚动修复</td><td>feat</td></tr>
-      <tr><td>#992</td><td>07-04</td><td>修复验收报告内链接点击无效</td><td>fix</td></tr>
-      <tr><td>#995</td><td>07-05</td><td>CDS 品牌标换代为宝石六芒、顶部导航贯穿、布局架构归一</td><td>refactor</td></tr>
-      <tr><td>#996</td><td>07-05</td><td>首页工作台重构：继续上次 + 统一设计语言 + 极光氛围 + 落地页性能修复</td><td>feat</td></tr>
-      <tr><td>#997</td><td>07-05</td><td>涌现探索器生成节点体验重做：流式 JSON 实时解析为正在生长的节点卡</td><td>feat</td></tr>
+    <table class="tb">
+      <tr><th>内部代号</th><th>说人话</th></tr>
+      <tr><td>模型网关 / LLM Gateway</td><td>统一管理所有 AI 大模型调用的中枢，可独立对外接入与计费</td></tr>
+      <tr><td>部署平台 / CDS</td><td>把代码自动变成可访问在线环境的平台</td></tr>
+      <tr><td>PR</td><td>一次代码改动的提交单元，是本刊统计「做了多少事」的基本颗粒</td></tr>
+      <tr><td>通过 / 有条件通过 / 未通过</td><td>验收后给出的三档判定（pass / conditional / fail）</td></tr>
+      <tr><td>每日巡检</td><td>机器人每天对全站做一次全量扫描的例行验收，天然容易判红</td></tr>
+      <tr><td>灰度试探 / canary</td><td>小流量先跑一遍确认没问题，再全量放开</td></tr>
+      <tr><td>不可变版本</td><td>内容固定、可随时原样重新部署与回滚的线上版本快照</td></tr>
+      <tr><td>冒烟</td><td>发布前的快速自动检查，确认基本功能没坏</td></tr>
+      <tr><td>双主题 / 双配色</td><td>白天与夜间两套界面配色</td></tr>
+      <tr><td>熵减</td><td>文档与台账的定期清理对账</td></tr>
     </table>
   </div>
-  <p class="appendix-note">归属口径：本地 origin/main 上 merge / squash commit 的提交日期（%cd --date=short），非 GitHub mergedAt；行数必须等于头部「PR 收口」数（本期 44 = 44，成稿前自查）。</p>
 
-  <div class="note"><b>取证说明</b> 本期为周刊 HTML 版式创刊样稿：封面配版画示意图，数据版图表由 git 真实数据生成；重点功能界面实拍可按 IMG 占位（双花括号语法，见头部注释）随刊补图——占位字面量不要写进成稿说明文字，publish.py 会把残留占位当坏图拒发。</div>
-
-  <!-- 数据页脚 -->
-  <div class="stat-row">
-    <div><b>356</b><span>主干提交</span></div>
-    <div><b>44</b><span>PR 收口</span></div>
-    <div><b>695</b><span>文件变更</span></div>
-    <div><b>+58k</b><span>新增行</span></div>
-    <div><b>3</b><span>主线纵深</span></div>
-    <div><b>4</b><span>署名</span></div>
+  <!-- 附录 A -->
+  <div class="col-head"><h2>附录 A · 本周验收报告</h2><span>ACCEPTANCE</span><span class="w">25 份 · 全量</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>日期</th><th>结论</th><th>类别</th><th>验收项</th><th>PR</th><th>报告</th></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>主题系统 · 首页主题与文字清晰度</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e2ce7f0ffcfc4efab8ee20937b9df1c3&report=1c1ec0b788b146d0bd45a4900219a412">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>全量变更 · 07-19 替代复验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=41b755925abd4e17964a8bff930016fe">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 07-19 替代复验（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=98b268a3ad454f67986ca57ab6a5125c">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音交互式播放</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=4ff743704e6d4fc699829eade3aef145">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音转笔记单文档体验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=0af8ff3cb60f44a9b7162e08a1eac586&report=8957e4ecb772428085ade3bb6232f490">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音与同页转录</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=3faa99a2249047c892306b5adc2ca95b">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音防重复启动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=09df986aca674a6388313938a8fe5ab5">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>视觉创作 · 多图片模型选择器</td><td>#1199</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=4d8c99519c22439ca458e73ea1498691&report=9e66d8c79d4047d0ad115f9370fb6629">打开</a></td></tr>
+      <tr><td>07-21</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 07-21 全量改动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=40f0c4e3596043edb014b00fce12cd37">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力生产闭环</td><td>#1218</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=7566a9efe45c491093eaa4177d3f9717&report=bd6db502cc144173be637bdfa1c3be5b">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志控制台与独立详情</td><td>#1222</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b3127a546e7a4558acb23772a2e69dfd&report=e90b0c2723134d21842056616996aef3">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 请求记录信息密度与正式发布</td><td>#1224</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=fb52b905cbee46838078a4c6f458eb01&report=30f76288ed4344d5b37342bdfcce9517">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 请求记录信息密度与下钻</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=9d4d84edc3ad4b3ea7a50113fbf2bcf1&report=eb1d645a9aee4802b88ffab6d34b5f93">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>全量变更 · 昨日全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=aba52d96edba4b75907b52c808bdbba8">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-cond">有条件</span></td><td>功能验收</td><td>部署平台 · 数据库复制集模式</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b62fb307035a43a99000a4c1416b96f1&report=e38ec1c5982744f688448857ca6e0ee5">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志实体悬浮卡与详情页</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=56aa5534eb344d24bb09bafc3ebfee97&report=54c93b26ec3041d6bdc3a3d74217c3ea">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力与日志体验</td><td>#1244</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=8456b0a2cb1b42e796c6bb2a43f05724&report=9c134d61a33244dfbf16b12f6c2d0cdf">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=0585e81f9073415981889172daa8a918">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=630fd8db05a24c43bd6721986a8b621f">打开</a></td></tr>
+      <tr><td>07-24</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音实时转写</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=eb113cad861b4b06b5ee9d6b320a80c7&report=8b87ef26d13b4035a399c4eb7a0560ed">打开</a></td></tr>
+      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 部署平台 / 全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=228e48bf56f7421e94c565a28ea86966">打开</a></td></tr>
+      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>缺陷复测</td><td>DEF-2026-0188 团队副负责人添加成员</td><td>#1217</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=27f97da57dbd4b7fb6586ab2ce345c8d&report=ff25fe9c4bb34e3c9f149e9fb23a3c27">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>PR 验收</td><td>#1264 模型网关教程双链运行时与可视化</td><td>#1264</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=a80a0755e13b46ebbcd63bc382e10e94&report=6fe2e2d8cbed49c6998b95df9072ad60">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 日志与三项能力生产闭环</td><td>#1260</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=40166cd1e4ad488182241ad20ad2e0be&report=7c63135c9319419c9ac58e3ebeb9734d">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-26</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=a6cabf0cf3404305a9ba44e923e4bba3">打开</a></td></tr>
+    </table>
   </div>
+  <p class="appendix-note">结论口径：通过 = pass、有条件 = conditional、未通过 = fail。报告深链需登录部署平台后可达。行数 25 = 头部验收份数。</p>
+
+  <!-- 附录 B -->
+  <div class="col-head"><h2>附录 B · 本周落地 PR</h2><span>APPENDIX</span><span class="w">47 个 · 全量</span></div>
+  <div class="table-scroll">
+    <table class="tb">
+      <tr><th>PR</th><th>落地日</th><th>分类</th><th>标题</th></tr>
+      <tr><td>#1199</td><td>07-20</td><td>视觉创作</td><td>视觉创作展开网关图片模型并补充实战教程</td></tr>
+      <tr><td>#1201</td><td>07-20</td><td>模型</td><td>迁移至 GPT-5.6 模型系列</td></tr>
+      <tr><td>#1202</td><td>07-20</td><td>模型</td><td>修复 GPT-5.6 默认 raw Chat 参数转换</td></tr>
+      <tr><td>#1204</td><td>07-21</td><td>界面</td><td>收拢周报浅色表面层级</td></tr>
+      <tr><td>#1205</td><td>07-21</td><td>验收</td><td>移动端验收硬门</td></tr>
+      <tr><td>#1206</td><td>07-21</td><td>知识库</td><td>增强录音保护与会议纪要整理</td></tr>
+      <tr><td>#1207</td><td>07-21</td><td>网关</td><td>扩展多上游故障切换状态</td></tr>
+      <tr><td>#1208</td><td>07-21</td><td>部署平台</td><td>统一无协议 GitHub 仓库身份</td></tr>
+      <tr><td>#1209</td><td>07-21</td><td>部署平台</td><td>兼容 Git 代理仓库身份</td></tr>
+      <tr><td>#1211</td><td>07-21</td><td>知识库</td><td>修复录音上传重复条目竞态</td></tr>
+      <tr><td>#1212</td><td>07-22</td><td>安全</td><td>隔离项目级 Key 的项目列表</td></tr>
+      <tr><td>#1213</td><td>07-22</td><td>部署平台</td><td>正式发布页重构 + 发布阶段识别 + 排队守卫 + 日志断流修复</td></tr>
+      <tr><td>#1215</td><td>07-22</td><td>验收</td><td>增强验收报告归档与知识库同步</td></tr>
+      <tr><td>#1216</td><td>07-22</td><td>验收</td><td>统一报告缺口统计并显示报告时间</td></tr>
+      <tr><td>#1217</td><td>07-22</td><td>缺陷</td><td>修复副负责人无法搜索团队成员（DEF-2026-0188）</td></tr>
+      <tr><td>#1218</td><td>07-22</td><td>网关/安全</td><td>收紧外部长连接地址并修复教程主题（生产闭环）</td></tr>
+      <tr><td>#1219</td><td>07-23</td><td>界面</td><td>完成双配色覆盖与首页工作台重构</td></tr>
+      <tr><td>#1220</td><td>07-22</td><td>缺陷</td><td>修复密钥撤销确认阻断</td></tr>
+      <tr><td>#1221</td><td>07-22</td><td>安全</td><td>仅暴露公开预览域名</td></tr>
+      <tr><td>#1223</td><td>07-23</td><td>部署平台</td><td>修复热重载滚动跳变</td></tr>
+      <tr><td>#1224</td><td>07-23</td><td>网关</td><td>重构请求记录信息密度与右侧详情</td></tr>
+      <tr><td>#1228</td><td>07-23</td><td>评审</td><td>修复评审限流与断流恢复</td></tr>
+      <tr><td>#1229</td><td>07-23</td><td>网关</td><td>补齐日志实体悬浮卡与独立详情页</td></tr>
+      <tr><td>#1230</td><td>07-23</td><td>验收</td><td>修复守卫漏检与契约漂移</td></tr>
+      <tr><td>#1231</td><td>07-23</td><td>验收</td><td>优化手机端报告导航交互</td></tr>
+      <tr><td>#1232</td><td>07-23</td><td>验收</td><td>补充九类验收报告说明</td></tr>
+      <tr><td>#1233</td><td>07-23</td><td>界面</td><td>收口双配色风险治理</td></tr>
+      <tr><td>#1234</td><td>07-23</td><td>网关</td><td>完成日志与三分钟接入闭环</td></tr>
+      <tr><td>#1235</td><td>07-23</td><td>部署平台</td><td>修复部署超时</td></tr>
+      <tr><td>#1237</td><td>07-23</td><td>网关</td><td>围栏过期的修复器写入</td></tr>
+      <tr><td>#1238</td><td>07-24</td><td>网关</td><td>收紧日志密度并统一实体图标 + 三能力验收</td></tr>
+      <tr><td>#1239</td><td>07-24</td><td>网关</td><td>修复维护发布重复 Provider 审计</td></tr>
+      <tr><td>#1240</td><td>07-24</td><td>网关</td><td>修复交易所日志详情跳转</td></tr>
+      <tr><td>#1241</td><td>07-24</td><td>网关</td><td>同步维护发布审计断言</td></tr>
+      <tr><td>#1242</td><td>07-24</td><td>网关</td><td>修复正式字体资源子路径</td></tr>
+      <tr><td>#1244</td><td>07-24</td><td>网关</td><td>修复手机端请求详情视口留白</td></tr>
+      <tr><td>#1245</td><td>07-24</td><td>网关</td><td>补全图片调用级日志观测</td></tr>
+      <tr><td>#1248</td><td>07-24</td><td>网关</td><td>修复语音识别灰度清单缺失</td></tr>
+      <tr><td>#1249</td><td>07-24</td><td>网关</td><td>排除文件上传边界日志的来源误判</td></tr>
+      <tr><td>#1250</td><td>07-26</td><td>验收</td><td>同步官方验收技能规则目录</td></tr>
+      <tr><td>#1251</td><td>07-24</td><td>网关</td><td>扩大手机日志设置触控区域</td></tr>
+      <tr><td>#1252</td><td>07-24</td><td>网关</td><td>修复维护发布影子门禁范围</td></tr>
+      <tr><td>#1253</td><td>07-24</td><td>网关</td><td>修复维护发布账本校验</td></tr>
+      <tr><td>#1254</td><td>07-24</td><td>网关</td><td>修复维护发布阶段报告校验</td></tr>
+      <tr><td>#1255</td><td>07-24</td><td>网关</td><td>统一正式冒烟调用方配置</td></tr>
+      <tr><td>#1256</td><td>07-26</td><td>网关</td><td>增加非付费正式发布冒烟</td></tr>
+      <tr><td>#1260</td><td>07-26</td><td>网关</td><td>收口正式日志视觉与实体跳转</td></tr>
+    </table>
+  </div>
+  <p class="appendix-note">归属口径：本地 origin/main 上 merge / squash commit 的提交日期，非 GitHub mergedAt；行数 47 = 头部 PR 收口数。</p>
+
+  <!-- 工程数据 -->
+  <div class="col-head"><h2>附录 C · 工程数据</h2><span>FOR ENGINEERS</span><span class="w">技术读者向</span></div>
+  <div class="stat-row">
+    <div><b>196</b><span>主干提交</span></div>
+    <div><b>47</b><span>PR 收口</span></div>
+    <div><b>911</b><span>文件变更</span></div>
+    <div><b>+36k</b><span>新增行</span></div>
+    <div><b>25</b><span>验收报告</span></div>
+    <div><b>8</b><span>线上版本</span></div>
+  </div>
+  <p class="appendix-note">
+    提交类型：fix 74 / merge 68 / polish 17 / feat 15 / security 5 / test 2 / rule 2 / refactor 2 / perf 2 / docs 2 / style 1。
+    署名：inernoro/InerNoro 172 · Claude 24。净增 +21,492 行。
+    相关设计文档：doc/plan.platform.llm-gateway.full-cutover.md（网关切换看板）、doc/design.platform.llm-gateway.physical-isolation.md（网关拓扑）、doc/debt.cds.build-gate.md（部署平台队列债务）。
+  </p>
 
   <footer class="colophon">
-    <span>米多智能体周刊 · 数据来自 git 主干本周落地提交与 PR</span>
-    <span>MAP WEEKLY · 2026-W27 · 06-29/07-05</span>
+    <span>米多智能体周刊 · 数据来自 git 主干 + 日报 + 验收中心 + 缺陷台账 + 部署版本</span>
+    <span>MAP WEEKLY · 2026-W30 · 07-20/07-26</span>
   </footer>
 </div>
 </body>

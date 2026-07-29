@@ -31,7 +31,7 @@ cut -f1,2,4 "$COMMITS_FILE"
 
 ## 2.2 去重文件/行数统计
 
-> **⛔ 绝对禁止使用 `git log --shortstat` 逐条累加！**
+> **绝对禁止使用 `git log --shortstat` 逐条累加！**
 >
 > 该方式会导致被多次提交修改的文件和行数被重复计算，产生严重膨胀的数字。
 > 本仓库为 shallow clone（`.git/shallow` 含 9 个边界提交），膨胀更为极端。
@@ -111,7 +111,7 @@ while IFS=$'\t' read -r PR_DATE HASH SUBJECT; do
 done < "$PRS_FILE"
 ```
 
-> **⚠️ 为什么必须深读**：merge commit 标题往往是 PR 分支的最后一次 commit 消息（可能是 merge/fix），不代表 PR 的真实主题。例如 PR #201 标题为 `remove: delete TAPD template`，但实际包含 25 个 commits 的 ECharts 报告系统重构。
+> **为什么必须深读**：merge commit 标题往往是 PR 分支的最后一次 commit 消息（可能是 merge/fix），不代表 PR 的真实主题。例如 PR #201 标题为 `remove: delete TAPD template`，但实际包含 25 个 commits 的 ECharts 报告系统重构。
 
 ## 2.4 贡献者统计
 
