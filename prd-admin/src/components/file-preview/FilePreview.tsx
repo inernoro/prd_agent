@@ -234,11 +234,18 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             d.addEventListener('click', (ev) => {
               const a = (ev.target as Element | null)?.closest?.('a, area');
               if (!a) return;
-              const raw = (a.getAttribute('href')
+              // 必须区分「没有 href 属性」和「有 href 但是空串」：
+              //   - 没有属性（<a name="x"> / <area> 占位）不是链接，放行；
+              //   - href="" 是**空相对引用**，按 baseURI 解析。srcdoc 文档的 base URL
+              //     继承自父页，所以它解析出的正是宿主 SPA 的地址，点一下就把 iframe
+              //     导航过去 —— 正是本修复要防的那条路径。当成 no-op 放行等于留了个后门。
+              // SVG2 起 href 优先于 xlink:href，两者都在时取 href（与浏览器一致）。
+              const rawAttr = a.getAttribute('href')
                 ?? a.getAttributeNS(XLINK, 'href')
-                ?? a.getAttribute('xlink:href')
-                ?? '').trim();
-              if (!raw || raw.startsWith('#')) return;                      // 页内锚点
+                ?? a.getAttribute('xlink:href');
+              if (rawAttr === null) return;                                 // 无导航属性，不是链接
+              const raw = rawAttr.trim();
+              if (raw.startsWith('#')) return;                              // 页内锚点
               let url: URL;
               try { url = new URL(raw, d.baseURI); } catch { return; }
               if (!SELF_NAVIGATING.has(url.protocol)) return;               // 交给系统处理器（含 vscode:/weixin: 等）

@@ -285,9 +285,24 @@ class _ReportScanner(HTMLParser):
                 return
         # href 三种写法都要认：HTML/SVG2 的 href、SVG1.1 遗留的 xlink:href。
         # 覆盖 <a> 与 <area>（图像映射热区导航语义与 a 相同）。
-        href = _normalize_url(d.get("href") or d.get("xlink:href") or "")
-        if not href or href.startswith("#"):
+        # 必须区分「没有 href 属性」与「有 href 但是空串」：前者不是链接，后者是**空相对
+        # 引用**，会按文档 base URL 解析并真的导航。知识库把正文渲染在 srcdoc iframe 里，
+        # 而 srcdoc 的 base URL 继承自父页——href="" 解析出的就是宿主 SPA 地址，点了就
+        # 把 frame 导航过去。当成 no-op 放行，等于给这条路径开了后门。
+        # SVG2 起 href 优先于 xlink:href，两者都在时取 href（与浏览器一致），
+        # 不能用 `d.get("href") or d.get("xlink:href")`——空串是 falsy，会串到后者。
+        if "href" in d:
+            href = _normalize_url(d["href"])
+        elif "xlink:href" in d:
+            href = _normalize_url(d["xlink:href"])
+        else:
+            return                       # 无导航属性，不是链接
+        if href.startswith("#"):
             return                       # 页内锚点，不导航
+        if not href:
+            self._err(f'<{tag} href=""> 空 href 会按文档 base URL 解析并导航当前 frame'
+                      "（srcdoc 的 base 继承自宿主页），不是 no-op；请删除该属性或填真实地址")
+            return
         # 判「会不会把所在 frame 导航走」而不是「像不像 http 链接」：
         # 文档相对（report.html / ../a / ?entry=x）、根相对（/a）、协议相对（//host/a）
         # 统统会导航，必须校验。

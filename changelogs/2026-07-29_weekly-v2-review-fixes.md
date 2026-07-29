@@ -33,3 +33,5 @@
 | fix | skill | 采集器把 cdscli 在本进程内的打印改道 stderr：die() 会往 stdout 打一行 JSON，导致 CDS 不可达时 stdout 变成两段 JSON 拼接、下游解析直接炸 |
 | rule | skill | 周报纪律 12 补「不可用 ≠ 0」：available=false 只能写数据不可用，只有 available=true 且 attempts=0 才写本周未发布 |
 | test | skill | 新增周报采集器判据回归（8 例，含保留边界/条数闸/标识集合/滤空守卫），逐条验证删掉对应修复即变红 |
+| security | prd-admin | 链接拦截区分「无 href 属性」与「href 空串」：srcdoc 的 base URL 继承父页，href="" 会解析成宿主 SPA 地址并导航本 frame，原先当 no-op 放行等于给卡死路径留了后门 |
+| security | skill | 发布闸同步拒收空 href（含纯空白），并按浏览器口径在 href 与 xlink:href 都存在时取 href（不能用 or 串联，空串是 falsy 会串到后者） |
