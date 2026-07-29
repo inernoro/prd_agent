@@ -58,8 +58,10 @@ jobs:
               - 'exec_dep.sh'
               - 'scripts/lib/static-release.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'
+              - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
+              - 'scripts/tests/release-evidence.test.py'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
 

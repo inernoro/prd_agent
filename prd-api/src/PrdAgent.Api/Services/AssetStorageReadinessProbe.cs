@@ -65,8 +65,13 @@ public sealed class AssetStorageReadinessProbe
                 return cached;
             }
 
-            _cached = await ExecuteAsync(cancellationToken);
-            return _cached;
+            var result = await ExecuteAsync(cancellationToken);
+            // 健康结果可缓存以控制对象存储探针成本；失败结果必须立即失效。
+            // 否则 Docker/CDS 的后续重试只会反复读到旧失败，存储已经恢复也无法自愈。
+            _cached = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+                ? result
+                : null;
+            return result;
         }
         finally
         {
@@ -209,6 +214,9 @@ public sealed class AssetStorageReadinessProbe
             DurationMs = stopwatch.ElapsedMilliseconds,
         };
     }
+
+    internal static bool CanForceProbe(IPAddress? remoteAddress)
+        => remoteAddress != null && IPAddress.IsLoopback(remoteAddress);
 
     private async Task<byte[]> ReadPublicBytesWithRetryAsync(
         Uri uri,

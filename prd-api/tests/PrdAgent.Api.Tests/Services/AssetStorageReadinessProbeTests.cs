@@ -86,6 +86,25 @@ public sealed class AssetStorageReadinessProbeTests
     }
 
     [Fact]
+    public async Task CheckAsync_ShouldNotCacheFailureAcrossRecoveryRetry()
+    {
+        var storage = new ProbeAssetStorage("tencentCos")
+        {
+            Failure = ProbeFailure.Write,
+        };
+        var probe = CreateProbe(storage, "tencentCos", cacheSeconds: 300);
+
+        var failed = await probe.CheckAsync();
+        storage.Failure = ProbeFailure.None;
+        var recovered = await probe.CheckAsync();
+
+        failed.Status.ShouldBe("unhealthy");
+        recovered.Status.ShouldBe("healthy");
+        storage.UploadCount.ShouldBe(2);
+        storage.DeleteCount.ShouldBe(1);
+    }
+
+    [Fact]
     public async Task CheckAsync_ShouldCoalesceConcurrentHealthChecksIntoOneProbe()
     {
         var storage = new ProbeAssetStorage("tencentCos")
@@ -159,6 +178,20 @@ public sealed class AssetStorageReadinessProbeTests
     public void CanonicalProvider_ShouldNormalizeSupportedAliases(string input, string expected)
     {
         AssetStorageReadinessProbe.CanonicalProvider(input).ShouldBe(expected);
+    }
+
+    [Theory]
+    [InlineData("127.0.0.1", true)]
+    [InlineData("::1", true)]
+    [InlineData("10.0.0.8", false)]
+    [InlineData("203.0.113.10", false)]
+    public void ForceProbe_ShouldOnlyAllowContainerLoopback(
+        string remoteAddress,
+        bool expected)
+    {
+        AssetStorageReadinessProbe
+            .CanForceProbe(IPAddress.Parse(remoteAddress))
+            .ShouldBe(expected);
     }
 
     private static AssetStorageReadinessProbe CreateProbe(

@@ -34,6 +34,9 @@ set -eu
 #   - DIST_SHA256 / DIST_SHA256_URL：DIST_URL 对应的审计哈希或哈希文件；不可变发布必须提供其一
 #   - PAGES_BASE_URL：覆盖 GitHub Pages 根地址（默认优先走 get.miduo.org 代理）
 #   - PRD_AGENT_PUBLIC_BASE_URL：发布后公网表面验收根地址，默认 https://map.ebcone.net
+#   - PRD_AGENT_API_SERVICE：正式 Compose 中的 API service 名，默认 api
+#   - PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL：API 容器内强制存储探针地址
+#   - PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS / INTERVAL_SECONDS / TIMEOUT_SECONDS：存储发布门禁重试参数
 #   - PRD_AGENT_RELEASE_EVIDENCE_DIR：不可覆盖的发布证据目录，默认 $HOME/prd-agent-release-evidence
 #   - GITHUB_TOKEN：仅当 Release 资产为私有时需要（公开 Pages 下载不需要）
 #   - LLMGW_MODE=http：全量切 HTTP 时必须先通过 scripts/llmgw-release-gate.py
@@ -670,6 +673,7 @@ release_evidence_dir="${PRD_AGENT_RELEASE_EVIDENCE_DIR:-${HOME:-.}/prd-agent-rel
 release_evidence_file="$release_evidence_dir/${release_evidence_id}.json"
 public_smoke_json="$tmp_dir/public-surface.json"
 rollback_smoke_json="$tmp_dir/public-surface-rollback.json"
+asset_storage_readiness_json="$tmp_dir/asset-storage-readiness.json"
 static_staging_dir=""
 static_release_id=""
 static_release_target=""
@@ -685,6 +689,7 @@ zip_path=""
 expected=""
 artifact_checksum_verified=0
 gateway_service="${PRD_AGENT_GATEWAY_SERVICE:-gateway}"
+api_service="${PRD_AGENT_API_SERVICE:-api}"
 gateway_container_id="$(compose_run ps -q "$gateway_service" 2>/dev/null | head -n 1)"
 active_static_root="deploy/web/dist"
 active_nginx_conf_root="deploy/nginx/conf.d"
@@ -732,6 +737,7 @@ write_release_evidence() {
     --static-before-current "$static_before_current" \
     --static-before-previous "$static_before_previous" \
     --smoke-json "$public_smoke_json" \
+    --asset-storage-readiness-json "$asset_storage_readiness_json" \
     --failure-stage "$evidence_failure_stage" \
     --rollback-result "$evidence_rollback_result"
 }
@@ -757,6 +763,37 @@ run_public_surface_smoke() {
     --timeout "${PRD_AGENT_PUBLIC_SMOKE_TIMEOUT_SECONDS:-15}" \
     --json-out "$smoke_output" \
     $public_smoke_commit_args
+}
+
+run_asset_storage_readiness() {
+  readiness_url="${PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true}"
+  readiness_attempts="${PRD_AGENT_ASSET_STORAGE_READINESS_ATTEMPTS:-3}"
+  readiness_interval="${PRD_AGENT_ASSET_STORAGE_READINESS_INTERVAL_SECONDS:-10}"
+  readiness_timeout="${PRD_AGENT_ASSET_STORAGE_READINESS_TIMEOUT_SECONDS:-25}"
+  readiness_attempt=1
+  readiness_attempt_json="$tmp_dir/asset-storage-readiness-attempt.json"
+
+  while [ "$readiness_attempt" -le "$readiness_attempts" ]; do
+    if compose_run exec -T "$api_service" \
+      curl -fsS --max-time "$readiness_timeout" "$readiness_url" \
+      > "$readiness_attempt_json"; then
+      mv "$readiness_attempt_json" "$asset_storage_readiness_json"
+      echo "Asset storage readiness: PASS ($readiness_url)"
+      return 0
+    fi
+    if [ "$readiness_attempt" -ge "$readiness_attempts" ]; then
+      break
+    fi
+    echo "Asset storage readiness retry $readiness_attempt/$readiness_attempts" >&2
+    sleep "$readiness_interval"
+    readiness_attempt=$((readiness_attempt + 1))
+  done
+
+  printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
+    "$readiness_attempts" > "$asset_storage_readiness_json"
+  echo "ERROR: asset storage readiness failed after ${readiness_attempts} attempts: $readiness_url" >&2
+  echo "RECOVERY: keep the gateway online, restore Tencent COS/CDN access or the API container, then retry the release gate." >&2
+  return 1
 }
 
 reload_active_gateway() {
@@ -1708,6 +1745,8 @@ wait_for_llmgw_serving_readiness() {
 
 if [ "$LLMGW_VERIFY_ONLY" = "1" ]; then
   echo "LLM Gateway verify-only: preserving current containers"
+  release_failure_stage="asset-storage-readiness"
+  run_asset_storage_readiness
   activate_pending_static_release
 else
   release_failure_stage="compose-update"
@@ -1732,6 +1771,9 @@ else
   fi
 
   wait_for_llmgw_serving_readiness
+
+  release_failure_stage="asset-storage-readiness"
+  run_asset_storage_readiness
 
   activate_pending_static_release
 

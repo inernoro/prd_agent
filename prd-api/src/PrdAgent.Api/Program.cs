@@ -1542,9 +1542,18 @@ static IResult HealthCheck()
 
 static async Task<IResult> AssetStorageReadiness(
     AssetStorageReadinessProbe probe,
-    CancellationToken cancellationToken)
+    HttpContext context,
+    CancellationToken cancellationToken,
+    bool force = false)
 {
-    var result = await probe.CheckAsync(cancellationToken: cancellationToken);
+    if (force && !AssetStorageReadinessProbe.CanForceProbe(
+            context.Connection.RemoteIpAddress))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+    var result = await probe.CheckAsync(
+        force: force,
+        cancellationToken: cancellationToken);
     var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
         ? StatusCodes.Status200OK
         : StatusCodes.Status503ServiceUnavailable;

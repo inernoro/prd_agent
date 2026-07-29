@@ -11,6 +11,7 @@ public sealed class DeploymentStorageProviderContractTests
         var cdsRoot = ReadRepoFile("cds-compose.yml");
         var cdsNested = ReadRepoFile("cds/cds-compose.yaml");
         var production = ReadRepoFile("docker-compose.yml");
+        var productionRelease = ReadRepoFile("exec_dep.sh");
 
         Assert.Contains("ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}", localDevelopment);
         Assert.Contains(
@@ -43,6 +44,20 @@ public sealed class DeploymentStorageProviderContractTests
         Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-", production);
         Assert.DoesNotContain("ASSETS_PROVIDER=cloudflareR2", production);
         Assert.DoesNotContain("R2_", production);
+        Assert.Contains(
+            "http://localhost:8080/health\"]",
+            production);
+        Assert.DoesNotContain(
+            "http://localhost:8080/health/ready\"]",
+            production);
+        Assert.Contains("run_asset_storage_readiness()", productionRelease);
+        Assert.Contains(
+            "PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true",
+            productionRelease);
+        Assert.Contains("compose_run exec -T \"$api_service\"", productionRelease);
+        Assert.Contains(
+            "release_failure_stage=\"asset-storage-readiness\"",
+            productionRelease);
     }
 
     [Fact]

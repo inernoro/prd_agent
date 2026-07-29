@@ -123,7 +123,9 @@ services:
       - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
       - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
     healthcheck:
-      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
+      # 容器依赖只判断 API 进程存活，不能让 COS/CDN 故障阻断已有静态页面与无关路由。
+      # 完整对象存储读写由 exec_dep.sh 的独立 /api/health/ready 发布门禁负责。
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
       interval: 30s
       timeout: 25s
       retries: 3
