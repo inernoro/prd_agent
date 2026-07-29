@@ -4,7 +4,7 @@ import { Reveal } from '../components/Reveal';
 import { SectionHeader } from '../components/SectionHeader';
 import { useLanguage } from '../contexts/LanguageContext';
 import { MapSpinner } from '@/components/ui/VideoLoader';
-import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
+import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 import { toast } from '@/lib/toast';
 import { createLlmGatewaySsoTicket } from '@/services';
 import { useAuthStore } from '@/stores/authStore';
@@ -44,14 +44,19 @@ export function CompatibilityStack() {
     setGatewayOpening(true);
     const result = await createLlmGatewaySsoTicket();
     if (result.success) {
-      const target = resolveLlmGatewaySsoHref(result.data.code);
-      if (target) {
-        window.location.assign(target);
+      // 票据签发成功后仍可能拼不出地址（例如预览分支名过长、网关子域超出 DNS 上限）。
+      // 那与凭据无关，必须报出真实原因，否则会把人引向「是不是被封号了」的错误方向。
+      const resolution = resolveLlmGatewaySso(result.data.code);
+      if (resolution.ok) {
+        window.location.assign(resolution.href);
         return;
       }
+      setGatewayOpening(false);
+      toast.error('模型网关暂时无法打开', resolution.message);
+      return;
     }
     setGatewayOpening(false);
-    toast.error('模型网关暂时无法打开', result.success ? '登录凭据未通过安全校验' : result.error?.message);
+    toast.error('模型网关暂时无法打开', result.error?.message);
   };
 
   const getProviderName = (p: (typeof PROVIDERS)[number]) =>

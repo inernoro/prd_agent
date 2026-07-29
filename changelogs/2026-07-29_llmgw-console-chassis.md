@@ -27,3 +27,4 @@
 | fix | llmgw | 修复 .lg-tutorial-link 的 5px 间距：该组件出现在每个迁移页，给 4 条被监测路由同时引入第 6 种容器间距 |
 | fix | llmgw | 修复两处「接口 success 但 body 缺字段即整页白屏」：预算与用量的 statusDistribution、系统运维的 keyHealth/configAuthority/shadow summary |
 | test | llmgw | 新增 e2e/llmgw-page-acceptance.mjs：逐页真人路径 + 双主题验收，断言白屏/h1/标题裸露/贴边/pageerror，首次运行即抓到上述两处白屏 |
+| fix | prd-admin | 区分模型网关跳转的两种失败：预览分支名过长导致网关子域超 DNS 63 字符上限时，不再误报「登录凭据未通过安全校验」，改为报出真实原因与超出字符数 |
