@@ -160,6 +160,12 @@ def _is_external(url):
     return u.startswith("http://") or u.startswith("https://") or u.startswith("//")
 
 
+# 交给系统外部处理器、不会导航当前 frame 的协议（白名单豁免）
+_EXTERNAL_HANDLER_SCHEMES = {"mailto", "tel", "sms", "mms", "callto", "facetime", "geo", "skype"}
+# 会在当前浏览上下文内导航或执行的协议，自包含报告一律禁用
+_BLOCKED_SCHEMES = {"javascript", "data", "vbscript", "blob", "filesystem", "about"}
+
+
 class _ReportScanner(HTMLParser):
     """自包含守卫的属性级扫描器（终结正则猫鼠游戏的实现，Codex P2 六轮后重写）。
 
@@ -256,14 +262,20 @@ class _ReportScanner(HTMLParser):
             return                       # 原生下载语义，不导航
         # 判「会不会把所在 frame 导航走」而不是「像不像 http 链接」：
         # 文档相对（report.html / ../a / ?entry=x）、根相对（/a）、协议相对（//host/a）
-        # 统统会导航，必须校验；只有 mailto/tel 这类交给系统 handler 的协议才放行。
+        # 统统会导航，必须校验。
+        # 协议豁免必须走**白名单**：data: / about: / blob: / javascript: 都会导航当前
+        # 浏览上下文，「非 http 就放行」会把它们整批漏过去。
         m = re.match(r"^([a-z][a-z0-9+.\-]*):", href, re.I)
         if m:
             scheme = m.group(1).lower()
-            if scheme in ("http", "https"):
-                pass                     # 需要校验
-            else:
-                return                   # mailto/tel/sms/自定义协议，不导航本 frame
+            if scheme in _BLOCKED_SCHEMES:
+                self._err(f'<{tag} href="{scheme}:..."> 使用 {scheme}: 协议——'
+                          "会在当前浏览上下文内导航/执行，自包含报告禁用")
+                return
+            if scheme in _EXTERNAL_HANDLER_SCHEMES:
+                return                   # 交给系统处理器，不动本 frame
+            if scheme not in ("http", "https"):
+                return                   # 未注册的自定义协议，浏览器不会导航本 frame
         if (d.get("target") or "").lower() != "_blank":
             self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "

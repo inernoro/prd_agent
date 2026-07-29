@@ -215,6 +215,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // 表单提交不在其列——sandbox 未给 allow-forms，浏览器直接阻断；
             // <base> 与 <meta refresh> 由发布闸整标签禁用。
             const XLINK = 'http://www.w3.org/1999/xlink';
+            // 协议判定必须是**白名单豁免**，不能是「非 http 就放行」：
+            // data: / about: / blob: / javascript: / filesystem: 都会导航当前浏览上下文，
+            // 「非 http 一律放行」等于把它们全放进来，照样能把 frame 导航走。
+            // 只有交给外部处理器、不动本 frame 的协议才豁免。
+            const EXTERNAL_HANDLER = new Set([
+              'mailto:', 'tel:', 'sms:', 'mms:', 'callto:', 'facetime:', 'geo:', 'skype:',
+            ]);
             d.addEventListener('click', (ev) => {
               const a = (ev.target as Element | null)?.closest?.('a, area');
               if (!a) return;
@@ -226,9 +233,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
               if (a.hasAttribute('download')) return;                       // 原生下载
               let url: URL;
               try { url = new URL(raw, d.baseURI); } catch { return; }
-              if (url.protocol !== 'http:' && url.protocol !== 'https:') return;  // mailto/tel/自定义协议
-              ev.preventDefault();
-              window.open(url.href, '_blank', 'noopener,noreferrer');
+              if (EXTERNAL_HANDLER.has(url.protocol)) return;               // 交给系统处理器
+              ev.preventDefault();                                          // 其余一律不许就地导航
+              // 只有 http(s) 值得开新标签；data:/javascript:/about: 等直接拦掉不放行，
+              // 在新标签里打开它们本身就是风险面。
+              if (url.protocol === 'http:' || url.protocol === 'https:') {
+                window.open(url.href, '_blank', 'noopener,noreferrer');
+              }
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}

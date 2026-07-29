@@ -358,10 +358,48 @@ def _resolve_project_id(project):
         return project, f"projectId 解析失败（{str(e)[:80]}），按原值过滤"
 
 
+# CDS 会裁剪发布台账：每个发布目标最多留 100 条 run，且超过 90 天的会被淘汰
+# （cds/src/services/release-retention.ts 的 MAX_RELEASE_RUNS_PER_TARGET /
+#  RELEASE_RUN_RETENTION_MS，写入时由 StateService.addReleaseRun 触发）。
+# 因此补写历史周（Phase 1.5 回补最多 6 周）时台账可能已经不全，而繁忙目标even在
+# 6 周窗口内也可能被条数闸削掉。不能默认「拿到的就是全部」——必须自己判覆盖完整性，
+# 否则会以 available=true 的姿态给出被低估的发布次数与成功率。
+RELEASE_MAX_RUNS_PER_TARGET = 100
+RELEASE_RETENTION_DAYS = 90
+
+
+def _release_coverage(all_runs, sel_runs, start, end):
+    """判断本周区间是否落在台账仍完整保留的范围内。"""
+    import datetime as dt
+    warns = []
+    today = dt.date.today()
+    if (today - dt.date.fromisoformat(end)).days > RELEASE_RETENTION_DAYS:
+        warns.append(f"目标周整体早于 {RELEASE_RETENTION_DAYS} 天保留窗口，台账很可能已被淘汰")
+    dates = sorted(d for d in ((r.get("startedAt") or "")[:10] for r in all_runs) if d)
+    oldest = dates[0] if dates else None
+    if oldest and oldest > start:
+        warns.append(f"台账最早记录为 {oldest}，晚于本周起点 {start}，早于该日期的 run 已被淘汰")
+    # 条数闸：某目标恰好留满上限，说明它更早的 run 已被削掉
+    per_target = {}
+    for r in all_runs:
+        per_target[r.get("targetId")] = per_target.get(r.get("targetId"), 0) + 1
+    capped = [k for k, v in per_target.items() if v >= RELEASE_MAX_RUNS_PER_TARGET]
+    if capped:
+        warns.append(f"{len(capped)} 个发布目标的 run 数已达 {RELEASE_MAX_RUNS_PER_TARGET} 条上限，更早记录已被裁剪")
+    return {
+        "complete": not warns,
+        "warnings": warns,
+        "oldestRetainedDate": oldest,
+        "retentionDays": RELEASE_RETENTION_DAYS,
+        "maxRunsPerTarget": RELEASE_MAX_RUNS_PER_TARGET,
+    }
+
+
 def collect_releases(project, start, end):
     pid, resolve_warn = _resolve_project_id(project)
     body = _cds_api("/api/releases/runs")
     runs = (body or {}).get("runs") or []
+    scoped_all = [r for r in runs if not pid or r.get("projectId") in (pid, None)]
     sel = []
     for r in runs:
         if pid and r.get("projectId") not in (pid, None):
@@ -402,6 +440,10 @@ def collect_releases(project, start, end):
                 "「run 成功」，但对业务而言「发上去又回滚」不算一次成功发布。"
                 "同一次发布的多次重试各算一条 run。",
     }
+    out["coverage"] = _release_coverage(scoped_all, sel, start, end)
+    if not out["coverage"]["complete"]:
+        out["note"] += "【覆盖不完整】" + "；".join(out["coverage"]["warnings"]) + \
+                       "——本段数字为下限，报告须注明口径。"
     if resolve_warn:
         out["projectResolveWarning"] = resolve_warn
     return out
@@ -520,6 +562,10 @@ def main():
                   + (f" / 回滚 {rl['rolledBack']}" if rl.get("rolledBack") else "")
                   + (f"，成功率 {rl['successRate']}%" if rl.get("successRate") is not None else "")
                   + (f"；在途 {rl['inFlight']}" if rl.get("inFlight") else ""))
+            cov = rl.get("coverage") or {}
+            if not cov.get("complete", True):
+                for w in cov.get("warnings", []):
+                    print("   覆盖不完整：" + w)
             if rl.get("projectResolveWarning"):
                 print("   注意：" + rl["projectResolveWarning"])
         else:

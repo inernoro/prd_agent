@@ -13,3 +13,6 @@
 | fix | skill | 发布闸锚点校验按「会不会导航本 frame」判定：文档相对/上级相对/query-only/根相对/协议相对链接一并纳入校验，仅 mailto/tel/自定义协议与页内锚点、download 放行 |
 | fix | prd-admin | 链接拦截覆盖全部可导航锚点形态：a[href]、SVG1.1 的 a[xlink:href]、area[href]（表单提交由 sandbox 无 allow-forms 阻断，base/meta-refresh 由发布闸禁用）|
 | fix | skill | 发布闸锚点校验同步覆盖 xlink:href 与 area 标签，19 例形态矩阵双向自测全过 |
+| security | prd-admin | 正文链接协议判定改为白名单豁免：只放行 mailto/tel/sms 等外部处理器协议，data:/about:/blob:/javascript:/filesystem: 等会导航当前上下文的协议一律拦截且不开新标签 |
+| security | skill | 发布闸同步改白名单豁免，并对 javascript:/data:/blob:/about: 等自导航协议直接拒发 |
+| fix | skill | 采集器判定发布台账覆盖完整性：CDS 按每目标 100 条 + 90 天裁剪，补写历史周时给出 coverage 警告，避免把被裁剪后的残缺数据当成完整发布统计 |
