@@ -59,11 +59,14 @@ public class DocumentStoreAgentWorker : BackgroundService
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
+            var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
+                .BuildDeferredTranscriptionAutomaticRetryBudgetFilter();
             var deferredRecoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
                 recoverFilter,
                 Builders<DocumentStoreAgentRun>.Filter.Eq(
                     r => r.Kind,
                     DocumentStoreAgentRunKind.Transcribe),
+                automaticRetryBudgetFilter,
                 Builders<DocumentStoreAgentRun>.Filter.Regex(
                     r => r.Id,
                     new MongoDB.Bson.BsonRegularExpression("^recording-archive-transcribe-")));
@@ -71,13 +74,17 @@ public class DocumentStoreAgentWorker : BackgroundService
             var recoveredDeferred = await db.DocumentStoreAgentRuns.UpdateManyAsync(
                 deferredRecoverFilter,
                 Builders<DocumentStoreAgentRun>.Update
-                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.ErrorMessage, "服务重启，任务被中断")
-                    .Set(r => r.EndedAt, restartAt)
-                    .Set(r => r.AutomaticRetryNextAt, restartAt)
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, "服务重启，正在恢复完整录音转录")
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.EndedAt, null)
+                    .Set(r => r.StartedAt, null)
+                    .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(
                         r => r.AutomaticRetryReason,
-                        DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted),
+                        DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
+                    .Inc(r => r.AutomaticRetryCount, 1),
                 cancellationToken: CancellationToken.None);
             var recoveredOther = await db.DocumentStoreAgentRuns.UpdateManyAsync(
                 recoverFilter,
@@ -89,7 +96,7 @@ public class DocumentStoreAgentWorker : BackgroundService
             var recoveredCount = recoveredDeferred.ModifiedCount + recoveredOther.ModifiedCount;
             if (recoveredCount > 0)
                 _logger.LogWarning(
-                    "[doc-store-agent] 启动兜底：{Count} 个残留 Running 任务标记为失败",
+                    "[doc-store-agent] 启动兜底：回收 {Count} 个残留 Running 任务",
                     recoveredCount);
         }
         catch (Exception ex)
@@ -122,21 +129,43 @@ public class DocumentStoreAgentWorker : BackgroundService
                     using var scope = _scopeFactory.CreateScope();
                     var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
                     var interruptedAt = DateTime.UtcNow;
-                    var interruptedUpdate = Builders<DocumentStoreAgentRun>.Update
-                        .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                        .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
-                        .Set(r => r.EndedAt, interruptedAt);
                     if (DocumentRecordingArchiveWorker.IsDeferredTranscriptionRunId(_currentRunId))
                     {
-                        interruptedUpdate = interruptedUpdate
-                            .Set(r => r.AutomaticRetryNextAt, interruptedAt)
-                            .Set(
-                                r => r.AutomaticRetryReason,
-                                DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted);
+                        var automaticRetryBudgetFilter = DocumentRecordingArchiveWorker
+                            .BuildDeferredTranscriptionAutomaticRetryBudgetFilter();
+                        await db.DocumentStoreAgentRuns.UpdateOneAsync(
+                            Builders<DocumentStoreAgentRun>.Filter.And(
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                    r => r.Id,
+                                    _currentRunId),
+                                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                                    r => r.Status,
+                                    DocumentStoreRunStatus.Running),
+                                automaticRetryBudgetFilter),
+                            Builders<DocumentStoreAgentRun>.Update
+                                .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                                .Set(r => r.Phase, "Worker 关闭，正在恢复完整录音转录")
+                                .Set(r => r.Progress, 0)
+                                .Set(r => r.ErrorMessage, null)
+                                .Set(r => r.StartedAt, null)
+                                .Set(r => r.EndedAt, null)
+                                .Set(r => r.AutomaticRetryNextAt, null)
+                                .Set(
+                                    r => r.AutomaticRetryReason,
+                                    DocumentRecordingArchiveWorker
+                                        .DeferredRetryReasonRestartInterrupted)
+                                .Inc(r => r.AutomaticRetryCount, 1),
+                            cancellationToken: CancellationToken.None);
                     }
                     await db.DocumentStoreAgentRuns.UpdateOneAsync(
                         r => r.Id == _currentRunId && r.Status == DocumentStoreRunStatus.Running,
-                        interruptedUpdate,
+                        Builders<DocumentStoreAgentRun>.Update
+                            .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                            .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
+                            .Set(r => r.EndedAt, interruptedAt)
+                            .Set(
+                                r => r.AutomaticRetryNextAt,
+                                null),
                         cancellationToken: CancellationToken.None);
                 }
                 catch { /* ignore */ }
@@ -156,6 +185,13 @@ public class DocumentStoreAgentWorker : BackgroundService
         var filter = Builders<DocumentStoreAgentRun>.Filter.And(
             Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Status, DocumentStoreRunStatus.Queued),
             Builders<DocumentStoreAgentRun>.Filter.Or(
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    r => r.AutomaticRetryNextAt,
+                    null),
+                Builders<DocumentStoreAgentRun>.Filter.Lte(
+                    r => r.AutomaticRetryNextAt,
+                    DateTime.UtcNow)),
+            Builders<DocumentStoreAgentRun>.Filter.Or(
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                 Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
@@ -164,6 +200,9 @@ public class DocumentStoreAgentWorker : BackgroundService
             // 认领时盖上本实例归属：领取历史无主任务后必须打主，否则本实例崩溃重启时
             // "只回收本实例 Running"的兜底匹配不到它，会让该任务永远卡在 running（Bugbot Medium）。
             .Set(r => r.OwnerInstanceId, instanceId)
+            .Set(r => r.AutomaticRetryNextAt, null)
+            .Set(r => r.ErrorMessage, null)
+            .Set(r => r.EndedAt, null)
             .Set(r => r.StartedAt, DateTime.UtcNow);
         var run = await db.DocumentStoreAgentRuns.FindOneAndUpdateAsync(
             filter, update,
@@ -277,26 +316,35 @@ public class DocumentStoreAgentWorker : BackgroundService
             }
 
             var failedAt = DateTime.UtcNow;
-            var failedUpdate = Builders<DocumentStoreAgentRun>.Update
-                .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                .Set(r => r.ErrorMessage, errorMessageForDb)
-                .Set(r => r.EndedAt, failedAt);
-            if (DocumentRecordingArchiveWorker.IsDeferredTranscriptionRunId(run.Id)
-                && run.AutomaticRetryCount
-                    < DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries)
+            var willRetry = DocumentRecordingArchiveWorker
+                .HasDeferredTranscriptionAutomaticRetryBudget(run);
+            UpdateDefinition<DocumentStoreAgentRun> failedUpdate;
+            DateTime? retryAt = null;
+            if (willRetry)
             {
-                failedUpdate = failedUpdate
+                retryAt = failedAt + DocumentRecordingArchiveWorker
+                    .ComputeDeferredTranscriptionRetryBackoff(run.AutomaticRetryCount);
+                failedUpdate = Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
+                    .Set(r => r.Phase, "转录暂时不可用，等待自动重试")
+                    .Set(r => r.Progress, 0)
+                    .Set(r => r.ErrorMessage, null)
+                    .Set(r => r.StartedAt, null)
+                    .Set(r => r.EndedAt, null)
                     .Set(
                         r => r.AutomaticRetryNextAt,
-                        failedAt + DocumentRecordingArchiveWorker
-                            .ComputeDeferredTranscriptionRetryBackoff(run.AutomaticRetryCount))
+                        retryAt)
                     .Set(
                         r => r.AutomaticRetryReason,
-                        DocumentRecordingArchiveWorker.DeferredRetryReasonExecutionFailed);
+                        DocumentRecordingArchiveWorker.DeferredRetryReasonExecutionFailed)
+                    .Inc(r => r.AutomaticRetryCount, 1);
             }
             else
             {
-                failedUpdate = failedUpdate
+                failedUpdate = Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                    .Set(r => r.ErrorMessage, errorMessageForDb)
+                    .Set(r => r.EndedAt, failedAt)
                     .Set(r => r.AutomaticRetryNextAt, null)
                     .Set(r => r.AutomaticRetryReason, null);
             }
@@ -306,11 +354,25 @@ public class DocumentStoreAgentWorker : BackgroundService
                 failedUpdate,
                 cancellationToken: CancellationToken.None);
 
-            await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
+            if (willRetry)
             {
-                message = msg,
-                diagnostic,
-            });
+                await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "phase", new
+                {
+                    phase = "转录暂时不可用，等待自动重试",
+                    retryAt,
+                    retryCount = run.AutomaticRetryCount + 1,
+                    maxRetries = DocumentRecordingArchiveWorker
+                        .MaxDeferredTranscriptionAutomaticRetries,
+                });
+            }
+            else
+            {
+                await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
+                {
+                    message = msg,
+                    diagnostic,
+                });
+            }
         }
         finally
         {

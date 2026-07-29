@@ -510,6 +510,21 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
     internal static bool IsDeferredTranscriptionRunId(string? runId)
         => runId?.StartsWith(DeferredTranscriptionRunPrefix, StringComparison.Ordinal) == true;
 
+    internal static bool HasDeferredTranscriptionAutomaticRetryBudget(
+        DocumentStoreAgentRun run)
+        => IsDeferredTranscriptionRunId(run.Id)
+           && run.AutomaticRetryCount < MaxDeferredTranscriptionAutomaticRetries;
+
+    internal static FilterDefinition<DocumentStoreAgentRun>
+        BuildDeferredTranscriptionAutomaticRetryBudgetFilter()
+        => Builders<DocumentStoreAgentRun>.Filter.Or(
+            Builders<DocumentStoreAgentRun>.Filter.Exists(
+                nameof(DocumentStoreAgentRun.AutomaticRetryCount),
+                false),
+            Builders<DocumentStoreAgentRun>.Filter.Lt(
+                run => run.AutomaticRetryCount,
+                MaxDeferredTranscriptionAutomaticRetries));
+
     internal static async Task<DocumentStoreAgentRun?> EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
         IMongoCollection<DocumentRecordingUploadSession> sessions,
         IMongoCollection<DocumentStoreAgentRun> runs,

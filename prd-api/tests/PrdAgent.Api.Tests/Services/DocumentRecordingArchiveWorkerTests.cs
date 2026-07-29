@@ -1595,6 +1595,58 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
     }
 
+    [Theory]
+    [InlineData("recording-archive-transcribe-session-1", 0, true)]
+    [InlineData("recording-archive-transcribe-session-1", 2, true)]
+    [InlineData("recording-archive-transcribe-session-1", 3, false)]
+    [InlineData("manual-transcribe-run", 0, false)]
+    public void AutomaticRetryBudget_ShouldRequireDeterministicRunBelowLimit(
+        string runId,
+        int retryCount,
+        bool expected)
+    {
+        var run = new DocumentStoreAgentRun
+        {
+            Id = runId,
+            AutomaticRetryCount = retryCount,
+        };
+
+        DocumentRecordingArchiveWorker
+            .HasDeferredTranscriptionAutomaticRetryBudget(run)
+            .ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task AutomaticRetryBudgetFilter_ShouldTreatLegacyMissingCounterAsZero()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var rawRuns = fixture.Db.Database.GetCollection<BsonDocument>(
+            "document_store_agent_runs");
+        await rawRuns.InsertManyAsync(
+        [
+            new BsonDocument
+            {
+                ["_id"] = "legacy-missing-counter",
+                [nameof(DocumentStoreAgentRun.Status)] = DocumentStoreRunStatus.Running,
+            },
+            new BsonDocument
+            {
+                ["_id"] = "retry-budget-exhausted",
+                [nameof(DocumentStoreAgentRun.Status)] = DocumentStoreRunStatus.Running,
+                [nameof(DocumentStoreAgentRun.AutomaticRetryCount)] =
+                    DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries,
+            },
+        ]);
+
+        var matchingIds = await fixture.Db.DocumentStoreAgentRuns
+            .Find(DocumentRecordingArchiveWorker
+                .BuildDeferredTranscriptionAutomaticRetryBudgetFilter())
+            .Project(run => run.Id)
+            .ToListAsync();
+
+        matchingIds.ShouldBe(["legacy-missing-counter"]);
+    }
+
     [Fact]
     public async Task EnsureDeferredTranscriptionRun_ShouldNotRequeueCompletedRun()
     {
@@ -1979,6 +2031,39 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         doneIndex.ShouldBeGreaterThanOrEqualTo(0);
         acknowledgeIndex.ShouldBeGreaterThan(doneIndex);
+    }
+
+    [Fact]
+    public void AgentWorker_ShouldKeepRecoverableFailuresQueuedUntilRetryBudgetIsExhausted()
+    {
+        var source = File.ReadAllText(DocumentStoreAgentWorkerPath());
+        var catchStart = source.IndexOf(
+            "var willRetry = DocumentRecordingArchiveWorker",
+            StringComparison.Ordinal);
+        var catchEnd = source.IndexOf(
+            "finally\n        {",
+            catchStart,
+            StringComparison.Ordinal);
+
+        catchStart.ShouldBeGreaterThanOrEqualTo(0);
+        catchEnd.ShouldBeGreaterThan(catchStart);
+        var failurePolicy = source[catchStart..catchEnd];
+        failurePolicy.ShouldContain(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Queued)");
+        failurePolicy.ShouldContain(".Inc(r => r.AutomaticRetryCount, 1)");
+        failurePolicy.ShouldContain(".Set(r => r.ErrorMessage, null)");
+        failurePolicy.ShouldContain(".Set(r => r.EndedAt, null)");
+        failurePolicy.ShouldContain("\"phase\", new");
+        failurePolicy.ShouldContain(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Failed)");
+        failurePolicy.IndexOf(
+                ".Set(r => r.Status, DocumentStoreRunStatus.Queued)",
+                StringComparison.Ordinal)
+            .ShouldBeLessThan(failurePolicy.IndexOf(
+                ".Set(r => r.Status, DocumentStoreRunStatus.Failed)",
+                StringComparison.Ordinal));
+        source.ShouldContain(
+            "Builders<DocumentStoreAgentRun>.Filter.Lte(\n                    r => r.AutomaticRetryNextAt,");
     }
 
     [Fact]
