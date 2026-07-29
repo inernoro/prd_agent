@@ -7,7 +7,9 @@ failed=0
 discovered=0
 
 while IFS= read -r project_file; do
-  if ! rg -q 'Microsoft\.NET\.Test\.Sdk|xunit|NUnit|MSTest' "$project_file"; then
+  # GitHub runner 不保证安装 ripgrep。该门禁必须在最小 POSIX 工具集下运行，
+  # 否则“验证测试发现”本身会在测试启动前误报零项目。
+  if ! grep -Eq 'Microsoft\.NET\.Test\.Sdk|xunit|NUnit|MSTest' "$project_file"; then
     continue
   fi
 
@@ -15,12 +17,12 @@ while IFS= read -r project_file; do
   relative="${project_file#"$repo_root/"}"
   project_name="$(basename "$project_file")"
 
-  if ! rg -q '<IsTestProject>\s*true\s*</IsTestProject>' "$project_file"; then
+  if ! grep -Eq '<IsTestProject>[[:space:]]*true[[:space:]]*</IsTestProject>' "$project_file"; then
     echo "测试项目缺少 <IsTestProject>true</IsTestProject>: $relative" >&2
     failed=1
   fi
 
-  if ! rg -q "$(printf '%s' "$project_name" | sed 's/[.[\\*^$()+?{|]/\\&/g')" "$solution_file"; then
+  if ! grep -Fq "$project_name" "$solution_file"; then
     echo "测试项目未纳入 prd-api/PrdAgent.sln: $relative" >&2
     failed=1
   fi
