@@ -159,6 +159,38 @@ branch 实体，改读存储字段即可，无存储值的存量分支回落现�
 **未做的原因**：它改变所有预览 host 的生成语义，影响面是整个共享 CDS 的全部项目，
 而本机无法端到端验证（CDS 平台未跑本分支代码）。需要用户拍板后再动。
 
+## ONB-key-usability — 新人清单的「可用密钥」只镜像了 scope 一项
+
+**状态**：open（边界已知，影响面窄）
+
+`llmgw/web/src/lib/onboarding.ts` 判「这个租户有没有一把能用的密钥」，目前镜像了
+serving 侧三项判据里的三条：`enabled`、未过期、scope 含业务调用（`invoke` /
+`stream:invoke` / `raw:invoke`，对应 `GatewaySuccessorObservationPolicy.IsBusinessInvocationScope`）。
+
+**没有镜像**的还有 `GatewayRuntimeGovernance` 的另外三项：`purpose`（`AllowsDataPlaneRequest`
+按 sourceSystem 分流 runtime / external-platform）、`ingressProtocols`、`appCallerCodes`。
+一把 purpose 或协议不匹配的密钥仍会被清单当成「可用」，用户点进 Quickstart 才会被拒。
+
+**为什么没做**：把整张授权矩阵抄进 TS 就是判据分裂（`predicate-and-wiring-discipline`
+形状 3），必然随服务端演进漂移。正解是服务端出一个 onboarding digest 端点，直接复用
+serving 的判定 —— 但 `llmgw/console-api` 与 `llmgw/serving` 是两个独立 csproj，
+console-api 不引用 serving，要复用得先抽一个共享判定项目。属独立改动。
+
+## ONB-key-page-cap — 密钥列表 500 条上限会影响新人清单的两个事实
+
+**状态**：open（边界已知，触发条件极窄）
+
+`GET /gw/service-keys`（`llmgw/console-api/Program.cs`）按 `CreatedAt` 倒序 `Limit(500)`。
+轮换过 500 把以上密钥的租户，若**最新 500 把全部被吊销/禁用**而更早的那把仍启用，
+或唯一带 `lastUsedAt` 的记录落在 500 条之外，清单会把「签一把密钥」「跑通首条请求」
+两步误判成未完成 —— 已上手的老租户会看到清单重新出现。
+
+**为什么没做**：客户端拿不到分页之外的数据，没有不新增端点的修法。正解与
+ONB-key-usability 同一个：服务端 onboarding digest（用存在性查询，不受分页影响）。
+两条应当一并解决。
+
+影响面：新人清单是提示性 UI，误判的后果是多显示一个步骤，不影响任何实际能力。
+
 ---
 
 ## 相关

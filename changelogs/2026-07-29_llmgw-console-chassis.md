@@ -75,3 +75,5 @@
 | fix | cds | 保存子域别名时也检查已发布的命名服务 host：别名和命名子域挤在同一个命名空间，此前只查 slug/别名/自定义域名，别的分支已发布的 `<slug>-llmgw` 可以被直接占走，forwarder 会收到两条同 host 不同上游的路由 |
 | fix | llmgw | 字段说明气泡靠近滚动容器底部时改为向上展开：气泡是 absolute 定位、不参与布局，被 overflow 裁掉的部分滚动也够不到，长表单末尾那几个字段说明整块读不到 |
 | fix | cds | 历史别名的冲突告警判断整个反了：别名可用（绝大多数情况）时照常告警，而 buildRoutes 每 2 秒重跑一次会把日志刷满；真被另一个 profile 占走时反而静默跳过。改为按「谁占的」区分，真冲突才报且按分支+host+占用者去重上报，冲突消失后清除记录以免二次犯错时静音 |
+| fix | llmgw | 新人清单的「可用密钥」补上调用能力判定：一把只有 readiness:read 的探针密钥此前会让「签一把密钥」划掉、接入片段还亮出它的前缀，而它根本发不出请求。判据照 serving 的 MatchesAny 语义（空列表恒拒、* 通配、其余大小写不敏感精确匹配） |
+| docs | llmgw | 债务台账新增 ONB-key-usability 与 ONB-key-page-cap：授权矩阵的其余三项与密钥列表 500 条上限没有镜像到前端，正解是服务端 onboarding digest（需先让 console-api 与 serving 共享判定） |

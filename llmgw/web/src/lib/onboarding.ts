@@ -127,6 +127,30 @@ export type ServiceKeyDigest = {
   everUsed: boolean;
 };
 
+/**
+ * 网关认可的「业务调用」scope。对应 serving 侧的具名常量
+ * `GatewaySuccessorObservationPolicy.IsBusinessInvocationScope`。
+ */
+const INVOCATION_SCOPES = ['invoke', 'stream:invoke', 'raw:invoke'];
+
+/**
+ * 这把密钥能不能发起调用。只镜像 scope 这一项，**不复刻整张授权矩阵**。
+ *
+ * 判据来自 serving 的 `MatchesAny`：空列表恒不匹配（= 拒绝），`*` 通配，
+ * 其余大小写不敏感精确匹配。只看 enabled + 未过期会把一把 `readiness:read`
+ * 的探针密钥当成「可以去跑请求了」，清单划掉、接入片段还把它的前缀亮出来（Codex P2）。
+ *
+ * 已知边界（见 doc/debt.platform.preview-entrypoints.md 的 ONB-key-usability）：
+ * purpose / ingressProtocol / appCallerCode 三项同样参与服务端授权，这里没有镜像 ——
+ * 把整张矩阵抄进 TS 就是判据分裂（形状 3），必然漂移。正解是服务端出一个
+ * onboarding digest，而那需要 console-api 与 serving 共享判定，属独立改动。
+ */
+function allowsInvocation(scopes: string[] | undefined): boolean {
+  const values = (scopes ?? []).map((s) => s.trim()).filter(Boolean);
+  if (values.length === 0) return false;
+  return values.some((s) => s === '*' || INVOCATION_SCOPES.includes(s.toLowerCase()));
+}
+
 function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
   return cached('serviceKeys', tenantId, async () => {
     const response = await getServiceKeys();
@@ -137,7 +161,9 @@ function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
     // 清单标完成、接入片段亮出一把根本认证不过的前缀（Codex P2）。
     const now = Date.now();
     const usable = items.find(
-      (item) => item.enabled && (!item.expiresAt || new Date(item.expiresAt).getTime() > now),
+      (item) => item.enabled
+        && (!item.expiresAt || new Date(item.expiresAt).getTime() > now)
+        && allowsInvocation(item.scopes),
     );
     // 已吊销/禁用的密钥也算数：它证明这个租户历史上确实跑通过。
     const everUsed = items.some((item) => Boolean(item.lastUsedAt));

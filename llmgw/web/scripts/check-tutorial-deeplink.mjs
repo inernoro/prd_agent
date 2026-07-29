@@ -91,7 +91,7 @@ must(
 );
 
 must(
-  /item\.enabled && \(!item\.expiresAt/.test(onboarding),
+  /item\.enabled\s*&&\s*\(!item\.expiresAt/.test(onboarding),
   'onboarding: 「可用密钥」必须排除已过期的 —— 网关对 enabled-but-expired 同样拒签，'
   + '只看 enabled 会亮出一把认证不过的前缀',
 );
@@ -109,6 +109,15 @@ must(
 must(
   onboarding.includes('REQUEST_COMPLETED_TENANTS.has(tenantId)'),
   'onboarding: 「跑通首条请求」必须叠上本地确证，不能只信可能落后于后台写的 digest',
+);
+
+must(
+  onboarding.includes('allowsInvocation(item.scopes)') && onboarding.includes("'stream:invoke'"),
+  'onboarding: 「可用密钥」必须能发起调用 —— 一把 readiness:read 的探针密钥不该让清单划掉这一步',
+);
+must(
+  /if \(values\.length === 0\) return false;/.test(onboarding),
+  'onboarding: scope 空列表必须判为不可用（serving 的 MatchesAny 要求非空，空 = 拒绝）',
 );
 
 const theme = read('src/theme.css');
