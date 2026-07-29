@@ -35,3 +35,5 @@
 | test | skill | 新增周报采集器判据回归（8 例，含保留边界/条数闸/标识集合/滤空守卫），逐条验证删掉对应修复即变红 |
 | security | prd-admin | 链接拦截区分「无 href 属性」与「href 空串」：srcdoc 的 base URL 继承父页，href="" 会解析成宿主 SPA 地址并导航本 frame，原先当 no-op 放行等于给卡死路径留了后门 |
 | security | skill | 发布闸同步拒收空 href（含纯空白），并按浏览器口径在 href 与 xlink:href 都存在时取 href（不能用 or 串联，空串是 falsy 会串到后者） |
+| docs | skill | 周刊 baseline 行/页脚/术语表的第四源署名由「部署版本」改为「正式发布台账 /api/releases/runs」，并在术语表拆开两个词条——此前只改了数字没改来源署名，等于把正确数字挂在被判作废的来源名下 |
+| rule | skill | 纪律 12 写明第四源必须署名「正式发布台账」，且 baseline/页脚/术语表/附录四处署名要一致 |
