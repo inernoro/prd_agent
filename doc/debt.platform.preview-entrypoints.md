@@ -4,7 +4,7 @@
 
 ## 总览
 
-当前 open: 3（PE-truncation / PE-env-staleness / PE-consumer-sweep）/ 已落地待验证: 1（PE-ssot-inversion）/ 总计: 4
+当前 open: 4（PE-truncation / PE-transition-window / PE-env-staleness / PE-consumer-sweep）/ 已落地待验证: 1（PE-ssot-inversion）/ 总计: 5
 
 记录「分支预览域名怎么产生、谁有权推算它」这条链路上的欠账。
 
@@ -39,11 +39,33 @@ prd-api 读取后由 `POST /api/llm-gateway/sso/ticket` 的 `console` 字段下�
 （平台事实，强制覆盖，项目 env 不得伪造）→ `PrdAgent.Infrastructure/Deployment/PlatformEntrypoints.cs`
 → `LlmGatewaySsoController.ResolveConsoleTarget()` → `prd-admin/src/lib/llmGatewaySso.ts`。
 
-三态明确：有 `baseUrl` 就去；有 `unavailableReason` 就如实说「本环境没发布这个入口」；
-两者皆空 = 正式环境同源 `/llmgw/`。
+四态明确（第 ③ 态是过渡期专用，见下）：
 
-**待验证**：本机无 dotnet SDK，C# 侧（新文件 + 控制器改动）未经本地编译，需 CDS 远端构建绿灯
-后在预览环境实测三态。
+| 条件 | 结果 |
+|---|---|
+| 表里有 `llmgw-web` | 用它 |
+| 有表但没这一项 | 「该入口确实没发布」（子域超 DNS 63 上限） |
+| 是 CDS 预览但没有表 | 「平台版本早于该能力，地址未知，CDS 更新后自愈」 |
+| 非预览且没有表 | 正式环境，同源 `/llmgw/` |
+
+**已验证**：CI（commit `a11a0a6`）Server Build & Test 绿——C# 编译通过、`dotnet test`
+含新增 `PlatformEntrypointsTests` 全绿；CDS Build & Test 绿（4297 测试 + tsc）；
+Admin Dashboard Build 绿（882 测试 + tsc + lint）。CDS 已用该 sha 镜像重新部署。
+
+**未验证**：浏览器里的实际提示文案。本机无 MAP 管理员凭据，跳转入口需真人管理员会话
+（控制器显式拒绝 Agent Key），未能点击取证。
+
+**上线前提**：入口注入是 CDS 侧改动，只有 CDS **自身**（跑 `main`）自更新到含本次改动的
+版本之后，预览容器才会拿到 `CDS_SERVICE_URLS`。合入 main 前，所有预览环境命中第 ③ 态。
+
+### PE-transition-window · 过渡期预览环境失去网关入口 —— open（有界，自愈）
+
+CDS 平台自更新到本次改动之前，预览容器拿不到入口表。此前那些**子域长度正常**、
+跳转本来能用的分支，现在会看到第 ③ 态提示而不是直接跳过去。
+
+为什么接受：替代方案是保留前端的域名推算做兜底，那等于把本次要消灭的第二份实现
+再留一份，与整改目标直接冲突。选择是「明确告知未知」而不是「静默猜一个」。
+影响面仅限分支预览（正式环境走同源路径，行为不变），且 CDS 更新后自动恢复。
 
 ### PE-truncation · 超长分支仍然拿不到网关入口 —— open
 
