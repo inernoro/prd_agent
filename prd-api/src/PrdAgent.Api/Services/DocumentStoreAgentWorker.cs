@@ -190,6 +190,28 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
 
+            if (run.Kind == DocumentStoreAgentRunKind.Transcribe)
+            {
+                try
+                {
+                    await DocumentRecordingArchiveWorker
+                        .AcknowledgeDeferredTranscriptionSuccessAsync(
+                            db.DocumentRecordingUploadSessions,
+                            run.Id,
+                            run.SourceEntryId,
+                            CancellationToken.None);
+                }
+                catch (Exception ex)
+                {
+                    // run 已经是 Done，确认失败不能反向改成 Failed。录音归档 Worker
+                    // 会保留 pending outbox，并在下一轮看到 Done 后补确认。
+                    _logger.LogWarning(
+                        ex,
+                        "[doc-store-agent] Deferred transcription outbox acknowledgement deferred run={RunId}",
+                        run.Id);
+                }
+            }
+
             await EmitEventAsync(runStore, kindForEvents, run.Id, "done", new
             {
                 outputEntryId = finalRun?.OutputEntryId,

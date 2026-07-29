@@ -1680,7 +1680,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(DocumentRecordingArchiveStatus.Completed)]
     [InlineData(DocumentRecordingArchiveStatus.Pending)]
-    public async Task PersistedOutbox_ShouldRecoverRunWithoutClientRetry(
+    public async Task PersistedOutbox_ShouldRecoverInterruptedRunUntilTerminalSuccess(
         string archiveStatus)
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -1744,6 +1744,56 @@ public sealed class DocumentRecordingArchiveWorkerTests
         (await fixture.Db.DocumentRecordingUploadSessions
                 .Find(candidate => candidate.Id == session.Id)
                 .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        // 模拟任务已被领取后容器退出：Agent Worker 启动兜底会把 Running 标成 Failed。
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Running)
+                .Set(candidate => candidate.OwnerInstanceId, "instance-1")
+                .Set(candidate => candidate.StartedAt, DateTime.UtcNow));
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Failed)
+                .Set(candidate => candidate.ErrorMessage, "服务重启，任务被中断")
+                .Set(candidate => candidate.EndedAt, DateTime.UtcNow));
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+        run = await fixture.Db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id == run.Id)
+            .SingleAsync();
+        run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        run.ErrorMessage.ShouldBeNull();
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        // 只有确定性任务最终 Done 后，outbox 才能确认并停止恢复。
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Done)
+                .Set(candidate => candidate.OutputEntryId, entry.Id)
+                .Set(candidate => candidate.EndedAt, DateTime.UtcNow));
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
             .DeferredTranscriptionRunPending.ShouldBeFalse();
 
         (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
@@ -1754,6 +1804,56 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 CancellationToken.None))
             .ShouldBe(0);
         (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task DeferredOutboxAcknowledgement_ShouldRequireMatchingDeterministicRunAndEntry()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-ack",
+            EntryId = "entry-ack",
+            DeferredTranscriptionRunPending = true,
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "manual-transcribe-run",
+            session.EntryId,
+            CancellationToken.None)).ShouldBeFalse();
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            "other-entry",
+            CancellationToken.None)).ShouldBeFalse();
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == session.Id).SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            session.EntryId,
+            CancellationToken.None)).ShouldBeTrue();
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == session.Id).SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeFalse();
+    }
+
+    [Fact]
+    public void AgentWorker_ShouldAcknowledgeDeferredOutboxAfterMarkingRunDone()
+    {
+        var source = File.ReadAllText(DocumentStoreAgentWorkerPath());
+        var doneIndex = source.IndexOf(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Done)",
+            StringComparison.Ordinal);
+        var acknowledgeIndex = source.IndexOf(
+            ".AcknowledgeDeferredTranscriptionSuccessAsync(",
+            doneIndex,
+            StringComparison.Ordinal);
+
+        doneIndex.ShouldBeGreaterThanOrEqualTo(0);
+        acknowledgeIndex.ShouldBeGreaterThan(doneIndex);
     }
 
     [Fact]
@@ -2204,6 +2304,26 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         throw new DirectoryNotFoundException(
             "Could not locate DocumentRecordingArchiveWorker.cs from test base directory.");
+    }
+
+    private static string DocumentStoreAgentWorkerPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(
+                dir.FullName,
+                "prd-api",
+                "src",
+                "PrdAgent.Api",
+                "Services",
+                "DocumentStoreAgentWorker.cs");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate DocumentStoreAgentWorker.cs from test base directory.");
     }
 
     private static string MongoDbIndexCatalogPath()

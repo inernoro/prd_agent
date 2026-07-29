@@ -12,6 +12,7 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public sealed class DocumentRecordingArchiveWorker : BackgroundService
 {
+    private const string DeferredTranscriptionRunPrefix = "recording-archive-transcribe-";
     internal const string DeferredTranscriptionRequiredMetadataKey = "deferredTranscriptionRequired";
     internal const string DeferredTranscriptionRunIdMetadataKey = "deferredTranscriptionRunId";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
@@ -486,17 +487,52 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         if (run == null)
             return null;
 
-        // 只有固定 ID 的 run 已成功插入或已存在后才能确认 outbox。若进程在确认前
-        // 退出，下一轮会幂等命中同一 run；绝不能先清标记再创建任务。
-        await sessions.UpdateOneAsync(
-            candidate => candidate.Id == session.Id
+        // outbox 覆盖的是“完整转录成功”而不只是“run 已创建”。Queued/Running/Failed
+        // 期间必须保持 pending，容器重启把 Running 标成 Failed 后，下一轮才能重新排队。
+        // Done 后才确认；若进程恰好在 Done 与确认之间退出，下一轮会幂等补确认。
+        if (run.Status == DocumentStoreRunStatus.Done)
+        {
+            await AcknowledgeDeferredTranscriptionSuccessAsync(
+                sessions,
+                run.Id,
+                entryId,
+                cancellationToken);
+        }
+        else
+        {
+            // 轮转扫描游标，避免前 25 个长任务长期占住 limit，饿死后续 outbox。
+            await sessions.UpdateOneAsync(
+                candidate => candidate.Id == session.Id
+                             && candidate.EntryId == entryId
+                             && candidate.DeferredTranscriptionRunPending,
+                Builders<DocumentRecordingUploadSession>.Update
+                    .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+                cancellationToken: cancellationToken);
+        }
+        return run;
+    }
+
+    internal static async Task<bool> AcknowledgeDeferredTranscriptionSuccessAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string runId,
+        string entryId,
+        CancellationToken cancellationToken)
+    {
+        if (!runId.StartsWith(DeferredTranscriptionRunPrefix, StringComparison.Ordinal))
+            return false;
+        var sessionId = runId[DeferredTranscriptionRunPrefix.Length..];
+        if (string.IsNullOrWhiteSpace(sessionId))
+            return false;
+
+        var acknowledged = await sessions.UpdateOneAsync(
+            candidate => candidate.Id == sessionId
                          && candidate.EntryId == entryId
                          && candidate.DeferredTranscriptionRunPending,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(candidate => candidate.DeferredTranscriptionRunPending, false)
                 .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
             cancellationToken: cancellationToken);
-        return run;
+        return acknowledged.ModifiedCount == 1;
     }
 
     internal static async Task<int> RecoverDeferredTranscriptionRunsAsync(
@@ -583,7 +619,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
     }
 
     internal static string DeferredTranscriptionRunId(string sessionId)
-        => $"recording-archive-transcribe-{sessionId}";
+        => $"{DeferredTranscriptionRunPrefix}{sessionId}";
 
     internal static bool ShouldDeleteChunksAfterArchive(
         bool entryRequiresDeferredTranscription,
