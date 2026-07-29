@@ -27,6 +27,7 @@ import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
 import type { StateService } from './state.js';
 import type { BranchEntry } from '../types.js';
+import type { PublishedEntrypointsEnv } from './env-provenance.js';
 
 /** 容器 env 里承载「本分支主入口」的 key。 */
 export const PREVIEW_URL_ENV_KEY = 'CDS_PREVIEW_URL';
@@ -179,6 +180,13 @@ export function buildPublishedEntrypoints(opts: {
   return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls };
 }
 
+/**
+ * 平台独占的 env key。项目 / profile 在这些 key 上写什么都不算数 ——
+ * 注入前会先被清掉（见 env-provenance 第 4.6 层）。表为空时更要清:
+ * 那正是「CDS 说这里没有这条路由」，项目却留着一个地址才最危险。
+ */
+export const RESERVED_ENTRYPOINT_ENV_KEYS = [PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY] as const;
+
 /** 把入口表转成注入容器的 env 片段。表为空则不注入任何 key(不写空串占位)。 */
 export function publishedEntrypointsEnv(entrypoints: PublishedEntrypoints): Record<string, string> {
   const env: Record<string, string> = {};
@@ -208,7 +216,7 @@ export interface BranchEntrypointDeps {
 export function resolveBranchEntrypointsEnv(
   entry: BranchEntry,
   deps: BranchEntrypointDeps,
-): Record<string, string> {
+): PublishedEntrypointsEnv {
   const project = deps.getProject(entry.projectId);
   const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
   const subdomains: string[] = [];
@@ -218,11 +226,14 @@ export function resolveBranchEntrypointsEnv(
     const sub = (bp as { subdomain?: string }).subdomain;
     if (sub) subdomains.push(sub);
   }
-  return publishedEntrypointsEnv(buildPublishedEntrypoints({
-    previewSlug,
-    previewHost: deps.previewHost,
-    subdomains,
-  }));
+  return {
+    reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
+    env: publishedEntrypointsEnv(buildPublishedEntrypoints({
+      previewSlug,
+      previewHost: deps.previewHost,
+      subdomains,
+    })),
+  };
 }
 
 /** 从 StateService 造 deps —— 唯一一处知道「effective profile 要过 resolveEffectiveProfile」。 */

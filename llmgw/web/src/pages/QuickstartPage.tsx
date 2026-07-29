@@ -20,6 +20,7 @@ import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { DetailsBlock, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
+import { invalidateOnboardingCache } from '@/lib/onboarding';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
@@ -226,6 +227,10 @@ export function QuickstartPage() {
       setActionError(`appCaller 已就绪，但密钥签发失败：${keyResponse.error?.message || '未知错误'}。请先到接入密钥页确认是否已生成，再决定是否重试。`);
       return;
     }
+
+    // 本页自己也签密钥：不失效的话，同页挂着的新人清单还在说「签一把密钥」，
+    // 接入片段也还没有前缀 —— TTL 不会刷新已挂载的 hook（Codex P2）。
+    invalidateOnboardingCache(tenant?.id);
 
     const nextBundle: AccessBundle = {
       key: keyResponse.data.key,

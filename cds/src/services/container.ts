@@ -9,7 +9,7 @@ import { combinedOutput } from '../types.js';
 import { resolveCommandTemplate, resolveEnvTemplates } from './compose-parser.js';
 import { collectReuseCandidates, targetShaOf, normalizeBuildScope, type ReuseCandidate } from './prebuilt-reuse.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
-import { resolveProfileRuntimeEnvWithProvenance } from './env-provenance.js';
+import { resolveProfileRuntimeEnvWithProvenance, type PublishedEntrypointsEnv } from './env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled, resolveAppNetworkPlan } from './branch-network.js';
 
 /**
@@ -58,7 +58,7 @@ export interface ProjectNetworkResolver {
    * 唯一实现见 preview-entrypoints.resolveBranchEntrypointsEnv;index.ts 负责接线。
    * 可选方法:测试与旧适配器不实现时不注入该表(等同「未声明入口」)。
    */
-  getPublishedEntrypointsEnv?(entry: BranchEntry): Record<string, string> | undefined;
+  getPublishedEntrypointsEnv?(entry: BranchEntry): PublishedEntrypointsEnv | undefined;
 }
 
 export interface ContainerRemoveContext {

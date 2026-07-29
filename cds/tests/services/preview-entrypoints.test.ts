@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_URL_ENV_KEY,
+  RESERVED_ENTRYPOINT_ENV_KEYS,
   SERVICE_URLS_ENV_KEY,
   buildPublishedEntrypoints,
   isPublishableNamedLabel,
@@ -131,8 +132,9 @@ describe('resolveBranchEntrypointsEnv — 用已声明拓扑,不看运行时状�
       // 注意：没有任何 services 状态，只有声明层的 profile。
       getEffectiveProfilesForBranch: () => [{ subdomain: 'llmgw-web' }, {}],
     });
-    expect(env[SERVICE_URLS_ENV_KEY]).toBe('{"llmgw-web":"https://demo-claude-prd-agent-llmgw-web.miduo.org"}');
-    expect(env[PREVIEW_URL_ENV_KEY]).toBe('https://demo-claude-prd-agent.miduo.org');
+    expect(env.env[SERVICE_URLS_ENV_KEY]).toBe('{"llmgw-web":"https://demo-claude-prd-agent-llmgw-web.miduo.org"}');
+    expect(env.env[PREVIEW_URL_ENV_KEY]).toBe('https://demo-claude-prd-agent.miduo.org');
+    expect(env.reservedKeys).toContain(SERVICE_URLS_ENV_KEY);
   });
 });
 
@@ -148,7 +150,10 @@ describe('注入是平台事实,项目 env 不得伪造', () => {
       [],
       {
         jwtIssuer: 'cds',
-        publishedEntrypoints: { [SERVICE_URLS_ENV_KEY]: '{"llmgw-web":"https://real.miduo.org"}' },
+        publishedEntrypoints: {
+          reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
+          env: { [SERVICE_URLS_ENV_KEY]: '{"llmgw-web":"https://real.miduo.org"}' },
+        },
       },
     );
     expect(r.env[SERVICE_URLS_ENV_KEY]).toBe('{"llmgw-web":"https://real.miduo.org"}');
@@ -160,6 +165,39 @@ describe('注入是平台事实,项目 env 不得伪造', () => {
     const r = resolveProfileRuntimeEnvWithProvenance(BRANCH, PROFILE, [], [], { jwtIssuer: 'cds' });
     expect(r.env[SERVICE_URLS_ENV_KEY]).toBeUndefined();
     expect(r.env[PREVIEW_URL_ENV_KEY]).toBeUndefined();
+  });
+
+  it('平台说「这里没有任何入口」时，项目留的值必须被清掉而不是留着', () => {
+    // Codex P2：只做覆盖是不够的 —— 表为空时 env 里没有那条 key，
+    // 项目/profile 的值就原样留下，等于允许项目在 CDS 明确没有这条路由的情况下
+    // 伪造一个网关地址。上一条「不得伪造」的用例只覆盖了表非空的路径，正好漏掉这里。
+    const r = resolveProfileRuntimeEnvWithProvenance(
+      BRANCH,
+      PROFILE,
+      [{ source: 'project', env: {
+        [SERVICE_URLS_ENV_KEY]: '{"llmgw":"https://evil.example"}',
+        [PREVIEW_URL_ENV_KEY]: 'https://evil.example',
+      } }],
+      [],
+      {
+        jwtIssuer: 'cds',
+        // 平台算出来是空表（如 previewHost 缺失 / 该分支没有命名服务）
+        publishedEntrypoints: { reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS, env: {} },
+      },
+    );
+    expect(r.env[SERVICE_URLS_ENV_KEY]).toBeUndefined();
+    expect(r.env[PREVIEW_URL_ENV_KEY]).toBeUndefined();
+  });
+
+  it('保留 key 之外的项目 env 不受影响（清空只针对平台独占的那两个）', () => {
+    const r = resolveProfileRuntimeEnvWithProvenance(
+      BRANCH,
+      PROFILE,
+      [{ source: 'project', env: { MY_APP_URL: 'https://mine.example' } }],
+      [],
+      { jwtIssuer: 'cds', publishedEntrypoints: { reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS, env: {} } },
+    );
+    expect(r.env.MY_APP_URL).toBe('https://mine.example');
   });
 });
 
