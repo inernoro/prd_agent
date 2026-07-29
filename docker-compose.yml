@@ -69,10 +69,9 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
-      # 资产存储：tencentCos / cloudflareR2
-      # - 生产建议：对象存储 + 禁用 local，确保”绝不落盘”
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
-      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-tencentCos}
+      # 正式环境固定使用 Tencent COS，禁止被通用环境变量切换到其他提供商。
+      - ASSETS_PROVIDER=tencentCos
+      - ASSETS_EXPECTED_PROVIDER=tencentCos
       # Tencent COS（密钥禁止写死到仓库；生产环境建议通过部署系统/Secrets 注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
@@ -164,7 +163,7 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 资产存储：日志写入正文/图片到对象存储（与 api 同一套配置）
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - ASSETS_PROVIDER=tencentCos
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
       - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}
@@ -225,7 +224,7 @@ services:
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - ASSETS_PROVIDER=tencentCos
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
       - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}

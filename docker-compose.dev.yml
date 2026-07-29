@@ -102,10 +102,10 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
-      # 资产存储：tencentCos / cloudflareR2
-      # - 强制”绝不落盘”时：选择对象存储 provider
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
-      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-tencentCos}
+      # 本地开发默认使用临时目录；CDS 独立使用 R2，正式环境独立使用 Tencent COS。
+      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}
+      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-local}
+      - ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}

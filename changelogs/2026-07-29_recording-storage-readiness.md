@@ -1,3 +1,3 @@
-| fix | prd-api | 新增对象存储真实写入、内部读取、公开访问与清理就绪探针，阻止存储提供商漂移时继续接收录音 |
+| fix | prd-api | 新增对象存储真实写入、内部读取、公开访问与清理就绪探针，并修复 Cloudflare R2 的 .NET 签名与校验和参数 |
 | test | prd-api | 强制测试项目发现并让录音归档测试使用独立 MongoDB，禁止依赖缺失时静默通过 |
-| ops | cds | 将 CDS 与生产部署的 API 就绪条件绑定腾讯 COS 业务探针 |
+| ops | cds | 固化本地 local、CDS Cloudflare R2、正式环境腾讯 COS 三套互斥存储合同并绑定业务就绪探针 |
