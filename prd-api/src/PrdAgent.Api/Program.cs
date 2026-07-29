@@ -1522,19 +1522,8 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
-app.MapGet(
-    "/health/ready",
-    async (AssetStorageReadinessProbe probe, CancellationToken cancellationToken) =>
-    {
-        var result = await probe.CheckAsync(cancellationToken: cancellationToken);
-        var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
-            ? StatusCodes.Status200OK
-            : StatusCodes.Status503ServiceUnavailable;
-        return TypedResults.Json(
-            result,
-            AppJsonContext.Default.AssetStorageReadinessResponse,
-            statusCode: statusCode);
-    });
+app.MapGet("/health/ready", AssetStorageReadiness);
+app.MapGet("/api/health/ready", AssetStorageReadiness);
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1571,6 +1560,20 @@ static IResult HealthCheck()
         Timestamp = DateTime.UtcNow
     };
     return Results.Ok(response);
+}
+
+static async Task<IResult> AssetStorageReadiness(
+    AssetStorageReadinessProbe probe,
+    CancellationToken cancellationToken)
+{
+    var result = await probe.CheckAsync(cancellationToken: cancellationToken);
+    var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable;
+    return TypedResults.Json(
+        result,
+        AppJsonContext.Default.AssetStorageReadinessResponse,
+        statusCode: statusCode);
 }
 
 static IResult VersionInfo(IHostEnvironment env)
