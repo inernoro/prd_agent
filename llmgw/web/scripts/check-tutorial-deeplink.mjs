@@ -80,6 +80,15 @@ for (const [file, label] of [
   );
 }
 
+must(
+  /status === 'active'/.test(onboarding),
+  'onboarding: 团队/成员必须只数 active —— Quickstart 按 active 过滤并会挡住签发，按总数判定会让清单先消失、下一步却做不了',
+);
+must(
+  !onboarding.includes('getLogs') && /everUsed/.test(onboarding),
+  'onboarding: 「跑通首条请求」要取密钥的 lastUsedAt（持久事实），不能查请求日志 —— 日志默认只留 90 天，过期后会把已上手的租户打回未完成',
+);
+
 const quickstart = strip(read('src/pages/QuickstartPage.tsx'));
 must(
   (quickstart.match(/invalidateOnboardingCache\(/g) || []).length >= 3,
@@ -91,4 +100,4 @@ if (failures.length > 0) {
   for (const line of failures) console.error(`  - ${line}`);
   process.exit(1);
 }
-console.log(`教程深链契约守卫通过：14 条断言。`);
+console.log(`教程深链契约守卫通过：16 条断言。`);

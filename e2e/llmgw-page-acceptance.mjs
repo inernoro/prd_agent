@@ -1,10 +1,21 @@
 // Phase D 验收脚手架：以真人路径逐页取证，双主题 + 像素采样。
-// 用法：cd llmgw/web && pnpm build && cd ../../e2e && node .verify-pages.mjs
-import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path';
+// 用法：cd llmgw/web && pnpm build && node ../../e2e/llmgw-page-acceptance.mjs
+// 可选环境变量：LLMGW_DIST / LLMGW_ACCEPTANCE_OUT / LLMGW_ACCEPTANCE_PORT / LLMGW_CHROMIUM
+import http from 'node:http'; import fs from 'node:fs'; import path from 'node:path'; import os from 'node:os';
+import { fileURLToPath } from 'node:url';
 import { chromium } from '@playwright/test';
 
-const DIST='/home/user/prd_agent/llmgw/web/dist', PORT=5652;
-const OUT='/tmp/claude-0/-home-user-prd-agent/7a4638e1-e3a6-56b3-94b0-8498b31c46a7/scratchpad/acc';
+// 路径一律从本文件位置推导 —— 此前写死了作者机器上的绝对路径，换个 checkout
+// 静态服务器就指向一个不存在的目录，第一次导航直接白屏（Codex P2）。
+const REPO_ROOT = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+const DIST = process.env.LLMGW_DIST || path.join(REPO_ROOT, 'llmgw', 'web', 'dist');
+const PORT = Number(process.env.LLMGW_ACCEPTANCE_PORT || 5652);
+// 截图落到系统临时目录（可用 LLMGW_ACCEPTANCE_OUT 覆盖），不再钉死某台机器的 scratchpad。
+const OUT = process.env.LLMGW_ACCEPTANCE_OUT || path.join(os.tmpdir(), 'llmgw-page-acceptance');
+if (!fs.existsSync(DIST)) {
+  console.error(`未找到构建产物：${DIST}\n请先在 llmgw/web 执行 pnpm build，或用 LLMGW_DIST 指定目录。`);
+  process.exit(1);
+}
 fs.mkdirSync(OUT,{recursive:true});
 const MIME={'.html':'text/html','.js':'text/javascript','.css':'text/css','.woff2':'font/woff2'};
 
@@ -53,7 +64,48 @@ const NAV=[ // [名称, 侧边栏 href, 期望 h1 关键词]
  ['学习中心','/llmgw/learn',null],['团队与成员','/llmgw/organization',null],['预算与用量','/llmgw/usage',null],
  ['审计','/llmgw/audits',null],['系统运维','/llmgw/governance',null],
 ];
-const b=await chromium.launch({executablePath:'/opt/pw-browsers/chromium-1194/chrome-linux/chrome'});
+/**
+ * 优先让 Playwright 自己解析浏览器；解析不到再去 PLAYWRIGHT_BROWSERS_PATH 下**发现**一个。
+ *
+ * 不能写死版本目录（此前是 `/opt/pw-browsers/chromium-1194/...`，换台机器必挂），
+ * 也不能只依赖默认解析 —— 预装浏览器的环境里 Playwright 想要的 headless-shell 未必存在，
+ * 而同目录下的完整 chromium 是可用的。所以：默认 → 发现 → LLMGW_CHROMIUM 显式覆盖。
+ */
+function discoverChromium() {
+  const base = process.env.PLAYWRIGHT_BROWSERS_PATH
+    || path.join(os.homedir(), '.cache', 'ms-playwright');
+  if (!fs.existsSync(base)) return null;
+  const candidates = [];
+  for (const dir of fs.readdirSync(base)) {
+    if (!dir.startsWith('chromium')) continue;
+    for (const rel of [
+      ['chrome-linux', 'chrome'],
+      ['chrome-headless-shell-linux64', 'chrome-headless-shell'],
+      ['chrome-mac', 'Chromium.app', 'Contents', 'MacOS', 'Chromium'],
+    ]) {
+      const full = path.join(base, dir, ...rel);
+      if (fs.existsSync(full)) candidates.push(full);
+    }
+  }
+  // 版本号倒序：优先用最新的那个
+  return candidates.sort().reverse()[0] || null;
+}
+
+async function launchChromium() {
+  if (process.env.LLMGW_CHROMIUM) {
+    return chromium.launch({ executablePath: process.env.LLMGW_CHROMIUM });
+  }
+  try {
+    return await chromium.launch();
+  } catch (err) {
+    const discovered = discoverChromium();
+    if (!discovered) throw err;
+    console.warn(`[acceptance] Playwright 默认浏览器不可用，改用发现到的 ${discovered}`);
+    return chromium.launch({ executablePath: discovered });
+  }
+}
+
+const b=await launchChromium();
 const problems=[];
 for(const theme of ['dark','light']){
   const page=await b.newPage({viewport:{width:1600,height:950}});

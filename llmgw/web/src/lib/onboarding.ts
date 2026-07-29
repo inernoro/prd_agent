@@ -11,7 +11,7 @@
 //   3. 读不到的不猜：当前角色没权限打开的数据源一律**不发请求**，标成 unreadable，
 //      由调用方渲染成「由管理员完成」，而不是显示一个永远完不成的步骤。
 import { useEffect, useState } from 'react';
-import { getLogs, getOrganization, getServiceKeys } from '@/lib/api';
+import { getOrganization, getServiceKeys } from '@/lib/api';
 import { canAccessPage } from '@/lib/access';
 import type { ConsolePage } from '@/lib/access';
 import { useAuth } from '@/lib/auth';
@@ -19,10 +19,7 @@ import { useAuth } from '@/lib/auth';
 /** 缓存 TTL：够短，签发密钥后回到概览页最多一分钟就能看到步骤变绿。 */
 const TTL_MS = 60_000;
 
-/** 「有过请求」看的是整个生命周期，不是日志页默认的 7 天窗口。 */
-const REQUEST_LOOKBACK_DAYS = 365;
-
-type CacheKind = 'organization' | 'serviceKeys' | 'requests';
+type CacheKind = 'organization' | 'serviceKeys';
 
 const CACHE = new Map<string, { at: number; promise: Promise<unknown> }>();
 
@@ -84,15 +81,31 @@ function loadTeamFacts(tenantId: string): Promise<TeamFacts> {
     // 失败必须抛：resolve 一个「都没有」会被 cached() 当成事实钉死 60 秒，
     // 一次瞬时 500 就会让配置齐全的租户被告知去建团队、拉成员（Codex P2）。
     if (!response.success) throw new OnboardingFactsUnavailable('organization');
+    // 只数 **active** 的：Quickstart 用 status==='active' 过滤团队，没有 active 团队时
+    // 直接挡住签发。按总数判定会让清单先消失、下一步却做不了（Codex P2）。
+    const activeTeams = response.data.teams.filter((team) => team.status === 'active');
+    const activeMembers = response.data.members.filter((member) => member.status === 'active');
     return {
-      hasTeam: response.data.teams.length > 0,
-      hasMember: response.data.members.length > 1,
+      hasTeam: activeTeams.length > 0,
+      hasMember: activeMembers.length > 1,
     };
   });
 }
 
 /** 掩码展示用：只取前缀与可用状态，永远不涉及密钥明文（明文只在签发那一刻存在）。 */
-export type ServiceKeyDigest = { total: number; activePrefix: string | null };
+export type ServiceKeyDigest = {
+  total: number;
+  activePrefix: string | null;
+  /**
+   * 这个租户是否**曾经**用密钥跑过请求。
+   *
+   * 取自密钥的 lastUsedAt 而不是查日志：请求日志默认只留 90 天
+   * （LlmGateway:Retention:RequestLogDays），拿它当「一生是否跑通过」的依据，
+   * 长期不活跃的租户过了保留期就会被打回「还没跑通首条请求」（Codex P2）。
+   * lastUsedAt 挂在密钥上，不随日志清理消失；顺带也省掉一次范围查询。
+   */
+  everUsed: boolean;
+};
 
 function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
   return cached('serviceKeys', tenantId, async () => {
@@ -100,21 +113,9 @@ function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
     if (!response.success) throw new OnboardingFactsUnavailable('serviceKeys');
     const items = response.data;
     const usable = items.find((item) => item.enabled);
-    return { total: items.length, activePrefix: usable?.keyPrefix ?? null };
-  });
-}
-
-function loadHasRequests(tenantId: string): Promise<boolean> {
-  return cached('requests', tenantId, async () => {
-    const to = new Date();
-    const from = new Date(to.getTime() - REQUEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-    // 走可分页的列表端点：它是 CountDocuments + Limit(1)，只回一条。
-    // 不能用 /logs/summary —— 那个端点不接受分页，会把整段区间的日志连同投影
-    // 全部 materialize 到内存再做聚合；为了「有没有跑过一条请求」拉一整年，
-    // 对日志量大的租户是每次缓存未命中就来一发（Codex P1）。
-    const response = await getLogs({ page: 1, pageSize: 1, from: from.toISOString(), to: to.toISOString() });
-    if (!response.success) throw new OnboardingFactsUnavailable('requests');
-    return response.data.total > 0;
+    // 已吊销/禁用的密钥也算数：它证明这个租户历史上确实跑通过。
+    const everUsed = items.some((item) => Boolean(item.lastUsedAt));
+    return { total: items.length, activePrefix: usable?.keyPrefix ?? null, everUsed };
   });
 }
 
@@ -174,7 +175,6 @@ export function useOnboardingState(): OnboardingState {
   const tenantId = tenant?.id ?? '';
   const canReadOrganization = canAccessPage(tenant, 'organization');
   const canReadKeys = canAccessPage(tenant, 'serviceKeys');
-  const canReadLogs = canAccessPage(tenant, 'logs');
 
   const [facts, setFacts] = useState<Facts>(EMPTY_FACTS);
   const [loading, setLoading] = useState(true);
@@ -194,13 +194,19 @@ export function useOnboardingState(): OnboardingState {
     setLoading(true);
     void Promise.all([
       canReadOrganization ? loadTeamFacts(tenantId) : Promise.resolve<TeamFacts>({ hasTeam: false, hasMember: false }),
-      canReadKeys ? loadServiceKeyDigest(tenantId) : Promise.resolve<ServiceKeyDigest>({ total: 0, activePrefix: null }),
-      canReadLogs ? loadHasRequests(tenantId) : Promise.resolve(false),
-    ]).then(([team, keys, hasRequests]) => {
+      canReadKeys ? loadServiceKeyDigest(tenantId) : Promise.resolve<ServiceKeyDigest>({ total: 0, activePrefix: null, everUsed: false }),
+    ]).then(([team, keys]) => {
       if (cancelled) return;
       // 只有还能用的密钥才算这一步完成：全被禁用/吊销时清单不该消失，
       // 否则用户既跑不出下一条请求，AccessSnippetBar 又还在催他签一把（Codex P2）。
-      setFacts({ team: team.hasTeam, member: team.hasMember, key: keys.activePrefix !== null, request: hasRequests });
+      setFacts({
+        team: team.hasTeam,
+        member: team.hasMember,
+        // 只有还能用的密钥才算这一步完成（全被禁用/吊销时清单不该消失）。
+        key: keys.activePrefix !== null,
+        // 「跑通首条请求」取密钥的 lastUsedAt —— 持久事实，不受 90 天日志保留期影响。
+        request: keys.everUsed,
+      });
       setUnavailable(false);
       setLoading(false);
     }).catch(() => {
@@ -212,13 +218,14 @@ export function useOnboardingState(): OnboardingState {
     });
     return () => { cancelled = true; };
     // 三个权限位进依赖：切租户或换角色都会重算；revision 让写操作后立刻重算。
-  }, [tenantId, canReadOrganization, canReadKeys, canReadLogs, revision]);
+  }, [tenantId, canReadOrganization, canReadKeys, revision]);
 
   const readableOf: Record<OnboardingStepId, boolean> = {
     team: canReadOrganization,
     member: canReadOrganization,
     key: canReadKeys,
-    request: canReadLogs,
+    // 判定源已从日志换成密钥的 lastUsedAt，可读性随之改看密钥权限。
+    request: canReadKeys,
   };
 
   const steps: OnboardingStep[] = (Object.keys(STEP_LABEL) as OnboardingStepId[]).map((id) => ({
