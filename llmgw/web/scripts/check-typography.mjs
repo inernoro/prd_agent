@@ -101,11 +101,8 @@ for (const full of walk(SRC)) {
 // 组织页已按 v1.2 迁移完毕，故不在表内——它再出现一处就会红。
 const SMALL_PROSE_BASELINE = {
   'theme.css': 27,
-  'pages/ModelPoolsPage.tsx': 5,
   'components/EntityPreviewDrawer.tsx': 4,
-  'pages/OverviewPage.tsx': 2,
   'pages/ChangePasswordPage.tsx': 1,
-  'pages/QuickstartPage.tsx': 1,
 };
 
 const SMALL_STEP = /--fs-(caption|micro)/;

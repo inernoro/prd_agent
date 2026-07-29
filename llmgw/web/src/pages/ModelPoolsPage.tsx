@@ -1,19 +1,61 @@
 // 模型池：每个池一张卡，展示策略/类型/默认标记 + 池内每个模型的健康 chip。
 // 「默认池」可就地切换：GW 权威池写 llm_gateway，MAP 来源池写旧集合。
+//
+// 按「控制台风格调性 v1.2」原则 6 / 7 迁移（详见
+// doc/rule.platform.llm-gateway.console-design-tonality.md）：
+//   - 走 PageShell 骨架、贴边全宽；页头此前自己套了 maxWidth:760，现在副标题宽度
+//     统一由 .lg-prose / .lg-page-heading p 的 --measure 管。
+//   - 文字预算：此前是全站最大页（8 段 / 488 汉字）。「有则增加，无则不变」这段平台
+//     补齐语义收进 HelpPopover，平台托管池的追加规则收进 DetailsBlock，路由机制收进
+//     页尾的 DetailsBlock + 教程深链；常驻正文只留只读角色提示一段。
+//   - 六种调度策略此前只有标签没有解释（用户看到「最少连接」并不知道它意味着什么），
+//     补成 StrategyHelp，挂在策略字段与策略 chip 旁按需展开。
+//   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：只用内联表单与扁平 DOM，
+//     卡片内边距只允许 CARD_PADDING(14) 与嵌套块 INSET_PADDING(10) 两种。
 import { useEffect, useState } from 'react';
 import { Link, useNavigate } from 'react-router-dom';
 import { bulkCalibratePoolPriceCurrency, bulkClaimPools, bulkImportPoolModels, claimPoolToGateway, createPool, ensurePoolTypes, getExchanges, getModels, getParameterCapabilitiesMeta, getPools, getPoolTypes, removePoolModel, setPoolDefault, updatePool, upsertPoolModel } from '@/lib/api';
 import type { ExchangeItem, ModelCapability, ModelItem, ModelPool, ParameterCapabilityMetaItem, PoolModelInfo, PoolTypesData } from '@/lib/types';
 import { Chip, SectionLoader, Button, ReadOnlyNotice } from '@/components/ui';
+import { DetailsBlock, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { healthChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT } from '@/lib/typography';
-import { CARD_ACTIONS, CARD_PADDING, GAP, INSET_PADDING, PAGE_GAP } from '@/lib/surface';
+import { BODY_TEXT, FIELD_INPUT, HINT_TEXT, SECTION_TITLE } from '@/lib/typography';
+import { CARD_ACTIONS, CARD_BODY, CARD_PADDING, GAP, INSET_BLOCK, INSET_PADDING } from '@/lib/surface';
 
 const STRATEGY_LABEL: Record<number, string> = {
   0: '优先级', 1: '轮询', 2: '加权', 3: '最少连接', 4: '随机', 5: '故障转移',
 };
+
+/**
+ * 六种调度策略的说明。原来页面上只有「优先级 / 轮询 / 加权 / 最少连接 / 随机 / 故障转移」
+ * 六个裸标签，选的人得自己猜；说明写成常驻段落又会把这一页的文字预算撑爆。
+ * 所以做成出口一（字段旁的 ?），在策略字段与策略 chip 两处复用同一份文案，不抄第二遍。
+ */
+const STRATEGY_DETAIL: { value: number; detail: string }[] = [
+  { value: 0, detail: '按成员优先级从小到大依次尝试，前一个不可用才轮到下一个' },
+  { value: 1, detail: '健康成员按顺序轮流承接，流量大致均分' },
+  { value: 2, detail: '按成员权重分配流量，权重高的承接更多' },
+  { value: 3, detail: '优先给在途请求最少的成员，适合响应耗时波动大的场景' },
+  { value: 4, detail: '在健康成员里随机挑一个，不保留任何调度状态' },
+  { value: 5, detail: '固定用首选成员，只有它失败时才切到备用成员' },
+];
+
+function StrategyHelp({ align }: { align?: 'start' | 'end' }) {
+  return (
+    <HelpPopover label="调度策略" align={align}>
+      <dl>
+        {STRATEGY_DETAIL.map((item) => (
+          <div key={item.value}>
+            <dt>{STRATEGY_LABEL[item.value]}</dt>
+            <dd>{item.detail}</dd>
+          </div>
+        ))}
+      </dl>
+    </HelpPopover>
+  );
+}
 type PoolEditDraft = { name: string; code: string; modelType: string; priority: string; strategyType: string; description: string };
 type PoolMemberDraft = { modelKey: string; priority: string; protocol: string; parameterCapabilities: string };
 type PoolBulkImportDraft = { platformId: string; capabilityFilter: string; maxCount: string; enabledOnly: boolean; overwriteExisting: boolean };
@@ -399,38 +441,40 @@ export function ModelPoolsPage() {
   const attentionPools = pools.filter((pool) => pool.health === 'unavailable' || pool.health === 'empty').length;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, overflowY: 'auto', overscrollBehavior: 'contain', display: 'flex', flexDirection: 'column', gap: PAGE_GAP }}>
+    <PageShell>
       <ParameterCapabilityOptions parameterMeta={parameterMeta} />
-      <header className="lg-page-heading">
-        <div style={{ maxWidth: 760 }}>
-          <h1>模型池</h1>
-          <p>
-            模型池把同一类业务需要的多个模型组织成一条稳定路由。先看它服务谁、承接多少请求和是否健康，需要调整时再进入详情。
-          </p>
-          {/* 汇总指标走标题行小字：此前是 4 张只装一个数字的大卡片，白占 100px 高。 */}
-          <p className="lg-summary-strip">
+      {/* summary 是标题行的一排小字：此前是 4 张只装一个数字的大卡片，白占 100px 高。 */}
+      <PageHeader
+        title="模型池"
+        subtitle="模型池把同一类业务的多个模型组织成一条稳定路由。"
+        summary={(
+          <>
             <span>模型池 <strong className="tabular">{pools.length}</strong></span>
             <span>业务路由 <strong className="tabular">{modelTypes.length}</strong> 类</span>
             <span>已绑定 appCaller <strong className="tabular">{totalBoundAppCallers}</strong></span>
             <span>近 7 天请求 <strong className="tabular">{totalRecentRequests}</strong></span>
             {attentionPools ? <span className="lg-summary-warn">{attentionPools} 个池需要处理</span> : null}
-          </p>
-        </div>
-        <div style={CARD_ACTIONS}>
-          {canWrite ? <Button size="sm" variant="primary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button> : null}
-          <Button size="sm" variant="ghost" onClick={() => navigate('/learn')}>了解路由机制</Button>
-        </div>
-      </header>
+          </>
+        )}
+        actions={(
+          <>
+            {canWrite ? <Button size="sm" variant="primary" onClick={() => setDrawer({ kind: 'create' })}>新建模型池</Button> : null}
+            <Button size="sm" variant="ghost" onClick={() => navigate('/learn')}>了解路由机制</Button>
+          </>
+        )}
+      />
+      <PageBody>
       {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
+        <div role="status" style={{ flexShrink: 0, ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>{toast}</div>
       ) : null}
-      <section style={{ display: 'flex', gap: GAP.normal, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
-        <div>
-          <strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-body)' }}>程序池类型规则</strong>
-          <p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
+      <section style={{ display: 'flex', gap: GAP.normal, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
+        <h2 style={SECTION_TITLE}>
+          程序池类型规则
+          {/* 补齐语义原来是一整段常驻说明，收进出口后逐字保留（跨模块契约断言这句字面量）。 */}
+          <HelpPopover label="程序池类型规则">
             有则增加，无则不变：只创建缺失类型默认池，只向平台托管默认池追加兼容且未存在的模型，不覆盖、删除或重排已有成员。
-          </p>
-        </div>
+          </HelpPopover>
+        </h2>
         <div style={{ ...CARD_ACTIONS, gap: GAP.normal }}>
           <Chip label={`${poolTypes?.total ?? 0} 类规则`} color="var(--accent)" bg="var(--accent-soft)" />
           <Chip label={`${poolTypes?.ready ?? 0} 已可用`} color="#3fb950" bg="rgba(63,185,80,0.14)" />
@@ -442,12 +486,12 @@ export function ModelPoolsPage() {
       </section>
       {!canWrite ? <ReadOnlyNotice>当前角色可以查看模型池、成员健康和路由使用情况，但不能修改平台配置。</ReadOnlyNotice> : null}
       {pools.length === 0 ? <Empty text={canWrite ? '暂无模型池，可先新建第一个模型池' : '当前租户暂无模型池，请联系 Owner 或 Admin 配置'} /> : null}
-      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))', gap: 12 }}>
+      <section style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 330px), 1fr))', gap: GAP.section }}>
         {pools.map((pool) => <PoolOverviewCard key={pool.id} pool={pool} busyId={busyId} canWrite={canWrite} onOpen={() => setDrawer({ kind: 'pool', poolId: pool.id })} onMakeDefault={() => void makeDefault(pool)} />)}
       </section>
-      {canWrite ? <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', padding: CARD_PADDING }}>
+      {canWrite ? <details style={{ border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)', ...CARD_BODY }}>
         <summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)', fontWeight: 600 }}>高级维护</summary>
-        <p style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>用于批量导入历史配置和校准价格币种。日常查看与路由判断不需要操作这里。</p>
+        <Prose style={{ margin: `${GAP.normal}px 0` }}>批量导入历史配置与校准价格币种，日常查看不需要。</Prose>
         <PoolCreateBar
           mode="advanced"
           draft={createDraft}
@@ -463,11 +507,19 @@ export function ModelPoolsPage() {
           onCalibratePriceCurrency={() => void calibratePriceCurrency()}
         />
       </details> : null}
+      <DetailsBlock title="工作原理：一次调用怎么落到某个模型池">
+        <Prose>
+          调用方指定模型池时直接用它；没指定时按业务类型落到该类型的默认池，再由调度策略在池内挑一个健康成员承接。
+          所以先看每个池服务谁、承接多少请求、是否健康，需要调整时再进入详情维护成员。
+        </Prose>
+        <TutorialLink chapter="chapter-17">查看教程：第 17 章 模型池与路由</TutorialLink>
+      </DetailsBlock>
+      </PageBody>
       {drawer ? (
         <div role="presentation" onMouseDown={(event) => { if (event.currentTarget === event.target) setDrawer(null); }} style={{ position: 'fixed', inset: 0, zIndex: 80, background: 'rgba(0,0,0,0.42)', display: 'flex', justifyContent: 'flex-end' }}>
-          <aside role="dialog" aria-modal="true" aria-label={drawer.kind === 'create' ? '新建模型池' : '模型池详情'} style={{ width: 'min(680px, 100vw)', height: '100%', overflowY: 'auto', background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-subtle)', padding: 18, boxShadow: '-16px 0 40px rgba(0,0,0,0.22)' }}>
-            <div style={{ display: 'flex', alignItems: 'flex-start', gap: 12, marginBottom: 18 }}>
-              <div style={{ flex: 1 }}><h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>{drawer.kind === 'create' ? '新建模型池' : selectedPool?.name || '模型池详情'}</h2><p style={{ margin: '5px 0 0', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>{drawer.kind === 'create' ? '先定义业务类型，再添加实际承接流量的模型。' : poolPurpose(selectedPool)}</p></div>
+          <aside role="dialog" aria-modal="true" aria-label={drawer.kind === 'create' ? '新建模型池' : '模型池详情'} style={{ width: 'min(680px, 100vw)', height: '100%', overflowY: 'auto', background: 'var(--bg-surface)', borderLeft: '1px solid var(--border-subtle)', padding: CARD_PADDING, boxShadow: '-16px 0 40px rgba(0,0,0,0.22)' }}>
+            <div style={{ display: 'flex', alignItems: 'flex-start', gap: GAP.section, marginBottom: GAP.page }}>
+              <div style={{ flex: 1 }}><h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>{drawer.kind === 'create' ? '新建模型池' : selectedPool?.name || '模型池详情'}</h2><p style={{ margin: '5px 0 0', ...BODY_TEXT }}>{drawer.kind === 'create' ? '先定义业务类型，再添加实际承接流量的模型。' : poolPurpose(selectedPool)}</p></div>
               <Button size="sm" variant="ghost" onClick={() => setDrawer(null)}>关闭</Button>
             </div>
             {drawer.kind === 'create' && canWrite ? (
@@ -488,24 +540,31 @@ export function ModelPoolsPage() {
             ) : selectedPool ? (
               <>
                 <PoolDetailSummary pool={selectedPool} />
-                <div style={{ display: 'flex', gap: 8, flexWrap: 'wrap', margin: '14px 0' }}>
+                <div style={{ display: 'flex', gap: GAP.normal, flexWrap: 'wrap', margin: `${GAP.section}px 0` }}>
                   {canWrite ? (selectedPool.authority === 'llm_gateway' ? <Button size="sm" variant="secondary" onClick={() => (editDrafts[selectedPool.id] ? cancelEditPool(selectedPool.id) : startEditPool(selectedPool))}>{editDrafts[selectedPool.id] ? '取消编辑' : '编辑属性'}</Button> : <Button size="sm" variant="secondary" disabled={busyId === selectedPool.id} onClick={() => void claimPool(selectedPool)}>导入为可维护配置</Button>) : null}
                   {canWrite && !selectedPool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === selectedPool.id} onClick={() => void makeDefault(selectedPool)}>设为默认池</Button> : null}
-                  <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-caption)', textDecoration: 'none' }}>查看 appCaller</Link>
-                  <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-caption)', textDecoration: 'none' }}>查看请求记录</Link>
+                  <Link to={`/app-callers?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看 appCaller</Link>
+                  <Link to={`/logs?modelPoolId=${encodeURIComponent(selectedPool.id)}`} style={{ alignSelf: 'center', color: 'var(--accent)', fontSize: 'var(--fs-secondary)', textDecoration: 'none' }}>查看请求记录</Link>
                 </div>
                 {canWrite && editDrafts[selectedPool.id] ? <PoolEditBar draft={editDrafts[selectedPool.id]} managed={selectedPool.appendOnly} busy={busyId === `pool-edit:${selectedPool.id}`} onDraftChange={(next) => setEditDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onSave={() => void savePool(selectedPool)} onCancel={() => cancelEditPool(selectedPool.id)} /> : null}
                 {canWrite && selectedPool.authority === 'llm_gateway' ? <PoolMemberEditor pool={selectedPool} models={models} parameterMeta={parameterMeta} draft={addDrafts[selectedPool.id] || emptyMemberDraft()} busyId={busyId} onDraftChange={(next) => setAddDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onAdd={() => void addPoolModel(selectedPool)} /> : null}
-                {selectedPool.appendOnly ? <div style={{ marginTop: 10, padding: 10, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>平台托管默认池只追加同类型、已启用且未存在的权威模型。已有成员的顺序、价格、协议和能力不可在这里覆盖或删除；特殊配置请新建专用模型池。</div> : null}
-                <h3 style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-body)', margin: '18px 0 8px' }}>模型成员</h3>
+                {/* 只追加语义原来是一整段常驻小字说明，改成默认收起的出口三：想知道「为什么这里改不了」的人点开即可。 */}
+                {selectedPool.appendOnly ? (
+                  <DetailsBlock title="工作原理：平台托管池为什么只能追加">
+                    <Prose>
+                      平台托管默认池只追加同类型、已启用且未存在的权威模型。已有成员的顺序、价格、协议和能力不可在这里覆盖或删除；特殊配置请新建专用模型池。
+                    </Prose>
+                  </DetailsBlock>
+                ) : null}
+                <h3 style={{ ...SECTION_TITLE, margin: `${GAP.page}px 0 ${GAP.normal}px` }}>模型成员</h3>
                 <PoolMembers pool={selectedPool} busyId={busyId} canWrite={canWrite} memberPriorities={memberPriorities} memberParameterCaps={memberParameterCaps} onPriorityChange={(key, value) => setMemberPriorities((prev) => ({ ...prev, [key]: value }))} onParameterChange={(key, value) => setMemberParameterCaps((prev) => ({ ...prev, [key]: value }))} onCurrencyChange={updateMemberPriceCurrency} onSave={savePoolModelPriority} onDelete={deletePoolModel} />
-                {canWrite && selectedPool.authority === 'llm_gateway' ? <details style={{ marginTop: 16, borderTop: '1px solid var(--border-subtle)', paddingTop: 12 }}><summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}>高级成员维护</summary><div style={{ marginTop: 10 }}><PoolBulkImportBar pool={selectedPool} platformIds={platformIds} draft={bulkImportDrafts[selectedPool.id] || emptyBulkImportDraft()} busyId={busyId} onDraftChange={(next) => setBulkImportDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onImport={() => void bulkImportModels(selectedPool)} /></div></details> : null}
+                {canWrite && selectedPool.authority === 'llm_gateway' ? <details style={{ marginTop: GAP.page, borderTop: '1px solid var(--border-subtle)', paddingTop: INSET_PADDING }}><summary style={{ cursor: 'pointer', color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}>高级成员维护</summary><div style={{ marginTop: INSET_PADDING }}><PoolBulkImportBar pool={selectedPool} platformIds={platformIds} draft={bulkImportDrafts[selectedPool.id] || emptyBulkImportDraft()} busyId={busyId} onDraftChange={(next) => setBulkImportDrafts((prev) => ({ ...prev, [selectedPool.id]: next }))} onImport={() => void bulkImportModels(selectedPool)} /></div></details> : null}
               </>
             ) : <Empty text="模型池不存在或已被移除" />}
           </aside>
         </div>
       ) : null}
-    </div>
+    </PageShell>
   );
 }
 
@@ -516,22 +575,22 @@ function PoolOverviewCard({ pool, busyId, canWrite, onOpen, onMakeDefault }: { p
   return (
     <article style={{ display: 'flex', flexDirection: 'column', gap: GAP.section, padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
       <div style={{ display: 'flex', alignItems: 'flex-start', gap: GAP.normal }}>
-        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}><strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-heading)' }}>{pool.name}</strong><Chip label={pool.modelType || 'chat'} color="var(--accent)" bg="var(--accent-soft)" />{pool.isDefaultForType ? <Chip label="默认路由" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-elevated)" /> : null}</div><p style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.65, margin: '7px 0 0' }}>{poolPurpose(pool)}</p></div>
+        <div style={{ flex: 1, minWidth: 0 }}><div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}><strong style={{ color: 'var(--text-primary)', fontSize: 'var(--fs-heading)' }}>{pool.name}</strong><Chip label={pool.modelType || 'chat'} color="var(--accent)" bg="var(--accent-soft)" />{pool.isDefaultForType ? <Chip label="默认路由" color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-elevated)" /> : null}</div><p style={{ ...BODY_TEXT, margin: '7px 0 0' }}>{poolPurpose(pool)}</p></div>
         <Chip label={status.label} color={status.color} bg={status.bg} />
       </div>
-      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: 8 }}>
+      <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, minmax(0, 1fr))', gap: GAP.normal }}>
         <CardStat label="绑定" value={`${pool.boundAppCallerCount} 个`} />
         <CardStat label="近 7 天" value={`${pool.recentRequests} 次`} />
         <CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} />
       </div>
       <div>
-        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', marginBottom: 7 }}>模型组成</div>
+        <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)', marginBottom: GAP.tight }}>模型组成</div>
         <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>
-          {visibleModels.length ? visibleModels.map((model) => { const chip = healthChip(model.healthStatus); return <div key={`${model.platformId}:${model.modelId}`} style={{ display: 'flex', alignItems: 'center', gap: 7, minWidth: 0, color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)' }}><span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: chip.color }} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</span><span style={{ marginLeft: 'auto', color: 'var(--text-muted)', flexShrink: 0 }}>优先级 {model.priority}</span></div>; }) : <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>尚未添加模型，当前不能承接请求。</span>}
+          {visibleModels.length ? visibleModels.map((model) => { const chip = healthChip(model.healthStatus); return <div key={`${model.platformId}:${model.modelId}`} style={{ display: 'flex', alignItems: 'center', gap: GAP.tight, minWidth: 0, color: 'var(--text-secondary)', fontSize: 'var(--fs-secondary)' }}><span style={{ width: 7, height: 7, borderRadius: '50%', flexShrink: 0, background: chip.color }} /><span style={{ overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</span><span style={{ marginLeft: 'auto', color: 'var(--text-muted)', flexShrink: 0 }}>优先级 {model.priority}</span></div>; }) : <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>尚未添加模型，当前不能承接请求。</span>}
           {pool.models.length > visibleModels.length ? <span style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>另有 {pool.models.length - visibleModels.length} 个模型</span> : null}
         </div>
       </div>
-      <div style={{ display: 'flex', gap: 8, alignItems: 'center', marginTop: 'auto' }}><Button size="sm" variant="secondary" onClick={onOpen}>{canWrite ? '查看与维护' : '查看详情'}</Button>{canWrite && !pool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === pool.id} onClick={onMakeDefault}>设为默认</Button> : null}<span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{formatRecentTime(pool.lastRequestAt)}</span></div>
+      <div style={{ display: 'flex', gap: GAP.normal, alignItems: 'center', marginTop: 'auto' }}><Button size="sm" variant="secondary" onClick={onOpen}>{canWrite ? '查看与维护' : '查看详情'}</Button>{canWrite && !pool.isDefaultForType ? <Button size="sm" variant="ghost" disabled={busyId === pool.id} onClick={onMakeDefault}>设为默认</Button> : null}<span style={{ marginLeft: 'auto', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{formatRecentTime(pool.lastRequestAt)}</span></div>
     </article>
   );
 }
@@ -542,12 +601,12 @@ function CardStat({ label, value }: { label: string; value: string }) {
 
 function PoolDetailSummary({ pool }: { pool: ModelPool }) {
   const status = poolHealthChip(pool);
-  return <section style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal, padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: GAP.tight, flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: 8 }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={{ color: 'var(--text-muted)', fontSize: 'var(--fs-caption)', lineHeight: 1.65 }}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ color: '#d29922', fontSize: 'var(--fs-caption)' }}>尚无明确绑定的 appCaller。若它是默认池，仍可能承接同类型的自动路由流量。</div>}</section>;
+  return <section style={{ display: 'flex', flexDirection: 'column', gap: GAP.normal, padding: CARD_PADDING, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-elevated)' }}><div style={{ display: 'flex', gap: GAP.tight, alignItems: 'center', flexWrap: 'wrap' }}><Chip label={status.label} color={status.color} bg={status.bg} /><Chip label={STRATEGY_LABEL[pool.strategyType] || `策略 ${pool.strategyType}`} color="var(--text-secondary)" bg="var(--bg-surface)" />{/* 只读角色看不到编辑栏，策略说明在这里也要够得着。 */}<StrategyHelp />{pool.isDefaultForType ? <Chip label={`${pool.modelType} 默认池`} color="#3fb950" bg="rgba(63,185,80,0.14)" /> : null}{pool.appendOnly ? <Chip label="平台托管，只追加" color="var(--text-secondary)" bg="var(--bg-surface)" /> : null}</div><div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(120px, 1fr))', gap: GAP.normal }}><CardStat label="绑定 appCaller" value={`${pool.boundAppCallerCount} 个`} /><CardStat label="近 7 天请求" value={`${pool.recentRequests} 次`} /><CardStat label="成功率" value={pool.recentSuccessRatePercent == null ? '暂无数据' : `${pool.recentSuccessRatePercent}%`} /><CardStat label="成员健康" value={`${pool.healthyMembers} 健康 / ${pool.unavailableMembers} 不可用`} /></div>{pool.boundAppCallers.length ? <div style={BODY_TEXT}>服务对象：{pool.boundAppCallers.map((caller) => caller.title || caller.appCallerCode).join('、')}{pool.boundAppCallerCount > pool.boundAppCallers.length ? ` 等 ${pool.boundAppCallerCount} 个` : ''}</div> : <div style={{ ...BODY_TEXT, color: '#d29922' }}>尚无绑定的 appCaller。若为默认池，仍可能承接同类型自动路由。</div>}</section>;
 }
 
 function PoolMembers({ pool, busyId, canWrite, memberPriorities, memberParameterCaps, onPriorityChange, onParameterChange, onCurrencyChange, onSave, onDelete }: { pool: ModelPool; busyId: string | null; canWrite: boolean; memberPriorities: Record<string, string>; memberParameterCaps: Record<string, string>; onPriorityChange: (key: string, value: string) => void; onParameterChange: (key: string, value: string) => void; onCurrencyChange: (poolId: string, member: PoolModelInfo, value: string) => void; onSave: (pool: ModelPool, member: PoolModelInfo) => Promise<void>; onDelete: (pool: ModelPool, member: PoolModelInfo) => Promise<void> }) {
-  if (!pool.models.length) return <div style={{ padding: CARD_PADDING, border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)', color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>暂无模型成员。添加至少一个健康模型后，这个池才能承接请求。</div>;
-  return <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>{pool.models.slice().sort((a, b) => a.priority - b.priority).map((member) => { const chip = healthChip(member.healthStatus); const key = memberKey(pool.id, member); return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap', padding: 10, background: 'var(--bg-elevated)', borderRadius: 'var(--radius-sm)', fontSize: 'var(--fs-caption)' }}><Chip label={chip.label} color={chip.color} bg={chip.bg} /><span style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{member.modelId}</span>{member.protocol ? <span style={{ color: 'var(--text-muted)' }}>{member.protocol}</span> : null}<CapabilityTags labels={capabilityLabelsForMember(member)} />{canWrite && pool.authority === 'llm_gateway' && !pool.appendOnly ? <><label style={inlineCheckStyle}>优先级<input value={memberPriorities[key] ?? String(member.priority)} onChange={(event) => onPriorityChange(key, event.target.value)} style={smallInputStyle(58)} inputMode="numeric" /></label><select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select><input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 170px' }} aria-label="字段级参数能力" /><span style={{ marginLeft: 'auto', display: 'flex', gap: 6 }}><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSave(pool, member)}>保存</Button><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDelete(pool, member)}>移除</Button></span></> : <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>优先级 {member.priority}</span>}</div>; })}</div>;
+  if (!pool.models.length) return <div style={{ padding: CARD_PADDING, border: '1px dashed var(--border-subtle)', borderRadius: 'var(--radius-sm)', ...BODY_TEXT }}>暂无模型成员。添加健康模型后才能承接请求。</div>;
+  return <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight }}>{pool.models.slice().sort((a, b) => a.priority - b.priority).map((member) => { const chip = healthChip(member.healthStatus); const key = memberKey(pool.id, member); return <div key={key} style={{ display: 'flex', alignItems: 'center', gap: GAP.normal, flexWrap: 'wrap', ...INSET_BLOCK, fontSize: 'var(--fs-secondary)' }}><Chip label={chip.label} color={chip.color} bg={chip.bg} /><span style={{ color: 'var(--text-primary)', fontFamily: 'var(--font-mono)', overflowWrap: 'anywhere' }}>{member.modelId}</span>{member.protocol ? <span style={{ color: 'var(--text-muted)' }}>{member.protocol}</span> : null}<CapabilityTags labels={capabilityLabelsForMember(member)} />{canWrite && pool.authority === 'llm_gateway' && !pool.appendOnly ? <><label style={inlineCheckStyle}>优先级<input value={memberPriorities[key] ?? String(member.priority)} onChange={(event) => onPriorityChange(key, event.target.value)} style={smallInputStyle(58)} inputMode="numeric" /></label><select value={(member.priceCurrency || 'CNY').toUpperCase()} onChange={(event) => onCurrencyChange(pool.id, member, event.target.value)} style={smallSelectStyle(74)} aria-label="价格币种"><option value="CNY">CNY</option><option value="USD">USD</option></select><input value={memberParameterCaps[key] ?? parameterCapabilityText(member.capabilities)} onChange={(event) => onParameterChange(key, event.target.value)} placeholder="字段能力，例如 seed" list="gw-parameter-capability-options" style={{ ...inputStyle, flex: '1 1 170px' }} aria-label="字段级参数能力" /><span style={{ marginLeft: 'auto', display: 'flex', gap: GAP.tight }}><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onSave(pool, member)}>保存</Button><Button size="sm" variant="ghost" disabled={busyId === key} onClick={() => void onDelete(pool, member)}>移除</Button></span></> : <span style={{ marginLeft: 'auto', color: 'var(--text-muted)' }}>优先级 {member.priority}</span>}</div>; })}</div>;
 }
 
 function poolPurpose(pool: ModelPool | null) {
@@ -646,7 +705,7 @@ function PoolCreateBar({
         background: 'var(--bg-surface)',
       }}
     >
-      {mode === 'create' ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {mode === 'create' ? <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.normal, alignItems: 'center' }}>
         <input
           value={draft.name}
           onChange={(e) => onDraftChange({ ...draft, name: e.target.value })}
@@ -685,7 +744,7 @@ function PoolCreateBar({
         </Button>
         <input value={draft.description} onChange={(e) => onDraftChange({ ...draft, description: e.target.value })} placeholder="业务说明（可选）" style={{ ...inputStyle, flex: '1 1 100%' }} aria-label="模型池业务说明" />
       </div> : null}
-      {mode === 'advanced' ? <><div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      {mode === 'advanced' ? <><div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.normal, alignItems: 'center' }}>
         <select value={bulkModelType} onChange={(e) => onBulkModelTypeChange(e.target.value)} style={{ ...selectStyle, width: 180 }} aria-label="批量认领模型类型">
           <option value="">全部类型</option>
           {modelTypes.map((type) => <option key={type} value={type}>{type}</option>)}
@@ -693,9 +752,9 @@ function PoolCreateBar({
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-claim-pools'} onClick={onBulkClaim}>
           {busyId === 'bulk-claim-pools' ? '处理中…' : '批量导入历史模型池'}
         </Button>
-        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>默认跳过已存在的平台模型池，不覆盖已有调整。</span>
+        <span style={HINT_TEXT}>默认跳过已存在的平台模型池，不覆盖已有调整。</span>
       </div>
-      <div style={{ display: 'flex', flexWrap: 'wrap', gap: 8, alignItems: 'center' }}>
+      <div style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.normal, alignItems: 'center' }}>
         <select
           value={priceCurrencyDraft.modelType}
           onChange={(e) => onPriceCurrencyDraftChange({ ...priceCurrencyDraft, modelType: e.target.value })}
@@ -714,7 +773,7 @@ function PoolCreateBar({
           <option value="CNY">CNY</option>
           <option value="USD">USD</option>
         </select>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>
+        <label style={inlineCheckStyle}>
           <input
             type="checkbox"
             checked={priceCurrencyDraft.onlyMissing}
@@ -722,7 +781,7 @@ function PoolCreateBar({
           />
           只补空币种
         </label>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, color: 'var(--text-muted)', fontSize: 'var(--fs-caption)' }}>
+        <label style={inlineCheckStyle}>
           <input
             type="checkbox"
             checked={priceCurrencyDraft.includeMembersWithoutPrice}
@@ -733,7 +792,7 @@ function PoolCreateBar({
         <Button size="sm" variant="ghost" disabled={busyId === 'bulk-calibrate-price-currency'} onClick={onCalibratePriceCurrency}>
           {busyId === 'bulk-calibrate-price-currency' ? '处理中…' : '校准价格币种'}
         </Button>
-        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>只更新平台配置中的模型池，默认仅校准已有价格字段的历史成员。</span>
+        <span style={HINT_TEXT}>只校准平台配置中已有价格字段的历史成员。</span>
       </div></> : null}
     </div>
   );
@@ -759,13 +818,11 @@ function PoolEditBar({
       style={{
         display: 'flex',
         flexWrap: 'wrap',
-        gap: 8,
+        gap: GAP.normal,
         alignItems: 'center',
-        marginBottom: 10,
-        padding: 10,
+        marginBottom: INSET_PADDING,
+        ...INSET_BLOCK,
         border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--radius-sm)',
-        background: 'var(--bg-elevated)',
       }}
     >
       <input
@@ -799,6 +856,9 @@ function PoolEditBar({
         style={{ ...inputStyle, width: 82 }}
         aria-label="模型池优先级"
       />
+      {/* 六种策略的差别收在这个 ? 里：常驻写出来会把这一页的文字预算撑爆，
+          不写又等于让人对着六个裸标签猜。 */}
+      <span style={strategyFieldStyle}>调度策略<StrategyHelp /></span>
       <select
         value={draft.strategyType}
         onChange={(e) => onDraftChange({ ...draft, strategyType: e.target.value })}
@@ -844,16 +904,14 @@ function PoolBulkImportBar({
       style={{
         display: 'flex',
         flexWrap: 'wrap',
-        gap: 8,
+        gap: GAP.normal,
         alignItems: 'center',
-        marginBottom: 10,
-        padding: 10,
+        marginBottom: INSET_PADDING,
+        ...INSET_BLOCK,
         border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--radius-sm)',
-        background: 'var(--bg-elevated)',
       }}
     >
-      <span style={{ fontSize: 'var(--fs-caption)', fontWeight: 600, color: 'var(--text-secondary)' }}>批量导入成员</span>
+      <span style={{ fontSize: 'var(--fs-secondary)', fontWeight: 600, color: 'var(--text-secondary)' }}>批量导入成员</span>
       <select
         value={draft.platformId}
         onChange={(e) => onDraftChange({ ...draft, platformId: e.target.value })}
@@ -911,7 +969,7 @@ function PoolBulkImportBar({
       <Button size="sm" variant="ghost" disabled={busyId === `pool-bulk-import:${pool.id}`} onClick={onImport}>
         {busyId === `pool-bulk-import:${pool.id}` ? '处理中…' : '批量导入'}
       </Button>
-      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{pool.appendOnly ? '平台托管池固定只导入已启用、同类型且未存在的模型。' : '只更新平台配置中的模型池，默认跳过已有成员。'}</span>
+      <span style={HINT_TEXT}>{pool.appendOnly ? '平台托管池固定只导入已启用、同类型且未存在的模型。' : '只更新平台配置中的模型池，默认跳过已有成员。'}</span>
     </div>
   );
 }
@@ -947,13 +1005,11 @@ function PoolMemberEditor({
       style={{
         display: 'flex',
         flexWrap: 'wrap',
-        gap: 8,
+        gap: GAP.normal,
         alignItems: 'center',
-        marginBottom: 10,
-        padding: 10,
+        marginBottom: INSET_PADDING,
+        ...INSET_BLOCK,
         border: '1px solid var(--border-subtle)',
-        borderRadius: 'var(--radius-sm)',
-        background: 'var(--bg-elevated)',
       }}
     >
       <select
@@ -1019,11 +1075,11 @@ function PoolMemberEditor({
       <Button size="sm" variant="secondary" disabled={busyId === pool.id} onClick={onAdd}>
         {busyId === pool.id ? '处理中…' : pool.appendOnly ? '追加模型' : '添加/更新'}
       </Button>
-      <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>
+      <span style={HINT_TEXT}>
         {filteredModels.length} 个可追加候选{pool.appendOnly ? '，已过滤已有成员与不匹配模型' : ''}
       </span>
       {parameterMeta.length ? (
-        <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>
+        <span style={HINT_TEXT}>
           参数能力 {parameterMeta.length} 项
         </span>
       ) : null}
@@ -1053,7 +1109,7 @@ function CapabilityTags({ labels }: { labels: string[] }) {
   const visible = labels.slice(0, 5);
   if (visible.length === 0) return null;
   return (
-    <span style={{ display: 'inline-flex', gap: 4, flexWrap: 'wrap' }}>
+    <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
       {visible.map((label) => (
         <Chip key={label} label={label} color="var(--text-secondary)" bg="var(--bg-surface)" />
       ))}
@@ -1320,9 +1376,18 @@ const selectStyle = {
 const inlineCheckStyle = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
+  gap: GAP.tight,
   color: 'var(--text-muted)',
-  fontSize: 'var(--fs-caption)',
+  fontSize: 'var(--fs-secondary)',
+};
+
+/** 策略字段名 + 出口一的 ?。字段名走 --fs-secondary（角色表里的「字段名」档）。 */
+const strategyFieldStyle = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: GAP.tight,
+  color: 'var(--text-secondary)',
+  fontSize: 'var(--fs-secondary)',
 };
 
 function smallInputStyle(width: number) {

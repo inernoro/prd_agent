@@ -11,6 +11,10 @@
 // 否则守卫会逼着人把有用的帮助内容删掉，那是把问题从「啰嗦」换成「什么都不说」。
 // 空状态与教程外链本来就短，不单独豁免。
 //
+// 已知边界（不要当成"已经很干净"）：守卫看得见「文字写在哪」，看不见「常量最终渲染到哪个出口」。
+// 一个定义在文件顶部、实际只喂给 HelpPopover 的说明常量，仍会被计入常驻预算。
+// 这类页面在 BUDGETS 里按实测值封顶并写明理由；真要精确，得引入 parser 做数据流分析。
+//
 // 规则见 doc/rule.platform.llm-gateway.console-design-tonality.md 原则 7。
 // 用法：pnpm check:prose
 import fs from 'node:fs';
@@ -37,13 +41,16 @@ const OUTLET_COMPONENTS = ['HelpPopover', 'DetailsBlock'];
  * 而不是「让 CI 过一下」。
  */
 const BUDGETS = [
-  { file: 'pages/QuickstartPage.tsx', maxParagraphs: 9, maxCjk: 607, allowPageCenter: true, reason: 'TODO 待迁移：四协议接入片段是产品内容，迁移时要拆出真正的解释性段落；居中 1080 同批去掉' },
-  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 8, maxCjk: 488, reason: 'TODO 待迁移：六种策略说明尚未收进出口' },
-  { file: 'pages/LearningCenterPage.tsx', maxParagraphs: 5, maxCjk: 362, reason: 'TODO 待迁移：学习中心本身就是讲解页，迁移时需重新界定它的预算口径' },
-  { file: 'pages/ServiceKeysPage.tsx', maxParagraphs: 4, maxCjk: 446, reason: 'TODO 待迁移：密钥作用域说明尚未收进出口' },
-  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 4, maxCjk: 417, reason: 'TODO 待迁移：空状态三步引导待收口；公网 WSS 与固定 IP 两句是教程锚点，必须逐字保留' },
-  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 288, reason: 'TODO 待迁移' },
-  { file: 'pages/OverviewPage.tsx', maxParagraphs: 3, maxCjk: 163, reason: 'TODO 待迁移：系统运维页的容器拓扑说明尚未收进折叠块' },
+  // 本轮范围外的页面（用户点名的 10 页不含它们），按当前实测值封顶，只减不增。
+  // 数值偏大是因为 2026-07-29 加宽了口径：此前只数 `>文本<`，把正文搬进常量数组即可绕过，
+  // 学习中心旧版就是靠 TOPICS 数组藏了约 750 汉字。加宽后这些页面的真实文字量才显形。
+  { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 299, reason: '本轮范围外，按加宽口径后的实测值封顶' },
+  { file: 'pages/PlatformsPage.tsx', maxParagraphs: 3, maxCjk: 300, reason: '本轮范围外，按加宽口径后的实测值封顶' },
+  // Exchange 已迁移，常驻 JSX 正文为 0 段；超出的字来自 transformerType 等选项常量，
+  // 它们实际渲染在 HelpPopover 里，但守卫看不出常量最终落到哪个出口（已知边界）。
+  { file: 'pages/ExchangesPage.tsx', maxParagraphs: 2, maxCjk: 420, reason: '选项常量渲染在 HelpPopover 内，守卫无法识别常量的渲染位置' },
+  { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 3, maxCjk: 433, reason: '六种策略说明常量渲染在 HelpPopover 内；另一段是契约锁定的 ReadOnlyNotice 文案' },
+  { file: 'pages/QuickstartPage.tsx', maxParagraphs: 2, maxCjk: 421, reason: '四协议接入片段常量属产品内容，且部分渲染在 HelpPopover 内' },
 ];
 
 const CJK = /[㐀-䶿一-鿿]/g;
@@ -84,9 +91,12 @@ for (const full of walk(SRC)) {
 
   try {
     let source = fs.readFileSync(full, 'utf8');
-    // 注释先走：注释里的中文不是界面文字。
-    source = source.replace(/\/\*[^]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
+    // 顺序要紧：pragma 必须在剥注释**之前**处理。
+    // 之前写反了——`{/* prose-ok: … */}` 里的注释先被剥成空白，pragma 正则再也匹配不到，
+    // 于是这个逃生门从来没生效过（一个不会生效的逃生门比没有更糟：它让人以为有退路）。
     source = maskPragmas(source);
+    // 注释里的中文不是界面文字。
+    source = source.replace(/\/\*[^]*?\*\//g, blank).replace(/^[ \t]*\/\/.*$/gm, blank);
     source = maskOutlets(source);
 
     // JSX 文本节点候选：`>...<` 之间的内容。
@@ -95,6 +105,18 @@ for (const full of walk(SRC)) {
     const runs = [];
     for (const match of source.matchAll(/>([^<>{}]*)</g)) {
       const text = match[1];
+      if (countCjk(text) > 0) runs.push(text);
+    }
+
+    // 只数 `>文本<` 会留下一个大洞：**把正文搬进常量数组就能绕过预算**。
+    // 实例：学习中心旧版把约 750 汉字、10 段解释放在 TOPICS 数组的
+    // detail/summary 字段里，守卫一个字都没数到，却照样一屏铺满解释。
+    // 所以承载正文语义的字段（写成 `x: '…'` 或 `x="…"` 都算）一并计入。
+    // 刻意不含 title / label / placeholder / aria-* —— 那些是控件可供性不是正文，
+    // 把它们计入会逼着人把输入框的标签删掉。
+    const PROSE_FIELDS = /\b(?:detail|description|desc|summary|explanation|note|hint|body|subtitle)\s*[:=]\s*(['"`])((?:(?!\1)[^\\])*)\1/g;
+    for (const match of source.matchAll(PROSE_FIELDS)) {
+      const text = match[2];
       if (countCjk(text) > 0) runs.push(text);
     }
 

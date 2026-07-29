@@ -14,3 +14,14 @@
 | fix | llmgw | 修复预算与用量页表单控件缺高度（padding 撑出的高度低于漂移检测 34px 下限），改用 FIELD_INPUT |
 | refactor | llmgw | 「逻辑模型目录」按 v1.2 迁移：页头统一走 PageShell、创建卡内边距归一到 14、表单栅格改固定列宽，路由策略等说明收进 HelpPopover 并深链教程第 18 章（2 段/230 字 → 1 段/155 字） |
 | fix | llmgw | 逻辑模型页 var(--danger)/var(--success) 两处失效 token 改为 --err/--ok |
+| refactor | llmgw | 系统运维页按 v1.2 迁移：容器拓扑收进折叠块并删 desc 列、删 7 个与侧边栏重复的快捷入口、页头 summary 由发布 Gate 派生（3 段/163 字 → 1 段/76 字） |
+| refactor | llmgw | Exchange 映射按 v1.2 迁移：自造页头换 PageHeader、内边距从 4 种收敛到 2 种（4 段/417 字 → 0 段 JSX 正文） |
+| refactor | llmgw | 模型池按 v1.2 迁移：六种调度策略说明收进 HelpPopover、程序池追加语义收进折叠块（8 段/488 字 → 1 段/286 字） |
+| refactor | llmgw | 接入密钥按 v1.2 迁移：作用域与轮换说明收进出口（4 段/446 字 → 0 段/309 字） |
+| refactor | llmgw | 模型管理按 v1.2 迁移：定价说明收进 HelpPopover、内边距 4 档收敛到 2 档（2 段/275 字 → 0 段/193 字） |
+| refactor | llmgw | 学习中心按 v1.2 迁移：改为「概念索引 + 深链教程」，不再在控制台复述教程正文（真实可见正文 1126 字/15 段 → 274 字/0 段） |
+| refactor | llmgw | Quickstart 按 v1.2 迁移：删 1080px 居中与三张纯解释 Step 卡，首屏挂接入片段与派生态清单（9 段/607 字 → 0 段/335 字） |
+| feat | llmgw | 三轨接入：AccessSnippetBar（老手拿地址就走）+ OnboardingChecklist（四步派生态，全绿自动消失）+ useOnboardingState（按租户缓存 60s） |
+| fix | llmgw | 文字预算守卫补两个洞：正文搬进常量数组即可绕过预算；prose-ok 逃生门因先剥注释而从未生效 |
+| fix | llmgw | 修复 --bg-muted / --radius-xs 两个从未定义的 CSS 变量（圆角与底色此前静默失效） |
+| fix | llmgw | 修复 .lg-tutorial-link 的 5px 间距：该组件出现在每个迁移页，给 4 条被监测路由同时引入第 6 种容器间距 |
