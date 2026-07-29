@@ -233,6 +233,40 @@ class _ReportScanner(HTMLParser):
                 self._check_load_url(tag, n, v)
             if n == "style" and v:
                 self.css_chunks.append(v)
+        if tag == "a":
+            self._check_nav_anchor(attrs)
+
+    def _check_nav_anchor(self, attrs):
+        """导航锚点必须开新标签。
+
+        知识库把正文渲染在**自增高的 sandbox iframe** 里（prd-admin 的 FilePreview）。
+        缺 target 的 http(s) 链接点下去会在该 iframe 内导航到整个 SPA，SPA 的 100vh
+        布局与自增高逻辑互相喂高，ResizeObserver 每帧触发、主线程被打满、整页卡死
+        （2026-07-29 实测 210 条 "ResizeObserver loop completed"）。
+        阅读器侧已有父页点击拦截兜底，但报告会被下载、被别处嵌入，那些场景没有兜底，
+        所以在发布闸这里硬校验——不能只把它写成文档里的一句话。
+        只管 http(s)：mailto/tel/自定义协议与页内锚点不会导航本 frame。"""
+        d = {k.lower(): (v or "").strip() for k, v in attrs}
+        href = d.get("href", "")
+        if not href or href.startswith("#"):
+            return
+        if not re.match(r"^(https?:)?//", href, re.I) and "://" in href:
+            return                       # mailto: / tel: / 自定义协议
+        if href.startswith("mailto:") or href.startswith("tel:"):
+            return
+        if "download" in d:
+            return                       # 原生下载语义，不导航
+        if not re.match(r"^(https?://|//|/)", href, re.I):
+            return                       # 相对片段等，交由其它规则
+        if (d.get("target") or "").lower() != "_blank":
+            self._err(f'<a href="{href[:60]}"> 缺 target="_blank"——'
+                      "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "
+                      "ResizeObserver 正反馈循环把页面卡死；导航链接一律新标签打开")
+        rel = (d.get("rel") or "").lower().split()
+        if "noopener" not in rel:
+            self._err(f'<a href="{href[:60]}"> 缺 rel="noopener"——'
+                      "新标签会拿到 window.opener，存在 tabnabbing 风险，请写 "
+                      'rel="noopener noreferrer"')
 
     def _check_load_url(self, tag, attr, url):
         """加载型 URL 的统一判定：外链与 data:image 两条禁令对所有加载位置一视同仁。

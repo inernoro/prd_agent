@@ -203,14 +203,18 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // 这里在父页（未被 sandbox 限制）拦截点击再 window.open：不必给 iframe 放
             // allow-popups/allow-popups-to-escape-sandbox 扩权，且对**存量**没写 target 的
             // 旧 HTML 条目同样生效。
+            // 只拦「真的会把本 frame 导航走」的链接：http(s) 且非 download。
+            // mailto: / tel: / 自定义协议交给浏览器原生处理（它们不导航本 frame），
+            // download 链接保留原生下载语义——一律 preventDefault 会把这些链接变成哑巴。
             d.addEventListener('click', (ev) => {
               const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
               if (!a) return;
-              const raw = a.getAttribute('href') || '';
-              if (raw.startsWith('#')) return;              // 页内锚点放行，正常跳转
-              ev.preventDefault();                          // 其余一律不许就地导航
+              if ((a.getAttribute('href') || '').startsWith('#')) return;  // 页内锚点
+              if (a.hasAttribute('download')) return;                      // 原生下载
               const url = a.href || '';
-              if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
+              if (!/^https?:\/\//i.test(url)) return;                      // mailto/tel/自定义协议
+              ev.preventDefault();
+              window.open(url, '_blank', 'noopener,noreferrer');
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}
