@@ -13,13 +13,19 @@
 
 import crypto from 'node:crypto';
 
-import { utils as ssh2Utils } from 'ssh2';
+// ssh2 是 CommonJS。这里必须走**默认导入**再取 .utils，不能写
+// `import { utils } from 'ssh2'`——tsc 编得过、vitest 也跑得过（它自己做 interop），
+// 但产物是真 ESM，Node 加载时会抛
+// `SyntaxError: Named export 'utils' not found`，整个 CDS 起不来。
+// 2026-07-29 就是这么把 CDS Self 预览打挂的：类型检查零错误、4568 条测试全绿、容器起不来。
+// release-service.ts 的 loadSsh2() 用 `mod.Client || mod.default?.Client` 处理同一件事。
+import ssh2 from 'ssh2';
 
 import type { StateService } from '../state.js';
 import type { RemoteHost } from '../../types.js';
 import { sealToken, unsealToken } from '../../infra/secret-seal.js';
 
-const { parseKey } = ssh2Utils;
+const { parseKey } = ssh2.utils;
 
 /** 用于 UI 展示的安全版 RemoteHost：剔除一切密文 + 仅保留 fingerprint。 */
 export interface RemoteHostPublicView {

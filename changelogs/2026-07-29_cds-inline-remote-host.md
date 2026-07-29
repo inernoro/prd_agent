@@ -7,3 +7,5 @@
 | fix | cds | 发布方式探测失败不再把裸 HTTP 错误糊在页面顶部，改为说明「需要手动填写」 |
 | fix | cds | 录入私钥时不再 trim 尾部换行，避免 PEM 缺失换行导致解析失败 |
 | test | cds | 新增连接串解析 18 条、三种认证方式 10 条、就地新建服务器接线守卫 10 条 |
+| fix | cds | 修复 ssh2 静态具名导入导致 CDS 启动即崩（tsc 与 vitest 均不报错，真 ESM 运行时抛 Named export not found），改走默认导入 |
+| test | cds | 新增 CommonJS 依赖导入方式守卫，禁止对 ssh2 一类 CJS 包使用静态具名导入 |
