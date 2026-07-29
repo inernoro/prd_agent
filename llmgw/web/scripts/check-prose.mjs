@@ -39,12 +39,10 @@ const OUTLET_COMPONENTS = ['HelpPopover', 'DetailsBlock'];
 const BUDGETS = [
   { file: 'pages/QuickstartPage.tsx', maxParagraphs: 9, maxCjk: 607, allowPageCenter: true, reason: 'TODO 待迁移：四协议接入片段是产品内容，迁移时要拆出真正的解释性段落；居中 1080 同批去掉' },
   { file: 'pages/ModelPoolsPage.tsx', maxParagraphs: 8, maxCjk: 488, reason: 'TODO 待迁移：六种策略说明尚未收进出口' },
-  { file: 'pages/UsagePage.tsx', maxParagraphs: 7, maxCjk: 575, reason: 'TODO 待迁移：可信度规则与对账说明尚未收进出口' },
   { file: 'pages/LearningCenterPage.tsx', maxParagraphs: 5, maxCjk: 362, reason: 'TODO 待迁移：学习中心本身就是讲解页，迁移时需重新界定它的预算口径' },
   { file: 'pages/ServiceKeysPage.tsx', maxParagraphs: 4, maxCjk: 446, reason: 'TODO 待迁移：密钥作用域说明尚未收进出口' },
   { file: 'pages/ExchangesPage.tsx', maxParagraphs: 4, maxCjk: 417, reason: 'TODO 待迁移：空状态三步引导待收口；公网 WSS 与固定 IP 两句是教程锚点，必须逐字保留' },
   { file: 'pages/AppCallersPage.tsx', maxParagraphs: 3, maxCjk: 288, reason: 'TODO 待迁移' },
-  { file: 'pages/PromptPolicyPage.tsx', maxParagraphs: 3, maxCjk: 274, allowPageCenter: true, reason: 'TODO 待迁移：正文尚未走 .lg-prose，此时去掉居中 1040 会让段落横跨整屏，只能同批改' },
   { file: 'pages/OverviewPage.tsx', maxParagraphs: 3, maxCjk: 163, reason: 'TODO 待迁移：系统运维页的容器拓扑说明尚未收进折叠块' },
 ];
 

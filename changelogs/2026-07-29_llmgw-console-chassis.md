@@ -9,3 +9,6 @@
 | docs | llmgw | 控制台风格调性规则升到 v1.2：新增原则 6（容器贴边、可读宽度作用在内容上）与原则 7（文字预算与三轨接入），补记漂移检测的三个前提 |
 | fix | llmgw | 修复组织页重构打破的 5 条跨模块源码契约断言（GatewayDataDomainGuardTests 直接读前端源码，本机无 dotnet 未能及时发现） |
 | feat | llmgw | 新增源码契约守卫 check-source-contracts.mjs：解析 GatewayDataDomainGuardTests.cs 并在本地复算全部 343 条前端断言，接进 pnpm build |
+| refactor | llmgw | 「预算与用量」按 v1.2 迁移：解释收进 HelpPopover/DetailsBlock、账单导入表单改抽屉、「对账覆盖」由说明句改为页头派生指标（7 段/575 字 → 0 段/241 字） |
+| refactor | llmgw | 「提示词策略」按 v1.2 迁移：取消 1040px 居中改贴边全宽，合并顺序与日志口径收进折叠块并深链教程第 20 章（3 段/274 字 → 1 段/103 字） |
+| fix | llmgw | 修复预算与用量页表单控件缺高度（padding 撑出的高度低于漂移检测 34px 下限），改用 FIELD_INPUT |

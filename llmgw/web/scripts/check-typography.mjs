@@ -104,10 +104,8 @@ const SMALL_PROSE_BASELINE = {
   'pages/ModelPoolsPage.tsx': 5,
   'components/EntityPreviewDrawer.tsx': 4,
   'pages/OverviewPage.tsx': 2,
-  'pages/PromptPolicyPage.tsx': 2,
   'pages/ChangePasswordPage.tsx': 1,
   'pages/QuickstartPage.tsx': 1,
-  'pages/UsagePage.tsx': 1,
 };
 
 const SMALL_STEP = /--fs-(caption|micro)/;
