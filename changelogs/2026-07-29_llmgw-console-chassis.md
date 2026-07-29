@@ -25,3 +25,5 @@
 | fix | llmgw | 文字预算守卫补两个洞：正文搬进常量数组即可绕过预算；prose-ok 逃生门因先剥注释而从未生效 |
 | fix | llmgw | 修复 --bg-muted / --radius-xs 两个从未定义的 CSS 变量（圆角与底色此前静默失效） |
 | fix | llmgw | 修复 .lg-tutorial-link 的 5px 间距：该组件出现在每个迁移页，给 4 条被监测路由同时引入第 6 种容器间距 |
+| fix | llmgw | 修复两处「接口 success 但 body 缺字段即整页白屏」：预算与用量的 statusDistribution、系统运维的 keyHealth/configAuthority/shadow summary |
+| test | llmgw | 新增 e2e/llmgw-page-acceptance.mjs：逐页真人路径 + 双主题验收，断言白屏/h1/标题裸露/贴边/pageerror，首次运行即抓到上述两处白屏 |

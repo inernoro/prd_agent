@@ -69,6 +69,8 @@ export function GovernancePage() {
     let alive = true;
     const protocolReleaseCommit = new URLSearchParams(window.location.search).get('releaseCommit')?.trim() || undefined;
     // 每个 slice 失败也置空数组（而非留 null）→ loading 一定会收敛、不卡 spinner；成功的部分照常渲染局部数据。
+    // 「success 但 body 缺字段」也要兜：否则 setX(undefined) 会绕过 `=== null` 的 loading 判定，
+    // 直接渲染并在 keyHealth!.status 上抛错，整页白屏。
     Promise.all([getPools(), getPlatforms(), getModels(), getExchanges(), getKeyHealth(), getConfigAuthorityReport(), getRuntimeGates(), getProtocolCoverage({ releaseCommit: protocolReleaseCommit, sinceHours: 24 }), getGatewayAppCallers({ page: 1, pageSize: 1 }), getShadowComparisons({ limit: 1 })]).then(
       ([poolsRes, platformsRes, modelsRes, exchangesRes, keyHealthRes, authorityRes, runtimeGatesRes, protocolCoverageRes, appCallersRes, shadowRes]) => {
         if (!alive) return;
@@ -76,12 +78,12 @@ export function GovernancePage() {
         if (platformsRes.success) setPlatforms(platformsRes.data.items); else { setPlatforms([]); setError((e) => e || platformsRes.error?.message || '加载失败'); }
         if (modelsRes.success) setModels(modelsRes.data.items); else { setModels([]); setError((e) => e || modelsRes.error?.message || '加载失败'); }
         if (exchangesRes.success) setExchanges(exchangesRes.data.items); else { setExchanges([]); setError((e) => e || exchangesRes.error?.message || '加载失败'); }
-        if (keyHealthRes.success) setKeyHealth(keyHealthRes.data.summary); else { setKeyHealth(emptyKeyHealth()); setError((e) => e || keyHealthRes.error?.message || '加载失败'); }
-        if (authorityRes.success) setConfigAuthority(authorityRes.data.summary); else { setConfigAuthority(emptyConfigAuthority()); setError((e) => e || authorityRes.error?.message || '加载失败'); }
+        if (keyHealthRes.success) setKeyHealth(keyHealthRes.data.summary ?? emptyKeyHealth()); else { setKeyHealth(emptyKeyHealth()); setError((e) => e || keyHealthRes.error?.message || '加载失败'); }
+        if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority()); else { setConfigAuthority(emptyConfigAuthority()); setError((e) => e || authorityRes.error?.message || '加载失败'); }
         if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data); else { setRuntimeGates(emptyRuntimeGates()); setError((e) => e || runtimeGatesRes.error?.message || '加载失败'); }
         if (protocolCoverageRes.success) setProtocolCoverage(protocolCoverageRes.data); else { setProtocolCoverage(emptyProtocolCoverage()); setError((e) => e || protocolCoverageRes.error?.message || '加载失败'); }
         if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total); else { setAppCallerTotal(0); setError((e) => e || appCallersRes.error?.message || '加载失败'); }
-        if (shadowRes.success) setShadow(shadowRes.data.summary); else setShadow({ total: 0, allMatch: 0, critical: 0, httpFail: 0 });
+        if (shadowRes.success) setShadow(shadowRes.data.summary ?? { total: 0, allMatch: 0, critical: 0, httpFail: 0 }); else setShadow({ total: 0, allMatch: 0, critical: 0, httpFail: 0 });
       },
     ).catch((err) => {
       // Promise.all/then 里抛错也要收敛 loading（否则永远转圈）。
@@ -114,7 +116,7 @@ export function GovernancePage() {
     if (platformsRes.success) setPlatforms(platformsRes.data.items);
     if (modelsRes.success) setModels(modelsRes.data.items);
     if (exchangesRes.success) setExchanges(exchangesRes.data.items);
-    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary);
+    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority());
     if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data);
     setBusyAction(null);
     setActionMessage(`已认领 ${res.data.claimedTotal} 个配置，跳过 ${res.data.skippedTotal} 个已存在配置`);
@@ -134,7 +136,7 @@ export function GovernancePage() {
       getRuntimeGates(),
       getGatewayAppCallers({ page: 1, pageSize: 1 }),
     ]);
-    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary);
+    if (authorityRes.success) setConfigAuthority(authorityRes.data.summary ?? emptyConfigAuthority());
     if (runtimeGatesRes.success) setRuntimeGates(runtimeGatesRes.data);
     if (appCallersRes.success) setAppCallerTotal(appCallersRes.data.total);
     setBusyAction(null);

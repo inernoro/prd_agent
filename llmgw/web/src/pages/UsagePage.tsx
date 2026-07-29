@@ -356,8 +356,10 @@ function CostMetric({ label, value, note }: { label: string; value: string; note
 }
 
 function countReconciliationStatus(summary: CostReconciliationSummary | null, status: string) {
+  // statusDistribution 缺失时整页白屏：`summary?.` 只护住了 summary，没护住这个数组。
+  // 后端少给一个字段就让「预算与用量」变空白页，代价与收益完全不成比例。
   return summary?.statusDistribution
-    .filter((item) => item.key.toLowerCase() === status)
+    ?.filter((item) => item.key.toLowerCase() === status)
     .reduce((total, item) => total + item.count, 0) ?? 0;
 }
 
