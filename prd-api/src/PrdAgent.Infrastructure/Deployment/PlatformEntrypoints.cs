@@ -28,13 +28,15 @@ public static class PlatformEntrypoints
     public const string GatewayConsoleSubdomain = "llmgw-web";
 
     /// <summary>
-    /// 当前部署是否由 CDS 按预览域名托管。
+    /// 平台有没有下发过入口表。
     ///
-    /// 用来区分「正式环境（同源 /llmgw/ 即可）」与「预览环境但这个入口没发布」——
-    /// 两者都取不到 URL，但只有后者需要向用户解释原因。
+    /// 用来区分「表里明确没有这一项（= 确实没发布）」与「平台压根没下发过表」——
+    /// 后者出现在跑着旧版 CDS 的预览环境（该能力 2026-07-29 才加），此时既不能说
+    /// 「没发布」（不知道），也不能自己拼一个（那正是本次要消灭的行为）。
     /// </summary>
-    public static bool IsPlatformManagedPreview(IConfiguration configuration)
-        => !string.IsNullOrWhiteSpace(configuration[PreviewUrlKey]);
+    public static bool HasEntrypointTable(IConfiguration configuration)
+        => !string.IsNullOrWhiteSpace(configuration[ServiceUrlsKey])
+           || !string.IsNullOrWhiteSpace(configuration[PreviewUrlKey]);
 
     /// <summary>
     /// 取某个命名服务的公网入口；未声明（含「因超长而未发布」）时返回 null。

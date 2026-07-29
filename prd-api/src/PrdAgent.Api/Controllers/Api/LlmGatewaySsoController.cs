@@ -10,6 +10,7 @@ using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
 using PrdAgent.Infrastructure.Deployment;
+using PrdAgent.Infrastructure.Security;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -108,11 +109,14 @@ public sealed class LlmGatewaySsoController : ControllerBase
     /// <summary>
     /// 票据要送去哪个控制台——由**服务端**回答，前端不再按 hostname 自己拼域名。
     ///
-    /// 三种结果各自明确（根 CLAUDE.md 规则 #11：预览地址只能来自平台，禁止本地推算）：
-    ///   baseUrl 有值           → CDS 已发布独立控制台入口，直接去；
-    ///   unavailableReason 有值 → 这是 CDS 预览环境，但该入口确实没发布（命名子域超 DNS 63
-    ///                            字符上限时 CDS 直接跳过不发布），如实告知而不是拼一个不存在的域名；
-    ///   两者都为 null          → 正式环境，控制台与本站同源，前端走 /llmgw/。
+    /// 四种结果各自明确（根 CLAUDE.md 规则 #11：预览地址只能来自平台，禁止本地推算）：
+    ///   ① 表里有这一项           → CDS 已发布独立控制台入口，直接去；
+    ///   ② 表里没有这一项         → 该入口确实没发布（命名子域超 DNS 63 字符上限时 CDS 直接
+    ///                              跳过不发布），如实告知而不是拼一个不存在的域名；
+    ///   ③ 预览环境但没有表       → 跑着旧版 CDS（入口下发是 2026-07-29 才加的能力）。此时
+    ///                              「有没有入口」是未知，既不能断言没发布，也不能自己推算
+    ///                              ——如实说未知，并指出 CDS 更新后自愈；
+    ///   ④ 非预览、也没有表       → 正式环境，控制台与本站同源，前端走 /llmgw/。
     /// </summary>
     private object ResolveConsoleTarget()
     {
@@ -122,12 +126,21 @@ public sealed class LlmGatewaySsoController : ControllerBase
             return new { baseUrl, unavailableReason = (string?)null };
         }
 
-        if (PlatformEntrypoints.IsPlatformManagedPreview(_configuration))
+        if (PlatformEntrypoints.HasEntrypointTable(_configuration))
         {
             return new
             {
                 baseUrl = (string?)null,
                 unavailableReason = "本环境未发布模型网关控制台入口：预览分支名过长时，网关子域会超出 DNS 63 字符上限，平台不会发布这条路由。请用更短的分支名重新部署，或在正式域名上打开。",
+            };
+        }
+
+        if (DeploymentAuthority.IsCdsBranchPreview(_configuration))
+        {
+            return new
+            {
+                baseUrl = (string?)null,
+                unavailableReason = "当前预览环境的平台尚未下发入口表（CDS 版本早于该能力），无法确定模型网关控制台地址。CDS 更新后本入口会自动恢复；在此之前请在正式域名上打开。",
             };
         }
 
