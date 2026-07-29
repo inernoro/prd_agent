@@ -91,23 +91,49 @@ def test_identity_unknown_project_falls_back_with_warning(m, monkeypatch):
 
 # --- 过滤器滤空必须喊出来，不许伪装成「本周未发布」 ------------------------
 
-def test_filter_dropping_everything_reports_unavailable(m, monkeypatch):
-    """最危险的静默错误：台账有 136 条，项目过滤器一条没留，却以
-    available=true + attempts=0 输出，读者会读成「本周一次都没发布」。"""
-    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"wrong-id"}, None))
-    monkeypatch.setattr(m, "_cds_api", lambda path: {"runs": [
+def _fake_ledger(m, monkeypatch, rows, honors_scope=True):
+    """模拟 /api/releases/runs：honors_scope=True 时按 ?project= 服务端过滤。"""
+    def api(path):
+        if "?project=" in path:
+            want = path.split("?project=", 1)[1]
+            if not honors_scope:
+                return {"runs": []}          # 服务端不认这个写法 -> 空
+            return {"runs": [r for r in rows if r.get("projectId") == want]}
+        return {"runs": rows}
+    monkeypatch.setattr(m, "_cds_api", api)
+
+
+def test_project_with_zero_releases_is_available_not_unavailable(m, monkeypatch):
+    """曾经的误报：台账里有别的项目的 run，本项目一次没发过，被判成「数据不可用」。
+    实测 mdimp 就是这种情况——那 136 条属于 prd-agent，mdimp 的正确答案是 0 次。
+    服务端 ?project= 过滤后空结果就是**真的 0**，必须如实报 available=true。"""
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"mdimp"}, None))
+    _fake_ledger(m, monkeypatch, [
         {"releaseId": "r1", "projectId": "prd-agent", "status": "success",
          "startedAt": "2026-07-21T10:00:00Z"},
-    ]})
-    out = m.collect_releases("whatever", "2026-07-20", "2026-07-26")
-    assert out["available"] is False
-    assert out["coverage"]["complete"] is False
-    assert "prd-agent" in out["reason"], "要把实际取到的写法示例给出来，便于定位"
+    ])
+    out = m.collect_releases("mdimp", "2026-07-20", "2026-07-26")
+    assert out["available"] is True, "本项目真的没发过，不能报成数据不可用"
+    assert out["attempts"] == 0
+
+
+def test_unrecognized_scope_spelling_falls_back_to_client_match(m, monkeypatch):
+    """端点只认 run 里存的 projectId 字面量：传项目名/hex id 会返回 0。
+    直接信这个 0 等于把静默错误搬到服务端，故必须交叉验证并回退。"""
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent", "map"}, None))
+    _fake_ledger(m, monkeypatch, [
+        {"releaseId": "a", "projectId": "prd-agent", "status": "success",
+         "startedAt": "2026-07-21T10:00:00Z"},
+    ], honors_scope=False)
+    out = m.collect_releases("MAP", "2026-07-20", "2026-07-26")
+    assert out["available"] is True
+    assert out["attempts"] == 1, "回退到客户端匹配后应拿到真实数字，而不是 0"
+    assert any("未命中" in a for a in out["coverage"]["advisories"]), "回退要告警"
 
 
 def test_matching_runs_are_counted(m, monkeypatch):
     monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent"}, None))
-    monkeypatch.setattr(m, "_cds_api", lambda path: {"runs": [
+    _fake_ledger(m, monkeypatch, [
         {"releaseId": "a", "projectId": "prd-agent", "status": "success",
          "startedAt": "2026-07-21T10:00:00Z"},
         {"releaseId": "b", "projectId": "prd-agent", "status": "failed",
@@ -116,7 +142,7 @@ def test_matching_runs_are_counted(m, monkeypatch):
          "startedAt": "2026-07-23T10:00:00Z"},   # 在途，不进分母
         {"releaseId": "d", "projectId": "other", "status": "success",
          "startedAt": "2026-07-24T10:00:00Z"},   # 他项目
-    ]})
+    ])
     out = m.collect_releases("prd-agent", "2026-07-20", "2026-07-26")
     assert out["available"] is True
     assert (out["attempts"], out["success"], out["failed"], out["inFlight"]) == (2, 1, 1, 1)

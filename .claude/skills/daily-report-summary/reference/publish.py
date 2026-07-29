@@ -318,7 +318,12 @@ class _ReportScanner(HTMLParser):
             return                       # 交给系统处理器，不动本 frame
         # download 只在同源时被浏览器真正当下载；跨源 http(s) 会退化成普通导航。
         # 报告最终落在哪个源不可知，故只对**相对 URL**（构造上必同源）豁免。
-        if "download" in d and not scheme and not href.startswith("//"):
+        # 反斜杠必须先按浏览器口径折成斜杠再判：URL 标准规定 special scheme（http/https/
+        # ws/wss/ftp/file）下 `\` 等价于 `/`，所以 `\\evil.example/file` 浏览器解析成
+        # `//evil.example/file` —— 跨源。照字面判「不以 // 开头」会把它当同源相对下载放行，
+        # 而浏览器对跨源忽略 download、直接导航本 frame，正好绕过本闸门要防的那件事。
+        rel_probe = href.replace("\\", "/")
+        if "download" in d and not scheme and not rel_probe.startswith("//"):
             return
         if (d.get("target") or "").lower() != "_blank":
             self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'

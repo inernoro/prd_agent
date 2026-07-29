@@ -21,6 +21,7 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   CDS 侧一律走 cdscli（禁止手拼 URL / 自己 slugify，见 CLAUDE.md 规则 11）。
 """
 import argparse, contextlib, json, os, re, subprocess, sys, time
+from urllib.parse import quote as _urlquote
 
 API = "/api/document-store"
 DAILY_STORE = "日报知识库"
@@ -452,13 +453,30 @@ def collect_releases(project, start, end):
             return True
         return str(p).strip().lower() in ident
 
-    body = _cds_api("/api/releases/runs")
-    runs = (body or {}).get("runs") or []
+    # 优先让**服务端**按项目过滤（/api/releases/runs 支持 ?project=）。
+    # 这样「本项目一次都没发过」与「标识写法对不上」不再混为一谈：前者服务端直接返回空。
+    # 之前靠「全量拉回来再客户端过滤，滤空就判定标识不匹配」是错的——实测 mdimp 就是
+    # 真的一次没发过，而台账里那 136 条属于 prd-agent，那条守卫会把正确的「0 次」误报成
+    # 「数据不可用」。
+    scope_warn = None
+    q = "/api/releases/runs"
+    if project:
+        q += "?project=" + _urlquote(str(project))
+    runs = ((_cds_api(q) or {}).get("runs")) or []
+    if project and not runs:
+        # 空结果有两种可能：真的没发过，或**传进去的写法服务端不认**。
+        # 实测该端点只认 run 里存的那个 projectId 字面量（本仓库是 slug `prd-agent`），
+        # 传项目名 `MAP` 或 hex id 一律返回 0 —— 直接信这个 0 等于把静默错误从客户端
+        # 搬到服务端。故再拉一次全量做交叉验证：全量里若有属于本项目标识的 run，
+        # 说明刚才那个写法没被认出来，回退到客户端匹配并告警。
+        allruns = ((_cds_api("/api/releases/runs") or {}).get("runs")) or []
+        fallback = [r for r in allruns if _mine(r)]
+        if fallback:
+            runs = fallback
+            scope_warn = (f"服务端 ?project={project} 未命中，已回退到客户端按标识匹配"
+                          f"（命中 {len(fallback)} 条）。该端点只认 run 里存的 projectId 字面量，"
+                          f"建议改传 {sorted(ident) if ident else project} 中被台账实际使用的那个写法")
     scoped_all = [r for r in runs if _mine(r)]
-    # 台账非空却被项目过滤器**全部**滤掉：几乎一定是标识写法对不上（如端点存 slug、
-    # 解析出 hex id），而不是「本项目真的一次都没发布」。这种情况以前会以
-    # available=true + attempts=0 的姿态输出，是最危险的静默错误——必须显式喊出来。
-    filtered_out_all = bool(runs) and not scoped_all
     sel = []
     for r in runs:
         if not _mine(r):
@@ -500,14 +518,9 @@ def collect_releases(project, start, end):
                 "同一次发布的多次重试各算一条 run。",
     }
     out["coverage"] = _release_coverage(scoped_all, sel, start, end)
-    if filtered_out_all:
-        out["available"] = False
-        out["reason"] = (f"发布台账有 {len(runs)} 条 run，但没有一条的 projectId 匹配 "
-                         f"{sorted(ident) if ident else project}——项目标识写法对不上，"
-                         f"实际取到的写法示例：{sorted({str(r.get('projectId')) for r in runs})[:3]}。"
-                         f"拒绝以 0 次发布的姿态输出，报告本段须写「数据不可用」而非「本周未发布」。")
-        out["coverage"]["complete"] = False
-        out["coverage"]["warnings"].append(out["reason"])
+    if scope_warn:
+        # 回退路径本身不影响数字正确性（客户端匹配已命中），但要让读者知道口径怎么来的
+        out["coverage"]["advisories"].append(scope_warn)
     if not out["coverage"]["complete"]:
         out["note"] += "【覆盖不完整】" + "；".join(out["coverage"]["warnings"]) + \
                        "——本段数字为下限，报告须注明口径。"

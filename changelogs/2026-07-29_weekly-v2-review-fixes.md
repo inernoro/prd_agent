@@ -37,3 +37,6 @@
 | security | skill | 发布闸同步拒收空 href（含纯空白），并按浏览器口径在 href 与 xlink:href 都存在时取 href（不能用 or 串联，空串是 falsy 会串到后者） |
 | docs | skill | 周刊 baseline 行/页脚/术语表的第四源署名由「部署版本」改为「正式发布台账 /api/releases/runs」，并在术语表拆开两个词条——此前只改了数字没改来源署名，等于把正确数字挂在被判作废的来源名下 |
 | rule | skill | 纪律 12 写明第四源必须署名「正式发布台账」，且 baseline/页脚/术语表/附录四处署名要一致 |
+| fix | skill | 发布台账改由服务端 ?project= 过滤，并对「服务端不认该写法」做交叉验证回退；删掉「客户端滤空即判数据不可用」的误报守卫——本项目真没发过时那条守卫会把正确的 0 次报成不可用 |
+| security | skill | 发布闸判 download 豁免前先把反斜杠折成斜杠：URL 标准下 special scheme 的 \ 等价于 /，`\\evil.example/f` 实为跨源，浏览器会忽略 download 直接导航 |
+| security | prd-admin | 链接拦截补 ws:/wss:：它们是 special scheme，点击会真的导航本 frame，且发布闸本来就要求其带 target，两侧判据需一致 |

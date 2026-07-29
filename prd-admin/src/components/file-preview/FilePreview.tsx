@@ -227,8 +227,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // 而不是反过来白名单列举外部协议：那样会把 vscode: / weixin: 这类已注册的
             // 自定义协议一并 preventDefault 又不 open，链接直接变哑巴（上一轮的回归）。
             // 未在此列的协议交由浏览器分派给系统处理器，本 frame 不动。
+            // ws:/wss: 也在列：它们是 URL 标准里的 special scheme，点击会真的发起一次
+            // 本 frame 导航（结果是错误文档），照样把 srcdoc 内容顶掉。发布闸那侧本来就
+            // 要求它们带 target，两边判据必须一致，否则闸门放行的形态运行时反而漏拦。
             const SELF_NAVIGATING = new Set([
-              'http:', 'https:', 'file:', 'ftp:',
+              'http:', 'https:', 'file:', 'ftp:', 'ws:', 'wss:',
               'data:', 'about:', 'blob:', 'filesystem:', 'javascript:', 'vbscript:',
             ]);
             d.addEventListener('click', (ev) => {
