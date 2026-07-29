@@ -32,6 +32,7 @@ import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
+import { isPublishableNamedLabel, namedServiceLabel } from './preview-entrypoints.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -444,8 +445,8 @@ export class ForwarderRoutePublisher {
         // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
         // 对长分支名**静默失效**。超长则跳过此命名路由并 warn —— 服务仍可经主域名 `<previewSlug>.<root>`
         // 的 `/gw/v1` 路径访问,不受影响。选 skip 而非截断/哈希:截断会丢唯一性、可能与别的 slug 撞 host。
-        const namedLabel = `${previewSlug}-${sub}`;
-        if (namedLabel.length > 63) {
+        const namedLabel = namedServiceLabel(previewSlug, sub);
+        if (!isPublishableNamedLabel(namedLabel)) {
           this.opts.logger?.warn?.(
             `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
           );

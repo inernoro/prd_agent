@@ -106,13 +106,21 @@ function trackSet(
  * @param opts.jwtIssuer  Jwt__Issuer 兜底值(config.jwt.issuer)
  * @param opts.injectBullmqPrefix  BULLMQ_PREFIX 分支前缀兜底开关(默认开;
  *                        CDS_BULLMQ_PREFIX_INJECTION=0 时调用方传 false 关闭)
+ * @param opts.publishedEntrypoints 已发布入口表的 env 片段(由
+ *                        preview-entrypoints.publishedEntrypointsEnv 算出)。纯函数不读
+ *                        state,由调用方算好传入;检查器端点必须传同值,否则
+ *                        「检查器看到的」≠「部署实际注入的」
  */
 export function resolveProfileRuntimeEnvWithProvenance(
   entry: EnvResolveBranchContext,
   profile: Pick<BuildProfile, 'dockerImage' | 'dbScope'>,
   customEnvLayers: EnvLayer[],
   profileLayers: EnvLayer[],
-  opts: { jwtIssuer: string; injectBullmqPrefix?: boolean },
+  opts: {
+    jwtIssuer: string;
+    injectBullmqPrefix?: boolean;
+    publishedEntrypoints?: Record<string, string>;
+  },
 ): EnvResolveResult {
   const tracked = new Map<string, TrackedEntry>();
 
@@ -169,6 +177,18 @@ export function resolveProfileRuntimeEnvWithProvenance(
   // 任何显式定义优先;放在 profile 层之后正是为此。逃生阀见 opts.injectBullmqPrefix。
   if (opts.injectBullmqPrefix !== false && entry.branch && !tracked.get('BULLMQ_PREFIX')?.value) {
     trackSet(tracked, 'BULLMQ_PREFIX', slugifyBranchForDb(entry.branch), 'platform-injected', 'bullmq-branch-prefix');
+  }
+
+  // 4.6 已发布入口表(强制覆盖,平台事实)。
+  // 应用侧要拼「兄弟服务的公网地址」(如 MAP 跳模型网关控制台)时,唯一合法来源是这里 ——
+  // 禁止应用自己按 hostname 推算(根 CLAUDE.md 规则 #11)。表由 CDS 按真实发布判据算出:
+  // 超过 DNS 63 octet 的命名子域根本不会发布,表里就没有这一项,应用据此显示
+  // 「本环境未发布该入口」,而不是拼一个不存在的域名。与版本元数据同为强制覆盖 ——
+  // 它是平台对外的客观事实,项目 env 不该能伪造(伪造即让应用指向别的部署)。
+  if (opts.publishedEntrypoints) {
+    for (const [k, v] of Object.entries(opts.publishedEntrypoints)) {
+      trackSet(tracked, k, v, 'platform-injected', 'published-entrypoints');
+    }
   }
 
   // 5. 平台版本元数据(强制覆盖)

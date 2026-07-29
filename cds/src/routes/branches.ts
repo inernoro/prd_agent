@@ -23,6 +23,12 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import {
+  branchEntrypointDepsFromState,
+  isPublishableNamedLabel,
+  namedServiceLabel,
+  resolveBranchEntrypointsEnv,
+} from '../services/preview-entrypoints.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
@@ -10750,8 +10756,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         const resolved = resolveProfileRuntimeEnvWithProvenance(
           entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix 与部署路径（container.ts resolveProfileRuntimeEnv）同源同值
-          { jwtIssuer: config.jwt.issuer, injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0' },
+          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
+          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
+          {
+            jwtIssuer: config.jwt.issuer,
+            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
+            publishedEntrypoints: resolveBranchEntrypointsEnv(
+              entry,
+              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
+            ),
+          },
         );
         // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
         const maskedEnv = maskSecrets(resolved.env);
@@ -15186,8 +15200,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const sub = profile?.subdomain;
       if (!sub) continue;
       if (seenSubdomains.has(sub)) continue;
-      const namedLabel = `${gwPreviewSlug}-${sub}`;
-      if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+      const namedLabel = namedServiceLabel(gwPreviewSlug, sub);
+      // RFC 1035 single-label limit + wildcard cert coverage — shared predicate with the publisher
+      // and the env-injected entrypoint table (preview-entrypoints.ts), so the three never drift.
+      if (!isPublishableNamedLabel(namedLabel)) continue;
       seenSubdomains.add(sub);
       // Landing path — pick the path most likely to return a live 200 when the entry is clicked
       // (Codex P2: don't force every named service onto the LLM gateway health path):

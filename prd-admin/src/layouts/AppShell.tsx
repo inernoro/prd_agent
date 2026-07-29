@@ -609,9 +609,9 @@ export default function AppShell() {
     setGatewayOpening(true);
     const result = await createLlmGatewaySsoTicket();
     if (result.success) {
-      // 票据签发成功后仍可能拼不出地址（例如预览分支名过长、网关子域超出 DNS 上限）。
-      // 那与凭据无关，必须报出真实原因，否则会把人引向「是不是被封号了」的错误方向。
-      const resolution = resolveLlmGatewaySso(result.data.code);
+      // 票据签发成功后仍可能没有可去的入口（例如预览分支名过长时，平台不会发布网关子域）。
+      // 那与凭据无关，必须报出服务端给的真实原因，否则会把人引向「是不是被封号了」的错误方向。
+      const resolution = resolveLlmGatewaySso(result.data.code, result.data.console);
       if (resolution.ok) {
         window.location.assign(resolution.href);
         return;

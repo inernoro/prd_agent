@@ -9,6 +9,7 @@ using PrdAgent.Api.Extensions;
 using PrdAgent.Api.Models.Responses;
 using PrdAgent.Core.Models;
 using PrdAgent.Infrastructure.Database;
+using PrdAgent.Infrastructure.Deployment;
 
 namespace PrdAgent.Api.Controllers.Api;
 
@@ -25,11 +26,16 @@ public sealed class LlmGatewaySsoController : ControllerBase
     private const string TicketCollectionName = "llmgw_map_sso_tickets";
     private readonly MongoDbContext _db;
     private readonly LlmGatewayDataContext _gatewayData;
+    private readonly IConfiguration _configuration;
 
-    public LlmGatewaySsoController(MongoDbContext db, LlmGatewayDataContext gatewayData)
+    public LlmGatewaySsoController(
+        MongoDbContext db,
+        LlmGatewayDataContext gatewayData,
+        IConfiguration configuration)
     {
         _db = db;
         _gatewayData = gatewayData;
+        _configuration = configuration;
     }
 
     [HttpPost("ticket")]
@@ -95,6 +101,36 @@ public sealed class LlmGatewaySsoController : ControllerBase
         {
             code,
             expiresAt = expiresAt.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+            console = ResolveConsoleTarget(),
         }));
+    }
+
+    /// <summary>
+    /// 票据要送去哪个控制台——由**服务端**回答，前端不再按 hostname 自己拼域名。
+    ///
+    /// 三种结果各自明确（根 CLAUDE.md 规则 #11：预览地址只能来自平台，禁止本地推算）：
+    ///   baseUrl 有值           → CDS 已发布独立控制台入口，直接去；
+    ///   unavailableReason 有值 → 这是 CDS 预览环境，但该入口确实没发布（命名子域超 DNS 63
+    ///                            字符上限时 CDS 直接跳过不发布），如实告知而不是拼一个不存在的域名；
+    ///   两者都为 null          → 正式环境，控制台与本站同源，前端走 /llmgw/。
+    /// </summary>
+    private object ResolveConsoleTarget()
+    {
+        var baseUrl = PlatformEntrypoints.ResolveGatewayConsoleBaseUrl(_configuration);
+        if (baseUrl is not null)
+        {
+            return new { baseUrl, unavailableReason = (string?)null };
+        }
+
+        if (PlatformEntrypoints.IsPlatformManagedPreview(_configuration))
+        {
+            return new
+            {
+                baseUrl = (string?)null,
+                unavailableReason = "本环境未发布模型网关控制台入口：预览分支名过长时，网关子域会超出 DNS 63 字符上限，平台不会发布这条路由。请用更短的分支名重新部署，或在正式域名上打开。",
+            };
+        }
+
+        return new { baseUrl = (string?)null, unavailableReason = (string?)null };
     }
 }
