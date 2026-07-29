@@ -745,8 +745,8 @@
 .video-demo__viewer.is-1-1 { width: min(70%, 560px); aspect-ratio: 1; }
 .video-demo__viewer > img { width: 100%; height: 100%; object-fit: cover; transition: transform 9s ease-out; }
 .video-demo__viewer.is-playing > img { transform: scale(1.055) translateX(-1%); }
-.video-demo__viewer-shade { position: absolute; inset: 0; background: var(--media-card-overlay-compact); }
-.video-demo__viewer-caption { position: absolute; right: 22px; bottom: 20px; left: 22px; color: var(--text-on-media); }
+.video-demo__viewer-shade { position: absolute; inset: 0; pointer-events: none; background: var(--media-card-overlay-compact); }
+.video-demo__viewer-caption { position: absolute; right: 22px; bottom: 20px; left: 22px; pointer-events: none; color: var(--text-on-media); }
 .video-demo__viewer-caption span { display: inline-block; margin-bottom: 7px; padding: 4px 7px; border-radius: 5px; background: var(--media-card-glass); font-size: 10px; }
 .video-demo__viewer-caption strong,
 .video-demo__viewer-caption small { display: block; }
@@ -961,11 +961,16 @@
 @media (max-width: 620px) {
   .video-create-demo-callout { grid-template-columns: 72px minmax(0, 1fr); }
   .video-create-demo-callout > span:last-child { display: none; }
-  .video-demo__header { display: flex; }
+  .video-demo__header { position: static; z-index: auto; display: flex; flex: 0 0 auto; }
   .video-demo__header-actions { margin-left: auto; }
   .video-demo__header-actions > span { display: none; }
   .video-demo__header-actions button { display: none; }
-  .video-demo__workspace { padding: 8px; }
+  .video-demo__workspace { flex: 0 0 auto; padding: 8px; }
+  .video-demo__scenes { order: 0; }
+  .video-demo__canvas { order: 1; }
+  .video-demo__inspector { order: 2; }
+  .video-demo__scene-list { scroll-padding-inline: 8px; overscroll-behavior-x: contain; }
+  .video-demo__scene-list > button { flex-basis: min(82vw, 280px); min-height: 92px; }
   .video-demo__viewer { min-height: 220px; }
   .video-demo__timeline { grid-template-columns: 42px minmax(0, 1fr); overflow-x: auto; }
   .video-demo__timeline-track { min-width: 500px; }

@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun } from '@/services/contracts/videoAgent';
@@ -9,6 +10,8 @@ import {
   shouldKeepVideoRunPolling,
 } from './VideoStoryboardEditor';
 import { VideoStudioDemo } from './VideoStudioDemo';
+
+const videoConsoleCss = readFileSync(new URL('./videoConsole.css', import.meta.url), 'utf8');
 
 const runWith = (
   status: string,
@@ -27,6 +30,13 @@ describe('VideoStudioDemo', () => {
     expect(html).toContain('这是交互 Demo，不会产生实际费用');
     expect(html).toContain('雨夜来信');
     expect(html).not.toContain('data-theme="dark"');
+  });
+
+  it('keeps the mobile scene strip touchable instead of placing the viewer above it', () => {
+    expect(videoConsoleCss).toContain('.video-demo__viewer-shade { position: absolute; inset: 0; pointer-events: none;');
+    expect(videoConsoleCss).toContain('.video-demo__header { position: static; z-index: auto;');
+    expect(videoConsoleCss).toContain('.video-demo__scenes { order: 0; }');
+    expect(videoConsoleCss).toContain('.video-demo__canvas { order: 1; }');
   });
 
   it('keeps zero-scene generation in a visible progress experience and rejects terminal empty runs', () => {
