@@ -49,3 +49,8 @@
 | fix | llmgw | 新人清单的事实读取失败被当成「确实没有」缓存 60 秒：一次瞬时 500 就让配置齐全的租户被告知去建团队、拉成员；改为失败即抛不入缓存，并新增 unavailable 态让清单沉默 |
 | fix | llmgw | 建团队 / 拉成员 / 签密钥后主动失效新人清单缓存并通知已挂载组件（此前失效函数无人调用，且清缓存本身不会让 hook 重跑） |
 | docs | doc | 预览入口下发债务台账登记进 index.yml 与 guide.list.directory |
+| fix | llmgw | 教程深链传的是未削 basename 的路径：同源部署下控制台挂在 /llmgw/，传过去的 /llmgw/service-keys 与图谱登记的 /service-keys 逐段比对必然不匹配，每个页面都报「没有找到关联教程」 |
+| fix | llmgw | 章节深链改用独立参数 tutorialSourceId：此前把教程 sourceId 塞进 entry（那是 Mongo 文档 id），且会被 tutorialRoute 解析结果覆盖，标着第 15 / 19 章的链接统统打开第一章 |
+| fix | llmgw | 站内学习中心回落改走 router Link：裸 a 标签在 basename=/llmgw 下会跳到 MAP 应用的 /learn |
+| fix | prd-admin | 知识库教程深链按 tutorialSourceId 选中对应章节，取不到才回落第一篇 |
+| test | llmgw | 新增教程深链契约守卫 check-tutorial-deeplink.mjs 并接进 build（这三条依赖 router basename 与跨应用参数约定，行为测不到，只能钉源码契约） |

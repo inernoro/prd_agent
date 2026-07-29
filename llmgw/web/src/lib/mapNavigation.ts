@@ -1,3 +1,5 @@
+import { getRuntimeBasePath } from './runtimeBase';
+
 type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
 
 /**
@@ -76,8 +78,29 @@ export function resolveTutorialHref(
 ): string {
   const base = new URL(resolveMapHomeHref(location), location.href);
   base.pathname = `${base.pathname.replace(/\/$/, '')}/document-store`;
-  base.searchParams.set('tutorialRoute', pathname);
+  base.searchParams.set('tutorialRoute', stripConsoleBase(pathname));
   base.searchParams.set('tutorialLinks', '1');
-  if (options.chapter) base.searchParams.set('entry', options.chapter);
+  // 章节用**独立参数**传，不能直接塞进 `entry`：`entry` 在知识库里是 Mongo 文档 id，
+  // 而这里给的是教程 sourceId；何况 DocumentStorePage 解析 tutorialRoute 后会把 `entry`
+  // 覆盖成该页第一篇教程，于是标着第 15 / 19 章的链接统统打开第一章（Codex P2）。
+  // 由消费方按 sourceId 在解析结果里选出对应的 entryId。
+  if (options.chapter) base.searchParams.set('tutorialSourceId', options.chapter);
   return base.toString();
+}
+
+/**
+ * 去掉控制台自身的挂载前缀，还原成教程图谱登记的路由。
+ *
+ * 同源部署时控制台挂在 `/llmgw/` 下，`window.location.pathname` 是 `/llmgw/service-keys`，
+ * 而图谱登记的是 `/service-keys` —— 直接传过去，MAP 那侧逐段比对必然不匹配，
+ * 每个页面都返回「没有找到关联教程」（Codex P2，也正是现场那个提示的成因）。
+ *
+ * 幂等：调用方传的若已是 React Router 的 basename-stripped 路径（ConsoleLayout 走
+ * useLocation），这里不会再削一次 —— 控制台没有名为 `/llmgw` 的路由。
+ */
+function stripConsoleBase(pathname: string): string {
+  const base = getRuntimeBasePath();
+  if (!base || !pathname.startsWith(base)) return pathname || '/';
+  const stripped = pathname.slice(base.length);
+  return stripped.startsWith('/') ? stripped : `/${stripped}`;
 }

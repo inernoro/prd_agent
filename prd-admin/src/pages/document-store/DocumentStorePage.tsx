@@ -2799,13 +2799,21 @@ export function DocumentStorePage() {
         navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '', hash: location.hash }, { replace: true });
         return;
       }
-      const firstEntryId = result.data.tutorials[0]?.entryId;
+      // 深链带了 tutorialSourceId 就打开那一章；控制台侧传的是教程 sourceId，
+      // 而 `entry` 是 Mongo 文档 id，必须在这里按 sourceId 换算成 entryId。
+      // 此前无条件取 tutorials[0]，于是标着第 15 / 19 章的链接统统打开第一章（Codex P2）。
+      const wantedSourceId = params.get('tutorialSourceId');
+      const matched = wantedSourceId
+        ? result.data.tutorials.find(item => item.sourceId === wantedSourceId)
+        : undefined;
+      const targetEntryId = matched?.entryId ?? result.data.tutorials[0]?.entryId;
       setSelectedStoreId(result.data.storeId);
-      setPendingEntryId(firstEntryId ?? null);
+      setPendingEntryId(targetEntryId ?? null);
       params.delete('tutorialRoute');
+      params.delete('tutorialSourceId');
       params.set('tutorialLinks', '1');
       params.set('store', result.data.storeId);
-      if (firstEntryId) params.set('entry', firstEntryId);
+      if (targetEntryId) params.set('entry', targetEntryId);
       navigate({ pathname: location.pathname, search: `?${params.toString()}`, hash: location.hash }, { replace: true });
     });
     return () => { alive = false; };

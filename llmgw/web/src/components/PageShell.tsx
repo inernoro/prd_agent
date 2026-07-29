@@ -15,6 +15,7 @@
 //   e2e/llmgw-layout-drift.mjs 的 headingBoxed 会从 h1 向上走 4 层，命中任何边框或非透明
 //   底色就判定「标题被卡片包住」——给这几个容器加一句 background 会让 8 条被测路由同时漂移。
 import type { CSSProperties, ReactNode } from 'react';
+import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { canOpenTutorials, resolveTutorialHref } from '@/lib/mapNavigation';
 import { BODY_TEXT } from '@/lib/typography';
@@ -117,13 +118,27 @@ export function DetailsBlock({ title = '工作原理', children }: { title?: str
  */
 export function TutorialLink({ chapter, children = '查看教程' }: { chapter?: string; children?: ReactNode }) {
   const { user, tenant } = useAuth();
-  const href = canOpenTutorials(user, tenant)
-    ? resolveTutorialHref(window.location.pathname, { chapter })
-    : '/learn';
+  const location = useLocation();
+  const arrow = (
+    <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>
+  );
+  // 回落到站内学习中心时必须走 router Link：同源部署下 basename 是 `/llmgw`，
+  // 裸 <a href="/learn"> 会跳到 MAP 应用的 /learn 而不是控制台的（Codex P2）。
+  if (!canOpenTutorials(user, tenant)) {
+    return (
+      <Link className="lg-tutorial-link" to="/learn" style={BODY_TEXT}>
+        {children}
+        {arrow}
+      </Link>
+    );
+  }
+  // 用 router 的 location（已按 basename 削过）而不是 window.location.pathname，
+  // 两个调用方从此同一口径；resolveTutorialHref 内部的 stripConsoleBase 是幂等的。
+  const href = resolveTutorialHref(location.pathname, { chapter });
   return (
     <a className="lg-tutorial-link" href={href} style={BODY_TEXT}>
       {children}
-      <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>
+      {arrow}
     </a>
   );
 }
