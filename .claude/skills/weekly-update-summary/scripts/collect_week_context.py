@@ -551,10 +551,16 @@ def collect_releases(project, start, end):
         # 若入参是别名（如项目名 MAP），台账里存的 `prd-agent` 就既不会被服务端 scope
         # 命中、也不会被客户端匹配命中 —— 这时的 0 是「没找着」，不是「没发过」，
         # 不能盖章认证。只有**解析成功**时的 0 才可信（mdimp 那种真实的零发布）。
-        if not sel:
+        #
+        # 判据必须看 scoped_all（该项目**任意时间**的历史），不能看 sel（仅本周）：
+        # 只要历史里匹配到过哪怕一条，就证明这个写法是对的、scope 是通的，
+        # 那么「本周恰好没发」就是可信的零。拿 sel 判会把「标识没对上」和
+        # 「标识对上了但本周没发」混为一谈，又一次把准确的 0 误报成数据不可用。
+        if not scoped_all:
             out["available"] = False
             out["reason"] = (f"项目标识未能解析（{resolve_warn}），且按现有标识"
-                             f"{sorted(ident) if ident else project}一条 run 都没匹配到。"
+                             f"{sorted(ident) if ident else project}在**整个台账**里"
+                             f"一条 run 都没匹配到。"
                              f"无法区分「本周未发布」与「标识没对上」，故报数据不可用；"
                              f"报告本段须写「数据不可用」而非「本周未发布」。")
             out["coverage"]["complete"] = False

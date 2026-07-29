@@ -192,3 +192,18 @@ def test_resolved_identity_with_real_zero_stays_available(m, monkeypatch):
          "startedAt": "2026-07-21T10:00:00Z"}])
     out = m.collect_releases("mdimp", "2026-07-20", "2026-07-26")
     assert out["available"] is True and out["attempts"] == 0
+
+
+def test_unresolved_identity_but_matched_history_trusts_zero_week(m, monkeypatch):
+    """解析失败，但台账里匹配到了该项目**本周之外**的 run —— 这证明写法是对的、
+    scope 是通的，那么「本周恰好没发」就是可信的零。
+    判据看 scoped_all（任意时间的历史）而非 sel（仅本周），否则又把准确的 0 误报成不可用。"""
+    monkeypatch.setattr(m, "_resolve_project_identity",
+                        lambda p: ({"prd-agent"}, None, "项目列表不可用，仅按入参原值过滤"))
+    _fake_ledger(m, monkeypatch, [
+        {"releaseId": "old", "projectId": "prd-agent", "status": "success",
+         "startedAt": "2026-06-01T10:00:00Z"},      # 本周之外，但证明标识有效
+    ])
+    out = m.collect_releases("prd-agent", "2026-07-20", "2026-07-26")
+    assert out["available"] is True, "历史匹配到了就说明标识有效，本周的 0 可信"
+    assert out["attempts"] == 0
