@@ -1529,6 +1529,38 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void CompletedArchivePath_ShouldQueueFullAudioCalibrationAfterLiveAsrDegrades()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var methodStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            StringComparison.Ordinal);
+        var methodEnd = source.IndexOf(
+            "internal static async Task CompensateStaleCompletedRecordingEntryAsync(",
+            methodStart,
+            StringComparison.Ordinal);
+
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+        var method = source[methodStart..methodEnd];
+        var persistIndex = method.IndexOf(
+            "await PersistCompletedLiveTranscriptAsync(",
+            StringComparison.Ordinal);
+        var queueIndex = method.IndexOf(
+            "await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(",
+            StringComparison.Ordinal);
+        var rereadIndex = method.IndexOf(
+            "var finalizedEntry = await _db.DocumentEntries",
+            StringComparison.Ordinal);
+
+        persistIndex.ShouldBeGreaterThanOrEqualTo(0);
+        rereadIndex.ShouldBeGreaterThan(persistIndex);
+        queueIndex.ShouldBeGreaterThan(rereadIndex);
+        method.ShouldContain(
+            "DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry)");
+    }
+
+    [Fact]
     public void ArchivedChunks_ShouldRemainAvailableUntilDeferredTranscriptionFinishes()
     {
         DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(

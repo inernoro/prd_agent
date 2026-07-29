@@ -2572,6 +2572,24 @@ public class DocumentStoreController : ControllerBase
                 entry,
                 finalizedSession,
                 CancellationToken.None);
+
+            // PersistCompletedLiveTranscriptAsync 直接更新 Mongo，不会回写当前 entry 实例。
+            // 必须重读后再判断，否则完整实时原文也会被旧对象误判为需要批量校准。
+            var finalizedEntry = await _db.DocumentEntries
+                .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == store.Id)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            // 对象存储成功不等于实时原文成功。原生流式供应商不可用时，浏览器会收到
+            // degraded 并承诺使用完整音频自动校准；该承诺必须由服务端终态兜底，不能
+            // 依赖前端随后打开抽屉再发起转录，否则页面关闭会留下只有局部预览的录音。
+            await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+                _db.DocumentStoreAgentRuns,
+                finalizedSession,
+                entry.Id,
+                InstanceIdentity.Get(_config),
+                finalizedEntry == null
+                    || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry),
+                CancellationToken.None);
         }
 
         await ReleaseRecordingCountTokensAsync(
