@@ -16,3 +16,7 @@
 | security | prd-admin | 正文链接协议判定改为白名单豁免：只放行 mailto/tel/sms 等外部处理器协议，data:/about:/blob:/javascript:/filesystem: 等会导航当前上下文的协议一律拦截且不开新标签 |
 | security | skill | 发布闸同步改白名单豁免，并对 javascript:/data:/blob:/about: 等自导航协议直接拒发 |
 | fix | skill | 采集器判定发布台账覆盖完整性：CDS 按每目标 100 条 + 90 天裁剪，补写历史周时给出 coverage 警告，避免把被裁剪后的残缺数据当成完整发布统计 |
+| security | skill | 发布闸判协议前按浏览器口径归一化 URL（剔除内部 tab/换行、剥首尾 C0 控制符），堵住 java&#9;script: 这类实体绕过 |
+| fix | prd-admin | 量高熔断改为只计真正写高的次数并在熔断前补最后一次写入，避免图多文档 1 秒内几十张图 load 触发误熔断导致内容被永久截断 |
+| fix | skill | 发布台账覆盖判定去掉「最早记录晚于周起点」这条会误报的启发式，只从真实保留信号（超 90 天窗口、目标 run 触顶）出发 |
+| docs | skill | 周刊模板从订正后的成稿重新派生，清除仍在示范旧「8 次线上发布」口径的样例段落 |

@@ -214,7 +214,7 @@
   </header>
   <div class="dateline">
     <span>2026 年第 <b>30</b> 周 · 07-20 至 07-26 · 总第 <b>W30</b> 期</span>
-    <span>功能验收通过率 <b>90.9%</b> · 线上发布 <b>8</b> 次 · PR 收口 <b>47</b> 个</span>
+    <span>功能验收通过率 <b>90.9%</b> · 正式发布成功 <b>23</b> 次 · PR 收口 <b>47</b> 个</span>
   </div>
   <div class="baseline">
     统计基线 origin/main @ 6aec8ef（采集 2026-07-29 03:10 UTC）· 数据来源：git 主干 + 日报知识库(7 篇) + 验收中心(25 份) + 缺陷台账 + 部署版本，四源齐全<br>
@@ -224,7 +224,7 @@
   <!-- 封面故事 -->
   <section class="cover">
     <div class="kicker">封面故事 · COVER STORY</div>
-    <h1>模型网关走完<em>能对外卖</em>的最后一公里，本周首次有 8 个版本真正发到线上。</h1>
+    <h1>模型网关走完<em>能对外卖</em>的最后一公里，正式发布成功率从 35% 升到 59%。</h1>
     <p class="standfirst">
       更值得记的是质量线：功能验收通过率从上周的 63% 升到 <b>90.9%</b>，本周<b>没有一个功能验收未通过</b>。
       5 条未通过全部来自机器人每天做的全站例行巡检——那是待清的毛刺，不是产品故障。
@@ -232,7 +232,7 @@
     <div class="cover-facts">
       <span>功能验收 <b>11</b> 份 · 通过 <b>10</b></span>
       <span>发布验收 <b>4</b> 份 · 全通过</span>
-      <span>线上不可变版本 <b>8</b> 个</span>
+      <span>正式发布成功 <b>23</b> / 39 次</span>
       <span>未关缺陷 <b>80</b>（未改善）</span>
     </div>
   </section>
@@ -251,10 +251,10 @@
       <div class="v">60.0%</div>
       <div class="d">含每日例行巡检 <span class="up">上周 48.6%</span></div>
     </div>
-    <div class="good">
-      <div class="k">线上发布</div>
-      <div class="v">8</div>
-      <div class="d">不可变版本 <span class="up">上周 0</span></div>
+    <div class="warn">
+      <div class="k">正式发布成功率</div>
+      <div class="v">59.0%</div>
+      <div class="d">39 次尝试成功 23 <span class="up">上周 35.1%</span></div>
     </div>
     <div class="warn">
       <div class="k">未关缺陷</div>
@@ -445,7 +445,7 @@
   <ul class="ledger">
     <li><span class="tag part">推进中</span><p><b>网关运营化验收闭环</b> —— 日志台重构 + 三项能力验收挂门 + 正式发布冒烟，4 份发布验收全部通过。全量双主题取证仍缺。</p></li>
     <li><span class="tag part">推进中</span><p><b>构建队列常态回归看护</b> —— 正式发布页重构里补了排队守卫与幂等前置（#1213）。事故值必红的自动断言仍未补。</p></li>
-    <li><span class="tag part">推进中</span><p><b>部署平台正式发布端到端</b> —— 发布页重构 + 仓库身份归一 + 项目密钥隔离；本周有 8 次真实线上发布。完整链路取证仍缺。</p></li>
+    <li><span class="tag part">推进中</span><p><b>部署平台正式发布端到端</b> —— 发布页重构 + 仓库身份归一 + 项目密钥隔离；本周正式发布成功 23 次（39 次尝试，失败 16）。完整链路取证仍缺。</p></li>
     <li><span class="tag todo">未启动</span><p><b>知识库跨节点同步确认</b> —— 本周知识库精力全在录音链路，同步专项未启动。<b>已连续第 2 周顺延</b>，下周要么排期要么明确放弃。</p></li>
     <li><span class="tag part">推进中</span><p><b>移动端双配色存量清扫</b> —— 双配色覆盖 + 风险治理收口 + 网关观测台移动端打磨。</p></li>
   </ul>
@@ -592,11 +592,11 @@
     <div><b>911</b><span>文件变更</span></div>
     <div><b>+36k</b><span>新增行</span></div>
     <div><b>25</b><span>验收报告</span></div>
-    <div><b>8</b><span>线上版本</span></div>
+    <div><b>23</b><span>正式发布成功</span></div>
   </div>
   <p class="appendix-note">
     提交类型：fix 74 / merge 68 / polish 17 / feat 15 / security 5 / test 2 / rule 2 / refactor 2 / perf 2 / docs 2 / style 1。
-    署名：inernoro/InerNoro 172 · Claude 24。净增 +21,492 行。
+    署名：inernoro/InerNoro 172 · Claude 24。净增 +21,492 行。正式发布：39 次 run，成功 23 / 失败 16（口径为正式发布台账，含失败重试）；另有 6 个分支预览部署版本，不计入正式发布。
     相关设计文档：doc/plan.platform.llm-gateway.full-cutover.md（网关切换看板）、doc/design.platform.llm-gateway.physical-isolation.md（网关拓扑）、doc/debt.cds.build-gate.md（部署平台队列债务）。
   </p>
 

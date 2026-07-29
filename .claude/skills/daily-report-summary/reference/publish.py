@@ -160,6 +160,21 @@ def _is_external(url):
     return u.startswith("http://") or u.startswith("https://") or u.startswith("//")
 
 
+# URL 里的 ASCII 制表/换行会被浏览器整串剔除后再解析协议，首尾 C0 控制符与空格也会被剥掉
+# （URL Standard 的 href 解析前置步骤）。HTMLParser 会把 `java&#9;script:` 实体解成真 tab，
+# 若不先归一化，正则就认不出协议，`javascript:` 这类会带着 target/rel 大摇大摆过闸——
+# 而报告可能被下载到无沙箱环境打开。所以判协议前必须先按浏览器口径归一化。
+_URL_INNER_WS = re.compile(r"[\t\n\r\f]")
+
+
+_URL_TRIM = "".join(chr(c) for c in range(0x00, 0x21))   # C0 控制符 + 空格
+
+
+def _normalize_url(raw):
+    """按浏览器口径归一化：内部 tab/换行整串剔除，首尾 C0 控制符与空格剥掉。"""
+    return _URL_INNER_WS.sub("", raw or "").strip(_URL_TRIM)
+
+
 # 交给系统外部处理器、不会导航当前 frame 的协议（白名单豁免）
 _EXTERNAL_HANDLER_SCHEMES = {"mailto", "tel", "sms", "mms", "callto", "facetime", "geo", "skype"}
 # 会在当前浏览上下文内导航或执行的协议，自包含报告一律禁用
@@ -255,7 +270,7 @@ class _ReportScanner(HTMLParser):
         d = {k.lower(): (v or "").strip() for k, v in attrs}
         # href 三种写法都要认：HTML/SVG2 的 href、SVG1.1 遗留的 xlink:href。
         # 覆盖 <a> 与 <area>（图像映射热区导航语义与 a 相同）。
-        href = d.get("href") or d.get("xlink:href") or ""
+        href = _normalize_url(d.get("href") or d.get("xlink:href") or "")
         if not href or href.startswith("#"):
             return                       # 页内锚点，不导航
         if "download" in d:

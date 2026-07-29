@@ -377,8 +377,9 @@ def _release_coverage(all_runs, sel_runs, start, end):
         warns.append(f"目标周整体早于 {RELEASE_RETENTION_DAYS} 天保留窗口，台账很可能已被淘汰")
     dates = sorted(d for d in ((r.get("startedAt") or "")[:10] for r in all_runs) if d)
     oldest = dates[0] if dates else None
-    if oldest and oldest > start:
-        warns.append(f"台账最早记录为 {oldest}，晚于本周起点 {start}，早于该日期的 run 已被淘汰")
+    # 注意：不能用「oldest > start」推断被裁剪。新项目的首次发布本来就可能晚于周起点，
+    # 那是真实的「当时还没有发布」，不是记录被删——照此告警会把准确数据误标成不完整，
+    # 逼报告把正确数字写成下限。只从**真实的保留信号**出发：超出保留窗口、或条数触顶。
     # 条数闸：某目标恰好留满上限，说明它更早的 run 已被削掉
     per_target = {}
     for r in all_runs:

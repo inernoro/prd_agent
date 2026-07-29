@@ -160,13 +160,6 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             ifr.__fitN = 0;
             ifr.__fitT = Date.now();
             const fit = () => {
-              const now = Date.now();
-              if (now - (ifr.__fitT || now) > 1000) { ifr.__fitN = 0; ifr.__fitT = now; }
-              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 40) {
-                ifr.__roFit?.disconnect();
-                ifr.__roFit = undefined;
-                return;
-              }
               const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
               if (h <= 0) return;
               // +2px 缓冲吃掉小数像素舍入；±2px 阈值防振荡——否则"外层滚动条出现/消失
@@ -174,8 +167,19 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
               // 调 scrollTop，与用户手势打架（"某个东西牵动某个东西"的阻滞感）。
               const target = Math.ceil(h) + 2;
               if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) return;
+              // 熔断只数**真正写高**的次数，不数 fit() 调用次数：图多的文档 1 秒内
+              // 几十张图 load 完会各触发一次 fit，但那是收敛过程、不是反馈循环，
+              // 按调用数熔断会把它们误伤成「量高中途断开 + 内容被永久截断」
+              // （scrolling="no" 之下用户还滚不到）。写高才计数，且熔断前必定
+              // 先把这一次量到的高度写进去，不留半截。
+              const now = Date.now();
+              if (now - (ifr.__fitT || now) > 1000) { ifr.__fitN = 0; ifr.__fitT = now; }
               ifr.__fitH = target;
               ifr.style.height = target + 'px';
+              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 40) {
+                ifr.__roFit?.disconnect();
+                ifr.__roFit = undefined;
+              }
             };
             fit();
             // 关键：内容会在 onLoad 之后继续变高（base64 图片/字体异步加载、响应式重排），
