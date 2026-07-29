@@ -104,8 +104,9 @@ services:
       - Session__TimeoutMinutes=30
       # 本地开发默认使用临时目录；CDS 独立使用 R2，正式环境独立使用 Tencent COS。
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}
-      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-local}
+      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-${ASSETS_PROVIDER:-local}}
       - ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}
+      - AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://127.0.0.1:8080}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}

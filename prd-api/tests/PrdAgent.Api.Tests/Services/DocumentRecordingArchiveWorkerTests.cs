@@ -883,11 +883,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public void NormalArchive_ShouldPersistLateTranscriptFromBothRaceOrderings()
     {
         var source = File.ReadAllText(DocumentStoreControllerPath());
-        source.Split(
-                "PersistCompletedLiveTranscriptAsync(",
-                StringSplitOptions.None)
-            .Length.ShouldBe(4);
-
         var finalizeStart = source.IndexOf(
             "private async Task<bool> FinalizeCompletedRecordingAsync(",
             StringComparison.Ordinal);
@@ -899,12 +894,18 @@ public sealed class DocumentRecordingArchiveWorkerTests
         var terminalWrite = finalizeBlock.IndexOf(
             "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
             StringComparison.Ordinal);
-        var transcriptWrite = finalizeBlock.IndexOf(
+        var transcriptWriteBeforeTerminal = finalizeBlock.IndexOf(
             "await PersistCompletedLiveTranscriptAsync(",
+            StringComparison.Ordinal);
+        var transcriptWriteAfterTerminal = finalizeBlock.IndexOf(
+            "await PersistCompletedLiveTranscriptAsync(",
+            terminalWrite,
             StringComparison.Ordinal);
 
         terminalWrite.ShouldBeGreaterThanOrEqualTo(0);
-        transcriptWrite.ShouldBeGreaterThan(terminalWrite);
+        transcriptWriteBeforeTerminal.ShouldBeGreaterThanOrEqualTo(0);
+        transcriptWriteBeforeTerminal.ShouldBeLessThan(terminalWrite);
+        transcriptWriteAfterTerminal.ShouldBeGreaterThan(terminalWrite);
     }
 
     [Fact]
@@ -1543,8 +1544,11 @@ public sealed class DocumentRecordingArchiveWorkerTests
         methodStart.ShouldBeGreaterThanOrEqualTo(0);
         methodEnd.ShouldBeGreaterThan(methodStart);
         var method = source[methodStart..methodEnd];
-        var persistIndex = method.IndexOf(
-            "await PersistCompletedLiveTranscriptAsync(",
+        var intentIndex = method.IndexOf(
+            ".PersistDeferredTranscriptionIntentAsync(",
+            StringComparison.Ordinal);
+        var terminalIndex = method.IndexOf(
+            "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
             StringComparison.Ordinal);
         var queueIndex = method.IndexOf(
             "await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(",
@@ -1553,11 +1557,80 @@ public sealed class DocumentRecordingArchiveWorkerTests
             "var finalizedEntry = await _db.DocumentEntries",
             StringComparison.Ordinal);
 
-        persistIndex.ShouldBeGreaterThanOrEqualTo(0);
-        rereadIndex.ShouldBeGreaterThan(persistIndex);
+        intentIndex.ShouldBeGreaterThanOrEqualTo(0);
+        terminalIndex.ShouldBeGreaterThan(intentIndex);
+        rereadIndex.ShouldBeGreaterThan(terminalIndex);
         queueIndex.ShouldBeGreaterThan(rereadIndex);
         method.ShouldContain(
             "DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry)");
+    }
+
+    [Fact]
+    public void CompletedFastPaths_ShouldReconstructMissingDeterministicTranscriptionRun()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var completeStart = source.IndexOf(
+            "public async Task<IActionResult> CompleteRecordingUpload(",
+            StringComparison.Ordinal);
+        var finalizeStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            completeStart,
+            StringComparison.Ordinal);
+        var completeBlock = source[completeStart..finalizeStart];
+
+        completeBlock.Split(
+                "EnsureCompletedRecordingTranscriptionRunAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(3);
+        completeBlock.ShouldContain("deferredTranscriptionRunId = deferredRun?.Id");
+    }
+
+    [Fact]
+    public async Task PersistedDeferredIntent_ShouldSurviveTerminalGapAndRecreateRun()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var entry = new DocumentEntry
+        {
+            Id = "entry-terminal-gap",
+            StoreId = "store-1",
+            Title = "recording.m4a",
+            Metadata = new Dictionary<string, string>(),
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-terminal-gap",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+            EntryId = entry.Id,
+        };
+
+        (await DocumentRecordingArchiveWorker.PersistDeferredTranscriptionIntentAsync(
+                fixture.Db.DocumentEntries,
+                entry,
+                session.Id,
+                entryRequiresDeferredTranscription: true,
+                CancellationToken.None))
+            .ShouldBeTrue();
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(0);
+
+        var recoveredEntry = await fixture.Db.DocumentEntries
+            .Find(candidate => candidate.Id == entry.Id)
+            .SingleAsync();
+        var run = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            session,
+            entry.Id,
+            "instance-1",
+            DocumentRecordingArchiveWorker.RequiresDeferredTranscription(recoveredEntry),
+            CancellationToken.None);
+
+        run.ShouldNotBeNull();
+        run!.Id.ShouldBe("recording-archive-transcribe-session-terminal-gap");
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
     }
 
     [Fact]

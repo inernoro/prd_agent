@@ -124,27 +124,15 @@ public sealed class AssetStorageReadinessProbe
             }
             internalReadVerified = true;
 
-            if (string.Equals(provider, "local", StringComparison.Ordinal))
+            stage = "public_read";
+            var publicUrl = _storage.BuildUrlForKey(key);
+            var uri = ResolvePublicUri(provider, publicUrl);
+            var publicBytes = await ReadPublicBytesWithRetryAsync(uri, cancellationToken);
+            if (!publicBytes.AsSpan().SequenceEqual(payload))
             {
-                publicReadVerified = true;
+                throw new InvalidDataException("对象存储公开 URL 内容与写入内容不一致");
             }
-            else
-            {
-                stage = "public_read";
-                var publicUrl = _storage.BuildUrlForKey(key);
-                if (!Uri.TryCreate(publicUrl, UriKind.Absolute, out var uri) ||
-                    (uri.Scheme != Uri.UriSchemeHttp && uri.Scheme != Uri.UriSchemeHttps))
-                {
-                    throw new InvalidDataException("对象存储公开 URL 无效");
-                }
-
-                var publicBytes = await ReadPublicBytesWithRetryAsync(uri, cancellationToken);
-                if (!publicBytes.AsSpan().SequenceEqual(payload))
-                {
-                    throw new InvalidDataException("对象存储公开 URL 内容与写入内容不一致");
-                }
-                publicReadVerified = true;
-            }
+            publicReadVerified = true;
         }
         catch (Exception ex) when (ex is not OperationCanceledException ||
                                    !cancellationToken.IsCancellationRequested)
@@ -251,6 +239,32 @@ public sealed class AssetStorageReadinessProbe
             $"对象存储公开 URL 返回 HTTP {(int)(lastStatus ?? HttpStatusCode.ServiceUnavailable)}",
             null,
             lastStatus);
+    }
+
+    private Uri ResolvePublicUri(string provider, string publicUrl)
+    {
+        if (Uri.TryCreate(publicUrl, UriKind.Absolute, out var absolute)
+            && (absolute.Scheme == Uri.UriSchemeHttp || absolute.Scheme == Uri.UriSchemeHttps))
+        {
+            return absolute;
+        }
+
+        if (!string.Equals(provider, "local", StringComparison.Ordinal)
+            || !Uri.TryCreate(publicUrl, UriKind.Relative, out var relative))
+        {
+            throw new InvalidDataException("对象存储公开 URL 无效");
+        }
+
+        var publicBaseUrl = (_configuration["AssetStorageReadiness:PublicBaseUrl"]
+            ?? string.Empty).Trim();
+        if (!Uri.TryCreate(publicBaseUrl, UriKind.Absolute, out var publicBase)
+            || (publicBase.Scheme != Uri.UriSchemeHttp
+                && publicBase.Scheme != Uri.UriSchemeHttps))
+        {
+            throw new InvalidDataException("本地资产公开访问基地址未配置");
+        }
+
+        return new Uri(publicBase, relative);
     }
 
     internal static string CanonicalProvider(string? value)

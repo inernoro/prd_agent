@@ -12,8 +12,13 @@ public sealed class DeploymentStorageProviderContractTests
         var production = ReadRepoFile("docker-compose.yml");
 
         Assert.Contains("ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}", localDevelopment);
-        Assert.Contains("ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-local}", localDevelopment);
+        Assert.Contains(
+            "ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-${ASSETS_PROVIDER:-local}}",
+            localDevelopment);
         Assert.Contains("ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}", localDevelopment);
+        Assert.Contains(
+            "AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://127.0.0.1:8080}",
+            localDevelopment);
         Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}", localDevelopment);
 
         Assert.Contains("ASSETS_PROVIDER: \"cloudflareR2\"", cds);
@@ -23,6 +28,28 @@ public sealed class DeploymentStorageProviderContractTests
         Assert.Contains("ASSETS_PROVIDER=tencentCos", production);
         Assert.Contains("ASSETS_EXPECTED_PROVIDER=tencentCos", production);
         Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-", production);
+        Assert.DoesNotContain("R2_ACCOUNT_ID", production);
+    }
+
+    [Fact]
+    public void ApplicationDefaults_ShouldNotSilentlyTreatUnknownEnvironmentAsTencentCos()
+    {
+        var files = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/AvatarUrlBuilder.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/AuthzController.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/StorageSyncController.cs",
+            "prd-api/src/PrdAgent.Infrastructure/Services/WatermarkFontRegistry.cs",
+            "prd-api/src/PrdAgent.Api/appsettings.json",
+            "prd-api/src/PrdAgent.Api/appsettings.Development.json",
+        };
+
+        foreach (var file in files)
+        {
+            var source = ReadRepoFile(file);
+            Assert.DoesNotContain("?? \"tencentCos\"", source);
+            Assert.DoesNotContain("\"Provider\": \"tencentCos\"", source);
+        }
     }
 
     private static string ReadRepoFile(string relativePath)

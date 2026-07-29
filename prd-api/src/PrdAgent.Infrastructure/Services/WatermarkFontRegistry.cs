@@ -42,10 +42,12 @@ public class WatermarkFontRegistry
         _fontDir = Path.Combine(env.ContentRootPath, "Assets", "Fonts");
 
         // 根据 ASSETS_PROVIDER 选择对应的公开域名
-        var provider = (cfg["ASSETS_PROVIDER"] ?? "tencentCos").Trim();
+        var provider = (cfg["ASSETS_PROVIDER"] ?? string.Empty).Trim();
         var cdnBase = string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase)
             ? (cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
-            : (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
+            : string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase)
+                ? (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
+                : string.Empty;
         _defaultRemoteFontUrl = string.IsNullOrWhiteSpace(cdnBase) ? null : $"{cdnBase}/{DefaultFontRelativePath}";
 
         _defaultDefinitions = new List<WatermarkFontDefinition>

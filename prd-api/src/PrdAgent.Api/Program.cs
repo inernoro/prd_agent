@@ -31,6 +31,7 @@ using PrdAgent.Infrastructure.Security;
 using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
+using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -1465,6 +1466,28 @@ if (app.Environment.IsDevelopment())
 {
     app.UseSwagger();
     app.UseSwaggerUI();
+}
+
+// local 只属于本地开发环境。IAssetStorage 返回的 /local-assets URL 必须由应用
+// 自己真实提供，否则“内部读取成功”会掩盖浏览器访问 404。CDS 固定走 R2、正式
+// 环境固定走 Tencent COS，均不会启用此文件系统映射。
+var assetStorageRuntime = app.Services.GetRequiredService<IAssetStorageRuntimeInfo>();
+if (string.Equals(
+        AssetStorageReadinessProbe.CanonicalProvider(assetStorageRuntime.ProviderName),
+        "local",
+        StringComparison.Ordinal))
+{
+    var localAssetDir = (builder.Configuration["ASSETS_LOCAL_DIR"] ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(localAssetDir))
+        localAssetDir = Path.Combine(app.Environment.ContentRootPath, "data", "assets");
+    Directory.CreateDirectory(localAssetDir);
+    app.UseStaticFiles(new StaticFileOptions
+    {
+        FileProvider = new PhysicalFileProvider(localAssetDir),
+        RequestPath = "/local-assets",
+        ServeUnknownFileTypes = true,
+        DefaultContentType = "application/octet-stream",
+    });
 }
 
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果

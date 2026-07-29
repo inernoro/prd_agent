@@ -119,18 +119,34 @@ public sealed class AssetStorageReadinessProbeTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldSkipPublicHttpOnlyForLocalDevelopmentStorage()
+    public async Task CheckAsync_ShouldVerifyLocalAssetThroughApplicationUrl()
     {
-        var storage = new ProbeAssetStorage("local")
-        {
-            Failure = ProbeFailure.PublicRead,
-        };
-        var probe = CreateProbe(storage, expectedProvider: null);
+        var storage = new ProbeAssetStorage("local");
+        var probe = CreateProbe(
+            storage,
+            expectedProvider: "local",
+            publicBaseUrl: "https://app.test");
 
         var result = await probe.CheckAsync(force: true);
 
         result.Status.ShouldBe("healthy");
         result.PublicReadVerified.ShouldBeTrue();
+        storage.PublicReadCount.ShouldBe(1);
+        storage.DeleteCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CheckAsync_ShouldRejectUnverifiableLocalPublicUrl()
+    {
+        var storage = new ProbeAssetStorage("local");
+        var probe = CreateProbe(storage, expectedProvider: "local");
+
+        var result = await probe.CheckAsync(force: true);
+
+        result.Status.ShouldBe("unhealthy");
+        result.ErrorCode.ShouldBe("public_read_failed");
+        result.PublicReadVerified.ShouldBeFalse();
+        storage.PublicReadCount.ShouldBe(0);
         storage.DeleteCount.ShouldBe(1);
     }
 
@@ -148,12 +164,14 @@ public sealed class AssetStorageReadinessProbeTests
     private static AssetStorageReadinessProbe CreateProbe(
         ProbeAssetStorage storage,
         string? expectedProvider,
-        int cacheSeconds = 120)
+        int cacheSeconds = 120,
+        string? publicBaseUrl = null)
     {
         var values = new Dictionary<string, string?>
         {
             ["ASSETS_EXPECTED_PROVIDER"] = expectedProvider,
             ["AssetStorageReadiness:CacheSeconds"] = cacheSeconds.ToString(),
+            ["AssetStorageReadiness:PublicBaseUrl"] = publicBaseUrl,
         };
         var configuration = new ConfigurationBuilder()
             .AddInMemoryCollection(values)
@@ -258,7 +276,9 @@ public sealed class AssetStorageReadinessProbeTests
         }
 
         public string BuildUrlForKey(string key)
-            => $"https://assets.test/{Uri.EscapeDataString(key)}";
+            => ProviderName == "local"
+                ? $"/local-assets/{Uri.EscapeDataString(key)}"
+                : $"https://assets.test/{Uri.EscapeDataString(key)}";
 
         public Task DeleteByKeyAsync(string key, CancellationToken ct)
         {

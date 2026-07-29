@@ -2115,10 +2115,9 @@ public class DocumentStoreController : ControllerBase
                         InstanceIdentity.Get(_config),
                         CancellationToken.None);
                 }
-                if (archivePending)
-                {
-                    await EnsurePendingRecordingTranscriptionRunAsync(session, completedEntry);
-                }
+                var deferredRun = archivePending
+                    ? await EnsurePendingRecordingTranscriptionRunAsync(session, completedEntry)
+                    : await EnsureCompletedRecordingTranscriptionRunAsync(session, completedEntry);
                 return Ok(ApiResponse<object>.Ok(new
                 {
                     entry = completedEntry,
@@ -2126,11 +2125,7 @@ public class DocumentStoreController : ControllerBase
                     reused = true,
                     archivePending,
                     audioProtected = archivePending,
-                    deferredTranscriptionRunId =
-                        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
-                            archivePending,
-                            completedEntry,
-                            sessionId),
+                    deferredTranscriptionRunId = deferredRun?.Id,
                 }));
             }
         }
@@ -2182,10 +2177,9 @@ public class DocumentStoreController : ControllerBase
                             InstanceIdentity.Get(_config),
                             CancellationToken.None);
                     }
-                    if (archivePending)
-                    {
-                        await EnsurePendingRecordingTranscriptionRunAsync(fresh, reusedEntry);
-                    }
+                    var deferredRun = archivePending
+                        ? await EnsurePendingRecordingTranscriptionRunAsync(fresh, reusedEntry)
+                        : await EnsureCompletedRecordingTranscriptionRunAsync(fresh, reusedEntry);
                     return Ok(ApiResponse<object>.Ok(new
                     {
                         entry = reusedEntry,
@@ -2193,11 +2187,7 @@ public class DocumentStoreController : ControllerBase
                         reused = true,
                         archivePending,
                         audioProtected = archivePending,
-                        deferredTranscriptionRunId =
-                            DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
-                                archivePending,
-                                reusedEntry,
-                                sessionId),
+                        deferredTranscriptionRunId = deferredRun?.Id,
                     }));
                 }
             }
@@ -2500,6 +2490,10 @@ public class DocumentStoreController : ControllerBase
             fileUrl = stored.FileUrl,
             sessionId,
             reused = false,
+            deferredTranscriptionRunId =
+                DocumentRecordingArchiveWorker.RequiresDeferredTranscription(stored.Entry)
+                    ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                    : null,
         }));
     }
 
@@ -2512,6 +2506,41 @@ public class DocumentStoreController : ControllerBase
         string fileUrl,
         string completionLeaseId)
     {
+        // 在会话翻转为 completed 之前先把“必须用完整音频校准”的意图写进条目。
+        // 这样进程即使在终态 CAS 与 run 插入之间退出，completed 幂等重试仍能从
+        // 条目恢复固定 run，而不会把 degraded 的临时预览误当成最终转录。
+        var preFinalizeSession = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId
+                       && s.UserId == userId
+                       && s.Status == DocumentRecordingUploadStatus.Completing
+                       && s.CompletionLeaseId == completionLeaseId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (preFinalizeSession == null)
+            return false;
+
+        await PersistCompletedLiveTranscriptAsync(
+            _db.DocumentEntries,
+            entry,
+            preFinalizeSession,
+            CancellationToken.None);
+        var preFinalizeEntry = await _db.DocumentEntries
+            .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == store.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var requiresDeferredTranscription = preFinalizeEntry == null
+            || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(preFinalizeEntry);
+        if (requiresDeferredTranscription)
+        {
+            var intentPersisted = await DocumentRecordingArchiveWorker
+                .PersistDeferredTranscriptionIntentAsync(
+                    _db.DocumentEntries,
+                    entry,
+                    sessionId,
+                    entryRequiresDeferredTranscription: true,
+                    CancellationToken.None);
+            if (!intentPersisted)
+                return false;
+        }
+
         // 先提交租约 CAS，再删除另一种确定性条目。旧请求若已失去租约，绝不能
         // 在 CAS 失败前删除新持有者已经提交的 pending 结果。
         var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -2965,16 +2994,40 @@ public class DocumentStoreController : ControllerBase
         return true;
     }
 
-    private async Task EnsurePendingRecordingTranscriptionRunAsync(
+    private async Task<DocumentStoreAgentRun?> EnsurePendingRecordingTranscriptionRunAsync(
         DocumentRecordingUploadSession session,
         DocumentEntry entry)
     {
-        await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        return await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
             _db.DocumentStoreAgentRuns,
             session,
             entry.Id,
             InstanceIdentity.Get(_config),
             DocumentRecordingArchiveWorker.RequiresDeferredTranscription(entry),
+            CancellationToken.None);
+    }
+
+    private async Task<DocumentStoreAgentRun?> EnsureCompletedRecordingTranscriptionRunAsync(
+        DocumentRecordingUploadSession session,
+        DocumentEntry entry)
+    {
+        // completed 是可重入终态。首次请求若在终态 CAS 后、run 插入前中断，
+        // 后续自动重试必须在这里补写晚到原文并重建同一个确定性转录任务。
+        await PersistCompletedLiveTranscriptAsync(
+            _db.DocumentEntries,
+            entry,
+            session,
+            CancellationToken.None);
+        var latestEntry = await _db.DocumentEntries
+            .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == entry.StoreId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        return await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            _db.DocumentStoreAgentRuns,
+            session,
+            entry.Id,
+            InstanceIdentity.Get(_config),
+            latestEntry == null
+                || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(latestEntry),
             CancellationToken.None);
     }
 

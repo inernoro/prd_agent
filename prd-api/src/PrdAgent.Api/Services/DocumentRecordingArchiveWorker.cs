@@ -450,6 +450,35 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         }
     }
 
+    internal static async Task<bool> PersistDeferredTranscriptionIntentAsync(
+        IMongoCollection<DocumentEntry> entries,
+        DocumentEntry entry,
+        string sessionId,
+        bool entryRequiresDeferredTranscription,
+        CancellationToken cancellationToken)
+    {
+        if (!entryRequiresDeferredTranscription)
+            return false;
+
+        var runId = DeferredTranscriptionRunId(sessionId);
+        entry.Metadata ??= new Dictionary<string, string>();
+        entry.Metadata[DeferredTranscriptionRequiredMetadataKey] = "true";
+        entry.Metadata[DeferredTranscriptionRunIdMetadataKey] = runId;
+        var update = Builders<DocumentEntry>.Update.Combine(
+            Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata[DeferredTranscriptionRequiredMetadataKey],
+                "true"),
+            Builders<DocumentEntry>.Update.Set(
+                e => e.Metadata[DeferredTranscriptionRunIdMetadataKey],
+                runId),
+            Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, DateTime.UtcNow));
+        var persisted = await entries.UpdateOneAsync(
+            e => e.Id == entry.Id,
+            update,
+            cancellationToken: cancellationToken);
+        return persisted.MatchedCount == 1;
+    }
+
     internal static string DeferredTranscriptionRunId(string sessionId)
         => $"recording-archive-transcribe-{sessionId}";
 

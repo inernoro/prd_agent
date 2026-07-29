@@ -141,21 +141,21 @@ public class LocalAssetStorage : IAssetStorage
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         if (!File.Exists(filePath)) return null;
         return await File.ReadAllBytesAsync(filePath, ct);
     }
 
     public Task<bool> ExistsAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         return Task.FromResult(File.Exists(filePath));
     }
 
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         // 本地存储无对象级 Cache-Control 概念，cacheControl 仅在 COS/R2 生效，这里忽略。
-        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         var dir = Path.GetDirectoryName(filePath);
         if (dir != null) Directory.CreateDirectory(dir);
         await File.WriteAllBytesAsync(filePath, bytes, ct);
@@ -163,12 +163,16 @@ public class LocalAssetStorage : IAssetStorage
 
     public string BuildUrlForKey(string key)
     {
-        return $"/local-assets/{key}";
+        var normalized = NormalizeKey(key);
+        var escaped = string.Join('/', normalized
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString));
+        return $"/local-assets/{escaped}";
     }
 
     public Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         if (File.Exists(filePath)) File.Delete(filePath);
         return Task.CompletedTask;
     }
@@ -176,6 +180,32 @@ public class LocalAssetStorage : IAssetStorage
     public string BuildSiteKey(string siteId, string filePath)
     {
         return $"web-hosting/sites/{siteId}/{filePath.TrimStart('/')}";
+    }
+
+    private string ResolveKeyPath(string key)
+    {
+        var normalized = NormalizeKey(key);
+        var fullPath = Path.GetFullPath(Path.Combine(
+            _baseDir,
+            normalized.Replace('/', Path.DirectorySeparatorChar)));
+        var basePath = Path.GetFullPath(_baseDir)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(basePath, StringComparison.Ordinal))
+            throw new ArgumentException("asset key escapes local storage root", nameof(key));
+        return fullPath;
+    }
+
+    private static string NormalizeKey(string key)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(normalized)
+            || normalized.StartsWith("/", StringComparison.Ordinal)
+            || normalized.Split('/').Any(segment => segment is "" or "." or ".."))
+        {
+            throw new ArgumentException("asset key invalid", nameof(key));
+        }
+        return normalized;
     }
 
     private static string Sha256Hex(byte[] bytes)
@@ -325,4 +355,3 @@ public class LocalAssetStorage : IAssetStorage
         };
     }
 }
-

@@ -8,7 +8,9 @@ namespace PrdAgent.Api.Tests.Services;
 
 /// <summary>
 /// 腾讯云 COS 存储集成测试
-/// 需要配置以下环境变量才能运行：
+/// 除凭据外还必须显式设置 TENCENT_COS_TEST_ENABLED=true 才会运行，避免普通
+/// dotnet test 继承正式环境变量后向生产桶写入测试对象。
+/// 需要配置以下环境变量：
 /// - TENCENT_COS_BUCKET
 /// - TENCENT_COS_REGION
 /// - TENCENT_COS_SECRET_ID
@@ -27,6 +29,15 @@ public class TencentCosStorageTests
     [Fact]
     public async Task SaveAsync_ShouldUploadAndDownloadAndDelete()
     {
+        var enabled = (Environment.GetEnvironmentVariable("TENCENT_COS_TEST_ENABLED")
+            ?? string.Empty).Trim();
+        if (!string.Equals(enabled, "1", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(enabled, "true", StringComparison.OrdinalIgnoreCase)
+            && !string.Equals(enabled, "yes", StringComparison.OrdinalIgnoreCase))
+        {
+            return;
+        }
+
         // Env vars are intentionally not committed. This is an integration test.
         var bucket = (Environment.GetEnvironmentVariable("TENCENT_COS_BUCKET") ?? string.Empty).Trim();
         var region = (Environment.GetEnvironmentVariable("TENCENT_COS_REGION") ?? string.Empty).Trim();
@@ -34,10 +45,11 @@ public class TencentCosStorageTests
         var secretKey = (Environment.GetEnvironmentVariable("TENCENT_COS_SECRET_KEY") ?? string.Empty).Trim();
         var publicBaseUrl = (Environment.GetEnvironmentVariable("TENCENT_COS_PUBLIC_BASE_URL") ?? string.Empty).Trim();
         var prefix = (Environment.GetEnvironmentVariable("TENCENT_COS_PREFIX") ?? "data/assets").Trim();
-        var cleanup = (Environment.GetEnvironmentVariable("TENCENT_COS_TEST_CLEANUP") ?? string.Empty).Trim();
-        var shouldCleanup = string.Equals(cleanup, "1", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(cleanup, "true", StringComparison.OrdinalIgnoreCase) ||
-                            string.Equals(cleanup, "yes", StringComparison.OrdinalIgnoreCase);
+        var keepObjects = (Environment.GetEnvironmentVariable("TENCENT_COS_TEST_KEEP_OBJECTS")
+            ?? string.Empty).Trim();
+        var shouldCleanup = !string.Equals(keepObjects, "1", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(keepObjects, "true", StringComparison.OrdinalIgnoreCase)
+                            && !string.Equals(keepObjects, "yes", StringComparison.OrdinalIgnoreCase);
 
         if (string.IsNullOrWhiteSpace(bucket) ||
             string.IsNullOrWhiteSpace(region) ||
@@ -150,7 +162,7 @@ public class TencentCosStorageTests
             _output.WriteLine($"saveAsyncUrlCheckError: {ex.GetType().Name} {ex.Message}");
         }
 
-        // Cleanup：默认不删，保证你能在控制台看到；如需自动清理，设置 TENCENT_COS_TEST_CLEANUP=true/1
+        // 默认清理，只有显式 TENCENT_COS_TEST_KEEP_OBJECTS=true 才保留取证对象。
         if (shouldCleanup)
         {
             foreach (var k in uploadedKeys.Append(saveAsyncKey))
@@ -166,5 +178,4 @@ public class TencentCosStorageTests
         return Convert.ToHexString(h).ToLowerInvariant();
     }
 }
-
 
