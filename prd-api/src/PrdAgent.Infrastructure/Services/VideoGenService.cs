@@ -295,11 +295,16 @@ public class VideoGenService : IVideoGenService
             throw new InvalidOperationException("仅在编辑阶段可生成分镜视频");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+        if (run.Scenes[sceneIndex].Status is SceneItemStatus.Submitting or SceneItemStatus.Rendering)
+            return;
+        if (run.Scenes[sceneIndex].Status == SceneItemStatus.Generating)
+            throw new InvalidOperationException("分镜提示词正在改写，请完成后再生成视频");
 
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
-            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Rendering),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Submitting),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.JobId", (string?)null),
         };
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
@@ -330,14 +335,15 @@ public class VideoGenService : IVideoGenService
         {
             var scene = run.Scenes[index];
             if (requested != null && !requested.Contains(index)) continue;
-            if (scene.Status is SceneItemStatus.Done or SceneItemStatus.Rendering or SceneItemStatus.Generating) continue;
+            if (scene.Status is SceneItemStatus.Done or SceneItemStatus.Submitting or SceneItemStatus.Rendering or SceneItemStatus.Generating) continue;
 
-            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.Status", SceneItemStatus.Rendering));
+            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.Status", SceneItemStatus.Submitting));
             updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.ErrorMessage", (string?)null));
+            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.JobId", (string?)null));
         }
 
         if (updates.Count == 0) return 0;
-        var count = updates.Count / 2;
+        var count = updates.Count / 3;
         if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == runId,

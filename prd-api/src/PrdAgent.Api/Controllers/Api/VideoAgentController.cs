@@ -247,7 +247,7 @@ public class VideoAgentController : ControllerBase
             r.ExportErrorMessage,
             ScenesCount = r.Scenes.Count,
             ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
-            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Rendering),
+            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.Rendering),
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));

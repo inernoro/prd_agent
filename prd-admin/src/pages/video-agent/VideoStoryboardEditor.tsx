@@ -75,6 +75,7 @@ const RESOLUTIONS = ['480p', '720p', '1080p'];
 const SCENE_STATUS_REGISTRY: Record<SceneItemStatus, { label: string; color: string }> = {
   Draft: { label: '待生成', color: 'var(--text-muted)' },
   Generating: { label: '改写中', color: '#a78bfa' },
+  Submitting: { label: '生成中', color: '#38bdf8' },
   Rendering: { label: '生成中', color: '#38bdf8' },
   Done: { label: '已就绪', color: '#34d399' },
   Error: { label: '需重试', color: '#fb7185' },
@@ -120,7 +121,7 @@ export const shouldKeepVideoRunPolling = (
   keepPollingUntil: number,
 ): boolean => {
   const hasTransientScene = run.scenes.some(
-    (scene) => scene.status === 'Generating' || scene.status === 'Rendering',
+    (scene) => scene.status === 'Generating' || scene.status === 'Submitting' || scene.status === 'Rendering',
   );
   const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(run.status);
   return hasTransientScene || hasTransientRun || now < keepPollingUntil;
@@ -129,7 +130,7 @@ export const shouldKeepVideoRunPolling = (
 export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): VideoGenRun => ({
   ...run,
   scenes: run.scenes.map((scene, index) => index === sceneIndex
-    ? { ...scene, status: 'Rendering', errorMessage: undefined }
+    ? { ...scene, status: 'Submitting', errorMessage: undefined }
     : scene),
 });
 
@@ -247,7 +248,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }, [markServerSignal, runId, startPolling]);
 
   const selectedScene = run?.scenes[selectedSceneIndex] ?? null;
-  const selectedSceneWorking = selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
+  const selectedSceneWorking = selectedScene?.status === 'Submitting' || selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
   const selectedSceneEditable = Boolean(selectedScene)
     && (run?.status === 'Editing' || run?.status === 'Completed')
     && !selectedSceneWorking;
@@ -600,7 +601,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               />
             ) : run.status === 'Rendering' && previewMode === 'export' ? (
               <ViewerProgress run={run} />
-            ) : selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating' ? (
+            ) : selectedScene?.status === 'Submitting' || selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating' ? (
               <ViewerProgress run={run} label={SCENE_STATUS_REGISTRY[selectedScene.status].label} />
             ) : selectedScene?.status === 'Error' ? (
               <div className="video-console__viewer-error" role="alert">
@@ -818,7 +819,7 @@ const Inspector: React.FC<{
     return <aside className="video-console__inspector"><EmptyLibrary /></aside>;
   }
 
-  const working = scene.status === 'Rendering' || scene.status === 'Generating';
+  const working = scene.status === 'Submitting' || scene.status === 'Rendering' || scene.status === 'Generating';
   const editable = (run.status === 'Editing' || run.status === 'Completed') && !working;
   const selectedModelId = scene.model ?? run.directVideoModel ?? '';
   const selectedModel = models.find((model) => model.id === selectedModelId);

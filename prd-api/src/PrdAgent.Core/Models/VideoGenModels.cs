@@ -168,6 +168,9 @@ public static class SceneItemStatus
     /// <summary>LLM 重新生成 prompt 中</summary>
     public const string Generating = "Generating";
 
+    /// <summary>视频生成已排队，等待 worker 原子领取</summary>
+    public const string Submitting = "Submitting";
+
     /// <summary>OpenRouter 视频生成中</summary>
     public const string Rendering = "Rendering";
 

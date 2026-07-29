@@ -1060,10 +1060,14 @@ public class GatewayDataDomainGuardTests
     public void VideoSceneWorker_SynchronizesProjectStatusAfterSceneTerminalStates()
     {
         var videoWorker = ReadRepoFile("prd-api/src/PrdAgent.Api/Services/VideoGenRunWorker.cs");
+        var videoService = ReadRepoFile("prd-api/src/PrdAgent.Infrastructure/Services/VideoGenService.cs");
 
         Assert.Contains("await SyncProjectSceneActivityAsync(run.Id);", videoWorker);
         Assert.Contains("await SyncProjectSceneActivityAsync(runId);", videoWorker);
         Assert.Contains("ResolveProjectStatusForScenes(run.Scenes)", videoWorker);
+        Assert.Contains("SceneItemStatus.Submitting", videoService);
+        Assert.Contains("FindOneAndUpdateAsync", videoWorker);
+        Assert.Contains("Scenes.{sceneIdx}.JobId", videoWorker);
     }
 
     [Fact]

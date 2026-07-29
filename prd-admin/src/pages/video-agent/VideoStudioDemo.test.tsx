@@ -54,7 +54,7 @@ describe('VideoStudioDemo', () => {
     } as VideoGenRun;
     const nextRun = markVideoSceneSubmitting(staleRun, 0);
 
-    expect(nextRun.scenes[0].status).toBe('Rendering');
+    expect(nextRun.scenes[0].status).toBe('Submitting');
     expect(nextRun.scenes[0].errorMessage).toBeUndefined();
   });
 });
