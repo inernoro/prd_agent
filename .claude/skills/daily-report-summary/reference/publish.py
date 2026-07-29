@@ -249,15 +249,19 @@ class _ReportScanner(HTMLParser):
         d = {k.lower(): (v or "").strip() for k, v in attrs}
         href = d.get("href", "")
         if not href or href.startswith("#"):
-            return
-        if not re.match(r"^(https?:)?//", href, re.I) and "://" in href:
-            return                       # mailto: / tel: / 自定义协议
-        if href.startswith("mailto:") or href.startswith("tel:"):
-            return
+            return                       # 页内锚点，不导航
         if "download" in d:
             return                       # 原生下载语义，不导航
-        if not re.match(r"^(https?://|//|/)", href, re.I):
-            return                       # 相对片段等，交由其它规则
+        # 判「会不会把所在 frame 导航走」而不是「像不像 http 链接」：
+        # 文档相对（report.html / ../a / ?entry=x）、根相对（/a）、协议相对（//host/a）
+        # 统统会导航，必须校验；只有 mailto/tel 这类交给系统 handler 的协议才放行。
+        m = re.match(r"^([a-z][a-z0-9+.\-]*):", href, re.I)
+        if m:
+            scheme = m.group(1).lower()
+            if scheme in ("http", "https"):
+                pass                     # 需要校验
+            else:
+                return                   # mailto/tel/sms/自定义协议，不导航本 frame
         if (d.get("target") or "").lower() != "_blank":
             self._err(f'<a href="{href[:60]}"> 缺 target="_blank"——'
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "

@@ -206,15 +206,21 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // 只拦「真的会把本 frame 导航走」的链接：http(s) 且非 download。
             // mailto: / tel: / 自定义协议交给浏览器原生处理（它们不导航本 frame），
             // download 链接保留原生下载语义——一律 preventDefault 会把这些链接变成哑巴。
+            // 一律读 href **属性**再自己解析，不读 a.href：内联 SVG 里的 <a> 是
+            // SVGAElement，其 .href 是 SVGAnimatedString 而不是字符串，拿去做正则会
+            // 判失败 → 这类链接就漏出拦截、照样把 frame 导航走。读属性 + new URL()
+            // 同时覆盖 HTML/SVG 锚点，也顺带把相对路径解析成绝对地址。
             d.addEventListener('click', (ev) => {
-              const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+              const a = (ev.target as Element | null)?.closest?.('a[href]');
               if (!a) return;
-              if ((a.getAttribute('href') || '').startsWith('#')) return;  // 页内锚点
-              if (a.hasAttribute('download')) return;                      // 原生下载
-              const url = a.href || '';
-              if (!/^https?:\/\//i.test(url)) return;                      // mailto/tel/自定义协议
+              const raw = (a.getAttribute('href') || '').trim();
+              if (!raw || raw.startsWith('#')) return;                      // 页内锚点
+              if (a.hasAttribute('download')) return;                       // 原生下载
+              let url: URL;
+              try { url = new URL(raw, d.baseURI); } catch { return; }
+              if (url.protocol !== 'http:' && url.protocol !== 'https:') return;  // mailto/tel/自定义协议
               ev.preventDefault();
-              window.open(url, '_blank', 'noopener,noreferrer');
+              window.open(url.href, '_blank', 'noopener,noreferrer');
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}

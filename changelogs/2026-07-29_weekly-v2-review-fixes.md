@@ -9,3 +9,5 @@
 | fix | skill | 周报采集器读 CDS 正式发布台账时显式加载项目级 .cds/credentials.json，并把 cdscli die() 抛的 SystemExit 翻成普通异常 + 走 fatal_network_errors=False，避免只有项目级凭据时取不到数、或 CDS 不可达时整个采集器被带走 |
 | fix | prd-admin | 知识库正文链接拦截只作用于会真正导航本 frame 的 http(s) 链接，mailto/tel/自定义协议与 download 链接保留原生行为，避免被 preventDefault 变成哑巴链接 |
 | fix | skill | publish.py 发布闸新增导航锚点校验：http(s) 链接缺 target=_blank 或 rel=noopener 直接拒发，把原先只写在 SKILL.md 里的约束变成可执行守卫 |
+| fix | prd-admin | 链接拦截改读 href 属性 + new URL(raw, baseURI) 解析，覆盖内联 SVG 锚点（SVGAElement 的 .href 是 SVGAnimatedString 非字符串，原实现会漏拦并让 frame 被导航走）|
+| fix | skill | 发布闸锚点校验按「会不会导航本 frame」判定：文档相对/上级相对/query-only/根相对/协议相对链接一并纳入校验，仅 mailto/tel/自定义协议与页内锚点、download 放行 |
