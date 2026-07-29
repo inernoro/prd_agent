@@ -86,22 +86,51 @@ public sealed class AssetStorageReadinessProbeTests
     }
 
     [Fact]
-    public async Task CheckAsync_ShouldNotCacheFailureAcrossRecoveryRetry()
+    public async Task CheckAsync_ShouldCacheFailureForOrdinaryCallAndAllowForcedRecoveryProbe()
     {
         var storage = new ProbeAssetStorage("tencentCos")
         {
             Failure = ProbeFailure.Write,
         };
-        var probe = CreateProbe(storage, "tencentCos", cacheSeconds: 300);
+        var probe = CreateProbe(
+            storage,
+            "tencentCos",
+            cacheSeconds: 300,
+            failureCacheSeconds: 30);
 
         var failed = await probe.CheckAsync();
         storage.Failure = ProbeFailure.None;
-        var recovered = await probe.CheckAsync();
+        var cachedFailure = await probe.CheckAsync();
+        var recovered = await probe.CheckAsync(force: true);
 
         failed.Status.ShouldBe("unhealthy");
+        cachedFailure.ShouldBeSameAs(failed);
         recovered.Status.ShouldBe("healthy");
         storage.UploadCount.ShouldBe(2);
         storage.DeleteCount.ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task CheckAsync_ShouldCoalesceConcurrentFailedHealthChecksIntoOneProbe()
+    {
+        var storage = new ProbeAssetStorage("tencentCos")
+        {
+            Failure = ProbeFailure.Write,
+            UploadDelay = TimeSpan.FromMilliseconds(50),
+        };
+        var probe = CreateProbe(
+            storage,
+            "tencentCos",
+            cacheSeconds: 300,
+            failureCacheSeconds: 30);
+
+        var results = await Task.WhenAll(Enumerable.Range(0, 12)
+            .Select(_ => probe.CheckAsync()));
+
+        results.ShouldAllBe(result => result.Status == "unhealthy");
+        results.ShouldAllBe(result => ReferenceEquals(result, results[0]));
+        storage.UploadCount.ShouldBe(1);
+        storage.DeleteCount.ShouldBe(0);
     }
 
     [Fact]
@@ -198,12 +227,14 @@ public sealed class AssetStorageReadinessProbeTests
         ProbeAssetStorage storage,
         string? expectedProvider,
         int cacheSeconds = 120,
+        int failureCacheSeconds = 15,
         string? publicBaseUrl = null)
     {
         var values = new Dictionary<string, string?>
         {
             ["ASSETS_EXPECTED_PROVIDER"] = expectedProvider,
             ["AssetStorageReadiness:CacheSeconds"] = cacheSeconds.ToString(),
+            ["AssetStorageReadiness:FailureCacheSeconds"] = failureCacheSeconds.ToString(),
             ["AssetStorageReadiness:PublicBaseUrl"] = publicBaseUrl,
         };
         var configuration = new ConfigurationBuilder()

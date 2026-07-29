@@ -14,6 +14,7 @@ public sealed class AssetStorageReadinessProbe
 {
     private const string ProbePrefix = "_it/asset-storage-readiness";
     private static readonly TimeSpan DefaultCacheTtl = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan DefaultFailureCacheTtl = TimeSpan.FromSeconds(15);
 
     private readonly IAssetStorage _storage;
     private readonly IAssetStorageRuntimeInfo _runtimeInfo;
@@ -41,42 +42,57 @@ public sealed class AssetStorageReadinessProbe
         bool force = false,
         CancellationToken cancellationToken = default)
     {
-        var cacheSeconds = Math.Clamp(
+        var successCacheTtl = TimeSpan.FromSeconds(Math.Clamp(
             _configuration.GetValue<int?>("AssetStorageReadiness:CacheSeconds")
                 ?? (int)DefaultCacheTtl.TotalSeconds,
             15,
-            900);
+            900));
+        var failureCacheTtl = TimeSpan.FromSeconds(Math.Clamp(
+            _configuration.GetValue<int?>("AssetStorageReadiness:FailureCacheSeconds")
+                ?? (int)DefaultFailureCacheTtl.TotalSeconds,
+            1,
+            60));
         var cached = _cached;
-        if (!force &&
-            cached != null &&
-            DateTime.UtcNow - cached.CheckedAt < TimeSpan.FromSeconds(cacheSeconds))
+        if (!force && IsFresh(cached, successCacheTtl, failureCacheTtl))
         {
-            return cached;
+            return cached!;
         }
 
         await _gate.WaitAsync(cancellationToken);
         try
         {
             cached = _cached;
-            if (!force &&
-                cached != null &&
-                DateTime.UtcNow - cached.CheckedAt < TimeSpan.FromSeconds(cacheSeconds))
+            if (!force && IsFresh(cached, successCacheTtl, failureCacheTtl))
             {
-                return cached;
+                return cached!;
             }
 
             var result = await ExecuteAsync(cancellationToken);
-            // 健康结果可缓存以控制对象存储探针成本；失败结果必须立即失效。
-            // 否则 Docker/CDS 的后续重试只会反复读到旧失败，存储已经恢复也无法自愈。
-            _cached = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
-                ? result
-                : null;
+            // 普通公开请求也短时缓存失败，避免存储故障时放大写读删压力。
+            // 受保护的 force 探针始终绕过缓存，因此发布门禁和故障恢复不会被旧失败阻塞。
+            _cached = result;
             return result;
         }
         finally
         {
             _gate.Release();
         }
+    }
+
+    private static bool IsFresh(
+        AssetStorageReadinessResponse? cached,
+        TimeSpan successCacheTtl,
+        TimeSpan failureCacheTtl)
+    {
+        if (cached == null)
+        {
+            return false;
+        }
+
+        var ttl = string.Equals(cached.Status, "healthy", StringComparison.Ordinal)
+            ? successCacheTtl
+            : failureCacheTtl;
+        return DateTime.UtcNow - cached.CheckedAt < ttl;
     }
 
     internal async Task<AssetStorageReadinessResponse> ExecuteAsync(
