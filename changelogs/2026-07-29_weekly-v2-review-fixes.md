@@ -43,3 +43,5 @@
 | fix | skill | 服务端 ?project= 查询改用解析出的规范 id：项目级凭据下 CDS 精确比对 key 绑定的 projectId，传 slug/项目名直接 403，会让整个发布来源不可用且回退跑不到 |
 | fix | skill | scope 查询失败（403/端点不支持/其它）改为回退全量查询 + 客户端匹配并告警，不再拖垮整个来源 |
 | fix | prd-admin | 量高熔断改按「连续未收敛写高」计数，删掉按秒清零：页面被正反馈拖到 40fps 以下时每秒不足 41 次写高，计数每秒清零会让循环永远跑下去，熔断形同虚设 |
+| fix | skill | 标识解析失败且零匹配时改报 available=false：入参是别名（项目名）而项目列表拿不到时，台账里的 slug 既不被服务端命中也不被客户端命中，那个 0 是「没找着」不是「没发过」，不能盖章 |
+| security | skill | 发布闸 rel 改按 HTML ASCII 空白切词：Python str.split() 连 Unicode 空白也切，rel="noopener noreferrer" 会被切成两个合法 token 过闸，而浏览器只看到一个不认识的整体 token，noreferrer 实际不生效 |

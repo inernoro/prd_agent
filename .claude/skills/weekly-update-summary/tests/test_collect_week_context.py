@@ -167,3 +167,28 @@ def test_scoped_query_failure_falls_back_instead_of_killing_source(m, monkeypatc
     assert out["available"] is True, "scope 查询失败不该拖垮整个来源"
     assert out["attempts"] == 1, "应回退到全量查询 + 客户端匹配拿到真实数字"
     assert any("回退" in a for a in out["coverage"]["advisories"]), "回退要如实告警"
+
+
+def test_unresolved_identity_with_zero_match_refuses_to_certify_zero(m, monkeypatch):
+    """标识没解析成功时 ident 只剩入参原值；入参若是别名（项目名 MAP），
+    台账里存的 prd-agent 既不会被服务端 scope 命中也不会被客户端匹配命中。
+    此时的 0 是「没找着」不是「没发过」，不能盖章认证成 available=true。"""
+    monkeypatch.setattr(m, "_resolve_project_identity",
+                        lambda p: ({"map"}, None, "项目列表不可用，仅按入参原值过滤"))
+    monkeypatch.setattr(m, "_cds_api", lambda path: (
+        {"runs": []} if "?project=" in path else
+        {"runs": [{"releaseId": "a", "projectId": "prd-agent", "status": "success",
+                   "startedAt": "2026-07-21T10:00:00Z"}]}))
+    out = m.collect_releases("MAP", "2026-07-20", "2026-07-26")
+    assert out["available"] is False, "解析失败 + 零匹配 = 无法区分两种零，不能认证"
+    assert out["coverage"]["complete"] is False
+
+
+def test_resolved_identity_with_real_zero_stays_available(m, monkeypatch):
+    """反向：解析成功时的 0 是可信的真实零发布（mdimp），不能被上面那条误伤。"""
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"mdimp"}, "mdimp", None))
+    _fake_ledger(m, monkeypatch, [
+        {"releaseId": "a", "projectId": "prd-agent", "status": "success",
+         "startedAt": "2026-07-21T10:00:00Z"}])
+    out = m.collect_releases("mdimp", "2026-07-20", "2026-07-26")
+    assert out["available"] is True and out["attempts"] == 0

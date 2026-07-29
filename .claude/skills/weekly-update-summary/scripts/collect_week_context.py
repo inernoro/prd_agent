@@ -547,6 +547,18 @@ def collect_releases(project, start, end):
         out["note"] += "【提示】" + "；".join(out["coverage"]["advisories"]) + "。"
     if resolve_warn:
         out["projectResolveWarning"] = resolve_warn
+        # 标识解析没成功（项目列表拿不到 / 项目没命中）时，ident 只剩入参原值。
+        # 若入参是别名（如项目名 MAP），台账里存的 `prd-agent` 就既不会被服务端 scope
+        # 命中、也不会被客户端匹配命中 —— 这时的 0 是「没找着」，不是「没发过」，
+        # 不能盖章认证。只有**解析成功**时的 0 才可信（mdimp 那种真实的零发布）。
+        if not sel:
+            out["available"] = False
+            out["reason"] = (f"项目标识未能解析（{resolve_warn}），且按现有标识"
+                             f"{sorted(ident) if ident else project}一条 run 都没匹配到。"
+                             f"无法区分「本周未发布」与「标识没对上」，故报数据不可用；"
+                             f"报告本段须写「数据不可用」而非「本周未发布」。")
+            out["coverage"]["complete"] = False
+            out["coverage"]["warnings"].append(out["reason"])
     return out
 
 

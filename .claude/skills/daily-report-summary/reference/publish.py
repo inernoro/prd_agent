@@ -329,7 +329,11 @@ class _ReportScanner(HTMLParser):
             self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "
                       "ResizeObserver 正反馈循环把页面卡死；导航链接一律新标签打开")
-        rel = (d.get("rel") or "").lower().split()
+        # rel 只能按 **HTML ASCII whitespace** 切词（空格/Tab/LF/FF/CR）。
+        # Python 的 str.split() 连 Unicode 空白也切，`rel="noopener\u00a0noreferrer"`
+        # 在这里会被切成两个合法 token 而过闸；浏览器却只看到一个不认识的整体 token，
+        # noreferrer 根本不生效——闸门放行了一个实际不成立的契约。
+        rel = [x for x in re.split(r"[ \t\n\f\r]+", (d.get("rel") or "").lower()) if x]
         missing = [x for x in ("noopener", "noreferrer") if x not in rel]
         if missing:
             self._err(f'<{tag} href="{href[:60]}"> 缺 rel="{" ".join(missing)}"——'
