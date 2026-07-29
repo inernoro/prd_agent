@@ -14,9 +14,7 @@ public sealed class DeploymentStorageProviderContractTests
         var productionRelease = ReadRepoFile("exec_dep.sh");
 
         Assert.Contains("ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}", localDevelopment);
-        Assert.Contains(
-            "ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-${ASSETS_PROVIDER:-local}}",
-            localDevelopment);
+        Assert.DoesNotContain("ASSETS_EXPECTED_PROVIDER=", localDevelopment);
         Assert.Contains("ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}", localDevelopment);
         Assert.Contains(
             "AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://web}",

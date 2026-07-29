@@ -8,6 +8,24 @@ import { discoverComposeFiles, parseCdsCompose } from '../../src/services/compos
 const repoRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../..');
 
 describe('存储提供商环境合同', () => {
+  it('本地开发不把 auto 字面值复制为 expected provider', () => {
+    const source = fs.readFileSync(path.join(repoRoot, 'docker-compose.dev.yml'), 'utf8');
+
+    expect(source).toContain('ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}');
+    expect(source).not.toContain('ASSETS_EXPECTED_PROVIDER=');
+  });
+
+  it('CDS 三条 compose 导入路径共用结构环境迁移规则', () => {
+    for (const relativePath of [
+      'cds/src/routes/pending-import.ts',
+      'cds/src/routes/projects.ts',
+      'cds/src/routes/branches.ts',
+    ]) {
+      const source = fs.readFileSync(path.join(repoRoot, relativePath), 'utf8');
+      expect(source).toContain('planImportedEnvSeedWrites(');
+    }
+  });
+
   it('CDS 实际优先发现的根配置固定使用 Cloudflare R2', () => {
     const discovered = discoverComposeFiles(repoRoot);
     expect(path.basename(discovered[0])).toBe('cds-compose.yml');

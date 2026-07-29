@@ -2,7 +2,10 @@
  * 波4 漂移巡检 —— classifyEnvSeed(seed 级权威) + computeComposeDrift(纯函数大脑)。
  */
 import { describe, it, expect } from 'vitest';
-import { classifyEnvSeed } from '../../src/services/config-authority.js';
+import {
+  classifyEnvSeed,
+  planImportedEnvSeedWrites,
+} from '../../src/services/config-authority.js';
 import { computeComposeDrift, type LiveComposeSnapshot } from '../../src/services/compose-drift.js';
 import type { CdsComposeConfig } from '../../src/services/compose-parser.js';
 
@@ -53,6 +56,37 @@ describe('classifyEnvSeed (seed 级权威)', () => {
   it('非密钥结构默认值归 repo 权威(种子)', () => {
     expect(classifyEnvSeed('ASSETS_PROVIDER', 'tencentCos').belonging).toBe('repo-structural');
     expect(classifyEnvSeed('TENCENT_COS_PREFIX', 'data').belonging).toBe('repo-structural');
+  });
+});
+
+describe('planImportedEnvSeedWrites', () => {
+  it('迁移 repo 结构合同但保留既有密钥和运行时参数', () => {
+    const writes = planImportedEnvSeedWrites(
+      {
+        ASSETS_PROVIDER: 'cloudflareR2',
+        ASSETS_EXPECTED_PROVIDER: 'cloudflareR2',
+        JWT_SECRET: 'repo-secret',
+        RUNTIME_ONLY_KEY: 'repo-runtime',
+      },
+      {
+        ASSETS_PROVIDER: 'tencentCos',
+        JWT_SECRET: 'operator-secret',
+        RUNTIME_ONLY_KEY: 'operator-runtime',
+      },
+    );
+
+    expect(writes).toEqual([
+      {
+        key: 'ASSETS_PROVIDER',
+        value: 'cloudflareR2',
+        reason: 'repo-structural-update',
+      },
+      {
+        key: 'ASSETS_EXPECTED_PROVIDER',
+        value: 'cloudflareR2',
+        reason: 'missing',
+      },
+    ]);
   });
 });
 
