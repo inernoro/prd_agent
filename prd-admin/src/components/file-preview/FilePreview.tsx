@@ -138,6 +138,9 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
         // 脚本不执行、无 XSS），onLoad 量内容高度让 iframe 自增高、自身不再内部滚动 → 只剩外层
         // 阅读区一条滚动条（修复「白底 iframe + 暗底外层」双滚动条）。
+        // 正文里的链接不放宽 sandbox，改由父页拦截点击后 window.open（见下方 onLoad）：
+        // 既不用给 allow-popups(-to-escape-sandbox) 扩权，又能覆盖所有存量 HTML 条目
+        // （包括没写 target=_blank 的旧正文）。
         // fileUrl（上传 .html，跨源不可量高）：保持最严 sandbox="" + 100% 高，行为不变。
         sandbox={fileUrl ? '' : 'allow-same-origin'}
         // srcDoc 必须 scrolling="no"：自增高偶有 1px 量差时 iframe 会变成"可滚几个像素"，
@@ -146,10 +149,24 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         scrolling={fileUrl ? undefined : 'no'}
         onLoad={fileUrl ? undefined : (e) => {
           try {
-            const ifr = e.currentTarget as HTMLIFrameElement & { __roFit?: ResizeObserver; __fitH?: number };
+            const ifr = e.currentTarget as HTMLIFrameElement & {
+              __roFit?: ResizeObserver; __fitH?: number; __fitN?: number; __fitT?: number;
+            };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
+            // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若 1 秒内仍在反复写高，
+            // 说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——此时必须停手，
+            // 否则 RO 每帧触发，主线程被打满、整页卡死。宁可高度量得不完美，不可锁死页面。
+            ifr.__fitN = 0;
+            ifr.__fitT = Date.now();
             const fit = () => {
+              const now = Date.now();
+              if (now - (ifr.__fitT || now) > 1000) { ifr.__fitN = 0; ifr.__fitT = now; }
+              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 40) {
+                ifr.__roFit?.disconnect();
+                ifr.__roFit = undefined;
+                return;
+              }
               const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
               if (h <= 0) return;
               // +2px 缓冲吃掉小数像素舍入；±2px 阈值防振荡——否则"外层滚动条出现/消失
@@ -176,6 +193,24 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             d.querySelectorAll?.('img').forEach((img) => {
               const im = img as HTMLImageElement;
               if (!im.complete) im.addEventListener('load', fit, { once: true });
+            });
+
+            // 正文链接一律新标签打开，绝不在本 iframe 内导航。
+            // 2026-07-29 事故：周报正文的日报深链没写 target，点击后这个自增高 iframe 直接
+            // 导航到整个 MAP SPA；SPA 是 100vh 布局，内容高度反过来依赖 iframe 高度，与上面的
+            // fit() 互相喂高，ResizeObserver 每帧触发，主线程被打满、整页卡死（控制台刷出
+            // 210 条 "ResizeObserver loop completed"）。
+            // 这里在父页（未被 sandbox 限制）拦截点击再 window.open：不必给 iframe 放
+            // allow-popups/allow-popups-to-escape-sandbox 扩权，且对**存量**没写 target 的
+            // 旧 HTML 条目同样生效。
+            d.addEventListener('click', (ev) => {
+              const a = (ev.target as Element | null)?.closest?.('a[href]') as HTMLAnchorElement | null;
+              if (!a) return;
+              const raw = a.getAttribute('href') || '';
+              if (raw.startsWith('#')) return;              // 页内锚点放行，正常跳转
+              ev.preventDefault();                          // 其余一律不许就地导航
+              const url = a.href || '';
+              if (/^https?:\/\//i.test(url)) window.open(url, '_blank', 'noopener,noreferrer');
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}

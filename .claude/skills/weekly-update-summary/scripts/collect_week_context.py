@@ -6,7 +6,7 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   1. 这一周每天到底发生了什么（-> 日报知识库）
   2. 做完的东西验没验、验没验过（-> CDS 验收中心的 verdict）
   3. 质量在变好还是变差（-> 缺陷台账）
-  4. 有没有真的发到线上（-> CDS 不可变部署版本）
+  4. 有没有真的发到线上（-> CDS 正式发布台账 /api/releases/runs，注意不是分支部署版本）
 
 本脚本把这四类「非 git 事实」按周聚合成一份 JSON，供周报正文引用。
 所有来源都独立降级：任一来源不可达只把该段标 available=false，绝不让整份周报生不出来。
@@ -55,14 +55,18 @@ def _headers(impersonate):
     return ["-H", f"X-AI-Access-Key: {sup}", "-H", f"X-AI-Impersonate: {impersonate}"]
 
 
-def _cdscli(args):
-    """所有 CDS 读取都过 cdscli：它是凭据与 URL 的 SSOT，禁止本脚本自己拼 host。"""
+def _cdscli_path():
     repo = os.environ.get("CDSCLI_REPO_ROOT", ".")
     cli = os.path.join(repo, CDSCLI)
     if not os.path.exists(cli):
         raise RuntimeError(f"找不到 cdscli：{cli}")
+    return cli
+
+
+def _cdscli(args):
+    """所有 CDS 读取都过 cdscli：它是凭据与 URL 的 SSOT，禁止本脚本自己拼 host。"""
     env = dict(os.environ, CDSCLI_NO_DRIFT_CHECK="1")
-    r = subprocess.run([sys.executable, cli] + args, capture_output=True, text=True,
+    r = subprocess.run([sys.executable, _cdscli_path()] + args, capture_output=True, text=True,
                        timeout=180, env=env)
     # cdscli 正常输出单行 JSON；漂移提示等杂讯可能混在前面，取最后一个 JSON 行。
     for line in reversed((r.stdout or "").strip().splitlines()):
@@ -73,6 +77,37 @@ def _cdscli(args):
             except Exception:
                 continue
     raise RuntimeError(f"cdscli {' '.join(args[:2])} 无 JSON 输出：{(r.stdout or r.stderr or '')[:160]}")
+
+
+_CDSCLI_MOD = None
+
+
+def _cds_api(path):
+    """
+    读 cdscli 尚未包装成子命令的 CDS 端点（如正式发布台账 /api/releases/runs）。
+
+    仍然复用 cdscli 的 `_request`——host、凭据、重试全部走它那一套，本脚本不碰 URL 拼装，
+    符合 CLAUDE.md 规则 11「不自己 slugify / 不猜 host」的实质要求。等 cdscli 补了
+    `release` 子命令，这里换成 _cdscli(["release", "list"]) 即可。
+    """
+    global _CDSCLI_MOD
+    if _CDSCLI_MOD is None:
+        import importlib.util
+        spec = importlib.util.spec_from_file_location("cdscli_mod", _cdscli_path())
+        mod = importlib.util.module_from_spec(spec)
+        saved = sys.argv
+        sys.argv = ["cdscli"]                      # 防模块顶层 argparse 吃到本脚本参数
+        try:
+            spec.loader.exec_module(mod)
+        except SystemExit:
+            pass
+        finally:
+            sys.argv = saved
+        _CDSCLI_MOD = mod
+    status, body, _ = _CDSCLI_MOD._request("GET", path)
+    if status != 200:
+        raise RuntimeError(f"CDS {path} 返回 {status}")
+    return body
 
 
 def _find_store(base, H, name):
@@ -105,9 +140,11 @@ def collect_daily_reports(base, H, start, end):
         return {"available": False, "reason": f"未找到「{DAILY_STORE}」"}
     sid = store["id"]
 
+    # all=true 必须带：ListEntries 在 all=false 时只返回根层级（ParentId==null），
+    # 日报一旦被归进文件夹就会被静默漏掉，然后被误报成「当天没有日报」。
     entries, page = [], 1
     while True:
-        res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page={page}&pageSize=200&excludeFolders=true"])
+        res = _curl(H + [f"{base}{API}/stores/{sid}/entries?page={page}&pageSize=200&all=true&excludeFolders=true"])
         data = res.get("data") or {}
         items = data.get("items") or []
         entries += items
@@ -117,13 +154,25 @@ def collect_daily_reports(base, H, start, end):
         if page > 50:
             break
 
-    # entryId -> 分享 token，用于给非 CDS/非登录读者一个可点开的链接
+    # entryId -> 分享 token，用于给非登录读者一个可点开的链接。
+    # 必须同时排除已撤销与已过期：匿名端点对过期 token 直接 404，
+    # 发一条打不开的链接比不发更糟（周报会声称「有深链」而读者点开是错误页）。
     tok = {}
     try:
+        import datetime as _dt
+        now = _dt.datetime.now(_dt.timezone.utc)
         sl = _curl(H + [f"{base}{API}/stores/{sid}/share-links"])
         for l in ((sl.get("data") or {}).get("items") or []):
-            if l.get("entryId") and not l.get("isRevoked"):
-                tok.setdefault(l["entryId"], l.get("token"))
+            if not l.get("entryId") or l.get("isRevoked"):
+                continue
+            exp = (l.get("expiresAt") or "").strip()
+            if exp:
+                try:
+                    if _dt.datetime.fromisoformat(exp.replace("Z", "+00:00")) <= now:
+                        continue                    # 已过期，跳过
+                except Exception:
+                    pass                            # 解析不了就不当过期处理，交由读者实际点击暴露
+            tok.setdefault(l["entryId"], l.get("token"))
     except Exception:
         pass
 
@@ -251,8 +300,43 @@ def collect_defects(base, H, start, end):
     }
 
 
-# ── 来源 4：线上发布（不可变部署版本，回答「有没有真的发出去」） ──────────
+# ── 来源 4：线上发布（正式发布台账，回答「有没有真的发出去」） ────────────
+# 注意：不能用 deployment-version。任何分支部署成功后 CDS 都会生成不可变部署版本
+# （cds/src/routes/branches.ts 的 version-create），分支预览也算在内——拿它当
+# 「线上发布次数」会把预览部署充成正式发布，把数字吹大好几倍。正式发布的唯一台账
+# 是 /api/releases/runs。
 def collect_releases(project, start, end):
+    body = _cds_api("/api/releases/runs")
+    runs = (body or {}).get("runs") or []
+    sel = []
+    for r in runs:
+        if project and r.get("projectId") not in (project, None):
+            continue
+        # 正式发布 run 用 startedAt 记时（createdAt 不存在于该模型）
+        if not _in_week(r.get("startedAt") or "", start, end):
+            continue
+        sel.append({
+            "releaseId": r.get("releaseId"),
+            "date": (r.get("startedAt") or "")[:10],
+            "status": r.get("status"),                 # success / failed
+            "commitSha": (r.get("commitSha") or "")[:7] or None,
+            "projectId": r.get("projectId"),
+        })
+    sel.sort(key=lambda x: x["date"])
+    ok = sum(1 for x in sel if x["status"] == "success")
+    failed = sum(1 for x in sel if x["status"] == "failed")
+    total = len(sel)
+    return {
+        "available": True, "items": sel, "attempts": total,
+        "success": ok, "failed": failed,
+        "successRate": round(ok * 100.0 / total, 1) if total else None,
+        "note": "口径为正式发布台账 /api/releases/runs 的 run（含失败重试），"
+                "不是分支预览部署；同一次发布可能包含多次重试 run。",
+    }
+
+
+# 分支预览部署版本：单独一段，供工程读者参考，禁止当成「线上发布」写进正文
+def collect_preview_deploys(project, start, end):
     res = _cdscli(["deployment-version", "list"] + (["--project", project] if project else []))
     if not res.get("ok"):
         return {"available": False, "reason": "cdscli deployment-version list 返回 ok=false"}
@@ -260,7 +344,8 @@ def collect_releases(project, start, end):
     items = [{"id": v.get("id"), "date": (v.get("createdAt") or "")[:10],
               "commitSha": (v.get("commitSha") or "")[:7], "branchId": v.get("branchId")}
              for v in vers if _in_week(v.get("createdAt") or "", start, end)]
-    return {"available": True, "items": items, "count": len(items)}
+    return {"available": True, "items": items, "count": len(items),
+            "note": "不可变部署版本（含分支预览），不等于正式发布次数"}
 
 
 # ── 来源 5：上周周报（保证「上周方向落地对照」有据可依） ────────────────────
@@ -312,8 +397,9 @@ def main():
             ctx[name] = {"available": False, "reason": str(e)[:200]}
 
     for name, fn in [
-        ("acceptance", lambda: collect_acceptance(a.project, start, end)),
-        ("releases",   lambda: collect_releases(a.project, start, end)),
+        ("acceptance",     lambda: collect_acceptance(a.project, start, end)),
+        ("releases",       lambda: collect_releases(a.project, start, end)),
+        ("previewDeploys", lambda: collect_preview_deploys(a.project, start, end)),
     ]:
         try:
             ctx[name] = fn()
@@ -357,7 +443,14 @@ def main():
         else:
             print("[缺陷] 不可用：" + str(df.get("reason")))
         rl = ctx.get("releases", {})
-        print(f"[发布] 本周不可变版本 {rl.get('count')}" if rl.get("available") else "[发布] 不可用：" + str(rl.get("reason")))
+        if rl.get("available"):
+            print(f"[正式发布] {rl['attempts']} 次 run：成功 {rl['success']} / 失败 {rl['failed']}"
+                  + (f"，成功率 {rl['successRate']}%" if rl.get("successRate") is not None else ""))
+        else:
+            print("[正式发布] 不可用：" + str(rl.get("reason")))
+        pv = ctx.get("previewDeploys", {})
+        print(f"[分支预览部署] {pv.get('count')} 个不可变版本（非正式发布，勿写进正文）"
+              if pv.get("available") else "[分支预览部署] 不可用：" + str(pv.get("reason")))
         if a.out:
             print(f"\n已写入 {a.out}")
     else:

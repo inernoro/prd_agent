@@ -37,6 +37,10 @@
   4. 每条业务能力都标了验收背书（通过/有条件/未通过/本周未验收），未验收的要显著标注
   5. 正文无未翻译的英文缩写、文件名、类名；出现的内部代号都在术语表里
   6. baseline 行含统计基线 SHA + 采集时间 + 四源可用性说明
+  7. 所有 <a href> 必须带 target="_blank" rel="noopener noreferrer"——知识库把正文渲染在
+     自增高 sandbox iframe 里，缺 target 会在本 iframe 内导航整个 SPA，触发 ResizeObserver
+     正反馈循环把页面卡死（2026-07-29 实测）
+  8. 「线上发布」只能用正式发布台账口径，禁止拿分支部署版本充数（分支预览也会生成版本）
 -->
 <html lang="zh-CN">
 <head>
@@ -401,37 +405,37 @@
     <div class="day">
       <div class="dhead"><b>周一</b><span>07-20</span><i>17 提交</i></div>
       <div class="dbody"><p>底层模型升级到 <b>GPT-5.6</b>；部署平台加生产更新防护</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/KgS9aXBog_k6?entry=afcc62a9703c4b6890e8dff25cc69384">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/KgS9aXBog_k6?entry=afcc62a9703c4b6890e8dff25cc69384" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day heavy">
       <div class="dhead"><b>周二</b><span>07-21</span><i>41 提交</i></div>
       <div class="dbody"><p>首页配色刷新、<b>手机端验收设硬门</b>；录音保护与会议纪要整理</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/a0mw1AphsBhT?entry=69246d33e9ad4cc396bdcbdb29edc5fd">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/a0mw1AphsBhT?entry=69246d33e9ad4cc396bdcbdb29edc5fd" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day">
       <div class="dhead"><b>周三</b><span>07-22</span><i>30 提交</i></div>
       <div class="dbody"><p>部署平台<b>正式发布页重构</b>；网关生产闭环；项目密钥隔离</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-BIX-nM0Z6Ld?entry=a063eafd98194f9b848a40a81f1bb02c">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-BIX-nM0Z6Ld?entry=a063eafd98194f9b848a40a81f1bb02c" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day heavy">
       <div class="dhead"><b>周四</b><span>07-23</span><i>51 提交</i></div>
       <div class="dbody"><p>全站双配色完成；<b>网关日志台重构</b>（本周最忙一天）</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/rw56ilBAOMF9?entry=7070aef02cab4bc994b367c71b816f27">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/rw56ilBAOMF9?entry=7070aef02cab4bc994b367c71b816f27" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day heavy">
       <div class="dhead"><b>周五</b><span>07-24</span><i>44 提交</i></div>
       <div class="dbody"><p><b>网关正式发布收口集中落地</b>；图片调用观测补齐</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-fbRp8VOPsLQ?entry=9a5c08b6ccf241d39459aed722552c1a">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/-fbRp8VOPsLQ?entry=9a5c08b6ccf241d39459aed722552c1a" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day">
       <div class="dhead"><b>周六</b><span>07-25</span><i>1 提交</i></div>
       <div class="dbody"><p>仅例行文档台账对账，无功能改动</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/cmn0dHnbajYX?entry=2b6ffeadf0c14c04b457efb707e76eef">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/cmn0dHnbajYX?entry=2b6ffeadf0c14c04b457efb707e76eef" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
     <div class="day">
       <div class="dhead"><b>周日</b><span>07-26</span><i>12 提交</i></div>
       <div class="dbody"><p>正式发布冒烟与<b>灰度密钥隔离</b>收尾</p>
-        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/02Fi0Q2l3au8?entry=f78a51afc78f4eb79b6e63e8cc5df813">看当天日报</a></p></div>
+        <p class="lk"><a href="https://main-prd-agent.miduo.org/s/lib/02Fi0Q2l3au8?entry=f78a51afc78f4eb79b6e63e8cc5df813" target="_blank" rel="noopener noreferrer">看当天日报</a></p></div>
     </div>
   </div>
   <p class="appendix-note">本周日报逐日齐全，7 天无缺。</p>
@@ -495,31 +499,31 @@
   <div class="table-scroll">
     <table class="tb">
       <tr><th>日期</th><th>结论</th><th>类别</th><th>验收项</th><th>PR</th><th>报告</th></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>主题系统 · 首页主题与文字清晰度</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e2ce7f0ffcfc4efab8ee20937b9df1c3&report=1c1ec0b788b146d0bd45a4900219a412">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>全量变更 · 07-19 替代复验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=41b755925abd4e17964a8bff930016fe">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 07-19 替代复验（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=98b268a3ad454f67986ca57ab6a5125c">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音交互式播放</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=4ff743704e6d4fc699829eade3aef145">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音转笔记单文档体验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=0af8ff3cb60f44a9b7162e08a1eac586&report=8957e4ecb772428085ade3bb6232f490">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音与同页转录</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=3faa99a2249047c892306b5adc2ca95b">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音防重复启动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=09df986aca674a6388313938a8fe5ab5">打开</a></td></tr>
-      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>视觉创作 · 多图片模型选择器</td><td>#1199</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=4d8c99519c22439ca458e73ea1498691&report=9e66d8c79d4047d0ad115f9370fb6629">打开</a></td></tr>
-      <tr><td>07-21</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 07-21 全量改动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=40f0c4e3596043edb014b00fce12cd37">打开</a></td></tr>
-      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力生产闭环</td><td>#1218</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=7566a9efe45c491093eaa4177d3f9717&report=bd6db502cc144173be637bdfa1c3be5b">打开</a></td></tr>
-      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志控制台与独立详情</td><td>#1222</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b3127a546e7a4558acb23772a2e69dfd&report=e90b0c2723134d21842056616996aef3">打开</a></td></tr>
-      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 请求记录信息密度与正式发布</td><td>#1224</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=fb52b905cbee46838078a4c6f458eb01&report=30f76288ed4344d5b37342bdfcce9517">打开</a></td></tr>
-      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 请求记录信息密度与下钻</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=9d4d84edc3ad4b3ea7a50113fbf2bcf1&report=eb1d645a9aee4802b88ffab6d34b5f93">打开</a></td></tr>
-      <tr><td>07-22</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>全量变更 · 昨日全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=aba52d96edba4b75907b52c808bdbba8">打开</a></td></tr>
-      <tr><td>07-23</td><td><span class="vd vd-cond">有条件</span></td><td>功能验收</td><td>部署平台 · 数据库复制集模式</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b62fb307035a43a99000a4c1416b96f1&report=e38ec1c5982744f688448857ca6e0ee5">打开</a></td></tr>
-      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志实体悬浮卡与详情页</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=56aa5534eb344d24bb09bafc3ebfee97&report=54c93b26ec3041d6bdc3a3d74217c3ea">打开</a></td></tr>
-      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力与日志体验</td><td>#1244</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=8456b0a2cb1b42e796c6bb2a43f05724&report=9c134d61a33244dfbf16b12f6c2d0cdf">打开</a></td></tr>
-      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=0585e81f9073415981889172daa8a918">打开</a></td></tr>
-      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=630fd8db05a24c43bd6721986a8b621f">打开</a></td></tr>
-      <tr><td>07-24</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音实时转写</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=eb113cad861b4b06b5ee9d6b320a80c7&report=8b87ef26d13b4035a399c4eb7a0560ed">打开</a></td></tr>
-      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 部署平台 / 全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=228e48bf56f7421e94c565a28ea86966">打开</a></td></tr>
-      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>缺陷复测</td><td>DEF-2026-0188 团队副负责人添加成员</td><td>#1217</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=27f97da57dbd4b7fb6586ab2ce345c8d&report=ff25fe9c4bb34e3c9f149e9fb23a3c27">打开</a></td></tr>
-      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>PR 验收</td><td>#1264 模型网关教程双链运行时与可视化</td><td>#1264</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=a80a0755e13b46ebbcd63bc382e10e94&report=6fe2e2d8cbed49c6998b95df9072ad60">打开</a></td></tr>
-      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 日志与三项能力生产闭环</td><td>#1260</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=40166cd1e4ad488182241ad20ad2e0be&report=7c63135c9319419c9ac58e3ebeb9734d">打开</a></td></tr>
-      <tr><td>07-26</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-26</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=a6cabf0cf3404305a9ba44e923e4bba3">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>主题系统 · 首页主题与文字清晰度</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=e2ce7f0ffcfc4efab8ee20937b9df1c3&report=1c1ec0b788b146d0bd45a4900219a412" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>全量变更 · 07-19 替代复验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=41b755925abd4e17964a8bff930016fe" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 07-19 替代复验（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=98b268a3ad454f67986ca57ab6a5125c" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音交互式播放</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=4ff743704e6d4fc699829eade3aef145" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音转笔记单文档体验</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=0af8ff3cb60f44a9b7162e08a1eac586&report=8957e4ecb772428085ade3bb6232f490" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音与同页转录</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=3faa99a2249047c892306b5adc2ca95b" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 快捷录音防重复启动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=ec9b72b21aec46eaa05f5c55d83014b1&report=09df986aca674a6388313938a8fe5ab5" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-20</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>视觉创作 · 多图片模型选择器</td><td>#1199</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=4d8c99519c22439ca458e73ea1498691&report=9e66d8c79d4047d0ad115f9370fb6629" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-21</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 07-21 全量改动</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=40f0c4e3596043edb014b00fce12cd37" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力生产闭环</td><td>#1218</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=7566a9efe45c491093eaa4177d3f9717&report=bd6db502cc144173be637bdfa1c3be5b" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志控制台与独立详情</td><td>#1222</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b3127a546e7a4558acb23772a2e69dfd&report=e90b0c2723134d21842056616996aef3" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 请求记录信息密度与正式发布</td><td>#1224</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=fb52b905cbee46838078a4c6f458eb01&report=30f76288ed4344d5b37342bdfcce9517" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 请求记录信息密度与下钻</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=9d4d84edc3ad4b3ea7a50113fbf2bcf1&report=eb1d645a9aee4802b88ffab6d34b5f93" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-22</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>全量变更 · 昨日全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=aba52d96edba4b75907b52c808bdbba8" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-cond">有条件</span></td><td>功能验收</td><td>部署平台 · 数据库复制集模式</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=b62fb307035a43a99000a4c1416b96f1&report=e38ec1c5982744f688448857ca6e0ee5" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>模型网关 · 日志实体悬浮卡与详情页</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=56aa5534eb344d24bb09bafc3ebfee97&report=54c93b26ec3041d6bdc3a3d74217c3ea" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 三项能力与日志体验</td><td>#1244</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=8456b0a2cb1b42e796c6bb2a43f05724&report=9c134d61a33244dfbf16b12f6c2d0cdf" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=0585e81f9073415981889172daa8a918" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-23</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-23（重复归档）</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=630fd8db05a24c43bd6721986a8b621f" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-24</td><td><span class="vd vd-pass">通过</span></td><td>功能验收</td><td>知识库 · 录音实时转写</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=eb113cad861b4b06b5ee9d6b320a80c7&report=8b87ef26d13b4035a399c4eb7a0560ed" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>每日巡检</td><td>每日验收 · 部署平台 / 全量变更</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=228e48bf56f7421e94c565a28ea86966" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-25</td><td><span class="vd vd-cond">有条件</span></td><td>缺陷复测</td><td>DEF-2026-0188 团队副负责人添加成员</td><td>#1217</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=27f97da57dbd4b7fb6586ab2ce345c8d&report=ff25fe9c4bb34e3c9f149e9fb23a3c27" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>PR 验收</td><td>#1264 模型网关教程双链运行时与可视化</td><td>#1264</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=a80a0755e13b46ebbcd63bc382e10e94&report=6fe2e2d8cbed49c6998b95df9072ad60" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-pass">通过</span></td><td>发布验收</td><td>模型网关 · 日志与三项能力生产闭环</td><td>#1260</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=40166cd1e4ad488182241ad20ad2e0be&report=7c63135c9319419c9ac58e3ebeb9734d" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
+      <tr><td>07-26</td><td><span class="vd vd-fail">未通过</span></td><td>每日巡检</td><td>每日验收 · 全量变更 · 07-26</td><td>-</td><td><a href="https://cds.miduo.org/reports?project=prd-agent&folder=95a19d5ce91348a3a45708338cdc3c28&report=a6cabf0cf3404305a9ba44e923e4bba3" target="_blank" rel="noopener noreferrer">打开</a></td></tr>
     </table>
   </div>
   <p class="appendix-note">结论口径：通过 = pass、有条件 = conditional、未通过 = fail。报告深链需登录部署平台后可达。行数 25 = 头部验收份数。</p>
