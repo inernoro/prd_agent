@@ -23,6 +23,16 @@ const react = tryResolve('react');
 const reactDomServer = tryResolve('react-dom/server');
 const reactJsxRuntime = tryResolve('react/jsx-runtime');
 
+// 解析不到时别只是「少一条 alias」——渲染冒烟会以 `Failed to load url react` 收场，
+// 而那句报错完全没指向真正的原因（cds/web 没装依赖）。这里把原因直接说出来。
+// 不 throw：那会让 340+ 条与前端无关的用例陪葬，只想跑后端测试的人不该被拦。
+if (!react || !reactDomServer || !reactJsxRuntime) {
+  console.warn(
+    '[vitest] cds/web/node_modules 里找不到 react，前端渲染冒烟将无法加载。\n' +
+    '         先跑 `pnpm run install:web`（CI 在 ci.yml / cds.yml 里已有这一步）。',
+  );
+}
+
 export default defineConfig({
   resolve: {
     alias: [

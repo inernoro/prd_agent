@@ -439,12 +439,18 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ${{ steps.pnpm_store.outputs.path }}
-          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json') }}
+          key: ${{ runner.os }}-pnpm-cds-${{ hashFiles('cds/pnpm-lock.yaml', 'cds/package.json', 'cds/web/pnpm-lock.yaml') }}
           restore-keys: |
             ${{ runner.os }}-pnpm-cds-
 
       - name: Install dependencies
         run: pnpm install
+
+      # 前端依赖装在 cds/web/node_modules。tests/ 里的渲染冒烟直接 import 前端组件，
+      # vitest.config.ts 把 react / react-dom 别名指向那里；这一步缺了别名就解析不到，
+      # 整个测试文件加载失败。守卫见 tests/lint/ci-installs-web-deps.test.ts。
+      - name: Install web dependencies
+        run: pnpm run install:web
 
       - name: Type check
         run: pnpm exec tsc --noEmit
