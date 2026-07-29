@@ -15279,6 +15279,43 @@ export function createBranchRouter(deps: RouterDeps): Router {
     return conflicts;
   };
 
+  /**
+   * 别名会不会撞上**已发布的命名服务 host**（含历史别名）。
+   *
+   * 别名和命名子域挤在同一个命名空间里：别名 `foo-llmgw` 生成的 host 与分支 foo 的
+   * 控制台 host 是同一个字符串，forwarder 会收到两条同 host 不同上游的路由。
+   *
+   * 为什么单独写而不是直接调 findPreviewHostCollisions：那个还会顺带查 preview slug
+   * 与其它分支的别名，而这两项 `stateService.findAliasCollisions` 已经查过，
+   * 复用会让同一个冲突报两遍。host 的枚举口径仍然共用 computeBranchPublishedServiceHosts，
+   * 不另起一份。
+   *
+   * **不跳过自己**：别名撞上自己分支的服务 host 同样是「一个 host 两个上游」
+   * （别名指向主应用、服务路由指向那个命名服务），并不因为同属一个分支就无害。
+   */
+  const findAliasServiceHostCollisions = (
+    candidateAliases: string[],
+  ): Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const conflicts: Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> = [];
+    for (const alias of candidateAliases) {
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const host = `${alias.toLowerCase()}.${root}`;
+        for (const other of stateService.getAllBranches()) {
+          if (computeBranchPublishedServiceHosts(other, root).includes(host)) {
+            conflicts.push({ alias, domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
   const findAliasCustomDomainCollisions = (
     branchId: string,
     candidateAliases: string[],
@@ -15476,12 +15513,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Check collisions with other branches' slugs/aliases
     const collisions = stateService.findAliasCollisions(id, normalized);
     const customDomainCollisions = findAliasCustomDomainCollisions(id, normalized);
-    const allCollisions = [...collisions, ...customDomainCollisions];
+    // 命名服务 host 也占着同一个命名空间。此前只查 slug/别名/自定义域名，
+    // 于是别名可以直接占走另一个分支已发布的 `<slug>-llmgw` —— helper 建好了却
+    // 只接进了 PUT /custom-domains，别名这条路径一直没人查（Codex P1，形状 2）。
+    const serviceHostCollisions = findAliasServiceHostCollisions(normalized);
+    const allCollisions = [...collisions, ...customDomainCollisions, ...serviceHostCollisions];
     if (allCollisions.length > 0) {
       res.status(409).json({
         error: `子域名冲突: ${allCollisions.map(c => {
           if (c.reason === 'slug') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的默认 slug 占用`;
           if (c.reason === 'alias') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的别名占用`;
+          // service-subdomain 必须排在 `'domain' in c` 之前：它同样带 domain 字段，
+          // 落到下一条会被说成「自定义域名占用」，指错排查方向。
+          if (c.reason === 'service-subdomain') return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 已发布的命名服务入口占用`;
           if ('domain' in c) return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 的完整自定义域名占用`;
           return `"${c.alias}" 已被分支 "${c.conflictWith}" 占用`;
         }).join('; ')}`,

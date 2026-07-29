@@ -14,6 +14,7 @@
 //   PageShell / PageBody / PageHeader 必须**透明、无边框**。
 //   e2e/llmgw-layout-drift.mjs 的 headingBoxed 会从 h1 向上走 4 层，命中任何边框或非透明
 //   底色就判定「标题被卡片包住」——给这几个容器加一句 background 会让 8 条被测路由同时漂移。
+import { useRef, useState } from 'react';
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
@@ -79,6 +80,37 @@ export function FormGrid({ children, style }: { children: ReactNode; style?: CSS
 }
 
 /**
+ * 最近的滚动裁剪框：气泡是 absolute 定位，真正裁掉它的是最近的 overflow 祖先
+ * （`.lg-page-body` / `.lg-side-drawer-body` 都是 `overflow-y:auto`），不是视口。
+ * 找不到（页面本身滚动）时退回视口。
+ */
+function nearestClipRect(node: HTMLElement): { top: number; bottom: number } {
+  for (let el = node.parentElement; el; el = el.parentElement) {
+    const overflowY = getComputedStyle(el).overflowY;
+    if (overflowY === 'auto' || overflowY === 'scroll' || overflowY === 'hidden') {
+      const r = el.getBoundingClientRect();
+      return { top: r.top, bottom: r.bottom };
+    }
+  }
+  return { top: 0, bottom: window.innerHeight };
+}
+
+/**
+ * 向下展开会被裁掉、且向上更宽裕时才翻转。纯判定，无副作用。
+ * 抽出来是为了让「什么时候翻」这件事有个能一眼读懂的地方，而不是散在事件处理里。
+ */
+export function shouldFlipHelpUp(opts: {
+  triggerTop: number; triggerBottom: number;
+  clipTop: number; clipBottom: number;
+  panelHeight: number; gap?: number;
+}): boolean {
+  const need = opts.panelHeight + (opts.gap ?? 12);
+  const below = opts.clipBottom - opts.triggerBottom;
+  const above = opts.triggerTop - opts.clipTop;
+  return below < need && above > below;
+}
+
+/**
  * 出口一：字段旁的 ?。用来收纳「这个字段怎么填 / 这几个选项什么区别」。
  *
  * `align` 决定浮层往哪边展开：触发点靠近容器右缘时必须用 'end'，
@@ -89,8 +121,35 @@ export function HelpPopover({ label, align = 'start', children }: {
   align?: 'start' | 'end';
   children: ReactNode;
 }) {
+  const ref = useRef<HTMLDetailsElement>(null);
+  const [up, setUp] = useState(false);
+  // 靠近滚动容器底部时向上展开。气泡是 absolute，既被 overflow 裁掉、又因为不参与
+  // 布局而没法靠滚动够到——长表单末尾那几个字段说明因此整块读不到（Codex P2）。
+  // 横向已有 align='end' 处理，这里补纵向。
+  const onToggle = () => {
+    const el = ref.current;
+    if (!el?.open) { setUp(false); return; }
+    const trigger = el.querySelector('summary');
+    const panel = el.querySelector('div');
+    if (!trigger || !panel) return;
+    const t = trigger.getBoundingClientRect();
+    const clip = nearestClipRect(el);
+    setUp(shouldFlipHelpUp({
+      triggerTop: t.top, triggerBottom: t.bottom,
+      clipTop: clip.top, clipBottom: clip.bottom,
+      panelHeight: (panel as HTMLElement).offsetHeight,
+    }));
+  };
   return (
-    <details className={cx('lg-help-popover', align === 'end' && 'lg-help-popover--end')}>
+    <details
+      ref={ref}
+      onToggle={onToggle}
+      className={cx(
+        'lg-help-popover',
+        align === 'end' && 'lg-help-popover--end',
+        up && 'lg-help-popover--up',
+      )}
+    >
       <summary aria-label={`${label}说明`}>?</summary>
       <div role="note">{children}</div>
     </details>

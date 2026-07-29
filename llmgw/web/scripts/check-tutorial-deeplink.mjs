@@ -20,7 +20,8 @@ const read = (rel) => readFileSync(join(root, rel), 'utf-8');
 const strip = (src) => src.replace(/\/\*[\s\S]*?\*\/|\/\/.*$/gm, '');
 
 const failures = [];
-const must = (cond, message) => { if (!cond) failures.push(message); };
+let asserted = 0;
+const must = (cond, message) => { asserted += 1; if (!cond) failures.push(message); };
 
 const nav = strip(read('src/lib/mapNavigation.ts'));
 must(
@@ -110,9 +111,20 @@ must(
   'onboarding: 「跑通首条请求」必须叠上本地确证，不能只信可能落后于后台写的 digest',
 );
 
+const theme = read('src/theme.css');
+must(
+  shell.includes('lg-help-popover--up') && shell.includes('shouldFlipHelpUp('),
+  'PageShell: HelpPopover 必须按最近滚动容器量出来后决定向上/向下展开'
+  + '（气泡是 absolute，不参与布局，被 overflow 裁掉的部分滚动也够不到）',
+);
+must(
+  theme.includes('.lg-help-popover--up > div'),
+  'theme.css: 缺少向上展开的样式，翻转类加了也没有效果（形状 2：链路只建到一半）',
+);
+
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');
   for (const line of failures) console.error(`  - ${line}`);
   process.exit(1);
 }
-console.log(`教程深链契约守卫通过：17 条断言。`);
+console.log(`教程深链契约守卫通过：${asserted} 条断言。`);

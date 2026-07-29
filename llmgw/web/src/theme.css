@@ -1465,6 +1465,13 @@ a:focus-visible {
   right: -8px;
 }
 
+/* 触发点靠近滚动容器底部时改为向上展开（类由 HelpPopover 量出来后加）。
+   纵向裁剪比横向更致命：气泡不参与布局，被裁掉的部分滚动也够不到。 */
+.lg-help-popover--up > div {
+  top: auto;
+  bottom: 24px;
+}
+
 .lg-help-popover dl { margin: 0; display: grid; gap: 8px; }
 .lg-help-popover dt { color: var(--text-primary); font-weight: var(--fw-strong); font-size: var(--fs-secondary); }
 .lg-help-popover dd { margin: 0; color: var(--text-secondary); font-size: var(--fs-secondary); line-height: 1.55; }
