@@ -22,6 +22,9 @@ public sealed class DeploymentStorageProviderContractTests
             localDevelopment);
         Assert.Contains("location ^~ /local-assets/", ReadRepoFile("deploy/nginx/nginx.conf"));
         Assert.Contains("'/local-assets':", ReadRepoFile("prd-admin/vite.config.ts"));
+        Assert.Contains(
+            "LocalAssetStaticFilePolicy.CreateOptions(localAssetDir)",
+            ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs"));
         Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}", localDevelopment);
 
         Assert.Contains("ASSETS_PROVIDER: cloudflareR2", cdsRoot);

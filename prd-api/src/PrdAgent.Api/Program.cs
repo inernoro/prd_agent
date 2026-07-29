@@ -31,7 +31,6 @@ using PrdAgent.Infrastructure.Security;
 using Serilog;
 using Serilog.Events;
 using Microsoft.Extensions.Configuration;
-using Microsoft.Extensions.FileProviders;
 
 var builder = WebApplication.CreateBuilder(args);
 
@@ -1443,13 +1442,7 @@ if (string.Equals(
     if (string.IsNullOrWhiteSpace(localAssetDir))
         localAssetDir = Path.Combine(app.Environment.ContentRootPath, "data", "assets");
     Directory.CreateDirectory(localAssetDir);
-    app.UseStaticFiles(new StaticFileOptions
-    {
-        FileProvider = new PhysicalFileProvider(localAssetDir),
-        RequestPath = "/local-assets",
-        ServeUnknownFileTypes = true,
-        DefaultContentType = "application/octet-stream",
-    });
+    app.UseStaticFiles(LocalAssetStaticFilePolicy.CreateOptions(localAssetDir));
 }
 
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
