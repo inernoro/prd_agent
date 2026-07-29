@@ -354,6 +354,27 @@ public class DocumentStoreAgentWorker : BackgroundService
                 failedUpdate,
                 cancellationToken: CancellationToken.None);
 
+            if (!willRetry && run.Kind == DocumentStoreAgentRunKind.Transcribe)
+            {
+                try
+                {
+                    await DocumentRecordingArchiveWorker.CloseDeferredTranscriptionOutboxAsync(
+                        db.DocumentRecordingUploadSessions,
+                        run.Id,
+                        run.SourceEntryId,
+                        CancellationToken.None);
+                }
+                catch (Exception closeError)
+                {
+                    // run 的终态已经持久化；关闭 outbox 失败时保留 pending，归档 Worker
+                    // 下一轮读取同一固定 run 后会幂等补关闭，不能反向改写 run 结果。
+                    _logger.LogWarning(
+                        closeError,
+                        "[doc-store-agent] Terminal deferred transcription outbox closure deferred run={RunId}",
+                        run.Id);
+                }
+            }
+
             if (willRetry)
             {
                 await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "phase", new

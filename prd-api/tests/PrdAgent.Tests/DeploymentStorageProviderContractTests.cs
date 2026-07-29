@@ -83,6 +83,19 @@ public sealed class DeploymentStorageProviderContractTests
         }
     }
 
+    [Fact]
+    public void CiServerPathFilter_ShouldRunWhenTestDiscoveryGuardChanges()
+    {
+        var ci = ReadRepoFile(".github/workflows/ci.yml");
+        var serverFilterStart = ci.IndexOf("            server:\n", StringComparison.Ordinal);
+        var adminFilterStart = ci.IndexOf("            admin:\n", serverFilterStart, StringComparison.Ordinal);
+
+        Assert.True(serverFilterStart >= 0 && adminFilterStart > serverFilterStart);
+        var serverFilter = ci[serverFilterStart..adminFilterStart];
+        Assert.Contains("scripts/verify-dotnet-test-projects.sh", serverFilter);
+        Assert.Contains("bash scripts/verify-dotnet-test-projects.sh", ci);
+    }
+
     private static string ReadRepoFile(string relativePath)
     {
         var root = LocateRepoRoot();

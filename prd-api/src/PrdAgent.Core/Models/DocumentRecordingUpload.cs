@@ -53,6 +53,9 @@ public class DocumentRecordingUploadSession
     /// <summary>完成上传请求的本次租约令牌，防止过期请求提交或释放新的认领。</summary>
     public string? CompletionLeaseId { get; set; }
 
+    /// <summary>过期清理的原子认领令牌；只有持有者可以删除对应分片和会话。</summary>
+    public string? CleanupLeaseId { get; set; }
+
     /// <summary>由 Mongo 原子递增的完成租约版本，用于跨实例写栅栏，不依赖应用服务器时钟。</summary>
     public long CompletionLeaseVersion { get; set; }
 
@@ -74,7 +77,7 @@ public class DocumentRecordingUploadSession
 
     /// <summary>
     /// 会话最早可清理时间。待归档或待转录 outbox 会延长该时间；清理逻辑还必须
-    /// 同时检查对应 pending 标记，禁止仅按本字段建立无条件 TTL 索引。
+    /// 同时检查 pending 标记并先原子认领，禁止仅按本字段建立无条件 TTL 索引。
     /// </summary>
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(1);
 }

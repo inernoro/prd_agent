@@ -44,6 +44,7 @@ jobs:
               - 'scripts/skill-bundles.json'
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
+              - 'scripts/verify-dotnet-test-projects.sh'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'

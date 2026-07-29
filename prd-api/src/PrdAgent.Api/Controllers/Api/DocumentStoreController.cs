@@ -63,7 +63,9 @@ public class DocumentStoreController : ControllerBase
     private static readonly TimeSpan RecordingCompletionStaleLease = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RecordingCompletionLeaseHeartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RecordingOrphanChunkGrace = TimeSpan.FromDays(2);
+    private static readonly TimeSpan RecordingCleanupStaleLease = TimeSpan.FromMinutes(10);
     private const int RecordingOrphanChunkScanLimit = 500;
+    private const int RecordingExpiredCleanupBatchSize = 500;
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -1625,10 +1627,11 @@ public class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var expiredBefore = DateTime.UtcNow;
-        var expiredSessions = await _db.DocumentRecordingUploadSessions
-            .Find(s => !s.DeferredTranscriptionRunPending
-                       && s.ExpiresAt <= expiredBefore)
-            .ToListAsync(CancellationToken.None);
+        var cleanupClaim = await ClaimExpiredRecordingUploadsAsync(
+            _db.DocumentRecordingUploadSessions,
+            expiredBefore,
+            CancellationToken.None);
+        var expiredSessions = cleanupClaim.Sessions;
         var expiredSessionIds = expiredSessions.Select(s => s.Id).ToArray();
         await CleanupExpiredRecordingUploadsAsync(
             expiredSessionIds,
@@ -1637,6 +1640,8 @@ public class DocumentStoreController : ControllerBase
                 CancellationToken.None),
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
                 s => ids.Contains(s.Id)
+                     && s.CleanupLeaseId == cleanupClaim.LeaseId
+                     && s.Status == DocumentRecordingUploadStatus.Cancelled
                      && !s.DeferredTranscriptionRunPending
                      && s.ExpiresAt <= expiredBefore,
                 CancellationToken.None));
@@ -3275,6 +3280,69 @@ public class DocumentStoreController : ControllerBase
         // 反过来先删会话，一旦进程中断，分片将失去可恢复的 session 索引。
         await deleteChunks(expiredSessionIds);
         await deleteSessions(expiredSessionIds);
+    }
+
+    internal static async Task<(string LeaseId, IReadOnlyList<DocumentRecordingUploadSession> Sessions)>
+        ClaimExpiredRecordingUploadsAsync(
+            IMongoCollection<DocumentRecordingUploadSession> sessions,
+            DateTime now,
+            CancellationToken cancellationToken,
+            int limit = RecordingExpiredCleanupBatchSize)
+    {
+        var staleBefore = now - RecordingCleanupStaleLease;
+        var claimableStatus = Builders<DocumentRecordingUploadSession>.Filter.Or(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                session => session.Status,
+                DocumentRecordingUploadStatus.Uploading),
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    session => session.Status,
+                    DocumentRecordingUploadStatus.Cancelled),
+                Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                    session => session.CleanupLeaseId,
+                    null),
+                Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                    session => session.UpdatedAt,
+                    staleBefore)));
+        var eligible = Builders<DocumentRecordingUploadSession>.Filter.And(
+            claimableStatus,
+            Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                session => session.DeferredTranscriptionRunPending,
+                true),
+            Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                session => session.ExpiresAt,
+                now));
+        var candidateIds = await sessions
+            .Find(eligible)
+            .SortBy(session => session.ExpiresAt)
+            .Limit(Math.Clamp(limit, 1, RecordingExpiredCleanupBatchSize))
+            .Project(session => session.Id)
+            .ToListAsync(cancellationToken);
+        if (candidateIds.Count == 0)
+            return (string.Empty, Array.Empty<DocumentRecordingUploadSession>());
+
+        var leaseId = Guid.NewGuid().ToString("N");
+        var claimedAt = DateTime.UtcNow;
+        var claimFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
+            eligible,
+            Builders<DocumentRecordingUploadSession>.Filter.In(
+                session => session.Id,
+                candidateIds));
+        await sessions.UpdateManyAsync(
+            claimFilter,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.Status, DocumentRecordingUploadStatus.Cancelled)
+                .Set(session => session.CleanupLeaseId, leaseId)
+                .Set(session => session.UpdatedAt, claimedAt),
+            cancellationToken: cancellationToken);
+        var claimed = await sessions
+            .Find(session => candidateIds.Contains(session.Id)
+                             && session.CleanupLeaseId == leaseId
+                             && session.Status == DocumentRecordingUploadStatus.Cancelled
+                             && !session.DeferredTranscriptionRunPending
+                             && session.ExpiresAt <= now)
+            .ToListAsync(cancellationToken);
+        return (leaseId, claimed);
     }
 
     internal static IReadOnlyCollection<string> FindOrphanedRecordingSessionIds(

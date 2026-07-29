@@ -1303,6 +1303,12 @@ db.document_recording_upload_sessions.createIndex(
   { name: "idx_recording_sessions_archive_expiry" }
 )
 
+// 新建录音前的过期回收按状态、outbox 与到期时间认领；UpdatedAt 用于回收中断的清理租约。
+db.document_recording_upload_sessions.createIndex(
+  { "Status": 1, "DeferredTranscriptionRunPending": 1, "ExpiresAt": 1, "UpdatedAt": 1 },
+  { name: "idx_recording_sessions_expired_cleanup_claim" }
+)
+
 // 录音分片拼接、转录读取和清理均按会话过滤并按 Index 排序。
 db.document_recording_upload_chunks.createIndex(
   { "SessionId": 1, "Index": 1 },

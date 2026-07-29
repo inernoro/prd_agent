@@ -1292,6 +1292,97 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task ExpiredRecordingCleanupClaim_ShouldBeMutuallyExclusiveWithCompletion()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var completionFirst = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-completion-first",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var cleanupFirst = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-cleanup-first",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var pendingOutbox = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-pending-outbox",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            DeferredTranscriptionRunPending = true,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync(
+            [completionFirst, cleanupFirst, pendingOutbox]);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+            new[] { completionFirst, cleanupFirst, pendingOutbox }
+                .Select(session => Chunk(session.Id, 0, [1, 2])));
+
+        (await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            completionFirst.Id,
+            completionFirst.UserId,
+            "completion-lease",
+            now,
+            CancellationToken.None)).ShouldNotBeNull();
+
+        var cleanupClaim = await DocumentStoreController.ClaimExpiredRecordingUploadsAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            now,
+            CancellationToken.None);
+        cleanupClaim.LeaseId.ShouldNotBeNullOrWhiteSpace();
+        cleanupClaim.Sessions.Select(session => session.Id)
+            .ShouldBe([cleanupFirst.Id]);
+        (await DocumentStoreController.ClaimExpiredRecordingUploadsAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            now,
+            CancellationToken.None)).Sessions.ShouldBeEmpty();
+
+        (await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            cleanupFirst.Id,
+            cleanupFirst.UserId,
+            "late-completion-lease",
+            now,
+            CancellationToken.None)).ShouldBeNull();
+
+        var claimedIds = cleanupClaim.Sessions.Select(session => session.Id).ToArray();
+        await DocumentStoreController.CleanupExpiredRecordingUploadsAsync(
+            claimedIds,
+            ids => fixture.Db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                chunk => ids.Contains(chunk.SessionId)),
+            ids => fixture.Db.DocumentRecordingUploadSessions.DeleteManyAsync(
+                session => ids.Contains(session.Id)
+                           && session.CleanupLeaseId == cleanupClaim.LeaseId
+                           && session.Status == DocumentRecordingUploadStatus.Cancelled));
+
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == cleanupFirst.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == cleanupFirst.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == completionFirst.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == completionFirst.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == pendingOutbox.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == pendingOutbox.Id)).ShouldBe(1);
+    }
+
+    [Fact]
     public void FindOrphanedRecordingSessionIds_ShouldIgnoreChunksWithExistingParents()
     {
         var orphaned = DocumentStoreController.FindOrphanedRecordingSessionIds(
@@ -1494,6 +1585,98 @@ public sealed class DocumentRecordingArchiveWorkerTests
         existing.OwnerInstanceId.ShouldBe("old-instance");
         (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
             run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(DocumentStoreRunStatus.Failed)]
+    [InlineData(DocumentStoreRunStatus.Cancelled)]
+    public async Task TerminalDeferredTranscriptionRun_ShouldClosePendingOutbox(
+        string terminalStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = $"session-terminal-close-{terminalStatus}",
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = "instance-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+            EntryId = "entry-1",
+            DeferredTranscriptionRunPending = true,
+            ExpiresAt = now.AddYears(10),
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = session.EntryId,
+            StoreId = session.StoreId,
+            UserId = session.UserId,
+            OwnerInstanceId = session.OwnerInstanceId,
+            Status = terminalStatus,
+            AutomaticRetryCount = terminalStatus == DocumentStoreRunStatus.Failed
+                ? DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries
+                : 0,
+        });
+
+        var terminalRun = await DocumentRecordingArchiveWorker
+            .EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentStoreAgentRuns,
+                session,
+                session.EntryId,
+                session.OwnerInstanceId,
+                entryRequiresDeferredTranscription: true,
+                CancellationToken.None);
+
+        terminalRun.ShouldNotBeNull();
+        terminalRun!.Status.ShouldBe(terminalStatus);
+        var closed = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(candidate => candidate.Id == session.Id)
+            .SingleAsync();
+        closed.DeferredTranscriptionRunPending.ShouldBeFalse();
+        closed.ExpiresAt.ShouldBeGreaterThan(now.AddHours(23));
+        closed.ExpiresAt.ShouldBeLessThan(now.AddHours(25));
+    }
+
+    [Fact]
+    public async Task ArchiveRetentionRefresh_ShouldNotOverwriteConcurrentOutboxClosure()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "archive-retention-race",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            EntryId = "entry-1",
+            DeferredTranscriptionRunPending = true,
+            ExpiresAt = DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(now),
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        (await DocumentRecordingArchiveWorker.CloseDeferredTranscriptionOutboxAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            session.EntryId,
+            CancellationToken.None)).ShouldBeTrue();
+        (await DocumentRecordingArchiveWorker.RefreshArchiveRetentionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            outboxRemainsPending: true,
+            now.AddSeconds(1),
+            CancellationToken.None)).ShouldBeFalse();
+
+        var retained = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(candidate => candidate.Id == session.Id)
+            .SingleAsync();
+        retained.DeferredTranscriptionRunPending.ShouldBeFalse();
+        retained.ExpiresAt.ShouldBeGreaterThan(now.AddHours(23));
+        retained.ExpiresAt.ShouldBeLessThan(now.AddHours(25));
     }
 
     [Fact]
@@ -1825,6 +2008,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
         catalog.ShouldContain("idx_recording_sessions_deferred_outbox");
         catalog.ShouldContain("idx_recording_sessions_archive_claim");
         catalog.ShouldContain("idx_recording_sessions_archive_expiry");
+        catalog.ShouldContain("idx_recording_sessions_expired_cleanup_claim");
         catalog.ShouldContain("idx_recording_chunks_session_index");
     }
 
@@ -2069,6 +2253,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 StringComparison.Ordinal));
         source.ShouldContain(
             "Builders<DocumentStoreAgentRun>.Filter.Lte(\n                    r => r.AutomaticRetryNextAt,");
+        failurePolicy.ShouldContain("CloseDeferredTranscriptionOutboxAsync(");
     }
 
     [Fact]
@@ -2090,6 +2275,23 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 entryRequiresDeferredTranscription: true,
                 new DocumentStoreAgentRun { Status = DocumentStoreRunStatus.Failed })
             .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun
+                {
+                    Status = DocumentStoreRunStatus.Cancelled,
+                })
+            .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun
+                {
+                    Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId("terminal"),
+                    Status = DocumentStoreRunStatus.Failed,
+                    AutomaticRetryCount =
+                        DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries,
+                })
+            .ShouldBeTrue();
         DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
                 entryRequiresDeferredTranscription: true,
                 new DocumentStoreAgentRun

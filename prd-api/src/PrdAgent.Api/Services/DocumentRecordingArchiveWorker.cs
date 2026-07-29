@@ -231,6 +231,10 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             }
 
             var archiveCompletedAt = DateTime.UtcNow;
+            var outboxRemainsPending = entryRequiresDeferredTranscription
+                                       && (deferredRun == null
+                                           || (deferredRun.Status != DocumentStoreRunStatus.Done
+                                               && !IsTerminalDeferredTranscriptionRun(deferredRun)));
             UpdateDefinition<DocumentRecordingUploadSession> archiveCompletedUpdate =
                 Builders<DocumentRecordingUploadSession>.Update
                     .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
@@ -239,12 +243,6 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     .Set(s => s.ArchiveError, null)
                     .Set(s => s.ArchiveNextAttemptAt, null)
                     .Set(s => s.UpdatedAt, archiveCompletedAt);
-            if (!entryRequiresDeferredTranscription)
-            {
-                archiveCompletedUpdate = archiveCompletedUpdate.Set(
-                    s => s.ExpiresAt,
-                    CompletedSessionExpiresAt(archiveCompletedAt));
-            }
             var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
                 s => s.Id == session.Id
                      && s.OwnerInstanceId == instanceId
@@ -252,6 +250,17 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                      && s.ArchiveLeaseId == archiveLeaseId,
                 archiveCompletedUpdate,
                 cancellationToken: CancellationToken.None);
+            if (completed.ModifiedCount == 1)
+            {
+                // 只按数据库里的当前 outbox 状态刷新保留期。转录 Worker 可能已在
+                // Ensure 返回后关闭 outbox，旧快照不能把 1 天保留期覆盖回 10 年。
+                await RefreshArchiveRetentionAsync(
+                    db.DocumentRecordingUploadSessions,
+                    session.Id,
+                    outboxRemainsPending,
+                    archiveCompletedAt,
+                    CancellationToken.None);
+            }
             // 延迟转录可能已经开始读取 Mongo 分片。归档成功与转录读取并发时，只有
             // 不需要延迟转录，或转录已经写出正文，才可释放分片。完成会话更新后必须
             // 回读 run，不能使用 Ensure 返回的旧快照，否则恰好并发完成时仍会泄漏。
@@ -561,12 +570,20 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         if (run == null)
             return null;
 
-        // outbox 覆盖的是“完整转录成功”而不只是“run 已创建”。Queued/Running/Failed
-        // 期间必须保持 pending，容器重启把 Running 标成 Failed 后，下一轮才能重新排队。
-        // Done 后才确认；若进程恰好在 Done 与确认之间退出，下一轮会幂等补确认。
+        // outbox 覆盖的是“完整转录成功或明确终止”而不只是“run 已创建”。Queued/Running
+        // 与仍有重试计划的失败期间保持 pending；Done、取消或重试耗尽后关闭，避免
+        // 无法再自动执行的固定 run 被永久扫描并保留音频十年。
         if (run.Status == DocumentStoreRunStatus.Done)
         {
             await AcknowledgeDeferredTranscriptionSuccessAsync(
+                sessions,
+                run.Id,
+                entryId,
+                cancellationToken);
+        }
+        else if (IsTerminalDeferredTranscriptionRun(run))
+        {
+            await CloseDeferredTranscriptionOutboxAsync(
                 sessions,
                 run.Id,
                 entryId,
@@ -593,6 +610,17 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         string runId,
         string entryId,
         CancellationToken cancellationToken)
+        => await CloseDeferredTranscriptionOutboxAsync(
+            sessions,
+            runId,
+            entryId,
+            cancellationToken);
+
+    internal static async Task<bool> CloseDeferredTranscriptionOutboxAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string runId,
+        string entryId,
+        CancellationToken cancellationToken)
     {
         if (!runId.StartsWith(DeferredTranscriptionRunPrefix, StringComparison.Ordinal))
             return false;
@@ -612,6 +640,13 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             cancellationToken: cancellationToken);
         return acknowledged.ModifiedCount == 1;
     }
+
+    internal static bool IsTerminalDeferredTranscriptionRun(DocumentStoreAgentRun run)
+        => IsDeferredTranscriptionRunId(run.Id)
+           && (run.Status == DocumentStoreRunStatus.Cancelled
+               || (run.Status == DocumentStoreRunStatus.Failed
+                   && (run.AutomaticRetryNextAt == null
+                       || !HasDeferredTranscriptionAutomaticRetryBudget(run))));
 
     internal static async Task<int> RecoverDeferredTranscriptionRunsAsync(
         IMongoCollection<DocumentRecordingUploadSession> sessions,
@@ -706,6 +741,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         DocumentStoreAgentRun? deferredRun)
         => !entryRequiresDeferredTranscription
            || deferredRun?.Status == DocumentStoreRunStatus.Done
+           || (deferredRun != null && IsTerminalDeferredTranscriptionRun(deferredRun))
            || !string.IsNullOrWhiteSpace(deferredRun?.OutputEntryId);
 
     internal static async Task<bool> DeleteArchivedChunksAfterSuccessfulTranscriptionAsync(
@@ -769,6 +805,35 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
 
     internal static DateTime CompletedSessionExpiresAt(DateTime now)
         => now.AddDays(1);
+
+    internal static async Task<bool> RefreshArchiveRetentionAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        string sessionId,
+        bool outboxRemainsPending,
+        DateTime now,
+        CancellationToken cancellationToken)
+    {
+        var pendingFilter = outboxRemainsPending
+            ? Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                session => session.DeferredTranscriptionRunPending,
+                true)
+            : Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                session => session.DeferredTranscriptionRunPending,
+                true);
+        var updated = await sessions.UpdateOneAsync(
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    session => session.Id,
+                    sessionId),
+                pendingFilter),
+            Builders<DocumentRecordingUploadSession>.Update.Set(
+                session => session.ExpiresAt,
+                outboxRemainsPending
+                    ? PendingOutboxExpiresAt(now)
+                    : CompletedSessionExpiresAt(now)),
+            cancellationToken: cancellationToken);
+        return updated.ModifiedCount == 1;
+    }
 
     internal static string? DeferredTranscriptionRunIdForClient(
         bool archivePending,
