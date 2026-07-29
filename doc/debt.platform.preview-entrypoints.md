@@ -4,7 +4,7 @@
 
 ## 总览
 
-当前 open: 4（PE-transition-window / PE-env-staleness / PE-consumer-sweep / PE-llmgw-console-mapnav）/ 已落地待验证: 4（PE-ssot-inversion / PE-truncation / PE-console-subdomain-rename / PE-truncation-readability）/ 总计: 8
+当前 open: 3（PE-transition-window / PE-env-staleness / PE-long-branch-hash）/ 已落地待验证: 6（PE-ssot-inversion / PE-truncation / PE-console-subdomain-rename / PE-truncation-readability / PE-consumer-sweep / PE-llmgw-console-mapnav）/ 总计: 9
 
 记录「分支预览域名怎么产生、谁有权推算它」这条链路上的欠账。
 
@@ -90,17 +90,19 @@ CDS 平台自更新到本次改动之前，预览容器拿不到入口表。此�
 判断：可接受。新增服务本身就要重新部署才能起容器，同一次部署里两边一致。
 若将来出现「不重启就要感知新入口」的需求，再考虑改成运行时查询平台接口。
 
-### PE-consumer-sweep · 其他消费方尚未清查 —— open
+### PE-consumer-sweep · 全仓守卫 —— 已落地待验证
 
-本轮只收敛了模型网关控制台这一个消费方（3 处调用点：`AppShell` / `CompatibilityStack` /
-`DocumentStorePage`）。仓库里是否还有别处按 hostname 推算兄弟服务地址，尚未做全量扫描。
+单文件断言只锁得住已知的那一个文件，锁不住下一个人新建的文件 —— 这正是同一个反模式
+能长出三份拷贝的原因。已加 `prd-admin/src/lib/__tests__/previewHostDerivation.guard.test.ts`：
+扫 `prd-admin/src` 与 `llmgw/web/src` 全部源码，命中即红，例外必须写进 ALLOWLIST 并注明
+理由与清除条件。
 
-守卫现状：`prd-admin/src/lib/__tests__/llmGatewaySso.test.ts` 有一条源码守卫，
-禁止 `llmGatewaySso.ts` 里再出现 `miduo.org` / `hostname` / `63`。这只锁住了这一个文件，
-不是全仓禁令。
+判据盯**构造**不盯**提及**：首版写成「出现 miduo.org 就红」，立刻误伤了联系邮箱
+`contact@miduo.org` 与产品截图文案 `map.miduo.org`。那种误报会逼后来人把无辜文件塞进
+例外清单，守卫就此失效。现判据是「用模板拼预览域名」「根域后缀常量」「网关子域后缀常量」
+三条，已做红绿闭环（塞一个假推算文件进去两条同时变红，删掉转绿）。
 
-补法：加一条全仓守卫，扫 `prd-admin/src`、`llmgw/web/src` 里的
-`` `${...}.miduo.org` `` 模式与 `-llmgw-web` 字面量，白名单显式登记。
+当前例外只有 1 条：`llmgw/web/src/lib/mapNavigation.ts` 的兜底推算（见下条）。
 
 ### PE-console-subdomain-rename · 控制台子域 llmgw-web → llmgw —— 已落地待验证
 
@@ -120,16 +122,42 @@ CDS 平台自更新到本次改动之前，预览容器拿不到入口表。此�
 改为按 `-` 分段丢弃整段，截出来的每一段都是完整单词。摘要仍保留（段截断照样会
 让前几段相同的长分支撞 host）。无连字符的超长 slug 退回字符硬切兜底，避免空串。
 
-### PE-llmgw-console-mapnav · 控制台反推 MAP 地址是第三份域名实现 —— open
+### PE-llmgw-console-mapnav · 控制台反推 MAP 地址是第三份域名实现 —— 已落地待验证
 
-`llmgw/web/src/lib/mapNavigation.ts` 的 `resolveMapHomeHref` 按 `location.hostname`
-剥掉控制台子域后缀来推 MAP 主入口地址 —— 与 MAP 侧刚拆掉的那份同源。它此前硬编码
-`-llmgw-web` 单一后缀，子域一改名就会失效（返回控制台自己的根路径，「返回 MAP」
-和「教程」深链一起断）。
+`resolveMapHomeHref` 按 `location.hostname` 剥控制台子域后缀来推 MAP 主入口 —— 与 MAP
+侧刚拆掉的那份同源，且硬编码 `-llmgw-web`，子域一改名就整片失效（「返回 MAP」和教程
+深链一起断）。
 
-本轮先把「认哪些后缀」收敛成文件内唯一一处 `CONSOLE_SUBDOMAIN_SUFFIXES`（新旧都认），
-止住改名带来的破坏。**正解仍未做**：console-api 读平台注入的 `CDS_PREVIEW_URL`
-（分支主入口 = MAP）下发给 SPA，本文件只消费。与 PE-consumer-sweep 同批清理。
+**已改为平台下发**：console-api 读 `CDS_PREVIEW_URL`（分支主入口 = MAP），经匿名的
+`/gw/healthz` 下发 `mapHomeUrl`；`getHealth()` 收到即喂进 `setPlatformMapHome`，
+`resolveMapHomeHref` 优先返回权威值。喂值放在 api 层而不是页面里，页面一行未改
+（也就不碰 `GatewayDataDomainGuardTests` 的 343 条跨模块源码契约）。
+
+**保留的兜底**：平台没下发时（正式环境 / 旧版 CDS / 首帧尚未拿到 health）仍走后缀推算，
+后缀表收敛在文件内唯一一处、新旧名都认。这条兜底是全仓守卫当前唯一的例外。
+待所有部署都下发 `mapHomeUrl` 后即可删掉推算分支与该例外。
+
+### PE-long-branch-hash · 超长分支的 host 仍会出现 8 位摘要 —— open
+
+用户明确指出摘要「不符合设计」：`ff49186f` 和先前的半截词 `cla` 是同一类问题 ——
+人读不出、记不住、拼不对。
+
+**现状影响已大幅收窄**：子域从 `llmgw-web` 缩到 `llmgw` 省出 4 个字符后，previewSlug
+≤57 的分支一律原样发布、不含摘要（本分支 57 恰好压线，规范入口是完整可读的
+`llmgw-self-service-panel-redesign-f4oeh6-claude-prd-agent-llmgw`）。摘要只在
+slug > 57 时出现，即分支尾段超过约 40 字符。
+
+**为什么没有一了百了**：纯函数式命名要同时满足「长度有界」「不依赖全局状态」
+「无碰撞且可读」是不可能的 —— 截断必然可能让前几段相同的两个长分支塌成同一个 host、
+互相抢路由（发布器早年因此宁可跳过不发布）。摘要是放弃「可读」换「无碰撞」。
+
+**正解是放弃「不依赖全局状态」**：分支创建时分配一个**短、可读、存下来**的标签
+（从分支尾段派生，同项目内重名就追加 `-2`），host 用存储值而非现算。Vercel / Netlify
+都是这么做的。四个消费方（发布器 / 网关 URL / 入口表 / 两处 SSRF 白名单）手里都有
+branch 实体，改读存储字段即可，无存储值的存量分支回落现有算法。
+
+**未做的原因**：它改变所有预览 host 的生成语义，影响面是整个共享 CDS 的全部项目，
+而本机无法端到端验证（CDS 平台未跑本分支代码）。需要用户拍板后再动。
 
 ---
 

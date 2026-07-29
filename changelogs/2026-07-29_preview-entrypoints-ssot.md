@@ -13,3 +13,5 @@
 | fix | cds | 超长命名子域的截断改为只在 `-` 段边界下刀（此前按字符硬切会切出 `...-f4oeh6-cla` 这种半截词，人读不出也拼不对） |
 | refactor | cds | 模型网关控制台子域 llmgw-web 改名为 llmgw（它本身就是 web，`-web` 是废字，还白占 4 个 DNS 标签额度）；发布器同时发布历史别名，存量链接与未重新导入 compose 的存量部署都不受影响 |
 | fix | llmgw | 控制台「返回 MAP / 教程」深链此前硬编码 `-llmgw-web` 后缀反推 MAP 地址，子域改名即失效；改为新旧后缀都认并收敛成文件内唯一一处 |
+| feat | llmgw | console-api 经 /gw/healthz 下发 mapHomeUrl（源头 CDS_PREVIEW_URL），控制台「返回 MAP / 教程」深链改用平台权威地址，不再按 hostname 反推（推算仅作平台未下发时的兜底） |
+| test | prd-admin | 新增全仓守卫 previewHostDerivation.guard：扫 prd-admin 与 llmgw/web 全部源码，禁止新增按 hostname 拼预览域名的实现，例外须登记理由与清除条件 |
