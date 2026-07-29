@@ -34,7 +34,9 @@ import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
 import { createUptimeRouter } from './routes/uptime.js';
 import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { cdsEventsBus } from './services/cds-events-bus.js';
 import { setReleaseHealthSource } from './services/release-health-snapshot.js';
+import { availabilityOverRange } from './services/uptime-metrics.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -4388,6 +4390,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     },
     config: uptimeConfigFromEnv(config.repoRoot),
     logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+    // 掉线/恢复上总线。少了这一行，生产健康掉线只会躺在 incidents 台账里，
+    // 没人盯着状态页就等于没发生——服务端站内信账本正是订阅总线拿到它的。
+    // 「这条要不要叫醒人」的判定仍只在 CDS_EVENT_ALERT_CLASS 一处，这里只转发。
+    onAlert: (type, data) => { cdsEventsBus.publish(type, data); },
   });
   app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
   // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
@@ -4409,6 +4415,9 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
     setReleaseHealthSource((probeTargetId) => {
       const record = uptimeMonitor.getRecord(probeTargetId);
       if (!record) return undefined;
+      // 近 24h 走存活监控自己那份口径（状态页也用它），发布中心不另算一遍：
+      // 两处各算各的必然漂移，用户会看到同一个目标在两个页面上可用率不一样。
+      const a24 = availabilityOverRange(record, 24 * 3600 * 1000, Date.now());
       return {
         status: record.status,
         probeUrl: record.probeUrl,
@@ -4416,6 +4425,10 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
         pausedReason: record.pausedReason,
         excluded: record.excluded,
         intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
+        availability24h: a24.ratio,
+        sampleCount24h: a24.upCount + a24.downCount,
+        upCount24h: a24.upCount,
+        avgLatencyMs24h: a24.avgLatencyMs,
       };
     });
   }

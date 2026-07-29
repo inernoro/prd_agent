@@ -2129,6 +2129,20 @@ export type ScheduledJobSchedule =
   | { type: 'interval'; intervalMinutes: number; timezone?: string }
   | { type: 'daily'; timeOfDay: string; timezone?: string };
 
+/**
+ * 定时发布动作的版本来源。
+ *
+ * promote 的语义**锁死**为「把 fromTargetId 最近一次成功 run 的那个 commit 原样发到
+ * 本动作的目标」：取该 run 的 branchId / commitSha / artifact.previewUrl，并把 commitSha
+ * 作为 expectedCommitSha 传给 ReleaseService 做 fail-closed 钳制。
+ * 少了那道钳制，startRelease 会按分支**当前** commit 建 artifact（resolveCommitSha =
+ * pinnedCommit || githubCommitSha），于是「原样提升」会静默发出一个从未在源环境验证过
+ * 的新版本——编译和测试都发现不了的语义级错误。
+ */
+export type ReleaseJobSource =
+  | { kind: 'branch'; branchId: string }
+  | { kind: 'promote'; fromTargetId: string };
+
 export type ScheduledJobTarget =
   | {
       type: 'http';
@@ -2141,6 +2155,28 @@ export type ScheduledJobTarget =
       type: 'command';
       command: string;
       cwd?: string;
+    }
+  | {
+      /**
+       * 定时发布。执行时直接调 ReleaseService 的服务方法（不走 HTTP 自调本机），
+       * 并发与幂等全部复用发布侧既有判据（ReleaseService.isTargetBusy），
+       * 绝不另起调度器、另起锁。
+       */
+      type: 'release';
+      /** 发布目标 id。必须与所属 ScheduledJob 同项目，跨项目一律拒绝。 */
+      targetId: string;
+      source: ReleaseJobSource;
+      /** true = 只跑发布前检查，不发布。用于验证规则本身是否配对。 */
+      dryRun?: boolean;
+      /**
+       * true = 这条规则「需要人工确认」，**永不自动发布**：到点只跑预检并产生一条
+       * 待确认站内信，把发不发的决定权留给人。与 dryRun 的区别只在于它会叫醒人。
+       */
+      requireApproval?: boolean;
+      /** 发布失败且未发生过自动恢复时，自动回滚到上一版本。 */
+      rollbackOnFailure?: boolean;
+      /** 目标已经在这个 commit 上时跳过本次发布（记 skipped 而不是 failed）。 */
+      skipWhenUnchanged?: boolean;
     };
 
 export type ScheduledJobAction = ScheduledJobTarget & {
@@ -2168,6 +2204,15 @@ export interface ScheduledJob {
   lastRunStatus?: ScheduledJobRunStatus;
   lastRunId?: string;
   nextRunAt?: string | null;
+  /**
+   * 连续失败计数（成功或跳过即清零）。只对含 release 动作的任务累计——
+   * 给 http/command 任务加自动停用会改变存量行为，本轮不动它们。
+   */
+  consecutiveFailureCount?: number;
+  /** 因连续失败被系统自动停用的时刻。人工重新启用时应清空。 */
+  autoDisabledAt?: string;
+  /** 自动停用的原因，供列表页直接展示，不必让用户翻运行记录。 */
+  autoDisabledReason?: string;
 }
 
 export type ScheduledJobRunStatus = 'queued' | 'running' | 'success' | 'failed' | 'skipped';
@@ -2186,6 +2231,13 @@ export interface ScheduledJobRun {
   httpStatus?: number;
   log?: string;
   error?: string;
+  /**
+   * 本次运行触发的 ReleaseRun id。没有它，用户在任务页只看得到一行日志，
+   * 点不进发布详情——「定时发了一版」和「那一版长什么样」就断成两截。
+   */
+  releaseId?: string;
+  /** 观察到的发布终态（或超时时的最后一次观察值）。 */
+  releaseStatus?: ReleaseRunStatus;
 }
 
 /**

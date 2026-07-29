@@ -5,6 +5,7 @@ import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
+import { formatSshExecFailure } from './ssh-exec-failure.js';
 import {
   advanceReleaseSteps,
   buildReleaseRunProgress,
@@ -107,6 +108,31 @@ export interface ReleaseStartInput {
   previewUrl?: string;
   /** 向导那次预检的落库 id。缺省时服务端按 (分支,目标,预览地址,操作人) 再找一次。 */
   preflightId?: string;
+  /**
+   * 期望发布的 commit（fail-closed 版本钳制）。给了就必须与预检算出的
+   * artifact.commitSha 逐字相等，否则直接拒绝。
+   *
+   * 为什么必须有它：startRelease 恒按分支**当前** commit 建 artifact
+   * （resolveCommitSha = pinnedCommit || githubCommitSha）。「把 A 环境正在跑的那一版
+   * 原样提升到 B」这件事，若不钳制，在分支已经前进时会把一个从未在 A 验证过的新版本
+   * 推上 B —— 而 UI 上写的是「原样提升」。这是语义级静默错误，编译和测试都发现不了。
+   *
+   * 手动「提升」按钮、POST /releases/branches/:branchId/runs、定时 promote 动作
+   * 三者必须传同一个字段；不传时行为与历史完全一致（存量路径零回归）。
+   */
+  expectedCommitSha?: string;
+}
+
+export type ReleaseTargetBusyKind = 'in-flight' | 'settling' | 'lock';
+
+/** 「这个发布目标现在忙不忙」的结论。busy=false 时其余字段一律缺省。 */
+export interface ReleaseTargetBusyState {
+  busy: boolean;
+  /** 中文原因（不含「请稍候再发起 X」这类动作后缀，由调用方按语境拼）。 */
+  reason?: string;
+  kind?: ReleaseTargetBusyKind;
+  /** in-flight / settling 时占着目标的那次 run。 */
+  releaseId?: string;
 }
 
 /** 一次远端现场只读盘点的结果。inventory 缺省 = 读不回来（readError 说明原因）。 */
@@ -142,6 +168,15 @@ export interface ReleaseHealthProbe {
   checkedAt: string;
   responseTimeMs?: number;
   message?: string;
+  /**
+   * 近 24 小时可用率 0-1；窗口内无采样为 null（前端渲染「无数据」而不是 0%）。
+   * 整组字段可缺省：实时探测（probeHealthcheckStatus）本来就只有单次结果，
+   * 监控关闭时也没有窗口数据 —— 缺省即「不知道」，不许编造。
+   */
+  availability24h?: number | null;
+  sampleCount24h?: number;
+  upCount24h?: number;
+  avgLatencyMs24h?: number | null;
 }
 
 /**
@@ -298,6 +333,11 @@ export function classifyReleaseFailure(input: {
   return { ...delegated, summary: sanitizeFailureSummary(input.message) };
 }
 
+/**
+ * 注意这一刀是从**头**切的。SSH 失败消息的判据在尾部，所以
+ * ssh-exec-failure.ts 的 SSH_EXEC_FAILURE_MAX_CHARS 必须严格小于这里的 2 * 1024，
+ * 否则执行器那边保下来的尾巴会在这里被原样切掉。两者是硬耦合，改一处要看另一处。
+ */
 function sanitizeFailureSummary(message: string): string {
   return String(message || '发布失败').replace(/\u001b\[[0-9;]*m/g, '').slice(0, 2 * 1024);
 }
@@ -742,6 +782,12 @@ export class ReleaseService {
     if (!preflight.ok || !preflight.artifact || !preflight.target || !preflight.plan) {
       throw new Error(`发布前检查未通过: ${preflight.checks.filter((c) => c.blocking && c.status === 'fail').map((c) => c.label).join(', ')}`);
     }
+    // 版本钳制（fail-closed）：调用方说「我要发的是这个 commit」时，绝不能因为分支
+    // 在这期间前进了就默默改发别的版本。见 ReleaseStartInput.expectedCommitSha。
+    const expectedCommitSha = (input.expectedCommitSha || '').trim();
+    if (expectedCommitSha && expectedCommitSha !== preflight.artifact.commitSha) {
+      throw new Error(`分支已前进到 ${preflight.artifact.commitSha}，与请求的版本 ${expectedCommitSha} 不一致，已拒绝发布`);
+    }
     // 并发串行化：同一发布目标已有在途 run（未到终态）时拒绝新发布，避免两个 SSH
     // 部署并发跑互相打架。在途 = 非终态，从 RELEASE_STATUS_TERMINAL 取反推导，
     // 不再手写字面量数组（旧数组里还挂着一个永不出现的 prechecking）。
@@ -1166,28 +1212,59 @@ export class ReleaseService {
    *   不给这个出口就会自锁：回收先 acquire、再走本闸，本闸看见自己那把锁判「目标忙」，
    *   于是回收永远跳过自己。既有用例第一时间抓到，值得留个显式参数而不是靠巧合。
    */
-  private assertTargetFree(
-    targetId: string,
-    action: '发布' | '回滚' | '产物回收',
-    options: { holdsTargetLock?: boolean } = {},
-  ): void {
+  /**
+   * 「目标忙不忙」的**唯一判定源**（公开只读，无副作用）。
+   *
+   * assertTargetFree 消费它；定时发布、UI 禁用态、未来的队列也只许读它。
+   * 谁都不许在别处重写一遍 in-flight / settling / lock 三段谓词 —— 判据一分裂，
+   * 两处必然漂移，而漂移的表现是「一边说忙一边真发了」这种并发写生产。
+   */
+  isTargetBusy(targetId: string, options: { holdsTargetLock?: boolean } = {}): ReleaseTargetBusyState {
     const inFlight = this.stateService
       .getReleaseRuns({ targetId })
       .find((r) => isReleaseRunInFlight(r));
     if (inFlight) {
-      throw new Error(`该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}），请等待其完成后再发起${action}`);
+      return {
+        busy: true,
+        kind: 'in-flight',
+        releaseId: inFlight.releaseId,
+        reason: `该发布目标已有进行中的发布（${inFlight.releaseId}，状态 ${inFlight.status}）`,
+      };
     }
     const settling = this.findSettlingExecution(targetId);
     if (settling) {
-      throw new Error(`该发布目标上一次发布（${settling}）已停止但执行体尚未退出，请稍候再发起${action}`);
+      return {
+        busy: true,
+        kind: 'settling',
+        releaseId: settling,
+        reason: `该发布目标上一次发布（${settling}）已停止但执行体尚未退出`,
+      };
     }
     // 产物回收不建 run、不留台账痕迹，上面两条判据都看不见它；而它正在远端跑
     // `git worktree remove` / `prune` / `rm -rf`，与发布抢同一个 git 仓库和同一批目录。
     // 这把锁是进程级的，因此巡检器与路由各自 new 的 ReleaseService 也拦得住（debt #6）。
     const lock = options.holdsTargetLock ? null : peekReleaseTargetLock(targetId);
     if (lock) {
-      throw new Error(`该发布目标正在${lock.kind}（远端目录正在变更），请稍候再发起${action}`);
+      return { busy: true, kind: 'lock', reason: `该发布目标正在${lock.kind}（远端目录正在变更）` };
     }
+    return { busy: false };
+  }
+
+  private assertTargetFree(
+    targetId: string,
+    action: '发布' | '回滚' | '产物回收',
+    options: { holdsTargetLock?: boolean } = {},
+  ): void {
+    const state = this.isTargetBusy(targetId, options);
+    if (!state.busy) return;
+    // in-flight 是「它自己会结束」，其余两种是「等一会儿再来」，措辞照旧不变。
+    const suffix = state.kind === 'in-flight' ? `请等待其完成后再发起${action}` : `请稍候再发起${action}`;
+    throw new Error(`${state.reason}，${suffix}`);
+  }
+
+  /** 只读转发：定时发布等外部消费方靠它轮询 run 终态，不必自己拿 StateService。 */
+  getRun(releaseId: string): ReleaseRun | undefined {
+    return this.stateService.getReleaseRun(releaseId);
   }
 
   /** 该发布目标上是否还有「已终态但执行体没退出」的 run；有则返回它的 releaseId。 */
@@ -1626,7 +1703,9 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
         stream.on('close', (code: unknown) => {
           const exitCode = typeof code === 'number' ? code : 0;
           if (exitCode === 0) return settle(() => resolve(stdout));
-          settle(() => reject(new Error(`ssh exec exit=${exitCode} stderr=${stderr.slice(0, 500)}`)));
+          // stdout 也得进摘要：门禁判据（llmgw-prod-preflight.py 的那段 JSON）走的是
+          // stdout，旧写法只取 stderr 头部，真正的失败原因一个字都留不下来。
+          settle(() => reject(new Error(formatSshExecFailure({ exitCode, stdout, stderr }))));
         });
       });
     });

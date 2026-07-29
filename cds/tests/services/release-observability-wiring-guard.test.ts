@@ -27,6 +27,37 @@ function read(relativePath: string): string {
   return fs.readFileSync(path.join(CDS_ROOT, relativePath), 'utf8');
 }
 
+/**
+ * `GET /releases/center` 那个 `res.json({...})` 的字面量。
+ *
+ * 只看这一段而不是全文，是因为字段名在文件别处（类型定义、helper、注释）也会出现，
+ * 全文 contains 会给出假绿：字段从响应里被摘掉、helper 还留着，守卫照样通过。
+ */
+function centerResponseLiteral(): string {
+  const source = read('src/routes/releases.ts');
+  const centerAt = source.indexOf("router.get('/releases/center'");
+  expect(centerAt).toBeGreaterThan(-1);
+  const responseAt = source.indexOf('res.json({', centerAt);
+  expect(responseAt).toBeGreaterThan(-1);
+  return source.slice(responseAt, responseAt + 1400);
+}
+
+/**
+ * center handler 从入口到响应之间的那一段（组装 rows 的地方）。
+ *
+ * 同样必须窗口化：`resolvePromotionCandidate(` 在文件下半部分还有一处**函数定义**，
+ * 拿全文 contains 去断言「有人调用它」是假绿——把调用摘掉、定义留着，守卫照样通过。
+ * 这次红绿闭环实测到了这个假绿，才补的这个窗口。
+ */
+function centerHandlerBody(): string {
+  const source = read('src/routes/releases.ts');
+  const centerAt = source.indexOf("router.get('/releases/center'");
+  expect(centerAt).toBeGreaterThan(-1);
+  const responseAt = source.indexOf('res.json({', centerAt);
+  expect(responseAt).toBeGreaterThan(centerAt);
+  return source.slice(centerAt, responseAt);
+}
+
 describe('阶段二可见性功能的接线不许掉', () => {
   it('存活监控的 state 源接了生产发布目标', () => {
     const source = read('src/index.ts');
@@ -50,9 +81,9 @@ describe('阶段二可见性功能的接线不许掉', () => {
    * 「样本不足」。整条指标链路建好却不可见，与 releaseEstimate 那次一模一样。
    */
   it('发布中心的响应带 DORA 指标', () => {
-    const source = read('src/routes/releases.ts');
-    expect(source).toContain('computeReleaseDora(');
-    expect(source).toMatch(/runs: runs\.slice\(0, 50\), dora/);
+    expect(read('src/routes/releases.ts')).toContain('computeReleaseDora(');
+    // 响应体里真的有这一项才算接上；只有 helper 存在不算。
+    expect(centerResponseLiteral()).toMatch(/\bdora,/);
   });
 
   /**
@@ -79,8 +110,47 @@ describe('阶段二可见性功能的接线不许掉', () => {
     const source = read('src/index.ts');
     const at = source.indexOf('setReleaseHealthSource(');
     expect(at).toBeGreaterThan(-1);
-    const window = source.slice(at, at + 700);
+    const window = source.slice(at, at + 900);
     expect(window).toContain('uptimeMonitor.getRecord(');
+    // 近 24h 那一组同族：摘掉这一行不会红，只会让「健康」那一格永远显示
+    // 「无数据」——而采样一直在攒。口径必须借存活监控自己那份，不在发布中心另算。
+    expect(window).toContain('availabilityOverRange(');
+    expect(window).toContain('availability24h');
+  });
+
+  /**
+   * v2 布局那四组字段：提交说明 / 主干流水轴 / 环境分组 / 每个目标自己的 DORA。
+   *
+   * 与 releaseEstimate、dora 那两次**完全同构**：判定模块（release-commit-clock /
+   * release-commit-rail / release-environment）建好了、前端也按契约画好了，
+   * 中间少一行 res.json 的字段，前端就恒为 undefined 并优雅退化成「无数据」——
+   * 页面既不报错也不白屏，全量单测照常全绿。删掉不会红的接线必须有守卫。
+   */
+  it('发布中心响应带提交说明台账（commitMeta）', () => {
+    expect(read('src/routes/releases.ts')).toContain('buildCommitMetaMap(');
+    expect(centerResponseLiteral()).toMatch(/commitMeta: buildCommitMetaMap\(/);
+  });
+
+  it('发布中心响应带主干提交流水轴（commitRail）', () => {
+    expect(read('src/routes/releases.ts')).toContain('ReleaseCommitRailReader');
+    expect(centerResponseLiteral()).toMatch(/commitRail: rail\.rail/);
+  });
+
+  it('发布中心响应带环境分组（environments）', () => {
+    expect(centerResponseLiteral()).toMatch(/environments: groupReleaseTargetsByEnvironment\(targets\)/);
+  });
+
+  it('发布中心每一行带流水轴落点、本目标 DORA 与跨环境提升', () => {
+    const body = centerHandlerBody();
+    // 落点：少了它顶部流水轴上画不出「这个环境停在哪」。
+    expect(body).toMatch(/commitPosition: rail\.positions\[target\.id\]/);
+    // per-target DORA：必须带 targetId，否则每一行拿到的都是全项目聚合，
+    // 三格摘要里「近 30 天发布 N 次」对每个环境显示同一个数——错得毫无痕迹。
+    expect(body).toMatch(/computeReleaseDora\(targetRuns, \{[\s\S]{0,220}targetId: target\.id/);
+    // 提升：必须在 handler 里真的被调用（定义存在不算），且 ahead 由后端直算——
+    // 前端拿两个 behindCount 相减在历史分叉时会给出一个无声的错数。
+    expect(body).toContain('resolvePromotionCandidate(');
+    expect(read('src/routes/releases.ts')).toContain('countCommitsBetween(');
   });
 
   /**

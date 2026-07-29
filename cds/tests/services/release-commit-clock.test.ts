@@ -6,10 +6,23 @@ import { afterEach, beforeEach, describe, expect, it } from 'vitest';
 import {
   MAX_COMMIT_TIME_ENTRIES,
   ReleaseCommitClock,
-  gitCommitTimeReader,
+  gitCommitMetaReader,
   isCommitShaLike,
   releaseCommitKey,
 } from '../../src/services/release-commit-clock.js';
+
+/**
+ * 真实 git 读取的「只要时间」口径。
+ *
+ * 以前这里测的是 gitCommitTimeReader —— 一个全委托给 gitCommitMetaReader 的窄包装，
+ * 生产代码一个调用方都没有（默认 reader 用的是 gitCommitMetaReader 本身）。
+ * 包装删掉后，这三条用例直接打在真正被接上的那个 reader 上：断言的行为一字未改，
+ * 但覆盖的是生产路径而不是一层没人用的壳。
+ */
+const readCommitTime = (worktreePath: string, commitSha: string): string | undefined => {
+  const meta = gitCommitMetaReader(worktreePath, commitSha);
+  return typeof meta === 'string' ? meta : meta?.at;
+};
 
 /**
  * commit 时间台账回归。
@@ -73,17 +86,17 @@ describe('真实 git 读取器', () => {
   });
 
   it('读到的是 committer date 本身，不是「现在」', () => {
-    expect(gitCommitTimeReader(repo, sha)).toBe('2026-01-02T03:04:05.000Z');
+    expect(readCommitTime(repo, sha)).toBe('2026-01-02T03:04:05.000Z');
   });
 
   it('worktree 已被回收 / sha 不在本地 → undefined，不抛给发布主链路', () => {
-    expect(gitCommitTimeReader(path.join(repo, '不存在'), sha)).toBeUndefined();
-    expect(gitCommitTimeReader(repo, 'f'.repeat(40))).toBeUndefined();
+    expect(readCommitTime(path.join(repo, '不存在'), sha)).toBeUndefined();
+    expect(readCommitTime(repo, 'f'.repeat(40))).toBeUndefined();
   });
 
   it('形状不合法的 sha 压根不起 git 进程', () => {
-    expect(gitCommitTimeReader(repo, '--upload-pack=/bin/echo')).toBeUndefined();
-    expect(gitCommitTimeReader('', sha)).toBeUndefined();
+    expect(readCommitTime(repo, '--upload-pack=/bin/echo')).toBeUndefined();
+    expect(readCommitTime('', sha)).toBeUndefined();
   });
 });
 

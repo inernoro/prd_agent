@@ -17,6 +17,16 @@ import {
   recordReleaseTargetUpsert,
 } from '../services/release-target-history.js';
 import { ReleaseCommitClock } from '../services/release-commit-clock.js';
+import {
+  ReleaseCommitRailReader,
+  type ReleaseCommitRail,
+  type ReleaseTargetCommitPosition,
+} from '../services/release-commit-rail.js';
+import {
+  groupReleaseTargetsByEnvironment,
+  normalizeReleaseEnvironment,
+  type ReleaseEnvironment,
+} from '../services/release-environment.js';
 import { computeReleaseDora, clampDoraWindowDays, DEFAULT_DORA_WINDOW_DAYS } from '../services/release-dora.js';
 import { isSuccessfulReleaseRun, KEEP_SUCCESSFUL_RELEASE_RUNS } from '../services/release-retention.js';
 import { buildReleaseLogSnapshot } from '../services/release-log-buffer.js';
@@ -48,15 +58,34 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     logger: { warn: (m) => console.warn(m) },
   });
 
+  /** 项目主 clone 的路径。取不到（旧项目 / 无 repoRoot）就是 undefined，绝不回落到 cwd。 */
+  const projectRepoRoot = (projectId: string): string | undefined => {
+    try {
+      const root = deps.stateService.getProjectRepoRoot(projectId, stateRoot || '');
+      return root && root.trim() ? root.trim() : undefined;
+    } catch {
+      return undefined;
+    }
+  };
+
   /**
-   * 发布发起后把本次 commit 的提交时间记下来（DORA 变更前置时间的唯一来源）。
+   * 主干流水轴 + 各环境落点。只读本地 ref、带 TTL 缓存、绝不 fetch，
+   * 理由见 release-commit-rail.ts 顶部（打开发布中心是纯读动作）。
+   */
+  const commitRail = new ReleaseCommitRailReader({ repoRootResolver: projectRepoRoot });
+
+  /**
+   * 发布发起后把本次 commit 的元信息（时间 / 说明 / 作者）记下来。
+   * 时间是 DORA 变更前置时间的唯一来源，说明是发布时间线上「这次发的是什么」。
+   *
    * 尽力而为：worktree 已回收 / git 不可用一律静默跳过，绝不能让一条统计口径
-   * 的旁路动作把「发布已经启动」这个既成事实变成 500。
+   * 的旁路动作把「发布已经启动」这个既成事实变成 500。分支 worktree 被回收后
+   * 再试一次项目主 clone —— 那里通常仍然有这个 commit。
    */
   const rememberCommitTime = (run: { projectId: string; commitSha: string; branchId: string }): void => {
     try {
       const branch = deps.stateService.getBranch(run.branchId);
-      commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath);
+      commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath, projectRepoRoot(run.projectId));
     } catch { /* 统计旁路，不影响发布 */ }
   };
 
@@ -153,7 +182,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       createdBy: resolveActorFromRequest(req),
       isEnabled: body.isEnabled !== false,
       lifecycle: 'active',
-      environment: normalizeEnvironment(body.environment),
+      environment: normalizeReleaseEnvironment(body.environment),
       isCanonical: body.isCanonical !== false,
       projectIdentity: releaseProjectIdentity(project),
       strategy,
@@ -336,7 +365,7 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       projectId,
       name: String(mergedBody.name).trim(),
       isEnabled: mergedBody.isEnabled !== false,
-      environment: normalizeEnvironment(mergedBody.environment),
+      environment: normalizeReleaseEnvironment(mergedBody.environment),
       isCanonical: mergedBody.isCanonical !== false,
       projectIdentity: releaseProjectIdentity(project),
       strategy,
@@ -512,6 +541,12 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         targetId: body.targetId.trim(),
         previewUrl: typeof body.previewUrl === 'string' ? body.previewUrl : '',
         operator: resolveActorFromRequest(req),
+        // 跨轨道契约：概览页的手动「提升」按钮必须带上它，否则「把 A 环境正在跑的那一版
+        // 原样发到 B」在分支已前进时会静默发出另一个版本（见 ReleaseStartInput 注释）。
+        // 不传时行为与历史完全一致。
+        ...(typeof body.expectedCommitSha === 'string' && body.expectedCommitSha.trim()
+          ? { expectedCommitSha: body.expectedCommitSha.trim() }
+          : {}),
       });
       rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
@@ -564,6 +599,9 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         if (rejectProjectMismatch(req, res, targetRun.projectId)) return;
       }
       const run = await service.startRollback(req.params.id, resolveActorFromRequest(req), targetReleaseId);
+      // 回滚也要记台账：回滚 run 用的是被回滚到那一版的 commit，如果那次发布
+      // 当时没记上（存量 run），不补这一笔它在时间线上就永远只有一串 sha。
+      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -692,6 +730,27 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     if (projectId) service.ensureDefaultPlans(projectId);
     const targets = deps.stateService.getReleaseTargets(projectId);
     const runs = deps.stateService.getReleaseRuns(projectId ? { projectId } : {});
+    const doraWindowDays = clampDoraWindowDays(req.query.doraDays ?? DEFAULT_DORA_WINDOW_DAYS);
+    const resolveCommitAt = (run: { projectId: string; commitSha: string }): string | undefined =>
+      commitClock.get(run.projectId, run.commitSha);
+
+    // 每个目标「当前跑着哪个 commit」——流水轴定位与跨环境提升都以它为输入。
+    const currentCommitByTarget = new Map<string, string>();
+    for (const target of targets) {
+      const current = runs.find((run) => run.targetId === target.id && isSuccessfulReleaseRun(run));
+      currentCommitByTarget.set(target.id, current?.commitSha || '');
+    }
+    // 流水轴是「一个项目一条主干」，没有项目语境就画不出来。系统级调用时若
+    // 恰好所有目标同属一个项目，仍然可以画——否则如实给不可用原因，不硬凑。
+    const railProjectId = projectId || singleProjectIdOf(targets);
+    const rail = commitRail.read({
+      projectId: railProjectId || '',
+      branch: railProjectId ? deps.stateService.getProject(railProjectId)?.gitDefaultBranch : undefined,
+      targets: targets
+        .filter((target) => !railProjectId || target.projectId === railProjectId)
+        .map((target) => ({ targetId: target.id, commitSha: currentCommitByTarget.get(target.id) || '' })),
+    });
+
     const rows = await Promise.all(targets.map(async (target) => {
       const targetRuns = runs.filter((run) => run.targetId === target.id);
       // 成功判定与保留策略共用 isSuccessfulReleaseRun：两边一旦分裂，UI 上还看得见的
@@ -722,20 +781,172 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         // 发布 ETA 的传输面。少了这一行，采样照常在攒、前端却恒为 undefined，
         // 发布中心永远显示「正在积累历史耗时数据」——功能全链路建好却不可见。
         releaseEstimate: deps.stateService.getReleaseEstimate(target.id),
+        // 该环境在主干流水轴上的落点（落后 / 领先 / 在不在轴上）。
+        // 算不出时 rail 那边给的是 null + reason，这里原样透传，绝不补 0。
+        commitPosition: rail.positions[target.id] as ReleaseTargetCommitPosition | undefined,
+        // 「近 30 天发布 8 次 / 失败 3 次」那一格。同一份已在手的 runs 按 targetId
+        // 再聚合一次，零新增外呼；顶层 dora 仍是全项目聚合，两者不互相替代。
+        dora: computeReleaseDora(targetRuns, {
+          windowDays: doraWindowDays,
+          targetId: target.id,
+          resolveCommitAt,
+        }),
       };
     }));
+
+    // 跨环境提升：某个环境正跑着比我更新的一版时，「提升」= 把那一版原样发到这里。
+    // ahead 必须由后端直算（rev-list A..B），禁止前端拿两个 behindCount 相减——
+    // 相减只在严格线性历史下成立，一旦分叉就给出一个无声的错数。
+    // 没有更新的一版时整个字段缺省，前端据此隐藏提升按钮。
+    const rowsWithPromotion = rows.map((row) => {
+      const promotion = resolvePromotionCandidate(row, rows, commitRail);
+      return promotion ? { ...row, promotion } : row;
+    });
     // DORA 四项的传输面。少了这一行，聚合照常能算、前端却恒为 undefined，
     // 发布中心永远显示「暂无指标」——同 releaseEstimate 那次的静默退化。
     // 刻意挂在 center 而不是新开端点：这个 handler 手里已经有全量 runs，
     // 零新增外呼、零新 API label，也保证指标和它下面那张发布记录表同源。
     const dora = computeReleaseDora(runs, {
-      windowDays: clampDoraWindowDays(req.query.doraDays ?? DEFAULT_DORA_WINDOW_DAYS),
-      resolveCommitAt: (run) => commitClock.get(run.projectId, run.commitSha),
+      windowDays: doraWindowDays,
+      resolveCommitAt,
     });
-    res.json({ rows, plans: deps.stateService.getReleasePlans(projectId), runs: runs.slice(0, 50), dora });
+    const visibleRuns = runs.slice(0, 50);
+    res.json({
+      rows: rowsWithPromotion,
+      plans: deps.stateService.getReleasePlans(projectId),
+      runs: visibleRuns,
+      dora,
+      // 本次响应里出现过的每个 sha 的提交说明。按 sha 而不是塞进每个 run：
+      // ReleaseRun 是持久化状态，不该被展示字段污染；多个 run 共用一个 sha 时也天然去重。
+      // 台账里没有的 sha 直接不出现在 map 里，前端退化成只显示 short sha。
+      commitMeta: buildCommitMetaMap(commitClock, rows, visibleRuns),
+      // 顶部主干流水轴。不可用时 nodes 为空 + unavailableReason 说人话，前端隐藏整条轴。
+      commitRail: rail.rail as ReleaseCommitRail,
+      // 左栏按环境分组（已排好序），前端不再自己归一 environment。
+      environments: groupReleaseTargetsByEnvironment(targets),
+    });
   });
 
   return router;
+}
+
+/**
+ * 一次发布所用 commit 的展示元信息。key 是完整 sha，缺席即「台账里没有」，
+ * 前端退化成只显示 short sha —— 绝不拿 branchName / operator 之类顶替。
+ */
+export interface ReleaseCommitMeta {
+  sha: string;
+  subject?: string;
+  authorName?: string;
+  committedAt?: string;
+}
+
+/** 「另一个环境跑着更新的一版，可以原样提升过来」。 */
+export interface ReleasePromotionCandidate {
+  fromTargetId: string;
+  fromTargetName: string;
+  fromEnvironment: ReleaseEnvironment;
+  commitSha: string;
+  releaseId: string;
+  /** 对方比我新几个提交。本环境从未发布过时为 null（无从比较，但确实可提升）。 */
+  aheadCount: number | null;
+  fromHealthStatus: string;
+  fromReleasedAt: string;
+}
+
+/** center 行里 promotion 判定用得到的那几个字段。刻意窄，不把整行形状焊死。 */
+interface PromotionRowLike {
+  target: ReleaseTarget;
+  currentVersion: string;
+  currentCommit: string;
+  healthStatus: string;
+  lastReleasedAt?: string;
+}
+
+/** 单次 promotion 判定最多探几个候选环境，避免目标一多就 N² 起 git 进程。 */
+const MAX_PROMOTION_PROBES = 6;
+
+/**
+ * 所有目标是否同属一个项目。系统级调用（无 project 参数）时用它兜一手：
+ * 只有一个项目就照样能画流水轴，多项目则如实说画不出来，不硬挑一个。
+ */
+function singleProjectIdOf(targets: ReadonlyArray<ReleaseTarget>): string | undefined {
+  const ids = new Set(targets.map((target) => target.projectId).filter(Boolean));
+  return ids.size === 1 ? [...ids][0] : undefined;
+}
+
+function buildCommitMetaMap(
+  clock: ReleaseCommitClock,
+  rows: ReadonlyArray<{ target: ReleaseTarget; currentCommit: string; latestRun?: { commitSha: string }; successfulRuns?: ReadonlyArray<{ commitSha: string }> }>,
+  runs: ReadonlyArray<{ projectId: string; commitSha: string }>,
+): Record<string, ReleaseCommitMeta> {
+  const wanted = new Map<string, string>(); // sha -> projectId
+  const want = (projectId: string, sha: string): void => {
+    if (projectId && sha && !wanted.has(sha)) wanted.set(sha, projectId);
+  };
+  for (const run of runs) want(run.projectId, run.commitSha);
+  for (const row of rows) {
+    want(row.target.projectId, row.currentCommit);
+    if (row.latestRun) want(row.target.projectId, row.latestRun.commitSha);
+    for (const run of row.successfulRuns || []) want(row.target.projectId, run.commitSha);
+  }
+
+  const meta: Record<string, ReleaseCommitMeta> = {};
+  for (const [sha, projectId] of wanted) {
+    const entry = clock.getMeta(projectId, sha);
+    if (!entry) continue;
+    meta[sha] = {
+      sha,
+      ...(entry.subject ? { subject: entry.subject } : {}),
+      ...(entry.author ? { authorName: entry.author } : {}),
+      ...(entry.at ? { committedAt: entry.at } : {}),
+    };
+  }
+  return meta;
+}
+
+/**
+ * 找出「哪个环境跑着比我更新的一版」。
+ *
+ * 只认同项目、不同环境、有成功版本、且健康不是 failed 的候选：把一个已知挂掉的
+ * 版本推荐去提升，是在教用户把故障扩散到下一个环境。健康 unknown 仍然算候选 ——
+ * 存活监控可能压根没开，把 unknown 排除等于整个功能对多数部署不可见。
+ */
+function resolvePromotionCandidate(
+  row: PromotionRowLike,
+  rows: ReadonlyArray<PromotionRowLike>,
+  rail: ReleaseCommitRailReader,
+): ReleasePromotionCandidate | undefined {
+  const myEnvironment = normalizeReleaseEnvironment(row.target.environment);
+  const candidates = rows
+    .filter((other) => other.target.id !== row.target.id)
+    .filter((other) => other.target.projectId === row.target.projectId)
+    .filter((other) => normalizeReleaseEnvironment(other.target.environment) !== myEnvironment)
+    .filter((other) => other.currentCommit && other.currentVersion)
+    .filter((other) => other.healthStatus !== 'failed')
+    .filter((other) => other.currentCommit !== row.currentCommit)
+    .sort((a, b) => String(b.lastReleasedAt || '').localeCompare(String(a.lastReleasedAt || '')))
+    .slice(0, MAX_PROMOTION_PROBES);
+
+  for (const other of candidates) {
+    // 本环境从未发布过：对方那一版**一定**比「什么都没有」新，但没有可比较的起点，
+    // 所以 aheadCount 如实给 null，而不是编一个数出来。
+    const aheadCount = row.currentCommit
+      ? rail.countCommitsBetween(row.target.projectId, row.currentCommit, other.currentCommit)
+      : null;
+    if (row.currentCommit && (aheadCount === null || aheadCount <= 0)) continue;
+    return {
+      fromTargetId: other.target.id,
+      fromTargetName: other.target.name,
+      fromEnvironment: normalizeReleaseEnvironment(other.target.environment),
+      commitSha: other.currentCommit,
+      releaseId: other.currentVersion,
+      aheadCount,
+      fromHealthStatus: other.healthStatus,
+      fromReleasedAt: other.lastReleasedAt || '',
+    };
+  }
+  return undefined;
 }
 
 /**
@@ -878,10 +1089,6 @@ function parseReleaseStrategy(body: Record<string, unknown>): ReleaseStrategy {
       ? body.deployCommand.trim()
       : '';
   return { mode, command, detectedFrom: stringArray(raw.detectedFrom) };
-}
-
-function normalizeEnvironment(value: unknown): ReleaseTarget['environment'] {
-  return value === 'staging' || value === 'other' ? value : 'production';
 }
 
 function stringArray(value: unknown): string[] | undefined {

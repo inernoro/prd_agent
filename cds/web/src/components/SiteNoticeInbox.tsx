@@ -1,14 +1,32 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
-import { Bell, Database, ExternalLink, Settings, TerminalSquare, Trash2, X } from 'lucide-react';
-import { apiRequest, ApiError } from '@/lib/api';
+/*
+ * SiteNoticeInbox — 右上角站内信铃铛。
+ *
+ * 2026-07-29 起数据源换成**服务端账本**（GET /api/notices）。
+ * 此前这份是 localStorage + window CustomEvent 的纯浏览器实现，服务端从没记过一条，
+ * 于是发布失败 / 生产掉线在没人开着页面时彻底沉默。localStorage 现在连缓存都不做：
+ * 账本是服务端权威，前端不做第二份归并（两份归并必然漂移）。
+ *
+ * 兼容层保留：BranchListPage 那四处 window.dispatchEvent('cds:notice:upsert')
+ * 一行不用改——本组件把它从「写 localStorage」改成「乐观插入 + POST /api/notices」。
+ *
+ * 两处如实告知（绝不假装通知过谁）：
+ *   - 外发未配置时顶部显示「仅记录在 CDS 本地，未外发」；
+ *   - 单条通知的外发失败原因原样展示。
+ */
 
-type NoticeTone = 'info' | 'warning' | 'danger';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { Bell, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
+import { apiRequest } from '@/lib/api';
+import { useCdsEvents } from '@/hooks/useCdsEvents';
 
+type NoticeLevel = 'info' | 'warning' | 'danger';
+
+/** window 'cds:notice:upsert' 的载荷。tone 是历史字段名，与 level 等价。 */
 export interface SiteNoticePayload {
   id: string;
   title: string;
   body: string;
-  tone?: NoticeTone;
+  tone?: NoticeLevel;
   href?: string;
   actionLabel?: string;
   source?: string;
@@ -17,41 +35,44 @@ export interface SiteNoticePayload {
   projectSlug?: string;
 }
 
-interface SiteNotice extends SiteNoticePayload {
+/** 与后端 CdsNoticeRecord 对齐。 */
+interface SiteNotice {
+  id: string;
+  dedupeKey: string;
+  level: NoticeLevel;
+  title: string;
+  body: string;
+  source?: string;
+  projectId?: string;
+  projectName?: string;
+  projectSlug?: string;
+  href?: string;
+  actionLabel?: string;
   createdAt: string;
+  updatedAt: string;
+  occurrences: number;
   readAt?: string;
   dismissedAt?: string;
+  outbound?: { status: 'sent' | 'skipped' | 'failed'; at: string; reason?: string; reference?: string };
 }
 
-const STORAGE_KEY = 'cds:site-notices:v1';
-const MAX_NOTICES = 30;
-
-function loadNotices(): SiteNotice[] {
-  try {
-    const parsed = JSON.parse(localStorage.getItem(STORAGE_KEY) || '[]') as SiteNotice[];
-    return Array.isArray(parsed) ? parsed.slice(0, MAX_NOTICES) : [];
-  } catch {
-    return [];
-  }
+interface NoticesResponse {
+  notices: SiteNotice[];
+  outbound: { configured: boolean; reason?: string };
 }
 
-function storeNotices(notices: SiteNotice[]): void {
-  try {
-    localStorage.setItem(STORAGE_KEY, JSON.stringify(notices.slice(0, MAX_NOTICES)));
-  } catch {
-    /* ignore storage failures */
-  }
-}
-
-function toneClass(tone: NoticeTone = 'info'): string {
-  if (tone === 'danger') return 'border-rose-500/35 bg-rose-500/10 text-rose-700 dark:text-rose-300';
-  if (tone === 'warning') return 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300';
+function levelClass(level: NoticeLevel = 'info'): string {
+  // 语义色走 token，暗/亮双主题各自成立（禁暗色字面量 fallback）。
+  if (level === 'danger') return 'border-[hsl(var(--destructive))]/35 bg-[hsl(var(--destructive))]/10 text-[hsl(var(--destructive))]';
+  if (level === 'warning') return 'border-amber-500/35 bg-amber-500/10 text-amber-700 dark:text-amber-300';
   return 'border-sky-500/35 bg-sky-500/10 text-sky-700 dark:text-sky-300';
 }
 
 function NoticeIcon({ source }: { source?: string }): JSX.Element {
   if (source === 'schema') return <Database className="h-4 w-4" />;
   if (source === 'env') return <TerminalSquare className="h-4 w-4" />;
+  if (source === 'release' || source === 'drift') return <Rocket className="h-4 w-4" />;
+  if (source === 'uptime' || source === 'system') return <ShieldAlert className="h-4 w-4" />;
   return <Settings className="h-4 w-4" />;
 }
 
@@ -59,27 +80,87 @@ function noticeProjectLabel(notice: SiteNotice): string {
   return notice.projectName || notice.projectSlug || notice.projectId || '';
 }
 
-export function SiteNoticeInbox(): JSX.Element {
-  const [notices, setNotices] = useState<SiteNotice[]>(() => loadNotices());
-  const [open, setOpen] = useState(false);
+function outboundHint(notice: SiteNotice): string | null {
+  if (!notice.outbound) return null;
+  if (notice.outbound.status === 'failed') return `外发失败：${notice.outbound.reason || '原因未知'}`;
+  if (notice.outbound.status === 'skipped') return notice.outbound.reason || '未外发，仅记录在 CDS 本地';
+  return null;
+}
 
+export function SiteNoticeInbox(): JSX.Element {
+  const [notices, setNotices] = useState<SiteNotice[]>([]);
+  const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
+  const [open, setOpen] = useState(false);
+  const { lastNoticeEvent } = useCdsEvents();
+  const noticeEventTs = lastNoticeEvent?.ts ?? null;
+
+  const refresh = useCallback(async (): Promise<void> => {
+    try {
+      const res = await apiRequest<NoticesResponse>('/api/notices');
+      setNotices(Array.isArray(res?.notices) ? res.notices : []);
+      if (res?.outbound) setOutbound(res.outbound);
+    } catch {
+      // 铃铛取不到账本不该炸掉整个 shell：保持上一次的展示，等下一次事件/打开时再拉。
+    }
+  }, []);
+
+  useEffect(() => { void refresh(); }, [refresh]);
+
+  // 服务端记了新通知 → 实时增量刷新（不轮询）。
+  useEffect(() => {
+    if (!noticeEventTs) return;
+    void refresh();
+  }, [noticeEventTs, refresh]);
+
+  // 兼容层：BranchListPage 等页面仍用 window 事件报「环境变量缺失」这类前端侧发现的问题。
+  // 乐观插入让铃铛立刻亮，同时 POST 到服务端账本落库（失败就靠下一次 refresh 纠正）。
+  const pendingRef = useRef<Set<string>>(new Set());
   useEffect(() => {
     const onUpsert = (event: Event): void => {
       const detail = (event as CustomEvent<SiteNoticePayload>).detail;
       if (!detail?.id || !detail.title) return;
+      const level: NoticeLevel = detail.tone || 'info';
+      const nowIso = new Date().toISOString();
       setNotices((current) => {
         const existing = current.find((item) => item.id === detail.id);
         if (existing?.dismissedAt) return current;
-        const nextNotice: SiteNotice = {
+        const next: SiteNotice = {
           ...existing,
-          ...detail,
-          tone: detail.tone || existing?.tone || 'info',
-          createdAt: existing?.createdAt || new Date().toISOString(),
+          id: detail.id,
+          dedupeKey: existing?.dedupeKey || detail.id,
+          level,
+          title: detail.title,
+          body: detail.body,
+          source: detail.source,
+          projectId: detail.projectId,
+          projectName: detail.projectName,
+          projectSlug: detail.projectSlug,
+          href: detail.href,
+          actionLabel: detail.actionLabel,
+          createdAt: existing?.createdAt || nowIso,
+          updatedAt: nowIso,
+          occurrences: existing ? existing.occurrences + 1 : 1,
         };
-        const next = [nextNotice, ...current.filter((item) => item.id !== detail.id)].slice(0, MAX_NOTICES);
-        storeNotices(next);
-        return next;
+        return [next, ...current.filter((item) => item.id !== detail.id)];
       });
+      if (pendingRef.current.has(detail.id)) return;
+      pendingRef.current.add(detail.id);
+      void apiRequest('/api/notices', {
+        method: 'POST',
+        body: {
+          id: detail.id,
+          title: detail.title,
+          body: detail.body,
+          level,
+          source: detail.source || 'ops',
+          projectId: detail.projectId,
+          projectName: detail.projectName,
+          projectSlug: detail.projectSlug,
+          href: detail.href,
+          actionLabel: detail.actionLabel,
+        },
+      }).catch(() => { /* 落库失败不回滚乐观插入：下一次 refresh 会以服务端为准 */ })
+        .finally(() => { pendingRef.current.delete(detail.id); });
     };
     window.addEventListener('cds:notice:upsert', onUpsert);
     return () => window.removeEventListener('cds:notice:upsert', onUpsert);
@@ -88,58 +169,20 @@ export function SiteNoticeInbox(): JSX.Element {
   const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
 
-  // 陈旧通知清理(2026-07-21):通知持久化在 localStorage 且携带创建时刻的项目 id,
-  // 项目删除/重建后旧通知仍留存,用户点「查看推荐方式」落到 /settings/<旧id> 即 404。
-  // 面板打开时对通知引用的项目逐个探活,确认 404(project_not_found)的通知自动移除;
-  // 网络错误/5xx 不动(可能是瞬时故障,不能误删)。每个 id 每次会话只探一次。
-  const checkedProjectIdsRef = useRef<Set<string>>(new Set());
-  useEffect(() => {
-    if (!open) return;
-    const idsToCheck = [...new Set(
-      notices
-        .filter((item) => !item.dismissedAt && item.projectId)
-        .map((item) => item.projectId as string),
-    )].filter((id) => !checkedProjectIdsRef.current.has(id));
-    if (idsToCheck.length === 0) return;
-    let cancelled = false;
-    void Promise.all(idsToCheck.map(async (id) => {
-      try {
-        await apiRequest(`/api/projects/${encodeURIComponent(id)}`);
-        checkedProjectIdsRef.current.add(id);
-        return null;
-      } catch (err) {
-        if (err instanceof ApiError && err.status === 404) {
-          checkedProjectIdsRef.current.add(id);
-          return id;
-        }
-        return null; // 瞬时错误不判死,下次打开重探
-      }
-    })).then((results) => {
-      if (cancelled) return;
-      const goneIds = new Set(results.filter((id): id is string => !!id));
-      if (goneIds.size === 0) return;
-      setNotices((current) => {
-        const next = current.filter((item) => !(item.projectId && goneIds.has(item.projectId)));
-        if (next.length === current.length) return current;
-        storeNotices(next);
-        return next;
-      });
-    });
-    return () => { cancelled = true; };
-  }, [open, notices]);
-
   const markAllRead = (): void => {
     const now = new Date().toISOString();
-    const next = notices.map((item) => (item.dismissedAt || item.readAt ? item : { ...item, readAt: now }));
-    setNotices(next);
-    storeNotices(next);
+    const before = notices;
+    setNotices(notices.map((item) => (item.dismissedAt || item.readAt ? item : { ...item, readAt: now })));
+    void apiRequest('/api/notices/read-all', { method: 'POST' })
+      .catch(() => { setNotices(before); });
   };
 
   const dismissNotice = (id: string): void => {
     const now = new Date().toISOString();
-    const next = notices.map((item) => (item.id === id ? { ...item, readAt: item.readAt || now, dismissedAt: now } : item));
-    setNotices(next);
-    storeNotices(next);
+    const before = notices;
+    setNotices(notices.map((item) => (item.id === id ? { ...item, readAt: item.readAt || now, dismissedAt: now } : item)));
+    void apiRequest(`/api/notices/${encodeURIComponent(id)}/dismiss`, { method: 'POST' })
+      .catch(() => { setNotices(before); });
   };
 
   return (
@@ -151,7 +194,10 @@ export function SiteNoticeInbox(): JSX.Element {
         title={`站内信${unreadCount ? ` · ${unreadCount} 条未读` : ''}`}
         onClick={() => {
           setOpen((value) => !value);
-          if (!open) markAllRead();
+          if (!open) {
+            void refresh();
+            markAllRead();
+          }
         }}
       >
         <Bell className="h-5 w-5" />
@@ -167,25 +213,38 @@ export function SiteNoticeInbox(): JSX.Element {
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
             <div>
               <div className="text-sm font-semibold">站内信</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">持久化提醒，不再占用页面横幅</div>
+              <div className="mt-0.5 text-[11px] text-muted-foreground">由 CDS 服务端记录，关掉页面也不会漏</div>
             </div>
             <button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭站内信">
               <X className="h-4 w-4" />
             </button>
           </div>
 
+          {!outbound.configured ? (
+            <div className="border-b border-[hsl(var(--hairline))] bg-amber-500/10 px-3 py-2 text-[11px] leading-4 text-amber-700 dark:text-amber-300">
+              {outbound.reason || '未配置外发凭据，通知仅记录在 CDS 本地'}
+            </div>
+          ) : null}
+
           {activeNotices.length === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
           ) : (
-            <div className="max-h-[420px] overflow-auto">
+            <div className="max-h-[420px] overflow-auto" style={{ overscrollBehavior: 'contain' }}>
               {activeNotices.map((notice) => (
                 <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
                   <div className="flex items-start gap-3">
-                    <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${toneClass(notice.tone)}`}>
+                    <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${levelClass(notice.level)}`}>
                       <NoticeIcon source={notice.source} />
                     </span>
                     <div className="min-w-0 flex-1">
-                      <div className="text-sm font-semibold leading-5">{notice.title}</div>
+                      <div className="flex items-start gap-2">
+                        <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
+                        {notice.occurrences > 1 ? (
+                          <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
+                            {notice.occurrences} 次
+                          </span>
+                        ) : null}
+                      </div>
                       {noticeProjectLabel(notice) ? (
                         <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
                           <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
@@ -198,6 +257,9 @@ export function SiteNoticeInbox(): JSX.Element {
                         </div>
                       ) : null}
                       <div className="mt-1 text-xs leading-5 text-muted-foreground">{notice.body}</div>
+                      {outboundHint(notice) ? (
+                        <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
+                      ) : null}
                       <div className="mt-2 flex flex-wrap items-center gap-2">
                         {notice.href ? (
                           <a

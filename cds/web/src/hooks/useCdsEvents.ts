@@ -48,6 +48,8 @@ export type CdsEventType =
   | 'infra.flap.circuit-breaker'
   // 2026-06-11:Agent 请求观测台 — 会话活动事件(创建/状态翻转/收发节点)
   | 'agent-session.activity'
+  // 2026-07-29:服务端站内信账本记下一条新通知(右上角铃铛实时亮)
+  | 'notice.created'
   | 'heartbeat';
 
 export type ConnectionState =
@@ -143,6 +145,12 @@ interface StoreState {
     eventType?: string;
     status?: string;
   } | null;
+  /**
+   * 2026-07-29:服务端站内信账本新记了一条(右上角铃铛据此实时增量插入)。
+   * 只带 ts + 最小标识,通知正文由 SiteNoticeInbox 自己从 GET /api/notices 拉——
+   * 账本是服务端权威,前端不做第二份归并。
+   */
+  lastNoticeEvent: { ts: string; id?: string; dedupeKey?: string } | null;
   /** 连续失败次数(用于退避 + 是否进 disconnected) */
   consecutiveErrors: number;
   /** 最近一次错误 */
@@ -161,6 +169,7 @@ const INITIAL_STATE: StoreState = {
   lastAccessRequestEvent: null,
   lastOperatorRequestEvent: null,
   lastAgentActivityEvent: null,
+  lastNoticeEvent: null,
   consecutiveErrors: 0,
   lastError: null,
 };
@@ -256,6 +265,10 @@ function openConnection(): void {
     'infra.flap.circuit-breaker',
     // 2026-06-11:Agent 请求观测台实时行内更新
     'agent-session.activity',
+    // 2026-07-29:站内信。**联合类型加了这里不加等于没加** —— EventSource 只把
+    // 已 addEventListener 的类型派发出去,漏注册的最多靠 25s 心跳隐身通过
+    // (operator.request.* 栽过同款,见上面 PR #684 注释)。守卫测试断言两处都有。
+    'notice.created',
     'heartbeat',
   ];
   for (const type of types) {
@@ -383,6 +396,13 @@ function routeEvent(type: CdsEventType, envelope: CdsEventEnvelope): void {
           eventType: data.eventType,
           status: data.status,
         },
+      });
+      break;
+    }
+    case 'notice.created': {
+      const data = (envelope.data || {}) as { id?: string; dedupeKey?: string };
+      setState({
+        lastNoticeEvent: { ts: envelope.ts, id: data.id, dedupeKey: data.dedupeKey },
       });
       break;
     }
