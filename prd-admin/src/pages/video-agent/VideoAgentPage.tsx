@@ -18,6 +18,7 @@ import type {
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
 import { VideoProjectStudio } from './VideoProjectStudio';
 import { VideoStoryboardEditor } from './VideoStoryboardEditor';
+import { VideoStudioDemo } from './VideoStudioDemo';
 
 const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
 
@@ -50,6 +51,7 @@ export const VideoAgentPage: React.FC = () => {
     try { return sessionStorage.getItem(SELECTED_PROJECT_KEY); } catch { return null; }
   });
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [demoOpen, setDemoOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -181,6 +183,10 @@ export const VideoAgentPage: React.FC = () => {
 
   if (loading) return <MapSectionLoader text="正在打开视频制作台" />;
 
+  if (demoOpen) {
+    return <VideoStudioDemo onBack={() => setDemoOpen(false)} />;
+  }
+
   if (activeRunId) {
     if (activeRun?.mode === 'direct') {
       return (
@@ -222,6 +228,7 @@ export const VideoAgentPage: React.FC = () => {
       onAnalyze={analyzeProject}
       onCreateDirect={createDirectVideo}
       onOpenRun={setActiveRunId}
+      onOpenDemo={() => setDemoOpen(true)}
     />
   );
 };

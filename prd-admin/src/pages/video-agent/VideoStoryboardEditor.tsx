@@ -4,16 +4,19 @@ import {
   AlertCircle,
   ArrowLeft,
   Check,
+  Clapperboard,
   Columns2,
   ChevronRight,
   Clock3,
   CircleStop,
   Download,
+  FileText,
   Film,
   GripVertical,
   History,
   Image as ImageIcon,
   Layers3,
+  ListChecks,
   Maximize2,
   PanelRightOpen,
   Pause,
@@ -63,6 +66,7 @@ export interface VideoStoryboardEditorProps {
 }
 
 type PreviewMode = 'scene' | 'compare' | 'export';
+export type StoryboardExperienceState = 'progress' | 'empty-error' | 'editor';
 
 const DURATIONS = [5, 8, 10, 12, 15];
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'];
@@ -87,6 +91,18 @@ const PHASE_LABELS: Record<string, string> = {
   'export-uploading': '正在上传成片',
   'export-failed': '导出失败，可修改后重试',
   completed: '成片已就绪',
+};
+
+export const getStoryboardExperienceState = (
+  run: Pick<VideoGenRun, 'status' | 'currentPhase' | 'scenes'>,
+): StoryboardExperienceState => {
+  if (run.scenes.length > 0) return 'editor';
+  if (['Failed', 'Cancelled', 'Editing', 'Completed'].includes(run.status)) return 'empty-error';
+  if (
+    ['Queued', 'Scripting', 'Rendering'].includes(run.status)
+    || /queue|script|analy|prepare/i.test(run.currentPhase)
+  ) return 'progress';
+  return 'empty-error';
 };
 
 export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ runId, onBack }) => {
@@ -356,14 +372,35 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   if (!run) return <MapSectionLoader text="正在打开视频项目" />;
 
-  if (run.status === 'Queued' || run.status === 'Scripting') {
+  const experienceState = getStoryboardExperienceState(run);
+
+  if (experienceState === 'progress') {
     return (
-      <div className="video-console-state">
-        <MapSpinner size={34} />
-        <strong>{PHASE_LABELS[run.currentPhase] || '正在创建视频项目'}</strong>
-        <span>文学稿正在转化为可编辑镜头，生成完成后会自动进入制作台。</span>
-        <ProgressBar progress={run.phaseProgress} />
-        {onBack && <Button size="sm" variant="ghost" onClick={onBack}>返回列表</Button>}
+      <StoryboardProgressView
+        run={run}
+        source={project?.sourceMarkdown || run.articleMarkdown || run.directPrompt}
+        onBack={onBack}
+        onCancel={cancelRun}
+        cancelling={mutating === 'cancel-run'}
+      />
+    );
+  }
+
+  if (experienceState === 'empty-error') {
+    return (
+      <div className="video-storyboard-empty" role="alert">
+        <div className="video-storyboard-empty__card">
+          <span><AlertCircle size={24} /></span>
+          <div>
+            <small>本次创作没有进入分镜阶段</small>
+            <h2>没有生成可编辑镜头</h2>
+            <p>{run.errorMessage || '系统没有从原稿中得到有效分镜。原稿仍已保存在项目中，可以返回后调整内容再试。'}</p>
+          </div>
+          <div className="video-storyboard-empty__actions">
+            {onBack && <Button variant="primary" onClick={onBack}>返回并调整原稿</Button>}
+            <Button variant="secondary" onClick={() => void loadRun()}>重新检查任务</Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -853,6 +890,76 @@ const ViewerProgress: React.FC<{ run: VideoGenRun; label?: string }> = ({ run, l
     <span>任务在服务器持续执行，离开页面不会中断。</span>
   </div>
 );
+
+const StoryboardProgressView: React.FC<{
+  run: VideoGenRun;
+  source?: string;
+  onBack?: () => void;
+  onCancel: () => void;
+  cancelling: boolean;
+}> = ({ run, source, onBack, onCancel, cancelling }) => {
+  const progress = Math.max(4, Math.min(run.phaseProgress || 12, 96));
+  const sourcePreview = source?.trim() || '原稿已保存，正在准备分析内容。';
+  const activeStep = progress >= 70 ? 2 : progress >= 25 ? 1 : 0;
+  const steps = [
+    ['理解原稿', '识别人物、场景和情绪转折'],
+    ['规划镜头', '把故事拆成可编辑的镜头节拍'],
+    ['生成分镜', '写入画面描述与默认生成参数'],
+    ['进入制作台', '所有镜头会在同一页继续编辑'],
+  ];
+
+  return (
+    <div className="video-storyboard-progress" aria-live="polite" data-testid="video-storyboard-progress">
+      <header>
+        <div>
+          {onBack && <button onClick={onBack} aria-label="返回作品列表"><ArrowLeft size={18} /></button>}
+          <span><Clapperboard size={18} /></span>
+          <div><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</strong><small>创作任务正在后台持续执行</small></div>
+        </div>
+        <Button size="sm" variant="secondary" onClick={onCancel} disabled={cancelling}>
+          {cancelling ? <MapSpinner size={14} /> : <CircleStop size={14} />} 停止任务
+        </Button>
+      </header>
+
+      <main>
+        <section className="video-storyboard-progress__summary">
+          <span className="video-storyboard-progress__badge"><Sparkles size={14} /> 正在把内容变成可编辑分镜</span>
+          <h1>{PHASE_LABELS[run.currentPhase] || '正在分析故事结构'}</h1>
+          <p>不需要守着空白页面。你可以先检查原稿和创作流程，也可以离开页面，任务不会中断。</p>
+          <div className="video-storyboard-progress__meter">
+            <div><span>整体进度</span><strong>{progress}%</strong></div>
+            <ProgressBar progress={progress} />
+          </div>
+          <ol>
+            {steps.map(([title, detail], index) => (
+              <li key={title} className={index < activeStep ? 'is-done' : index === activeStep ? 'is-active' : ''}>
+                <i>{index < activeStep ? <Check size={14} /> : index + 1}</i>
+                <span><strong>{title}</strong><small>{detail}</small></span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="video-storyboard-progress__draft">
+          <div className="video-storyboard-progress__draft-heading">
+            <div><FileText size={17} /><span><strong>创作简报</strong><small>原稿已经安全保存</small></span></div>
+            <span>{sourcePreview.length.toLocaleString('zh-CN')} 字</span>
+          </div>
+          <blockquote>{sourcePreview.slice(0, 420)}{sourcePreview.length > 420 ? '…' : ''}</blockquote>
+          <div className="video-storyboard-progress__preview">
+            <div><img src="/video-studio/story-to-film-stage.jpg" alt="镜头风格参考" /></div>
+            <div>
+              <span><ListChecks size={15} /> 即将得到</span>
+              <strong>可逐镜修改的故事板</strong>
+              <p>每个镜头都包含画面描述、时长、画幅、模型和版本记录，不满意的镜头可以单独重做。</p>
+              <div><span>画面</span><span>旁白</span><span>字幕</span><span>时间线</span></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+};
 
 const ProgressBar: React.FC<{ progress: number }> = ({ progress }) => (
   <div className="video-console__progress"><i style={{ width: `${Math.max(2, Math.min(progress, 100))}%` }} /></div>
