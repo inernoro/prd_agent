@@ -25,6 +25,7 @@ import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } f
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import {
   branchEntrypointDepsFromState,
+  isGatewayConsoleSubdomain,
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedServiceLabels,
@@ -15162,10 +15163,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> {
+  ): Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> = [];
     if (!gwPreviewSlug) return gatewayUrls;
     const profileById = new Map<string, BuildProfile>();
     for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
@@ -15205,6 +15206,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
         // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
         url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
+        // 「这是不是可登录的控制台」由平台判定后下发。面板此前自己按子域名字判，
+        // 改名当天那 4 处判定整块失效（Codex P2）；命名约定的解释权归这一侧。
+        isConsole: isGatewayConsoleSubdomain(sub),
       });
     }
     return gatewayUrls;

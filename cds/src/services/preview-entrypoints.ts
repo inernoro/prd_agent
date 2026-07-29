@@ -183,6 +183,21 @@ export function buildPublishedEntrypoints(opts: {
 }
 
 /**
+ * 这个子域是不是模型网关**控制台**（可登录的 web 界面），而不是 API 引擎。
+ *
+ * 判据挂在别名表上，因此 2026-07-29 的 `llmgw-web` → `llmgw` 改名自动同时认两个名字，
+ * 别名将来删掉时这里也跟着收敛，不需要谁记得回来改。
+ *
+ * 为什么必须由服务端算好下发：CDS 前端此前在 `BranchDetailDrawer` 里用
+ * `subdomain === 'llmgw-web'` 自己判了 4 处，改名后整块失效——面板把控制台
+ * 当成健康检查入口标注、排序也不再把它排在最前（Codex P2）。这与本 PR 的主题
+ * 同源：命名约定的解释权归平台，消费方只读结论。
+ */
+export function isGatewayConsoleSubdomain(subdomain: string): boolean {
+  return subdomainWithLegacyAliases('llmgw').includes((subdomain || '').trim().toLowerCase());
+}
+
+/**
  * 命名子域入口在面板上该落到哪个路径。
  *
  * **判据是 profile 自己声明的就绪路径，不是子域的名字。** 就绪路径是该服务对
@@ -202,8 +217,7 @@ export function resolveServiceLandingPath(subdomain: string, readinessPath?: str
   if (declared.startsWith('/')) return declared;
   const sub = (subdomain || '').trim().toLowerCase();
   // 控制台是 Vite SPA，nginx 对任何非 /gw/* 路径回落 index.html，落根即进登录页。
-  // `llmgw` 是 2026-07-29 起的规范名，`llmgw-web` 是发布器继续服务的历史别名。
-  if (sub === 'llmgw' || sub === 'llmgw-web') return '/';
+  if (isGatewayConsoleSubdomain(sub)) return '/';
   // serving 引擎 API-only，挂在 /gw/v1/* 下，裸根 404。
   if (sub === 'llmgw-serve') return '/gw/v1/healthz';
   return '/';

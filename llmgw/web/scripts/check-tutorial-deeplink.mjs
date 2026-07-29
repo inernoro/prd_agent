@@ -97,8 +97,17 @@ must(
 
 const quickstart = strip(read('src/pages/QuickstartPage.tsx'));
 must(
-  (quickstart.match(/invalidateOnboardingCache\(/g) || []).length >= 3,
-  'QuickstartPage: 签密钥与两种测试成功路径都要失效新人清单缓存（清单是派生态，不失效就一直显示未完成）',
+  quickstart.includes('invalidateOnboardingCache(tenant?.id)'),
+  'QuickstartPage: 本页签密钥后要失效新人清单缓存（清单是派生态，不失效就一直显示未完成）',
+);
+must(
+  (quickstart.match(/markRequestCompleted\(/g) || []).length >= 2,
+  'QuickstartPage: 两种测试成功路径都要走 markRequestCompleted 而非裸失效'
+  + '（serving 的 LastUsedAt 是不 await 的后台写，只失效+重拉会抢在它落库之前读到旧值）',
+);
+must(
+  onboarding.includes('REQUEST_COMPLETED_TENANTS.has(tenantId)'),
+  'onboarding: 「跑通首条请求」必须叠上本地确证，不能只信可能落后于后台写的 digest',
 );
 
 if (failures.length > 0) {

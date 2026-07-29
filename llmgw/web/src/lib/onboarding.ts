@@ -73,6 +73,26 @@ export function invalidateOnboardingCache(tenantId?: string) {
   for (const listener of [...INVALIDATION_LISTENERS]) listener();
 }
 
+/**
+ * 「这个租户刚刚亲自跑通过一条请求」的本地确证。
+ *
+ * 为什么不能只靠重拉 digest：serving 端把 LastUsedAt 写成 fire-and-forget
+ * （`GatewayRuntimeGovernance.cs` 的 `_ = keys.UpdateOneAsync(...)`，不 await），
+ * Quickstart 测试成功后立刻失效并重拉，完全可能抢在那次写落库之前读到旧值，
+ * 于是把 everUsed:false 又缓存 60 秒 —— 用户明明刚看到「已写入请求记录」，
+ * 清单却还说没跑通（Codex P2）。
+ *
+ * 请求成功本身就是这件事的第一手证据，不需要绕回数据库再问一遍。这里只做
+ * 单调的「一旦为真永远为真」叠加：它不会让任何步骤被错误地标成未完成。
+ */
+const REQUEST_COMPLETED_TENANTS = new Set<string>();
+
+/** Quickstart 测试成功时调用：钉住既成事实 + 失效缓存，取代裸失效。 */
+export function markRequestCompleted(tenantId?: string): void {
+  if (tenantId) REQUEST_COMPLETED_TENANTS.add(tenantId);
+  invalidateOnboardingCache(tenantId);
+}
+
 type TeamFacts = { hasTeam: boolean; hasMember: boolean };
 
 function loadTeamFacts(tenantId: string): Promise<TeamFacts> {
@@ -211,7 +231,9 @@ export function useOnboardingState(): OnboardingState {
         // 只有还能用的密钥才算这一步完成（全被禁用/吊销时清单不该消失）。
         key: keys.activePrefix !== null,
         // 「跑通首条请求」取密钥的 lastUsedAt —— 持久事实，不受 90 天日志保留期影响。
-        request: keys.everUsed,
+        // 叠上本地确证：serving 端 LastUsedAt 是不 await 的后台写，本轮重拉可能
+        // 抢在它落库之前，只信 digest 会把刚跑成功的租户又标成未完成（Codex P2）。
+        request: keys.everUsed || REQUEST_COMPLETED_TENANTS.has(tenantId),
       });
       setUnavailable(false);
       setLoading(false);

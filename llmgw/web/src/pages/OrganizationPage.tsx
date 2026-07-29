@@ -331,6 +331,10 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     const response = await updateMember(member.id, request);
     setBusy(false);
     if (!response.success) { onError(response.error.message); return; }
+    // 改成员和建成员是同一份事实的两个方向：新人清单的「拉一个成员」只数 active，
+    // 把唯一一个额外成员停用后这一步应当重新亮起。此前只在创建路径失效，
+    // 于是 60 秒内回到概览仍认为这一步完成、清单已经消失（Codex P2）。
+    invalidateOnboardingCache();
     await onDone(`成员“${who}”已更新`);
   };
 

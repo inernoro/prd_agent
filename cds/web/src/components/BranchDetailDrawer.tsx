@@ -268,6 +268,24 @@ interface GatewayUrlEntry {
   subdomain: string;
   name: string;
   url: string;
+  /**
+   * 这条入口是不是可登录的网关控制台（而非 API 引擎的健康检查入口）。
+   *
+   * 由服务端 computeBranchGatewayUrls 下发，前端不再按子域名字自己判：
+   * 2026-07-29 控制台子域从 `llmgw-web` 改名为 `llmgw` 时，这里原本硬编码的
+   * 4 处 `=== 'llmgw-web'` 全部失效——控制台被当成健康检查入口标注、排序也不再
+   * 排在最前（Codex P2）。判据在 cds/src/services/preview-entrypoints.ts。
+   *
+   * 可选：老后端不返回该字段时退回按名字判，避免前后端版本错位时整块失灵。
+   */
+  isConsole?: boolean;
+}
+
+/** 老后端没有 isConsole 时的兜底（与 preview-entrypoints 的别名表同口径）。 */
+function isConsoleEntry(gw: GatewayUrlEntry): boolean {
+  if (typeof gw.isConsole === 'boolean') return gw.isConsole;
+  const sub = gw.subdomain.toLowerCase();
+  return sub === 'llmgw' || sub === 'llmgw-web';
 }
 
 // 2026-05-18: 分支生命周期系统日志（部署 / 停止 / 崩溃 / 重启 / 回收）。
@@ -2060,11 +2078,11 @@ export function BranchDetailDrawer({
                     {[...gatewayUrls]
                       .sort((a, b) => {
                         // 网关控制台(真实可登录页面)排在引擎/健康入口之前。
-                        const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
-                        return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                        const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
+                        return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
                       })
                       .map((gw) => {
-                        const isConsole = gw.subdomain.toLowerCase() === 'llmgw-web';
+                        const isConsole = isConsoleEntry(gw);
                         return (
                           <a
                             key={gw.subdomain}
@@ -2277,10 +2295,10 @@ export function BranchDetailDrawer({
                       ...((previewUrl || branch.previewUrl) ? [{ name: '主应用', url: (previewUrl || branch.previewUrl)! }] : []),
                       ...[...gatewayUrls]
                         .sort((a, b) => {
-                          const rank = (s: string) => (s.toLowerCase() === 'llmgw-web' ? 0 : 1);
-                          return rank(a.subdomain) - rank(b.subdomain) || a.subdomain.localeCompare(b.subdomain);
+                          const rank = (gw: GatewayUrlEntry) => (isConsoleEntry(gw) ? 0 : 1);
+                          return rank(a) - rank(b) || a.subdomain.localeCompare(b.subdomain);
                         })
-                        .map((gw) => ({ name: gw.subdomain.toLowerCase() === 'llmgw-web' ? '网关控制台' : gw.subdomain, url: gw.url })),
+                        .map((gw) => ({ name: isConsoleEntry(gw) ? '网关控制台' : gw.subdomain, url: gw.url })),
                     ]}
                     onToast={onToast}
                   />

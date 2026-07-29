@@ -20,7 +20,7 @@ import { Button, Card, Chip, ReadOnlyNotice, SectionLoader } from '@/components/
 import { AccessSnippetBar } from '@/components/AccessSnippetBar';
 import { OnboardingChecklist } from '@/components/OnboardingChecklist';
 import { DetailsBlock, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
-import { invalidateOnboardingCache } from '@/lib/onboarding';
+import { invalidateOnboardingCache, markRequestCompleted } from '@/lib/onboarding';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
 import { CARD_BODY, GAP } from '@/lib/surface';
@@ -351,16 +351,16 @@ export function QuickstartPage() {
       if (!response.ok) {
         setTestResult({ ok: false, message: readErrorMessage(payload) || `${mode === 'safe' ? '安全测试' : '真实请求'}失败，HTTP ${response.status}`, requestId: actualRequestId });
       } else if (mode === 'safe' && upstreamCalled === false) {
-        // 这次请求已写进记录：新人清单的「跑通首条请求」是从日志推出来的派生态，
-        // 不失效的话，缓存里那个 false 会让它一直显示未完成（Codex P2）。
-        invalidateOnboardingCache(tenant?.id);
+        // 这次请求已写进记录。用 markRequestCompleted 而不是裸失效：serving 端
+        // 的 LastUsedAt 是不 await 的后台写，只失效+重拉会抢在它落库之前读到旧值。
+        markRequestCompleted(tenant?.id);
         setTestResult({ ok: true, message: `${definition.label} 的 ${requestTypeLabel(target.requestType)}、团队边界和密钥鉴权均通过；已写入请求记录，未访问上游。`, requestId: actualRequestId });
       } else if (mode === 'safe') {
         setTestResult({ ok: false, message: 'Gateway 未明确证明 upstreamCalled=false，本次结果不计为安全验收。', requestId: actualRequestId });
       } else {
         const actualModel = readActualModel(payload) || currentRoutePreview?.actualModel || '已解析模型';
         const provider = currentRoutePreview?.actualPlatformName || currentRoutePreview?.actualPlatformId || '已解析 Provider';
-        invalidateOnboardingCache(tenant?.id);
+        markRequestCompleted(tenant?.id);
         setTestResult({ ok: true, message: `真实上游已返回，Provider：${provider}，模型：${actualModel}。请用 requestId 核对实际模型、耗时和费用。`, requestId: actualRequestId });
       }
     } catch (error) {

@@ -4,6 +4,7 @@ import {
   RESERVED_ENTRYPOINT_ENV_KEYS,
   SERVICE_URLS_ENV_KEY,
   buildPublishedEntrypoints,
+  isGatewayConsoleSubdomain,
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedEntrypointsEnv,
@@ -299,5 +300,28 @@ describe('resolveServiceLandingPath — 落点看 profile 的声明，不看子�
     expect(resolveServiceLandingPath('llmgw-serve', '   ')).toBe('/gw/v1/healthz');
     expect(resolveServiceLandingPath('llmgw-serve', 'gw/v1/healthz')).toBe('/gw/v1/healthz');
     expect(resolveServiceLandingPath('some-app', 'health')).toBe('/');
+  });
+});
+
+describe('isGatewayConsoleSubdomain — 控制台判定挂在别名表上（Codex P2）', () => {
+  it('规范名与历史别名都认（改名当天两个名字同时在跑）', () => {
+    expect(isGatewayConsoleSubdomain('llmgw')).toBe(true);
+    expect(isGatewayConsoleSubdomain('llmgw-web')).toBe(true);
+    expect(isGatewayConsoleSubdomain('LLMGW-Web')).toBe(true);
+    expect(isGatewayConsoleSubdomain('  llmgw  ')).toBe(true);
+  });
+
+  it('引擎与其它服务不是控制台', () => {
+    expect(isGatewayConsoleSubdomain('llmgw-serve')).toBe(false);
+    expect(isGatewayConsoleSubdomain('docs')).toBe(false);
+    expect(isGatewayConsoleSubdomain('')).toBe(false);
+  });
+
+  it('判定与别名表同源：别名表列出的每个名字都算控制台', () => {
+    // 这条锁的是「同源」而不是某几个字面量：将来删掉 llmgw-web 别名时，
+    // 这里跟着收敛，不会留下一处只认旧名的判定（形状 3：判据分裂）。
+    for (const name of subdomainWithLegacyAliases('llmgw')) {
+      expect(isGatewayConsoleSubdomain(name)).toBe(true);
+    }
   });
 });
