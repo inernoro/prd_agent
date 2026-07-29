@@ -210,10 +210,18 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // SVGAElement，其 .href 是 SVGAnimatedString 而不是字符串，拿去做正则会
             // 判失败 → 这类链接就漏出拦截、照样把 frame 导航走。读属性 + new URL()
             // 同时覆盖 HTML/SVG 锚点，也顺带把相对路径解析成绝对地址。
+            // 覆盖所有「能导航本 frame」的锚点形态，不逐个补丁：
+            //   a[href]（HTML / SVG2）、a[xlink:href]（SVG1.1 遗留）、area[href]（图像映射）
+            // 表单提交不在其列——sandbox 未给 allow-forms，浏览器直接阻断；
+            // <base> 与 <meta refresh> 由发布闸整标签禁用。
+            const XLINK = 'http://www.w3.org/1999/xlink';
             d.addEventListener('click', (ev) => {
-              const a = (ev.target as Element | null)?.closest?.('a[href]');
+              const a = (ev.target as Element | null)?.closest?.('a, area');
               if (!a) return;
-              const raw = (a.getAttribute('href') || '').trim();
+              const raw = (a.getAttribute('href')
+                ?? a.getAttributeNS(XLINK, 'href')
+                ?? a.getAttribute('xlink:href')
+                ?? '').trim();
               if (!raw || raw.startsWith('#')) return;                      // 页内锚点
               if (a.hasAttribute('download')) return;                       // 原生下载
               let url: URL;

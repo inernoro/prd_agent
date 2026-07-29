@@ -233,10 +233,10 @@ class _ReportScanner(HTMLParser):
                 self._check_load_url(tag, n, v)
             if n == "style" and v:
                 self.css_chunks.append(v)
-        if tag == "a":
-            self._check_nav_anchor(attrs)
+        if tag in ("a", "area"):
+            self._check_nav_anchor(tag, attrs)
 
-    def _check_nav_anchor(self, attrs):
+    def _check_nav_anchor(self, tag, attrs):
         """导航锚点必须开新标签。
 
         知识库把正文渲染在**自增高的 sandbox iframe** 里（prd-admin 的 FilePreview）。
@@ -247,7 +247,9 @@ class _ReportScanner(HTMLParser):
         所以在发布闸这里硬校验——不能只把它写成文档里的一句话。
         只管 http(s)：mailto/tel/自定义协议与页内锚点不会导航本 frame。"""
         d = {k.lower(): (v or "").strip() for k, v in attrs}
-        href = d.get("href", "")
+        # href 三种写法都要认：HTML/SVG2 的 href、SVG1.1 遗留的 xlink:href。
+        # 覆盖 <a> 与 <area>（图像映射热区导航语义与 a 相同）。
+        href = d.get("href") or d.get("xlink:href") or ""
         if not href or href.startswith("#"):
             return                       # 页内锚点，不导航
         if "download" in d:
@@ -263,12 +265,12 @@ class _ReportScanner(HTMLParser):
             else:
                 return                   # mailto/tel/sms/自定义协议，不导航本 frame
         if (d.get("target") or "").lower() != "_blank":
-            self._err(f'<a href="{href[:60]}"> 缺 target="_blank"——'
+            self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "
                       "ResizeObserver 正反馈循环把页面卡死；导航链接一律新标签打开")
         rel = (d.get("rel") or "").lower().split()
         if "noopener" not in rel:
-            self._err(f'<a href="{href[:60]}"> 缺 rel="noopener"——'
+            self._err(f'<{tag} href="{href[:60]}"> 缺 rel="noopener"——'
                       "新标签会拿到 window.opener，存在 tabnabbing 风险，请写 "
                       'rel="noopener noreferrer"')
 

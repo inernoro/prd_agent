@@ -11,3 +11,5 @@
 | fix | skill | publish.py 发布闸新增导航锚点校验：http(s) 链接缺 target=_blank 或 rel=noopener 直接拒发，把原先只写在 SKILL.md 里的约束变成可执行守卫 |
 | fix | prd-admin | 链接拦截改读 href 属性 + new URL(raw, baseURI) 解析，覆盖内联 SVG 锚点（SVGAElement 的 .href 是 SVGAnimatedString 非字符串，原实现会漏拦并让 frame 被导航走）|
 | fix | skill | 发布闸锚点校验按「会不会导航本 frame」判定：文档相对/上级相对/query-only/根相对/协议相对链接一并纳入校验，仅 mailto/tel/自定义协议与页内锚点、download 放行 |
+| fix | prd-admin | 链接拦截覆盖全部可导航锚点形态：a[href]、SVG1.1 的 a[xlink:href]、area[href]（表单提交由 sandbox 无 allow-forms 阻断，base/meta-refresh 由发布闸禁用）|
+| fix | skill | 发布闸锚点校验同步覆盖 xlink:href 与 area 标签，19 例形态矩阵双向自测全过 |
