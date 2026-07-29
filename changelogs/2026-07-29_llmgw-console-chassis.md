@@ -12,3 +12,5 @@
 | refactor | llmgw | 「预算与用量」按 v1.2 迁移：解释收进 HelpPopover/DetailsBlock、账单导入表单改抽屉、「对账覆盖」由说明句改为页头派生指标（7 段/575 字 → 0 段/241 字） |
 | refactor | llmgw | 「提示词策略」按 v1.2 迁移：取消 1040px 居中改贴边全宽，合并顺序与日志口径收进折叠块并深链教程第 20 章（3 段/274 字 → 1 段/103 字） |
 | fix | llmgw | 修复预算与用量页表单控件缺高度（padding 撑出的高度低于漂移检测 34px 下限），改用 FIELD_INPUT |
+| refactor | llmgw | 「逻辑模型目录」按 v1.2 迁移：页头统一走 PageShell、创建卡内边距归一到 14、表单栅格改固定列宽，路由策略等说明收进 HelpPopover 并深链教程第 18 章（2 段/230 字 → 1 段/155 字） |
+| fix | llmgw | 逻辑模型页 var(--danger)/var(--success) 两处失效 token 改为 --err/--ok |
