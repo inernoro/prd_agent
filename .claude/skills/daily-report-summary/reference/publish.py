@@ -273,24 +273,23 @@ class _ReportScanner(HTMLParser):
         href = _normalize_url(d.get("href") or d.get("xlink:href") or "")
         if not href or href.startswith("#"):
             return                       # 页内锚点，不导航
-        if "download" in d:
-            return                       # 原生下载语义，不导航
         # 判「会不会把所在 frame 导航走」而不是「像不像 http 链接」：
         # 文档相对（report.html / ../a / ?entry=x）、根相对（/a）、协议相对（//host/a）
         # 统统会导航，必须校验。
-        # 协议豁免必须走**白名单**：data: / about: / blob: / javascript: 都会导航当前
-        # 浏览上下文，「非 http 就放行」会把它们整批漏过去。
+        # 协议一律**白名单豁免**：只有交给系统外部处理器的协议才放行。凡是走排除法
+        # （「不在黑名单就放行」）都会漏——data:/about:/blob: 是一批，file:/ftp: 又是一批。
         m = re.match(r"^([a-z][a-z0-9+.\-]*):", href, re.I)
-        if m:
-            scheme = m.group(1).lower()
-            if scheme in _BLOCKED_SCHEMES:
-                self._err(f'<{tag} href="{scheme}:..."> 使用 {scheme}: 协议——'
-                          "会在当前浏览上下文内导航/执行，自包含报告禁用")
-                return
-            if scheme in _EXTERNAL_HANDLER_SCHEMES:
-                return                   # 交给系统处理器，不动本 frame
-            if scheme not in ("http", "https"):
-                return                   # 未注册的自定义协议，浏览器不会导航本 frame
+        scheme = m.group(1).lower() if m else ""
+        if scheme in _BLOCKED_SCHEMES:
+            self._err(f'<{tag} href="{scheme}:..."> 使用 {scheme}: 协议——'
+                      "会在当前浏览上下文内导航/执行，自包含报告禁用")
+            return
+        if scheme in _EXTERNAL_HANDLER_SCHEMES:
+            return                       # 交给系统处理器，不动本 frame
+        # download 只在同源时被浏览器真正当下载；跨源 http(s) 会退化成普通导航。
+        # 报告最终落在哪个源不可知，故只对**相对 URL**（构造上必同源）豁免。
+        if "download" in d and not scheme and not href.startswith("//"):
+            return
         if (d.get("target") or "").lower() != "_blank":
             self._err(f'<{tag} href="{href[:60]}"> 缺 target="_blank"——'
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "

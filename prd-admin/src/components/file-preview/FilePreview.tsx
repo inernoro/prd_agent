@@ -234,10 +234,16 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
                 ?? a.getAttribute('xlink:href')
                 ?? '').trim();
               if (!raw || raw.startsWith('#')) return;                      // 页内锚点
-              if (a.hasAttribute('download')) return;                       // 原生下载
               let url: URL;
               try { url = new URL(raw, d.baseURI); } catch { return; }
               if (EXTERNAL_HANDLER.has(url.protocol)) return;               // 交给系统处理器
+              // download 不能无条件放行：浏览器对**跨源** http(s) 会忽略 download，
+              // 按普通导航处理——那正好是要拦的情形。只有同源才真的走原生下载。
+              if (a.hasAttribute('download')) {
+                let baseOrigin = '';
+                try { baseOrigin = new URL(d.baseURI).origin; } catch { /* 取不到就按跨源处理 */ }
+                if (baseOrigin && url.origin === baseOrigin) return;        // 同源，原生下载
+              }
               ev.preventDefault();                                          // 其余一律不许就地导航
               // 只有 http(s) 值得开新标签；data:/javascript:/about: 等直接拦掉不放行，
               // 在新标签里打开它们本身就是风险面。

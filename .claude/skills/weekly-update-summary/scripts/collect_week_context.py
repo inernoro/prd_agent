@@ -373,20 +373,31 @@ def _release_coverage(all_runs, sel_runs, start, end):
     import datetime as dt
     warns = []
     today = dt.date.today()
-    if (today - dt.date.fromisoformat(end)).days > RELEASE_RETENTION_DAYS:
-        warns.append(f"目标周整体早于 {RELEASE_RETENTION_DAYS} 天保留窗口，台账很可能已被淘汰")
+    # 必须拿**周起点**跟保留边界比，不是周终点：跨边界的那一周（如起点 93 天前、
+    # 终点 87 天前）前几天的记录已可被淘汰，只看终点会漏判成 complete。
+    if (today - dt.date.fromisoformat(start)).days > RELEASE_RETENTION_DAYS:
+        warns.append(f"本周起点已超出 {RELEASE_RETENTION_DAYS} 天保留窗口，早于边界的 run 可能已被淘汰")
     dates = sorted(d for d in ((r.get("startedAt") or "")[:10] for r in all_runs) if d)
     oldest = dates[0] if dates else None
     # 注意：不能用「oldest > start」推断被裁剪。新项目的首次发布本来就可能晚于周起点，
     # 那是真实的「当时还没有发布」，不是记录被删——照此告警会把准确数据误标成不完整，
     # 逼报告把正确数字写成下限。只从**真实的保留信号**出发：超出保留窗口、或条数触顶。
-    # 条数闸：某目标恰好留满上限，说明它更早的 run 已被削掉
+    # 条数闸：只有「目标触顶」还不够——触顶只说明更早的记录被削过，不代表削掉的
+    # 落在本周。裁剪从最旧开始，所以只有当该目标**现存最早记录晚于周起点**时，
+    # 本周区间才可能真的丢了行。否则本周数据完整，不该逼报告把准确数字写成下限。
     per_target = {}
     for r in all_runs:
-        per_target[r.get("targetId")] = per_target.get(r.get("targetId"), 0) + 1
-    capped = [k for k, v in per_target.items() if v >= RELEASE_MAX_RUNS_PER_TARGET]
-    if capped:
-        warns.append(f"{len(capped)} 个发布目标的 run 数已达 {RELEASE_MAX_RUNS_PER_TARGET} 条上限，更早记录已被裁剪")
+        k = r.get("targetId")
+        dts = (r.get("startedAt") or "")[:10]
+        e = per_target.setdefault(k, {"n": 0, "oldest": None})
+        e["n"] += 1
+        if dts and (e["oldest"] is None or dts < e["oldest"]):
+            e["oldest"] = dts
+    at_risk = [k for k, e in per_target.items()
+               if e["n"] >= RELEASE_MAX_RUNS_PER_TARGET and e["oldest"] and e["oldest"] > start]
+    if at_risk:
+        warns.append(f"{len(at_risk)} 个发布目标 run 数触及 {RELEASE_MAX_RUNS_PER_TARGET} 条上限"
+                     f"且现存最早记录晚于本周起点 {start}，本周区间可能已丢行")
     return {
         "complete": not warns,
         "warnings": warns,
