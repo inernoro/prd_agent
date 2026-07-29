@@ -6,10 +6,12 @@
   "description": "独立的 LLM Gateway 租户控制台（独立账号、路由和组件体系）",
   "scripts": {
     "dev": "vite",
-    "build": "node scripts/check-typography.mjs && tsc -b && vite build",
+    "build": "node scripts/check-typography.mjs && node scripts/check-prose.mjs && tsc -b && vite build",
     "preview": "vite preview",
     "tsc": "tsc -b",
-    "check:typography": "node scripts/check-typography.mjs"
+    "check:typography": "node scripts/check-typography.mjs",
+    "check:prose": "node scripts/check-prose.mjs",
+    "check:design": "pnpm check:typography && pnpm check:prose"
   },
   "dependencies": {
     "@fontsource-variable/plus-jakarta-sans": "^5.3.0",

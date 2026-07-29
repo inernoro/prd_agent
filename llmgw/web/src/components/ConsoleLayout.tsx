@@ -10,7 +10,7 @@ import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { canAccessPage, canUseCapability, type ConsolePage } from '@/lib/access';
 import { useThemePreference } from '@/lib/theme';
-import { resolveMapHomeHref } from '@/lib/mapNavigation';
+import { canOpenTutorials, resolveMapHomeHref, resolveTutorialHref } from '@/lib/mapNavigation';
 
 type NavItem = { to: string; label: string; icon: ReactNode; page: ConsolePage; end?: boolean };
 type NavGroup = { label: string; items: NavItem[] };
@@ -63,15 +63,10 @@ export function ConsoleLayout() {
     items: group.items.filter((item) => canAccessPage(tenant, item.page)),
   })).filter((group) => group.items.length > 0);
   const canSearchRequests = canUseCapability(tenant?.role, 'logsRead');
-  const canOpenMapTutorials = user?.identityProvider === 'map'
-    && (tenant?.role === 'owner' || tenant?.role === 'admin');
-  const mapTutorialHref = (() => {
-    const base = new URL(resolveMapHomeHref(), window.location.href);
-    base.pathname = `${base.pathname.replace(/\/$/, '')}/document-store`;
-    base.searchParams.set('tutorialRoute', location.pathname);
-    base.searchParams.set('tutorialLinks', '1');
-    return base.toString();
-  })();
+  // 判定与拼接都收在 lib/mapNavigation —— 页面里的 TutorialLink 走同一份实现，
+  // 不再各拼各的（否则改一处漏一处）。
+  const canOpenMapTutorials = canOpenTutorials(user, tenant);
+  const mapTutorialHref = resolveTutorialHref(location.pathname);
 
   useEffect(() => {
     getAvailableTenants().then((res) => {

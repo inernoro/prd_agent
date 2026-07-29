@@ -37,6 +37,12 @@
   --lh-body: 1.625;
   --lh-title: 1.8;
   --ls-title: -0.02em;
+
+  /* 段落可读宽度。页面容器一律贴边全宽，上限只作用在**正文**上——
+     这样表格能撑满，成句解释又不会在宽屏上横跨 1600px 让眼睛来回甩。
+     用 em 不用 ch：ch 是拉丁 "0" 的字宽，中文下不可预测，换个字体就悄悄跑偏。
+     42em @ --fs-body 14px ≈ 588px ≈ 每行 40 个汉字，落在可读带内。 */
+  --measure: 42em;
   --bg-page: #03080a;
   --bg-surface: #0c1114;
   --bg-elevated: #11181d;
@@ -1335,10 +1341,161 @@ a:focus-visible {
 .lg-usage-grid p,
 .lg-subtitle {
   margin: 0;
+  max-width: var(--measure);
   color: var(--text-muted);
   font-size: var(--fs-body);
   line-height: var(--lh-body);
 }
+
+/* 汇总指标条也是页头里的 <p>，但它是一排并列小字而不是成句正文，
+   套上 --measure 会让「团队 3 · 成员 12 · 密钥 5」提前折行。 */
+.lg-page-heading p.lg-summary-strip,
+.lg-logs-heading p.lg-summary-strip,
+.lg-log-summary-strip {
+  max-width: none;
+}
+
+/* ── 页面骨架（配 components/PageShell.tsx）──────────────────────────────────
+   PageShell / PageBody / .lg-page-heading 三者**必须保持透明无边框**：
+   e2e/llmgw-layout-drift.mjs 的 headingBoxed 从 h1 向上走 4 层，命中任何边框或
+   非透明底色即判定「标题被卡片包住」。在这里加一句 background（哪怕只是想做个
+   滚动阴影），8 条被测路由会同时开始漂移。 */
+.lg-page-shell {
+  flex: 1;
+  min-width: 0;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  overflow: hidden;
+}
+
+.lg-page-body {
+  flex: 1;
+  min-height: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  display: flex;
+  flex-direction: column;
+  gap: 12px;
+  padding-bottom: 16px;
+}
+
+/* 页头右侧操作组。与 .lg-log-page-actions 分开：那一套把按钮做成 38px 圆形，
+   是请求记录页的专属造型，不该扩散到配置页。 */
+.lg-page-actions {
+  display: flex;
+  flex-shrink: 0;
+  align-items: center;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+
+/* 正文段落：宽度受 --measure 约束。 */
+.lg-prose {
+  max-width: var(--measure);
+  margin: 0;
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  line-height: var(--lh-body);
+}
+
+/* 表单栅格：列宽固定 260~320px 且左对齐，替代 minmax(N, 1fr) 的拉伸写法。 */
+.lg-form-grid {
+  display: grid;
+  justify-content: start;
+  gap: 8px;
+  grid-template-columns: repeat(auto-fit, minmax(260px, 320px));
+  align-items: end;
+}
+
+/* 栅格里的按钮不跟着列宽拉伸，否则会被误读成又一个输入框。 */
+.lg-form-grid > button {
+  justify-self: start;
+}
+
+/* 出口一：字段旁的 ? 浮层。
+   内边距取 14 = surface.ts 的 CARD_PADDING —— 漂移检测会数「>150px 的盒子有几种内边距」，
+   这里另拍一个数就会给全站多添一种规格。 */
+.lg-help-popover {
+  position: relative;
+  display: inline-block;
+  vertical-align: middle;
+  margin-left: 4px;
+}
+
+.lg-help-popover > summary {
+  list-style: none;
+  cursor: pointer;
+  width: 18px;
+  height: 18px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border-subtle);
+  border-radius: 999px;
+  color: var(--text-muted);
+  font-size: var(--fs-micro);
+  font-weight: var(--fw-strong);
+}
+
+.lg-help-popover > summary::-webkit-details-marker { display: none; }
+.lg-help-popover[open] > summary { border-color: var(--accent); color: var(--accent); }
+
+.lg-help-popover > div {
+  position: absolute;
+  z-index: 50;
+  top: 24px;
+  left: -8px;
+  width: 288px;
+  padding: 14px;
+  border: 1px solid var(--border-strong);
+  border-radius: var(--radius);
+  background: var(--bg-elevated);
+  box-shadow: var(--shadow-drawer);
+  color: var(--text-secondary);
+  font-size: var(--fs-body);
+  font-weight: var(--fw-body);
+  line-height: var(--lh-body);
+  white-space: normal;
+}
+
+/* 触发点靠右时改为右对齐展开，避免越过容器右缘被 overflow 裁掉。 */
+.lg-help-popover--end > div {
+  left: auto;
+  right: -8px;
+}
+
+.lg-help-popover dl { margin: 0; display: grid; gap: 8px; }
+.lg-help-popover dt { color: var(--text-primary); font-weight: var(--fw-strong); font-size: var(--fs-secondary); }
+.lg-help-popover dd { margin: 0; color: var(--text-secondary); font-size: var(--fs-secondary); line-height: 1.55; }
+
+/* 出口三：默认收起的「工作原理」。内容区透明无边框，不进内边距计数。 */
+.lg-explainer > summary {
+  list-style: none;
+  cursor: pointer;
+  min-height: 32px;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  color: var(--text-muted);
+  font-size: var(--fs-secondary);
+}
+
+.lg-explainer > summary::-webkit-details-marker { display: none; }
+.lg-explainer[open] .lg-explainer-caret { transform: rotate(90deg); }
+.lg-explainer-caret { transition: transform 0.15s; }
+.lg-explainer > div { padding-top: 8px; display: flex; flex-direction: column; gap: 8px; }
+
+/* 出口四：外链教程。 */
+.lg-tutorial-link {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  color: var(--accent);
+  text-decoration: none;
+}
+
+.lg-tutorial-link:hover { text-decoration: underline; }
 
 .lg-eyebrow {
   margin-bottom: 4px;
@@ -1388,11 +1545,13 @@ a:focus-visible {
   gap: 12px;
 }
 
+/* 卡片内边距全站唯一值 = surface.ts 的 CARD_PADDING(14)。
+   这里此前是 18，于是同一屏能量到 14/16/18 三种内边距——「这里松那里紧」的来源。 */
 .lg-home-primary-grid > div,
 .lg-recent-card,
 .lg-usage-grid > div,
 .lg-settings-card {
-  padding: 18px;
+  padding: 14px;
 }
 
 .lg-card-kicker {
@@ -5340,9 +5499,10 @@ a:focus-visible {
   color: var(--text-primary);
 }
 
+/* 贴边全宽：页面级居中已废止（原则 6）。可读宽度由 .lg-prose 的 --measure 管，
+   长 JSON / 键值块由各自的容器单独设上限，不再靠把整页居中来兜。 */
 .lg-entity-detail-content {
-  width: min(1180px, 100%);
-  margin: 0 auto;
+  width: 100%;
   padding: 8px 4px 40px;
 }
 
