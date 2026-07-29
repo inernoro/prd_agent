@@ -150,15 +150,15 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         onLoad={fileUrl ? undefined : (e) => {
           try {
             const ifr = e.currentTarget as HTMLIFrameElement & {
-              __roFit?: ResizeObserver; __fitH?: number; __fitN?: number; __fitT?: number;
+              __roFit?: ResizeObserver; __fitH?: number; __fitN?: number;
             };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
-            // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若 1 秒内仍在反复写高，
-            // 说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——此时必须停手，
-            // 否则 RO 每帧触发，主线程被打满、整页卡死。宁可高度量得不完美，不可锁死页面。
+            // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若**连续**写高
+            // 迟迟不收敛，说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——
+            // 此时必须停手，否则 RO 每帧触发，主线程被打满、整页卡死。
+            // 宁可高度量得不完美，不可锁死页面。
             ifr.__fitN = 0;
-            ifr.__fitT = Date.now();
             const fit = () => {
               const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
               if (h <= 0) return;
@@ -166,17 +166,26 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
               // → 内容重排 → 高度再变 → RO 再触发"会形成往复写高，滚动锚定跟着来回
               // 调 scrollTop，与用户手势打架（"某个东西牵动某个东西"的阻滞感）。
               const target = Math.ceil(h) + 2;
-              if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) return;
+              if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) {
+                // 收敛：这次量到的高度和已写入的一致，说明内容不再反过来推高度。
+                // 熔断计数在这里清零——它数的是「连续未收敛的写高」，不是频率。
+                ifr.__fitN = 0;
+                return;
+              }
               // 熔断只数**真正写高**的次数，不数 fit() 调用次数：图多的文档 1 秒内
               // 几十张图 load 完会各触发一次 fit，但那是收敛过程、不是反馈循环，
               // 按调用数熔断会把它们误伤成「量高中途断开 + 内容被永久截断」
               // （scrolling="no" 之下用户还滚不到）。写高才计数，且熔断前必定
               // 先把这一次量到的高度写进去，不留半截。
-              const now = Date.now();
-              if (now - (ifr.__fitT || now) > 1000) { ifr.__fitN = 0; ifr.__fitT = now; }
+              //
+              // 计数**不按时间窗清零**：按「1 秒内超 N 次」判定会留一条低速逃逸路径——
+              // 页面被正反馈拖到 40fps 以下时每秒不足 41 次写高，计数每秒清零，
+              // 循环可以永远跑下去，熔断形同虚设。改为按「连续未收敛」计数：
+              // 正常内容每次写高后 RO 会再触发一次，那一次必然命中上面的收敛分支并清零；
+              // 只有真正的正反馈才会一直写不收敛。这样与帧率无关，慢速循环照样兜住。
               ifr.__fitH = target;
               ifr.style.height = target + 'px';
-              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 40) {
+              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 60) {
                 ifr.__roFit?.disconnect();
                 ifr.__roFit = undefined;
               }

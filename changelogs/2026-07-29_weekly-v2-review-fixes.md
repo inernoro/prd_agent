@@ -40,3 +40,6 @@
 | fix | skill | 发布台账改由服务端 ?project= 过滤，并对「服务端不认该写法」做交叉验证回退；删掉「客户端滤空即判数据不可用」的误报守卫——本项目真没发过时那条守卫会把正确的 0 次报成不可用 |
 | security | skill | 发布闸判 download 豁免前先把反斜杠折成斜杠：URL 标准下 special scheme 的 \ 等价于 /，`\\evil.example/f` 实为跨源，浏览器会忽略 download 直接导航 |
 | security | prd-admin | 链接拦截补 ws:/wss:：它们是 special scheme，点击会真的导航本 frame，且发布闸本来就要求其带 target，两侧判据需一致 |
+| fix | skill | 服务端 ?project= 查询改用解析出的规范 id：项目级凭据下 CDS 精确比对 key 绑定的 projectId，传 slug/项目名直接 403，会让整个发布来源不可用且回退跑不到 |
+| fix | skill | scope 查询失败（403/端点不支持/其它）改为回退全量查询 + 客户端匹配并告警，不再拖垮整个来源 |
+| fix | prd-admin | 量高熔断改按「连续未收敛写高」计数，删掉按秒清零：页面被正反馈拖到 40fps 以下时每秒不足 41 次写高，计数每秒清零会让循环永远跑下去，熔断形同虚设 |

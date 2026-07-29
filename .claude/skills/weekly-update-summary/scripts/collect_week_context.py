@@ -355,23 +355,29 @@ RELEASE_TERMINAL = {"success", "failed", "rollback_success", "rollback_failed"}
 
 
 def _resolve_project_identity(project):
-    """把 --project 解析成该项目的**全部可能写法**（id / slug / name），返回小写集合。
+    """把 --project 解析成 (全部可能写法的小写集合, CDS 规范 id, 警告)。
 
-    为什么是集合而不是「规范 id」：CDS 各端点对 `projectId` 字段的填法并不统一——
-    `/api/releases/runs` 里存的是 slug（实测 `prd-agent`），而 `cdscli project list`
-    返回的是 hex id（`defd4695ab5f`）。先前把入参归一成 hex id 再逐条比对，结果是
-    W30 的 39 条 run 被**全部过滤掉**，却仍以 `available=true` + `attempts=0` 的姿态
-    输出——静默的错误统计，比直接报错危险得多。所以不赌哪一种是"规范"写法，
-    把三种标识全收进集合，命中任意一个即算本项目。
+    两个返回值各有用途，不能只留一个：
+
+    - **集合**用于客户端比对。CDS 各端点对 `projectId` 字段的填法并不统一——
+      `/api/releases/runs` 里存的是 slug（实测 `prd-agent`），而 `cdscli project list`
+      返回的是 hex id（`defd4695ab5f`）。先前把入参归一成 hex id 再逐条比对，结果是
+      W30 的 39 条 run 被**全部过滤掉**，却仍以 `available=true` + `attempts=0` 的姿态
+      输出——静默的错误统计，比直接报错危险得多。所以不赌哪一种是「规范」写法，
+      三种标识全收进集合，命中任意一个即算本项目。
+    - **规范 id** 用于服务端 `?project=` 查询。项目级凭据下 CDS 会把该参数与 key 绑定的
+      projectId **精确比对**，不一致直接 403；此时传调用方的原始写法（slug / 项目名）
+      会让整个来源变成不可用，连回退都跑不到。所以查询一律用解析出的规范 id。
+
     解析失败时退化为「只认原始入参」，并由调用方在 note 里说明。
     """
     if not project:
-        return None, None
+        return None, None, None
     raw = project.strip().lower()
     try:
         res = _cdscli(["project", "list"])
         if not res.get("ok"):
-            return {raw}, "项目列表不可用，仅按入参原值过滤"
+            return {raw}, None, "项目列表不可用，仅按入参原值过滤"
         data = res.get("data")
         items = data if isinstance(data, list) else (data or {}).get("projects") or []
         for p in items:
@@ -379,10 +385,10 @@ def _resolve_project_identity(project):
                      for k in ("id", "slug", "name")}
             ident.discard("")
             if raw in ident:
-                return ident, None
-        return {raw}, f"项目 {project} 未在 CDS 项目列表命中，仅按入参原值过滤"
+                return ident, (str(p.get("id") or "").strip() or None), None
+        return {raw}, None, f"项目 {project} 未在 CDS 项目列表命中，仅按入参原值过滤"
     except Exception as e:
-        return {raw}, f"项目标识解析失败（{str(e)[:80]}），仅按入参原值过滤"
+        return {raw}, None, f"项目标识解析失败（{str(e)[:80]}），仅按入参原值过滤"
 
 
 # CDS 会裁剪发布台账：每个发布目标最多留 100 条 run，且超过 90 天的会被淘汰
@@ -445,7 +451,7 @@ def _release_coverage(all_runs, sel_runs, start, end):
 
 
 def collect_releases(project, start, end):
-    ident, resolve_warn = _resolve_project_identity(project)
+    ident, canonical_id, resolve_warn = _resolve_project_identity(project)
 
     def _mine(r):
         p = r.get("projectId")
@@ -458,12 +464,24 @@ def collect_releases(project, start, end):
     # 之前靠「全量拉回来再客户端过滤，滤空就判定标识不匹配」是错的——实测 mdimp 就是
     # 真的一次没发过，而台账里那 136 条属于 prd-agent，那条守卫会把正确的「0 次」误报成
     # 「数据不可用」。
+    #
+    # 查询参数必须用**解析出的规范 id**，不能用调用方原始写法：项目级凭据下 CDS 把该
+    # 参数与 key 绑定的 projectId 精确比对，不一致直接 403 —— 而 403 会让 _cds_api 抛错、
+    # 整个来源变不可用，连下面的回退都跑不到。
     scope_warn = None
+    scope_key = canonical_id or project
     q = "/api/releases/runs"
     if project:
-        q += "?project=" + _urlquote(str(project))
-    runs = ((_cds_api(q) or {}).get("runs")) or []
-    if project and not runs:
+        q += "?project=" + _urlquote(str(scope_key))
+    try:
+        runs = ((_cds_api(q) or {}).get("runs")) or []
+    except Exception as e:
+        # 带 scope 的查询失败（403 / 端点不支持该参数 / 其它）不该拖垮整个来源：
+        # 退回不带 scope 的全量查询 + 客户端匹配，并如实告警。
+        scope_warn = (f"服务端 ?project={scope_key} 查询失败（{str(e)[:80]}），"
+                      f"已回退到全量查询 + 客户端按标识匹配")
+        runs = [r for r in (((_cds_api("/api/releases/runs") or {}).get("runs")) or []) if _mine(r)]
+    if project and not runs and not scope_warn:
         # 空结果有两种可能：真的没发过，或**传进去的写法服务端不认**。
         # 实测该端点只认 run 里存的那个 projectId 字面量（本仓库是 slug `prd-agent`），
         # 传项目名 `MAP` 或 hex id 一律返回 0 —— 直接信这个 0 等于把静默错误从客户端

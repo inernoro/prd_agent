@@ -78,15 +78,16 @@ def test_identity_set_matches_any_spelling(m, monkeypatch):
                               {"id": "prd-agent", "slug": "prd-agent", "name": "MAP"}]},
     })
     for spelling in ("prd-agent", "MAP", "map"):
-        ident, warn = m._resolve_project_identity(spelling)
+        ident, canonical, warn = m._resolve_project_identity(spelling)
         assert warn is None
         assert {"prd-agent", "map"} <= ident, f"{spelling} 应解析出全部等价写法"
+        assert canonical == "prd-agent", "服务端 ?project= 必须用规范 id，否则项目级凭据下 403"
 
 
 def test_identity_unknown_project_falls_back_with_warning(m, monkeypatch):
     monkeypatch.setattr(m, "_cdscli", lambda *a, **k: {"ok": True, "data": {"projects": []}})
-    ident, warn = m._resolve_project_identity("nope")
-    assert ident == {"nope"} and warn
+    ident, canonical, warn = m._resolve_project_identity("nope")
+    assert ident == {"nope"} and warn and canonical is None
 
 
 # --- 过滤器滤空必须喊出来，不许伪装成「本周未发布」 ------------------------
@@ -107,7 +108,7 @@ def test_project_with_zero_releases_is_available_not_unavailable(m, monkeypatch)
     """曾经的误报：台账里有别的项目的 run，本项目一次没发过，被判成「数据不可用」。
     实测 mdimp 就是这种情况——那 136 条属于 prd-agent，mdimp 的正确答案是 0 次。
     服务端 ?project= 过滤后空结果就是**真的 0**，必须如实报 available=true。"""
-    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"mdimp"}, None))
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"mdimp"}, "mdimp", None))
     _fake_ledger(m, monkeypatch, [
         {"releaseId": "r1", "projectId": "prd-agent", "status": "success",
          "startedAt": "2026-07-21T10:00:00Z"},
@@ -120,7 +121,7 @@ def test_project_with_zero_releases_is_available_not_unavailable(m, monkeypatch)
 def test_unrecognized_scope_spelling_falls_back_to_client_match(m, monkeypatch):
     """端点只认 run 里存的 projectId 字面量：传项目名/hex id 会返回 0。
     直接信这个 0 等于把静默错误搬到服务端，故必须交叉验证并回退。"""
-    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent", "map"}, None))
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent", "map"}, "prd-agent", None))
     _fake_ledger(m, monkeypatch, [
         {"releaseId": "a", "projectId": "prd-agent", "status": "success",
          "startedAt": "2026-07-21T10:00:00Z"},
@@ -132,7 +133,7 @@ def test_unrecognized_scope_spelling_falls_back_to_client_match(m, monkeypatch):
 
 
 def test_matching_runs_are_counted(m, monkeypatch):
-    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent"}, None))
+    monkeypatch.setattr(m, "_resolve_project_identity", lambda p: ({"prd-agent"}, "prd-agent", None))
     _fake_ledger(m, monkeypatch, [
         {"releaseId": "a", "projectId": "prd-agent", "status": "success",
          "startedAt": "2026-07-21T10:00:00Z"},
@@ -147,3 +148,22 @@ def test_matching_runs_are_counted(m, monkeypatch):
     assert out["available"] is True
     assert (out["attempts"], out["success"], out["failed"], out["inFlight"]) == (2, 1, 1, 1)
     assert out["successRate"] == 50.0
+
+
+def test_scoped_query_failure_falls_back_instead_of_killing_source(m, monkeypatch):
+    """项目级凭据下 CDS 把 ?project= 与 key 绑定的 projectId 精确比对，不一致直接 403。
+    403 会让 _cds_api 抛错——若不接住，整个发布来源变不可用，连交叉验证都跑不到。"""
+    monkeypatch.setattr(m, "_resolve_project_identity",
+                        lambda p: ({"prd-agent"}, "prd-agent", None))
+
+    def api(path):
+        if "?project=" in path:
+            raise RuntimeError("CDS /api/releases/runs 返回 403")
+        return {"runs": [{"releaseId": "a", "projectId": "prd-agent", "status": "success",
+                          "startedAt": "2026-07-21T10:00:00Z"}]}
+    monkeypatch.setattr(m, "_cds_api", api)
+
+    out = m.collect_releases("prd-agent", "2026-07-20", "2026-07-26")
+    assert out["available"] is True, "scope 查询失败不该拖垮整个来源"
+    assert out["attempts"] == 1, "应回退到全量查询 + 客户端匹配拿到真实数字"
+    assert any("回退" in a for a in out["coverage"]["advisories"]), "回退要如实告警"
