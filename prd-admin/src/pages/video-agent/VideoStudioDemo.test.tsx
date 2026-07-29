@@ -1,7 +1,12 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun } from '@/services/contracts/videoAgent';
-import { formatVideoSceneError, getStoryboardExperienceState } from './VideoStoryboardEditor';
+import {
+  formatVideoSceneError,
+  getStoryboardExperienceState,
+  markVideoSceneSubmitting,
+  shouldKeepVideoRunPolling,
+} from './VideoStoryboardEditor';
 import { VideoStudioDemo } from './VideoStudioDemo';
 
 const runWith = (
@@ -34,5 +39,22 @@ describe('VideoStudioDemo', () => {
   it('turns unsupported duration errors into an actionable retry message', () => {
     expect(formatVideoSceneError('Duration 6s is not supported for this model. Supported durations: 5, 10s'))
       .toContain('系统将在重试时自动采用最接近的可用时长');
+  });
+
+  it('keeps polling during the submission grace period even when the first reload is stale', () => {
+    const staleRun = runWith('Editing', 'editing', [{ index: 0, status: 'Error' }] as VideoGenRun['scenes']);
+    expect(shouldKeepVideoRunPolling(staleRun, 1_000, 46_000)).toBe(true);
+    expect(shouldKeepVideoRunPolling(staleRun, 46_001, 46_000)).toBe(false);
+  });
+
+  it('shows an optimistic rendering state immediately after a real generation click', () => {
+    const staleRun = {
+      ...runWith('Editing', 'editing', [{ index: 0, status: 'Error', errorMessage: '旧错误' }] as VideoGenRun['scenes']),
+      id: 'run-1',
+    } as VideoGenRun;
+    const nextRun = markVideoSceneSubmitting(staleRun, 0);
+
+    expect(nextRun.scenes[0].status).toBe('Rendering');
+    expect(nextRun.scenes[0].errorMessage).toBeUndefined();
   });
 });

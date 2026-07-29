@@ -114,6 +114,25 @@ export const formatVideoSceneError = (message?: string): string => {
   return message.trim();
 };
 
+export const shouldKeepVideoRunPolling = (
+  run: Pick<VideoGenRun, 'status' | 'scenes'>,
+  now: number,
+  keepPollingUntil: number,
+): boolean => {
+  const hasTransientScene = run.scenes.some(
+    (scene) => scene.status === 'Generating' || scene.status === 'Rendering',
+  );
+  const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(run.status);
+  return hasTransientScene || hasTransientRun || now < keepPollingUntil;
+};
+
+export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): VideoGenRun => ({
+  ...run,
+  scenes: run.scenes.map((scene, index) => index === sceneIndex
+    ? { ...scene, status: 'Rendering', errorMessage: undefined }
+    : scene),
+});
+
 const formatElapsedDuration = (seconds: number) => {
   const safeSeconds = Math.max(0, Math.floor(seconds));
   const minutes = Math.floor(safeSeconds / 60);
@@ -140,6 +159,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [lastServerSignalAt, setLastServerSignalAt] = useState<number | null>(null);
   const [liveTransport, setLiveTransport] = useState<'connecting' | 'streaming' | 'polling'>('connecting');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const keepPollingUntilRef = useRef(0);
   const loadRunRef = useRef<(() => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const autoSelectedExportRef = useRef(false);
@@ -172,11 +192,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       markServerSignal();
       setError(null);
       setSelectedSceneIndex((current) => Math.min(current, Math.max(response.data.scenes.length - 1, 0)));
-      const hasTransientScene = response.data.scenes.some(
-        (scene) => scene.status === 'Generating' || scene.status === 'Rendering',
-      );
-      const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(response.data.status);
-      if (hasTransientScene || hasTransientRun) startPolling();
+      if (shouldKeepVideoRunPolling(response.data, Date.now(), keepPollingUntilRef.current)) startPolling();
       else stopPolling();
 
       if (response.data.status === 'Completed' && response.data.videoAssetUrl) {
@@ -259,13 +275,29 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   useEffect(() => { setPromptDraft(selectedScene?.prompt ?? ''); }, [selectedScene?.prompt, selectedSceneIndex]);
   useEffect(() => { setTopicDraft(selectedScene?.topic ?? ''); }, [selectedScene?.topic, selectedSceneIndex]);
 
-  const mutate = useCallback(async (key: string, action: () => Promise<boolean>) => {
+  const mutate = useCallback(async (
+    key: string,
+    action: () => Promise<boolean>,
+    options?: { keepPollingMs?: number; optimisticSceneIndex?: number },
+  ) => {
     if (mutating) return;
     setMutating(key);
+    if (options?.keepPollingMs) {
+      keepPollingUntilRef.current = Date.now() + options.keepPollingMs;
+      startPolling();
+    }
+    if (options?.optimisticSceneIndex != null) {
+      setRun((current) => current
+        ? markVideoSceneSubmitting(current, options.optimisticSceneIndex!)
+        : current);
+    }
     try {
       const success = await action();
       if (success) {
         startPolling();
+        await loadRun();
+      } else if (options?.optimisticSceneIndex != null) {
+        keepPollingUntilRef.current = 0;
         await loadRun();
       }
     } finally {
@@ -304,7 +336,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     }
     toast.success('镜头已进入生成队列');
     return true;
-  }), [mutate, promptDraft, runId, selectedScene, selectedSceneIndex, updateScene]);
+  }, { keepPollingMs: 45_000, optimisticSceneIndex: selectedSceneIndex }), [mutate, promptDraft, runId, selectedScene, selectedSceneIndex, updateScene]);
 
   const regenerateScene = useCallback(() => mutate('regenerate-scene', async () => {
     const response = await regenerateVideoSceneReal(runId, selectedSceneIndex);
@@ -324,7 +356,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     setBatchDialogOpen(false);
     toast.success(`已提交 ${response.data?.count ?? 0} 个镜头`);
     return true;
-  }), [mutate, runId]);
+  }, { keepPollingMs: 45_000 }), [mutate, runId]);
 
   const exportRun = useCallback(() => mutate('export', async () => {
     const response = await exportVideoGenRunReal(runId);
@@ -335,7 +367,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     setPreviewMode('export');
     toast.success('完整视频已进入导出队列');
     return true;
-  }), [mutate, runId]);
+  }, { keepPollingMs: 45_000 }), [mutate, runId]);
 
   const cancelRun = useCallback(() => mutate('cancel-run', async () => {
     const response = await cancelVideoGenRunReal(runId);
@@ -639,7 +671,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 </div>
                 <Button variant="primary" onClick={renderScene} disabled={!selectedSceneEditable || Boolean(mutating) || !promptDraft.trim()}>
                   {mutating === 'render-scene' || selectedSceneWorking ? <MapSpinner size={14} /> : <Sparkles size={14} />}
-                  {selectedScene.videoUrl ? '生成新版本' : '生成这个镜头'}
+                  {mutating === 'render-scene' ? '正在提交' : selectedSceneWorking ? '生成中' : selectedScene.videoUrl ? '生成新版本' : '生成这个镜头'}
                 </Button>
               </div>
             </section>
