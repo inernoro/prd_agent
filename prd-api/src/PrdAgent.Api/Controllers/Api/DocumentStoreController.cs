@@ -2438,7 +2438,7 @@ public class DocumentStoreController : ControllerBase
             await EnsurePendingRecordingTranscriptionRunAsync(claimed, pendingEntry);
             _logger.LogError(
                 ex,
-                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 耐久队列 session={SessionId} entry={EntryId}",
+                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 临时恢复队列；正式文件仍以对象存储为准 session={SessionId} entry={EntryId}",
                 sessionId,
                 pendingEntry.Id);
             return Ok(ApiResponse<object>.Ok(new

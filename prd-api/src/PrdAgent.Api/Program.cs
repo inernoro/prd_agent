@@ -690,6 +690,16 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return new RegistryAssetStorage(inner, db, providerName, regLogger);
     }
 });
+builder.Services.AddSingleton<IAssetStorageRuntimeInfo>(sp =>
+    sp.GetRequiredService<IAssetStorage>() as IAssetStorageRuntimeInfo
+    ?? throw new InvalidOperationException("IAssetStorage 实现未暴露运行时提供商信息"));
+builder.Services.AddSingleton<AssetStorageReadinessProbe>();
+builder.Services.AddHttpClient("AssetStorageReadiness", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.CacheControl =
+        new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
+});
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
 builder.Services.AddSingleton<IFileContentExtractor, FileContentExtractor>();
@@ -1512,6 +1522,19 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
+app.MapGet(
+    "/health/ready",
+    async (AssetStorageReadinessProbe probe, CancellationToken cancellationToken) =>
+    {
+        var result = await probe.CheckAsync(cancellationToken: cancellationToken);
+        var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+            ? StatusCodes.Status200OK
+            : StatusCodes.Status503ServiceUnavailable;
+        return TypedResults.Json(
+            result,
+            AppJsonContext.Default.AssetStorageReadinessResponse,
+            statusCode: statusCode);
+    });
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 

@@ -194,7 +194,8 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（转录仅支持音频/视频）");
 
         // 录音期间已稳定完成的实时原文不依赖对象存储。R2/COS 故障时，
-        // 音频由 Mongo 分片耐久保全并后台归档，快捷录音仍应立即生成原文。
+        // Mongo 分片只在对象存储异常期间临时保全音频并等待后台归档；
+        // 正式录音文件仍以对象存储为准，快捷录音在恢复期间也应立即生成原文。
         var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
 
         string? fileUrl = null;

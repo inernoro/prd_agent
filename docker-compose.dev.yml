@@ -105,6 +105,7 @@ services:
       # 资产存储：tencentCos / cloudflareR2
       # - 强制”绝不落盘”时：选择对象存储 provider
       - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - ASSETS_EXPECTED_PROVIDER=${ASSETS_EXPECTED_PROVIDER:-tencentCos}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
@@ -139,6 +140,12 @@ services:
       # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换 + 知识库字幕生成用）
       - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
       - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 25s
+      retries: 3
+      start_period: 60s
     depends_on:
       - mongodb
       - redis

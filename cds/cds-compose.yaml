@@ -11,6 +11,7 @@ x-cds-project:
 # ${VAR} 解析顺序：CDS 内部变量 → 宿主机 process.env → 空字符串
 x-cds-env:
   ASSETS_PROVIDER: "${ASSETS_PROVIDER:-tencentCos}"
+  ASSETS_EXPECTED_PROVIDER: "tencentCos"
   TENCENT_COS_BUCKET: "${TENCENT_COS_BUCKET}"
   TENCENT_COS_REGION: "${TENCENT_COS_REGION}"
   TENCENT_COS_SECRET_ID: "${TENCENT_COS_SECRET_ID}"
@@ -46,6 +47,12 @@ services:
       Redis__ConnectionString: "${CDS_HOST}:${CDS_REDIS_PORT}"
       Jwt__Secret: "${JWT_SECRET}"
       Jwt__Issuer: prdagent
+    healthcheck:
+      test: curl --fail --silent http://localhost:5000/health/ready
+      interval: 30s
+      timeout: 25s
+      retries: 3
+      start_period: 90s
     labels:
       cds.path-prefix: "/api/"
 

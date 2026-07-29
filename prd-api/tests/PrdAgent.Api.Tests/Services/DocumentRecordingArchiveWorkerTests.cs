@@ -33,7 +33,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FindRecoveredRecordingEntry_ShouldRecoverBothArchiveFormsAndRequireOwner()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var completedEntry = new DocumentEntry
         {
@@ -148,7 +147,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = new DateTime(2026, 7, 26, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -213,7 +211,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task PendingLeaseFencedUpsert_ShouldRejectOlderWriterAfterNewLeaseWins()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const long oldLeaseVersion = 1;
         const long newLeaseVersion = 2;
@@ -315,7 +312,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureRecordingChunkAsync_ShouldCollapseConcurrentRetriesToOneDocument()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var bytes = new byte[] { 1, 2, 3, 4 };
         var attempts = Enumerable.Range(0, 16)
@@ -338,7 +334,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureRecordingChunkAsync_ShouldRejectDifferentPayloadForSameIndex()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         await DocumentStoreController.EnsureRecordingChunkAsync(
             fixture.Db.DocumentRecordingUploadChunks,
@@ -381,7 +376,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task ArchiveClaim_ShouldOnlyTakeSessionsOwnedByCurrentInstance()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([
             Session("main-session", "main", DocumentRecordingArchiveStatus.Pending),
@@ -410,7 +404,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("legacy-unowned", "", DocumentRecordingArchiveStatus.Pending);
         session.Status = DocumentRecordingUploadStatus.Completed;
@@ -441,7 +434,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleArchiveRecovery_ShouldNotReleaseAnotherInstancesLease()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = DateTime.UtcNow;
         var main = Session("main-stale", "main", DocumentRecordingArchiveStatus.Archiving);
@@ -475,7 +467,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionClaim_ShouldIncludeFinalChunkCommittedBeforeClaim()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("complete-after-append", "main", DocumentRecordingArchiveStatus.None);
         session.NextChunkIndex = 1;
@@ -519,7 +510,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionClaim_ShouldBlockAndExcludeAppendThatHasNotCommitted()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("complete-before-append", "main", DocumentRecordingArchiveStatus.None);
         session.NextChunkIndex = 1;
@@ -564,7 +554,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionLease_ShouldPreventOldClaimFromReleasingNewClaim()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("completion-fence", "main", DocumentRecordingArchiveStatus.None);
         session.UpdatedAt = DateTime.UtcNow.AddMinutes(-20);
@@ -607,7 +596,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionLeaseHeartbeat_ShouldBlockEarlyReclaimAndFenceExpiredOwner()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = DateTime.UtcNow;
         var session = Session("completion-heartbeat", "main", DocumentRecordingArchiveStatus.None);
@@ -665,7 +653,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleCompletedSideEffects_ShouldBeCompensatedOnlyAfterPendingWinnerCommits()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "stale-completed-side-effects";
         var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
@@ -747,7 +734,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleCompletedSideEffects_WithoutCountTokenShouldPreserveOtherEntryCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "stale-completed-without-count";
         var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
@@ -797,7 +783,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCount_ShouldApplyExactlyOnceAcrossRetries()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -926,7 +911,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task PersistCompletedLiveTranscript_ShouldIndexLateNormalArchiveTranscript()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -974,7 +958,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task InterruptedCompletedEntryRecovery_ShouldRestoreMissingCountExactlyOnce()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1021,7 +1004,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCount_ShouldCommuteWithConcurrentNormalAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1055,7 +1037,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCountTokens_ShouldBeTransientAcrossCompletedSessions()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1099,7 +1080,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCountToken_ShouldBeRemovedWithDeletedEntry()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1141,7 +1121,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task DocumentCountDeletion_ShouldCommuteWithConcurrentAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1175,7 +1154,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task DocumentCountDeletion_ShouldClampInsteadOfGoingNegative()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1367,7 +1345,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureDeferredTranscriptionRun_ShouldQueueBeforeArchiveAndRemainIdempotent()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1407,7 +1384,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
         string terminalStatus)
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1459,7 +1435,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureDeferredTranscriptionRun_ShouldNotRequeueCompletedRun()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1501,7 +1476,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task PendingRecordingAudio_ShouldLoadCompleteMongoChunksWithoutAssetUrl()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1591,7 +1565,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task SuccessfulTranscriptionCleanup_ShouldWaitForArchiveThenDeleteChunks()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "session-transcription-cleanup";
         var session = new DocumentRecordingUploadSession
@@ -1647,7 +1620,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task ExpiredArchiveCleanup_ShouldRunWithoutNewRecordingAndKeepPendingAudio()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = DateTime.UtcNow;
         var sessions = new[]
@@ -1782,7 +1754,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FinalizeArchivedEntry_ShouldIndexLateLiveTranscriptAndPreserveRunSignal()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1839,7 +1810,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FinalizeArchivedEntry_ShouldPreserveCompletedDeferredTranscriptionContent()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1935,9 +1905,11 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         public MongoDbContext Db { get; }
 
-        public static async Task<RecordingMongoFixture?> TryCreateAsync()
+        public static async Task<RecordingMongoFixture> TryCreateAsync()
         {
-            var configuredConnectionString = Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
+            var configuredConnectionString =
+                Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                ?? Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
             var connectionString = configuredConnectionString ?? "mongodb://localhost:27018";
             var settings = MongoClientSettings.FromConnectionString(connectionString);
             settings.ServerSelectionTimeout = TimeSpan.FromSeconds(2);
@@ -1947,9 +1919,12 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 await client.GetDatabase("admin").RunCommandAsync<MongoDB.Bson.BsonDocument>(
                     new MongoDB.Bson.BsonDocument("ping", 1));
             }
-            catch when (string.IsNullOrWhiteSpace(configuredConnectionString))
+            catch (Exception ex)
             {
-                return null;
+                throw new InvalidOperationException(
+                    "录音归档测试需要独立 MongoDB。CI 请设置 MONGODB_TEST_CONNECTION；" +
+                    "本地默认使用 mongodb://localhost:27018。禁止在 MongoDB 不可达时静默通过。",
+                    ex);
             }
 
             return new RecordingMongoFixture(
