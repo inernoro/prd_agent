@@ -527,7 +527,6 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
     //   实例如 CDS 预览也能正常存图，而不是构造 IAssetStorage 直接抛异常导致传图失败）。
     // 显式设了 tencentCos/cloudflareR2 但缺凭据→仍按原样抛错（尊重显式选择）。
     var providerRaw = (cfg["ASSETS_PROVIDER"] ?? string.Empty).Trim();
-    var providerExplicit = !string.IsNullOrWhiteSpace(providerRaw);
 
     static (string bucket, string region, string secretId, string secretKey, string? publicBaseUrl, string? prefix) ReadTencentCosEnv(IConfiguration cfg)
     {
@@ -540,27 +539,7 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return (bucket, region, sid, sk, string.IsNullOrWhiteSpace(publicBaseUrl) ? null : publicBaseUrl, string.IsNullOrWhiteSpace(prefix) ? null : prefix);
     }
 
-    var provider = providerExplicit ? providerRaw : "auto";
-
-    static bool HasCosCreds(IConfiguration c)
-        => !string.IsNullOrWhiteSpace(c["TENCENT_COS_BUCKET"])
-        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_REGION"])
-        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_SECRET_ID"])
-        && !string.IsNullOrWhiteSpace(c["TENCENT_COS_SECRET_KEY"]);
-
-    static bool HasR2Creds(IConfiguration c)
-        => !string.IsNullOrWhiteSpace(c["R2_ACCOUNT_ID"])
-        && !string.IsNullOrWhiteSpace(c["R2_ACCESS_KEY_ID"])
-        && !string.IsNullOrWhiteSpace(c["R2_SECRET_ACCESS_KEY"])
-        && !string.IsNullOrWhiteSpace(c["R2_BUCKET"]);
-
-    // 是否存在「任何」云存储凭据片段（用于区分"完全没配"vs"配了一半"）。
-    static bool HasAnyCloudVar(IConfiguration c)
-        => new[]
-        {
-            "TENCENT_COS_BUCKET", "TENCENT_COS_REGION", "TENCENT_COS_SECRET_ID", "TENCENT_COS_SECRET_KEY",
-            "R2_ACCOUNT_ID", "R2_ACCESS_KEY_ID", "R2_SECRET_ACCESS_KEY", "R2_BUCKET",
-        }.Any(k => !string.IsNullOrWhiteSpace(c[k]));
+    var provider = AssetStorageProviderResolver.ResolveProviderName(cfg);
 
     // 本地文件存储（占位/兜底）：无云凭据时也能存图，避免 IAssetStorage 构造抛异常。
     IAssetStorage BuildLocal(string reason)
@@ -579,29 +558,12 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         return WrapWithRegistry(new LocalAssetStorage(dir), "local");
     }
 
-    // auto：未显式指定 Provider 时按凭据自动挑选。
-    //   - 完整 COS / R2 凭据 → 用对应云存储；
-    //   - 完全没有任何云凭据 → 回退本地占位（文档化的 no-cloud 场景）；
-    //   - 配了一半（部分云变量存在但不完整）→ 视为配置错误 fail-fast，
-    //     不静默回退本地，避免资产被写进容器本地盘、重部署即丢（Codex P2）。
-    if (string.Equals(provider, "auto", StringComparison.OrdinalIgnoreCase))
-    {
-        if (HasCosCreds(cfg)) provider = "tencentCos";
-        else if (HasR2Creds(cfg)) provider = "cloudflareR2";
-        else if (HasAnyCloudVar(cfg))
-        {
-            throw new InvalidOperationException(
-                "检测到部分云存储凭据但不完整：请补全 TENCENT_COS_*（BUCKET/REGION/SECRET_ID/SECRET_KEY）" +
-                "或 R2_*（ACCOUNT_ID/ACCESS_KEY_ID/SECRET_ACCESS_KEY/BUCKET）整套；" +
-                "若确实要用本地存储，请显式设置 ASSETS_PROVIDER=local。" +
-                "已拒绝在凭据不完整时静默回退本地，以免资产写入容器本地盘、重部署后丢失。");
-        }
-        else return BuildLocal("ASSETS_PROVIDER 未设置且无任何云凭据");
-    }
-
     if (string.Equals(provider, "local", StringComparison.OrdinalIgnoreCase))
     {
-        return BuildLocal("ASSETS_PROVIDER=local（显式）");
+        var reason = string.Equals(providerRaw, "local", StringComparison.OrdinalIgnoreCase)
+            ? "ASSETS_PROVIDER=local（显式）"
+            : "ASSETS_PROVIDER 未设置或为 auto，且无任何云凭据";
+        return BuildLocal(reason);
     }
 
     // 读取通用安全删除配置（两种 Provider 共享同一套策略逻辑）
@@ -689,6 +651,16 @@ builder.Services.AddSingleton<IAssetStorage>(sp =>
         log.LogInformation("AssetStorage wrapped with RegistryAssetStorage (provider={Provider})", providerName);
         return new RegistryAssetStorage(inner, db, providerName, regLogger);
     }
+});
+builder.Services.AddSingleton<IAssetStorageRuntimeInfo>(sp =>
+    sp.GetRequiredService<IAssetStorage>() as IAssetStorageRuntimeInfo
+    ?? throw new InvalidOperationException("IAssetStorage 实现未暴露运行时提供商信息"));
+builder.Services.AddSingleton<AssetStorageReadinessProbe>();
+builder.Services.AddHttpClient("AssetStorageReadiness", client =>
+{
+    client.Timeout = TimeSpan.FromSeconds(20);
+    client.DefaultRequestHeaders.CacheControl =
+        new System.Net.Http.Headers.CacheControlHeaderValue { NoCache = true };
 });
 
 // 文件内容提取器（PDF/Word/Excel/PPT）
@@ -1457,6 +1429,22 @@ if (app.Environment.IsDevelopment())
     app.UseSwaggerUI();
 }
 
+// local 只属于本地开发环境。IAssetStorage 返回的 /local-assets URL 必须由应用
+// 自己真实提供，否则“内部读取成功”会掩盖浏览器访问 404。CDS 固定走 R2、正式
+// 环境固定走 Tencent COS，均不会启用此文件系统映射。
+var assetStorageRuntime = app.Services.GetRequiredService<IAssetStorageRuntimeInfo>();
+if (string.Equals(
+        AssetStorageReadinessProbe.CanonicalProvider(assetStorageRuntime.ProviderName),
+        "local",
+        StringComparison.Ordinal))
+{
+    var localAssetDir = (builder.Configuration["ASSETS_LOCAL_DIR"] ?? string.Empty).Trim();
+    if (string.IsNullOrWhiteSpace(localAssetDir))
+        localAssetDir = Path.Combine(app.Environment.ContentRootPath, "data", "assets");
+    Directory.CreateDirectory(localAssetDir);
+    app.UseStaticFiles(LocalAssetStaticFilePolicy.CreateOptions(localAssetDir));
+}
+
 // 始终启用"单行 Request finished 摘要日志"（不包含 body，且默认跳过 OPTIONS），用于确认请求是否到达和返回结果
 app.UseRequestResponseLogging();
 
@@ -1512,6 +1500,8 @@ app.MapControllers();
 
 // 健康检查端点
 app.MapGet("/health", HealthCheck);
+app.MapGet("/health/ready", AssetStorageReadiness);
+app.MapGet("/api/health/ready", AssetStorageReadiness);
 app.MapGet("/api/v", VersionInfo);
 app.MapGet("/api/version", VersionInfo);
 
@@ -1548,6 +1538,29 @@ static IResult HealthCheck()
         Timestamp = DateTime.UtcNow
     };
     return Results.Ok(response);
+}
+
+static async Task<IResult> AssetStorageReadiness(
+    AssetStorageReadinessProbe probe,
+    HttpContext context,
+    CancellationToken cancellationToken,
+    bool force = false)
+{
+    if (force && !AssetStorageReadinessProbe.CanForceProbe(
+            context.Connection.RemoteIpAddress))
+    {
+        return Results.StatusCode(StatusCodes.Status403Forbidden);
+    }
+    var result = await probe.CheckAsync(
+        force: force,
+        cancellationToken: cancellationToken);
+    var statusCode = string.Equals(result.Status, "healthy", StringComparison.Ordinal)
+        ? StatusCodes.Status200OK
+        : StatusCodes.Status503ServiceUnavailable;
+    return TypedResults.Json(
+        result,
+        AppJsonContext.Default.AssetStorageReadinessResponse,
+        statusCode: statusCode);
 }
 
 static IResult VersionInfo(IHostEnvironment env)

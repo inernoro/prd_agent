@@ -282,6 +282,24 @@ public class HealthCheckResponse
 }
 
 /// <summary>
+/// 对象存储业务就绪检查响应
+/// </summary>
+public class AssetStorageReadinessResponse
+{
+    public string Status { get; set; } = string.Empty;
+    public string Provider { get; set; } = string.Empty;
+    public string? ExpectedProvider { get; set; }
+    public string? ErrorCode { get; set; }
+    public string? ErrorMessage { get; set; }
+    public bool WriteVerified { get; set; }
+    public bool InternalReadVerified { get; set; }
+    public bool PublicReadVerified { get; set; }
+    public bool CleanupVerified { get; set; }
+    public DateTime CheckedAt { get; set; }
+    public long DurationMs { get; set; }
+}
+
+/// <summary>
 /// 流式错误事件
 /// </summary>
 public class StreamErrorEvent

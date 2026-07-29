@@ -59,7 +59,13 @@ def read_json(path: str) -> object | None:
     candidate = Path(path)
     if not candidate.is_file():
         return None
-    return json.loads(candidate.read_text(encoding="utf-8"))
+    try:
+        return json.loads(candidate.read_text(encoding="utf-8"))
+    except (OSError, UnicodeError, json.JSONDecodeError) as exc:
+        return {
+            "status": "unreadable",
+            "error": type(exc).__name__,
+        }
 
 
 def main() -> int:
@@ -83,6 +89,7 @@ def main() -> int:
     parser.add_argument("--static-before-current", default="")
     parser.add_argument("--static-before-previous", default="")
     parser.add_argument("--smoke-json", default="")
+    parser.add_argument("--asset-storage-readiness-json", default="")
     parser.add_argument("--failure-stage", default="")
     parser.add_argument("--rollback-result", default="not-needed")
     args = parser.parse_args()
@@ -120,6 +127,7 @@ def main() -> int:
             "previous": path_metadata(args.previous_link),
         },
         "publicSurface": read_json(args.smoke_json),
+        "assetStorageReadiness": read_json(args.asset_storage_readiness_json),
         "firstFailureStage": args.failure_stage or None,
         "rollbackResult": args.rollback_result,
     }

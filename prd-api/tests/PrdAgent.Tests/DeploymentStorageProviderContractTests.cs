@@ -1,0 +1,121 @@
+using Xunit;
+
+namespace PrdAgent.Tests;
+
+public sealed class DeploymentStorageProviderContractTests
+{
+    [Fact]
+    public void DeploymentFiles_ShouldKeepStorageProvidersSeparatedByEnvironment()
+    {
+        var localDevelopment = ReadRepoFile("docker-compose.dev.yml");
+        var cdsRoot = ReadRepoFile("cds-compose.yml");
+        var cdsNested = ReadRepoFile("cds/cds-compose.yaml");
+        var production = ReadRepoFile("docker-compose.yml");
+        var productionRelease = ReadRepoFile("exec_dep.sh");
+
+        Assert.Contains("ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}", localDevelopment);
+        Assert.DoesNotContain("ASSETS_EXPECTED_PROVIDER=", localDevelopment);
+        Assert.Contains("ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}", localDevelopment);
+        Assert.Contains(
+            "AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://web}",
+            localDevelopment);
+        Assert.Contains("location ^~ /local-assets/", ReadRepoFile("deploy/nginx/nginx.conf"));
+        Assert.Contains("'/local-assets':", ReadRepoFile("prd-admin/vite.config.ts"));
+        Assert.Contains(
+            "LocalAssetStaticFilePolicy.CreateOptions(localAssetDir)",
+            ReadRepoFile("prd-api/src/PrdAgent.Api/Program.cs"));
+        Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}", localDevelopment);
+
+        Assert.Contains("ASSETS_PROVIDER: cloudflareR2", cdsRoot);
+        Assert.Contains("ASSETS_EXPECTED_PROVIDER: cloudflareR2", cdsRoot);
+        Assert.Contains("cds.readiness-path: \"/health/ready\"", cdsRoot);
+        Assert.DoesNotContain("TENCENT_COS_", cdsRoot);
+        Assert.DoesNotContain("ASSETS_PROVIDER: tencentCos", cdsRoot);
+
+        Assert.Contains("ASSETS_PROVIDER: \"cloudflareR2\"", cdsNested);
+        Assert.Contains("ASSETS_EXPECTED_PROVIDER: \"cloudflareR2\"", cdsNested);
+        Assert.DoesNotContain("TENCENT_COS_", cdsNested);
+        Assert.DoesNotContain("ASSETS_PROVIDER: \"tencentCos\"", cdsNested);
+
+        Assert.Contains("ASSETS_PROVIDER=tencentCos", production);
+        Assert.Contains("ASSETS_EXPECTED_PROVIDER=tencentCos", production);
+        Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-", production);
+        Assert.DoesNotContain("ASSETS_PROVIDER=cloudflareR2", production);
+        Assert.DoesNotContain("R2_", production);
+        Assert.Contains(
+            "http://localhost:8080/health\"]",
+            production);
+        Assert.DoesNotContain(
+            "http://localhost:8080/health/ready\"]",
+            production);
+        Assert.Contains("run_asset_storage_readiness()", productionRelease);
+        Assert.Contains(
+            "PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true",
+            productionRelease);
+        Assert.Contains("compose_run exec -T \"$api_service\"", productionRelease);
+        Assert.Contains("curl --fail-with-body", productionRelease);
+        Assert.Contains("readiness_last_response_json", productionRelease);
+        Assert.Contains(
+            "release_failure_stage=\"asset-storage-readiness\"",
+            productionRelease);
+    }
+
+    [Fact]
+    public void ApplicationDefaults_ShouldNotSilentlyTreatUnknownEnvironmentAsTencentCos()
+    {
+        var files = new[]
+        {
+            "prd-api/src/PrdAgent.Api/Services/AvatarUrlBuilder.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/AuthzController.cs",
+            "prd-api/src/PrdAgent.Api/Controllers/Api/StorageSyncController.cs",
+            "prd-api/src/PrdAgent.Infrastructure/Services/WatermarkFontRegistry.cs",
+            "prd-api/src/PrdAgent.Api/appsettings.json",
+            "prd-api/src/PrdAgent.Api/appsettings.Development.json",
+        };
+
+        foreach (var file in files)
+        {
+            var source = ReadRepoFile(file);
+            Assert.DoesNotContain("?? \"tencentCos\"", source);
+            Assert.DoesNotContain("\"Provider\": \"tencentCos\"", source);
+        }
+    }
+
+    [Fact]
+    public void CiServerPathFilter_ShouldRunWhenTestDiscoveryGuardChanges()
+    {
+        var ci = ReadRepoFile(".github/workflows/ci.yml");
+        var serverFilterStart = ci.IndexOf("            server:\n", StringComparison.Ordinal);
+        var adminFilterStart = ci.IndexOf("            admin:\n", serverFilterStart, StringComparison.Ordinal);
+
+        Assert.True(serverFilterStart >= 0 && adminFilterStart > serverFilterStart);
+        var serverFilter = ci[serverFilterStart..adminFilterStart];
+        Assert.Contains("scripts/verify-dotnet-test-projects.sh", serverFilter);
+        Assert.Contains("bash scripts/verify-dotnet-test-projects.sh", ci);
+    }
+
+    private static string ReadRepoFile(string relativePath)
+    {
+        var root = LocateRepoRoot();
+        var fullPath = Path.Combine(root, relativePath.Replace('/', Path.DirectorySeparatorChar));
+        Assert.True(File.Exists(fullPath), $"找不到部署文件: {fullPath}");
+        return File.ReadAllText(fullPath);
+    }
+
+    private static string LocateRepoRoot()
+    {
+        var directory = new DirectoryInfo(AppContext.BaseDirectory);
+        while (directory != null)
+        {
+            if (File.Exists(Path.Combine(directory.FullName, "AGENTS.md"))
+                && Directory.Exists(Path.Combine(directory.FullName, "prd-api")))
+            {
+                return directory.FullName;
+            }
+
+            directory = directory.Parent;
+        }
+
+        throw new DirectoryNotFoundException("无法定位仓库根目录");
+    }
+}

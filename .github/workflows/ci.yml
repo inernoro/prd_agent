@@ -44,6 +44,7 @@ jobs:
               - 'scripts/skill-bundles.json'
               - 'scripts/bundle-official-skills.mjs'
               - 'scripts/test-official-skill-bundles.mjs'
+              - 'scripts/verify-dotnet-test-projects.sh'
               - '.github/workflows/ci.yml'
             admin:
               - 'prd-admin/**'
@@ -58,8 +59,11 @@ jobs:
               - 'exec_dep.sh'
               - 'scripts/lib/static-release.sh'
               - 'scripts/prd-agent-public-surface-smoke.py'
+              - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
+              - 'scripts/tests/asset-storage-readiness-gate.test.py'
+              - 'scripts/tests/release-evidence.test.py'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
 
@@ -80,6 +84,12 @@ jobs:
 
       - name: Public surface smoke unit test
         run: python3 scripts/tests/public-surface-smoke.test.py
+
+      - name: Asset storage readiness gate
+        run: python3 scripts/tests/asset-storage-readiness-gate.test.py
+
+      - name: Release evidence ledger
+        run: python3 scripts/tests/release-evidence.test.py
 
   # 后端服务构建和测试
   server-build:
@@ -132,6 +142,10 @@ jobs:
       - name: Official skill catalog freshness and bundle self-test
         working-directory: ${{ github.workspace }}
         run: node scripts/test-official-skill-bundles.mjs
+
+      - name: Verify .NET test project discovery contract
+        working-directory: ${{ github.workspace }}
+        run: bash scripts/verify-dotnet-test-projects.sh
 
       - name: Restore dependencies
         run: dotnet restore PrdAgent.sln
