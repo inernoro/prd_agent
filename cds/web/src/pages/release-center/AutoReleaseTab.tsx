@@ -13,6 +13,8 @@ import { useCallback, useEffect, useState } from 'react';
 import { ChevronDown, Loader2, Play, Plus, Trash2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { ApiError, apiRequest } from '@/lib/api';
+import { describeDryRunResult } from '@/lib/releaseDiagnosis';
+import { mergeReleaseAction } from '@/lib/scheduledJobActions';
 import { Chip, formatDateTime } from './shared';
 import type {
   BranchOption,
@@ -103,12 +105,15 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     }
     setSaving(true);
     try {
+      const nextAction = { id: 'release', name: '发布到环境', ...action };
+      // 编辑既有规则时必须把兄弟动作原样带回——判据见 mergeReleaseAction。
+      const editing = draft.id ? jobs.find((job) => job.id === draft.id) : undefined;
       const body = {
         projectId: row.target.projectId,
         name: draft.name.trim() || defaultRuleName(draft, row),
         enabled: draft.enabled,
         schedule: buildSchedule(draft),
-        actions: [{ id: 'release', name: '发布到环境', ...action }],
+        actions: mergeReleaseAction(editing?.actions, row.target.id, nextAction),
       };
       if (draft.id) {
         await apiRequest(`/api/scheduled-jobs/${encodeURIComponent(draft.id)}`, { method: 'PATCH', body });
@@ -146,11 +151,11 @@ export function AutoReleaseTab({ row, otherRows, branches, onToast }: AutoReleas
     if (!action) return;
     setBusyJobId(job.id);
     try {
-      const res = await apiRequest<{ result: { ok?: boolean; message?: string; log?: string } }>(
+      const res = await apiRequest<{ result: { ok?: boolean; error?: string; log?: string } }>(
         '/api/scheduled-jobs/check-target',
         { method: 'POST', body: { projectId: row.target.projectId, target: action } },
       );
-      onToast(res.result?.message || res.result?.log?.split('\n')[0] || '试跑完成：只执行了发布前检查，未发布');
+      onToast(describeDryRunResult(res.result));
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     } finally {
@@ -533,7 +538,7 @@ function buildSchedule(draft: RuleDraft): Record<string, unknown> {
 }
 
 /** 来源没选全就返回 undefined：宁可不让保存，也不能存一条来源不明的发布规则。 */
-function buildReleaseAction(draft: RuleDraft, targetId: string): Record<string, unknown> | undefined {
+function buildReleaseAction(draft: RuleDraft, targetId: string): ScheduledJobActionSummary | undefined {
   if (draft.sourceKind === 'promote') {
     if (!draft.fromTargetId) return undefined;
     return {

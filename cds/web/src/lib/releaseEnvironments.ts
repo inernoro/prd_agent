@@ -144,3 +144,36 @@ export function resolveSelectedTargetId<Row extends EnvironmentRowLike>(
   }
   return firstSelectableTargetId(sections);
 }
+
+/**
+ * 已经有「主目标」的环境集合。
+ *
+ * 后端 `StateService.upsertReleaseTarget` 拒绝一个环境出现第二个启用中的 canonical
+ * 目标。前端建站向导此前无条件把 isCanonical 预置为 true，于是给已有生产目标的项目
+ * 再加一个生产目标时，保存必然被拒——而拒绝理由指向一个用户从没主动勾过的复选框，
+ * 他得先自己找到并取消它（Codex review P2，2026-07-29）。
+ *
+ * 判据取自 sections（后端下发的分组），不在前端按 environment 字段自己归一：
+ * 归一规则（缺省算什么、未知值算什么）只有后端一份，抄第二份就会漂移。
+ */
+export function canonicalEnvironments<Row extends EnvironmentRowLike>(
+  sections: ReadonlyArray<EnvironmentSection<Row>>,
+): Set<string> {
+  const taken = new Set<string>();
+  for (const section of sections) {
+    if (section.degraded) continue;
+    if (section.canonicalTargetId) taken.add(section.environment);
+  }
+  return taken;
+}
+
+/**
+ * 新建目标时 isCanonical 的默认值：该环境还没有主目标才默认勾上。
+ * 第一个目标默认是主目标（省掉一次必然的勾选），后续的默认不是（省掉一次必然的取消）。
+ */
+export function defaultIsCanonical(
+  environment: string | undefined,
+  taken: ReadonlySet<string>,
+): boolean {
+  return !taken.has(environment || 'production');
+}

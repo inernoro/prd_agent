@@ -31,6 +31,8 @@ import {
 } from '@/lib/releaseCenter';
 import {
   buildEnvironmentSections,
+  canonicalEnvironments,
+  defaultIsCanonical,
   resolveSelectedTargetId,
   type EnvironmentSection,
 } from '@/lib/releaseEnvironments';
@@ -107,6 +109,13 @@ export function ReleaseCenterPage(): JSX.Element {
   const [deepLink] = useState(() => releaseCenterDeepLink(searchParams));
   const [selectedTargetId, setSelectedTargetId] = useState(deepLink.targetId || '');
   const [pendingRunId, setPendingRunId] = useState(deepLink.runId || '');
+  // 只有三个参数都在才算一条完整的「批这一版」链接：缺 commit 就没有可钉的版本，
+  // 缺 target 就不知道发到哪，此时退回普通深链行为（选中目标即可），不猜。
+  const [pendingApproval, setPendingApproval] = useState<
+    { targetId: string; branchId: string; commitSha: string } | null
+  >(() => (deepLink.targetId && deepLink.branchId && deepLink.commitSha
+    ? { targetId: deepLink.targetId, branchId: deepLink.branchId, commitSha: deepLink.commitSha }
+    : null));
   const [tab, setTab] = useState<DetailTab>('overview');
   const [historyFilter, setHistoryFilter] = useState<TimelineFilter>('all');
   const [toast, setToast] = useState('');
@@ -204,6 +213,8 @@ export function ReleaseCenterPage(): JSX.Element {
     [center?.environments, rows],
   );
 
+  const canonicalEnvs = useMemo(() => canonicalEnvironments(sections), [sections]);
+
   // 选中态收敛在一处：刷新后「选中的环境自己跳走」是最招人烦的一类闪烁。
   const effectiveTargetId = resolveSelectedTargetId(sections, selectedTargetId);
   useEffect(() => {
@@ -222,6 +233,23 @@ export function ReleaseCenterPage(): JSX.Element {
       setLogRun(target);
     }
   }, [pendingRunId, runs]);
+
+  // 待人工确认的深链：`?target=&branch=&commit=`。定时规则跑完预检后不自动发布，
+  // 只留一条通知；人点进来必须批准**当时过检的那一版**，所以 commit 钉死在链接里。
+  // 不钉的话，几小时后分支已经前进，批准发出去的是另一个从没过检的版本。
+  useEffect(() => {
+    if (!pendingApproval || rows.length === 0) return;
+    const row = rows.find((item) => item.target.id === pendingApproval.targetId);
+    setPendingApproval(null);
+    if (!row) return;
+    setSelectedTargetId(row.target.id);
+    setReleaseIntent({
+      row,
+      branchId: pendingApproval.branchId,
+      expectedCommitSha: pendingApproval.commitSha,
+      reason: `定时规则已对 ${pendingApproval.commitSha.slice(0, 7)} 跑完发布前检查并等待人工确认。commit 已钉死，即使分支之后又前进，批准发出的仍是通过检查的这一版。`,
+    });
+  }, [pendingApproval, rows]);
 
   const selectedRow = rows.find((row) => row.target.id === effectiveTargetId);
   const selectedRuns = useMemo(
@@ -271,10 +299,12 @@ export function ReleaseCenterPage(): JSX.Element {
   }, [state, runs]);
 
   const openCreateWizard = (): void => {
+    const base = emptySiteDraft(projectId);
     const initial = {
-      ...emptySiteDraft(projectId),
+      ...base,
       sitePath: `/opt/${projectId}`,
-      isCanonical: true,
+      // 该环境已有主目标就别默认勾主目标：后端会拒，而用户根本没碰过这个勾。
+      isCanonical: defaultIsCanonical(base.environment, canonicalEnvs),
     };
     setDraft(initial);
     setWizardStep('server');
@@ -704,6 +734,7 @@ export function ReleaseCenterPage(): JSX.Element {
         onDraft={setDraft}
         onSelectHost={selectHost}
         onHostCreated={handleHostCreated}
+        canonicalEnvironments={canonicalEnvs}
         onSave={() => void saveSite()}
       />
       <StartReleaseDialog

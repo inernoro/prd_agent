@@ -36,12 +36,18 @@ export function initialReleaseCenterProject(searchParams: URLSearchParams, stora
 export function releaseCenterDeepLink(searchParams: URLSearchParams): {
   targetId?: string;
   runId?: string;
+  branchId?: string;
+  commitSha?: string;
 } {
   const targetId = searchParams.get('target')?.trim();
   const runId = searchParams.get('run')?.trim();
+  const branchId = searchParams.get('branch')?.trim();
+  const commitSha = searchParams.get('commit')?.trim();
   return {
     ...(targetId ? { targetId } : {}),
     ...(runId ? { runId } : {}),
+    ...(branchId ? { branchId } : {}),
+    ...(commitSha ? { commitSha } : {}),
   };
 }
 

@@ -5,7 +5,7 @@ import { decryptRemoteHostSecrets } from './sidecar/remote-host-service.js';
 import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
-import { formatSshExecFailure } from './ssh-exec-failure.js';
+import { formatSshExecFailure, maskSshExecSecrets } from './ssh-exec-failure.js';
 import {
   advanceReleaseSteps,
   buildReleaseRunProgress,
@@ -1933,10 +1933,14 @@ export async function probeHealthcheckStatus(url: string, timeoutMs = 8_000): Pr
   }
 }
 
+/**
+ * 发布日志脱敏。**唯一实现**在 ssh-exec-failure.ts —— 这里曾经是一份独立的、
+ * 少两条规则的拷贝（不认 `*_KEY=`、不认 Authorization 头、不认 JSON 口令），
+ * 于是同一条凭据在失败摘要里被盖住、在运行日志里照样露出来。两份判据分头漂移
+ * 正是 predicate-and-wiring-discipline 形状 3，收敛成一处。
+ */
 function maskLog(value: string): string {
-  return value
-    .replace(/-----BEGIN [\s\S]*?PRIVATE KEY-----[\s\S]*?-----END [\s\S]*?PRIVATE KEY-----/g, '***PRIVATE_KEY***')
-    .replace(/(TOKEN|SECRET|PASSWORD|PRIVATE_KEY)=([^\s]+)/gi, '$1=***');
+  return maskSshExecSecrets(value);
 }
 
 async function loadSsh2(): Promise<{ Client: new () => unknown }> {

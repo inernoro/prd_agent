@@ -110,6 +110,21 @@ export interface NoticeInput {
  *   - `https://...` 即使是善意的外链，也不该由通知这条低门槛写入口决定跳到站外。
  * 内部产出的 href 全是 `/release-center?...` 这种形态，不受影响。
  */
+/**
+ * HTTP 写入口（POST /api/notices）的合并键。
+ *
+ * 不能直接用调用方给的 `id`：账本按 dedupeKey 全局查找，而项目级 Agent Key 能自由
+ * 指定 id。填一个别的项目的 id、或猜中内部事件的键（形如 `release.failed:<targetId>`），
+ * upsert 就会把那条记录的标题、正文、projectId 一起改写——原告警等于被从它自己的
+ * 作用域里抹掉（Codex review P1，2026-07-29）。
+ *
+ * 两段前缀各挡一类越界：`api:` 把外部写入与内部事件分到互不相交的键空间；
+ * 作用域段把项目之间隔开。同一调用方重复上报同一个 id 仍然正常合并。
+ */
+export function apiNoticeDedupeKey(scope: string | null | undefined, id: string): string {
+  return `api:${scope || '_global'}:${id}`;
+}
+
 export function sanitizeNoticeHref(raw: unknown): string | undefined {
   if (typeof raw !== 'string') return undefined;
   const value = raw.trim();
@@ -375,6 +390,7 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     targetName?: string;
     releaseId?: string;
     branchId?: string;
+    commitSha?: string;
     message?: string;
     errorMessage?: string;
     failure?: { summary?: string; reason?: string };
@@ -396,6 +412,10 @@ export function renderNoticeFromEvent(envelope: CdsEventEnvelope): NoticeInput |
     if (data.projectId) params.set('project', data.projectId);
     if (data.targetId) params.set('target', data.targetId);
     if (data.releaseId) params.set('run', data.releaseId);
+    // 待人工确认的通知靠这两个参数钉住「批的是哪一版」。少了它们，人点进来
+    // 发布中心会重新解析当前最新版本，跟通知里刚过检的那一版不是一回事。
+    if (data.branchId) params.set('branch', data.branchId);
+    if (data.commitSha) params.set('commit', data.commitSha);
     const query = params.toString();
     href = query ? `/release-center?${query}` : '/release-center';
   } else if (copy.link === 'status') {

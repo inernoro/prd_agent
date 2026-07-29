@@ -85,8 +85,36 @@ export function StartReleaseDialog({
 
   const branch = useMemo(() => branches.find((item) => item.id === branchId), [branches, branchId]);
   // promote 走源 run 的产物地址；普通发布按预览模式推导（推导不出来就交给发布前检查说话）。
-  const previewUrl = intent?.previewUrl
+  const derivedPreviewUrl = intent?.previewUrl
     || (branch ? resolvePreviewUrl(previewMode, branch, previewConfig) : '');
+
+  // `port` 模式的入口是运行期分配的端口，公式算不出来（resolvePreviewUrl 会如实给空串）。
+  // 现取一次，取不到就保持空串让发布前检查拦下——绝不编一个子域出来充数。
+  const [portPreviewUrl, setPortPreviewUrl] = useState('');
+  useEffect(() => {
+    if (previewMode !== 'port' || !branchId || intent?.previewUrl) {
+      setPortPreviewUrl('');
+      return undefined;
+    }
+    let cancelled = false;
+    void (async () => {
+      try {
+        const result = await apiRequest<{ port: number }>(
+          `/api/branches/${encodeURIComponent(branchId)}/preview-port`,
+          { method: 'POST' },
+        );
+        if (cancelled || !result?.port) return;
+        setPortPreviewUrl(`${window.location.protocol}//${window.location.hostname}:${result.port}`);
+      } catch {
+        // 静默：错误由发布前检查的「可发布产物」那一项统一说明，
+        // 这里再弹一个 toast 只会让用户看到两遍同一件事。
+        if (!cancelled) setPortPreviewUrl('');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [previewMode, branchId, intent?.previewUrl]);
+
+  const previewUrl = derivedPreviewUrl || portPreviewUrl;
   const commitSha = intent?.expectedCommitSha || branch?.commitSha || branch?.githubCommitSha || '';
   const subject = commitMeta[commitSha]?.subject || branch?.subject || '';
 

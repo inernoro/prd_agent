@@ -105,7 +105,7 @@ describe('GET /api/notices 作用域', () => {
 });
 
 describe('POST /api/notices 兼容入口', () => {
-  it('写入前端 window 事件那四类来源，id 直接当合并键', async () => {
+  it('写入前端 window 事件那四类来源，合并键按调用方作用域加前缀', async () => {
     const ledger = new NoticeLedgerService({ storePath: '' });
     const srv = await boot({ ledger, projectScope: null });
     const res = await request(srv, 'POST', '/api/notices', {
@@ -117,8 +117,59 @@ describe('POST /api/notices 兼容入口', () => {
       projectId: 'proj-a',
     });
     expect(res.status).toBe(200);
-    expect(res.body.notice.dedupeKey).toBe('env-missing:proj-a');
+    // 曾经这里断言 `dedupeKey === id`，把「调用方能随便指定全局合并键」这件事
+    // 当成契约锁住了。id 仍然原样保留，只有合并键带前缀。
+    expect(res.body.notice.id).toBe('env-missing:proj-a');
+    expect(res.body.notice.dedupeKey).toBe('api:_global:env-missing:proj-a');
     expect(ledger.list()).toHaveLength(1);
+  });
+
+  it('同一调用方重复上报同一个 id 仍然合并成一条', async () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    const srv = await boot({ ledger, projectScope: 'proj-a' });
+    for (let i = 0; i < 3; i += 1) {
+      await request(srv, 'POST', '/api/notices', {
+        id: 'env-missing', title: '必填环境变量缺失', source: 'env', level: 'warning',
+      });
+    }
+    expect(ledger.list()).toHaveLength(1);
+  });
+
+  it('项目级 Key 不能借 id 覆盖别的项目的同名通知', async () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    const a = await boot({ ledger, projectScope: 'proj-a' });
+    const b = await boot({ ledger, projectScope: 'proj-b' });
+    await request(a, 'POST', '/api/notices', {
+      id: 'release-failed', title: 'A 的发布失败', source: 'release', level: 'danger',
+    });
+    await request(b, 'POST', '/api/notices', {
+      id: 'release-failed', title: 'B 的发布失败', source: 'release', level: 'danger',
+    });
+    // 两条各自独立。合并成一条就意味着后写的把先写的标题、正文、projectId 全改了——
+    // A 项目的那条告警等于被 B 从账本上抹掉。
+    const all = ledger.list();
+    expect(all).toHaveLength(2);
+    expect(all.map((item) => item.projectId).sort()).toEqual(['proj-a', 'proj-b']);
+  });
+
+  it('项目级 Key 不能覆盖内部事件生成的通知', async () => {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    // 内部事件的键形如 `release.failed:<targetId>`，是可预测的。
+    ledger.upsert({
+      id: 'ntc_release.failed_rt_prod',
+      dedupeKey: 'release.failed:rt_prod',
+      level: 'danger',
+      title: '发布失败',
+      body: '门禁未通过',
+      source: 'release',
+    });
+    const srv = await boot({ ledger, projectScope: 'proj-a' });
+    await request(srv, 'POST', '/api/notices', {
+      id: 'release.failed:rt_prod', title: '无关紧要', source: 'release', level: 'info',
+    });
+    const original = ledger.list().find((item) => item.dedupeKey === 'release.failed:rt_prod');
+    expect(original?.title).toBe('发布失败');
+    expect(ledger.list()).toHaveLength(2);
   });
 
   it('缺 id/title、来源或级别不在白名单一律 400', async () => {

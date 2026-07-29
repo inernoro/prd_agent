@@ -77,7 +77,17 @@ export function maskSshExecSecrets(text: string): string {
     // `_KEY` 前缀那一段的长度上界不是洁癖：写成 `[A-Za-z0-9_]*_KEY` 的话，
     // 一整行没有下划线的长文本会让引擎在每个起始位置都扫到行尾找 `_KEY`，
     // 在几十 KB 的单行输出上就是平方级开销。环境变量名不会超过 64 字符。
-    .replace(/(TOKEN|SECRET|PASSWORD|PRIVATE_?KEY|[A-Za-z][A-Za-z0-9_]{0,64}_KEY)=([^\s]+)/gi, '$1=***');
+    .replace(/(TOKEN|SECRET|PASSWORD|PRIVATE_?KEY|[A-Za-z][A-Za-z0-9_]{0,64}_KEY)=([^\s]+)/gi, '$1=***')
+    // 整个 header 值都是凭据，连 scheme（Bearer/Basic）一起盖掉最省事也最保险。
+    .replace(/\b((?:proxy-)?authorization)\s*:[^\r\n]*/gi, '$1: ***')
+    // JSON / YAML / 带引号的赋值：`"password": "x"`、`token = 'y'`、`apiKey: "z"`。
+    // 上面那条只认裸 `KEY=value`，curl 打印请求体、部署脚本 echo 配置时都是这种形状。
+    .replace(
+      /(["']?(?:pass(?:word|wd)?|pwd|token|secret|api[_-]?key|access[_-]?key|auth)["']?\s*[:=]\s*)(["'])[^"'\r\n]*\2/gi,
+      '$1$2***$2',
+    )
+    // URL 里的 userinfo：`https://user:pass@host`。git remote、curl、数据库连接串都会这么打。
+    .replace(/([a-z][a-z0-9+.-]{0,32}:\/\/)([^\s:@/]{1,256}):([^\s@/]{1,256})@/gi, '$1$2:***@');
 }
 
 function normalize(text: string): string {

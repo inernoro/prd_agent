@@ -84,6 +84,7 @@ export function SiteWizardDialog({
   onSelectHost,
   onHostCreated,
   onSave,
+  canonicalEnvironments,
 }: {
   open: boolean;
   draft: SiteDraft;
@@ -96,6 +97,8 @@ export function SiteWizardDialog({
   onStep: (step: WizardStep) => void;
   onDraft: Dispatch<SetStateAction<SiteDraft>>;
   onSelectHost: (hostId: string) => void;
+  /** 已有主目标的环境集合——决定新建时「设为主目标」的默认勾选状态。 */
+  canonicalEnvironments: ReadonlySet<string>;
   /** 就地新建服务器后：父级把这台主机并进列表并选中，向导原地继续。 */
   onHostCreated: (host: RemoteHostOption) => void | Promise<void>;
   onSave: () => void;
@@ -188,7 +191,14 @@ export function SiteWizardDialog({
                       <button
                         key={option.value}
                         type="button"
-                        onClick={() => onDraft((current) => ({ ...current, environment: option.value }))}
+                        onClick={() => onDraft((current) => ({
+                          ...current,
+                          environment: option.value,
+                          // 换环境就重算主目标默认值：新建时切到一个已有主目标的环境，
+                          // 勾还留着的话保存必然被后端拒。编辑既有目标不动它——
+                          // 那是用户自己的选择，不是默认值。
+                          ...(current.id ? {} : { isCanonical: canonicalEnvironments.has(option.value) === false }),
+                        }))}
                         className={`rounded-md border p-3 text-left ${
                           draft.environment === option.value
                             ? 'border-primary/45 bg-primary/10'

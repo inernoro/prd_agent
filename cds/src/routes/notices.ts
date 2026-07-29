@@ -11,6 +11,7 @@
  */
 
 import { Router } from 'express';
+import { apiNoticeDedupeKey } from '../services/notice-ledger.js';
 import type { NoticeLedgerService, CdsNoticeLevel } from '../services/notice-ledger.js';
 
 /**
@@ -79,8 +80,9 @@ export function createNoticesRouter(deps: NoticesRouterDeps): Router {
     }
     const { record } = deps.ledger.upsert({
       id,
-      // 前端来源的 id 已经是稳定的内容键（如 `env-missing:<projectId>`），直接当合并键。
-      dedupeKey: id,
+      // 前端来源的 id 是稳定的内容键（如 `env-missing:<projectId>`），但它由调用方
+      // 控制，不能直接当全局合并键——键空间与作用域段见 apiNoticeDedupeKey。
+      dedupeKey: apiNoticeDedupeKey(scope, id),
       level,
       title,
       body: typeof body.body === 'string' ? body.body : '',

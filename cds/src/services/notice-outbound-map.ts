@@ -28,6 +28,37 @@ export interface NoticeOutboundConfig {
   source: string;
   /** 定向投递给某个 MAP 用户；不填则按 MAP 的默认受众规则。 */
   targetUserId?: string;
+  /**
+   * CDS 自己的公网入口（如 `https://cds.miduo.org`）。
+   *
+   * 站内信的 href 是同源相对路径（`/release-center?...`），那是**给 CDS 看的**。
+   * 原样发给 MAP，MAP 会按自己的 origin 展开——点开落到 MAP 的 /release-center，
+   * 一个不存在的页面（Codex review P2，2026-07-29）。所以外发前必须绝对化；
+   * 解析不出 origin 时宁可不带动作，也不给一个必然点错的链接。
+   */
+  publicOrigin?: string;
+}
+
+/** 裸域名补 https；已带 scheme 的原样收下。空值返回空串。 */
+export function normalizeNoticeOrigin(raw: string | undefined): string {
+  const value = (raw || '').trim().replace(/\/+$/, '');
+  if (!value) return '';
+  return /^https?:\/\//i.test(value) ? value : `https://${value}`;
+}
+
+/**
+ * 把站内信 href 变成外部可点的绝对地址。
+ * href 已由 sanitizeNoticeHref 收敛为「以单个 / 开头的同源相对路径」，
+ * 所以这里只需拼接，不需要再防一次协议相对或外链。
+ */
+export function absoluteNoticeActionUrl(
+  href: string | undefined,
+  publicOrigin: string | undefined,
+): string {
+  const origin = normalizeNoticeOrigin(publicOrigin);
+  const path = (href || '').trim();
+  if (!origin || !path.startsWith('/')) return '';
+  return `${origin}${path}`;
 }
 
 export type FetchLike = (input: string, init?: {
@@ -65,7 +96,18 @@ export function resolveNoticeOutboundConfig(
 
   const source = (env.CDS_NOTICE_MAP_SOURCE || '').trim() || DEFAULT_MAP_SOURCE;
   const targetUserId = (env.CDS_NOTICE_MAP_TARGET_USER || '').trim();
-  return { baseUrl, token, source, ...(targetUserId ? { targetUserId } : {}) };
+  // 显式变量优先；退到 dashboard 域名——那本来就是「CDS 面板对外的地址」，
+  // 已部署实例基本都配了它，不必为外发再让人填一遍。
+  const publicOrigin = normalizeNoticeOrigin(
+    env.CDS_NOTICE_PUBLIC_ORIGIN || env.CDS_DASHBOARD_DOMAIN || env.DASHBOARD_DOMAIN,
+  );
+  return {
+    baseUrl,
+    token,
+    source,
+    ...(targetUserId ? { targetUserId } : {}),
+    ...(publicOrigin ? { publicOrigin } : {}),
+  };
 }
 
 /** CDS 级别 → MAP 级别。MAP 没有 danger，未映射会被静默降成 info（坑 2）。 */
@@ -81,13 +123,16 @@ export function buildMapNotificationBody(
   config: NoticeOutboundConfig,
 ): Record<string, unknown> {
   const occurrenceSuffix = notice.occurrences > 1 ? `（近期第 ${notice.occurrences} 次）` : '';
+  // 动作按钮是「标签 + 地址」的整体：地址绝对化不了就把标签一起去掉，
+  // 只留一个点不动（或点错地方）的按钮比没有按钮更糟。
+  const actionUrl = absoluteNoticeActionUrl(notice.href, config.publicOrigin);
   return {
     source: config.source,
     title: notice.title,
     message: `${notice.body}${occurrenceSuffix}`,
     level: mapNoticeLevel(notice.level),
-    ...(notice.actionLabel ? { actionLabel: notice.actionLabel } : {}),
-    ...(notice.href ? { actionUrl: notice.href } : {}),
+    ...(actionUrl && notice.actionLabel ? { actionLabel: notice.actionLabel } : {}),
+    ...(actionUrl ? { actionUrl } : {}),
     // 逐字 dedupKey —— 不是 dedupeKey（坑 1）。
     dedupKey: notice.dedupeKey,
     expiresInDays: 7,

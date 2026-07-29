@@ -329,6 +329,13 @@ export class ScheduledJobService {
     type: 'release.schedule.approval-required' | 'release.schedule.disabled',
     job: ScheduledJob,
     message: string,
+    /**
+     * 待确认的那一版。必须随事件一起带出去：审批通知是异步的，人可能几小时后才点，
+     * 那时分支早已前进。不钉死版本的话，人在发布中心批准的是「当时最新」，
+     * 而不是刚才通过预检的那一版——预检结论与实际发布的内容对不上
+     * （Codex review P1，2026-07-29）。
+     */
+    candidate?: { branchId?: string; commitSha?: string },
   ): void {
     const publish = this.deps.publishEvent;
     if (!publish) return;
@@ -345,6 +352,8 @@ export class ScheduledJobService {
         projectSlug: project?.slug,
         ...(targetId ? { targetId } : {}),
         ...(releaseTarget?.name ? { targetName: releaseTarget.name } : {}),
+        ...(candidate?.branchId ? { branchId: candidate.branchId } : {}),
+        ...(candidate?.commitSha ? { commitSha: candidate.commitSha } : {}),
         message: `${job.name}：${message}`,
       });
     } catch (err) {
@@ -575,8 +584,16 @@ export class ScheduledJobService {
           preflight.ok
             ? `发布前检查已通过，等待人工确认后发布 ${source.candidateCommitSha || source.branchId}`
             : `发布前检查未通过，请人工核对：${preflight.error || '存在阻塞项'}`,
+          // 把刚才过检的那一版钉进通知：它是持久化的，人几小时后点进来，
+          // 发布中心据此预置同一个 commit，而不是重新解析「当前最新」。
+          { branchId: source.branchId, ...(source.candidateCommitSha ? { commitSha: source.candidateCommitSha } : {}) },
         );
       }
+      // 预检没过 = 这条规则当前是坏的，必须记成失败。
+      // 记成 skip 会顺带把 consecutiveFailureCount 清零，于是一条每次都过不了预检的
+      // 规则永远够不到自动停用阈值，坏着坏着就没人管了（Codex review P2，2026-07-29）。
+      // skip 只留给「候选确实已就绪、只差人点头」这一种情况。
+      if (!preflight.ok) return preflight;
       return skip('已生成待人工确认通知，未自动发布。');
     }
 

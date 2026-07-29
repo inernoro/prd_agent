@@ -70,3 +70,64 @@ describe('页面真的消费了这两个参数（接线守卫）', () => {
     expect(ledger).toContain("params.set('run', data.releaseId)");
   });
 });
+
+/**
+ * 待人工确认的深链：`?target=&branch=&commit=`。
+ *
+ * 定时规则要求人工确认时不自动发布，只留一条通知。人可能几小时后才点进来，
+ * 那时分支早已前进——链接不钉死 commit，批准发出去的就不是刚才过检的那一版
+ * （Codex review P1，2026-07-29）。
+ */
+describe('待人工确认深链钉住版本', () => {
+  const page = read('pages/ReleaseCenterPage.tsx');
+
+  it('解析 branch 与 commit', () => {
+    const params = new URLSearchParams('project=p1&target=rt_prod&branch=br_main&commit=abc123');
+    expect(releaseCenterDeepLink(params)).toEqual({
+      targetId: 'rt_prod', branchId: 'br_main', commitSha: 'abc123',
+    });
+  });
+
+  it('只有 branch 没有 commit 时不算一条完整的审批链接', () => {
+    expect(releaseCenterDeepLink(new URLSearchParams('target=rt_prod&branch=br_main')))
+      .toEqual({ targetId: 'rt_prod', branchId: 'br_main' });
+  });
+
+  it('通知侧把 branch 与 commit 写进链接（两头都在才叫一条链路）', () => {
+    const ledger = fs.readFileSync(path.resolve(here, '../../src/services/notice-ledger.ts'), 'utf8');
+    expect(ledger).toContain("params.set('branch', data.branchId)");
+    expect(ledger).toContain("params.set('commit', data.commitSha)");
+  });
+
+  it('调度侧把过检的那一版随事件带出去', () => {
+    const svc = fs.readFileSync(path.resolve(here, '../../src/services/scheduled-job-service.ts'), 'utf8');
+    // 事件里没有 commitSha，notice-ledger 就拼不出 commit 参数，整条链断在源头。
+    expect(svc).toMatch(/candidate\?\.commitSha \? \{ commitSha: candidate\.commitSha \}/);
+    expect(svc).toMatch(/\{ branchId: source\.branchId, \.\.\.\(source\.candidateCommitSha/);
+  });
+
+  it('页面把 commit 钉进发布意图，而不只是选中目标', () => {
+    // 只选中目标 = 打开的仍是「发当前最新」，等于没钉。
+    const effect = page.slice(page.indexOf('pendingApproval'), page.indexOf('const selectedRow'));
+    expect(effect).toContain('expectedCommitSha: pendingApproval.commitSha');
+    expect(effect).toContain('branchId: pendingApproval.branchId');
+    expect(effect).toContain('setReleaseIntent');
+  });
+
+  it('三个参数缺一就不进审批流程（不猜）', () => {
+    const init = page.slice(page.indexOf('const [pendingApproval'), page.indexOf('const [releaseIntent'));
+    expect(init).toMatch(/deepLink\.targetId && deepLink\.branchId && deepLink\.commitSha/);
+  });
+});
+
+describe('待人工确认时预检失败必须记成失败', () => {
+  it('preflight 不 ok 就返回失败结果，而不是 skip', async () => {
+    const svc = fs.readFileSync(path.resolve(here, '../../src/services/scheduled-job-service.ts'), 'utf8');
+    const branch = svc.slice(svc.indexOf('if (target.requireApproval)'), svc.indexOf('// f) 试跑模式'));
+    // 记成 skip 会顺带清零 consecutiveFailureCount，于是一条每次都过不了预检的规则
+    // 永远够不到自动停用阈值。
+    expect(branch).toContain('if (!preflight.ok) return preflight;');
+    expect(branch.indexOf('if (!preflight.ok) return preflight;'))
+      .toBeLessThan(branch.indexOf("return skip('已生成待人工确认通知"));
+  });
+});

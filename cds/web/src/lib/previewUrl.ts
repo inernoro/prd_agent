@@ -91,5 +91,12 @@ export function resolvePreviewUrl(
   origin: PreviewUrlOrigin = currentOrigin(),
 ): string {
   if (mode === 'simple') return simplePreviewUrl(config, origin);
+  // `port` 模式必须显式退回空串，不能跟着 multi 走子域公式。
+  // 这两种模式的地址形状根本不同：port 的入口是运行期分配的 `host:端口`，
+  // 由 `POST /api/branches/:id/preview-port` 现取。套 multi 公式会得到一个
+  // 语法合法、却没有任何东西监听的子域；而发布前检查只校验「非空」，
+  // 于是这个编出来的地址会被当作有效产物一路传成 CDS_PREVIEW_URL
+  // （Codex review P1，2026-07-29）。宁可空着让检查拦下来。
+  if (mode === 'port') return '';
   return multiPreviewUrl(branch, config, origin);
 }

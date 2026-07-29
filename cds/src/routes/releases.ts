@@ -912,7 +912,7 @@ function buildCommitMetaMap(
  * 版本推荐去提升，是在教用户把故障扩散到下一个环境。健康 unknown 仍然算候选 ——
  * 存活监控可能压根没开，把 unknown 排除等于整个功能对多数部署不可见。
  */
-function resolvePromotionCandidate(
+export function resolvePromotionCandidate(
   row: PromotionRowLike,
   rows: ReadonlyArray<PromotionRowLike>,
   rail: ReleaseCommitRailReader,
@@ -935,6 +935,20 @@ function resolvePromotionCandidate(
       ? rail.countCommitsBetween(row.target.projectId, row.currentCommit, other.currentCommit)
       : null;
     if (row.currentCommit && (aheadCount === null || aheadCount <= 0)) continue;
+    if (row.currentCommit) {
+      // 「对方领先我 N 个提交」还不足以说它是升级版本：两条分叉的分支互相都领先对方，
+      // `rev-list a..b` 两个方向都是正数。只有反向为 0 —— 我这一版是对方的祖先 ——
+      // 才是真正的「同一条线上往前走」。否则把一个无关分叉标成可晋升，
+      // 用户点一下就把生产切到另一条线上（Codex review P1，2026-07-29）。
+      const behindCount = rail.countCommitsBetween(
+        row.target.projectId,
+        other.currentCommit,
+        row.currentCommit,
+      );
+      // null = 算不出来（仓库读不到 / commit 不在本地）。此时宁可不推荐：
+      // 建议用户把生产切过去，是本页面里后果最重的一个动作。
+      if (behindCount === null || behindCount > 0) continue;
+    }
     return {
       fromTargetId: other.target.id,
       fromTargetName: other.target.name,

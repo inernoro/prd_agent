@@ -81,6 +81,21 @@ export function fingerprintPrivateKey(plain: string): string {
   return hash.slice(0, 16);
 }
 
+/**
+ * 密码认证主机的凭据标识。
+ *
+ * **不能**复用 fingerprintPrivateKey：那是无盐 sha256 截 64 位，而这个值经
+ * `GET /api/cds-system/remote-hosts` 公开返回、且不按项目作用域过滤。私钥有几百比特
+ * 熵，截断哈希对它没有实际意义上的可逆性；口令没有——低权限凭据读到这个指纹，就能
+ * 拿一本字典离线比对，猜中即得到生产机的 SSH 口令。
+ *
+ * 所以这里返回一枚**与密钥材料无关**的随机串：它仍然满足「同一台主机换过凭据没有」
+ * 这个 UI 用途（换凭据即换值），但不再是任何东西的校验子。
+ */
+export function opaqueCredentialRef(): string {
+  return crypto.randomBytes(8).toString('hex');
+}
+
 /** 把可能 sealed 的 RemoteHost 转为只暴露公开字段的视图。 */
 export function redactRemoteHost(host: RemoteHost): RemoteHostPublicView {
   return {
@@ -193,9 +208,11 @@ export class RemoteHostService {
       ? generateSshKeyPair(`cds-${input.name.trim() || id}`)
       : null;
     const privateKey = generated?.privateKey ?? pastedKey;
-    // 密码主机也留指纹：它只是「认出同一份凭据」的锚，不承诺是私钥。
-    const fingerprint = fingerprintPrivateKey(privateKey || password || id);
-    const sealedPass = input.sshPassphrase ? sealToken(input.sshPassphrase) : undefined;
+    // 私钥才做内容指纹；密码主机走与密钥材料无关的随机标识（见 opaqueCredentialRef）。
+    const fingerprint = privateKey ? fingerprintPrivateKey(privateKey) : opaqueCredentialRef();
+    // 密码认证下忽略口令：口令是解私钥用的，此时没有私钥可解，存了只会让
+    // 公开视图报出一个不存在的 hasPassphrase。
+    const sealedPass = input.sshPassphrase && !password ? sealToken(input.sshPassphrase) : undefined;
 
     const entity: RemoteHost = {
       id,
@@ -251,14 +268,20 @@ export class RemoteHostService {
       fields.sshPasswordEncrypted = undefined;
       fields.sshAuthMethod = 'private-key';
     } else if (patch.sshPassword?.trim()) {
-      fields.sshPrivateKeyFingerprint = fingerprintPrivateKey(patch.sshPassword);
+      fields.sshPrivateKeyFingerprint = opaqueCredentialRef();
       fields.sshPasswordEncrypted = sealToken(patch.sshPassword);
       fields.sshPrivateKeyEncrypted = undefined;
       fields.sshPublicKey = undefined;
       fields.sshAuthMethod = 'password';
+      // 口令属于「那把已经被清掉的私钥」。留着它，公开视图会继续报 hasPassphrase，
+      // 而且之后换回私钥认证时这枚陈年口令会被拿去解新私钥，认证失败还查不出原因。
+      fields.sshPassphraseEncrypted = undefined;
     }
 
-    if (patch.clearPassphrase) {
+    const switchedToPassword = fields.sshAuthMethod === 'password';
+    if (patch.clearPassphrase || switchedToPassword) {
+      // switchedToPassword 也走这里，且优先于下面的写入：口令是私钥的附属品，
+      // 「改成密码认证」和「同时给一个口令」是自相矛盾的输入，按前者解读。
       fields.sshPassphraseEncrypted = undefined;
     } else if (patch.sshPassphrase !== undefined && patch.sshPassphrase !== '') {
       fields.sshPassphraseEncrypted = sealToken(patch.sshPassphrase);

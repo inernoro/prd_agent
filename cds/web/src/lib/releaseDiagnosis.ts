@@ -284,3 +284,28 @@ export function diagnoseReleaseFailure(
     ...(humanHint ? { humanHint } : {}),
   };
 }
+
+/**
+ * 「立即试跑一次」的结论文案。
+ *
+ * 这条结果**没有** `message` 字段（后端给的是 `{ ok, exitCode, log, error }`），
+ * 而 log 的第一行恒为「本次只做检查、未发布」的安全横幅。所以原先的
+ * `result.message || log 首行` 在成功和失败两种情况下都只显示那条横幅——
+ * 用户看不到规则到底哪一项没过，也就无从修（Codex review P2，2026-07-29）。
+ *
+ * 失败时按「error → 日志里的 fail 行 → 兜底」逐级取，取到什么说什么。
+ */
+export function describeDryRunResult(
+  result: { ok?: boolean; error?: string; log?: string } | undefined,
+): string {
+  if (!result) return '试跑完成：只执行了发布前检查，未发布';
+  if (result.ok) return '试跑通过：发布前检查全部满足，未发布';
+
+  const failedChecks = (result.log || '')
+    .split('\n')
+    .map((line) => line.trim())
+    .filter((line) => line.startsWith('[fail]') || line.startsWith('[warn]'));
+
+  const detail = result.error?.trim() || failedChecks.join('；');
+  return detail ? `试跑未通过：${detail}` : '试跑未通过：发布前检查存在阻塞项';
+}
