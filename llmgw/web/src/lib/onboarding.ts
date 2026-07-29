@@ -11,7 +11,7 @@
 //   3. 读不到的不猜：当前角色没权限打开的数据源一律**不发请求**，标成 unreadable，
 //      由调用方渲染成「由管理员完成」，而不是显示一个永远完不成的步骤。
 import { useEffect, useState } from 'react';
-import { getLogsSummary, getOrganization, getServiceKeys } from '@/lib/api';
+import { getLogs, getOrganization, getServiceKeys } from '@/lib/api';
 import { canAccessPage } from '@/lib/access';
 import type { ConsolePage } from '@/lib/access';
 import { useAuth } from '@/lib/auth';
@@ -108,7 +108,11 @@ function loadHasRequests(tenantId: string): Promise<boolean> {
   return cached('requests', tenantId, async () => {
     const to = new Date();
     const from = new Date(to.getTime() - REQUEST_LOOKBACK_DAYS * 24 * 60 * 60 * 1000);
-    const response = await getLogsSummary({ from: from.toISOString(), to: to.toISOString(), pageSize: 1 });
+    // 走可分页的列表端点：它是 CountDocuments + Limit(1)，只回一条。
+    // 不能用 /logs/summary —— 那个端点不接受分页，会把整段区间的日志连同投影
+    // 全部 materialize 到内存再做聚合；为了「有没有跑过一条请求」拉一整年，
+    // 对日志量大的租户是每次缓存未命中就来一发（Codex P1）。
+    const response = await getLogs({ page: 1, pageSize: 1, from: from.toISOString(), to: to.toISOString() });
     if (!response.success) throw new OnboardingFactsUnavailable('requests');
     return response.data.total > 0;
   });
@@ -194,7 +198,9 @@ export function useOnboardingState(): OnboardingState {
       canReadLogs ? loadHasRequests(tenantId) : Promise.resolve(false),
     ]).then(([team, keys, hasRequests]) => {
       if (cancelled) return;
-      setFacts({ team: team.hasTeam, member: team.hasMember, key: keys.total > 0, request: hasRequests });
+      // 只有还能用的密钥才算这一步完成：全被禁用/吊销时清单不该消失，
+      // 否则用户既跑不出下一条请求，AccessSnippetBar 又还在催他签一把（Codex P2）。
+      setFacts({ team: team.hasTeam, member: team.hasMember, key: keys.activePrefix !== null, request: hasRequests });
       setUnavailable(false);
       setLoading(false);
     }).catch(() => {

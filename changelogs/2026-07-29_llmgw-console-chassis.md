@@ -54,3 +54,6 @@
 | fix | llmgw | 站内学习中心回落改走 router Link：裸 a 标签在 basename=/llmgw 下会跳到 MAP 应用的 /learn |
 | fix | prd-admin | 知识库教程深链按 tutorialSourceId 选中对应章节，取不到才回落第一篇 |
 | test | llmgw | 新增教程深链契约守卫 check-tutorial-deeplink.mjs 并接进 build（这三条依赖 router basename 与跨应用参数约定，行为测不到，只能钉源码契约） |
+| perf | llmgw | 新人清单的「有没有跑过请求」改走可分页的日志列表端点：此前用 /logs/summary 拉一整年，而该端点不接受分页、会把整段区间的日志全量 materialize 后再聚合 |
+| fix | llmgw | 「签一把密钥」改看可用密钥而非历史总数：密钥全被禁用/吊销时清单不再提前消失（此前既跑不出请求、接入片段又还在催签发） |
+| fix | llmgw | 平台下发的 MAP 主入口改在应用挂载时取一次：此前只有登录页与首页会调 healthz，SSO 直落页与书签入口拿不到权威地址会退回按 hostname 反推，而长分支子域是截断+摘要过的、根本还原不出主入口 |

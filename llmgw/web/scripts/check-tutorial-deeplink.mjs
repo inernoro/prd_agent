@@ -46,9 +46,25 @@ must(
   'PageShell: 教程深链要用 router 的 location（已按 basename 削过），不要用 window.location.pathname',
 );
 
+const app = strip(read('src/App.tsx'));
+must(
+  /useEffect\(\(\)\s*=>\s*\{\s*void getHealth\(\);/.test(app),
+  'App: 挂载时必须取一次 /gw/healthz 的 mapHomeUrl —— 只靠 LoginPage / HomePage 会让 SSO 直落页与书签入口拿不到权威地址',
+);
+
+const onboarding = strip(read('src/lib/onboarding.ts'));
+must(
+  !onboarding.includes('getLogsSummary'),
+  'onboarding: 「有没有跑过请求」不得用 /logs/summary —— 该端点不分页，会把整段区间全量 materialize',
+);
+must(
+  /key:\s*keys\.activePrefix\s*!==\s*null/.test(onboarding),
+  'onboarding: 「签一把密钥」要看可用密钥（activePrefix），不是历史总数',
+);
+
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');
   for (const line of failures) console.error(`  - ${line}`);
   process.exit(1);
 }
-console.log(`教程深链契约守卫通过：${5} 条断言。`);
+console.log(`教程深链契约守卫通过：8 条断言。`);
