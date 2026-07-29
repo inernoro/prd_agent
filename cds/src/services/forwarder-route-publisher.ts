@@ -96,6 +96,13 @@ export class ForwarderRoutePublisher {
   private pendingJson: string = '';
   private pendingStableSamples: number = 0;
   private publishCount: number = 0;
+  /**
+   * 已经报过的「历史别名被显式声明占走」冲突（`branchId:label:owner`）。
+   *
+   * buildRoutes 每 2 秒重跑一次，不去重就会把同一条配置错误刷满日志；
+   * 冲突消失后要从这里移除，否则改回来再改错就再也不会提示了。
+   */
+  private warnedAliasCollisions = new Set<string>();
 
   constructor(private opts: ForwarderRoutePublisherOptions) {
     if (!opts.rootDomains?.length) {
@@ -164,6 +171,10 @@ export class ForwarderRoutePublisher {
 
   private buildRoutes(): RouteRecord[] {
     const records: RouteRecord[] = [];
+    // 本轮实际存在的别名冲突。收在这里是为了在末尾把已经消失的冲突从
+    // warnedAliasCollisions 里剪掉——否则「改错 → 报警 → 改对 → 再改错」的第二次
+    // 就永远静默了（去重不能变成一次性静音）。
+    const seenAliasCollisions = new Set<string>();
     const projects = this.opts.state.getProjects();
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
@@ -467,10 +478,13 @@ export class ForwarderRoutePublisher {
       // 都会放行，但前者展开出的别名 host 与后者的规范 host 完全相同 —— forwarder 于是
       // 拿到两条 host 相同、上游端口不同的路由，按路由 id 定死选一条，另一个服务直接不可达。
       // 先发全部规范名、再发别名，保证「显式声明」永远压过「兼容别名」。
-      const writtenLabels = new Set<string>();
+      // label → 写它的那个 profileId。用 Map 而不是 Set：只有知道「是谁占的」，
+      // 才能把「另一个 profile 显式声明占走了这个别名」（真冲突，要报）与
+      // 「这个 label 就是本 profile 刚发的规范名」（正常，别报）区分开。
+      const writtenLabels = new Map<string, string>();
       const emit = (svc: typeof subdomainCandidates[number], namedLabel: string): void => {
         if (writtenLabels.has(namedLabel)) return;
-        writtenLabels.add(namedLabel);
+        writtenLabels.set(namedLabel, svc.profileId);
         {
           for (const root of this.opts.rootDomains) {
             // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
@@ -497,13 +511,28 @@ export class ForwarderRoutePublisher {
       }
       for (const { svc, sub } of claims) {
         for (const label of publishedServiceLabels(previewSlug, sub)) {
-          if (writtenLabels.has(label)) continue;
-          this.opts.logger?.warn?.(
-            `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被同分支另一个 profile 的显式声明占用，跳过别名路由（显式声明优先）`,
-          );
-          emit(svc, label);
+          const owner = writtenLabels.get(label);
+          if (owner === undefined) {
+            emit(svc, label); // 别名没人占，静默发出去——这是绝大多数情况
+            continue;
+          }
+          // 本 profile 自己刚在规范名那趟发过这个 label，不是冲突。
+          if (owner === svc.profileId) continue;
+          // 真冲突：另一个 profile 显式声明了这个 host。显式声明优先，别名让路。
+          // 去重上报：buildRoutes 每 2 秒重跑一次，不去重会把同一条配置错误刷满日志。
+          const warnKey = `${branch.id}:${label}:${owner}`;
+          if (!this.warnedAliasCollisions.has(warnKey)) {
+            this.warnedAliasCollisions.add(warnKey);
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被同分支 profile ${owner} 的显式声明占用，跳过别名路由（显式声明优先）`,
+            );
+          }
+          seenAliasCollisions.add(warnKey);
         }
       }
+    }
+    for (const key of [...this.warnedAliasCollisions]) {
+      if (!seenAliasCollisions.has(key)) this.warnedAliasCollisions.delete(key);
     }
     return records;
   }
