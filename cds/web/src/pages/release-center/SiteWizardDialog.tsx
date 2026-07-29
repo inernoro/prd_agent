@@ -161,8 +161,13 @@ export function SiteWizardDialog({
                     ))}
                   </div>
                 )}
+                {/* 这里绝对不能挂随 hosts.length 变化的 key。
+                    新建成功后这台主机会立刻并进列表，hosts.length 从 0 变 1 →
+                    带 key 的组件当场重挂 → 组件内的 created 状态被清空 →
+                    刚生成的公钥凭空消失，而那把公钥是用户唯一一次拿到它的机会
+                    （私钥留在服务端，公钥不贴到 authorized_keys 这台机器就永远连不上）。
+                    2026-07-29 真人路径验收当场撞到，截图为证。 */}
                 <InlineHostCreator
-                  key={`host-creator-${hosts.length}`}
                   defaultOpen={hosts.length === 0}
                   onCreated={onHostCreated}
                 />

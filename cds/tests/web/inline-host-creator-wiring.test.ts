@@ -59,6 +59,12 @@ describe('就地加服务器的接线', () => {
     expect(creator).toMatch(/已被占用/);
   });
 
+  it('不给 InlineHostCreator 挂随 hosts 变化的 key（重挂会把刚生成的公钥清空）', () => {
+    // 新建成功后主机立刻进列表，hosts.length 0→1；若组件带 key={`...${hosts.length}`}
+    // 就会当场重挂，created 状态清零，公钥面板消失。用户拿不到公钥 = 这台机器永远连不上。
+    expect(wizard).not.toMatch(/<InlineHostCreator[\s\S]{0,200}key=\{[^}]*hosts\.length/);
+  });
+
   it('三种认证方式都在 UI 上给出（不是只留私钥）', () => {
     expect(creator).toContain("value: 'generate'");
     expect(creator).toContain("value: 'private-key'");
