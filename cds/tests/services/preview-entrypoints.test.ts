@@ -243,3 +243,32 @@ describe('publishedServiceLabels 是「发布了哪些 host」的唯一枚举口
     expect([...published].sort()).toEqual([...enumerated].sort());
   });
 });
+
+describe('同一分支内规范名与历史别名撞车（Codex P1）', () => {
+  const SLUG = 'demo-claude-prd-agent';
+
+  it('一个 profile 声明 llmgw、另一个声明 llmgw-web 时，显式声明压过兼容别名', () => {
+    // 原始 subdomain 去重放行了两者（字符串不同），但 llmgw 展开出的别名 host
+    // 与 llmgw-web 的规范 host 完全相同 —— 表和发布器都必须把这个 host 判给
+    // 显式声明它的那个 profile，否则两边归属相反、路由指向错的容器。
+    const r = buildPublishedEntrypoints({
+      previewSlug: SLUG,
+      previewHost: HOST,
+      subdomains: ['llmgw', 'llmgw-web'],
+    });
+    expect(Object.keys(r.serviceUrls).sort()).toEqual(['llmgw', 'llmgw-web']);
+    expect(r.serviceUrls['llmgw']).toBe(`https://${SLUG}-llmgw.miduo.org`);
+    expect(r.serviceUrls['llmgw-web']).toBe(`https://${SLUG}-llmgw-web.miduo.org`);
+  });
+
+  it('声明顺序反过来结果一致（两趟法保证与 profile 顺序无关）', () => {
+    const a = buildPublishedEntrypoints({ previewSlug: SLUG, previewHost: HOST, subdomains: ['llmgw', 'llmgw-web'] });
+    const b = buildPublishedEntrypoints({ previewSlug: SLUG, previewHost: HOST, subdomains: ['llmgw-web', 'llmgw'] });
+    expect(b.serviceUrls).toEqual(a.serviceUrls);
+  });
+
+  it('只声明 llmgw 时别名照常发布（改名兼容不受影响）', () => {
+    const r = buildPublishedEntrypoints({ previewSlug: SLUG, previewHost: HOST, subdomains: ['llmgw'] });
+    expect(Object.keys(r.serviceUrls).sort()).toEqual(['llmgw', 'llmgw-web']);
+  });
+});

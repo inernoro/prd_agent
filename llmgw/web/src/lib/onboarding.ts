@@ -112,7 +112,13 @@ function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
     const response = await getServiceKeys();
     if (!response.success) throw new OnboardingFactsUnavailable('serviceKeys');
     const items = response.data;
-    const usable = items.find((item) => item.enabled);
+    // 「可用」= 启用**且未过期**。GatewayRuntimeGovernance 对 enabled-but-expired 的
+    // 密钥同样拒签（`!record.Enabled || record.ExpiresAt <= now`），只看 enabled 会让
+    // 清单标完成、接入片段亮出一把根本认证不过的前缀（Codex P2）。
+    const now = Date.now();
+    const usable = items.find(
+      (item) => item.enabled && (!item.expiresAt || new Date(item.expiresAt).getTime() > now),
+    );
     // 已吊销/禁用的密钥也算数：它证明这个租户历史上确实跑通过。
     const everUsed = items.some((item) => Boolean(item.lastUsedAt));
     return { total: items.length, activePrefix: usable?.keyPrefix ?? null, everUsed };

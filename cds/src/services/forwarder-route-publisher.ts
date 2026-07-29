@@ -436,16 +436,14 @@ export class ForwarderRoutePublisher {
       // 同一容器(否则两次发布可能因键序不同把同名 subdomain 指向不同端口)。
       const subdomainCandidates = [...routableServices].sort((a, b) => a.profileId.localeCompare(b.profileId));
       const writtenSubdomains = new Set<string>();
+      const claims: Array<{ svc: typeof subdomainCandidates[number]; sub: string }> = [];
       for (const svc of subdomainCandidates) {
         const bp = profileById.get(svc.profileId);
         const sub = bp?.subdomain;
         if (!sub) continue;
         if (writtenSubdomains.has(sub)) continue;
         writtenSubdomains.add(sub);
-        // 规范名 + 历史别名一起发（preview-entrypoints.publishedServiceLabels）：
-        // 子域改名（llmgw-web → llmgw）时别的分支还挂在旧地址上，只发新名会让那些
-        // 链接一起失效。两个 host 指同一个上游，旧链接照常可达。
-        //
+        claims.push({ svc, sub });
         // DNS label 上限守卫(Codex P2):命名 host 第一标签必须 ≤63 octet(RFC 1035),否则
         // 无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL 对长分支名**静默失效**。
         // namedServiceLabel 已按段截断 + 摘要压到上限内;仍超限(subdomain 自身过长)的由
@@ -458,7 +456,22 @@ export class ForwarderRoutePublisher {
             `[forwarder-publisher] 跳过命名子域路由 ${label}.*（第一 DNS 标签 ${label.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
           );
         }
-        for (const namedLabel of publishable) {
+      }
+
+      // 规范名 + 历史别名一起发（preview-entrypoints.publishedServiceLabels）：
+      // 子域改名（llmgw-web → llmgw）时别的分支还挂在旧地址上，只发新名会让那些
+      // 链接一起失效。两个 host 指同一个上游，旧链接照常可达。
+      //
+      // **两趟发，且按最终 label 去重**（Codex P1）：去重键此前是原始 subdomain，
+      // 同一分支里若一个 profile 声明 `llmgw`、另一个声明 `llmgw-web`，两者原始名不同、
+      // 都会放行，但前者展开出的别名 host 与后者的规范 host 完全相同 —— forwarder 于是
+      // 拿到两条 host 相同、上游端口不同的路由，按路由 id 定死选一条，另一个服务直接不可达。
+      // 先发全部规范名、再发别名，保证「显式声明」永远压过「兼容别名」。
+      const writtenLabels = new Set<string>();
+      const emit = (svc: typeof subdomainCandidates[number], namedLabel: string): void => {
+        if (writtenLabels.has(namedLabel)) return;
+        writtenLabels.add(namedLabel);
+        {
           for (const root of this.opts.rootDomains) {
             // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
             //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
@@ -477,6 +490,18 @@ export class ForwarderRoutePublisher {
               // 不写 updatedAt(理由同前:dedup 失效防御)
             }, svc.profileId);
           }
+        }
+      };
+      for (const { svc, sub } of claims) {
+        emit(svc, namedServiceLabel(previewSlug, sub));
+      }
+      for (const { svc, sub } of claims) {
+        for (const label of publishedServiceLabels(previewSlug, sub)) {
+          if (writtenLabels.has(label)) continue;
+          this.opts.logger?.warn?.(
+            `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被同分支另一个 profile 的显式声明占用，跳过别名路由（显式声明优先）`,
+          );
+          emit(svc, label);
         }
       }
     }

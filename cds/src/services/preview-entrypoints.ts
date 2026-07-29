@@ -164,19 +164,21 @@ export function buildPublishedEntrypoints(opts: {
   if (!previewSlug || !previewHost) return { serviceUrls: {} };
 
   const serviceUrls: Record<string, string> = {};
-  for (const raw of opts.subdomains) {
-    const sub = (raw || '').trim();
-    if (!sub) continue;
-    if (serviceUrls[sub]) continue; // first-wins,对齐发布端 writtenSubdomains 去重
-    // 表里要**逐条对应发布器实际写出的路由**，历史别名同样在列 —— 否则会出现
-    // 「路由发布了但表里没有」，消费方据表判定就会误报「本环境没有这个入口」。
-    for (const name of subdomainWithLegacyAliases(sub)) {
-      if (serviceUrls[name]) continue;
-      const label = namedServiceLabel(previewSlug, name);
-      if (!isPublishableNamedLabel(label)) continue; // 没发布就不声明
-      serviceUrls[name] = `https://${label}.${previewHost}`;
-    }
-  }
+  const declare = (name: string): void => {
+    if (serviceUrls[name]) return;
+    const label = namedServiceLabel(previewSlug, name);
+    if (!isPublishableNamedLabel(label)) return; // 没发布就不声明
+    serviceUrls[name] = `https://${label}.${previewHost}`;
+  };
+  // 表里要**逐条对应发布器实际写出的路由**，历史别名同样在列 —— 否则会出现
+  // 「路由发布了但表里没有」，消费方据表判定就会误报「本环境没有这个入口」。
+  //
+  // 与发布器同款两趟：先全部规范名，再补别名。同一分支里一个 profile 声明 `llmgw`、
+  // 另一个声明 `llmgw-web` 时，后者的**显式声明**必须压过前者展开出的兼容别名，
+  // 否则表与实际发布的归属相反（Codex P1）。
+  const subs = opts.subdomains.map((raw) => (raw || '').trim()).filter(Boolean);
+  for (const sub of subs) declare(sub);
+  for (const sub of subs) for (const name of subdomainWithLegacyAliases(sub)) declare(name);
   return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls };
 }
 

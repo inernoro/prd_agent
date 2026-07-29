@@ -89,6 +89,12 @@ must(
   'onboarding: 「跑通首条请求」要取密钥的 lastUsedAt（持久事实），不能查请求日志 —— 日志默认只留 90 天，过期后会把已上手的租户打回未完成',
 );
 
+must(
+  /item\.enabled && \(!item\.expiresAt/.test(onboarding),
+  'onboarding: 「可用密钥」必须排除已过期的 —— 网关对 enabled-but-expired 同样拒签，'
+  + '只看 enabled 会亮出一把认证不过的前缀',
+);
+
 const quickstart = strip(read('src/pages/QuickstartPage.tsx'));
 must(
   (quickstart.match(/invalidateOnboardingCache\(/g) || []).length >= 3,
@@ -100,4 +106,4 @@ if (failures.length > 0) {
   for (const line of failures) console.error(`  - ${line}`);
   process.exit(1);
 }
-console.log(`教程深链契约守卫通过：16 条断言。`);
+console.log(`教程深链契约守卫通过：17 条断言。`);
