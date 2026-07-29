@@ -58,6 +58,15 @@ export class MockShellExecutor implements IShellExecutor {
     this.patterns.push({ regex, handler });
   }
 
+  /**
+   * 同 addResponsePattern，但插到队首 —— exec() 是**首个命中即返回**，所以在
+   * beforeEach 里注册过通用桩之后，单个用例想覆盖其中一条只能靠这个（往后追加永远
+   * 匹配不到）。用于「这个用例的场景与通用桩的默认值不符」的局部修正。
+   */
+  addResponsePatternFirst(regex: RegExp, handler: PatternHandler): void {
+    this.patterns.unshift({ regex, handler });
+  }
+
   clearPatterns(): void {
     this.patterns = [];
   }

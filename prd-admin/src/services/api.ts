@@ -710,6 +710,7 @@ export const api = {
       generate: (id: string) => `/api/report-agent/reports/${id}/generate`,
       comments: (id: string) => `/api/report-agent/reports/${id}/comments`,
       comment: (id: string, commentId: string) => `/api/report-agent/reports/${id}/comments/${commentId}`,
+      commentImages: (id: string) => `/api/report-agent/reports/${id}/comments/images`,
       likes: (id: string) => `/api/report-agent/reports/${id}/likes`,
       views: (id: string) => `/api/report-agent/reports/${id}/views`,
       viewsSummary: (id: string) => `/api/report-agent/reports/${id}/views-summary`,
@@ -937,6 +938,9 @@ export const api = {
   // ============ Official Skills 平台官方技能包（findmapskills：海鲜市场全操作） ============
   officialSkills: {
     download: (skillKey: string) => `/api/official-skills/${skillKey}/download`,
+    /** 角色套装列表（匿名可访问），返回 roleLabels + items */
+    bundles: (role?: string) =>
+      role ? `/api/official-skills/bundles?role=${encodeURIComponent(role)}` : '/api/official-skills/bundles',
   },
 
   // ============ Model Sizes ============

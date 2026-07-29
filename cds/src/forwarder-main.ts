@@ -28,8 +28,10 @@ import './load-env.js';
 import http from 'node:http';
 import fs from 'node:fs';
 import path from 'node:path';
+import { createHash } from 'node:crypto';
 import { ProxyHandler } from './forwarder/proxy-handler.js';
-import { resolveRoute } from './forwarder/route-resolver.js';
+import { resolveRoute, stickyEntryMemberFor } from './forwarder/route-resolver.js';
+import { ReplicaHealthRegistry } from './forwarder/replica-health.js';
 import type { RouteRecord } from './forwarder/types.js';
 import { buildForwarderWaitingPageHtml } from './forwarder/waiting-page.js';
 import {
@@ -78,8 +80,12 @@ if (activeHttpLogStore) {
   }
 }
 
+// 复制集被动健康注册表（debt #12）：数据面就地摘除死副本，冷却半开回池
+const replicaHealth = new ReplicaHealthRegistry();
+
 const proxy = new ProxyHandler({
   upstreamTimeoutMs: 30_000,
+  replicaHealth,
   masterPassthroughHost: MASTER_PASSTHROUGH_HOST,
   masterPassthroughPort: MASTER_PASSTHROUGH_PORT,
   unknownHostFallbackHost: FALLBACK_PORT > 0 ? FALLBACK_HOST : undefined,
@@ -245,22 +251,131 @@ function handleDiagnostic(req: http.IncomingMessage, res: http.ServerResponse): 
     }));
     return true;
   }
+  if (url === '/__forwarder/replica-health') {
+    // 与相邻 routes/stats/active 同一道门（Codex P2）：摘除表含跨项目的分支/
+    // profile/成员/故障态标识，公网预览 host 不得读取。
+    if (!isLoopback) {
+      res.writeHead(403, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'forbidden' }));
+      return true;
+    }
+    res.writeHead(200, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ ejected: replicaHealth.snapshot(), generatedAt: new Date().toISOString() }));
+    return true;
+  }
   res.writeHead(404, { 'Content-Type': 'application/json' });
   res.end(JSON.stringify({ error: 'unknown forwarder endpoint' }));
   return true;
 }
 
+/**
+ * 复制集粘性提取（design.cds.replica-set）：query __rs > header x-cds-replica >
+ * 组作用域 cookie `cds_rs_<组哈希8位>`。
+ *
+ * cookie 按组作用域（Codex P1，2026-07-26）：res-N 按 profile 顺位命名，同一
+ * host 多个复制集 profile 时，单一 host 级 cookie 会让「选 A 组 res-1」连带钉住
+ * B 组的 res-1；成员 id 不同时各组响应又互相覆写 cookie，粘性彻底失效。
+ * 现每组独立一枚 cookie，resolver 按本组的 replicaGroup 查值。
+ */
+function replicaGroupCookieHash(group: string): string {
+  return createHash('sha1').update(group).digest('hex').slice(0, 8);
+}
+
+/**
+ * 复制集会话粘性 cookie 收集（HTTP 与 WebSocket 升级共用，Codex 第二十一轮 P2）：
+ * 选中组内路由后种**组作用域** cookie（30 分钟滑动窗口），同一浏览器会话不横跳
+ * 版本；成员被移除后 cookie 失配 → resolver 自动回落权重选择。
+ * 显式多钉选（项目级整组预览）：__rs 带多个成员 id 时一次导航把该分支每个组的
+ * cookie 都种上（条目支持 profile 作用域 `profileId:memberId`，只命中匹配组）。
+ * WS-first 客户端此前拿不到 cookie，每次重连都重新掷签、可在不兼容版本间横跳
+ * ——升级路径把返回值写进 101 握手响应。
+ */
+function collectReplicaStickyCookies(
+  allRoutes: RouteRecord[],
+  route: RouteRecord | null,
+  sticky: { explicit?: string[]; byGroupHash: Map<string, string> },
+): string[] {
+  const cookies: string[] = [];
+  const pin = (group: string, memberId: string): void => {
+    const groupHash = replicaGroupCookieHash(group);
+    if (sticky.byGroupHash.get(groupHash) !== memberId) {
+      cookies.push(`cds_rs_${groupHash}=${memberId}; Path=/; Max-Age=1800; SameSite=Lax`);
+    }
+  };
+  if (route?.branchId && sticky.explicit?.length) {
+    const seenGroups = new Set<string>();
+    for (const r of allRoutes) {
+      if (r.branchId !== route.branchId || !r.replicaGroup || !r.replicaMemberId) continue;
+      if (r.replicaMemberId === 'primary' || seenGroups.has(r.replicaGroup)) continue;
+      const matched = sticky.explicit.some((entry) => stickyEntryMemberFor(entry, r.replicaGroup!) === r.replicaMemberId);
+      if (!matched) continue;
+      seenGroups.add(r.replicaGroup);
+      pin(r.replicaGroup, r.replicaMemberId);
+    }
+  } else if (route?.replicaGroup && route.replicaMemberId) {
+    pin(route.replicaGroup, route.replicaMemberId);
+  }
+  return cookies;
+}
+
+function extractReplicaSticky(req: http.IncomingMessage): {
+  /** 显式钉选（query __rs / header）。支持逗号多值：项目级整组预览一条链接钉住每个组 */
+  explicit?: string[];
+  byGroupHash: Map<string, string>;
+} {
+  const byGroupHash = new Map<string, string>();
+  const cookieHeader = req.headers.cookie ?? '';
+  for (const m of cookieHeader.matchAll(/(?:^|;\s*)cds_rs_([a-f0-9]{8})=([A-Za-z0-9_-]+)/g)) {
+    byGroupHash.set(m[1], m[2]);
+  }
+  // query 用 URLSearchParams 完整解析 + 解码（Codex P2）：字符类正则会把含 `.`
+  // 或百分号编码的 `profileId:memberId` 条目截断成前缀（api.v2:res-1 → api），
+  // 作用域钉选静默失效回落加权。
+  const splitIds = (raw: string): string[] => raw.split(',').map((s) => s.trim()).filter(Boolean);
+  try {
+    const parsed = new URL(req.url ?? '/', 'http://cds.internal');
+    const rsRaw = parsed.searchParams.get('__rs');
+    if (rsRaw && rsRaw.trim()) return { explicit: splitIds(rsRaw), byGroupHash };
+  } catch { /* 非法 URL 走 header/cookie 兜底 */ }
+  const header = req.headers['x-cds-replica'];
+  if (typeof header === 'string' && header.trim()) return { explicit: splitIds(header), byGroupHash };
+  return { byGroupHash };
+}
+
 const server = http.createServer((req, res) => {
   if (handleDiagnostic(req, res)) return;
   const host = (req.headers.host ?? '').split(':')[0];
-  const route = resolveRoute(routes, host, req.url ?? '/');
+  const sticky = extractReplicaSticky(req);
+  const route = resolveRoute(routes, host, req.url ?? '/', {
+    sticky: sticky.explicit,
+    stickyFor: (group) => sticky.byGroupHash.get(replicaGroupCookieHash(group)),
+    isEjected: (r) => replicaHealth.isEjected(r),
+    reserveProbe: (r) => replicaHealth.reserveProbe(r),
+  });
+  const stickyCookies = collectReplicaStickyCookies(routes, route, sticky);
+  if (stickyCookies.length > 0) res.setHeader('Set-Cookie', stickyCookies);
+  // 可观测性（用户拍板）：复制集链路的每个响应都盖「谁服务的」标记头，
+  // curl -I / 浏览器 DevTools / 探测端点都能核对——分流不是摆设。
+  if (route?.replicaGroup && route.replicaMemberId) {
+    res.setHeader('X-CDS-Replica', route.replicaMemberId);
+    res.setHeader('X-CDS-Replica-Group', route.replicaGroup);
+  }
   void proxy.handle(req, res, route);
 });
 
 server.on('upgrade', (req, socket, head) => {
   const host = (req.headers.host ?? '').split(':')[0];
-  const route = resolveRoute(routes, host, req.url ?? '/');
-  void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route);
+  const sticky = extractReplicaSticky(req);
+  const route = resolveRoute(routes, host, req.url ?? '/', {
+    sticky: sticky.explicit,
+    stickyFor: (group) => sticky.byGroupHash.get(replicaGroupCookieHash(group)),
+    isEjected: (r) => replicaHealth.isEjected(r),
+    reserveProbe: (r) => replicaHealth.reserveProbe(r),
+  });
+  // WS-first 亲和（Codex 第二十一轮 P2）：首次接触就是 WebSocket 升级的客户端
+  // 也要拿到组作用域 cookie，否则每次重连重新掷签、可在不兼容版本间横跳
+  const wsStickyCookies = collectReplicaStickyCookies(routes, route, sticky);
+  void proxy.handleUpgrade(req, socket as import('node:net').Socket, head, route, wsStickyCookies);
 });
 
 function shutdown(signal: string): void {

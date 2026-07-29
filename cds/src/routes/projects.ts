@@ -30,6 +30,7 @@ import { StateService } from '../services/state.js';
 import { detectStack, detectModules, detectDatabaseInitialization, type StackDetection } from '../services/stack-detector.js';
 import { buildCacheMounts } from '../services/cache-catalog.js';
 import { processTeardownTombstones, computeCdsInstanceId } from '../services/orphan-container-reaper.js';
+import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
@@ -3546,7 +3547,28 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       .flatMap((b) => stateService.getResourceExternalAccessForBranch(project.id, b.id))
       .map((p) => p.proxyContainerName)
       .filter((n): n is string => Boolean(n));
-    const teardownContainers = [...new Set([...appContainerNames, ...infraContainerNames, ...proxyContainerNames])];
+    // 复制集级联（Codex P1，2026-07-26）：成员容器不在 b.services 快照里；专用隔离
+    // 实例（cds-rsdb-*）更是只记在 replicaDbSnapshots 台账、没有 cds.branch.id /
+    // cds.type=app label——项目一删台账即失，孤儿收割器（只认 cds.type=app）永远
+    // 看不见它们，删一个带隔离库的项目就永久漏跑一个数据库容器。两类都进墓碑；
+    // 专用实例另在异步段先走 dropReplicaDb（docker rm -f -v，连匿名数据卷一起清），
+    // 墓碑仅作 rm -f 兜底。共享库里的 _rs_ 隔离库无需单独 drop——承载它们的项目级
+    // infra 容器本身就在墓碑清单里，随项目一起消失。
+    const replicaMemberContainerNames = projectBranches
+      .flatMap((b) => Object.values(b.replicaSets || {}))
+      .flatMap((rs) => rs.members.map((m) => m.containerName))
+      .filter((n): n is string => Boolean(n));
+    const replicaDbSnapshots = projectBranches.flatMap((b) => b.replicaDbSnapshots || []);
+    const dedicatedDbContainerNames = replicaDbSnapshots
+      .map((s) => s.dedicatedContainer)
+      .filter((n): n is string => Boolean(n));
+    const teardownContainers = [...new Set([
+      ...appContainerNames,
+      ...infraContainerNames,
+      ...proxyContainerNames,
+      ...replicaMemberContainerNames,
+      ...dedicatedDbContainerNames,
+    ])];
 
     // 墓碑必须**先于** removeProject 落库（Codex P2）：若 tombstone 写在
     // removeProject 之后，两次写之间进程被杀 / save 失败时，state 已无项目/分支、
@@ -3554,14 +3576,26 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 再删项目，即使删项目那步失败，收割器也能按墓碑收敛。
     const requestedAt = new Date().toISOString();
     if (teardownContainers.length > 0) {
+      // 专用隔离实例（cds-rsdb-*）的数据在匿名卷里、装的是生产派生克隆——墓碑
+      // 必须标注「连卷删」（Codex 第三十二轮 P1），否则 rm -f 之后卷会永久失去
+      // 追踪：敏感数据留着、盘一直占着，孤儿扫描也看不到它。
+      const volumeBearing = new Set(dedicatedDbContainerNames);
       stateService.addContainerTeardownTombstones(
         teardownContainers.map((containerName) => ({
           containerName,
           projectId: project.id,
           requestedAt,
+          ...(volumeBearing.has(containerName) ? { removeVolumes: true } : {}),
         })),
       );
     }
+
+    // worktree 桶墓碑（Codex PR #1275 三轮 P2）：删项目不删磁盘上的 worktree 目录，
+    // 而孤儿对账为了不误删「迁移自扁平布局的遗留 worktree」只在已知项目桶下枚举。
+    // 项目 id 一从台账消失，那个桶就再也进不去，里面已无人认领的 worktree 永久占盘。
+    // 与容器墓碑同理必须**先于** removeProject 落库：两次写之间进程被杀时，
+    // 至少墓碑还在，回收路径不断。
+    stateService.addDeletedProjectWorktreeBucket(project.id);
 
     // P4 Part 17 (G8 fix): cascade-remove branches/profiles/infra/routing
     // belonging to this project so deleting a project no longer leaves
@@ -3589,6 +3623,16 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
     // 按墓碑补偿重试（含「删最后一个项目、state 已空」的场景）。
     const dockerNetwork = project.dockerNetwork;
     void (async () => {
+      // 专用隔离实例先走 dropReplicaDb（rm -f -v，匿名数据卷一并清除）；失败留给
+      // 墓碑兜底（墓碑 rm -f 不带 -v，卷会残留，但容器不会漏跑）。
+      for (const snapshot of replicaDbSnapshots) {
+        if (!snapshot.dedicatedContainer) continue;
+        try {
+          await dropReplicaDb(snapshot, {});
+        } catch (err) {
+          console.warn(`[projects] 删除项目 ${project.id} 的专用隔离实例 ${snapshot.dedicatedContainer} 清理失败（墓碑会兜底 rm 容器）: ${(err as Error).message}`);
+        }
+      }
       try {
         await processTeardownTombstones({ shell, state: stateService, instanceId: config?.repoRoot ? computeCdsInstanceId(config.repoRoot) : undefined });
       } catch (err) {

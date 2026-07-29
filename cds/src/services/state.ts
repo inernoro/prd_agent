@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -21,6 +21,22 @@ import {
   tickHeartbeat as tickActiveUpdateHeartbeat,
 } from '../updater/active-update-store.js';
 import { getAgentOperationContext } from './agent-operation-context.js';
+import {
+  appendDurationSample,
+  computeDurationEstimate,
+  DURATION_ESTIMATE_WINDOW,
+  DURATION_SAMPLES_MAX,
+} from './duration-samples.js';
+import {
+  appendBoundedReleaseLog,
+  shouldPersistReleaseLog,
+  RELEASE_LOG_FLUSH_INTERVAL_MS,
+} from './release-log-buffer.js';
+import {
+  isSuccessfulReleaseRun,
+  selectReleasePreflightsToPrune,
+  selectReleaseRunsToPrune,
+} from './release-retention.js';
 
 const MAX_LOGS_PER_BRANCH = 10;
 const MAX_DEPLOYMENT_RUNS_PER_PROJECT = 50;
@@ -178,6 +194,7 @@ function emptyState(): CdsState {
     releaseTargets: {},
     releasePlans: {},
     releaseRuns: {},
+    releasePreflights: {},
     previewMode: 'multi',
     activityLogs: {},
     resourceExternalAccess: {},
@@ -241,6 +258,21 @@ export class StateService {
   private backingStore: StateBackingStore;
   /** Project slug derived from repoRoot directory name, used for cache isolation */
   readonly projectSlug: string;
+  /**
+   * 自上次落盘以来攒下的发布日志行数。任何一次 save() 都会把它们写出去，
+   * 所以计数在 save() 里统一归零 —— 只在 appendReleaseRunLog 里减会漏算其他写路径，
+   * 结果是明明刚落过盘还按「攒够 50 行」再落一次。
+   */
+  private pendingReleaseLogLines = 0;
+  private lastReleaseLogSaveAtMs = 0;
+  /**
+   * 攒批的**兜底定时器**。没有它，1 秒阈值只在「又来一行日志」时才被求值 ——
+   * 一串不足 50 行的输出之后命令转入静默（编译、等待远端），这几行就只在内存里，
+   * 要等一次无关的 save 或 30 秒心跳才落盘；CDS 此刻被 kill 就丢掉排障最需要的那几行。
+   * 注释里承诺了 1 秒，代码却从不调度 —— 这类「说了没做」比没承诺更糟（Codex P2）。
+   * unref 掉：它绝不该让进程为了一次日志落盘而多活着。
+   */
+  private releaseLogFlushTimer: NodeJS.Timeout | null = null;
 
   constructor(filePath: string, repoRoot?: string, backingStore?: StateBackingStore) {
     this.filePath = filePath;
@@ -315,6 +347,8 @@ export class StateService {
       if (!this.state.releaseTargets) this.state.releaseTargets = {};
       if (!this.state.releasePlans) this.state.releasePlans = {};
       if (!this.state.releaseRuns) this.state.releaseRuns = {};
+      // 阶段三新增：存量状态里没有这个键，漏了这句所有预检读处都会 Object.values(undefined) 炸掉。
+      if (!this.state.releasePreflights) this.state.releasePreflights = {};
       if (!this.state.containerLogArchives) this.state.containerLogArchives = {};
       if (!this.state.routingRules) this.state.routingRules = [];
       if (!this.state.buildProfiles) this.state.buildProfiles = [];
@@ -801,6 +835,8 @@ export class StateService {
     // mongo-split 后端据此只克隆/diff 被点名的实体。**hint 必须完整覆盖本次
     // save 前的全部变更**，拿不准就不传（退化为全量快照，永远安全）。
     this.backingStore.save(this.state, hints);
+    // 这一次物理写已经把内存里攒着的发布日志一并带出去了，攒批计数必须在这里归零。
+    this.pendingReleaseLogLines = 0;
 
     // Notify listeners (this is *not* part of the backing store contract
     // because listeners are a StateService concern — they run after
@@ -1110,6 +1146,17 @@ export class StateService {
     for (const b of Object.values(this.state.branches)) {
       for (const svc of Object.values(b.services)) {
         if (svc.hostPort) usedPorts.add(svc.hostPort);
+      }
+      // 复制集成员/专用隔离实例的端口同样保留（Codex 第二十五轮 P2）：stopped/
+      // provisioning 成员不在 ss 可见集合里，分配序列绕回后会把它们保留的
+      // hostPort 判给新部署——分支重启时既有成员容器因端口被占启动失败
+      for (const rs of Object.values(b.replicaSets ?? {})) {
+        for (const m of rs.members) {
+          if (m.hostPort) usedPorts.add(m.hostPort);
+        }
+      }
+      for (const snap of b.replicaDbSnapshots ?? []) {
+        if (snap.dedicatedHostPort) usedPorts.add(snap.dedicatedHostPort);
       }
     }
     for (const svc of this.state.infraServices || []) {
@@ -1617,6 +1664,67 @@ export class StateService {
     return [...(this.state.pendingContainerTeardowns || [])];
   }
 
+  /**
+   * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
+   *
+   * 删项目不删磁盘上的 worktree 目录，而孤儿对账为了不误删「迁移自扁平布局的遗留
+   * worktree」只在已知项目桶下枚举 —— 项目 id 一消失，那个桶就永远进不去了，里面
+   * 已经无人认领的 worktree 从此不可回收。墓碑保住桶的身份，等里面清空再自动摘除。
+   * 与容器墓碑同理，必须**先于** removeProject 落库。
+   */
+  addDeletedProjectWorktreeBucket(projectId: string): void {
+    const id = (projectId || '').trim();
+    if (!id) return;
+    const list = this.state.deletedProjectWorktreeBuckets || [];
+    if (list.some((t) => t.projectId === id)) return;
+    list.push({ projectId: id, requestedAt: new Date().toISOString() });
+    // 与容器墓碑同样的 ring-buffer 上限，防极端情况下无限膨胀；本次写入不被挤掉。
+    while (list.length > StateService.CONTAINER_TEARDOWN_TOMBSTONES_MAX) {
+      const idx = list.findIndex((t) => t.projectId !== id);
+      if (idx === -1) break;
+      list.splice(idx, 1);
+    }
+    this.state.deletedProjectWorktreeBuckets = list;
+    this.save();
+  }
+
+  getDeletedProjectWorktreeBuckets(): DeletedProjectWorktreeTombstone[] {
+    return [...(this.state.deletedProjectWorktreeBuckets || [])];
+  }
+
+  /** 桶里已经没有 worktree 了 → 摘墓碑（对账不必再进这个桶）。 */
+  removeDeletedProjectWorktreeBucket(projectId: string): void {
+    const list = this.state.deletedProjectWorktreeBuckets;
+    if (!list?.length) return;
+    this.state.deletedProjectWorktreeBuckets = list.filter((t) => t.projectId !== projectId);
+    if (this.state.deletedProjectWorktreeBuckets.length === 0) {
+      delete this.state.deletedProjectWorktreeBuckets;
+    }
+    this.save();
+  }
+
+  /** 共享实例隔离库待清理台账（Codex 第二十五轮 P1）：drop 失败入队，收敛循环重试。 */
+  addPendingReplicaDbDrop(item: { snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }): void {
+    const list = this.state.pendingReplicaDbDrops || [];
+    if (!list.some((x) => x.snapshot.dbName === item.snapshot.dbName && x.snapshot.infraContainer === item.snapshot.infraContainer)) {
+      list.push(item);
+    }
+    this.state.pendingReplicaDbDrops = list;
+    this.save();
+  }
+
+  getPendingReplicaDbDrops(): Array<{ snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }> {
+    return [...(this.state.pendingReplicaDbDrops || [])];
+  }
+
+  removePendingReplicaDbDrop(dbName: string, infraContainer: string): void {
+    const list = this.state.pendingReplicaDbDrops;
+    if (!list?.length) return;
+    this.state.pendingReplicaDbDrops = list.filter((x) => !(x.snapshot.dbName === dbName && x.snapshot.infraContainer === infraContainer));
+    if (this.state.pendingReplicaDbDrops.length === 0) delete this.state.pendingReplicaDbDrops;
+    this.save();
+  }
+
   removeContainerTeardownTombstone(containerName: string): void {
     const list = this.state.pendingContainerTeardowns;
     if (!list?.length) return;
@@ -2095,6 +2203,7 @@ export class StateService {
       agentIdentity: run.agentIdentity ?? context?.identity,
     };
     this.state.releaseRuns[run.releaseId] = enriched;
+    this.pruneReleaseRuns(enriched.targetId);
     this.save(HINT_GLOBAL);
     return enriched;
   }
@@ -2104,12 +2213,31 @@ export class StateService {
       throw new Error(`ReleaseRun not found: ${id}`);
     }
     const current = this.state.releaseRuns[id];
-    const merged = { ...current, ...fields, releaseId: id, logs: current.logs };
+    // logs 与 firstEventSeq 必须成对锁死在 current 上：patch 从不改日志，
+    // 却能被传进一个 firstEventSeq: undefined 把截断标记冲掉，客户端从此收不到「已截断」。
+    const merged = {
+      ...current,
+      ...fields,
+      releaseId: id,
+      logs: current.logs,
+      firstEventSeq: current.firstEventSeq,
+    };
     this.state.releaseRuns[id] = merged;
     this.save(HINT_GLOBAL);
     return merged;
   }
 
+  /**
+   * 追加一条发布日志。**内存永远同步更新，落盘攒批。**
+   *
+   * 事故值：这里曾经每行一次 save()。SSH 输出按 chunk 逐行 emit，一次发布上千行，
+   * 而 releaseRuns 属 global rest —— 每次 flush 都要把全部 run 的全部日志整份序列化 /
+   * structuredClone，于是单次发布的持久化开销是平方级（1200 行 = 1200 次全量快照）。
+   *
+   * SSE 与 afterSeq 回放读的都是内存里的 run.logs，攒批不影响实时性；
+   * 尾巴由状态迁移兜底：patchStatus / patchReleaseRun 每次都整份 save，
+   * 终态、步骤推进、心跳都会把攒下的行一并落盘。
+   */
   appendReleaseRunLog(
     id: string,
     entry: Omit<ReleaseLogEntry, 'seq' | 'at'> & { at?: string },
@@ -2118,24 +2246,111 @@ export class StateService {
       throw new Error(`ReleaseRun not found: ${id}`);
     }
     const run = this.state.releaseRuns[id];
-    const nextSeq = (run.seq || 0) + 1;
-    run.logs.push({
-      seq: nextSeq,
-      at: entry.at || new Date().toISOString(),
+    appendBoundedReleaseLog(run, entry);
+    this.pendingReleaseLogLines += 1;
+    // 时钟以日志自身时间戳为准：调用方给了 at 就用它，测试据此可以在不真等一秒的
+    // 前提下断言落盘节奏，生产路径不给 at 则退回真实时钟。
+    const parsedAt = entry.at ? Date.parse(entry.at) : Number.NaN;
+    const nowMs = Number.isFinite(parsedAt) ? parsedAt : Date.now();
+    if (shouldPersistReleaseLog({
+      pendingLines: this.pendingReleaseLogLines,
+      lastSaveAtMs: this.lastReleaseLogSaveAtMs,
+      nowMs,
       level: entry.level,
-      message: entry.message,
-      phase: entry.phase,
-    });
-    run.seq = nextSeq;
-    // 发布日志逐行 append 是高频路径：releaseRuns 属 global rest，hint 让
-    // mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
-    this.save(HINT_GLOBAL);
+    })) {
+      this.lastReleaseLogSaveAtMs = nowMs;
+      // hint 让 mongo-split 免于克隆 branches/deploymentRuns 等大 kind。
+      this.save(HINT_GLOBAL);
+    } else {
+      this.scheduleReleaseLogFlush();
+    }
     return run;
+  }
+
+  /**
+   * 攒够时间就自己落盘，不等下一行日志来触发。
+   * 已经排上队就不重排：目的是「第一行 pending 之后最多 N 毫秒必落盘」，
+   * 每来一行就重置会让持续输出的日志永远推迟落盘（debounce 的反效果）。
+   */
+  private scheduleReleaseLogFlush(): void {
+    if (this.releaseLogFlushTimer) return;
+    this.releaseLogFlushTimer = setTimeout(() => {
+      this.releaseLogFlushTimer = null;
+      try { this.flushPendingReleaseLogs(); } catch { /* 落盘失败不该炸掉定时器回调 */ }
+    }, RELEASE_LOG_FLUSH_INTERVAL_MS);
+    this.releaseLogFlushTimer.unref?.();
+  }
+
+  /** 强制把攒批中的发布日志落盘。发布执行体收尾时调用，保证不丢尾巴。 */
+  flushPendingReleaseLogs(): void {
+    if (this.releaseLogFlushTimer) {
+      clearTimeout(this.releaseLogFlushTimer);
+      this.releaseLogFlushTimer = null;
+    }
+    if (this.pendingReleaseLogLines <= 0) return;
+    this.lastReleaseLogSaveAtMs = Date.now();
+    this.save(HINT_GLOBAL);
+  }
+
+  /**
+   * 发布 run 保留策略。淘汰判据（含「谁绝不能删」）在 release-retention.ts，
+   * 这里只负责删除与记账 —— 保留策略是破坏性动作，必须留下一条谁在什么时候删了多少的痕迹，
+   * 否则用户回头找不到历史发布记录时没人说得清是被谁清掉的。
+   */
+  private pruneReleaseRuns(targetId: string): void {
+    if (!targetId || !this.state.releaseRuns) return;
+    const runs = Object.values(this.state.releaseRuns).filter((run) => run.targetId === targetId);
+    const doomed = selectReleaseRunsToPrune({ runs, nowMs: Date.now() });
+    if (doomed.length === 0) return;
+    for (const releaseId of doomed) delete this.state.releaseRuns[releaseId];
+    console.warn(`[release] 保留策略淘汰目标 ${targetId} 的 ${doomed.length} 条历史发布记录: ${doomed.join(', ')}`);
+  }
+
+  // ── 发布前检查结论（阶段三记账）──
+  //
+  // 结论落库是为了让「向导里看到的那份」与「真正放行发布的那份」是同一份，
+  // 而不是两次独立的 SSH + HTTP 探测。复用判据见 release-retention.ts。
+
+  getReleasePreflight(id: string): ReleasePreflightRecord | undefined {
+    return this.state.releasePreflights?.[id];
+  }
+
+  /** 按目标列出预检记录，最新在前。存量状态没有 releasePreflights 键，一律 `?.` 兜底。 */
+  getReleasePreflights(filter: { targetId?: string; branchId?: string } = {}): ReleasePreflightRecord[] {
+    if (!this.state.releasePreflights) return [];
+    return Object.values(this.state.releasePreflights)
+      .filter((record) => !filter.targetId || record.targetId === filter.targetId)
+      .filter((record) => !filter.branchId || record.branchId === filter.branchId)
+      .sort((a, b) => b.createdAt.localeCompare(a.createdAt));
+  }
+
+  addReleasePreflight(record: ReleasePreflightRecord): ReleasePreflightRecord {
+    if (!this.state.releasePreflights) this.state.releasePreflights = {};
+    this.state.releasePreflights[record.id] = record;
+    this.pruneReleasePreflights(record.targetId);
+    this.save(HINT_GLOBAL);
+    return record;
+  }
+
+  private pruneReleasePreflights(targetId: string): void {
+    if (!targetId || !this.state.releasePreflights) return;
+    const records = Object.values(this.state.releasePreflights).filter((item) => item.targetId === targetId);
+    // 仍被保留 run 引用的结论不许删，否则 run 上那条审计链接指向空气。
+    // 引用集从当前 releaseRuns 现算：run 保留策略先跑、preflight 裁剪后跑，
+    // 被淘汰的 run 自然不在这里，不会把它的结论永久钉住。
+    const referencedIds = Object.values(this.state.releaseRuns || {})
+      .filter((run) => run.targetId === targetId && run.preflightId)
+      .map((run) => run.preflightId as string);
+    for (const id of selectReleasePreflightsToPrune({ records, nowMs: Date.now(), referencedIds })) {
+      delete this.state.releasePreflights[id];
+    }
   }
 
   getLatestSuccessfulReleaseRun(targetId: string, beforeReleaseId?: string): ReleaseRun | undefined {
     const runs = this.getReleaseRuns({ targetId })
-      .filter((run) => run.status === 'success' || run.status === 'rollback_success');
+      // 「哪些 run 算成功版本」与保留策略的保护集必须是同一个判据：
+      // 这里放宽一点、那边收紧一点，就会出现「下拉里有、点下去说没有」。
+      .filter(isSuccessfulReleaseRun);
     if (!beforeReleaseId) return runs[0];
     const current = this.getReleaseRun(beforeReleaseId);
     const beforeTs = current?.startedAt;
@@ -3382,11 +3597,16 @@ export class StateService {
   //   最近 N 条毫秒耗时；只在部署成功时追加。OperationLog 不能用作历史
   //   （per-branch 10 条上限 + build/run 混合 + 删分支即丢），故另立此台账。
 
-  /** 每个 (project, mode) 桶最多保留的样本数。窗口取近 30 次。 */
-  static readonly DEPLOY_DURATION_SAMPLES_MAX = 30;
+  /**
+   * 每个桶最多保留的样本数 / 估算窗口。
+   *
+   * 值本身在 duration-samples.ts（分支部署与生产发布两份台账共用同一口径），
+   * 这里只做转发别名——存量调用方与单测按 StateService.XXX 读，改名会白白制造
+   * 一次跨文件重命名。
+   */
+  static readonly DEPLOY_DURATION_SAMPLES_MAX = DURATION_SAMPLES_MAX;
 
-  /** 中位预计耗时基于"近 N 次"，UI 文案显示这个窗口大小。 */
-  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = 20;
+  static readonly DEPLOY_DURATION_ESTIMATE_WINDOW = DURATION_ESTIMATE_WINDOW;
 
   private deployDurationBucketKey(projectId: string, mode: import('../types.js').DeployDurationMode): string {
     return `${projectId || 'default'}::${mode}`;
@@ -3406,15 +3626,15 @@ export class StateService {
     ms: number,
     maxReasonableMs = 30 * 60 * 1000,
   ): void {
-    if (!Number.isFinite(ms) || ms <= 0) return;
-    if (Number.isFinite(maxReasonableMs) && maxReasonableMs > 0 && ms > maxReasonableMs) return;
     const store = this.state.deployDurationSamples || { buckets: {} };
     if (!store.buckets) store.buckets = {};
     const key = this.deployDurationBucketKey(projectId, mode);
-    const bucket = store.buckets[key] || [];
-    bucket.push(Math.round(ms));
-    while (bucket.length > StateService.DEPLOY_DURATION_SAMPLES_MAX) bucket.shift();
-    store.buckets[key] = bucket;
+    const next = appendDurationSample(store.buckets[key], ms, {
+      max: StateService.DEPLOY_DURATION_SAMPLES_MAX,
+      maxReasonableMs,
+    });
+    if (!next) return;
+    store.buckets[key] = next;
     this.state.deployDurationSamples = store;
     try {
       this.save();
@@ -3432,17 +3652,11 @@ export class StateService {
     projectId: string,
     mode: import('../types.js').DeployDurationMode,
   ): import('../types.js').DeployDurationEstimate {
-    const store = this.state.deployDurationSamples;
     const key = this.deployDurationBucketKey(projectId, mode);
-    const all = store?.buckets?.[key] || [];
-    const window = all.slice(-StateService.DEPLOY_DURATION_ESTIMATE_WINDOW);
-    if (window.length === 0) return { medianMs: null, sampleCount: 0 };
-    const sorted = [...window].sort((a, b) => a - b);
-    const mid = Math.floor(sorted.length / 2);
-    const medianMs = sorted.length % 2 === 1
-      ? sorted[mid]
-      : Math.round((sorted[mid - 1] + sorted[mid]) / 2);
-    return { medianMs, sampleCount: window.length };
+    return computeDurationEstimate(
+      this.state.deployDurationSamples?.buckets?.[key],
+      StateService.DEPLOY_DURATION_ESTIMATE_WINDOW,
+    );
   }
 
   /** 一次拿齐两种模式的预计耗时，供 BranchSummary 下发到分支卡片。 */
@@ -3455,6 +3669,53 @@ export class StateService {
       sourceMedianMs: source.medianMs,
       sourceSamples: source.sampleCount,
     };
+  }
+
+  // ── 2026-07-28 生产发布耗时样本台账 ── 发布中心在发布进行中只显示「已耗时」，
+  //   用户不知道还要等多久（发布是往生产机器 SSH 跑脚本，动辄好几分钟，比分支
+  //   构建更需要一个预计）。与上面那份分支部署台账**物理分开**：那边的
+  //   mode='release' 指分支容器跑编译产物，语义完全不同，合桶会互相污染
+  //   （事故值：极速版构建中位 42s vs 生产发布中位 8 分钟量级）。
+
+  /** 桶键用 targetId：同项目不同站点可能在不同机器跑不同脚本，合桶中位没有判别力。 */
+  private releaseDurationBucketKey(targetId: string): string {
+    return targetId || 'unknown';
+  }
+
+  /**
+   * 记录一次成功生产发布的耗时样本（毫秒，run.startedAt → finishedAt）。
+   *
+   * 口径由调用方把关（只有非回滚的 success 才该进来）；本方法只管合法性与落盘。
+   * 落盘失败不致命——顶多丢这条样本，绝不能反过来影响发布本身的终态。
+   */
+  recordReleaseDuration(targetId: string, ms: number, maxReasonableMs: number): void {
+    const store = this.state.releaseDurationSamples || { buckets: {} };
+    if (!store.buckets) store.buckets = {};
+    const key = this.releaseDurationBucketKey(targetId);
+    const next = appendDurationSample(store.buckets[key], ms, {
+      max: StateService.DEPLOY_DURATION_SAMPLES_MAX,
+      maxReasonableMs,
+    });
+    if (!next) return;
+    store.buckets[key] = next;
+    this.state.releaseDurationSamples = store;
+    try {
+      this.save();
+    } catch (err) {
+      console.warn('[state] recordReleaseDuration save failed:', (err as Error).message);
+    }
+  }
+
+  /**
+   * 某发布目标的历史中位发布耗时（p50，毫秒）+ 参与样本数。
+   * 无样本时 medianMs=null —— 发布中心据此显示「正在积累历史耗时数据」，不编造。
+   */
+  getReleaseEstimate(targetId: string): import('../types.js').DeployDurationEstimate {
+    const key = this.releaseDurationBucketKey(targetId);
+    return computeDurationEstimate(
+      this.state.releaseDurationSamples?.buckets?.[key],
+      StateService.DEPLOY_DURATION_ESTIMATE_WINDOW,
+    );
   }
 
   // ── 2026-05-07 GitHub webhook 投递日志(ring buffer 200)── 用户反馈

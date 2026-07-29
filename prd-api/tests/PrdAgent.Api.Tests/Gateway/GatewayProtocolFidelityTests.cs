@@ -15,7 +15,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// think 缝合、字符集变体、edge→null 等。cell 全集见 Gateway/fixtures/protocol-cells.json
 /// （scripts/gen-gw-matrix-report.py 生成，与 doc/report.gw-test-matrix.md 第 3 节同源）。
 ///
-/// 对应 doc/spec.llm-gateway-test-matrix.md 的 D2/D5/D6/D7/E1/E2/E3 维度。
+/// 对应 doc/spec.platform.llm-gateway.test-matrix.md 的 D2/D5/D6/D7/E1/E2/E3 维度。
 /// 不打 Integration/Manual trait → CI 默认 dotnet test 会真跑全部 cell。
 /// </summary>
 public class GatewayProtocolFidelityTests

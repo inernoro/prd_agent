@@ -70,7 +70,10 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 每日/昨日自动验收必须先跑机器盘点:
 
 ```bash
-python3 .claude/skills/acceptance-test-design/scripts/daily_scope.py \
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+python3 "$SKILLS_ROOT/acceptance-test-design/scripts/daily_scope.py" \
   --date <YYYY-MM-DD> \
   --json-out /tmp/daily-scope.json \
   --md-out /tmp/daily-scope.md
@@ -113,7 +116,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 每日验收开始取证前必须证明被测预览环境真的可测:
 
-- 预览域名和 branch 信息只能来自 `python3 .claude/skills/cds/cli/cdscli.py --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
+- 预览域名和 branch 信息只能来自 `python3 "$SKILLS_ROOT/cds/cli/cdscli.py" --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
 - 必须检查目标 branch 的部署状态和 smoke 结果。状态为 building、starting、stopped、error、missing,或 smoke 非 0 时,最多每 30 秒重试一次,总等待不超过 15 分钟。
 - 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
 - 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
@@ -134,6 +137,8 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 写作源仍是 Markdown 模板,继续使用 `{{IMG:name}}`、证据表、缺陷表和截图回读表。
 - `format=md` 输出写作源的原始审计结构,保持现有 Markdown 格式不变。
 - `format=html` 使用独立阅读模板,归档脚本负责生成顶部结论区、指标卡、证据缩略图、左侧证据导航、图号锚点、表格搜索、按未通过/有缺陷/未覆盖过滤、章节折叠。
+- 皮肤是「米多刊系」检验档案版(`.claude/rules/report-design-system.md`):刊头 masthead + 期号 dateline + 栏目眉 + 手写体验定印章 + 刊尾 colophon;验收报告身份色青碧,每日巡检特刊身份色钢蓝,由 `flavor` 自动判定。
+- 正文每张证据是一块「档案图版」(`figure.shot`):图注在上(图号 + 说明 + 失败/风险标签 + 放大入口)、图版在下、底部返回证据列表;点正文图片开大图灯箱(左右方向键翻页,ESC 关闭),禁用 JS 时「放大查看」退化为直接打开原图链接,整页仍是可读静态页。
 - HTML 交互只用于阅读和定位证据,不得把验收结论只藏在 JS 状态里。核心结论、缺陷、未覆盖项仍必须以正文表格存在,保证 raw 内容和跨系统同步可读。
 - 不要手写复杂前端应用或远程依赖。报告 HTML 必须单文件可归档。截图先逐张上传到 CDS 内容寻址资产库,正文只引用不可变 URL;10MB 只约束文本/HTML 正文,不限制一份报告需要多少张合格证据图。
 - 执行类验收 HTML 必须由 `archive_report.py` 从 Markdown 写作源和 manifest 生成,并带 `map-acceptance-template` 模板标记。禁止把 `/tmp/*.html`、临时手写页面或外部生成的自由样式 HTML 直接上传到 CDS 作为每日/视觉验收报告。CDS 会对带 verdict 或 L0/L1/L2 档位的验收 HTML 做模板血统校验,不合格返回 `acceptance_html_template_required`。
@@ -291,7 +296,10 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 `scripts/example-driver.mjs` 是可直接改的取证脚本骨架。完整一轮:
 
 ```bash
-SKILL=.claude/skills/create-visual-test-to-kb
+# 解析当前项目的技能根（Claude Code 用 .claude，Cursor 用 .cursor，Codex 用 .agents）。
+# 不带这行的话 $SKILLS_ROOT 为空，命令会去找 /cds/cli/cdscli.py —— 比写死路径更难查。
+SKILLS_ROOT=$(for h in .claude .cursor .agents; do [ -d "$h/skills" ] && { echo "$h/skills"; break; }; done)
+SKILL="$SKILLS_ROOT/create-visual-test-to-kb"
 export PWPATH=$(npm root -g)/playwright
 export MAP_AI_USER='<login-user>' MAP_ACCEPT_PASS='<login-password>' AI_ACCESS_KEY='<access-key>'
 

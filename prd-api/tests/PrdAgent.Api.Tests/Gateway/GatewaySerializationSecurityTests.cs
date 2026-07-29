@@ -9,7 +9,7 @@ namespace PrdAgent.Api.Tests.Gateway;
 /// 安全契约（纯单元，CI 常驻，无 HTTP / 无 Mongo）：GatewayModelResolution 跨进程 HTTP 回传给调用方时
 /// 序列化形态绝不包含 ApiKey —— [JsonIgnore] 守住「密钥不过 HTTP 线」（compute-then-send，serving 端
 /// 重解析补 ApiKey 不外泄）。替代被标 Integration 的真 socket 跨进程往返测试在 CI 内对该安全契约的覆盖。
-/// 见 doc/design.llm-gateway-physical-isolation.md。
+/// 见 doc/design.platform.llm-gateway.physical-isolation.md。
 /// </summary>
 public class GatewaySerializationSecurityTests
 {

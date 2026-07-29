@@ -587,6 +587,12 @@ export type UploadDailyLogImageContract = (input: {
   file: File;
 }) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
 
+/** 上传周报评论图片（有权查看该周报即可，不限周报作者与状态） */
+export type UploadReportCommentImageContract = (input: {
+  reportId: string;
+  file: File;
+}) => Promise<ApiResponse<ReportRichTextImageUploadData>>;
+
 export type DeleteWeeklyReportContract = (input: { id: string }) => Promise<ApiResponse<object>>;
 
 export type SubmitWeeklyReportContract = (input: { id: string }) => Promise<
@@ -705,6 +711,13 @@ export type GetCollectedActivityContract = (input?: {
 
 // ========== Phase 3: Comments ==========
 
+export interface ReportCommentAttachmentInfo {
+  attachmentId: string;
+  url: string;
+  fileName: string;
+  mimeType?: string;
+}
+
 export interface ReportComment {
   id: string;
   reportId: string;
@@ -714,8 +727,20 @@ export interface ReportComment {
   authorUserId: string;
   authorDisplayName: string;
   content: string;
+  /** 评论图片附件 ID 列表（图文评论） */
+  attachmentIds?: string[];
+  /** 附件详情（后端按 attachmentIds 批量解析返回） */
+  attachments?: ReportCommentAttachmentInfo[];
   createdAt: string;
   updatedAt?: string;
+  /** 划词锚定：被选中的原文片段（无则为传统段落级评论） */
+  selectedText?: string;
+  /** 选中片段前上下文（多处命中时消歧） */
+  contextBefore?: string;
+  /** 选中片段后上下文 */
+  contextAfter?: string;
+  startOffset?: number;
+  endOffset?: number;
 }
 
 export interface ReportLikeUser {
@@ -759,6 +784,14 @@ export type CreateCommentContract = (input: {
   sectionIndex: number;
   content: string;
   parentCommentId?: string;
+  /** 评论图片附件 ID 列表（先经 uploadReportCommentImage 上传，最多 9 张；有图时允许 content 为空） */
+  attachmentIds?: string[];
+  /** 划词锚定（可选，仅顶级评论生效） */
+  selectedText?: string;
+  contextBefore?: string;
+  contextAfter?: string;
+  startOffset?: number;
+  endOffset?: number;
 }) => Promise<ApiResponse<{ comment: ReportComment }>>;
 
 export type UpdateCommentContract = (input: {

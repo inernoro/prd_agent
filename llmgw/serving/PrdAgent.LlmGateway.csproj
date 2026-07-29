@@ -5,7 +5,7 @@
     通过 DI 承载现有的 PrdAgent.Infrastructure.LlmGateway.LlmGateway + ModelResolver 实现，
     把 LLM serving 能力以 HTTP 暴露出来，供 MAP 及其他系统跨进程调用。
     不重写网关实现，只做 DI 装配 + HTTP 端点。
-    设计见 doc/design.llm-gateway-physical-isolation.md。
+    设计见 doc/design.platform.llm-gateway.physical-isolation.md。
   -->
 
   <PropertyGroup>

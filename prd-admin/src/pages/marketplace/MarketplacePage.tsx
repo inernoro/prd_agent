@@ -12,7 +12,7 @@ import { useSmartBack } from '@/hooks/useSmartBack';
 import { createPortal } from 'react-dom';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { useSearchParams, useLocation } from 'react-router-dom';
-import { ArrowLeft, Clock, Hash, PanelTop, Rows3, Search, Store, TrendingUp, UploadCloud, Zap } from 'lucide-react';
+import { ArrowLeft, Clock, Hash, PanelTop, Rows3, Search, Store, TrendingUp, UploadCloud, UserRound, Zap } from 'lucide-react';
 import { MarketplaceCard } from '@/components/marketplace/MarketplaceCard';
 import type { MixedMarketplaceItem } from '@/lib/marketplaceTypes';
 import { QuickConnectPanel } from './QuickConnectPanel';
@@ -30,6 +30,7 @@ import { getMarketplaceSkillTags } from '@/services';
 import { useHomepageAssetsStore } from '@/stores/homepageAssetsStore';
 import { SkillUploadDialog } from './SkillUploadDialog';
 import { SkillOpenApiDialog } from './SkillOpenApiDialog';
+import { fetchOfficialSkillRoleLabels, type OfficialSkillRoleLabels } from './skillOpenApi/downloadOfficialSkill';
 import { useAuthStore } from '@/stores/authStore';
 import type { MarketplaceSkillDto } from '@/services/contracts/marketplaceSkills';
 import { TipsEntryButton } from '@/components/daily-tips/TipsEntryButton';
@@ -145,6 +146,10 @@ export const MarketplacePage: React.FC = () => {
   const [forkingId, setForkingId] = useState<string | null>(null);
   const [tagFilter, setTagFilter] = useState<string>('');
   const [skillTags, setSkillTags] = useState<Array<{ tag: string; count: number }>>([]);
+  // 角色入口：让「我是产品经理」的人一键筛出该角色的套装 + 技能，
+  // 不用从二十张按功能分类的卡里自己猜哪几张跟自己有关
+  const [roleFilter, setRoleFilter] = useState<string>('');
+  const [roleLabels, setRoleLabels] = useState<OfficialSkillRoleLabels>({});
   const [uploadOpen, setUploadOpen] = useState(false);
   const [editingSkill, setEditingSkill] = useState<MarketplaceSkillDto | null>(null);
   const [openApiOpen, setOpenApiOpen] = useState(false);
@@ -187,6 +192,11 @@ export const MarketplacePage: React.FC = () => {
   }, [cardDemoEnabled]);
 
   useEffect(() => { void loadSkillTags(); }, [loadSkillTags]);
+
+  useEffect(() => {
+    if (cardDemoEnabled) return;
+    void fetchOfficialSkillRoleLabels().then(setRoleLabels);
+  }, [cardDemoEnabled]);
 
   useEffect(() => {
     if (typeFromUrl !== categoryFilter) setCategoryFilter(typeFromUrl);
@@ -251,15 +261,28 @@ export const MarketplacePage: React.FC = () => {
   const searchFiltered = filterMarketplaceItems(sorted, searchKeyword);
 
   const filtered = useMemo(() => {
-    if (!tagFilter) return searchFiltered;
-    return searchFiltered.filter((item) => {
-      if (item.type !== 'skill') return true;
-      const tags = (item.data as unknown as { tags?: string[] }).tags || [];
-      return tags.some((t) => t === tagFilter);
-    });
-  }, [searchFiltered, tagFilter]);
+    let list = searchFiltered;
+    if (tagFilter) {
+      list = list.filter((item) => {
+        if (item.type !== 'skill') return true;
+        const tags = (item.data as unknown as { tags?: string[] }).tags || [];
+        return tags.some((t) => t === tagFilter);
+      });
+    }
+    if (roleFilter) {
+      // 只有官方条目带 roles；用户上传的技能没有角色归属，
+      // 选了角色就不该混进来（否则「产品经理」筛出一堆无关技能，等于没筛）
+      list = list.filter((item) => {
+        if (item.type !== 'skill') return true;
+        const roles = (item.data as unknown as { roles?: string[] }).roles || [];
+        return roles.includes(roleFilter);
+      });
+    }
+    return list;
+  }, [searchFiltered, tagFilter, roleFilter]);
 
   const showSkillControls = categoryFilter === 'skill';
+  const roleEntries = useMemo(() => Object.entries(roleLabels), [roleLabels]);
   // 去掉"全部"，技能排第一
   const filterOptions = getCategoryFilterOptions().filter((o) => o.key !== 'all');
 
@@ -439,6 +462,34 @@ export const MarketplacePage: React.FC = () => {
               ))}
             </div>
 
+            {showSkillControls && roleEntries.length > 0 && (
+              <div className="marketplace-tags-row" data-tour-id="marketplace-role-row">
+                <span className="marketplace-tags-label">
+                  <UserRound size={11} />
+                  我是
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setRoleFilter('')}
+                  data-active={!roleFilter}
+                  className="marketplace-tag-pill"
+                >
+                  不限
+                </button>
+                {roleEntries.map(([key, label]) => (
+                  <button
+                    key={key}
+                    type="button"
+                    onClick={() => setRoleFilter((prev) => (prev === key ? '' : key))}
+                    data-active={roleFilter === key}
+                    className="marketplace-tag-pill"
+                  >
+                    {label}
+                  </button>
+                ))}
+              </div>
+            )}
+
             {showSkillControls && skillTags.length > 0 && (
               <div className="marketplace-tags-row">
                 <span className="marketplace-tags-label">
@@ -499,11 +550,13 @@ export const MarketplacePage: React.FC = () => {
             <div className="text-sm text-token-muted">
               {searchKeyword
                 ? '没有找到匹配的配置'
-                : tagFilter
-                  ? `没有带 #${tagFilter} 的配置`
-                  : categoryFilter === 'skill'
-                    ? '还没有人上传技能，第一个就是你'
-                    : '暂无公开配置'}
+                : roleFilter
+                  ? `还没有面向「${roleLabels[roleFilter] ?? roleFilter}」的技能`
+                  : tagFilter
+                    ? `没有带 #${tagFilter} 的配置`
+                    : categoryFilter === 'skill'
+                      ? '还没有人上传技能，第一个就是你'
+                      : '暂无公开配置'}
             </div>
             {categoryFilter === 'skill' && (
               <Button variant="primary" size="sm" onClick={() => setUploadOpen(true)}>

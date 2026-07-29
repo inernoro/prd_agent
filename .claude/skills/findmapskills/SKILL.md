@@ -1,33 +1,45 @@
 ---
 name: findmapskills
+version: 1.3.0
 description: PrdAgent 海鲜市场（skill marketplace）操作技能。通过长效 API Key 搜索、下载、上传、订阅本平台的技能包。当用户说"找个海鲜市场的技能做 X"、"从市场装个技能"、"把这个技能发布到市场"、"订阅新技能"时触发。
 ---
 
 # 海鲜市场全操作（findmapskills）
 
-> **版本**：v1.1.0 | **状态**：已落地 | **触发**：`/findmapskills`、"海鲜市场"、"从市场装技能"、"发布到市场"、"订阅新技能"
+> **版本**：v1.3.0 | **状态**：已落地 | **触发**：`/findmapskills`、"海鲜市场"、"从市场装技能"、"发布到市场"、"订阅新技能"
 
 > **来源**：$PRD_AGENT_BASE —— PrdAgent 官方内置技能，持续跟随后端 API 契约更新
 > **最新版下载**：`curl -sSLo findmapskills.zip $PRD_AGENT_BASE/api/official-skills/findmapskills/download`
 
 装上这个技能后，你可以通过 PrdAgent 的开放接口操作海鲜市场。
 
-> **注意**：此文件是**仓库内本地版**，供 Claude Code 直接识别。
-> 真正对用户下发的技能包由后端动态生成，内容参见 `prd-api/src/PrdAgent.Api/Controllers/Api/OfficialSkills/OfficialSkillTemplates.cs` 中的 `FindMapSkillsSkillMd` 常量。
-> 两份内容应保持一致 —— 下次修改时两边都要改。
+> **本文件是唯一事实源**。后端下发给用户的技能包由打包脚本从本文件生成，
+> 下载时只做一处替换（把 `PRD_AGENT_BASE` 的默认值设为该实例的实际地址）。
+> 不存在第二份需要同步的副本。
 
 ## 前置
 
+**搜索和下载不需要任何凭据**——技能是公开内容。只有上传、收藏、订阅这类要绑定到人的操作才需要 API Key。
+
 ```bash
 : "${PRD_AGENT_BASE:?缺 base URL。导出 PRD_AGENT_BASE=https://your-platform}"
+
+# Key 可选：有就带上（解锁上传/收藏），没有也能搜索和下载
 if [ -z "${PRD_AGENT_API_KEY:-}" ] && [ -f "$HOME/.codex/secrets/prd-agent-api-key" ]; then
   PRD_AGENT_API_KEY="$(cat "$HOME/.codex/secrets/prd-agent-api-key")"
 fi
-: "${PRD_AGENT_API_KEY:?缺 API Key。在 海鲜市场 → 右上角「接入 AI」新建，并保存到 ~/.codex/secrets/prd-agent-api-key 或当前 shell 环境变量。}"
-AUTH=(-H "Authorization: Bearer $PRD_AGENT_API_KEY" -H "Accept: application/json")
+if [ -n "${PRD_AGENT_API_KEY:-}" ]; then
+  AUTH=(-H "Authorization: Bearer $PRD_AGENT_API_KEY" -H "Accept: application/json")
+else
+  AUTH=(-H "Accept: application/json")
+fi
 ```
 
-如果用户没设 `PRD_AGENT_API_KEY`，引导去 `$PRD_AGENT_BASE/marketplace` 的「接入 AI」按钮新建。明文 Key 只允许保存到本机 secrets/Keychain/CI Secret 或当前 shell 临时变量，禁止写入仓库、`.claude/settings.local.json`、PR、验收报告或公开日志。
+**不要因为没有 Key 就停下来问用户**——直接搜索、直接下载。只有当用户要上传或收藏时，才引导去
+`$PRD_AGENT_BASE/marketplace` 右上角「接入 AI」新建 Key。
+
+明文 Key 只允许保存到本机 secrets/Keychain/CI Secret 或当前 shell 临时变量，禁止写入仓库、
+`.claude/settings.local.json`、PR、验收报告或公开日志。
 
 ## 搜索技能
 
@@ -52,10 +64,21 @@ RESP=$(curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/f
 URL=$(echo "$RESP"  | jq -r '.data.downloadUrl')
 NAME=$(echo "$RESP" | jq -r '.data.fileName // "skill.zip"')
 curl -sSL -o "$NAME" "$URL"
-unzip -o "$NAME" -d ~/.claude/skills/   # 安装到 Claude Code 技能目录
+# 装到「项目级」技能目录，不是用户主目录 —— 技能跟着项目的版本库走，
+# 团队每个人 clone 下来都有；装到 ~ 的话，人一走团队什么都不剩。
+# 宿主识别与 CDS 初始化脚本同一套约定，两条路装到同一个地方，不会分裂成两处技能库。
+# 装到项目级，且**存在几个宿主就装几个**。
+# 一个仓库可能同时装了多个 Agent（比如同时有 .claude 和 .agents）：
+# 只装第一个命中的，从另一个 Agent 跑就「装完了一个技能都看不见」。
+SKILLS_DIRS=""
+for h in .claude .cursor .agents; do
+  [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+done
+[ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"   # 一个都没有时兜底
+for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o "$NAME" -d "$d"; done
 ```
 
-## 上传（要 `marketplace.skills:write` scope）
+## 上传（**要** `marketplace.skills:write` scope —— 这是唯一需要凭据的主流程）
 
 zip 内必须含 `SKILL.md`，≤ 20 MB，上传后默认公开。
 
@@ -83,7 +106,7 @@ curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/upload" "${AUTH[@]
 3. 直接 POST，根据响应 `replaced` 报告"已覆盖 / 新发布"
 4. 不要问"是否覆盖" / "用什么 slug" / "下一版本号是多少"，从 SKILL.md 推断即可
 
-## 收藏
+## 收藏（要 Key —— 收藏是绑定到人的操作）
 
 ```bash
 curl -sS -X POST "$PRD_AGENT_BASE/api/open/marketplace/skills/$SKILL_ID/favorite" "${AUTH[@]}" -d '{}'
@@ -120,22 +143,29 @@ curl -sS "$PRD_AGENT_BASE/api/open/marketplace/skills?sort=new&limit=50" "${AUTH
 
 1. **被调用接口返回 `UNKNOWN_FIELD` / 404** —— 后端已改契约，立即重装
 2. **UI 海鲜市场卡片显示新的版本号**（在 `$PRD_AGENT_BASE/marketplace` 搜 `findmapskills`，比较卡片上的版本号与本文件 header 的版本）
-3. **AI Agent 定期（每月）主动轮询**
+3. **AI Agent 定期（每月）主动轮询** —— 用户说"帮我看看我装的海鲜市场技能还是不是最新的"时执行：
 
 ```bash
 REMOTE_VERSION=$(curl -sSLo - "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
   | unzip -p - findmapskills/SKILL.md | grep -oE '\*\*版本\*\*：[^（]+' | head -1)
 echo "远端版本: $REMOTE_VERSION"
-echo "本地版本: 1.1.0"
+echo "本地版本: 1.3.0"
 ```
 
 不一样就告诉用户：
 
-> 你装的 findmapskills 版本是 **1.1.0**（2026-05-01），平台上已经有更新。跑这条命令重装：
+> 你装的 findmapskills 版本是 **1.3.0**，平台上已经有更新。跑这条命令重装：
 >
 > ```bash
+> # 这一段必须自带宿主识别：换个 shell 跑时 $SKILLS_DIRS 是空的，
+> # for 循环会零次迭代然后正常退出——命令看着成功，技能一个没更新。
+> SKILLS_DIRS=""
+> for h in .claude .cursor .agents; do
+>   [ -d "$h" ] && SKILLS_DIRS="$SKILLS_DIRS $h/skills"
+> done
+> [ -n "$SKILLS_DIRS" ] || SKILLS_DIRS=".agents/skills"
 > curl -sSLo /tmp/findmapskills.zip "$PRD_AGENT_BASE/api/official-skills/findmapskills/download" \
->   && unzip -o /tmp/findmapskills.zip -d ~/.claude/skills/
+>   && for d in $SKILLS_DIRS; do mkdir -p "$d" && unzip -o /tmp/findmapskills.zip -d "$d"; done
 > ```
 
 后端 `OfficialSkillTemplates.cs` 的 `FindMapSkillsVersion` 常量是本技能版本的权威源。

@@ -23,6 +23,7 @@ import { spawn } from 'node:child_process';
 import type { StateService } from '../services/state.js';
 import type { IShellExecutor, InfraService } from '../types.js';
 import { isPreviewInstance, previewInstanceBlockedMessage } from '../services/preview-instance.js';
+import { getActiveInfraLifecycleWatcher } from '../services/infra-lifecycle-watcher.js';
 
 export interface InfraDataRouterDeps {
   stateService: StateService;
@@ -153,18 +154,27 @@ export function runDockerExec(argv: string[], stdin: string, timeoutMs = 30_000,
   return new Promise((resolve) => {
     const proc = spawn('docker', argv, { stdio: ['pipe', 'pipe', 'pipe'] });
     let out = '';
-    let err = '';
+    // stderr 保留头 8KB + 滚动尾 8KB：长任务（dump/restore）的进度日志会刷满缓冲，
+    // 只留头段会把最后出现的致命错误挤掉（复验 R3-P2 真实事故）
+    let errHead = '';
+    let errTail = '';
+    const ERR_SEG = 8 * 1024;
+    const composeErr = (): string => (errTail ? `${errHead}\n…[stderr 中段截断]…\n${errTail.slice(-ERR_SEG)}` : errHead);
     let truncated = false;
     let settled = false;
     const finish = (r: DockerExecResult) => { if (!settled) { settled = true; clearTimeout(timer); resolve(r); } };
-    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } finish({ stdout: out, stderr: err + '\n[超时] 操作被中止（30s）', code: -1, truncated }); }, timeoutMs);
+    const timer = setTimeout(() => { try { proc.kill('SIGKILL'); } catch { /* noop */ } finish({ stdout: out, stderr: composeErr() + '\n[超时] 操作被中止（30s）', code: -1, truncated }); }, timeoutMs);
     proc.stdout.on('data', (c: Buffer) => {
       if (out.length < maxBytes) out += c.toString();
       else truncated = true;
     });
-    proc.stderr.on('data', (c: Buffer) => { if (err.length < 16 * 1024) err += c.toString(); });
-    proc.on('error', (e) => finish({ stdout: out, stderr: `${err}\n${e.message}`, code: -1, truncated }));
-    proc.on('close', (code) => finish({ stdout: out, stderr: err, code: code ?? -1, truncated }));
+    proc.stderr.on('data', (c: Buffer) => {
+      const s = c.toString();
+      if (errHead.length < ERR_SEG) errHead += s;
+      else errTail = (errTail + s).slice(-ERR_SEG * 2);
+    });
+    proc.on('error', (e) => finish({ stdout: out, stderr: `${composeErr()}\n${e.message}`, code: -1, truncated }));
+    proc.on('close', (code) => finish({ stdout: out, stderr: composeErr(), code: code ?? -1, truncated }));
     try { proc.stdin.write(stdin); proc.stdin.end(); } catch { /* noop */ }
   });
 }
@@ -228,6 +238,28 @@ export function createInfraDataRouter(deps: InfraDataRouterDeps): Router {
       error: r.code === 0 ? null : maskSecretValues(r.stderr, plan.secretValues),
     });
   }
+
+  // 生命周期取证（debt.cds.replica-set #17）：oom/die/kill/start 事件回看，
+  // 区分 cgroup OOM / 外部 SIGKILL(exitCode 137 无 oom) / 进程自身退出
+  router.get('/infra/:id/lifecycle-events', (req, res) => {
+    const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
+    if (!projectFilter && stateService.getProjectInfraServicesById(req.params.id).length > 1) {
+      res.status(400).json({ error: 'project_required', message: `基础设施 "${req.params.id}" 在多个项目中存在,请用 ?project=<projectId> 指定` });
+      return;
+    }
+    const svc = projectFilter
+      ? (stateService.getInfraServicesForProject(projectFilter).find((s) => s.id === req.params.id) || null)
+      : stateService.getInfraService(req.params.id);
+    if (!svc) { res.status(404).json({ error: `基础设施服务不存在: ${req.params.id}` }); return; }
+    const mismatch = assertProjectAccess(req, svc.projectId);
+    if (mismatch) { res.status(mismatch.status).json(mismatch.body as Record<string, unknown>); return; }
+    const watcher = getActiveInfraLifecycleWatcher();
+    res.json({
+      containerName: svc.containerName,
+      watcherActive: !!watcher,
+      events: watcher?.getEvents(svc.containerName) ?? [],
+    });
+  });
 
   router.post('/infra/:id/query', (req, res) => { void handle(req, res, 'query'); });
   router.get('/infra/:id/schema', (req, res) => { void handle(req, res, 'schema'); });

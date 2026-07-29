@@ -101,3 +101,15 @@ DocBrowser 的核心契约是 `entries: DocBrowserEntry[]` + `loadContent(id) �
 | UTL-3 | 三个渲染器对 mermaid 的处理本就分裂（这是 timeline 之前就存在的历史问题）。根治应抽一个共享 `renderCodeBlock(lang, code)` SSOT，三处共用。届时 timeline / mermaid / 高亮逻辑只维护一份。 | P2（架构） | UTL-1/2 任一开始动 | open |
 
 类型色推断（`CHANGE_TYPES` 关键词注册表）是启发式的，个别条目可能归错类（如标题不含关键词→默认紫）。如需精确，应让周报生成侧在 timeline 数据里显式带类型标记，而非靠前端猜。
+
+---
+
+## 评论图文（2026-07-28 图文评论上线时留尾）
+
+背景：周报评论已支持粘贴/选择图片 + 图文结合（`ReportCommentComposer` + `ReportCommentAttachmentGrid`，后端 `ReportComment.AttachmentIds` + `comments/images` 上传端点）。以下为主动收窄未做的边界：
+
+| ID | 说明 | 优先级 | 触发条件 | 状态 |
+|---|---|---|---|---|
+| CIMG-1 | 编辑已发评论时不能增删图片（编辑仅改文字；纯图评论因编辑保存要求非空文本而无法进入"改文字"路径） | P2 | 用户要求"改评论里的图" | open |
+| CIMG-2 | 评论输入器不支持拖拽文件上传（已支持粘贴 + 文件选择两通道） | P3 | 用户反馈拖图无响应 | open |
+| CIMG-3 | 删除评论不清理孤儿附件（与缺陷评论一致的既有取舍；附件仅 5MB 图片，暂不回收） | P3 | 存储量治理专项 | open |

@@ -33,6 +33,7 @@ import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { BranchDetailLoadingSkeleton, CodePill, ErrorBlock, LoadingBlock, MetricTile } from '@/pages/cds-settings/components';
 import { ExtraServicesPanel } from '@/components/branch/ExtraServicesPanel';
 import { EffectiveConfigPanel } from '@/components/branch/EffectiveConfigPanel';
+import { bottomRightToastStyle } from '@/lib/overlayOffsets';
 
 interface ProjectSummary {
   id: string;
@@ -1994,7 +1995,7 @@ export function BranchDetailPage(): JSX.Element {
         ) : null}
 
         {toast ? (
-          <div className="fixed bottom-5 right-5 z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg" role="status">
+          <div className="fixed z-50 max-w-sm rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-4 py-3 text-sm shadow-lg" style={bottomRightToastStyle} role="status">
             {toast}
           </div>
         ) : null}

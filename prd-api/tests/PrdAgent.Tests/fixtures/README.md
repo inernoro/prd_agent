@@ -9,7 +9,7 @@ P1 协议下沉重构的安全网。重构前后各跑一次解析，与本基�
 - 全一致 → 证明"内部重构、对外行为零变化"（P1 目标）。
 - 任一行变 → 精确指出哪个 `AppCallerCode` 的解析被意外改动。
 
-详见 `doc/design.llm-gateway-unification.md` §11 测试策略。
+详见 `doc/design.platform.llm-gateway.unification.md` §11 测试策略。
 
 ## 字段
 

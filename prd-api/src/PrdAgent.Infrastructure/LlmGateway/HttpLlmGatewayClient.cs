@@ -18,7 +18,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// 跨进程 LLM Gateway 客户端 —— 把 MAP 自身的 LLM 调用从进程内（直接 new LlmGateway）
 /// 切换到 HTTP，远程调用独立部署的 PrdAgent.LlmGateway serving 服务（/gw/v1/*）。
 ///
-/// 物理隔离设计见 doc/design.llm-gateway-physical-isolation.md。
+/// 物理隔离设计见 doc/design.platform.llm-gateway.physical-isolation.md。
 /// 仅当配置 LlmGateway:Mode=http（环境变量 LlmGateway__Mode=http）时由 DI 注册，默认走进程内 LlmGateway。
 ///
 /// 同时实现 Infrastructure 与 Core 两个 ILlmGateway 接口（两者仅命名空间不同；

@@ -291,7 +291,7 @@ def render_report(rows, pcells, tcells):
     A("> 自动生成（`scripts/gen-gw-matrix-report.py`），勿手改。一处定义三处消费：本报告 +")
     A("> `protocol-cells.json`(B 层 [Theory]) + `transport-cells.json`(C 层 [Theory])。")
     A("> 报告里 B/C 的每一行都是 CI 真执行的一个 cell（非只列不跑）。矩阵设计 SSOT：")
-    A("> `doc/spec.llm-gateway-test-matrix.md`；债务台账：`doc/debt.llm-gateway-isolation.md`。")
+    A("> `doc/spec.platform.llm-gateway.test-matrix.md`；债务台账：`doc/debt.platform.llm-gateway.isolation.md`。")
     A("")
     total = len(rows) + len(pcells) + len(tcells) + len(EMERGE_DIMS)
     A("全枚举、不压缩：")

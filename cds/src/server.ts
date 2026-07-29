@@ -9,12 +9,19 @@ import { fileURLToPath } from 'node:url';
 import { createBranchRouter } from './routes/branches.js';
 import { createDeploymentRunsRouter } from './routes/deployment-runs.js';
 import { createDeploymentVersionsRouter } from './routes/deployment-versions.js';
+import { createReplicaSetsRouter } from './routes/replica-sets.js';
+import { ReplicaSetService } from './services/replica-set.js';
+import { isRemoteExecutorOwned } from './services/executor-ownership.js';
+import { computeCdsInstanceId } from './services/orphan-container-reaper.js';
+import { setReplicaMemberDeathListener } from './services/infra-lifecycle-watcher.js';
 import { createManagedProjectsRouter } from './routes/managed-projects.js';
 import { createCdsEventsRouter } from './routes/cds-events.js';
 import { createOperatorConsoleRouter } from './routes/operator-console.js';
 import { createBridgeRouter } from './routes/bridge.js';
 import { createProjectsRouter, assertProjectAccess } from './routes/projects.js';
 import { createPendingImportRouter } from './routes/pending-import.js';
+import { createBootstrapRouter } from './routes/bootstrap.js';
+import { SkillProxy } from './services/skill-proxy.js';
 import { createAccessRequestsRouter } from './routes/access-requests.js';
 import { createProjectInfraResyncRouter } from './routes/project-infra-resync.js';
 import { createProjectComposeRouter } from './routes/project-compose.js';
@@ -23,10 +30,12 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
+import { createBugReportsRouter } from './routes/bug-reports.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
+import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
@@ -45,9 +54,11 @@ import { maskBranchExtraProfilesEnv } from './services/secret-masker.js';
 import { createAuthRouter } from './routes/auth.js';
 import { createAuthLocalRouter } from './routes/auth-local.js';
 import {
+  TICKET_SSO_COOKIE,
+  buildTicketSsoSessionCookie,
   createTicketSsoConfigRouter,
   createTicketSsoPublicRouter,
-  ticketSsoIdentity,
+  ticketSsoSession,
 } from './routes/ticket-sso.js';
 import { createWorkspacesRouter } from './routes/workspaces.js';
 import { MemoryAuthStore } from './infra/auth-store/memory-store.js';
@@ -103,6 +114,9 @@ import { ScheduledJobService } from './services/scheduled-job-service.js';
 import { DeploymentRunService } from './services/deployment-run.js';
 import { DeploymentVersionService } from './services/deployment-version.js';
 import { ManagedProjectService } from './services/managed-project.js';
+import { ReleaseService } from './services/release-service.js';
+import { setReleaseDriftNotifier, startReleaseRemoteWatcher } from './services/release-remote-watcher.js';
+import { cdsEventsBus } from './services/cds-events-bus.js';
 import {
   DeploymentDiagnosisService,
   GatewayDeploymentExplanationProvider,
@@ -733,6 +747,12 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /cds-system/connections/accept': '接受配对请求',
     // 项目级资源占用排行（系统级运维视图，2026-06-23）
     'GET /cds-system/resource-usage': '查看资源占用',
+    // 自建存活监控 / 状态页（2026-07-27）
+    'GET /uptime/summary': '查看存活总览',
+    'GET /uptime/incidents': '列出存活故障',
+    // 快捷提 bug（Ctrl+B 全局面板，2026-07-27）
+    'POST /bug-reports': '提交缺陷反馈',
+    'GET /bug-reports': '列出缺陷反馈',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -746,11 +766,17 @@ export function resolveApiLabel(method: string, path: string): string {
     'PATCH /releases/targets/:id': '更新发布目标',
     'DELETE /releases/targets/:id': '删除发布目标',
     'POST /releases/targets/:id/archive': '归档发布目标并保留审计证据',
+    'GET /releases/targets/:id/changes': '查看发布目标变更历史',
+    'GET /releases/targets/:id/remote-state': '查看远端发布现场',
+    'POST /releases/targets/:id/reclaim': '回收远端发布产物',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
     'POST /releases/branches/:branchId/runs': '启动分支发布',
     'GET /releases/runs': '列出发布记录',
     'GET /releases/runs/:id': '查看发布记录',
     'POST /releases/runs/:id/rollback': '回滚发布记录',
+    'POST /releases/runs/:id/retry': '重试发布记录',
+    // 取消在途发布（阶段一 · 止血）：路由与 label 同期落地，避免又漏一条。
+    'POST /releases/runs/:id/cancel': '取消进行中发布',
     'GET /releases/runs/:id/stream': '订阅发布日志流',
     'GET /releases/center': '查看发布中心',
     'GET /deployment-runs': '列出部署运行',
@@ -823,6 +849,9 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /legacy-cleanup/rename-default': '迁移 default 项目',
     'POST /legacy-cleanup/cleanup-residual': '清理 default 残留',
     'GET /export-skill': '导出技能配置',
+    'GET /bootstrap/presets': '列出初始化预设',
+    'GET /skills/bundles': '列出角色套装',
+    'GET /skills/cds-pack/download': '下载 CDS 技能包',
     'POST /import-and-init': '导入并初始化',
     'GET /self-branches': '获取自身分支',
     'GET /self-status': '获取自更新状态',
@@ -969,13 +998,59 @@ export function resolveApiLabel(method: string, path: string): string {
 
   // Dynamic pattern matches (with :id params)
   const patterns: Array<[RegExp, string]> = [
+    [/^GET \/bootstrap\/([a-z0-9-]+)$/, '获取初始化脚本'],
+    [/^GET \/skills\/([a-z0-9-]+)\/download$/, '下载技能包'],
+    [/^GET \/uptime\/targets\/(.+)\/history$/, '查看存活时序'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis\/stream$/, '流式解释部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/diagnosis$/, '查看结构化部署诊断'],
     [/^GET \/deployment-runs\/(.+)\/stream$/, '订阅部署运行'],
     [/^GET \/deployment-runs\/(.+)$/, '查看部署运行'],
     [/^GET \/deployment-versions\/(.+)$/, '查看部署版本'],
     [/^POST \/deployment-versions\/(.+)\/deploy$/, '部署指定版本'],
+    // 发布控制面：staticMap 里的 `:id` 条目只够 auditApiLabels（它拿 express 路由
+    // 原样比对）；真实调用带的是具体 id，必须靠这里的 pattern 才有 label，否则
+    // Activity Monitor 上整条发布链路都是裸 URL。一律用 segment-safe `[^/]+`
+    // （PR #522 的教训：贪婪 `(.+)` 会跨 `/` 把子路径截胡），子路径排在裸 id 之前。
+    [/^POST \/releases\/runs\/[^/]+\/rollback$/, '回滚发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/retry$/, '重试发布记录'],
+    [/^POST \/releases\/runs\/[^/]+\/cancel$/, '取消进行中发布'],
+    [/^GET \/releases\/runs\/[^/]+\/stream$/, '订阅发布日志流'],
+    [/^GET \/releases\/runs\/[^/]+$/, '查看发布记录'],
+    [/^POST \/releases\/targets\/[^/]+\/archive$/, '归档发布目标并保留审计证据'],
+    [/^GET \/releases\/targets\/[^/]+\/changes$/, '查看发布目标变更历史'],
+    [/^GET \/releases\/targets\/[^/]+\/remote-state$/, '查看远端发布现场'],
+    [/^POST \/releases\/targets\/[^/]+\/reclaim$/, '回收远端发布产物'],
+    [/^PATCH \/releases\/targets\/[^/]+$/, '更新发布目标'],
+    [/^DELETE \/releases\/targets\/[^/]+$/, '删除发布目标'],
+    [/^POST \/releases\/branches\/[^/]+\/preflight$/, '执行发布前检查'],
+    [/^POST \/releases\/branches\/[^/]+\/runs$/, '启动分支发布'],
+    [/^POST \/releases\/projects\/[^/]+\/discover$/, '检测项目可用发布策略'],
     [/^POST \/branches\/(.+)\/rollback$/, '回滚分支版本'],
+    [/^GET \/branches\/(.+)\/replica-sets$/, '查看复制集'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)\/promote$/, '提升复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/probe$/, '探测复制集分流'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolation-audit$/, '隔离审计'],
+    [/^GET \/branches\/(.+)\/replica-plans$/, '查执行计划'],
+    [/^POST \/branches\/(.+)\/replica-plans$/, '保存执行计划'],
+    [/^PATCH \/branches\/(.+)\/replica-plans\/(.+)$/, '调整执行顺序'],
+    [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/steps\/(.+)\/skip$/, '跳过计划步骤'],
+    [/^POST \/branches\/(.+)\/replica-plans\/(.+)\/cancel$/, '取消执行计划'],
+    // 复制集压测（2026-07-27）。cancel 必须排在单段 runId 之前，否则会被后者吞掉；
+    // regex 本身用 [^/]+ 保持 segment-safe，不依赖数组顺序也不会误命中。
+    [/^POST \/branches\/[^/]+\/replica-loadtests\/[^/]+\/cancel$/, '取消压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests\/[^/]+$/, '查看压测报告'],
+    [/^POST \/branches\/[^/]+\/replica-loadtests$/, '发起压测'],
+    [/^GET \/branches\/[^/]+\/replica-loadtests$/, '列出压测记录'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/isolate$/, '复制隔离数据库'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/revert-db$/, '回切主库'],
+    [/^POST \/branches\/(.+)\/db-guard$/, '启动数据库保护罩'],
+    [/^GET \/branches\/(.+)\/db-guard\/(.+)$/, '查询保护罩进度'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)\/members$/, '添加复制集成员'],
+    [/^PATCH \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '调整复制集成员'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)\/members\/(.+)$/, '下线复制集成员'],
+    [/^POST \/branches\/(.+)\/replica-sets\/(.+)$/, '启用复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-sets\/(.+)$/, '解散复制集'],
+    [/^DELETE \/branches\/(.+)\/replica-db-snapshots\/(.+)$/, '删除隔离库快照'],
     [/^GET \/projects\/(.+)\/delivery$/, '查看项目交付模式'],
     [/^PUT \/projects\/(.+)\/delivery$/, '更新项目交付模式'],
     [/^POST \/projects\/(.+)\/managed-plan$/, '生成托管部署计划'],
@@ -1066,6 +1141,7 @@ export function resolveApiLabel(method: string, path: string): string {
     [/^POST \/infra\/(.+)\/restore$/, '恢复数据库'],
     [/^GET \/infra\/(.+)\/backup-history$/, '查看备份历史'],
     [/^POST \/infra\/(.+)\/query$/, '查询数据库'],
+    [/^GET \/infra\/(.+)\/lifecycle-events$/, '查基础设施生命周期'],
     [/^GET \/infra\/(.+)\/schema$/, '查看数据库结构'],
     [/^POST \/infra\/(.+)\/init-sql$/, '执行初始化 SQL'],
     [/^POST \/branches\/(.+)\/resources\/(.+)\/data\/init-sql$/, '执行分支资源初始化 SQL'],
@@ -1257,6 +1333,13 @@ function isPublicAccessRequestRoute(method: string, path: string): boolean {
   // 构建队列健康探针（2026-07-16）：探针语义同 /healthz，供「任务调度」定时回归
   // 任务与外部监控免鉴权探测。端点响应已剥掉持有者身份 detail，只含结论与计数。
   if (method === 'GET' && path === '/api/cluster/build-gate/health') return true;
+  // 项目初始化（2026-07-28）：发引导脚本与技能 zip，只读、不签发凭据。
+  // 客户拿到任何 CDS 凭据之前就要能装技能，所以必须匿名可达。
+  // 与 github-auth.ts PUBLIC_PATHS 保持同步。
+  if (method === 'GET' && path === '/api/bootstrap/presets') return true;
+  if (method === 'GET' && /^\/api\/bootstrap\/[a-z0-9-]+$/.test(path)) return true;
+  if (method === 'GET' && path === '/api/skills/bundles') return true;
+  if (method === 'GET' && /^\/api\/skills\/[a-z0-9-]+\/download$/.test(path)) return true;
   return false;
 }
 
@@ -1356,6 +1439,115 @@ function resolveAiSession(req: express.Request, stateService?: StateService): Ap
   return null;
 }
 
+/* ------------------------------------------------------------------ *
+ * 发布中断收敛的启动 + 周期接线（阶段一 · 止血）
+ *
+ * 分支部署那条链路已经有这套东西了（deploymentRunService.reconcileInterrupted +
+ * 每 5 分钟收割）；生产发布这条一直没有，代价更大：CDS 自更新/重启把在途发布的
+ * 执行体带走后，ReleaseRun 永远停在 running，在途守卫会因此拒绝该目标的一切新
+ * 发布——这个发布目标从此发不出去，只能改库。自更新是 CDS 的日常操作。
+ *
+ * 收割器自身不许拖垮主流程：同步抛错、异步 reject 一律吞掉并落一条 warn；
+ * 上一轮没跑完就跳过这一轮（不叠加）。
+ * ------------------------------------------------------------------ */
+
+export interface ReleaseReconcileOutcome {
+  /** 本轮收敛的发布 run 数量。 */
+  reconciled: number;
+}
+
+export interface ReleaseReconcileOptions {
+  /**
+   * 启动收敛：把**所有**持久化的非终态 run 直接判失败，不看心跳新鲜度。
+   * 进程刚起来时不可能持有任何执行体，心跳是上一个已死进程打的，用它当活性证据
+   * 只会让刚打过心跳就被重启的发布继续堵住目标至少 15 分钟（Codex PR #1273 P1）。
+   */
+  assumeAllOrphaned?: boolean;
+}
+
+/** 跨轨道契约：ReleaseService 暴露的中断收敛入口（同步或异步均可）。 */
+export interface ReleaseRunReconciler {
+  reconcileInterruptedReleases(
+    now?: Date,
+    options?: ReleaseReconcileOptions,
+  ): ReleaseReconcileOutcome | Promise<ReleaseReconcileOutcome>;
+}
+
+/** 与部署侧收割周期同频（deployment-run 也是 5 分钟）。 */
+export const RELEASE_RECONCILE_INTERVAL_MS = 5 * 60 * 1000;
+
+export interface ReleaseRunReaperDeps {
+  service: ReleaseRunReconciler;
+  intervalMs?: number;
+  /** 便于注入假定时器做回归；默认 setInterval。 */
+  setTimer?: (fn: () => void, ms: number) => { unref?: () => void };
+  clearTimer?: (handle: { unref?: () => void }) => void;
+  log?: (message: string) => void;
+}
+
+export interface ReleaseRunReaperHandle {
+  /** 立刻收一轮（启动时先跑的就是它）。 */
+  reapNow: () => void;
+  stop: () => void;
+}
+
+export function startReleaseRunReaper(deps: ReleaseRunReaperDeps): ReleaseRunReaperHandle {
+  const log = deps.log ?? ((message: string) => console.warn(message));
+  const reconcile = deps.service?.reconcileInterruptedReleases;
+  if (typeof reconcile !== 'function') {
+    // 契约被改名/漏实现时必须出声：静默跳过等于把「发布目标锁死」这个故障留在原地。
+    log('[release-run] ReleaseService 未提供 reconcileInterruptedReleases，发布中断收敛未启用');
+    return { reapNow: () => {}, stop: () => {} };
+  }
+
+  let busy = false;
+  // 第一轮 = 启动收敛：此刻本进程不可能有任何执行体，所有非终态 run 都已orphan，
+  // 不该再用「上一个已死进程打的心跳」当活性证据放它们过。之后的周期轮必须看心跳，
+  // 否则会误杀正在正常执行的发布。
+  let startupPass = true;
+  const finish = (outcome: ReleaseReconcileOutcome | undefined, wasStartup: boolean) => {
+    busy = false;
+    const count = Number(outcome?.reconciled ?? 0);
+    if (count > 0) {
+      log(wasStartup
+        ? `[release-run] 启动收敛：${count} 个被重启打断的发布已收敛为失败，对应发布目标已释放`
+        : `[release-run] 周期收割：${count} 个心跳过期的发布已收敛为失败，对应发布目标已释放`);
+    }
+  };
+  const fail = (err: unknown) => {
+    busy = false;
+    log(`[release-run] 周期收割失败: ${(err as Error)?.message ?? String(err)}`);
+  };
+
+  const reapNow = () => {
+    if (busy) return;
+    busy = true;
+    const wasStartup = startupPass;
+    startupPass = false;
+    try {
+      const result = deps.service.reconcileInterruptedReleases(undefined, {
+        assumeAllOrphaned: wasStartup,
+      });
+      if (result && typeof (result as Promise<ReleaseReconcileOutcome>).then === 'function') {
+        void (result as Promise<ReleaseReconcileOutcome>).then((o) => finish(o, wasStartup), fail);
+        return;
+      }
+      finish(result as ReleaseReconcileOutcome, wasStartup);
+    } catch (err) {
+      fail(err);
+    }
+  };
+
+  // 启动先收一轮：重启正是执行体丢失的时刻，不能等满一个周期才发现。
+  reapNow();
+
+  const setTimer = deps.setTimer ?? ((fn, ms) => setInterval(fn, ms));
+  const clearTimer = deps.clearTimer ?? ((handle) => clearInterval(handle as unknown as NodeJS.Timeout));
+  const timer = setTimer(reapNow, deps.intervalMs ?? RELEASE_RECONCILE_INTERVAL_MS);
+  timer?.unref?.();
+  return { reapNow, stop: () => clearTimer(timer) };
+}
+
 export function createServer(deps: ServerDeps): express.Express {
   const app = express();
   const deploymentRunService = new DeploymentRunService(deps.stateService);
@@ -1398,6 +1590,22 @@ export function createServer(deps: ServerDeps): express.Express {
     }, 5 * 60 * 1000);
     runReaper.unref?.();
   }
+  // 生产发布侧的同款收割（阶段一 · 止血）：启动收一轮 + 每 5 分钟一轮，
+  // 把「CDS 重启导致执行体丢失」的在途发布收敛成失败并释放在途守卫。
+  const releaseService = new ReleaseService(deps.stateService);
+  const releaseReconciler: ReleaseRunReconciler = releaseService;
+  startReleaseRunReaper({ service: releaseReconciler });
+  // 远端现场巡检（阶段三 · 记账）：另起一个 starter 而不塞进上面的收割器 —— 收割器
+  // 是纯内存状态机、从不外呼，混进 SSH 巡检后一台目标机器不通就会把它拖住，所有目标
+  // 的在途 run 都释放不掉，失败语义也变糊（收敛失败还是网络失败？）。同频不同体。
+  //
+  // 告警出口在这里晚绑定：巡检模块不反向 import 事件总线，「这条要不要叫醒人」的判定
+  // 只留在 CDS_EVENT_ALERT_CLASS 一处，不让存活监控一套、发布一套长出两条分发逻辑。
+  setReleaseDriftNotifier((type, data) => { cdsEventsBus.publish(type, data); });
+  startReleaseRemoteWatcher({
+    listTargets: () => deps.stateService.getReleaseTargets(),
+    releaseService,
+  });
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
@@ -1421,11 +1629,13 @@ export function createServer(deps: ServerDeps): express.Express {
   // We stash the bytes on req.rawBody so the GitHub webhook route can
   // HMAC-verify the exact payload GitHub signed (re-serialized JSON
   // would produce a different hash and fail signature checks).
-  // 全局 JSON body 解析器（默认上限 100kb）。/api/reports 例外：验收报告正文
-  // 可达数 MB（HTML/Markdown 粘贴），其路由自带 12mb 的 json/text/multipart 解析器，
-  // 故这里跳过 /api/reports，避免大报告在全局 100kb 解析器处被 413 拦掉（修复 PR #865
-  // codex P2「大粘贴报告绕不过全局 JSON 解析器」）。rawBody 仅签名校验类路由需要，
-  // /api/reports 不需要。
+  // 全局 JSON body 解析器（默认上限 100kb）。以下路径例外，各自在路由内挂更大的解析器：
+  //   - /api/reports：验收报告正文可达数 MB（HTML/Markdown 粘贴），路由自带 12mb 解析器
+  //     （修复 PR #865 codex P2「大粘贴报告绕不过全局 JSON 解析器」）。
+  //   - /api/bug-reports：快捷提 bug 允许 4 个 x 5MB 截图（base64 后更大），路由自带 16mb
+  //     解析器；不跳过的话截图附件会在 body-parser 阶段就被全局 100kb 上限 413 掉，
+  //     且响应是 HTML 不是 JSON，前端只能显示一段读不懂的报错。
+  // rawBody 仅签名校验类路由（GitHub webhook）需要，上述两个路径都不需要。
   const globalJsonParser = express.json({
     verify: (req, _res, buf) => {
       (req as { rawBody?: Buffer }).rawBody = buf;
@@ -1433,6 +1643,7 @@ export function createServer(deps: ServerDeps): express.Express {
   });
   app.use((req, res, next) => {
     if (req.path === '/api/reports' || req.path.startsWith('/api/reports/')) return next();
+    if (req.path === '/api/bug-reports' || req.path.startsWith('/api/bug-reports/')) return next();
     return globalJsonParser(req, res, next);
   });
 
@@ -1828,8 +2039,12 @@ export function createServer(deps: ServerDeps): express.Express {
   const publicBaseUrl =
     configuredPublicBaseUrl || `http://localhost:${deps.config.masterPort}`;
   const cookieSecure = publicBaseUrl.startsWith('https://');
+  // 登录有效期策略（全系统 7 天，用后自动延长）——GitHub / 本地密码会话与 ticket SSO 会话
+  // 必须共用同一份，否则 SSO 这条真实登录路径会悄悄短命，用户在同一个 CDS 里体验不一致。
+  const sessionTtlDays = Math.min(90, Math.max(1, Number(process.env.CDS_SESSION_TTL_DAYS) || 7));
+  const sessionTtlMs = sessionTtlDays * 24 * 60 * 60 * 1000;
   const ticketSsoStateStore = new TicketSsoStateStore();
-  const ticketSsoSessionStore = new TicketSsoSessionStore();
+  const ticketSsoSessionStore = new TicketSsoSessionStore(sessionTtlMs);
   const resolveSsoConfig = () => resolveTicketSsoConfig(deps.stateService);
 
   // Provider-neutral ticket SSO. Public routes are mounted before either
@@ -1850,11 +2065,22 @@ export function createServer(deps: ServerDeps): express.Express {
       },
     }),
   );
-  app.use((req, _res, next) => {
-    const identity = ticketSsoIdentity(req, ticketSsoSessionStore);
-    if (identity) {
+  app.use((req, res, next) => {
+    const ssoSession = ticketSsoSession(req, ticketSsoSessionStore);
+    const identity = ssoSession?.identity ?? null;
+    if (identity && ssoSession) {
       const now = new Date().toISOString();
-      const expiresAt = new Date(Date.now() + 12 * 60 * 60 * 1000).toISOString();
+      const expiresAt = ssoSession.expiresAt.toISOString();
+      // 滑动续期后必须重发 cookie，否则服务端窗口推后了、浏览器那份仍在原时间点死掉。
+      if (ssoSession.renewed) {
+        const ssoToken = parseCookie(req.headers.cookie || '', TICKET_SSO_COOKIE);
+        if (ssoToken) {
+          res.setHeader(
+            'Set-Cookie',
+            buildTicketSsoSessionCookie(ssoToken, ssoSession.expiresAt, cookieSecure),
+          );
+        }
+      }
       const request = req as typeof req & {
         cdsSsoIdentity?: typeof identity;
         _cdsCookieAuth?: boolean;
@@ -2003,10 +2229,11 @@ export function createServer(deps: ServerDeps): express.Express {
       clientId: ghClientId,
       clientSecret: ghClientSecret,
     });
+    // 登录有效期走上面那份统一策略（默认 7 天 + 用后自动延长，CDS_SESSION_TTL_DAYS 可调）。
     const authService = new AuthService({
       store: authStore,
       github: githubClient,
-      config: { allowedOrgs },
+      config: { allowedOrgs, sessionTtlMs },
     });
 
     app.use(
@@ -2031,6 +2258,8 @@ export function createServer(deps: ServerDeps): express.Express {
     app.use(createGithubAuthMiddleware({
       authService,
       resolveAgentKey: (req) => resolveAiSession(req, deps.stateService),
+      // 会话滑动续期后要重新下发 cookie，标志位必须与登录路由一致。
+      cookieSecure,
     }));
 
     // Local username + password routes. Public endpoints (login / bootstrap)
@@ -2057,7 +2286,7 @@ export function createServer(deps: ServerDeps): express.Express {
     app.post('/api/login', (req, res) => {
       const { username, password } = req.body || {};
       if (username === cdsUser && password === cdsPass) {
-        res.setHeader('Set-Cookie', `cds_token=${validToken}; Path=/; Max-Age=${30 * 86400}; SameSite=Lax; HttpOnly`);
+        res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
         res.json({ success: true });
       } else {
         res.status(401).json({ error: '用户名或密码错误' });
@@ -2574,6 +2803,13 @@ export function createServer(deps: ServerDeps): express.Express {
       const headerToken = req.headers['x-cds-token'] as string | undefined;
       const token = cookieToken || headerToken;
       if (token === validToken) {
+        // 滑动续期：basic 模式的 cds_token 是静态派生值、服务端没有会话记录，
+        // 只能靠「每次带 cookie 的已鉴权请求重发一次 cookie」来续。不这么做的话，
+        // basic 部署会停在签发时那个固定期限上，完全吃不到统一的 7 天滑动策略。
+        // header token（x-cds-token）走机器凭据，不涉及 cookie，不参与续期。
+        if (cookieToken === validToken) {
+          res.setHeader('Set-Cookie', basicSessionCookie(validToken, sessionTtlMs));
+        }
         // SECURITY P1 (2026-05-09): stamp a marker so secret-reveal handlers
         // can distinguish human cookie auth (admin-equivalent on this single-
         // tenant CDS) from machine credentials. Static AI_ACCESS_KEY and
@@ -3126,7 +3362,7 @@ export function createServer(deps: ServerDeps): express.Express {
         for (const b of Object.values(state.branches || {})) {
           // Skip branches owned by a remote executor — they're counted
           // via that executor's own heartbeat.
-          if (b.executorId && !b.executorId.startsWith('master-')) continue;
+          if (isRemoteExecutorOwned(b.executorId)) continue;
           for (const svc of Object.values(b.services || {})) {
             if (svc?.status === 'running') localRunning++;
           }
@@ -3698,6 +3934,16 @@ export function createServer(deps: ServerDeps): express.Express {
   // Mounted at /api so the nested /projects/:id/pending-import path works
   // alongside the rest of the projects router.
   app.use('/api', createPendingImportRouter({ stateService: deps.stateService }));
+  // 项目初始化 —— 匿名可访问（客户拿到任何凭据之前就要能装技能）。
+  // 放行清单同步在 github-auth.ts PUBLIC_PATHS 与 isPublicAccessRequestRoute。
+  app.use('/api', createBootstrapRouter({
+    skillProxy: new SkillProxy({
+      mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+      cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+    }),
+    cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
+    repoRoot: deps.config.repoRoot,
+  }));
   app.use('/api', createScheduledJobsRouter({
     stateService: deps.stateService,
     scheduledJobService,
@@ -3753,6 +3999,20 @@ export function createServer(deps: ServerDeps): express.Express {
     containerService: deps.containerService,
     config: deps.config,
   }));
+  // 自更新排空窗口闸（app 级，Codex PR #1273 P1）。
+  //
+  // 必须挂在**所有**会产出写操作的路由器之前，且判定走 deploy-drain 的
+  // isDrainBlockedPath 这一个源：此前它只是 branches 路由器里的一段中间件，
+  // 而生产发布在另一个路由器（/releases/*）里，从来不经过它——排空最后一次轮询
+  // 之后仍能开启一次新发布，然后被重启把 SSH 拦腰砍断。
+  app.use('/api', (req, res, next) => {
+    if (!isDrainBlockedPath(req.method, req.path)) { next(); return; }
+    const draining = selfUpdateDrainBlockReason(Date.now());
+    if (!draining) { next(); return; }
+    res.setHeader('Retry-After', '60');
+    res.status(503).json({ error: 'self_update_draining', message: draining });
+  });
+
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
     config: deps.config,
@@ -3941,42 +4201,95 @@ export function createServer(deps: ServerDeps): express.Express {
   // githubApp 用于 E4「验收回写 PR」（check-run / PR 评论）；未配置时回写端点返回 503。
   app.use('/api', createReportsRouter({ stateService: deps.stateService, githubApp: githubAppClient }));
 
+  // 快捷提 bug（Ctrl+B）：转发凭据只在服务端读取，前端只调本端点。
+  // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
+  app.use('/api', createBugReportsRouter({
+    getDataDir: () => path.dirname(deps.stateService.getCacheBase()),
+  }));
+
   app.use('/api', createDeploymentRunsRouter({
     deploymentRunService,
     deploymentDiagnosisService,
     assertProjectAccess: assertProjectAccess as any,
   }));
 
+  const dispatchVersion = async (
+    version: import('./types.js').DeploymentVersion,
+    trigger: 'manual' | 'rollback',
+  ): Promise<import('./routes/deployment-versions.js').VersionDispatchResult> => {
+    try {
+      const upstream = await fetch(
+        `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
+        {
+          method: 'POST',
+          headers: {
+            'Content-Type': 'application/json',
+            'X-CDS-Internal': '1',
+            'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
+            'X-CDS-Source-Project-Id': version.projectId,
+            'X-CDS-Source-Branch-Id': version.branchId,
+          },
+          body: JSON.stringify({ versionId: version.id }),
+        },
+      );
+      const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
+      if (upstream.ok) {
+        void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
+        return { accepted: true, status: upstream.status, runId };
+      }
+      const error = (await upstream.text().catch(() => '')).slice(0, 500);
+      return { accepted: false, status: upstream.status, error };
+    } catch (err) {
+      return { accepted: false, status: 503, error: (err as Error).message };
+    }
+  };
+
   app.use('/api', createDeploymentVersionsRouter({
     deploymentVersionService,
     assertProjectAccess: assertProjectAccess as any,
-    dispatchVersion: async (version, trigger) => {
-      try {
-        const upstream = await fetch(
-          `http://127.0.0.1:${deps.config.masterPort}/api/branches/${encodeURIComponent(version.branchId)}/deploy`,
-          {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-              'X-CDS-Internal': '1',
-              'X-CDS-Trigger': trigger === 'rollback' ? 'system' : 'manual',
-              'X-CDS-Source-Project-Id': version.projectId,
-              'X-CDS-Source-Branch-Id': version.branchId,
-            },
-            body: JSON.stringify({ versionId: version.id }),
-          },
-        );
-        const runId = upstream.headers.get('x-cds-deployment-run-id') || undefined;
-        if (upstream.ok) {
-          void upstream.text().catch(() => { /* 后台部署继续，调用方按 runId 跟踪 */ });
-          return { accepted: true, status: upstream.status, runId };
-        }
-        const error = (await upstream.text().catch(() => '')).slice(0, 500);
-        return { accepted: false, status: upstream.status, error };
-      } catch (err) {
-        return { accepted: false, status: 503, error: (err as Error).message };
-      }
+    dispatchVersion,
+  }));
+
+  // 复制集模式（design.cds.replica-set）：单服务多版本并排 + forwarder 分流。
+  const replicaSetService = new ReplicaSetService({
+    state: deps.stateService,
+    container: deps.containerService,
+    versions: deploymentVersionService,
+    shell: deps.shell,
+    portStart: deps.config.portStart,
+    // 多 master 共宿主的实例身份（Codex 第十九轮 P1）：专用隔离实例容器名/label
+    instanceId: computeCdsInstanceId(deps.config.repoRoot),
+    // 与部署路径同口径（branches.ts remoteAttributed，Codex 第二十五轮 P1）：
+    // executorId 非空且不以 'master-' 开头即远端归属——注册表查不到（已注销/
+    // 离线/registry 不可用）时**保守视为远端**，绝不在 master 本机替离线执行器
+    // 物化副本（错 docker 网络错端口的分裂宿主副本）。
+    isRemoteBranch: (branch) => {
+      if (!isRemoteExecutorOwned(branch.executorId)) return false;
+      const node = deps.registry?.getAll().find((n) => n.id === branch.executorId);
+      return !node || node.role !== 'embedded';
     },
+    logger: console,
+  });
+  // 启动收敛：CDS 自更新/重启会打断执行中的复制集计划——开机把僵尸 running
+  // 计划标记为中断，杜绝「更新 CDS 导致的不一致」（用户点名的安全防线）
+  replicaSetService.reconcileInterruptedPlans();
+  // 副本容器真身对账（2026-07-26 孤儿收割器误杀事故）：启动即对账一次收敛
+  // CDS 停机期间的副本死亡，此后每分钟兜底；取证器 die 事件另走秒级摘流。
+  // executor 节点不跑：集群共享 state 时它拿本机 docker 对账会误杀 master 的成员
+  // （成员容器只在 master 本机，与 auto-lifecycle 的协调者集中纪律同源）。
+  if (deps.config.mode !== 'executor') {
+    replicaSetService.startMemberReconcileLoop();
+    setReplicaMemberDeathListener((containerName, verdict) =>
+      replicaSetService.noteMemberContainerDeath(containerName, verdict));
+  }
+  app.use('/api', createReplicaSetsRouter({
+    stateService: deps.stateService,
+    replicaSetService,
+    deploymentVersionService,
+    assertProjectAccess: assertProjectAccess as any,
+    dispatchVersion,
+    getDeploymentRunStatus: (runId) => deploymentRunService.get(runId)?.status,
+    rootDomains: deps.config.rootDomains || [],
   }));
 
   app.use('/api', createManagedProjectsRouter({
@@ -4438,6 +4751,15 @@ export function installSpaFallback(
       message: `Unknown API endpoint: ${req.method} /api${req.path}`,
     });
   });
+}
+
+/**
+ * basic 模式的会话 cookie（`cds_token`）。走统一的登录有效期策略，并在每次带 cookie 的
+ * 已鉴权请求上重发，实现「只要在用就不会掉登录」——该模式没有服务端会话记录，只能这样滑动。
+ */
+function basicSessionCookie(token: string, ttlMs: number): string {
+  const maxAgeSec = Math.max(0, Math.floor(ttlMs / 1000));
+  return `cds_token=${token}; Path=/; Max-Age=${maxAgeSec}; SameSite=Lax; HttpOnly`;
 }
 
 function parseCookie(cookieStr: string, name: string): string | undefined {

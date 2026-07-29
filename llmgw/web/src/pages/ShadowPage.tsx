@@ -4,6 +4,7 @@ import { useSearchParams } from 'react-router-dom';
 import { getLogsMeta, getShadowComparisons } from '@/lib/api';
 import type { ShadowData } from '@/lib/types';
 import { Button, Chip, SectionLoader } from '@/components/ui';
+import { TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 type QuickFilter = 'all' | 'critical' | 'httpFail';
 
@@ -71,22 +72,10 @@ export function ShadowPage() {
     return true;
   });
 
-  const th: React.CSSProperties = { textAlign: 'left', padding: '8px 12px', fontSize: 11, color: 'var(--text-muted)', fontWeight: 600, whiteSpace: 'nowrap' };
-  const td: React.CSSProperties = { padding: '8px 12px', fontSize: 12, color: 'var(--text-primary)', borderTop: '1px solid var(--border-subtle)', verticalAlign: 'middle' };
-  const selectStyle: React.CSSProperties = {
-    background: 'var(--bg-input)',
-    border: '1px solid var(--border-subtle)',
-    color: 'var(--text-secondary)',
-    borderRadius: 8,
-    height: 30,
-    padding: '0 8px',
-    fontSize: 12,
-  };
-  const inputStyle: React.CSSProperties = {
-    ...selectStyle,
-    width: 180,
-    minWidth: 140,
-  };
+  const th = TABLE_HEAD_CELL;
+  const td = TABLE_CELL;
+  const selectStyle: React.CSSProperties = TOOLBAR_CONTROL;
+  const inputStyle: React.CSSProperties = TOOLBAR_CONTROL;
   const clearFilters = () => {
     setAppCaller('');
     setReleaseCommit('');
@@ -100,8 +89,8 @@ export function ShadowPage() {
     <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
       <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'space-between', gap: 8, flexWrap: 'wrap', flexShrink: 0 }}>
         <div>
-          <div style={{ fontSize: 15, fontWeight: 600, color: 'var(--text-primary)' }}>Shadow comparisons</div>
-          <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>inproc 与 http 的逐字段一致性证据</div>
+          <h1 className="lg-title">影子对比</h1>
+          <p className="lg-subtitle">inproc 与 http 的逐字段一致性证据</p>
         </div>
         <div style={{ display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
           <select value={appCaller} onChange={(e) => setAppCaller(e.target.value)} style={selectStyle}>
@@ -163,8 +152,8 @@ export function ShadowPage() {
               padding: '12px 16px',
             }}
           >
-            <div style={{ fontSize: 11, color: 'var(--text-muted)' }}>{t.label}</div>
-            <div style={{ fontSize: 24, fontWeight: 700, color: t.color, marginTop: 2 }}>{t.value}</div>
+            <div style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{t.label}</div>
+            <div style={{ fontSize: 'var(--fs-metric)', fontWeight: 'var(--fw-strong)', color: t.color, marginTop: 2 }}>{t.value}</div>
           </div>
         ))}
       </div>
@@ -173,7 +162,7 @@ export function ShadowPage() {
         <Empty text={data.recent.length === 0 ? '暂无影子比对样本（Mode=shadow 或配了灰度白名单后开始积累）' : '当前快速筛选下暂无样本'} />
       ) : (
         <div style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table style={{ width: '100%', borderCollapse: 'collapse' }}>
+          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
             <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
               <tr>
                 <th style={th}>时间</th>
@@ -188,9 +177,9 @@ export function ShadowPage() {
               {recent.map((r) => (
                 <tr key={r.id}>
                   <td style={{ ...td, color: 'var(--text-muted)', whiteSpace: 'nowrap' }}>{r.comparedAt?.replace('T', ' ').slice(0, 19) || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace' }}>{r.appCallerCode || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace' }}>{r.inproc.actualModel || '—'}</td>
-                  <td style={{ ...td, fontFamily: 'ui-monospace, monospace' }}>{r.httpOk ? (r.http.actualModel || '—') : <span style={{ color: '#d29922' }}>http失败</span>}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{r.appCallerCode || '—'}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{r.inproc.actualModel || '—'}</td>
+                  <td style={{ ...td, fontFamily: 'var(--font-mono)' }}>{r.httpOk ? (r.http.actualModel || '—') : <span style={{ color: '#d29922' }}>http失败</span>}</td>
                   <td style={td}>
                     {r.allMatch ? (
                       <Chip label="一致" color="#3fb950" bg="rgba(63,185,80,0.14)" />
@@ -213,7 +202,7 @@ export function ShadowPage() {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 13, padding: 20, textAlign: 'center' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)', padding: 20, textAlign: 'center' }}>
       {text}
     </div>
   );

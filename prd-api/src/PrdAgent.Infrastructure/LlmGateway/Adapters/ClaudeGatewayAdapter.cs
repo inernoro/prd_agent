@@ -150,7 +150,7 @@ public class ClaudeGatewayAdapter : IGatewayAdapter
         //   stream_options 等是 OpenAI 专有、Claude 会 400，故「不」透传（白名单而非黑名单）。
         //   tools / tool_choice 两侧 schema 不同（OpenAI function 包裹 vs Claude input_schema），
         //   需协议原生转换器处理，属 F4「能力描述符 + 协议原生处理器」一波，见
-        //   doc/design.llm-gateway-unification.md 决策一。本次不做半成品转换。
+        //   doc/design.platform.llm-gateway.unification.md 决策一。本次不做半成品转换。
         if (openaiBody.TryGetPropertyValue("top_p", out var topP) && topP is not null)
         {
             result["top_p"] = topP.DeepClone();

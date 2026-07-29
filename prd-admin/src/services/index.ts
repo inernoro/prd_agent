@@ -637,6 +637,7 @@ import type {
   UpdateWeeklyReportContract,
   UploadReportRichTextImageContract,
   UploadDailyLogImageContract,
+  UploadReportCommentImageContract,
   DeleteWeeklyReportContract,
   SubmitWeeklyReportContract,
   ReviewWeeklyReportContract,
@@ -731,6 +732,7 @@ import {
   updateWeeklyReportReal,
   uploadReportRichTextImageReal,
   uploadDailyLogImageReal,
+  uploadReportCommentImageReal,
   deleteWeeklyReportReal,
   submitWeeklyReportReal,
   reviewWeeklyReportReal,
@@ -1205,6 +1207,7 @@ export const importReportFromMarkdown: ImportReportFromMarkdownContract = withAu
 export const updateWeeklyReport: UpdateWeeklyReportContract = withAuth(updateWeeklyReportReal);
 export const uploadReportRichTextImage: UploadReportRichTextImageContract = withAuth(uploadReportRichTextImageReal);
 export const uploadDailyLogImage: UploadDailyLogImageContract = withAuth(uploadDailyLogImageReal);
+export const uploadReportCommentImage: UploadReportCommentImageContract = withAuth(uploadReportCommentImageReal);
 export const deleteWeeklyReport: DeleteWeeklyReportContract = withAuth(deleteWeeklyReportReal);
 export const submitWeeklyReport: SubmitWeeklyReportContract = withAuth(submitWeeklyReportReal);
 export const reviewWeeklyReport: ReviewWeeklyReportContract = withAuth(reviewWeeklyReportReal);

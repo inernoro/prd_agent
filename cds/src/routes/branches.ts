@@ -1,4 +1,5 @@
 import http from 'node:http';
+import { normalizeBuildScope } from '../services/prebuilt-reuse.js';
 import https from 'node:https';
 import { isIP } from 'node:net';
 import fs from 'node:fs';
@@ -12,10 +13,24 @@ import { StateService } from '../services/state.js';
 import { resolveActorFromRequest } from '../services/actor-resolver.js';
 import { WorktreeService } from '../services/worktree.js';
 import { resolveEffectiveProfile, resolveDeployReadinessFloorSeconds, applyDeployReadinessFloor } from '../services/container.js';
+import { diskGuard } from '../services/disk-guard.js';
+import { settleMemberAfterStop } from '../services/replica-stop.js';
+import { shellQuote } from '../services/sidecar/sidecar-deployer.js';
+import {
+  drainInFlightDeploys, beginSelfUpdateDrain, endSelfUpdateDrain, collectDrainableRuns,
+  type DrainableRun, type DrainableReleaseRunSource,
+} from '../services/deploy-drain.js';
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
+import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
+import {
+  resolveBranchProtection,
+  describeBranchProtectionReason,
+  isTrunkBranch,
+  type BranchProtectionReason,
+} from '../services/branch-protection.js';
 import { classifyTriggerSource, deriveDeployMode, deriveCommitMeta, parsePulledSha, shouldRefreshCommitSha } from '../services/build-log-meta.js';
 import { acquireBuildSlot, buildGateStatus, BuildSlotCancelledError, type BuildSlot } from '../services/build-gate.js';
 import { runLayerWithSharedAbort } from '../services/deploy-layer-runner.js';
@@ -41,6 +56,7 @@ import { combinedOutput } from '../types.js';
 import { topoSortLayers } from '../services/topo-sort.js';
 import { detectStack, type DatabaseInitRecommendation, type StackDetection } from '../services/stack-detector.js';
 import { buildInfraDataExec, detectInfraDataKind, maskSecretValues, runDockerExec } from './infra-data.js';
+import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { getInfraCatalogPublic } from '../services/infra-catalog.js';
 import { assertProjectAccess, assertScopedSweep } from './projects.js';
 import { CheckRunRunner } from '../services/check-run-runner.js';
@@ -1627,6 +1643,63 @@ interface RunServiceWithPortRetryOptions {
   onPortChanged?: (info: { oldPort: number; newPort: number; attempt: number }) => void;
   /** 极速版回退源码编译前回补构建槽（见 container.ts runService context 同名钩子）。 */
   onSourceCompileFallback?: () => Promise<void>;
+  /** 版本台账里该分支该服务的历史构建镜像（由新到旧），用于「组件没变就复用上一版」。 */
+  ledgerImages?: readonly string[];
+  /** CI 构建输入路径在 fromSha..toSha 之间有无改动；查不出来返回 false（见 prebuilt-reuse.ts）。 */
+  isComponentUnchangedSince?: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+}
+
+/**
+ * 「组件没变就复用上一版镜像」所需的两份数据（2026-07-27 宕机复盘 P1）。
+ *
+ * 判定逻辑本身在 services/prebuilt-reuse.ts（纯函数、可单测），这里只负责取数：
+ *  - ledgerImages：版本台账里该分支该服务构建过的镜像，由新到旧；
+ *  - isComponentUnchangedSince：在该分支的 worktree 里比「构建那一版的 commit」到
+ *    **本次要部署的那个 commit**（toSha，取自目标镜像 tag，不是 worktree HEAD），
+ *    该组件子树（profile.workDir）有没有改动。对着 HEAD 比是错的：部署可以锁定某个
+ *    不可变版本，若目标版本改了该组件、更晚的 HEAD 又把它 revert 回去，「候选 → HEAD」
+ *    的 diff 会是干净的，于是旧镜像被安静地当成用户点名的那一版发出去（Codex PR #1275 P1）。
+ *    git 查不出来（sha 不在本地历史 / 仓库异常）一律返回 false —— 判不出来就当有变更，
+ *    宁可多编一次，也绝不静默把旧代码当新代码发出去。
+ */
+function buildPrebuiltReuseInputs(
+  stateService: StateService,
+  shell: IShellExecutor,
+  entry: BranchEntry,
+  profileId: string,
+): {
+  ledgerImages: string[];
+  isComponentUnchangedSince: (fromSha: string, toSha: string, scopePaths: readonly string[]) => Promise<boolean>;
+} {
+  const ledgerImages = stateService.getDeploymentVersions()
+    .filter((v) => v.branchId === entry.id)
+    .sort((a, b) => (b.createdAt || '').localeCompare(a.createdAt || ''))
+    .map((v) => (v.profiles || []).find((p) => p.profileId === profileId)?.artifactImage)
+    .filter((im): im is string => !!im);
+
+  const isComponentUnchangedSince = async (
+    fromSha: string,
+    toSha: string,
+    scopePaths: readonly string[],
+  ): Promise<boolean> => {
+    // scopePaths 是 CI 的 path-filter 口径（buildScope），**不是**运行时挂载目录：
+    // compose 里服务常写 `.:/repo`，workDir 因此是 `.`，比整仓等于永远「变了」，
+    // 复用一次都不会发生（Codex PR #1275 三轮 P1）。规整与拒绝规则见
+    // prebuilt-reuse.normalizeBuildScope，这里只做最后一道防线式的复核。
+    const paths = normalizeBuildScope(scopePaths as string[]);
+    if (!paths || !entry.worktreePath) return false;
+    // 两端都必须是完整 sha：只有 CI 打在镜像 tag 上的 commit 才是可信比较基准。
+    if (!/^[0-9a-f]{40}$/.test(fromSha) || !/^[0-9a-f]{40}$/.test(toSha)) return false;
+    if (fromSha === toSha) return false;
+    // --quiet: 有差异退出码 1，无差异 0，出错 128。只有明确的 0 才算「没变」。
+    const pathArgs = paths.map((p) => shellQuote(p)).join(' ');
+    const r = await shell.exec(
+      `git -C ${shellQuote(entry.worktreePath)} diff --quiet ${fromSha} ${toSha} -- ${pathArgs}`,
+    ).catch(() => null);
+    return !!r && r.exitCode === 0;
+  };
+
+  return { ledgerImages, isComponentUnchangedSince };
 }
 
 async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions): Promise<void> {
@@ -1647,6 +1720,8 @@ async function runServiceWithPortRetry(options: RunServiceWithPortRetryOptions):
           trigger: options.trigger ?? null,
           assertCurrent: options.assertCurrent,
           onSourceCompileFallback: options.onSourceCompileFallback,
+          ledgerImages: options.ledgerImages,
+          isComponentUnchangedSince: options.isComponentUnchangedSince,
         },
       );
       return;
@@ -2196,6 +2271,102 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // 磁盘刹车统一守卫（2026-07-27 宕机复盘 P0 + Codex 第二十九轮 P1）：根盘写满会让
+  // CDS 自用 mongo 退出、master 反复启动失败、全站不可用。构建/部署是最大的写入源，
+  // freeze 档（默认 90%）一律拒绝。
+  //
+  // 与上面的预览守卫同样做成**路由器级**：最初只在 /deploy 一个 handler 里判，
+  // 而 /deploy/:profileId 与 /force-rebuild/:profileId 各有独立 handler，照样能拉镜像、
+  // 编译、起容器——闸门等于形同虚设（逐个 handler 打补丁必然漏，预览守卫就是前车之鉴）。
+  //
+  // 只罩**产出构建物**的三个入口；stop / restart / pull 不在其列：前两个是**释放**
+  // 空间的自救动作，磁盘满时必须还能用。
+  router.use((req, res, next) => {
+    if (req.method !== 'POST') { next(); return; }
+    if (!/^\/branches\/[^/]+\/(deploy(\/[^/]+)?|force-rebuild\/[^/]+)\/?$/.test(req.path)) {
+      next();
+      return;
+    }
+    const blocked = diskGuard.blockReasonForDeploy();
+    if (blocked) {
+      res.status(507).json({ error: 'disk_low', message: blocked });
+      return;
+    }
+    // 自更新排空窗口闸已上移到 app 级中间件（server.ts + deploy-drain 的
+    // isDrainBlockedPath）：它同时罩住分支部署与生产发布两个路由器，路由器级只罩
+    // 得住自己那一半（Codex PR #1273 P1）。这里只留磁盘刹车。
+    next();
+  });
+
+  /**
+   * 自更新重启前排空在途部署（debt.cds.selfupdate-prebuilt #1，2026-07-27）。
+   *
+   * 同一次 push 会同时触发 webhook 分支部署与生产自更新；重启把在途部署执行器
+   * 一并杀掉，心跳过期后看门狗收敛为 failed（PR check 变红），需人工重触发。
+   * 本 PR 期间复现 6 次以上。这里改为**事前避免**：先等在途部署落地再重启。
+   *
+   * 刻意不走「打开自动补发」那条路——`CDS_DEPLOY_DISPATCH_RETRY_ENABLED` 默认关
+   * 是 2026-06-24 为治重试风暴做的决策，补发是事后补偿，会把那个旧事故放回来。
+   *
+   * 等待有上限：超时就照常重启并把仍在途的 run 如实记进事件日志。卡住的部署
+   * 不该把自更新永久堵死——自更新往往正是去修那个卡住它的 bug。
+   */
+  /**
+   * 重启后多久仍活着就判定「重启没生效」，提前放开排空闸。
+   * 取值要大于 `scheduleDetachedCdsRestart` 里 1 秒的 process.exit 延迟，
+   * 又要远小于闸自身的 fail-open 窗口（timeoutMs + 60s，默认 6 分钟）。
+   */
+  const RESTART_GATE_RELEASE_MS = 15_000;
+
+  async function drainDeploysBeforeSelfUpdateRestart(context: {
+    trigger: string;
+    branch?: string;
+    toSha?: string;
+  }): Promise<void> {
+    // 0 必须当 0 用（Codex 第三十七轮 P2）：`parseInt('0') || 默认值` 会把显式关闭
+    // 的 0 吞掉换成 5 分钟——文档明写「设 0 关闭」，实际却照等不误，还顺带把部署闸
+    // 关满五分钟。只有「没设 / 设了非数字」才落默认值。
+    const rawDrainTimeout = Number.parseInt(process.env.CDS_SELFUPDATE_DRAIN_TIMEOUT_MS ?? '', 10);
+    const timeoutMs = Number.isFinite(rawDrainTimeout) ? Math.max(0, rawDrainTimeout) : 5 * 60_000;
+    // 先关闸再开始等（顺序要紧）：等待期间与「等完到进程退出」之间到达的新部署
+    // 若还能建 run，重启照样把它腰斩，排空只是把窗口从几分钟压到几秒。闸门自带
+    // 过期时间，重启万一没发生也会自动开，不会把部署永久锁死。
+    // 显式设 0 = 整个机制关闭，连闸也不关（回到旧版行为，Codex 第三十七轮 P2）。
+    // 排空之外只多留 1 分钟给 flush（上限 1s）+ spawn 交接，不再多占五分钟。
+    if (timeoutMs > 0) beginSelfUpdateDrain(Date.now(), timeoutMs + 60_000);
+    const outcome = await drainInFlightDeploys({
+      // 部署 + 发布一起排空（Codex PR #1273 P1）：deploy-drain 早就支持发布口径，
+      // 但这个唯一调用点只喂了部署 run，于是自更新会在预览部署落地后立刻重启，
+      // 把一条正在跑的生产发布 SSH 拦腰砍断——而发布被腰斩的代价比部署大得多
+      // （run 停在 running，在途守卫从此拒绝该目标的一切新发布）。
+      listRuns: () => collectDrainableRuns({
+        deploymentRuns: stateService.getDeploymentRuns() as unknown as DrainableRun[],
+        releaseRuns: stateService.getReleaseRuns() as unknown as DrainableReleaseRunSource[],
+      }),
+      now: () => Date.now(),
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms).unref?.(); }),
+      timeoutMs,
+      onWait: (pending, waitedMs) => {
+        if (waitedMs === 0 || waitedMs % 30_000 < 2_500) {
+          const releases = pending.filter((r) => r.kind === 'release').length;
+          const suffix = releases > 0 ? `（其中 ${releases} 个是生产发布）` : '';
+          console.log(`[self-update] 等待 ${pending.length} 个在途部署/发布落地再重启${suffix}（已等 ${Math.round(waitedMs / 1000)}s）`);
+        }
+      },
+    });
+    if (outcome.skipped) return;
+    serverEventLogStore?.record({
+      category: 'system',
+      severity: outcome.drained ? 'info' : 'warn',
+      source: 'self-update',
+      action: outcome.drained ? 'self-update.deploy-drain.completed' : 'self-update.deploy-drain.timeout',
+      message: outcome.drained
+        ? `自更新重启前已等到全部在途部署落地（等待 ${Math.round(outcome.waitedMs / 1000)}s）`
+        : `自更新重启前等待在途部署超时（${Math.round(outcome.waitedMs / 1000)}s），仍在途 ${outcome.remaining.length} 个，将照常重启（这些 run 会被收敛为中断，需重新触发部署）`,
+      details: { ...context, waitedMs: outcome.waitedMs, remaining: outcome.remaining },
+    });
+  }
+
   async function flushSelfUpdateStateBeforeRestart(context: {
     trigger: 'manual' | 'force-sync';
     branch?: string;
@@ -2203,6 +2374,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     toSha?: string;
     actor?: string;
   }): Promise<void> {
+    // 先排空在途部署，再 flush state、再重启（顺序要紧：flush 之后才重启，
+    // 排空放在最前，避免等待期间新落的状态又没被 flush 到）。
+    await drainDeploysBeforeSelfUpdateRestart({
+      trigger: context.trigger, branch: context.branch, toSha: context.toSha,
+    });
     const result = await waitForFlushWithTimeout(
       () => stateService.flush(),
       SELF_UPDATE_STATE_FLUSH_TIMEOUT_MS,
@@ -2268,6 +2444,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
           `CDS restart requested by ${input.source}`,
           input.source,
         );
+        // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
+        // 只有「重启没真的发生」（spawn 静默失败、上层提前返回）时它才会跑到，
+        // 把排空闸提前放掉。否则闸要等满 timeoutMs+60s（默认 6 分钟）才 fail-open，
+        // 这期间每一次 webhook 部署都拿 503 + 红灯 CI —— 2026-07-28 本 PR 实际中招
+        // 一次：一次 fast-forward 自更新没重启进程，随后的部署被闸了。
+        setTimeout(() => {
+          endSelfUpdateDrain();
+          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+        }, RESTART_GATE_RELEASE_MS).unref?.();
         setTimeout(() => process.exit(0), 1000);
       } catch (spawnErr) {
         try {
@@ -2281,6 +2466,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
             input.source,
           );
           setTimeout(() => process.exit(1), 1000);
+        } else {
+          // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
+          endSelfUpdateDrain();
         }
       }
     };
@@ -5063,6 +5251,86 @@ export function createBranchRouter(deps: RouterDeps): Router {
     });
   });
 
+  // ── 一键删除类操作的分支保护（2026-07-27 P0 收尾）──
+  //
+  // 判定本身**不在这里写**，一律走 `branch-protection.ts` 的 SSOT（janitor /
+  // scheduler / GitHub delete webhook 消费的是同一份）。P0 事故的根因正是「同一件事
+  // 在多处各写一份且互不一致」：`/cleanup` 只比对全局 `state.defaultBranch === b.id`，
+  // 多项目部署下项目 B 的 main，其 CDS 分支 id 根本不等于那个全局值 —— 运维在 UI
+  // 点一次「清理」并选中项目 B，循环走到 main 就会停容器、删 worktree、删 state 条目，
+  // 与定时 janitor 删掉 main 的后果逐字相同，只是触发者换成了一次点击。
+  //
+  // 因此凡是「会成批删分支」的路径（cleanup / cleanup-orphans / cleanup-stopped）
+  // 一律先过 partitionProtectedBranches()，并把「保住了谁、凭什么保住」回传给
+  // 响应与 SSE —— 与 janitor 报表的 skippedProtected 同口径，保护必须可见。
+  type ProtectedBranchNote = {
+    branchId: string;
+    /** git 分支名：主干判定靠的就是它，回传给用户时必须能看到。 */
+    branchName: string;
+    reason: BranchProtectionReason;
+    /** 中文说明，运维不必回查枚举就知道「凭什么保住它」。 */
+    reasonText: string;
+  };
+
+  function noteBranchProtection(entry: BranchEntry): ProtectedBranchNote | null {
+    // 第三个参数必须传：只配在 scheduler 那侧的固定名单同样要挡住批量清理，
+    // 否则「按文档 pin 住」的非主干分支挡得住降温与 janitor，却会被
+    // /cleanup、/cleanup-orphans、cleanup-stopped 删掉（Codex PR #1273 P1）。
+    const protection = resolveBranchProtection(entry, stateService, deps.config?.scheduler?.pinnedBranches ?? []);
+    let reason = protection.reason;
+    // 额外一道兜底：旧的全局 state.defaultBranch。SSOT 的 default-branch 判定走
+    // getDefaultBranchFor(projectId)，若项目上显式写了 defaultBranch: null，就不会
+    // 再回落到这个全局值。这里保留 /cleanup 的历史行为，方向只会更保守（少删）。
+    if (!reason && stateService.getState().defaultBranch === entry.id) reason = 'default-branch';
+    if (!reason) return null;
+    return {
+      branchId: entry.id,
+      branchName: entry.branch,
+      reason,
+      reasonText: describeBranchProtectionReason(reason),
+    };
+  }
+
+  /** 把一批分支拆成「可删」与「受保护（含原因）」两堆。 */
+  function partitionProtectedBranches(entries: BranchEntry[]): {
+    deletable: BranchEntry[];
+    skippedProtected: ProtectedBranchNote[];
+  } {
+    const deletable: BranchEntry[] = [];
+    const skippedProtected: ProtectedBranchNote[] = [];
+    for (const entry of entries) {
+      const note = noteBranchProtection(entry);
+      if (note) skippedProtected.push(note);
+      else deletable.push(entry);
+    }
+    return { deletable, skippedProtected };
+  }
+
+  /**
+   * 只按「主干分支」拆分（恢复出厂设置专用，见该路由的注释）。
+   * 不含 pinnedByUser / isColorMarked —— 那些是用户临时标记，本就该被出厂重置清掉。
+   */
+  function partitionTrunkBranches(entries: BranchEntry[]): { trunk: BranchEntry[]; rest: BranchEntry[] } {
+    const trunk: BranchEntry[] = [];
+    const rest: BranchEntry[] = [];
+    for (const entry of entries) {
+      const project = entry.projectId ? stateService.getProject(entry.projectId) : undefined;
+      if (isTrunkBranch(entry, project)) trunk.push(entry);
+      else rest.push(entry);
+    }
+    return { trunk, rest };
+  }
+
+  /** 恢复出厂设置是否被显式授权连主干一起删（?confirmTrunk=1 或 body.confirmTrunk=true）。 */
+  function factoryResetIncludesTrunk(req: Request): boolean {
+    const raw = String(
+      (req.query?.confirmTrunk as string | undefined)
+      ?? ((req.body as Record<string, unknown> | undefined)?.confirmTrunk as string | boolean | undefined)
+      ?? '',
+    ).trim().toLowerCase();
+    return raw === '1' || raw === 'true' || raw === 'yes';
+  }
+
   // 判定一个分支是否「已停止」（2026-06-21 Bug B2）。
   //
   // 注意：BranchEntry.status 没有字面量 'stopped'——分支停掉后状态回落到
@@ -5112,9 +5380,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const requestId = String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null;
     const actor = resolveActorFromRequest(req);
     const trigger = triggerFromRequest(req);
-    const branches = Object.values(stateService.getState().branches).filter(
+    const stoppedCandidates = Object.values(stateService.getState().branches).filter(
       (b) => (!projectFilter || (b.projectId || 'default') === projectFilter) && isStoppedBranch(b),
     );
+    // 主干保护（2026-07-27 P0 收尾）：停掉的 main 依然是 main，一键「清理已停止分支」
+    // 不得把它连 worktree 带 state 条目一起删。判定走 branch-protection.ts 的 SSOT。
+    const { deletable: branches, skippedProtected } = partitionProtectedBranches(stoppedCandidates);
 
     const removed: Array<{ branchId: string; branch: string; projectId: string }> = [];
     const skippedBusy: Array<{ branchId: string; reason: string }> = [];
@@ -5199,15 +5470,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       action: 'app.stopped-branches.cleanup',
       message: `cleaned ${removed.length} stopped branch(es)${projectFilter ? ` for project ${projectFilter}` : ''}`,
       projectId: projectFilter || null,
-      details: { removed, skippedBusy },
+      details: { removed, skippedBusy, skippedProtected },
     });
 
     res.json({
       ok: true,
       removedCount: removed.length,
       skippedBusyCount: skippedBusy.length,
+      // 保护要可见：只报「删了几个」而不报「保住了谁、凭什么保住」，运维无从确认
+      // 主干保护到底有没有生效（同 janitor 报表的 skippedProtected 口径）。
+      skippedProtectedCount: skippedProtected.length,
       removed,
       skippedBusy,
+      skippedProtected,
     });
   });
 
@@ -10846,12 +11121,17 @@ export function createBranchRouter(deps: RouterDeps): Router {
     };
     try {
       entry.status = 'stopping';
+      // 克隆完成栅栏（Codex 第十六轮 P1）：先置删除标记再遍历快照台账。
+      // 复制集的在途克隆完成回调查到该标记即自弃（drop 刚克隆的库、不入账），
+      // 封死「台账已扫过 → 完成回调追加新快照 → removeBranch」的无主库窗口。
+      entry.deleting = true;
       entry.lastStoppedAt = deleteStartedAt;
       entry.lastStopSource = trigger === 'webhook' ? 'system' : 'cds';
       entry.lastStopReason = `删除分支流程已开始：${deleteReason}`;
       stateService.save();
     } catch (err) {
       entry.status = previousDeleteIntent.status;
+      entry.deleting = undefined;
       entry.lastStoppedAt = previousDeleteIntent.lastStoppedAt;
       entry.lastStopSource = previousDeleteIntent.lastStopSource;
       entry.lastStopReason = previousDeleteIntent.lastStopReason;
@@ -10927,6 +11207,59 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
       } catch { /* best-effort：发现失败不阻断删除 */ }
+      // 隔离库级联清理（Codex P1，2026-07-26）：专用隔离实例（cds-rsdb-*，label 是
+      // cds.type=rsdb、**没有** cds.branch.id）与共享库里的隔离库（<源库>_rs_<member>）
+      // 只记录在 branch.replicaDbSnapshots 台账。分支状态一删，快照 API 与上面的
+      // app 容器残留清扫都够不着它们——每删一个带隔离库的分支就永久漏跑一个数据库
+      // 容器 + 留存一份数据。必须在删台账前逐个 drop。best-effort：单个失败记
+      // 服务器事件不阻断删除主流程（dropReplicaDb 自带 cds-rsdb-/_rs_ 命名双保险，
+      // 不会误删共享主库）。
+      for (const snapshot of entry.replicaDbSnapshots ?? []) {
+        try {
+          const snapshotInfra = stateService.getInfraServicesForProject(entry.projectId)
+            .find((svc) => svc.containerName === snapshot.infraContainer);
+          await dropReplicaDb(snapshot, snapshotInfra?.env || {});
+        } catch (err) {
+          // 失败不能只记事件（Codex P2）：台账马上随分支状态删除，瞬时 Docker/DB
+          // 故障会让专用实例容器从此彻底无主。专用实例失败 → 写墓碑，收割器按
+          // 墓碑持续重试 rm -f -v（removeVolumes 标记，连匿名数据卷一并删——
+          // 卷里装的是生产派生克隆，只删容器会让它永久失去追踪，Codex 第三十二轮 P1）。
+          // 共享库里的 _rs_ 隔离库无容器可墓碑，仅数据残留在活着的共享 infra 里，
+          // 记事件供人工收口（残留台账见 debt.cds.replica-set #19）。
+          if (snapshot.dedicatedContainer) {
+            try {
+              stateService.addContainerTeardownTombstones([{
+                containerName: snapshot.dedicatedContainer,
+                projectId: entry.projectId,
+                requestedAt: new Date().toISOString(),
+                removeVolumes: true,
+              }]);
+            } catch { /* 墓碑写入失败退回事件告警 */ }
+          } else {
+            // 共享实例隔离库无容器可墓碑（Codex 第二十五轮 P1）：台账马上随
+            // removeBranch 消失，只记事件会让生产派生克隆永久失踪在共享 infra
+            // 里。入待清理台账，复制集对账循环持续重试 DROP。
+            try {
+              stateService.addPendingReplicaDbDrop({
+                snapshot, projectId: entry.projectId, requestedAt: new Date().toISOString(),
+              });
+            } catch { /* 入队失败退回事件告警 */ }
+          }
+          serverEventLogStore?.record({
+            category: 'container',
+            severity: 'warn',
+            source: 'branch-delete',
+            action: 'branch.delete.replica-db-drop-failed',
+            message: `删分支级联清理隔离库失败: ${snapshot.dbName}${snapshot.dedicatedContainer ? ` (专用实例 ${snapshot.dedicatedContainer}，已写墓碑交收割器重试)` : ''} — ${(err as Error).message}`,
+            projectId: entry.projectId,
+            branchId: entry.id,
+            requestId: requestId || null,
+            operationId: branchOperationLease?.operationId || null,
+            ...operationAuditFields,
+            details: { snapshotId: snapshot.id, engine: snapshot.engine, dedicatedContainer: snapshot.dedicatedContainer || null },
+          });
+        }
+      }
       // 分支删除收尾:容器此时已 stop+remove,顺手清掉分支专属网(cds-br-<id>),让「删分支即消失」
       // 覆盖到网络层(分支级临时额外服务的隔离网随分支一起消失)。best-effort:网络仍被占用/不存在
       // 都吞掉(removeBranchNetwork 内部已容错)。分支的 extraProfiles 是 BranchEntry 字段,
@@ -11515,7 +11848,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const desiredIds = new Set(profiles.map((p) => p.id));
       const droppedExisting = Object.keys(entry.services).filter((sid) => !desiredIds.has(sid));
       // executorId 以 'master-' 开头 = 内嵌 master（本地）；其余非空值 = 远端归属（与 server.ts 心跳口径一致）。
-      const remoteAttributed = !!entry.executorId && !entry.executorId.startsWith('master-');
+      const remoteAttributed = isRemoteExecutorOwned(entry.executorId);
       if (droppedExisting.length > 0 && remoteAttributed) {
         const onlineRemoteNode = registry
           ? registry.getAll().find((n) => n.id === entry.executorId && n.role !== 'embedded' && n.status === 'online')
@@ -12015,13 +12348,6 @@ export function createBranchRouter(deps: RouterDeps): Router {
         detail: pullResult as unknown as Record<string, unknown>,
         timestamp: new Date().toISOString(),
       });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-      });
-
       // 非极速版（源码编译）路径:镜像/构建用 pull 后真实 HEAD,故无显式 body.commitSha 时
       // 用 pullResult.head 刷新 githubCommitSha,避免镜像 tag/构建对应到 pull 前旧 SHA
       // （Codex P2: refresh prebuilt SHA after pulling latest code）。
@@ -12035,7 +12361,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const pulledSha = parsePulledSha(pullResult);
       // 源码 pull（非极速版、未 skip、解析出 SHA）：deploy 总是 reset 到分支 HEAD（下方清
       // pinnedCommit、"deploy always restores to branch HEAD"），落地的就是 pulledSha。
-      const isSourcePull = !branchUsesPrebuiltMode(profiles, entry)
+      // 「是否真的从源码构建」必须把**两种**极速版形态都排掉（Codex PR #1275 四轮 P2
+      // 修复时发现）：branchUsesPrebuiltMode 只认 deployModes.<mode>.prebuilt，认不出
+      // profile 级的 prebuiltImage=true。后者部署的是 tag 锁死在某个 sha 的镜像，
+      // 落地的 commit 就是那个 sha，与 worktree 刚拉到的 HEAD 无关；漏判会把 opLog /
+      // run / version 全部贴成 pulledSha。单 profile 部署路径本来就是按 profile 的
+      // prebuiltImage 判的，这里对齐它。
+      const usesPrebuilt = branchUsesPrebuiltMode(profiles, entry)
+        || profiles.some((p) => resolveEffectiveProfile(p, entry).prebuiltImage === true);
+      const isSourcePull = !usesPrebuilt
         && !(pullResult as { skipped?: boolean }).skipped
         && !!pulledSha;
       if (!requestCommitSha && isSourcePull && shouldRefreshCommitSha(entry.githubCommitSha, pulledSha)) {
@@ -12049,6 +12383,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
       if (isSourcePull) {
         Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
       }
+      // run 台账 / 不可变版本记的也必须是**实际落地**的 SHA（Codex PR #1275 四轮 P2）。
+      // 上面那段只在 `!requestCommitSha` 时才把 entry.githubCommitSha 跟到 HEAD —— 这是
+      // 有意的（该字段被 check-run/release 复用）。但 webhook 带 requestCommitSha=A 而
+      // origin 已前进到 B 时，pull 硬 reset 落地的是 B，entry 上却仍是 A：opLog 已经用
+      // pulledSha 记对了，run 与 version 却照抄 entry，于是部署审计挂在一份**没有被部署过**
+      // 的代码上，findReusable 还可能据此复用 A 的构建产物顶替 B。这里统一取实际落地值。
+      // 已选中不可变版本时，真正启动的是**那个版本的产物**（下面 building 的文案就是
+      // 「不可变版本已准备，开始启动服务」），此刻落地的 commit 是版本自己的 sha，
+      // 不是 worktree 刚拉到的 HEAD —— 否则又会反过来把 run 贴错成 pulledSha。
+      // 用 let：极速版镜像拉不到时 runService 会**自动回退源码编译**（container.ts 的
+      // sourceFallbackProfile 分支），那一刻实际落地的就从「镜像锁定的 sha」变成了
+      // 刚 pull 到的 HEAD。回退发生在这句之后，所以只能由回调回来修正
+      //（Codex PR #1275 六轮 P2）。
+      let deployedCommitSha = selectedDeploymentVersion?.commitSha
+        ?? (isSourcePull ? pulledSha : entry.githubCommitSha);
+      // 顺序要紧（2026-07-27 复盘 P2）：这一句必须排在上面那段 pull-SHA 刷新**之后**。
+      // 原先它在刷新之前，于是 run 上盖的是**触发时**缓存的 entry.githubCommitSha，
+      // 而这次构建实际落地的是 pull 之后的 HEAD —— run 写着一个 sha、构建用的却是
+      // 另一份代码。宕机复盘期间就被这个误导过一次（以为 worktree 没拉新代码）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: selectedDeploymentVersion ? '不可变版本已准备，开始启动服务' : '源码准备完成，开始构建服务',
+        operationId: branchOperationLease?.operationId,
+        commitSha: deployedCommitSha,
+      });
+
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit && !selectedDeploymentVersion) {
@@ -12185,7 +12545,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
 
-      if (!selectedDeploymentVersion && deploymentVersionService && entry.githubCommitSha) {
+      // 判据同为 deployedCommitSha：不知道实际落地哪个 commit 就不复用/不建版本，
+      // 免得版本被贴上一个没被部署过的 sha（Codex PR #1275 四轮 P2）。
+      if (!selectedDeploymentVersion && deploymentVersionService && deployedCommitSha) {
         const refreshedEffectiveProfiles = currentProfiles.map((profile) => resolveEffectiveProfile(profile, entry));
         deploymentConfigHash = deploymentVersionService.computeConfigHash(
           refreshedEffectiveProfiles,
@@ -12194,7 +12556,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const reusable = deploymentVersionService.findReusable({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash: deploymentConfigHash,
         });
         if (reusable) {
@@ -12513,7 +12875,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
               // 非极速版部署已持槽，此钩子不会触发第二次 acquire。
               onSourceCompileFallback: async () => {
                 if (!buildSlot) buildSlot = await acquireGateSlot();
+                // 回退成源码编译 = 这台服务实际跑的是 worktree 当前 HEAD，不再是
+                // 镜像 tag 锁定的那个 sha。后续 run 流转 / 版本记录必须跟着改口径，
+                // 否则审计又挂在一份没被部署过的代码上（Codex 六轮 P2）。
+                if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) {
+                  deployedCommitSha = pulledSha;
+                  Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
+                }
               },
+              // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+              ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
               onPortChanged: ({ oldPort, newPort, attempt }) => {
                 logEvent({
                   step: `port-${profile.id}`,
@@ -12689,7 +13060,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         phase: 'ready',
         message: '服务构建与启动阶段结束，开始汇总就绪结果',
         operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
+        commitSha: deployedCommitSha,
       });
       //
       // 2026-04-27 (用户反馈"GitHub Checks 一直失败但日志看不到原因"):
@@ -12868,7 +13239,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         && deploymentVersionService
         && deploymentRun
         && deploymentConfigHash
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
       ) {
         if (!selectedDeploymentVersion) {
@@ -12876,7 +13247,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           selectedDeploymentVersion = deploymentVersionService.create({
             projectId: entry.projectId || 'default',
             branchId: entry.id,
-            commitSha: entry.githubCommitSha,
+            commitSha: deployedCommitSha,
             configHash: deploymentConfigHash,
             profiles: versionProfiles,
             branch: entry,
@@ -12988,7 +13359,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: smokeOk ? '部署完成并通过验证' : '部署运行完成，自动冒烟未通过',
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { smokeOk },
         });
       }
@@ -13276,19 +13647,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
         ? { head: entry.githubCommitSha || 'cds-managed-runtime', skipped: true, reason: 'synthetic-cds-managed-runtime' }
         : await worktreeService.pull(entry.branch, entry.worktreePath);
       logEvent({ step: 'pull', status: 'done', title: `已拉取: ${pullResult.head}`, detail: pullResult as unknown as Record<string, unknown>, timestamp: new Date().toISOString() });
-      advanceDeploymentRun(deploymentRun?.id, 'building', {
-        phase: 'build',
-        message: `源码准备完成，开始构建 ${profile.name}`,
-        operationId: branchOperationLease?.operationId,
-        commitSha: entry.githubCommitSha,
-        detail: { profileId },
-      });
-
       // 同主 deploy 路径:**非极速版**才用 pull 后真实 HEAD 刷新 githubCommitSha;极速版
       // 镜像锁定 CI 就绪的 ciTargetSha,不跟随 pull 后新 HEAD（Codex P2: refresh prebuilt
       // SHA after pulling latest code + require CI readiness for the deployed SHA）。
       // 本单服务路径无 requestCommitSha 变量,内联判定 body.commitSha 是否显式指定;
       // 用本 profile 的 prebuiltImage 判定是否极速版。
+      // 本次实际落地的 commit（在下面的 pull 块里赋值；块外声明供后续 run/version 复用）。
+      let deployedCommitSha: string | undefined = entry.githubCommitSha;
+      // pull 到的裸 SHA 也提到块外：极速版回退源码编译时要用它改口径（见下方钩子）。
+      let fallbackPulledSha: string | undefined;
       {
         const bodySha = typeof req.body?.commitSha === 'string' && /^[0-9a-f]{7,40}$/i.test(req.body.commitSha)
           ? req.body.commitSha : undefined;
@@ -13305,7 +13672,20 @@ export function createBranchRouter(deps: RouterDeps): Router {
         if (isSourcePull) {
           Object.assign(opLog, deriveCommitMeta(entry, pulledSha));
         }
+        // 同主路径：run/version 记实际落地的 SHA，不照抄可能被 body.commitSha 冻住的
+        // entry.githubCommitSha（Codex PR #1275 四轮 P2）。
+        deployedCommitSha = isSourcePull ? pulledSha : entry.githubCommitSha;
+        if (pulledSha && !(pullResult as { skipped?: boolean }).skipped) fallbackPulledSha = pulledSha;
       }
+      // 同主 deploy 路径：这一句排在上面的 pull-SHA 刷新**之后**，否则 run 上盖的是
+      // 触发时缓存的 sha，而非本次构建真正落地的 HEAD（2026-07-27 复盘 P2）。
+      advanceDeploymentRun(deploymentRun?.id, 'building', {
+        phase: 'build',
+        message: `源码准备完成，开始构建 ${profile.name}`,
+        operationId: branchOperationLease?.operationId,
+        commitSha: deployedCommitSha,
+        detail: { profileId },
+      });
 
       // Clear pinned commit — deploy always restores to branch HEAD
       if (entry.pinnedCommit) {
@@ -13481,7 +13861,14 @@ export function createBranchRouter(deps: RouterDeps): Router {
           // 极速版镜像拉取失败 → 回退源码编译前回补构建槽（可能排队）。
           onSourceCompileFallback: async () => {
             if (!buildSlot) buildSlot = await acquireGateSlot();
+            // 同主路径：回退源码编译后，实际落地的是 pull 到的 HEAD（Codex 六轮 P2）。
+            if (fallbackPulledSha) {
+              deployedCommitSha = fallbackPulledSha;
+              Object.assign(opLog, deriveCommitMeta(entry, fallbackPulledSha));
+            }
           },
+          // 组件没变就复用上一版镜像，别在宿主重编（2026-07-27 宕机的临门一脚）
+          ...buildPrebuiltReuseInputs(stateService, shell, entry, profile.id),
           onPortChanged: ({ oldPort, newPort, attempt }) => {
             logEvent({
               step: `port-${profile.id}`,
@@ -13635,7 +14022,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         svc.status === 'running'
         && deploymentVersionService
         && deploymentRun
-        && entry.githubCommitSha
+        && deployedCommitSha
         && stateService.getBranch(entry.id) === entry
         && profiles.every((candidate) => entry.services[candidate.id]?.status === 'running')
       ) {
@@ -13647,7 +14034,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const version = deploymentVersionService.create({
           projectId: entry.projectId || 'default',
           branchId: entry.id,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           configHash,
           profiles: versionProfiles,
           branch: entry,
@@ -13699,7 +14086,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
           phase: 'complete',
           message: `${profile.name} 部署完成并通过就绪检查`,
           operationId: branchOperationLease?.operationId,
-          commitSha: entry.githubCommitSha,
+          commitSha: deployedCommitSha,
           detail: { profileId, hostPort: svc.hostPort },
         });
       } else {
@@ -14028,6 +14415,49 @@ export function createBranchRouter(deps: RouterDeps): Router {
         } catch { /* ok */ }
         svc.status = 'stopped';
       }
+      // 复制集成员级联停止（design.cds.replica-set）：成员容器不在 entry.services
+      // 快照里，必须显式停掉，否则分支停止/睡眠后成员版本继续占资源。
+      // 无容器的 provisioning 成员也必须标 stopped（Codex P1）：此前 continue 跳过
+      // 让后台 materializeMember 任务继续跑，分支已 idle 后还会把副本容器起出来
+      //（成员记录仍在，memberStillTracked 栅栏拦不住）——标 stopped 后物化栅栏
+      // 按状态就地放弃。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, stopAttribution.reason, {
+                projectId: entry.projectId,
+                branchId: entry.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                requestId: String((req as any).cdsRequestId || req.headers['x-cds-request-id'] || '').trim() || null,
+                operationId: branchOperationLease?.operationId || null,
+                actor: resolveActorFromRequest(req),
+                trigger: triggerFromRequest(req),
+                operation: 'branch-stop-replica-member',
+                source: 'api.stop-branch',
+              });
+            } catch { /* 失败与否统一由下面的实测判定，不靠异常 */ }
+          }
+          // 停止必须核实再落状态（Codex 第三十五轮 P1，判定见 services/replica-stop.ts）
+          await settleMemberAfterStop(member, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '物化被分支停止中断，可在画布删除后重建',
+            onStillRunning: (containerName, message) => {
+              serverEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'api.stop-branch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器停止失败但仍在运行: ${containerName}`,
+                branchId: entry.id,
+                projectId: entry.projectId,
+                containerName,
+                details: { hint: message },
+              });
+            },
+          });
+        }
+      }
       await archiveBranchContainerLogs({
         stateService,
         containerService,
@@ -14136,6 +14566,79 @@ export function createBranchRouter(deps: RouterDeps): Router {
           svc.status = 'error';
           svc.errorMessage = `容器 ${svc.containerName} 原地重启失败（可能未构建过），请改用「重新部署」`;
           failed.push(svc.containerName);
+        }
+      }
+
+      // 复制集成员级联重启（Codex P1，2026-07-26）：成员容器不在 entry.services
+      // 快照里，分支停止/降温会把它们一并停掉；这里若不拉起，例行「停止 → 重启」
+      // 会让副本分流永久消失——成员记录还在（占成员上限、钉住管理模式），但没有
+      // 任何路径能再物化它们，只能删了重建。成员重启失败不阻断分支主服务恢复，
+      // 只把该成员标 error（画布可见），用户可在画布删除后重建。
+      for (const replicaSet of Object.values(entry.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          if (!member.containerName) continue;
+          if (member.status === 'provisioning') continue;
+          assertBranchOperationCurrent(branchOperationLease, `restart before replica ${replicaSet.profileId}--${member.id}`);
+          const memberOk = await containerService.restartServiceInPlace(member.containerName, undefined, {
+            projectId: entry.projectId,
+            branchId: entry.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            requestId,
+            operationId: branchOperationLease?.operationId || null,
+            actor,
+            trigger,
+            operation: 'branch-restart-replica-member',
+            source: 'api.restart-branch',
+            reason: '分支重启级联拉起复制集副本（docker restart，未重建代码）',
+          });
+          if (memberOk) {
+            // 就绪实证后才恢复分流（Codex P1）：restartServiceInPlace 只确认容器
+            // 进程活着，不跑就绪探测。就绪契约复用该成员**自己版本快照**里的
+            // readinessProbe / startupSignal（与首次物化同一分支逻辑，Codex 第十四轮
+            // P1）——noHttp 后台 worker、自定义健康路径、启动信号成员都按各自契约
+            // 判定；快照不可得时才退默认 60s TCP/HTTP 探测兜底。
+            const memberSnapshot = deploymentVersionService
+              ?.get(member.versionId)
+              ?.profiles.find((p) => p.profileId === replicaSet.profileId);
+            let memberReady = false;
+            if (memberSnapshot?.startupSignal) {
+              memberReady = await containerService.waitForStartupSignal(
+                member.containerName,
+                memberSnapshot.startupSignal,
+                undefined,
+                120,
+              );
+            } else if (typeof member.hostPort === 'number' && member.hostPort > 0) {
+              memberReady = await containerService.waitForReadiness(
+                member.hostPort,
+                memberSnapshot?.readinessProbe ?? ({ timeoutSeconds: 60 } as ReadinessProbe),
+                undefined,
+                undefined,
+                member.containerName,
+              );
+            }
+            if (memberReady) {
+              member.status = 'running';
+              member.statusMessage = undefined;
+            } else {
+              // 与 materializeMember 同纪律（Codex 第二十七轮 P1，第二十六轮 P1 的重启路径
+              // 兄弟）：只标 error 而留容器活着，共享库模式下它仍跑后台消费者/定时任务
+              // 读写主库，还白占端口内存。stop 而非 remove，保留 docker logs 供排障。
+              let stopped = false;
+              try {
+                await containerService.stop(member.containerName, 'replica-member-not-ready', {
+                  branchId: entry.id, projectId: entry.projectId, profileId: replicaSet.profileId,
+                  actor: 'branch-restart', trigger: 'replica-readiness-failed',
+                });
+                stopped = true;
+              } catch { /* 停不掉交给成员对账/孤儿收割兜底，不阻断重启主流程 */ }
+              member.status = 'error';
+              member.statusMessage = `副本容器 ${member.containerName} 已重启但未通过就绪契约（readinessProbe/startupSignal）——已从分流摘除${stopped ? '并停止容器（避免其继续读写主库）' : '（停止容器失败，请手动确认）'}，可在画布删除后重建副本`;
+            }
+          } else {
+            member.status = 'error';
+            member.statusMessage = `副本容器 ${member.containerName} 原地重启失败（可能已被移除），可在画布删除后重建副本`;
+          }
         }
       }
 
@@ -15106,14 +15609,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
       });
       return;
     }
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;
@@ -15282,14 +15800,29 @@ export function createBranchRouter(deps: RouterDeps): Router {
 
   router.post('/branches/:id/container-env', async (req, res) => {
     const { id } = req.params;
-    const { profileId } = req.body as { profileId?: string };
+    const { profileId, memberId } = req.body as { profileId?: string; memberId?: string };
     const entry = stateService.getBranch(id);
     if (!entry) {
       res.status(404).json({ error: `分支 "${id}" 不存在` });
       return;
     }
 
-    const svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    // 复制集成员容器日志（2026-07-25，debt #4 偿还）：memberId 指定时按成员容器取日志，
+    // 复用主容器同一条归档/掩码/事件链路（合成 svc 形状即可）。
+    let svc = profileId ? entry.services[profileId] : Object.values(entry.services)[0];
+    if (memberId && profileId) {
+      const member = entry.replicaSets?.[profileId]?.members.find((m) => m.id === memberId);
+      if (!member?.containerName) {
+        res.status(404).json({ error: `副本 ${memberId} 不存在或尚无容器` });
+        return;
+      }
+      svc = {
+        profileId: `${profileId}--${memberId}`,
+        containerName: member.containerName,
+        hostPort: member.hostPort ?? 0,
+        status: member.status === 'running' ? 'running' : member.status === 'provisioning' ? 'starting' : 'error',
+      };
+    }
     if (!svc) {
       res.status(404).json({ error: '未找到服务' });
       return;
@@ -16213,6 +16746,32 @@ export function createBranchRouter(deps: RouterDeps): Router {
             skippedBusy.push({ branchId: entry.id, profileId: removedProfileId, reason: (err as Error).message });
           } finally {
             completeBranchOperation(branchOperationLease, branchOperationFinalStatus);
+          }
+        }
+        // 复制集级联解散（Codex P1，2026-07-26）：profile 删除后主服务从
+        // branch.services 消失，但 replicaSets[profileId] 与成员容器留活——发布器
+        // 的「主宕成员兜底」会把这些成员继续发进路由表，被操作员删掉的服务对
+        // 公网依旧可达且持续占资源。删 profile 必须连带收割其复制集。
+        const orphanRs = entry.replicaSets?.[removedProfileId];
+        if (orphanRs) {
+          for (const member of orphanRs.members) {
+            if (!member.containerName) continue;
+            await containerService.remove(member.containerName, {
+              projectId: entry.projectId,
+              branchId: entry.id,
+              profileId: `${removedProfileId}--${member.id}`,
+              requestId,
+              actor,
+              trigger,
+              operation: 'build-profile-delete-replica-member',
+              source: 'api.delete-build-profile',
+              reason: `删除构建配置 ${removedProfileId} 时级联收割复制集副本`,
+            }).catch(() => { /* best-effort：容器可能已不在 */ });
+          }
+          delete entry.replicaSets![removedProfileId];
+          if (Object.keys(entry.replicaSets!).length === 0) {
+            delete entry.replicaSets;
+            delete entry.replicaMode;
           }
         }
       }
@@ -17542,11 +18101,22 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const projectFilter = typeof req.query.project === 'string' ? req.query.project : null;
 
       const state = stateService.getState();
-      const toRemove = Object.values(state.branches).filter((b) => {
-        if (b.id === state.defaultBranch) return false;
+      const scopedBranches = Object.values(state.branches).filter((b) => {
         if (projectFilter && (b.projectId || 'default') !== projectFilter) return false;
         return true;
       });
+      // 2026-07-27 P0 收尾：此前这里只比对 `b.id === state.defaultBranch`（一个**全局**值），
+      // 既没有 per-project 判定、也没有按 git 分支名的主干判定。多项目部署下项目 B 的 main
+      // 其 CDS 分支 id 不等于该全局值 —— 运维点一次「清理」并选中项目 B，循环走到 main
+      // 就会停容器、删 worktree、删 state 条目，把 P0 事故原样复现一遍。现在统一过 SSOT。
+      const { deletable: toRemove, skippedProtected } = partitionProtectedBranches(scopedBranches);
+      for (const note of skippedProtected) {
+        sendSSE(res, 'step', {
+          step: 'cleanup',
+          status: 'info',
+          title: `已保护 ${note.branchName}（${note.branchId}）：${note.reasonText}`,
+        });
+      }
       let removedCount = 0;
       const skippedBusy: Array<{ branchId: string; reason: string }> = [];
       for (const entry of toRemove) {
@@ -17613,10 +18183,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
       }
       stateService.save();
-      const msg = projectFilter
+      const protectedSuffix = skippedProtected.length > 0
+        ? `，已保护 ${skippedProtected.length} 个分支（${skippedProtected.map((n) => `${n.branchName}:${n.reasonText}`).join('、')}）`
+        : '';
+      const msg = (projectFilter
         ? `已清理项目 ${projectFilter} 的 ${removedCount} 个分支`
-        : `已清理 ${removedCount} 个分支`;
-      sendSSE(res, 'complete', { message: msg, removedCount, scope: projectFilter || '_all', skippedBusy });
+        : `已清理 ${removedCount} 个分支`) + protectedSuffix;
+      sendSSE(res, 'complete', {
+        message: msg,
+        removedCount,
+        scope: projectFilter || '_all',
+        skippedBusy,
+        skippedProtected,
+      });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -17651,6 +18230,10 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // A project whose clone isn't ready (cloneStatus !== 'ready')
       // is skipped — it has no remote to check against.
       const allOrphans: BranchEntry[] = [];
+      /** 受保护而不参与孤儿清理的分支（含原因），回传给用户。 */
+      const skippedProtected: ProtectedBranchNote[] = [];
+      /** 因 fetch 异常（远端分支集合为空）被整体中止的项目。 */
+      const abortedProjects: Array<{ projectId: string; projectName: string; reason: string }> = [];
       for (const project of projects) {
         if (project.cloneStatus && project.cloneStatus !== 'ready') {
           sendSSE(res, 'step', { step: `skip-${project.id}`, status: 'info', title: `跳过项目 ${project.name}（clone 未就绪）` });
@@ -17675,16 +18258,41 @@ export function createBranchRouter(deps: RouterDeps): Router {
         const remoteBranches = new Set(
           result.stdout.trim().split('\n').filter(Boolean).filter(b => b !== 'HEAD'),
         );
+        // fetch 异常守卫（2026-07-27 P0 收尾）：孤儿判定完全依赖这个远端集合，
+        // 「远端一个分支都没有」绝不能被解释成「本地全都是孤儿」——远端默认分支刚改名、
+        // fetch 部分失败但 exec 未抛、仓库处于异常状态，都会让集合为空，而后果是
+        // 该项目**全部分支（含 main）**被整批删除。空集合一律判为异常并中止该项目。
+        if (remoteBranches.size === 0) {
+          const reason = `${project.name}: 远端分支列表为空，判定为 fetch 异常（远端默认分支刚改名 / fetch 部分失败 / 仓库状态异常都会这样），已中止该项目的孤儿清理，未删除任何分支`;
+          sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'error', title: reason });
+          abortedProjects.push({ projectId: project.id, projectName: project.name, reason });
+          continue;
+        }
         const projectBranches = stateService.getBranchesForProject(project.id);
-        const projectOrphans = projectBranches.filter(b => !remoteBranches.has(b.branch));
-        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个` });
+        const orphanCandidates = projectBranches.filter(b => !remoteBranches.has(b.branch));
+        // 主干保护走 SSOT：远端改名/远端已删主干这类场景下 main 会被算成孤儿，
+        // 而它恰恰是最不能删的那一条。
+        const partitioned = partitionProtectedBranches(orphanCandidates);
+        const projectOrphans = partitioned.deletable;
+        for (const note of partitioned.skippedProtected) {
+          skippedProtected.push(note);
+          sendSSE(res, 'step', {
+            step: `fetch-${project.id}`,
+            status: 'info',
+            title: `已保护 ${note.branchName}（${note.branchId}）：${note.reasonText}`,
+          });
+        }
+        sendSSE(res, 'step', { step: `fetch-${project.id}`, status: 'done', title: `${project.name}: 远程 ${remoteBranches.size} 个分支, 本地 ${projectBranches.length} 个, 孤儿 ${projectOrphans.length} 个, 受保护 ${partitioned.skippedProtected.length} 个` });
         allOrphans.push(...projectOrphans);
       }
 
       const orphans = allOrphans;
 
       if (orphans.length === 0) {
-        sendSSE(res, 'complete', { message: '没有发现孤儿分支，一切正常', orphanCount: 0 });
+        const message = abortedProjects.length > 0
+          ? `已中止 ${abortedProjects.length} 个项目的孤儿清理（fetch 异常），未删除任何分支`
+          : '没有发现孤儿分支，一切正常';
+        sendSSE(res, 'complete', { message, orphanCount: 0, skippedProtected, abortedProjects });
         res.end();
         return;
       }
@@ -17768,7 +18376,15 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const cleaned = cleanedOrphans.length;
 
       stateService.save();
-      sendSSE(res, 'complete', { message: `已清理 ${cleaned} 个孤儿分支`, orphanCount: cleaned, skippedBusy });
+      sendSSE(res, 'complete', {
+        message: `已清理 ${cleaned} 个孤儿分支`
+          + (skippedProtected.length > 0 ? `，已保护 ${skippedProtected.length} 个分支` : '')
+          + (abortedProjects.length > 0 ? `，${abortedProjects.length} 个项目因 fetch 异常被中止` : ''),
+        orphanCount: cleaned,
+        skippedBusy,
+        skippedProtected,
+        abortedProjects,
+      });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });
     } finally {
@@ -17880,8 +18496,44 @@ export function createBranchRouter(deps: RouterDeps): Router {
         }
 
         // 1. Stop + remove that project's branches
-        const branches = Object.values(state.branches)
+        //
+        // 主干的处置（2026-07-27 P0 收尾）：与 /cleanup 那类「回收垃圾」的语义不同，
+        // 「恢复出厂设置」的语义确实是「清空一切、回到空白装机态」，主干在语义之内。
+        // 所以这里不硬拦，而是要求**显式确认**：不带 confirmTrunk 时保留主干（其余照清），
+        // 带 confirmTrunk=1 才连主干一并删除。两种情况都把主干逐条列进 SSE 与响应 ——
+        // 「这次会不会动 main」永远是明写出来的，不靠读代码猜，也不会因为一次点击
+        // 就把主干的 worktree 与 state 条目悄悄吃掉。
+        const includeTrunk = factoryResetIncludesTrunk(req);
+        const projectBranches = Object.values(state.branches)
           .filter((b) => (b.projectId || 'default') === projectFilter);
+        const trunkSplit = partitionTrunkBranches(projectBranches);
+        const keptTrunk = includeTrunk ? [] : trunkSplit.trunk;
+        const branches = includeTrunk ? projectBranches : trunkSplit.rest;
+        // 保留主干 + 清空配置 = 僵尸态：分支条目与容器还在跑，但它依赖的
+        // buildProfiles / routingRules / 项目环境变量 / 基础设施全被清掉，既没法
+        // 重新部署，路由也已经断了，而响应还宣称「已保留主干」（Codex PR #1273 P1）。
+        // 与其造这种半吊子状态，不如把这个组合直接判为非法：要么显式确认连主干
+        // 一起清（confirmTrunk=1），要么先把主干处理掉再重置。
+        if (!includeTrunk && trunkSplit.trunk.length > 0) {
+          sendSSE(res, 'error', {
+            message: `该项目还有主干分支（${trunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+              + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+              + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+            trunkBranches: trunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+          });
+          res.end();
+          return;
+        }
+
+        for (const entry of trunkSplit.trunk) {
+          sendSSE(res, 'step', {
+            step: 'reset',
+            status: includeTrunk ? 'warning' : 'info',
+            title: includeTrunk
+              ? `将删除主干分支 ${entry.branch}（${entry.id}）：已带 confirmTrunk 显式确认`
+              : `已保留主干分支 ${entry.branch}（${entry.id}）：如需一并清除，请带 confirmTrunk=1 重试`,
+          });
+        }
         for (const entry of branches) {
           const branchOperationLease = beginSilentBranchOperation(req, entry, {
             kind: 'factory-reset',
@@ -17974,11 +18626,23 @@ export function createBranchRouter(deps: RouterDeps): Router {
         stateService.save();
 
         sendSSE(res, 'complete', {
-          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`,
+          message: `项目 ${project.name} 已重置：清除 ${branches.length} 个分支、${infra.length} 个基础设施、${removedProfiles} 个构建配置、环境变量作用域。项目实体 + Docker 数据卷保留。`
+            + (keptTrunk.length > 0
+              ? `已保留 ${keptTrunk.length} 个主干分支（${keptTrunk.map((b) => b.branch).join('、')}），如需一并清除请带 confirmTrunk=1 重试。`
+              : '')
+            + (includeTrunk && trunkSplit.trunk.length > 0
+              ? `其中主干分支 ${trunkSplit.trunk.map((b) => b.branch).join('、')} 已按 confirmTrunk 一并删除。`
+              : ''),
           scope: projectFilter,
           removedBranches: branches.length,
           removedInfra: infra.length,
           removedProfiles,
+          /** 本次保留的主干分支（未带 confirmTrunk 时非空）。 */
+          keptTrunkBranches: keptTrunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+          /** 本次删除的主干分支（带 confirmTrunk 时非空）。 */
+          removedTrunkBranches: includeTrunk
+            ? trunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch }))
+            : [],
         });
         return;
       }
@@ -17986,7 +18650,37 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // ── Global factory-reset (all projects) — pre-feature path ──
 
       // 1. Stop and remove all branch containers + worktrees
-      const branches = Object.values(state.branches);
+      //
+      // 主干处置同上（scoped 路径的长注释）：默认保留各项目主干，带 confirmTrunk=1
+      // 才连主干一起清空；无论哪种都在响应里逐条列明。
+      const globalIncludeTrunk = factoryResetIncludesTrunk(req);
+      const globalTrunkSplit = partitionTrunkBranches(Object.values(state.branches));
+      const globalKeptTrunk = globalIncludeTrunk ? [] : globalTrunkSplit.trunk;
+
+      // 同上：保留主干但清空它依赖的全部配置会造出无法部署的僵尸分支，
+      // 这个组合直接判为非法（Codex PR #1273 P1）。
+      if (!globalIncludeTrunk && globalTrunkSplit.trunk.length > 0) {
+        sendSSE(res, 'error', {
+          message: `当前还有主干分支（${globalTrunkSplit.trunk.map((b) => b.branch).join('、')}）。`
+            + '恢复出厂设置会清空构建配置、路由规则、环境变量与基础设施，只保留分支条目会让主干变成无法部署的僵尸。'
+            + '请带 confirmTrunk=1 连主干一并清除，或先单独删除/迁移主干后再重置。',
+          trunkBranches: globalTrunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+        });
+        res.end();
+        return;
+      }
+      const branches = globalIncludeTrunk
+        ? Object.values(state.branches)
+        : globalTrunkSplit.rest;
+      for (const entry of globalTrunkSplit.trunk) {
+        sendSSE(res, 'step', {
+          step: 'reset',
+          status: globalIncludeTrunk ? 'warning' : 'info',
+          title: globalIncludeTrunk
+            ? `将删除主干分支 ${entry.branch}（${entry.id}）：已带 confirmTrunk 显式确认`
+            : `已保留主干分支 ${entry.branch}（${entry.id}）：如需一并清除，请带 confirmTrunk=1 重试`,
+        });
+      }
       for (const entry of branches) {
         const branchOperationLease = beginSilentBranchOperation(req, entry, {
           kind: 'factory-reset',
@@ -18048,13 +18742,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
       }
 
       // 3. Clear all state (but keep the file — it will be overwritten with defaults)
+      //    未带 confirmTrunk 时，被保留的主干分支条目必须原样留在 state 里 ——
+      //    容器还在跑、worktree 还在盘上，条目一删就成了没人认领的幽灵。
+      const keptBranchMap: Record<string, BranchEntry> = {};
+      for (const entry of globalKeptTrunk) keptBranchMap[entry.id] = entry;
+      const removedInfraCount = (state.infraServices || []).length;
       const freshState: typeof state = {
         routingRules: [],
         buildProfiles: [],
-        branches: {},
-        nextPortIndex: 0,
+        branches: keptBranchMap,
+        // 保留了分支就不能把端口游标归零，否则后续分配会和保留分支已占用的端口撞车。
+        nextPortIndex: globalKeptTrunk.length > 0 ? state.nextPortIndex : 0,
         logs: {},
-        defaultBranch: null,
+        defaultBranch: globalKeptTrunk.length > 0 ? (state.defaultBranch ?? null) : null,
         customEnv: { _global: {} },
         infraServices: [],
       };
@@ -18062,7 +18762,18 @@ export function createBranchRouter(deps: RouterDeps): Router {
       stateService.save();
 
       sendSSE(res, 'complete', {
-        message: `已恢复出厂设置：清除 ${branches.length} 个分支、${state.infraServices.length} 个基础设施服务、所有配置。Docker 数据卷已保留。`,
+        message: `已恢复出厂设置：清除 ${branches.length} 个分支、${removedInfraCount} 个基础设施服务、所有配置。Docker 数据卷已保留。`
+          + (globalKeptTrunk.length > 0
+            ? `已保留 ${globalKeptTrunk.length} 个主干分支（${globalKeptTrunk.map((b) => b.branch).join('、')}），如需一并清除请带 confirmTrunk=1 重试。`
+            : '')
+          + (globalIncludeTrunk && globalTrunkSplit.trunk.length > 0
+            ? `其中主干分支 ${globalTrunkSplit.trunk.map((b) => b.branch).join('、')} 已按 confirmTrunk 一并删除。`
+            : ''),
+        removedBranches: branches.length,
+        keptTrunkBranches: globalKeptTrunk.map((b) => ({ branchId: b.id, branchName: b.branch })),
+        removedTrunkBranches: globalIncludeTrunk
+          ? globalTrunkSplit.trunk.map((b) => ({ branchId: b.id, branchName: b.branch }))
+          : [],
       });
     } catch (err) {
       sendSSE(res, 'error', { message: (err as Error).message });

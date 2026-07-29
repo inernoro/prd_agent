@@ -70,6 +70,15 @@ x-cds-deploy-modes:
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-server:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**。
+      # 用途：per-SHA 镜像拉不到时，据此判断「CI 因该组件没变而跳过构建」（可安全复用
+      # 上一版镜像，免掉宿主全量重编 —— 2026-07-27 宕机的临门一脚）还是「CI 没跑完/失败」
+      # （复用即静默发旧代码）。不能用运行时挂载目录代替：本文件各服务都挂 `.:/repo`，
+      # 那个口径等于比整个仓库，判定永远是「变了」，复用一次都不会发生。
+      # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
+      buildScope:
+        - "prd-api/**"
+        - ".github/workflows/branch-image.yml"
       prebuilt: true
       # 生产镜像监听 8080（与源码模式 5000 不同），覆盖容器端口 + 端口相关 env。
       containerPort: 8080
@@ -107,6 +116,15 @@ x-cds-deploy-modes:
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-admin:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**。
+      # 用途：per-SHA 镜像拉不到时，据此判断「CI 因该组件没变而跳过构建」（可安全复用
+      # 上一版镜像，免掉宿主全量重编 —— 2026-07-27 宕机的临门一脚）还是「CI 没跑完/失败」
+      # （复用即静默发旧代码）。不能用运行时挂载目录代替：本文件各服务都挂 `.:/repo`，
+      # 那个口径等于比整个仓库，判定永远是「变了」，复用一次都不会发生。
+      # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
+      buildScope:
+        - "prd-admin/**"
+        - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8080
   # 独立 LLM 网关后端 llmgw —— 自包含 ASP.NET 服务，读共享 Mongo 做观测 + 独立账号。
@@ -129,6 +147,16 @@ x-cds-deploy-modes:
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**。
+      # 用途：per-SHA 镜像拉不到时，据此判断「CI 因该组件没变而跳过构建」（可安全复用
+      # 上一版镜像，免掉宿主全量重编 —— 2026-07-27 宕机的临门一脚）还是「CI 没跑完/失败」
+      # （复用即静默发旧代码）。不能用运行时挂载目录代替：本文件各服务都挂 `.:/repo`，
+      # 那个口径等于比整个仓库，判定永远是「变了」，复用一次都不会发生。
+      # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
+      buildScope:
+        - "llmgw/console-api/**"
+        - "prd-api/**"
+        - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8090
       env:
@@ -151,6 +179,16 @@ x-cds-deploy-modes:
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-serve:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**。
+      # 用途：per-SHA 镜像拉不到时，据此判断「CI 因该组件没变而跳过构建」（可安全复用
+      # 上一版镜像，免掉宿主全量重编 —— 2026-07-27 宕机的临门一脚）还是「CI 没跑完/失败」
+      # （复用即静默发旧代码）。不能用运行时挂载目录代替：本文件各服务都挂 `.:/repo`，
+      # 那个口径等于比整个仓库，判定永远是「变了」，复用一次都不会发生。
+      # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
+      buildScope:
+        - "llmgw/serving/**"
+        - "prd-api/**"
+        - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 8091
       env:
@@ -181,6 +219,16 @@ x-cds-deploy-modes:
       fallbackImage:
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-${CDS_BRANCH_SLUG}"
         - "ghcr.io/inernoro/prd_agent/prdagent-llmgw-web:branch-main"
+      # CI 构建该镜像的输入路径，**逐条对齐 .github/workflows/branch-image.yml 的 filters**。
+      # 用途：per-SHA 镜像拉不到时，据此判断「CI 因该组件没变而跳过构建」（可安全复用
+      # 上一版镜像，免掉宿主全量重编 —— 2026-07-27 宕机的临门一脚）还是「CI 没跑完/失败」
+      # （复用即静默发旧代码）。不能用运行时挂载目录代替：本文件各服务都挂 `.:/repo`，
+      # 那个口径等于比整个仓库，判定永远是「变了」，复用一次都不会发生。
+      # 声明得比 CI 实际输入窄会让 CDS 把旧镜像当新代码发出去 —— 改这里必须同步改工作流。
+      buildScope:
+        - "llmgw/web/**"
+        - "prd-api/**"
+        - ".github/workflows/branch-image.yml"
       prebuilt: true
       containerPort: 80
 services:

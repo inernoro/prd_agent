@@ -1,5 +1,5 @@
 import { useEffect, useMemo, useState } from 'react';
-import { Bot, Check, Copy, Download, ExternalLink, Package, ShieldCheck } from 'lucide-react';
+import { Bot, Check, Copy, Download, ExternalLink, Package, Rocket, ShieldCheck } from 'lucide-react';
 
 import {
   AgentAccessMap,
@@ -38,10 +38,13 @@ interface Props {
   context?: AgentPageContext;
 }
 
-type TabKey = 'connect' | 'manual' | 'marketplace';
+type TabKey = 'init' | 'connect' | 'manual' | 'marketplace';
 
+// 「项目初始化」排在第一位：从零建项目是新用户最常见的入口，
+// 藏在第四个 tab 等于没有。详见 doc/design.cds.project-bootstrap.md。
 const TABS: Array<{ key: TabKey; label: string; icon: typeof Bot; recommended?: boolean }> = [
-  { key: 'connect', label: '自动接入', icon: Bot, recommended: true },
+  { key: 'init', label: '项目初始化', icon: Rocket, recommended: true },
+  { key: 'connect', label: '自动接入', icon: Bot },
   { key: 'manual', label: '手动安装', icon: Package },
   { key: 'marketplace', label: '海鲜市场', icon: ExternalLink },
 ];
@@ -58,7 +61,7 @@ function initialMapSelection(
 }
 
 export function SkillDownloadDialog({ open, onOpenChange, projects, context }: Props): JSX.Element {
-  const [active, setActive] = useState<TabKey>('connect');
+  const [active, setActive] = useState<TabKey>('init');
   const sourceContext = context || createAgentMissionContext('projects');
   const [mapSelection, setMapSelection] = useState<AgentAccessMapSelection>(
     () => initialMapSelection(projects, sourceContext),
@@ -180,7 +183,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
           </label>
         ) : null}
 
-        <nav className="grid grid-cols-3 gap-1 border-b border-[hsl(var(--hairline))]">
+        <nav className="grid grid-cols-4 gap-1 border-b border-[hsl(var(--hairline))]">
           {TABS.map((tab) => {
             const Icon = tab.icon;
             const selected = active === tab.key;
@@ -207,6 +210,7 @@ export function SkillDownloadDialog({ open, onOpenChange, projects, context }: P
         </nav>
 
         <div className="min-h-[260px]">
+          {active === 'init' ? <ProjectInitTab /> : null}
           {active === 'connect' ? <ConnectTab prompt={prompt} /> : null}
           {active === 'manual' ? <ManualTab /> : null}
           {active === 'marketplace' ? <MarketplaceTab /> : null}
@@ -271,16 +275,287 @@ function ManualTab(): JSX.Element {
   );
 }
 
+/**
+ * 技能市场：在 CDS 内直接浏览可安装的技能。
+ *
+ * 为什么不能只给一个跳 MAP 的外链：客户接不进 MAP（那是内部平台），
+ * 点过去撞登录墙。CDS 是中介，得自己把「有什么技能」摆出来 —— 数据走
+ * 代理端点，内容事实源仍在 MAP，不产生第二份。
+ */
 function MarketplaceTab(): JSX.Element {
+  const [bundles, setBundles] = useState<BundleView[]>([]);
+  const [state, setState] = useState<'loading' | 'ready' | 'error'>('loading');
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/skills/bundles')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { data?: { items?: BundleView[] } }) => {
+        if (!alive) return;
+        setBundles(data?.data?.items || []);
+        setState('ready');
+      })
+      .catch(() => { if (alive) setState('error'); });
+    return () => { alive = false; };
+  }, []);
+
+  if (state === 'loading') {
+    return <p className="text-sm text-muted-foreground">正在读取技能清单…</p>;
+  }
+  if (state === 'error') {
+    return (
+      <div className="space-y-3 text-sm text-muted-foreground">
+        <p>技能来源当前不可达，清单暂时列不出来。「项目初始化」里的安装命令仍可使用（会走本地缓存）。</p>
+        <Button asChild variant="outline">
+          <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
+            <ExternalLink className="h-4 w-4" />
+            在浏览器打开来源站点
+          </a>
+        </Button>
+      </div>
+    );
+  }
+
   return (
-    <div className="space-y-3 text-sm text-muted-foreground">
-      <p>也可以从 PrdAgent 海鲜市场获取 CDS 技能。安装完成后仍使用“自动接入”中的页面批准流程。</p>
-      <Button asChild>
-        <a href={MARKETPLACE_URL} target="_blank" rel="noreferrer">
-          <ExternalLink className="h-4 w-4" />
-          打开海鲜市场
-        </a>
-      </Button>
+    <div className="space-y-3">
+      <p className="text-sm text-muted-foreground">
+        按角色打包的技能套装。选好之后到「项目初始化」拿安装命令，不需要注册账号。
+      </p>
+      <div className="space-y-2">
+        {bundles.map((b) => (
+          <div key={b.key} className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] p-3">
+            <div className="flex items-baseline justify-between gap-2">
+              <span className="text-sm font-medium text-foreground">{b.title}</span>
+              <span className="shrink-0 text-xs text-muted-foreground">
+                {b.roleLabels.join('、')} · {b.skillCount} 个技能
+              </span>
+            </div>
+            <ul className="mt-2 space-y-1">
+              {b.skills.map((sk) => (
+                <li key={sk.key} className="text-xs leading-relaxed">
+                  <code className="text-foreground">{sk.key}</code>
+                  <span className="text-muted-foreground"> — {sk.description}</span>
+                </li>
+              ))}
+            </ul>
+          </div>
+        ))}
+      </div>
+    </div>
+  );
+}
+
+interface BundleSkillView { key: string; title: string; description: string }
+interface BundleView {
+  key: string;
+  title: string;
+  roleLabels: string[];
+  skillCount: number;
+  skills: BundleSkillView[];
+}
+
+interface BootstrapPresetView {
+  key: string;
+  label: string;
+  audience: string;
+  summary: string;
+  marketplaceKeys: string[];
+  includeCdsSkills: boolean;
+  nextStep: string;
+}
+
+/**
+ * 项目初始化：给对方「一条命令 + 一句话」，而不是一段让 AI 自己想办法的提示词。
+ *
+ * 默认展示两步版本（先下载、可阅读、再执行）——管道执行有供应链风险，
+ * 给非技术用户的默认必须是安全的那个。详见 doc/design.cds.project-bootstrap.md。
+ */
+function ProjectInitTab(): JSX.Element {
+  const [presets, setPresets] = useState<BootstrapPresetView[]>([]);
+  // 技能清单实时从代理端点拉：客户接不进 MAP，CDS 必须自己能把「这套装里有什么」
+  // 摆出来，而不是只显示一个套装名让人猜。
+  const [bundles, setBundles] = useState<BundleView[]>([]);
+  const [showSkills, setShowSkills] = useState(false);
+  const [selected, setSelected] = useState<string>('');
+  const [loadError, setLoadError] = useState<string>('');
+  const [showPipe, setShowPipe] = useState(false);
+  const [copied, setCopied] = useState<string>('');
+
+  useEffect(() => {
+    let alive = true;
+    fetch('/api/bootstrap/presets')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { presets?: BootstrapPresetView[] }) => {
+        if (!alive) return;
+        const list = data.presets || [];
+        setPresets(list);
+        setSelected((prev) => prev || list[0]?.key || '');
+      })
+      .catch(() => { if (alive) setLoadError('预设清单暂时读不到，请稍后重试。'); });
+    fetch('/api/skills/bundles')
+      .then((r) => (r.ok ? r.json() : Promise.reject(new Error(`HTTP ${r.status}`))))
+      .then((data: { data?: { items?: BundleView[] } }) => {
+        if (alive) setBundles(data?.data?.items || []);
+      })
+      // 技能清单拉不到不阻塞安装：命令照给，只是列不出明细
+      .catch(() => { if (alive) setBundles([]); });
+    return () => { alive = false; };
+  }, []);
+
+  const origin = typeof window === 'undefined' ? '' : window.location.origin;
+  const active = presets.find((p) => p.key === selected);
+  const scriptUrl = active ? `${origin}/api/bootstrap/${active.key}` : '';
+  // 两处都必须让失败可见：
+  // - 两步版用 && 串起来，下载失败就不会去执行上一次留下的旧 cds-init.sh
+  // - 单行版不能用 `curl | sh`：管道的退出码取自 sh，而 sh 读到空输入会成功退出，
+  //   curl 失败反而被报成「初始化成功」。改为先落盘再执行，退出码如实反映失败。
+  const twoStep = active
+    ? `curl -fsSL -o cds-init.sh "${scriptUrl}" \\\n  && less cds-init.sh \\\n  && sh cds-init.sh`
+    : '';
+  const oneLine = active
+    ? `curl -fsSL -o cds-init.sh "${scriptUrl}" && sh cds-init.sh`
+    : '';
+  const activeSkills = active
+    ? bundles.filter((b) => active.marketplaceKeys.includes(b.key)).flatMap((b) => b.skills)
+    : [];
+
+  const copy = async (text: string, tag: string): Promise<void> => {
+    try {
+      await navigator.clipboard.writeText(text);
+      setCopied(tag);
+      window.setTimeout(() => setCopied(''), 1800);
+    } catch {
+      setCopied('');
+    }
+  };
+
+  if (loadError) {
+    return <p className="text-sm text-muted-foreground">{loadError}</p>;
+  }
+
+  return (
+    <div className="space-y-3">
+      <div className="flex items-start gap-2 rounded-md border border-primary/30 bg-primary/5 px-3 py-2 text-xs text-muted-foreground">
+        <ShieldCheck className="mt-0.5 h-4 w-4 shrink-0 text-primary" />
+        <span>
+          在目标项目根目录执行。脚本只往当前项目写技能文件，不含密钥，也不会改你的终端配置或用户主目录。
+        </span>
+      </div>
+
+      <div className="grid gap-2 sm:grid-cols-2">
+        {presets.map((p) => {
+          const on = p.key === selected;
+          return (
+            <button
+              key={p.key}
+              type="button"
+              onClick={() => setSelected(p.key)}
+              className={`rounded-md border p-3 text-left transition-colors ${
+                on
+                  ? 'border-primary/60 bg-primary/5'
+                  : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] hover:border-primary/40'
+              }`}
+            >
+              <div className="text-sm font-medium text-foreground">{p.label}</div>
+              <div className="mt-0.5 text-xs text-muted-foreground">{p.audience}</div>
+              <div className="mt-1.5 text-xs leading-relaxed text-muted-foreground">{p.summary}</div>
+            </button>
+          );
+        })}
+      </div>
+
+      {active ? (
+        <>
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-foreground">第一步：在项目目录执行</div>
+            <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
+              <pre className="overflow-x-auto whitespace-pre pr-12 font-mono text-xs leading-relaxed text-foreground">
+                {twoStep}
+              </pre>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="absolute right-2 top-2"
+                onClick={() => void copy(twoStep, 'two')}
+              >
+                {copied === 'two' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              </Button>
+            </div>
+            <button
+              type="button"
+              className="text-xs text-muted-foreground underline-offset-2 hover:underline"
+              onClick={() => setShowPipe((v) => !v)}
+            >
+              {showPipe ? '收起一行版' : '我信任来源，给我一行命令'}
+            </button>
+            {showPipe ? (
+              <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
+                <pre className="overflow-x-auto whitespace-pre pr-12 font-mono text-xs text-foreground">{oneLine}</pre>
+                <Button
+                  size="sm"
+                  variant="ghost"
+                  className="absolute right-2 top-2"
+                  onClick={() => void copy(oneLine, 'one')}
+                >
+                  {copied === 'one' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+                </Button>
+              </div>
+            ) : null}
+          </div>
+
+          <div className="space-y-1.5">
+            <div className="text-xs font-medium text-foreground">第二步：打开 AI 编程工具，说这一句</div>
+            <div className="cds-surface-raised cds-hairline relative rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3">
+              <pre className="font-mono text-xs text-foreground">{active.nextStep}</pre>
+              <Button
+                size="sm"
+                variant="ghost"
+                className="absolute right-2 top-2"
+                onClick={() => void copy(active.nextStep, 'next')}
+              >
+                {copied === 'next' ? <Check className="h-4 w-4" /> : <Copy className="h-4 w-4" />}
+              </Button>
+            </div>
+          </div>
+
+          {activeSkills.length > 0 ? (
+            <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))]">
+              <button
+                type="button"
+                onClick={() => setShowSkills((v) => !v)}
+                className="flex w-full items-center justify-between px-3 py-2 text-left text-xs"
+              >
+                <span className="text-foreground">
+                  这套会装 {activeSkills.length + (active.includeCdsSkills ? 5 : 0)} 个技能
+                </span>
+                <span className="text-muted-foreground">{showSkills ? '收起' : '看看都有什么'}</span>
+              </button>
+              {showSkills ? (
+                <div className="max-h-56 overflow-y-auto border-t border-[hsl(var(--hairline))] px-3 py-2">
+                  <ul className="space-y-1.5">
+                    {activeSkills.map((sk) => (
+                      <li key={sk.key} className="text-xs leading-relaxed">
+                        <code className="text-foreground">{sk.key}</code>
+                        <span className="text-muted-foreground"> — {sk.description}</span>
+                      </li>
+                    ))}
+                    {active.includeCdsSkills ? (
+                      <li className="text-xs text-muted-foreground">
+                        另含 CDS 的五个技能：部署、扫描、排障、发布、预览地址
+                      </li>
+                    ) : null}
+                  </ul>
+                </div>
+              ) : null}
+            </div>
+          ) : null}
+
+          <p className="text-xs text-muted-foreground">
+            会装到当前项目的技能目录（自动识别 .claude / .cursor / .agents），跟着项目的版本库走，
+            团队每个人拉下来都有。
+          </p>
+        </>
+      ) : null}
     </div>
   );
 }

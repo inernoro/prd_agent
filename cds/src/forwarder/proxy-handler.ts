@@ -61,6 +61,14 @@ export interface ProxyHandlerOptions {
   unknownHostFallbackHost?: string;
   /** Unknown host fallback 端口(默认 5500 = master workerPort)。 */
   unknownHostFallbackPort?: number;
+  /**
+   * 复制集被动健康回调（debt #12）：上游连接级失败 / 成功给出响应时通知注册表，
+   * 死副本在数据面就地临时摘除（控制面对账之外的最后防线）。
+   */
+  replicaHealth?: {
+    noteFailure(route: RouteRecord, code: string | undefined): void;
+    noteSuccess(route: RouteRecord): void;
+  } | null;
 }
 
 const DEFAULT_WAITING_HTML = 'CDS waiting';
@@ -130,6 +138,7 @@ interface ResolvedProxyOptions {
   unknownHostFallbackPort: number | undefined;
   logger: ProxyHandlerOptions['logger'];
   httpLogStore: HttpLogSink | null;
+  replicaHealth: ProxyHandlerOptions['replicaHealth'];
 }
 
 export class ProxyHandler {
@@ -147,6 +156,7 @@ export class ProxyHandler {
       unknownHostFallbackPort: opts.unknownHostFallbackPort,
       logger: opts.logger,
       httpLogStore: opts.httpLogStore ?? null,
+      replicaHealth: opts.replicaHealth ?? null,
     };
     this.agent = opts.agent ?? new http.Agent({ keepAlive: true, maxSockets: 256 });
   }
@@ -436,6 +446,8 @@ export class ProxyHandler {
         },
         (upstreamRes) => {
           const status = upstreamRes.statusCode ?? 502;
+          // 被动健康：上游给出任何响应（含 4xx/5xx 业务错误）= 端口活着 → 回池
+          if (route.replicaGroup) this.opts.replicaHealth?.noteSuccess(route);
           const contentType = String(upstreamRes.headers['content-type'] || '');
           // 改写后续要透传给客户端的 headers
           const respHeaders: Record<string, string | string[] | undefined> = { ...upstreamRes.headers };
@@ -454,6 +466,17 @@ export class ProxyHandler {
           respHeaders['x-cds-upstream'] = `${upstreamHost}:${upstreamPort}`;
           if (route.branchId) respHeaders['x-cds-branch'] = route.branchId;
           if (route._id) respHeaders['x-cds-route-id'] = route._id;
+          // 副本身份头以**路由**为唯一权威（Codex 第二十四轮 P2）：respHeaders 从
+          // 上游响应展开，应用/历史版本若自己发 X-CDS-Replica* 会盖掉 forwarder-main
+          // 在代理前 setHeader 的可信值——分流探测统计的就成了应用伪造的落点。
+          // 复制集路由强制覆写为选中成员；非复制集路由删净，untagged 才是诚实信号。
+          if (route.replicaGroup && route.replicaMemberId) {
+            respHeaders['x-cds-replica'] = route.replicaMemberId;
+            respHeaders['x-cds-replica-group'] = route.replicaGroup;
+          } else {
+            delete respHeaders['x-cds-replica'];
+            delete respHeaders['x-cds-replica-group'];
+          }
           // Cookie cache control:cookie 含 cds_branch 时禁缓存(对齐 master proxy.ts:971-973)。
           // 防止浏览器在 cookie 路由场景下混用不同分支的 disk cache。
           if (req.headers.cookie?.includes('cds_branch')) {
@@ -462,6 +485,20 @@ export class ProxyHandler {
           }
           if (route.branchId && this.isStaticAssetRequest(req.url || '/')) {
             respHeaders['cache-control'] = 'no-cache, must-revalidate';
+          }
+          // 复制集粘性 cookie 合并（Codex P1，2026-07-26）：forwarder-main 在代理前用
+          // res.setHeader 种 cds_rs，但 writeHead 的同名头会覆盖 setHeader——上游响应
+          // 自己也带 Set-Cookie（登录/会话端点必带）时，浏览器只收到应用 cookie、
+          // 丢了 cds_rs，登录后的下一个请求立刻被加权路由横跳到另一个版本。
+          // 这里把 res 上已种的 Set-Cookie 并进上游数组一起下发。
+          {
+            const ownSetCookie = res.getHeader('set-cookie');
+            if (ownSetCookie) {
+              const upstream = respHeaders['set-cookie'];
+              const upstreamArr = Array.isArray(upstream) ? upstream : (upstream ? [String(upstream)] : []);
+              const ownArr = Array.isArray(ownSetCookie) ? ownSetCookie.map(String) : [String(ownSetCookie)];
+              respHeaders['set-cookie'] = [...upstreamArr, ...ownArr];
+            }
           }
 
           // Widget injection 条件:HTML 200 + route 带 branchId+branchName(对齐
@@ -550,6 +587,8 @@ export class ProxyHandler {
           ENOTFOUND: 'DNS 无法解析 upstream host',
         };
         const hint = ERR_HINTS[code ?? ''] ?? '上游异常';
+        // 被动健康：连接级死亡信号计入摘除判定（注册表只认 ECONNREFUSED 家族）
+        if (route.replicaGroup) this.opts.replicaHealth?.noteFailure(route, code);
         const acceptsHtml = this.isHtmlNavigationRequest(req);
         this.opts.logger?.warn?.(
           `[forward] upstream error: code=${code ?? 'UNKNOWN'} ${hint} → ${upstreamHost}:${upstreamPort} (host=${host})`,
@@ -635,6 +674,8 @@ export class ProxyHandler {
     socket: Socket,
     head: Buffer,
     route: RouteRecord | null,
+    /** 复制集亲和 cookie（Codex 第二十一轮 P2）：追加进 101 握手响应，WS-first 客户端也能建立粘性 */
+    extraSetCookies?: string[],
   ): Promise<void> {
     // /_cds/* passthrough 同样适用于 WebSocket Upgrade(/_cds/api/*/stream 等)
     // 同 handle():用本地变量,不 mutate req(Cursor Bugbot Low)。
@@ -696,6 +737,9 @@ export class ProxyHandler {
 
     return new Promise<void>((resolve) => {
       upstreamReq.on('upgrade', (upstreamRes, upstreamSocket, upstreamHead) => {
+        // 被动健康（Codex P2）：升级握手成功 = 端口活着，与 HTTP 路径同款回池——
+        // 否则被摘成员的半开探针走 WebSocket 成功后永远回不了池
+        if (route.replicaGroup) this.opts.replicaHealth?.noteSuccess(route);
         // 把 upstream 的 101 + headers 写回客户端
         const headers = ['HTTP/1.1 101 Switching Protocols'];
         for (const [k, v] of Object.entries(upstreamRes.headers)) {
@@ -704,6 +748,11 @@ export class ProxyHandler {
           } else if (v != null) {
             headers.push(`${k}: ${v}`);
           }
+        }
+        // 复制集亲和 cookie（Codex 第二十一轮 P2）：与 HTTP 路径同款的组作用域
+        // cookie 写进握手响应——WS-first 客户端重连不再重新掷签横跳版本
+        if (extraSetCookies) {
+          for (const c of extraSetCookies) headers.push(`set-cookie: ${c}`);
         }
         socket.write(headers.join('\r\n') + '\r\n\r\n');
         if (upstreamHead && upstreamHead.length > 0) socket.write(upstreamHead);
@@ -729,7 +778,12 @@ export class ProxyHandler {
         socket.on('error', cleanup);
       });
 
-      upstreamReq.on('error', () => {
+      upstreamReq.on('error', (err) => {
+        // 被动健康（Codex P2）：WebSocket-only 服务的端口死亡此前从不计入摘除——
+        // 连接级死亡信号与 HTTP 路径同口径上报（非致命错误码由 registry 自行过滤）
+        if (route.replicaGroup) {
+          this.opts.replicaHealth?.noteFailure(route, (err as NodeJS.ErrnoException).code);
+        }
         try {
           socket.write('HTTP/1.1 502 Bad Gateway\r\n\r\n');
           socket.destroy();

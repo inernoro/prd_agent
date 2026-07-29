@@ -46,7 +46,12 @@ export interface TombstoneStateView {
 /** 收割器状态视图的窄接口（便于单测注入，不拖整个 StateService）。 */
 export interface OrphanReaperStateView extends TombstoneStateView {
   getProjects(): Array<{ id: string }>;
-  getAllBranches(): Array<{ id: string; services?: Record<string, { containerName?: string }> }>;
+  getAllBranches(): Array<{
+    id: string;
+    services?: Record<string, { containerName?: string }>;
+    /** 复制集成员容器不在 services 里，但同样是有主容器（2026-07-26 误杀事故）。 */
+    replicaSets?: Record<string, { members: Array<{ id: string; containerName?: string }> }>;
+  }>;
   getInfraServices(): Array<{ containerName: string }>;
   /** 启用中的外部访问代理容器名（缺省视为无启用策略）。 */
   getActiveExternalAccessProxyContainerNames?(): Set<string>;
@@ -86,6 +91,15 @@ const quote = (s: string): string => `'${String(s).replace(/'/g, `'\\''`)}'`;
  * 口径对齐 state.ts 的 classifyInfraScope 已知系统 infra。
  */
 const PROTECTED_CONTAINER_NAMES = new Set(['cds-infra-cds-state-mongo']);
+
+/**
+ * 保护标记（2026-07-27 宕机复盘 P2）：带 `cds.protected=true` 的容器一律不收割。
+ * 名单式保护只能护住写死的那几个名字，标记式保护对**所有** infra 容器与将来新增的
+ * 关键容器自动生效——事故当天被误删的正是这一类（装着数据、停掉就出大事）。
+ */
+export function isProtectedByLabel(labels: string): boolean {
+  return /(^|,)cds\.protected=true(,|$)/.test((labels || '').trim());
+}
 
 interface DiscoveredContainer {
   name: string;
@@ -208,7 +222,11 @@ export async function processTeardownTombstones(opts: {
       });
       continue;
     }
-    const rm = await shell.exec(`docker rm -f ${quote(name)}`, { timeout: 60_000 });
+    // 带 removeVolumes 标记的墓碑必须连匿名卷一起删（Codex 第三十二轮 P1）：
+    // 专用隔离实例的数据在匿名卷里、装的是生产派生克隆，只删容器等于把敏感数据
+    // 和它占的盘一起变成谁也扫不到的孤儿。
+    const rmFlags = tombstone.removeVolumes ? '-f -v' : '-f';
+    const rm = await shell.exec(`docker rm ${rmFlags} ${quote(name)}`, { timeout: 60_000 });
     if (rm.exitCode === 0 || /no such container/i.test(rm.stderr || '')) {
       state.removeContainerTeardownTombstone(name);
       result.removed.push(name);
@@ -276,6 +294,18 @@ export async function sweepOrphanCdsContainers(opts: {
       knownAppPairs.add(`${b.id}/${profileId}`);
       if (svc?.containerName) knownAppContainerNames.add(svc.containerName);
     }
+    // 复制集成员容器认领（2026-07-26 真实事故）：成员容器带 cds.profile.id=
+    // `<profileId>--<memberId>`，但成员运行态记在 branch.replicaSets 不在 services，
+    // 此前收割器不认识 → 21:41 建的 5 个副本 23:09 被当孤儿优雅停掉，state 仍标
+    // running，forwarder 继续按权重把入口真实流量打到死端口（50% 503）。
+    // 只要成员还在 state 台账里（任何状态），它的容器就有主；成员移除走
+    // removeMember 的显式收割，不归本收割器。
+    for (const [profileId, rs] of Object.entries(b.replicaSets || {})) {
+      for (const m of rs.members || []) {
+        knownAppPairs.add(`${b.id}/${profileId}--${m.id}`);
+        if (m.containerName) knownAppContainerNames.add(m.containerName);
+      }
+    }
   }
   const knownBranchIds = new Set(branches.map((b) => b.id));
 
@@ -327,7 +357,7 @@ export async function sweepOrphanCdsContainers(opts: {
   };
 
   for (const c of infraContainers) {
-    if (PROTECTED_CONTAINER_NAMES.has(c.name)) continue;
+    if (PROTECTED_CONTAINER_NAMES.has(c.name) || isProtectedByLabel(c.labels)) continue;
     if (belongsToOtherInstance(c)) continue;
     if (knownInfraNames.has(c.name)) continue;
     if (withinGracePeriod(c, nowMs)) continue;

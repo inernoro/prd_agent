@@ -337,6 +337,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | `marketplace.md` | 市场相关文件 | CONFIG_TYPE_REGISTRY + IForkable 白名单复制 |
 | `snapshot-fallback.md` | `Controllers/**/*.cs`, `Services/**/*.cs` | 快照反规范化必须有等价覆盖的兜底查询路径 |
 | `enum-ripple-audit.md` | `Enums/**/*.cs`, `types/**/*.ts` | 枚举/常量扩展时全栈 6 层涟漪审计 |
+| `predicate-and-wiring-discipline.md` | 任何新增判定函数 / 新增模块 / 新增测试 | 四种「编译过、测试绿、通读也挑不出」的形状：判据太窄 / 链路只建到一半（删掉不会红）/ 判据分裂漂移 / 测试反向锁死 bug 或静默空跑。判据：**改动删掉后测试仍全绿 = 需要一条守卫** |
 | `codebase-snapshot.md` | 无 glob (手动维护) | 项目快照：架构模式、功能注册表、118 个 MongoDB 集合 |
 | `zero-friction-input.md` | `**/*.{ts,tsx}` | 能上传不手输，不确定就两个都给，禁止空白发呆 |
 | `admin-dual-theme.md` | `prd-admin/src/**/*.{tsx,css}` | 系统级双皮肤：颜色只能来自 token 或双皮肤分支；硬编码棘轮测试只减不增，基线上调必须 PR 说明 |
@@ -405,6 +406,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **feature-emerge** | `/emerge` | 输入任意模块/痛点 → 扫描该模块能力 + 全局横向能力（Gateway / Bridge / Run-Worker / Attachment）→ 四层发散（基线/差异化/智力/疯狂）→ 收敛推荐波次。通用涌现，不限文档 |
 | **dev-completion-report** | `/dev-report` | 开发完成后 → 输出三段式报告：200 字总结 + 总结清单（改动/风险/测试/验收）+ 行业对比分析 |
 | **create-skill-file** | `/create-skill` | 输入技能需求 → 生成符合规范的 SKILL.md 文件并评分 |
+| **sdd-init** | `/sdd-init` | 无需输入 → 探测项目现状，生成 CLAUDE.md 八条规则骨架 + `doc/` 七类文档骨架 + 角色路线图，并输出「已装什么/还缺什么/下一步做什么」。海鲜市场角色套装的入口技能，对外分发用 |
 | **production-hotfix-release** | `/hotfix-prod` | 输入生产环境 + 指定分支/提交 → 基于线上当前 revision 最小 cherry-pick，走 CI 产物 + 生产脚本热发布，严禁保存或输出敏感信息 |
 | **cds-project-scan** | `/cds-scan` | 输入项目目录 → 自动检测技术栈和基础设施，生成 CDS docker-compose YAML |
 | **cds** | `/cds` | 输入项目/分支 → CDS 全生命周期管理：扫描生成 compose YAML + Agent 鉴权 + 推送部署 + 等待就绪 + 分层冒烟 + 故障诊断自动排查，内置 cdscli Python 封装所有 CDS REST API |

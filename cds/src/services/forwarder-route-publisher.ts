@@ -73,6 +73,22 @@ export interface ForwarderRoutePublisherOptions {
   logger?: { info?: (m: string) => void; warn?: (m: string) => void; error?: (m: string) => void };
 }
 
+/**
+ * 成员直达子域的 profile 段清洗（发布器与探测白名单共用的 SSOT）。
+ *
+ * 防撞编码（Codex 第十四轮 P2）：清洗**有损**（api_v2 与 api.v2 同归 api-v2）时
+ * 追加原始 id 的确定性短哈希（djb2-xor，base36），保证不同 profile 落到不同 DNS 段；
+ * 已是合法 DNS 段的 id 原样保留（既有直达域名不变）。与前端 memberDirectUrl 同款
+ * 算法，三处必须同步改。
+ */
+export function dnsSafeProfile(id: string): string {
+  const cleaned = id.toLowerCase().replace(/[^a-z0-9-]/g, '-').replace(/^-+|-+$/g, '') || 'svc';
+  if (cleaned === id) return cleaned;
+  let h = 5381;
+  for (let i = 0; i < id.length; i++) h = ((h * 33) ^ id.charCodeAt(i)) >>> 0;
+  return `${cleaned}-${h.toString(36)}`;
+}
+
 export class ForwarderRoutePublisher {
   private timer: ReturnType<typeof setInterval> | null = null;
   private lastPublishedJson: string = '';
@@ -178,6 +194,43 @@ export class ForwarderRoutePublisher {
           routableServices.push({ profileId, hostPort: svc.hostPort, status: String(svc.status) });
         }
       }
+
+      // 复制集（design.cds.replica-set）:每个启用复制集且有 running 成员的 profile,
+      // 主入口路由扩展成一组同 host 同 prefix 的兄弟路由（primary + members,
+      // replicaGroup 标记）,由 resolver 按权重/粘性选择;成员另获直达子域
+      // `<previewSlug>-<memberId>.<root>`（整套路由,仅该 profile 的端口钉到成员）。
+      // 主容器不可路由（error/stopped）但成员还活着时（Codex P1，2026-07-26）:
+      // 不能整组跳过——那会连健康成员的路由和直达子域一起蒸发,单服务分支 host
+      // 直接消失。此时以成员身份把该 profile 补进可路由集合,组内只发成员路由
+      //（不发 primary 记录）,resolver 权重全零时的兜底会自动落到组内成员。
+      const replicaByProfile = new Map<string, {
+        group: string;
+        primaryWeight: number;
+        primaryRoutable: boolean;
+        members: Array<{ id: string; hostPort: number; weight: number }>;
+      }>();
+      for (const rs of Object.values(branch.replicaSets ?? {})) {
+        if (!rs.enabled) continue;
+        // 数据面保险（Codex P1）：profile 已被删除（不在分支生效 profiles 里）时，
+        // 成员兜底不许把它的副本再抬进可路由集合——控制面删 profile 已级联解散
+        // 复制集，这里防的是任何绕过级联的路径让「被删的服务」继续公网可达。
+        if (!profileById.has(rs.profileId)) continue;
+        const members = rs.members
+          .filter((m) => m.status === 'running' && typeof m.hostPort === 'number' && m.hostPort > 0)
+          .map((m) => ({ id: m.id, hostPort: m.hostPort as number, weight: m.weight }));
+        if (members.length === 0) continue;
+        const primarySvc = routableServices.find((s) => s.profileId === rs.profileId);
+        replicaByProfile.set(rs.profileId, {
+          group: `${branch.id}:${rs.profileId}`,
+          primaryWeight: rs.primaryWeight,
+          primaryRoutable: !!primarySvc,
+          members,
+        });
+        if (!primarySvc) {
+          routableServices.push({ profileId: rs.profileId, hostPort: members[0].hostPort, status: 'running' });
+        }
+      }
+
       if (routableServices.length === 0) continue;
 
       // 默认入口优先挑 running 服务。若全部仍在 building/starting，则保留
@@ -201,8 +254,60 @@ export class ForwarderRoutePublisher {
         if (host) hosts.push(host);
       }
 
+      // 单条路由入账:普通 profile 原样;复制集 profile 主入口展开成组;
+      // override（成员直达 host）把该 profile 的上游钉到成员端口,不展开组。
+      const pushRoute = (
+        base: RouteRecord,
+        profileId: string,
+        override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },
+      ): void => {
+        if (override) {
+          // 成员直达路由必须带上副本身份（Codex 第二十八轮 P2）：第二十四轮把
+          // X-CDS-Replica 改成「以路由为准」后，proxy 对**非副本路由**会显式删掉
+          // 这两个响应头——直达链接若只钉上游端口不带身份，用户点开就拿不到
+          // 「这条请求落在哪个副本」，而这正是直达链接与观测流承诺的东西。
+          records.push(profileId === override.profileId
+            ? {
+              ...base,
+              upstreamPort: override.hostPort,
+              ...(override.replicaGroup ? { replicaGroup: override.replicaGroup } : {}),
+              ...(override.replicaMemberId ? { replicaMemberId: override.replicaMemberId } : {}),
+            }
+            : base);
+          return;
+        }
+        const replica = replicaByProfile.get(profileId);
+        if (!replica) {
+          records.push(base);
+          return;
+        }
+        // 主容器不可路由时只发成员路由（Codex P1）:不发 primary 记录,
+        // resolver 的「全组权重为零 → 回落非摘除成员」兜底保证仍有出口。
+        if (replica.primaryRoutable) {
+          records.push({
+            ...base,
+            weight: replica.primaryWeight,
+            replicaGroup: replica.group,
+            replicaMemberId: 'primary',
+          });
+        }
+        for (const member of replica.members) {
+          records.push({
+            ...base,
+            _id: `${base._id}:m:${member.id}`,
+            upstreamPort: member.hostPort,
+            weight: member.weight,
+            replicaGroup: replica.group,
+            replicaMemberId: member.id,
+          });
+        }
+      };
+
       let idx = 0;
-      for (const host of hosts) {
+      const emitHostRouteSet = (
+        host: string,
+        override?: { profileId: string; hostPort: number; replicaGroup?: string; replicaMemberId?: string },
+      ): void => {
         // 同一 host 下避免给同一 prefix 重复发布(BuildProfile.pathPrefixes 与
         // convention 兜底可能冲突,前者优先)
         const writtenPrefixes = new Set<string>();
@@ -213,7 +318,7 @@ export class ForwarderRoutePublisher {
           for (const prefix of bp?.pathPrefixes ?? []) {
             if (writtenPrefixes.has(prefix)) continue;
             writtenPrefixes.add(prefix);
-            records.push({
+            pushRoute({
               _id: `${branch.id}:${svc.profileId}:bp:${idx++}`,
               host,
               pathPrefix: prefix,
@@ -226,7 +331,7 @@ export class ForwarderRoutePublisher {
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
-            });
+            }, svc.profileId, override);
           }
         }
         // 2) Convention:`/api/*` → 含 api/backend 的 profile(若 BuildProfile 没显式配)
@@ -242,7 +347,7 @@ export class ForwarderRoutePublisher {
           // 变化导致 /api/* 与 / 路由分叉。
           if (apiSvc) {
             writtenPrefixes.add('/api/');
-            records.push({
+            pushRoute({
               _id: `${branch.id}:${apiSvc.profileId}:apiconv:${idx++}`,
               host,
               pathPrefix: '/api/',
@@ -255,11 +360,11 @@ export class ForwarderRoutePublisher {
               // 注意:不写 updatedAt(每次 buildRoutes 都生成新时间戳会让 dedup 永远失效,
               // 每 2s 重写盘 + 触发 forwarder fs.watch 风暴。Cursor Bugbot 抓到。
               // mongo change-stream 触发依据是 design 文档预留字段,JSON file 模式不用)。
-            });
+            }, apiSvc.profileId, override);
           }
         }
         // 3) 默认 fallback:无 pathPrefix → 所有未匹配 path 走默认 profile(admin/web/frontend)
-        records.push({
+        pushRoute({
           _id: `${branch.id}:${defaultProfile}:default:${idx++}`,
           host,
           upstreamHost: '127.0.0.1',
@@ -269,7 +374,51 @@ export class ForwarderRoutePublisher {
           weight: 100,
           healthState: defaultCandidates.find((s) => s.profileId === defaultProfile)?.status === 'running' ? 'running' : 'unknown',
           // 不写 updatedAt(理由同前两处:dedup 失效防御)
-        });
+        }, defaultProfile, override);
+      };
+
+      for (const host of hosts) {
+        emitHostRouteSet(host);
+      }
+
+      // 复制集成员直达子域:`<previewSlug>-<profileId>-<memberId>.<root>` 整套路由,
+      // 仅复制集 profile 的上游钉到该成员端口,其余服务仍走主容器 ——
+      // 用户拿直达链能浏览整个应用,只有该服务是成员版本。63 字符守卫同命名子域。
+      // host 带 profile 段（Codex P1）:res-N 按 profile 顺位命名,两个服务都有
+      // res-1 时旧格式 `<slug>-res-1` 撞同一 host,两套整组路由互相覆盖,至少
+      // 一个服务的直达链钉不住自己宣传的版本。
+      // profile 段 DNS 清洗（Codex P2）：profile id 允许 `_`/`.`（compose 服务名
+      // 导入），但单 DNS 标签不许下划线、点会多出一级域逃出通配证书。清洗成
+      // [a-z0-9-]；清洗后撞名（api_v2 与 api.v2 同归 api-v2）时保留首个、跳过
+      // 后续并 warn——与前端 memberDirectUrl 的同款清洗保持一致（两端必须同步改）。
+      // 防撞编码（Codex 第十四轮 P2）：清洗**有损**（api_v2 与 api.v2 同归 api-v2）
+      // 时追加原始 id 的确定性短哈希（djb2-xor，base36），保证不同 profile 落到
+      // 不同 DNS 段；已是合法 DNS 段的 id 原样保留（既有直达域名不变）。撞名
+      // skip+warn 仍保留为最后防线。与前端 memberDirectUrl 同款算法，两端必须同步改。
+      const emittedMemberHosts = new Set<string>();
+      for (const [profileId, replica] of replicaByProfile) {
+        for (const member of replica.members) {
+          const memberLabel = `${previewSlug}-${dnsSafeProfile(profileId)}-${member.id}`;
+          if (emittedMemberHosts.has(memberLabel)) {
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 复制集成员直达子域撞名跳过 ${memberLabel}.*（profile id DNS 清洗后重合）；成员仍可经主入口 ?__rs=${profileId}:${member.id} 钉选直达`,
+            );
+            continue;
+          }
+          emittedMemberHosts.add(memberLabel);
+          if (memberLabel.length > 63) {
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 跳过复制集成员直达子域 ${memberLabel}.*（第一 DNS 标签超 63 octet 上限）；成员仍可经主入口 ?__rs=${member.id} 粘性直达`,
+            );
+            continue;
+          }
+          for (const root of this.opts.rootDomains) {
+            emitHostRouteSet(`${memberLabel}.${root}`, {
+              profileId, hostPort: member.hostPort,
+              replicaGroup: replica.group, replicaMemberId: member.id,
+            });
+          }
+        }
       }
 
       // 4) 命名子域路由:声明了 subdomain 的服务获得自己的命名 URL
@@ -278,7 +427,7 @@ export class ForwarderRoutePublisher {
       //    拥有区别于主应用域名的命名入口,而不是埋在主应用的 /gw/v1 路径下。
       //    单标签(<previewSlug>-<subdomain>)以匹配 *.<root> 通配证书;subdomain 合法性
       //    由 branch-extra-services.isValidServiceSubdomain / compose cds.subdomain 入口保证。
-      //    见 .claude/rules/navigation-registry 同源思路 + doc/design.llm-gateway-physical-isolation.md。
+      //    见 .claude/rules/navigation-registry 同源思路 + doc/design.platform.llm-gateway.physical-isolation.md。
       // 同一 subdomain 在一个分支内只发一条命名 host 路由：若两个服务复用同一 subdomain（理论上
       // 入口校验已拒，这里作数据面兜底），保留首个、跳过后续,避免同 host 不同上游端口的撞车路由
       // 命中错容器(Cursor Bugbot)。
@@ -304,7 +453,10 @@ export class ForwarderRoutePublisher {
         }
         writtenSubdomains.add(sub);
         for (const root of this.opts.rootDomains) {
-          records.push({
+          // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
+          //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
+          // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
+          pushRoute({
             _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
             host: `${previewSlug}-${sub}.${root}`,
             upstreamHost: '127.0.0.1',
@@ -314,7 +466,7 @@ export class ForwarderRoutePublisher {
             weight: 100,
             healthState: svc.status === 'running' ? 'running' : 'unknown',
             // 不写 updatedAt(理由同前:dedup 失效防御)
-          });
+          }, svc.profileId);
         }
       }
     }

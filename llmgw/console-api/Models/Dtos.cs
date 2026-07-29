@@ -1399,3 +1399,57 @@ public sealed class UpdateMemberRequest
     public string? Status { get; set; }
     public List<string>? TeamIds { get; set; }
 }
+
+// ── 快捷提 bug（Ctrl+B 全局面板，2026-07-27）──
+
+/// <summary>控制台快捷提交的缺陷截图附件（base64 不含 data: 前缀）。</summary>
+public sealed class BugReportAttachmentDto
+{
+    public string? Name { get; set; }
+    public string? MimeType { get; set; }
+    public long Size { get; set; }
+    public string? DataBase64 { get; set; }
+}
+
+/// <summary>控制台快捷提交的缺陷内容。环境信息由前端自动采集，用户不必手填。</summary>
+public sealed class BugReportSubmitRequest
+{
+    public string? Source { get; set; }
+    public string? Title { get; set; }
+    public string? Description { get; set; }
+    public string? Severity { get; set; }
+    /// <summary>正文（描述 + 环境附录），缺陷系统可直接落库展示。</summary>
+    public string? Content { get; set; }
+    public Dictionary<string, string>? Environment { get; set; }
+    public List<BugReportAttachmentDto>? Attachments { get; set; }
+}
+
+/// <summary>提交结果。delivery=forwarded 表示已进缺陷系统，local 表示仅本地留存。</summary>
+public sealed class BugReportSubmitResult
+{
+    public string Id { get; set; } = string.Empty;
+    public string Delivery { get; set; } = "local";
+    public string? Reference { get; set; }
+    public string? DegradeReason { get; set; }
+}
+
+/// <summary>本地留存的缺陷记录（列表展示用，不含附件 base64）。</summary>
+public sealed class BugReportItem
+{
+    public string Id { get; set; } = string.Empty;
+    public string Title { get; set; } = string.Empty;
+    public string Severity { get; set; } = string.Empty;
+    public string Delivery { get; set; } = string.Empty;
+    public string? Reference { get; set; }
+    public string? DegradeReason { get; set; }
+    public string? Reporter { get; set; }
+    public int AttachmentCount { get; set; }
+    public string? CreatedAt { get; set; }
+}
+
+/// <summary>缺陷记录列表 + 当前是否配置了缺陷系统转发。</summary>
+public sealed class BugReportListData
+{
+    public List<BugReportItem> Items { get; set; } = new();
+    public bool ForwardConfigured { get; set; }
+}

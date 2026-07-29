@@ -106,7 +106,9 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
 
   it('按项目、分类和横排任务卡选择 Agent 上下文', () => {
     expect(agentDialogSource).toContain('<AgentAccessMap');
-    expect(agentDialogSource).toContain('grid grid-cols-3');
+    // 4 列：项目初始化 / 自动接入 / 手动安装 / 海鲜市场。
+    // 2026-07-28 新增「项目初始化」并排在第一位，tab 数从 3 变 4。
+    expect(agentDialogSource).toContain('grid grid-cols-4');
     expect(agentDialogSource).toContain('min-w-0 items-center justify-center');
     expect(agentDialogSource).toContain('resolveAgentMissionContextForTarget(');
     expect(agentDialogSource).toContain('连接已有项目');
@@ -174,12 +176,18 @@ describe('CDS 壳层用户入口与授权提醒契约', () => {
     expect(accessIndex).toBeGreaterThan(stackIndex);
     expect(pendingIndex).toBeGreaterThan(accessIndex);
     expect(updateIndex).toBeGreaterThan(pendingIndex);
-    expect(styles).toMatch(/\.cds-global-action-stack\s*\{[\s\S]*?right:\s*1rem;[\s\S]*?bottom:\s*1rem;/);
+    // 2026-07-28：定位从两个坞各自贴角，收敛到唯一的 .cds-bottom-docks 底部带
+    // （它让开常驻 rail 并在窄视口折行）。右下角消息栈的成员与顺序契约不变。
+    expect(styles).toMatch(/\.cds-bottom-docks\s*\{[\s\S]*?right:\s*1rem;[\s\S]*?bottom:\s*1rem;/);
     expect(shellSource).toContain("data-nav-open={navOpen ? 'true' : 'false'}");
-    expect(styles).toContain(".cds-app-shell[data-nav-open='true'] .cds-global-action-stack");
+    expect(styles).toContain(".cds-app-shell[data-nav-open='true'] .cds-bottom-docks");
     expect(updateSource).not.toContain('fixed bottom-4 left-4');
     expect(pendingImportSource).not.toContain('fixed bottom-4 right-4');
-    expect(commitInboxSource).toContain('fixed bottom-4 left-4');
+    // 曾经断言 CommitInbox **必须**自己 `fixed bottom-4 left-4` —— 那正是用户
+    // 2026-07-28 反馈的遮挡：它压在 72px 宽 rail 的导航图标上。现在改由
+    // AppShell 把它放进 .cds-bottom-left-dock，组件自身不许再定位。
+    expect(commitInboxSource).not.toMatch(/className[^\n]*fixed bottom-4 left-4/);
+    expect(shellSource).toMatch(/cds-bottom-left-dock[\s\S]{0,200}<CommitInbox \/>/);
     expect(commitInboxSource).not.toContain('updateBadgeVisible');
   });
 

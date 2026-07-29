@@ -3,7 +3,7 @@ import { MapSectionLoader } from '@/components/ui/VideoLoader';
 import { formatWeekDateRange } from './utils/weekRange';
 import { useState, useEffect, useMemo, useRef, useCallback } from 'react';
 import { useParams, useNavigate, useSearchParams } from 'react-router-dom';
-import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, Send, GitCompare, X, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
+import { ArrowLeft, MessageSquare, CornerDownRight, Trash2, GitCompare, CheckCircle2, AlertCircle, Clock, Pencil } from 'lucide-react';
 import { GlassCard } from '@/components/design/GlassCard';
 import { Button } from '@/components/design/Button';
 import { toast } from '@/lib/toast';
@@ -16,6 +16,9 @@ import { PlanComparisonPanel } from './components/PlanComparisonPanel';
 import { RichTextMarkdownContent } from './components/RichTextMarkdownContent';
 import { ReportTableSectionView } from './components/ReportTableSectionView';
 import { RightRailPanel } from './components/RightRailPanel';
+import { ReportSelectionCommentLayer } from './components/ReportSelectionCommentLayer';
+import { underlineStroke, type ReportCommentAnchor } from './components/reportCommentAnchor';
+import { ReportCommentComposer, ReportCommentAttachmentGrid } from './components/ReportCommentComposer';
 import { useDataTheme } from './hooks/useDataTheme';
 import { useStatusChipConfig } from './hooks/useStatusChipConfig';
 
@@ -65,8 +68,12 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
   const [canReview, setCanReview] = useState(false);
   const [comments, setComments] = useState<ReportComment[]>([]);
   const [activeTab, setActiveTab] = useState<TabKey>('content');
-  const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string } | null>(null);
-  const [commentText, setCommentText] = useState('');
+  const [replyTo, setReplyTo] = useState<{ sectionIndex: number; parentId?: string; anchor?: ReportCommentAnchor } | null>(null);
+  /** 正文容器（划词评论层的定位坐标系） */
+  const contentRef = useRef<HTMLDivElement>(null);
+  /** 点击下划线角标后短暂标亮的目标评论 */
+  const [flashCommentId, setFlashCommentId] = useState<string | null>(null);
+  const flashTimerRef = useRef<number | null>(null);
   const [submitting, setSubmitting] = useState(false);
   const [viewSummary, setViewSummary] = useState<ReportViewSummary>({ count: 0, totalViewCount: 0, users: [] });
   const currentUserId = useAuthStore((s) => s.user?.userId);
@@ -161,18 +168,24 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     [navigate, onSelectSiblingProp, reportId, searchParams, siblings]
   );
 
-  const handleCreateComment = async () => {
-    if (!replyTo || !commentText.trim() || !reportId) return;
+  const handleCreateComment = async (content: string, attachmentIds: string[]) => {
+    if (!replyTo || (!content && attachmentIds.length === 0) || !reportId) return;
     setSubmitting(true);
+    const anchor = !replyTo.parentId ? replyTo.anchor : undefined;
     const res = await createComment({
       reportId,
       sectionIndex: replyTo.sectionIndex,
-      content: commentText.trim(),
+      content,
       parentCommentId: replyTo.parentId,
+      attachmentIds: attachmentIds.length > 0 ? attachmentIds : undefined,
+      selectedText: anchor?.selectedText,
+      contextBefore: anchor?.contextBefore,
+      contextAfter: anchor?.contextAfter,
+      startOffset: anchor?.startOffset,
+      endOffset: anchor?.endOffset,
     });
     setSubmitting(false);
     if (res.success) {
-      setCommentText('');
       setReplyTo(null);
       await loadComments();
     } else {
@@ -206,13 +219,25 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
     return false;
   }, [reportId, loadComments]);
 
+  // 切换评论目标时依赖 composer 的 key 变化自动重置草稿（文本 + 待发图片）
   const openCommentInput = (sectionIndex: number, parentId?: string) => {
-    const isSameTarget = replyTo?.sectionIndex === sectionIndex && replyTo?.parentId === parentId;
-    if (!isSameTarget) {
-      setCommentText('');
-    }
     setReplyTo({ sectionIndex, parentId });
   };
+
+  /** 划词后点「评论」：带锚点打开该段落的评论输入框 */
+  const handleSelectionComment = useCallback((sectionIndex: number, anchor: ReportCommentAnchor) => {
+    setReplyTo({ sectionIndex, anchor });
+  }, []);
+
+  /** 点击正文黄色下划线角标 → 滚动并短暂标亮对应评论 */
+  const handleActivateThread = useCallback((comment: ReportComment) => {
+    setFlashCommentId(comment.id);
+    if (flashTimerRef.current != null) window.clearTimeout(flashTimerRef.current);
+    flashTimerRef.current = window.setTimeout(() => setFlashCommentId(null), 2400);
+    requestAnimationFrame(() => {
+      document.getElementById(`report-comment-${comment.id}`)?.scrollIntoView({ behavior: 'smooth', block: 'center' });
+    });
+  }, []);
 
   const handleReview = async () => {
     if (!reportId) return;
@@ -397,6 +422,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
       <div className="flex-1 min-h-0 overflow-auto">
         {activeTab === 'content' && (
           <GlassCard variant="subtle" className="p-6">
+            {/* relative：划词评论层（下划线/角标/评论按钮）的定位坐标系 */}
+            <div ref={contentRef} className="relative">
             {report.sections.map((section, idx) => {
               const sectionComments = commentsBySection[idx] || [];
               const topLevel = sectionComments.filter((c) => !c.parentCommentId);
@@ -438,6 +465,8 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                       {section.templateSection.title}
                     </span>
                   </div>
+                  {/* data-report-section：划词评论的段落锚定根（选区必须完整落在同一块内） */}
+                  <div data-report-section={idx}>
                   {section.items.length === 0 ? (
                     <div className="text-[12px] ml-10" style={{ color: 'var(--text-muted)' }}>（未填写）</div>
                   ) : section.templateSection.inputType === ReportInputType.IssueList ? (
@@ -518,6 +547,7 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                       ))}
                     </ul>
                   )}
+                  </div>
 
                   {/* Section comments */}
                   {topLevel.length > 0 && (
@@ -528,13 +558,23 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                       {topLevel.map((comment) => {
                         const replies = sectionComments.filter((c) => c.parentCommentId === comment.id);
                         return (
-                          <div key={comment.id} className="mb-2">
+                          <div
+                            key={comment.id}
+                            id={`report-comment-${comment.id}`}
+                            className="mb-2"
+                            style={{
+                              borderRadius: 10,
+                              transition: 'box-shadow 0.3s',
+                              boxShadow: flashCommentId === comment.id ? `0 0 0 2px ${underlineStroke(isLight, true)}` : undefined,
+                            }}
+                          >
                             <CommentItem
                               comment={comment}
                               isMine={comment.authorUserId === currentUserId}
                               onDelete={() => handleDeleteComment(comment.id)}
                               onReply={() => openCommentInput(idx, comment.id)}
                               onEdit={(newContent) => handleUpdateComment(comment.id, newContent)}
+                              quoteUnderline={underlineStroke(isLight)}
                             />
                             {replies.map((reply) => (
                               <div key={reply.id} className="ml-4 mt-1">
@@ -565,30 +605,40 @@ export default function ReportDetailPage(props: ReportDetailPageProps = {}) {
                   {replyTo?.sectionIndex === idx && (
                     <div className="mt-2 ml-7 p-3 rounded-xl" style={{ background: 'var(--bg-secondary)', border: '1px solid var(--border-primary)' }}>
                       <div className="text-[11px] mb-1.5" style={{ color: 'var(--text-muted)' }}>
-                        {replyTo.parentId ? '回复评论' : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
+                        {replyTo.parentId
+                          ? '回复评论'
+                          : replyTo.anchor
+                            ? (
+                              <>
+                                评论选中内容：
+                                <span style={{ borderBottom: `2px solid ${underlineStroke(isLight)}`, paddingBottom: 1 }}>
+                                  「{replyTo.anchor.selectedText.length > 40 ? `${replyTo.anchor.selectedText.slice(0, 40)}…` : replyTo.anchor.selectedText}」
+                                </span>
+                              </>
+                            )
+                            : `评论「${report.sections[replyTo.sectionIndex]?.templateSection?.title || ''}」`}
                       </div>
-                      <div className="flex items-center gap-2">
-                        <input
-                          className="flex-1 text-[12px] px-3 py-2 rounded-lg"
-                          style={{ background: 'var(--bg-primary)', color: 'var(--text-primary)', border: '1px solid var(--border-primary)' }}
-                          placeholder="输入评论..."
-                          value={commentText}
-                          onChange={(e) => setCommentText(e.target.value)}
-                          onKeyDown={(e) => e.key === 'Enter' && !e.shiftKey && handleCreateComment()}
-                          autoFocus
-                        />
-                        <Button variant="primary" size="sm" onClick={handleCreateComment} disabled={submitting || !commentText.trim()}>
-                          <Send size={12} />
-                        </Button>
-                        <Button variant="ghost" size="sm" onClick={() => { setReplyTo(null); setCommentText(''); }}>
-                          <X size={12} />
-                        </Button>
-                      </div>
+                      <ReportCommentComposer
+                        key={`${replyTo.sectionIndex}:${replyTo.parentId ?? ''}:${replyTo.anchor?.selectedText ?? ''}`}
+                        reportId={reportId ?? ''}
+                        submitting={submitting}
+                        onSubmit={handleCreateComment}
+                        onCancel={() => setReplyTo(null)}
+                      />
                     </div>
                   )}
                 </div>
               );
             })}
+            <ReportSelectionCommentLayer
+              containerRef={contentRef}
+              comments={comments}
+              isLight={isLight}
+              reflowKey={`${report.id}:${report.sections.length}`}
+              onCreateFromSelection={handleSelectionComment}
+              onActivateThread={handleActivateThread}
+            />
+            </div>
           </GlassCard>
         )}
 
@@ -746,6 +796,7 @@ function CommentItem({
   onReply,
   onEdit,
   isReply,
+  quoteUnderline,
 }: {
   comment: ReportComment;
   isMine: boolean;
@@ -753,6 +804,8 @@ function CommentItem({
   onReply: () => void;
   onEdit: (newContent: string) => Promise<boolean>;
   isReply?: boolean;
+  /** 划词评论引用片段的下划线颜色（与正文黄色下划线同色，视觉上连成一体） */
+  quoteUnderline?: string;
 }) {
   const [editing, setEditing] = useState(false);
   const [draft, setDraft] = useState(comment.content);
@@ -808,6 +861,14 @@ function CommentItem({
             </span>
           )}
         </div>
+        {comment.selectedText && (
+          <div className="text-[11px] mt-1 truncate" style={{ color: 'var(--text-muted)' }} title={comment.selectedText}>
+            引用：
+            <span style={{ borderBottom: `2px solid ${quoteUnderline ?? 'rgba(234, 179, 8, 0.75)'}`, paddingBottom: 1 }}>
+              {comment.selectedText.length > 60 ? `${comment.selectedText.slice(0, 60)}…` : comment.selectedText}
+            </span>
+          </div>
+        )}
         {editing ? (
           <div className="mt-1.5">
             <textarea
@@ -847,9 +908,14 @@ function CommentItem({
             </div>
           </div>
         ) : (
-          <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
-            {comment.content}
-          </div>
+          <>
+            {comment.content && (
+              <div className="text-[12px] leading-relaxed mt-1 whitespace-pre-wrap break-words" style={{ color: 'var(--text-secondary)' }}>
+                {comment.content}
+              </div>
+            )}
+            <ReportCommentAttachmentGrid attachments={comment.attachments} />
+          </>
         )}
       </div>
       {!editing && (

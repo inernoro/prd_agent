@@ -12,7 +12,7 @@ namespace PrdAgent.Infrastructure.LlmGateway;
 /// 把 ILLMClient 的流式生成转成对 serving 端 /gw/v1/client-stream 的 SSE 调用，
 /// 每个 "data: " 行是一个 LLMStreamChunk JSON。
 ///
-/// 物理隔离设计见 doc/design.llm-gateway-physical-isolation.md。
+/// 物理隔离设计见 doc/design.platform.llm-gateway.physical-isolation.md。
 /// </summary>
 public sealed class HttpLlmClient : PrdAgent.Core.Interfaces.ILLMClient
 {

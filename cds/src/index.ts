@@ -16,9 +16,12 @@ import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
-import { JanitorService } from './services/janitor.js';
+import { JanitorService, defaultDiskUsage } from './services/janitor.js';
+import { withBootRetry, diagnoseDisksForBootFailure } from './services/boot-retry.js';
+import { diskGuard, resolveDockerDataRoot } from './services/disk-guard.js';
 import { AutoLifecycleService } from './services/auto-lifecycle.js';
 import { InfraFlapWatchdog } from './services/infra-flap-watchdog.js';
+import { InfraLifecycleWatcher } from './services/infra-lifecycle-watcher.js';
 import { BridgeService } from './services/bridge.js';
 import { buildPreviewUrlForProject } from './services/comment-template.js';
 import { previewSlugMatchPercent } from './services/preview-slug.js';
@@ -29,6 +32,9 @@ import { createExecutorRouter } from './executor/routes.js';
 import { ExecutorRegistry } from './scheduler/executor-registry.js';
 import { createSchedulerRouter } from './scheduler/routes.js';
 import { createClusterRouter } from './routes/cluster.js';
+import { createUptimeRouter } from './routes/uptime.js';
+import { UptimeMonitorService, uptimeConfigFromEnv } from './services/uptime-monitor.js';
+import { setReleaseHealthSource } from './services/release-health-snapshot.js';
 import { setMaxConcurrentBuildsProvider, buildGateStatus } from './services/build-gate.js';
 import { evaluateBuildGateHealth } from './services/build-gate-health.js';
 import { updateEnvFile, defaultEnvFilePath } from './services/env-file.js';
@@ -40,6 +46,7 @@ import { syncAllSystemdUnits } from './services/systemd-sync.js';
 import { branchEvents, nowIso } from './services/branch-events.js';
 import { archiveBranchContainerLogs } from './services/container-log-archiver.js';
 import { reconcileStaleDeployDispatches, type DeployDispatchReconcileResult } from './services/deploy-dispatch-reconciler.js';
+import { settleMemberAfterStop } from './services/replica-stop.js';
 import { reconcileStuckDeployStates, hasYoungActiveLease } from './services/deploy-stuck-reconciler.js';
 import { analyzeChangeImpact } from './services/change-impact-analyzer.js';
 import { shouldRetryInterruptedWebhookDispatch, isDeployDispatchRetryEnabled } from './services/deploy-dispatch-retry.js';
@@ -76,6 +83,23 @@ import type { BranchEntry } from './types.js';
 
 const configPath = process.argv[2] || undefined;
 const config = loadConfig(configPath);
+
+/**
+ * 启动依赖起不来时的磁盘诊断：**仓库盘与 docker 数据根都量**（Codex 十轮 P2）。
+ * mongo 的数据落在 docker 那侧，两者常不在同一个文件系统上；2026-07-27 撑爆的
+ * 正是 containerd（159GB），只量仓库盘会让这句提示恰好在真凶场景下不出现。
+ * 运行期 diskGuard 早就两处都量，但启动失败时进程走不到那里，故这里自己量全。
+ */
+function diagnoseBootDisks(): string | null {
+  const readings: Array<{ label: string; usage: { totalBytes: number; freeBytes: number } | null }> = [
+    { label: config.repoRoot, usage: defaultDiskUsage(config.repoRoot) },
+  ];
+  try {
+    const dockerRoot = resolveDockerDataRoot();
+    if (dockerRoot) readings.push({ label: `docker: ${dockerRoot}`, usage: defaultDiskUsage(dockerRoot) });
+  } catch { /* docker 不可用就只量仓库盘，不能因为诊断本身抛错吞掉真正的启动错误 */ }
+  return diagnoseDisksForBootFailure(readings);
+}
 
 // 预览实例（CDS 托管 CDS，MVP）：宿主操作命令统一拦截成友好错误，
 // 其余（git 等）放行。详见 services/preview-instance.ts 头注释。
@@ -683,12 +707,32 @@ async function initStateService(): Promise<void> {
     const splitHandle = new RealMongoSplitHandle({ uri, databaseName: dbName });
     const splitStore = new MongoSplitStateBackingStore(splitHandle);
     try {
-      await splitStore.init();
+      // 退避重试（2026-07-27 宕机复盘 P1，事故本体）：mongo 起不来往往是暂时的
+      //（宿主正忙、容器正在重启、磁盘刚清出空间）。此前一次失败就 throw → 进程
+      // 退出 → systemd 重启 → 再抛，restart counter 一路到 58，35 分钟全站 502，
+      // 每次重启还要重跑一遍 boot，在一台已经着火的机器上继续浇油。
+      // 仍然不静默降级到 JSON —— 那会让 CDS 跑在过期状态上而真相在 mongo 里。
+      await withBootRetry(() => splitStore.init(), {
+        // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+        // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+        // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+        // systemd 重启循环，等于白改。
+        sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+        onAttemptFailed: (attempt, total, delayMs, err) => {
+          console.warn(
+            `  [storage] mongo-split init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+            + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+          );
+        },
+      });
     } catch (err) {
       const msg = (err as Error).message;
       console.error(
-        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败: ${msg}`,
+        `  [storage] FATAL: CDS_STORAGE_MODE=mongo-split init 失败（已重试至上限）: ${msg}`,
       );
+      // 指向真凶：满盘时明写出来，别让运维从数据库连接开始查（事故当天就是这样）
+      const diskHint = diagnoseBootDisks();
+      if (diskHint) console.error(`  [storage] ${diskHint}`);
       try { await splitHandle.close(); } catch { /* best effort */ }
       throw err;
     }
@@ -724,13 +768,27 @@ async function initStateService(): Promise<void> {
   const handle = new RealMongoHandle({ uri, databaseName: dbName });
   const mongoStore = new MongoStateBackingStore(handle);
   try {
-    await mongoStore.init();
+    await withBootRetry(() => mongoStore.init(), {
+      // 刻意**不** unref（Codex PR #1275 P1）：启动期这段等待在顶层 await 里，
+      // 此时 HTTP server 还没起、没有任何 handle 撑着事件循环。unref 掉唯一的
+      // 定时器会让 Node 直接退出、第二次尝试永远不发生——那正是本改动要消灭的
+      // systemd 重启循环，等于白改。
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [storage] mongo init 第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
   } catch (err) {
     const msg = (err as Error).message;
     console.error(
       `  [storage] FATAL: CDS_STORAGE_MODE=${rawStorageMode} + CDS_MONGO_URI 已配置，`
-      + `但 mongo init 失败: ${msg}`,
+      + `但 mongo init 失败（已重试至上限）: ${msg}`,
     );
+    const diskHint = diagnoseBootDisks();
+    if (diskHint) console.error(`  [storage] ${diskHint}`);
     console.error(
       `  [storage] 不再自动退回 JSON（用户需求：Mongo 是主存储）。`
       + `紧急回退：编辑 cds/.cds.env 注释掉 CDS_MONGO_URI 或改 CDS_STORAGE_MODE=json，重启。`
@@ -971,8 +1029,25 @@ async function initAuthStore(): Promise<void> {
     const { RealAuthMongoHandle } = await import('./infra/auth-store/mongo-handle.js');
     const { MongoAuthStore } = await import('./infra/auth-store/mongo-store.js');
 
-    const handle = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
-    await handle.connect();
+    // 与状态库同一条退避重试纪律（Codex PR #1275 七轮 P2）。此前只有 state store
+    // 享受启动容忍，鉴权连接一次失败就 throw 退出 —— 而标准安装 `exec_cds.sh init`
+    // 同时开 `CDS_STORAGE_MODE=mongo-split` 与 `CDS_AUTH_BACKEND=mongo`，指的还是**同一个**
+    // mongo。状态库连上之后它再抖一下，进程照样死，宣传的「约 90s 忍耐窗口」形同虚设。
+    // 每次重试都 new 一个 handle：连接失败的 handle 处于半开状态，复用它等于白重试
+    //（该 handle 自身的复位见 auth-store/mongo-handle.ts）。
+    const handle = await withBootRetry(async () => {
+      const h = new RealAuthMongoHandle({ uri: mongoUri, databaseName: mongoDb, connectTimeoutMs: 5000 });
+      await h.connect();
+      return h;
+    }, {
+      sleep: (ms) => new Promise((r) => { setTimeout(r, ms); }),
+      onAttemptFailed: (attempt, total, delayMs, err) => {
+        console.warn(
+          `  [auth] mongo 连接第 ${attempt}/${total} 次失败：${(err as Error).message}`
+          + ` —— ${Math.round(delayMs / 1000)}s 后重试`,
+        );
+      },
+    });
     activeAuthStore = new MongoAuthStore(handle);
     console.log(`  [auth] backend=mongo (db=${mongoDb})`);
   } else {
@@ -1459,6 +1534,51 @@ schedulerService.setCoolFn(async (slug: string) => {
       svc.status = 'stopped';
     }
   }
+  // 复制集成员级联降温（Codex P1 连带修复，2026-07-26）：成员容器不在
+  // branch.services 快照里，上面的循环停不到它们。不停的话，降温分支的副本
+  // 继续占资源；更糟的是主容器已停、成员还挂着分流权重，入口流量会被加权
+  // 路由导向一个"半活"的分支。与手动 /stop 的级联语义保持一致（配套的
+  // /restart 级联拉起已同步落地）。
+  for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+    for (const member of replicaSet.members) {
+      branchOperationLease?.assertCurrent(`scheduler cooling before replica ${replicaSet.profileId}--${member.id}`);
+      if (member.containerName) {
+        try {
+          await containerService.stop(member.containerName, '调度器降温（保留容器，可秒级唤醒）', {
+            projectId: branch.projectId,
+            branchId: branch.id,
+            profileId: `${replicaSet.profileId}--${member.id}`,
+            operationId: branchOperationLease?.operationId || null,
+            actor: 'scheduler',
+            trigger: 'scheduler',
+            operation: 'scheduler-cooling-replica-member',
+            source: 'schedulerService.setCoolFn',
+          });
+        } catch (err) {
+          console.warn(`[scheduler] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+        }
+      }
+      // 停止必须核实再落状态（Codex 第三十五轮 P1 点名的三处循环之一，
+      // 判定见 services/replica-stop.ts）。无容器的 provisioning 成员照旧标 stopped，
+      // 物化栅栏按状态放弃，防止降温后后台任务把副本容器起出来。
+      await settleMemberAfterStop(member, {
+        isRunning: (name) => containerService.isRunning(name),
+        interruptedMessage: '物化被调度器降温中断，可在画布删除后重建',
+        onStillRunning: (containerName) => {
+          activeServerEventLogStore?.record({
+            category: 'container',
+            severity: 'error',
+            source: 'schedulerService.setCoolFn',
+            action: 'replica.member.stop.failed',
+            message: `副本容器降温停止失败但仍在运行: ${containerName}`,
+            branchId: branch.id,
+            projectId: branch.projectId,
+            containerName,
+          });
+        },
+      });
+    }
+  }
   await archiveBranchContainerLogs({
     stateService,
     containerService,
@@ -1858,12 +1978,31 @@ if (process.env.CDS_PREVIEW_AUTOWAKE !== '0') {
 }
 const janitorService = new JanitorService(
   stateService,
-  config.janitor,
+  // 固定名单只配在 scheduler 那侧（文档也只写了那一处），但 janitor 的删除判定
+  // 同样要认它——否则「按文档 pin 住的非主干分支」只挡得住降温、挡不住 TTL 到期
+  // 被 janitor 删掉，两套保护看起来统一实则漏一半（Codex PR #1273 P1）。
+  { ...config.janitor, pinnedBranches: config.scheduler?.pinnedBranches ?? [] },
   config.worktreeBase,
 );
+// 磁盘刹车自带测量能力（Codex 第二十八轮 P1）：不依赖 janitor 的启停与一小时
+// 节奏——进程刚重启（往往正是「刚被磁盘打满打死」）时部署闸门会就地测一次。
+// 两个挂载点都量（Codex 第二十九轮 P2）：worktree 与 docker 数据目录常不在同一个
+// 文件系统上，而镜像层/容器可写层/state mongo 卷全落在 docker 那侧——2026-07-27
+// 撑爆的正是 containerd（159GB）。只量 worktree 会在 docker 盘 95% 时报「一切正常」。
+diskGuard.setProbe(() => {
+  const readings = [defaultDiskUsage(config.worktreeBase)];
+  const dockerRoot = resolveDockerDataRoot();
+  if (dockerRoot) readings.push(defaultDiskUsage(dockerRoot));
+  return readings.filter((r): r is { totalBytes: number; freeBytes: number } => !!r);
+});
+diskGuard.refreshNow();
 // ── AutoLifecycle (项目级 N 分钟自动切发布版；自动停止交给系统级 Scheduler) ──
 // 与 SchedulerService 正交：那个按访问时间降温，这个按"部署完成时间"处理。
 // 默认开（项目里两个字段都不配就自动 no-op）。tick 30s 一拍。
+// infra 生命周期取证器（debt.cds.replica-set #17）：常驻 docker events 监听，
+// 记录 infra 容器 oom/die/kill/start 事件，区分 cgroup OOM / 外部 SIGKILL / 自身退出
+const infraLifecycleWatcher = new InfraLifecycleWatcher({ serverEventLogStore: activeServerEventLogStore });
+
 const infraFlapWatchdog = new InfraFlapWatchdog(
   {
     shell,
@@ -1998,6 +2137,49 @@ const autoLifecycleService = new AutoLifecycleService(
             console.warn(`[auto-lifecycle] stop(${svc.containerName}) failed: ${(err as Error).message}`);
           }
           svc.status = 'stopped';
+        }
+      }
+      // 复制集成员级联停止（Codex P1，2026-07-26）：与手动 /stop、调度器 coolFn
+      // 同款——auto-lifecycle 自动停止此前只停 branch.services，副本容器留活：
+      // 分支标 idle 后发布器的「成员兜底」仍把它们发进路由表，"已停止"的分支
+      // 对公网依旧可达且持续占资源。无容器的 provisioning 成员同样标 stopped，
+      // 物化栅栏按状态放弃。
+      for (const replicaSet of Object.values(branch.replicaSets ?? {})) {
+        for (const member of replicaSet.members) {
+          branchOperationLease?.assertCurrent(`auto-lifecycle stop before replica ${replicaSet.profileId}--${member.id}`);
+          if (member.containerName) {
+            try {
+              await containerService.stop(member.containerName, 'auto-lifecycle 自动停止（保留容器，可秒级唤醒）', {
+                projectId: branch.projectId,
+                branchId: branch.id,
+                profileId: `${replicaSet.profileId}--${member.id}`,
+                operationId: branchOperationLease?.operationId || null,
+                actor: 'auto-lifecycle',
+                trigger: 'auto-lifecycle',
+                operation: 'auto-lifecycle-stop-replica-member',
+                source: 'autoLifecycleService.stopBranch',
+              });
+            } catch (err) {
+              console.warn(`[auto-lifecycle] stop replica ${member.containerName} failed: ${(err as Error).message}`);
+            }
+          }
+          // 停止必须核实再落状态（三处循环之一，判定见 services/replica-stop.ts）
+          await settleMemberAfterStop(member, {
+            isRunning: (name) => containerService.isRunning(name),
+            interruptedMessage: '物化被 auto-lifecycle 自动停止中断，可在画布删除后重建',
+            onStillRunning: (containerName) => {
+              activeServerEventLogStore?.record({
+                category: 'container',
+                severity: 'error',
+                source: 'autoLifecycleService.stopBranch',
+                action: 'replica.member.stop.failed',
+                message: `副本容器自动停止失败但仍在运行: ${containerName}`,
+                branchId: branch.id,
+                projectId: branch.projectId,
+                containerName,
+              });
+            },
+          });
         }
       }
       await archiveBranchContainerLogs({
@@ -2939,6 +3121,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     // 缺 cmd 灾难的根因防御。standalone / scheduler 角色启用,executor 跳过。
     if (config.mode !== 'executor') {
       infraFlapWatchdog.start();
+      infraLifecycleWatcher.start();
     }
     // 2026-07-15:孤儿容器收割器。删除的项目/分支残留的 cds-managed 容器
     //（state 中无 owner）定期停掉——单日取证 68 个孤儿 app 容器 + 用户报告的
@@ -2984,6 +3167,7 @@ janitorService.setRemoveFn(async (slug: string) => {
     autoLifecycleService.stop();
     stopAutoRestartLoop();
     infraFlapWatchdog.stop();
+    infraLifecycleWatcher.stop();
     forwarderRoutePublisher?.stop();
     previewCanaryService?.stop();
   }
@@ -4184,6 +4368,63 @@ ${masterUrl ? `<a class="btn" href="${escHtmlSafe(masterUrl)}" target="_blank" r
   } else {
     console.log(`  Scheduler: standby, will auto-upgrade on first executor bootstrap`);
   }
+
+  // ── 自建存活监控（Uptime Kuma 风格状态页的数据源） ──
+  //
+  // 周期直连 `127.0.0.1:<hostPort>` 探测每个 running 分支的对外服务，绝不走
+  // proxy / forwarder —— 后者每转发一次就会 scheduler.touch()，会把 idleTTL
+  // 降温彻底废掉。详见 services/uptime-monitor.ts 顶部纪律 1。
+  // CDS_UPTIME_ENABLED=0 可一刀关停（start() 变 no-op）。
+  const uptimeMonitor = new UptimeMonitorService({
+    state: {
+      getAllBranches: () => stateService.getAllBranches(),
+      getProject: (projectId: string) => stateService.getProject(projectId),
+      // 生产发布目标也纳入探测。不接这一行，发布中心以外就再没有任何生产健康
+      // 信号——「发完就失联」正是这条接线要治的病。
+      getReleaseTargets: () => stateService.getReleaseTargets(),
+      // 故障归因到发布。少了这一行，生产站点宕机时状态页只会说「宕了」，
+      // 答不出「是哪次发布引入的」——而这是排障时第一个要问的问题。
+      getReleaseRuns: (targetId: string) => stateService.getReleaseRuns({ targetId }),
+    },
+    config: uptimeConfigFromEnv(config.repoRoot),
+    logger: { warn: (m) => console.warn(m), info: (m) => console.log(m) },
+  });
+  app.use('/api', createUptimeRouter({ monitor: uptimeMonitor }));
+  // 发布中心从这里读生产健康，不再自己打 healthcheckUrl。晚绑定是因为 createServer()
+  // 在模块顶层就跑完了，而 uptimeMonitor 到这一行才存在——闭包捕获不到。
+  // 没接上这一行不会报错，只会让发布中心的健康列恒为「存活监控未启用」：
+  // 守卫测试 release-observability-wiring-guard 盯着它，免得被静默摘掉。
+  // 监控被关掉时**不注册 source**，改传关闭原因：注册了也永远拿不到记录，
+  // 发布中心会永久显示「稍后自动开始探测」这个不会兑现的承诺，而实时探测已经拿掉了
+  // ——那一列就永远在骗人（Codex P2）。两个开关分开说，别把「整个监控关了」
+  // 和「只是没监控发布目标」混成一句话。
+  const releaseProbeDisabledReason = !uptimeMonitor.config.enabled
+    ? '存活监控已按 CDS_UPTIME_ENABLED=0 关闭，发布中心没有生产健康数据来源'
+    : uptimeMonitor.config.releaseTargetsEnabled === false
+      ? '生产目标探测已按 CDS_UPTIME_RELEASE_ENABLED=0 关闭，状态页与发布中心都不会有该目标的健康数据'
+      : '';
+  if (releaseProbeDisabledReason) {
+    setReleaseHealthSource(null, releaseProbeDisabledReason);
+  } else {
+    setReleaseHealthSource((probeTargetId) => {
+      const record = uptimeMonitor.getRecord(probeTargetId);
+      if (!record) return undefined;
+      return {
+        status: record.status,
+        probeUrl: record.probeUrl,
+        lastSample: record.lastSample,
+        pausedReason: record.pausedReason,
+        excluded: record.excluded,
+        intervalSeconds: Math.round(uptimeMonitor.config.intervalMs / 1000),
+      };
+    });
+  }
+  uptimeMonitor.start();
+  console.log(
+    uptimeMonitor.config.enabled
+      ? `  Uptime: 存活监控已启动（间隔 ${Math.round(uptimeMonitor.config.intervalMs / 1000)}s，状态页 /status）`
+      : `  Uptime: 存活监控已按 CDS_UPTIME_ENABLED=0 关闭`,
+  );
 
   // ── SPA fallback MUST be installed last ──
   //

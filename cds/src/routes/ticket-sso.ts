@@ -81,6 +81,20 @@ export function ticketSsoIdentity(req: Request, store: TicketSsoSessionStore) {
   return store.get(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
 }
 
+/**
+ * Resolve the SSO session and slide it forward when due. Returns the renewed expiry so
+ * the caller can re-issue the cookie via {@link buildTicketSsoSessionCookie} — the
+ * server-side window and the browser copy must move together.
+ */
+export function ticketSsoSession(req: Request, store: TicketSsoSessionStore) {
+  return store.touch(parseCookie(req.headers.cookie, TICKET_SSO_COOKIE));
+}
+
+/** Session cookie for the ticket SSO session; exported so renewal can re-issue it. */
+export function buildTicketSsoSessionCookie(token: string, expiresAt: Date, secure: boolean): string {
+  return sessionCookie(token, expiresAt, secure);
+}
+
 export function createTicketSsoPublicRouter(deps: TicketSsoRouterDeps): Router {
   const router = Router();
 

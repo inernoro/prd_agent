@@ -64,7 +64,8 @@ export function locateInSegments(
 }
 
 // DOM 适配层：收集容器内所有文本节点 → 交给纯核心匹配 → 把结果映射回 Range。跳过 UI 控件文本。
-function findTextRange(root: HTMLElement, query: string, contextBefore?: string): Range | null {
+// export：周报划词评论（ReportSelectionCommentLayer）复用同一套锚定，避免两份匹配逻辑漂移。
+export function findTextRange(root: HTMLElement, query: string, contextBefore?: string): Range | null {
   const walker = document.createTreeWalker(root, NodeFilter.SHOW_TEXT, {
     acceptNode(node) {
       for (let el = node.parentElement; el && el !== root; el = el.parentElement) {

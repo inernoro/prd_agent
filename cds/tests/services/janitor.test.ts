@@ -1,10 +1,12 @@
 import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 import os from 'node:os';
 import { StateService } from '../../src/services/state.js';
-import { JanitorService, type JanitorConfig, type JanitorClock, type DiskUsageFn, isBranchProtected } from '../../src/services/janitor.js';
-import type { BranchEntry } from '../../src/types.js';
+import { JanitorService, type JanitorConfig, type JanitorClock, type DiskUsageFn } from '../../src/services/janitor.js';
+import { isBranchProtected } from '../../src/services/branch-protection.js';
+import type { BranchEntry, Project } from '../../src/types.js';
 
 import { flushAllJsonStateStores } from '../../src/infra/state-store/json-backing-store.js';
 /**
@@ -81,23 +83,25 @@ describe('JanitorService', () => {
     if (fs.existsSync(dir)) fs.rmSync(dir, { recursive: true, force: true, maxRetries: 5, retryDelay: 50 });
   });
 
-  // ── isBranchProtected ──
+  // ── isBranchProtected（判定 SSOT 在 branch-protection.ts，这里只验 janitor 消费的是同一份）──
 
   describe('isBranchProtected', () => {
     it('returns true for pinnedByUser', () => {
-      expect(isBranchProtected(makeBranch('a', 100, { pinnedByUser: true }), null)).toBe(true);
+      expect(isBranchProtected(makeBranch('a', 100, { pinnedByUser: true }), stateService)).toBe(true);
     });
     it('returns true for isColorMarked', () => {
-      expect(isBranchProtected(makeBranch('a', 100, { isColorMarked: true }), null)).toBe(true);
+      expect(isBranchProtected(makeBranch('a', 100, { isColorMarked: true }), stateService)).toBe(true);
     });
     it('returns true when branch is defaultBranch', () => {
-      expect(isBranchProtected(makeBranch('main', 100), 'main')).toBe(true);
+      stateService.setDefaultBranch('some-release');
+      expect(isBranchProtected(makeBranch('some-release', 100), stateService)).toBe(true);
     });
     it('returns true when branch is in configPinned list', () => {
-      expect(isBranchProtected(makeBranch('keep', 100), null, ['keep'])).toBe(true);
+      expect(isBranchProtected(makeBranch('keep', 100), stateService, ['keep'])).toBe(true);
     });
     it('returns false for unrelated branch', () => {
-      expect(isBranchProtected(makeBranch('a', 100), 'main')).toBe(false);
+      stateService.setDefaultBranch('main');
+      expect(isBranchProtected(makeBranch('a', 100), stateService)).toBe(false);
     });
   });
 
@@ -209,6 +213,164 @@ describe('JanitorService', () => {
       expect(removed).toEqual([]);
       // But disk info still returned
       expect(report.disk).not.toBeNull();
+    });
+  });
+
+  // ── 主干分支永不删除（2026-07-27 P0：CDS 把 main 回收删掉了）──
+
+  function addProject(id: string, over: Partial<Project> = {}): void {
+    stateService.addProject({
+      id,
+      slug: id,
+      name: id,
+      kind: 'git',
+      createdAt: new Date('2026-01-01T00:00:00Z').toISOString(),
+      updatedAt: new Date('2026-01-01T00:00:00Z').toISOString(),
+      ...over,
+    } as Project);
+  }
+
+  describe('sweep — 主干分支保护（事故回归）', () => {
+    it('事故值：gitDefaultBranch=main 且项目 defaultBranch(id) 未配置时，main 不进删除集合', async () => {
+      // 事故根因：janitor 只比对 defaultBranch(CDS 分支 id)，项目没配它 → main 被当过期分支
+      // 连 state 条目带 worktree 一起删。修复后必须靠「git 分支名」判主干保住它。
+      addProject('acme', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme-main', 400, { projectId: 'acme', branch: 'main' }));
+      expect(stateService.getDefaultBranchFor('acme')).toBeNull();
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+      expect(report.skippedProtected).toEqual([
+        expect.objectContaining({ branchId: 'acme-main', branchName: 'main', reason: 'trunk-branch' }),
+      ]);
+      // dryRun 与真实 sweep 口径一致，不许预告一次它其实不会做的删除
+      expect(janitor.dryRun().wouldRemove).toEqual([]);
+      expect(janitor.dryRun().wouldSkip).toEqual(['acme-main']);
+    });
+
+    it('分支名 master 同样受保护（项目连 gitDefaultBranch 都没有时的兜底）', async () => {
+      addProject('legacy');
+      stateService.addBranch(makeBranch('legacy-master', 400, { projectId: 'legacy', branch: 'master' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(report.skippedProtected.map((s) => s.branchId)).toEqual(['legacy-master']);
+    });
+
+    it('多项目：A 项目的 main 不因 B 项目配了 defaultBranch 而失去保护', async () => {
+      addProject('proj-a', { gitDefaultBranch: 'main' });
+      addProject('proj-b', { gitDefaultBranch: 'main', defaultBranch: 'proj-b-main' });
+      stateService.addBranch(makeBranch('proj-a-main', 400, { projectId: 'proj-a', branch: 'main' }));
+      stateService.addBranch(makeBranch('proj-b-main', 400, { projectId: 'proj-b', branch: 'main' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+      expect(report.skippedProtected.map((s) => s.branchId).sort()).toEqual(['proj-a-main', 'proj-b-main']);
+      // A 项目走主干名判定，B 项目走它自己配置的 defaultBranch id
+      const reasons = Object.fromEntries(report.skippedProtected.map((s) => [s.branchId, s.reason]));
+      expect(reasons['proj-a-main']).toBe('trunk-branch');
+      expect(reasons['proj-b-main']).toBe('default-branch');
+    });
+
+    it('普通分支仍被正常清理——保护不能宽到让 janitor 失效', async () => {
+      addProject('acme2', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme2-main', 400, { projectId: 'acme2', branch: 'main' }));
+      stateService.addBranch(makeBranch('acme2-feat', 400, { projectId: 'acme2', branch: 'feat/login' }));
+      // 名字像主干但不是主干（mainline）也必须照常回收
+      stateService.addBranch(makeBranch('acme2-mainline', 400, { projectId: 'acme2', branch: 'mainline' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches.sort()).toEqual(['acme2-feat', 'acme2-mainline']);
+      expect(removed.sort()).toEqual(['acme2-feat', 'acme2-mainline']);
+      expect(report.skippedProtected.map((s) => s.branchId)).toEqual(['acme2-main']);
+    });
+
+    it('保护结果进 lastSweep 摘要——保住了什么、凭什么保住必须可见', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      addProject('acme3', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme3-main', 400, { projectId: 'acme3', branch: 'main' }));
+
+      await janitor.sweep();
+
+      const last = janitor.getSnapshot().lastSweep;
+      expect(last!.skippedProtected).toBe(1);
+      expect(last!.protectedTrunkBranches).toEqual(['acme3-main']);
+      expect(last!.removedBranches).toBe(0);
+    });
+
+    it('config.pinnedBranches 名单同样拦住删除（此前 janitor 不认这份名单）', async () => {
+      setup({ pinnedBranches: ['acme5-keep'] });
+      addProject('acme5');
+      stateService.addBranch(makeBranch('acme5-keep', 400, { projectId: 'acme5', branch: 'keep' }));
+      stateService.addBranch(makeBranch('acme5-drop', 400, { projectId: 'acme5', branch: 'drop' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.removedBranches).toEqual(['acme5-drop']);
+      expect(report.skippedProtected).toEqual([
+        expect.objectContaining({ branchId: 'acme5-keep', reason: 'config-pinned' }),
+      ]);
+    });
+
+    it('未过期的主干分支不会被记进 skippedProtected（不制造噪音）', async () => {
+      addProject('acme4', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme4-main', 1, { projectId: 'acme4', branch: 'main' }));
+
+      const report = await janitor.sweep();
+
+      expect(report.skippedProtected).toEqual([]);
+      expect(report.removedBranches).toEqual([]);
+    });
+
+    it('保护跳过日志只在状态变化时打一次——主干每轮复读会淹掉真正的事件', async () => {
+      addProject('acme6', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme6-main', 400, { projectId: 'acme6', branch: 'main' }));
+
+      const lines: string[] = [];
+      const original = console.log;
+      console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+      try {
+        await janitor.sweep();
+        await janitor.sweep();
+        await janitor.sweep();
+      } finally {
+        console.log = original;
+      }
+
+      const protectedLines = lines.filter((l) => l.includes('保护跳过分支'));
+      expect(protectedLines).toHaveLength(1);
+      expect(protectedLines[0]).toContain('acme6-main');
+      // 报表字段仍逐轮如实回报——「保护可见」由它承担，不靠日志复读
+      expect((await janitor.sweep()).skippedProtected).toHaveLength(1);
+    });
+
+    it('保护原因变化时重新打日志（新增分支 / 原因翻转都要能看见）', async () => {
+      addProject('acme7', { gitDefaultBranch: 'main' });
+      stateService.addBranch(makeBranch('acme7-main', 400, { projectId: 'acme7', branch: 'main' }));
+
+      const lines: string[] = [];
+      const original = console.log;
+      console.log = (...args: unknown[]) => { lines.push(args.map(String).join(' ')); };
+      try {
+        await janitor.sweep();
+        // 新增一条同样受保护的分支：这是状态变化，必须再打一条
+        stateService.addBranch(makeBranch('acme7-keep', 400, {
+          projectId: 'acme7', branch: 'feat/keep', pinnedByUser: true,
+        }));
+        await janitor.sweep();
+      } finally {
+        console.log = original;
+      }
+
+      const protectedLines = lines.filter((l) => l.includes('保护跳过分支'));
+      expect(protectedLines).toHaveLength(2);
+      expect(protectedLines[1]).toContain('acme7-keep');
     });
   });
 
@@ -326,5 +488,130 @@ describe('JanitorService', () => {
       reloaded.load();
       expect(reloaded.getJanitorWorktreeTTLOverride()).toBe(7);
     });
+  });
+
+  describe('回收调度与 enabled 解耦（2026-07-27 宕机复盘）', () => {
+    it('janitor 被关掉时仍调度 sweep——破坏性分支清理关掉，回收类动作不该跟着停', () => {
+      // 此前 start() 在 !enabled 时直接 return，把磁盘检查/悬空镜像清理/per-SHA
+      // 镜像回收/孤儿对账一并停掉，dockerPrune 注释里「与 enabled 解耦，默认就清」
+      // 从未兑现。破坏性分支删除仍由 sweep() 内部单独 gate。
+      setup({ enabled: false });
+      janitor.start();
+      expect(janitor.isEnabled()).toBe(false);
+      expect(() => janitor.stop()).not.toThrow();
+    });
+
+    it('禁用状态下的 sweep 仍做磁盘检查与档位判定，但一个分支都不删', async () => {
+      setup({ enabled: false, dockerPrune: false, imageRetention: false });
+      stateService.addBranch(makeBranch('stale-branch', 90));
+      mockDiskState = { totalBytes: 100, freeBytes: 4 }; // 96% used
+      const report = await janitor.sweep();
+      expect(report.removedBranches).toEqual([]);
+      expect(removed).toEqual([]);
+      expect(report.disk?.usedPercent).toBe(96);
+      expect(report.diskTier).toBe('freeze');
+    });
+  });
+
+  describe('sweep 去重与摘要可达（Codex 第三十轮）', () => {
+    it('并发调用合并成同一次 sweep，不叠加', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      const [a, b, c] = await Promise.all([janitor.sweep(), janitor.sweep(), janitor.sweep()]);
+      // 合并 = 三个调用拿到同一个 report 对象（而不是各跑一轮各出一份）
+      expect(a).toBe(b);
+      expect(b).toBe(c);
+    });
+
+    it('合并窗口结束后仍能再跑新的一轮', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      const first = await janitor.sweep();
+      const second = await janitor.sweep();
+      expect(second).not.toBe(first);
+    });
+
+    it('TTL 清理被关掉时也记得下摘要——回收跑了就必须留证', async () => {
+      // 此前摘要写在提前 return 之后，janitor 一关，/api/janitor/state 永远
+      // lastSweep:null，正好废掉「回收是否在工作」的证据。
+      setup({ enabled: false, dockerPrune: false, imageRetention: false });
+      mockDiskState = { totalBytes: 100, freeBytes: 30 }; // 70% -> ok
+      await janitor.sweep();
+      const last = janitor.getSnapshot().lastSweep;
+      expect(last).not.toBeNull();
+      expect(last!.diskTier).toBe('ok');
+      expect(last!.removedBranches).toBe(0);
+    });
+  });
+
+  describe('回收失败必须带原因（2026-07-27 实测：只报 failed:1 等于没说）', () => {
+    it('镜像删除失败时摘要带上原因样本，成功时不带这个字段', async () => {
+      setup({ dockerPrune: false });
+      // 注入一个「列得出、删不掉」的镜像：台账里有它确立仓库归属，rmi 必失败
+      const img = 'ghcr.io/acme/api:sha-' + '0'.repeat(40);
+      const failing = new JanitorService(
+        stateService,
+        { enabled: false, worktreeTTLDays: 7, diskWarnPercent: 80, sweepIntervalSeconds: 3600, dockerPrune: false },
+        '/tmp/wt',
+        clock,
+        mockDiskUsage,
+        async () => ({ ran: true, reclaimed: [], errors: [] }),
+        {
+          listImages: async () => [img],
+          listInUseImages: async () => [],
+          removeImage: async () => 'Error response from daemon: conflict: unable to delete',
+        },
+      );
+      // 台账为空 = 无归属仓库，按安全边界一个都不删，也就没有失败可报
+      const noCandidate = await failing.sweep();
+      expect(noCandidate.imageRetention?.failed).toHaveLength(0);
+      expect(failing.getSnapshot().lastSweep!.imageRetention!.failureSamples).toBeUndefined();
+
+      // 台账里放一代同仓库镜像：确立归属，宿主上那个台账外的镜像成为候选
+      stateService.addBranch(makeBranch('b1', 1));
+      stateService.addDeploymentVersion({
+        id: 'dv_1', projectId: 'default', branchId: 'b1', commitSha: 'c1', configHash: 'h1',
+        profiles: [{
+          profileId: 'api', name: 'api', artifactImage: 'ghcr.io/acme/api:sha-' + '1'.repeat(40),
+          artifactKind: 'prebuilt-image', reusable: true, containerPort: 3000,
+        }],
+        migrations: [], capabilities: [], createdByRunId: 'run1',
+        createdAt: new Date('2026-07-27T00:00:00Z').toISOString(),
+      });
+      const withCandidate = await failing.sweep();
+      expect(withCandidate.imageRetention!.failed).toHaveLength(1);
+      const samples = failing.getSnapshot().lastSweep!.imageRetention!.failureSamples;
+      expect(samples).toHaveLength(1);
+      // 原因必须能定位到具体镜像与 docker 的原话，而不是一个孤零零的数字
+      expect(samples![0]).toContain(img);
+      expect(samples![0]).toContain('unable to delete');
+    });
+  });
+
+  describe('回收结果可观测（2026-07-27 复盘）', () => {
+    it('sweep 后快照带上本轮摘要——外部据此确认回收是否真的在跑', async () => {
+      setup({ dockerPrune: false, imageRetention: false });
+      expect(janitor.getSnapshot().lastSweep).toBeNull();
+      mockDiskState = { totalBytes: 100, freeBytes: 12 }; // 88% -> reclaim
+      await janitor.sweep();
+      const last = janitor.getSnapshot().lastSweep;
+      expect(last).not.toBeNull();
+      expect(last!.diskTier).toBe('reclaim');
+      expect(last!.removedBranches).toBe(0);
+      // 两项回收都关掉时如实报 null，而不是假装跑过
+      expect(last!.imageRetention).toBeNull();
+      expect(last!.dockerPrune).toBeNull();
+    });
+  });
+});
+
+describe('装配接线：scheduler 的固定名单必须传进 janitor（Codex PR #1273 P1）', () => {
+  it('index.ts 构造 JanitorService 时把 scheduler.pinnedBranches 透进 janitor config', () => {
+    const src = fs.readFileSync(
+      path.join(path.dirname(fileURLToPath(import.meta.url)), '../../src/index.ts'),
+      'utf-8',
+    );
+    const ctor = src.slice(src.indexOf('new JanitorService('), src.indexOf('new JanitorService(') + 500);
+    // 只配在 scheduler 那侧的 pin，必须同时挡住降温与 janitor 删除；
+    // 少了这行接线，按文档 pin 住的分支 TTL 到期照样被删。
+    expect(ctor).toContain('config.scheduler?.pinnedBranches');
   });
 });

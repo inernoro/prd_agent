@@ -44,6 +44,12 @@ export interface BuildProfile {
   dockerImage: string;
   /** Working directory relative to worktree root (derived from volume mount host path) */
   workDir: string;
+  /**
+   * CI 构建该组件镜像的输入路径（语义见 DeployModeOverride.buildScope）。
+   * 由 resolveEffectiveProfile 从激活的部署模式带上来，**不是** workDir 的同义词：
+   * workDir 是运行时挂载目录（常为整仓 `.`），这里是 CI path-filter 口径。
+   */
+  buildScope?: string[];
   /** Working directory inside the container (from compose `working_dir`, default: '/app'). */
   containerWorkDir?: string;
   /**
@@ -416,6 +422,23 @@ export interface DeployModeOverride {
    * 单字符串视为只有一个回退。支持模板变量(${CDS_BRANCH_SLUG} 等)。
    */
   fallbackImage?: string | string[];
+  /**
+   * 2026-07-28 宕机复盘补 —— **CI 构建这个镜像时的输入路径**（对齐工作流里的
+   * path-filter，如 `['prd-api/**', '.github/workflows/branch-image.yml']`）。
+   *
+   * 用途只有一个：per-SHA 镜像拉不到时，判断「CI 是因为该组件没变才跳过构建」
+   * 还是「CI 没跑完 / 失败」。前者可以安全复用上一版镜像，省掉一次宿主全量重编
+   *（正是 2026-07-27 宕机的临门一脚）；后者复用就是静默发旧代码。
+   *
+   * 为什么不能用 `workDir` 代替：compose 里服务常写 `.:/repo`（整仓挂载，编译脚本
+   * 自己 cd 到子目录），workDir 因此是 `.`，拿它比等于比整个仓库，判定永远是
+   * 「变了」，复用一次都不会发生（Codex PR #1275 三轮 P1）。
+   *
+   * 不声明 = 不复用（fail-closed）。声明得比 CI 实际输入**窄**会让 CDS 把旧镜像
+   * 当新代码发出去，所以务必与工作流的 filters 逐条对齐。
+   * cds-compose 中通过 `x-cds-deploy-modes.<svc>.<mode>.buildScope` 声明。
+   */
+  buildScope?: string[];
 }
 
 /**
@@ -554,9 +577,163 @@ export interface BranchTombstone {
   removedAt: string;
 }
 
+/**
+ * 复制集成员 —— 一个并排运行的历史版本（2026-07-23，design.cds.replica-set）。
+ *
+ * 只允许从 reusable 的 DeploymentVersion 物化（不可变镜像，零构建秒起）。
+ * 运行态记在成员自身，**不进 branch.services**（services 消费方极多，
+ * 进去会被部署循环 / 发布器约定路由 / 服务卡当成普通服务，涟漪不可控）。
+ */
+export interface ReplicaMember {
+  /** 成员短 id（`rs` + 6 位），也是粘性 cookie / 直达子域后缀的值 */
+  id: string;
+  /** 指向 DeploymentVersion（内容寻址、不可变） */
+  versionId: string;
+  /** 用户可读标签（默认取 commit 短 sha） */
+  label?: string;
+  /** 主入口分流权重 0-100；0 = 只挂直达子域，不接主入口流量（默认） */
+  weight: number;
+  /** 物化快照：该版本此 profile 的不可变镜像引用 */
+  image: string;
+  /** 该版本的 commit sha（展示用） */
+  commitSha?: string;
+  /** 物化后的容器名（cds-<branchId>-<profileId>-<memberId>） */
+  containerName?: string;
+  /** 物化后分配的宿主端口 */
+  hostPort?: number;
+  status: 'provisioning' | 'running' | 'stopped' | 'error';
+  statusMessage?: string;
+  /** 数据库模式：shared=与主容器同库（默认）；isolated=一键隔离库（先克隆当前数据再切换） */
+  dbMode: 'shared' | 'isolated';
+  /** dbMode=isolated 时的隔离库全名（<源库>_rs_<memberId>） */
+  isolatedDbName?: string;
+  /**
+   * 项目级整组身份（Codex 第二十轮 P1）：同一次「整组副本」手势创建的各 profile
+   * 成员共享同一 id，前端按 id join 成组——部分失败/单侧下线造成成员数组错位时，
+   * 按位配对会把不同批次/不同版本的副本拼成假组并被预览钉选放大。容器级单独
+   * 添加的成员无此字段（按位配对仅作存量兜底）。
+   */
+  projectGroupId?: string;
+  createdAt: string;
+}
+
+/**
+ * 复制集隔离库快照（design.cds.replica-set MVP-2）。
+ * dbMode=isolated 的成员启动前，把当前库整库克隆成隔离库；成员下线/复制集解散
+ * 后隔离库**保留**（这就是「一键隔离数据库(保留)」的保留语义），在快照列表可见，
+ * 手动删除才 drop。
+ */
+export interface ReplicaDbSnapshot {
+  id: string;
+  profileId: string;
+  memberId: string;
+  engine: 'mongo' | 'mysql' | 'postgres';
+  /** 克隆来源库名（克隆时间点的主库） */
+  sourceDb: string;
+  /** 隔离库名 */
+  dbName: string;
+  /** 执行克隆的 infra 容器名（drop 时复用） */
+  infraContainer: string;
+  /** mongo 专用隔离实例容器名（存在 = 隔离库在独立实例里，删除快照即移除该容器） */
+  dedicatedContainer?: string;
+  /** 专用隔离实例的宿主端口（成员连接串覆写用） */
+  dedicatedHostPort?: number;
+  /**
+   * 专用实例认证标记（Codex P1，2026-07-26）：'source-infra' = 实例以**源库的
+   * root 凭据**启用认证（凭据活取自 infra env，不在快照落盘）。缺省 = 历史
+   * 无认证实例，消费方（连接串生成/审计 eval）不得对其发凭据。
+   */
+  dedicatedAuth?: 'source-infra';
+  clonedAt: string;
+}
+
+/** 复制集执行计划的步骤类型（草稿-保存模型：用户先排操作，保存后串行执行） */
+export type ReplicaPlanStepKind =
+  | 'add-replica'      // params: versionId?（缺省=当前版本）, dbMode?
+  | 'remove-member'    // params: memberId
+  | 'set-weight'       // params: memberId('primary'=主), weight
+  | 'isolate-db'       // profile 级复制隔离
+  | 'revert-db'        // 回切主库
+  | 'dissolve';        // 关闭复制集
+
+export interface ReplicaPlanStep {
+  id: string;
+  kind: ReplicaPlanStepKind;
+  profileId: string;
+  params?: {
+    memberId?: string;
+    versionId?: string;
+    weight?: number;
+    dbMode?: 'shared' | 'isolated';
+    /** 项目级整组身份：同手势各 profile 的 add-replica 共享（Codex 第二十轮 P1） */
+    projectGroupId?: string;
+  };
+  status: 'pending' | 'running' | 'done' | 'error' | 'skipped' | 'cancelled' | 'rolled-back';
+  error?: string;
+  /** 执行产物（add-replica 生成的成员 id / set-weight 的原权重），回滚用 */
+  resultMemberId?: string;
+  prevWeight?: number;
+  /**
+   * 破坏性/单向步骤已开始真实变更的标记（Codex 第二十四轮 P1）：校验期失败
+   * （目标不存在等）零副作用，不置位；置位后步骤失败 = 现场可能有不可自动
+   * 复原的部分效果，回滚必须如实保持 error 而非谎报 rolled-back。
+   */
+  mutationStarted?: boolean;
+  startedAt?: string;
+  endedAt?: string;
+}
+
+/** 一次「保存并执行」的完整记录（含失败与回滚日志 = 问题记录） */
+export interface ReplicaPlan {
+  id: string;
+  branchId: string;
+  status: 'running' | 'done' | 'error' | 'cancelled' | 'rolled-back';
+  /** 失败策略：stop=停止剩余；rollback=停止并逆序回滚已完成步骤 */
+  onFailure: 'stop' | 'rollback';
+  steps: ReplicaPlanStep[];
+  rollbackLog?: string[];
+  createdAt: string;
+  endedAt?: string;
+}
+
+/**
+ * 单个服务（profile）的复制集配置。挂在 BranchEntry.replicaSets[profileId]。
+ *
+ * 主容器（branch.services[profileId]）即天然主成员，不重建不迁移——
+ * 启用复制集是纯配置写入，零容器操作；解散（退回普通）= 收割全部成员容器
+ * + 删本配置，分支回到与未启用时完全一致的状态。
+ */
+export interface ProfileReplicaSet {
+  profileId: string;
+  enabled: boolean;
+  /** 主容器权重 0-100（与成员权重同一口径） */
+  primaryWeight: number;
+  members: ReplicaMember[];
+  /**
+   * profile 级「复制隔离」状态（2026-07-24 用户拍板的三步心智）：
+   * 复制（克隆一次隔离库）→ 切换（全体副本重物化改连隔离库）→ 可回切。
+   * absent = 副本连主库（普通态）。回切后本字段清除，快照留在台账。
+   */
+  isolated?: {
+    dbName: string;
+    snapshotId: string;
+    isolatedAt: string;
+  };
+  createdAt: string;
+  updatedAt: string;
+}
+
 /** Branch entry — simplified for CDS */
 export interface BranchEntry {
   id: string;
+  /**
+   * 删除进行中标记（Codex 第十六轮 P1）：删除路由在遍历快照台账/拆容器之前
+   * 置位。复制集的克隆完成回调（隔离/保护罩/成员物化）看到该标记即放弃入账
+   * 并就地清掉刚克隆的库——否则「删除已扫过台账 → 克隆完成追加新快照 →
+   * removeBranch」的间隙会留下永久无主的隔离库/专用实例容器。删除失败时回滚
+   * 清位；进程崩溃残留该标记也无害（重试删除即收敛）。
+   */
+  deleting?: boolean;
   /**
    * 该分支所属项目。PR_B.1 起为必填 — migrateProjectScoping() 启动时把
    * pre-P4 / 孤儿引用补齐到 legacy project 的真实 id。消费方不再需要
@@ -662,6 +839,25 @@ export interface BranchEntry {
    * (保护底座,要按分支改项目服务请用 profileOverrides,不是这里)。
    */
   extraProfiles?: BuildProfile[];
+  /**
+   * 复制集模式（2026-07-23，design.cds.replica-set）：按 profileId 粒度，
+   * 让单个服务在同一入口下并排跑多个历史版本。absent/空 = 普通模式（现状零回归）。
+   * 流量分配见 forwarder-route-publisher（replicaGroup 路由）+ route-resolver（权重/粘性）。
+   */
+  replicaSets?: Record<string, ProfileReplicaSet>;
+  /**
+   * 复制集隔离库快照台账（保留语义）：成员下线后隔离库不删，记录在这里，
+   * 手动删除才 drop。详见 ReplicaDbSnapshot。
+   */
+  replicaDbSnapshots?: ReplicaDbSnapshot[];
+  /** 复制集执行计划记录（活跃 + 历史，保留最近 20 条；含失败/回滚日志 = 问题记录） */
+  replicaPlans?: ReplicaPlan[];
+  /**
+   * 复制集管理模式二选一（2026-07-24 用户拍板）：container = 容器级逐容器管理；
+   * project = 项目级整组管理。首次保存计划时钉住；全部副本关闭后自动清除，
+   * 之后才允许换另一种模式。absent = 尚未启用复制集。
+   */
+  replicaMode?: 'container' | 'project';
   /**
    * 波3 配置树:分支派生溯源(2026-07-06,快照拷贝语义)。
    *
@@ -1188,10 +1384,42 @@ export interface ReleaseTarget {
 }
 
 export interface ReleasePlanStep {
+  /**
+   * **连接键：step.id 必须等于执行器 emitLog 该步时用的 phase。**
+   *
+   * 这个键其实一直存在于日志里，只是从没被声明过——于是 ReleasePlan.steps 定义了却
+   * 端到端零消费，前端只能靠正则从日志 phase 反推步骤条，两边还各自漂移
+   * （ssh-script 模板写 4 步、执行器实际发 6 个 phase）。新增或改名步骤时必须同时改
+   * 执行器的 phase，判定逻辑统一在 services/release-steps.ts。
+   */
   id: string;
   title: string;
   kind: 'ssh' | 'healthcheck' | 'record' | 'manual';
   command?: string;
+}
+
+export type ReleaseRunStepState = 'pending' | 'running' | 'done' | 'failed';
+
+/** 某次运行里实际执行的一步。id 同 ReleasePlanStep.id，也同该步日志的 phase。 */
+export interface ReleaseRunStep {
+  id: string;
+  title: string;
+  kind: ReleasePlanStep['kind'];
+  state: ReleaseRunStepState;
+  startedAt?: string;
+  finishedAt?: string;
+}
+
+/**
+ * 本次运行的步骤快照。
+ *
+ * 刻意不存 index / total：两个数字与 steps 数组重复表达同一件事，必然漂移；
+ * 「第 N / 共 M 步」一律由 steps 推导（services/release-steps.ts::releaseStepOrdinal）。
+ */
+export interface ReleaseRunProgress {
+  planId: string;
+  steps: ReleaseRunStep[];
+  currentStepId?: string;
 }
 
 export interface ReleasePlan {
@@ -1214,6 +1442,59 @@ export interface ReleaseLogEntry {
   phase?: string;
 }
 
+/** 发布前检查的单条结论。blocking 的 fail 才拦发布，warn 一律放行只做提示。 */
+export interface ReleasePreflightCheck {
+  id: string;
+  label: string;
+  status: 'pass' | 'warn' | 'fail';
+  message: string;
+  blocking: boolean;
+}
+
+/**
+ * 落库的发布前检查结论。
+ *
+ * 病根：预检结论此前只是个内存对象直接 res.json 出去，`startRelease` 第一句又
+ * 无条件重跑一遍 `preflight()` —— 一次「向导确认后立刻发布」要打两轮独立的
+ * SSH + HTTP 探测，而**用户在向导里看到并据以决策的那一份，不是真正把关的那一份**。
+ * 落库之后，向导那次的结论被 run 显式引用，两者是同一份。
+ *
+ * 复用不等于盲信：这里刻意存了 `createdAt` 与 `artifactCommitSha` ——
+ * 结论过期、或分支 commit 已经变了（产物换了），就必须重跑而不是拿旧结论顶。
+ * 判据见 release-retention.ts::canReuseReleasePreflight。
+ */
+export interface ReleasePreflightRecord {
+  id: string;
+  projectId: string;
+  branchId: string;
+  targetId: string;
+  previewUrl?: string;
+  operator?: string;
+  ok: boolean;
+  checks: ReleasePreflightCheck[];
+  /** 本次结论所依据的产物（含 commitSha）。复用时按它比对现分支 commit。 */
+  artifact?: ReleaseArtifact;
+  artifactCommitSha?: string;
+  /**
+   * 结论生成时目标配置的指纹（releaseTargetConfigFingerprint）。
+   *
+   * 复用键只带 targetId 是不够的：运维在两分钟复用窗口里改了 host / 凭据 / appPath /
+   * 发布命令 / healthcheckUrl，targetId 不变，旧结论会被套到一台连通性、仓库身份、
+   * 脚本都没验证过的机器上（Codex P1）。缺省 = 阶段三早期入库的存量记录，
+   * 一律**不允许复用**（宁可多跑一次预检，也不拿证明不了的结论放行）。
+   */
+  targetConfigFingerprint?: string;
+  /**
+   * 结论生成时**项目**身份的指纹。预检的 project-identity / remote-repository
+   * 两项验的是项目仓库身份，不是目标：改 gitRepoUrl 时目标指纹不变，只比目标会漏。
+   * 缺省 = 早期存量记录，一律不许复用。
+   */
+  projectIdentityFingerprint?: string;
+  planId?: string;
+  previousReleaseId?: string;
+  createdAt: string;
+}
+
 /**
  * 渐进式 Agent 操作者声明。第一阶段仅采集，不参与鉴权或强制拦截。
  * `declared` 只代表调用方提供了通过格式校验的字段，绝不等同 `verified`。
@@ -1231,6 +1512,24 @@ export interface AgentOperatorIdentitySummary {
   invalidFields?: string[];
 }
 
+/**
+ * ReleaseRun 的持久化状态机。
+ * 终态：success / failed / rollback_success / rollback_failed。
+ *
+ * 历史上还有一个 'prechecking'，但全仓从未被任何代码赋值过——预检是 startRelease
+ * 之前的同步前置动作，不落 run。它只出现在「在途状态字面量数组」里，反而让状态机
+ * 表要为一个永不出现的状态表态。2026-07-28 阶段一止血时删除。
+ */
+export type ReleaseRunStatus =
+  | 'queued'
+  | 'running'
+  | 'healthchecking'
+  | 'success'
+  | 'failed'
+  | 'rollback_running'
+  | 'rollback_success'
+  | 'rollback_failed';
+
 export interface ReleaseRun {
   releaseId: string;
   projectId: string;
@@ -1239,28 +1538,69 @@ export interface ReleaseRun {
   artifact: ReleaseArtifact;
   targetId: string;
   planId: string;
-  status:
-    | 'queued'
-    | 'prechecking'
-    | 'running'
-    | 'healthchecking'
-    | 'success'
-    | 'failed'
-    | 'rollback_running'
-    | 'rollback_success'
-    | 'rollback_failed';
+  status: ReleaseRunStatus;
   startedAt: string;
   finishedAt?: string;
+  /**
+   * 执行心跳（ISO）。与分支侧 DeploymentRun.heartbeatAt 同口径：执行期周期刷新，
+   * SSH 长静默阶段也照常打点。心跳过期即代表执行体已随进程消失（CDS 自更新 /
+   * 重启），由 ReleaseService.reconcileInterruptedReleases 收敛为失败并释放目标。
+   */
+  heartbeatAt?: string;
   operator?: string;
   logs: ReleaseLogEntry[];
   seq: number;
+  /**
+   * 当前 logs 窗口里最早那条的 seq。logs 有上限（500 条），超出即从头部丢弃，
+   * 客户端拿着 afterSeq 续传时必须能看出「你要的那段已经没了」。
+   *
+   * 存量 run 没有这个字段，被持久化层应急压缩过的历史 run 更是「头部已丢却无标记」。
+   * 所以读侧一律走 release-log-buffer.ts::resolveReleaseFirstEventSeq 从 logs[0].seq
+   * 推导，本字段只做空日志时的兜底，绝不能被当成可信真相直接读。
+   */
+  firstEventSeq?: number;
+  /**
+   * 本次发布依据的预检记录 id。缺省 = 阶段三之前入库的存量 run（当时预检不落库）。
+   * 有它才能回答「这次发布放行的依据是哪一份结论、什么时候做的」。
+   */
+  preflightId?: string;
+  /**
+   * 最终入口探测失败后，自动恢复上一版本**成功完成**的时刻。
+   *
+   * 它是这条失败 run 的「恢复时刻」：生产在这一刻已经回到上一版本了，尽管本次 run
+   * 终态仍是 failed。DORA 的恢复配对必须认它，否则会把一次几秒就自愈的失败算成
+   * 「进行中故障」，一直挂到下一次成功发布，恢复时长与 ongoingCount 双双失真。
+   * 刻意不为自动恢复新建 run —— 那不是一次「发布」，造假 run 会污染发布频率与
+   * 变更失败率的分母。
+   */
+  autoRestoredAt?: string;
+  /**
+   * 最终入口探测失败、开始自动恢复的时刻 = 故障窗口的**起点**。
+   *
+   * 不能用 `finishedAt` 当起点：自动恢复跑在 failRun 之前，`finishedAt` 恒晚于
+   * `autoRestoredAt`，用它配对会得到负数并被守卫整条丢掉（这正是上一版修复空转的原因）。
+   */
+  autoRestoreStartedAt?: string;
   previousReleaseId?: string;
   requestId?: string;
   operationId?: string;
   agentIdentity?: AgentOperatorIdentitySummary;
   rollbackOf?: string;
   rollbackTargetReleaseId?: string;
+  /** 人类可读的失败摘要。保留给存量 UI；结构化事实一律读 failure。 */
   errorMessage?: string;
+  /**
+   * 结构化失败事实。刻意复用分支侧的 DeploymentFailure 结构（code / owner /
+   * retryable / evidenceRefs / suggestedAction），不另发明一套字段名，
+   * 让两条生命周期的失败展示与归因逻辑可以共用。
+   */
+  failure?: DeploymentFailure;
+  /**
+   * 本次运行的步骤快照（后端一等公民步骤模型）。
+   *
+   * 缺省代表阶段二之前入库的存量 run —— 前端必须优雅退化成通用骨架，不许白屏或报错。
+   */
+  progress?: ReleaseRunProgress;
   /** 本次运行实际执行策略的不可变快照，避免目标后改配置污染历史证据。 */
   executionSnapshot?: {
     mode: ReleaseExecutionMode;
@@ -1351,6 +1691,31 @@ export interface ContainerTeardownTombstone {
   projectId: string;
   /** 墓碑写入时刻（ISO）。晚于此刻创建的同名容器属于后继项目，不许动。 */
   requestedAt: string;
+  /**
+   * 移除时必须连匿名数据卷一起删（`docker rm -f -v`）。
+   *
+   * 复制集专用隔离实例（cds-rsdb-*）的数据在**匿名卷**里，装的是生产派生克隆。
+   * 墓碑路径原本一律跑 `docker rm -f`（不带 -v）：容器没了、卷永久失去追踪，
+   * 既留着敏感数据又持续吃盘，谁也扫不到（Codex 第三十二轮 P1）。
+   */
+  removeVolumes?: boolean;
+}
+
+/**
+ * 已删项目的 worktree 桶墓碑（Codex PR #1275 三轮 P2）。
+ *
+ * 删项目会 cascade 掉项目与分支记录，但**不删磁盘上的 worktree 目录**。孤儿对账
+ * 为了不误删「迁移自扁平布局的遗留 worktree」，只在**已知项目桶**下枚举；项目一删，
+ * 它的 id 就从清单里消失，那个桶从此再也不会被枚举 —— 里面的 worktree 永久占盘，
+ * 而它们恰恰是最该回收的（已经没有任何分支认领）。
+ *
+ * 墓碑保住「这个 id 曾经是项目桶」这一事实，让对账还能进去。桶里所有 worktree
+ * 回收干净后墓碑自动消失。
+ */
+export interface DeletedProjectWorktreeTombstone {
+  projectId: string;
+  /** 墓碑写入时刻（ISO），审计用。 */
+  requestedAt: string;
 }
 
 export interface CdsState {
@@ -1372,6 +1737,12 @@ export interface CdsState {
   releaseTargets?: Record<string, ReleaseTarget>;
   /** Release plan templates keyed by id. */
   releasePlans?: Record<string, ReleasePlan>;
+  /**
+   * 落库的发布前检查结论，key 为 ReleasePreflightRecord.id。
+   * 存量 state.json / mongo global 文档里**没有这个键**，所有读处必须 `?.` 兜底，
+   * 否则 `Object.values(undefined)` 直接把 CDS 启动炸掉。
+   */
+  releasePreflights?: Record<string, ReleasePreflightRecord>;
   /** Immutable release run records keyed by releaseId. */
   releaseRuns?: Record<string, ReleaseRun>;
   /** Per-branch append-only container log archives owned by CDS. */
@@ -1559,6 +1930,18 @@ export interface CdsState {
    */
   pendingContainerTeardowns?: ContainerTeardownTombstone[];
   /**
+   * 已删项目的 worktree 桶墓碑（见 DeletedProjectWorktreeTombstone 注释）。
+   * 孤儿对账把这些 id 并入「已知项目桶」白名单，桶清空后自动摘除。
+   */
+  deletedProjectWorktreeBuckets?: DeletedProjectWorktreeTombstone[];
+  /**
+   * 共享实例隔离库的待清理台账（Codex 第二十五轮 P1）：分支删除时 mysql/pg
+   * 隔离库 drop 失败没有容器可写墓碑，branch.replicaDbSnapshots 又随分支状态
+   * 即刻消失——生产派生克隆会永久失踪在共享 infra 里。失败的 drop 入本台账，
+   * 复制集对账循环持续重试；承载 infra 已不存在时数据随实例消亡，出队。
+   */
+  pendingReplicaDbDrops?: Array<{ snapshot: ReplicaDbSnapshot; projectId: string; requestedAt: string }>;
+  /**
    * User-customisable settings for the GitHub PR preview comment that
    * CDS posts on PR open / refreshes on every deploy
    * (postOrUpdatePrComment in routes/github-webhook.ts).
@@ -1623,6 +2006,21 @@ export interface CdsState {
    * 数据源。系统级（与具体项目无关的存储位置，样本本身按 projectId 分桶）。
    */
   deployDurationSamples?: DeployDurationSamples;
+  /**
+   * 生产发布耗时样本台账（2026-07-28）。keyed by targetId，桶结构与
+   * deployDurationSamples 完全一致，但**刻意分成两个顶层字段**。
+   *
+   * 为什么不复用 deployDurationSamples 的 `${projectId}::${mode}` 桶：那里的
+   * mode='release' 指的是分支容器跑编译产物/极速版镜像（classifyDeployRuntime
+   * 的输出），与「往生产机器 SSH 执行发布脚本」毫无关系。事故值：极速版构建
+   * 中位 42s，真实生产发布中位 8 分钟量级 —— 混桶后两边互相拉扯，分支等待页
+   * 和发布中心拿到的都是没有判别力的数字。独立字段是键空间层面就不可能撞的
+   * 唯一零歧义隔离方式。
+   *
+   * 桶键用 targetId 而不是 projectId：同一个项目的两个站点可能部署在不同机器、
+   * 跑不同脚本，耗时能差一个数量级，合桶后中位同样失去判别力。
+   */
+  releaseDurationSamples?: DeployDurationSamples;
   /**
    * Agent 请求历史摘要(2026-06-11 用户信任诉求:「看到一条条请求事件才相信
    * HTML 真是远程 agent 返回的」)。会话 done/fail/stop 时由 remote-hosts

@@ -1940,8 +1940,11 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                     return GatewayRawResponse.Fail("EXCHANGE_ASYNC_SUBMIT_FAILED", submitError, (int)response.StatusCode);
                 }
 
-                if (asyncTransformer.IsTaskPending((int)response.StatusCode, submitResponseHeaders, responseBody)
-                    || asyncTransformer.IsTaskComplete((int)response.StatusCode, submitResponseHeaders, responseBody) == false)
+                // IAsyncExchangeTransformer 的 submit 成功只代表任务已受理，不代表业务结果已生成。
+                // 豆包 submit 与 query 完成都使用 20000000；若在 submit 上调用
+                // IsTaskComplete，会把没有 result 的提交响应误当成最终响应并返回空转录。
+                // 因此 submit 未失败后必须至少 query 一次，完成判断只用于 query 响应。
+                if (response.IsSuccessStatusCode)
                 {
                     _logger.LogInformation("[LlmGateway.Exchange.Async] 进入轮询模式, Exchange={ExchangeName}", resolution.ExchangeName);
 
@@ -1949,6 +1952,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         endpoint, (int)response.StatusCode, submitResponseHeaders, responseBody, resolution.ExchangeTransformerConfig);
 
                     var pollAttempt = 0;
+                    var taskCompleted = false;
                     while (pollAttempt < asyncTransformer.MaxPollAttempts)
                     {
                         await Task.Delay(asyncTransformer.PollIntervalMs, ct);
@@ -1996,6 +2000,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
 
                         if (asyncTransformer.IsTaskComplete((int)queryResp.StatusCode, queryHeaders, responseBody))
                         {
+                            taskCompleted = true;
                             AddProviderAttempt(
                                 rawProviderAttempts,
                                 resolution,
@@ -2051,7 +2056,7 @@ public class LlmGateway : ILlmGateway, CoreGateway.ILlmGateway
                         }
                     }
 
-                    if (pollAttempt >= asyncTransformer.MaxPollAttempts)
+                    if (!taskCompleted)
                     {
                         var endedNow = DateTime.UtcNow;
                         var dur = (long)(endedNow - startedAt).TotalMilliseconds;

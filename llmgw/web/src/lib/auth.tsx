@@ -1,11 +1,15 @@
-// 极简鉴权上下文：JWT 存 sessionStorage，未登录跳登录页；首登强制改密门。
-import { createContext, useContext, useEffect, useMemo, useState } from 'react';
+// 极简鉴权上下文：JWT 存 localStorage（长会话 + 服务端滑动续期，见 lib/api.ts），
+// 未登录跳登录页；首登强制改密门；会话到期/被吊销时主动下线。
+import { createContext, useCallback, useContext, useEffect, useMemo, useRef, useState } from 'react';
 import type { ReactNode } from 'react';
 import {
+  adoptStoredSession,
   applyChangePasswordResult,
   changePassword as apiChangePassword,
   clearSession,
+  expireSession,
   exportSessionSnapshot,
+  getSessionExpiresAt,
   getStoredUser,
   getStoredTenant,
   importSessionSnapshot,
@@ -13,8 +17,12 @@ import {
   login as apiLogin,
   exchangeMapSso,
   mustChangePassword as readMustChangePassword,
+  onSessionExpired,
+  onSessionRenewed,
   setSession,
 } from './api';
+import { getToken } from './api';
+import type { SessionExpiredReason } from './api';
 import type { ApiResponse, ChangePasswordResult, LoginResult, TenantSession } from './types';
 
 type AuthState = {
@@ -24,6 +32,8 @@ type AuthState = {
   tenant: TenantSession | null;
   /** 首登强制改密：为 true 时守卫强制跳 /change-password，改密成功前不放行日志页。 */
   mustChangePassword: boolean;
+  /** 上一次会话是被动失效（过期/吊销）而非主动退出；登录页据此提示原因。 */
+  sessionExpiredReason: SessionExpiredReason | null;
   login: (username: string, password: string) => Promise<ApiResponse<LoginResult>>;
   loginWithMapCode: (code: string) => Promise<ApiResponse<LoginResult>>;
   changePassword: (oldPassword: string, newPassword: string) => Promise<ApiResponse<ChangePasswordResult>>;
@@ -41,6 +51,37 @@ export function AuthProvider({ children }: { children: ReactNode }) {
   const [user, setUser] = useState(() => getStoredUser());
   const [tenant, setTenant] = useState(() => getStoredTenant());
   const [mustChange, setMustChange] = useState<boolean>(() => readMustChangePassword());
+  const [expiredReason, setExpiredReason] = useState<SessionExpiredReason | null>(null);
+  // 每次装入新 token（登录 / 一键登录 / 改密 / 跨标签页交接）都自增，
+  // 用来把「到期定时器」重新排一次——改密会换发新 token，旧到期时间必须作废。
+  const [sessionEpoch, setSessionEpoch] = useState(0);
+  const channelRef = useRef<BroadcastChannel | null>(null);
+  // 当前会话用的 token：storage 事件里据此判断「是不是换了另一把」，
+  // 换了就要重排到期定时器（见下面的 syncFromStorage）。
+  const activeTokenRef = useRef<string | null>(getToken());
+
+  // 会话失效的唯一落地点：翻 authed → 路由守卫立刻把用户送回登录页。
+  // 以前这里没有订阅，api 层清了 sessionStorage 但 React 状态还停在「已登录」，
+  // 于是页面永远卡在「登录已失效，请重新登录」而不跳转。
+  const applyExpired = useCallback((reason: SessionExpiredReason) => {
+    setAuthed(false);
+    setUser(null);
+    setTenant(null);
+    setMustChange(false);
+    setInitializing(false);
+    setExpiredReason(reason);
+  }, []);
+
+  // 服务端滑动续期换发了新 token（连带新的到期时间）→ 重排主动过期定时器。
+  // 不重排的话，定时器还按签发时的旧到期时间跑，续期就白续了。
+  useEffect(() => onSessionRenewed(() => setSessionEpoch((v) => v + 1)), []);
+
+  useEffect(() => onSessionExpired(({ reason, token }) => {
+    applyExpired(reason);
+    // 广播时带上失效的那个 token：其他标签页只在「自己也在用这个 token」时才下线。
+    // 否则改密后新标签页拿到新 token，旧标签页的 401 广播会把它一起踢掉。
+    channelRef.current?.postMessage({ type: 'expired', reason, token });
+  }), [applyExpired]);
 
   useEffect(() => {
     if (typeof BroadcastChannel === 'undefined') {
@@ -49,16 +90,29 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     }
 
     const channel = new BroadcastChannel(AUTH_CHANNEL_NAME);
+    channelRef.current = channel;
     const requestId = crypto.randomUUID();
     const timer = window.setTimeout(() => setInitializing(false), 700);
     channel.onmessage = (event: MessageEvent<{
       type?: string;
+      reason?: SessionExpiredReason;
       requestId?: string;
+      token?: string | null;
       snapshot?: ReturnType<typeof exportSessionSnapshot>;
     }>) => {
       if (event.data?.type === 'request') {
         const snapshot = exportSessionSnapshot();
         if (snapshot) channel.postMessage({ type: 'response', requestId: event.data.requestId, snapshot });
+        return;
+      }
+
+      // 其他标签页已失效：只有当自己用的就是那个 token 时才同步下线；
+      // 不回广播，避免标签页之间来回弹。
+      if (event.data?.type === 'expired') {
+        const failedToken = event.data.token;
+        if (failedToken && getToken() && failedToken !== getToken()) return;
+        clearSession();
+        applyExpired(event.data.reason || 'expired');
         return;
       }
 
@@ -68,7 +122,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         || isAuthed())
         return;
 
-      importSessionSnapshot(event.data.snapshot);
+      if (!importSessionSnapshot(event.data.snapshot)) return;
+      setSessionEpoch((v) => v + 1);
       setUser(getStoredUser());
       setTenant(getStoredTenant());
       setMustChange(readMustChangePassword());
@@ -83,7 +138,70 @@ export function AuthProvider({ children }: { children: ReactNode }) {
     return () => {
       window.clearTimeout(timer);
       channel.close();
+      channelRef.current = null;
     };
+  }, [applyExpired]);
+
+  // 主动过期：到点就下线，不必等用户点一下、撞一次 401 才知道自己已经登出。
+  // 定时器在系统休眠时可能延迟，故补一条「标签页重新可见时复查」。
+  useEffect(() => {
+    if (!authed) return undefined;
+    const expiresAt = getSessionExpiresAt();
+    if (expiresAt === null) return undefined;
+
+    // 定时器绑定它当时排给哪个 token：改密等换发场景下，
+    // 旧 token 的回调可能在本 effect 清理之前跑到，不带 token 就会把新会话一并清掉。
+    const scheduledToken = getToken();
+    const fire = () => expireSession('expired', scheduledToken);
+    const delay = expiresAt - Date.now();
+    if (delay <= 0) {
+      fire();
+      return undefined;
+    }
+
+    const timer = window.setTimeout(fire, Math.min(delay, 2 ** 31 - 1));
+    const recheck = () => {
+      if (document.visibilityState === 'visible' && Date.now() >= expiresAt) fire();
+    };
+    document.addEventListener('visibilitychange', recheck);
+    window.addEventListener('focus', recheck);
+    return () => {
+      window.clearTimeout(timer);
+      document.removeEventListener('visibilitychange', recheck);
+      window.removeEventListener('focus', recheck);
+    };
+    // sessionEpoch：换发 token（尤其是改密）后必须按新的 expiresAt 重排定时器，
+    // 只依赖 authed 的话，会话中途改密的用户仍会在旧 token 的到期时刻被登出。
+  }, [authed, sessionEpoch]);
+
+  // 会话现在存 localStorage，跨标签页共享：A 标签页登出 / 换账号登录会立刻改掉所有标签页
+  // 实际发请求用的凭据。若这里不跟着同步，B 标签页会一边用账号 B 的 token 发请求、
+  // 一边把账号 A 的身份和租户显示在界面上，或者在对方登出后继续停在受保护页面。
+  // storage 事件只在「其它标签页」触发，本标签页的登录/登出仍走上面的 setState 分支。
+  useEffect(() => {
+    const syncFromStorage = () => {
+      const nextToken = getToken();
+      const nextAuthed = isAuthed();
+      // 接管别的标签页建立的会话：顺带重置失效闩，否则这个新会话将来失效时不会广播，
+      // 本标签页会卡在「已登录但没有 token」的死状态（见 adoptStoredSession 注释）。
+      if (nextAuthed) adoptStoredSession();
+      // 整体一次性对齐，避免出现「已登录但身份还是上一个账号」的中间态。
+      setUser(nextAuthed ? getStoredUser() : null);
+      setTenant(nextAuthed ? getStoredTenant() : null);
+      setMustChange(nextAuthed ? readMustChangePassword() : false);
+      setAuthed(nextAuthed);
+      setInitializing(false);
+      // 换了另一把 token（别的标签页切账号）时，authed 仍是 true，到期定时器的 deps
+      // 不变就不会重排——旧定时器绑的是上一把 token，触发时被 expireSession 的
+      // token 比对挡掉，等于新会话根本没有定时器。必须自增 epoch 强制按新到期时间重排。
+      if (nextToken !== activeTokenRef.current) {
+        activeTokenRef.current = nextToken;
+        setSessionEpoch((v) => v + 1);
+      }
+    };
+
+    window.addEventListener('storage', syncFromStorage);
+    return () => window.removeEventListener('storage', syncFromStorage);
   }, []);
 
   const value = useMemo<AuthState>(
@@ -93,6 +211,7 @@ export function AuthProvider({ children }: { children: ReactNode }) {
       user,
       tenant,
       mustChangePassword: mustChange,
+      sessionExpiredReason: expiredReason,
       async login(username: string, password: string) {
         const res = await apiLogin({ username, password });
         if (res.success && res.data?.token) {
@@ -102,6 +221,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setMustChange(readMustChangePassword());
           setAuthed(true);
           setInitializing(false);
+          setExpiredReason(null);
+          setSessionEpoch((v) => v + 1);
         }
         return res;
       },
@@ -114,6 +235,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setMustChange(readMustChangePassword());
           setAuthed(true);
           setInitializing(false);
+          setExpiredReason(null);
+          setSessionEpoch((v) => v + 1);
         }
         return res;
       },
@@ -124,6 +247,8 @@ export function AuthProvider({ children }: { children: ReactNode }) {
           setUser(getStoredUser());
           setTenant(getStoredTenant());
           setMustChange(false);
+          // 改密换发的新 token 有新的 expiresAt，必须让到期定时器按新值重排。
+          setSessionEpoch((v) => v + 1);
         }
         return res;
       },
@@ -133,9 +258,11 @@ export function AuthProvider({ children }: { children: ReactNode }) {
         setUser(null);
         setTenant(null);
         setMustChange(false);
+        // 主动退出不是「过期」，登录页不该弹过期提示。
+        setExpiredReason(null);
       },
     }),
-    [authed, initializing, user, tenant, mustChange],
+    [authed, initializing, user, tenant, mustChange, expiredReason],
   );
 
   return <AuthContext.Provider value={value}>{children}</AuthContext.Provider>;
