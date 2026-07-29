@@ -55,6 +55,8 @@ public sealed class DeploymentStorageProviderContractTests
             "PRD_AGENT_ASSET_STORAGE_READINESS_INTERNAL_URL:-http://localhost:8080/health/ready?force=true",
             productionRelease);
         Assert.Contains("compose_run exec -T \"$api_service\"", productionRelease);
+        Assert.Contains("curl --fail-with-body", productionRelease);
+        Assert.Contains("readiness_last_response_json", productionRelease);
         Assert.Contains(
             "release_failure_stage=\"asset-storage-readiness\"",
             productionRelease);

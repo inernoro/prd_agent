@@ -61,6 +61,7 @@ jobs:
               - 'scripts/prd-agent-release-evidence.py'
               - 'scripts/tests/static-release-*.test.sh'
               - 'scripts/tests/public-surface-smoke.test.py'
+              - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
@@ -82,6 +83,12 @@ jobs:
 
       - name: Public surface smoke unit test
         run: python3 scripts/tests/public-surface-smoke.test.py
+
+      - name: Asset storage readiness gate
+        run: python3 scripts/tests/asset-storage-readiness-gate.test.py
+
+      - name: Release evidence ledger
+        run: python3 scripts/tests/release-evidence.test.py
 
   # 后端服务构建和测试
   server-build:

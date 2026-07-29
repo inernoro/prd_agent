@@ -72,7 +72,10 @@ public class DocumentRecordingUploadSession
 
     public DateTime UpdatedAt { get; set; } = DateTime.UtcNow;
 
-    /// <summary>未完成会话的清理时间；建议为本集合建立 TTL 索引。</summary>
+    /// <summary>
+    /// 会话最早可清理时间。待归档或待转录 outbox 会延长该时间；清理逻辑还必须
+    /// 同时检查对应 pending 标记，禁止仅按本字段建立无条件 TTL 索引。
+    /// </summary>
     public DateTime ExpiresAt { get; set; } = DateTime.UtcNow.AddDays(1);
 }
 

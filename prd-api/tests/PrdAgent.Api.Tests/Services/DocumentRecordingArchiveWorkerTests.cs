@@ -2008,13 +2008,18 @@ public sealed class DocumentRecordingArchiveWorkerTests
         (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == session.Id).SingleAsync())
             .DeferredTranscriptionRunPending.ShouldBeTrue();
 
+        var acknowledgedAfter = DateTime.UtcNow;
         (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
             fixture.Db.DocumentRecordingUploadSessions,
             DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
             session.EntryId,
             CancellationToken.None)).ShouldBeTrue();
-        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == session.Id).SingleAsync())
-            .DeferredTranscriptionRunPending.ShouldBeFalse();
+        var acknowledged = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == session.Id)
+            .SingleAsync();
+        acknowledged.DeferredTranscriptionRunPending.ShouldBeFalse();
+        acknowledged.ExpiresAt.ShouldBeGreaterThan(acknowledgedAfter.AddHours(23));
+        acknowledged.ExpiresAt.ShouldBeLessThan(acknowledgedAfter.AddHours(25));
     }
 
     [Fact]
@@ -2186,6 +2191,15 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
                 ExpiresAt = now.AddMinutes(-1),
             },
+            new DocumentRecordingUploadSession
+            {
+                Id = "expired-archived-outbox",
+                StoreId = "store-1",
+                UserId = "user-1",
+                ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+                DeferredTranscriptionRunPending = true,
+                ExpiresAt = now.AddMinutes(-1),
+            },
         };
         await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync(sessions);
         await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
@@ -2210,6 +2224,21 @@ public sealed class DocumentRecordingArchiveWorkerTests
             session => session.Id == "expired-pending")).ShouldBe(1);
         (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
             chunk => chunk.SessionId == "expired-pending")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == "expired-archived-outbox")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == "expired-archived-outbox")).ShouldBe(1);
+    }
+
+    [Fact]
+    public void DeferredTranscriptionOutbox_ShouldRetainSessionUntilAcknowledged()
+    {
+        var now = new DateTime(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
+
+        DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(now)
+            .ShouldBe(now.AddYears(10));
+        DocumentRecordingArchiveWorker.CompletedSessionExpiresAt(now)
+            .ShouldBe(now.AddDays(1));
     }
 
     [Fact]

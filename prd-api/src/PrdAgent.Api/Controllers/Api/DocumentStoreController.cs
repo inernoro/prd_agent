@@ -1626,7 +1626,8 @@ public class DocumentStoreController : ControllerBase
         var userId = GetUserId();
         var expiredBefore = DateTime.UtcNow;
         var expiredSessions = await _db.DocumentRecordingUploadSessions
-            .Find(s => s.ExpiresAt <= expiredBefore)
+            .Find(s => !s.DeferredTranscriptionRunPending
+                       && s.ExpiresAt <= expiredBefore)
             .ToListAsync(CancellationToken.None);
         var expiredSessionIds = expiredSessions.Select(s => s.Id).ToArray();
         await CleanupExpiredRecordingUploadsAsync(
@@ -1635,7 +1636,9 @@ public class DocumentStoreController : ControllerBase
                 c => ids.Contains(c.SessionId),
                 CancellationToken.None),
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
-                s => ids.Contains(s.Id),
+                s => ids.Contains(s.Id)
+                     && !s.DeferredTranscriptionRunPending
+                     && s.ExpiresAt <= expiredBefore,
                 CancellationToken.None));
         foreach (var expiredStoreGroup in expiredSessions.GroupBy(s => s.StoreId, StringComparer.Ordinal))
         {
@@ -2567,7 +2570,12 @@ public class DocumentStoreController : ControllerBase
                 .Set(s => s.ArchiveUrl, fileUrl)
                 .Set(s => s.ArchiveError, null)
                 .Unset(s => s.CompletionLeaseId)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                .Set(
+                    s => s.ExpiresAt,
+                    requiresDeferredTranscription
+                        ? DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(DateTime.UtcNow)
+                        : DocumentRecordingArchiveWorker.CompletedSessionExpiresAt(DateTime.UtcNow)),
             cancellationToken: CancellationToken.None);
         if (completed.ModifiedCount == 0)
         {

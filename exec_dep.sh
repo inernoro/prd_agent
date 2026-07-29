@@ -772,14 +772,18 @@ run_asset_storage_readiness() {
   readiness_timeout="${PRD_AGENT_ASSET_STORAGE_READINESS_TIMEOUT_SECONDS:-25}"
   readiness_attempt=1
   readiness_attempt_json="$tmp_dir/asset-storage-readiness-attempt.json"
+  readiness_last_response_json="$tmp_dir/asset-storage-readiness-last-response.json"
 
   while [ "$readiness_attempt" -le "$readiness_attempts" ]; do
     if compose_run exec -T "$api_service" \
-      curl -fsS --max-time "$readiness_timeout" "$readiness_url" \
+      curl --fail-with-body -sS --max-time "$readiness_timeout" "$readiness_url" \
       > "$readiness_attempt_json"; then
       mv "$readiness_attempt_json" "$asset_storage_readiness_json"
       echo "Asset storage readiness: PASS ($readiness_url)"
       return 0
+    fi
+    if [ -s "$readiness_attempt_json" ]; then
+      mv "$readiness_attempt_json" "$readiness_last_response_json"
     fi
     if [ "$readiness_attempt" -ge "$readiness_attempts" ]; then
       break
@@ -789,8 +793,12 @@ run_asset_storage_readiness() {
     readiness_attempt=$((readiness_attempt + 1))
   done
 
-  printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
-    "$readiness_attempts" > "$asset_storage_readiness_json"
+  if [ -s "$readiness_last_response_json" ]; then
+    mv "$readiness_last_response_json" "$asset_storage_readiness_json"
+  else
+    printf '{"status":"unhealthy","errorCode":"probe_request_failed","attempts":%s}\n' \
+      "$readiness_attempts" > "$asset_storage_readiness_json"
+  fi
   echo "ERROR: asset storage readiness failed after ${readiness_attempts} attempts: $readiness_url" >&2
   echo "RECOVERY: keep the gateway online, restore Tencent COS/CDN access or the API container, then retry the release gate." >&2
   return 1

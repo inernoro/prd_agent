@@ -230,19 +230,27 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                     deferredRun.Id);
             }
 
-            var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
-                s => s.Id == session.Id
-                     && s.OwnerInstanceId == instanceId
-                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
-                     && s.ArchiveLeaseId == archiveLeaseId,
+            var archiveCompletedAt = DateTime.UtcNow;
+            UpdateDefinition<DocumentRecordingUploadSession> archiveCompletedUpdate =
                 Builders<DocumentRecordingUploadSession>.Update
                     .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
                     .Unset(s => s.ArchiveLeaseId)
                     .Set(s => s.ArchiveUrl, stored.Url)
                     .Set(s => s.ArchiveError, null)
                     .Set(s => s.ArchiveNextAttemptAt, null)
-                    .Set(s => s.UpdatedAt, DateTime.UtcNow)
-                    .Set(s => s.ExpiresAt, DateTime.UtcNow.AddDays(1)),
+                    .Set(s => s.UpdatedAt, archiveCompletedAt);
+            if (!entryRequiresDeferredTranscription)
+            {
+                archiveCompletedUpdate = archiveCompletedUpdate.Set(
+                    s => s.ExpiresAt,
+                    CompletedSessionExpiresAt(archiveCompletedAt));
+            }
+            var completed = await db.DocumentRecordingUploadSessions.UpdateOneAsync(
+                s => s.Id == session.Id
+                     && s.OwnerInstanceId == instanceId
+                     && s.ArchiveStatus == DocumentRecordingArchiveStatus.Archiving
+                     && s.ArchiveLeaseId == archiveLeaseId,
+                archiveCompletedUpdate,
                 cancellationToken: CancellationToken.None);
             // 延迟转录可能已经开始读取 Mongo 分片。归档成功与转录读取并发时，只有
             // 不需要延迟转录，或转录已经写出正文，才可释放分片。完成会话更新后必须
@@ -567,12 +575,14 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         else
         {
             // 轮转扫描游标，避免前 25 个长任务长期占住 limit，饿死后续 outbox。
+            var pendingAt = DateTime.UtcNow;
             await sessions.UpdateOneAsync(
                 candidate => candidate.Id == session.Id
                              && candidate.EntryId == entryId
                              && candidate.DeferredTranscriptionRunPending,
                 Builders<DocumentRecordingUploadSession>.Update
-                    .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+                    .Set(candidate => candidate.UpdatedAt, pendingAt)
+                    .Set(candidate => candidate.ExpiresAt, PendingOutboxExpiresAt(pendingAt)),
                 cancellationToken: cancellationToken);
         }
         return run;
@@ -590,13 +600,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         if (string.IsNullOrWhiteSpace(sessionId))
             return false;
 
+        var acknowledgedAt = DateTime.UtcNow;
         var acknowledged = await sessions.UpdateOneAsync(
             candidate => candidate.Id == sessionId
                          && candidate.EntryId == entryId
                          && candidate.DeferredTranscriptionRunPending,
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(candidate => candidate.DeferredTranscriptionRunPending, false)
-                .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+                .Set(candidate => candidate.UpdatedAt, acknowledgedAt)
+                .Set(candidate => candidate.ExpiresAt, CompletedSessionExpiresAt(acknowledgedAt)),
             cancellationToken: cancellationToken);
         return acknowledged.ModifiedCount == 1;
     }
@@ -629,13 +641,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             {
                 // 用户已删除条目时不再制造必然失败的孤儿 run；条件更新保证不会
                 // 覆盖同一会话后来指向的新条目。
+                var discardedAt = DateTime.UtcNow;
                 await sessions.UpdateOneAsync(
                     candidate => candidate.Id == session.Id
                                  && candidate.EntryId == entryId
                                  && candidate.DeferredTranscriptionRunPending,
                     Builders<DocumentRecordingUploadSession>.Update
                         .Set(candidate => candidate.DeferredTranscriptionRunPending, false)
-                        .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+                        .Set(candidate => candidate.UpdatedAt, discardedAt)
+                        .Set(candidate => candidate.ExpiresAt, CompletedSessionExpiresAt(discardedAt)),
                     cancellationToken: cancellationToken);
                 continue;
             }
@@ -727,6 +741,7 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         var batchSize = Math.Clamp(limit, 1, 500);
         var expiredSessionIds = await sessions
             .Find(s => s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
+                       && !s.DeferredTranscriptionRunPending
                        && s.ExpiresAt <= now)
             .SortBy(s => s.ExpiresAt)
             .Limit(batchSize)
@@ -743,10 +758,17 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         await sessions.DeleteManyAsync(
             s => expiredSessionIds.Contains(s.Id)
                  && s.ArchiveStatus == DocumentRecordingArchiveStatus.Completed
+                 && !s.DeferredTranscriptionRunPending
                  && s.ExpiresAt <= now,
             cancellationToken: cancellationToken);
         return expiredSessionIds.Count;
     }
+
+    internal static DateTime PendingOutboxExpiresAt(DateTime now)
+        => now.AddYears(10);
+
+    internal static DateTime CompletedSessionExpiresAt(DateTime now)
+        => now.AddDays(1);
 
     internal static string? DeferredTranscriptionRunIdForClient(
         bool archivePending,
