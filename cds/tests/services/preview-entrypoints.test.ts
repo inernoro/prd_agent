@@ -27,24 +27,51 @@ describe('buildPublishedEntrypoints — 只声明真正会发布的入口', () =
     });
   });
 
-  it('超 63 octet 的命名子域不声明,主入口仍在', () => {
+  it('超 63 octet 时截断+摘要,长分支照样拿得到入口', () => {
     // 2026-07-29 现场分支：slug 57 + '-llmgw-web' 10 = 67 > 63。
-    // 这正是 MAP 前端自己拼域名时拼出一个 CDS 根本没发布的 host 的那条分支。
+    // 旧行为是整条路由跳过不发布，长分支的网关控制台点不开。
     const previewSlug = 'llmgw-self-service-panel-redesign-f4oeh6-claude-prd-agent';
     expect(previewSlug).toHaveLength(57);
+    expect(`${previewSlug}-llmgw-web`).toHaveLength(67);
+
+    const label = namedServiceLabel(previewSlug, 'llmgw-web');
+    expect(label.length).toBeLessThanOrEqual(63);
+    expect(isPublishableNamedLabel(label)).toBe(true);
+    // subdomain 必须逐字保留在末尾——它是「这是哪个服务」的唯一可读线索。
+    expect(label.endsWith('-llmgw-web')).toBe(true);
+
     const r = buildPublishedEntrypoints({ previewSlug, previewHost: HOST, subdomains: ['llmgw-web'] });
-    expect(namedServiceLabel(previewSlug, 'llmgw-web')).toHaveLength(67);
-    expect(r.previewUrl).toBe(`https://${previewSlug}.miduo.org`);
-    // 关键回归点：缺席必须是「表里没有」，不能退化成空串 / 猜一个截断地址。
-    expect(r.serviceUrls).toEqual({});
-    expect(r.serviceUrls['llmgw-web']).toBeUndefined();
+    expect(r.serviceUrls['llmgw-web']).toBe(`https://${label}.miduo.org`);
   });
 
-  it('恰好 63 发布、64 不发布（边界不许偏一位）', () => {
-    const sub = 'x';
-    const slug61 = 'a'.repeat(61);
-    expect(isPublishableNamedLabel(namedServiceLabel(slug61, sub))).toBe(true);
-    expect(isPublishableNamedLabel(namedServiceLabel(`${slug61}a`, sub))).toBe(false);
+  it('截断必须带摘要:前缀相同的两个长分支不许塌成同一个 host', () => {
+    const sub = 'llmgw-web';
+    const a = `${'same-prefix-'.repeat(4)}branch-alpha`;
+    const b = `${'same-prefix-'.repeat(4)}branch-beta`;
+    expect(`${a}-${sub}`.length).toBeGreaterThan(63);
+    expect(`${b}-${sub}`.length).toBeGreaterThan(63);
+    // 裸截断会让这两条塌成同一个 host、互相抢路由 —— 这正是发布器当年宁可跳过的理由。
+    expect(namedServiceLabel(a, sub)).not.toBe(namedServiceLabel(b, sub));
+  });
+
+  it('同一分支多次计算结果稳定（解析侧靠重算再比，必须确定性）', () => {
+    const slug = 'a'.repeat(60);
+    expect(namedServiceLabel(slug, 'llmgw-web')).toBe(namedServiceLabel(slug, 'llmgw-web'));
+  });
+
+  it('不超限时原样返回，不许无谓改写既有 host', () => {
+    expect(namedServiceLabel('short-slug', 'llmgw-web')).toBe('short-slug-llmgw-web');
+    // 'llmgw-web' 9 字符：53 + 1 + 9 = 63，正好压线；再多一位就必须截断。
+    const slug53 = 'a'.repeat(53);
+    expect(`${slug53}-llmgw-web`).toHaveLength(63);
+    expect(namedServiceLabel(slug53, 'llmgw-web')).toBe(`${slug53}-llmgw-web`);
+    expect(namedServiceLabel(`${slug53}a`, 'llmgw-web')).not.toBe(`${slug53}a-llmgw-web`);
+    expect(namedServiceLabel(`${slug53}a`, 'llmgw-web').length).toBeLessThanOrEqual(63);
+  });
+
+  it('subdomain 自身长到压不下来时不假装成功，交给发布判据拦下', () => {
+    const label = namedServiceLabel('slug', 'x'.repeat(80));
+    expect(isPublishableNamedLabel(label)).toBe(false);
   });
 
   it('同名 subdomain 取第一个（对齐发布端 first-wins）', () => {

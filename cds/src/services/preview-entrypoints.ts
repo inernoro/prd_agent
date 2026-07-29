@@ -21,6 +21,7 @@
  * 纯函数,不读 state、不碰 docker,可直接单测。
  */
 
+import crypto from 'node:crypto';
 import { DNS_LABEL_MAX_LENGTH } from './preview-slug.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
@@ -39,9 +40,33 @@ export interface PublishedEntrypoints {
   serviceUrls: Record<string, string>;
 }
 
-/** 命名子域的第一 DNS 标签。与 forwarder-route-publisher 的拼法一致。 */
+const LABEL_HASH_LENGTH = 8;
+
+/**
+ * 命名子域的第一 DNS 标签。**唯一拼法** —— 发布器、入口表、网关 URL 计算、
+ * 两处 SSRF 白名单全部走这里，任何一处自己拼都会与实际发布的 host 漂移。
+ *
+ * 超过 63 octet 时截断 slug 并接一段 sha1 摘要，让长分支也拿得到命名入口。
+ * 为什么必须带摘要：裸截断会丢唯一性 —— 两个前缀相同的长分支会塌成同一个 host，
+ * 互相抢路由（发布器早年因此宁可跳过不发布）。摘要取自完整 previewSlug，
+ * 所以同一分支的所有服务共享同一段 `<head>-<hash>` 前缀，肉眼可归组。
+ *
+ * 纯函数、确定性：同样的输入永远得到同样的 host，解析侧照旧「重算再比」即可。
+ */
 export function namedServiceLabel(previewSlug: string, subdomain: string): string {
-  return `${previewSlug}-${subdomain}`;
+  const label = `${previewSlug}-${subdomain}`;
+  if (label.length <= DNS_LABEL_MAX_LENGTH) return label;
+
+  const suffix = `-${subdomain}`;
+  // 预留 `-<8 位摘要>` 与 `-<subdomain>`，剩下的才是 slug 头部能占的位置。
+  const headBudget = DNS_LABEL_MAX_LENGTH - suffix.length - LABEL_HASH_LENGTH - 1;
+  // subdomain 自己就长到压不下来 —— 截无可截，原样返回让 isPublishableNamedLabel 拦下。
+  if (headBudget <= 0) return label;
+
+  const hash = crypto.createHash('sha1').update(previewSlug).digest('hex').slice(0, LABEL_HASH_LENGTH);
+  const sliced = previewSlug.slice(0, headBudget);
+  const head = sliced.replace(/-+$/g, '') || sliced;
+  return `${head}-${hash}${suffix}`;
 }
 
 /**

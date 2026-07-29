@@ -17,6 +17,7 @@ import { dnsSafeProfile } from '../services/forwarder-route-publisher.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
+import { namedServiceLabel } from '../services/preview-entrypoints.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
@@ -293,7 +294,8 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
         allowedLabels.add(previewSlug);
         for (const p of deps.stateService.getEffectiveProfilesForBranch(branchForHost)) {
           const sub = resolveEffectiveProfile(p, branchForHost).subdomain;
-          if (sub) allowedLabels.add(`${previewSlug}-${String(sub).toLowerCase()}`);
+          // 走发布器同一个拼法（含 63 上限截断+摘要），否则白名单会漏掉真实发布的 host。
+          if (sub) allowedLabels.add(namedServiceLabel(previewSlug, String(sub).toLowerCase()));
         }
         for (const [profileId, rs] of Object.entries(branchForHost.replicaSets ?? {})) {
           for (const m of rs.members) {

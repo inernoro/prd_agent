@@ -459,7 +459,9 @@ export class ForwarderRoutePublisher {
           // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
           pushRoute({
             _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
-            host: `${previewSlug}-${sub}.${root}`,
+            // 必须用 namedLabel（可能已按 63 上限截断+摘要），不能再拼一遍原始 slug ——
+            // 否则发布的 host 与入口表/白名单算出来的不是同一个。
+            host: `${namedLabel}.${root}`,
             upstreamHost: '127.0.0.1',
             upstreamPort: svc.hostPort,
             branchId: branch.id,

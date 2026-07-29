@@ -32,6 +32,7 @@ import type { StateService } from './state.js';
 import { resolveEffectiveProfile } from './container.js';
 import { dnsSafeProfile } from './forwarder-route-publisher.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
+import { namedServiceLabel } from './preview-entrypoints.js';
 
 /** 压测硬上限。改这里等于改「最多能把宿主压到什么程度」，请连同回归测试一起改。 */
 export const LOADTEST_LIMITS = {
@@ -796,7 +797,8 @@ export class ReplicaLoadTestService {
       labels.add(previewSlug);
       for (const p of this.opts.state.getEffectiveProfilesForBranch(branch)) {
         const sub = resolveEffectiveProfile(p, branch).subdomain;
-        if (sub) labels.add(`${previewSlug}-${String(sub).toLowerCase()}`);
+        // 走发布器同一个拼法（含 63 上限截断+摘要），否则白名单会漏掉真实发布的 host。
+        if (sub) labels.add(namedServiceLabel(previewSlug, String(sub).toLowerCase()));
       }
       for (const [profileId, rs] of Object.entries(branch.replicaSets ?? {})) {
         for (const m of rs.members) {
