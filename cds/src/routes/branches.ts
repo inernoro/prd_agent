@@ -72,6 +72,7 @@ import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../serv
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
+import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { installSelfUpdateEventProjector } from '../services/self-update-event-projector.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
@@ -17343,16 +17344,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           stateService.addBuildProfile(profile);
         }
 
-        // Merge envVars — never clobber user-authored vars. Since the
-        // compose belongs to this project, seed values into the project
-        // scope (so e.g. a JWT_SECRET from cds-compose.yaml doesn't leak
-        // into sibling projects). Skip when either global OR project
-        // already has the key — both are user-authored sources of truth.
+        // 密钥与运行时参数不覆盖操作员现值；provider 合同键按仓库结构种子
+        // 同步，保证合同迁移不会留下新旧值混合状态。
         const mergedExisting = stateService.getCustomEnv(projectId);
-        for (const [key, value] of Object.entries(parsed.envVars)) {
-          if (mergedExisting[key] === undefined) {
-            stateService.setCustomEnvVar(key, value, projectId);
-          }
+        for (const write of planImportedEnvSeedWrites(parsed.envVars, mergedExisting)) {
+          stateService.setCustomEnvVar(write.key, write.value, projectId);
         }
 
         // Add infra services only when this project doesn't already

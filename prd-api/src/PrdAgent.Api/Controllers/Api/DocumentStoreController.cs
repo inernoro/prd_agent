@@ -63,7 +63,9 @@ public class DocumentStoreController : ControllerBase
     private static readonly TimeSpan RecordingCompletionStaleLease = TimeSpan.FromMinutes(15);
     private static readonly TimeSpan RecordingCompletionLeaseHeartbeatInterval = TimeSpan.FromSeconds(30);
     private static readonly TimeSpan RecordingOrphanChunkGrace = TimeSpan.FromDays(2);
+    private static readonly TimeSpan RecordingCleanupStaleLease = TimeSpan.FromMinutes(10);
     private const int RecordingOrphanChunkScanLimit = 500;
+    private const int RecordingExpiredCleanupBatchSize = 500;
 
     /// <summary>访问去重窗口（分钟）：同一访客在此窗口内重复打开/刷新同一文档只算一次访问</summary>
     private const int ViewDedupWindowMinutes = 30;
@@ -1625,9 +1627,11 @@ public class DocumentStoreController : ControllerBase
     {
         var userId = GetUserId();
         var expiredBefore = DateTime.UtcNow;
-        var expiredSessions = await _db.DocumentRecordingUploadSessions
-            .Find(s => s.ExpiresAt <= expiredBefore)
-            .ToListAsync(CancellationToken.None);
+        var cleanupClaim = await ClaimExpiredRecordingUploadsAsync(
+            _db.DocumentRecordingUploadSessions,
+            expiredBefore,
+            CancellationToken.None);
+        var expiredSessions = cleanupClaim.Sessions;
         var expiredSessionIds = expiredSessions.Select(s => s.Id).ToArray();
         await CleanupExpiredRecordingUploadsAsync(
             expiredSessionIds,
@@ -1635,7 +1639,11 @@ public class DocumentStoreController : ControllerBase
                 c => ids.Contains(c.SessionId),
                 CancellationToken.None),
             ids => _db.DocumentRecordingUploadSessions.DeleteManyAsync(
-                s => ids.Contains(s.Id),
+                s => ids.Contains(s.Id)
+                     && s.CleanupLeaseId == cleanupClaim.LeaseId
+                     && s.Status == DocumentRecordingUploadStatus.Cancelled
+                     && !s.DeferredTranscriptionRunPending
+                     && s.ExpiresAt <= expiredBefore,
                 CancellationToken.None));
         foreach (var expiredStoreGroup in expiredSessions.GroupBy(s => s.StoreId, StringComparer.Ordinal))
         {
@@ -2115,10 +2123,9 @@ public class DocumentStoreController : ControllerBase
                         InstanceIdentity.Get(_config),
                         CancellationToken.None);
                 }
-                if (archivePending)
-                {
-                    await EnsurePendingRecordingTranscriptionRunAsync(session, completedEntry);
-                }
+                var deferredRun = archivePending
+                    ? await EnsurePendingRecordingTranscriptionRunAsync(session, completedEntry)
+                    : await EnsureCompletedRecordingTranscriptionRunAsync(session, completedEntry);
                 return Ok(ApiResponse<object>.Ok(new
                 {
                     entry = completedEntry,
@@ -2126,11 +2133,7 @@ public class DocumentStoreController : ControllerBase
                     reused = true,
                     archivePending,
                     audioProtected = archivePending,
-                    deferredTranscriptionRunId =
-                        DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
-                            archivePending,
-                            completedEntry,
-                            sessionId),
+                    deferredTranscriptionRunId = deferredRun?.Id,
                 }));
             }
         }
@@ -2182,10 +2185,9 @@ public class DocumentStoreController : ControllerBase
                             InstanceIdentity.Get(_config),
                             CancellationToken.None);
                     }
-                    if (archivePending)
-                    {
-                        await EnsurePendingRecordingTranscriptionRunAsync(fresh, reusedEntry);
-                    }
+                    var deferredRun = archivePending
+                        ? await EnsurePendingRecordingTranscriptionRunAsync(fresh, reusedEntry)
+                        : await EnsureCompletedRecordingTranscriptionRunAsync(fresh, reusedEntry);
                     return Ok(ApiResponse<object>.Ok(new
                     {
                         entry = reusedEntry,
@@ -2193,11 +2195,7 @@ public class DocumentStoreController : ControllerBase
                         reused = true,
                         archivePending,
                         audioProtected = archivePending,
-                        deferredTranscriptionRunId =
-                            DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdForClient(
-                                archivePending,
-                                reusedEntry,
-                                sessionId),
+                        deferredTranscriptionRunId = deferredRun?.Id,
                     }));
                 }
             }
@@ -2335,6 +2333,11 @@ public class DocumentStoreController : ControllerBase
                 fileUrl = interruptedAttachment.Url,
                 sessionId,
                 reused = true,
+                deferredTranscriptionRunId =
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        interruptedCompletedEntry)
+                        ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                        : null,
             }));
         }
 
@@ -2358,7 +2361,9 @@ public class DocumentStoreController : ControllerBase
                     userId,
                     store.Id,
                     recoveredEntry.Id,
-                    completionLeaseId))
+                    completionLeaseId,
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        recoveredEntry)))
             {
                 await CompensateStalePendingRecordingEntryAsync(
                     _db.DocumentEntries,
@@ -2421,7 +2426,9 @@ public class DocumentStoreController : ControllerBase
                     userId,
                     store.Id,
                     pendingEntry.Id,
-                    completionLeaseId))
+                    completionLeaseId,
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        pendingEntry)))
             {
                 await CompensateStalePendingRecordingEntryAsync(
                     _db.DocumentEntries,
@@ -2438,7 +2445,7 @@ public class DocumentStoreController : ControllerBase
             await EnsurePendingRecordingTranscriptionRunAsync(claimed, pendingEntry);
             _logger.LogError(
                 ex,
-                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 耐久队列 session={SessionId} entry={EntryId}",
+                "[document-store] 录音对象存储暂时不可用，已转入 Mongo 临时恢复队列；正式文件仍以对象存储为准 session={SessionId} entry={EntryId}",
                 sessionId,
                 pendingEntry.Id);
             return Ok(ApiResponse<object>.Ok(new
@@ -2500,6 +2507,10 @@ public class DocumentStoreController : ControllerBase
             fileUrl = stored.FileUrl,
             sessionId,
             reused = false,
+            deferredTranscriptionRunId =
+                DocumentRecordingArchiveWorker.RequiresDeferredTranscription(stored.Entry)
+                    ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                    : null,
         }));
     }
 
@@ -2512,6 +2523,41 @@ public class DocumentStoreController : ControllerBase
         string fileUrl,
         string completionLeaseId)
     {
+        // 在会话翻转为 completed 之前先把“必须用完整音频校准”的意图写进条目。
+        // 这样进程即使在终态 CAS 与 run 插入之间退出，completed 幂等重试仍能从
+        // 条目恢复固定 run，而不会把 degraded 的临时预览误当成最终转录。
+        var preFinalizeSession = await _db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == sessionId
+                       && s.UserId == userId
+                       && s.Status == DocumentRecordingUploadStatus.Completing
+                       && s.CompletionLeaseId == completionLeaseId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        if (preFinalizeSession == null)
+            return false;
+
+        await PersistCompletedLiveTranscriptAsync(
+            _db.DocumentEntries,
+            entry,
+            preFinalizeSession,
+            CancellationToken.None);
+        var preFinalizeEntry = await _db.DocumentEntries
+            .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == store.Id)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        var requiresDeferredTranscription = preFinalizeEntry == null
+            || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(preFinalizeEntry);
+        if (requiresDeferredTranscription)
+        {
+            var intentPersisted = await DocumentRecordingArchiveWorker
+                .PersistDeferredTranscriptionIntentAsync(
+                    _db.DocumentEntries,
+                    entry,
+                    sessionId,
+                    entryRequiresDeferredTranscription: true,
+                    CancellationToken.None);
+            if (!intentPersisted)
+                return false;
+        }
+
         // 先提交租约 CAS，再删除另一种确定性条目。旧请求若已失去租约，绝不能
         // 在 CAS 失败前删除新持有者已经提交的 pending 结果。
         var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
@@ -2522,11 +2568,19 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entry.Id)
+                .Set(
+                    s => s.DeferredTranscriptionRunPending,
+                    requiresDeferredTranscription)
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
                 .Set(s => s.ArchiveUrl, fileUrl)
                 .Set(s => s.ArchiveError, null)
                 .Unset(s => s.CompletionLeaseId)
-                .Set(s => s.UpdatedAt, DateTime.UtcNow),
+                .Set(s => s.UpdatedAt, DateTime.UtcNow)
+                .Set(
+                    s => s.ExpiresAt,
+                    requiresDeferredTranscription
+                        ? DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(DateTime.UtcNow)
+                        : DocumentRecordingArchiveWorker.CompletedSessionExpiresAt(DateTime.UtcNow)),
             cancellationToken: CancellationToken.None);
         if (completed.ModifiedCount == 0)
         {
@@ -2571,6 +2625,25 @@ public class DocumentStoreController : ControllerBase
                 _db.DocumentEntries,
                 entry,
                 finalizedSession,
+                CancellationToken.None);
+
+            // PersistCompletedLiveTranscriptAsync 直接更新 Mongo，不会回写当前 entry 实例。
+            // 必须重读后再判断，否则完整实时原文也会被旧对象误判为需要批量校准。
+            var finalizedEntry = await _db.DocumentEntries
+                .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == store.Id)
+                .FirstOrDefaultAsync(CancellationToken.None);
+
+            // 对象存储成功不等于实时原文成功。原生流式供应商不可用时，浏览器会收到
+            // degraded 并承诺使用完整音频自动校准；该承诺必须由服务端终态兜底，不能
+            // 依赖前端随后打开抽屉再发起转录，否则页面关闭会留下只有局部预览的录音。
+            await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                _db.DocumentRecordingUploadSessions,
+                _db.DocumentStoreAgentRuns,
+                finalizedSession,
+                entry.Id,
+                InstanceIdentity.Get(_config),
+                finalizedEntry == null
+                    || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry),
                 CancellationToken.None);
         }
 
@@ -2668,8 +2741,11 @@ public class DocumentStoreController : ControllerBase
         var contentIndex = transcript.Length > 2000 ? transcript[..2000] : transcript;
         var now = DateTime.UtcNow;
         entry.Metadata = metadata;
-        entry.Summary = summary;
-        entry.ContentIndex = contentIndex;
+        if (entry.DocumentId == null)
+        {
+            entry.Summary = summary;
+            entry.ContentIndex = contentIndex;
+        }
         entry.LastChangedAt = now;
         var updates = new List<UpdateDefinition<DocumentEntry>>
         {
@@ -2679,8 +2755,6 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscriptStatus"],
                 DocumentLiveTranscriptStatus.Completed),
-            Builders<DocumentEntry>.Update.Set(e => e.Summary, summary),
-            Builders<DocumentEntry>.Update.Set(e => e.ContentIndex, contentIndex),
             Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now),
         };
         if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
@@ -2696,13 +2770,21 @@ public class DocumentStoreController : ControllerBase
                 session.LiveTranscriptModel));
         }
 
-        // 只更新实时原文相关字段，避免晚到中继用旧 entry 快照覆盖归档状态、
-        // 延迟转写意图或其他并发写入的 Metadata。
-        var persisted = await entries.UpdateOneAsync(
+        // 实时原文 metadata 始终保留用于诊断，但它只是预览。完整音频 ASR 已通过
+        // SaveContentAsync 写入 DocumentId 时，后到的中继或幂等 /complete 不能把
+        // Summary/ContentIndex 降级回局部实时文本。第二个条件更新以数据库当前
+        // DocumentId 为空作为原子闸门，覆盖“读旧快照后批量转录刚完成”的竞态。
+        var metadataPersisted = await entries.UpdateOneAsync(
             e => e.Id == entry.Id,
             Builders<DocumentEntry>.Update.Combine(updates),
             cancellationToken: cancellationToken);
-        return persisted.ModifiedCount == 1;
+        var previewPersisted = await entries.UpdateOneAsync(
+            e => e.Id == entry.Id && e.DocumentId == null,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.Summary, summary)
+                .Set(e => e.ContentIndex, contentIndex),
+            cancellationToken: cancellationToken);
+        return metadataPersisted.ModifiedCount == 1 || previewPersisted.ModifiedCount == 1;
     }
 
     /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>
@@ -2915,7 +2997,8 @@ public class DocumentStoreController : ControllerBase
         string userId,
         string storeId,
         string entryId,
-        string completionLeaseId)
+        string completionLeaseId,
+        bool requiresDeferredTranscription)
     {
         var pending = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId
@@ -2925,6 +3008,9 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entryId)
+                .Set(
+                    s => s.DeferredTranscriptionRunPending,
+                    requiresDeferredTranscription)
                 .Set(s => s.OwnerInstanceId, InstanceIdentity.Get(_config))
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
                 .Unset(s => s.ArchiveLeaseId)
@@ -2947,16 +3033,42 @@ public class DocumentStoreController : ControllerBase
         return true;
     }
 
-    private async Task EnsurePendingRecordingTranscriptionRunAsync(
+    private async Task<DocumentStoreAgentRun?> EnsurePendingRecordingTranscriptionRunAsync(
         DocumentRecordingUploadSession session,
         DocumentEntry entry)
     {
-        await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        return await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+            _db.DocumentRecordingUploadSessions,
             _db.DocumentStoreAgentRuns,
             session,
             entry.Id,
             InstanceIdentity.Get(_config),
             DocumentRecordingArchiveWorker.RequiresDeferredTranscription(entry),
+            CancellationToken.None);
+    }
+
+    private async Task<DocumentStoreAgentRun?> EnsureCompletedRecordingTranscriptionRunAsync(
+        DocumentRecordingUploadSession session,
+        DocumentEntry entry)
+    {
+        // completed 是可重入终态。首次请求若在终态 CAS 后、run 插入前中断，
+        // 后续自动重试必须在这里补写晚到原文并重建同一个确定性转录任务。
+        await PersistCompletedLiveTranscriptAsync(
+            _db.DocumentEntries,
+            entry,
+            session,
+            CancellationToken.None);
+        var latestEntry = await _db.DocumentEntries
+            .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == entry.StoreId)
+            .FirstOrDefaultAsync(CancellationToken.None);
+        return await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+            _db.DocumentRecordingUploadSessions,
+            _db.DocumentStoreAgentRuns,
+            session,
+            entry.Id,
+            InstanceIdentity.Get(_config),
+            latestEntry == null
+                || DocumentRecordingArchiveWorker.RequiresDeferredTranscription(latestEntry),
             CancellationToken.None);
     }
 
@@ -3168,6 +3280,69 @@ public class DocumentStoreController : ControllerBase
         // 反过来先删会话，一旦进程中断，分片将失去可恢复的 session 索引。
         await deleteChunks(expiredSessionIds);
         await deleteSessions(expiredSessionIds);
+    }
+
+    internal static async Task<(string LeaseId, IReadOnlyList<DocumentRecordingUploadSession> Sessions)>
+        ClaimExpiredRecordingUploadsAsync(
+            IMongoCollection<DocumentRecordingUploadSession> sessions,
+            DateTime now,
+            CancellationToken cancellationToken,
+            int limit = RecordingExpiredCleanupBatchSize)
+    {
+        var staleBefore = now - RecordingCleanupStaleLease;
+        var claimableStatus = Builders<DocumentRecordingUploadSession>.Filter.Or(
+            Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                session => session.Status,
+                DocumentRecordingUploadStatus.Uploading),
+            Builders<DocumentRecordingUploadSession>.Filter.And(
+                Builders<DocumentRecordingUploadSession>.Filter.Eq(
+                    session => session.Status,
+                    DocumentRecordingUploadStatus.Cancelled),
+                Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                    session => session.CleanupLeaseId,
+                    null),
+                Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                    session => session.UpdatedAt,
+                    staleBefore)));
+        var eligible = Builders<DocumentRecordingUploadSession>.Filter.And(
+            claimableStatus,
+            Builders<DocumentRecordingUploadSession>.Filter.Ne(
+                session => session.DeferredTranscriptionRunPending,
+                true),
+            Builders<DocumentRecordingUploadSession>.Filter.Lte(
+                session => session.ExpiresAt,
+                now));
+        var candidateIds = await sessions
+            .Find(eligible)
+            .SortBy(session => session.ExpiresAt)
+            .Limit(Math.Clamp(limit, 1, RecordingExpiredCleanupBatchSize))
+            .Project(session => session.Id)
+            .ToListAsync(cancellationToken);
+        if (candidateIds.Count == 0)
+            return (string.Empty, Array.Empty<DocumentRecordingUploadSession>());
+
+        var leaseId = Guid.NewGuid().ToString("N");
+        var claimedAt = DateTime.UtcNow;
+        var claimFilter = Builders<DocumentRecordingUploadSession>.Filter.And(
+            eligible,
+            Builders<DocumentRecordingUploadSession>.Filter.In(
+                session => session.Id,
+                candidateIds));
+        await sessions.UpdateManyAsync(
+            claimFilter,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(session => session.Status, DocumentRecordingUploadStatus.Cancelled)
+                .Set(session => session.CleanupLeaseId, leaseId)
+                .Set(session => session.UpdatedAt, claimedAt),
+            cancellationToken: cancellationToken);
+        var claimed = await sessions
+            .Find(session => candidateIds.Contains(session.Id)
+                             && session.CleanupLeaseId == leaseId
+                             && session.Status == DocumentRecordingUploadStatus.Cancelled
+                             && !session.DeferredTranscriptionRunPending
+                             && session.ExpiresAt <= now)
+            .ToListAsync(cancellationToken);
+        return (leaseId, claimed);
     }
 
     internal static IReadOnlyCollection<string> FindOrphanedRecordingSessionIds(

@@ -37,9 +37,10 @@ public class LocalAssetStorage : IAssetStorage
             await File.WriteAllBytesAsync(filePath, bytes, ct);
         }
 
-        // 本地存储：仍通过 image-master 文件读取接口读取（兼容旧前端/旧 URL）。
-        // 注意：该接口按 sha 查找，不包含 domain/type；因此本地模式只建议用于单机开发调试。
-        var url = $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
+        // 本地存储统一返回精确相对键，由 /local-assets 静态路由读取。
+        // 不能复用 image-master 的按 SHA 路由：它只扫描少数图片域，文档、音频等
+        // 其他 domain/type 会保存成功但读取 404。
+        var url = BuildUrlForPath(filePath);
         return new StoredAsset(sha, url, bytes.LongLength, safeMime);
     }
 
@@ -135,27 +136,43 @@ public class LocalAssetStorage : IAssetStorage
     {
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha) || sha.Length < 16) return null;
+        if (!IsHex(sha)) return null;
+
+        var dir = ResolveDir(domain, type);
         var ext = MimeToExt(mime ?? "image/png");
-        return $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
+        if (Directory.Exists(dir))
+        {
+            try
+            {
+                var existing = Directory.GetFiles(dir, $"{sha}.*").FirstOrDefault();
+                if (existing != null) return BuildUrlForPath(existing);
+            }
+            catch
+            {
+                // 文件系统瞬时不可读时仍返回可预测 URL，调用方可按原有方式处理 404。
+            }
+        }
+
+        return BuildUrlForPath(Path.Combine(dir, $"{sha}.{ext}"));
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         if (!File.Exists(filePath)) return null;
         return await File.ReadAllBytesAsync(filePath, ct);
     }
 
     public Task<bool> ExistsAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, (key ?? string.Empty).Trim().Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         return Task.FromResult(File.Exists(filePath));
     }
 
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         // 本地存储无对象级 Cache-Control 概念，cacheControl 仅在 COS/R2 生效，这里忽略。
-        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         var dir = Path.GetDirectoryName(filePath);
         if (dir != null) Directory.CreateDirectory(dir);
         await File.WriteAllBytesAsync(filePath, bytes, ct);
@@ -163,12 +180,23 @@ public class LocalAssetStorage : IAssetStorage
 
     public string BuildUrlForKey(string key)
     {
-        return $"/local-assets/{key}";
+        var normalized = NormalizeKey(key);
+        var escaped = string.Join('/', normalized
+            .Split('/', StringSplitOptions.RemoveEmptyEntries)
+            .Select(Uri.EscapeDataString));
+        return $"/local-assets/{escaped}";
+    }
+
+    private string BuildUrlForPath(string filePath)
+    {
+        var relativePath = Path.GetRelativePath(_baseDir, filePath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        return BuildUrlForKey(relativePath);
     }
 
     public Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
-        var filePath = Path.Combine(_baseDir, key.Replace('/', Path.DirectorySeparatorChar));
+        var filePath = ResolveKeyPath(key);
         if (File.Exists(filePath)) File.Delete(filePath);
         return Task.CompletedTask;
     }
@@ -176,6 +204,32 @@ public class LocalAssetStorage : IAssetStorage
     public string BuildSiteKey(string siteId, string filePath)
     {
         return $"web-hosting/sites/{siteId}/{filePath.TrimStart('/')}";
+    }
+
+    private string ResolveKeyPath(string key)
+    {
+        var normalized = NormalizeKey(key);
+        var fullPath = Path.GetFullPath(Path.Combine(
+            _baseDir,
+            normalized.Replace('/', Path.DirectorySeparatorChar)));
+        var basePath = Path.GetFullPath(_baseDir)
+            .TrimEnd(Path.DirectorySeparatorChar, Path.AltDirectorySeparatorChar)
+            + Path.DirectorySeparatorChar;
+        if (!fullPath.StartsWith(basePath, StringComparison.Ordinal))
+            throw new ArgumentException("asset key escapes local storage root", nameof(key));
+        return fullPath;
+    }
+
+    private static string NormalizeKey(string key)
+    {
+        var normalized = (key ?? string.Empty).Trim().Replace('\\', '/');
+        if (string.IsNullOrWhiteSpace(normalized)
+            || normalized.StartsWith("/", StringComparison.Ordinal)
+            || normalized.Split('/').Any(segment => segment is "" or "." or ".."))
+        {
+            throw new ArgumentException("asset key invalid", nameof(key));
+        }
+        return normalized;
     }
 
     private static string Sha256Hex(byte[] bytes)
@@ -325,4 +379,3 @@ public class LocalAssetStorage : IAssetStorage
         };
     }
 }
-
