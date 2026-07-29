@@ -1,4 +1,5 @@
 using PrdAgent.Core.Models;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 
 namespace PrdAgent.Api.Services;
 
@@ -110,15 +111,10 @@ public static class AvatarUrlBuilder
     /// </summary>
     public static string? ResolvePublicBaseUrl(IConfiguration cfg)
     {
-        var provider = (cfg["ASSETS_PROVIDER"] ?? string.Empty).Trim();
+        var provider = AssetStorageProviderResolver.ResolveProviderName(cfg);
         if (string.Equals(provider, "local", StringComparison.OrdinalIgnoreCase))
             return "/local-assets";
 
-        var raw = string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase)
-            ? (cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
-            : string.Equals(provider, "tencentCos", StringComparison.OrdinalIgnoreCase)
-                ? (cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
-                : string.Empty;
-        return string.IsNullOrWhiteSpace(raw) ? null : raw;
+        return AssetStorageProviderResolver.ResolveCloudPublicBaseUrl(cfg);
     }
 }

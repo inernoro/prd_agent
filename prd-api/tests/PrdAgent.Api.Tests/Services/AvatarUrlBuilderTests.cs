@@ -1,5 +1,6 @@
 using Microsoft.Extensions.Configuration;
 using PrdAgent.Api.Services;
+using PrdAgent.Infrastructure.Services.AssetStorage;
 using Shouldly;
 using Xunit;
 
@@ -38,6 +39,60 @@ public sealed class AvatarUrlBuilderTests
 
         AvatarUrlBuilder.Build(configuration, "avatar.webp")
             .ShouldBe($"{baseUrl.TrimEnd('/')}/icon/backups/head/avatar.webp");
+    }
+
+    [Fact]
+    public void Build_AutoProviderWithR2Credentials_ShouldUseR2BaseUrl()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["ASSETS_PROVIDER"] = "auto",
+            ["R2_ACCOUNT_ID"] = "account",
+            ["R2_ACCESS_KEY_ID"] = "access-key",
+            ["R2_SECRET_ACCESS_KEY"] = "secret-key",
+            ["R2_BUCKET"] = "bucket",
+            ["R2_PUBLIC_BASE_URL"] = "https://r2.example.test",
+            ["TENCENT_COS_PUBLIC_BASE_URL"] = "https://cos.example.test",
+        });
+
+        AssetStorageProviderResolver.ResolveProviderName(configuration)
+            .ShouldBe(AssetStorageProviderResolver.CloudflareR2);
+        AvatarUrlBuilder.Build(configuration, "avatar.png")
+            .ShouldBe("https://r2.example.test/icon/backups/head/avatar.png");
+    }
+
+    [Fact]
+    public void Build_UnsetProviderWithTencentCredentials_ShouldUseTencentBaseUrl()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["TENCENT_COS_BUCKET"] = "bucket",
+            ["TENCENT_COS_REGION"] = "ap-test",
+            ["TENCENT_COS_SECRET_ID"] = "secret-id",
+            ["TENCENT_COS_SECRET_KEY"] = "secret-key",
+            ["TENCENT_COS_PUBLIC_BASE_URL"] = "https://cos.example.test",
+            ["R2_PUBLIC_BASE_URL"] = "https://r2.example.test",
+        });
+
+        AssetStorageProviderResolver.ResolveProviderName(configuration)
+            .ShouldBe(AssetStorageProviderResolver.TencentCos);
+        AvatarUrlBuilder.Build(configuration, "avatar.png")
+            .ShouldBe("https://cos.example.test/icon/backups/head/avatar.png");
+    }
+
+    [Fact]
+    public void Build_UnsetProviderWithoutCloudCredentials_ShouldUseLocalBaseUrl()
+    {
+        var configuration = BuildConfiguration(new Dictionary<string, string?>
+        {
+            ["R2_PUBLIC_BASE_URL"] = "https://r2.example.test",
+            ["TENCENT_COS_PUBLIC_BASE_URL"] = "https://cos.example.test",
+        });
+
+        AssetStorageProviderResolver.ResolveProviderName(configuration)
+            .ShouldBe(AssetStorageProviderResolver.Local);
+        AvatarUrlBuilder.Build(configuration, "avatar.png")
+            .ShouldBe("/local-assets/icon/backups/head/avatar.png");
     }
 
     [Fact]

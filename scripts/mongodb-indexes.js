@@ -1281,6 +1281,34 @@ db.home_recent_opens.createIndex(
   { name: "uniq_home_recent_opens_user_entity", unique: true }
 )
 
+// collection: document_recording_upload_sessions
+// 每轮 Worker 先恢复已完成会话的转录 outbox；partial index 只保留真正待恢复的小集合。
+db.document_recording_upload_sessions.createIndex(
+  { "OwnerInstanceId": 1, "Status": 1, "UpdatedAt": 1 },
+  {
+    name: "idx_recording_sessions_deferred_outbox",
+    partialFilterExpression: { "DeferredTranscriptionRunPending": true }
+  }
+)
+
+// 对象存储恢复队列按实例、归档状态和下次执行时间认领。
+db.document_recording_upload_sessions.createIndex(
+  { "OwnerInstanceId": 1, "ArchiveStatus": 1, "ArchiveNextAttemptAt": 1 },
+  { name: "idx_recording_sessions_archive_claim" }
+)
+
+// 已归档会话清理按状态和过期时间分批扫描。
+db.document_recording_upload_sessions.createIndex(
+  { "ArchiveStatus": 1, "ExpiresAt": 1 },
+  { name: "idx_recording_sessions_archive_expiry" }
+)
+
+// 录音分片拼接、转录读取和清理均按会话过滤并按 Index 排序。
+db.document_recording_upload_chunks.createIndex(
+  { "SessionId": 1, "Index": 1 },
+  { name: "idx_recording_chunks_session_index" }
+)
+
 if (tightenedUniqueIndexMigrationFailures.length > 0) {
   throw new Error(
     `Tightened unique index migrations require attention:\n${tightenedUniqueIndexMigrationFailures.join("\n")}`

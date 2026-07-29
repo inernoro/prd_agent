@@ -2348,7 +2348,9 @@ public class DocumentStoreController : ControllerBase
                     userId,
                     store.Id,
                     recoveredEntry.Id,
-                    completionLeaseId))
+                    completionLeaseId,
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        recoveredEntry)))
             {
                 await CompensateStalePendingRecordingEntryAsync(
                     _db.DocumentEntries,
@@ -2411,7 +2413,9 @@ public class DocumentStoreController : ControllerBase
                     userId,
                     store.Id,
                     pendingEntry.Id,
-                    completionLeaseId))
+                    completionLeaseId,
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        pendingEntry)))
             {
                 await CompensateStalePendingRecordingEntryAsync(
                     _db.DocumentEntries,
@@ -2551,6 +2555,9 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entry.Id)
+                .Set(
+                    s => s.DeferredTranscriptionRunPending,
+                    requiresDeferredTranscription)
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Completed)
                 .Set(s => s.ArchiveUrl, fileUrl)
                 .Set(s => s.ArchiveError, null)
@@ -2611,7 +2618,8 @@ public class DocumentStoreController : ControllerBase
             // 对象存储成功不等于实时原文成功。原生流式供应商不可用时，浏览器会收到
             // degraded 并承诺使用完整音频自动校准；该承诺必须由服务端终态兜底，不能
             // 依赖前端随后打开抽屉再发起转录，否则页面关闭会留下只有局部预览的录音。
-            await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+            await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                _db.DocumentRecordingUploadSessions,
                 _db.DocumentStoreAgentRuns,
                 finalizedSession,
                 entry.Id,
@@ -2962,7 +2970,8 @@ public class DocumentStoreController : ControllerBase
         string userId,
         string storeId,
         string entryId,
-        string completionLeaseId)
+        string completionLeaseId,
+        bool requiresDeferredTranscription)
     {
         var pending = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(
             s => s.Id == sessionId
@@ -2972,6 +2981,9 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentRecordingUploadSession>.Update
                 .Set(s => s.Status, DocumentRecordingUploadStatus.Completed)
                 .Set(s => s.EntryId, entryId)
+                .Set(
+                    s => s.DeferredTranscriptionRunPending,
+                    requiresDeferredTranscription)
                 .Set(s => s.OwnerInstanceId, InstanceIdentity.Get(_config))
                 .Set(s => s.ArchiveStatus, DocumentRecordingArchiveStatus.Pending)
                 .Unset(s => s.ArchiveLeaseId)
@@ -2998,7 +3010,8 @@ public class DocumentStoreController : ControllerBase
         DocumentRecordingUploadSession session,
         DocumentEntry entry)
     {
-        return await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        return await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+            _db.DocumentRecordingUploadSessions,
             _db.DocumentStoreAgentRuns,
             session,
             entry.Id,
@@ -3021,7 +3034,8 @@ public class DocumentStoreController : ControllerBase
         var latestEntry = await _db.DocumentEntries
             .Find(candidate => candidate.Id == entry.Id && candidate.StoreId == entry.StoreId)
             .FirstOrDefaultAsync(CancellationToken.None);
-        return await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        return await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+            _db.DocumentRecordingUploadSessions,
             _db.DocumentStoreAgentRuns,
             session,
             entry.Id,

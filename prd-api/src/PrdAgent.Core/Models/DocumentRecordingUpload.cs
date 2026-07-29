@@ -30,6 +30,12 @@ public class DocumentRecordingUploadSession
 
     public string? EntryId { get; set; }
 
+    /// <summary>
+    /// 持久化的转录任务 outbox。会话进入完成态时与终态原子写入；后台 Worker
+    /// 创建或确认固定 ID 的转录任务后清除，覆盖进程在两次集合写入之间退出的窗口。
+    /// </summary>
+    public bool DeferredTranscriptionRunPending { get; set; }
+
     /// <summary>正式对象存储归档状态。R2/COS 不可用时为 pending，Mongo 分片继续保留。</summary>
     public string ArchiveStatus { get; set; } = DocumentRecordingArchiveStatus.None;
 

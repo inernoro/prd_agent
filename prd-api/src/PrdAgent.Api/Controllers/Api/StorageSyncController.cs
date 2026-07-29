@@ -92,7 +92,7 @@ public class StorageSyncController : ControllerBase
         }
 
         var dryRun = request.DryRun;
-        var provider = (_cfg["ASSETS_PROVIDER"] ?? "local").Trim();
+        var provider = AssetStorageProviderResolver.ResolveProviderName(_cfg);
         var http = _httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromSeconds(30);
 
@@ -192,7 +192,7 @@ public class StorageSyncController : ControllerBase
             return BadRequest(ApiResponse<object>.Fail("INVALID_FORMAT", ex.Message));
         }
 
-        var provider = (_cfg["ASSETS_PROVIDER"] ?? "local").Trim();
+        var provider = AssetStorageProviderResolver.ResolveProviderName(_cfg);
         var http = _httpFactory.CreateClient("SafeOutbound");
         http.Timeout = TimeSpan.FromSeconds(30);
 

@@ -1551,7 +1551,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
             StringComparison.Ordinal);
         var queueIndex = method.IndexOf(
-            "await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(",
+            "await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(",
             StringComparison.Ordinal);
         var rereadIndex = method.IndexOf(
             "var finalizedEntry = await _db.DocumentEntries",
@@ -1561,8 +1561,36 @@ public sealed class DocumentRecordingArchiveWorkerTests
         terminalIndex.ShouldBeGreaterThan(intentIndex);
         rereadIndex.ShouldBeGreaterThan(terminalIndex);
         queueIndex.ShouldBeGreaterThan(rereadIndex);
+        method.ShouldContain("s => s.DeferredTranscriptionRunPending");
         method.ShouldContain(
             "DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry)");
+    }
+
+    [Fact]
+    public void ArchiveWorker_ShouldRecoverTranscriptionOutboxBeforeStorageArchive()
+    {
+        var source = File.ReadAllText(DocumentRecordingArchiveWorkerPath());
+        var recoverIndex = source.IndexOf(
+            "await RecoverDeferredTranscriptionRunsAsync(",
+            StringComparison.Ordinal);
+        var archiveClaimIndex = source.IndexOf(
+            "await ClaimOwnedArchiveSessionAsync(",
+            recoverIndex,
+            StringComparison.Ordinal);
+
+        recoverIndex.ShouldBeGreaterThanOrEqualTo(0);
+        archiveClaimIndex.ShouldBeGreaterThan(recoverIndex);
+    }
+
+    [Fact]
+    public void RecordingWorkerQueries_ShouldHaveExecutableIndexCatalogCoverage()
+    {
+        var catalog = File.ReadAllText(MongoDbIndexCatalogPath());
+
+        catalog.ShouldContain("idx_recording_sessions_deferred_outbox");
+        catalog.ShouldContain("idx_recording_sessions_archive_claim");
+        catalog.ShouldContain("idx_recording_sessions_archive_expiry");
+        catalog.ShouldContain("idx_recording_chunks_session_index");
     }
 
     [Fact]
@@ -1585,8 +1613,11 @@ public sealed class DocumentRecordingArchiveWorkerTests
         completeBlock.ShouldContain("deferredTranscriptionRunId = deferredRun?.Id");
     }
 
-    [Fact]
-    public async Task PersistedDeferredIntent_ShouldSurviveTerminalGapAndRecreateRun()
+    [Theory]
+    [InlineData(DocumentRecordingArchiveStatus.Completed)]
+    [InlineData(DocumentRecordingArchiveStatus.Pending)]
+    public async Task PersistedOutbox_ShouldRecoverRunWithoutClientRetry(
+        string archiveStatus)
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
         var entry = new DocumentEntry
@@ -1594,7 +1625,12 @@ public sealed class DocumentRecordingArchiveWorkerTests
             Id = "entry-terminal-gap",
             StoreId = "store-1",
             Title = "recording.m4a",
-            Metadata = new Dictionary<string, string>(),
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdMetadataKey] =
+                    "recording-archive-transcribe-session-terminal-gap",
+            },
         };
         await fixture.Db.DocumentEntries.InsertOneAsync(entry);
         var session = new DocumentRecordingUploadSession
@@ -1602,34 +1638,57 @@ public sealed class DocumentRecordingArchiveWorkerTests
             Id = "session-terminal-gap",
             StoreId = "store-1",
             UserId = "user-1",
+            OwnerInstanceId = "instance-1",
             Status = DocumentRecordingUploadStatus.Completed,
-            ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+            ArchiveStatus = archiveStatus,
             LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
             EntryId = entry.Id,
+            DeferredTranscriptionRunPending = true,
         };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
 
-        (await DocumentRecordingArchiveWorker.PersistDeferredTranscriptionIntentAsync(
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
                 fixture.Db.DocumentEntries,
-                entry,
-                session.Id,
-                entryRequiresDeferredTranscription: true,
+                fixture.Db.DocumentStoreAgentRuns,
+                "other-instance",
                 CancellationToken.None))
-            .ShouldBeTrue();
+            .ShouldBe(0);
         (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
 
-        var recoveredEntry = await fixture.Db.DocumentEntries
-            .Find(candidate => candidate.Id == entry.Id)
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+
+        var run = await fixture.Db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id ==
+                "recording-archive-transcribe-session-terminal-gap")
             .SingleAsync();
-        var run = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
-            fixture.Db.DocumentStoreAgentRuns,
-            session,
-            entry.Id,
-            "instance-1",
-            DocumentRecordingArchiveWorker.RequiresDeferredTranscription(recoveredEntry),
-            CancellationToken.None);
-
         run.ShouldNotBeNull();
-        run!.Id.ShouldBe("recording-archive-transcribe-session-terminal-gap");
+        run.Id.ShouldBe("recording-archive-transcribe-session-terminal-gap");
+        run.SourceEntryId.ShouldBe(entry.Id);
+        run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeFalse();
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(0);
         (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
     }
 
@@ -2061,5 +2120,39 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         throw new DirectoryNotFoundException(
             "Could not locate DocumentStoreController.cs from test base directory.");
+    }
+
+    private static string DocumentRecordingArchiveWorkerPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(
+                dir.FullName,
+                "prd-api",
+                "src",
+                "PrdAgent.Api",
+                "Services",
+                "DocumentRecordingArchiveWorker.cs");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate DocumentRecordingArchiveWorker.cs from test base directory.");
+    }
+
+    private static string MongoDbIndexCatalogPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(dir.FullName, "scripts", "mongodb-indexes.js");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate scripts/mongodb-indexes.js from test base directory.");
     }
 }

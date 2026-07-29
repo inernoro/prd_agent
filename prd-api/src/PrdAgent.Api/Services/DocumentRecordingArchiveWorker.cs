@@ -93,6 +93,22 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             }
         }
 
+        // 转录 outbox 必须独立于对象存储归档处理。即使进程在“会话终态提交”与
+        // “run 插入”之间退出，或者 R2/COS 仍不可用，下一轮也会先从 Mongo 分片
+        // 恢复固定 ID 的完整音频转录任务，不依赖浏览器再次调用 /complete。
+        var recoveredRuns = await RecoverDeferredTranscriptionRunsAsync(
+            db.DocumentRecordingUploadSessions,
+            db.DocumentEntries,
+            db.DocumentStoreAgentRuns,
+            instanceId,
+            CancellationToken.None);
+        if (recoveredRuns > 0)
+        {
+            _logger.LogInformation(
+                "[recording-archive] Recovered {Count} deferred transcription run(s)",
+                recoveredRuns);
+        }
+
         var archiveLeaseId = Guid.NewGuid().ToString("N");
         var session = await ClaimOwnedArchiveSessionAsync(
             db.DocumentRecordingUploadSessions,
@@ -194,7 +210,8 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
                 entryRequiresDeferredTranscription,
                 CancellationToken.None);
 
-            var deferredRun = await EnsureDeferredTranscriptionRunAsync(
+            var deferredRun = await EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                db.DocumentRecordingUploadSessions,
                 db.DocumentStoreAgentRuns,
                 latestSession,
                 entry.Id,
@@ -448,6 +465,92 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             return requeued
                    ?? await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
         }
+    }
+
+    internal static async Task<DocumentStoreAgentRun?> EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentRecordingUploadSession session,
+        string entryId,
+        string ownerInstanceId,
+        bool entryRequiresDeferredTranscription,
+        CancellationToken cancellationToken)
+    {
+        var run = await EnsureDeferredTranscriptionRunAsync(
+            runs,
+            session,
+            entryId,
+            ownerInstanceId,
+            entryRequiresDeferredTranscription,
+            cancellationToken);
+        if (run == null)
+            return null;
+
+        // 只有固定 ID 的 run 已成功插入或已存在后才能确认 outbox。若进程在确认前
+        // 退出，下一轮会幂等命中同一 run；绝不能先清标记再创建任务。
+        await sessions.UpdateOneAsync(
+            candidate => candidate.Id == session.Id
+                         && candidate.EntryId == entryId
+                         && candidate.DeferredTranscriptionRunPending,
+            Builders<DocumentRecordingUploadSession>.Update
+                .Set(candidate => candidate.DeferredTranscriptionRunPending, false)
+                .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+            cancellationToken: cancellationToken);
+        return run;
+    }
+
+    internal static async Task<int> RecoverDeferredTranscriptionRunsAsync(
+        IMongoCollection<DocumentRecordingUploadSession> sessions,
+        IMongoCollection<DocumentEntry> entries,
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        string ownerInstanceId,
+        CancellationToken cancellationToken,
+        int limit = 25)
+    {
+        var candidates = await sessions
+            .Find(session => session.OwnerInstanceId == ownerInstanceId
+                             && session.Status == DocumentRecordingUploadStatus.Completed
+                             && session.DeferredTranscriptionRunPending
+                             && session.EntryId != null
+                             && session.EntryId != string.Empty)
+            .SortBy(session => session.UpdatedAt)
+            .Limit(Math.Clamp(limit, 1, 100))
+            .ToListAsync(cancellationToken);
+        var recovered = 0;
+        foreach (var session in candidates)
+        {
+            var entryId = session.EntryId!;
+            var entryExists = await entries
+                .Find(entry => entry.Id == entryId && entry.StoreId == session.StoreId)
+                .AnyAsync(cancellationToken);
+            if (!entryExists)
+            {
+                // 用户已删除条目时不再制造必然失败的孤儿 run；条件更新保证不会
+                // 覆盖同一会话后来指向的新条目。
+                await sessions.UpdateOneAsync(
+                    candidate => candidate.Id == session.Id
+                                 && candidate.EntryId == entryId
+                                 && candidate.DeferredTranscriptionRunPending,
+                    Builders<DocumentRecordingUploadSession>.Update
+                        .Set(candidate => candidate.DeferredTranscriptionRunPending, false)
+                        .Set(candidate => candidate.UpdatedAt, DateTime.UtcNow),
+                    cancellationToken: cancellationToken);
+                continue;
+            }
+
+            var run = await EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                sessions,
+                runs,
+                session,
+                entryId,
+                ownerInstanceId,
+                entryRequiresDeferredTranscription: true,
+                cancellationToken);
+            if (run != null)
+                recovered++;
+        }
+
+        return recovered;
     }
 
     internal static async Task<bool> PersistDeferredTranscriptionIntentAsync(
