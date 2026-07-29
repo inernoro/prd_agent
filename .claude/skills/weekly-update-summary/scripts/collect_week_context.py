@@ -305,34 +305,88 @@ def collect_defects(base, H, start, end):
 # （cds/src/routes/branches.ts 的 version-create），分支预览也算在内——拿它当
 # 「线上发布次数」会把预览部署充成正式发布，把数字吹大好几倍。正式发布的唯一台账
 # 是 /api/releases/runs。
+#
+# 状态口径抄 CDS 的 SSOT（cds/src/services/release-retention.ts）：
+#   终态 = success / failed / rollback_success / rollback_failed
+#   在途 = queued / running / healthchecking / rollback_running
+# 在途 run 必须排除出成功率分母，否则会出现「1 次尝试 / 0 成功 / 0 失败 / 0%」这种自相矛盾。
+# rollback_* 单独报：CDS 把 rollback_success 计为「run 成功」，但对业务读者，
+# 「发上去又回滚了」不能算一次成功发布，混进成功数会掩盖线上事故。
+RELEASE_TERMINAL = {"success", "failed", "rollback_success", "rollback_failed"}
+
+
+def _resolve_project_id(project):
+    """
+    把 --project 传进来的 slug 解析成 CDS 规范 projectId。
+
+    发布 run 里存的是 projectId；若调用方给的是 slug（如 mdimp -> defd4695ab5f），
+    直接按字符串比对会把本项目所有 run 全过滤掉，然后以 available=true + 0 条的
+    姿态给出静默错误的统计。解析失败时原样返回，并由调用方在 note 里说明。
+    """
+    if not project:
+        return None, None
+    try:
+        res = _cdscli(["project", "list"])
+        if not res.get("ok"):
+            return project, "项目列表不可用，projectId 未解析，按原值过滤"
+        data = res.get("data")
+        items = data if isinstance(data, list) else (data or {}).get("projects") or []
+        low = project.strip().lower()
+        for p in items:
+            if str(p.get("id", "")).lower() == low or str(p.get("slug", "")).lower() == low:
+                return p.get("id") or project, None
+        return project, f"项目 {project} 未在 CDS 项目列表命中，按原值过滤"
+    except Exception as e:
+        return project, f"projectId 解析失败（{str(e)[:80]}），按原值过滤"
+
+
 def collect_releases(project, start, end):
+    pid, resolve_warn = _resolve_project_id(project)
     body = _cds_api("/api/releases/runs")
     runs = (body or {}).get("runs") or []
     sel = []
     for r in runs:
-        if project and r.get("projectId") not in (project, None):
+        if pid and r.get("projectId") not in (pid, None):
             continue
-        # 正式发布 run 用 startedAt 记时（createdAt 不存在于该模型）
+        # 正式发布 run 用 startedAt 记时（该模型没有 createdAt）
         if not _in_week(r.get("startedAt") or "", start, end):
             continue
         sel.append({
             "releaseId": r.get("releaseId"),
             "date": (r.get("startedAt") or "")[:10],
-            "status": r.get("status"),                 # success / failed
+            "status": r.get("status"),
             "commitSha": (r.get("commitSha") or "")[:7] or None,
             "projectId": r.get("projectId"),
         })
     sel.sort(key=lambda x: x["date"])
-    ok = sum(1 for x in sel if x["status"] == "success")
-    failed = sum(1 for x in sel if x["status"] == "failed")
-    total = len(sel)
-    return {
-        "available": True, "items": sel, "attempts": total,
-        "success": ok, "failed": failed,
-        "successRate": round(ok * 100.0 / total, 1) if total else None,
-        "note": "口径为正式发布台账 /api/releases/runs 的 run（含失败重试），"
-                "不是分支预览部署；同一次发布可能包含多次重试 run。",
+
+    def n(*st):
+        return sum(1 for x in sel if x["status"] in st)
+
+    terminal = [x for x in sel if x["status"] in RELEASE_TERMINAL]
+    attempts = len(terminal)
+    success, failed = n("success"), n("failed")
+    rb_ok, rb_fail = n("rollback_success"), n("rollback_failed")
+    in_flight = len(sel) - attempts
+    out = {
+        "available": True, "items": sel,
+        "attempts": attempts,               # 仅终态，成功率分母
+        "success": success,
+        "failed": failed,
+        "rollbackSuccess": rb_ok,
+        "rollbackFailed": rb_fail,
+        "rolledBack": rb_ok + rb_fail,
+        "inFlight": in_flight,              # 采集时点仍在跑，单列不进分母
+        "successRate": round(success * 100.0 / attempts, 1) if attempts else None,
+        "note": "口径为正式发布台账 /api/releases/runs（不是分支预览部署）。"
+                "成功率分母只含终态 run（success/failed/rollback_success/rollback_failed），"
+                "在途 run 单列 inFlight；回滚单列 rolledBack——CDS 把 rollback_success 记为"
+                "「run 成功」，但对业务而言「发上去又回滚」不算一次成功发布。"
+                "同一次发布的多次重试各算一条 run。",
     }
+    if resolve_warn:
+        out["projectResolveWarning"] = resolve_warn
+    return out
 
 
 # 分支预览部署版本：单独一段，供工程读者参考，禁止当成「线上发布」写进正文
@@ -444,8 +498,12 @@ def main():
             print("[缺陷] 不可用：" + str(df.get("reason")))
         rl = ctx.get("releases", {})
         if rl.get("available"):
-            print(f"[正式发布] {rl['attempts']} 次 run：成功 {rl['success']} / 失败 {rl['failed']}"
-                  + (f"，成功率 {rl['successRate']}%" if rl.get("successRate") is not None else ""))
+            print(f"[正式发布] 终态 {rl['attempts']} 次：成功 {rl['success']} / 失败 {rl['failed']}"
+                  + (f" / 回滚 {rl['rolledBack']}" if rl.get("rolledBack") else "")
+                  + (f"，成功率 {rl['successRate']}%" if rl.get("successRate") is not None else "")
+                  + (f"；在途 {rl['inFlight']}" if rl.get("inFlight") else ""))
+            if rl.get("projectResolveWarning"):
+                print("   注意：" + rl["projectResolveWarning"])
         else:
             print("[正式发布] 不可用：" + str(rl.get("reason")))
         pv = ctx.get("previewDeploys", {})
