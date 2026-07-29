@@ -37,9 +37,10 @@ public class LocalAssetStorage : IAssetStorage
             await File.WriteAllBytesAsync(filePath, bytes, ct);
         }
 
-        // 本地存储：仍通过 image-master 文件读取接口读取（兼容旧前端/旧 URL）。
-        // 注意：该接口按 sha 查找，不包含 domain/type；因此本地模式只建议用于单机开发调试。
-        var url = $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
+        // 本地存储统一返回精确相对键，由 /local-assets 静态路由读取。
+        // 不能复用 image-master 的按 SHA 路由：它只扫描少数图片域，文档、音频等
+        // 其他 domain/type 会保存成功但读取 404。
+        var url = BuildUrlForPath(filePath);
         return new StoredAsset(sha, url, bytes.LongLength, safeMime);
     }
 
@@ -135,8 +136,24 @@ public class LocalAssetStorage : IAssetStorage
     {
         var sha = (sha256 ?? string.Empty).Trim().ToLowerInvariant();
         if (string.IsNullOrWhiteSpace(sha) || sha.Length < 16) return null;
+        if (!IsHex(sha)) return null;
+
+        var dir = ResolveDir(domain, type);
         var ext = MimeToExt(mime ?? "image/png");
-        return $"/api/v1/admin/image-master/assets/file/{sha}.{ext}";
+        if (Directory.Exists(dir))
+        {
+            try
+            {
+                var existing = Directory.GetFiles(dir, $"{sha}.*").FirstOrDefault();
+                if (existing != null) return BuildUrlForPath(existing);
+            }
+            catch
+            {
+                // 文件系统瞬时不可读时仍返回可预测 URL，调用方可按原有方式处理 404。
+            }
+        }
+
+        return BuildUrlForPath(Path.Combine(dir, $"{sha}.{ext}"));
     }
 
     public async Task<byte[]?> TryDownloadBytesAsync(string key, CancellationToken ct)
@@ -168,6 +185,13 @@ public class LocalAssetStorage : IAssetStorage
             .Split('/', StringSplitOptions.RemoveEmptyEntries)
             .Select(Uri.EscapeDataString));
         return $"/local-assets/{escaped}";
+    }
+
+    private string BuildUrlForPath(string filePath)
+    {
+        var relativePath = Path.GetRelativePath(_baseDir, filePath)
+            .Replace(Path.DirectorySeparatorChar, '/');
+        return BuildUrlForKey(relativePath);
     }
 
     public Task DeleteByKeyAsync(string key, CancellationToken ct)

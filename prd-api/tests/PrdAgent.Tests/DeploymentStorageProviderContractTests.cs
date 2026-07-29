@@ -17,8 +17,9 @@ public sealed class DeploymentStorageProviderContractTests
             localDevelopment);
         Assert.Contains("ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}", localDevelopment);
         Assert.Contains(
-            "AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://127.0.0.1:8080}",
+            "AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://web}",
             localDevelopment);
+        Assert.Contains("location ^~ /local-assets/", ReadRepoFile("deploy/nginx/nginx.conf"));
         Assert.DoesNotContain("ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}", localDevelopment);
 
         Assert.Contains("ASSETS_PROVIDER: \"cloudflareR2\"", cds);
