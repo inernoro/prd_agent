@@ -138,6 +138,9 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         // srcDoc（导入/手写 HTML，与父同源可量高）：用 allow-same-origin（仍未给 allow-scripts，
         // 脚本不执行、无 XSS），onLoad 量内容高度让 iframe 自增高、自身不再内部滚动 → 只剩外层
         // 阅读区一条滚动条（修复「白底 iframe + 暗底外层」双滚动条）。
+        // 正文里的链接不放宽 sandbox，改由父页拦截点击后 window.open（见下方 onLoad）：
+        // 既不用给 allow-popups(-to-escape-sandbox) 扩权，又能覆盖所有存量 HTML 条目
+        // （包括没写 target=_blank 的旧正文）。
         // fileUrl（上传 .html，跨源不可量高）：保持最严 sandbox="" + 100% 高，行为不变。
         sandbox={fileUrl ? '' : 'allow-same-origin'}
         // srcDoc 必须 scrolling="no"：自增高偶有 1px 量差时 iframe 会变成"可滚几个像素"，
@@ -146,9 +149,16 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
         scrolling={fileUrl ? undefined : 'no'}
         onLoad={fileUrl ? undefined : (e) => {
           try {
-            const ifr = e.currentTarget as HTMLIFrameElement & { __roFit?: ResizeObserver; __fitH?: number };
+            const ifr = e.currentTarget as HTMLIFrameElement & {
+              __roFit?: ResizeObserver; __fitH?: number; __fitN?: number;
+            };
             const d = ifr.contentDocument;
             if (!d || !d.documentElement) return;
+            // 失控熔断：正常内容量高会在几帧内收敛（±2px 阈值兜住抖动）。若**连续**写高
+            // 迟迟不收敛，说明内容高度反过来依赖 iframe 高度（如 100vh 布局）形成正反馈——
+            // 此时必须停手，否则 RO 每帧触发，主线程被打满、整页卡死。
+            // 宁可高度量得不完美，不可锁死页面。
+            ifr.__fitN = 0;
             const fit = () => {
               const h = Math.max(d.documentElement?.scrollHeight || 0, d.body?.scrollHeight || 0);
               if (h <= 0) return;
@@ -156,9 +166,29 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
               // → 内容重排 → 高度再变 → RO 再触发"会形成往复写高，滚动锚定跟着来回
               // 调 scrollTop，与用户手势打架（"某个东西牵动某个东西"的阻滞感）。
               const target = Math.ceil(h) + 2;
-              if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) return;
+              if (ifr.__fitH !== undefined && Math.abs(target - ifr.__fitH) <= 2) {
+                // 收敛：这次量到的高度和已写入的一致，说明内容不再反过来推高度。
+                // 熔断计数在这里清零——它数的是「连续未收敛的写高」，不是频率。
+                ifr.__fitN = 0;
+                return;
+              }
+              // 熔断只数**真正写高**的次数，不数 fit() 调用次数：图多的文档 1 秒内
+              // 几十张图 load 完会各触发一次 fit，但那是收敛过程、不是反馈循环，
+              // 按调用数熔断会把它们误伤成「量高中途断开 + 内容被永久截断」
+              // （scrolling="no" 之下用户还滚不到）。写高才计数，且熔断前必定
+              // 先把这一次量到的高度写进去，不留半截。
+              //
+              // 计数**不按时间窗清零**：按「1 秒内超 N 次」判定会留一条低速逃逸路径——
+              // 页面被正反馈拖到 40fps 以下时每秒不足 41 次写高，计数每秒清零，
+              // 循环可以永远跑下去，熔断形同虚设。改为按「连续未收敛」计数：
+              // 正常内容每次写高后 RO 会再触发一次，那一次必然命中上面的收敛分支并清零；
+              // 只有真正的正反馈才会一直写不收敛。这样与帧率无关，慢速循环照样兜住。
               ifr.__fitH = target;
               ifr.style.height = target + 'px';
+              if ((ifr.__fitN = (ifr.__fitN || 0) + 1) > 60) {
+                ifr.__roFit?.disconnect();
+                ifr.__roFit = undefined;
+              }
             };
             fit();
             // 关键：内容会在 onLoad 之后继续变高（base64 图片/字体异步加载、响应式重排），
@@ -176,6 +206,74 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             d.querySelectorAll?.('img').forEach((img) => {
               const im = img as HTMLImageElement;
               if (!im.complete) im.addEventListener('load', fit, { once: true });
+            });
+
+            // 正文链接一律新标签打开，绝不在本 iframe 内导航。
+            // 2026-07-29 事故：周报正文的日报深链没写 target，点击后这个自增高 iframe 直接
+            // 导航到整个 MAP SPA；SPA 是 100vh 布局，内容高度反过来依赖 iframe 高度，与上面的
+            // fit() 互相喂高，ResizeObserver 每帧触发，主线程被打满、整页卡死（控制台刷出
+            // 210 条 "ResizeObserver loop completed"）。
+            // 这里在父页（未被 sandbox 限制）拦截点击再 window.open：不必给 iframe 放
+            // allow-popups/allow-popups-to-escape-sandbox 扩权，且对**存量**没写 target 的
+            // 旧 HTML 条目同样生效。
+            // 只拦「真的会把本 frame 导航走」的链接：http(s) 且非 download。
+            // mailto: / tel: / 自定义协议交给浏览器原生处理（它们不导航本 frame），
+            // download 链接保留原生下载语义——一律 preventDefault 会把这些链接变成哑巴。
+            // 一律读 href **属性**再自己解析，不读 a.href：内联 SVG 里的 <a> 是
+            // SVGAElement，其 .href 是 SVGAnimatedString 而不是字符串，拿去做正则会
+            // 判失败 → 这类链接就漏出拦截、照样把 frame 导航走。读属性 + new URL()
+            // 同时覆盖 HTML/SVG 锚点，也顺带把相对路径解析成绝对地址。
+            // 覆盖所有「能导航本 frame」的锚点形态，不逐个补丁：
+            //   a[href]（HTML / SVG2）、a[xlink:href]（SVG1.1 遗留）、area[href]（图像映射）
+            // 表单提交不在其列——sandbox 未给 allow-forms，浏览器直接阻断；
+            // <base> 与 <meta refresh> 由发布闸整标签禁用。
+            const XLINK = 'http://www.w3.org/1999/xlink';
+            // 协议判定必须是**白名单豁免**，不能是「非 http 就放行」：
+            // data: / about: / blob: / javascript: / filesystem: 都会导航当前浏览上下文，
+            // 「非 http 一律放行」等于把它们全放进来，照样能把 frame 导航走。
+            // 只有交给外部处理器、不动本 frame 的协议才豁免。
+            // 这里判「会不会导航本 frame」——该集合是**可枚举**的，所以按它判定，
+            // 而不是反过来白名单列举外部协议：那样会把 vscode: / weixin: 这类已注册的
+            // 自定义协议一并 preventDefault 又不 open，链接直接变哑巴（上一轮的回归）。
+            // 未在此列的协议交由浏览器分派给系统处理器，本 frame 不动。
+            // ws:/wss: 也在列：它们是 URL 标准里的 special scheme，点击会真的发起一次
+            // 本 frame 导航（结果是错误文档），照样把 srcdoc 内容顶掉。发布闸那侧本来就
+            // 要求它们带 target，两边判据必须一致，否则闸门放行的形态运行时反而漏拦。
+            const SELF_NAVIGATING = new Set([
+              'http:', 'https:', 'file:', 'ftp:', 'ws:', 'wss:',
+              'data:', 'about:', 'blob:', 'filesystem:', 'javascript:', 'vbscript:',
+            ]);
+            d.addEventListener('click', (ev) => {
+              const a = (ev.target as Element | null)?.closest?.('a, area');
+              if (!a) return;
+              // 必须区分「没有 href 属性」和「有 href 但是空串」：
+              //   - 没有属性（<a name="x"> / <area> 占位）不是链接，放行；
+              //   - href="" 是**空相对引用**，按 baseURI 解析。srcdoc 文档的 base URL
+              //     继承自父页，所以它解析出的正是宿主 SPA 的地址，点一下就把 iframe
+              //     导航过去 —— 正是本修复要防的那条路径。当成 no-op 放行等于留了个后门。
+              // SVG2 起 href 优先于 xlink:href，两者都在时取 href（与浏览器一致）。
+              const rawAttr = a.getAttribute('href')
+                ?? a.getAttributeNS(XLINK, 'href')
+                ?? a.getAttribute('xlink:href');
+              if (rawAttr === null) return;                                 // 无导航属性，不是链接
+              const raw = rawAttr.trim();
+              if (raw.startsWith('#')) return;                              // 页内锚点
+              let url: URL;
+              try { url = new URL(raw, d.baseURI); } catch { return; }
+              if (!SELF_NAVIGATING.has(url.protocol)) return;               // 交给系统处理器（含 vscode:/weixin: 等）
+              // download 不能无条件放行：浏览器对**跨源** http(s) 会忽略 download，
+              // 按普通导航处理——那正好是要拦的情形。只有同源才真的走原生下载。
+              if (a.hasAttribute('download')) {
+                let baseOrigin = '';
+                try { baseOrigin = new URL(d.baseURI).origin; } catch { /* 取不到就按跨源处理 */ }
+                if (baseOrigin && url.origin === baseOrigin) return;        // 同源，原生下载
+              }
+              ev.preventDefault();                                          // 会导航本 frame 的，一律拦
+              // 只有 http(s) 值得开新标签；data:/javascript:/about: 等拦掉即止，
+              // 在新标签里打开它们本身就是风险面。
+              if (url.protocol === 'http:' || url.protocol === 'https:') {
+                window.open(url.href, '_blank', 'noopener,noreferrer');
+              }
             });
           } catch { /* 跨源不可量，保持默认高度 */ }
         }}

@@ -187,6 +187,45 @@ export function classifyEnvSeed(key: string, value: string | null | undefined): 
   };
 }
 
+export interface ImportedEnvSeedWrite {
+  key: string;
+  value: string;
+  reason: 'missing' | 'repo-structural-update';
+}
+
+// 这些键共同组成必须同批迁移的环境合同。其余 env 即使是非密钥，也继续保留
+// 操作员现值；避免一次 compose 导入静默覆盖 LOG_LEVEL 等运行时调优参数。
+const AUTHORITATIVE_IMPORTED_ENV_KEYS = new Set([
+  'ASSETS_PROVIDER',
+  'ASSETS_EXPECTED_PROVIDER',
+]);
+
+/**
+ * 规划一次已批准 compose 导入应写入的 env。
+ *
+ * 密钥与运行时参数继续保护现有操作员值；明确列入迁移清单的 provider 合同键
+ * 则由已批准的仓库结构种子更新。否则存储合同从 COS 迁移到 R2 时，旧值永远
+ * 不会变化，却会与新加入的 expected-provider 组成必然失败的混合状态。
+ */
+export function planImportedEnvSeedWrites(
+  importedEnv: Record<string, string>,
+  existingEnv: Record<string, string>,
+): ImportedEnvSeedWrite[] {
+  const writes: ImportedEnvSeedWrite[] = [];
+  for (const [key, value] of Object.entries(importedEnv)) {
+    if (!(key in existingEnv)) {
+      writes.push({ key, value, reason: 'missing' });
+      continue;
+    }
+    if (existingEnv[key] === value) continue;
+    if (AUTHORITATIVE_IMPORTED_ENV_KEYS.has(key)
+        && classifyEnvSeed(key, value).belonging === 'repo-structural') {
+      writes.push({ key, value, reason: 'repo-structural-update' });
+    }
+  }
+  return writes;
+}
+
 export interface ComposePatchViolation {
   path: string;
   authority: FieldAuthority;

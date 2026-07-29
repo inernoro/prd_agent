@@ -302,6 +302,16 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
       if ((err as NodeJS.ErrnoException).code !== 'ENOENT') unreadable.push(base);
       return { dirs: out, unreadable };
     }
+    let resolvedBase: string;
+    try {
+      // macOS 的 os.tmpdir() 可能返回 /var/...，realpathSync() 却返回
+      // /private/var/...。安全边界必须在两边都规范化后比较，否则合法的桶内
+      // 迁移别名会被误判成指向 base 之外，永远无法进入回收候选。
+      resolvedBase = fs.realpathSync(base);
+    } catch {
+      unreadable.push(base);
+      return { dirs: out, unreadable };
+    }
     for (const proj of projects) {
       // isDirectory() 走 lstat 语义：顶层若是符号链接一律不认（只认真实项目桶）
       if (!proj.isDirectory()) continue;
@@ -325,7 +335,7 @@ export const defaultOrphanWorktreeFs: OrphanWorktreeFs = {
           try {
             const resolved = fs.realpathSync(full);
             // 只认解析后仍落在 base 之内的链接：指到 base 之外的一律不碰（不删别人的东西）
-            if (resolved === base || resolved.startsWith(`${base}/`)) realPath = resolved;
+            if (resolved === resolvedBase || resolved.startsWith(`${resolvedBase}/`)) realPath = resolved;
             else continue;
           } catch (err) {
             if ((err as NodeJS.ErrnoException).code !== 'ENOENT') {

@@ -389,7 +389,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **issues-visual-create** | `/issues-visual-create` | 创建一条视觉验收子 issue。输入"测什么"(PR#/commit/页面)，按 #605 模板 v0.x 生成 `[visual-test]` issue，挂 `visual-test:pending` 等执行者接单 |
 | **issues-visual-run** | `/issues-visual-run` | 24h 视觉测试执行者 Agent 逻辑。拉 `visual-test:pending` 队列，按矩阵跑用例(双主题强制)，回评论失败清单(P0-P3) 或 `/visual-pass`。完全不开新 issue |
 | **create-visual-test-to-kb** | `/验收` | 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）。三段不可分：标准/模板 → 模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图）→ 报告归档进知识库出分享链。归档前强制准入校验（目标/档位/Verdict/截图数/证据完整性不达标直接拒收）。项目无关，改 `acceptance.config.json` 跨仓库复用 |
-| **weekly-update-summary** | `/weekly` | 输入时间范围 → 从 git 历史收集 commit/PR/贡献者数据，输出分类周报（完成项 + 下周优先级） |
+| **weekly-update-summary** | `/weekly` | 输入时间范围 → 四源聚合（git 提交与 PR + 日报知识库 + CDS 验收中心 + 缺陷台账/发布版本）→ 输出**面向老板/产品经理**的业务周报：质量闸（验收通过率 + 未通过清单）→ 业务价值看板（谁能多做什么）→ 逐日脉络挂日报深链 → 落地对照 → 下周优先级 → 术语表，技术细节降到附录 |
 | **daily-report-summary** | `/daily` | 输入目标日期 → 从 git 历史按单日提交收集改动，按「新增多讲 → 优化/修复次之 → 计划/遗留垫底」分层写日报，find-or-create「日报知识库」发布并出分享链 |
 
 ### 辅助技能（按需使用）

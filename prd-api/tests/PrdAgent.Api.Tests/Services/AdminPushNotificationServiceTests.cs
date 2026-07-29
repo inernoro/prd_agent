@@ -21,7 +21,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_DeliversOpenNotificationOnce()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -68,7 +67,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_RetriesAfterOldFailedDelivery()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -126,7 +124,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task SendTestAsync_BarkQueryUsesPlainPlaceholderValues()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -162,7 +159,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_BarkUsesNotificationImageAttachment()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -217,7 +213,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_BarkExpandsRelativeActionUrlToPublicUrl()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -264,7 +259,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_BarkDerivesPreviewActionUrlFromBranchEnvironment()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -320,7 +314,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_BarkDoesNotDeriveMainPreviewUrlWithoutPreviewEnvironment()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -368,7 +361,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_DoesNotPushDefectReminderNotifications()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -430,7 +422,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_DoesNotRouteGenericFeedbackSourceToUserVoice()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -474,7 +465,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task UpsertSubscriptionAsync_SkipsExistingBacklogWhenEnablingTopic()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -535,7 +525,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task DispatchPendingAsync_RoutesUserVoiceAndApiAlertsToDedicatedTopics()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -608,7 +597,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task EventService_CreatesInfrastructureEventsForDedicatedPushTopics()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -742,7 +730,6 @@ public sealed class AdminPushNotificationServiceTests
     public async Task NotificationsController_HandleAll_ShouldOnlyHandleCurrentUserVisibleNotifications()
     {
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -795,7 +782,6 @@ public sealed class AdminPushNotificationServiceTests
         if (string.IsNullOrWhiteSpace(key)) return;
 
         var testDb = await AdminPushTestDatabase.TryCreateAsync();
-        if (testDb == null) return;
 
         try
         {
@@ -955,9 +941,11 @@ public sealed class AdminPushNotificationServiceTests
         public string DatabaseName { get; }
         public MongoDbContext Context { get; }
 
-        public static async Task<AdminPushTestDatabase?> TryCreateAsync()
+        public static async Task<AdminPushTestDatabase> TryCreateAsync()
         {
-            var uri = Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
+            var uri =
+                Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                ?? Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
             if (string.IsNullOrWhiteSpace(uri)) uri = "mongodb://localhost:27018";
 
             var databaseName = "prdagent_admin_push_test_" + Guid.NewGuid().ToString("N");
@@ -968,9 +956,12 @@ public sealed class AdminPushNotificationServiceTests
                 await client.GetDatabase("admin").RunCommandAsync((Command<MongoDB.Bson.BsonDocument>)"{ping:1}", cancellationToken: cts.Token);
                 return new AdminPushTestDatabase(client, databaseName, new MongoDbContext(uri, databaseName));
             }
-            catch
+            catch (Exception ex)
             {
-                return null;
+                throw new InvalidOperationException(
+                    "通知测试需要独立 MongoDB。CI 请设置 MONGODB_TEST_CONNECTION；" +
+                    "本地默认使用 mongodb://localhost:27018。禁止在 MongoDB 不可达时静默通过。",
+                    ex);
             }
         }
 

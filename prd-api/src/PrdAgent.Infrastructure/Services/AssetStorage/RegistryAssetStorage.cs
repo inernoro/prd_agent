@@ -17,12 +17,14 @@ namespace PrdAgent.Infrastructure.Services.AssetStorage;
 /// 注意：AI 生成的内容（scope="generated"）需要后续在具体 Worker 中通过
 ///       RegistryAssetStorage.OverrideNextScope("generated") 显式标记。
 /// </summary>
-public sealed class RegistryAssetStorage : IAssetStorage
+public sealed class RegistryAssetStorage : IAssetStorage, IAssetStorageRuntimeInfo
 {
     private readonly IAssetStorage _inner;
     private readonly IMongoCollection<AssetRegistryEntry> _registry;
     private readonly string _providerName;
     private readonly ILogger<RegistryAssetStorage> _logger;
+
+    public string ProviderName => _providerName;
 
     /// <summary>
     /// AsyncLocal 允许调用方在特定上下文中覆盖 scope（如 Worker 中标记 "generated"）。
@@ -102,6 +104,7 @@ public sealed class RegistryAssetStorage : IAssetStorage
     public async Task UploadToKeyAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         await _inner.UploadToKeyAsync(key, bytes, contentType, ct, cacheControl);
+        if (IsIntegrationTestKey(key)) return;
         var url = _inner.BuildUrlForKey(key);
         await LogRegistryAsync("write", key, null, url, InferDomainFromKey(key), InferTypeFromKey(key), contentType, bytes.Length);
     }
@@ -114,12 +117,23 @@ public sealed class RegistryAssetStorage : IAssetStorage
     public async Task DeleteByKeyAsync(string key, CancellationToken ct)
     {
         await _inner.DeleteByKeyAsync(key, ct);
+        if (IsIntegrationTestKey(key)) return;
         await LogRegistryAsync("delete", key, null, null, InferDomainFromKey(key), InferTypeFromKey(key), null, 0);
     }
 
     public string BuildSiteKey(string siteId, string filePath)
     {
         return _inner.BuildSiteKey(siteId, filePath);
+    }
+
+    internal static bool IsIntegrationTestKey(string? key)
+    {
+        var normalized = (key ?? string.Empty)
+            .Trim()
+            .Replace('\\', '/')
+            .TrimStart('/');
+        return normalized.StartsWith("_it/", StringComparison.OrdinalIgnoreCase)
+            || normalized.Contains("/_it/", StringComparison.OrdinalIgnoreCase);
     }
 
     // ========================== Registry ==========================

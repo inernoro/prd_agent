@@ -760,10 +760,16 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("static_release_rollback \"$active_static_root\"", deploy);
         Assert.Contains("scripts/prd-agent-public-surface-smoke.py", deploy);
         Assert.Contains("scripts/prd-agent-release-evidence.py", deploy);
+        Assert.Contains("--asset-storage-readiness-json", deploy);
         Assert.DoesNotContain("rm -rf deploy/web/dist/*", deploy);
         var readinessIndex = deploy.LastIndexOf("wait_for_llmgw_serving_readiness", StringComparison.Ordinal);
         var activationIndex = deploy.LastIndexOf("activate_pending_static_release", StringComparison.Ordinal);
         Assert.True(readinessIndex >= 0 && activationIndex > readinessIndex);
+        var storageReadinessIndex = deploy.LastIndexOf(
+            "run_asset_storage_readiness",
+            activationIndex,
+            StringComparison.Ordinal);
+        Assert.True(storageReadinessIndex > readinessIndex && activationIndex > storageReadinessIndex);
 
         Assert.Contains("os.replace(sys.argv[1], sys.argv[2])", staticLayout);
         Assert.Contains("STATIC_RELEASE_ROLLBACK_TARGET", staticLayout);
@@ -777,6 +783,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("Public surface smoke test: PASS", publicSurfaceTest);
         Assert.Contains("release evidence already exists and cannot be overwritten", evidence);
         Assert.Contains("static-before-mode", evidence);
+        Assert.Contains("assetStorageReadiness", evidence);
         Assert.Contains("Release evidence test: PASS", evidenceTest);
         Assert.Contains("public-surface:", scheduledWatch);
         Assert.Contains("scripts/prd-agent-public-surface-smoke.py", scheduledWatch);
