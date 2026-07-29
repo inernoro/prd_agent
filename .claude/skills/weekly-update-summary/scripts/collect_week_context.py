@@ -89,6 +89,14 @@ def _cds_api(path):
     仍然复用 cdscli 的 `_request`——host、凭据、重试全部走它那一套，本脚本不碰 URL 拼装，
     符合 CLAUDE.md 规则 11「不自己 slugify / 不猜 host」的实质要求。等 cdscli 补了
     `release` 子命令，这里换成 _cdscli(["release", "list"]) 即可。
+
+    两件事必须自己做，因为我们是 import 模块而不是跑它的 main()：
+    1. 显式调 `_load_local_credentials()`。项目级 `.cds/credentials.json` 是标准接入方式，
+       平时由 main() 负责加载；只 import 的话本进程既没有 CDS_HOST 也没有项目 key，
+       `_cds_base()` 会直接 die。
+    2. 传 `fatal_network_errors=False` 并把 SystemExit 翻成普通异常。cdscli 的 `die()`
+       走 `sys.exit()`，抛的是 BaseException 子类，调用方的 `except Exception` 接不住，
+       CDS 一不可达就会把整个采集器带走——那正好违背「每个来源独立降级」的设计。
     """
     global _CDSCLI_MOD
     if _CDSCLI_MOD is None:
@@ -103,8 +111,18 @@ def _cds_api(path):
             pass
         finally:
             sys.argv = saved
+        try:
+            mod._load_local_credentials()          # 注入 .cds/credentials.json 到本进程
+        except Exception:
+            pass                                   # 没有项目级凭据时靠环境变量，交由下面报错
         _CDSCLI_MOD = mod
-    status, body, _ = _CDSCLI_MOD._request("GET", path)
+
+    try:
+        status, body, _ = _CDSCLI_MOD._request("GET", path, fatal_network_errors=False)
+    except SystemExit as e:                        # _cds_base() 等处缺 host/凭据时 die()
+        raise RuntimeError(f"cdscli 无法请求 {path}（缺 CDS_HOST 或项目凭据？exit={e.code}）") from None
+    if status == 0:
+        raise RuntimeError(f"CDS {path} 网络不可达：{(body or {}).get('message') or (body or {}).get('error')}")
     if status != 200:
         raise RuntimeError(f"CDS {path} 返回 {status}")
     return body

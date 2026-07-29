@@ -6,3 +6,4 @@
 | docs | doc | 订正 W30 周报的线上发布数据：由错误的「8 个不可变版本」改为正式发布 39 次尝试 / 成功 23 / 失败 16（成功率 59.0%，上周 35.1%） |
 | fix | skill | 周报采集器解析项目 slug 为 CDS 规范 projectId（如 mdimp -> defd4695ab5f），避免 slug 与 id 不一致的项目被整体过滤成「0 次发布」的静默错误 |
 | fix | skill | 周报采集器按 CDS 终态口径统计发布 run：成功率分母只含终态（success/failed/rollback_*），在途 run 单列 inFlight、回滚单列 rolledBack，消除「1 次尝试 / 0 成功 / 0 失败 / 0%」的自相矛盾 |
+| fix | skill | 周报采集器读 CDS 正式发布台账时显式加载项目级 .cds/credentials.json，并把 cdscli die() 抛的 SystemExit 翻成普通异常 + 走 fatal_network_errors=False，避免只有项目级凭据时取不到数、或 CDS 不可达时整个采集器被带走 |
