@@ -52,8 +52,10 @@ interface Ssh2ConnectOptions {
   host: string;
   port: number;
   username: string;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一，所以两个都是可选：ssh2 把 undefined 当「这项没配」。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   readyTimeout?: number;
 }
 
@@ -283,7 +285,7 @@ export class SidecarDeployer {
   /** 执行 SSH 命令。仅返回 stdout；非 0 退出码抛错。 */
   private async sshExec(host: RemoteHost, cmd: string): Promise<string> {
     const ssh2Mod = await loadSsh2();
-    const { privateKey, passphrase } = decryptRemoteHostSecrets(host);
+    const { privateKey, passphrase, password } = decryptRemoteHostSecrets(host);
     const client = new ssh2Mod.Client() as unknown as Ssh2Client;
 
     return new Promise<string>((resolve, reject) => {
@@ -329,6 +331,7 @@ export class SidecarDeployer {
         username: host.sshUser,
         privateKey,
         passphrase,
+        password,
         readyTimeout: 10_000,
       });
     });

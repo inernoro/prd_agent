@@ -77,8 +77,10 @@ interface Ssh2ConnectOptions {
   host: string;
   port: number;
   username: string;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一，所以两个都是可选：ssh2 把 undefined 当「这项没配」。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   readyTimeout?: number;
 }
 
@@ -345,8 +347,10 @@ function sanitizeFailureSummary(message: string): string {
 /** 注入式 SSH 执行请求。把「连哪台、跑什么、何时中止」与「怎么连」解耦，便于回归测试。 */
 export interface ReleaseSshExecRequest {
   host: RemoteHost;
-  privateKey: string | Buffer;
+  /** 私钥与密码二选一（见 decryptRemoteHostSecrets），两个都可能缺席。 */
+  privateKey?: string | Buffer;
   passphrase?: string;
+  password?: string;
   command: string;
   /** 中止信号：执行超时、取消发布、心跳收割都通过它掐断在跑的 SSH。 */
   signal: AbortSignal;
@@ -1625,7 +1629,7 @@ export class ReleaseService {
       sshPort: target.ssh.port,
       sshUser: target.ssh.user,
     };
-    const { privateKey, passphrase } = decryptRemoteHostSecrets(host);
+    const { privateKey, passphrase, password } = decryptRemoteHostSecrets(host);
 
     // 预检类探测跑在 HTTP 请求生命周期里，用短超时；发布命令用长超时。
     const timeoutMs = releaseId ? this.execTimeoutMs : RELEASE_PREFLIGHT_EXEC_TIMEOUT_MS;
@@ -1650,6 +1654,7 @@ export class ReleaseService {
         host,
         privateKey,
         passphrase,
+        password,
         command: cmd,
         signal: controller.signal,
         onOutput: (level, chunk) => {
@@ -1716,6 +1721,7 @@ export const defaultReleaseSshExecutor: ReleaseSshExecutor = async (req) => {
       username: req.host.sshUser,
       privateKey: req.privateKey,
       passphrase: req.passphrase,
+      password: req.password,
       readyTimeout: 10_000,
     });
   });

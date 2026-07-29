@@ -120,13 +120,24 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
       res.status(400).json({ error: 'body must be an object' });
       return;
     }
-    const required = ['name', 'host', 'sshUser', 'sshPrivateKey'] as const;
+    const required = ['name', 'host', 'sshUser'] as const;
     for (const key of required) {
       const v = body[key];
       if (typeof v !== 'string' || !v.trim()) {
         res.status(400).json({ error: `${key} is required` });
         return;
       }
+    }
+    // 凭据三选一（粘私钥 / 填密码 / 让 CDS 生成密钥对）。具体的「只能选一种」
+    // 判定在 RemoteHostService.create 里，这里只挡住「一种都没给」。
+    const hasCredential = Boolean(
+      (typeof body.sshPrivateKey === 'string' && body.sshPrivateKey.trim())
+      || (typeof body.sshPassword === 'string' && body.sshPassword.trim())
+      || body.generateKeyPair === true,
+    );
+    if (!hasCredential) {
+      res.status(400).json({ error: 'sshPrivateKey, sshPassword or generateKeyPair is required' });
+      return;
     }
     if (body.sshPort !== undefined) {
       const port = Number(body.sshPort);
@@ -174,6 +185,9 @@ export function createRemoteHostsRouter(deps: RemoteHostsRouterDeps): Router {
     if (typeof body.isEnabled === 'boolean') patch.isEnabled = body.isEnabled;
     if (typeof body.sshPrivateKey === 'string' && body.sshPrivateKey.trim()) {
       patch.sshPrivateKey = body.sshPrivateKey;
+    }
+    if (typeof body.sshPassword === 'string' && body.sshPassword.trim()) {
+      patch.sshPassword = body.sshPassword;
     }
     if (body.sshPassphrase !== undefined) {
       if (body.sshPassphrase === '' || body.sshPassphrase === null) {

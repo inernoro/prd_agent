@@ -2446,11 +2446,35 @@ export interface RemoteHost {
    * SealedSecret 对象。**不要 JSON.stringify SealedSecret 再存** —— 那
    * 会绕过 unsealToken 的 isSealedSecret 校验，把序列化字符串当明文返回。
    */
-  sshPrivateKeyEncrypted: string | SealedSecret;
-  /** 私钥指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。 */
+  sshPrivateKeyEncrypted?: string | SealedSecret;
+  /**
+   * 凭据指纹（明文 SHA256，前 16 hex 字符），用于 UI 展示和日志去敏。
+   *
+   * 私钥与密码两种认证都算这个指纹：它唯一的用途是「让人认出这是不是同一份凭据」，
+   * 而不是「这是一把私钥」。所以密码主机也有指纹，UI 按 sshAuthMethod 决定怎么称呼它。
+   */
   sshPrivateKeyFingerprint: string;
   /** 私钥口令密文（可选，同样走 sealToken）。 */
   sshPassphraseEncrypted?: string | SealedSecret;
+  /**
+   * SSH 登录密码密文（可选，同样走 sealToken）。
+   *
+   * 与 sshPrivateKeyEncrypted 二选一：CDS 一直只支持私钥，但很多人手上只有
+   * 一串用户名密码，为了「加一台服务器」先去生成密钥、传公钥，等于把人挡在门外。
+   * 两个字段都为空的 RemoteHost 是非法的（RemoteHostService.create 会拒）。
+   */
+  sshPasswordEncrypted?: string | SealedSecret;
+  /**
+   * 认证方式。存量数据没有这个字段，一律按 private-key 解读（当时只有这一种）。
+   */
+  sshAuthMethod?: 'private-key' | 'password';
+  /**
+   * 由 CDS 生成密钥对时留下的 OpenSSH 公钥明文（如 "ssh-rsa AAAA..."）。
+   *
+   * 公钥本身不是秘密，存明文是为了让用户随时能回来复制它去 authorized_keys ——
+   * 只在创建那一刻给一次，人一旦关掉弹窗就再也拿不到，等于这台机器永远连不上。
+   */
+  sshPublicKey?: string;
   /** 路由 / 分类标签（如 ["prod","asia"]）。 */
   tags: string[];
   /** 是否启用；false 表示 deploy 不会路由到此主机。 */

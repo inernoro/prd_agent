@@ -150,7 +150,19 @@ export function ReleaseCenterPage(): JSX.Element {
   useEffect(() => {
     let cancelled = false;
     apiRequest<{ projects?: ProjectLite[] }>('/api/projects')
-      .then((res) => { if (!cancelled) setProjects(res.projects ?? []); })
+      .then((res) => {
+        if (cancelled) return;
+        const list = res.projects ?? [];
+        setProjects(list);
+        // 记忆值（localStorage）来自另一个 CDS 实例或已删除的项目时，它是个幽灵：
+        // 拿它去打 /discover 只会换来一串 404，而用户什么也没做错。
+        // 有真实项目就落到第一个，让页面直接可用；一个都没有才走空状态引导。
+        if (list.length > 0 && !list.some((project) => project.id === projectId)) {
+          setProjectId(list[0].id);
+          setSelectedTargetId('');
+          setDraft((current) => ({ ...current, projectId: list[0].id }));
+        }
+      })
       .catch(() => { if (!cancelled) setProjects([]); });
     return () => { cancelled = true; };
   }, []);
@@ -260,7 +272,12 @@ export function ReleaseCenterPage(): JSX.Element {
       const recommended = result.candidates.find((candidate) => candidate.mode === result.recommendedMode);
       if (recommended) setDraft((current) => applyDiscoveredStrategy(current, recommended.strategy));
     }).catch((err) => {
-      setToast(err instanceof ApiError ? err.message : String(err));
+      // 探测只是「帮你猜发布方式」，猜不到不该变成一条挡在页面顶上的红字。
+      // 尤其项目不存在时（换实例/项目已删），裸 404 对用户零信息量。
+      const message = err instanceof ApiError ? err.message : String(err);
+      setToast(/not found/i.test(message)
+        ? `项目 ${projectId} 在这个 CDS 上不存在，发布方式需要手动填写。`
+        : `没能自动识别发布方式，可手动填写。原因：${message}`);
     }).finally(() => setDiscovering(false));
   };
 
@@ -270,6 +287,31 @@ export function ReleaseCenterPage(): JSX.Element {
     setWizardOpen(true);
     setToast('');
     setDiscovery(null);
+  };
+
+  /**
+   * 就地新建服务器后的收尾：刷新列表 + 选中它，向导原地继续。
+   *
+   * 不能复用 selectHost：它从闭包里的 hosts 找主机，而这台刚创建的还没进列表，
+   * 找不到就只写 privateKeyRef、host/user/port 三个字段仍是空的。
+   */
+  const handleHostCreated = async (hostId: string): Promise<void> => {
+    try {
+      const targets = await apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`);
+      const nextHosts = targets.remoteHosts || [];
+      setState((current) => (current.status === 'ok' ? { ...current, hosts: nextHosts } : current));
+      const created = nextHosts.find((item) => item.id === hostId);
+      setDraft((current) => ({
+        ...current,
+        privateKeyRef: hostId,
+        host: created?.host || current.host,
+        port: created ? String(created.sshPort || 22) : current.port,
+        user: created?.sshUser || current.user,
+      }));
+    } catch {
+      // 列表刷新失败不该挡住向导：至少把选中关系落下，用户仍能继续下一步。
+      setDraft((current) => ({ ...current, privateKeyRef: hostId }));
+    }
   };
 
   const selectHost = (hostId: string): void => {
@@ -644,6 +686,7 @@ export function ReleaseCenterPage(): JSX.Element {
         onStep={setWizardStep}
         onDraft={setDraft}
         onSelectHost={selectHost}
+        onHostCreated={handleHostCreated}
         onSave={() => void saveSite()}
       />
       <StartReleaseDialog

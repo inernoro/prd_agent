@@ -7,13 +7,13 @@
  */
 
 import type { Dispatch, ReactNode, SetStateAction } from 'react';
-import { Link } from 'react-router-dom';
 import { CheckCircle2, Loader2 } from 'lucide-react';
 import { Button } from '@/components/ui/button';
 import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
 import { buildReleaseHealthcheckUrl } from '@/lib/releaseCenter';
 import { LoadingBlock } from '@/pages/cds-settings/components';
 import { Chip } from './shared';
+import { InlineHostCreator } from './InlineHostCreator';
 import type {
   ReleaseStrategy,
   ReleaseStrategyCandidate,
@@ -82,6 +82,7 @@ export function SiteWizardDialog({
   onStep,
   onDraft,
   onSelectHost,
+  onHostCreated,
   onSave,
 }: {
   open: boolean;
@@ -95,6 +96,8 @@ export function SiteWizardDialog({
   onStep: (step: WizardStep) => void;
   onDraft: Dispatch<SetStateAction<SiteDraft>>;
   onSelectHost: (hostId: string) => void;
+  /** 就地新建服务器后：父级刷新列表并选中它，向导原地继续。 */
+  onHostCreated: (hostId: string) => void | Promise<void>;
   onSave: () => void;
 }): JSX.Element {
   const selectedHost = hosts.find((host) => host.id === draft.privateKeyRef);
@@ -131,10 +134,10 @@ export function SiteWizardDialog({
           </nav>
           <div className="min-h-[360px] space-y-4">
             {step === 'server' ? (
-              <WizardPanel title="选择服务器" description="站点会发布到这台服务器的站点目录。凭据仍复用 CDS 系统设置里的 Remote Hosts。">
+              <WizardPanel title="选择服务器" description="站点会发布到这台服务器的站点目录。没有现成的就在这里直接加一台，不用离开这个向导。">
                 {hosts.length === 0 ? (
-                  <div className="rounded-md border border-amber-500/30 bg-amber-500/10 p-3 text-sm text-amber-700 dark:text-amber-300">
-                    还没有可用服务器。先到 <Link className="underline" to="/cds-settings#remote-hosts">CDS 系统设置 / Remote Hosts</Link> 添加 SSH 凭据。
+                  <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm text-muted-foreground">
+                    还没有服务器。填下面这一段就能加一台，加完自动选中、继续下一步。
                   </div>
                 ) : (
                   <div className="grid gap-2">
@@ -158,6 +161,11 @@ export function SiteWizardDialog({
                     ))}
                   </div>
                 )}
+                <InlineHostCreator
+                  key={`host-creator-${hosts.length}`}
+                  defaultOpen={hosts.length === 0}
+                  onCreated={onHostCreated}
+                />
               </WizardPanel>
             ) : null}
 
