@@ -62,9 +62,33 @@ must(
   'onboarding: 「签一把密钥」要看可用密钥（activePrefix），不是历史总数',
 );
 
+must(
+  /useSyncExternalStore\(/.test(nav),
+  'mapNavigation: 权威 MAP 地址必须是可订阅的 —— 只改模块变量不会让已挂载的链接重算，'
+  + 'healthz 在首屏之后回来时它们会整个挂载期指着兜底算出的错地址',
+);
+
+for (const [file, label] of [
+  ['src/components/ConsoleLayout.tsx', 'ConsoleLayout'],
+  ['src/components/PageShell.tsx', 'PageShell'],
+  ['src/pages/LoginPage.tsx', 'LoginPage'],
+  ['src/pages/MapSsoPage.tsx', 'MapSsoPage'],
+]) {
+  must(
+    strip(read(file)).includes('usePlatformMapHome()'),
+    `${label}: 在渲染期算 MAP 地址 / 教程深链的组件必须订阅 usePlatformMapHome，否则权威地址到达时不会重算`,
+  );
+}
+
+const quickstart = strip(read('src/pages/QuickstartPage.tsx'));
+must(
+  (quickstart.match(/invalidateOnboardingCache\(/g) || []).length >= 3,
+  'QuickstartPage: 签密钥与两种测试成功路径都要失效新人清单缓存（清单是派生态，不失效就一直显示未完成）',
+);
+
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');
   for (const line of failures) console.error(`  - ${line}`);
   process.exit(1);
 }
-console.log(`教程深链契约守卫通过：8 条断言。`);
+console.log(`教程深链契约守卫通过：14 条断言。`);

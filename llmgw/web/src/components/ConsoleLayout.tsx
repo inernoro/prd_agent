@@ -10,7 +10,7 @@ import type { AvailableTenant } from '@/lib/types';
 import { useAuth } from '@/lib/auth';
 import { canAccessPage, canUseCapability, type ConsolePage } from '@/lib/access';
 import { useThemePreference } from '@/lib/theme';
-import { canOpenTutorials, resolveMapHomeHref, resolveTutorialHref } from '@/lib/mapNavigation';
+import { canOpenTutorials, resolveMapHomeHref, resolveTutorialHref, usePlatformMapHome } from '@/lib/mapNavigation';
 
 type NavItem = { to: string; label: string; icon: ReactNode; page: ConsolePage; end?: boolean };
 type NavGroup = { label: string; items: NavItem[] };
@@ -65,6 +65,8 @@ export function ConsoleLayout() {
   const canSearchRequests = canUseCapability(tenant?.role, 'logsRead');
   // 判定与拼接都收在 lib/mapNavigation —— 页面里的 TutorialLink 走同一份实现，
   // 不再各拼各的（否则改一处漏一处）。
+  // 订阅平台下发的 MAP 主入口：healthz 通常在首屏之后才回来，不订阅就一直用兜底算出的 href。
+  usePlatformMapHome();
   const canOpenMapTutorials = canOpenTutorials(user, tenant);
   const mapTutorialHref = resolveTutorialHref(location.pathname);
 

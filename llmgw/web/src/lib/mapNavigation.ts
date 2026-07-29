@@ -1,3 +1,4 @@
+import { useSyncExternalStore } from 'react';
 import { getRuntimeBasePath } from './runtimeBase';
 
 type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
@@ -25,16 +26,52 @@ const CONSOLE_SUBDOMAIN_SUFFIXES = ['-llmgw-web', '-llmgw'] as const;
  */
 let platformMapHome: string | null = null;
 
+/**
+ * 权威值到达时要通知已挂载的组件。
+ *
+ * 只改模块变量是不够的（Codex P2）：`/gw/healthz` 通常在首屏渲染**之后**才回来，
+ * 那时 ConsoleLayout / TutorialLink / 登录页的 href 已经按推算兜底算好了，
+ * 没有任何东西会让它们重算 —— 长预览域名下兜底根本还原不出主入口，
+ * 这些链接就会在整个挂载期间指着一个不存在的域名。
+ *
+ * 这和 onboarding 缓存失效是同一个坑：模块级值 + 无通知 = 界面不会动。
+ */
+const PLATFORM_MAP_HOME_LISTENERS = new Set<() => void>();
+
 /** 由 `getHealth()` 在拿到响应时调用；空值不覆盖已有的权威值。 */
 export function setPlatformMapHome(url: string | null | undefined): void {
   const trimmed = (url ?? '').trim();
   if (!trimmed) return;
-  platformMapHome = trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+  const next = trimmed.endsWith('/') ? trimmed : `${trimmed}/`;
+  if (next === platformMapHome) return;
+  platformMapHome = next;
+  for (const listener of [...PLATFORM_MAP_HOME_LISTENERS]) listener();
 }
 
 /** 测试与调试用：清掉缓存的权威值，回到纯推算路径。 */
 export function resetPlatformMapHome(): void {
+  if (platformMapHome === null) return;
   platformMapHome = null;
+  for (const listener of [...PLATFORM_MAP_HOME_LISTENERS]) listener();
+}
+
+function subscribePlatformMapHome(listener: () => void): () => void {
+  PLATFORM_MAP_HOME_LISTENERS.add(listener);
+  return () => { PLATFORM_MAP_HOME_LISTENERS.delete(listener); };
+}
+
+function readPlatformMapHome(): string | null {
+  return platformMapHome;
+}
+
+/**
+ * 订阅平台下发的 MAP 主入口。
+ *
+ * 任何在渲染期算 MAP 地址 / 教程深链的组件都必须调它 —— 拿不拿返回值不重要，
+ * 关键是权威值到达时能重渲染一次，把兜底算出的 href 换成真的。
+ */
+export function usePlatformMapHome(): string | null {
+  return useSyncExternalStore(subscribePlatformMapHome, readPlatformMapHome, readPlatformMapHome);
 }
 
 export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {

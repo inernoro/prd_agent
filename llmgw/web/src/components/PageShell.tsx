@@ -17,7 +17,7 @@
 import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
-import { canOpenTutorials, resolveTutorialHref } from '@/lib/mapNavigation';
+import { canOpenTutorials, resolveTutorialHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { BODY_TEXT } from '@/lib/typography';
 
 const cx = (...parts: (string | undefined | false)[]) => parts.filter(Boolean).join(' ');
@@ -119,6 +119,8 @@ export function DetailsBlock({ title = '工作原理', children }: { title?: str
 export function TutorialLink({ chapter, children = '查看教程' }: { chapter?: string; children?: ReactNode }) {
   const { user, tenant } = useAuth();
   const location = useLocation();
+  // 订阅权威 MAP 地址：它到达时这条深链要跟着重算（兜底在长预览域名下算不对）。
+  usePlatformMapHome();
   const arrow = (
     <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" aria-hidden="true"><path d="M7 17 17 7" /><path d="M7 7h10v10" /></svg>
   );

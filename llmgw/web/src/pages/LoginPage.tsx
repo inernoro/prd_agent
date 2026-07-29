@@ -4,13 +4,15 @@ import { useNavigate, useLocation } from 'react-router-dom';
 import { Activity, ArrowLeft, BarChart3, Building2, KeyRound, Lock, Rocket, ShieldCheck, User } from 'lucide-react';
 import { useAuth } from '@/lib/auth';
 import { getHealth } from '@/lib/api';
-import { resolveMapHomeHref } from '@/lib/mapNavigation';
+import { resolveMapHomeHref, usePlatformMapHome } from '@/lib/mapNavigation';
 import { Button } from '@/components/ui';
 
 export { resolveMapHomeHref } from '@/lib/mapNavigation';
 
 export function LoginPage() {
   const { login, sessionExpiredReason } = useAuth();
+  // 「返回 MAP」的地址等 healthz 回来才准，订阅一下让它到达时重算。
+  usePlatformMapHome();
   const navigate = useNavigate();
   const location = useLocation();
   const from = (location.state as { from?: string } | null)?.from || '/';
