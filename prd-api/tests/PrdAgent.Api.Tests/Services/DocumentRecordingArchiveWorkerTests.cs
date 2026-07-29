@@ -956,6 +956,70 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task PersistCompletedLiveTranscript_ShouldNotDowngradeCalibratedContent()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var calibratedAt = new DateTime(2026, 7, 29, 8, 0, 0, DateTimeKind.Utc);
+        var entry = new DocumentEntry
+        {
+            Id = "calibrated-entry-late-live",
+            StoreId = "store-1",
+            Title = "recording.webm",
+            DocumentId = "full-audio-document",
+            Summary = "完整音频校准摘要",
+            ContentIndex = "完整音频校准正文索引",
+            LastChangedAt = calibratedAt,
+            Metadata = new Dictionary<string, string>
+            {
+                ["generated_kind"] = "transcribe",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        // 模拟 /complete 在批量 ASR 写入前读到的旧快照；数据库当前文档已经完成校准。
+        var staleEntrySnapshot = new DocumentEntry
+        {
+            Id = entry.Id,
+            StoreId = entry.StoreId,
+            Title = entry.Title,
+            Summary = "旧实时预览",
+            ContentIndex = "旧实时预览",
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "calibrated-session-late-live",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = "晚到但可能不完整的实时原文",
+            LiveTranscriptProvider = "provider-1",
+            LiveTranscriptModel = "model-1",
+        };
+
+        (await DocumentStoreController.PersistCompletedLiveTranscriptAsync(
+                fixture.Db.DocumentEntries,
+                staleEntrySnapshot,
+                session,
+                CancellationToken.None))
+            .ShouldBeTrue();
+
+        var updated = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        updated.DocumentId.ShouldBe(entry.DocumentId);
+        updated.Summary.ShouldBe(entry.Summary);
+        updated.ContentIndex.ShouldBe(entry.ContentIndex);
+        updated.Metadata["generated_kind"].ShouldBe("transcribe");
+        updated.Metadata["liveTranscript"].ShouldBe(session.LiveTranscript);
+        updated.Metadata["liveTranscriptStatus"]
+            .ShouldBe(DocumentLiveTranscriptStatus.Completed);
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey]
+            .ShouldBe("true");
+        updated.LastChangedAt.ShouldNotBeNull();
+        updated.LastChangedAt.Value.ShouldBeGreaterThan(calibratedAt);
+    }
+
+    [Fact]
     public async Task InterruptedCompletedEntryRecovery_ShouldRestoreMissingCountExactlyOnce()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();

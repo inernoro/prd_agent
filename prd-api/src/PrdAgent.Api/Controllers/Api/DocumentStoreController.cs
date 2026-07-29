@@ -2723,8 +2723,11 @@ public class DocumentStoreController : ControllerBase
         var contentIndex = transcript.Length > 2000 ? transcript[..2000] : transcript;
         var now = DateTime.UtcNow;
         entry.Metadata = metadata;
-        entry.Summary = summary;
-        entry.ContentIndex = contentIndex;
+        if (entry.DocumentId == null)
+        {
+            entry.Summary = summary;
+            entry.ContentIndex = contentIndex;
+        }
         entry.LastChangedAt = now;
         var updates = new List<UpdateDefinition<DocumentEntry>>
         {
@@ -2734,8 +2737,6 @@ public class DocumentStoreController : ControllerBase
             Builders<DocumentEntry>.Update.Set(
                 e => e.Metadata["liveTranscriptStatus"],
                 DocumentLiveTranscriptStatus.Completed),
-            Builders<DocumentEntry>.Update.Set(e => e.Summary, summary),
-            Builders<DocumentEntry>.Update.Set(e => e.ContentIndex, contentIndex),
             Builders<DocumentEntry>.Update.Set(e => e.LastChangedAt, now),
         };
         if (!string.IsNullOrWhiteSpace(session.LiveTranscriptProvider))
@@ -2751,13 +2752,21 @@ public class DocumentStoreController : ControllerBase
                 session.LiveTranscriptModel));
         }
 
-        // 只更新实时原文相关字段，避免晚到中继用旧 entry 快照覆盖归档状态、
-        // 延迟转写意图或其他并发写入的 Metadata。
-        var persisted = await entries.UpdateOneAsync(
+        // 实时原文 metadata 始终保留用于诊断，但它只是预览。完整音频 ASR 已通过
+        // SaveContentAsync 写入 DocumentId 时，后到的中继或幂等 /complete 不能把
+        // Summary/ContentIndex 降级回局部实时文本。第二个条件更新以数据库当前
+        // DocumentId 为空作为原子闸门，覆盖“读旧快照后批量转录刚完成”的竞态。
+        var metadataPersisted = await entries.UpdateOneAsync(
             e => e.Id == entry.Id,
             Builders<DocumentEntry>.Update.Combine(updates),
             cancellationToken: cancellationToken);
-        return persisted.ModifiedCount == 1;
+        var previewPersisted = await entries.UpdateOneAsync(
+            e => e.Id == entry.Id && e.DocumentId == null,
+            Builders<DocumentEntry>.Update
+                .Set(e => e.Summary, summary)
+                .Set(e => e.ContentIndex, contentIndex),
+            cancellationToken: cancellationToken);
+        return metadataPersisted.ModifiedCount == 1 || previewPersisted.ModifiedCount == 1;
     }
 
     /// <summary>用户主动放弃录音时清理服务端临时分片。</summary>
