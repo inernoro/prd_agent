@@ -30,7 +30,7 @@ public class OpenRouterVideoClientGatewayTests
             ReferenceImageUrls = ["https://example.test/character.png"],
             AspectRatio = "16:9",
             Resolution = "720p",
-            DurationSeconds = 5,
+            DurationSeconds = 6,
             GenerateAudio = true,
             Seed = 42,
             UserId = "user-1",
@@ -40,6 +40,7 @@ public class OpenRouterVideoClientGatewayTests
         submit.Success.ShouldBeTrue(submit.ErrorMessage);
         submit.JobId.ShouldBe("job-123");
         submit.ActualModel.ShouldBe("openrouter/test-video");
+        submit.ActualDurationSeconds.ShouldBe(5);
 
         var status = await client.GetStatusAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate, "job-123");
         status.Status.ShouldBe("completed");
@@ -70,6 +71,7 @@ public class OpenRouterVideoClientGatewayTests
         submitCall.Request.RequestBody.ShouldNotBeNull();
         submitCall.Request.RequestBody!["model"]!.GetValue<string>().ShouldBe("openrouter/test-video");
         submitCall.Request.RequestBody!["prompt"]!.GetValue<string>().ShouldBe("生成一个产品演示视频");
+        submitCall.Request.RequestBody!["duration"]!.GetValue<int>().ShouldBe(5);
         var frameImages = submitCall.Request.RequestBody!["frame_images"]!.AsArray();
         frameImages.Count.ShouldBe(3);
         frameImages[0]!["frame_type"]!.GetValue<string>().ShouldBe("first_frame");

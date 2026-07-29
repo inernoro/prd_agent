@@ -49,6 +49,18 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             };
         }
 
+        var actualDuration = VideoModelCapabilities.NormalizeDuration(
+            resolution.ActualModel,
+            request.DurationSeconds);
+        if (request.DurationSeconds.HasValue && actualDuration != request.DurationSeconds)
+        {
+            _logger.LogInformation(
+                "视频时长已按模型能力调整: model={Model}, requested={Requested}s, actual={Actual}s",
+                resolution.ActualModel,
+                request.DurationSeconds,
+                actualDuration);
+        }
+
         var body = new JsonObject
         {
             ["model"] = resolution.ActualModel,
@@ -85,7 +97,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         if (frameImages.Count > 0) body["frame_images"] = frameImages;
         if (!string.IsNullOrWhiteSpace(request.AspectRatio)) body["aspect_ratio"] = request.AspectRatio;
         if (!string.IsNullOrWhiteSpace(request.Resolution)) body["resolution"] = request.Resolution;
-        if (request.DurationSeconds.HasValue) body["duration"] = request.DurationSeconds.Value;
+        if (actualDuration.HasValue) body["duration"] = actualDuration.Value;
         if (request.GenerateAudio.HasValue) body["generate_audio"] = request.GenerateAudio.Value;
         if (request.Seed.HasValue) body["seed"] = request.Seed.Value;
 
@@ -138,7 +150,8 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
             Success = true,
             JobId = jobId,
             Cost = cost,
-            ActualModel = resolution.ActualModel
+            ActualModel = resolution.ActualModel,
+            ActualDurationSeconds = actualDuration,
         };
     }
 

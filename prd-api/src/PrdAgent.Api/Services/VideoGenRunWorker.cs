@@ -274,18 +274,12 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
-        // 把 Gateway 解析出来的实际模型 id 回写到 Run
-        if (!string.IsNullOrWhiteSpace(submitResult.ActualModel))
-        {
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.DirectVideoModel, submitResult.ActualModel),
-                cancellationToken: CancellationToken.None);
-        }
-
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
+                .Set(x => x.DirectVideoModel, submitResult.ActualModel ?? run.DirectVideoModel)
+                .Set(x => x.DirectDuration, submitResult.ActualDurationSeconds ?? run.DirectDuration)
+                .Set(x => x.TotalDurationSeconds, submitResult.ActualDurationSeconds ?? run.TotalDurationSeconds)
                 .Set(x => x.DirectVideoJobId, submitResult.JobId)
                 .Set(x => x.CurrentPhase, "videogen-polling")
                 .Set(x => x.PhaseProgress, 10),
@@ -757,7 +751,10 @@ public class VideoGenRunWorker : BackgroundService
 
             await _db.VideoGenRuns.UpdateOneAsync(
                 x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId),
+                Builders<VideoGenRun>.Update
+                    .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
+                    .Set($"Scenes.{sceneIdx}.Model", submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel)
+                    .Set($"Scenes.{sceneIdx}.Duration", submitResult.ActualDurationSeconds ?? scene.Duration ?? run.DirectDuration),
                 cancellationToken: CancellationToken.None);
             await UpdateProjectAsync(run, VideoProjectStatus.Rendering);
 
@@ -792,7 +789,7 @@ public class VideoGenRunWorker : BackgroundService
                         JobId = submitResult.JobId,
                         Model = submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel,
                         Prompt = scene.Prompt,
-                        Duration = scene.Duration ?? run.DirectDuration,
+                        Duration = submitResult.ActualDurationSeconds ?? scene.Duration ?? run.DirectDuration,
                         FirstFrameUrl = scene.FirstFrameUrl,
                         LastFrameUrl = scene.LastFrameUrl,
                         Cost = status.Cost,

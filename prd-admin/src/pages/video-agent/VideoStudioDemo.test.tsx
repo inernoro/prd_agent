@@ -1,7 +1,7 @@
 import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun } from '@/services/contracts/videoAgent';
-import { getStoryboardExperienceState } from './VideoStoryboardEditor';
+import { formatVideoSceneError, getStoryboardExperienceState } from './VideoStoryboardEditor';
 import { VideoStudioDemo } from './VideoStudioDemo';
 
 const runWith = (
@@ -29,5 +29,10 @@ describe('VideoStudioDemo', () => {
     expect(getStoryboardExperienceState(runWith('Editing', 'editing'))).toBe('empty-error');
     expect(getStoryboardExperienceState(runWith('Failed', 'failed'))).toBe('empty-error');
     expect(getStoryboardExperienceState(runWith('Editing', 'editing', [{ index: 0 }] as VideoGenRun['scenes']))).toBe('editor');
+  });
+
+  it('turns unsupported duration errors into an actionable retry message', () => {
+    expect(formatVideoSceneError('Duration 6s is not supported for this model. Supported durations: 5, 10s'))
+      .toContain('系统将在重试时自动采用最接近的可用时长');
   });
 });

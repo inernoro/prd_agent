@@ -105,6 +105,22 @@ export const getStoryboardExperienceState = (
   return 'empty-error';
 };
 
+export const formatVideoSceneError = (message?: string): string => {
+  if (!message?.trim()) return '生成服务没有返回失败原因，请重新生成；若再次失败，请检查模型配置。';
+  const durationMatch = message.match(/Duration\s+(\d+)s\s+is not supported.*Supported durations:\s*([\d,\s]+)s/i);
+  if (durationMatch) {
+    return `当前模型不支持 ${durationMatch[1]} 秒视频，仅支持 ${durationMatch[2].trim()} 秒。系统将在重试时自动采用最接近的可用时长。`;
+  }
+  return message.trim();
+};
+
+const formatElapsedDuration = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return minutes > 0 ? `${minutes} 分 ${remainder} 秒` : `${remainder} 秒`;
+};
+
 export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ runId, onBack }) => {
   const [run, setRun] = useState<VideoGenRun | null>(null);
   const [models, setModels] = useState<VideoModelOption[]>([]);
@@ -121,10 +137,17 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [lastServerSignalAt, setLastServerSignalAt] = useState<number | null>(null);
+  const [liveTransport, setLiveTransport] = useState<'connecting' | 'streaming' | 'polling'>('connecting');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
   const loadRunRef = useRef<(() => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const autoSelectedExportRef = useRef(false);
+
+  const markServerSignal = useCallback((transport?: 'streaming' | 'polling') => {
+    setLastServerSignalAt(Date.now());
+    if (transport) setLiveTransport(transport);
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (!pollRef.current) return;
@@ -134,7 +157,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
-    pollRef.current = setInterval(() => { void loadRunRef.current?.(); }, 2500);
+    pollRef.current = setInterval(() => { void loadRunRef.current?.(); }, 2000);
   }, []);
 
   const loadRun = useCallback(async () => {
@@ -146,13 +169,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       }
 
       setRun(response.data);
+      markServerSignal();
       setError(null);
       setSelectedSceneIndex((current) => Math.min(current, Math.max(response.data.scenes.length - 1, 0)));
       const hasTransientScene = response.data.scenes.some(
         (scene) => scene.status === 'Generating' || scene.status === 'Rendering',
       );
       const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(response.data.status);
-      if (!hasTransientScene && !hasTransientRun) stopPolling();
+      if (hasTransientScene || hasTransientRun) startPolling();
+      else stopPolling();
 
       if (response.data.status === 'Completed' && response.data.videoAssetUrl) {
         if (!autoSelectedExportRef.current) {
@@ -165,7 +190,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '网络错误');
     }
-  }, [runId, stopPolling]);
+  }, [markServerSignal, runId, startPolling, stopPolling]);
 
   useEffect(() => { loadRunRef.current = loadRun; }, [loadRun]);
   useEffect(() => {
@@ -188,15 +213,22 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   useEffect(() => {
     const controller = new AbortController();
+    setLiveTransport('connecting');
     void connectSse({
       url: getVideoGenStreamUrl(runId),
       signal: controller.signal,
-      onEvent: () => { void loadRunRef.current?.(); },
+      onEvent: (event) => {
+        markServerSignal('streaming');
+        if (event.event !== 'heartbeat') void loadRunRef.current?.();
+      },
     }).then((result) => {
-      if (!result.success && !controller.signal.aborted) startPolling();
+      if (!result.success && !controller.signal.aborted) {
+        setLiveTransport('polling');
+        startPolling();
+      }
     });
     return () => controller.abort();
-  }, [runId, startPolling]);
+  }, [markServerSignal, runId, startPolling]);
 
   const selectedScene = run?.scenes[selectedSceneIndex] ?? null;
   const selectedSceneWorking = selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
@@ -379,6 +411,8 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       <StoryboardProgressView
         run={run}
         source={project?.sourceMarkdown || run.articleMarkdown || run.directPrompt}
+        lastServerSignalAt={lastServerSignalAt}
+        liveTransport={liveTransport}
         onBack={onBack}
         onCancel={cancelRun}
         cancelling={mutating === 'cancel-run'}
@@ -536,6 +570,12 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <ViewerProgress run={run} />
             ) : selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating' ? (
               <ViewerProgress run={run} label={SCENE_STATUS_REGISTRY[selectedScene.status].label} />
+            ) : selectedScene?.status === 'Error' ? (
+              <div className="video-console__viewer-error" role="alert">
+                <AlertCircle size={32} />
+                <strong>这个镜头没有开始生成</strong>
+                <span>{formatVideoSceneError(selectedScene.errorMessage)}</span>
+              </div>
             ) : (
               <div className="video-console__viewer-empty">
                 <WandSparkles size={32} />
@@ -557,6 +597,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
           {selectedScene && (
             <section className="video-workbench__composer" aria-label="镜头生成">
+              {selectedScene.status === 'Error' && (
+                <div className="video-workbench__scene-error" role="alert">
+                  <AlertCircle size={16} />
+                  <div>
+                    <strong>上次生成失败，描述和参数均已保留</strong>
+                    <span>{formatVideoSceneError(selectedScene.errorMessage)}</span>
+                  </div>
+                </div>
+              )}
               <input
                 className="video-workbench__topic-input"
                 value={topicDraft}
@@ -894,13 +943,30 @@ const ViewerProgress: React.FC<{ run: VideoGenRun; label?: string }> = ({ run, l
 const StoryboardProgressView: React.FC<{
   run: VideoGenRun;
   source?: string;
+  lastServerSignalAt: number | null;
+  liveTransport: 'connecting' | 'streaming' | 'polling';
   onBack?: () => void;
   onCancel: () => void;
   cancelling: boolean;
-}> = ({ run, source, onBack, onCancel, cancelling }) => {
-  const progress = Math.max(4, Math.min(run.phaseProgress || 12, 96));
+}> = ({ run, source, lastServerSignalAt, liveTransport, onBack, onCancel, cancelling }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const progress = Math.max(0, Math.min(run.phaseProgress ?? 0, 96));
   const sourcePreview = source?.trim() || '原稿已保存，正在准备分析内容。';
   const activeStep = progress >= 70 ? 2 : progress >= 25 ? 1 : 0;
+  const startedAt = new Date(run.startedAt || run.createdAt).getTime();
+  const elapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, (now - startedAt) / 1000) : 0;
+  const signalAgeSeconds = lastServerSignalAt == null ? null : Math.max(0, Math.floor((now - lastServerSignalAt) / 1000));
+  const serverHealthy = signalAgeSeconds != null && signalAgeSeconds < 6;
+  const liveLabel = liveTransport === 'streaming' ? '实时通道' : liveTransport === 'polling' ? '备用通道' : '正在连接';
+  const waitGuidance = elapsedSeconds >= 120
+    ? '模型响应时间明显偏长。可以停止任务后重试，原稿不会丢失。'
+    : elapsedSeconds >= 45
+      ? '模型仍在分析内容，服务器持续响应中。你可以离开页面，任务不会中断。'
+      : '正在等待模型返回故事结构，页面会持续报告服务器状态。';
   const steps = [
     ['理解原稿', '识别人物、场景和情绪转折'],
     ['规划镜头', '把故事拆成可编辑的镜头节拍'],
@@ -926,6 +992,12 @@ const StoryboardProgressView: React.FC<{
           <span className="video-storyboard-progress__badge"><Sparkles size={14} /> 正在把内容变成可编辑分镜</span>
           <h1>{PHASE_LABELS[run.currentPhase] || '正在分析故事结构'}</h1>
           <p>不需要守着空白页面。你可以先检查原稿和创作流程，也可以离开页面，任务不会中断。</p>
+          <div className={`video-storyboard-progress__live ${serverHealthy ? 'is-live' : 'is-delayed'}`} role="status" aria-live="polite">
+            <span><i />{serverHealthy ? '服务器持续响应' : liveTransport === 'connecting' ? '正在建立实时连接' : '响应延迟，正在自动重连'}</span>
+            <span>已运行 {formatElapsedDuration(elapsedSeconds)}</span>
+            <span>{liveLabel}{signalAgeSeconds == null ? '' : ` · ${signalAgeSeconds === 0 ? '刚刚响应' : `${signalAgeSeconds} 秒前响应`}`}</span>
+          </div>
+          <p className="video-storyboard-progress__guidance">{waitGuidance}</p>
           <div className="video-storyboard-progress__meter">
             <div><span>整体进度</span><strong>{progress}%</strong></div>
             <ProgressBar progress={progress} />

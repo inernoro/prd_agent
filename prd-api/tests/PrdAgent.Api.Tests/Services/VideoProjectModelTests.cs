@@ -57,4 +57,17 @@ public class VideoProjectModelTests
             new VideoGenScene { Status = SceneItemStatus.Error },
         ]).ShouldBe(VideoProjectStatus.Editing);
     }
+
+    [Theory]
+    [InlineData("alibaba/wan-2.6", 6, 5)]
+    [InlineData("alibaba/wan-2.6", 8, 10)]
+    [InlineData("seedance-2.0", 14, 15)]
+    [InlineData("seedance-1.5", 7, 8)]
+    public void Duration_ShouldMatchActualVideoModelCapabilities(
+        string modelId,
+        int requested,
+        int expected)
+    {
+        VideoModelCapabilities.NormalizeDuration(modelId, requested).ShouldBe(expected);
+    }
 }

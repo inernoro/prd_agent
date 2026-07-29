@@ -82,6 +82,8 @@ public class OpenRouterVideoSubmitResult
     public double? Cost { get; set; }
     /// <summary>实际使用的模型 id（Gateway 解析结果）</summary>
     public string? ActualModel { get; set; }
+    /// <summary>按实际模型能力归一化后的生成时长。</summary>
+    public int? ActualDurationSeconds { get; set; }
 }
 
 public class OpenRouterVideoStatus

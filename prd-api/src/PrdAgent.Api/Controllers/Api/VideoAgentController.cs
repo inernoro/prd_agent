@@ -102,13 +102,6 @@ public class VideoAgentController : ControllerBase
         var isSeedance = key.Contains("seedance");
         var isWan = key.Contains("wan-") || key.Contains("wan2");
         var isVeo = key.Contains("veo-3");
-        var durations = isSeedance20
-            ? new List<int> { 5, 10, 15 }
-            : isSeedance15
-                ? new List<int> { 4, 5, 8, 10, 12 }
-                : isWan
-                    ? new List<int> { 5, 10 }
-                    : new List<int> { 5, 8, 10 };
         return new VideoModelOption
         {
             Id = id,
@@ -120,7 +113,7 @@ public class VideoAgentController : ControllerBase
             SupportsReferenceAssets = isSeedance20,
             AspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
             Resolutions = isSeedance || isWan || isVeo ? ["720p", "1080p"] : ["720p"],
-            Durations = durations,
+            Durations = VideoModelCapabilities.GetSupportedDurations(key).ToList(),
             PricePerCall = pricing?.PricePerCall,
             PriceCurrency = pricing?.PriceCurrency,
         };
@@ -415,12 +408,16 @@ public class VideoAgentController : ControllerBase
             return;
         }
 
-        // 立即发送 SSE 注释作为心跳，确保连接建立并防止代理超时
-        await Response.WriteAsync(": connected\n\n", cancellationToken);
-        await Response.Body.FlushAsync(cancellationToken);
+        await WriteEventAsync(null, "heartbeat", JsonSerializer.Serialize(new
+        {
+            serverTime = DateTime.UtcNow,
+            status = run.Status,
+            phase = run.CurrentPhase,
+            progress = run.PhaseProgress,
+        }, JsonOptions), cancellationToken);
 
         long lastSeq = afterSeq ?? 0;
-        var lastKeepAliveAt = DateTime.UtcNow;
+        var lastHeartbeatAt = DateTime.UtcNow;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -432,22 +429,25 @@ public class VideoAgentController : ControllerBase
                     await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
                     lastSeq = ev.Seq;
                 }
-                lastKeepAliveAt = DateTime.UtcNow;
             }
             else
             {
-                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
-                {
-                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
-                    await Response.Body.FlushAsync(cancellationToken);
-                    lastKeepAliveAt = DateTime.UtcNow;
-                }
-
                 run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
                 if (run == null) break;
+                if ((DateTime.UtcNow - lastHeartbeatAt).TotalSeconds >= 2)
+                {
+                    await WriteEventAsync(null, "heartbeat", JsonSerializer.Serialize(new
+                    {
+                        serverTime = DateTime.UtcNow,
+                        status = run.Status,
+                        phase = run.CurrentPhase,
+                        progress = run.PhaseProgress,
+                    }, JsonOptions), cancellationToken);
+                    lastHeartbeatAt = DateTime.UtcNow;
+                }
                 if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
                 {
-                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
+                    break;
                 }
 
                 await Task.Delay(650, cancellationToken);

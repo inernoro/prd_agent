@@ -11,6 +11,27 @@ public static class VideoProjectStatus
     public const string Completed = "Completed";
 }
 
+public static class VideoModelCapabilities
+{
+    public static IReadOnlyList<int> GetSupportedDurations(string? modelId)
+    {
+        var key = (modelId ?? string.Empty).ToLowerInvariant();
+        if (key.Contains("seedance-2")) return [5, 10, 15];
+        if (key.Contains("seedance-1-5") || key.Contains("seedance-1.5")) return [4, 5, 8, 10, 12];
+        if (key.Contains("wan-") || key.Contains("wan2")) return [5, 10];
+        return [5, 8, 10];
+    }
+
+    public static int? NormalizeDuration(string? modelId, int? requestedDuration)
+    {
+        if (!requestedDuration.HasValue) return null;
+        return GetSupportedDurations(modelId)
+            .OrderBy(duration => Math.Abs(duration - requestedDuration.Value))
+            .ThenBy(duration => duration)
+            .First();
+    }
+}
+
 public static class VideoProjectAssetType
 {
     public const string Character = "character";

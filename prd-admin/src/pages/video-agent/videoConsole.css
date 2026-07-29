@@ -815,6 +815,12 @@
 .video-storyboard-progress__badge { display: inline-flex; align-items: center; gap: 7px; padding: 6px 9px; border-radius: 7px; background: color-mix(in srgb, var(--accent-gold-2) 10%, var(--bg-secondary)); color: var(--accent-gold-2); font-size: 11px; font-weight: 700; }
 .video-storyboard-progress h1 { margin: 18px 0 10px; font-size: clamp(24px, 3vw, 34px); line-height: 1.25; }
 .video-storyboard-progress__summary > p { margin: 0; color: var(--text-secondary); font-size: 14px; line-height: 1.7; }
+.video-storyboard-progress__live { display: flex; flex-wrap: wrap; align-items: center; gap: 8px 16px; margin-top: 18px; padding: 11px 12px; border: 1px solid var(--border-faint); border-radius: 10px; background: var(--bg-secondary); color: var(--text-secondary); font-size: 11px; }
+.video-storyboard-progress__live > span { display: inline-flex; align-items: center; gap: 6px; }
+.video-storyboard-progress__live > span:first-child { color: var(--text-primary); font-weight: 700; }
+.video-storyboard-progress__live i { width: 8px; height: 8px; border-radius: 50%; background: var(--canvas-state-warning); box-shadow: 0 0 0 0 color-mix(in srgb, var(--canvas-state-warning) 35%, transparent); }
+.video-storyboard-progress__live.is-live i { background: var(--canvas-state-completed); animation: video-live-pulse 1.6s ease-out infinite; }
+.video-storyboard-progress__guidance { margin-top: 10px !important; padding-left: 1px; color: var(--text-muted) !important; font-size: 12px !important; }
 .video-storyboard-progress__meter { margin-top: 26px; }
 .video-storyboard-progress__meter > div { display: flex; justify-content: space-between; margin-bottom: 8px; font-size: 12px; }
 .video-storyboard-progress__meter .video-console__progress { width: 100%; height: 7px; background: var(--bg-secondary); }
@@ -882,6 +888,9 @@
 .video-workbench__viewer { border-radius: 12px; background: var(--media-card-base); box-shadow: var(--shadow-raised); }
 .video-console__viewer-empty,
 .video-console__viewer-progress { color: var(--text-muted); }
+.video-console__viewer-error { display: flex; width: min(520px, calc(100% - 32px)); flex-direction: column; align-items: center; gap: 9px; padding: 22px; border: 1px solid var(--semantic-danger-border); border-radius: 12px; background: color-mix(in srgb, var(--semantic-danger-soft) 45%, var(--media-card-base)); color: var(--semantic-danger-text); text-align: center; }
+.video-console__viewer-error strong { color: var(--text-primary); font-size: 15px; }
+.video-console__viewer-error span { max-width: 440px; color: var(--text-secondary); font-size: 12px; line-height: 1.65; }
 .video-console__viewer-empty strong,
 .video-console__viewer-progress strong { color: var(--text-primary); font-size: 14px; }
 .video-console__viewer-empty span,
@@ -891,6 +900,12 @@
 .video-workbench__transport button:hover { background: var(--bg-card-hover); }
 .video-console__transport-line { background: var(--bg-secondary); }
 .video-workbench__composer { border: 1px solid var(--border-faint); background: var(--bg-secondary); box-shadow: none; }
+.video-workbench__scene-error { display: flex; align-items: flex-start; gap: 9px; margin-bottom: 10px; padding: 10px 11px; border: 1px solid var(--semantic-danger-border); border-radius: 8px; background: color-mix(in srgb, var(--semantic-danger-soft) 45%, var(--bg-secondary)); color: var(--semantic-danger-text); }
+.video-workbench__scene-error svg { flex: 0 0 auto; margin-top: 1px; }
+.video-workbench__scene-error strong,
+.video-workbench__scene-error span { display: block; }
+.video-workbench__scene-error strong { color: var(--text-primary); font-size: 11px; }
+.video-workbench__scene-error span { margin-top: 3px; color: var(--text-secondary); font-size: 10px; line-height: 1.55; }
 .video-workbench__topic-input,
 .video-workbench__composer textarea { color: var(--text-primary); }
 .video-workbench__topic-input { font-size: 13px; }
@@ -915,6 +930,15 @@
 .video-console__library-empty { color: var(--text-muted); }
 .video-console__library-empty strong { color: var(--text-primary); font-size: 11px; }
 .video-console__library-empty span { font-size: 10px; }
+
+@keyframes video-live-pulse {
+  70% { box-shadow: 0 0 0 6px color-mix(in srgb, var(--canvas-state-completed) 0%, transparent); }
+  100% { box-shadow: 0 0 0 0 transparent; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .video-storyboard-progress__live.is-live i { animation: none; }
+}
 
 @media (max-width: 1180px) {
   .video-demo__header { grid-template-columns: minmax(210px, 1fr) auto; }
