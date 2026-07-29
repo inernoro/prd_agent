@@ -21,7 +21,7 @@
 | 8 | 更新 主流程 | smoke-test | `/smoke` | 扫描 Controller 生成链式 curl 冒烟脚本 |
 | 9 | 更新 主流程 | preview-url | `/preview` | 分支名 → 预览地址（`分支名.miduo.org`） |
 | 10 | 更新 主流程 | task-handoff-checklist | `/handoff` | 8 维度交接清单（导航/文档/规则/测试/风险等） |
-| 11 | 更新 主流程 | weekly-update-summary | `/weekly` | git 历史 → 分类周报（中文） |
+| 11 | 更新 主流程 | weekly-update-summary | `/weekly` | git + 日报 + 验收 + 缺陷/发布 四源 → 业务向周报（中文） |
 | 12 | 运维 辅助 | conflict-resolution | `/resolve` | 合并 main 到当前分支，AI 解决冲突 |
 | 13 | 运维 辅助 | doc-writer | `/doc` | `doc/` 目录命名 + 表头格式守护，6 种标准模板 |
 | 14 | 运维 辅助 | doc-sync | `/doc-sync` | 扫描 `doc/` 自动对齐 index.yml 和目录文档 |

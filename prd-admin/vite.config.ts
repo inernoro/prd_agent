@@ -66,6 +66,12 @@ export default defineConfig({
           });
         },
       },
+      // LocalAssetStorage 返回同源相对地址；直接 pnpm dev 时也必须与 Docker
+      // Nginx 一样转发到 API，否则头像、录音和自定义键资产会落入 Vite 的 SPA fallback。
+      '/local-assets': {
+        target: 'http://localhost:5001',
+        changeOrigin: true,
+      },
     },
   },
   resolve: {

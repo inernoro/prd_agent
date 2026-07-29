@@ -163,6 +163,7 @@ import { SubtitleGenerationDrawer } from './SubtitleGenerationDrawer';
 import { TranscribeFlowDrawer } from './TranscribeFlowDrawer';
 import { RecordAudioSheet } from './RecordAudioSheet';
 import {
+  decideUploadedRecordingFollowUp,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
@@ -2291,6 +2292,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
               const liveTranscriptReady = entry.metadata?.liveTranscriptStatus === 'completed'
                 && Boolean(entry.metadata?.liveTranscript?.trim());
+              const followUp = decideUploadedRecordingFollowUp(
+                archivePending,
+                liveTranscriptReady,
+                deferredTranscriptionRunId,
+              );
               setShowRecorder(false);
               if (destination === storeId) setEntries(prev => [entry, ...prev.filter(item => item.id !== entry.id)]);
               void vaultDeleteSession(vaultSessionId);
@@ -2302,12 +2308,17 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                     : '音频已进入耐久队列，云端恢复后将自动归档并转录',
                 );
               }
-              if (archivePending && !liveTranscriptReady) {
-                if (deferredTranscriptionRunId) {
-                  watchBackgroundTranscription(deferredTranscriptionRunId);
+              if (followUp.kind === 'watch-deferred-run') {
+                if (!archivePending) {
+                  toast.info(
+                    '录音已安全保存',
+                    '完整音频正在后台转录，完成后会通知你',
+                  );
                 }
+                watchBackgroundTranscription(followUp.runId);
                 return;
               }
+              if (followUp.kind === 'wait-for-archive') return;
               setTranscribeFlow({
                 entryId: entry.id,
                 title: entry.title,

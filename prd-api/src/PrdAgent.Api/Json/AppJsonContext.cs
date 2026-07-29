@@ -60,6 +60,7 @@ namespace PrdAgent.Api.Json;
 [JsonSerializable(typeof(ApiResponse<AdminRegenerateInviteResponse>))]
 [JsonSerializable(typeof(ApiResponse<AdminPagedResult<AdminMessageDto>>))]
 [JsonSerializable(typeof(ApiResponse<HealthCheckResponse>))]
+[JsonSerializable(typeof(AssetStorageReadinessResponse))]
 // Desktop Branding
 [JsonSerializable(typeof(ApiResponse<DesktopBrandingResponse>))]
 // Desktop Assets

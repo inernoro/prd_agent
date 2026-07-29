@@ -84,7 +84,7 @@ public class SubtitleGenerationProcessor
                 CancellationToken.None);
         }
         if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
-            throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
+            throw new InvalidOperationException("源文件 URL 不可用（可能尚未归档到对象存储）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
 
@@ -194,8 +194,13 @@ public class SubtitleGenerationProcessor
             throw new InvalidOperationException($"不支持的文件类型: {contentType}（转录仅支持音频/视频）");
 
         // 录音期间已稳定完成的实时原文不依赖对象存储。R2/COS 故障时，
-        // 音频由 Mongo 分片耐久保全并后台归档，快捷录音仍应立即生成原文。
-        var liveTranscript = isAudio ? GetCompletedLiveTranscript(entry) : null;
+        // Mongo 分片只在对象存储异常期间临时保全音频并等待后台归档；
+        // 正式录音文件仍以对象存储为准，快捷录音在恢复期间也应立即生成原文。
+        // 但录音终态已持久化完整音频校准意图时，即使实时中继随后变成 Completed，
+        // 固定转录任务也必须跳过实时预览并读取 Attachment 或 Mongo 全量分片。
+        var liveTranscript = isAudio
+            ? GetPreferredLiveTranscriptForTranscription(entry)
+            : null;
 
         string? fileUrl = null;
         byte[]? pendingRecordingAudio = null;
@@ -212,7 +217,7 @@ public class SubtitleGenerationProcessor
                 CancellationToken.None);
         }
         if (liveTranscript == null && string.IsNullOrEmpty(fileUrl) && pendingRecordingAudio == null)
-            throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
+            throw new InvalidOperationException("源文件 URL 不可用（可能尚未归档到对象存储）");
 
         await UpdateProgressAsync(db, runStore, run, 10, "准备中");
 
@@ -350,6 +355,13 @@ public class SubtitleGenerationProcessor
 
         return transcript.Trim();
     }
+
+    internal static bool RequiresFullRecordingAudio(DocumentEntry entry)
+        => entry.Metadata?.GetValueOrDefault(
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey) == "true";
+
+    internal static string? GetPreferredLiveTranscriptForTranscription(DocumentEntry entry)
+        => RequiresFullRecordingAudio(entry) ? null : GetCompletedLiveTranscript(entry);
 
     /// <summary>
     /// 「换个整理方式」（restyle）：不重跑 ASR，用原转录文本按新风格重生成摘要，

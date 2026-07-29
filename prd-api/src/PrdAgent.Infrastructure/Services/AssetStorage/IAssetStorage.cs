@@ -2,6 +2,15 @@ namespace PrdAgent.Infrastructure.Services.AssetStorage;
 
 public record StoredAsset(string Sha256, string Url, long SizeBytes, string Mime);
 
+/// <summary>
+/// 暴露运行时实际选择的存储实现，供就绪检查核对环境合同。
+/// 只返回提供商名称，不暴露 bucket、endpoint 或凭据。
+/// </summary>
+public interface IAssetStorageRuntimeInfo
+{
+    string ProviderName { get; }
+}
+
 public interface IAssetStorage
 {
     /// <summary>
@@ -65,5 +74,4 @@ public interface IAssetStorage
     /// </summary>
     string BuildSiteKey(string siteId, string filePath);
 }
-
 
