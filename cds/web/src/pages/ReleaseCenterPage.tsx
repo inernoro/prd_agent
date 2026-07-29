@@ -17,7 +17,7 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
-import { Link, useSearchParams } from 'react-router-dom';
+import { useSearchParams } from 'react-router-dom';
 import { Plus, RefreshCw, Rocket, RotateCcw } from 'lucide-react';
 import { AppShell, Crumb, PaletteHint, TopBar, Workspace } from '@/components/layout/AppShell';
 import { Button } from '@/components/ui/button';
@@ -295,23 +295,22 @@ export function ReleaseCenterPage(): JSX.Element {
    * 不能复用 selectHost：它从闭包里的 hosts 找主机，而这台刚创建的还没进列表，
    * 找不到就只写 privateKeyRef、host/user/port 三个字段仍是空的。
    */
-  const handleHostCreated = async (hostId: string): Promise<void> => {
-    try {
-      const targets = await apiRequest<TargetsResponse>(`/api/releases/targets?project=${encodeURIComponent(projectId)}`);
-      const nextHosts = targets.remoteHosts || [];
-      setState((current) => (current.status === 'ok' ? { ...current, hosts: nextHosts } : current));
-      const created = nextHosts.find((item) => item.id === hostId);
-      setDraft((current) => ({
-        ...current,
-        privateKeyRef: hostId,
-        host: created?.host || current.host,
-        port: created ? String(created.sshPort || 22) : current.port,
-        user: created?.sshUser || current.user,
-      }));
-    } catch {
-      // 列表刷新失败不该挡住向导：至少把选中关系落下，用户仍能继续下一步。
-      setDraft((current) => ({ ...current, privateKeyRef: hostId }));
-    }
+  const handleHostCreated = (created: RemoteHostOption): void => {
+    // 直接把创建接口返回的这台主机并进列表，**不能**改去重拉 /releases/targets：
+    // 那个接口出于项目隔离只返回「已被本项目发布目标引用」的主机（releases.ts 的
+    // referencedHostIds），刚建出来的主机还没被任何目标引用，重拉等于查无此人——
+    // 于是界面继续说「还没有服务器」，再加一次又撞后端的全局重名校验 409。
+    // 真人路径验收当场撞到的就是这条（2026-07-29）。
+    setState((current) => (current.status === 'ok'
+      ? { ...current, hosts: [...current.hosts.filter((item) => item.id !== created.id), created] }
+      : current));
+    setDraft((current) => ({
+      ...current,
+      privateKeyRef: created.id,
+      host: created.host || current.host,
+      port: String(created.sshPort || 22),
+      user: created.sshUser || current.user,
+    }));
   };
 
   const selectHost = (hostId: string): void => {
@@ -748,9 +747,12 @@ function EmptyEnvironmentsState({ hostCount, onAdd }: { hostCount: number; onAdd
           <Plus />
           添加环境
         </Button>
+        {/* 这里原本是一个跳去 CDS 系统设置的链接。没有服务器恰恰是最不该把人支走的时候——
+            向导第一步已经能就地建服务器，空状态直接把人送进那一步即可。
+            用户 2026-07-29 原话：不允许操作用户跳来跳去。 */}
         {hostCount === 0 ? (
-          <Button asChild variant="outline">
-            <Link to="/cds-settings#remote-hosts">先添加服务器</Link>
+          <Button variant="outline" onClick={onAdd}>
+            还没有服务器？在向导第一步直接加
           </Button>
         ) : null}
       </div>

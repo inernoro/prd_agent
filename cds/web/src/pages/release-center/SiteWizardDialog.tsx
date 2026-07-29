@@ -96,8 +96,8 @@ export function SiteWizardDialog({
   onStep: (step: WizardStep) => void;
   onDraft: Dispatch<SetStateAction<SiteDraft>>;
   onSelectHost: (hostId: string) => void;
-  /** 就地新建服务器后：父级刷新列表并选中它，向导原地继续。 */
-  onHostCreated: (hostId: string) => void | Promise<void>;
+  /** 就地新建服务器后：父级把这台主机并进列表并选中，向导原地继续。 */
+  onHostCreated: (host: RemoteHostOption) => void | Promise<void>;
   onSave: () => void;
 }): JSX.Element {
   const selectedHost = hosts.find((host) => host.id === draft.privateKeyRef);

@@ -42,8 +42,8 @@ export function InlineHostCreator({
 }: {
   /** 一台服务器都没有时直接展开：此时折叠等于把人挡在门外。 */
   defaultOpen: boolean;
-  /** 新服务器已创建：父级负责刷新列表并选中它，向导原地继续。 */
-  onCreated: (hostId: string) => void | Promise<void>;
+  /** 新服务器已创建：把创建接口返回的这台主机交给父级并入列表并选中，向导原地继续。 */
+  onCreated: (host: RemoteHostOption) => void | Promise<void>;
 }): JSX.Element {
   const [open, setOpen] = useState(defaultOpen);
   const [quickInput, setQuickInput] = useState('');
@@ -84,9 +84,11 @@ export function InlineHostCreator({
   const save = async (): Promise<void> => {
     setSaving(true);
     setError('');
+    // 显示名在 catch 里还要用（重名提示要指名道姓），所以提到 try 外算好。
+    const displayName = name.trim() || suggestHostName(host) || host.trim();
     try {
       const body: Record<string, unknown> = {
-        name: name.trim() || suggestHostName(host) || host.trim(),
+        name: displayName,
         host: host.trim(),
         sshPort: Number(port) || 22,
         sshUser: user.trim(),
@@ -108,9 +110,14 @@ export function InlineHostCreator({
       setPrivateKey('');
       setPassphrase('');
       setPassword('');
-      await onCreated(createdHost.id);
+      await onCreated(createdHost);
     } catch (err) {
-      setError(err instanceof Error ? err.message : String(err));
+      const raw = err instanceof Error ? err.message : String(err);
+      // 后端的重名校验是全局的，但报出来是一句英文 + HTTP 409 + requestId，
+      // 对着「显示名」那个框的人完全不知道该改哪里。翻成一句能照做的话。
+      setError(/already exists/i.test(raw)
+        ? `显示名「${displayName}」已被占用，换一个显示名再保存。`
+        : raw);
     } finally {
       setSaving(false);
     }

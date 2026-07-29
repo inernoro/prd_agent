@@ -34,17 +34,29 @@ describe('就地加服务器的接线', () => {
 
   it('页面把 onHostCreated 传给了向导', () => {
     expect(page).toMatch(/onHostCreated=\{handleHostCreated\}/);
-    expect(page).toMatch(/const handleHostCreated = async/);
+    expect(page).toMatch(/const handleHostCreated = /);
   });
 
-  it('新建后会刷新服务器列表并把它选中，而不是只写一个 id', () => {
-    // 只写 privateKeyRef 的话，host/port/user 三个字段仍是空的，
-    // 用户会在下一步撞上「远端目录填了但连不上」这种莫名其妙的失败。
+  it('新建后把创建接口返回的主机并进列表，不重拉按引用过滤的目标接口', () => {
+    // 2026-07-29 真人路径验收当场撞到的坑：/releases/targets 出于项目隔离
+    // 只返回「已被本项目发布目标引用」的主机，刚建出来的那台还没被引用 →
+    // 重拉等于查无此人，界面继续说「还没有服务器」，再加一次撞后端全局重名 409。
     const handler = page.slice(page.indexOf('const handleHostCreated'), page.indexOf('const selectHost'));
-    expect(handler).toContain('/api/releases/targets');
-    expect(handler).toContain('privateKeyRef: hostId');
-    expect(handler).toMatch(/host: created\?\.host/);
-    expect(handler).toMatch(/user: created\?\.sshUser/);
+    expect(handler).not.toContain('/api/releases/targets');
+    expect(handler).toContain('privateKeyRef: created.id');
+    expect(handler).toMatch(/hosts: \[/);
+    expect(handler).toMatch(/host: created\.host/);
+    expect(handler).toMatch(/user: created\.sshUser/);
+  });
+
+  it('空状态不再把没有服务器的人支去 CDS 系统设置', () => {
+    // 用户原话：不允许操作用户跳来跳去。没有服务器恰恰是最不该把人支走的时刻。
+    expect(page).not.toContain('/cds-settings#remote-hosts');
+  });
+
+  it('重名冲突给的是能照做的中文，不是原始英文 409', () => {
+    expect(creator).toContain('already exists');
+    expect(creator).toMatch(/已被占用/);
   });
 
   it('三种认证方式都在 UI 上给出（不是只留私钥）', () => {
