@@ -43,12 +43,36 @@ export interface PublishedEntrypoints {
 const LABEL_HASH_LENGTH = 8;
 
 /**
+ * 截断 slug 到给定预算，**只在 `-` 分段边界下刀**。
+ *
+ * 为什么不能按字符硬切：slug 是人读的（`llmgw-self-service-...-claude-prd-agent`），
+ * 硬切会切出 `...-cla` 这种半个词的残根 —— 用户看一眼记不住、也拼不出来。
+ * 按段丢弃则每一段都是完整单词，截出来的仍然念得出、抄得对。
+ *
+ * 兜底：第一段就超预算时（罕见，如无连字符的超长 slug）才退回字符硬切，
+ * 否则会返回空串导致 host 里出现 `--`。
+ */
+function truncateSlugAtSegmentBoundary(slug: string, budget: number): string {
+  if (slug.length <= budget) return slug;
+  let head = '';
+  for (const segment of slug.split('-')) {
+    if (!segment) continue;
+    const next = head ? `${head}-${segment}` : segment;
+    if (next.length > budget) break;
+    head = next;
+  }
+  if (head) return head;
+  const sliced = slug.slice(0, budget);
+  return sliced.replace(/-+$/g, '') || sliced;
+}
+
+/**
  * 命名子域的第一 DNS 标签。**唯一拼法** —— 发布器、入口表、网关 URL 计算、
  * 两处 SSRF 白名单全部走这里，任何一处自己拼都会与实际发布的 host 漂移。
  *
- * 超过 63 octet 时截断 slug 并接一段 sha1 摘要，让长分支也拿得到命名入口。
- * 为什么必须带摘要：裸截断会丢唯一性 —— 两个前缀相同的长分支会塌成同一个 host，
- * 互相抢路由（发布器早年因此宁可跳过不发布）。摘要取自完整 previewSlug，
+ * 超过 63 octet 时按 `-` 分段截断 slug 并接一段 sha1 摘要，让长分支也拿得到命名入口。
+ * 为什么必须带摘要：段截断照样会丢唯一性 —— 两个前几段相同的长分支会塌成同一个
+ * host、互相抢路由（发布器早年因此宁可跳过不发布）。摘要取自完整 previewSlug，
  * 所以同一分支的所有服务共享同一段 `<head>-<hash>` 前缀，肉眼可归组。
  *
  * 纯函数、确定性：同样的输入永远得到同样的 host，解析侧照旧「重算再比」即可。
@@ -64,9 +88,30 @@ export function namedServiceLabel(previewSlug: string, subdomain: string): strin
   if (headBudget <= 0) return label;
 
   const hash = crypto.createHash('sha1').update(previewSlug).digest('hex').slice(0, LABEL_HASH_LENGTH);
-  const sliced = previewSlug.slice(0, headBudget);
-  const head = sliced.replace(/-+$/g, '') || sliced;
-  return `${head}-${hash}${suffix}`;
+  return `${truncateSlugAtSegmentBoundary(previewSlug, headBudget)}-${hash}${suffix}`;
+}
+
+/**
+ * 改名后仍要继续解析的历史子域。
+ *
+ * 2026-07-29：模型网关控制台的子域从 `llmgw-web` 改名为 `llmgw`（它本来就是 web，
+ * `-web` 是废字）。但**别的分支正挂在旧地址上**，直接改名会让那些链接一起失效。
+ * 所以发布器对每个规范子域**同时发布它的历史别名**，旧 host 照常可达；
+ * 面板只展示规范名，不制造重复条目。
+ *
+ * 别名什么时候能删：确认没有存量链接/文档还指着旧名之后，从这里去掉即可，
+ * 判据不散落在别处。
+ */
+export const LEGACY_SUBDOMAIN_ALIASES: Readonly<Record<string, readonly string[]>> = {
+  llmgw: ['llmgw-web'],
+};
+
+/** 某个规范子域实际要发布的全部名字：规范名在前，历史别名在后。 */
+export function subdomainWithLegacyAliases(subdomain: string): string[] {
+  const legacy = LEGACY_SUBDOMAIN_ALIASES[subdomain] ?? [];
+  // 存量 profile 可能仍写着历史名（compose 未重新导入），此时它自己就是规范名，
+  // 不再展开别名，避免同一个名字发两遍。
+  return [subdomain, ...legacy.filter((name) => name !== subdomain)];
 }
 
 /**
@@ -105,9 +150,14 @@ export function buildPublishedEntrypoints(opts: {
     const sub = (raw || '').trim();
     if (!sub) continue;
     if (serviceUrls[sub]) continue; // first-wins,对齐发布端 writtenSubdomains 去重
-    const label = namedServiceLabel(previewSlug, sub);
-    if (!isPublishableNamedLabel(label)) continue; // 没发布就不声明
-    serviceUrls[sub] = `https://${label}.${previewHost}`;
+    // 表里要**逐条对应发布器实际写出的路由**，历史别名同样在列 —— 否则会出现
+    // 「路由发布了但表里没有」，消费方据表判定就会误报「本环境没有这个入口」。
+    for (const name of subdomainWithLegacyAliases(sub)) {
+      if (serviceUrls[name]) continue;
+      const label = namedServiceLabel(previewSlug, name);
+      if (!isPublishableNamedLabel(label)) continue; // 没发布就不声明
+      serviceUrls[name] = `https://${label}.${previewHost}`;
+    }
   }
   return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls };
 }

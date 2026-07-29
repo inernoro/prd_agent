@@ -10,3 +10,6 @@
 | test | prd-api | 新增 PlatformEntrypointsTests：表里取值 / 尾斜杠归一 / 缺项返回 null 不猜 / 畸形 JSON 降级 / 「没有表」与「表里没这项」可区分 |
 | feat | cds | 命名子域超 DNS 63 字符上限时改为截断 slug + 接 8 位 sha1 摘要（此前整条路由跳过不发布，长分支拿不到网关等命名入口）；摘要保证前缀相同的长分支不会塌成同一 host |
 | fix | cds | 发布器写 host、两处 SSRF 白名单此前各自拼 `<slug>-<sub>`，改为统一走 namedServiceLabel，否则截断后发布的 host 与白名单算出的不是同一个 |
+| fix | cds | 超长命名子域的截断改为只在 `-` 段边界下刀（此前按字符硬切会切出 `...-f4oeh6-cla` 这种半截词，人读不出也拼不对） |
+| refactor | cds | 模型网关控制台子域 llmgw-web 改名为 llmgw（它本身就是 web，`-web` 是废字，还白占 4 个 DNS 标签额度）；发布器同时发布历史别名，存量链接与未重新导入 compose 的存量部署都不受影响 |
+| fix | llmgw | 控制台「返回 MAP / 教程」深链此前硬编码 `-llmgw-web` 后缀反推 MAP 地址，子域改名即失效；改为新旧后缀都认并收敛成文件内唯一一处 |

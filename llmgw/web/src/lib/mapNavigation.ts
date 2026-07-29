@@ -1,5 +1,20 @@
 type ConsoleLocation = Pick<Location, 'hostname' | 'protocol'>;
 
+/**
+ * 控制台子域的候选后缀。**长的排前面**，否则 `-llmgw` 会先把 `-llmgw-web` 削掉一半。
+ *
+ * 2026-07-29：子域从 `llmgw-web` 改名为 `llmgw`（它本来就是 web）。改名期间新旧
+ * 两个 host 都会被平台发布（cds/src/services/preview-entrypoints.ts 的
+ * LEGACY_SUBDOMAIN_ALIASES），所以这里必须两个都认——只认一个会让另一半用户
+ * 点「返回 MAP」时落到控制台自己的根路径。
+ *
+ * 已知债务：这仍是一份「按 hostname 反推兄弟服务地址」的实现，与 MAP 侧刚刚拆掉的
+ * 那份同源（doc/debt.platform.preview-entrypoints.md 的 PE-consumer-sweep）。
+ * 正解是 console-api 把平台注入的 CDS_PREVIEW_URL 下发给 SPA，本文件只消费。
+ * 在那之前，至少把「认哪些后缀」收敛成这一处，不再散落。
+ */
+const CONSOLE_SUBDOMAIN_SUFFIXES = ['-llmgw-web', '-llmgw'] as const;
+
 export function resolveMapHomeHref(location: ConsoleLocation = window.location): string {
   if (location.hostname.endsWith('.ebcone.net') && location.hostname !== 'map.ebcone.net') {
     return `${location.protocol}//map.ebcone.net/`;
@@ -9,10 +24,10 @@ export function resolveMapHomeHref(location: ConsoleLocation = window.location):
   if (firstDot < 0) return '/';
 
   const hostPrefix = location.hostname.slice(0, firstDot);
-  const gatewaySuffix = '-llmgw-web';
-  if (!hostPrefix.endsWith(gatewaySuffix)) return '/';
+  const suffix = CONSOLE_SUBDOMAIN_SUFFIXES.find((candidate) => hostPrefix.endsWith(candidate));
+  if (!suffix) return '/';
 
-  const mapHost = `${hostPrefix.slice(0, -gatewaySuffix.length)}${location.hostname.slice(firstDot)}`;
+  const mapHost = `${hostPrefix.slice(0, -suffix.length)}${location.hostname.slice(firstDot)}`;
   return `${location.protocol}//${mapHost}/`;
 }
 

@@ -24,8 +24,17 @@ public static class PlatformEntrypoints
     /// <summary>CDS 注入的本分支主入口。它的存在与否 = 「本部署是不是 CDS 托管的预览」。</summary>
     public const string PreviewUrlKey = "CDS_PREVIEW_URL";
 
-    /// <summary>模型网关控制台在 cds-compose.yml 里声明的 cds.subdomain。</summary>
-    public const string GatewayConsoleSubdomain = "llmgw-web";
+    /// <summary>模型网关控制台在 cds-compose.yml 里声明的 cds.subdomain（规范名）。</summary>
+    public const string GatewayConsoleSubdomain = "llmgw";
+
+    /// <summary>
+    /// 改名前的历史子域。2026-07-29 由 llmgw-web 改名为 llmgw。
+    ///
+    /// 必须留着回退查一次：compose 是逐项目重新导入才生效的，存量部署的 profile 里
+    /// 可能仍写着旧名，此时平台注入的表里只有 llmgw-web 这一项。只认新名会让这些
+    /// 环境凭空「没有网关入口」——而它明明是可达的。
+    /// </summary>
+    public const string LegacyGatewayConsoleSubdomain = "llmgw-web";
 
     /// <summary>
     /// 平台有没有下发过入口表。
@@ -72,7 +81,8 @@ public static class PlatformEntrypoints
     /// </summary>
     public static string? ResolveGatewayConsoleBaseUrl(IConfiguration configuration)
     {
-        var url = ResolveServiceUrl(configuration, GatewayConsoleSubdomain);
+        var url = ResolveServiceUrl(configuration, GatewayConsoleSubdomain)
+                  ?? ResolveServiceUrl(configuration, LegacyGatewayConsoleSubdomain);
         if (url is null) return null;
         return url.EndsWith('/') ? url : url + "/";
     }

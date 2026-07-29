@@ -7,6 +7,7 @@ import {
   namedServiceLabel,
   publishedEntrypointsEnv,
   resolveBranchEntrypointsEnv,
+  subdomainWithLegacyAliases,
 } from '../../src/services/preview-entrypoints.js';
 import { resolveProfileRuntimeEnvWithProvenance } from '../../src/services/env-provenance.js';
 import type { BranchEntry } from '../../src/types.js';
@@ -28,7 +29,7 @@ describe('buildPublishedEntrypoints — 只声明真正会发布的入口', () =
   });
 
   it('超 63 octet 时截断+摘要,长分支照样拿得到入口', () => {
-    // 2026-07-29 现场分支：slug 57 + '-llmgw-web' 10 = 67 > 63。
+    // 2026-07-29 现场分支：slug 57 + '-llmgw' 6 = 63 压线，'-llmgw-web' 10 = 67 超限。
     // 旧行为是整条路由跳过不发布，长分支的网关控制台点不开。
     const previewSlug = 'llmgw-self-service-panel-redesign-f4oeh6-claude-prd-agent';
     expect(previewSlug).toHaveLength(57);
@@ -42,6 +43,25 @@ describe('buildPublishedEntrypoints — 只声明真正会发布的入口', () =
 
     const r = buildPublishedEntrypoints({ previewSlug, previewHost: HOST, subdomains: ['llmgw-web'] });
     expect(r.serviceUrls['llmgw-web']).toBe(`https://${label}.miduo.org`);
+  });
+
+  it('截断只在 `-` 段边界下刀,不留半个词的残根', () => {
+    // 用户反馈：`...-f4oeh6-cla` 这种半截词「人类不知道怎么拼」。
+    const previewSlug = 'llmgw-self-service-panel-redesign-f4oeh6-claude-prd-agent';
+    const label = namedServiceLabel(previewSlug, 'llmgw');
+    expect(label.length).toBeLessThanOrEqual(63);
+    // 摘要与 subdomain 之前的每一段都必须是 slug 里的完整段。
+    const head = label.slice(0, label.length - '-llmgw'.length).replace(/-[0-9a-f]{8}$/, '');
+    const slugSegments = previewSlug.split('-');
+    head.split('-').forEach((segment, i) => expect(segment).toBe(slugSegments[i]));
+    expect(head.endsWith('-cla')).toBe(false);
+  });
+
+  it('无连字符的超长 slug 仍能产出可发布 host（兜底不返回空串）', () => {
+    const label = namedServiceLabel('x'.repeat(70), 'llmgw');
+    expect(isPublishableNamedLabel(label)).toBe(true);
+    expect(label).not.toContain('--');
+    expect(label.startsWith('-')).toBe(false);
   });
 
   it('截断必须带摘要:前缀相同的两个长分支不许塌成同一个 host', () => {
@@ -139,5 +159,19 @@ describe('注入是平台事实,项目 env 不得伪造', () => {
     const r = resolveProfileRuntimeEnvWithProvenance(BRANCH, PROFILE, [], [], { jwtIssuer: 'cds' });
     expect(r.env[SERVICE_URLS_ENV_KEY]).toBeUndefined();
     expect(r.env[PREVIEW_URL_ENV_KEY]).toBeUndefined();
+  });
+});
+
+describe('子域改名不许打断存量链接', () => {
+  it('规范名 llmgw 会连同历史别名 llmgw-web 一起发布', () => {
+    expect(subdomainWithLegacyAliases('llmgw')).toEqual(['llmgw', 'llmgw-web']);
+  });
+
+  it('存量 profile 仍写着旧名时不重复展开（旧名此时自己就是规范名）', () => {
+    expect(subdomainWithLegacyAliases('llmgw-web')).toEqual(['llmgw-web']);
+  });
+
+  it('没有别名的子域原样返回', () => {
+    expect(subdomainWithLegacyAliases('llmgw-serve')).toEqual(['llmgw-serve']);
   });
 });

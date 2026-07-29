@@ -4,7 +4,7 @@
 
 ## 总览
 
-当前 open: 4（PE-truncation / PE-transition-window / PE-env-staleness / PE-consumer-sweep）/ 已落地待验证: 1（PE-ssot-inversion）/ 总计: 5
+当前 open: 4（PE-transition-window / PE-env-staleness / PE-consumer-sweep / PE-llmgw-console-mapnav）/ 已落地待验证: 4（PE-ssot-inversion / PE-truncation / PE-console-subdomain-rename / PE-truncation-readability）/ 总计: 8
 
 记录「分支预览域名怎么产生、谁有权推算它」这条链路上的欠账。
 
@@ -67,21 +67,20 @@ CDS 平台自更新到本次改动之前，预览容器拿不到入口表。此�
 再留一份，与整改目标直接冲突。选择是「明确告知未知」而不是「静默猜一个」。
 影响面仅限分支预览（正式环境走同源路径，行为不变），且 CDS 更新后自动恢复。
 
-### PE-truncation · 超长分支仍然拿不到网关入口 —— open
+### PE-truncation · 超长分支拿不到网关入口 —— 已落地待验证
 
-`capPreviewSlug`（`preview-slug.ts:53`，截断到 54 字符 + `-` + sha1 前 8 位）目前只作用在
-previewSlug **本身**（293/301/309 三处），没有作用在复合标签 `${previewSlug}-${sub}` 上。
-超长时命名子域是**跳过不发布**，不是截断。
+原先 `capPreviewSlug` 只作用在 previewSlug **本身**，复合标签 `${previewSlug}-${sub}`
+超长时是**跳过不发布**，长分支点不开网关控制台。现已把截断提到复合标签这一层
+（`namedServiceLabel`）：按 `-` 段截断 slug + 接 8 位 sha1 摘要压进 63 内。
 
-现状影响已从「拼错域名」降级为「明确告知没有入口」——正确性问题已解，剩下的是可用性：
-长分支名的预览环境点不开网关控制台。
+**摘要不可省**：截断会丢唯一性，前几段相同的两个长分支会塌成同一个 host、互相抢路由
+——这正是发布端注释里原本拒绝截断的理由。
 
-补法（独立排期）：把 cap 提到复合标签这一层，发布端（`forwarder-route-publisher`）、
-`computeBranchGatewayUrls`、`preview-entrypoints` 三处同时改（它们已共用
-`isPublishableNamedLabel` 判据，改一处判据即可）。**必须保留哈希后缀** ——
-纯截断会丢唯一性、可能与别的 slug 撞 host（发布端注释里原本拒绝截断就是这个理由）。
+同批修掉一处会立刻出事的接线：发布器写 host、`replica-loadtest` 与 `replica-sets`
+两处 SSRF 白名单此前各自拼 `<slug>-<sub>`，截断一上线三者算出的就不是同一个 host
+（直达链接会被自己的 SSRF 闸挡掉）。现统一走 `namedServiceLabel`。
 
-绕过办法（当下）：用更短的分支名重新部署，或在正式域名上打开。
+短分支行为逐字不变（不超限原样返回），无回归面。
 
 ### PE-env-staleness · 入口表在容器创建时定格 —— open（已知边界）
 
@@ -102,6 +101,35 @@ previewSlug **本身**（293/301/309 三处），没有作用在复合标签 `${
 
 补法：加一条全仓守卫，扫 `prd-admin/src`、`llmgw/web/src` 里的
 `` `${...}.miduo.org` `` 模式与 `-llmgw-web` 字面量，白名单显式登记。
+
+### PE-console-subdomain-rename · 控制台子域 llmgw-web → llmgw —— 已落地待验证
+
+`-web` 是废字（llmgw 本来就是 web 控制台），还白占 4 个 DNS 标签额度 —— 长分支名下
+这 4 个字符正是「发布得出 / 发布不出」的分界。2026-07-29 改名为 `llmgw`。
+
+**旧地址不断**：发布器对每个规范子域同时发布 `LEGACY_SUBDOMAIN_ALIASES` 里的历史名
+（`llmgw` → 也发 `llmgw-web`），入口表同样两个 key 都给。存量链接、存量部署（compose
+未重新导入、profile 里仍写旧名）都照常工作；prd-api 侧解析也先查新名再回退旧名。
+
+别名什么时候能删：确认没有存量链接/文档还指着旧名之后，从 `LEGACY_SUBDOMAIN_ALIASES`
+去掉即可 —— 判据集中在一处，不散落。
+
+### PE-truncation-readability · 截断只在 `-` 段边界下刀 —— 已落地待验证
+
+首版按字符硬切，切出 `...-f4oeh6-cla` 这种半截词，用户反馈「人类不知道怎么拼」。
+改为按 `-` 分段丢弃整段，截出来的每一段都是完整单词。摘要仍保留（段截断照样会
+让前几段相同的长分支撞 host）。无连字符的超长 slug 退回字符硬切兜底，避免空串。
+
+### PE-llmgw-console-mapnav · 控制台反推 MAP 地址是第三份域名实现 —— open
+
+`llmgw/web/src/lib/mapNavigation.ts` 的 `resolveMapHomeHref` 按 `location.hostname`
+剥掉控制台子域后缀来推 MAP 主入口地址 —— 与 MAP 侧刚拆掉的那份同源。它此前硬编码
+`-llmgw-web` 单一后缀，子域一改名就会失效（返回控制台自己的根路径，「返回 MAP」
+和「教程」深链一起断）。
+
+本轮先把「认哪些后缀」收敛成文件内唯一一处 `CONSOLE_SUBDOMAIN_SUFFIXES`（新旧都认），
+止住改名带来的破坏。**正解仍未做**：console-api 读平台注入的 `CDS_PREVIEW_URL`
+（分支主入口 = MAP）下发给 SPA，本文件只消费。与 PE-consumer-sweep 同批清理。
 
 ---
 

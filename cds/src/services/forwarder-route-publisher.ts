@@ -32,7 +32,7 @@ import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
-import { isPublishableNamedLabel, namedServiceLabel } from './preview-entrypoints.js';
+import { isPublishableNamedLabel, namedServiceLabel, subdomainWithLegacyAliases } from './preview-entrypoints.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -441,35 +441,40 @@ export class ForwarderRoutePublisher {
         const sub = bp?.subdomain;
         if (!sub) continue;
         if (writtenSubdomains.has(sub)) continue;
-        // DNS label 上限守卫(Codex P2):命名 host 第一标签 `<previewSlug>-<sub>` 必须 ≤63 octet
-        // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
-        // 对长分支名**静默失效**。超长则跳过此命名路由并 warn —— 服务仍可经主域名 `<previewSlug>.<root>`
-        // 的 `/gw/v1` 路径访问,不受影响。选 skip 而非截断/哈希:截断会丢唯一性、可能与别的 slug 撞 host。
-        const namedLabel = namedServiceLabel(previewSlug, sub);
-        if (!isPublishableNamedLabel(namedLabel)) {
-          this.opts.logger?.warn?.(
-            `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
-          );
-          continue;
-        }
         writtenSubdomains.add(sub);
-        for (const root of this.opts.rootDomains) {
-          // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
-          //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
-          // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
-          pushRoute({
-            _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
-            // 必须用 namedLabel（可能已按 63 上限截断+摘要），不能再拼一遍原始 slug ——
-            // 否则发布的 host 与入口表/白名单算出来的不是同一个。
-            host: `${namedLabel}.${root}`,
-            upstreamHost: '127.0.0.1',
-            upstreamPort: svc.hostPort,
-            branchId: branch.id,
-            branchName: branch.branch,
-            weight: 100,
-            healthState: svc.status === 'running' ? 'running' : 'unknown',
-            // 不写 updatedAt(理由同前:dedup 失效防御)
-          }, svc.profileId);
+        // 规范名 + 历史别名一起发（preview-entrypoints.LEGACY_SUBDOMAIN_ALIASES）：
+        // 子域改名（llmgw-web → llmgw）时别的分支还挂在旧地址上，只发新名会让那些
+        // 链接一起失效。两个 host 指同一个上游，旧链接照常可达。
+        for (const name of subdomainWithLegacyAliases(sub)) {
+          // DNS label 上限守卫(Codex P2):命名 host 第一标签 `<previewSlug>-<sub>` 必须 ≤63 octet
+          // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
+          // 对长分支名**静默失效**。namedServiceLabel 已按段截断 + 摘要压到上限内;仍超限
+          // (subdomain 自身过长)时跳过并 warn —— 服务仍可经主域名的路径访问,不受影响。
+          const namedLabel = namedServiceLabel(previewSlug, name);
+          if (!isPublishableNamedLabel(namedLabel)) {
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+            );
+            continue;
+          }
+          for (const root of this.opts.rootDomains) {
+            // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
+            //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
+            // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
+            pushRoute({
+              _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
+              // 必须用 namedLabel（可能已按 63 上限截断+摘要），不能再拼一遍原始 slug ——
+              // 否则发布的 host 与入口表/白名单算出来的不是同一个。
+              host: `${namedLabel}.${root}`,
+              upstreamHost: '127.0.0.1',
+              upstreamPort: svc.hostPort,
+              branchId: branch.id,
+              branchName: branch.branch,
+              weight: 100,
+              healthState: svc.status === 'running' ? 'running' : 'unknown',
+              // 不写 updatedAt(理由同前:dedup 失效防御)
+            }, svc.profileId);
+          }
         }
       }
     }
