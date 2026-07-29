@@ -91,6 +91,30 @@ public class OpenRouterVideoClientGatewayTests
     }
 
     [Fact]
+    public async Task RestartedPollingClient_ShouldResolveStatusAndDownloadWithRecordedModel()
+    {
+        var gateway = new CapturingGateway();
+        var client = new OpenRouterVideoClient(
+            gateway,
+            new SingleClientFactory(new HttpClient(new CapturingHandler(_ => throw new NotSupportedException()))),
+            NullLogger<OpenRouterVideoClient>.Instance);
+
+        var status = await client.GetStatusAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "job-123",
+            "recorded/video-model");
+        var download = await client.DownloadVideoBytesAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate,
+            "job-123",
+            expectedModel: "recorded/video-model");
+
+        status.IsCompleted.ShouldBeTrue();
+        download.Success.ShouldBeTrue(download.ErrorMessage);
+        gateway.ResolveCalls.Count.ShouldBe(2);
+        gateway.ResolveCalls.ShouldAllBe(call => call.ExpectedModel == "recorded/video-model");
+    }
+
+    [Fact]
     public async Task VolcengineVideoExchange_ShouldUseGatewayStatusAndDownloadSignedUrl()
     {
         var gateway = new CapturingGateway(new GatewayModelResolution

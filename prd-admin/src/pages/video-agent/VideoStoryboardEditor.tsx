@@ -76,6 +76,9 @@ const SCENE_STATUS_REGISTRY: Record<SceneItemStatus, { label: string; color: str
   Draft: { label: '待生成', color: 'var(--text-muted)' },
   Generating: { label: '改写中', color: '#a78bfa' },
   Submitting: { label: '生成中', color: '#38bdf8' },
+  SubmittingClaimed: { label: '正在提交', color: '#38bdf8' },
+  Polling: { label: '等待接管', color: '#38bdf8' },
+  PollingClaimed: { label: '生成中', color: '#38bdf8' },
   Rendering: { label: '生成中', color: '#38bdf8' },
   Done: { label: '已就绪', color: '#34d399' },
   Error: { label: '需重试', color: '#fb7185' },
@@ -121,7 +124,7 @@ export const shouldKeepVideoRunPolling = (
   keepPollingUntil: number,
 ): boolean => {
   const hasTransientScene = run.scenes.some(
-    (scene) => scene.status === 'Generating' || scene.status === 'Submitting' || scene.status === 'Rendering',
+    (scene) => ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(scene.status),
   );
   const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(run.status);
   return hasTransientScene || hasTransientRun || now < keepPollingUntil;
@@ -133,6 +136,15 @@ export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): 
     ? { ...scene, status: 'Submitting', errorMessage: undefined }
     : scene),
 });
+
+export const calculateVideoRunSpentCost = (scenes: VideoGenRun['scenes']): number => scenes.reduce((sum, scene) => {
+  const recordedVersionCosts = scene.versions
+    .map((version) => version.cost)
+    .filter((cost): cost is number => typeof cost === 'number' && Number.isFinite(cost));
+  return sum + (recordedVersionCosts.length > 0
+    ? recordedVersionCosts.reduce((versionSum, cost) => versionSum + cost, 0)
+    : (scene.cost ?? 0));
+}, 0);
 
 const formatElapsedDuration = (seconds: number) => {
   const safeSeconds = Math.max(0, Math.floor(seconds));
@@ -248,7 +260,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   }, [markServerSignal, runId, startPolling]);
 
   const selectedScene = run?.scenes[selectedSceneIndex] ?? null;
-  const selectedSceneWorking = selectedScene?.status === 'Submitting' || selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
+  const selectedSceneWorking = Boolean(selectedScene && ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(selectedScene.status));
   const selectedSceneEditable = Boolean(selectedScene)
     && (run?.status === 'Editing' || run?.status === 'Completed')
     && !selectedSceneWorking;
@@ -260,7 +272,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     run?.scenes.length && run.scenes.every((scene) => scene.status === 'Done' && scene.videoUrl),
   );
   const totalCost = useMemo(
-    () => run?.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0) ?? 0,
+    () => calculateVideoRunSpentCost(run?.scenes ?? []),
     [run],
   );
   const totalDuration = useMemo(
@@ -483,7 +495,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           )}
           <div className="min-w-0">
             <div className="video-workbench__title">{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</div>
-            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · ${totalCost.toFixed(3)}</div>
+            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
           </div>
         </div>
 
@@ -601,7 +613,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               />
             ) : run.status === 'Rendering' && previewMode === 'export' ? (
               <ViewerProgress run={run} />
-            ) : selectedScene?.status === 'Submitting' || selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating' ? (
+            ) : selectedSceneWorking && selectedScene ? (
               <ViewerProgress run={run} label={SCENE_STATUS_REGISTRY[selectedScene.status].label} />
             ) : selectedScene?.status === 'Error' ? (
               <div className="video-console__viewer-error" role="alert">
@@ -819,7 +831,7 @@ const Inspector: React.FC<{
     return <aside className="video-console__inspector"><EmptyLibrary /></aside>;
   }
 
-  const working = scene.status === 'Submitting' || scene.status === 'Rendering' || scene.status === 'Generating';
+  const working = ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(scene.status);
   const editable = (run.status === 'Editing' || run.status === 'Completed') && !working;
   const selectedModelId = scene.model ?? run.directVideoModel ?? '';
   const selectedModel = models.find((model) => model.id === selectedModelId);

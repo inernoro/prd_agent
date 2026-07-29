@@ -2,6 +2,7 @@ import { renderToStaticMarkup } from 'react-dom/server';
 import { describe, expect, it, vi } from 'vitest';
 import type { VideoGenRun } from '@/services/contracts/videoAgent';
 import {
+  calculateVideoRunSpentCost,
   formatVideoSceneError,
   getStoryboardExperienceState,
   markVideoSceneSubmitting,
@@ -45,6 +46,34 @@ describe('VideoStudioDemo', () => {
     const staleRun = runWith('Editing', 'editing', [{ index: 0, status: 'Error' }] as VideoGenRun['scenes']);
     expect(shouldKeepVideoRunPolling(staleRun, 1_000, 46_000)).toBe(true);
     expect(shouldKeepVideoRunPolling(staleRun, 46_001, 46_000)).toBe(false);
+  });
+
+  it.each(['SubmittingClaimed', 'Polling', 'PollingClaimed'] as const)(
+    'keeps polling while the server is in the %s recovery state',
+    (status) => {
+      const activeRun = runWith('Editing', 'editing', [{ index: 0, status }] as VideoGenRun['scenes']);
+      expect(shouldKeepVideoRunPolling(activeRun, 60_000, 1_000)).toBe(true);
+    },
+  );
+
+  it('reports all recorded generation versions instead of only the active scene cost', () => {
+    const scenes = [
+      {
+        index: 0,
+        status: 'Done',
+        cost: 0.6,
+        versions: [
+          { id: 'v1', cost: 0.6 },
+          { id: 'v2', cost: 0.6 },
+          { id: 'v3', cost: 0.6 },
+          { id: 'v4', cost: 0.6 },
+        ],
+      },
+      { index: 1, status: 'Done', cost: 0.6, versions: [{ id: 'v5', cost: 0.6 }] },
+      { index: 2, status: 'Draft', cost: 0.2, versions: [] },
+    ] as VideoGenRun['scenes'];
+
+    expect(calculateVideoRunSpentCost(scenes)).toBeCloseTo(3.2);
   });
 
   it('shows an optimistic rendering state immediately after a real generation click', () => {

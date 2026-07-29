@@ -15,8 +15,12 @@ public interface IOpenRouterVideoClient
     /// <summary>提交视频生成任务，返回 OpenRouter jobId</summary>
     Task<OpenRouterVideoSubmitResult> SubmitAsync(OpenRouterVideoSubmitRequest request, CancellationToken ct = default);
 
-    /// <summary>查询任务状态</summary>
-    Task<OpenRouterVideoStatus> GetStatusAsync(string appCallerCode, string jobId, CancellationToken ct = default);
+    /// <summary>查询任务状态；恢复轮询时传入提交阶段记录的实际模型，避免模型池漂移到其他供应商。</summary>
+    Task<OpenRouterVideoStatus> GetStatusAsync(
+        string appCallerCode,
+        string jobId,
+        string? expectedModel = null,
+        CancellationToken ct = default);
 
     /// <summary>
     /// 下载视频 mp4 二进制（OpenRouter URL 需 API Key 鉴权，浏览器无法直接播放，
@@ -25,7 +29,13 @@ public interface IOpenRouterVideoClient
     /// <param name="appCallerCode">同 SubmitAsync</param>
     /// <param name="jobId">OpenRouter jobId</param>
     /// <param name="urlIndex">默认 0（OpenRouter 一次提交可能返回多 URL，目前只用第 0 个）</param>
-    Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(string appCallerCode, string jobId, int urlIndex = 0, CancellationToken ct = default);
+    /// <param name="expectedModel">提交阶段记录的实际模型，用于 worker 重启后的稳定解析</param>
+    Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex = 0,
+        string? expectedModel = null,
+        CancellationToken ct = default);
 }
 
 public class OpenRouterVideoSubmitRequest

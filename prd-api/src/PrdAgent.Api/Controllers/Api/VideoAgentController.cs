@@ -198,7 +198,8 @@ public class VideoAgentController : ControllerBase
     [HttpGet("videogen-direct/status/{jobId}")]
     public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
     {
-        var status = await _videoClient.GetStatusAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, ct);
+        var status = await _videoClient.GetStatusAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: null, ct: ct);
         return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
     }
 
@@ -247,7 +248,7 @@ public class VideoAgentController : ControllerBase
             r.ExportErrorMessage,
             ScenesCount = r.Scenes.Count,
             ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
-            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.Rendering),
+            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering),
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
@@ -299,7 +300,7 @@ public class VideoAgentController : ControllerBase
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 
-    /// <summary>触发分镜视频渲染（标记 Rendering，由 worker 调 OpenRouter）</summary>
+    /// <summary>触发分镜视频渲染（进入提交队列，由 worker 调 OpenRouter）</summary>
     [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/render")]
     public async Task<IActionResult> RenderScene(string runId, int sceneIndex, CancellationToken ct)
     {
@@ -313,7 +314,7 @@ public class VideoAgentController : ControllerBase
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 
-    /// <summary>批量触发未完成分镜渲染，worker 按顺序处理</summary>
+    /// <summary>批量触发未完成分镜渲染，由 worker 原子领取处理</summary>
     [HttpPost("runs/{runId}/scenes/render-batch")]
     public async Task<IActionResult> RenderScenes(
         string runId,

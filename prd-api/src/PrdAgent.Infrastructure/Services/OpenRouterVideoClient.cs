@@ -155,7 +155,11 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         };
     }
 
-    public async Task<OpenRouterVideoStatus> GetStatusAsync(string appCallerCode, string jobId, CancellationToken ct = default)
+    public async Task<OpenRouterVideoStatus> GetStatusAsync(
+        string appCallerCode,
+        string jobId,
+        string? expectedModel = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
         {
@@ -166,7 +170,7 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         // 仅在 appCallerCode 匹配时复用缓存，防止跨上下文重用错误的解析结果
         var statusResolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct: ct);
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!statusResolution.Success)
             return new OpenRouterVideoStatus { Status = "failed", ErrorMessage = statusResolution.ErrorMessage };
 
@@ -223,7 +227,12 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         };
     }
 
-    public async Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(string appCallerCode, string jobId, int urlIndex = 0, CancellationToken ct = default)
+    public async Task<OpenRouterVideoDownload> DownloadVideoBytesAsync(
+        string appCallerCode,
+        string jobId,
+        int urlIndex = 0,
+        string? expectedModel = null,
+        CancellationToken ct = default)
     {
         if (string.IsNullOrWhiteSpace(jobId))
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = "jobId 不能为空" };
@@ -231,13 +240,13 @@ public class OpenRouterVideoClient : IOpenRouterVideoClient
         // 复用已有 resolution，避免重复查 DB
         var resolution = (_submitResolution?.Success == true && _submitAppCallerCode == appCallerCode)
             ? _submitResolution
-            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, null, ct: ct);
+            : await _gateway.ResolveModelAsync(appCallerCode, ModelTypes.VideoGen, expectedModel, ct: ct);
         if (!resolution.Success)
             return new OpenRouterVideoDownload { Success = false, ErrorMessage = resolution.ErrorMessage };
 
         if (IsVolcengineVideoResolution(resolution))
         {
-            var status = await GetStatusAsync(appCallerCode, jobId, ct);
+            var status = await GetStatusAsync(appCallerCode, jobId, expectedModel, ct);
             if (!status.IsCompleted || string.IsNullOrWhiteSpace(status.VideoUrl))
             {
                 return new OpenRouterVideoDownload

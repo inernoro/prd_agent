@@ -59,6 +59,11 @@ public class VideoProjectModelTests
 
         VideoGenRunWorker.ResolveProjectStatusForScenes([
             new VideoGenScene { Status = SceneItemStatus.Done },
+            new VideoGenScene { Status = SceneItemStatus.PollingClaimed },
+        ]).ShouldBe(VideoProjectStatus.Rendering);
+
+        VideoGenRunWorker.ResolveProjectStatusForScenes([
+            new VideoGenScene { Status = SceneItemStatus.Done },
             new VideoGenScene { Status = SceneItemStatus.Error },
         ]).ShouldBe(VideoProjectStatus.Editing);
     }
