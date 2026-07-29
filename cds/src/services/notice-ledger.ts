@@ -95,6 +95,32 @@ export interface NoticeInput {
   actionLabel?: string;
 }
 
+/**
+ * 站内信的 href 白名单：只收**同源相对路径**。
+ *
+ * 为什么必须在账本这一层挡（而不是只在路由层校验）：
+ * 通知能由项目级 Agent Key 通过 POST /api/notices 写入，而 SiteNoticeInbox 会把
+ * href 直接渲染成 `<a href={notice.href}>`。一个 `javascript:...` 就变成存储型脚本执行——
+ * **全局运维**打开自己的 CDS 会话点那条项目通知时执行，等于低权限凭据拿到高权限会话。
+ * 账本是所有写入路径的必经之地（内部事件渲染也走这里），挡在这儿才没有绕过口。
+ *
+ * 判据刻意收得很窄：必须以单个 `/` 开头。放过的话：
+ *   - `//evil.com/x` 是协议相对 URL，浏览器当外站，等于开放重定向；
+ *   - `javascript:` / `data:` / `vbscript:` 直接执行；
+ *   - `https://...` 即使是善意的外链，也不该由通知这条低门槛写入口决定跳到站外。
+ * 内部产出的 href 全是 `/release-center?...` 这种形态，不受影响。
+ */
+export function sanitizeNoticeHref(raw: unknown): string | undefined {
+  if (typeof raw !== 'string') return undefined;
+  const value = raw.trim();
+  if (!value) return undefined;
+  // 控制字符可以把 `java\nscript:` 拼回可执行 URL，浏览器解析时会忽略它们。
+  if (/[\u0000-\u001f\u007f]/.test(value)) return undefined;
+  if (!value.startsWith('/')) return undefined;
+  if (value.startsWith('//')) return undefined;
+  return value;
+}
+
 /** 同一件事在这个窗口内重复发生只累加次数，不重新外发。 */
 export const NOTICE_MERGE_WINDOW_MS = 10 * 60_000;
 
@@ -145,7 +171,8 @@ export function mergeNotice(
     ...(incoming.projectId ? { projectId: incoming.projectId } : {}),
     ...(incoming.projectName ? { projectName: incoming.projectName } : {}),
     ...(incoming.projectSlug ? { projectSlug: incoming.projectSlug } : {}),
-    ...(incoming.href ? { href: incoming.href } : {}),
+    // href 一律过白名单：见 sanitizeNoticeHref。这里是所有写入路径的收口。
+    ...((() => { const href = sanitizeNoticeHref(incoming.href); return href ? { href } : {}; })()),
     ...(incoming.actionLabel ? { actionLabel: incoming.actionLabel } : {}),
     createdAt: nowIso,
     updatedAt: nowIso,

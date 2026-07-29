@@ -30,3 +30,21 @@
 | chore | cds | 补齐 /api/scheduled-jobs 与 /api/notices 系列路由的 Activity Monitor 中文 label |
 | test | cds | 新增 releaseDiagnosis / releaseRail / releaseEnvironments / previewUrl 纯函数用例、发布中心接线守卫与渲染冒烟共 84 条 |
 | ops | - | fast.sh 镜像预热超时默认提到 180s，新增总预算闸并收敛超时噪音 |
+| feat | cds | 加环境时可以就地添加服务器：向导第一步内嵌新建表单，不再把用户支到 CDS 系统设置再走回来 |
+| feat | cds | 服务器支持三种接法：CDS 生成密钥对（私钥留在服务端、只给公钥去授权）、粘贴私钥、用户名密码 |
+| feat | cds | 远程主机新增密码认证，发布与 sidecar 两条 SSH 链路同步支持，此前只认私钥 |
+| feat | cds | 新建服务器支持粘贴连接串自动填表（认 ssh:// 、ssh 命令行 -p 端口、user@host:port、IPv6），并按主机名建议显示名 |
+| feat | cds | 新建服务器后就地测试连接，生成密钥对时同时给出公钥与一行授权命令 |
+| fix | cds | 记忆的项目 id 在当前 CDS 实例不存在时自动落到第一个真实项目，不再拿幽灵 id 去打接口换回一串 404 |
+| fix | cds | 发布方式探测失败不再把裸 HTTP 错误糊在页面顶部，改为说明「需要手动填写」 |
+| fix | cds | 录入私钥时不再 trim 尾部换行，避免 PEM 缺失换行导致解析失败 |
+| test | cds | 新增连接串解析 18 条、三种认证方式 10 条、就地新建服务器接线守卫 10 条 |
+| fix | cds | 修复 ssh2 静态具名导入导致 CDS 启动即崩（tsc 与 vitest 均不报错，真 ESM 运行时抛 Named export not found），改走默认导入 |
+| test | cds | 新增 CommonJS 依赖导入方式守卫，禁止对 ssh2 一类 CJS 包使用静态具名导入 |
+| fix | cds | 就地新建的服务器改为直接并入列表，不再重拉按引用过滤的目标接口（新建的主机尚未被任何发布目标引用，重拉会查无此人，界面继续说「还没有服务器」，再加一次撞后端全局重名 409） |
+| fix | cds | 发布中心空状态的「先添加服务器」不再跳去 CDS 系统设置，改为就地打开向导第一步 |
+| fix | cds | 新建服务器重名冲突给出可照做的中文提示，替代原始英文 409 与 requestId |
+| fix | cds | 去掉 InlineHostCreator 上随 hosts 数量变化的 key：新建主机进列表会让组件重挂，刚生成的公钥当场消失，而那是用户唯一一次拿到它的机会 |
+| fix | cds | 站内信 href 只收同源相对路径：项目级 Key 可写入通知，而收件箱把 href 直接渲染成链接，javascript: 之类会在全局运维会话里执行 |
+| fix | cds | 发布告警深链的 target/run 参数真正生效：点「查看发布记录」直接选中出事的目标并打开那次发布的日志，不再落到默认目标 |
+| fix | cds | 镜像预热单张超时被剩余总预算夹住，避免 4 张各 180s 把 420s 的总闸撑到 540s |

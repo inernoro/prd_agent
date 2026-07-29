@@ -194,17 +194,28 @@ warm_image() {
     return 0
   fi
 
-  echo "Warming ${name} image: $image"
+  # 单张的超时必须被**剩余**总预算夹住，否则总闸是假的：
+  # 默认 4 张 x 180s 在 420s 的总预算下，前两张各卡满就已经 360s，
+  # 第三张仍按整 180s 起跑 → 实际 540s，比广告的 420s 多出四分之一，
+  # 而这段时间是从发布 SSH 窗口里借的（Codex review P2，2026-07-29）。
+  # 同理 FAST_PULL_TIMEOUT_SECONDS 被调得比总预算还大时，第一张就该被夹住。
+  remaining=$(( total_timeout_seconds - elapsed ))
+  pull_timeout="$timeout_seconds"
+  if [ "$remaining" -lt "$pull_timeout" ]; then
+    pull_timeout="$remaining"
+  fi
+
+  echo "Warming ${name} image: $image (timeout ${pull_timeout}s, remaining budget ${remaining}s)"
   # stdout（层进度）继续直连：它是 info 级的，既给人等待反馈又不污染 warn 窗口。
   # stderr 收进临时文件，失败时只压成一行 WARN —— 掐掉噪音靠的是这里，
   # 不是靠「不再超时」（超时仍可能发生，但 warn 行数从几十行降到 1 行）。
   pull_err="$(mktemp)"
   if command -v timeout >/dev/null 2>&1; then
-    if timeout "$timeout_seconds" docker pull "$image" 2>"$pull_err"; then
+    if timeout "$pull_timeout" docker pull "$image" 2>"$pull_err"; then
       rm -f "$pull_err"
       echo "${name} image warmup completed"
     else
-      echo "WARN: ${name} image warmup skipped or timed out after ${timeout_seconds}s (last: $(tail -n 3 "$pull_err" | tr '\n' ' ')); exec_dep.sh will enforce release pull" >&2
+      echo "WARN: ${name} image warmup skipped or timed out after ${pull_timeout}s (last: $(tail -n 3 "$pull_err" | tr '\n' ' ')); exec_dep.sh will enforce release pull" >&2
       rm -f "$pull_err"
     fi
   else

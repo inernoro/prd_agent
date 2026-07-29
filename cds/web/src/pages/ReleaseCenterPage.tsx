@@ -25,6 +25,7 @@ import { ApiError, apiRequest } from '@/lib/api';
 import { useNowTick } from '@/hooks/useNowTick';
 import {
   initialReleaseCenterProject,
+  releaseCenterDeepLink,
   normalizeProductionOrigin,
   rememberReleaseCenterProject,
 } from '@/lib/releaseCenter';
@@ -101,7 +102,11 @@ export function ReleaseCenterPage(): JSX.Element {
   const [projects, setProjects] = useState<ProjectLite[]>([]);
   const [state, setState] = useState<LoadState>({ status: 'loading' });
   const [archivedTargets, setArchivedTargets] = useState<ReleaseTarget[]>([]);
-  const [selectedTargetId, setSelectedTargetId] = useState('');
+  // 通知深链 `?target=&run=` 指名要看哪个目标的哪次发布。只在首次挂载时取一次：
+  // 之后用户在页面里切目标不该被 URL 上的旧参数拽回去。
+  const [deepLink] = useState(() => releaseCenterDeepLink(searchParams));
+  const [selectedTargetId, setSelectedTargetId] = useState(deepLink.targetId || '');
+  const [pendingRunId, setPendingRunId] = useState(deepLink.runId || '');
   const [tab, setTab] = useState<DetailTab>('overview');
   const [historyFilter, setHistoryFilter] = useState<TimelineFilter>('all');
   const [toast, setToast] = useState('');
@@ -204,6 +209,19 @@ export function ReleaseCenterPage(): JSX.Element {
   useEffect(() => {
     if (effectiveTargetId && effectiveTargetId !== selectedTargetId) setSelectedTargetId(effectiveTargetId);
   }, [effectiveTargetId, selectedTargetId]);
+
+  // 深链点名的那次发布：数据到位后打开它的日志弹窗，然后把 pending 清掉——
+  // 只弹一次，用户关掉不该再被弹回来。查不到（run 已被回收）就静默放弃，
+  // 不拿一句「找不到」把人挡在页面外。
+  useEffect(() => {
+    if (!pendingRunId || runs.length === 0) return;
+    const target = runs.find((run) => run.releaseId === pendingRunId);
+    setPendingRunId('');
+    if (target) {
+      setSelectedTargetId(target.targetId);
+      setLogRun(target);
+    }
+  }, [pendingRunId, runs]);
 
   const selectedRow = rows.find((row) => row.target.id === effectiveTargetId);
   const selectedRuns = useMemo(
