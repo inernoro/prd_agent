@@ -267,7 +267,22 @@ class _ReportScanner(HTMLParser):
         阅读器侧已有父页点击拦截兜底，但报告会被下载、被别处嵌入，那些场景没有兜底，
         所以在发布闸这里硬校验——不能只把它写成文档里的一句话。
         只管 http(s)：mailto/tel/自定义协议与页内锚点不会导航本 frame。"""
-        d = {k.lower(): (v or "").strip() for k, v in attrs}
+        # 重复属性必须按**浏览器口径取首个**：HTMLParser 会把两个都给出来，
+        # dict 推导式却保留最后一个 —— <a href="javascript:.." href="#safe"> 于是
+        # 以「片段链接」的面目过闸，而浏览器点击时用的是第一个 javascript: URL。
+        # 同理重复 target 能把 _self 藏在后面。既取首个，也直接拒收重复的导航属性。
+        d, dup = {}, set()
+        for k, v in attrs:
+            k = k.lower()
+            if k in d:
+                dup.add(k)
+                continue                 # 保留首个，与浏览器一致
+            d[k] = (v or "").strip()
+        for k in ("href", "xlink:href", "target", "rel"):
+            if k in dup:
+                self._err(f"<{tag}> 出现重复的 {k} 属性——浏览器取首个而校验易取到后者，"
+                          "自包含报告禁止重复导航属性")
+                return
         # href 三种写法都要认：HTML/SVG2 的 href、SVG1.1 遗留的 xlink:href。
         # 覆盖 <a> 与 <area>（图像映射热区导航语义与 a 相同）。
         href = _normalize_url(d.get("href") or d.get("xlink:href") or "")
@@ -295,10 +310,12 @@ class _ReportScanner(HTMLParser):
                       "知识库把正文渲染在自增高 sandbox iframe 里，就地导航会触发 "
                       "ResizeObserver 正反馈循环把页面卡死；导航链接一律新标签打开")
         rel = (d.get("rel") or "").lower().split()
-        if "noopener" not in rel:
-            self._err(f'<{tag} href="{href[:60]}"> 缺 rel="noopener"——'
-                      "新标签会拿到 window.opener，存在 tabnabbing 风险，请写 "
-                      'rel="noopener noreferrer"')
+        missing = [x for x in ("noopener", "noreferrer") if x not in rel]
+        if missing:
+            self._err(f'<{tag} href="{href[:60]}"> 缺 rel="{" ".join(missing)}"——'
+                      "noopener 防新标签拿到 window.opener（tabnabbing），"
+                      "noreferrer 防把报告地址当 referrer 带出去；"
+                      '契约要求写全 rel="noopener noreferrer"')
 
     def _check_load_url(self, tag, attr, url):
         """加载型 URL 的统一判定：外链与 data:image 两条禁令对所有加载位置一视同仁。

@@ -23,3 +23,6 @@
 | security | prd-admin | download 链接不再无条件放行：浏览器对跨源 http(s) 会忽略 download 按普通导航处理，现只对同源放行，跨源仍走拦截 |
 | security | skill | 发布闸协议豁免收为纯白名单，file:/ftp:/ws: 等可导航标准协议一并要求 target+rel；download 仅对相对 URL（构造上同源）豁免 |
 | fix | skill | 覆盖判定改用周起点比对保留边界（修跨 90 天边界周漏判），且 run 触顶需叠加「现存最早记录晚于周起点」才告警，避免把完整数据误标成下限 |
+| security | skill | 发布闸按浏览器口径取首个重复属性并直接拒收重复的 href/xlink:href/target/rel，堵住 <a href="javascript:.." href="#safe"> 这类藏在后一个属性里的绕过 |
+| security | skill | 发布闸要求 rel 同时含 noopener 与 noreferrer，与技能/模板声明的契约对齐 |
+| docs | skill | 清除周刊模板与成稿里最后一处旧口径「本周已有 8 次真实发布」，三份产物发布数字口径统一 |
