@@ -706,12 +706,23 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
     } else if (!this.dirtyAll) {
       for (const hint of hints) this.noteHint(hint);
     }
-    if (!this.snapshotScheduled) {
-      this.snapshotScheduled = true;
-      // setImmediate：把一连串同步 save（部署日志 append 风暴 / 调和器遍历分支）
-      // 合并成本 tick 末的一次克隆 + 落盘，事件循环不再被反复同步阻塞。
-      setImmediate(() => this.takeSnapshot());
-    }
+    this.scheduleSnapshot();
+  }
+
+  /**
+   * Mongo 写入在途时只保留最新 live 引用和 dirty 范围，不再生成新的快照。
+   *
+   * 旧实现虽然能合并同一 tick 的 save()，但异步 bulkWrite 尚未完成时，后续每个
+   * tick 仍会 structuredClone 整个 state，再用新快照覆盖 pendingWrite。部署日志
+   * 持续追加时，这会让 master 在一次真正落盘之间白做几十次全量克隆和 stringify，
+   * 最终把 HTTP 事件循环拖到数秒延迟。写完后由 drainWrites.finally 只补拍最新态。
+   */
+  private scheduleSnapshot(): void {
+    if (this.snapshotScheduled || this.writeInFlight || !this.dirtyState) return;
+    this.snapshotScheduled = true;
+    // setImmediate：把一连串同步 save（部署日志 append 风暴 / 调和器遍历分支）
+    // 合并成本 tick 末的一次克隆 + 落盘，事件循环不再被反复同步阻塞。
+    setImmediate(() => this.takeSnapshot());
   }
 
   /** 累积一条脏范围声明（实体级 kind 支持按 id 收窄，重复声明自动并集）。 */
@@ -1045,6 +1056,7 @@ export class MongoSplitStateBackingStore implements StateBackingStore {
       } finally {
         this.writeInFlight = false;
         if (this.pendingWrite) this.drainWrites();
+        else this.scheduleSnapshot();
       }
     })();
   }
