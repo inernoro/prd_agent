@@ -176,6 +176,14 @@ html 周刊版硬约束（publish.py `--report-html` 发布前校验，与日报
 - **必带 `<meta viewport>`**：否则移动端按 980px 桌面视口缩放、整页变小
 - **禁 `data:image`**：插图一律内联 `<svg>`、图表纯 CSS
 - **`<a href>` 导航链接允许**（不是加载型资源）：日报深链与验收报告深链都靠它，是 v2 的关键载体
+- **每个 `<a href>` 必须带 `target="_blank" rel="noopener noreferrer"`**（血泪，2026-07-29）：
+  知识库把正文渲染在**自增高的 sandbox iframe** 里（`FilePreview.tsx`，父页用 ResizeObserver
+  持续把 iframe 高度跟内容同步）。链接若不开新标签，点击会**在这个 iframe 内导航**到整个 MAP SPA，
+  而 SPA 是 `100vh` 布局——内容高度反过来依赖 iframe 高度，与自增高逻辑互相喂高，
+  ResizeObserver 每帧触发一次，主线程被打满，**整页卡死**（用户实测控制台 210 条
+  `ResizeObserver loop completed with undelivered notifications`，间隔 16ms）。
+  阅读器侧已加父页点击拦截兜底（`FilePreview` 一律新标签打开），但**生成端仍必须写 target**：
+  周刊在知识库之外（分享页、下载后本地打开）没有那层兜底。
 - 版式即「米多智能体周刊」（刊系归属见 `.claude/rules/report-design-system.md`）。**v2 章节顺序**：刊头 + 期号 dateline + 统计基线行 + 封面故事 + **质量闸**（四宫格 + 类别拆分表 + 未通过清单 + 提醒 callout）+ **业务价值看板**（`.cap` 卡片，六段式）+ 一周脉络（逐日挂日报深链）+ 上周方向落地对照 + 下周优先级三卡 + **术语表** + 附录 A 验收表 + 附录 B PR 表 + 附录 C 工程数据页脚
 - verdict 三色是 v2 新增语义色，勿改：`--green` 通过 / `--amber` 有条件通过 / `--red` 未通过
 - 内容与 md 底稿同源同数（纪律 5：数字全部来自 git 与 Phase 2.7 采集器），格式只改皮不改骨
@@ -262,7 +270,19 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 | git（主干提交与 PR） | 做了什么 | 不可缺，缺则整个周报不成立 |
 | 日报知识库 | 每天发生了什么 | 「日报源不可达：<原因>，本周脉络仅据 git 重建」 |
 | CDS 验收中心 | 做完的验没验过 | 「验收源不可达：<原因>，本周质量结论无法给出」 |
-| 缺陷台账 + 线上发布 | 质量趋势与是否真发出去 | 「缺陷/发布源不可达：<原因>」 |
+| 缺陷台账 + 正式发布台账 `/api/releases/runs` | 质量趋势与是否真发出去 | 「缺陷/发布源不可达：<原因>」 |
+
+**第四源写名字时必须写「正式发布台账」，不许写成「部署版本」。** 两者是不同的东西：
+任何分支部署成功后 CDS 都会生成不可变部署版本（分支预览也算），拿它当「线上发布」
+会把数字吹大好几倍。baseline 行、页脚、术语表、附录**四处**的来源署名要一致——
+只改数字不改署名，等于把正确的数字挂在被判定作废的来源名下，下一份周报照抄署名就又错回去。
+
+**「不可用」和「是 0」是两回事，绝不许混写。** 采集器给的 `releases.available=false`
+意味着**没测到**（台账拿不到、项目标识对不上），此时正文只能写「发布数据不可用：<reason>」；
+只有 `available=true && attempts=0` 才可以写「本周未发布」。把前者写成后者，是在用一句
+确定的假话替换一个诚实的空白——读者会据此认为这周没上线任何东西。
+同理 `coverage.complete=false` 时，本段数字是**下限**，必须带口径说明；
+`coverage.advisories` 只是提示，不改口径、也不许拿来给数字打折扣。
 
 ## 触发词
 
@@ -390,12 +410,19 @@ python3 .claude/skills/weekly-update-summary/scripts/collect_week_context.py \
 | `dailyReports` | 本周逐日日报：日期 / 标题 / 匿名分享深链 / 缺失日期清单 | 一周脉络逐日挂链（纪律 9） |
 | `acceptance` | 本周验收报告：标题 / verdict / tier / PR 号 / 通过率 / 深链 | 质量闸 + 未通过清单（纪律 10） |
 | `defects` | 本周新报缺陷 + 存量未关 + 平均解决时长 | 质量闸趋势行 |
-| `releases` | 本周不可变部署版本数（是否真发到线上） | 质量闸交付行 |
+| `releases` | 正式发布 run：尝试 / 成功 / 失败 / 成功率 | 质量闸交付行 |
+| `previewDeploys` | 分支预览产生的不可变部署版本数 | 仅附录参考，**禁止**写成「线上发布」 |
 | `prevWeekly` | 上周周报条目（供落地对照引用） | 上周方向落地对照 |
 
 **鉴权**：MAP 侧读 `DAILY_DOC_STORE_KEY` / `MAP_DOC_STORE_KEY` / `AI_ACCESS_KEY`；CDS 侧一律经 `cdscli`（禁止手拼 host，CLAUDE.md 规则 11）。
 
 **强制**：采集结果里 `acceptance.tally.fail > 0` 时，这些未通过项**必须**出现在报告正文（封面故事或质量闸），不许只留在附录。
+
+**「线上发布」只认正式发布台账**（2026-07-29 review 纠正）：任何分支部署成功后 CDS 都会生成
+不可变部署版本（`cds/src/routes/branches.ts` 的 version-create），**分支预览也算在内**。拿
+`deployment-version list` 当「线上发布次数」会把预览部署充成正式发布，数字虚高数倍。正式发布的
+唯一台账是 `/api/releases/runs`（采集器的 `releases` 段），口径含失败重试，故要同时给
+**尝试 / 成功 / 失败 / 成功率**四个数——只报成功数会掩盖发布失败率。`previewDeploys` 仅作附录参考。
 
 ---
 
@@ -611,3 +638,5 @@ bash scripts/assemble-changelog.sh
 8. **风格**：正式周刊风格，分类与结论用文字分级 + 语义色，禁止使用 emoji
 9. **不许只报喜**：验收未通过、缺陷零改善、连续顺延项，都必须写进正文并给下一步——这是业务读者判断"该不该介入"的唯一依据
 10. **四源缺一要声明**：日报 / 验收 / 缺陷 / 发布任一不可达，在 baseline 行写明原因（纪律 12），禁止静默省略
+11. **不可用 ≠ 0**：`available=false` 只能写「数据不可用 + 原因」，只有 `available=true && attempts=0` 才写「本周未发布」（纪律 12）
+12. **发布口径固定走正式发布台账**：`releases` 段来自 `/api/releases/runs`，与分支预览部署（`previewDeploys`）是两码事，禁止把预览次数写成"上线次数"
