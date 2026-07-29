@@ -68,6 +68,24 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public async Task MissingArchivedAudio_ShouldUseProviderNeutralFailureMessage()
+    {
+        var processor = BuildProcessor(Mock.Of<ILlmGateway>());
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeAudioOrVideoAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        method.ShouldNotBeNull();
+        var task = (Task<List<SubtitleSegment>>)method.Invoke(
+            processor,
+            new object?[] { BuildRun(), null, null, null, false, null })!;
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(() => task);
+        exception.Message.ShouldBe("源文件 URL 不可用（可能尚未归档到对象存储）");
+        exception.Message.ShouldNotContain("COS");
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart()
     {
         GatewayRawRequest? capturedRequest = null;
