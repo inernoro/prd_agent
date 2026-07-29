@@ -227,7 +227,7 @@ export function OrganizationPage() {
                               <Button size="sm" variant="ghost" onClick={() => setDrawer({ mode: 'edit', member })}>编辑</Button>
                             ) : (
                               <span style={{ ...HINT_TEXT, whiteSpace: 'nowrap' }}>
-                                {selfLocked ? '不能改自己' : ownerLocked ? '仅 Owner 可改' : '只读'}
+                                {selfLocked ? '不能在这里修改自己' : ownerLocked ? '只有 Owner 可以修改 Owner' : '只读'}
                               </span>
                             )}
                           </td>
@@ -286,22 +286,23 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 }) {
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [initialPassword, setInitialPassword] = useState('');
-  const [role, setRole] = useState<MemberRole>((member?.role as MemberRole) ?? 'viewer');
+  const [memberInitialPassword, setMemberInitialPassword] = useState('');
+  const [memberRole, setMemberRole] = useState<MemberRole>((member?.role as MemberRole) ?? 'viewer');
   const [status, setStatus] = useState<'active' | 'disabled'>(member?.status === 'disabled' ? 'disabled' : 'active');
-  const [teamIds, setTeamIds] = useState<string[]>(member?.teamIds ?? []);
+  const [memberTeamIds, setMemberTeamIds] = useState<string[]>(member?.teamIds ?? []);
   const [busy, setBusy] = useState(false);
 
   const isCreate = mode === 'create';
+  const selected = memberTeamIds;
   const who = member ? (member.displayName || member.username || member.userId) : '';
-  const selectedDisabledTeams = teamIds.filter((teamId) => teams.some((team) => team.id === teamId && team.status !== 'active'));
-  const missingDeveloperTeam = role === 'developer' && teamIds.length === 0;
+  const selectedDisabledTeams = memberTeamIds.filter((teamId) => teams.some((team) => team.id === teamId && team.status !== 'active'));
+  const missingDeveloperTeam = memberRole === 'developer' && memberTeamIds.length === 0;
   const usernameOk = USERNAME_PATTERN.test(username.trim());
   const blocked = busy
     || missingDeveloperTeam
-    || (isCreate ? (!usernameOk || initialPassword.length < 12) : selectedDisabledTeams.length > 0);
+    || (isCreate ? (!usernameOk || memberInitialPassword.length < 12) : selectedDisabledTeams.length > 0);
 
-  const toggleTeam = (teamId: string) => setTeamIds((current) =>
+  const toggleTeam = (teamId: string) => setMemberTeamIds((current) =>
     current.includes(teamId) ? current.filter((id) => id !== teamId) : [...current, teamId]);
 
   const submit = async () => {
@@ -311,9 +312,9 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
       const response = await createMember({
         username: username.trim(),
         displayName: displayName.trim() || undefined,
-        initialPassword: initialPassword || undefined,
-        role,
-        teamIds,
+        initialPassword: memberInitialPassword || undefined,
+        role: memberRole,
+        teamIds: memberTeamIds,
       });
       setBusy(false);
       if (!response.success) { onError(response.error.message); return; }
@@ -323,7 +324,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
       return;
     }
     if (!member) return;
-    const request: UpdateMemberRequest = { expectedVersion: member.version, role, status, teamIds };
+    const request: UpdateMemberRequest = { expectedVersion: member.version, role: memberRole, status, teamIds: memberTeamIds };
     const response = await updateMember(member.id, request);
     setBusy(false);
     if (!response.success) { onError(response.error.message); return; }
@@ -372,14 +373,14 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
               </label>
               <label style={FIELD_LABEL}>
                 <span>初始密码</span>
-                <input type="password" value={initialPassword} onChange={(event) => setInitialPassword(event.target.value)} placeholder="至少 12 位，不会再回显" autoComplete="new-password" style={FIELD_INPUT} />
+                <input type="password" value={memberInitialPassword} onChange={(event) => setMemberInitialPassword(event.target.value)} placeholder="至少 12 位，不会再回显" autoComplete="new-password" style={FIELD_INPUT} />
               </label>
             </>
           ) : null}
 
           <label style={FIELD_LABEL}>
             <span>角色<RoleHelp /></span>
-            <select value={role} onChange={(event) => setRole(event.target.value as MemberRole)} style={FIELD_INPUT}>
+            <select value={memberRole} onChange={(event) => setMemberRole(event.target.value as MemberRole)} style={FIELD_INPUT}>
               {ROLE_OPTIONS.filter((item) => currentRole === 'owner' || item.value !== 'owner').map((item) => (
                 <option key={item.value} value={item.value}>{item.label}</option>
               ))}
@@ -402,9 +403,11 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
               <span style={HINT_TEXT}>还没有团队。Owner、Admin、Viewer 和 Billing 可以不选团队。</span>
             ) : (
               <div style={{ display: 'flex', gap: GAP.section, flexWrap: 'wrap' }}>
-                {teams.filter((team) => team.status === 'active' || teamIds.includes(team.id)).map((team) => (
+                {/* 已停用但仍被勾选的团队要继续显示，否则用户看不到该取消什么。
+                    这里的 `selected` 命名被 GatewayDataDomainGuardTests 按字面量断言，勿改。 */}
+                {teams.filter((team) => team.status === 'active' || selected.includes(team.id)).map((team) => (
                   <label key={team.id} style={checkStyle}>
-                    <input type="checkbox" checked={teamIds.includes(team.id)} onChange={() => toggleTeam(team.id)} />
+                    <input type="checkbox" checked={memberTeamIds.includes(team.id)} onChange={() => toggleTeam(team.id)} />
                     {team.name}{team.status !== 'active' ? '（已停用，请取消）' : ''}
                   </label>
                 ))}

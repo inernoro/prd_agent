@@ -7,3 +7,5 @@
 | fix | llmgw | 修复角色说明浮层被表格 overflow-x 容器裁切（第 5 个角色显示不全），HelpPopover 增加 align 参数 |
 | style | llmgw | 卡片内边距归一到 14px（此前 home/usage/settings 为 18px），实体详情页取消 1180px 居中 |
 | docs | llmgw | 控制台风格调性规则升到 v1.2：新增原则 6（容器贴边、可读宽度作用在内容上）与原则 7（文字预算与三轨接入），补记漂移检测的三个前提 |
+| fix | llmgw | 修复组织页重构打破的 5 条跨模块源码契约断言（GatewayDataDomainGuardTests 直接读前端源码，本机无 dotnet 未能及时发现） |
+| feat | llmgw | 新增源码契约守卫 check-source-contracts.mjs：解析 GatewayDataDomainGuardTests.cs 并在本地复算全部 343 条前端断言，接进 pnpm build |
