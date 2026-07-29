@@ -13,6 +13,9 @@ namespace PrdAgent.Api.Services;
 public sealed class DocumentRecordingArchiveWorker : BackgroundService
 {
     private const string DeferredTranscriptionRunPrefix = "recording-archive-transcribe-";
+    internal const int MaxDeferredTranscriptionAutomaticRetries = 3;
+    internal const string DeferredRetryReasonRestartInterrupted = "restart-interrupted";
+    internal const string DeferredRetryReasonExecutionFailed = "execution-failed";
     internal const string DeferredTranscriptionRequiredMetadataKey = "deferredTranscriptionRequired";
     internal const string DeferredTranscriptionRunIdMetadataKey = "deferredTranscriptionRunId";
     private static readonly TimeSpan PollInterval = TimeSpan.FromSeconds(15);
@@ -439,34 +442,73 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
         catch (MongoWriteException ex)
             when (ex.WriteError?.Category == ServerErrorCategory.DuplicateKey)
         {
-            // 固定任务可能在容器重启或主动取消时进入终态。后续 /complete、归档重试
-            // 或用户重试都代表再次提交同一份完整录音，应原子恢复为 queued；否则固定
-            // ID 虽避免了重复任务，却会把一次可恢复失败永久固化。Done/Running/Queued
-            // 保持幂等，不能重复执行已经完成或正在处理的任务。
-            var retryableTerminalFilter = Builders<DocumentStoreAgentRun>.Filter.And(
-                Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.Id, run.Id),
-                Builders<DocumentStoreAgentRun>.Filter.In(
-                    r => r.Status,
-                    [DocumentStoreRunStatus.Failed, DocumentStoreRunStatus.Cancelled]));
-            var requeued = await runs.FindOneAndUpdateAsync(
-                retryableTerminalFilter,
-                Builders<DocumentStoreAgentRun>.Update
-                    .Set(r => r.Status, DocumentStoreRunStatus.Queued)
-                    .Set(r => r.Phase, run.Phase)
-                    .Set(r => r.Progress, 0)
-                    .Set(r => r.ErrorMessage, null)
-                    .Set(r => r.StartedAt, null)
-                    .Set(r => r.EndedAt, null)
-                    .Set(r => r.OwnerInstanceId, ownerInstanceId),
-                new FindOneAndUpdateOptions<DocumentStoreAgentRun>
-                {
-                    ReturnDocument = ReturnDocument.After,
-                },
-                cancellationToken);
-            return requeued
-                   ?? await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
+            // 固定 ID 只负责去重，不能把任意 Failed/Cancelled 都解释成重试请求。
+            // 是否重放由持久化的次数、时间和原因共同决定，人工取消永不自动恢复。
+            return await runs.Find(r => r.Id == run.Id).FirstOrDefaultAsync(cancellationToken);
         }
     }
+
+    internal static async Task<DocumentStoreAgentRun?> TryRequeueDeferredTranscriptionRunAsync(
+        IMongoCollection<DocumentStoreAgentRun> runs,
+        DocumentStoreAgentRun run,
+        string ownerInstanceId,
+        DateTime utcNow,
+        CancellationToken cancellationToken)
+    {
+        if (run.Status != DocumentStoreRunStatus.Failed
+            || run.AutomaticRetryNextAt == null
+            || run.AutomaticRetryNextAt > utcNow
+            || run.AutomaticRetryCount >= MaxDeferredTranscriptionAutomaticRetries)
+        {
+            return run;
+        }
+
+        var retryFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+            Builders<DocumentStoreAgentRun>.Filter.Eq(candidate => candidate.Id, run.Id),
+            Builders<DocumentStoreAgentRun>.Filter.Eq(
+                candidate => candidate.Status,
+                DocumentStoreRunStatus.Failed),
+            Builders<DocumentStoreAgentRun>.Filter.Ne(
+                candidate => candidate.AutomaticRetryNextAt,
+                null),
+            Builders<DocumentStoreAgentRun>.Filter.Lte(
+                candidate => candidate.AutomaticRetryNextAt,
+                utcNow),
+            Builders<DocumentStoreAgentRun>.Filter.Lt(
+                candidate => candidate.AutomaticRetryCount,
+                MaxDeferredTranscriptionAutomaticRetries));
+        var requeued = await runs.FindOneAndUpdateAsync(
+            retryFilter,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Queued)
+                .Set(candidate => candidate.Phase, "等待完整录音转录")
+                .Set(candidate => candidate.Progress, 0)
+                .Set(candidate => candidate.ErrorMessage, null)
+                .Set(candidate => candidate.StartedAt, null)
+                .Set(candidate => candidate.EndedAt, null)
+                .Set(candidate => candidate.OwnerInstanceId, ownerInstanceId)
+                .Set(candidate => candidate.AutomaticRetryNextAt, null)
+                .Inc(candidate => candidate.AutomaticRetryCount, 1),
+            new FindOneAndUpdateOptions<DocumentStoreAgentRun, DocumentStoreAgentRun>
+            {
+                ReturnDocument = ReturnDocument.After,
+            },
+            cancellationToken);
+        return requeued
+               ?? await runs.Find(candidate => candidate.Id == run.Id)
+                   .FirstOrDefaultAsync(cancellationToken);
+    }
+
+    internal static TimeSpan ComputeDeferredTranscriptionRetryBackoff(int completedRetries)
+        => completedRetries switch
+        {
+            <= 0 => TimeSpan.FromSeconds(30),
+            1 => TimeSpan.FromMinutes(2),
+            _ => TimeSpan.FromMinutes(10),
+        };
+
+    internal static bool IsDeferredTranscriptionRunId(string? runId)
+        => runId?.StartsWith(DeferredTranscriptionRunPrefix, StringComparison.Ordinal) == true;
 
     internal static async Task<DocumentStoreAgentRun?> EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
         IMongoCollection<DocumentRecordingUploadSession> sessions,
@@ -483,6 +525,15 @@ public sealed class DocumentRecordingArchiveWorker : BackgroundService
             entryId,
             ownerInstanceId,
             entryRequiresDeferredTranscription,
+            cancellationToken);
+        if (run == null)
+            return null;
+
+        run = await TryRequeueDeferredTranscriptionRunAsync(
+            runs,
+            run,
+            ownerInstanceId,
+            DateTime.UtcNow,
             cancellationToken);
         if (run == null)
             return null;

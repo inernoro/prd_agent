@@ -1445,7 +1445,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(DocumentStoreRunStatus.Failed)]
     [InlineData(DocumentStoreRunStatus.Cancelled)]
-    public async Task EnsureDeferredTranscriptionRun_ShouldRequeueRetryableTerminalRun(
+    public async Task EnsureDeferredTranscriptionRun_ShouldNotReplayTerminalRunWithoutRetrySchedule(
         string terminalStatus)
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
@@ -1475,7 +1475,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             EndedAt = DateTime.UtcNow.AddMinutes(-1),
         });
 
-        var requeued = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        var existing = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
             fixture.Db.DocumentStoreAgentRuns,
             session,
             "entry-1",
@@ -1483,17 +1483,116 @@ public sealed class DocumentRecordingArchiveWorkerTests
             entryRequiresDeferredTranscription: true,
             CancellationToken.None);
 
+        existing.ShouldNotBeNull();
+        existing!.Id.ShouldBe(runId);
+        existing.Status.ShouldBe(terminalStatus);
+        existing.Phase.ShouldBe("失败");
+        existing.Progress.ShouldBe(73);
+        existing.ErrorMessage.ShouldBe("服务重启，任务被中断");
+        existing.StartedAt.ShouldNotBeNull();
+        existing.EndedAt.ShouldNotBeNull();
+        existing.OwnerInstanceId.ShouldBe("old-instance");
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+            run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task ScheduledDeferredRetry_ShouldRequeueOnceAndIncrementPersistentCounter()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId("session-due-retry"),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = "old-instance",
+            Status = DocumentStoreRunStatus.Failed,
+            Phase = "失败",
+            Progress = 73,
+            ErrorMessage = "服务重启，任务被中断",
+            AutomaticRetryCount = 1,
+            AutomaticRetryNextAt = now.AddSeconds(-1),
+            AutomaticRetryReason =
+                DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted,
+            StartedAt = now.AddMinutes(-2),
+            EndedAt = now.AddMinutes(-1),
+        };
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        var requeued = await DocumentRecordingArchiveWorker.TryRequeueDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            run,
+            "new-instance",
+            now,
+            CancellationToken.None);
+
         requeued.ShouldNotBeNull();
-        requeued!.Id.ShouldBe(runId);
-        requeued.Status.ShouldBe(DocumentStoreRunStatus.Queued);
-        requeued.Phase.ShouldBe("等待完整录音转录");
-        requeued.Progress.ShouldBe(0);
+        requeued!.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        requeued.AutomaticRetryCount.ShouldBe(2);
+        requeued.AutomaticRetryNextAt.ShouldBeNull();
+        requeued.AutomaticRetryReason.ShouldBe(
+            DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted);
         requeued.ErrorMessage.ShouldBeNull();
         requeued.StartedAt.ShouldBeNull();
         requeued.EndedAt.ShouldBeNull();
         requeued.OwnerInstanceId.ShouldBe("new-instance");
-        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
-            run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(DocumentStoreRunStatus.Failed, 0, 1)]
+    [InlineData(DocumentStoreRunStatus.Failed, 3, -1)]
+    [InlineData(DocumentStoreRunStatus.Cancelled, 0, -1)]
+    public async Task DeferredRetry_ShouldRespectDueTimeLimitAndCancellation(
+        string status,
+        int retryCount,
+        int nextAttemptMinutes)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(
+                $"session-policy-{status}-{retryCount}-{nextAttemptMinutes}"),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = status,
+            AutomaticRetryCount = retryCount,
+            AutomaticRetryNextAt = now.AddMinutes(nextAttemptMinutes),
+            AutomaticRetryReason =
+                DocumentRecordingArchiveWorker.DeferredRetryReasonExecutionFailed,
+        };
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        var unchanged = await DocumentRecordingArchiveWorker
+            .TryRequeueDeferredTranscriptionRunAsync(
+                fixture.Db.DocumentStoreAgentRuns,
+                run,
+                "instance-1",
+                now,
+                CancellationToken.None);
+
+        unchanged.ShouldNotBeNull();
+        unchanged!.Status.ShouldBe(status);
+        unchanged.AutomaticRetryCount.ShouldBe(retryCount);
+    }
+
+    [Theory]
+    [InlineData(0, 30)]
+    [InlineData(1, 120)]
+    [InlineData(2, 600)]
+    [InlineData(100, 600)]
+    public void DeferredRetryBackoff_ShouldIncreaseAndRemainBounded(
+        int completedRetries,
+        int expectedSeconds)
+    {
+        DocumentRecordingArchiveWorker
+            .ComputeDeferredTranscriptionRetryBackoff(completedRetries)
+            .ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
     }
 
     [Fact]
@@ -1631,6 +1730,26 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void InterruptedCompletedRecovery_ShouldReturnScheduledDeferredRunId()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var recoveryStart = source.IndexOf(
+            "var interruptedCompletedEntry = interruptedEntries.FirstOrDefault(",
+            StringComparison.Ordinal);
+        var nextRecoveryBranch = source.IndexOf(
+            "var interruptedPendingEntry = interruptedEntries.FirstOrDefault(",
+            recoveryStart,
+            StringComparison.Ordinal);
+
+        recoveryStart.ShouldBeGreaterThanOrEqualTo(0);
+        nextRecoveryBranch.ShouldBeGreaterThan(recoveryStart);
+        var completedRecovery = source[recoveryStart..nextRecoveryBranch];
+        completedRecovery.ShouldContain("deferredTranscriptionRunId =");
+        completedRecovery.ShouldContain(
+            "DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)");
+    }
+
+    [Fact]
     public void ArchiveWorker_ShouldRecoverTranscriptionOutboxBeforeStorageArchive()
     {
         var source = File.ReadAllText(DocumentRecordingArchiveWorkerPath());
@@ -1758,6 +1877,10 @@ public sealed class DocumentRecordingArchiveWorkerTests
             Builders<DocumentStoreAgentRun>.Update
                 .Set(candidate => candidate.Status, DocumentStoreRunStatus.Failed)
                 .Set(candidate => candidate.ErrorMessage, "服务重启，任务被中断")
+                .Set(candidate => candidate.AutomaticRetryNextAt, DateTime.UtcNow.AddSeconds(-1))
+                .Set(
+                    candidate => candidate.AutomaticRetryReason,
+                    DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
                 .Set(candidate => candidate.EndedAt, DateTime.UtcNow));
 
         (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
@@ -1771,6 +1894,8 @@ public sealed class DocumentRecordingArchiveWorkerTests
             .Find(candidate => candidate.Id == run.Id)
             .SingleAsync();
         run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        run.AutomaticRetryCount.ShouldBe(1);
+        run.AutomaticRetryNextAt.ShouldBeNull();
         run.ErrorMessage.ShouldBeNull();
         (await fixture.Db.DocumentRecordingUploadSessions
                 .Find(candidate => candidate.Id == session.Id)

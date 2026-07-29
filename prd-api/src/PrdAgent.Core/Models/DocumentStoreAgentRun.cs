@@ -42,6 +42,15 @@ public class DocumentStoreAgentRun
     /// <summary>失败时的错误信息</summary>
     public string? ErrorMessage { get; set; }
 
+    /// <summary>后台自动恢复已实际重新排队的次数；用于限制确定性录音转录的重放。</summary>
+    public int AutomaticRetryCount { get; set; }
+
+    /// <summary>允许后台再次排队的最早时间；为空表示终态失败或人工取消，不自动重试。</summary>
+    public DateTime? AutomaticRetryNextAt { get; set; }
+
+    /// <summary>自动恢复原因，用于区分容器中断与一次正常执行失败。</summary>
+    public string? AutomaticRetryReason { get; set; }
+
     /// <summary>生成成功后对应的新 entry ID（字幕/再加工产物）</summary>
     public string? OutputEntryId { get; set; }
 

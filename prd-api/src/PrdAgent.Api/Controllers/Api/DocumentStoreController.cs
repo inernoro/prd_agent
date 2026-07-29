@@ -2325,6 +2325,11 @@ public class DocumentStoreController : ControllerBase
                 fileUrl = interruptedAttachment.Url,
                 sessionId,
                 reused = true,
+                deferredTranscriptionRunId =
+                    DocumentRecordingArchiveWorker.RequiresDeferredTranscription(
+                        interruptedCompletedEntry)
+                        ? DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)
+                        : null,
             }));
         }
 

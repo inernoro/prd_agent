@@ -31,8 +31,8 @@ public class DocumentRecordingUploadSession
     public string? EntryId { get; set; }
 
     /// <summary>
-    /// 持久化的转录任务 outbox。会话进入完成态时与终态原子写入；后台 Worker
-    /// 创建或确认固定 ID 的转录任务后清除，覆盖进程在两次集合写入之间退出的窗口。
+    /// 持久化的转录任务 outbox。会话进入完成态时与终态原子写入；固定 ID 任务
+    /// 成功结束后才清除，覆盖任务创建、执行和容器重启的完整生命周期。
     /// </summary>
     public bool DeferredTranscriptionRunPending { get; set; }
 

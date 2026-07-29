@@ -59,17 +59,38 @@ public class DocumentStoreAgentWorker : BackgroundService
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, instanceId),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, (string?)null),
                     Builders<DocumentStoreAgentRun>.Filter.Eq(r => r.OwnerInstanceId, "")));
-            var recovered = await db.DocumentStoreAgentRuns.UpdateManyAsync(
+            var deferredRecoverFilter = Builders<DocumentStoreAgentRun>.Filter.And(
+                recoverFilter,
+                Builders<DocumentStoreAgentRun>.Filter.Eq(
+                    r => r.Kind,
+                    DocumentStoreAgentRunKind.Transcribe),
+                Builders<DocumentStoreAgentRun>.Filter.Regex(
+                    r => r.Id,
+                    new MongoDB.Bson.BsonRegularExpression("^recording-archive-transcribe-")));
+            var restartAt = DateTime.UtcNow;
+            var recoveredDeferred = await db.DocumentStoreAgentRuns.UpdateManyAsync(
+                deferredRecoverFilter,
+                Builders<DocumentStoreAgentRun>.Update
+                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                    .Set(r => r.ErrorMessage, "服务重启，任务被中断")
+                    .Set(r => r.EndedAt, restartAt)
+                    .Set(r => r.AutomaticRetryNextAt, restartAt)
+                    .Set(
+                        r => r.AutomaticRetryReason,
+                        DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted),
+                cancellationToken: CancellationToken.None);
+            var recoveredOther = await db.DocumentStoreAgentRuns.UpdateManyAsync(
                 recoverFilter,
                 Builders<DocumentStoreAgentRun>.Update
                     .Set(r => r.Status, DocumentStoreRunStatus.Failed)
                     .Set(r => r.ErrorMessage, "服务重启，任务被中断")
-                    .Set(r => r.EndedAt, DateTime.UtcNow),
+                    .Set(r => r.EndedAt, restartAt),
                 cancellationToken: CancellationToken.None);
-            if (recovered.ModifiedCount > 0)
+            var recoveredCount = recoveredDeferred.ModifiedCount + recoveredOther.ModifiedCount;
+            if (recoveredCount > 0)
                 _logger.LogWarning(
                     "[doc-store-agent] 启动兜底：{Count} 个残留 Running 任务标记为失败",
-                    recovered.ModifiedCount);
+                    recoveredCount);
         }
         catch (Exception ex)
         {
@@ -100,12 +121,22 @@ public class DocumentStoreAgentWorker : BackgroundService
                 {
                     using var scope = _scopeFactory.CreateScope();
                     var db = scope.ServiceProvider.GetRequiredService<MongoDbContext>();
+                    var interruptedAt = DateTime.UtcNow;
+                    var interruptedUpdate = Builders<DocumentStoreAgentRun>.Update
+                        .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                        .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
+                        .Set(r => r.EndedAt, interruptedAt);
+                    if (DocumentRecordingArchiveWorker.IsDeferredTranscriptionRunId(_currentRunId))
+                    {
+                        interruptedUpdate = interruptedUpdate
+                            .Set(r => r.AutomaticRetryNextAt, interruptedAt)
+                            .Set(
+                                r => r.AutomaticRetryReason,
+                                DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted);
+                    }
                     await db.DocumentStoreAgentRuns.UpdateOneAsync(
                         r => r.Id == _currentRunId && r.Status == DocumentStoreRunStatus.Running,
-                        Builders<DocumentStoreAgentRun>.Update
-                            .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                            .Set(r => r.ErrorMessage, "Worker 关闭，任务被中断")
-                            .Set(r => r.EndedAt, DateTime.UtcNow),
+                        interruptedUpdate,
                         cancellationToken: CancellationToken.None);
                 }
                 catch { /* ignore */ }
@@ -187,6 +218,8 @@ public class DocumentStoreAgentWorker : BackgroundService
                     .Set(r => r.Status, DocumentStoreRunStatus.Done)
                     .Set(r => r.Phase, "完成")
                     .Set(r => r.Progress, 100)
+                    .Set(r => r.AutomaticRetryNextAt, null)
+                    .Set(r => r.AutomaticRetryReason, null)
                     .Set(r => r.EndedAt, DateTime.UtcNow),
                 cancellationToken: CancellationToken.None);
 
@@ -243,12 +276,34 @@ public class DocumentStoreAgentWorker : BackgroundService
                 catch { /* fall back to plain msg */ }
             }
 
+            var failedAt = DateTime.UtcNow;
+            var failedUpdate = Builders<DocumentStoreAgentRun>.Update
+                .Set(r => r.Status, DocumentStoreRunStatus.Failed)
+                .Set(r => r.ErrorMessage, errorMessageForDb)
+                .Set(r => r.EndedAt, failedAt);
+            if (DocumentRecordingArchiveWorker.IsDeferredTranscriptionRunId(run.Id)
+                && run.AutomaticRetryCount
+                    < DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries)
+            {
+                failedUpdate = failedUpdate
+                    .Set(
+                        r => r.AutomaticRetryNextAt,
+                        failedAt + DocumentRecordingArchiveWorker
+                            .ComputeDeferredTranscriptionRetryBackoff(run.AutomaticRetryCount))
+                    .Set(
+                        r => r.AutomaticRetryReason,
+                        DocumentRecordingArchiveWorker.DeferredRetryReasonExecutionFailed);
+            }
+            else
+            {
+                failedUpdate = failedUpdate
+                    .Set(r => r.AutomaticRetryNextAt, null)
+                    .Set(r => r.AutomaticRetryReason, null);
+            }
+
             await db.DocumentStoreAgentRuns.UpdateOneAsync(
                 r => r.Id == run.Id,
-                Builders<DocumentStoreAgentRun>.Update
-                    .Set(r => r.Status, DocumentStoreRunStatus.Failed)
-                    .Set(r => r.ErrorMessage, errorMessageForDb)
-                    .Set(r => r.EndedAt, DateTime.UtcNow),
+                failedUpdate,
                 cancellationToken: CancellationToken.None);
 
             await EmitEventAsync(runStore, KindForEvents(run.Kind), run.Id, "error", new
