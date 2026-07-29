@@ -26,3 +26,10 @@
 | security | skill | 发布闸按浏览器口径取首个重复属性并直接拒收重复的 href/xlink:href/target/rel，堵住 <a href="javascript:.." href="#safe"> 这类藏在后一个属性里的绕过 |
 | security | skill | 发布闸要求 rel 同时含 noopener 与 noreferrer，与技能/模板声明的契约对齐 |
 | docs | skill | 清除周刊模板与成稿里最后一处旧口径「本周已有 8 次真实发布」，三份产物发布数字口径统一 |
+| fix | skill | 覆盖判定的保留边界改用 >=：CDS 淘汰线是滚动 90*24h 而此处只有日期粒度，起点正好第 90 天时当天清晨的 run 已可被删，用 > 会漏判成完整 |
+| fix | skill | 条数触顶从「丢数警告」降级为提示（advisories）：n==上限只说明恰好装满，新目标攒满 100 条时第 101 条从未存在，原判据会把准确数据误标成下限 |
+| fix | skill | 采集器项目标识改按 id/slug/name 集合匹配：/api/releases/runs 存的是 slug 而 cdscli 返回 hex id，先前归一成单一 id 会把本项目全部 run 静默滤成「0 次发布」 |
+| fix | skill | 台账非空却被项目过滤器全部滤空时改报 available=false + 实际写法示例，拒绝以「本周未发布」的姿态输出静默错误 |
+| fix | skill | 采集器把 cdscli 在本进程内的打印改道 stderr：die() 会往 stdout 打一行 JSON，导致 CDS 不可达时 stdout 变成两段 JSON 拼接、下游解析直接炸 |
+| rule | skill | 周报纪律 12 补「不可用 ≠ 0」：available=false 只能写数据不可用，只有 available=true 且 attempts=0 才写本周未发布 |
+| test | skill | 新增周报采集器判据回归（8 例，含保留边界/条数闸/标识集合/滤空守卫），逐条验证删掉对应修复即变红 |

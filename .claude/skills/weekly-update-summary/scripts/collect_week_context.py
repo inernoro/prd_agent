@@ -20,7 +20,7 @@ git 只能回答「改了什么代码」，回答不了老板/产品经理真正
   MAP 侧同 publish.py —— DAILY_DOC_STORE_KEY / MAP_DOC_STORE_KEY 优先，回退 AI_ACCESS_KEY + impersonate。
   CDS 侧一律走 cdscli（禁止手拼 URL / 自己 slugify，见 CLAUDE.md 规则 11）。
 """
-import argparse, json, os, re, subprocess, sys, time
+import argparse, contextlib, json, os, re, subprocess, sys, time
 
 API = "/api/document-store"
 DAILY_STORE = "日报知识库"
@@ -82,6 +82,21 @@ def _cdscli(args):
 _CDSCLI_MOD = None
 
 
+@contextlib.contextmanager
+def _cdscli_stdout_guard():
+    """把 cdscli 在**本进程内**的打印全部改道 stderr。
+
+    cdscli 的 `die()` 先往 stdout 打一行 `{"ok": false, ...}` 再 sys.exit。我们是 import
+    它、直接调它的内部函数，那行 JSON 就落进了本采集器的 stdout —— 而本脚本的 stdout
+    必须是**一份**可被 json.load 直接吃掉的 JSON。CDS 一不可达（缺 CDS_HOST / 缺项目凭据）
+    输出就变成两段 JSON 拼接，下游解析直接炸 "Extra data"，把「某个来源降级」放大成
+    「整份上下文不可用」。诊断信息不能丢，所以是改道 stderr 而不是丢进 devnull。
+    子进程路径（_cdscli）不受影响：那边本来就 capture_output。
+    """
+    with contextlib.redirect_stdout(sys.stderr):
+        yield
+
+
 def _cds_api(path):
     """
     读 cdscli 尚未包装成子命令的 CDS 端点（如正式发布台账 /api/releases/runs）。
@@ -106,19 +121,24 @@ def _cds_api(path):
         saved = sys.argv
         sys.argv = ["cdscli"]                      # 防模块顶层 argparse 吃到本脚本参数
         try:
-            spec.loader.exec_module(mod)
+            with _cdscli_stdout_guard():
+                spec.loader.exec_module(mod)
         except SystemExit:
             pass
         finally:
             sys.argv = saved
         try:
-            mod._load_local_credentials()          # 注入 .cds/credentials.json 到本进程
+            with _cdscli_stdout_guard():
+                mod._load_local_credentials()      # 注入 .cds/credentials.json 到本进程
         except Exception:
             pass                                   # 没有项目级凭据时靠环境变量，交由下面报错
+        except SystemExit:
+            pass                                   # die() 抛的是 BaseException，Exception 接不住
         _CDSCLI_MOD = mod
 
     try:
-        status, body, _ = _CDSCLI_MOD._request("GET", path, fatal_network_errors=False)
+        with _cdscli_stdout_guard():
+            status, body, _ = _CDSCLI_MOD._request("GET", path, fatal_network_errors=False)
     except SystemExit as e:                        # _cds_base() 等处缺 host/凭据时 die()
         raise RuntimeError(f"cdscli 无法请求 {path}（缺 CDS_HOST 或项目凭据？exit={e.code}）") from None
     if status == 0:
@@ -333,29 +353,35 @@ def collect_defects(base, H, start, end):
 RELEASE_TERMINAL = {"success", "failed", "rollback_success", "rollback_failed"}
 
 
-def _resolve_project_id(project):
-    """
-    把 --project 传进来的 slug 解析成 CDS 规范 projectId。
+def _resolve_project_identity(project):
+    """把 --project 解析成该项目的**全部可能写法**（id / slug / name），返回小写集合。
 
-    发布 run 里存的是 projectId；若调用方给的是 slug（如 mdimp -> defd4695ab5f），
-    直接按字符串比对会把本项目所有 run 全过滤掉，然后以 available=true + 0 条的
-    姿态给出静默错误的统计。解析失败时原样返回，并由调用方在 note 里说明。
+    为什么是集合而不是「规范 id」：CDS 各端点对 `projectId` 字段的填法并不统一——
+    `/api/releases/runs` 里存的是 slug（实测 `prd-agent`），而 `cdscli project list`
+    返回的是 hex id（`defd4695ab5f`）。先前把入参归一成 hex id 再逐条比对，结果是
+    W30 的 39 条 run 被**全部过滤掉**，却仍以 `available=true` + `attempts=0` 的姿态
+    输出——静默的错误统计，比直接报错危险得多。所以不赌哪一种是"规范"写法，
+    把三种标识全收进集合，命中任意一个即算本项目。
+    解析失败时退化为「只认原始入参」，并由调用方在 note 里说明。
     """
     if not project:
         return None, None
+    raw = project.strip().lower()
     try:
         res = _cdscli(["project", "list"])
         if not res.get("ok"):
-            return project, "项目列表不可用，projectId 未解析，按原值过滤"
+            return {raw}, "项目列表不可用，仅按入参原值过滤"
         data = res.get("data")
         items = data if isinstance(data, list) else (data or {}).get("projects") or []
-        low = project.strip().lower()
         for p in items:
-            if str(p.get("id", "")).lower() == low or str(p.get("slug", "")).lower() == low:
-                return p.get("id") or project, None
-        return project, f"项目 {project} 未在 CDS 项目列表命中，按原值过滤"
+            ident = {str(p.get(k, "")).strip().lower()
+                     for k in ("id", "slug", "name")}
+            ident.discard("")
+            if raw in ident:
+                return ident, None
+        return {raw}, f"项目 {project} 未在 CDS 项目列表命中，仅按入参原值过滤"
     except Exception as e:
-        return project, f"projectId 解析失败（{str(e)[:80]}），按原值过滤"
+        return {raw}, f"项目标识解析失败（{str(e)[:80]}），仅按入参原值过滤"
 
 
 # CDS 会裁剪发布台账：每个发布目标最多留 100 条 run，且超过 90 天的会被淘汰
@@ -369,22 +395,30 @@ RELEASE_RETENTION_DAYS = 90
 
 
 def _release_coverage(all_runs, sel_runs, start, end):
-    """判断本周区间是否落在台账仍完整保留的范围内。"""
+    """判断本周区间是否落在台账仍完整保留的范围内。
+
+    分两档，别混用：
+    - warnings：**确定性**的丢数信号，会把 coverage.complete 打成 false，
+      逼报告把本段数字写成下限。只有真的可能丢行才允许进这一档。
+    - advisories：可能有风险但**不足以断定丢了行**的观察（如某目标 run 数逼近条数闸）。
+      照常输出给读者提醒，但不改 complete —— 否则准确数据会被误标成下限。
+    """
     import datetime as dt
-    warns = []
+    warns, advisories = [], []
     today = dt.date.today()
     # 必须拿**周起点**跟保留边界比，不是周终点：跨边界的那一周（如起点 93 天前、
     # 终点 87 天前）前几天的记录已可被淘汰，只看终点会漏判成 complete。
-    if (today - dt.date.fromisoformat(start)).days > RELEASE_RETENTION_DAYS:
-        warns.append(f"本周起点已超出 {RELEASE_RETENTION_DAYS} 天保留窗口，早于边界的 run 可能已被淘汰")
+    # 用 >= 不是 >：CDS 的淘汰线是滚动的 90*24h（毫秒级），而这里只有日期粒度。
+    # 起点正好是 90 天前那天时，该天清晨的 run 已经越过滚动线可被删，日期减法却只得 90。
+    if (today - dt.date.fromisoformat(start)).days >= RELEASE_RETENTION_DAYS:
+        warns.append(f"本周起点已触及 {RELEASE_RETENTION_DAYS} 天保留窗口边界，早于边界的 run 可能已被淘汰")
     dates = sorted(d for d in ((r.get("startedAt") or "")[:10] for r in all_runs) if d)
     oldest = dates[0] if dates else None
     # 注意：不能用「oldest > start」推断被裁剪。新项目的首次发布本来就可能晚于周起点，
-    # 那是真实的「当时还没有发布」，不是记录被删——照此告警会把准确数据误标成不完整，
-    # 逼报告把正确数字写成下限。只从**真实的保留信号**出发：超出保留窗口、或条数触顶。
-    # 条数闸：只有「目标触顶」还不够——触顶只说明更早的记录被削过，不代表削掉的
-    # 落在本周。裁剪从最旧开始，所以只有当该目标**现存最早记录晚于周起点**时，
-    # 本周区间才可能真的丢了行。否则本周数据完整，不该逼报告把准确数字写成下限。
+    # 那是真实的「当时还没有发布」，不是记录被删——照此告警会把准确数据误标成不完整。
+    # 条数闸同理：`n == 上限` 只说明**恰好装满**，不等于发生过淘汰（第 101 条从未存在过
+    # 的新目标也满足），而 CDS 又不回传「删了多少条」这类真实淘汰信号。所以条数闸一律
+    # 只作提示（advisory），不作丢数判据。
     per_target = {}
     for r in all_runs:
         k = r.get("targetId")
@@ -393,14 +427,16 @@ def _release_coverage(all_runs, sel_runs, start, end):
         e["n"] += 1
         if dts and (e["oldest"] is None or dts < e["oldest"]):
             e["oldest"] = dts
-    at_risk = [k for k, e in per_target.items()
-               if e["n"] >= RELEASE_MAX_RUNS_PER_TARGET and e["oldest"] and e["oldest"] > start]
-    if at_risk:
-        warns.append(f"{len(at_risk)} 个发布目标 run 数触及 {RELEASE_MAX_RUNS_PER_TARGET} 条上限"
-                     f"且现存最早记录晚于本周起点 {start}，本周区间可能已丢行")
+    at_cap = [k for k, e in per_target.items()
+              if e["n"] >= RELEASE_MAX_RUNS_PER_TARGET and e["oldest"] and e["oldest"] > start]
+    if at_cap:
+        advisories.append(f"{len(at_cap)} 个发布目标 run 数已达 {RELEASE_MAX_RUNS_PER_TARGET} 条上限"
+                          f"且现存最早记录晚于本周起点 {start}；CDS 不回传淘汰计数，"
+                          f"无法断定本周是否丢行，仅作提示")
     return {
         "complete": not warns,
         "warnings": warns,
+        "advisories": advisories,
         "oldestRetainedDate": oldest,
         "retentionDays": RELEASE_RETENTION_DAYS,
         "maxRunsPerTarget": RELEASE_MAX_RUNS_PER_TARGET,
@@ -408,13 +444,24 @@ def _release_coverage(all_runs, sel_runs, start, end):
 
 
 def collect_releases(project, start, end):
-    pid, resolve_warn = _resolve_project_id(project)
+    ident, resolve_warn = _resolve_project_identity(project)
+
+    def _mine(r):
+        p = r.get("projectId")
+        if not ident or p is None:      # 未指定项目，或 run 未标项目 -> 一律收
+            return True
+        return str(p).strip().lower() in ident
+
     body = _cds_api("/api/releases/runs")
     runs = (body or {}).get("runs") or []
-    scoped_all = [r for r in runs if not pid or r.get("projectId") in (pid, None)]
+    scoped_all = [r for r in runs if _mine(r)]
+    # 台账非空却被项目过滤器**全部**滤掉：几乎一定是标识写法对不上（如端点存 slug、
+    # 解析出 hex id），而不是「本项目真的一次都没发布」。这种情况以前会以
+    # available=true + attempts=0 的姿态输出，是最危险的静默错误——必须显式喊出来。
+    filtered_out_all = bool(runs) and not scoped_all
     sel = []
     for r in runs:
-        if pid and r.get("projectId") not in (pid, None):
+        if not _mine(r):
             continue
         # 正式发布 run 用 startedAt 记时（该模型没有 createdAt）
         if not _in_week(r.get("startedAt") or "", start, end):
@@ -453,9 +500,20 @@ def collect_releases(project, start, end):
                 "同一次发布的多次重试各算一条 run。",
     }
     out["coverage"] = _release_coverage(scoped_all, sel, start, end)
+    if filtered_out_all:
+        out["available"] = False
+        out["reason"] = (f"发布台账有 {len(runs)} 条 run，但没有一条的 projectId 匹配 "
+                         f"{sorted(ident) if ident else project}——项目标识写法对不上，"
+                         f"实际取到的写法示例：{sorted({str(r.get('projectId')) for r in runs})[:3]}。"
+                         f"拒绝以 0 次发布的姿态输出，报告本段须写「数据不可用」而非「本周未发布」。")
+        out["coverage"]["complete"] = False
+        out["coverage"]["warnings"].append(out["reason"])
     if not out["coverage"]["complete"]:
         out["note"] += "【覆盖不完整】" + "；".join(out["coverage"]["warnings"]) + \
                        "——本段数字为下限，报告须注明口径。"
+    if out["coverage"]["advisories"]:
+        # 提示档：照常告知读者，但**不**声称数字是下限（未确认丢行）
+        out["note"] += "【提示】" + "；".join(out["coverage"]["advisories"]) + "。"
     if resolve_warn:
         out["projectResolveWarning"] = resolve_warn
     return out

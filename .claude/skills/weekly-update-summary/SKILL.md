@@ -272,6 +272,13 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
 | CDS 验收中心 | 做完的验没验过 | 「验收源不可达：<原因>，本周质量结论无法给出」 |
 | 缺陷台账 + 线上发布 | 质量趋势与是否真发出去 | 「缺陷/发布源不可达：<原因>」 |
 
+**「不可用」和「是 0」是两回事，绝不许混写。** 采集器给的 `releases.available=false`
+意味着**没测到**（台账拿不到、项目标识对不上），此时正文只能写「发布数据不可用：<reason>」；
+只有 `available=true && attempts=0` 才可以写「本周未发布」。把前者写成后者，是在用一句
+确定的假话替换一个诚实的空白——读者会据此认为这周没上线任何东西。
+同理 `coverage.complete=false` 时，本段数字是**下限**，必须带口径说明；
+`coverage.advisories` 只是提示，不改口径、也不许拿来给数字打折扣。
+
 ## 触发词
 
 "生成周报" / "写周报" / "本周总结" / "周报" / "weekly report" / "weekly summary" / "上周总结"
@@ -626,3 +633,5 @@ bash scripts/assemble-changelog.sh
 8. **风格**：正式周刊风格，分类与结论用文字分级 + 语义色，禁止使用 emoji
 9. **不许只报喜**：验收未通过、缺陷零改善、连续顺延项，都必须写进正文并给下一步——这是业务读者判断"该不该介入"的唯一依据
 10. **四源缺一要声明**：日报 / 验收 / 缺陷 / 发布任一不可达，在 baseline 行写明原因（纪律 12），禁止静默省略
+11. **不可用 ≠ 0**：`available=false` 只能写「数据不可用 + 原因」，只有 `available=true && attempts=0` 才写「本周未发布」（纪律 12）
+12. **发布口径固定走正式发布台账**：`releases` 段来自 `/api/releases/runs`，与分支预览部署（`previewDeploys`）是两码事，禁止把预览次数写成"上线次数"

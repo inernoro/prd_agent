@@ -223,8 +223,13 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             // data: / about: / blob: / javascript: / filesystem: 都会导航当前浏览上下文，
             // 「非 http 一律放行」等于把它们全放进来，照样能把 frame 导航走。
             // 只有交给外部处理器、不动本 frame 的协议才豁免。
-            const EXTERNAL_HANDLER = new Set([
-              'mailto:', 'tel:', 'sms:', 'mms:', 'callto:', 'facetime:', 'geo:', 'skype:',
+            // 这里判「会不会导航本 frame」——该集合是**可枚举**的，所以按它判定，
+            // 而不是反过来白名单列举外部协议：那样会把 vscode: / weixin: 这类已注册的
+            // 自定义协议一并 preventDefault 又不 open，链接直接变哑巴（上一轮的回归）。
+            // 未在此列的协议交由浏览器分派给系统处理器，本 frame 不动。
+            const SELF_NAVIGATING = new Set([
+              'http:', 'https:', 'file:', 'ftp:',
+              'data:', 'about:', 'blob:', 'filesystem:', 'javascript:', 'vbscript:',
             ]);
             d.addEventListener('click', (ev) => {
               const a = (ev.target as Element | null)?.closest?.('a, area');
@@ -236,7 +241,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
               if (!raw || raw.startsWith('#')) return;                      // 页内锚点
               let url: URL;
               try { url = new URL(raw, d.baseURI); } catch { return; }
-              if (EXTERNAL_HANDLER.has(url.protocol)) return;               // 交给系统处理器
+              if (!SELF_NAVIGATING.has(url.protocol)) return;               // 交给系统处理器（含 vscode:/weixin: 等）
               // download 不能无条件放行：浏览器对**跨源** http(s) 会忽略 download，
               // 按普通导航处理——那正好是要拦的情形。只有同源才真的走原生下载。
               if (a.hasAttribute('download')) {
@@ -244,8 +249,8 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
                 try { baseOrigin = new URL(d.baseURI).origin; } catch { /* 取不到就按跨源处理 */ }
                 if (baseOrigin && url.origin === baseOrigin) return;        // 同源，原生下载
               }
-              ev.preventDefault();                                          // 其余一律不许就地导航
-              // 只有 http(s) 值得开新标签；data:/javascript:/about: 等直接拦掉不放行，
+              ev.preventDefault();                                          // 会导航本 frame 的，一律拦
+              // 只有 http(s) 值得开新标签；data:/javascript:/about: 等拦掉即止，
               // 在新标签里打开它们本身就是风险面。
               if (url.protocol === 'http:' || url.protocol === 'https:') {
                 window.open(url.href, '_blank', 'noopener,noreferrer');
