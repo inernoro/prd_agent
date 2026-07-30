@@ -684,6 +684,28 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+    def test_explicit_terminal_actions_close_prior_failures(self):
+        for failure, closure in (
+            ("构建失败", "构建现已完成"),
+            ("验收报告归档失败", "验收报告归档现已完成"),
+            ("报告未发布", "报告现已发布"),
+            ("Slack 通知发送失败", "Slack 通知现已送达"),
+            ("核心用例执行失败", "核心用例现已完成"),
+        ):
+            with self.subTest(failure=failure, closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一事项已复测 | 关闭旧失败证据 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_already_failed_binds_to_archive_instead_of_ready(self):
         fact = "验收报告归档 already failed"
         self.assertEqual({"archive"}, archive_report._current_failure_subjects(fact))
@@ -700,6 +722,36 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         self.assertTrue(any("验收链路失败事实" in error for error in errors))
         self.assertFalse(any("硬门禁失败事实" in error for error in errors))
+
+    def test_gate_result_evidence_gaps_do_not_become_gate_failures(self):
+        for fact in (
+            "CDS smoke 结果不可用于确认移动端覆盖",
+            "构建结果不可用于验证目标版本",
+            "CDS smoke 产出无法用于证明冻结版本",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+        actual_failure = "构建产物不可交付"
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", actual_failure
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进", actual_failure
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
 
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):

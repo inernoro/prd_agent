@@ -665,10 +665,13 @@ _DIAGNOSTIC_MODIFIER_PATTERN = (
 _RESOLVED_STATUS_PREFIX_PATTERN = (
     r"(?:(?:现已|已经|已)|(?:重试后|随后)\s*已|最终(?:已)?)"
 )
+_RESOLVED_ACTION_PATTERN = (
+    r"(?:通过|完成|送达|归档|发布|打开|访问|连接|恢复|解决|关闭|修复|"
+    r"正常|可用|就绪|部署|上线|生效|合并|ready|"
+    rf"成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+)
 _RESOLVED_FACT_PATTERN = re.compile(
-    rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*"
-    rf"(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
-    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+    rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*{_RESOLVED_ACTION_PATTERN}"
     rf"|{_RAW_RESOLVED_STATUS_PATTERN}",
     re.I,
 )
@@ -713,7 +716,9 @@ _FAILURE_SUBJECT_PATTERNS = (
     (
         "report-publish",
         re.compile(
-            rf"(?:验收)?报告\s*(?:{_ONGOING_FAILURE_PREFIX_PATTERN}\s*)?"
+            rf"(?:验收)?报告\s*"
+            rf"(?:(?:{_ONGOING_FAILURE_PREFIX_PATTERN}"
+            rf"|{_RESOLVED_STATUS_PREFIX_PATTERN})\s*)?"
             r"发布(?:流程|任务|操作)?",
             re.I,
         ),
@@ -1152,12 +1157,13 @@ def _root_cause_state_scope(row, row_index):
 def _normalize_evidence_usage_gap_clauses(text):
     """Neutralize evidence-use wording without removing real failures beside it."""
     clauses = _split_fact_clauses(text)
-    evidence_subject = r"截图|证据|日志|记录|样本|材料"
+    evidence_subject = r"截图|证据|日志|记录|样本|材料|结果|产出|产物"
     usage_pattern = re.compile(
         rf"({evidence_subject})"
         rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
         r"(不可用于|无法用于|不能用于)"
-        r"(?=[^。；;，,|\n]{0,20}(?:确认|验证|证明|覆盖|判断|评估))",
+        r"(?=\s*(?:(?:直接|继续|后续|当前|本次|目标日)\s*)?"
+        r"(?:确认|验证|证明|覆盖|判断|评估))",
         re.I,
     )
     evidence_status_pattern = re.compile(
