@@ -603,6 +603,8 @@ def main():
         meta["coverFrom"] = a.cover_from
     if a.cover_to:
         meta["coverTo"] = a.cover_to
+    # 身份字段（建条目时就要有，用于同日查重）与水位线字段（必须等正文验完才写）分开。
+    meta_identity = {"kind": kind, "dailyDate": daily_date, "format": "html" if is_html else "md"}
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
@@ -612,10 +614,15 @@ def main():
             # 而水位线错配会让下一期从错误的位置续采。
             eid = reuse_eid
         else:
+            # 建条目时**不带水位线**（lastCommit/coverFrom/coverTo），只带身份字段。
+            # 否则：正文 PUT 失败、随后的清理 DELETE 又失败时，库里会留下一个**空壳**
+            # 却带着已推进的水位线；下一期 latest_daily_entry 正好选中它，
+            # 于是从「本期其实没发出去」的位置继续采，那批提交永久跳过。
+            # 水位线统一在正文逐字校验通过后再写（与原地更新路径同一条规则）。
             created = curl(HJ + ["-X", "POST", "-d", json.dumps({
                 "title": a.title, "summary": a.title if is_html else f"# {a.title}",
                 "sourceType": "reference", "contentType": content_type,
-                "tags": tags, "metadata": meta,
+                "tags": tags, "metadata": meta_identity,
             }), f"{base}/stores/{rid}/entries"])["data"]
             eid = created["id"]
             my_created_at = created.get("createdAt") or ""
@@ -682,10 +689,17 @@ def main():
                   "已保留该条目与其分享链不删、且**不推进水位线**，请稍后重跑覆盖")
         else:
             try:
-                curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
-                print(f"  正文未落库，已删空壳条目 {eid}")
+                dr = curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
+                if dr.get("success"):
+                    print(f"  正文未落库，已删空壳条目 {eid}")
+                else:
+                    # curl() 只在解析不出 JSON 时才抛；{"success":false} 会静默通过。
+                    # 空壳若留在库里，虽已不带水位线（见建条目处），仍会被下期选为"最新一篇"
+                    # 而退化成 today 口径，必须让人看见。
+                    print(f"  [告警] 空壳条目 {eid} 删除被拒（{json.dumps(dr.get('error'), ensure_ascii=False)[:80]}），"
+                          "请手动删除，否则下一期会把它当成最新一篇并退化为当日口径")
             except Exception:
-                print(f"  正文未落库且删除失败；稳定后请手动删条目 {eid}")
+                print(f"  [告警] 正文未落库且删除失败；请手动删条目 {eid}")
         rollback_store_if_new()
         raise RuntimeError("正文写入未确认落库（库中内容与本次正文不一致），请稍后重跑")
     elif put_ok:
@@ -700,12 +714,12 @@ def main():
     # 正文已确认落库，这时才把 title / summary / metadata 更新到原地复用的那条上。
     # 顺序不可提前（见上文）：先改元数据后写正文，一旦正文失败就会留下
     #「新水位线 + 旧正文」的错配条目，而错配的水位线会让下一期从错误的位置续采。
-    if reuse_eid and state is True:
+    if state is True:
         try:
             ok = curl(HJ + ["-X", "PUT", "-d", json.dumps({
                 "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
             }), f"{base}/entries/{eid}"]).get("success")
-            print(f"  原地更新标题/标签/水位线 ok={ok}")
+            print(f"  {'原地更新' if reuse_eid else '回写'}标题/标签/水位线 ok={ok}")
             # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
             # 这里再验一次：若正文已不是本次内容，则库里是「我的水位线 + 别人的正文」，
             # 下一期会从错误位置续采。无法在无后端原子 upsert 的前提下杜绝，但绝不能静默。
