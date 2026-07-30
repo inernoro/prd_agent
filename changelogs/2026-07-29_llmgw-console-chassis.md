@@ -79,3 +79,4 @@
 | docs | llmgw | 债务台账新增 ONB-key-usability 与 ONB-key-page-cap：授权矩阵的其余三项与密钥列表 500 条上限没有镜像到前端，正解是服务端 onboarding digest（需先让 console-api 与 serving 共享判定） |
 | fix | llmgw | 抽屉内的失败信息改在抽屉里显示：成员抽屉、新建租户抽屉、账单导入抽屉此前都把失败抛给页面级 alert，而那条 alert 渲染在 PageBody 里、被固定定位的抽屉与毛玻璃背板整块盖住，用户只看到表单停止转圈、没有任何可读原因，然后原样再试一次 |
 | fix | cds | 兼容别名发布前查全部分支已保存的子域别名：改名前就存在的别名（或先存别名、后加 profile 的反序）恰好等于 `<slug>-llmgw-web` 时，保存期检查拦不住，兼容别名会与它撞成同 host 两条路由，route-resolver 按路由 id 静默选一条 |
+| fix | cds | 已保存别名的撞名检查收进发布单点：上一版只在兼容别名那一趟查，规范服务 host 无条件写，于是一个早于改名就存在的别名 `<slug>-llmgw` 会与规范 host 撞成同 host 两个上游，resolver 按路由 id 静默选一条，用户可能打开另一个分支的应用 |

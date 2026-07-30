@@ -496,8 +496,33 @@ export class ForwarderRoutePublisher {
       // 才能把「另一个 profile 显式声明占走了这个别名」（真冲突，要报）与
       // 「这个 label 就是本 profile 刚发的规范名」（正常，别报）区分开。
       const writtenLabels = new Map<string, string>();
+      /**
+       * 写一条命名子域路由。**已保存别名的检查放在这里单点**，规范名与兼容别名两趟
+       * 都必然经过它。
+       *
+       * 上一版只在别名那一趟查 aliasOwners，规范名那一趟无条件写 —— 于是一个早于
+       * 改名就存在的别名 `<slug>-llmgw`（它已经为自己的主应用发了一条路由）会与
+       * 规范服务 host 撞成同 host 两个上游，resolver 按路由 id 静默选一条，用户可能
+       * 打开另一个分支的应用（Codex P1）。同一个判断分两趟各写一遍正是判据分裂的
+       * 温床，故收进 emit。
+       *
+       * 撞上就**跳过并告警**，与本文件既有的「第一标签超 63 octet 则跳过」同一处理：
+       * 命名入口丢掉后服务仍可经主域名的路径访问，而同 host 两条路由是静默错路由。
+       */
       const emit = (svc: typeof subdomainCandidates[number], namedLabel: string): void => {
         if (writtenLabels.has(namedLabel)) return;
+        const aliasOwner = aliasOwners.get(namedLabel);
+        if (aliasOwner !== undefined) {
+          const key = `${branch.id}:${namedLabel}:alias:${aliasOwner}`;
+          if (!this.warnedAliasCollisions.has(key)) {
+            this.warnedAliasCollisions.add(key);
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 命名子域 host ${namedLabel}.* 已被分支 ${aliasOwner} 保存为子域别名，跳过该命名路由（已保存的别名优先）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+            );
+          }
+          seenAliasCollisions.add(key);
+          return;
+        }
         writtenLabels.set(namedLabel, svc.profileId);
         {
           for (const root of this.opts.rootDomains) {
@@ -525,21 +550,7 @@ export class ForwarderRoutePublisher {
       }
       for (const { svc, sub } of claims) {
         for (const label of publishedServiceLabels(previewSlug, sub)) {
-          // 已被某个分支保存为子域别名 → 那条别名路由已经指向它自己的上游，
-          // 兼容别名必须让路。兼容别名只是「旧链接别断」的顺手之举，
-          // 丢掉它远好过让同一个 host 出现两条指向不同容器的路由。
-          const aliasOwner = aliasOwners.get(label);
-          if (aliasOwner !== undefined) {
-            const key = `${branch.id}:${label}:alias:${aliasOwner}`;
-            if (!this.warnedAliasCollisions.has(key)) {
-              this.warnedAliasCollisions.add(key);
-              this.opts.logger?.warn?.(
-                `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被分支 ${aliasOwner} 保存为子域别名，跳过兼容别名路由（已保存的别名优先）`,
-              );
-            }
-            seenAliasCollisions.add(key);
-            continue;
-          }
+          // 已保存别名的检查在 emit 里单点做（规范名那一趟同样要过），这里不再重复。
           const owner = writtenLabels.get(label);
           if (owner === undefined) {
             emit(svc, label); // 别名没人占，静默发出去——这是绝大多数情况

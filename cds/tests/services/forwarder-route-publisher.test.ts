@@ -336,6 +336,36 @@ describe('ForwarderRoutePublisher', () => {
     expect(warnings.filter((w) => w.includes('保存为子域别名'))).toHaveLength(1);
   });
 
+  it('规范服务 host 也要查已保存别名：撞上则跳过，不能只在别名那一趟查（Codex P1）', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({ projectId: 'demo', branch: 'main', services: { web: 41900, llmgw: 41901 } });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+    // B 分支早于改名就把 A 的**规范** host 标签存成了自己的别名。
+    addMultiProfileBranch({ projectId: 'demo', branch: 'other', services: { web: 42000 } });
+    const slugA = computePreviewSlug('main', 'demo');
+    state.setBranchSubdomainAliases('demo-other', [`${slugA}-llmgw`]);
+
+    const warnings: string[] = [];
+    publisher = new ForwarderRoutePublisher({
+      state, outputPath: outFile, rootDomains: ['miduo.org'],
+      logger: { warn: (m: string) => { warnings.push(m); } } as never,
+    });
+    publisher.publishNow();
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 该 host 只有一条路由，归已保存别名的分支（42000）——A 的规范服务入口让路。
+    const hosts = data.filter((r: { host?: string }) => r.host === `${slugA}-llmgw.miduo.org`);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].upstreamPort).toBe(42000);
+    // 兼容别名 host 没被占，照常发布（指向 A 的 llmgw 容器）。
+    expect(data.find((r: { host?: string }) => r.host === `${slugA}-llmgw-web.miduo.org`)?.upstreamPort).toBe(41901);
+    expect(warnings.filter((w) => w.includes('保存为子域别名'))).toHaveLength(1);
+  });
+
   it('命名 host 第一 DNS 标签超 63 octet 时跳过该路由（Codex P2「Guard named hosts against overlong DNS labels」），主域名路径访问不受影响', () => {
     ensureProject('demo', 'demo');
     // 构造长分支名：无 `/` → previewSlug = `<branch>-demo`。branch 取 55 字 → slug = 60 字，
