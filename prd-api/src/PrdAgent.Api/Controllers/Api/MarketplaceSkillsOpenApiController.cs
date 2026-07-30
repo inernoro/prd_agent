@@ -209,10 +209,34 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         }
         return Ok(ApiResponse<object>.Ok(new
         {
-            downloadUrl = skill.ZipUrl,
+            downloadUrl = BuildPublicDownloadUrl(skill.Id),
             fileName = skill.OriginalFileName,
             item = ToDto(skill, userId)
         }));
+    }
+
+    [HttpGet("{id}/download")]
+    [AllowAnonymous]
+    public async Task<IActionResult> Download(string id, CancellationToken ct)
+    {
+        if (OfficialMarketplaceSkillInjector.IsOfficialId(id))
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "官方技能请使用 fork 返回的官方下载地址"));
+
+        var skill = await _db.MarketplaceSkills
+            .Find(x => x.Id == id && x.IsPublic)
+            .FirstOrDefaultAsync(ct);
+        if (skill == null)
+            return NotFound(ApiResponse<object>.Fail(ErrorCodes.DOCUMENT_NOT_FOUND, "技能不存在或已下架"));
+
+        var bytes = await _assetStorage.TryDownloadBytesAsync(skill.ZipKey, ct);
+        if (bytes == null || bytes.Length == 0)
+        {
+            _logger.LogWarning("[OpenApi] MarketplaceSkill 下载对象不存在 id={SkillId} key={Key}", skill.Id, skill.ZipKey);
+            return StatusCode(StatusCodes.Status502BadGateway,
+                ApiResponse<object>.Fail("SKILL_ARCHIVE_UNAVAILABLE", "技能包暂时不可下载，请稍后重试"));
+        }
+
+        return File(bytes, "application/zip", SanitizeFileName(skill.OriginalFileName));
     }
 
     // ======================================================================
@@ -597,7 +621,13 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         return s.Length <= maxLen ? s : s[..maxLen];
     }
 
-    private static object ToDto(MarketplaceSkill s, string currentUserId)
+    private string BuildPublicDownloadUrl(string id)
+    {
+        var pathBase = Request.PathBase.HasValue ? Request.PathBase.Value : string.Empty;
+        return $"{Request.Scheme}://{Request.Host}{pathBase}/api/open/marketplace/skills/{Uri.EscapeDataString(id)}/download";
+    }
+
+    private object ToDto(MarketplaceSkill s, string currentUserId)
     {
         return new
         {
@@ -608,7 +638,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,
             tags = s.Tags ?? new List<string>(),
-            zipUrl = s.ZipUrl,
+            zipUrl = BuildPublicDownloadUrl(s.Id),
             zipSizeBytes = s.ZipSizeBytes,
             originalFileName = s.OriginalFileName,
             hasSkillMd = s.HasSkillMd,

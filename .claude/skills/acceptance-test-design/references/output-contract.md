@@ -1,66 +1,47 @@
-# Acceptance Test Design Output Contract
+# 验收设计输出契约
 
-Produce this design brief before visual execution.
+## 必填结构
 
-For daily/yesterday runs, first attach or summarize the output from
-`scripts/daily_scope.py`. The brief must not silently omit commits, open PRs, or
-unpublished branches that appear in that scope inventory.
+```markdown
+# 验收测试设计
 
-## 1. 昨日/范围总结
+## 范围与来源
+- 目标：<需求、缺陷、PR、commit 或时间窗口>
+- 基线：<branch/sha/date>
+- 规则来源：<repository rules, selected profile, generic baseline>
+- 状态：READY/BLOCKED/DRAFT
 
-Write a short summary:
+## 可验证断言
+| ID | 用户与场景 | 动作 | 可观察结果 | 失败影响 |
+|---|---|---|---|---|
 
-- target date or range
-- tested branch/preview/SHA
-- commit count and PR count
-- major modules
-- high-risk modules
-- expected depth: `广度冒烟`, `深度验收`, or `发布前阻断验收`
-- scope source: path to `daily_scope.py` JSON/Markdown output when available
+## 风险与影响面
+| 风险 | 概率 | 影响 | 不可发现性 | 优先级 |
+|---|---:|---:|---:|---|
 
-## 2. 改动断言表
+## 融合用例
+| 用例 | 覆盖断言 | 前置条件 | 主步骤 | 负面检查 | 清理 |
+|---|---|---|---|---|---|
 
-| PR/commit | changed files | 归属模块 | 改动断言 | 类型 | 用户可见页面/状态 | 是否可视觉验收 |
-|-----------|---------------|----------|----------|------|-------------------|----------------|
+## 证据矩阵
+| 断言 | 主证据 | 佐证 | 通过门槛 | 禁止替代 |
+|---|---|---|---|---|
 
-Rules:
-- Each commit appears or is intentionally grouped.
-- The assertion describes behavior, not implementation.
-- If there is no user-visible surface, write `无用户可见页面` and classify it as internal-only.
-- Keep `cds` and `CDS Agent` separate. For `cds/` platform changes, write platform surfaces such as CDS branch status, deploy log, smoke result, reports page, preview routing, self-update state, scheduler state, or API response. Do not write `/cds-agent` as the user-visible surface unless the assertion is explicitly about CDS Agent UI/runtime/session behavior.
+## 执行简报
+- 环境与入口：<authoritative source>
+- 角色与凭据：<secure retrieval method>
+- 顺序与停止条件：<steps>
+- 产物位置：<repository convention or external store>
 
-## 3. 影响面矩阵
+## 覆盖缺口
+| 未覆盖项 | 原因 | 风险 | 补齐条件 |
+|---|---|---|---|
+```
 
-| 改动断言 | 上游输入 | 用户路径 | 下游输出 | 持久化状态 | 权限/边界 | 异步/外部依赖 | 可能回归 |
-|----------|----------|----------|----------|------------|-----------|----------------|----------|
+## 质量门槛
 
-The goal is not exhaustive imagination. The goal is to reveal where a correct-looking code change could still fail users.
-
-## 4. 融合测试设计
-
-| 融合场景 | 覆盖断言 | 用户路径 | 主要页面证据 | 内部佐证 | 负面/边界路径 | 证明密度 | 风险 |
-|----------|----------|----------|--------------|----------|----------------|----------|------|
-
-Mark a scenario as invalid if its covered assertions are only file-adjacent or module-adjacent.
-
-## 5. 证明力矩阵
-
-| 改动断言 | 页面主证据 | 交互动作 | 内部佐证 | 失败条件 | 证明力 0-4 | 结论 |
-|----------|------------|----------|----------|----------|------------|------|
-
-Use `references/proof-strength.md` for scoring.
-
-## 6. 覆盖缺口与不可测项
-
-| 缺口 | 原因 | 风险 | 降级结论 | 后续动作 |
-|------|------|------|----------|----------|
-
-If a critical assertion lacks score 3 or 4 proof, the final visual report cannot claim deep acceptance pass.
-
-## 7. 交给视觉验收的执行清单
-
-| 顺序 | 现在开测 | 归属模块 | 页面位置 | 预期页面反馈 | 截图要求 | 内部佐证 | 通过标准 |
-|------|----------|----------|----------|--------------|----------|----------|----------|
-
-Each row must be executable by a browser-driven agent. If it cannot be executed, move it to the gap table instead of pretending.
-For CDS platform rows, the executable target is a CDS platform page/API/CLI state, not the prd-admin CDS Agent workbench.
+- 每个 P0 断言至少有一个主证据。
+- 每个高风险项至少被一个用例覆盖。
+- 每个用例都有失败判定和清理方式。
+- 凭据只写安全获取方式，不写具体值。
+- 未执行时不得出现“通过”结论。
