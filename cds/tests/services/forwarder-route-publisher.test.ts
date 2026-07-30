@@ -302,6 +302,40 @@ describe('ForwarderRoutePublisher', () => {
     expect(warnings.filter((w) => w.includes('历史别名'))).toHaveLength(1);
   });
 
+  it('兼容别名 host 已被别的分支保存为子域别名时跳过（存量别名/反序都拦得住，Codex P1）', () => {
+    ensureProject('demo', 'demo');
+    // A 分支：声明 llmgw，会展开出兼容别名 `<slugA>-llmgw-web`。
+    addMultiProfileBranch({ projectId: 'demo', branch: 'main', services: { web: 41700, llmgw: 41701 } });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+    // B 分支：**早于本次改名**就把 `<slugA>-llmgw-web` 存成了自己的子域别名。
+    // 保存期的撞名检查管不到这种存量数据，只有发布器能拦。
+    addMultiProfileBranch({ projectId: 'demo', branch: 'other', services: { web: 41800 } });
+    const slugA = computePreviewSlug('main', 'demo');
+    state.setBranchSubdomainAliases('demo-other', [`${slugA}-llmgw-web`]);
+
+    const warnings: string[] = [];
+    publisher = new ForwarderRoutePublisher({
+      state, outputPath: outFile, rootDomains: ['miduo.org'],
+      logger: { warn: (m: string) => { warnings.push(m); } } as never,
+    });
+    publisher.publishNow();
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    // 同一个 host 只许有一条路由，且必须归已保存别名的那个分支（41800），
+    // 不能被 A 的兼容别名再插一条指向 41701。
+    const hosts = data.filter((r: { host?: string }) => r.host === `${slugA}-llmgw-web.miduo.org`);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].upstreamPort).toBe(41800);
+    // 规范名不受影响，照常发布。
+    expect(data.find((r: { host?: string }) => r.host === `${slugA}-llmgw.miduo.org`)?.upstreamPort).toBe(41701);
+    // 告警必须有，且每 2 秒重跑不刷屏。
+    expect(warnings.filter((w) => w.includes('保存为子域别名'))).toHaveLength(1);
+  });
+
   it('命名 host 第一 DNS 标签超 63 octet 时跳过该路由（Codex P2「Guard named hosts against overlong DNS labels」），主域名路径访问不受影响', () => {
     ensureProject('demo', 'demo');
     // 构造长分支名：无 `/` → previewSlug = `<branch>-demo`。branch 取 55 字 → slug = 60 字，

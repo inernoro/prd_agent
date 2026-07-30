@@ -191,6 +191,26 @@ ONB-key-usability 同一个：服务端 onboarding digest（用存在性查询�
 
 影响面：新人清单是提示性 UI，误判的后果是多显示一个步骤，不影响任何实际能力。
 
+## ONB-everused-preflight — 「跑通首条请求」会被 preflight 提前点亮
+
+**状态**：open（方向保守，影响面窄）
+
+`GatewayRuntimeGovernance.cs` 对**任何通过授权的 scope** 都无条件写 `LastUsedAt`，
+紧接着下一行才用 `IsBusinessInvocationScope` 区分「只有 invoke / stream:invoke /
+raw:invoke 才算业务流量」。新人清单的 `everUsed` 取自 `lastUsedAt`，所以一次
+readiness 或 route preflight（例如自动化探针）就会把「跑通首条请求」点亮，
+而租户其实还没发过一条真请求。
+
+**为什么没做**：客户端没有可读的「仅业务调用」持久标记。请求日志有，但默认只留
+90 天——正是因为这个才从日志改成了 `lastUsedAt`（见上文 everUsed 的注释）；
+`RecordSuccessorObservationAsync` 写的是轮换后继观测，不是通用的「首次业务调用」。
+要做就得服务端落一个持久标记并出 digest，与 ONB-key-usability / ONB-key-page-cap
+是同一个改动。
+
+**误判方向是保守的**：`lastUsedAt` 只会让这一步**提前**变完成，不会让已完成的
+倒回未完成。清单是提示性 UI，提前消失的后果是少一次提示，不影响任何能力；
+同 session 内刚跑成功的情况另有 `markRequestCompleted` 本地确证兜住。
+
 ---
 
 ## 相关

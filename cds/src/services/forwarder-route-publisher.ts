@@ -171,6 +171,20 @@ export class ForwarderRoutePublisher {
 
   private buildRoutes(): RouteRecord[] {
     const records: RouteRecord[] = [];
+    // 全部分支已保存的子域别名标签 → 拥有它的分支 id。
+    //
+    // 兼容别名（`llmgw` 展开出的 `llmgw-web`）发布前必须查这张表：保存期的撞名检查
+    // 只拦「新保存的别名」，管不了两种情况——① 本次改名之前就已经存在的别名恰好等于
+    // `<slug>-llmgw-web`；② 别名先保存、声明 `llmgw` 的 profile 后来才加。两种都会让
+    // forwarder 收到同 host 两条路由，route-resolver 按路由 id 静默选一条，用户可能
+    // 被路由到别的分支（Codex P1）。
+    const aliasOwners = new Map<string, string>();
+    for (const b of this.opts.state.getAllBranches()) {
+      for (const alias of b.subdomainAliases ?? []) {
+        const label = (alias || '').trim().toLowerCase();
+        if (label && !aliasOwners.has(label)) aliasOwners.set(label, b.id);
+      }
+    }
     // 本轮实际存在的别名冲突。收在这里是为了在末尾把已经消失的冲突从
     // warnedAliasCollisions 里剪掉——否则「改错 → 报警 → 改对 → 再改错」的第二次
     // 就永远静默了（去重不能变成一次性静音）。
@@ -511,6 +525,21 @@ export class ForwarderRoutePublisher {
       }
       for (const { svc, sub } of claims) {
         for (const label of publishedServiceLabels(previewSlug, sub)) {
+          // 已被某个分支保存为子域别名 → 那条别名路由已经指向它自己的上游，
+          // 兼容别名必须让路。兼容别名只是「旧链接别断」的顺手之举，
+          // 丢掉它远好过让同一个 host 出现两条指向不同容器的路由。
+          const aliasOwner = aliasOwners.get(label);
+          if (aliasOwner !== undefined) {
+            const key = `${branch.id}:${label}:alias:${aliasOwner}`;
+            if (!this.warnedAliasCollisions.has(key)) {
+              this.warnedAliasCollisions.add(key);
+              this.opts.logger?.warn?.(
+                `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被分支 ${aliasOwner} 保存为子域别名，跳过兼容别名路由（已保存的别名优先）`,
+              );
+            }
+            seenAliasCollisions.add(key);
+            continue;
+          }
           const owner = writtenLabels.get(label);
           if (owner === undefined) {
             emit(svc, label); // 别名没人占，静默发出去——这是绝大多数情况

@@ -78,3 +78,4 @@
 | fix | llmgw | 新人清单的「可用密钥」补上调用能力判定：一把只有 readiness:read 的探针密钥此前会让「签一把密钥」划掉、接入片段还亮出它的前缀，而它根本发不出请求。判据照 serving 的 MatchesAny 语义（空列表恒拒、* 通配、其余大小写不敏感精确匹配） |
 | docs | llmgw | 债务台账新增 ONB-key-usability 与 ONB-key-page-cap：授权矩阵的其余三项与密钥列表 500 条上限没有镜像到前端，正解是服务端 onboarding digest（需先让 console-api 与 serving 共享判定） |
 | fix | llmgw | 抽屉内的失败信息改在抽屉里显示：成员抽屉、新建租户抽屉、账单导入抽屉此前都把失败抛给页面级 alert，而那条 alert 渲染在 PageBody 里、被固定定位的抽屉与毛玻璃背板整块盖住，用户只看到表单停止转圈、没有任何可读原因，然后原样再试一次 |
+| fix | cds | 兼容别名发布前查全部分支已保存的子域别名：改名前就存在的别名（或先存别名、后加 profile 的反序）恰好等于 `<slug>-llmgw-web` 时，保存期检查拦不住，兼容别名会与它撞成同 host 两条路由，route-resolver 按路由 id 静默选一条 |
