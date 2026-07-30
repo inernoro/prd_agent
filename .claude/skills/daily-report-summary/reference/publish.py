@@ -92,6 +92,34 @@ def find_store(base, H, name):
             raise RuntimeError("知识库分页超过 1000 页仍未翻到尾，疑似分页异常，停止以免误建重复库")
 
 
+def list_entries_by_date(base, H, store_id, kind, daily_date):
+    """列出同 dailyDate + 同 kind 的既有条目 id（--replace-same-date 用）。
+
+    分页翻全库：重跑当天时如果只翻首页，旧条目可能漏在后面，结果是库里留下两篇
+    同日日报（一篇残缺一篇完整），读者不知道该信哪篇。
+    """
+    if not daily_date:
+        return []
+    found, page = [], 1
+    while True:
+        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100"])
+        if not res.get("success"):
+            # 列不出来就别删——宁可留重复条目，也不能因为读失败而误删别的东西
+            raise RuntimeError("列出条目失败，无法安全执行 --replace-same-date")
+        data = res.get("data") or {}
+        items = data.get("items") or []
+        for it in items:
+            md = it.get("metadata") or {}
+            if (md.get("kind") or "") == kind and (md.get("dailyDate") or "").strip() == daily_date:
+                found.append(it["id"])
+        if data.get("hasNextPage") is False or len(items) < 100:
+            break
+        page += 1
+        if page > 1000:
+            break
+    return found
+
+
 def resolve_daily_date(daily_date, title):
     if (daily_date or "").strip():
         return daily_date.strip()
@@ -446,6 +474,13 @@ def main():
     ap.add_argument("--store-desc", default=STORE_DESC, help="新建目标库时的描述")
     ap.add_argument("--kind", default="daily-report", help="metadata.kind，如 weekly-report")
     ap.add_argument("--tags", default="日报,今日大事", help="条目 tags，逗号分隔")
+    # 水位线（纪律 2）：本期采到哪，写进 metadata 供**下一期**续采。
+    # 不写 = 下一期读不到水位线，只能退化回「按日历日采」的老行为并漏掉当天晚些时候的提交。
+    ap.add_argument("--last-commit", default="", help="本期覆盖到的最后一个主干提交 SHA（下期水位线起点，必传）")
+    ap.add_argument("--cover-from", default="", help="本期窗口起点（ISO 时间戳或 YYYY-MM-DD），仅记账用")
+    ap.add_argument("--cover-to", default="", help="本期窗口终点（ISO 时间戳），SHA 不可达时的降级水位线")
+    ap.add_argument("--replace-same-date", action="store_true",
+                    help="同 dailyDate 已有条目时替换它（先建新条目并校验落库成功，再删旧条目）")
     a = ap.parse_args()
 
     if bool(a.report_md) == bool(a.report_html):
@@ -530,8 +565,28 @@ def main():
 
     # create entry（失败则回滚新建的库）
     daily_date = resolve_daily_date(a.daily_date, a.title)
-    meta = {"kind": a.kind or "daily-report", "dailyDate": daily_date,
+    kind = a.kind or "daily-report"
+
+    # --replace-same-date：**先**记下同日旧条目，等新条目确认落库后再删。
+    # 顺序不能反——先删后建的话，中途失败会把当天日报整个删没。
+    stale_ids = []
+    if a.replace_same_date:
+        stale_ids = list_entries_by_date(base, H, rid, kind, daily_date)
+        if stale_ids:
+            print(f"  同日({daily_date})已有 {len(stale_ids)} 条旧条目，将在新条目校验落库后删除")
+
+    meta = {"kind": kind, "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
+    # 水位线：写给下一期读（纪律 2）。缺 lastCommit 会让下期退化回当日口径并漏报，
+    # 所以这里明确告警，不静默放过。
+    if a.last_commit:
+        meta["lastCommit"] = a.last_commit
+    else:
+        print("  [告警] 未传 --last-commit：下一期读不到水位线，会退回「按日历日采」并漏掉今天晚些时候的提交")
+    if a.cover_from:
+        meta["coverFrom"] = a.cover_from
+    if a.cover_to:
+        meta["coverTo"] = a.cover_to
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
@@ -540,6 +595,7 @@ def main():
             "sourceType": "reference", "contentType": content_type,
             "tags": tags, "metadata": meta,
         }), f"{base}/stores/{rid}/entries"])["data"]["id"]
+        stale_ids = [x for x in stale_ids if x != eid]   # 防御：绝不把刚建的这条算进待删
     except Exception as e:
         print(f"  建条目失败：{str(e)[:120]}")
         rollback_store_if_new()
@@ -593,6 +649,20 @@ def main():
         raise RuntimeError(
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
+
+    # 同日旧条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
+    # state=None（验证接口不可达）时宁可留一条重复，也不能删掉可能是唯一完好的那篇。
+    if stale_ids:
+        if state is True:
+            for sid in stale_ids:
+                try:
+                    curl(H + ["-X", "DELETE", f"{base}/entries/{sid}"], retries=2)
+                    print(f"  已删同日旧条目 {sid}（被本期替换）")
+                except Exception as de:
+                    print(f"  [告警] 同日旧条目 {sid} 删除失败，库里会有两篇同日日报，请手动清理：{str(de)[:80]}")
+        else:
+            print(f"  [告警] 新条目落库未获确认(state={state})，保留同日旧条目 {stale_ids} 不删；"
+                  "请人工确认后手动清理，避免误删唯一完好版本")
 
     # html 条目摘要兜底：正文 PUT 会用正文前 200 字重算 summary，旧版后端不剥标签时
     # 列表/卡片/搜索会展示裸 <!DOCTYPE html> 片段（Bugbot Medium）。发布成功后回写

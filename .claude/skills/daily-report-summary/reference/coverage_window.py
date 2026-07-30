@@ -1,0 +1,219 @@
+#!/usr/bin/env python3
+"""日报采集窗口解析（水位线 / watermark）。
+
+回答一个问题：**这次日报该从哪里开始采？**
+
+答案永远是「上一期日报采到哪，这期就从哪续」——不是「今天 00:00」。
+两者的差别就是 2026-07-30 暴露的那个洞：日报每天早上 09:10 跑，按**日历日**
+过滤提交，于是当天 09:10 之后落地的提交，既不在当天的报告里（已经跑完了），
+也不在第二天的报告里（日期桶不对），永久漏报。实测 07-28/07-29 两天漏掉
+8 个主干条目 / 36 个真实提交，含 4 个 feat。
+
+水位线以**提交 SHA** 为准（而不是日期或时间戳）：
+  - 天然免疫时区问题（git 的 %cd 用提交自带时区，容器用 UTC，两者会错位一天）
+  - 天然处理中断续上：漏跑三天，下次窗口自动横跨三天，不需要额外补偿逻辑
+  - 天然免疫「同一秒多个提交」的边界重叠
+
+三级兜底（前一级不可用才降级，每级都会在输出里标明 mode）：
+  1. sha      —— 上期 metadata.lastCommit 在本地 git 里存在 → 窗口 = (lastCommit, HEAD]
+  2. since    —— SHA 不存在（force push / 浅克隆截断）→ 用 metadata.coverTo 时间戳
+  3. today    —— 两者都没有（首次运行 / 库是空的）→ 退化为当日，与旧行为一致
+
+用法：
+  export AI_ACCESS_KEY=...          # 或 DAILY_DOC_STORE_KEY（document-store:read 即可）
+  python3 coverage_window.py --base https://main-prd-agent.miduo.org --impersonate inernoro
+  # 输出 JSON 到 stdout；诊断信息一律走 stderr，保证 stdout 是单份可解析 JSON
+
+输出字段：
+  mode        sha | since | today
+  baseSha     窗口起点提交（不含）；mode=sha 时有值
+  sinceIso    窗口起点时间戳（不含）；mode=since 时有值
+  headSha     窗口终点提交（含）——就是本次要写进 metadata.lastCommit 的值
+  revRange    可直接喂给 git log 的区间串，如 "b239edcff..HEAD"
+  spanDays    窗口横跨的自然日数（用于判断是否「补记期」）
+  prevDate    上一期日报的 dailyDate
+  gap         True 表示上期水位线之后有超过一天没报道（中断续上场景）
+"""
+import argparse, json, os, subprocess, sys, time
+from datetime import datetime, timezone
+
+API = "/api/document-store"
+STORE_NAME = "日报知识库"
+
+
+def log(msg):
+    """诊断信息走 stderr —— stdout 必须是干净的单份 JSON，否则调用方 json.loads 会炸。"""
+    sys.stderr.write(msg + "\n")
+
+
+def curl(args, retries=4):
+    last = ""
+    for i in range(retries):
+        r = subprocess.run(["curl", "-s", "--max-time", "120"] + args, capture_output=True, text=True)
+        last = r.stdout
+        try:
+            return json.loads(r.stdout)
+        except Exception:
+            if i < retries - 1:
+                time.sleep(3 * (i + 1)); continue
+    raise RuntimeError("curl 返回非 JSON（多为预览环境 524/重启）：" + (last or "")[:160])
+
+
+def headers(impersonate):
+    key = os.environ.get("DAILY_DOC_STORE_KEY", "").strip() or os.environ.get("MAP_DOC_STORE_KEY", "").strip()
+    if key:
+        return ["-H", f"Authorization: Bearer {key}"]
+    super_key = os.environ.get("AI_ACCESS_KEY", "").strip()
+    if not super_key:
+        raise RuntimeError("既无 DAILY_DOC_STORE_KEY 也无 AI_ACCESS_KEY，无法读知识库水位线")
+    return ["-H", f"X-AI-Access-Key: {super_key}", "-H", f"X-AI-Impersonate: {impersonate}"]
+
+
+def find_store(base, H, name):
+    page = 1
+    while True:
+        res = curl(H + [f"{base}/stores?page={page}&pageSize=100"])
+        if not res.get("success"):
+            raise RuntimeError("列出知识库失败，无法读取水位线（拒绝当成首次运行以免重复报道）")
+        data = res.get("data") or {}
+        for s in (data.get("items") or []):
+            if s.get("name") == name:
+                return s
+        items = data.get("items") or []
+        if data.get("hasNextPage") is False or len(items) < 100:
+            return None
+        page += 1
+        if page > 1000:
+            raise RuntimeError("知识库分页异常")
+
+
+def latest_daily_entry(base, H, store_id, kind, before_date=""):
+    """取 dailyDate 最大的一篇日报条目。
+
+    before_date 非空时只看**严格早于**它的条目——补历史或重跑当天时，
+    不能把「今天已经发过的那篇」当成自己的水位线（否则窗口塌成空集）。
+    """
+    best, page = None, 1
+    while True:
+        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100"])
+        if not res.get("success"):
+            raise RuntimeError("列出条目失败，无法读取水位线")
+        data = res.get("data") or {}
+        items = data.get("items") or []
+        for it in items:
+            md = it.get("metadata") or {}
+            # 只认正牌日报条目：库里可能混入手工「新建文档」等无 metadata 的条目
+            if (md.get("kind") or "") != kind:
+                continue
+            d = (md.get("dailyDate") or "").strip()
+            if not d:
+                continue
+            if before_date and d >= before_date:
+                continue
+            if best is None or d > (best[0] or ""):
+                best = (d, md, it.get("id"))
+        if data.get("hasNextPage") is False or len(items) < 100:
+            break
+        page += 1
+        if page > 1000:
+            break
+    return best
+
+
+def git(*args):
+    r = subprocess.run(["git"] + list(args), capture_output=True, text=True)
+    return r.returncode, r.stdout.strip(), r.stderr.strip()
+
+
+def sha_exists(sha):
+    if not sha:
+        return False
+    # ^{commit} 确保它真是个 commit 对象且在本地可达（浅克隆截断后会失败）
+    code, _, _ = git("cat-file", "-e", f"{sha}^{{commit}}")
+    return code == 0
+
+
+def main():
+    ap = argparse.ArgumentParser()
+    ap.add_argument("--base", required=True)
+    ap.add_argument("--impersonate", default="inernoro")
+    ap.add_argument("--store", default=STORE_NAME)
+    ap.add_argument("--kind", default="daily-report")
+    ap.add_argument("--branch", default="", help="主干 ref，缺省自动解析 origin/HEAD → origin/main")
+    ap.add_argument("--target-date", default="", help="本期目标日期 YYYY-MM-DD；补历史/重跑当天时用它排除自己那篇")
+    a = ap.parse_args()
+
+    branch = a.branch
+    if not branch:
+        code, out, _ = git("symbolic-ref", "--quiet", "--short", "refs/remotes/origin/HEAD")
+        branch = out if code == 0 and out else "origin/main"
+
+    code, head, _ = git("rev-parse", branch)
+    if code != 0:
+        raise RuntimeError(f"解析主干 {branch} 失败——请先 git fetch origin")
+
+    out = {"mode": "today", "baseSha": "", "sinceIso": "", "headSha": head,
+           "branch": branch, "revRange": "", "spanDays": 1, "prevDate": "", "gap": False}
+
+    try:
+        base = a.base.rstrip("/") + API
+        H = headers(a.impersonate)
+        store = find_store(base, H, a.store)
+        if not store:
+            log(f"[水位线] 知识库「{a.store}」不存在 → 首次运行，退化为当日口径")
+            print(json.dumps(out, ensure_ascii=False)); return
+        prev = latest_daily_entry(base, H, store["id"], a.kind, before_date=a.target_date)
+        if not prev:
+            log("[水位线] 库中无历史日报条目 → 首次运行，退化为当日口径")
+            print(json.dumps(out, ensure_ascii=False)); return
+        prev_date, md, _eid = prev
+        out["prevDate"] = prev_date
+        last_sha = (md.get("lastCommit") or "").strip()
+        cover_to = (md.get("coverTo") or "").strip()
+        log(f"[水位线] 上一期：dailyDate={prev_date} lastCommit={last_sha[:12] or '(无)'} coverTo={cover_to or '(无)'}")
+
+        if sha_exists(last_sha):
+            out["mode"] = "sha"; out["baseSha"] = last_sha
+            out["revRange"] = f"{last_sha}..{head}"
+        elif cover_to:
+            # 上期没记 SHA（老版本发布的条目），或 SHA 已不可达 → 退到时间戳
+            out["mode"] = "since"; out["sinceIso"] = cover_to
+            out["revRange"] = head
+            if last_sha:
+                log(f"[水位线] lastCommit {last_sha[:12]} 在本地不可达（force push/浅克隆？）→ 降级用 coverTo 时间戳")
+            else:
+                log("[水位线] 上期未记 lastCommit（旧版条目）→ 降级用 coverTo 时间戳")
+        else:
+            # 老条目既无 SHA 也无 coverTo：只能退回当日口径，并明确告警——
+            # 这正是本次要根治的旧行为，必须让调用方看见它还在生效。
+            log(f"[水位线] 上期（{prev_date}）无 lastCommit 也无 coverTo（本次改造之前发布的条目）"
+                " → 本期仍按当日口径；下期起水位线即可生效")
+            print(json.dumps(out, ensure_ascii=False)); return
+
+        # 算窗口横跨天数 + 是否属于「中断续上」
+        if out["mode"] == "sha":
+            _c, base_date, _e = git("log", "-1", out["baseSha"], "--format=%cd", "--date=short")
+        else:
+            base_date = out["sinceIso"][:10]
+        _c, head_date, _e = git("log", "-1", head, "--format=%cd", "--date=short")
+        try:
+            d0 = datetime.strptime(base_date, "%Y-%m-%d")
+            d1 = datetime.strptime(head_date, "%Y-%m-%d")
+            out["spanDays"] = max(1, (d1 - d0).days + 1)
+            # 上期日报日期与本期 HEAD 日期差超过 1 天 = 中间有天没出报告（或有天被漏采）
+            dp = datetime.strptime(prev_date, "%Y-%m-%d")
+            out["gap"] = (d1 - dp).days > 1
+        except Exception:
+            pass
+        log(f"[水位线] 窗口 mode={out['mode']} range={out['revRange'][:24]} "
+            f"跨 {out['spanDays']} 天 gap={out['gap']}")
+    except Exception as e:
+        # 读不到水位线绝不能静默当成「首次运行」重报一遍历史——明确失败让人来看
+        log(f"[水位线][错误] {e}")
+        sys.exit(3)
+
+    print(json.dumps(out, ensure_ascii=False))
+
+
+if __name__ == "__main__":
+    main()
