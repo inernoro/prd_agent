@@ -12,7 +12,7 @@ describe('TranscriptKaraoke unified playback', () => {
       />,
     );
 
-    expect(html).toContain('播放时原文会自动跟随高亮');
+    expect(html).toContain('精准时间轴，播放时逐句高亮');
     expect(html).not.toContain('普通播放');
     expect(html).not.toContain('交互式播放');
     expect(html.match(/title="播放"/g)).toHaveLength(1);

@@ -1209,6 +1209,59 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
     setLoading(false);
   }, [storeId]);
 
+  const pendingRecordingArchiveSignature = useMemo(
+    () => entries
+      .filter(entry => (entry.contentType ?? '').toLowerCase().startsWith('audio/')
+        && entry.metadata?.audioArchiveStatus === 'pending')
+      .map(entry => entry.id)
+      .sort()
+      .join('|'),
+    [entries],
+  );
+  const notifiedRecordingArchivesRef = useRef(new Set<string>());
+
+  // 待归档录音不能只留一张静态“后台处理中”卡片。只要本库仍有 pending 录音，
+  // 就静默刷新条目；归档完成后 updatedAt 改变会驱动 DocBrowser 重拉正式音频，
+  // 当前页面原地更新，不要求用户手动刷新或猜测后台是否结束。
+  useEffect(() => {
+    if (!pendingRecordingArchiveSignature) return;
+    const pendingIds = new Set(pendingRecordingArchiveSignature.split('|').filter(Boolean));
+    let cancelled = false;
+    let checking = false;
+    const check = async () => {
+      if (checking) return;
+      checking = true;
+      try {
+        const res = await listDocumentEntries(storeId, 1, 200);
+        if (cancelled || !res.success) return;
+        const completed = res.data.items.filter(entry => (
+          pendingIds.has(entry.id) && entry.metadata?.audioArchiveStatus !== 'pending'
+        ));
+        setEntries(res.data.items);
+        setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
+        for (const entry of completed) {
+          const vaultSessionId = recordingVaultByEntryIdRef.current.get(entry.id);
+          if (vaultSessionId) {
+            recordingVaultByEntryIdRef.current.delete(entry.id);
+            void vaultDeleteSession(vaultSessionId);
+          }
+          if (notifiedRecordingArchivesRef.current.has(entry.id)) continue;
+          notifiedRecordingArchivesRef.current.add(entry.id);
+          toast.success('云端副本已保存', '当前页面已自动切换正式音频，原文跟随可继续使用');
+        }
+      } finally {
+        checking = false;
+      }
+    };
+    const first = window.setTimeout(() => { void check(); }, 2500);
+    const timer = window.setInterval(() => { void check(); }, 6000);
+    return () => {
+      cancelled = true;
+      window.clearTimeout(first);
+      window.clearInterval(timer);
+    };
+  }, [pendingRecordingArchiveSignature, storeId]);
+
   // 轮询本库运行台账：有 syncing 记录时让顶栏「同步」按钮动起来（含对端推来的 incoming）。
   // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。
   useEffect(() => {

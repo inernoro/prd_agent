@@ -5,6 +5,8 @@ import {
   parseTranscriptSegments,
   hasUsableTimestamps,
   activeSegmentIndex,
+  estimateTranscriptSegments,
+  replaceEstimatedTranscriptSentenceText,
   replaceTranscriptSegmentText,
 } from '@/components/doc-browser/transcriptSegments';
 
@@ -14,7 +16,7 @@ import {
  * 点任意句跳播到那一秒。录音的和上传的音频走同一个组件（结果页统一）。
  *
  * 数据源：该音频已生成的转录笔记 markdown（**[mm:ss - mm:ss]** 行）。
- * chat-audio 转写路径无时间戳 → 退化为静态全文（不假装同步，见 no-rootless-tree）。
+ * chat-audio 转写路径无时间戳 → 音频时长就绪后按语速估算逐句位置，并明确标注估算。
  * 用户手动滚动歌词区后，暂停自动跟随 3 秒再恢复（不跟用户抢滚动条）。
  */
 export function TranscriptKaraoke({
@@ -34,6 +36,8 @@ export function TranscriptKaraoke({
   const synced = useMemo(() => hasUsableTimestamps(segments), [segments]);
 
   const [activeIdx, setActiveIdx] = useState(0);
+  const [duration, setDuration] = useState(0);
+  const [playing, setPlaying] = useState(false);
   const [editingIndex, setEditingIndex] = useState<number | null>(null);
   const [editDraft, setEditDraft] = useState('');
   const [savingEdit, setSavingEdit] = useState(false);
@@ -42,19 +46,26 @@ export function TranscriptKaraoke({
   const lineRefs = useRef<(HTMLButtonElement | null)[]>([]);
   // 用户手动滚动 → 3s 内不自动跟随（不抢滚动条）
   const manualUntilRef = useRef(0);
+  const estimatedSegments = useMemo(
+    () => synced ? [] : estimateTranscriptSegments(segments, duration),
+    [duration, segments, synced],
+  );
+  const timelineSegments = synced ? segments : estimatedSegments.length > 0 ? estimatedSegments : segments;
+  const followEnabled = synced || estimatedSegments.length > 1;
+  const estimated = !synced && estimatedSegments.length > 1;
 
   const onTimeUpdate = useCallback((t: number) => {
-    if (!synced) return;
-    const idx = activeSegmentIndex(segments, t);
+    if (!followEnabled) return;
+    const idx = activeSegmentIndex(timelineSegments, t);
     setActiveIdx(prev => (prev === idx ? prev : idx));
-  }, [segments, synced]);
+  }, [followEnabled, timelineSegments]);
 
   // 当前句滚到滚轮中心
   useEffect(() => {
-    if (!synced) return;
+    if (!followEnabled) return;
     if (Date.now() < manualUntilRef.current) return;
     lineRefs.current[activeIdx]?.scrollIntoView({ block: 'center', behavior: 'smooth' });
-  }, [activeIdx, synced]);
+  }, [activeIdx, followEnabled]);
 
   const markManualScroll = () => { manualUntilRef.current = Date.now() + 3000; };
 
@@ -65,12 +76,24 @@ export function TranscriptKaraoke({
       {documentMode && (
         <div className="flex w-full max-w-[760px] flex-wrap items-center justify-between gap-2">
           <p className="text-[12px] font-semibold text-token-muted">录音</p>
-          <p className="text-[11px] text-token-muted">播放时原文会自动跟随高亮</p>
+          <p className="text-[11px] text-token-muted" aria-live="polite">
+            {playing && followEnabled
+              ? `正在跟随第 ${activeIdx + 1}/${timelineSegments.length} 句`
+              : synced
+                ? '精准时间轴，播放时逐句高亮'
+                : estimated
+                  ? documentMode && onSaveNote
+                    ? '智能估算逐句跟随，点击可校对'
+                    : '智能估算跟随，可点句跳播'
+                  : '正在读取音频时长，随后开启原文跟随'}
+          </p>
         </div>
       )}
       <AudioWavePlayer
         src={src}
         onTimeUpdate={onTimeUpdate}
+        onDurationChange={setDuration}
+        onPlaybackChange={setPlaying}
         registerSeek={(seek) => { seekRef.current = seek; }}
       />
 
@@ -86,13 +109,13 @@ export function TranscriptKaraoke({
         onTouchMove={markManualScroll}
         className={documentMode ? 'w-full max-w-[760px]' : 'w-[480px] max-w-[92%] overflow-y-auto'}
         style={{
-          height: !documentMode && synced ? 240 : 'auto',
-          maxHeight: documentMode ? undefined : synced ? 240 : 320,
+          height: !documentMode && followEnabled ? 240 : 'auto',
+          maxHeight: documentMode ? undefined : followEnabled ? 240 : 320,
           overscrollBehavior: documentMode ? undefined : 'contain',
-          WebkitMaskImage: !documentMode && synced
+          WebkitMaskImage: !documentMode && followEnabled
             ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
             : undefined,
-          maskImage: !documentMode && synced
+          maskImage: !documentMode && followEnabled
             ? 'linear-gradient(to bottom, transparent 0, black 18%, black 82%, transparent 100%)'
             : undefined,
         }}
@@ -100,9 +123,9 @@ export function TranscriptKaraoke({
         {/* 首末句也能滚到中心：上下各留半屏 padding */}
         <div
           className="flex flex-col items-center gap-1"
-          style={!documentMode && synced ? { padding: '104px 8px' } : { padding: '4px 0' }}>
-          {segments.map((s, i) => {
-            const active = synced && i === activeIdx;
+          style={!documentMode && followEnabled ? { padding: '104px 8px' } : { padding: '4px 0' }}>
+          {timelineSegments.map((s, i) => {
+            const active = followEnabled && i === activeIdx;
             const dist = Math.abs(i - activeIdx);
             if (documentMode && editingIndex === i && onSaveNote) {
               return (
@@ -123,7 +146,9 @@ export function TranscriptKaraoke({
                       type="button"
                       disabled={savingEdit || !editDraft.trim()}
                       onClick={() => {
-                        const next = replaceTranscriptSegmentText(noteMd, i, editDraft);
+                        const next = estimated
+                          ? replaceEstimatedTranscriptSentenceText(noteMd, i, editDraft)
+                          : replaceTranscriptSegmentText(noteMd, i, editDraft);
                         setSavingEdit(true);
                         void onSaveNote(next)
                           .then((ok) => { if (ok !== false) setEditingIndex(null); })
@@ -147,21 +172,21 @@ export function TranscriptKaraoke({
                     setEditDraft(s.text);
                     return;
                   }
-                  if (synced && s.start >= 0) seekRef.current?.(s.start);
+                  if (followEnabled && s.start >= 0) seekRef.current?.(s.start);
                 }}
-                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${synced ? 'cursor-pointer' : 'cursor-default'}`}
+                className={`min-h-11 w-full overflow-hidden rounded-[10px] px-3 py-2 leading-relaxed transition-colors duration-200 motion-reduce:transition-none ${documentMode ? 'text-left' : 'text-center'} ${followEnabled ? 'cursor-pointer' : 'cursor-default'}`}
                 style={{
                   fontSize: active ? 15 : 13,
                   fontWeight: active ? 600 : 400,
                   color: active
                     ? 'var(--text-primary)'
-                    : synced
+                    : followEnabled
                       ? `rgba(148,163,184,${Math.max(0.35, 0.8 - dist * 0.15)})`
                       : 'var(--text-secondary)',
                   background: active ? 'rgba(168,85,247,0.10)' : 'transparent',
                   border: active ? '1px solid rgba(168,85,247,0.18)' : '1px solid transparent',
                 }}
-                title={documentMode && onSaveNote ? '点击修改这句原文' : synced && s.start >= 0 ? '点击跳到这一句' : undefined}
+                title={documentMode && onSaveNote ? '点击修改这句原文' : followEnabled && s.start >= 0 ? '点击跳到这一句' : undefined}
               >
                 <span className="block min-w-0 break-words">{s.text}</span>
               </button>
@@ -170,9 +195,10 @@ export function TranscriptKaraoke({
         </div>
       </div>
 
-      {!synced && (
+      {estimated && (
         <p className="text-[11px] text-token-muted">
-          本次转录没有逐句时间戳，播放可用，原文暂不自动跟随
+          当前跟随位置按语速智能估算，不会重复转录；
+          {documentMode && onSaveNote ? '可直接播放或点击句子校对' : '可直接播放或点句跳转'}
         </p>
       )}
     </div>

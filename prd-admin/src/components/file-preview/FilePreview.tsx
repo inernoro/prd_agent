@@ -1,3 +1,5 @@
+import { useEffect, useState } from 'react';
+import { Check, CloudUpload, FileText, Loader2 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -8,6 +10,110 @@ import { MarkdownViewer } from './MarkdownViewer';
 import { listTranscribeStyles } from '@/services';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
+
+function formatBackgroundDuration(totalSeconds: number): string {
+  const minutes = Math.floor(totalSeconds / 60);
+  const seconds = totalSeconds % 60;
+  return `${String(minutes).padStart(2, '0')}:${String(seconds).padStart(2, '0')}`;
+}
+
+function RecordingArchiveProgress({
+  hasPlayback,
+  hasTranscript,
+  startedAt,
+}: {
+  hasPlayback: boolean;
+  hasTranscript: boolean;
+  startedAt?: string;
+}) {
+  const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
+  const [elapsed, setElapsed] = useState(() => (
+    Number.isFinite(startedMs) ? Math.max(0, Math.floor((Date.now() - startedMs) / 1000)) : 0
+  ));
+
+  useEffect(() => {
+    const timer = window.setInterval(() => setElapsed(value => value + 1), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+
+  const stages = [
+    { label: '录音已保存', state: 'done' as const, icon: Check },
+    { label: '保存云端副本', state: 'active' as const, icon: CloudUpload },
+    { label: '本页自动更新', state: 'pending' as const, icon: FileText },
+  ];
+
+  return (
+    <section
+      data-testid="recording-background-progress"
+      aria-live="polite"
+      className="w-full max-w-[760px] rounded-[14px] p-4"
+      style={{
+        background: 'var(--semantic-info-soft)',
+        border: '1px solid var(--semantic-info-border)',
+        color: 'var(--text-secondary)',
+      }}>
+      <div className="flex items-start gap-3">
+        <span
+          className="flex h-10 w-10 shrink-0 items-center justify-center rounded-[12px]"
+          style={{ background: 'rgba(59,130,246,0.12)', color: 'rgba(96,165,250,0.98)' }}>
+          <CloudUpload size={18} />
+        </span>
+        <div className="min-w-0 flex-1">
+          <p className="text-[13px] font-semibold text-token-primary">正在保存云端副本</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
+            后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写。
+          </p>
+          <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+            {hasPlayback
+              ? hasTranscript
+                ? '现在可以播放、编辑原文，并使用按语速估算的逐句跟随。完成后本页会自动切换正式音频。'
+                : '现在可以播放本机录音。云端副本完成后，本页会自动补齐原文。'
+              : '录音已经安全保存。云端副本完成后，本页会自动出现正式音频和原文。'}
+          </p>
+        </div>
+      </div>
+
+      <div
+        className="mt-3 h-1.5 overflow-hidden rounded-full"
+        role="progressbar"
+        aria-label="保存云端副本"
+        aria-valuetext={`已后台处理 ${formatBackgroundDuration(elapsed)}`}
+        style={{ background: 'rgba(59,130,246,0.10)' }}>
+        <span
+          className="block h-full w-2/5 animate-pulse rounded-full motion-reduce:animate-none"
+          style={{ background: 'linear-gradient(90deg, rgba(59,130,246,0.45), rgba(129,140,248,0.95))' }}
+        />
+      </div>
+
+      <div className="mt-3 grid grid-cols-3 gap-2" aria-label="云端副本处理阶段">
+        {stages.map(({ label, state, icon: Icon }) => (
+          <div key={label} className="flex min-w-0 flex-col items-center text-center">
+            <span
+              className="flex h-7 w-7 items-center justify-center rounded-full"
+              style={{
+                background: state === 'done' ? 'rgba(34,197,94,0.14)' : 'var(--bg-elevated)',
+                color: state === 'done'
+                  ? 'rgba(74,222,128,0.95)'
+                  : state === 'active'
+                    ? 'rgba(96,165,250,0.98)'
+                    : 'var(--text-muted)',
+                border: '1px solid var(--border-faint)',
+              }}>
+              {state === 'active'
+                ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
+                : <Icon size={13} />}
+            </span>
+            <span className="mt-1.5 text-[10px] leading-4 text-token-muted">{label}</span>
+          </div>
+        ))}
+      </div>
+
+      <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
+        预计几分钟内完成，可以离开本页 · 已处理 {formatBackgroundDuration(elapsed)}
+      </p>
+    </section>
+  );
+}
 
 /**
  * 给 srcDoc 渲染的 HTML 正文注入移动端响应式能力：
@@ -100,11 +206,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     return (
       <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
         {archivePending && (
-          <div
-            className="w-full max-w-[760px] rounded-[12px] px-3 py-2 text-[11px] leading-relaxed"
-            style={{ background: 'var(--semantic-info-soft)', border: '1px solid var(--semantic-info-border)', color: 'var(--text-secondary)' }}>
-            云端归档正在后台继续，本机录音可以立即播放。完成后会在当前页面补齐正式音频和原文。
-          </div>
+          <RecordingArchiveProgress
+            hasPlayback
+            hasTranscript={Boolean(effectiveTranscript)}
+            startedAt={entry.createdAt}
+          />
         )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
         {effectiveTranscript ? (
@@ -125,14 +231,11 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   if (isAudio && archivePending) {
     return (
       <div className="mx-auto flex h-full w-full max-w-[760px] flex-col gap-4 py-4">
-        <section
-          className="rounded-[14px] p-4"
-          style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
-          <p className="text-[13px] font-semibold text-token-primary">录音正在安全归档</p>
-          <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
-            音频已经保存，云端恢复后会在本页自动出现播放按钮并继续生成原文，无需重新录音。
-          </p>
-        </section>
+        <RecordingArchiveProgress
+          hasPlayback={false}
+          hasTranscript={Boolean(liveTranscript)}
+          startedAt={entry.createdAt}
+        />
         {liveTranscript ? (
           <section
             className="rounded-[14px] p-4"
@@ -480,4 +583,3 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
 }
 
 export default FilePreview;
-import { useEffect, useState } from 'react';

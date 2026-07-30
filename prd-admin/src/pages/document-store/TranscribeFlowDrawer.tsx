@@ -348,7 +348,7 @@ export function TranscribeFlowDrawer({
     }
   }, [rawDraft, runId, savingRaw]);
 
-  // ── 阶段清单状态推导（默认三步；主动整理时四步，纯函数与单测覆盖） ──
+  // ── 阶段清单状态推导（三步横向标志，纯函数与单测覆盖） ──
   const steps = useMemo(
     () => deriveTranscribeSteps({
       status,
@@ -437,9 +437,10 @@ export function TranscribeFlowDrawer({
         </div>
       )}
 
-      {/* 阶段清单（Notion 式逐项点亮） */}
+      {/* 三步横向标志：移动端只表达里程碑，不用纵向清单占满首屏。 */}
       <div
-        className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
+        aria-label="处理进度"
+        className={running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : 'w-full'}
         style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
         {restylingSavedTranscript ? (
           <div className="flex items-start gap-2.5" aria-live="polite">
@@ -449,12 +450,14 @@ export function TranscribeFlowDrawer({
               <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
             </div>
           </div>
-        ) : steps.map((s) => (
-          <div key={s.key} className="flex items-center gap-2.5">
-            <StepIcon state={s.state} />
-            <div className="min-w-0">
+        ) : (
+          <div className="grid grid-cols-3 gap-2">
+            {steps.map((s) => (
+              <div key={s.key} className="flex min-w-0 flex-col items-center text-center">
+                <StepIcon state={s.state} />
+                <div className="mt-2 min-w-0">
               <span
-                className="text-[13px]"
+                    className="block text-[11px] leading-4"
                 style={{
                   color: s.state === 'pending'
                     ? 'var(--text-muted)'
@@ -466,11 +469,13 @@ export function TranscribeFlowDrawer({
                 {s.label}
               </span>
               {s.sub && (
-                <span className="ml-2 text-[11px] text-token-muted">{s.sub}</span>
+                    <span className="mt-0.5 block text-[10px] leading-4 text-token-muted">{s.sub}</span>
               )}
             </div>
           </div>
-        ))}
+            ))}
+          </div>
+        )}
       </div>
 
       {/* 上传进度条：仅上传阶段显示 */}

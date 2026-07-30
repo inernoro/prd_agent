@@ -22,8 +22,9 @@ describe('FilePreview pending recording', () => {
       <FilePreview entry={pendingAudioEntry()} preview={null} />,
     );
 
-    expect(html).toContain('录音正在安全归档');
-    expect(html).toContain('无需重新录音');
+    expect(html).toContain('正在保存云端副本');
+    expect(html).toContain('不会自动总结或改写');
+    expect(html).toContain('预计几分钟内完成，可以离开本页');
     expect(html).not.toContain('暂无可预览的内容');
   });
 
@@ -35,7 +36,7 @@ describe('FilePreview pending recording', () => {
       />,
     );
 
-    expect(html).toContain('本机录音可以立即播放');
+    expect(html).toContain('现在可以播放、编辑原文');
     expect(html).toContain('这是刚刚录下来的实时原文');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
     expect(html).not.toContain('<video');

@@ -203,7 +203,16 @@ async function installRecordingBrowserFakes(page: Page) {
 
 async function installApiFixture(page: Page, requests: string[]) {
   let recordingCompleted = false;
+  let recordingCompletedAt = 0;
   let uploadedBytes = 0;
+  const archiveReady = () => recordingCompletedAt > 0 && Date.now() - recordingCompletedAt >= 1_500;
+  const currentEntry = () => archiveReady()
+    ? {
+        ...pendingEntry,
+        metadata: { ...pendingEntry.metadata, audioArchiveStatus: 'completed' },
+        updatedAt: '2026-07-31T03:46:00.000Z',
+      }
+    : pendingEntry;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -254,7 +263,7 @@ async function installApiFixture(page: Page, requests: string[]) {
     }
     if (path === `/api/document-store/stores/${STORE_ID}/entries` && method === 'GET') {
       return json(route, {
-        items: recordingCompleted ? [pendingEntry] : [],
+        items: recordingCompleted ? [currentEntry()] : [],
         sharedEntryIds: [],
         total: recordingCompleted ? 1 : 0,
         page: 1,
@@ -280,7 +289,9 @@ async function installApiFixture(page: Page, requests: string[]) {
       });
     }
     if (path === `/api/document-store/recording-uploads/${SESSION_ID}/complete` && method === 'POST') {
+      await new Promise(resolve => setTimeout(resolve, 900));
       recordingCompleted = true;
+      recordingCompletedAt = Date.now();
       return json(route, {
         entry: pendingEntry,
         attachmentId: null,
@@ -310,12 +321,12 @@ async function installApiFixture(page: Page, requests: string[]) {
       return json(route, {
         hasContent: false,
         content: null,
-        fileUrl: null,
+        fileUrl: archiveReady() ? '/recording-ready.webm' : null,
         contentType: 'audio/webm',
       });
     }
     if (path === `/api/document-store/entries/${ENTRY_ID}` && method === 'GET') {
-      return json(route, pendingEntry);
+      return json(route, currentEntry());
     }
     if (path === `/api/mentions/documents/${ENTRY_ID}/links`) {
       return json(route, {
@@ -424,6 +435,11 @@ test.describe('录音连续性发布门禁', () => {
     await page.waitForTimeout(80);
     await finish.click();
     await page.getByRole('button', { name: '仍要转成文字' }).click();
+    const finalizingPanel = page.getByTestId('recording-finalizing-panel');
+    await expect(finalizingPanel).toBeVisible();
+    await expect(finalizingPanel).toContainText('正在创建录音结果');
+    await expect(finalizingPanel).toContainText('最多前台等待 45 秒');
+    await attachViewport(page, testInfo, '02-finalizing-progress');
 
     await expect.poll(() => {
       const url = new URL(page.url());
@@ -432,37 +448,47 @@ test.describe('录音连续性发布门禁', () => {
     if (await page.getByText('页面渲染出错').count()) {
       throw new Error(JSON.stringify({ consoleErrors, pageErrors, apiRequests }, null, 2));
     }
-    await expect(page.getByText('本机录音可以立即播放')).toBeVisible();
+    const backgroundProgress = page.getByTestId('recording-background-progress');
+    await expect(backgroundProgress).toBeVisible();
+    await expect(backgroundProgress).toContainText('后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写');
+    await expect(backgroundProgress).toContainText('预计几分钟内完成，可以离开本页');
+    await backgroundProgress.scrollIntoViewIfNeeded();
+    await attachViewport(page, testInfo, '03-background-progress');
     const playToggle = page.getByTestId('audio-play-toggle');
     await expect(playToggle).toBeVisible();
     await expect(playToggle).toBeEnabled();
+    await expect(page.getByText('智能估算跟随，可点句跳播')).toBeVisible();
     await playToggle.click();
     await expect(playToggle).toHaveAttribute('title', '暂停');
     await expect(page.getByText('暂无可预览的内容')).toHaveCount(0);
-    const transcriptResult = page.getByRole('button', { name: /验收注入第 1 段/ });
+    const transcriptLines = page.locator('button[title="点击跳到这一句"]');
+    await expect(transcriptLines).toHaveCount(18);
+    const lastTranscriptLine = transcriptLines.nth(17);
     const backlinksHint = page.getByText('还没有文档引用这篇', { exact: false });
-    await expect(transcriptResult).toContainText('验收注入第 18 段');
+    await expect(lastTranscriptLine).toContainText('验收注入第 18 段');
     await expect(backlinksHint).toBeVisible();
-    const transcriptBox = await transcriptResult.boundingBox();
+    const transcriptBox = await lastTranscriptLine.boundingBox();
     const backlinksBox = await backlinksHint.boundingBox();
     expect(transcriptBox).not.toBeNull();
     expect(backlinksBox).not.toBeNull();
     expect(backlinksBox!.y).toBeGreaterThanOrEqual(transcriptBox!.y + transcriptBox!.height - 1);
-    await attachViewport(page, testInfo, '02-recording-local-playback');
+    await attachViewport(page, testInfo, '04-recording-local-playback');
     await backlinksHint.scrollIntoViewIfNeeded();
-    await attachViewport(page, testInfo, '02b-transcript-footer-separated');
+    await attachViewport(page, testInfo, '05-transcript-footer-separated');
 
+    await expect(backgroundProgress).toHaveCount(0, { timeout: 8_000 });
+    await expect(page.getByText('云端副本已保存', { exact: true })).toBeVisible();
     const stableUrl = page.url();
     await page.reload({ waitUntil: 'domcontentloaded' });
-    await expect(page.getByText('本机录音可以立即播放')).toBeVisible();
     await expect(page.getByTestId('audio-play-toggle')).toBeEnabled();
+    await expect(page.getByTestId('recording-background-progress')).toHaveCount(0);
     await page.waitForTimeout(1_200);
     expect(page.url()).toBe(stableUrl);
     const replaceStateCalls = await page.evaluate(() => (
       window as typeof window & { __recordingAcceptance: { replaceStateCalls: number } }
     ).__recordingAcceptance.replaceStateCalls);
     expect(replaceStateCalls).toBeLessThan(20);
-    await attachViewport(page, testInfo, '03-recording-refresh-stable');
+    await attachViewport(page, testInfo, '06-recording-refresh-stable');
 
     const criticalErrors = [...consoleErrors, ...pageErrors].filter(message => (
       /replaceState|maximum update depth|页面渲染出错|render error/i.test(message)

@@ -84,6 +84,35 @@ export function replaceTranscriptSegmentText(md: string, index: number, nextText
   return head + updated.join('\n');
 }
 
+/**
+ * 替换无时间戳原文经「按语速估算」拆出的第 index 句。
+ * 拆句规则与 estimateTranscriptSegments 保持一致，避免估算跟随开启后只能编辑第一大段。
+ */
+export function replaceEstimatedTranscriptSentenceText(
+  md: string,
+  index: number,
+  nextText: string,
+): string {
+  if (index < 0 || !nextText.trim()) return md;
+  const marker = '## 转录全文';
+  const markerIdx = md.indexOf(marker);
+  const bodyStart = markerIdx >= 0 ? markerIdx + marker.length : 0;
+  const head = md.slice(0, bodyStart);
+  let cursor = -1;
+  const lines = md.slice(bodyStart).split('\n').map((raw) => {
+    const line = raw.trim();
+    if (!line || line.startsWith('#') || line.startsWith('>') || /^_.*_$/.test(line)) return raw;
+    const indent = raw.match(/^\s*/)?.[0] ?? '';
+    const sentences = line.match(/[^。！？!?；;\n]+[。！？!?；;]?/g) ?? [line];
+    const updated = sentences.map((sentence) => {
+      cursor += 1;
+      return cursor === index ? nextText.trim() : sentence;
+    });
+    return indent + updated.join('');
+  });
+  return head + lines.join('\n');
+}
+
 /** 提取「摘要」与「转录全文」之间的整理结果，供音频原文页原地展示。 */
 export function extractTranscriptSummary(md: string): string {
   if (!md) return '';
