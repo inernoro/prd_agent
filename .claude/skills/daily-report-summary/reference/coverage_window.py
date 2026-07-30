@@ -113,8 +113,14 @@ def latest_daily_entry(base, H, store_id, kind, before_date=""):
                 continue
             if before_date and d >= before_date:
                 continue
-            if best is None or d > (best[0] or ""):
-                best = (d, md, it.get("id"))
+            # 同 dailyDate 可能有多条（历史竞态留下的重复）。后端按 CreatedAt 倒序返回，
+            # 若只用 `d > best` 取先遇到的，选中的会是**最新建**的那条——它未必是本期
+            # 真正更新过的那条，可能带着过期甚至缺失的水位线。
+            # 判据改为：先比 dailyDate，同日则**优先带 lastCommit 的**，仍并列再比 coverTo。
+            # 这样即便库里有重复，也总能选到信息最完整的那条。
+            cand = (d, 1 if (md.get("lastCommit") or "").strip() else 0, (md.get("coverTo") or ""))
+            if best is None or cand > best[0]:
+                best = (cand, md, it.get("id"))
         if data.get("hasNextPage") is False or len(items) < 100:
             break
         page += 1
@@ -217,7 +223,8 @@ def main():
         if not prev:
             log("[水位线] 库中无历史日报条目 → 首次运行，退化为当日口径")
             print(json.dumps(out, ensure_ascii=False)); return
-        prev_date, md, _eid = prev
+        prev_key, md, _eid = prev
+        prev_date = prev_key[0]
         out["prevDate"] = prev_date
         last_sha = (md.get("lastCommit") or "").strip()
         cover_to = (md.get("coverTo") or "").strip()

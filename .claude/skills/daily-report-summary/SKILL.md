@@ -323,7 +323,7 @@ python3 .claude/skills/daily-report-summary/reference/publish.py \
   --cover-to "$COVER_TO" \
   --replace-same-date \
   --manifest /tmp/acc_shots/manifest.json
-# --last-commit：**必传**（纪律 2）。它是下一期的水位线起点；不传则下期退回按日历日采、
+# --last-commit：**必传，脚本已强制**（纪律 2；不传直接 exit 7 拒发）。它是下一期的水位线起点；
 #   当天晚些时候的提交会永久漏报（2026-07-30 实测漏 36 个真实提交的根因）。
 # --cover-to：SHA 因 force push / 浅克隆不可达时的降级水位线，一并写上。
 # --replace-same-date：同一天重跑/修正时替换旧条目而不是叠一篇（先建新、校验落库成功、再删旧）。
