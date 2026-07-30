@@ -348,10 +348,9 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
         var tags = string.IsNullOrWhiteSpace(tagsJson) && existing != null
             ? existing.Tags
             : ParseTags(tagsJson);
-        var finalIcon = string.IsNullOrWhiteSpace(iconEmoji)
-            ? (existing?.IconEmoji ?? "🧩")
-            : iconEmoji.Trim();
-        if (finalIcon.Length > 4) finalIcon = finalIcon[..4];
+        // 字段仅为旧客户端兼容保留。视觉标识由前端 SVG 图标体系负责，
+        // 新建和幂等覆盖都主动清理历史字符值。
+        var finalIcon = string.Empty;
 
         // ── version 解析 ──
         // form > frontmatter > 已有版本 patch++ > "1.0.0"
@@ -634,7 +633,7 @@ public class MarketplaceSkillsOpenApiController : ControllerBase
             s.Id,
             s.Title,
             s.Description,
-            iconEmoji = s.IconEmoji,
+            iconEmoji = string.Empty,
             coverImageUrl = s.CoverImageUrl,
             previewUrl = s.PreviewUrl,
             tags = s.Tags ?? new List<string>(),
