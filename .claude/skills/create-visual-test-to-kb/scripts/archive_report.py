@@ -616,10 +616,22 @@ _FAILURE_FACT_PATTERN = re.compile(
     r"|无法(?=(?:正常)?(?:执行|送达|归档|发布|打开|访问|连接))",
     re.I,
 )
+_DIAGNOSTIC_ACTION_PATTERN = (
+    r"(?:复现|重现|再现|定位|捕获|观察到|检测到|发现|触发|确认|验证|记录)"
+)
+_SUCCESS_DIAGNOSTIC_PATTERN = (
+    rf"成功\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}"
+)
+_DIAGNOSTIC_MODIFIER_PATTERN = (
+    rf"(?:已|已经)?{_SUCCESS_DIAGNOSTIC_PATTERN}(?:到了|到|出|了)?"
+)
 _RESOLVED_FACT_PATTERN = re.compile(
-    r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭|解决|正常)"
-    r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭|解决|正常)"
-    r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭|解决|正常)",
+    rf"(?:现已|已经|已)(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+    rf"|(?:重试后|随后)已(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+    rf"|最终(?:已)?(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))",
     re.I,
 )
 _FAILURE_SUBJECT_PATTERNS = (
@@ -685,9 +697,10 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
     last_left_end = max(end for _, end, _ in left)
     left_gap = clause[last_left_end : event.start()]
     if previous_event_end > last_left_end or not re.fullmatch(
-        r"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
-        r"再次|重新|均|都|执行|运行|任务|操作|流程|作业|步骤|环节|过程|"
-        r"用例|测试|检查|验证|检测|校验|结果|状态)\s*)*",
+        rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
+        rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
+        rf"运行|任务|操作|流程|作业|步骤|环节|过程|用例|测试|检查|验证|"
+        rf"检测|校验|结果|状态|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
         left_gap,
         re.I,
     ):

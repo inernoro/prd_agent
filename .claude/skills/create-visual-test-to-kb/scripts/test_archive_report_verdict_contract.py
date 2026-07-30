@@ -95,8 +95,27 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 未能通过", {"smoke"}),
             ("构建未能完成", {"build"}),
             ("验收报告归档未能成功", {"archive"}),
+            ("CDS smoke 已成功复现失败", {"smoke"}),
+            ("CDS smoke 已成功复现出失败", {"smoke"}),
+            ("构建已成功重现报错", {"build"}),
+            ("构建已经成功地定位到报错", {"build"}),
+            ("验收报告归档已成功定位失败", {"archive"}),
+            (
+                "CDS smoke 与构建同时失败",
+                {"smoke", "build"},
+            ),
+            (
+                "CDS smoke、构建全部失败",
+                {"smoke", "build"},
+            ),
+            (
+                "CDS smoke 与构建均已失败",
+                {"smoke", "build"},
+            ),
             ("CDS smoke 先前失败，问题已解决", set()),
             ("CDS smoke 先前失败，现已正常", set()),
+            ("CDS smoke 先前失败，现已成功", set()),
+            ("CDS smoke 先前失败，重试后已成功", set()),
             ("CDS smoke 已通过；复测仍未通过", {"smoke"}),
             ("CDS smoke 已通过；移动端验收未完成", set()),
             ("CDS smoke 已通过；移动端验证未通过", set()),
@@ -298,6 +317,13 @@ class DailyVerdictContractTests(unittest.TestCase):
             "构建任务失败",
             "CDS smoke 未能通过",
             "构建未能完成",
+            "CDS smoke 已成功复现失败",
+            "CDS smoke 已成功复现出失败",
+            "构建已成功重现报错",
+            "构建已经成功地定位到报错",
+            "CDS smoke 与构建同时失败",
+            "CDS smoke、构建全部失败",
+            "CDS smoke 与构建均已失败",
         ):
             with self.subTest(fact=fact):
                 body = report_body("硬门禁失败").replace(
@@ -456,6 +482,12 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("构建未能完成", "硬门禁失败事实"),
             ("验收报告归档操作执行失败", "验收链路失败事实"),
             ("验收报告归档未能成功", "验收链路失败事实"),
+            ("CDS smoke 已成功复现失败", "硬门禁失败事实"),
+            ("CDS smoke 已成功复现出失败", "硬门禁失败事实"),
+            ("构建已成功重现报错", "硬门禁失败事实"),
+            ("构建已经成功地定位到报错", "硬门禁失败事实"),
+            ("CDS smoke 与构建同时失败", "硬门禁失败事实"),
+            ("CDS smoke、构建全部失败", "硬门禁失败事实"),
             ("验收报告归档返回 500", "验收链路失败事实"),
         ):
             with self.subTest(fact=fact):
@@ -478,6 +510,8 @@ class DailyVerdictContractTests(unittest.TestCase):
                 "CDS ready 与 smoke 先前失败，现已通过",
                 "CDS smoke 先前失败，问题已解决",
                 "CDS smoke 先前失败，现已正常",
+                "CDS smoke 先前失败，现已成功",
+                "CDS smoke 先前失败，重试后已成功",
             ):
                 with self.subTest(verdict=verdict, fact=fact):
                     body = report_body(nature).replace(
