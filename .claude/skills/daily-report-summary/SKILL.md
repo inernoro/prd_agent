@@ -179,6 +179,16 @@ git rev-parse --is-shallow-repository | grep -q true && git fetch origin --unsha
 WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
         --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
 echo "$WIN"    # {mode, baseSha, sinceIso, headSha, revRange, spanDays, prevDate, gap}
+
+# 窗口三变量在此**一次性**解出，Phase 2 与 Phase 5 只引用、不重复解析——
+# 重复解析是上一轮的真实事故：Phase 2 只解了 MODE/RANGE 却引用 $HEAD_SHA，
+# since 模式下它是空串，git log 直接 exit 128，降级路径整条跑不起来。
+MODE=$(echo "$WIN"  | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
+RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
+HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
+SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
+# 空值即刻报错，不要留到 git log 才以 exit 128 的形式暴露
+: "${MODE:?窗口解析失败：MODE 为空}" "${HEAD_SHA:?窗口解析失败：headSha 为空}"
 ```
 
 用户可指定日期（如「补 2026-05-30 的日报」时 `TODAY=2026-05-30`）；缺省取今天。
@@ -191,12 +201,10 @@ echo "$WIN"    # {mode, baseSha, sinceIso, headSha, revRange, spanDays, prevDate
 ```bash
 # 0. 把 Phase 1 解出的窗口落成一个可复用的 first-parent 列表 /tmp/win_fp.tsv：<date>\t<sha>\t<author>\t<subject>
 #    以下所有统计都从这个列表派生，保证「报头数字」与「正文叙事」同源，不会各算各的。
-MODE=$(echo "$WIN"  | python3 -c 'import json,sys;print(json.load(sys.stdin)["mode"])')
-RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
+#    MODE / RANGE / HEAD_SHA / SINCE 均来自 Phase 1，此处不重新解析（重解就会漏解）。
 case "$MODE" in
   sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
-  since) SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
-         # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
+  since) # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
          git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
   today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
            | awk -F '\t' -v d="$TODAY" '$1==d' ;;
@@ -278,7 +286,7 @@ node /tmp/daily-driver.mjs "$PREVIEW_URL"      # 产出 OUT/*.png + OUT/manifest
 ```bash
 export AI_ACCESS_KEY=...            # 已在 CDS 远端环境注入
 # 注意：续行反斜杠必须是行尾最后一个字符，行内注释会截断命令（Codex P2 教训）
-HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
+# HEAD_SHA 来自 Phase 1，不重解
 COVER_TO=$(git log -1 "$HEAD_SHA" --format=%cI)
 python3 .claude/skills/daily-report-summary/reference/publish.py \
   --base https://main-prd-agent.miduo.org \
