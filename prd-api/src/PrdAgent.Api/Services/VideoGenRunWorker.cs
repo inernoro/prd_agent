@@ -356,9 +356,10 @@ public class VideoGenRunWorker : BackgroundService
                         return;
                     }
 
+                    var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
                     RegistryAssetStorage.OverrideNextScope("generated");
                     var stored = await _assetStorage.SaveAsync(
-                        dl.Bytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
+                        playbackBytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
                     finalUrl = stored.Url;
 
@@ -976,8 +977,9 @@ public class VideoGenRunWorker : BackgroundService
                             claimId);
                         return;
                     }
+                    var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
                     RegistryAssetStorage.OverrideNextScope("generated");
-                    var stored = await _assetStorage.SaveAsync(dl.Bytes, dl.ContentType ?? "video/mp4",
+                    var stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
                         CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
 

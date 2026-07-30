@@ -66,6 +66,7 @@ export interface VideoStoryboardEditorProps {
 }
 
 type PreviewMode = 'scene' | 'compare' | 'export';
+type PlayerStatus = 'idle' | 'loading' | 'ready' | 'waiting' | 'playing' | 'error';
 export type StoryboardExperienceState = 'progress' | 'empty-error' | 'editor';
 
 const DURATIONS = [5, 8, 10, 12, 15];
@@ -137,6 +138,20 @@ export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): 
     : scene),
 });
 
+export const playVideoSafely = async (
+  player: Pick<HTMLMediaElement, 'play'>,
+  onFailure?: (message: string) => void,
+): Promise<boolean> => {
+  try {
+    await player.play();
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') return false;
+    onFailure?.(error instanceof Error ? error.message : '浏览器未能开始播放视频');
+    return false;
+  }
+};
+
 export const calculateVideoRunSpentCost = (scenes: VideoGenRun['scenes']): number => scenes.reduce((sum, scene) => {
   const recordedVersionCosts = scene.versions
     .map((version) => version.cost)
@@ -169,6 +184,9 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [playerStatus, setPlayerStatus] = useState<PlayerStatus>('idle');
+  const [playerError, setPlayerError] = useState<string | null>(null);
+  const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
   const [lastServerSignalAt, setLastServerSignalAt] = useState<number | null>(null);
   const [liveTransport, setLiveTransport] = useState<'connecting' | 'streaming' | 'polling'>('connecting');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
@@ -279,12 +297,23 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
     [run],
   );
+  const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
+    ?? selectedScene?.videoUrl;
   const previewUrl = previewMode === 'export'
     ? run?.videoAssetUrl
-    : selectedScene?.videoUrl;
+    : previewSceneUrl;
   const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
 
-  useEffect(() => { setCompareVersionIds([]); }, [selectedSceneIndex]);
+  useEffect(() => {
+    setCompareVersionIds([]);
+    setPreviewVersionId(null);
+  }, [selectedSceneIndex]);
+  useEffect(() => {
+    setIsPlaying(false);
+    setPlayhead(0);
+    setPlayerError(null);
+    setPlayerStatus(previewUrl ? 'loading' : 'idle');
+  }, [previewUrl]);
   useEffect(() => { setPromptDraft(selectedScene?.prompt ?? ''); }, [selectedScene?.prompt, selectedSceneIndex]);
   useEffect(() => { setTopicDraft(selectedScene?.topic ?? ''); }, [selectedScene?.topic, selectedSceneIndex]);
 
@@ -429,9 +458,23 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const togglePlayback = useCallback(() => {
     const player = videoRef.current;
     if (!player || !previewUrl) return;
-    if (player.paused) void player.play();
-    else player.pause();
+    if (player.paused) {
+      setPlayerStatus('loading');
+      void playVideoSafely(player, (message) => {
+        setIsPlaying(false);
+        setPlayerStatus('error');
+        setPlayerError(message);
+      });
+    } else player.pause();
   }, [previewUrl]);
+
+  const retryPlayback = useCallback(() => {
+    const player = videoRef.current;
+    if (!player) return;
+    setPlayerError(null);
+    setPlayerStatus('loading');
+    player.load();
+  }, []);
 
   if (error) {
     return (
@@ -551,6 +594,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 active={index === selectedSceneIndex && previewMode === 'scene'}
                 onClick={() => {
                   setSelectedSceneIndex(index);
+                  setPreviewVersionId(null);
                   setPreviewMode('scene');
                 }}
               />
@@ -599,18 +643,48 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 </div>
               )
             ) : previewUrl ? (
-              <video
-                key={previewUrl}
-                ref={videoRef}
-                src={previewUrl}
-                aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
-                controls={false}
-                playsInline
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onTimeUpdate={(event) => setPlayhead(event.currentTarget.currentTime)}
-                onEnded={() => setIsPlaying(false)}
-              />
+              <>
+                <video
+                  ref={videoRef}
+                  src={previewUrl}
+                  aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onLoadStart={() => setPlayerStatus('loading')}
+                  onLoadedMetadata={() => setPlayerStatus('ready')}
+                  onCanPlay={() => setPlayerStatus((status) => status === 'playing' ? status : 'ready')}
+                  onPlay={() => { setIsPlaying(true); setPlayerStatus('playing'); }}
+                  onPlaying={() => setPlayerStatus('playing')}
+                  onWaiting={() => setPlayerStatus('waiting')}
+                  onPause={() => { setIsPlaying(false); setPlayerStatus('ready'); }}
+                  onTimeUpdate={(event) => setPlayhead(event.currentTarget.currentTime)}
+                  onEnded={() => { setIsPlaying(false); setPlayerStatus('ready'); }}
+                  onError={() => {
+                    setIsPlaying(false);
+                    setPlayerStatus('error');
+                    setPlayerError('视频加载失败。可以重试，或在新窗口打开原始视频检查。');
+                  }}
+                />
+                {(playerStatus === 'loading' || playerStatus === 'waiting') && (
+                  <div className="video-console__player-feedback" aria-live="polite">
+                    <MapSpinner size={22} />
+                    <strong>{playerStatus === 'waiting' ? '网络缓冲中' : '正在准备视频预览'}</strong>
+                    <span>播放器保持可操作，加载完成后可直接点击播放。</span>
+                  </div>
+                )}
+                {playerStatus === 'error' && (
+                  <div className="video-console__player-feedback is-error" role="alert">
+                    <AlertCircle size={24} />
+                    <strong>暂时无法播放这个视频</strong>
+                    <span>{playerError}</span>
+                    <div>
+                      <button onClick={retryPlayback}>重试加载</button>
+                      <a href={previewUrl} target="_blank" rel="noreferrer">打开原始视频</a>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : run.status === 'Rendering' && previewMode === 'export' ? (
               <ViewerProgress run={run} />
             ) : selectedSceneWorking && selectedScene ? (
@@ -696,6 +770,11 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <VersionLibrary
                 scene={selectedScene}
                 mutating={mutating === 'activate-version'}
+                previewingId={previewVersionId ?? selectedScene?.activeVersionId ?? null}
+                onPreview={(version) => {
+                  setPreviewVersionId(version.id);
+                  setPreviewMode('scene');
+                }}
                 onActivate={activateVersion}
                 selectedIds={compareVersionIds}
                 onCompare={toggleCompareVersion}
@@ -756,7 +835,7 @@ const SceneLibraryItem: React.FC<{
   return (
     <button className={`video-console__shot ${active ? 'is-active' : ''}`} onClick={onClick}>
       <div className="video-console__shot-thumb">
-        {scene.videoUrl ? <video src={scene.videoUrl} muted preload="metadata" /> : <Film size={16} />}
+        <Film size={16} />
         <span>{String(index + 1).padStart(2, '0')}</span>
       </div>
       <div className="video-console__shot-copy">
@@ -779,10 +858,12 @@ const EmptyLibrary = () => (
 const VersionLibrary: React.FC<{
   scene: VideoGenScene | null;
   mutating: boolean;
+  previewingId: string | null;
+  onPreview: (version: VideoGenSceneVersion) => void;
   onActivate: (version: VideoGenSceneVersion) => void;
   selectedIds: string[];
   onCompare: (version: VideoGenSceneVersion) => void;
-}> = ({ scene, mutating, onActivate, selectedIds, onCompare }) => {
+}> = ({ scene, mutating, previewingId, onPreview, onActivate, selectedIds, onCompare }) => {
   const versions = scene?.versions ?? [];
   if (versions.length === 0) {
     return (
@@ -796,17 +877,20 @@ const VersionLibrary: React.FC<{
   return <>{[...versions].reverse().map((version, index) => (
     <div
       key={version.id}
-      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''} ${selectedIds.includes(version.id) ? 'is-compare' : ''}`}
+      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''} ${previewingId === version.id ? 'is-previewing' : ''} ${selectedIds.includes(version.id) ? 'is-compare' : ''}`}
     >
-      <button className="video-console__version-select" onClick={() => onCompare(version)} disabled={mutating} title="加入版本比较">
-        <video src={version.videoUrl} muted preload="metadata" />
+      <button className="video-console__version-select" onClick={() => onPreview(version)} disabled={mutating} title="预览这个版本">
+        <span className="video-console__version-thumb"><Play size={18} /></span>
         <div>
           <strong>版本 {versions.length - index}</strong>
           <span>{version.model || '模型池自动选择'}</span>
           <span>{new Date(version.createdAt).toLocaleString('zh-CN')}</span>
         </div>
       </button>
-      <button className="video-console__version-use" onClick={() => onActivate(version)} disabled={mutating} title="采用这个版本">
+      <button className="video-console__version-use" onClick={() => onCompare(version)} disabled={mutating} title="加入版本比较">
+        {selectedIds.includes(version.id) ? <Check size={14} /> : <Columns2 size={13} />}
+      </button>
+      <button className="video-console__version-activate" onClick={() => onActivate(version)} disabled={mutating || scene?.activeVersionId === version.id} title="采用这个版本">
         {scene?.activeVersionId === version.id ? <Check size={14} /> : <Film size={13} />}
       </button>
     </div>
@@ -960,7 +1044,7 @@ const Timeline: React.FC<{
                 title="拖动排序，或按 Alt 加左右方向键移动"
               >
                 <GripVertical className="video-console__clip-grip" size={12} />
-                {scene.videoUrl ? <video src={scene.videoUrl} muted preload="metadata" /> : <Film size={14} />}
+                <Film size={14} />
                 <div><strong>{scene.topic || `镜头 ${index + 1}`}</strong><span>{clipDuration}s</span></div>
               </button>
             );

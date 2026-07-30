@@ -4,6 +4,7 @@ using Microsoft.AspNetCore.Authorization;
 using Microsoft.AspNetCore.Mvc;
 using MongoDB.Driver;
 using PrdAgent.Api.Models.Responses;
+using PrdAgent.Api.Services;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
 using PrdAgent.Core.Security;
@@ -50,7 +51,7 @@ public sealed class AuthzController : ControllerBase
         var raw = string.Equals(provider, "cloudflareR2", StringComparison.OrdinalIgnoreCase)
             ? (_cfg["R2_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/')
             : (_cfg["TENCENT_COS_PUBLIC_BASE_URL"] ?? string.Empty).Trim().TrimEnd('/');
-        return string.IsNullOrWhiteSpace(raw) ? null : raw;
+        return AvatarUrlBuilder.NormalizePublicBaseUrl(raw);
     }
 
     [HttpGet("me")]

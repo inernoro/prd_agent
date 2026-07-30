@@ -80,4 +80,23 @@ public class VideoProjectModelTests
     {
         VideoModelCapabilities.NormalizeDuration(modelId, requested).ShouldBe(expected);
     }
+
+    [Fact]
+    public void FastStartCommand_ShouldRelocateMp4MetadataWithoutReencoding()
+    {
+        var arguments = VideoFastStartOptimizer.BuildArguments("input.mp4", "output.mp4");
+
+        arguments.ShouldContain("copy");
+        arguments.ShouldContain("+faststart");
+        arguments.ShouldNotContain("libx264");
+    }
+
+    [Theory]
+    [InlineData("请填写实际值")]
+    [InlineData("relative/path")]
+    [InlineData("javascript:alert(1)")]
+    public void AvatarBaseUrl_ShouldRejectPlaceholdersAndNonHttpValues(string value)
+    {
+        AvatarUrlBuilder.NormalizePublicBaseUrl(value).ShouldBeNull();
+    }
 }

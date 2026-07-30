@@ -7,11 +7,13 @@ import {
   formatVideoSceneError,
   getStoryboardExperienceState,
   markVideoSceneSubmitting,
+  playVideoSafely,
   shouldKeepVideoRunPolling,
 } from './VideoStoryboardEditor';
 import { VideoStudioDemo } from './VideoStudioDemo';
 
 const videoConsoleCss = readFileSync(new URL('./videoConsole.css', import.meta.url), 'utf8');
+const videoEditorSource = readFileSync(new URL('./VideoStoryboardEditor.tsx', import.meta.url), 'utf8');
 
 const runWith = (
   status: string,
@@ -95,5 +97,21 @@ describe('VideoStudioDemo', () => {
 
     expect(nextRun.scenes[0].status).toBe('Submitting');
     expect(nextRun.scenes[0].errorMessage).toBeUndefined();
+  });
+
+  it('absorbs interrupted playback promises instead of creating an unhandled rejection', async () => {
+    const interrupted = Object.assign(new Error('media was removed'), { name: 'AbortError' });
+    const onFailure = vi.fn();
+    const player = { play: vi.fn().mockRejectedValue(interrupted) };
+
+    await expect(playVideoSafely(player, onFailure)).resolves.toBe(false);
+    expect(onFailure).not.toHaveBeenCalled();
+  });
+
+  it('keeps one stable controllable player and does not preload every version thumbnail', () => {
+    expect(videoEditorSource).not.toContain('key={previewUrl}');
+    expect(videoEditorSource).toContain('controls\n                  playsInline');
+    expect(videoEditorSource).not.toContain('<video src={version.videoUrl} muted preload="metadata" />');
+    expect(videoEditorSource).toContain('title="预览这个版本"');
   });
 });
