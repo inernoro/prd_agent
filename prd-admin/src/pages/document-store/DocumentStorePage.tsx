@@ -1220,6 +1220,22 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   );
   const notifiedRecordingArchivesRef = useRef(new Set<string>());
 
+  const applyPolledEntries = useCallback((nextEntries: DocumentEntry[]) => {
+    setEntries(previous => {
+      if (previous.length !== nextEntries.length) return nextEntries;
+      const unchanged = previous.every((entry, index) => {
+        const next = nextEntries[index];
+        return entry.id === next?.id
+          && entry.updatedAt === next.updatedAt
+          && entry.title === next.title
+          && entry.metadata?.audioArchiveStatus === next.metadata?.audioArchiveStatus
+          && entry.metadata?.audioArchiveNeedsRetry === next.metadata?.audioArchiveNeedsRetry
+          && entry.metadata?.liveTranscript === next.metadata?.liveTranscript;
+      });
+      return unchanged ? previous : nextEntries;
+    });
+  }, []);
+
   // 待归档录音不能只留一张静态“后台处理中”卡片。只要本库仍有 pending 录音，
   // 就静默刷新条目；归档完成后 updatedAt 改变会驱动 DocBrowser 重拉正式音频，
   // 当前页面原地更新，不要求用户手动刷新或猜测后台是否结束。
@@ -1234,10 +1250,36 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       try {
         const res = await listDocumentEntries(storeId, 1, 200);
         if (cancelled || !res.success) return;
-        const completed = res.data.items.filter(entry => (
+        let nextEntries = res.data.items;
+        const selectedPending = nextEntries.find(entry => (
+          entry.id === selectedEntryId
+          && entry.metadata?.audioArchiveStatus === 'pending'
+          && Boolean(entry.metadata?.recordingUploadSessionId)
+        ));
+        if (selectedPending?.metadata?.recordingUploadSessionId) {
+          const status = await getRecordingUpload(
+            selectedPending.metadata.recordingUploadSessionId,
+            4_000,
+          ).catch(() => null);
+          if (!cancelled && status?.success && status.data.archiveStatus !== 'completed') {
+            const needsRetry = Boolean(status.data.archiveError);
+            nextEntries = nextEntries.map(entry => entry.id === selectedPending.id
+              ? {
+                  ...entry,
+                  metadata: {
+                    ...entry.metadata,
+                    audioArchiveNeedsRetry: needsRetry ? 'true' : 'false',
+                    audioArchiveAttempts: String(status.data.archiveAttempts),
+                  },
+                }
+              : entry);
+          }
+        }
+        if (cancelled) return;
+        const completed = nextEntries.filter(entry => (
           pendingIds.has(entry.id) && entry.metadata?.audioArchiveStatus !== 'pending'
         ));
-        setEntries(res.data.items);
+        applyPolledEntries(nextEntries);
         setSharedEntryIds(new Set(res.data.sharedEntryIds ?? []));
         for (const entry of completed) {
           const vaultSessionId = recordingVaultByEntryIdRef.current.get(entry.id);
@@ -1260,7 +1302,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       window.clearTimeout(first);
       window.clearInterval(timer);
     };
-  }, [pendingRecordingArchiveSignature, storeId]);
+  }, [applyPolledEntries, pendingRecordingArchiveSignature, selectedEntryId, storeId]);
 
   // 轮询本库运行台账：有 syncing 记录时让顶栏「同步」按钮动起来（含对端推来的 incoming）。
   // 4s 一刷足够即时；无任务时也保持 4s（payload 很小），关页自动停。

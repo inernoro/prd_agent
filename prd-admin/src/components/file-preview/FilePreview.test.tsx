@@ -24,7 +24,7 @@ describe('FilePreview pending recording', () => {
 
     expect(html).toContain('正在保存云端副本');
     expect(html).toContain('不会自动总结或改写');
-    expect(html).toContain('预计几分钟内完成，可以离开本页');
+    expect(html).toContain('完成后本页自动更新，可以离开本页');
     expect(html).not.toContain('暂无可预览的内容');
   });
 
@@ -40,5 +40,23 @@ describe('FilePreview pending recording', () => {
     expect(html).toContain('这是刚刚录下来的实时原文');
     expect(html.match(/title="播放"/g)).toHaveLength(1);
     expect(html).not.toContain('<video');
+    expect(html).not.toContain('>原文</button>');
+  });
+
+  it('turns a failed cloud attempt into an explicit non-blocking retry state', () => {
+    const html = renderToStaticMarkup(
+      <FilePreview
+        entry={pendingAudioEntry({
+          liveTranscript: '录音与原文已经可用。',
+          audioArchiveNeedsRetry: 'true',
+        })}
+        preview={{ text: null, fileUrl: 'blob:recording-1', contentType: 'audio/webm' }}
+      />,
+    );
+
+    expect(html).toContain('云端服务暂时不可用，已排队重试');
+    expect(html).toContain('不需要停在本页等待');
+    expect(html).toContain('等待自动重试');
+    expect(html).not.toContain('正在保存云端副本');
   });
 });

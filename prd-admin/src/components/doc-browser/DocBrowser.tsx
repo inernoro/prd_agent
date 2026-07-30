@@ -2732,17 +2732,24 @@ export function DocBrowser({
       return;
     }
     const fid = ++contentFetchIdRef.current;
-    setContentLoading(true);
-    setPreview(null);
+    // 同一篇文档的 updatedAt 可能因录音转录、云端归档、订阅同步连续变化。
+    // 保留当前可用内容并在后台拉取新版本，只有切换文档时才清空预览。
+    // 否则每次元数据变化都会露出整块加载页，视觉上像页面反复刷新。
+    const refreshInBackground = loadedContentKey?.startsWith(`${entryId}:`)
+      && previewRef.current !== null;
+    if (!refreshInBackground) {
+      setContentLoading(true);
+      setPreview(null);
+    }
     try {
       const data = await loadContent(entryId);
       if (fid !== contentFetchIdRef.current) return; // 过期：更晚的加载/本地保存已发生，丢弃本次结果
       setPreview(data);
       setLoadedContentKey(contentKey);
     } catch {
-      if (fid === contentFetchIdRef.current) setPreview(null);
+      if (fid === contentFetchIdRef.current && !refreshInBackground) setPreview(null);
     }
-    if (fid === contentFetchIdRef.current) setContentLoading(false);
+    if (fid === contentFetchIdRef.current && !refreshInBackground) setContentLoading(false);
   }, [loadContent, loadedContentKey]);
 
   useEffect(() => {
