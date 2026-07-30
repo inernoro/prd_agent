@@ -5,6 +5,7 @@ import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';
 import { reconnectRemainingSeconds } from '@/lib/cdsReconnectPolicy';
 import { useCdsEvents, type SelfStatusSnapshot } from '@/hooks/useCdsEvents';
+import { diagnoseSelfUpdateHttpFailure, formatSelfUpdateHttpFailure } from '@/lib/selfUpdateHttpFailure';
 import {
   activeUpdateStaleSeconds,
   isActiveUpdateStalled,
@@ -348,9 +349,14 @@ export function GlobalUpdateBadge({
       });
       window.clearTimeout(abortTimer);
       if (!response.ok) {
+        // 请求被边缘层挡回（例如运维关掉了 /api/self-update），根本没进到应用，
+        // 后端的失败归因覆盖不到这里。翻成中文再弹，别把英文原文糊给用户。
         const text = await response.text().catch(() => '');
+        const retryAfter = Number(response.headers.get('retry-after') || '') || undefined;
+        const failure = diagnoseSelfUpdateHttpFailure(response.status, text, retryAfter);
+        if (failure.raw) console.warn('[self-update] 服务端原文:', failure.raw);
         // eslint-disable-next-line no-alert
-        alert(`触发更新失败 (${response.status})${text ? ': ' + text.slice(0, 200) : ''}`);
+        alert(formatSelfUpdateHttpFailure(failure));
         return;
       }
       if (!response.body) return;

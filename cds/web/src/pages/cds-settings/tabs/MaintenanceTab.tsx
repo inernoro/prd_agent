@@ -14,6 +14,7 @@ import {
   DialogTrigger,
 } from '@/components/ui/dialog';
 import { apiRequest, ApiError, apiUrl } from '@/lib/api';
+import { diagnoseSelfUpdateHttpFailure } from '@/lib/selfUpdateHttpFailure';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
@@ -424,8 +425,19 @@ async function postSse(
     body: JSON.stringify(body || {}),
   });
   if (!response.ok) {
-    const text = await response.text();
-    throw new Error(text || `${path} -> ${response.status}`);
+    // 请求被边缘层挡回（没进到应用），后端归因覆盖不到；先翻成中文再抛，
+    // 否则面板上只会出现「/api/self-update -> 503」这种谁也看不懂的串。
+    const text = await response.text().catch(() => '');
+    const retryAfter = Number(response.headers.get('retry-after') || '') || undefined;
+    const failure = diagnoseSelfUpdateHttpFailure(response.status, text, retryAfter);
+    const err = new Error(failure.cause) as Error & { selfUpdateFailure?: SelfUpdateRecord['failure'] };
+    err.selfUpdateFailure = {
+      stage: 'unknown',
+      cause: failure.cause,
+      nextAction: failure.nextAction,
+      raw: failure.raw,
+    };
+    throw err;
   }
   if (!response.body) return;
 
@@ -855,6 +867,9 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
       const message = err instanceof Error ? err.message : String(err);
       setRunState('error');
       setRunTitle(message);
+      // postSse 对「没进到应用」的失败会挂上归因，一并展示下一步与服务端原文。
+      const attached = (err as { selfUpdateFailure?: SelfUpdateRecord['failure'] }).selfUpdateFailure;
+      if (attached) setRunFailure(attached);
       appendRunLine(message);
       onToast(`${label} 失败：${message}`);
       // 2026-05-28: 旧的 loadSelfStatus() 已删,改为触发后端 refresh job。
