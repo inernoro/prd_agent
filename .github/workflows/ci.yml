@@ -64,6 +64,17 @@ jobs:
               - 'scripts/tests/public-surface-smoke.test.py'
               - 'scripts/tests/asset-storage-readiness-gate.test.py'
               - 'scripts/tests/release-evidence.test.py'
+              - 'scripts/llmgw-prod-preflight.py'
+              - 'scripts/tests/gateway-route-self-test-diagnosis.test.py'
+              # 下面这批 test_*.py 曾经躺在 scripts/tests/ 里没有任何 workflow 引用，
+              # 写了等于没写（predicate-and-wiring-discipline 形状 2 与形状 4 的合体）。
+              # 它们守的是 gw-smoke / 发布双密钥 / rollout 账本 / ASR WebSocket 转发，
+              # 所以连同各自的被测脚本一起登记进这道闸。
+              - 'scripts/gw-smoke.py'
+              - 'scripts/llmgw-rollout-ledger.py'
+              - 'scripts/tests/test_*.py'
+              - 'scripts/tests/validate-static-dist.test.sh'
+              - 'scripts/validate-static-dist.sh'
               - 'deploy/nginx/**'
               - '.github/workflows/ci.yml'
 
@@ -90,6 +101,20 @@ jobs:
 
       - name: Release evidence ledger
         run: python3 scripts/tests/release-evidence.test.py
+
+      - name: Gateway route self-test failure diagnosis
+        run: python3 scripts/tests/gateway-route-self-test-diagnosis.test.py
+
+      - name: Static dist validation
+        run: sh scripts/tests/validate-static-dist.test.sh
+
+      - name: Release script source guards
+        run: |
+          set -e
+          for t in scripts/tests/test_*.py; do
+            echo "--- $t"
+            python3 "$t"
+          done
 
   # 后端服务构建和测试
   server-build:

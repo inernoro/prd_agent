@@ -85,6 +85,17 @@
 
 涉及生产发布的任务只有在公网最终入口、静态资源和相关 API 都通过后才能声明完成。只提供 CI、镜像构建、容器 healthy 或内部健康端点证据时，状态必须写为“部署链路通过，用户表面未验收”。
 
+### 9. 部署前门禁必须分清“服务坏了”与“配置副本没刷新”，且不得挡死能修好它的那次发布
+
+在 `docker compose up` 之前运行的预检，判定用的是**发布前**的运行态。容器在启动那一刻把 `.env` 快照进了自己的环境变量，源头之后再改，进程一无所知——所以“文件里的值”与“容器里的值”可以长期不一致而毫无告警（详见 `.claude/rules/config-runtime-drift.md`）。
+
+由此产生两条硬约束：
+
+- **失败归因必须收敛到一个主要原因**（承接条目 5）。凭据被拒（401/403）在网关自身健康时，几乎总是“密钥已轮换但持 key 容器从未重建”，不是“网关不可用”；服务不可达（5xx/无响应）、协议缺失（版本落后）、用例不通过（配置错误）各自是不同的原因，不许压成一个笼统的 `ok: false`。每种失败形态都必须同时给出**原因**和**一条可执行的恢复动作**。
+- **不得制造门禁死锁**。若一条 pre-flight 失败时，被它 gate 的那次发布本身就会消解该失败（compose up 会用新 `.env` 重建容器），则必须在提示中点破“重试同一条 run 不会自愈”，并给出先补完轮换再发布的顺序。写任何 pre-check 都要先问：**这条检查失败时，我要 gate 的那个动作会不会正好修好它？**
+
+配套要求：改完源头配置要在同一次操作里让**全部**持有者重新持有（`--force-recreate` 而非 `restart`）；重建非 gateway 容器后必须原地 `nginx -s reload`（承接条目 4 的代理稳定要求），否则代理仍连旧容器 IP，公网 502。对账一律只输出哈希前缀，禁止把密钥明文写进日志或证据文件。
+
 ## 强制回归矩阵
 
 | 场景 | 必须结果 |
@@ -95,6 +106,8 @@
 | 新版切换后公网探针失败 | 自动恢复 previous，记录回滚证据 |
 | 执行 `./exec_dep.sh release` | 兼容部署 latest，并输出迁移提示 |
 | API 健康但主页面不可读 | 产品表面门禁失败并明确归类为静态站故障 |
+| 网关健康但预检 key 被拒（401/403） | 归因为凭据与运行态不一致，并说明重试同一条 run 不会自愈 |
+| 网关无响应 / 协议缺失 / 用例不通过 | 三者各自给出不同的主要原因，不得复用凭据漂移结论 |
 
 ## 判断标准速查
 
@@ -116,7 +129,8 @@
 - `scripts/prd-agent-public-surface-smoke.py`：验证根 HTML、实际同源 JS/CSS、根级 `/health`、`/api/version`、LLMGW 页面及 Console/Serving 双健康；发布后强制运行，并由 `llmgw-shadow-watch.yml` 每 6 小时独立运行。
 - `scripts/prd-agent-release-evidence.py`：按唯一发布编号写不可覆盖 JSON，记录操作者、主机、release PID、开始结束时间、ref、产物 URL 与 hash、静态链接和权限、公网探针、首个失败阶段和回滚结果。
 - `./exec_dep.sh release`：保留 latest 兼容语义并提示迁移到不可变 `--commit`；`--help` 同时展示兼容与推荐命令。
-- `.github/workflows/ci.yml`：独立执行静态布局、严格 umask、真实 `nginx:1.27-alpine` worker 和公网探针单测，防止只有发布时才发现权限退化。
+- `scripts/llmgw-prod-preflight.py`：`_diagnose_route_self_test_failure` 把 `gateway_route_self_test` 的失败收敛为「一个主要原因 + 一条恢复动作」，401/403 明确指向凭据与运行态不一致并点破“预检在部署之前跑、重试不会自愈”，服务不可达 / 协议缺失 / 用例不通过各自独立归因；放行时不写入归因字段。
+- `.github/workflows/ci.yml`：独立执行静态布局、严格 umask、真实 `nginx:1.27-alpine` worker 和公网探针单测，防止只有发布时才发现权限退化；并执行 `scripts/tests/gateway-route-self-test-diagnosis.test.py`，锁住上述归因的分辨力与反向断言。
 
 ## 关联债务
 
