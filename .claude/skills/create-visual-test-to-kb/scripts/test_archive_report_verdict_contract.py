@@ -262,6 +262,14 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_future_recovery_phrase_in_fact_does_not_resolve_failure(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进",
+            "CDS smoke 当前失败，重试后恢复服务",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
     def test_non_fail_verdicts_reject_fail_only_facts(self):
         cases = (
             (

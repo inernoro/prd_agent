@@ -611,7 +611,8 @@ def _strip_resolved_failure_phrases(text):
     """Remove historical failures that the same clause explicitly closes."""
     closure = (
         r"(?:(?:现已|已经|已)(?:通过|修复|恢复|成功|可用)"
-        r"|(?:最终|重试后|随后)(?:已)?(?:通过|修复|恢复|成功|可用))"
+        r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用)"
+        r"|最终(?:已)?(?:通过|成功))"
     )
     return re.sub(
         r"(?:失败|未通过|阻断|不可用|不可交付|无法完成)"
@@ -628,7 +629,8 @@ def _has_resolved_failure_status(text):
     return bool(
         re.search(
             r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
-            r"|(?:最终|重试后|随后)(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
+            r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭)"
+            r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
             r"|恢复正常",
             text or "",
             re.I,
