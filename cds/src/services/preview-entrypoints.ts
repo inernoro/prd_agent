@@ -33,8 +33,21 @@ import type { PublishedEntrypointsEnv } from './env-provenance.js';
 export const PREVIEW_URL_ENV_KEY = 'CDS_PREVIEW_URL';
 /** 容器 env 里承载「本分支全部命名服务入口」的 key,值为 JSON 对象字符串。 */
 export const SERVICE_URLS_ENV_KEY = 'CDS_SERVICE_URLS';
+/**
+ * 容器 env 里承载「本分支的模型网关控制台入口」的 key。
+ *
+ * 为什么必须单独下发、不能让消费方从 CDS_SERVICE_URLS 的 key 名推：
+ * 改名后表里是 `llmgw` + `llmgw-web`（同一个控制台的规范名与兼容别名）；
+ * 而**改名前的存量项目**表里同样是 `llmgw` + `llmgw-web`，但那是「后端 API + 控制台」。
+ * 两者 key 集合完全相同、语义相反 —— 按名字猜必然有一半项目猜错，把管理员的 SSO 票据
+ * 送到一个只返回健康 JSON 的 API 服务上（Codex P2；本仓库的 prd-agent 项目当前正是后者）。
+ * 只有平台知道哪个 profile 是可登录控制台，所以由平台明说。
+ */
+export const CONSOLE_URL_ENV_KEY = 'CDS_CONSOLE_URL';
 
 export interface PublishedEntrypoints {
+  /** 可登录的模型网关控制台入口（由平台判定，消费方不再按子域名字推）。 */
+  consoleUrl?: string;
   /** 分支主入口 `https://<previewSlug>.<host>`;previewSlug/host 缺失时为 undefined。 */
   previewUrl?: string;
   /** subdomain → 完整 URL。只包含**确实会被发布**的命名入口(标签 ≤63)。 */
@@ -172,6 +185,11 @@ export function buildPublishedEntrypoints(opts: {
    * 表里也必须跟着不声明，否则消费方拿到一个指向别人应用的地址（Codex P1）。
    */
   aliasOwnedLabels?: ReadonlySet<string>;
+  /**
+   * 哪个 subdomain 是可登录控制台（调用方按 isGatewayConsoleEntry 判好后传入）。
+   * 判定留在调用方是因为它需要 profile 的就绪路径，而本函数刻意只收字符串。
+   */
+  consoleSubdomain?: string;
 }): PublishedEntrypoints {
   const previewSlug = (opts.previewSlug || '').trim();
   const previewHost = (opts.previewHost || '')
@@ -197,7 +215,10 @@ export function buildPublishedEntrypoints(opts: {
   const subs = opts.subdomains.map((raw) => (raw || '').trim()).filter(Boolean);
   for (const sub of subs) declare(sub);
   for (const sub of subs) for (const name of subdomainWithLegacyAliases(sub)) declare(name);
-  return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls };
+  // 控制台入口取表里那一条 —— 表已过全部发布判据（长度上限、别名占位），
+  // 所以「表里没有」= 「这条控制台入口确实没发布」，不另算一个可能不存在的地址。
+  const consoleUrl = opts.consoleSubdomain ? serviceUrls[opts.consoleSubdomain] : undefined;
+  return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls, consoleUrl };
 }
 
 /**
@@ -218,6 +239,34 @@ export function savedAliasOwners(
       const label = (alias || '').trim().toLowerCase();
       if (label && !owners.has(label)) owners.set(label, b.id);
     }
+  }
+  return owners;
+}
+
+/**
+ * 已被占用的**完整 host** → 拥有者分支 id：子域别名（按每个根域展开）+ 完整自定义域名。
+ *
+ * 为什么不能只按 label 判：自定义域名存的是整条 host（`foo.miduo.org`），不是标签。
+ * 一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在 buildRoutes 里**先**被发出去，
+ * 之后命名服务再发同一个 host、指向不同上游，resolver 按路由 id 静默选一条 ——
+ * 与别名撞车完全同源，只是占位者换成了自定义域名（Codex P1）。
+ */
+export function occupiedHostOwners(
+  branches: ReadonlyArray<{ id: string; subdomainAliases?: string[]; customDomains?: string[] }>,
+  rootDomains: readonly string[],
+): Map<string, string> {
+  const owners = new Map<string, string>();
+  const claim = (host: string, branchId: string): void => {
+    const key = host.trim().toLowerCase();
+    if (key && !owners.has(key)) owners.set(key, branchId);
+  };
+  for (const b of branches) {
+    for (const alias of b.subdomainAliases ?? []) {
+      const label = (alias || '').trim().toLowerCase();
+      if (!label) continue;
+      for (const root of rootDomains) claim(`${label}.${root.trim().toLowerCase()}`, b.id);
+    }
+    for (const domain of b.customDomains ?? []) claim(domain, b.id);
   }
   return owners;
 }
@@ -281,7 +330,7 @@ export function resolveServiceLandingPath(subdomain: string, readinessPath?: str
  * 注入前会先被清掉（见 env-provenance 第 4.6 层）。表为空时更要清:
  * 那正是「CDS 说这里没有这条路由」，项目却留着一个地址才最危险。
  */
-export const RESERVED_ENTRYPOINT_ENV_KEYS = [PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY] as const;
+export const RESERVED_ENTRYPOINT_ENV_KEYS = [PREVIEW_URL_ENV_KEY, SERVICE_URLS_ENV_KEY, CONSOLE_URL_ENV_KEY] as const;
 
 /** 把入口表转成注入容器的 env 片段。表为空则不注入任何 key(不写空串占位)。 */
 export function publishedEntrypointsEnv(entrypoints: PublishedEntrypoints): Record<string, string> {
@@ -290,6 +339,7 @@ export function publishedEntrypointsEnv(entrypoints: PublishedEntrypoints): Reco
   if (Object.keys(entrypoints.serviceUrls).length > 0) {
     env[SERVICE_URLS_ENV_KEY] = JSON.stringify(entrypoints.serviceUrls);
   }
+  if (entrypoints.consoleUrl) env[CONSOLE_URL_ENV_KEY] = entrypoints.consoleUrl;
   return env;
 }
 
@@ -298,7 +348,7 @@ export interface BranchEntrypointDeps {
   /** 公开的 previewDomain(不带协议)。缺失则不声明任何入口。 */
   previewHost?: string;
   getProject(projectId: string): { slug?: string; name?: string } | undefined;
-  getEffectiveProfilesForBranch(entry: BranchEntry): Array<{ subdomain?: string }>;
+  getEffectiveProfilesForBranch(entry: BranchEntry): Array<{ subdomain?: string; readinessProbe?: { path?: string } }>;
   /** 全部分支（用于枚举已保存别名占走的标签）。缺省则不做别名过滤。 */
   getAllBranches?(): ReadonlyArray<{ id: string; subdomainAliases?: string[] }>;
 }
@@ -318,11 +368,16 @@ export function resolveBranchEntrypointsEnv(
   const project = deps.getProject(entry.projectId);
   const previewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
   const subdomains: string[] = [];
+  let consoleSubdomain: string | undefined;
   for (const bp of deps.getEffectiveProfilesForBranch(entry)) {
     // 与发布端一致:必须应用 branch profileOverrides,否则覆写过 subdomain 的分支
     // 会声明出一个 forwarder 根本没发布的 host。
-    const sub = (bp as { subdomain?: string }).subdomain;
-    if (sub) subdomains.push(sub);
+    const sub = bp.subdomain;
+    if (!sub) continue;
+    subdomains.push(sub);
+    // 判据与面板 isConsole、落点计算同源：控制台名 **且** 落点为根。
+    // 存量项目里叫 llmgw 的后端 API（声明 /gw/healthz）因此不会被当成控制台。
+    if (!consoleSubdomain && isGatewayConsoleEntry(sub, bp.readinessProbe?.path)) consoleSubdomain = sub;
   }
   return {
     reservedKeys: RESERVED_ENTRYPOINT_ENV_KEYS,
@@ -330,6 +385,7 @@ export function resolveBranchEntrypointsEnv(
       previewSlug,
       previewHost: deps.previewHost,
       subdomains,
+      consoleSubdomain,
       aliasOwnedLabels: deps.getAllBranches
         ? new Set(savedAliasOwners(deps.getAllBranches()).keys())
         : undefined,

@@ -333,7 +333,7 @@ describe('ForwarderRoutePublisher', () => {
     // 规范名不受影响，照常发布。
     expect(data.find((r: { host?: string }) => r.host === `${slugA}-llmgw.miduo.org`)?.upstreamPort).toBe(41701);
     // 告警必须有，且每 2 秒重跑不刷屏。
-    expect(warnings.filter((w) => w.includes('保存为子域别名'))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes('跳过该命名路由'))).toHaveLength(1);
   });
 
   it('规范服务 host 也要查已保存别名：撞上则跳过，不能只在别名那一趟查（Codex P1）', () => {
@@ -363,7 +363,37 @@ describe('ForwarderRoutePublisher', () => {
     expect(hosts[0].upstreamPort).toBe(42000);
     // 兼容别名 host 没被占，照常发布（指向 A 的 llmgw 容器）。
     expect(data.find((r: { host?: string }) => r.host === `${slugA}-llmgw-web.miduo.org`)?.upstreamPort).toBe(41901);
-    expect(warnings.filter((w) => w.includes('保存为子域别名'))).toHaveLength(1);
+    expect(warnings.filter((w) => w.includes('跳过该命名路由'))).toHaveLength(1);
+  });
+
+  it('自定义域名占走的 host 同样让路（别名判定按标签，自定义域名是整条 host，Codex P1）', () => {
+    ensureProject('demo', 'demo');
+    addMultiProfileBranch({ projectId: 'demo', branch: 'main', services: { web: 42100, llmgw: 42101 } });
+    state.addBuildProfile({ id: 'web', name: 'web', projectId: 'demo' } as Parameters<typeof state.addBuildProfile>[0]);
+    state.setBranchExtraProfiles('demo-main', [
+      { id: 'llmgw', name: 'llmgw', dockerImage: 'nginx:alpine', workDir: '', command: '', containerPort: 8091, projectId: 'demo', subdomain: 'llmgw' } as any,
+    ]);
+    // B 分支把 A 的规范 host 整条存成了**自定义域名**（不是子域别名）——
+    // 只按标签判的实现会漏掉它，而它那条路由在 buildRoutes 里更早就发出去了。
+    addMultiProfileBranch({ projectId: 'demo', branch: 'other', services: { web: 42200 } });
+    const slugA = computePreviewSlug('main', 'demo');
+    state.setBranchCustomDomains('demo-other', [`${slugA}-llmgw.miduo.org`]);
+
+    const warnings: string[] = [];
+    publisher = new ForwarderRoutePublisher({
+      state, outputPath: outFile, rootDomains: ['miduo.org'],
+      logger: { warn: (m: string) => { warnings.push(m); } } as never,
+    });
+    publisher.publishNow();
+    publisher.publishNow();
+    const data = JSON.parse(fs.readFileSync(outFile, 'utf8'));
+
+    const hosts = data.filter((r: { host?: string }) => r.host === `${slugA}-llmgw.miduo.org`);
+    expect(hosts).toHaveLength(1);
+    expect(hosts[0].upstreamPort).toBe(42200);
+    // 兼容别名 host 没被占，照常发布。
+    expect(data.find((r: { host?: string }) => r.host === `${slugA}-llmgw-web.miduo.org`)?.upstreamPort).toBe(42101);
+    expect(warnings.filter((w) => w.includes('跳过该命名路由'))).toHaveLength(1);
   });
 
   it('命名 host 第一 DNS 标签超 63 octet 时跳过该路由（Codex P2「Guard named hosts against overlong DNS labels」），主域名路径访问不受影响', () => {

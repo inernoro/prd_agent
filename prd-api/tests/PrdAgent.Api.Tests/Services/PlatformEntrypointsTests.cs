@@ -20,6 +20,43 @@ public class PlatformEntrypointsTests
         => new ConfigurationBuilder().AddInMemoryCollection(values).Build();
 
     [Fact]
+    public void PrefersPlatformDeclaredConsoleUrlOverSubdomainGuessing()
+    {
+        // 改名后表里是 llmgw + llmgw-web（同一控制台的规范名与兼容别名）；
+        // 改名前的存量项目表里**同样**是这两个 key，但那是「后端 API + 控制台」。
+        // key 集合一模一样、语义相反，所以只能由平台明说是哪一个（Codex P2）。
+        var config = Build(new()
+        {
+            ["CDS_SERVICE_URLS"] = """{"llmgw":"https://demo-llmgw.miduo.org","llmgw-web":"https://demo-llmgw-web.miduo.org"}""",
+            ["CDS_CONSOLE_URL"] = "https://demo-llmgw-web.miduo.org",
+        });
+        PlatformEntrypoints.ResolveGatewayConsoleBaseUrl(config)
+            .ShouldBe("https://demo-llmgw-web.miduo.org/");
+    }
+
+    [Fact]
+    public void FallsBackToSubdomainOrderWhenPlatformDidNotDeclareConsole()
+    {
+        // 老平台没下发 CDS_CONSOLE_URL 时才退回按名字猜；这条路径无法区分两种布局，
+        // 是已知边界，CDS 升级后自愈。断言它至少与改名后的布局一致（规范名优先）。
+        var config = Build(new()
+        {
+            ["CDS_SERVICE_URLS"] = """{"llmgw":"https://demo-llmgw.miduo.org","llmgw-web":"https://demo-llmgw-web.miduo.org"}""",
+        });
+        PlatformEntrypoints.ResolveGatewayConsoleBaseUrl(config)
+            .ShouldBe("https://demo-llmgw.miduo.org/");
+    }
+
+    [Fact]
+    public void ConsoleUrlAloneCountsAsAnInjectedTable()
+    {
+        // 「平台下发了表」的判定必须认这个 key —— 否则只下发控制台入口时会被当成
+        // 「老平台没下发表」，提示语走错分支（形状 1：判据太窄）。
+        var config = Build(new() { ["CDS_CONSOLE_URL"] = "https://demo-llmgw.miduo.org/" });
+        PlatformEntrypoints.HasEntrypointTable(config).ShouldBeTrue();
+    }
+
+    [Fact]
     public void ResolvesGatewayConsoleFromInjectedTable()
     {
         var config = Build(new()

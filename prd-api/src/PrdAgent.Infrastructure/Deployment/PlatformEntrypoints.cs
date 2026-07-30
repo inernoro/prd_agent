@@ -24,6 +24,12 @@ public static class PlatformEntrypoints
     /// <summary>CDS 注入的本分支主入口。它的存在与否 = 「本部署是不是 CDS 托管的预览」。</summary>
     public const string PreviewUrlKey = "CDS_PREVIEW_URL";
 
+    /// <summary>
+    /// 平台直接声明的「模型网关控制台入口」。由 CDS 按 profile 语义判定后注入，
+    /// 消费方不再从 <see cref="ServiceUrlsKey"/> 的 key 名去推是哪一个。
+    /// </summary>
+    public const string ConsoleUrlKey = "CDS_CONSOLE_URL";
+
     /// <summary>模型网关控制台在 cds-compose.yml 里声明的 cds.subdomain（规范名）。</summary>
     public const string GatewayConsoleSubdomain = "llmgw";
 
@@ -45,7 +51,8 @@ public static class PlatformEntrypoints
     /// </summary>
     public static bool HasEntrypointTable(IConfiguration configuration)
         => !string.IsNullOrWhiteSpace(configuration[ServiceUrlsKey])
-           || !string.IsNullOrWhiteSpace(configuration[PreviewUrlKey]);
+           || !string.IsNullOrWhiteSpace(configuration[PreviewUrlKey])
+           || !string.IsNullOrWhiteSpace(configuration[ConsoleUrlKey]);
 
     /// <summary>
     /// 取某个命名服务的公网入口；未声明（含「因超长而未发布」）时返回 null。
@@ -81,9 +88,29 @@ public static class PlatformEntrypoints
     /// </summary>
     public static string? ResolveGatewayConsoleBaseUrl(IConfiguration configuration)
     {
+        // 首选平台直接声明的控制台入口（CDS 注入 CDS_CONSOLE_URL）。
+        //
+        // 为什么不能只按子域名字挑：改名后表里是 `llmgw` + `llmgw-web`（同一个控制台的
+        // 规范名与兼容别名）；改名前的存量项目表里**同样**是这两个 key，但那是
+        // 「后端 API + 控制台」—— key 集合一模一样、语义相反。按名字挑必然有一半项目
+        // 挑错，把管理员的 SSO 票据送到只返回健康 JSON 的 API 服务上（Codex P2）。
+        // 本仓库的 prd-agent 项目当前正是后者：llmgw 是 API、llmgw-web 才是控制台。
+        var declared = ReadTrimmed(configuration, ConsoleUrlKey);
+        if (!string.IsNullOrWhiteSpace(declared)) return WithTrailingSlash(declared!);
+
+        // 平台没下发该 key（CDS 版本早于该能力）时才退回按名字猜。这条路径**无法**
+        // 区分上述两种项目布局，是已知边界：先试规范名、再试历史别名，与改名后的
+        // 布局一致；存量布局下会挑到 API host。CDS 升级后自愈。
         var url = ResolveServiceUrl(configuration, GatewayConsoleSubdomain)
                   ?? ResolveServiceUrl(configuration, LegacyGatewayConsoleSubdomain);
-        if (url is null) return null;
-        return url.EndsWith('/') ? url : url + "/";
+        return url is null ? null : WithTrailingSlash(url);
+    }
+
+    private static string WithTrailingSlash(string url) => url.EndsWith('/') ? url : url + "/";
+
+    private static string? ReadTrimmed(IConfiguration configuration, string key)
+    {
+        var raw = configuration[key];
+        return string.IsNullOrWhiteSpace(raw) ? null : raw.Trim();
     }
 }

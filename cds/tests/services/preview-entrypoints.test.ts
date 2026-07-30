@@ -3,6 +3,7 @@ import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_URL_ENV_KEY,
+  CONSOLE_URL_ENV_KEY,
   RESERVED_ENTRYPOINT_ENV_KEYS,
   SERVICE_URLS_ENV_KEY,
   buildPublishedEntrypoints,
@@ -399,10 +400,13 @@ describe('别名抑制决定的全部消费方都接线了（形状 2 守卫）'
   // 逐个文件断言它确实传了别名集合，漏掉任何一个就红。
   const read = (rel: string) => fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
 
-  it('发布器在 emit 单点查表（规范名与兼容别名两趟都过它）', () => {
+  it('发布器在 emit 单点按完整 host 查占位（别名 + 自定义域名，两趟都过它）', () => {
     const src = read('src/services/forwarder-route-publisher.ts');
-    expect(src).toContain('savedAliasOwners(this.opts.state.getAllBranches())');
-    expect(src).toContain('const aliasOwner = aliasOwners.get(namedLabel);');
+    // 判定必须按完整 host：自定义域名存的是整条 host，只按标签判会漏掉它。
+    expect(src).toContain('occupiedHostOwners(this.opts.state.getAllBranches(), this.opts.rootDomains)');
+    expect(src).toContain('const hostOwner = occupiedHosts.get(host);');
+    // 标签级那份别名检查已被按-host 检查完全包含，不许再留第二份判据。
+    expect(src).not.toContain('aliasOwners.get(namedLabel)');
   });
 
   it('面板 / GET /api/branches 的网关入口清单过滤了被占走的 host', () => {
@@ -425,5 +429,56 @@ describe('别名抑制决定的全部消费方都接线了（形状 2 守卫）'
     const src = read('src/routes/branches.ts');
     expect(src).toContain('for (const host of computeBranchPublishedServiceHosts(other, root))');
     expect(src).toContain('for (const label of publishedServiceLabels(slug, sub))');
+  });
+});
+
+describe('CDS_CONSOLE_URL — 控制台入口由平台声明，不让消费方按名字猜（Codex P2）', () => {
+  const entry = { id: 'b1', projectId: 'p1', branch: 'claude/demo' } as unknown as BranchEntry;
+  const base = {
+    previewHost: HOST,
+    getProject: () => ({ slug: 'prd-agent' }),
+  };
+
+  it('控制台 profile（声明 /）下发 CDS_CONSOLE_URL', () => {
+    const env = resolveBranchEntrypointsEnv(entry, {
+      ...base,
+      getEffectiveProfilesForBranch: () => [{ subdomain: 'llmgw', readinessProbe: { path: '/' } }],
+    });
+    expect(env.env[CONSOLE_URL_ENV_KEY]).toBe('https://demo-claude-prd-agent-llmgw.miduo.org');
+    expect(env.reservedKeys).toContain(CONSOLE_URL_ENV_KEY);
+  });
+
+  it('存量布局：llmgw 是后端 API（声明 /gw/healthz）、llmgw-web 才是控制台', () => {
+    // 这是本仓库 prd-agent 项目当前的真实布局。按 key 名猜会挑到 API host，
+    // 把管理员的 SSO 票据送到一个只返回健康 JSON 的服务上。
+    const env = resolveBranchEntrypointsEnv(entry, {
+      ...base,
+      getEffectiveProfilesForBranch: () => [
+        { subdomain: 'llmgw', readinessProbe: { path: '/gw/healthz' } },
+        { subdomain: 'llmgw-web', readinessProbe: { path: '/' } },
+      ],
+    });
+    expect(env.env[CONSOLE_URL_ENV_KEY]).toBe('https://demo-claude-prd-agent-llmgw-web.miduo.org');
+    // 两个 key 都在表里 —— 正说明按 key 集合无法区分两种布局。
+    const table = JSON.parse(env.env[SERVICE_URLS_ENV_KEY]);
+    expect(Object.keys(table).sort()).toEqual(['llmgw', 'llmgw-web']);
+  });
+
+  it('没有控制台 profile 时不下发该 key（可声明的缺席）', () => {
+    const env = resolveBranchEntrypointsEnv(entry, {
+      ...base,
+      getEffectiveProfilesForBranch: () => [{ subdomain: 'llmgw-serve', readinessProbe: { path: '/gw/v1/healthz' } }],
+    });
+    expect(env.env[CONSOLE_URL_ENV_KEY]).toBeUndefined();
+  });
+
+  it('控制台 host 被别名占走时也不下发（表里没有就不声明）', () => {
+    const occupied = namedServiceLabel('demo-claude-prd-agent', 'llmgw');
+    const env = resolveBranchEntrypointsEnv(entry, {
+      ...base,
+      getEffectiveProfilesForBranch: () => [{ subdomain: 'llmgw', readinessProbe: { path: '/' } }],
+      getAllBranches: () => [{ id: 'other', subdomainAliases: [occupied] }],
+    });
+    expect(env.env[CONSOLE_URL_ENV_KEY]).toBeUndefined();
   });
 });
