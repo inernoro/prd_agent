@@ -143,18 +143,33 @@ export function publishedServiceLabels(
   previewSlug: string,
   subdomain: string,
   /**
-   * 已被某个分支保存为子域别名的标签（`savedAliasOwners` 的 keys）。传了就一并滤掉 ——
-   * 发布器不会写这些 host，凡是「要跟发布结果对齐」的消费方都必须跟着滤。
+   * 占位过滤（可选）：`occupiedHostOwners` 的结果 + 要检查的根域集合。
+   *
+   * **判据必须与发布器一字不差**——发布器按「完整 host、含自定义域名」抑制，消费方若
+   * 只按标签、只看别名，就会声明/放行发布器故意没写的 host。这正是连续五轮同一形状的
+   * 复发点：每次我升级发布器却漏了其它消费方（Codex P1 x3）。因此这里刻意只接受
+   * 完整的占位表，不再提供「标签集合」那种窄形式。
+   *
+   * 任一根域被占即丢弃该标签（保守）：白名单场景下宁可少放行，也不能让探测打到别人。
    *
    * 唯一不该传的地方是**撞名占位**（`computeBranchPublishedServiceHosts`）：它要的是
    * 「已声明的拓扑占了哪些 host」，滤掉反而会放行新的重复别名。
    */
-  aliasOwnedLabels?: ReadonlySet<string>,
+  occupied?: { hosts: ReadonlyMap<string, string>; roots: readonly string[] },
 ): string[] {
   return subdomainWithLegacyAliases(subdomain)
     .map((name) => namedServiceLabel(previewSlug, name))
     .filter(isPublishableNamedLabel)
-    .filter((label) => !aliasOwnedLabels?.has(label));
+    .filter((label) => !isHostOccupiedOnAnyRoot(occupied, label));
+}
+
+/** 该标签在任一根域上是否已被占位。占位表缺省时恒为 false（调用方未启用过滤）。 */
+export function isHostOccupiedOnAnyRoot(
+  occupied: { hosts: ReadonlyMap<string, string>; roots: readonly string[] } | undefined,
+  label: string,
+): boolean {
+  if (!occupied) return false;
+  return occupied.roots.some((root) => occupied.hosts.has(`${label}.${root}`.trim().toLowerCase()));
 }
 
 /**
@@ -181,10 +196,10 @@ export function buildPublishedEntrypoints(opts: {
   previewHost?: string;
   subdomains: readonly string[];
   /**
-   * 已被某个分支保存为子域别名的标签集合。发布器会跳过这些 host，
-   * 表里也必须跟着不声明，否则消费方拿到一个指向别人应用的地址（Codex P1）。
+   * 占位表（`occupiedHostOwners` 的结果）。发布器按完整 host 跳过这些路由，
+   * 表里必须跟着不声明 —— 否则消费方（含 SSO）拿到一个指向别人应用的地址（Codex P1）。
    */
-  aliasOwnedLabels?: ReadonlySet<string>;
+  occupiedHosts?: ReadonlyMap<string, string>;
   /**
    * 哪个 subdomain 是可登录控制台（调用方按 isGatewayConsoleEntry 判好后传入）。
    * 判定留在调用方是因为它需要 profile 的就绪路径，而本函数刻意只收字符串。
@@ -203,7 +218,8 @@ export function buildPublishedEntrypoints(opts: {
     if (serviceUrls[name]) return;
     const label = namedServiceLabel(previewSlug, name);
     if (!isPublishableNamedLabel(label)) return; // 没发布就不声明
-    if (opts.aliasOwnedLabels?.has(label)) return; // 发布器会跳过它，表里也不能声明
+    // 按**完整 host** 判（含自定义域名占位）：入口表只有一个 previewHost，直接拼出来比。
+    if (opts.occupiedHosts?.has(`${label}.${previewHost}`.toLowerCase())) return;
     serviceUrls[name] = `https://${label}.${previewHost}`;
   };
   // 表里要**逐条对应发布器实际写出的路由**，历史别名同样在列 —— 否则会出现
@@ -221,27 +237,6 @@ export function buildPublishedEntrypoints(opts: {
   return { previewUrl: `https://${previewSlug}.${previewHost}`, serviceUrls, consoleUrl };
 }
 
-/**
- * 全部分支已保存的子域别名标签 → 拥有它的分支 id。
- *
- * 发布器与入口表**必须同用这一份**：发布器跳过被别名占走的命名 host，而入口表若照旧
- * 声明它，SSO 就会把用户送到别名拥有者的主应用（可能是另一个分支）—— 表与实际发布的
- * 路由必须逐条一致，这是本模块开头就写着的前提（Codex P1）。
- *
- * 判据只有一处，避免两侧各写一遍再漂移（形状 3）。
- */
-export function savedAliasOwners(
-  branches: ReadonlyArray<{ id: string; subdomainAliases?: string[] }>,
-): Map<string, string> {
-  const owners = new Map<string, string>();
-  for (const b of branches) {
-    for (const alias of b.subdomainAliases ?? []) {
-      const label = (alias || '').trim().toLowerCase();
-      if (label && !owners.has(label)) owners.set(label, b.id);
-    }
-  }
-  return owners;
-}
 
 /**
  * 已被占用的**完整 host** → 拥有者分支 id：子域别名（按每个根域展开）+ 完整自定义域名。
@@ -349,8 +344,8 @@ export interface BranchEntrypointDeps {
   previewHost?: string;
   getProject(projectId: string): { slug?: string; name?: string } | undefined;
   getEffectiveProfilesForBranch(entry: BranchEntry): Array<{ subdomain?: string; readinessProbe?: { path?: string } }>;
-  /** 全部分支（用于枚举已保存别名占走的标签）。缺省则不做别名过滤。 */
-  getAllBranches?(): ReadonlyArray<{ id: string; subdomainAliases?: string[] }>;
+  /** 全部分支（用于枚举已被别名/自定义域名占走的 host）。缺省则不做占位过滤。 */
+  getAllBranches?(): ReadonlyArray<{ id: string; subdomainAliases?: string[]; customDomains?: string[] }>;
 }
 
 /**
@@ -386,8 +381,9 @@ export function resolveBranchEntrypointsEnv(
       previewHost: deps.previewHost,
       subdomains,
       consoleSubdomain,
-      aliasOwnedLabels: deps.getAllBranches
-        ? new Set(savedAliasOwners(deps.getAllBranches()).keys())
+      // 与发布器同一份占位表：别名按根域展开 + 完整自定义域名。
+      occupiedHosts: deps.getAllBranches && deps.previewHost
+        ? occupiedHostOwners(deps.getAllBranches(), [deps.previewHost.replace(/^https?:\/\//, '').replace(/\/+$/, '')])
         : undefined,
     })),
   };

@@ -137,6 +137,12 @@ must(
   'onboarding: 读不到判定源的步骤不得标成 actionable（done 恒 false，给 CTA 等于让人点一个不知道做完没有的动作）',
 );
 
+must(
+  /canReadOrganization = canUseCapability\(tenant\?\.role, 'organizationWrite'\)/.test(onboarding),
+  'onboarding: 组织事实的可读性要按「能读到全貌」判 —— /gw/organization 对 owner/admin 之外'
+  + '按 teamIds 收窄，拿局部视图数成员会把已配好的租户判成没拉成员',
+);
+
 const theme = read('src/theme.css');
 must(
   shell.includes('lg-help-popover--up') && shell.includes('shouldFlipHelpUp('),

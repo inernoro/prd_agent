@@ -245,7 +245,13 @@ const EMPTY_FACTS: Facts = { team: false, member: false, key: false, request: fa
 export function useOnboardingState(): OnboardingState {
   const { tenant } = useAuth();
   const tenantId = tenant?.id ?? '';
-  const canReadOrganization = canAccessPage(tenant, 'organization');
+  // 「读得到组织全貌」而不是「打得开组织页」：/gw/organization 对 owner / admin 之外的
+  // 角色会按 caller 的 teamIds 收窄 teams 与 memberships（console-api Program.cs 的
+  // canReadEntireOrganization 分支）。拿那份局部视图数成员必然偏小 —— 一个独自待在新建
+  // 团队里的 developer 看不到默认团队里的 owner，activeMembers 只有 1，清单就一直说
+  // 「拉一个成员」没做完，而他既改不了（写操作限 admin）也没法自证（Codex P2）。
+  // 读不到就标 unreadable：不阻塞整体完成，渲染成「由管理员完成」。
+  const canReadOrganization = canUseCapability(tenant?.role, 'organizationWrite');
   const canReadKeys = canAccessPage(tenant, 'serviceKeys');
 
   const [facts, setFacts] = useState<Facts>(EMPTY_FACTS);

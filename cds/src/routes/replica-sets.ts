@@ -17,7 +17,7 @@ import { dnsSafeProfile } from '../services/forwarder-route-publisher.js';
 import { resolveEffectiveProfile } from '../services/container.js';
 import { runIsolationAudit } from '../services/replica-isolation-audit.js';
 import { buildPreviewUrlForProject } from '../services/comment-template.js';
-import { publishedServiceLabels, savedAliasOwners } from '../services/preview-entrypoints.js';
+import { occupiedHostOwners, publishedServiceLabels } from '../services/preview-entrypoints.js';
 import type { VersionDispatchResult } from './deployment-versions.js';
 import type { DeploymentVersionService } from '../services/deployment-version.js';
 
@@ -290,8 +290,12 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
       // 端点会替调用方向那个外部 host 打最多 50 次服务端 GET 并回报状态。改为按
       // 发布器同源规则列出：主入口 + 命名子域 + 成员直达，逐一精确比对。
       const allowedLabels = new Set<string>();
-      // 被别名占走的 host 不属于本分支（发布器已跳过），放进白名单等于允许探测别人的应用。
-      const aliasOwned = new Set(savedAliasOwners(deps.stateService.getAllBranches()).keys());
+      // 被别名**或自定义域名**占走的 host 不属于本分支（发布器已跳过），放进白名单等于
+      // 允许这个分支的授权用户让服务端去打别人的应用（Codex P2）。判据与发布器同一份。
+      const occupied = {
+        hosts: occupiedHostOwners(deps.stateService.getAllBranches(), roots),
+        roots,
+      };
       if (previewSlug) {
         allowedLabels.add(previewSlug);
         for (const p of deps.stateService.getEffectiveProfilesForBranch(branchForHost)) {
@@ -299,7 +303,7 @@ export function createReplicaSetsRouter(deps: ReplicaSetsRouterDeps): Router {
           // 走发布器同一个枚举口径（含 63 上限截断+摘要**与历史别名**），否则白名单会漏掉
           // 真实发布的 host —— 探测打自己发布的别名地址会被自家 SSRF 闸 403 挡掉（Codex P2）。
           if (sub) {
-            for (const label of publishedServiceLabels(previewSlug, String(sub).toLowerCase(), aliasOwned)) {
+            for (const label of publishedServiceLabels(previewSlug, String(sub).toLowerCase(), occupied)) {
               allowedLabels.add(label);
             }
           }

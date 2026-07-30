@@ -29,7 +29,7 @@ import {
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedServiceLabels,
-  savedAliasOwners,
+  occupiedHostOwners,
   resolveBranchEntrypointsEnv,
   resolveServiceLandingPath,
 } from '../services/preview-entrypoints.js';
@@ -15169,10 +15169,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
     const gatewayUrls: Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> = [];
     if (!gwPreviewSlug) return gatewayUrls;
-    // 被已保存别名占走的 host 发布器不会写（那条别名路由指向别人的主应用），面板与
-    // GET /api/branches 也就不能把它当自己的入口列出来——否则用户点开打开的是另一个
-    // 分支的应用（Codex P1）。抑制决定与发布器 / 入口表同用 savedAliasOwners 一份。
-    const gwAliasOwned = new Set(savedAliasOwners(stateService.getAllBranches()).keys());
+    // 被已保存别名**或自定义域名**占走的 host，发布器不会写（那条路由指向别人的应用），
+    // 面板与 GET /api/branches 也就不能把它当自己的入口列出来 —— 否则用户点开打开的是
+    // 另一个分支的应用（Codex P1）。判据与发布器 / 入口表同用 occupiedHostOwners 一份，
+    // 按**完整 host** 比（自定义域名存的是整条 host，只按标签判会漏）。
+    const gwOccupied = occupiedHostOwners(stateService.getAllBranches(), [primaryRoot]);
     const profileById = new Map<string, BuildProfile>();
     for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
       // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
@@ -15196,7 +15197,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       // RFC 1035 single-label limit + wildcard cert coverage — shared predicate with the publisher
       // and the env-injected entrypoint table (preview-entrypoints.ts), so the three never drift.
       if (!isPublishableNamedLabel(namedLabel)) continue;
-      if (gwAliasOwned.has(namedLabel)) continue;
+      if (gwOccupied.has(`${namedLabel}.${primaryRoot}`.toLowerCase())) continue;
       seenSubdomains.add(sub);
       // Landing path — pick the path most likely to return a live 200 when the entry is clicked
       // (Codex P2: don't force every named service onto the LLM gateway health path):

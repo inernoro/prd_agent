@@ -12,6 +12,7 @@ import {
   savedAliasOwners,
   isPublishableNamedLabel,
   namedServiceLabel,
+  occupiedHostOwners,
   publishedEntrypointsEnv,
   publishedServiceLabels,
   resolveBranchEntrypointsEnv,
@@ -351,16 +352,21 @@ describe('isGatewayConsoleEntry — 判据与落点同源（Codex P2）', () => 
   });
 });
 
-describe('savedAliasOwners / 入口表与发布器口径一致（Codex P1）', () => {
-  it('枚举全部分支的已保存别名，first-wins', () => {
-    const owners = savedAliasOwners([
+describe('occupiedHostOwners / 入口表与发布器口径一致（Codex P1）', () => {
+  it('按完整 host 枚举占位：别名按根域展开 + 自定义域名原样，first-wins', () => {
+    const owners = occupiedHostOwners([
       { id: 'b1', subdomainAliases: ['Foo', ' bar '] },
-      { id: 'b2', subdomainAliases: ['foo'] },
+      { id: 'b2', subdomainAliases: ['foo'], customDomains: ['Legacy.Example.ORG'] },
       { id: 'b3' },
-    ]);
-    expect(owners.get('foo')).toBe('b1');
-    expect(owners.get('bar')).toBe('b1');
-    expect(owners.size).toBe(2);
+    ], ['miduo.org', 'alt.org']);
+    // 别名占每一个根域上的那条 host。
+    expect(owners.get('foo.miduo.org')).toBe('b1');
+    expect(owners.get('foo.alt.org')).toBe('b1');
+    expect(owners.get('bar.miduo.org')).toBe('b1');
+    // 自定义域名是整条 host，与根域无关，且大小写归一。
+    expect(owners.get('legacy.example.org')).toBe('b2');
+    // 裸标签不再是 key —— 判据已从「标签」升级为「完整 host」。
+    expect(owners.has('foo')).toBe(false);
   });
 
   it('被别名占走的 host 不进入口表（发布器会跳过它，表不能还声明）', () => {
@@ -368,7 +374,7 @@ describe('savedAliasOwners / 入口表与发布器口径一致（Codex P1）', (
     const canonical = namedServiceLabel(previewSlug, 'llmgw');
     const withAlias = buildPublishedEntrypoints({
       previewSlug, previewHost: HOST, subdomains: ['llmgw'],
-      aliasOwnedLabels: new Set([canonical]),
+      occupiedHosts: new Map([[`${canonical}.${HOST}`, 'other']]),
     });
     // 规范名被占 → 不声明；兼容别名没被占 → 照常声明。
     expect(withAlias.serviceUrls['llmgw']).toBeUndefined();
@@ -394,38 +400,38 @@ describe('savedAliasOwners / 入口表与发布器口径一致（Codex P1）', (
   });
 });
 
-describe('别名抑制决定的全部消费方都接线了（形状 2 守卫）', () => {
-  // 这条守卫存在的理由：同一个「被已保存别名占走则不算本分支的 host」决定，
-  // 连续四轮 review 每次只被接进一半消费方（发布器 → 入口表 → 面板/API → 白名单）。
-  // 逐个文件断言它确实传了别名集合，漏掉任何一个就红。
+describe('占位抑制：全部消费方与发布器同判据（形状 2/3 守卫）', () => {
+  // 这条守卫上一版**没拦住**同一形状的第五次复发：它断言的是旧判据的名字
+  // （savedAliasOwners / aliasOwned），我把发布器升级成「按完整 host + 含自定义域名」后，
+  // 守卫照旧通过，反而把「发布器已升级、其它三处还在旧判据」这个半成品锁住了。
+  // 教训：守卫要钉**不变量**（大家用同一份判据），不是钉某个符号名。
   const read = (rel: string) => fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+  const CONSUMERS = [
+    'src/services/forwarder-route-publisher.ts',
+    'src/routes/branches.ts',
+    'src/services/replica-loadtest.ts',
+    'src/routes/replica-sets.ts',
+  ];
 
-  it('发布器在 emit 单点按完整 host 查占位（别名 + 自定义域名，两趟都过它）', () => {
-    const src = read('src/services/forwarder-route-publisher.ts');
-    // 判定必须按完整 host：自定义域名存的是整条 host，只按标签判会漏掉它。
-    expect(src).toContain('occupiedHostOwners(this.opts.state.getAllBranches(), this.opts.rootDomains)');
-    expect(src).toContain('const hostOwner = occupiedHosts.get(host);');
-    // 标签级那份别名检查已被按-host 检查完全包含，不许再留第二份判据。
-    expect(src).not.toContain('aliasOwners.get(namedLabel)');
+  it('窄判据 savedAliasOwners 已彻底删除，物理上无法再被使用', () => {
+    // 删掉它比断言「别用它」更强：只要它还导出，下一次升级又会有人只接一半。
+    expect(read('src/services/preview-entrypoints.ts')).not.toContain('export function savedAliasOwners');
+    for (const rel of CONSUMERS) expect(read(rel)).not.toContain('savedAliasOwners');
   });
 
-  it('面板 / GET /api/branches 的网关入口清单过滤了被占走的 host', () => {
-    const src = read('src/routes/branches.ts');
-    expect(src).toContain('const gwAliasOwned = new Set(savedAliasOwners(stateService.getAllBranches()).keys())');
-    expect(src).toContain('if (gwAliasOwned.has(namedLabel)) continue;');
-  });
-
-  it('两处 SSRF 白名单都传了别名集合（否则允许探测别人的应用）', () => {
-    for (const rel of ['src/services/replica-loadtest.ts', 'src/routes/replica-sets.ts']) {
-      const src = read(rel);
-      expect(src).toContain('savedAliasOwners(');
-      // 参数里含 `String(sub).toLowerCase()`，不能用 [^)]* —— 会被内层括号截断。
-      expect(src).toMatch(/publishedServiceLabels\([\s\S]{0,120}?aliasOwned\)/);
+  it('四个消费方都从 occupiedHostOwners 取占位表', () => {
+    for (const rel of CONSUMERS) {
+      expect(read(rel), rel).toContain('occupiedHostOwners(');
     }
   });
 
+  it('入口表也按完整 host 过滤（含自定义域名）', () => {
+    const src = read('src/services/preview-entrypoints.ts');
+    expect(src).toContain('opts.occupiedHosts?.has(');
+    expect(src).toContain('occupiedHosts: deps.getAllBranches && deps.previewHost');
+  });
+
   it('撞名占位刻意**不**过滤 —— 它要的是已声明拓扑占了哪些 host', () => {
-    // 反向断言：这一处若也开始过滤，新的重复别名就会被放行（与其余四处相反的语义）。
     const src = read('src/routes/branches.ts');
     expect(src).toContain('for (const host of computeBranchPublishedServiceHosts(other, root))');
     expect(src).toContain('for (const label of publishedServiceLabels(slug, sub))');
