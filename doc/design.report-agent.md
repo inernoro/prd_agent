@@ -164,7 +164,7 @@
 | `report_weekly_reports` | 周报 | UserId, TeamId, WeekYear, Sections, Status |
 | `report_data_sources` | 数据源配置 | TeamId, SourceType(git/svn), RepoUrl, Credentials |
 | `report_commits` | 代码提交缓存 | DataSourceId, MappedUserId, CommitHash, Message, Date |
-| `report_comments` | 段落级评论 | ReportId, SectionIndex, Content, ParentCommentId（回复） |
+| `report_comments` | 段落级评论 + 划词评论 | ReportId, SectionIndex, Content, ParentCommentId（回复）；划词评论额外带 SelectedText/ContextBefore/ContextAfter/StartOffset/EndOffset（选区锚定，null 表示传统段落级评论），前端据此在正文重定位并画黄色下划线，正文变化找不到原片段时仅不画线、评论保留（changelogs/2026-07-27_report-comment-underline.md） |
 | `report_likes` | 点赞记录 | ReportId, UserId（唯一约束：一人一赞） |
 | `report_view_events` | 浏览事件 | ReportId, UserId, ViewedAt（允许重复，统计频次） |
 | `report_team_summaries` | AI 团队汇总 | TeamId, WeekYear, Summary, GeneratedBy(AI) |
