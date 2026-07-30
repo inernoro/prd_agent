@@ -3,6 +3,7 @@ import {
   hasQuickRecordRequest,
   parseDocumentStoreDeepLink,
   withDocumentStoreEntry,
+  withoutDocumentStoreTabRequest,
   withoutOrphanedDocumentStoreEntry,
   withoutQuickRecordRequest,
 } from './documentStoreDeepLink';
@@ -36,5 +37,11 @@ describe('documentStoreDeepLink', () => {
     expect(hasQuickRecordRequest('?quickRecord=1')).toBe(true);
     expect(hasQuickRecordRequest('?quickRecord=0')).toBe(false);
     expect(withoutQuickRecordRequest('?quickRecord=1&tab=mine')).toBe('?tab=mine');
+  });
+
+  it('consumes a list tab request without dropping the open store and entry', () => {
+    expect(withoutDocumentStoreTabRequest('?tab=mine&store=store-1&entry=entry-2'))
+      .toBe('?store=store-1&entry=entry-2');
+    expect(withoutDocumentStoreTabRequest('?tab=team')).toBe('');
   });
 });
