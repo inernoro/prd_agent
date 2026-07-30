@@ -12,6 +12,7 @@ import type { ActivityEvent } from './server.js';
 import { ShellExecutor } from './services/shell-executor.js';
 import { StateService } from './services/state.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
+import { runEntrypointSelfCheck, resolveSelfCheckBaseUrl } from './services/entrypoint-reachability.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
 import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
@@ -224,7 +225,69 @@ function startMasterMemoryMonitor(store: ServerEventLogSink | null): NodeJS.Time
  * 端点共用，端点是注册在「任务调度」里的定时回归任务的探测目标）。
  */
 const BUILD_GATE_WATCHDOG_INTERVAL_MS = 60_000;
+// 入口可达性自检间隔。2026-07-30 事故：Cloudflare 一条规则把 /api/self-update
+// 挡在应用之外数小时无人知晓——因为请求没进应用，CDS 的日志和历史都不会有记录。
+// 30 分钟一轮足够（拦截规则不是高频事件），且探测本身是三个无鉴权请求，开销可忽略。
+const ENTRYPOINT_SELF_CHECK_INTERVAL_MS = 30 * 60_000;
+// 启动后延迟首检：等 CDS 自己起来并且 nginx reload 完，否则首检必然误报。
+const ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS = 90_000;
+
 const BUILD_GATE_WATCHDOG_EVENT_MIN_INTERVAL_MS = 10 * 60_000;
+
+/**
+ * 控制面入口可达性看门狗（2026-07-30）。
+ *
+ * 回答一个此前没人问过的问题：**我自己的入口，从公网还进得来吗？**
+ *
+ * 这次事故里 /api/self-update 被 CDN 规则挡在应用外，用户每次点更新都失败，
+ * 但因为请求没进应用，CDS 的日志、更新历史、事件流里一条记录都没有——
+ * 从系统内部看一切正常。只有从**公网**回头探测自己，才能看见这一层。
+ */
+function startEntrypointReachabilityWatchdog(store: ServerEventLogSink | null): NodeJS.Timeout | null {
+  // executor 不对外提供控制面入口，自检没有意义。
+  if (config.mode === 'executor') return null;
+  const baseUrl = resolveSelfCheckBaseUrl(config.rootDomains);
+  if (!baseUrl) {
+    // 没配根域名就没法做真实链路探测。明说跳过，不假装健康（no-rootless-tree）。
+    console.log('[entrypoint-check] 未配置 CDS_ROOT_DOMAINS，跳过入口可达性自检');
+    return null;
+  }
+
+  let lastBlockedSignature = '';
+  const run = async () => {
+    try {
+      const report = await runEntrypointSelfCheck(baseUrl);
+      const signature = report.blocked.map((b) => `${b.path}:${b.status}`).join(',');
+      if (signature === lastBlockedSignature) return;   // 状态没变化就不刷屏
+      lastBlockedSignature = signature;
+
+      if (report.healthy) {
+        console.log(`[entrypoint-check] ${report.summary}`);
+        store?.record({
+          category: 'system', severity: 'info', source: 'entrypoint-check',
+          action: 'entrypoint.reachability.recovered',
+          message: report.summary, status: 'info',
+          details: { results: report.results },
+        });
+        return;
+      }
+      console.warn(`[entrypoint-check] ${report.summary}`);
+      store?.record({
+        category: 'system', severity: 'warn', source: 'entrypoint-check',
+        action: 'entrypoint.reachability.blocked',
+        message: report.summary, status: 'warn',
+        details: { blocked: report.blocked, nextAction: report.nextAction, results: report.results },
+      });
+    } catch (err) {
+      console.warn(`[entrypoint-check] 自检失败: ${(err as Error).message}`);
+    }
+  };
+
+  setTimeout(() => { void run(); }, ENTRYPOINT_SELF_CHECK_STARTUP_DELAY_MS).unref?.();
+  const timer = setInterval(() => { void run(); }, ENTRYPOINT_SELF_CHECK_INTERVAL_MS);
+  timer.unref?.();
+  return timer;
+}
 
 function startBuildGateWatchdog(store: ServerEventLogSink | null, state: StateService): NodeJS.Timeout | null {
   if (!store) return null;
@@ -876,6 +939,7 @@ if (activeServerEventLogStore) {
 const branchOperationCoordinator = new BranchOperationCoordinator(activeServerEventLogStore);
 const masterMemoryMonitor = startMasterMemoryMonitor(activeServerEventLogStore);
 const buildGateWatchdog = startBuildGateWatchdog(activeServerEventLogStore, stateService);
+const entrypointReachabilityWatchdog = startEntrypointReachabilityWatchdog(activeServerEventLogStore);
 const staleDeployDispatchReconciler = startStaleDeployDispatchReconciler(stateService, activeServerEventLogStore);
 
 function beginBackgroundBranchOperation(input: {
