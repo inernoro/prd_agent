@@ -607,6 +607,35 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
+def _strip_resolved_failure_phrases(text):
+    """Remove historical failures that the same clause explicitly closes."""
+    closure = (
+        r"(?:(?:现已|已经|已)(?:通过|修复|恢复|成功|可用)"
+        r"|(?:最终|重试后|随后)(?:已)?(?:通过|修复|恢复|成功|可用))"
+    )
+    return re.sub(
+        r"(?:失败|未通过|阻断|不可用|不可交付|无法完成)"
+        r"[^。；;|\n]{0,40}"
+        + closure,
+        " ",
+        text or "",
+        flags=re.I,
+    )
+
+
+def _has_resolved_failure_status(text):
+    """Return whether a root-cause status cell explicitly closes its failure."""
+    return bool(
+        re.search(
+            r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
+            r"|(?:最终|重试后|随后)(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
+            r"|恢复正常",
+            text or "",
+            re.I,
+        )
+    )
+
+
 def _daily_fact_signals(values, body):
     """Extract the product and coverage facts used to justify a daily Verdict."""
     product_quality = values.get("产品质量", "").strip()
@@ -701,13 +730,16 @@ def _daily_fact_signals(values, body):
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
     root_fact_cells = []
     for row in root_cause_rows:
-        root_fact_cells.extend(row[:4])
-    root_facts = "；".join(root_fact_cells)
+        status_cells = "；".join(row[4:])
+        if not _has_resolved_failure_status(status_cells):
+            root_fact_cells.extend(row[:4])
+    root_facts = _strip_resolved_failure_phrases("；".join(root_fact_cells))
     chain_failure = bool(
         re.search(
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
             r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)"
-            r"|(?:失败|未通过|不可交付|无法完成|不可用|无法)"
+            r"|(?:失败|未通过|不可交付|无法完成|不可用"
+            r"|无法(?=(?:正常)?(?:完成|执行|送达|归档|发布|打开|访问|连接)))"
             r"[^。；;|\n]{0,28}"
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)",
             root_facts,

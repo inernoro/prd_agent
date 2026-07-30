@@ -193,6 +193,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_coverage_uncertainty_is_not_acceptance_chain_failure(self):
+        for fact in (
+            "无法确认报告归档是否覆盖移动端",
+            "无法确认 Slack 通知是否送达所有频道",
+            "无法检测报告发布是否覆盖旧浏览器",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+    def test_resolved_historical_failures_do_not_force_fail(self):
+        for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
+            for fact in (
+                "CDS smoke 先前失败但重试后已通过",
+                "验收报告归档失败已修复",
+            ):
+                with self.subTest(verdict=verdict, fact=fact):
+                    body = report_body(nature).replace(
+                        "当前部署 SHA 已前进", fact
+                    )
+                    errors = archive_report._daily_conclusion_contract_errors(
+                        verdict, body
+                    )
+                    self.assertEqual([], errors)
+
+    def test_resolved_root_cause_status_does_not_force_fail(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "验收报告归档失败"
+        ).replace(
+            "| 无法确认 | 创建冻结预览后复测 |",
+            "| 已修复 | 保留历史记录 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
     def test_non_fail_verdicts_reject_fail_only_facts(self):
         cases = (
             (
