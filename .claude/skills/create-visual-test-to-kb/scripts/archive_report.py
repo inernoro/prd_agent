@@ -689,6 +689,10 @@ _ROOT_CAUSE_INSTANCE_PATTERN = re.compile(
     r"|prd-(?:api|admin|desktop|video)|llmgw(?:-[A-Za-z0-9_-]+)?",
     re.I,
 )
+_VERIFIED_SCENARIO_OBJECT_PATTERN = (
+    r"(?:场景|用例|测试|重试|处理|请求|响应|路径|分支|案例|样本|输入|"
+    r"数据|状态码|逻辑|机制|流程)"
+)
 
 
 def _split_fact_clauses(text):
@@ -734,6 +738,9 @@ def _subject_occurrences(text, instance_aware=False):
         qualifier = suffix[
             : min((match.start() for match in suffix_events), default=len(suffix))
         ]
+        qualifier = re.split(
+            r"(?:以及|并且|和|与|及|、|/|并|且)", qualifier, maxsplit=1
+        )[0]
         raw_identities = [
             match.group(0).lower()
             for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(
@@ -886,6 +893,27 @@ def _failure_is_negated(clause, event, previous_event_end):
     prefix = clause[max(previous_event_end, event.start() - 12) : event.start()]
     scope = clause[previous_event_end : event.start()]
     suffix = clause[event.end() : event.end() + 12]
+    scenario_prefix = clause[max(0, event.start() - 32) : event.start()]
+    if re.match(_VERIFIED_SCENARIO_OBJECT_PATTERN, suffix, re.I):
+        successful_diagnostic = re.search(
+            rf"(?:{_DIAGNOSTIC_MODIFIER_PATTERN}"
+            r"|(?:已|已经)(?:验证|测试|检查|覆盖|复测))\s*$",
+            scenario_prefix,
+            re.I,
+        )
+        resolved_match = None
+        for match in _RESOLVED_FACT_PATTERN.finditer(scenario_prefix):
+            resolved_match = match
+        resolved_bridge = bool(
+            resolved_match
+            and re.fullmatch(
+                r"\s*(?:对|针对|关于)?\s*",
+                scenario_prefix[resolved_match.end() :],
+                re.I,
+            )
+        )
+        if successful_diagnostic or resolved_bridge:
+            return True
     if re.search(
         r"(?:并未|没有|并非|并不是|不是|不算|未曾|从未|无|未|没)"
         r"(?:发生|出现|处于|被判定为)?\s*$",
@@ -960,6 +988,15 @@ def _event_inherits_context(clause, event, state, previous_event_end):
         return True
     if re.fullmatch(
         r"(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?"
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        rf"(?:{_VERIFIED_SCENARIO_OBJECT_PATTERN})+(?:后)?"
+        r"(?:但是|但|不过|然而)?(?:再次|重新)?"
+        r"(?:重试|复测|验证)(?:结果)?(?:后)?"
         r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
         normalized,
         re.I,

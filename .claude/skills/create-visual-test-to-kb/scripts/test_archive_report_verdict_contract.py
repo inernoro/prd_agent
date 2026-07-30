@@ -119,6 +119,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("构建已成功重现报错", {"build"}),
             ("构建已经成功地定位到报错", {"build"}),
             ("验收报告归档已成功定位失败", {"archive"}),
+            ("CDS smoke 已通过失败场景测试", set()),
+            ("CDS smoke 已成功验证异常处理", set()),
+            ("验收报告归档已通过失败重试测试", set()),
             (
                 "CDS smoke 与构建同时失败",
                 {"smoke", "build"},
@@ -605,6 +608,29 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
+    def test_verified_failure_scenario_does_not_reopen_gate(self):
+        for fact in (
+            "CDS smoke 已通过失败场景测试",
+            "CDS smoke 已成功验证异常处理",
+            "验收报告归档已通过失败重试测试",
+            "CDS smoke 已验证异常处理",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+        current_failure = "CDS smoke 已通过失败场景测试但复测仍失败"
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进", current_failure
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
     def test_repaired_artifact_or_pending_delivery_does_not_close_gate(self):
         facts = (
             "CDS smoke 失败；已修复代码仍未部署",
@@ -722,6 +748,20 @@ class DailyVerdictContractTests(unittest.TestCase):
         body = body.rstrip() + (
             "\n| 验收冻结 SHA | 移动端 CDS smoke 已通过 | 移动端复测完成 | "
             "已证明同一实例 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
+    def test_parallel_subject_instances_can_be_closed_independently(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进",
+            "移动端 CDS smoke 与后端验收报告归档同时失败",
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | 移动端 CDS smoke 已通过 | 移动端复测完成 | "
+            "已证明移动端 | 已通过 | 保留记录 |"
+            "\n| 验收冻结 SHA | 后端验收报告归档已修复 | 后端复测完成 | "
+            "已证明后端 | 已通过 | 保留记录 |\n"
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
