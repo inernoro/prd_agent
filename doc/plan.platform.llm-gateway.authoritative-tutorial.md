@@ -1,6 +1,6 @@
 # LLM Gateway 模型网关权威教程 · 计划
 
-> **版本**：v1.5 | **日期**：2026-07-18 | **状态**：已完成并持续维护
+> **版本**：v1.6 | **日期**：2026-07-28 | **状态**：已完成并持续维护
 
 ## 一、目标与完成定义
 
@@ -187,7 +187,7 @@ G2-E 本地实现证据：控制台已提供空状态创建、动态模型映射
 | T5 发布与终验 | 已完成 | PR #1158 已合并；104/104 权威图片资产返回 200；[整本教程 L2 终验报告](https://cds.miduo.org/reports?project=prd-agent&folder=eb1021a9af874bdc91da5f07762dba68&report=b20e4de1719c42f6b444941bf8a0c383) verdict 为通过、P0/P1/P2 为 0 | 公共入口保持 `https://map.ebcone.net/s/lib/PNyJj8JYqXJN?entry=3e4e51616ce64cb8f9e09c105dc7aaaa` |
 | 最终关联预览补洞 | 已生产交付 | PR #1168 已 squash 合并为 `ab560ba28cc0b6a973b2c276c14d8cbfd8d5d4b3`；功能提交、PR 末端提交和主分支合并提交的检查及部署证据已在外部平台化 SSOT §9.1 分开记录，避免跨 SHA 混写。CDS 五个源码 profile 和 smoke 3/3 通过；独立 Web 的 10 个页面与双健康端点返回 200，四协议无 Key 全部 401；远端浏览器 113/113、Exchange 连续故事 3/3、0 console/network finding。[最终 L2 验收报告](https://cds.miduo.org/reports?project=prd-agent&folder=2d16c45faee0490387098c6979935b3b&report=819a8f3bebad449d893d003884f4c6e3) 已读回 12 个步骤、12 张图片和 4 个验收深链。生产发布 `rel_aaae1903c97652b6` 首次更新 37 项，第二次 37 项全部 noop；只读复核 `rel_3c0ae6c6fc0ce838` 确认五集合备份 SHA256 为 `9167ba616bcc228ea42ae509d6686c07a3c484080c3f88b851f82c0132e1f1a2`，临时 Key 活跃数为 0 且最新 Key 已撤销；CDS 目标已恢复原命令并禁用。PR #1169 另补齐 Quickstart、本地主节点、远程派发和 executor 执行四条路径的依赖作用域及存量兼容，CDS 构建、纯函数 4/4、定向链路 7/7 与全量 2852/2852 测试通过 | 后续仅在控制台功能变化造成教程证据漂移时增量维护 |
 | Generation details 增量维护 | 源码完成，待生产发布 | PR #1178 将详情重构为概览、请求与响应、路由、审计四页签，并补图 105 至 108；第 13、21 章已改为精确 requestId 自动开详情，发布器检查和 8/8 单测通过 | PR 合并后使用新的临时最小权限教程 Key 增量发布，发布后立即撤销；当前 Key 保持已撤销状态 |
-| 每日漂移维护 | 已落地 | 每日 workflow 扫描 LLMGW 页面增量，页面到章节映射覆盖现有页面；关键稳定文案执行页面与教程双向对账，未映射新页面为 P1、锚点消失为 P0 | 只产 JSON/Markdown 健康报告和 advanced 更新提醒草稿，不自动改正文、seed 或知识库；确认后的教程变更仍走 publisher CAS 增量发布 |
+| 每日漂移维护 | 已落地 | 每日 workflow 扫描 LLMGW 页面增量，页面到章节映射覆盖现有页面；关键稳定文案执行页面与教程双向对账，未映射新页面为 P1、锚点消失为 P0。已升级为页面、教程步骤与截图证据三方双向维护图谱：MAP 新增 Draft/Published/历史/CAS 回滚 API，发布器读回成功后同步图谱、支持每日只写 Draft 与二次 noop 校验，人工草稿禁止被自动批次覆盖；对图谱与节点响应丢失执行远端对账并按依赖顺序恢复发布批次，主文档写入失败改为回读确认 + 最新 CAS 重试；prd-admin 控制台新增教程关系草稿视图、安全深链、一次性入口与全量教程发现，publisher 写操作按作用域收窄；prd-api 修复教程图谱对旧租户读取返回空值、以及知识库删除未级联清理关联图谱节点残留（changelogs/2026-07-27_llmgw-tutorial-bilink-maintenance.md、changelogs/2026-07-27_llmgw-review-comment-closure.md） | 只产 JSON/Markdown 健康报告和 advanced 更新提醒草稿，不自动改正文、seed 或知识库；确认后的教程变更仍走 publisher CAS 增量发布；图谱发布批次失败时靠远端对账与依赖顺序恢复收敛，不留部分状态 |
 
 ## 八、实时可见与完成口径
 

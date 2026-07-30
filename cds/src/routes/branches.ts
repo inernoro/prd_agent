@@ -23,6 +23,16 @@ import {
 import { classifyDeployRuntime, computeServiceDrift, applyDefaultDeployModesToBranch, branchUsesPrebuiltMode } from '../services/deploy-runtime.js';
 import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } from '../services/branch-extra-services.js';
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
+import {
+  branchEntrypointDepsFromState,
+  isGatewayConsoleEntry,
+  isPublishableNamedLabel,
+  namedServiceLabel,
+  publishedServiceLabels,
+  occupiedHostOwners,
+  resolveBranchEntrypointsEnv,
+  resolveServiceLandingPath,
+} from '../services/preview-entrypoints.js';
 import { branchAppNetworkName, branchNetworkIsolationEnabled } from '../services/branch-network.js';
 import { isRemoteExecutorOwned } from '../services/executor-ownership.js';
 import {
@@ -72,6 +82,7 @@ import { buildUnifiedBranchResources, type UnifiedBranchResource } from '../serv
 import { fetchWithLockRetry } from '../services/git-fetch-retry.js';
 import { resolveGitAuthEnv } from '../services/git-auth-env.js';
 import { selfStatusCache, type RemoteBranchEntry } from '../services/self-status-cache.js';
+import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { installSelfUpdateEventProjector } from '../services/self-update-event-projector.js';
 import { nodeModulesVolumePrefix } from '../util/node-modules-volume.js';
@@ -303,23 +314,6 @@ function isSyntheticCdsManagedRuntimeBranch(
  * readiness path when it declares one, else '/'. Never force a generic service onto /gw/* — that
  * would 404 despite a valid host (Codex P2).
  */
-function resolveGatewayLandingPath(subdomain: string, readinessPath?: string): string {
-  const sub = subdomain.toLowerCase();
-  // Gateway console (llmgw-web): a standalone Vite SPA whose nginx falls back to
-  // index.html for any non-/gw/* path, so land on the console root — clicking it
-  // opens the real login → LLM logs UI, not a health JSON. This is the entry we
-  // want most prominent in the panel.
-  if (sub === 'llmgw-web') return '/';
-  // Serving engine (llmgw-serve): API-only, mounts under /gw/v1/* and 404s at the
-  // bare root, so land on its health endpoint.
-  if (sub === 'llmgw-serve') return '/gw/v1/healthz';
-  // Backend/API engine (llmgw): API-only, mounts under /gw/* and 404s at the bare
-  // root, so land on its health endpoint.
-  if (sub === 'llmgw') return '/gw/healthz';
-  const trimmed = (readinessPath ?? '').trim();
-  if (trimmed && trimmed.startsWith('/')) return trimmed;
-  return '/';
-}
 
 function githubLoginFromCommitEmail(email: string): string | null {
   const normalized = email.trim().toLowerCase();
@@ -10225,7 +10219,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // getMergedEnv() 的结果按来源分类返回,前端可以按「来源 chip」过滤:
   //   - cds-builtin: CDS_HOST / CDS_PROJECT_SLUG 等系统注入,只读不可改
   //   - mirror:      镜像加速变量(NPM_REGISTRY 等),开关在 CDS 系统设置
-  //   - global:      _global scope customEnv,所有项目共享
+  //   - global:      _global scope customEnv,仅项目显式开启 inheritGlobalEnv 时继承
   //   - project:     当前项目的 customEnv,只影响这个项目
   //
   // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
@@ -10265,7 +10259,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       builtinDerived.CDS_PROJECT_ID = project.id;
       builtinDerived.CDS_PROJECT_SLUG = project.slug;
     }
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    // 与真实部署路径 stateService.getCustomEnv(projectId) 保持一致：_global 默认只
+    // 服务 CDS 控制面，项目只有显式开启 inheritGlobalEnv 才能看到并继承。
+    // 此前本接口无条件读取 _global，导致 mos 这类未继承项目被错误展示为“已生效”。
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global'
       ? {}
       : stateService.getCustomEnvScope(projectId);
@@ -10702,7 +10701,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
     const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
     const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
     const derivedReserved: Record<string, string> = {};
@@ -10750,8 +10751,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
       try {
         const resolved = resolveProfileRuntimeEnvWithProvenance(
           entry, effective, customLayers, profileLayers,
-          // injectBullmqPrefix 与部署路径（container.ts resolveProfileRuntimeEnv）同源同值
-          { jwtIssuer: config.jwt.issuer, injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0' },
+          // injectBullmqPrefix / publishedEntrypoints 与部署路径（container.ts
+          // resolveProfileRuntimeEnv）同源同值,否则检查器显示的 env ≠ 容器实际拿到的 env
+          {
+            jwtIssuer: config.jwt.issuer,
+            injectBullmqPrefix: process.env.CDS_BULLMQ_PREFIX_INJECTION !== '0',
+            publishedEntrypoints: resolveBranchEntrypointsEnv(
+              entry,
+              branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
+            ),
+          },
         );
         // 脱敏走 maskSecrets SSOT:按 key 名或 URL 凭据值判定,provenance 的 value 同步替换
         const maskedEnv = maskSecrets(resolved.env);
@@ -15162,11 +15171,16 @@ export function createBranchRouter(deps: RouterDeps): Router {
   function computeBranchGatewayUrls(
     entry: BranchEntry,
     primaryRoot: string,
-  ): Array<{ subdomain: string; name: string; url: string }> {
+  ): Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> {
     const project = stateService.getProject(entry.projectId);
     const gwPreviewSlug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
-    const gatewayUrls: Array<{ subdomain: string; name: string; url: string }> = [];
+    const gatewayUrls: Array<{ subdomain: string; name: string; url: string; isConsole: boolean }> = [];
     if (!gwPreviewSlug) return gatewayUrls;
+    // 被已保存别名**或自定义域名**占走的 host，发布器不会写（那条路由指向别人的应用），
+    // 面板与 GET /api/branches 也就不能把它当自己的入口列出来 —— 否则用户点开打开的是
+    // 另一个分支的应用（Codex P1）。判据与发布器 / 入口表同用 occupiedHostOwners 一份，
+    // 按**完整 host** 比（自定义域名存的是整条 host，只按标签判会漏）。
+    const gwOccupied = occupiedHostOwners(stateService.getAllBranches(), [primaryRoot]);
     const profileById = new Map<string, BuildProfile>();
     for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
       // resolveEffectiveProfile applies branch profileOverrides (subdomain / readinessProbe / …),
@@ -15186,8 +15200,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
       const sub = profile?.subdomain;
       if (!sub) continue;
       if (seenSubdomains.has(sub)) continue;
-      const namedLabel = `${gwPreviewSlug}-${sub}`;
-      if (namedLabel.length > 63) continue; // RFC 1035 single-label limit + wildcard cert coverage
+      const namedLabel = namedServiceLabel(gwPreviewSlug, sub);
+      // RFC 1035 single-label limit + wildcard cert coverage — shared predicate with the publisher
+      // and the env-injected entrypoint table (preview-entrypoints.ts), so the three never drift.
+      if (!isPublishableNamedLabel(namedLabel)) continue;
+      if (gwOccupied.has(`${namedLabel}.${primaryRoot}`.toLowerCase())) continue;
       seenSubdomains.add(sub);
       // Landing path — pick the path most likely to return a live 200 when the entry is clicked
       // (Codex P2: don't force every named service onto the LLM gateway health path):
@@ -15195,7 +15212,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
       //      and 404 at the bare root, so land on their health endpoint explicitly.
       //   2) Any other named service (docs / metrics / …) — the forwarder publishes the named host to
       //      the container root, so honor the profile's readiness path when set, else land at '/'.
-      const landingPath = resolveGatewayLandingPath(sub, profile?.readinessProbe?.path);
+      const landingPath = resolveServiceLandingPath(sub, profile?.readinessProbe?.path);
       gatewayUrls.push({
         subdomain: sub,
         name: profileId,
@@ -15203,9 +15220,39 @@ export function createBranchRouter(deps: RouterDeps): Router {
         // nginx `*.<root>` server 块已在 443 用同一份通配证书服务命名子域，此前误印成 http:// 才导致
         // 「1 HTTPS + 3 HTTP」。命名子域是单标签（连字符不产生新点），落在 *.<root> 通配证书覆盖内。
         url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
+        // 「这是不是可登录的控制台」由平台判定后下发。面板此前自己按子域名字判，
+        // 改名当天那 4 处判定整块失效（Codex P2）；命名约定的解释权归这一侧。
+        // 判据与落点同源：叫 llmgw 但声明了 /gw/healthz 的存量 API profile 不算控制台，
+        // 否则面板把它排最前、标成「网关控制台」，点开是一串 JSON（Codex P2）。
+        isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path),
       });
     }
     return gatewayUrls;
+  }
+
+  /**
+   * 该分支**实际被发布出去的全部命名 host**（含历史别名），用于跨分支撞名判定。
+   *
+   * 与 computeBranchGatewayUrls 的区别：那个是给面板看的「入口清单」，刻意只列规范名，
+   * 免得同一个服务出现两行。撞名判定要的是「谁已经占了哪些 host」，别名同样占着，
+   * 漏算就会放行一个与别的分支重复的别名（Codex P1）。两者共用 publishedServiceLabels
+   * 作为发布口径，不各自拼。
+   */
+  function computeBranchPublishedServiceHosts(entry: BranchEntry, root: string): string[] {
+    const project = stateService.getProject(entry.projectId);
+    const slug = buildPreviewUrlForProject('', entry.branch, project, entry.projectId).previewSlug;
+    if (!slug) return [];
+    const hosts: string[] = [];
+    const seen = new Set<string>();
+    for (const bp of stateService.getEffectiveProfilesForBranch(entry)) {
+      const sub = resolveEffectiveProfile(bp, entry).subdomain;
+      if (!sub || seen.has(sub)) continue;
+      seen.add(sub);
+      for (const label of publishedServiceLabels(slug, sub)) {
+        hosts.push(`${label}.${root}`.toLowerCase());
+      }
+    }
+    return hosts;
   }
 
   const findPreviewHostCollisions = (
@@ -15236,10 +15283,48 @@ export function createBranchRouter(deps: RouterDeps): Router {
           }
         }
 
-        for (const gateway of computeBranchGatewayUrls(other, root)) {
-          const host = new URL(gateway.url).host.toLowerCase();
+        // 必须用「实际发布的全部 host」而不是面板入口清单：历史别名同样被发布、同样占位，
+        // 只比规范名会放行一个与别的分支重复的别名（Codex P1）。
+        for (const host of computeBranchPublishedServiceHosts(other, root)) {
           if (candidates.has(host)) {
             conflicts.push({ domain: host, conflictWith: other.id, reason: 'service-subdomain' });
+          }
+        }
+      }
+    }
+    return conflicts;
+  };
+
+  /**
+   * 别名会不会撞上**已发布的命名服务 host**（含历史别名）。
+   *
+   * 别名和命名子域挤在同一个命名空间里：别名 `foo-llmgw` 生成的 host 与分支 foo 的
+   * 控制台 host 是同一个字符串，forwarder 会收到两条同 host 不同上游的路由。
+   *
+   * 为什么单独写而不是直接调 findPreviewHostCollisions：那个还会顺带查 preview slug
+   * 与其它分支的别名，而这两项 `stateService.findAliasCollisions` 已经查过，
+   * 复用会让同一个冲突报两遍。host 的枚举口径仍然共用 computeBranchPublishedServiceHosts，
+   * 不另起一份。
+   *
+   * **不跳过自己**：别名撞上自己分支的服务 host 同样是「一个 host 两个上游」
+   * （别名指向主应用、服务路由指向那个命名服务），并不因为同属一个分支就无害。
+   */
+  const findAliasServiceHostCollisions = (
+    candidateAliases: string[],
+  ): Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> => {
+    const rootDomains = config.rootDomains?.length
+      ? config.rootDomains
+      : (config.previewDomain ? [config.previewDomain] : []);
+    if (rootDomains.length === 0) return [];
+
+    const conflicts: Array<{ alias: string; domain: string; conflictWith: string; reason: 'service-subdomain' }> = [];
+    for (const alias of candidateAliases) {
+      for (const rawRoot of rootDomains) {
+        const root = rawRoot.toLowerCase();
+        const host = `${alias.toLowerCase()}.${root}`;
+        for (const other of stateService.getAllBranches()) {
+          if (computeBranchPublishedServiceHosts(other, root).includes(host)) {
+            conflicts.push({ alias, domain: host, conflictWith: other.id, reason: 'service-subdomain' });
           }
         }
       }
@@ -15444,12 +15529,19 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // Check collisions with other branches' slugs/aliases
     const collisions = stateService.findAliasCollisions(id, normalized);
     const customDomainCollisions = findAliasCustomDomainCollisions(id, normalized);
-    const allCollisions = [...collisions, ...customDomainCollisions];
+    // 命名服务 host 也占着同一个命名空间。此前只查 slug/别名/自定义域名，
+    // 于是别名可以直接占走另一个分支已发布的 `<slug>-llmgw` —— helper 建好了却
+    // 只接进了 PUT /custom-domains，别名这条路径一直没人查（Codex P1，形状 2）。
+    const serviceHostCollisions = findAliasServiceHostCollisions(normalized);
+    const allCollisions = [...collisions, ...customDomainCollisions, ...serviceHostCollisions];
     if (allCollisions.length > 0) {
       res.status(409).json({
         error: `子域名冲突: ${allCollisions.map(c => {
           if (c.reason === 'slug') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的默认 slug 占用`;
           if (c.reason === 'alias') return `"${c.alias}" 已被分支 "${c.conflictWith}" 的别名占用`;
+          // service-subdomain 必须排在 `'domain' in c` 之前：它同样带 domain 字段，
+          // 落到下一条会被说成「自定义域名占用」，指错排查方向。
+          if (c.reason === 'service-subdomain') return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 已发布的命名服务入口占用`;
           if ('domain' in c) return `"${c.alias}" 生成的域名 "${c.domain}" 已被分支 "${c.conflictWith}" 的完整自定义域名占用`;
           return `"${c.alias}" 已被分支 "${c.conflictWith}" 占用`;
         }).join('; ')}`,
@@ -17343,16 +17435,11 @@ export function createBranchRouter(deps: RouterDeps): Router {
           stateService.addBuildProfile(profile);
         }
 
-        // Merge envVars — never clobber user-authored vars. Since the
-        // compose belongs to this project, seed values into the project
-        // scope (so e.g. a JWT_SECRET from cds-compose.yaml doesn't leak
-        // into sibling projects). Skip when either global OR project
-        // already has the key — both are user-authored sources of truth.
+        // 密钥与运行时参数不覆盖操作员现值；provider 合同键按仓库结构种子
+        // 同步，保证合同迁移不会留下新旧值混合状态。
         const mergedExisting = stateService.getCustomEnv(projectId);
-        for (const [key, value] of Object.entries(parsed.envVars)) {
-          if (mergedExisting[key] === undefined) {
-            stateService.setCustomEnvVar(key, value, projectId);
-          }
+        for (const write of planImportedEnvSeedWrites(parsed.envVars, mergedExisting)) {
+          stateService.setCustomEnvVar(write.key, write.value, projectId);
         }
 
         // Add infra services only when this project doesn't already

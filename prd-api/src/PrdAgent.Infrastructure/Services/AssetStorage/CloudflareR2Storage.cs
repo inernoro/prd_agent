@@ -67,18 +67,7 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
         _safeDeleteAllowPrefixes = NormalizeSafeDeleteAllowPrefixes(safeDeleteAllowPrefixes, _prefix);
 
         // R2 S3 兼容 endpoint: https://{accountId}.r2.cloudflarestorage.com
-        var ep = (endpoint ?? string.Empty).Trim();
-        if (string.IsNullOrWhiteSpace(ep))
-            ep = $"https://{aid}.r2.cloudflarestorage.com";
-
-        var config = new AmazonS3Config
-        {
-            ServiceURL = ep,
-            ForcePathStyle = true, // R2 要求 path-style
-            Timeout = TimeSpan.FromSeconds(120),
-        };
-
-        _s3 = new AmazonS3Client(akid, sk, config);
+        _s3 = new AmazonS3Client(akid, sk, CreateClientConfig(aid, endpoint));
     }
 
     public void Dispose()
@@ -252,17 +241,51 @@ public sealed class CloudflareR2Storage : IAssetStorage, IDisposable
     private async Task UploadBytesInternalAsync(string key, byte[] bytes, string? contentType, CancellationToken ct, string? cacheControl = null)
     {
         if (bytes == null || bytes.Length == 0) throw new ArgumentException("bytes empty", nameof(bytes));
-        var putReq = new PutObjectRequest
+        var putReq = CreatePutObjectRequest(_bucket, key, bytes, contentType, cacheControl);
+        try
         {
-            BucketName = _bucket,
+            await _s3.PutObjectAsync(putReq, ct).ConfigureAwait(false);
+        }
+        finally
+        {
+            putReq.InputStream.Dispose();
+        }
+    }
+
+    internal static AmazonS3Config CreateClientConfig(string accountId, string? endpoint)
+    {
+        var ep = (endpoint ?? string.Empty).Trim();
+        if (string.IsNullOrWhiteSpace(ep))
+            ep = $"https://{accountId}.r2.cloudflarestorage.com";
+
+        return new AmazonS3Config
+        {
+            ServiceURL = ep,
+            ForcePathStyle = true,
+            AuthenticationRegion = "auto",
+            Timeout = TimeSpan.FromSeconds(120),
+        };
+    }
+
+    internal static PutObjectRequest CreatePutObjectRequest(
+        string bucket,
+        string key,
+        byte[] bytes,
+        string? contentType,
+        string? cacheControl)
+    {
+        var request = new PutObjectRequest
+        {
+            BucketName = bucket,
             Key = key,
             InputStream = new MemoryStream(bytes, writable: false),
             ContentType = (contentType ?? string.Empty).Trim(),
-            DisablePayloadSigning = true, // R2 推荐
+            DisablePayloadSigning = true,
+            DisableDefaultChecksumValidation = true,
         };
         var cc = (cacheControl ?? string.Empty).Trim();
-        if (!string.IsNullOrWhiteSpace(cc)) putReq.Headers.CacheControl = cc;
-        await _s3.PutObjectAsync(putReq, ct).ConfigureAwait(false);
+        if (!string.IsNullOrWhiteSpace(cc)) request.Headers.CacheControl = cc;
+        return request;
     }
 
     private string BuildPublicUrl(string key)

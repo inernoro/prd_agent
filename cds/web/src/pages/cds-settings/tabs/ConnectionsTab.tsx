@@ -1,23 +1,13 @@
-/**
- * 对接 MAP（CDS 系统设置 → 运行时 → 对接 MAP）—— spec.cds.map-pairing-protocol.md v1。
- *
- * 用户体验流：
- *   1. 点 [+ 创建连接密钥]
- *   2. dialog 显示一段 base64url 密文 + [复制到剪贴板]
- *   3. 用户切到 MAP 平台粘贴
- *   4. 完成后回到本页，列表自动出现一条 status='active' 的连接
- *
- * 关键约束：
- *   - 密钥仅一次性可见（这条 status='pending-pairing' 时 issue 端可重新看，
- *     但 long token 只在 accept 响应里给 partner 一次，CDS 端不显示）
- *   - 默认 10 分钟 TTL，过期后 GC 自动删除
- */
+/** CDS 系统设置中的外部接入：统一走 MAP 跳转授权，不向用户暴露凭据。 */
 import { useEffect, useState } from 'react';
 import {
+  Bug,
   CheckCircle2,
   Clock,
-  Copy,
-  Plus,
+  ExternalLink,
+  Link2,
+  LockKeyhole,
+  RefreshCw,
   ShieldCheck,
   Trash2,
   X,
@@ -27,13 +17,7 @@ import {
 import { apiRequest, ApiError } from '@/lib/api';
 import { Button } from '@/components/ui/button';
 import { ConfirmAction } from '@/components/ui/confirm-action';
-import {
-  Dialog,
-  DialogContent,
-  DialogHeader,
-  DialogTitle,
-} from '@/components/ui/dialog';
-import { ErrorBlock, Field, LoadingBlock, Section } from '../components';
+import { ErrorBlock, LoadingBlock, Section } from '../components';
 
 interface CdsConnectionView {
   id: string;
@@ -42,32 +26,29 @@ interface CdsConnectionView {
   status: 'pending-pairing' | 'active' | 'revoked';
   scopes: string[];
   pairingExpiresAt?: string;
-  partnerId?: string;
   partnerName?: string;
   partnerBaseUrl?: string;
-  projectId?: string;
-  longTokenExpiresAt?: string;
   createdAt: string;
-  activatedAt?: string;
-  lastUsedAt?: string;
 }
 
 interface ListResponse {
   connections: CdsConnectionView[];
 }
 
-/**
- * `/api/cds-system/connections/issue` 响应。
- *
- * 注意：后端**不再**单独返回 pairingToken 明文 —— 它已嵌在 clipboardText
- * （`cds-connect:v1:<base64url>` 格式）里。这样减少 token 在 access logs /
- * proxy logs / browser devtools 中的足迹（PR #529 Bugbot MEDIUM）。
- * 前端只需要把 clipboardText 整体丢给 navigator.clipboard.writeText。
- */
-interface IssueResponse {
-  connectionId: string;
-  clipboardText: string;
-  expiresAt: string;
+interface BugReportIntegrationStatus {
+  configured: boolean;
+  source: 'system-settings' | 'environment' | 'none';
+  baseUrl: string;
+  tokenConfigured: boolean;
+  updatedAt?: string | null;
+  secretStorage: 'encrypted' | 'plaintext';
+  configurationError?: string | null;
+  authorizationUrl?: string | null;
+}
+
+interface BugReportIntegrationTestResult {
+  ok: boolean;
+  message: string;
 }
 
 type LoadState =
@@ -75,25 +56,32 @@ type LoadState =
   | { status: 'error'; message: string }
   | { status: 'ok'; connections: CdsConnectionView[] };
 
-export function ConnectionsTab({
-  onToast,
-}: {
-  onToast: (msg: string) => void;
-}): JSX.Element {
+export function ConnectionsTab({ onToast }: { onToast: (msg: string) => void }): JSX.Element {
   const [state, setState] = useState<LoadState>({ status: 'loading' });
-  const [issueOpen, setIssueOpen] = useState(false);
-  const [issued, setIssued] = useState<IssueResponse | null>(null);
-  const [submitting, setSubmitting] = useState(false);
+  const [integrationState, setIntegrationState] = useState<
+    | { status: 'loading' }
+    | { status: 'error'; message: string }
+    | { status: 'ok'; data: BugReportIntegrationStatus }
+  >({ status: 'loading' });
+  const [testing, setTesting] = useState(false);
+  const [testResult, setTestResult] = useState<BugReportIntegrationTestResult | null>(null);
 
   const reload = async () => {
-    try {
-      const data = await apiRequest<ListResponse>('/api/cds-system/connections');
-      setState({ status: 'ok', connections: data.connections });
-    } catch (err) {
-      setState({
-        status: 'error',
-        message: err instanceof ApiError ? err.message : String(err),
-      });
+    const [connectionsResult, integrationResult] = await Promise.allSettled([
+      apiRequest<ListResponse>('/api/cds-system/connections'),
+      apiRequest<BugReportIntegrationStatus>('/api/cds-system/integrations/bug-report'),
+    ]);
+    if (connectionsResult.status === 'fulfilled') {
+      setState({ status: 'ok', connections: connectionsResult.value.connections });
+    } else {
+      const err = connectionsResult.reason;
+      setState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
+    }
+    if (integrationResult.status === 'fulfilled') {
+      setIntegrationState({ status: 'ok', data: integrationResult.value });
+    } else {
+      const err = integrationResult.reason;
+      setIntegrationState({ status: 'error', message: err instanceof ApiError ? err.message : String(err) });
     }
   };
 
@@ -101,331 +89,268 @@ export function ConnectionsTab({
     void reload();
   }, []);
 
-  const handleIssue = async (name: string) => {
-    setSubmitting(true);
+  const handleRevoke = async (connection: CdsConnectionView) => {
     try {
-      const resp = await apiRequest<IssueResponse>(
-        '/api/cds-system/connections/issue',
-        {
-          method: 'POST',
-          body: { name: name.trim() || undefined, ttlMinutes: 10 },
-        },
+      await apiRequest(`/api/cds-system/connections/${connection.id}/revoke`, { method: 'POST' });
+      onToast('长期连接已撤销');
+      await reload();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  const handleDelete = async (connection: CdsConnectionView) => {
+    try {
+      await apiRequest(`/api/cds-system/connections/${connection.id}`, { method: 'DELETE' });
+      onToast('连接记录已删除');
+      await reload();
+    } catch (err) {
+      onToast(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  const testConnection = async () => {
+    setTesting(true);
+    setTestResult(null);
+    try {
+      const result = await apiRequest<BugReportIntegrationTestResult>(
+        '/api/cds-system/integrations/bug-report/test',
+        { method: 'POST' },
       );
-      setIssued(resp);
-      await reload();
+      setTestResult(result);
     } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
+      setTestResult({ ok: false, message: err instanceof ApiError ? err.message : String(err) });
     } finally {
-      setSubmitting(false);
+      setTesting(false);
     }
   };
 
-  const handleCopy = async (text: string) => {
+  const clearForwarding = async () => {
     try {
-      await navigator.clipboard.writeText(text);
-      onToast('密钥已复制到剪贴板，去 MAP 端粘贴');
-    } catch {
-      onToast('复制失败，请手动选中复制');
-    }
-  };
-
-  const handleRevoke = async (conn: CdsConnectionView) => {
-    try {
-      await apiRequest(`/api/cds-system/connections/${conn.id}/revoke`, {
-        method: 'POST',
-      });
-      onToast('已撤销');
+      await apiRequest('/api/cds-system/integrations/bug-report', { method: 'DELETE' });
+      setTestResult(null);
+      onToast('缺陷转发授权已撤销');
       await reload();
     } catch (err) {
       onToast(err instanceof ApiError ? err.message : String(err));
     }
   };
 
-  const handleDelete = async (conn: CdsConnectionView) => {
-    try {
-      await apiRequest(`/api/cds-system/connections/${conn.id}`, {
-        method: 'DELETE',
-      });
-      onToast('已删除');
-      await reload();
-    } catch (err) {
-      onToast(err instanceof ApiError ? err.message : String(err));
-    }
-  };
+  const connections = state.status === 'ok' ? state.connections : [];
+  const activeMapConnections = connections.filter(
+    (connection) => connection.partnerKind === 'map' && connection.status === 'active',
+  );
+  const integration = integrationState.status === 'ok' ? integrationState.data : null;
+  const fullyAuthorized = activeMapConnections.length > 0 && Boolean(integration?.configured);
 
   return (
     <Section
-      title="对接 MAP"
-      description={
-        <>
-          通过剪贴板配对密钥，与 MAP 平台或其他执行器适配器建立信任连接。流程：点
-          「创建连接密钥」→ 复制 → 在 MAP 平台粘贴 → 自动完成。详见{' '}
-          <code className="rounded bg-muted px-1 py-0.5 text-xs">
-            doc/spec.cds.map-pairing-protocol.md
-          </code>
-          。
-        </>
-      }
+      title="外部接入"
+      description="MAP 系统互联与缺陷转发在同一次授权中完成。用户只负责确认授权，不填写地址、不复制 Token、不粘贴配对码。"
     >
-      <div className="space-y-4">
-        <div className="flex items-center justify-between">
-          <div className="text-sm text-muted-foreground">
-            {state.status === 'ok'
-              ? `${state.connections.length} 条记录（含 pending）`
-              : null}
+      <div className="space-y-7">
+        <div className="rounded-xl border border-border bg-muted/20 p-5">
+          <div className="flex flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
+            <div className="min-w-0">
+              <div className="flex items-center gap-2 text-base font-semibold">
+                <ShieldCheck className={fullyAuthorized ? 'h-5 w-5 text-emerald-600' : 'h-5 w-5 text-primary'} />
+                {fullyAuthorized ? 'MAP 长期授权已生效' : '授权 MAP 平台'}
+              </div>
+              <p className="mt-2 max-w-3xl text-sm leading-6 text-muted-foreground">
+                {fullyAuthorized
+                  ? '系统互联与缺陷转发均已接通。长期凭据永久有效，仅在主动撤销、删除或凭据实际失效时终止。'
+                  : '点击后跳转到 MAP 确认授权。确认完成后，MAP 与 CDS 由服务端自动交换永久有效的长期凭据并返回结果。'}
+              </p>
+            </div>
+            {fullyAuthorized ? (
+              <Button disabled className="shrink-0">授权已完成</Button>
+            ) : integration?.authorizationUrl ? (
+              <Button asChild className="shrink-0">
+                <a href={integration.authorizationUrl}>
+                  <ExternalLink className="mr-1 h-4 w-4" />
+                  前往 MAP 授权
+                </a>
+              </Button>
+            ) : (
+              <Button disabled className="shrink-0">MAP 授权入口不可用</Button>
+            )}
           </div>
-          <Button size="sm" onClick={() => setIssueOpen(true)}>
-            <Plus className="mr-1 h-4 w-4" /> 创建连接密钥
-          </Button>
         </div>
 
-        {state.status === 'loading' ? <LoadingBlock /> : null}
+        {state.status === 'loading' || integrationState.status === 'loading' ? <LoadingBlock label="读取外部接入状态" /> : null}
         {state.status === 'error' ? <ErrorBlock message={state.message} /> : null}
-        {state.status === 'ok' && state.connections.length === 0 ? (
-          <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
-            还没有连接。点「创建连接密钥」开始配对。
-          </div>
-        ) : null}
-        {state.status === 'ok' && state.connections.length > 0 ? (
-          <div className="overflow-hidden rounded-md border border-border">
-            <table className="w-full text-sm">
-              <thead className="bg-muted/40 text-xs uppercase tracking-wide text-muted-foreground">
-                <tr>
-                  <th className="px-3 py-2 text-left font-medium">名称</th>
-                  <th className="px-3 py-2 text-left font-medium">对端</th>
-                  <th className="px-3 py-2 text-left font-medium">状态</th>
-                  <th className="px-3 py-2 text-left font-medium">Scope</th>
-                  <th className="px-3 py-2 text-right font-medium">操作</th>
-                </tr>
-              </thead>
-              <tbody>
-                {state.connections.map(conn => (
-                  <tr key={conn.id} className="border-t border-border align-middle">
-                    <td className="px-3 py-2.5">
-                      <div className="font-medium">{conn.name}</div>
-                      <div className="font-mono text-xs text-muted-foreground/70">
-                        {conn.id}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5">
-                      {conn.partnerName ? (
-                        <div>
-                          <div className="text-sm">{conn.partnerName}</div>
-                          <div className="font-mono text-xs text-muted-foreground/70">
-                            {conn.partnerBaseUrl}
-                          </div>
-                        </div>
-                      ) : (
-                        <span className="text-xs text-muted-foreground/60">—</span>
-                      )}
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <StatusBadge status={conn.status} pairingExpiresAt={conn.pairingExpiresAt} />
-                    </td>
-                    <td className="px-3 py-2.5">
-                      <div className="flex flex-wrap gap-1">
-                        {conn.scopes.map(s => (
-                          <span
-                            key={s}
-                            className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground"
-                          >
-                            {s}
-                          </span>
-                        ))}
-                      </div>
-                    </td>
-                    <td className="px-3 py-2.5 text-right">
-                      <div className="flex items-center justify-end gap-1">
-                        {conn.status === 'active' ? (
-                          <ConfirmAction
-                            title="撤销连接"
-                            description={`撤销与 ${conn.partnerName || conn.name} 的连接，对方将无法继续调用 CDS API。`}
-                            confirmLabel="撤销"
-                            onConfirm={() => handleRevoke(conn)}
-                            trigger={(
-                              <Button variant="ghost" size="sm" title="撤销">
-                                <ShieldCheck className="h-4 w-4" />
-                              </Button>
-                            )}
-                          />
-                        ) : null}
-                        <ConfirmAction
-                          title="删除连接记录"
-                          description={`删除连接记录 ${conn.name}。已撤销的记录删除后不会影响现有状态。`}
-                          confirmLabel="删除"
-                          onConfirm={() => handleDelete(conn)}
-                          trigger={(
-                            <Button variant="ghost" size="sm" title="删除记录">
-                              <Trash2 className="h-4 w-4" />
-                            </Button>
-                          )}
-                        />
-                      </div>
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
-        ) : null}
-      </div>
+        {integrationState.status === 'error' ? <ErrorBlock message={integrationState.message} /> : null}
+        {integration?.configurationError ? <ErrorBlock message={integration.configurationError} /> : null}
 
-      {/* 创建密钥 dialog */}
-      <Dialog
-        open={issueOpen}
-        onOpenChange={open => {
-          if (!open) {
-            setIssueOpen(false);
-            setIssued(null);
-          }
-        }}
-      >
-        <DialogContent className="max-w-2xl">
-          <DialogHeader>
-            <DialogTitle>创建连接密钥</DialogTitle>
-          </DialogHeader>
-          {!issued ? (
-            <IssueForm
-              onSubmit={handleIssue}
-              onCancel={() => setIssueOpen(false)}
-              submitting={submitting}
-            />
-          ) : (
-            <IssueResult
-              data={issued}
-              onCopy={() => void handleCopy(issued.clipboardText)}
-              onClose={() => {
-                setIssueOpen(false);
-                setIssued(null);
-              }}
-            />
-          )}
-        </DialogContent>
-      </Dialog>
+        <div className="grid gap-3 md:grid-cols-2">
+          <StatusCard
+            icon={<Link2 className="h-5 w-5" />}
+            title="MAP 系统互联"
+            ready={activeMapConnections.length > 0}
+            detail={activeMapConnections.length > 0
+              ? `${activeMapConnections.length} 条有效长期连接`
+              : '尚未建立双向信任连接'}
+          />
+          <StatusCard
+            icon={<Bug className="h-5 w-5" />}
+            title="MAP 缺陷转发"
+            ready={Boolean(integration?.configured)}
+            detail={integration?.configured
+              ? `快捷提缺陷将转发到 ${integration.baseUrl}`
+              : '未授权时仅保存在 CDS 本地台账'}
+          />
+        </div>
+
+        {integration ? (
+          <div className="space-y-3 rounded-lg border border-border p-4">
+            <div className="flex flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+              <div>
+                <h3 className="flex items-center gap-2 text-sm font-semibold">
+                  <LockKeyhole className="h-4 w-4 text-emerald-600" />
+                  服务端凭据状态
+                </h3>
+                <p className="mt-1 text-xs leading-5 text-muted-foreground">
+                  {integration.tokenConfigured
+                    ? `缺陷转发凭据已由 MAP 自动签发并在 CDS ${integration.secretStorage === 'encrypted' ? '加密保存' : '保存'}，浏览器不会收到明文。`
+                    : '完成 MAP 授权后将自动签发永久缺陷转发凭据。'}
+                </p>
+              </div>
+              <div className="flex flex-wrap gap-2">
+                {integration.configured ? (
+                  <Button type="button" variant="outline" onClick={() => void testConnection()} disabled={testing}>
+                    <RefreshCw className={testing ? 'mr-1 h-4 w-4 animate-spin' : 'mr-1 h-4 w-4'} />
+                    {testing ? '验证中' : '验证连接'}
+                  </Button>
+                ) : null}
+                {integration.source === 'system-settings' ? (
+                  <ConfirmAction
+                    title="撤销缺陷转发授权"
+                    description="撤销后快捷提缺陷将退回 CDS 本地台账，系统互联连接不受影响。"
+                    confirmLabel="撤销"
+                    onConfirm={clearForwarding}
+                    trigger={<Button type="button" variant="ghost">撤销缺陷转发</Button>}
+                  />
+                ) : null}
+              </div>
+            </div>
+            {testResult ? (
+              <div role="status" className={testResult.ok
+                ? 'rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-800 dark:text-emerald-300'
+                : 'rounded-md border border-destructive/30 bg-destructive/10 px-3 py-2 text-sm text-destructive'}
+              >
+                {testResult.message}
+              </div>
+            ) : null}
+          </div>
+        ) : null}
+
+        <div className="space-y-4 border-t border-border pt-6">
+          <div className="flex items-center justify-between gap-3">
+            <div>
+              <h3 className="text-base font-semibold">连接记录</h3>
+              <p className="mt-1 text-sm text-muted-foreground">长期授权不按时间自动过期，可在这里明确撤销或删除。</p>
+            </div>
+            <Button type="button" variant="outline" size="sm" onClick={() => void reload()}>
+              <RefreshCw className="mr-1 h-4 w-4" /> 刷新
+            </Button>
+          </div>
+          {state.status === 'ok' && connections.length === 0 ? (
+            <div className="rounded-md border border-dashed border-border px-4 py-8 text-center text-sm text-muted-foreground">
+              暂无连接记录，请使用上方“前往 MAP 授权”。
+            </div>
+          ) : null}
+          {connections.length > 0 ? (
+            <div className="overflow-x-auto rounded-md border border-border">
+              <table className="w-full min-w-[720px] text-sm">
+                <thead className="bg-muted/40 text-xs text-muted-foreground">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-medium">名称</th>
+                    <th className="px-3 py-2 text-left font-medium">对端</th>
+                    <th className="px-3 py-2 text-left font-medium">状态</th>
+                    <th className="px-3 py-2 text-left font-medium">权限</th>
+                    <th className="px-3 py-2 text-right font-medium">操作</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {connections.map((connection) => (
+                    <tr key={connection.id} className="border-t border-border align-middle">
+                      <td className="px-3 py-2.5">
+                        <div className="font-medium">{connection.name}</div>
+                        <div className="font-mono text-xs text-muted-foreground/70">{connection.id}</div>
+                      </td>
+                      <td className="px-3 py-2.5">
+                        <div>{connection.partnerName || '未登记'}</div>
+                        <div className="font-mono text-xs text-muted-foreground/70">{connection.partnerBaseUrl || '—'}</div>
+                      </td>
+                      <td className="px-3 py-2.5"><StatusBadge connection={connection} /></td>
+                      <td className="px-3 py-2.5">
+                        <div className="flex flex-wrap gap-1">
+                          {connection.scopes.map((scope) => (
+                            <span key={scope} className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{scope}</span>
+                          ))}
+                        </div>
+                      </td>
+                      <td className="px-3 py-2.5 text-right">
+                        <div className="flex items-center justify-end gap-1">
+                          {connection.status === 'active' ? (
+                            <ConfirmAction
+                              title="撤销长期连接"
+                              description={`撤销与 ${connection.partnerName || connection.name} 的连接后，对方将不能继续调用 CDS。`}
+                              confirmLabel="撤销"
+                              onConfirm={() => handleRevoke(connection)}
+                              trigger={<Button variant="ghost" size="sm" title="撤销"><ShieldCheck className="h-4 w-4" /></Button>}
+                            />
+                          ) : null}
+                          <ConfirmAction
+                            title="删除连接记录"
+                            description={`删除连接记录 ${connection.name}。`}
+                            confirmLabel="删除"
+                            onConfirm={() => handleDelete(connection)}
+                            trigger={<Button variant="ghost" size="sm" title="删除"><Trash2 className="h-4 w-4" /></Button>}
+                          />
+                        </div>
+                      </td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : null}
+        </div>
+      </div>
     </Section>
   );
 }
 
-// ── 子组件 ────────────────────────────────────
-
-function IssueForm({
-  onSubmit,
-  onCancel,
-  submitting,
-}: {
-  onSubmit: (name: string) => void | Promise<void>;
-  onCancel: () => void;
-  submitting: boolean;
-}): JSX.Element {
-  const [name, setName] = useState('');
+function StatusCard({ icon, title, ready, detail }: { icon: JSX.Element; title: string; ready: boolean; detail: string }): JSX.Element {
   return (
-    <form
-      className="space-y-4"
-      onSubmit={e => {
-        e.preventDefault();
-        void onSubmit(name);
-      }}
-    >
-      <Field label="名称（可选，给自己看）">
-        <input
-          value={name}
-          onChange={e => setName(e.target.value)}
-          placeholder="for noroenrn map"
-          className="w-full rounded-md border border-border bg-background px-2.5 py-1.5 text-sm"
-        />
-      </Field>
-      <div className="rounded-md border border-amber-500/30 bg-amber-500/10 px-3 py-2 text-xs text-amber-700 dark:text-amber-400">
-        密钥 10 分钟内有效，且只能使用一次。请生成后立即复制粘贴。
+    <div className="rounded-lg border border-border bg-muted/20 p-4">
+      <div className="flex items-start justify-between gap-3">
+        <div className="flex items-center gap-2 font-medium">
+          <span className={ready ? 'text-emerald-600' : 'text-muted-foreground'}>{icon}</span>
+          {title}
+        </div>
+        <span className={ready
+          ? 'rounded-full bg-emerald-500/15 px-2.5 py-1 text-xs font-medium text-emerald-700 dark:text-emerald-400'
+          : 'rounded-full bg-amber-500/15 px-2.5 py-1 text-xs font-medium text-amber-700 dark:text-amber-400'}
+        >
+          {ready ? '已授权' : '待授权'}
+        </span>
       </div>
-      <div className="flex items-center gap-3 pt-1">
-        <Button type="submit" disabled={submitting}>
-          {submitting ? '生成中…' : '生成密钥'}
-        </Button>
-        <Button type="button" variant="ghost" onClick={onCancel}>
-          取消
-        </Button>
-      </div>
-    </form>
-  );
-}
-
-function IssueResult({
-  data,
-  onCopy,
-  onClose,
-}: {
-  data: IssueResponse;
-  onCopy: () => void;
-  onClose: () => void;
-}): JSX.Element {
-  return (
-    <div className="space-y-4">
-      <div className="rounded-md border border-emerald-500/30 bg-emerald-500/10 px-3 py-2 text-sm text-emerald-700 dark:text-emerald-400">
-        <CheckCircle2 className="mr-1 inline h-4 w-4" />
-        密钥已生成，10 分钟内有效。复制后到 MAP 平台粘贴即可完成连接。
-      </div>
-      <Field label="剪贴板密钥">
-        <textarea
-          readOnly
-          value={data.clipboardText}
-          rows={5}
-          className="w-full rounded-md border border-border bg-muted/30 px-2.5 py-1.5 font-mono text-xs"
-          onFocus={e => e.target.select()}
-        />
-      </Field>
-      <div className="grid gap-2 text-xs text-muted-foreground sm:grid-cols-2">
-        <div>过期时间：{new Date(data.expiresAt).toLocaleString()}</div>
-        <div>连接 ID：{data.connectionId}</div>
-      </div>
-      <div className="flex items-center gap-3">
-        <Button onClick={onCopy}>
-          <Copy className="mr-1 h-4 w-4" /> 复制到剪贴板
-        </Button>
-        <Button variant="ghost" onClick={onClose}>
-          关闭
-        </Button>
-      </div>
+      <p className="mt-3 text-sm leading-6 text-muted-foreground">{detail}</p>
     </div>
   );
 }
 
-function StatusBadge({
-  status,
-  pairingExpiresAt,
-}: {
-  status: CdsConnectionView['status'];
-  pairingExpiresAt?: string;
-}): JSX.Element {
-  if (status === 'active') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600">
-        <CheckCircle2 className="h-3 w-3" /> 已连接
-      </span>
-    );
+function StatusBadge({ connection }: { connection: CdsConnectionView }): JSX.Element {
+  if (connection.status === 'active') {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-emerald-500/15 px-2 py-0.5 text-xs font-medium text-emerald-600"><CheckCircle2 className="h-3 w-3" />长期有效</span>;
   }
-  if (status === 'pending-pairing') {
-    const remain = pairingExpiresAt
-      ? Math.max(0, Math.floor((new Date(pairingExpiresAt).getTime() - Date.now()) / 60000))
-      : null;
-    return (
-      <span
-        className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"
-        title={pairingExpiresAt ? `到期 ${new Date(pairingExpiresAt).toLocaleTimeString()}` : ''}
-      >
-        <Clock className="h-3 w-3" /> 待配对{remain !== null ? `（${remain}分钟）` : ''}
-      </span>
-    );
+  if (connection.status === 'pending-pairing') {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-amber-500/15 px-2 py-0.5 text-xs font-medium text-amber-600"><Clock className="h-3 w-3" />旧版待配对</span>;
   }
-  if (status === 'revoked') {
-    return (
-      <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-medium text-rose-600">
-        <XCircle className="h-3 w-3" /> 已撤销
-      </span>
-    );
+  if (connection.status === 'revoked') {
+    return <span className="inline-flex items-center gap-1 rounded-full bg-rose-500/15 px-2 py-0.5 text-xs font-medium text-rose-600"><XCircle className="h-3 w-3" />已撤销</span>;
   }
-  return (
-    <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs">
-      <X className="h-3 w-3" /> 未知
-    </span>
-  );
+  return <span className="inline-flex items-center gap-1 rounded-full bg-muted px-2 py-0.5 text-xs"><X className="h-3 w-3" />未知</span>;
 }

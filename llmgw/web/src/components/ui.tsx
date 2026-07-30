@@ -110,9 +110,38 @@ export function Card({ children, style, className }: { children: ReactNode; styl
   );
 }
 
+/**
+ * 页面级提示条（错误 / 成功 / 说明）。
+ *
+ * 此前每个页面自己拍一套 errorStyle / noticeStyle，且有一批写的是 `var(--danger)`
+ * 与 `var(--success)` —— 这两个 token 在 theme.css 里**从未定义过**，于是整条
+ * `color` 声明作废：报错文字根本没变红，用 color-mix 的地方连底色和边框都一起丢了。
+ * 语义色只有 --ok / --warn / --err / --info 四个（外加 -bg），一律从这里取。
+ */
+export function InlineAlert({ tone = 'info', children }: { tone?: 'error' | 'ok' | 'info'; children: ReactNode }) {
+  const token = tone === 'error' ? 'err' : tone === 'ok' ? 'ok' : 'info';
+  return (
+    <div
+      role={tone === 'error' ? 'alert' : 'status'}
+      style={{
+        padding: '9px 11px',
+        border: `1px solid color-mix(in srgb, var(--${token}) 32%, transparent)`,
+        borderRadius: 'var(--radius-sm)',
+        background: `var(--${token}-bg)`,
+        color: `var(--${token})`,
+        fontSize: 'var(--fs-body)',
+        lineHeight: 'var(--lh-body)',
+      }}
+    >
+      {children}
+    </div>
+  );
+}
+
 export function ReadOnlyNotice({ children = '当前角色可以查看这些配置，但不能修改。需要变更时请联系 Owner 或 Admin。' }: { children?: ReactNode }) {
   return (
-    <div role="status" style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 'var(--fs-caption)', lineHeight: 1.6 }}>
+    // 整句话，走正文档：12px 承载成句解释正是「字号乱」的观感来源（规则三守卫会拦）。
+    <div role="status" style={{ padding: '9px 12px', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', background: 'var(--bg-elevated)', color: 'var(--text-secondary)', fontSize: 'var(--fs-body)', lineHeight: 'var(--lh-body)' }}>
       {children}
     </div>
   );

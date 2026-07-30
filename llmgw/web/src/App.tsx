@@ -1,7 +1,9 @@
 // 独立路由（自成体系，不依赖 prd-admin）：/login 登录 + /change-password 首登强制改密 + / 控制台首页（需鉴权）。
+import { useEffect } from 'react';
 import { BrowserRouter, Link, Routes, Route, Navigate, useLocation } from 'react-router-dom';
 import type { ReactNode } from 'react';
 import { AuthProvider, useAuth } from '@/lib/auth';
+import { getHealth } from '@/lib/api';
 import { ConsoleLayout } from '@/components/ConsoleLayout';
 // 全局快捷提 bug（Ctrl+B / Command+B）+ 右下角常驻入口，跨路由常驻不卸载。
 import { BugReportDialog } from '@/components/BugReportDialog';
@@ -80,6 +82,12 @@ function RequirePageAccess({ page, children }: { page: ConsolePage; children: Re
 }
 
 export function App() {
+  // 平台下发的 MAP 主入口（/gw/healthz 的 mapHomeUrl）在应用挂载时就取一次。
+  // 此前只有 LoginPage / HomePage 会调 getHealth：SSO 直接落在某个页、或者用户
+  // 从书签打开非首页时，权威值为空就会退回按 hostname 反推——而长分支的子域是
+  // 截断+摘要过的，去掉 `-llmgw` 根本还原不出主入口，「返回 MAP」和教程深链会
+  // 指向一个不存在的域名（Codex P2）。healthz 是匿名端点，未登录也能取。
+  useEffect(() => { void getHealth(); }, []);
   return (
     <AuthProvider>
       <BrowserRouter basename={getRouterBasename()}>

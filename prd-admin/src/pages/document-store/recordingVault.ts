@@ -98,8 +98,28 @@ export function decideVaultServerRecovery(
 export function deferredRunIdForRecoveredVaultCompletion(
   completion: VaultServerCompletion,
 ): string | null {
-  if (!completion?.success || completion.data?.archivePending !== true) return null;
-  return completion.data.deferredTranscriptionRunId?.trim() || null;
+  if (!completion?.success) return null;
+  return completion.data?.deferredTranscriptionRunId?.trim() || null;
+}
+
+export type UploadedRecordingFollowUp =
+  | { kind: 'watch-deferred-run'; runId: string }
+  | { kind: 'wait-for-archive' }
+  | { kind: 'open-transcription' };
+
+/**
+ * 录音完成响应的后续动作 SSOT。服务端返回固定延迟任务时，该任务已经拥有完整音频
+ * 转写责任，不论对象归档是否仍 pending，前端都只能观察它，不能再创建第二个任务。
+ */
+export function decideUploadedRecordingFollowUp(
+  archivePending: boolean,
+  liveTranscriptReady: boolean,
+  deferredTranscriptionRunId?: string | null,
+): UploadedRecordingFollowUp {
+  const runId = deferredTranscriptionRunId?.trim();
+  if (runId) return { kind: 'watch-deferred-run', runId };
+  if (archivePending && !liveTranscriptReady) return { kind: 'wait-for-archive' };
+  return { kind: 'open-transcription' };
 }
 
 /** 多段保险箱录音可能同时恢复；观察队列必须保留全部任务并对重入去重。 */

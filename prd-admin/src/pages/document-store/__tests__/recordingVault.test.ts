@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import {
+  decideUploadedRecordingFollowUp,
   decideVaultServerRecovery,
   deferredRunIdForRecoveredVaultCompletion,
   enqueueBackgroundTranscriptionRun,
@@ -33,7 +34,7 @@ describe('recording vault completion retry gate', () => {
 });
 
 describe('recording vault deferred transcription recovery', () => {
-  it('watches only a non-empty deferred run owned by an archive-pending completion', () => {
+  it('watches a non-empty server-owned run regardless of archive state', () => {
     expect(deferredRunIdForRecoveredVaultCompletion({
       success: true,
       data: { archivePending: true, deferredTranscriptionRunId: ' run-1 ' },
@@ -41,13 +42,32 @@ describe('recording vault deferred transcription recovery', () => {
     expect(deferredRunIdForRecoveredVaultCompletion({
       success: true,
       data: { archivePending: false, deferredTranscriptionRunId: 'run-1' },
-    })).toBeNull();
+    })).toBe('run-1');
     expect(deferredRunIdForRecoveredVaultCompletion({
       success: true,
       data: { archivePending: true, deferredTranscriptionRunId: ' ' },
     })).toBeNull();
     expect(deferredRunIdForRecoveredVaultCompletion(null)).toBeNull();
   });
+
+  it.each([
+    [false, false, ' run-1 ', { kind: 'watch-deferred-run', runId: 'run-1' }],
+    [true, false, 'run-2', { kind: 'watch-deferred-run', runId: 'run-2' }],
+    [true, true, 'run-3', { kind: 'watch-deferred-run', runId: 'run-3' }],
+    [true, false, null, { kind: 'wait-for-archive' }],
+    [true, true, null, { kind: 'open-transcription' }],
+    [false, false, null, { kind: 'open-transcription' }],
+    [false, true, null, { kind: 'open-transcription' }],
+  ])(
+    'selects one exclusive follow-up for archivePending=%s liveReady=%s runId=%s',
+    (archivePending, liveTranscriptReady, runId, expected) => {
+      expect(decideUploadedRecordingFollowUp(
+        archivePending as boolean,
+        liveTranscriptReady as boolean,
+        runId as string | null,
+      )).toEqual(expected);
+    },
+  );
 
   it('keeps multiple recovered runs while trimming and deduplicating replays', () => {
     const first = enqueueBackgroundTranscriptionRun([], ' run-1 ');

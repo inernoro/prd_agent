@@ -1,0 +1,96 @@
+| refactor | llmgw | 新增页面骨架 PageShell（PageHeader/PageBody/Prose/FormGrid/HelpPopover/DetailsBlock/TutorialLink），统一控制台页头与容器 |
+| refactor | llmgw | 「团队与成员」按风格调性 v1.2 重写：取消 1060px 居中改贴边全宽、成员卡片流改表格、增改走抽屉、角色说明收进 ? 浮层、概念解释收进折叠块并深链教程第 5 章（537 字/8 段 → 225 字/1 段） |
+| feat | llmgw | 新增令牌 --measure 与 .lg-prose / .lg-form-grid：容器贴边，可读宽度改为作用在段落与表单列上 |
+| feat | llmgw | 新增文字预算守卫 check-prose.mjs（常驻正文 ≤2 段 / ≤400 汉字，出口内文字不计入；页面级居中直接判错），接进 pnpm build |
+| feat | llmgw | check-typography 新增规则三：小字号配正文行高即判错，按棘轮制记录存量只减不增 |
+| fix | llmgw | 修复 --danger / --success 两个从未定义的 CSS 变量：报错文字不显红、ServiceKeys 警告框连边框底色一起丢失；统一改走 --err / --ok 并抽出 InlineAlert |
+| fix | llmgw | 修复角色说明浮层被表格 overflow-x 容器裁切（第 5 个角色显示不全），HelpPopover 增加 align 参数 |
+| style | llmgw | 卡片内边距归一到 14px（此前 home/usage/settings 为 18px），实体详情页取消 1180px 居中 |
+| docs | llmgw | 控制台风格调性规则升到 v1.2：新增原则 6（容器贴边、可读宽度作用在内容上）与原则 7（文字预算与三轨接入），补记漂移检测的三个前提 |
+| fix | llmgw | 修复组织页重构打破的 5 条跨模块源码契约断言（GatewayDataDomainGuardTests 直接读前端源码，本机无 dotnet 未能及时发现） |
+| feat | llmgw | 新增源码契约守卫 check-source-contracts.mjs：解析 GatewayDataDomainGuardTests.cs 并在本地复算全部 343 条前端断言，接进 pnpm build |
+| refactor | llmgw | 「预算与用量」按 v1.2 迁移：解释收进 HelpPopover/DetailsBlock、账单导入表单改抽屉、「对账覆盖」由说明句改为页头派生指标（7 段/575 字 → 0 段/241 字） |
+| refactor | llmgw | 「提示词策略」按 v1.2 迁移：取消 1040px 居中改贴边全宽，合并顺序与日志口径收进折叠块并深链教程第 20 章（3 段/274 字 → 1 段/103 字） |
+| fix | llmgw | 修复预算与用量页表单控件缺高度（padding 撑出的高度低于漂移检测 34px 下限），改用 FIELD_INPUT |
+| refactor | llmgw | 「逻辑模型目录」按 v1.2 迁移：页头统一走 PageShell、创建卡内边距归一到 14、表单栅格改固定列宽，路由策略等说明收进 HelpPopover 并深链教程第 18 章（2 段/230 字 → 1 段/155 字） |
+| fix | llmgw | 逻辑模型页 var(--danger)/var(--success) 两处失效 token 改为 --err/--ok |
+| refactor | llmgw | 系统运维页按 v1.2 迁移：容器拓扑收进折叠块并删 desc 列、删 7 个与侧边栏重复的快捷入口、页头 summary 由发布 Gate 派生（3 段/163 字 → 1 段/76 字） |
+| refactor | llmgw | Exchange 映射按 v1.2 迁移：自造页头换 PageHeader、内边距从 4 种收敛到 2 种（4 段/417 字 → 0 段 JSX 正文） |
+| refactor | llmgw | 模型池按 v1.2 迁移：六种调度策略说明收进 HelpPopover、程序池追加语义收进折叠块（8 段/488 字 → 1 段/286 字） |
+| refactor | llmgw | 接入密钥按 v1.2 迁移：作用域与轮换说明收进出口（4 段/446 字 → 0 段/309 字） |
+| refactor | llmgw | 模型管理按 v1.2 迁移：定价说明收进 HelpPopover、内边距 4 档收敛到 2 档（2 段/275 字 → 0 段/193 字） |
+| refactor | llmgw | 学习中心按 v1.2 迁移：改为「概念索引 + 深链教程」，不再在控制台复述教程正文（真实可见正文 1126 字/15 段 → 274 字/0 段） |
+| refactor | llmgw | Quickstart 按 v1.2 迁移：删 1080px 居中与三张纯解释 Step 卡，首屏挂接入片段与派生态清单（9 段/607 字 → 0 段/335 字） |
+| feat | llmgw | 三轨接入：AccessSnippetBar（老手拿地址就走）+ OnboardingChecklist（四步派生态，全绿自动消失）+ useOnboardingState（按租户缓存 60s） |
+| fix | llmgw | 文字预算守卫补两个洞：正文搬进常量数组即可绕过预算；prose-ok 逃生门因先剥注释而从未生效 |
+| fix | llmgw | 修复 --bg-muted / --radius-xs 两个从未定义的 CSS 变量（圆角与底色此前静默失效） |
+| fix | llmgw | 修复 .lg-tutorial-link 的 5px 间距：该组件出现在每个迁移页，给 4 条被监测路由同时引入第 6 种容器间距 |
+| fix | llmgw | 修复两处「接口 success 但 body 缺字段即整页白屏」：预算与用量的 statusDistribution、系统运维的 keyHealth/configAuthority/shadow summary |
+| test | llmgw | 新增 e2e/llmgw-page-acceptance.mjs：逐页真人路径 + 双主题验收，断言白屏/h1/标题裸露/贴边/pageerror，首次运行即抓到上述两处白屏 |
+| fix | prd-admin | 区分模型网关跳转的两种失败：预览分支名过长导致网关子域超 DNS 63 字符上限时，不再误报「登录凭据未通过安全校验」，改为报出真实原因与超出字符数 |
+| feat | cds | 部署时向所有容器注入已发布入口表 CDS_PREVIEW_URL / CDS_SERVICE_URLS（平台事实层，强制覆盖，项目 env 不得伪造），应用侧不再需要自己按 hostname 推算兄弟服务域名 |
+| refactor | cds | 新增 preview-entrypoints.ts 作为「本分支发布了哪几个入口」的计算 SSOT；DNS 63 octet 判据此前分裂在 forwarder-route-publisher、computeBranchGatewayUrls 两处字面量，收敛为共享谓词 isPublishableNamedLabel |
+| feat | prd-api | SSO 票据接口新增 console 字段，由服务端按平台注入的入口表回答「这张票据该送去哪个控制台」：有基址 / 明确未发布 / 同源三态 |
+| fix | prd-admin | 删除前端按 location.hostname 拼网关子域的第二份域名实现（违反规则 #11）：预览分支名过长导致平台未发布该子域时，此前会拼出一个不存在的域名并把失败报成「登录凭据未通过安全校验」，现改为如实报出未发布原因 |
+| test | cds | 新增 preview-entrypoints 守卫（含 2026-07-29 现场 67 字符分支用例、63/64 边界、项目 env 不得伪造平台注入） |
+| test | prd-admin | SSO 落点测试改为契约驱动，新增源码守卫禁止 llmGatewaySso.ts 再出现域名推算痕迹 |
+| docs | doc | 新增 debt.platform.preview-entrypoints.md 台账：记录截断未覆盖复合标签、入口表容器创建时定格、其他消费方未清查三项欠账 |
+| fix | prd-api | 区分「入口确实未发布」与「旧版平台没下发入口表」：过渡期预览环境不再误判为正式环境而回退到并不存在的同源控制台 |
+| refactor | prd-api | DeploymentAuthority 里读了两遍的 CDS_PROJECT_ID 判据抽成 IsCdsBranchPreview，供第三个消费方复用 |
+| test | prd-api | 新增 PlatformEntrypointsTests：表里取值 / 尾斜杠归一 / 缺项返回 null 不猜 / 畸形 JSON 降级 / 「没有表」与「表里没这项」可区分 |
+| feat | cds | 命名子域超 DNS 63 字符上限时改为截断 slug + 接 8 位 sha1 摘要（此前整条路由跳过不发布，长分支拿不到网关等命名入口）；摘要保证前缀相同的长分支不会塌成同一 host |
+| fix | cds | 发布器写 host、两处 SSRF 白名单此前各自拼 `<slug>-<sub>`，改为统一走 namedServiceLabel，否则截断后发布的 host 与白名单算出的不是同一个 |
+| fix | cds | 超长命名子域的截断改为只在 `-` 段边界下刀（此前按字符硬切会切出 `...-f4oeh6-cla` 这种半截词，人读不出也拼不对） |
+| refactor | cds | 模型网关控制台子域 llmgw-web 改名为 llmgw（它本身就是 web，`-web` 是废字，还白占 4 个 DNS 标签额度）；发布器同时发布历史别名，存量链接与未重新导入 compose 的存量部署都不受影响 |
+| fix | llmgw | 控制台「返回 MAP / 教程」深链此前硬编码 `-llmgw-web` 后缀反推 MAP 地址，子域改名即失效；改为新旧后缀都认并收敛成文件内唯一一处 |
+| feat | llmgw | console-api 经 /gw/healthz 下发 mapHomeUrl（源头 CDS_PREVIEW_URL），控制台「返回 MAP / 教程」深链改用平台权威地址，不再按 hostname 反推（推算仅作平台未下发时的兜底） |
+| test | prd-admin | 新增全仓守卫 previewHostDerivation.guard：扫 prd-admin 与 llmgw/web 全部源码，禁止新增按 hostname 拼预览域名的实现，例外须登记理由与清除条件 |
+| fix | cds | 撞名检查与两处 SSRF 白名单只算规范子域、漏掉同样被发布的历史别名：别的分支能占走别名 host，探测/压测打自己发布的别名会被自家闸门 403；三处统一走 publishedServiceLabels |
+| fix | llmgw | 新人清单的事实读取失败被当成「确实没有」缓存 60 秒：一次瞬时 500 就让配置齐全的租户被告知去建团队、拉成员；改为失败即抛不入缓存，并新增 unavailable 态让清单沉默 |
+| fix | llmgw | 建团队 / 拉成员 / 签密钥后主动失效新人清单缓存并通知已挂载组件（此前失效函数无人调用，且清缓存本身不会让 hook 重跑） |
+| docs | doc | 预览入口下发债务台账登记进 index.yml 与 guide.list.directory |
+| fix | llmgw | 教程深链传的是未削 basename 的路径：同源部署下控制台挂在 /llmgw/，传过去的 /llmgw/service-keys 与图谱登记的 /service-keys 逐段比对必然不匹配，每个页面都报「没有找到关联教程」 |
+| fix | llmgw | 章节深链改用独立参数 tutorialSourceId：此前把教程 sourceId 塞进 entry（那是 Mongo 文档 id），且会被 tutorialRoute 解析结果覆盖，标着第 15 / 19 章的链接统统打开第一章 |
+| fix | llmgw | 站内学习中心回落改走 router Link：裸 a 标签在 basename=/llmgw 下会跳到 MAP 应用的 /learn |
+| fix | prd-admin | 知识库教程深链按 tutorialSourceId 选中对应章节，取不到才回落第一篇 |
+| test | llmgw | 新增教程深链契约守卫 check-tutorial-deeplink.mjs 并接进 build（这三条依赖 router basename 与跨应用参数约定，行为测不到，只能钉源码契约） |
+| perf | llmgw | 新人清单的「有没有跑过请求」改走可分页的日志列表端点：此前用 /logs/summary 拉一整年，而该端点不接受分页、会把整段区间的日志全量 materialize 后再聚合 |
+| fix | llmgw | 「签一把密钥」改看可用密钥而非历史总数：密钥全被禁用/吊销时清单不再提前消失（此前既跑不出请求、接入片段又还在催签发） |
+| fix | llmgw | 平台下发的 MAP 主入口改在应用挂载时取一次：此前只有登录页与首页会调 healthz，SSO 直落页与书签入口拿不到权威地址会退回按 hostname 反推，而长分支子域是截断+摘要过的、根本还原不出主入口 |
+| fix | cds | 平台入口表注入改为「先清保留 key 再写」：表为空时此前不产出 CDS_SERVICE_URLS，项目/profile 在该 key 上的值会原样留下，等于允许项目在 CDS 明确没有这条路由时伪造网关地址 |
+| fix | llmgw | Quickstart 自己签密钥后也失效新人清单缓存（此前只接了接入密钥页与组织页，同页挂着的清单仍在催「签一把密钥」） |
+| fix | llmgw | 网关入口缺席的提示不再归因于「分支名过长」：命名子域已截断+摘要压进上限、子域本身受 40 字符校验，长分支不会再因此丢入口，改为指向控制台服务未部署或子域声明不一致 |
+| fix | llmgw | 平台下发的 MAP 主入口改为可订阅：此前只改模块变量，healthz 在首屏之后回来时已挂载的「返回 MAP」与教程深链不会重算，整个挂载期指着兜底算出的地址（长预览域名下兜底还原不出主入口） |
+| fix | llmgw | Quickstart 两种测试成功后也失效新人清单缓存：「跑通首条请求」是从日志推的派生态，不失效就一直显示未完成 |
+| fix | llmgw | 新人清单的团队/成员改只数 active：Quickstart 按 active 过滤且无 active 团队时直接挡住签发，按总数判定会让清单先消失、下一步却做不了 |
+| fix | llmgw | 「跑通首条请求」改取密钥的 lastUsedAt（持久事实）：请求日志默认只留 90 天，拿它当「一生是否跑通过」的依据会把长期不活跃的租户打回未完成；顺带彻底去掉那次范围查询 |
+| fix | e2e | 逐页验收脚手架的产物目录、截图目录、浏览器路径改为从 checkout 推导并支持环境变量覆盖（此前写死作者机器绝对路径，换个 checkout 第一次导航就白屏） |
+| fix | cds | 命名子域改为按「展开别名后的最终 label」去重发布：同一分支里若一个 profile 声明 llmgw、另一个声明历史别名 llmgw-web，按原始子域去重会放行两者，而 llmgw 展开别名后publish 的正是同一个 host —— 两条同 host 不同上游的路由。改为两趟发布（规范名先占位、别名后补），显式声明恒压过兼容别名 |
+| fix | llmgw | 新人清单的「可用密钥」判定补上过期时间：网关运行时把 expiresAt 已过的密钥同样视为不可用，只看 enabled 会让只剩过期密钥的租户既跑不出请求、清单又已经把「签一把密钥」划掉 |
+| fix | cds | 命名入口的落点改看 profile 声明的就绪路径，不再看子域名字：子域改名把 llmgw 从「后端 API」改判成「控制台」时，那张全局名字表跟着替所有存量项目改了落点，仍把 llmgw 当 API 用的服务被指到根路径 404，且它们显式声明的 /gw/healthz 被名字表压掉连兜底都轮不上。名字表降级为兜底，只服务「声明了子域却没声明就绪路径」的 profile |
+| fix | llmgw | 撤销接入密钥后也失效新人清单缓存：此前只接了签发路径，撤掉最后一把可用密钥后 60 秒内回到 Quickstart 仍显示已撤销的前缀、清单也还认为这一步完成 |
+| fix | cds | 命名入口新增平台判定的 isConsole 字段，分支抽屉不再按子域名字自己判「哪个是控制台」：子域改名后抽屉里 4 处硬编码的 llmgw-web 判定整块失效，控制台被当成引擎健康入口标注、排序也不再排在最前 |
+| fix | llmgw | 修改成员后也失效新人清单缓存：清单的「拉一个成员」只数 active，把唯一一个额外成员停用后这一步应当重新亮起，此前只在创建路径失效 |
+| fix | llmgw | 「跑通首条请求」叠上本地确证：serving 端 LastUsedAt 是不 await 的后台写，测试成功后立刻重拉可能抢在它落库之前读到旧值，把刚跑成功的租户又标成未完成并缓存 60 秒 |
+| fix | cds | 保存子域别名时也检查已发布的命名服务 host：别名和命名子域挤在同一个命名空间，此前只查 slug/别名/自定义域名，别的分支已发布的 `<slug>-llmgw` 可以被直接占走，forwarder 会收到两条同 host 不同上游的路由 |
+| fix | llmgw | 字段说明气泡靠近滚动容器底部时改为向上展开：气泡是 absolute 定位、不参与布局，被 overflow 裁掉的部分滚动也够不到，长表单末尾那几个字段说明整块读不到 |
+| fix | cds | 历史别名的冲突告警判断整个反了：别名可用（绝大多数情况）时照常告警，而 buildRoutes 每 2 秒重跑一次会把日志刷满；真被另一个 profile 占走时反而静默跳过。改为按「谁占的」区分，真冲突才报且按分支+host+占用者去重上报，冲突消失后清除记录以免二次犯错时静音 |
+| fix | llmgw | 新人清单的「可用密钥」补上调用能力判定：一把只有 readiness:read 的探针密钥此前会让「签一把密钥」划掉、接入片段还亮出它的前缀，而它根本发不出请求。判据照 serving 的 MatchesAny 语义（空列表恒拒、* 通配、其余大小写不敏感精确匹配） |
+| docs | llmgw | 债务台账新增 ONB-key-usability 与 ONB-key-page-cap：授权矩阵的其余三项与密钥列表 500 条上限没有镜像到前端，正解是服务端 onboarding digest（需先让 console-api 与 serving 共享判定） |
+| fix | llmgw | 抽屉内的失败信息改在抽屉里显示：成员抽屉、新建租户抽屉、账单导入抽屉此前都把失败抛给页面级 alert，而那条 alert 渲染在 PageBody 里、被固定定位的抽屉与毛玻璃背板整块盖住，用户只看到表单停止转圈、没有任何可读原因，然后原样再试一次 |
+| fix | cds | 兼容别名发布前查全部分支已保存的子域别名：改名前就存在的别名（或先存别名、后加 profile 的反序）恰好等于 `<slug>-llmgw-web` 时，保存期检查拦不住，兼容别名会与它撞成同 host 两条路由，route-resolver 按路由 id 静默选一条 |
+| fix | cds | 已保存别名的撞名检查收进发布单点：上一版只在兼容别名那一趟查，规范服务 host 无条件写，于是一个早于改名就存在的别名 `<slug>-llmgw` 会与规范 host 撞成同 host 两个上游，resolver 按路由 id 静默选一条，用户可能打开另一个分支的应用 |
+| fix | cds | 入口表与发布器口径对齐：发布器跳过被已保存别名占走的命名 host 后，入口表仍在声明它，SSO 会把用户送到别名拥有者的主应用（可能是另一个分支）。别名枚举抽成 savedAliasOwners 供两侧同用 |
+| fix | cds | isConsole 判据改与落点同源：存量项目里把 llmgw 当后端 API 用且声明 /gw/healthz 的 profile，落点已正确落到健康端点，但面板仍把它排最前、标成「网关控制台」，点开是一串 JSON |
+| fix | cds | 别名抑制决定接齐全部消费方：面板与 GET /api/branches 的网关入口清单、两处 SSRF 探测白名单此前仍在声明/放行被已保存别名占走的 host，前者会让用户点开另一个分支的应用，后者等于允许探测别人的应用 |
+| fix | llmgw | 模型池抽屉打开时反馈渲染在抽屉内：抽屉是 fixed 覆盖层，页面级 toast 被整块盖住，建池/设默认/导入/认领/校准任一失败都只看到按钮停止转圈 |
+| fix | llmgw | 新人清单的「去完成」按每步需要的写权限判定：组织页只要求 logsRead，developer/viewer 到得了页面但建团队/加成员全被 organizationWrite 门控，此前只看页面可达会给这些人一个点进去什么也做不了的链接，现在渲染「由管理员完成」 |
+| fix | llmgw | 逻辑模型页的失败提示不再渲染成绿色成功条：10 个提示写入点里有 6 个是失败路径，却共用固定 tone="ok"，「更新路由策略失败」看起来像改动已生效 |
+| fix | llmgw | 「跑通首条请求」的 CTA 补齐 Quickstart 的真实门控（appCallerWrite + serviceKeyWrite）：不满足时测试按钮压根不渲染，此前给 viewer 一个点进去没有按钮的死链；同时读不到判定源的步骤不再标成可操作 |
+| fix | cds | 命名 host 的占位判定改按完整 host 且纳入自定义域名：自定义域名存的是整条 host 不是标签，一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在更早处已发出路由，命名服务再发同一 host 就是两个上游 |
+| feat | cds | 入口表新增 CDS_CONSOLE_URL：由平台按 profile 语义判定并下发控制台入口。改名后与改名前的存量项目在表里 key 集合完全相同（llmgw + llmgw-web）而语义相反，消费方按名字猜必然有一半项目挑错 |
+| fix | prd-api | 网关控制台基址优先读平台下发的 CDS_CONSOLE_URL：此前按子域名字先试 llmgw 再退 llmgw-web，在「llmgw 是后端 API」的存量项目上会把管理员的 SSO 票据送到只返回健康 JSON 的服务 |
+| fix | cds | 占位抑制统一升级为「按完整 host + 含自定义域名」并删掉窄判据 savedAliasOwners：入口表、面板与 GET /api/branches、两处 SSRF 探测白名单此前仍按标签且只看别名，会声明/放行发布器故意跳过的 host |
+| fix | llmgw | 组织事实的可读性改按「能读到全貌」判：/gw/organization 对 owner/admin 之外按 teamIds 收窄，独自在新建团队里的 developer 数不到默认团队的 owner，清单会一直说「拉一个成员」没做完而他既改不了也自证不了 |
+| fix | llmgw | 新人轨缓存键加上登录身份：/gw/service-keys 对 developer 按 CreatedByUserId 过滤，只按租户做键会让同浏览器换账号后的 60 秒内读到上一个人的摘要，接入片段亮出别人的密钥前缀；identity 同时进两个 effect 的依赖，否则换账号不重跑 |
+| fix | llmgw | 学习中心页不再渲染指向自己的教程回落链接：非 MAP 管理员身份的用户在 /learn 上点「查看完整教程」只会回到当前页，而该页详细解释已在 v1.2 迁移里收进深链教程，等于断在死链上；改为直说需要什么身份 |

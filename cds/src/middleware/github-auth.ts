@@ -40,6 +40,7 @@ const PUBLIC_PATHS: (string | RegExp)[] = [
   '/api/cds-system/connections/authorize',
   '/api/cds-system/connections/token',
   '/api/cds-system/connections/accept',
+  '/api/cds-system/integrations/bug-report/authorize',
   /^\/api\/projects\/[^/]+\/instances$/,
   // GitHub App webhook is authenticated by HMAC signature verification
   // inside the route handler, not by the CDS session cookie. Must be

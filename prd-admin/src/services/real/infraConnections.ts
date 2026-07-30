@@ -1,5 +1,5 @@
 /**
- * 基础设施连接 service（MAP 端剪贴板配对密钥）
+ * 基础设施连接 service（MAP 端跳转授权；剪贴板方法仅保留旧协议兼容）
  * 详见 doc/spec.cds.map-pairing-protocol.md
  */
 import { apiRequest } from './apiClient';

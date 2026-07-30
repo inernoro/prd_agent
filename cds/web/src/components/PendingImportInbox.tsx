@@ -50,7 +50,11 @@ interface PendingImportsResponse {
   degraded?: boolean;
 }
 
-export function PendingImportInbox(): JSX.Element | null {
+export function PendingImportInbox({
+  onCountChange,
+}: {
+  onCountChange?: (count: number) => void;
+} = {}): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<PendingImport[]>([]);
   const [open, setOpen] = useState(false);
@@ -124,6 +128,11 @@ export function PendingImportInbox(): JSX.Element | null {
   const showFlap = flap && flap.ts !== flapDismissedAt;
 
   const count = pending.length;
+  const informationCount = count + (showFlap ? 1 : 0);
+
+  useEffect(() => {
+    onCountChange?.(informationCount);
+  }, [informationCount, onCountChange]);
 
   // 没 pending + 没 flap toast → 完全不渲染
   if (count === 0 && !showFlap) return null;

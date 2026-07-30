@@ -29,6 +29,9 @@ RUN --mount=type=cache,id=nuget,target=/root/.nuget/packages \
 
 FROM base AS final
 WORKDIR /app
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends curl ca-certificates \
+    && rm -rf /var/lib/apt/lists/*
 ARG GIT_COMMIT=""
 ARG BUILD_TIME_UTC=""
 ENV GIT_COMMIT=$GIT_COMMIT

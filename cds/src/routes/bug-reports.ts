@@ -5,7 +5,8 @@
  *   GET  /api/bug-reports   列出最近的缺陷反馈（默认 50 条）
  *
  * 投递策略（两条路，绝不假装成功）：
- *   1. 配置了 MAP 缺陷系统凭据（CDS_BUG_REPORT_MAP_BASE_URL + CDS_BUG_REPORT_MAP_TOKEN）
+ *   1. 在「CDS 系统设置 → 外部接入」保存了 MAP 缺陷系统凭据，或通过兼容环境变量
+ *      CDS_BUG_REPORT_MAP_BASE_URL + CDS_BUG_REPORT_MAP_TOKEN 配置
  *      → 由**服务端**带凭据转发到 MAP `POST /api/defect-agent/defects`，再调 submit。
  *      凭据只存在服务端，前端永远拿不到（前端只调本服务这个端点）。
  *   2. 未配置或转发失败 → 落到本服务自己的存储（`<dataDir>/bug-reports/`），
@@ -20,6 +21,7 @@ import express, { Router, type NextFunction, type Request, type Response } from 
 import fs from 'node:fs';
 import path from 'node:path';
 import crypto from 'node:crypto';
+import type { CdsConnection } from '../types.js';
 
 /** 与前端 BugReportCore 对齐的严重程度取值。 */
 export type BugSeverity = 'critical' | 'major' | 'minor' | 'trivial';
@@ -174,8 +176,12 @@ export interface BugReportForwardConfig {
   assigneeUserId?: string;
 }
 
+export interface StoredBugReportForwardConfig extends BugReportForwardConfig {
+  updatedAt?: string;
+}
+
 /**
- * 从环境变量解析转发配置。缺任何一项都返回 null（= 走本地留存路径）。
+ * 从兼容环境变量解析转发配置。缺任何一项都返回 null（= 走本地留存路径）。
  * 导出供单测断言「未配置时必须退化」。
  */
 export function resolveForwardConfig(
@@ -186,6 +192,29 @@ export function resolveForwardConfig(
   if (!baseUrl || !token) return null;
   const assigneeUserId = (env.CDS_BUG_REPORT_MAP_ASSIGNEE || '').trim();
   return { baseUrl, token, assigneeUserId: assigneeUserId || undefined };
+}
+
+function normalizeMapBaseUrl(value: unknown): { value: string } | { error: string } {
+  const raw = asString(value).trim().replace(/\/+$/, '');
+  if (!raw) return { error: '请填写 MAP 服务地址' };
+  try {
+    const parsed = new URL(raw);
+    if (parsed.protocol !== 'https:' && parsed.protocol !== 'http:') {
+      return { error: 'MAP 服务地址只支持 http 或 https' };
+    }
+    if (parsed.username || parsed.password) {
+      return { error: 'MAP 服务地址不能包含用户名或密码' };
+    }
+    if (parsed.pathname && parsed.pathname !== '/') {
+      return { error: 'MAP 服务地址请填写站点根地址，不要包含 /api 路径' };
+    }
+    parsed.pathname = '';
+    parsed.search = '';
+    parsed.hash = '';
+    return { value: parsed.toString().replace(/\/+$/, '') };
+  } catch {
+    return { error: 'MAP 服务地址格式无效' };
+  }
 }
 
 /** 组装 MAP `POST /api/defect-agent/defects` 的请求体。 */
@@ -343,6 +372,20 @@ export interface BugReportsRouterDeps {
   getDataDir: () => string;
   /** 转发配置读取，默认读 process.env。 */
   readForwardConfig?: () => BugReportForwardConfig | null;
+  /** CDS 系统设置中持久化的配置，优先于环境变量。 */
+  readStoredForwardConfig?: () => StoredBugReportForwardConfig | null | undefined;
+  /** 环境变量兼容配置。 */
+  readEnvironmentForwardConfig?: () => BugReportForwardConfig | null;
+  /** 保存到 CDS 系统级密钥存储。未提供时配置写接口不可用。 */
+  writeStoredForwardConfig?: (config: BugReportForwardConfig) => StoredBugReportForwardConfig | void;
+  /** 清除 CDS 系统设置中的配置；环境变量兼容项不受影响。 */
+  clearStoredForwardConfig?: () => boolean | void;
+  /** 已配对 MAP 连接提供的地址候选。 */
+  getSuggestedMapBaseUrl?: () => string | null | undefined;
+  /** 校验 MAP 持有的 CDS 长期连接凭据；授权回调只接受 active MAP 连接。 */
+  authenticateMapConnectionToken?: (rawToken: string | undefined) => CdsConnection | null;
+  /** 当前 CDS_SECRET_KEY 是否使系统密钥加密落库。 */
+  isSecretStorageEncrypted?: () => boolean;
   /** 注入 fetch 便于测试。 */
   fetchImpl?: FetchLike;
   /** 解析报告人（默认取 CDS 登录态用户名）。 */
@@ -372,7 +415,9 @@ function extensionFor(mimeType: string): string {
 
 export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
   const router = Router();
-  const readForwardConfig = deps.readForwardConfig ?? (() => resolveForwardConfig());
+  const readStoredForwardConfig = deps.readStoredForwardConfig ?? (() => null);
+  const readEnvironmentForwardConfig = deps.readEnvironmentForwardConfig ?? (() => resolveForwardConfig());
+  const readForwardConfig = deps.readForwardConfig ?? (() => readStoredForwardConfig() ?? readEnvironmentForwardConfig());
   const resolveReporter = deps.resolveReporter ?? defaultResolveReporter;
   const fetchImpl = deps.fetchImpl
     ?? ((input, init) => (globalThis.fetch as unknown as FetchLike)(input, init));
@@ -383,6 +428,49 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
 
   const baseDir = (): string => path.join(deps.getDataDir(), 'bug-reports');
   const recordsFile = (): string => path.join(baseDir(), 'records.jsonl');
+
+  function publicForwardStatus(req: Request): Record<string, unknown> {
+    let stored: StoredBugReportForwardConfig | null | undefined;
+    let environment: BugReportForwardConfig | null = null;
+    let configurationError: string | null = null;
+    try {
+      stored = readStoredForwardConfig();
+    } catch (err) {
+      configurationError = `CDS 系统设置中的 Token 无法读取：${err instanceof Error ? err.message : String(err)}`;
+      stored = null;
+    }
+    if (!stored) environment = readEnvironmentForwardConfig();
+    const effective = stored ?? environment;
+    const suggestedBaseUrl = deps.getSuggestedMapBaseUrl?.() ?? null;
+    const forwardedProto = asString(req.headers['x-forwarded-proto']).split(',')[0]?.trim();
+    const protocol = forwardedProto || req.protocol;
+    const host = req.get('host') || '';
+    const cdsBaseUrl = host ? `${protocol}://${host}` : '';
+    const authorizationUrl = suggestedBaseUrl && cdsBaseUrl
+      ? `${suggestedBaseUrl.replace(/\/$/, '')}/infra-services?authorizeCds=${encodeURIComponent(cdsBaseUrl)}`
+      : null;
+    return {
+      configured: Boolean(effective),
+      source: stored ? 'system-settings' : environment ? 'environment' : 'none',
+      baseUrl: effective?.baseUrl ?? '',
+      tokenConfigured: Boolean(effective?.token),
+      assigneeUserId: effective?.assigneeUserId ?? '',
+      updatedAt: stored?.updatedAt ?? null,
+      suggestedBaseUrl,
+      authorizationUrl,
+      secretStorage: deps.isSecretStorageEncrypted?.() ? 'encrypted' : 'plaintext',
+      configurationError,
+    };
+  }
+
+  function rejectProjectScopedKey(req: Request, res: Response): boolean {
+    const projectKey = (req as Request & { cdsProjectKey?: { projectId?: string } }).cdsProjectKey;
+    if (!projectKey) return false;
+    res.status(403).json({
+      error: '外部接入是 CDS 系统级配置，项目级 Key 无权读取或修改',
+    });
+    return true;
+  }
 
   function readRecords(limit: number): StoredBugReport[] {
     try {
@@ -578,6 +666,126 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     }
   }
 
+  // CDS 系统级外部接入配置。密钥永不回显，且不进入项目 customEnv。
+  router.get('/cds-system/integrations/bug-report', (req, res) => {
+    if (rejectProjectScopedKey(req, res)) return;
+    res.json(publicForwardStatus(req));
+  });
+
+  // MAP 在用户完成 CDS 授权后，从服务端回授永久 defect-agent 凭据。
+  // 浏览器不接触 token；Bearer ct_ 长期连接凭据在本路由内单独校验。
+  router.post('/cds-system/integrations/bug-report/authorize', (req, res) => {
+    const rawAuthorization = asString(req.headers.authorization);
+    const rawToken = /^Bearer\s+(.+)$/i.exec(rawAuthorization)?.[1]?.trim();
+    const connection = deps.authenticateMapConnectionToken?.(rawToken);
+    if (!connection || connection.partnerKind !== 'map' || connection.status !== 'active') {
+      res.status(401).json({ error: 'MAP 长期连接凭据无效或已撤销' });
+      return;
+    }
+    if (!deps.writeStoredForwardConfig) {
+      res.status(501).json({ error: '当前 CDS 运行模式不支持保存缺陷转发授权' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    const normalizedUrl = normalizeMapBaseUrl(body.baseUrl);
+    if ('error' in normalizedUrl) {
+      res.status(400).json({ error: normalizedUrl.error });
+      return;
+    }
+    const connectedMapBaseUrl = (connection.partnerBaseUrl || '').trim().replace(/\/$/, '');
+    if (connectedMapBaseUrl !== normalizedUrl.value) {
+      res.status(403).json({ error: 'MAP 回授地址与当前长期连接不一致' });
+      return;
+    }
+    const token = asString(body.token).trim();
+    if (!token) {
+      res.status(400).json({ error: 'MAP 未回授缺陷转发凭据' });
+      return;
+    }
+    deps.writeStoredForwardConfig({
+      baseUrl: normalizedUrl.value,
+      token,
+      assigneeUserId: asString(body.assigneeUserId).trim() || undefined,
+    });
+    res.json(publicForwardStatus(req));
+  });
+
+  router.put('/cds-system/integrations/bug-report', (req, res) => {
+    if (rejectProjectScopedKey(req, res)) return;
+    if (!deps.writeStoredForwardConfig) {
+      res.status(501).json({ error: '当前 CDS 运行模式不支持在页面保存系统接入配置' });
+      return;
+    }
+    const body = (req.body || {}) as Record<string, unknown>;
+    const normalizedUrl = normalizeMapBaseUrl(body.baseUrl);
+    if ('error' in normalizedUrl) {
+      res.status(400).json({ error: normalizedUrl.error });
+      return;
+    }
+    let existingToken = '';
+    try {
+      existingToken = readForwardConfig()?.token ?? '';
+    } catch {
+      // 已有密钥无法解密时必须重新粘贴，不能悄悄沿用损坏值。
+    }
+    const token = asString(body.token).trim() || existingToken;
+    if (!token) {
+      res.status(400).json({ error: '请粘贴 MAP Token；已保存的 Token 不会回显' });
+      return;
+    }
+    deps.writeStoredForwardConfig({
+      baseUrl: normalizedUrl.value,
+      token,
+      assigneeUserId: asString(body.assigneeUserId).trim() || undefined,
+    });
+    res.json(publicForwardStatus(req));
+  });
+
+  router.delete('/cds-system/integrations/bug-report', (req, res) => {
+    if (rejectProjectScopedKey(req, res)) return;
+    if (!deps.clearStoredForwardConfig) {
+      res.status(501).json({ error: '当前 CDS 运行模式不支持清除系统接入配置' });
+      return;
+    }
+    deps.clearStoredForwardConfig();
+    res.json(publicForwardStatus(req));
+  });
+
+  router.post('/cds-system/integrations/bug-report/test', async (req, res) => {
+    if (rejectProjectScopedKey(req, res)) return;
+    let config: BugReportForwardConfig | null = null;
+    try {
+      config = readForwardConfig();
+    } catch (err) {
+      res.status(400).json({ ok: false, message: `转发配置无法读取：${err instanceof Error ? err.message : String(err)}` });
+      return;
+    }
+    if (!config) {
+      res.status(400).json({ ok: false, message: '请先保存 MAP 缺陷转发配置' });
+      return;
+    }
+    try {
+      const signal = typeof AbortSignal !== 'undefined' && typeof AbortSignal.timeout === 'function'
+        ? AbortSignal.timeout(5_000)
+        : undefined;
+      const response = await fetchImpl(`${config.baseUrl}/api/defect-agent/defects?page=1&pageSize=1`, {
+        method: 'GET',
+        headers: { Authorization: `Bearer ${config.token}` },
+        signal,
+      });
+      if (!response.ok) {
+        res.status(502).json({ ok: false, message: `MAP 缺陷接口返回 HTTP ${response.status}` });
+        return;
+      }
+      res.json({ ok: true, message: 'MAP 缺陷接口连接正常，Token 权限可用' });
+    } catch (err) {
+      res.status(502).json({
+        ok: false,
+        message: `无法连接 MAP 缺陷接口：${err instanceof Error ? err.message : String(err)}`,
+      });
+    }
+  });
+
   router.get('/bug-reports', (req, res) => {
     // 本地留存的缺陷是 CDS 系统级台账（正文含页面地址与 query、提交人、环境信息），
     // 且提交时没有项目维度可供过滤。项目级 cdsp_/cdsg_ key 一旦能读，等于跨项目
@@ -593,7 +801,13 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     const limitRaw = Number(req.query.limit);
     const limit = Number.isFinite(limitRaw) && limitRaw > 0 ? Math.min(limitRaw, 200) : 50;
     const items = readRecords(limit).map((item) => ({ ...item, attachments: item.attachments || [] }));
-    res.json({ items, forwardConfigured: Boolean(readForwardConfig()) });
+    let forwardConfigured = false;
+    try {
+      forwardConfigured = Boolean(readForwardConfig());
+    } catch {
+      // 损坏或无法解密的系统密钥按未配置处理，列表本身仍应可用。
+    }
+    res.json({ items, forwardConfigured });
   });
 
   // 截图附件是 base64，请求体远超全局 100kb 上限，故本路由自挂大上限解析器。
@@ -608,10 +822,16 @@ export function createBugReportsRouter(deps: BugReportsRouterDeps): Router {
     }
     const report = normalized.report;
 
-    const config = readForwardConfig();
+    let config: BugReportForwardConfig | null = null;
     let delivery: 'forwarded' | 'local' = 'local';
     let reference: string | null = null;
-    let degradeReason: string | null = config ? null : '未配置缺陷系统转发（CDS_BUG_REPORT_MAP_BASE_URL / CDS_BUG_REPORT_MAP_TOKEN）';
+    let degradeReason: string | null = null;
+    try {
+      config = readForwardConfig();
+      if (!config) degradeReason = '未配置缺陷系统转发，请到「CDS 系统设置 → 外部接入」完成配置';
+    } catch (err) {
+      degradeReason = `缺陷系统转发配置无法读取：${err instanceof Error ? err.message : String(err)}`;
+    }
 
     if (config) {
       const forwarded = await forwardToMap(report, config, fetchImpl);

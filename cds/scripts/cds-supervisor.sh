@@ -21,13 +21,31 @@ set -u
 SUBCMD="${1:-master}"
 shift || true
 
-CDS_ROOT="${CDS_REPO_ROOT:-/root/inernoro/prd_agent}"
-NODE_BIN="${CDS_NODE_BIN:-/opt/node22/bin/node}"
-RUN_DIR="${CDS_RUN_DIR:-/run/cds}"
-LOG_DIR="${CDS_LOG_DIR:-/var/log/cds}"
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+CDS_ROOT="${CDS_REPO_ROOT:-$(cd "$SCRIPT_DIR/../.." && pwd)}"
+NODE_BIN="${CDS_NODE_BIN:-$(command -v node 2>/dev/null || true)}"
+RUN_DIR="${CDS_RUN_DIR:-$CDS_ROOT/cds/.cds}"
+LOG_DIR="${CDS_LOG_DIR:-$CDS_ROOT/cds/.cds/logs}"
 RESTART_DELAY_SEC="${CDS_RESTART_DELAY_SEC:-2}"
+RAPID_FAILURE_WINDOW_SEC="${CDS_RAPID_FAILURE_WINDOW_SEC:-30}"
+RAPID_FAILURE_LIMIT="${CDS_RAPID_FAILURE_LIMIT:-5}"
+CIRCUIT_BREAK_SEC="${CDS_CIRCUIT_BREAK_SEC:-300}"
+
+if [ -z "$NODE_BIN" ] || [ ! -x "$NODE_BIN" ]; then
+  echo "CDS supervisor: 找不到可执行的 Node.js，请设置 CDS_NODE_BIN" >&2
+  exit 78
+fi
 
 mkdir -p "$RUN_DIR" "$LOG_DIR" 2>/dev/null || true
+
+# launchd/systemd 不继承交互 shell。supervisor 自己加载项目唯一环境文件，保证
+# Mongo URI、存储模式和认证配置在 child 重启后仍一致。
+if [ -f "$CDS_ROOT/cds/.cds.env" ]; then
+  set -a
+  # shellcheck disable=SC1091
+  . "$CDS_ROOT/cds/.cds.env"
+  set +a
+fi
 
 case "$SUBCMD" in
   master)
@@ -43,9 +61,9 @@ case "$SUBCMD" in
     ;;
 esac
 
-PID_FILE="$RUN_DIR/cds-${ROLE:-unknown}.pid"
-SUPERVISOR_PID_FILE="$RUN_DIR/cds-${ROLE:-unknown}.supervisor.pid"
-LOG_FILE="$LOG_DIR/cds-${ROLE:-unknown}.log"
+PID_FILE="${CDS_CHILD_PID_FILE:-$RUN_DIR/cds-${ROLE:-unknown}.pid}"
+SUPERVISOR_PID_FILE="${CDS_SUPERVISOR_PID_FILE:-$RUN_DIR/cds-${ROLE:-unknown}.supervisor.pid}"
+LOG_FILE="${CDS_LOG_FILE:-$LOG_DIR/cds-${ROLE:-unknown}.log}"
 
 run_loop() {
   local role="$1" script="$2"
@@ -53,7 +71,7 @@ run_loop() {
   # 用 process.cwd() 推 cds.config.json + 默认 repoRoot。不 chdir 就会在错误目录读写
   # state。spawn node 前先切到 repo 的 cds/ 目录,保证配置/状态落在正确的树。
   if ! cd "$CDS_ROOT/cds" 2>/dev/null; then
-    echo "[supervisor $role $(date -Iseconds)] FATAL: 无法 cd 到 $CDS_ROOT/cds,检查 CDS_REPO_ROOT" >&2
+    echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] FATAL: 无法 cd 到 $CDS_ROOT/cds,检查 CDS_REPO_ROOT" >&2
     exit 1
   fi
   # 自己注册到 supervisor pid 文件
@@ -63,20 +81,38 @@ run_loop() {
     [ -n "$child" ] && kill -TERM "$child" 2>/dev/null
     [ -n "$child" ] && wait "$child" 2>/dev/null
     rm -f "$PID_FILE" "$SUPERVISOR_PID_FILE"
-    echo "[supervisor $role $(date -Iseconds)] shutdown clean"
+    echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] shutdown clean"
     exit 0
   ' TERM INT
 
-  echo "[supervisor $role $(date -Iseconds)] starting,script=$script"
+  echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] starting,script=$script"
+  local rapid_failures=0
   while true; do
-    "$NODE_BIN" "$script" &
+    local started_epoch; started_epoch="$(date +%s)"
+    if [ "$role" = "master" ]; then
+      "$NODE_BIN" "$script" "${CDS_CONFIG:-cds.config.json}" &
+    else
+      "$NODE_BIN" "$script" &
+    fi
     child=$!
     echo $child > "$PID_FILE"
-    echo "[supervisor $role $(date -Iseconds)] child pid=$child"
+    echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] child pid=$child"
     wait $child
     local rc=$?
-    echo "[supervisor $role $(date -Iseconds)] child exited code=$rc,${RESTART_DELAY_SEC}s 后重启"
-    sleep "$RESTART_DELAY_SEC"
+    local runtime_sec=$(( $(date +%s) - started_epoch ))
+    if [ "$runtime_sec" -lt "$RAPID_FAILURE_WINDOW_SEC" ]; then
+      rapid_failures=$((rapid_failures + 1))
+    else
+      rapid_failures=0
+    fi
+    if [ "$rapid_failures" -ge "$RAPID_FAILURE_LIMIT" ]; then
+      echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] child 连续 ${rapid_failures} 次快速退出，熔断 ${CIRCUIT_BREAK_SEC}s，避免配置错误重启风暴"
+      sleep "$CIRCUIT_BREAK_SEC"
+      rapid_failures=0
+    else
+      echo "[supervisor $role $(date -u '+%Y-%m-%dT%H:%M:%SZ')] child exited code=$rc,runtime=${runtime_sec}s,${RESTART_DELAY_SEC}s 后重启"
+      sleep "$RESTART_DELAY_SEC"
+    fi
   done
 }
 

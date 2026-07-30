@@ -323,6 +323,41 @@ describe('Pending-import router', () => {
       const env = stateService.getCustomEnv();
       expect(env['JWT_SECRET']).toBe('pre-existing');
     });
+
+    it('migrates repo-structural provider contract without clobbering secrets', async () => {
+      stateService.setCustomEnvVar('ASSETS_PROVIDER', 'tencentCos', projectId);
+      stateService.setCustomEnvVar('JWT_SECRET', 'operator-secret', projectId);
+      const composeYaml = `
+x-cds-env:
+  ASSETS_PROVIDER: cloudflareR2
+  ASSETS_EXPECTED_PROVIDER: cloudflareR2
+  JWT_SECRET: repo-secret
+services:
+  api:
+    image: node:20
+    command: node server.js
+`;
+      const create = await request(server, 'POST', `/api/projects/${projectId}/pending-import`, {
+        agentName: 'A', composeYaml,
+      });
+      expect(create.body.summary.addedEnvKeys).toEqual(
+        expect.arrayContaining(['ASSETS_PROVIDER', 'ASSETS_EXPECTED_PROVIDER']),
+      );
+      const res = await request(
+        server,
+        'POST',
+        `/api/pending-imports/${create.body.importId}/approve`,
+      );
+
+      expect(res.status).toBe(200);
+      expect(res.body.appliedEnvKeys).toEqual(
+        expect.arrayContaining(['ASSETS_PROVIDER', 'ASSETS_EXPECTED_PROVIDER']),
+      );
+      const env = stateService.getCustomEnv(projectId);
+      expect(env.ASSETS_PROVIDER).toBe('cloudflareR2');
+      expect(env.ASSETS_EXPECTED_PROVIDER).toBe('cloudflareR2');
+      expect(env.JWT_SECRET).toBe('operator-secret');
+    });
   });
 
   describe('POST /api/pending-imports/:id/reject', () => {

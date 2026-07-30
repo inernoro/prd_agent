@@ -40,9 +40,9 @@ export const BOOTSTRAP_PRESETS: readonly BootstrapPreset[] = [
   {
     key: 'pm-project',
     label: '产品经理项目底座',
-    audience: '产品经理、老板或非技术团队主导的新项目',
+    audience: '产品经理、业务专家、需求专家或非技术团队主导的新项目',
     summary: '装齐方法论套装与 CDS 技能，随后由 sdd-init 生成协作规则、文档骨架和新人引导路线图。',
-    marketplaceKeys: ['pm-starter'],
+    marketplaceKeys: ['skill-validation', 'risk-matrix'],
     includeCdsSkills: true,
     nextStep: '/sdd-init',
   },
@@ -51,7 +51,7 @@ export const BOOTSTRAP_PRESETS: readonly BootstrapPreset[] = [
     label: '开发项目底座',
     audience: '开发主导的新项目',
     summary: '装齐开发方法论套装与 CDS 技能，随后由 sdd-init 生成协作规则与文档骨架。',
-    marketplaceKeys: ['dev-starter'],
+    marketplaceKeys: ['skill-validation', 'risk-matrix'],
     includeCdsSkills: true,
     nextStep: '/sdd-init',
   },
@@ -60,7 +60,12 @@ export const BOOTSTRAP_PRESETS: readonly BootstrapPreset[] = [
     label: '测试与验收底座',
     audience: '测试或验收主导的项目',
     summary: '装齐验收设计、场景编排、真人清单与浏览器取证归档，随后由 sdd-init 落地骨架。',
-    marketplaceKeys: ['qa-starter'],
+    marketplaceKeys: [
+      'acceptance-test-design',
+      'acceptance-scenario-orchestrator',
+      'acceptance-checklist',
+      'create-visual-test-to-kb',
+    ],
     includeCdsSkills: true,
     nextStep: '/sdd-init',
   },
@@ -416,7 +421,7 @@ if [ -n "$skipped" ]; then
   echo "  未安装:$skipped" >&2
   echo "" >&2
   echo "  上面这些是本预设的必需包，缺了功能不完整。" >&2
-  echo "  检查网络（能否访问 $CDS_ORIGIN）后重新运行本脚本即可补齐，已装的会跳过重复下载之外的副作用。" >&2
+  echo "  检查网络（能否访问 \${CDS_ORIGIN}）后重新运行本脚本即可补齐，已装的会跳过重复下载之外的副作用。" >&2
   exit 1
 fi
 

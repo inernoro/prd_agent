@@ -9,7 +9,7 @@ x-cds-project:
 # 全局共享结构默认（波4：repo cds-compose.yml = 纯结构种子）
 #
 # 本段只声明「非密钥的结构默认值」。所有密钥/凭据/部署环境值
-# （TENCENT_COS_* / JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY 等）
+# （R2_* / JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY 等）
 # 一律**不写进仓库**，只存在于 CDS env scope：
 #   cdscli env get --scope prd-agent      # 查看
 #   cdscli env set KEY=VALUE --scope prd-agent
@@ -20,15 +20,15 @@ x-cds-project:
 # doc/debt.cds.compose-secrets.md D1）。剥离占位后 import 不再覆盖密钥即可通过。
 #
 # 应用所需的密钥清单（去 CDS env scope 配，勿写回本文件）：
-#   ASSETS_PROVIDER=tencentCos 时：TENCENT_COS_BUCKET / TENCENT_COS_REGION /
-#     TENCENT_COS_SECRET_ID / TENCENT_COS_SECRET_KEY / TENCENT_COS_PUBLIC_BASE_URL
+#   ASSETS_PROVIDER=cloudflareR2 时：R2_ACCOUNT_ID / R2_ACCESS_KEY_ID /
+#     R2_SECRET_ACCESS_KEY / R2_BUCKET / R2_PUBLIC_BASE_URL / R2_ENDPOINT
 #   通用：JWT_SECRET / ApiKeyCrypto__Secret / AI_ACCESS_KEY
-#   （切 cloudflareR2 时改配 R2_* 系列，语义同上）
 x-cds-env:
-  # 资产存储提供方（tencentCos / cloudflareR2 二选一）——结构默认，非密钥
-  ASSETS_PROVIDER: tencentCos
+  # CDS 固定使用 Cloudflare R2；Tencent COS 只属于正式环境。
+  ASSETS_PROVIDER: cloudflareR2
+  ASSETS_EXPECTED_PROVIDER: cloudflareR2
   # 对象存储路径前缀——结构约定，非密钥
-  TENCENT_COS_PREFIX: data
+  R2_PREFIX: data
 
 # 部署模式 — 每个服务可在 CDS 左侧面板下拉切换
 # dev: 热重载开发模式（改代码自动刷新）
@@ -292,7 +292,7 @@ services:
       AGENT_WORKSPACE_GIT_REF: "${VITE_GIT_BRANCH:-main}"
     labels:
       cds.path-prefix: "/api/"
-      cds.readiness-path: "/health"
+      cds.readiness-path: "/health/ready"
       # static 模式下 API 需要 restore + publish 后再启动；冷启动常超过 CDS 默认就绪窗口。
       # 与 admin 的 1200s 保持一致，避免容器最终已监听但分支先被误判为 error。
       cds.readiness-timeout: "1200"
@@ -367,7 +367,7 @@ services:
 
   # 独立 LLM serving 网关 llmgw-serve（DI 承载现有 LlmGateway/ModelResolver，HTTP 暴露 /gw/v1/*）。
   # 与 api 同连一份 CDS 托管 Mongo；resolve 解密平台 key 用全局 x-cds-env.ApiKeyCrypto__Secret，
-  # 日志写入用全局 TENCENT_COS_*（CDS 自动注入所有容器，无需在此重复声明）。
+  # 日志写入用全局 R2_*（CDS 自动注入所有容器，无需在此重复声明）。
   llmgw-serve:
     image: mcr.microsoft.com/dotnet/sdk:8.0
     working_dir: /repo
@@ -431,9 +431,13 @@ services:
     labels:
       # 显式清理存量 CDS profile 可能遗留的 prebuiltImage=true；源码模式必须挂载当前 worktree。
       cds.prebuilt-image: "false"
-      # 公网命名 URL：<previewSlug>-llmgw-web.<root> 根路径直达控制台（登录后看 LLM 日志）。
-      # Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
-      cds.subdomain: "llmgw-web"
+      # 公网命名 URL：<previewSlug>-llmgw.<root> 根路径直达控制台（登录后看 LLM 日志）。
+      # 2026-07-29 由 llmgw-web 改名为 llmgw —— 它本来就是 web 控制台，`-web` 是废字，
+      # 还白占 4 个 DNS 标签额度（长分支名下这 4 个字符就是发布与否的分界）。
+      # 旧 host `<previewSlug>-llmgw-web.<root>` 由平台的历史别名机制继续发布
+      # （cds/src/services/preview-entrypoints.ts 的 LEGACY_SUBDOMAIN_ALIASES），
+      # 存量链接不断。Vite dev 与 nginx express 都保持同源入口，SPA 无需额外 VITE_LLMGW_API_BASE。
+      cds.subdomain: "llmgw"
       # SPA 根路径返回 index.html 即视为就绪。
       cds.readiness-path: "/"
       # 首次 pnpm 冷安装留足窗口。

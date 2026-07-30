@@ -40,6 +40,52 @@ public class SubtitleGenerationProcessorTests
     }
 
     [Fact]
+    public void DeferredCalibrationIntent_ShouldForceFullRecordingAudio_AfterLateLiveCompletion()
+    {
+        var entry = new DocumentEntry
+        {
+            Metadata = new Dictionary<string, string>
+            {
+                ["liveTranscriptStatus"] = DocumentLiveTranscriptStatus.Completed,
+                ["liveTranscript"] = "晚到但可能不完整的实时原文",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+
+        SubtitleGenerationProcessor.GetCompletedLiveTranscript(entry)
+            .ShouldBe("晚到但可能不完整的实时原文");
+        SubtitleGenerationProcessor.RequiresFullRecordingAudio(entry)
+            .ShouldBeTrue();
+        SubtitleGenerationProcessor.GetPreferredLiveTranscriptForTranscription(entry)
+            .ShouldBeNull();
+
+        entry.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] =
+            "false";
+        SubtitleGenerationProcessor.RequiresFullRecordingAudio(entry)
+            .ShouldBeFalse();
+        SubtitleGenerationProcessor.GetPreferredLiveTranscriptForTranscription(entry)
+            .ShouldBe("晚到但可能不完整的实时原文");
+    }
+
+    [Fact]
+    public async Task MissingArchivedAudio_ShouldUseProviderNeutralFailureMessage()
+    {
+        var processor = BuildProcessor(Mock.Of<ILlmGateway>());
+        var method = typeof(SubtitleGenerationProcessor).GetMethod(
+            "TranscribeAudioOrVideoAsync",
+            BindingFlags.Instance | BindingFlags.NonPublic);
+
+        method.ShouldNotBeNull();
+        var task = (Task<List<SubtitleSegment>>)method.Invoke(
+            processor,
+            new object?[] { BuildRun(), null, null, null, false, null })!;
+
+        var exception = await Should.ThrowAsync<InvalidOperationException>(() => task);
+        exception.Message.ShouldBe("源文件 URL 不可用（可能尚未归档到对象存储）");
+        exception.Message.ShouldNotContain("COS");
+    }
+
+    [Fact]
     public async Task DoubaoAsyncAsr_ShouldSendAudioDataJson_NotMultipart()
     {
         GatewayRawRequest? capturedRequest = null;

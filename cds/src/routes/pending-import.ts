@@ -36,6 +36,7 @@ import { parseCdsCompose } from '../services/compose-parser.js';
 import { cdsEventsBus } from '../services/cds-events-bus.js';
 import { findInfraCmdViolations } from '../config/infra-cmd-whitelist.js';
 import { sanitizeDockerRestartPolicy } from '../config/docker-restart-policy.js';
+import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 
 export interface PendingImportRouterDeps {
   stateService: StateService;
@@ -85,9 +86,9 @@ function summariseCompose(
   const existingInfraIds = new Set(
     stateService.getInfraServicesForProject(projectId).map((s) => s.id),
   );
-  // Project-scoped diff: "will this import add new env keys" considers
-  // both the _global baseline and this project's existing overrides.
-  const existingEnvKeys = new Set(Object.keys(stateService.getCustomEnv(projectId)));
+  // Project-scoped diff includes both missing keys and explicit provider-contract
+  // migrations, so the approval drawer shows the existing value that will change.
+  const existingEnv = stateService.getCustomEnv(projectId);
 
   // Phase 8 — env metadata 分类预览,UI 弹窗用
   // requiredKeys 给"用户必填"区块,autoKeys/derivedKeys 给"CDS 自动"区块
@@ -109,9 +110,10 @@ function summariseCompose(
       addedInfra: parsed.infraServices
         .map((s) => s.id)
         .filter((id) => !existingInfraIds.has(id)),
-      addedEnvKeys: Object.keys(parsed.envVars || {}).filter(
-        (k) => !existingEnvKeys.has(k),
-      ),
+      addedEnvKeys: planImportedEnvSeedWrites(
+        parsed.envVars || {},
+        existingEnv,
+      ).map((write) => write.key),
       // Phase 8 — env 三色分类
       requiredEnvKeys,
       autoEnvKeys,
@@ -368,16 +370,14 @@ export function createPendingImportRouter(deps: PendingImportRouterDeps): Router
       appliedProfiles.push(scoped.id);
     }
 
-    // Apply env vars into the target project's scope (merge; existing
-    // keys in either _global or the project win so operator-set values
-    // aren't silently clobbered by a machine-authored import).
+    // 已批准的导入允许 provider 合同键迁移已有值；密钥与运行时参数仍保护
+    // 操作员现值。统一使用配置权威 SSOT，避免 provider 与 expected-provider
+    // 一新一旧形成必然失败的环境合同。
     const existingEnv = stateService.getCustomEnv(project.id);
     const appliedEnvKeys: string[] = [];
-    for (const [key, value] of Object.entries(parsed.envVars || {})) {
-      if (!(key in existingEnv)) {
-        stateService.setCustomEnvVar(key, value, project.id);
-        appliedEnvKeys.push(key);
-      }
+    for (const write of planImportedEnvSeedWrites(parsed.envVars || {}, existingEnv)) {
+      stateService.setCustomEnvVar(write.key, write.value, project.id);
+      appliedEnvKeys.push(write.key);
     }
 
     // Phase 8 — env metadata + defaultEnv 同步落库(同上 projects.ts /clone 路径逻辑)
