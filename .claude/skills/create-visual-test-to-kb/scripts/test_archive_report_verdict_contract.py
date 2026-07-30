@@ -614,6 +614,11 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke 退出码=2",
             "CDS smoke 返回 5xx",
             "CDS smoke HTTP 4xx",
+            "CDS smoke failed",
+            "CDS smoke tests failed",
+            "CDS ready failed",
+            "CDS ready check failure",
+            "CDS build failed",
             "CDS ready status=missing",
             "CDS ready status=error",
             "CDS ready status=stopped",
@@ -639,8 +644,12 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke exit code 0",
             "CDS smoke 退出码=0",
             "CDS smoke 返回 2xx",
+            "CDS smoke passed",
+            "CDS smoke tests passed",
             "CDS ready status=ready",
             "CDS ready status=running",
+            "CDS ready check passed",
+            "CDS build passed",
         ):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(

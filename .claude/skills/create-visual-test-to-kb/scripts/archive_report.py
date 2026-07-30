@@ -628,6 +628,7 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
     r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
+    r"|\b(?:failed|failure)\b"
     r"|(?:status|状态)\s*[:：=]\s*"
     r"(?:missing|error|failed|failure|stopped)\b)"
 )
@@ -668,9 +669,21 @@ _FAILURE_SUBJECT_PATTERNS = (
         "core-case",
         re.compile(r"(?:核心用例|核心流程)(?:执行|测试|验证|检查)?", re.I),
     ),
-    ("ready", re.compile(r"ready(?:\s*(?:检查|门禁|状态))?", re.I)),
-    ("smoke", re.compile(r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁))?", re.I)),
-    ("build", re.compile(r"(?:构建|编译)(?:产物|结果)?", re.I)),
+    (
+        "ready",
+        re.compile(r"ready(?:\s*(?:检查|门禁|状态|check|gate|status))?", re.I),
+    ),
+    (
+        "smoke",
+        re.compile(
+            r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁|tests?|check|gate))?",
+            re.I,
+        ),
+    ),
+    (
+        "build",
+        re.compile(r"(?:构建|编译|build)(?:\s*(?:产物|结果|job|task))?", re.I),
+    ),
     (
         "service-ready",
         re.compile(
