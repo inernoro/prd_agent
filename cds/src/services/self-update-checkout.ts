@@ -112,6 +112,53 @@ export function evaluateSelfUpdateTransition(
   };
 }
 
+/**
+ * 「强制更新」的版本切换解析 —— **永不拒绝**。
+ *
+ * 为什么和 evaluateSelfUpdateTransition 分开（2026-07-30 用户定的原则）：
+ * 强制更新是用户控制 CDS 的**最后手段**。CDS 卡在一个坏分支上、门禁判据本身出问题、
+ * 或者运维侧临时关了普通更新时，用户必须还有一条一定能走通的路。一个能被策略拒绝的
+ * 「强制」根本不叫强制 —— 用户原话：「强制更新一定是忽略所有条件，不然用户没有任何
+ * 手段控制 CDS」。
+ *
+ * 旧实现让 /api/self-force-sync 也走严格闸门，还在 hint 里写「强制同步不能绕过版本
+ * 继承门禁」，等于给逃生门上了锁。
+ *
+ * 门禁的原意是拦「**隐式**的跨分支覆盖」（多个 Agent 各自 push 自己的分支，谁最后
+ * 调一次自更新谁赢）。而强制更新是人点了一个写着「强制更新」的按钮、过了二次确认、
+ * 还自己选了目标分支——这已经是最强的显式意图，再要求一次声明是同义反复。
+ *
+ * 所以这里只做两件事：判出**这次是什么性质的切换**（供审计与日志），
+ * 以及把调用方给的原因原样带上（没给就写清「未声明」，不编一个假的）。
+ */
+export function resolveForceSyncTransition(input: {
+  currentSha: string;
+  targetSha: string;
+  targetContainsCurrent: boolean;
+  intent?: string;
+  reason?: string;
+}): { mode: 'same-sha' | 'fast-forward' | SelfUpdateTransitionIntent; reason: string } {
+  const rawReason = input.reason?.trim() || '';
+  // 控制字符会让审计记录里出现不可见内容；这里**不拒绝**，只是不采用。
+  const auditReason = rawReason && !/[\u0000-\u001f\u007f]/.test(rawReason)
+    ? rawReason.slice(0, 300)
+    : '强制更新（调用方未声明原因）';
+
+  if (shaMatches(input.currentSha, input.targetSha)) {
+    return { mode: 'same-sha', reason: auditReason };
+  }
+  if (input.targetContainsCurrent) {
+    return { mode: 'fast-forward', reason: auditReason };
+  }
+
+  // 非快进。调用方声明了就照它记；没声明也照样放行，性质记为 release
+  // （「切到一条不包含当前提交的线上去」这个描述对 release / rollback 都成立，
+  // 而把它记成 rollback 会在审计里造成「回滚到一个更新版本」这种自相矛盾的记录）。
+  const rawIntent = input.intent?.trim();
+  const mode: SelfUpdateTransitionIntent = rawIntent === 'rollback' ? 'rollback' : 'release';
+  return { mode, reason: auditReason };
+}
+
 export function resolveSelfUpdateTargetBranch(currentBranch: string): string {
   const normalized = currentBranch.trim();
   if (!normalized || normalized === 'HEAD') return '';

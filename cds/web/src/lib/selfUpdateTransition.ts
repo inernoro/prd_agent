@@ -1,5 +1,5 @@
 /**
- * 「强制更新」要带的版本切换声明（纯函数，可单测）。
+ * 「强制更新」要带的版本切换**审计信息**（纯函数，可单测）。
  *
  * 背景（2026-07-30 用户实拍两张报错图）：后端 `evaluateSelfUpdateTransition` 对
  * **非快进**切换要求三件事——`transitionIntent`（release / rollback）、
@@ -9,6 +9,12 @@
  *
  * 这是典型的「链路只建到一半」：闸门后加，UI 没跟上，而且失败信息还反过来
  * 要求用户做他刚刚做过的事。
+ *
+ * **随后（同日）纠正了更根本的一层**：强制更新根本不该有闸。它是用户控制 CDS 的
+ * 最后手段，能被策略拒绝的「强制」不叫强制（用户原话：「强制更新一定是忽略所有条件，
+ * 不然用户没有任何手段控制 CDS」）。后端已改为 `resolveForceSyncTransition` 永不拒绝。
+ * 所以本模块产出的三个字段现在是**审计信息**而非通行条件：填了更好查账，
+ * 没填也照样执行。前端不许拿它们禁用按钮。
  *
  * 为什么**不**在前端猜 intent：
  * self-status 的 `localAheadCount` / `remoteAheadCount` 是拿
@@ -53,7 +59,12 @@ export function defaultTransitionReason(
   return `从 CDS 系统设置强制${action}到 ${branch}`;
 }
 
-/** 原因是否满足后端约束。返回不合法的理由，合法时返回 undefined。 */
+/**
+ * 原因是否满足**普通更新**那条严格闸门的约束（8-300 字符、无控制字符）。
+ *
+ * 只用来给提示文案，**绝不能用来禁用强制更新按钮**：强制路径后端不校验原因，
+ * 不合法时它会自己退回「强制更新（调用方未声明原因）」。
+ */
 export function validateTransitionReason(reason: string): string | undefined {
   const value = reason.trim();
   if (value.length < TRANSITION_REASON_MIN) {
@@ -85,14 +96,6 @@ export function buildForceSyncBody(input: ForceSyncTransitionInput): ForceSyncTr
   };
 }
 
-/**
- * 能不能发起强制更新。缺 headSha 时**不发**：`expectedFromSha` 是防「基于过期状态
- * 覆盖生产」的那道锁，拿不到当前 sha 就等于把锁交出去，应该让用户先刷新状态。
- */
-export function forceSyncBlockedReason(
-  headSha: string,
-  reason: string,
-): string | undefined {
-  if (!headSha.trim()) return '读不到当前 CDS 版本，请先点「刷新分支」再试';
-  return validateTransitionReason(reason);
-}
+// 刻意**没有** forceSyncBlockedReason 这类函数：强制更新不存在「不能发起」的情形。
+// 曾经写过一个（缺 headSha / 原因不合法就禁用按钮），那是把刚拆掉的闸又装回 UI 侧。
+// headSha 读不到就发空串，后端强制路径不依赖它。

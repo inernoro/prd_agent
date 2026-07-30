@@ -49,6 +49,7 @@ import {
   checkoutSelfUpdateTarget,
   evaluateSelfUpdateTransition,
   recommendSelfUpdateTargetBranch,
+  resolveForceSyncTransition,
   resolveRemoteDefaultBranch,
   resolveSelfUpdateTargetBranch,
 } from '../services/self-update-checkout.js';
@@ -2423,55 +2424,96 @@ export function createBranchRouter(deps: RouterDeps): Router {
     const launch = () => {
       const cdsDir = path.join(config.repoRoot, 'cds');
       const errorLogPath = path.join(cdsDir, '.cds', 'self-update-error.log');
-      try {
+      /**
+       * 记账动作一律各自 try/catch。
+       *
+       * 2026-07-30 真实事故：一次强制同步把 dist/ 和 web/dist 都换成了新版本，
+       * 但进程没重启 —— 生产变成「新前端 + 旧后端」，而 lastSelfUpdate 还写着
+       * success。根因是整个 launch 被一个大 try 包着，而 `process.exit(0)` 排在
+       * 写日志文件、`fs.openSync`、`interruptAll` **后面**：这些记账动作里任意
+       * 一处同步抛异常，都会跳到 catch，而 catch 在 exitOnFailure 未设时**不退出**。
+       * 于是一个写日志的小失败取消掉了整件事的目的。
+       *
+       * 现在的顺序保证：spawn 成功 → 退出一定会被排上，任何记账失败都碰不到它。
+       */
+      const safely = (label: string, fn: () => void): void => {
+        try {
+          fn();
+        } catch (err) {
+          console.warn(`[self-update] restart bookkeeping "${label}" failed: ${(err as Error).message}`);
+        }
+      };
+
+      safely('open-log', () => {
         fs.mkdirSync(path.dirname(errorLogPath), { recursive: true });
         fs.appendFileSync(
           errorLogPath,
           `\n=== ${input.source} spawn at ${new Date().toISOString()} (branch=${input.branchLabel || '(same)'}) ===\n`,
         );
-        const out = fs.openSync(errorLogPath, 'a');
-        const errFd = fs.openSync(errorLogPath, 'a');
+      });
+
+      // stdio 目标拿不到就退回 'ignore'：日志重定向失败绝不能成为不重启的理由。
+      let stdio: ['ignore', number | 'ignore', number | 'ignore'] = ['ignore', 'ignore', 'ignore'];
+      safely('open-log-fd', () => {
+        stdio = ['ignore', fs.openSync(errorLogPath, 'a'), fs.openSync(errorLogPath, 'a')];
+      });
+
+      let spawned = false;
+      try {
         const child = spawn('bash', ['./exec_cds.sh', 'daemon'], {
           cwd: cdsDir,
           detached: true,
-          stdio: ['ignore', out, errFd],
+          stdio,
           env: { ...process.env },
         });
         child.on('error', (err) => {
-          fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+          safely('spawn-error-log', () => {
+            fs.appendFileSync(errorLogPath, `spawn error: ${err.message}\n`);
+          });
         });
         child.unref();
-        branchOperationCoordinator?.interruptAll(
-          `CDS restart requested by ${input.source}`,
-          input.source,
-        );
-        // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
-        // 只有「重启没真的发生」（spawn 静默失败、上层提前返回）时它才会跑到，
-        // 把排空闸提前放掉。否则闸要等满 timeoutMs+60s（默认 6 分钟）才 fail-open，
-        // 这期间每一次 webhook 部署都拿 503 + 红灯 CI —— 2026-07-28 本 PR 实际中招
-        // 一次：一次 fast-forward 自更新没重启进程，随后的部署被闸了。
-        setTimeout(() => {
-          endSelfUpdateDrain();
-          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
-        }, RESTART_GATE_RELEASE_MS).unref?.();
-        setTimeout(() => process.exit(0), 1000);
+        spawned = true;
       } catch (spawnErr) {
-        try {
+        safely('pre-spawn-log', () => {
           fs.appendFileSync(errorLogPath, `pre-spawn error: ${(spawnErr as Error).message}\n`);
-        } catch {
-          /* ignore */
-        }
-        if (input.exitOnFailure) {
+        });
+      }
+
+      if (!spawned) {
+        // 只有**spawn 本身**失败才不退出：退出了就没人把 CDS 拉起来，等于自己造停机。
+        safely('interrupt-on-failure', () => {
           branchOperationCoordinator?.interruptAll(
             `CDS restart failed for ${input.source}`,
             input.source,
           );
+        });
+        if (input.exitOnFailure) {
           setTimeout(() => process.exit(1), 1000);
         } else {
           // 进程要继续活下去，闸必须立刻放开，不能把部署晾满 fail-open 窗口。
           endSelfUpdateDrain();
         }
+        return;
       }
+
+      // 退出先排上，再做剩下的记账 —— 顺序即保障。
+      setTimeout(() => process.exit(0), 1000);
+      // 兜底开闸：重启成功时本进程 1 秒后就没了，这个定时器随之消失；
+      // 只有「重启没真的发生」时它才会跑到，把排空闸提前放掉。否则闸要等满
+      // timeoutMs+60s（默认 6 分钟）才 fail-open，这期间每一次 webhook 部署都拿
+      // 503 + 红灯 CI —— 2026-07-28 实际中招一次。
+      safely('gate-release-timer', () => {
+        setTimeout(() => {
+          endSelfUpdateDrain();
+          console.warn('[self-update] 重启未生效，已提前释放部署排空闸');
+        }, RESTART_GATE_RELEASE_MS).unref?.();
+      });
+      safely('interrupt-all', () => {
+        branchOperationCoordinator?.interruptAll(
+          `CDS restart requested by ${input.source}`,
+          input.source,
+        );
+      });
     };
     setTimeout(launch, Math.max(0, input.delayMs || 0));
   }
@@ -22739,38 +22781,28 @@ python3 <项目技能目录>/cds/cli/cdscli.py connect --host https://<cds-host>
         `git merge-base --is-ancestor ${currentFullSha} ${targetFullSha}`,
         { cwd: repoRoot },
       );
-      const transition = evaluateSelfUpdateTransition({
+      // 强制同步**不设闸**：它是用户控制 CDS 的最后手段。CDS 卡在坏分支上、门禁判据
+      // 本身出问题、或运维侧关了普通更新时，必须还有一条一定走得通的路。能被策略拒绝
+      // 的「强制」不叫强制（2026-07-30 用户定的原则）。这里只判性质 + 记审计原因。
+      // 普通更新 /api/self-update 仍走 evaluateSelfUpdateTransition 严格闸门。
+      const transition = resolveForceSyncTransition({
         currentSha: currentFullSha,
         targetSha: targetFullSha,
         targetContainsCurrent: ancestorResult.exitCode === 0,
         intent: transitionIntent,
-        expectedFromSha,
         reason: transitionReason,
       });
-      if (!transition.allowed) {
-        send('transition-guard', 'error', transition.message);
-        sendSSE(res, 'error', {
-          code: transition.code,
-          message: transition.message,
-          currentSha: currentFullSha,
-          targetSha: targetFullSha,
-          targetBranch: target,
-          hint: '强制同步不能绕过版本继承门禁；请显式声明 release/rollback、expectedFromSha 和原因。',
-        });
-        res.end();
-        recordFailure(`${transition.code}: ${transition.message}`);
-        return;
-      }
       forceSyncTransitionMode = transition.mode;
       forceSyncTransitionReason = transition.reason;
+      // 非快进照样放行，但要在日志里说清「这次会丢掉当前提交」——不拦，但绝不静悄悄。
       send(
         'transition-guard',
         transition.mode === 'release' || transition.mode === 'rollback' ? 'warning' : 'done',
         transition.mode === 'fast-forward'
-          ? '版本继承检查通过：目标包含当前 CDS 提交'
+          ? '版本继承检查：目标包含当前 CDS 提交'
           : transition.mode === 'same-sha'
-            ? '版本继承检查通过：目标与当前 CDS 提交一致'
-            : `已确认非快进 ${transition.mode}：${transition.reason}`,
+            ? '版本继承检查：目标与当前 CDS 提交一致'
+            : `强制${transition.mode === 'rollback' ? '回滚' : '切换'}：目标 ${targetFullSha.slice(0, 7)} 不包含当前 ${currentFullSha.slice(0, 7)}，将丢弃当前版本。原因：${transition.reason}`,
       );
 
       // Step 3a: checkout target branch BEFORE the hard reset.

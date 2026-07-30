@@ -16,11 +16,13 @@ import { describe, expect, it } from 'vitest';
 import {
   buildForceSyncBody,
   defaultTransitionReason,
-  forceSyncBlockedReason,
   validateTransitionReason,
   TRANSITION_REASON_MIN,
 } from '../../web/src/lib/selfUpdateTransition';
-import { evaluateSelfUpdateTransition } from '../../src/services/self-update-checkout.js';
+import {
+  evaluateSelfUpdateTransition,
+  resolveForceSyncTransition,
+} from '../../src/services/self-update-checkout.js';
 
 const HEAD = 'a'.repeat(40);
 const TARGET = 'b'.repeat(40);
@@ -141,9 +143,13 @@ describe('默认原因与校验', () => {
     expect(validateTransitionReason(`ok${String.fromCharCode(7)}ok-reason`)).toContain('控制字符');
   });
 
-  it('读不到当前 sha 时不许发起——那把乐观锁不能交出去', () => {
-    expect(forceSyncBlockedReason('', '从 CDS 系统设置强制发布到 main')).toContain('刷新');
-    expect(forceSyncBlockedReason(HEAD, '从 CDS 系统设置强制发布到 main')).toBeUndefined();
+  it('读不到当前 sha 也照样能组出请求体——强制更新不设前置条件', () => {
+    // 曾经这里有个 forceSyncBlockedReason，缺 headSha / 原因不合法就禁用按钮。
+    // 那是把后端刚拆掉的闸又装回 UI 侧：强制更新是用户控制 CDS 的最后手段，
+    // 它必须在任何状态下都能发起。
+    const body = buildForceSyncBody({ headSha: '', targetBranch: 'main', intent: 'release', reason: '' });
+    expect(body.force).toBe(true);
+    expect(body.expectedFromSha).toBe('');
   });
 });
 
@@ -168,13 +174,152 @@ describe('UI 真的把声明发出去了（接线守卫）', () => {
     expect(source).toContain('headSha: forceHeadSha');
   });
 
-  it('原因不合法时禁用确认按钮，不让用户点了才吃后端报错', () => {
-    expect(source).toContain('disabled={Boolean(forceBlockedReason)}');
+  it('绝不因为审计字段不完整就禁用确认按钮', () => {
+    // 强制更新不能有任何 UI 侧前置条件。出现这类 disabled 就是又给逃生门上了锁。
+    expect(source).not.toContain('disabled={Boolean(forceBlockedReason)}');
+    expect(source).not.toContain('forceSyncBlockedReason');
   });
 
   it('对话框里能选发布还是回滚', () => {
     expect(source).toContain('setForceIntent');
     expect(source).toContain('发布新版本');
     expect(source).toContain('回滚旧版本');
+  });
+});
+
+/**
+ * 强制更新 = 逃生门，**永不拒绝**。
+ *
+ * 用户 2026-07-30 定的原则：「强制更新一定是忽略所有条件，不然用户没有任何手段
+ * 控制 CDS」。旧实现让 /api/self-force-sync 也走严格闸门，hint 里还写着
+ * 「强制同步不能绕过版本继承门禁」——等于给逃生门上了锁。
+ */
+describe('resolveForceSyncTransition 永不拒绝', () => {
+  const nonFf = { currentSha: HEAD, targetSha: TARGET, targetContainsCurrent: false };
+
+  it('非快进 + 什么都不声明 → 照样放行（这正是修复前会被拒的那一种）', () => {
+    const decision = resolveForceSyncTransition(nonFf);
+    expect(decision.mode).toBe('release');
+    expect(decision.reason).toContain('未声明');
+    // 对照组：同样的输入喂给普通更新那道严格闸门，会被拒。两条路径语义不同。
+    expect(evaluateSelfUpdateTransition(nonFf)).toMatchObject({ allowed: false });
+  });
+
+  it('原因太短也照记原文——那是用户真写的字，不该被换成「未声明」', () => {
+    // 8 字符下限属于普通更新那道严格闸门；强制路径没有下限，
+    // 把「短」改写成「未声明」等于在审计记录里造假。
+    expect(resolveForceSyncTransition({ ...nonFf, reason: '短' }).reason).toBe('短');
+  });
+
+  it('含控制字符才退回默认（那会让审计记录出现不可见内容）', () => {
+    expect(resolveForceSyncTransition({ ...nonFf, reason: `x${String.fromCharCode(7)}y` }).reason)
+      .toContain('未声明');
+    expect(resolveForceSyncTransition({ ...nonFf, reason: '   ' }).reason).toContain('未声明');
+  });
+
+  it('expectedFromSha 完全不参与——强制路径不做乐观锁', () => {
+    // 函数签名里压根没有这个字段：有的话早晚会有人拿它做拦截。
+    expect(Object.keys(resolveForceSyncTransition(nonFf))).toEqual(['mode', 'reason']);
+  });
+
+  it('声明了就照实记，供审计', () => {
+    expect(resolveForceSyncTransition({ ...nonFf, intent: 'rollback', reason: '回滚到上一个稳定版本' }))
+      .toEqual({ mode: 'rollback', reason: '回滚到上一个稳定版本' });
+  });
+
+  it('没声明 intent 的非快进记为 release，不记 rollback', () => {
+    // 记成 rollback 会在审计里造出「回滚到一个更新的版本」这种自相矛盾的记录。
+    expect(resolveForceSyncTransition(nonFf).mode).toBe('release');
+  });
+
+  it('同 sha / 快进照常识别，日志文案才分得清', () => {
+    expect(resolveForceSyncTransition({ ...nonFf, targetSha: HEAD }).mode).toBe('same-sha');
+    expect(resolveForceSyncTransition({ ...nonFf, targetContainsCurrent: true }).mode).toBe('fast-forward');
+  });
+
+  it('原因超长截断到 300，不拒绝', () => {
+    expect(resolveForceSyncTransition({ ...nonFf, reason: 'x'.repeat(400) }).reason).toHaveLength(300);
+  });
+});
+
+describe('强制同步路由不再设闸（接线守卫）', () => {
+  it('走 resolveForceSyncTransition，且不再有「不能绕过门禁」那句话', async () => {
+    const routes = fs.readFileSync(
+      path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes/branches.ts'),
+      'utf8',
+    );
+    expect(routes).toContain('resolveForceSyncTransition({');
+    expect(routes).not.toContain('强制同步不能绕过版本继承门禁');
+    // 普通更新那条路径必须**保留**严格闸门 —— 两条路不能一起放开。
+    expect(routes).toContain('evaluateSelfUpdateTransition({');
+  });
+});
+
+/**
+ * 重启不能被记账动作取消掉。
+ *
+ * 2026-07-30 真实事故：一次强制同步把 dist/ 与 web/dist 都换成了新版本，进程却没重启
+ * —— 生产是「新前端 + 旧后端」，而 lastSelfUpdate 写着 success。根因是整个 launch()
+ * 包在一个大 try 里，`process.exit(0)` 排在写日志 / openSync / interruptAll **后面**，
+ * 这些记账动作任意一处同步抛异常就跳到 catch，而 catch 在 exitOnFailure 未设时不退出。
+ * 一个写日志的小失败，取消了整件事的目的。
+ */
+describe('自更新重启的结构（源码守卫）', () => {
+  const routes = fs.readFileSync(
+    path.resolve(path.dirname(fileURLToPath(import.meta.url)), '../../src/routes/branches.ts'),
+    'utf8',
+  );
+  const launch = routes.slice(
+    routes.indexOf('const launch = () => {'),
+    routes.indexOf('setTimeout(launch, Math.max(0, input.delayMs || 0));'),
+  );
+
+  it('记账动作各自 try/catch，不共用一个大 try', () => {
+    expect(launch).toContain('const safely = (label: string, fn: () => void)');
+    for (const step of ['open-log', 'open-log-fd', 'gate-release-timer', 'interrupt-all']) {
+      expect(launch, step).toContain(`safely('${step}'`);
+    }
+  });
+
+  it('只有 spawn 本身失败才不退出（其余一律照常重启）', () => {
+    // 判据必须是 spawn 的结果，不是「try 块有没有抛」。
+    expect(launch).toContain('let spawned = false;');
+    expect(launch).toContain('spawned = true;');
+    expect(launch).toContain('if (!spawned) {');
+  });
+
+  it('spawn 成功后 process.exit 先排上，再做剩余记账', () => {
+    const exitAt = launch.indexOf('setTimeout(() => process.exit(0), 1000);');
+    const gateAt = launch.indexOf("safely('gate-release-timer'");
+    const interruptAt = launch.indexOf("safely('interrupt-all'");
+    expect(exitAt).toBeGreaterThan(-1);
+    // 顺序即保障：退出排在后面的话，前面任何一处再出问题又会把它挡掉。
+    expect(exitAt).toBeLessThan(gateAt);
+    expect(exitAt).toBeLessThan(interruptAt);
+  });
+
+  it('stdio 打不开时退回 ignore，而不是放弃重启', () => {
+    expect(launch).toContain("stdio: ['ignore', number | 'ignore', number | 'ignore']");
+    expect(launch).toMatch(/stdio = \['ignore', fs\.openSync/);
+  });
+});
+
+describe('「更新成功但没重启」必须显眼且可一键补救（接线守卫）', () => {
+  const source = fs.readFileSync(
+    path.resolve(
+      path.dirname(fileURLToPath(import.meta.url)),
+      '../../web/src/pages/cds-settings/tabs/MaintenanceTab.tsx',
+    ),
+    'utf8',
+  );
+
+  it('incomplete 时给整条横幅，不只是一个小 chip', () => {
+    expect(source).toContain("data.restartStatus === 'incomplete'");
+    expect(source).toContain('新前端 + 旧后端');
+  });
+
+  it('横幅里带一键重启，打到 /api/self-restart', () => {
+    expect(source).toContain('立即重启');
+    expect(source).toContain("'/api/self-restart'");
   });
 });

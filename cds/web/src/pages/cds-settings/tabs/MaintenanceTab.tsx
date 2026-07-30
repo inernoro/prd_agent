@@ -20,7 +20,6 @@ import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
 import {
   buildForceSyncBody,
   defaultTransitionReason,
-  forceSyncBlockedReason,
   type ForceSyncTransitionBody,
   type SelfUpdateIntent,
 } from '@/lib/selfUpdateTransition';
@@ -470,14 +469,14 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
   const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
 
-  // 强制更新的三件套。expectedFromSha 必须来自**刚读到的** self-status ——
-  // 它就是那道「别拿过期状态覆盖生产」的锁，不能用缓存或让用户手填。
+  // 强制更新带的这几个字段是**审计信息**，不是通行条件：后端 resolveForceSyncTransition
+  // 永不拒绝（强制更新是用户控制 CDS 的最后手段）。所以这里也绝不因为它们不完整
+  // 就禁用按钮——那等于在 UI 侧又给逃生门加了一把锁。
   const forceHeadSha = selfStatus.status === 'ok' ? selfStatus.data.headSha || '' : '';
   // 用户没动过输入框就跟着 intent / 分支走，动过之后就是他的内容，不再被覆盖。
   const forceReasonValue = forceReasonTouched
     ? forceReason
     : defaultTransitionReason(forceIntent, selectedBranch);
-  const forceBlockedReason = forceSyncBlockedReason(forceHeadSha, forceReasonValue);
 
   // 进度条专用 elapsed:必须与 step 同源(都来自后端 activeSelfUpdate)。
   // runStartedAt 是点按钮那一刻的客户端时间,从本 tab 触发时不会回填后端
@@ -728,7 +727,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   }
 
   async function runSelfUpdate(
-    endpoint: '/api/self-update' | '/api/self-force-sync',
+    endpoint: '/api/self-update' | '/api/self-force-sync' | '/api/self-restart',
     label: string,
     opts: { force?: boolean; transition?: ForceSyncTransitionBody } = {},
   ): Promise<void> {
@@ -846,6 +845,8 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           <SelfUpdateStatusPanel
             state={selfStatus}
             onRefresh={() => void cdsEvents.requestRefresh('manual').catch(() => { /* silent */ })}
+            onRestart={() => void runSelfUpdate('/api/self-restart', '重启')}
+            restarting={runState === 'running'}
           />
           {branchState.status === 'loading' ? <LoadingBlock label="读取 CDS 源码分支" /> : null}
           {branchState.status === 'error' ? <ErrorBlock message={branchState.message} /> : null}
@@ -1079,14 +1080,13 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                             onChange={(event) => { setForceReason(event.target.value); setForceReasonTouched(true); }}
                             className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1 text-xs"
                           />
-                          {forceBlockedReason ? (
-                            <span className="text-[11px] text-amber-600 dark:text-amber-400">{forceBlockedReason}</span>
-                          ) : null}
+                          <span className="text-[11px] text-muted-foreground">
+                            仅用于自更新历史的审计记录。留空或格式不符也照样执行 —— 强制更新不设前置条件。
+                          </span>
                         </div>
                       </div>
                     }
                     confirmLabel="强制更新"
-                    disabled={Boolean(forceBlockedReason)}
                     pending={runState === 'running'}
                     onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', {
                       force: true,
@@ -1415,9 +1415,13 @@ function DockerNetworkMetric({
 function SelfUpdateStatusPanel({
   state,
   onRefresh,
+  onRestart,
+  restarting,
 }: {
   state: SelfStatusState;
   onRefresh: () => void;
+  onRestart: () => void;
+  restarting: boolean;
 }): JSX.Element {
   if (state.status === 'loading') {
     return (
@@ -1511,6 +1515,25 @@ function SelfUpdateStatusPanel({
           >
             PID {data.runningPid || '-'} · 重启{data.restartStatus === 'completed' ? '已确认' : data.restartStatus === 'pending' ? '进行中' : '未确认'}
           </span>
+        ) : null}
+
+        {/* 「更新成功但进程没换」是最危险的一种状态：代码与 web/dist 已经是新版本，
+            跑着的却是旧后端 —— 新前端会去调旧后端没有的接口，页面直接报错，而上面
+            那条 chip 只是小字「重启未确认」，用户根本不会当回事。
+            2026-07-30 真实发生：强制同步换完产物没重启，生产半吊子跑了几分钟。
+            所以这里给整条横幅 + 一键重启，而不是让人自己去猜下一步。 */}
+        {data.restartStatus === 'incomplete' ? (
+          <div className="mt-2 flex w-full flex-wrap items-center gap-3 rounded-md border border-red-500/40 bg-red-500/10 px-3 py-2 text-xs text-red-700 dark:text-red-300">
+            <span className="min-w-0 flex-1">
+              代码与前端产物已切到 {data.headSha || '新版本'}，但进程仍是更新前那个
+              （PID {data.runningPid || '-'}，启动于 {data.pidStartedAt ? formatAbsoluteTime(data.pidStartedAt) : '-'}）。
+              现在是「新前端 + 旧后端」，页面可能报错。重启后才算真正完成。
+            </span>
+            <Button type="button" size="sm" variant="outline" disabled={restarting} onClick={onRestart} className="shrink-0">
+              {restarting ? <RefreshCw className="animate-spin" /> : <RotateCw />}
+              立即重启
+            </Button>
+          </div>
         ) : null}
 
         <div className="ml-auto flex items-center gap-2">

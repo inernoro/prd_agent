@@ -69,3 +69,6 @@
 | fix | cds | 强制更新按钮补上版本切换声明（transitionIntent / expectedFromSha / transitionReason）：此前只发 branch+force，非快进切换必然被后端回「必须显式声明 release 或 rollback」，而用户刚点的按钮就叫强制更新 |
 | fix | cds | 强制更新对话框可选「发布新版本 / 回滚旧版本」并填原因（预填可编辑），原因不合法时禁用确认；expectedFromSha 取自 self-status 当前 sha |
 | fix | cds | 非快进切换的拒绝文案改为指明去哪里声明、API 缺哪三个字段 |
+| fix | cds | 强制更新改为永不拒绝（resolveForceSyncTransition）：它是用户控制 CDS 的最后手段，能被策略拒绝的强制不叫强制；普通更新仍保留严格闸门 |
+| fix | cds | 自更新重启不再被记账动作取消：记账各自 try/catch，spawn 成功后先排上 process.exit 再做其余记账，避免写日志失败导致「产物已换、进程没重启」 |
+| fix | cds | 「更新成功但进程没重启」从小字 chip 升级为醒目横幅 + 一键重启，说明当前是新前端配旧后端 |
