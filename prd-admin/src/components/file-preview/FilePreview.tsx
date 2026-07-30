@@ -55,6 +55,9 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   const kind: FilePreviewKind = cfg.preview;
   const fileUrl = preview?.fileUrl ?? null;
   const text = preview?.text ?? null;
+  // MIME 是服务端对实际媒体内容的权威判断。录音产出的 .webm 扩展名也可用于
+  // 视频，不能在检查 audio/* 之前按扩展名提前渲染成黑色视频框。
+  const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
 
   // 图片预览
   if (kind === 'image' && fileUrl) {
@@ -71,7 +74,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   }
 
   // 视频预览
-  if (kind === 'video' && fileUrl) {
+  if (kind === 'video' && fileUrl && !isAudioEntry) {
     return (
       <div className="flex items-center justify-center py-4 w-full">
         <video
@@ -87,7 +90,6 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   // 音频预览 — 自定义波形播放器（wavesurfer.js）。
   // contentType audio/* 优先于扩展名路由：录音产出的 .webm 是音频（audio/webm），
   // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
-  const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
   const isAudio = kind === 'audio' || isAudioEntry;
   const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
   const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
@@ -96,7 +98,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      <div className={`flex min-h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
         {archivePending && (
           <div
             className="w-full max-w-[760px] rounded-[12px] px-3 py-2 text-[11px] leading-relaxed"

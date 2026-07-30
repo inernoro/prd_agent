@@ -236,6 +236,7 @@ export function AudioWavePlayer({
       <div className="flex items-center gap-3">
         <button
           onClick={togglePlay}
+          data-testid="audio-play-toggle"
           disabled={!ready}
           className="flex h-11 w-11 items-center justify-center rounded-full cursor-pointer transition-all motion-reduce:transition-none disabled:cursor-not-allowed"
           style={{
