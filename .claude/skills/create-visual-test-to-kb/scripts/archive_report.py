@@ -607,13 +607,19 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
+_FAILURE_ACTION_PATTERN = (
+    r"(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接|恢复|解决|"
+    r"关闭|可用|就绪)"
+)
 _FAILURE_FACT_PATTERN = re.compile(
-    r"失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
-    r"|未能(?:正常)?(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接)"
-    r"|阻断|不可用|不可交付|无法完成"
+    r"(?:尚未|尚没|还未|还没|仍未|仍然未|依然未|暂未|暂时未|至今未)"
+    rf"(?:正常)?{_FAILURE_ACTION_PATTERN}"
+    r"|失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
+    rf"|未能(?:正常)?{_FAILURE_ACTION_PATTERN}"
+    r"|阻断|不可用|不可交付"
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
-    r"|无法(?=(?:正常)?(?:执行|送达|归档|发布|打开|访问|连接))",
+    rf"|无法(?:正常)?{_FAILURE_ACTION_PATTERN}",
     re.I,
 )
 _DIAGNOSTIC_ACTION_PATTERN = (
@@ -676,6 +682,13 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
     """Bind a status to the preceding subject, except for prefix-status wording."""
     if not occurrences:
         return set()
+    overlapping = {
+        occurrence
+        for occurrence in occurrences
+        if occurrence[0] < event.end() and occurrence[1] > event.start()
+    }
+    if overlapping:
+        return overlapping
     left = [occurrence for occurrence in occurrences if occurrence[1] <= event.start()]
     right = [occurrence for occurrence in occurrences if occurrence[0] >= event.end()]
     if right:
