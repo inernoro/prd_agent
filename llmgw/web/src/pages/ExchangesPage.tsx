@@ -1,5 +1,18 @@
 // Exchange：把非 OpenAI/Claude 标准上游映射为 Gateway 可调度的虚拟平台。
 // tenantId 永远由服务端会话解析；密钥仅写入，不从 API 读回。
+//
+// 按「控制台风格调性 v1.2」原则 6 / 7 迁移（doc/rule.platform.llm-gateway.console-design-tonality.md）：
+//   - 走 PageShell / PageHeader / PageBody 骨架；此前是自造页头 .lg-exchange-hero
+//     与自造根容器 .lg-exchange-page，同一层级的东西和别的页长得不一样。
+//   - 文字预算：迁移前 4 段 / 417 汉字（有豁免条目）。四段常驻说明里，
+//     「保存不会调用上游」「保存后从服务端读回」这类边界承诺是产品语义不能删，
+//     只把它们压到一句以内；成套的解释（Exchange 是什么、adapter 怎么选、
+//     公网出口与证书校验）收进 HelpPopover 与 DetailsBlock，并深链教程第 19 章。
+//   - 空状态的三步引导保留：零数据的人正需要它，而有配置的人根本看不到它。
+//   - 卡片内边距统一到 surface.ts 的 CARD_BODY(14) / INSET_BLOCK(10)；
+//     原来 .lg-exchange-* 一套 CSS 里混了 9 / 12 / 14 / 24 四种内边距。
+//   - 本路由被 e2e/llmgw-layout-drift.mjs 监测：表单一律内联、DOM 保持扁平，
+//     不许把创建/编辑改成抽屉或对话框（EntityPreviewDrawer 是只读预览，另论）。
 import { useEffect, useState } from 'react';
 import { ArrowRight, CheckCircle2, KeyRound, Pencil, Plus, Route, Trash2 } from 'lucide-react';
 import { Link, useSearchParams } from 'react-router-dom';
@@ -20,11 +33,14 @@ import type {
   ExchangeModelWriteRequest,
   UpdateExchangeRequest,
 } from '@/lib/types';
-import { Button, Chip, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { Button, Card, Chip, InlineAlert, ReadOnlyNotice, SectionLoader } from '@/components/ui';
+import { DetailsBlock, FormGrid, HelpPopover, PageBody, PageHeader, PageShell, Prose, TutorialLink } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
+import { CARD_ACTIONS, CARD_BODY, GAP, INSET_BLOCK, INSET_PADDING } from '@/lib/surface';
+import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, SECTION_TITLE } from '@/lib/typography';
 
 type ExchangeFormState = {
   name: string;
@@ -57,6 +73,21 @@ const emptyForm = (): ExchangeFormState => ({
   models: [emptyModel()],
   version: 0,
 });
+
+/**
+ * 出口一：上游接口类型旁的 ?。
+ *
+ * 这三句是《模型网关权威教程》第 19 章的锚点，教程巡检按字面量比对，
+ * **逐字保留**：公网 WSS 只对豆包流式语音识别开放、其他类型必须 HTTP/HTTPS、
+ * 运行时固定已验证公网 IP。删任何一句都会让教程对不上界面。
+ */
+function TargetTypeHelp() {
+  return (
+    <HelpPopover label="上游接口类型">
+      选择类型后会自动推荐认证方式。只有豆包流式语音识别可使用公网 WSS；其他类型必须使用 HTTP/HTTPS。运行时会固定已验证公网 IP 并校验证书主机名。
+    </HelpPopover>
+  );
+}
 
 export function ExchangesPage() {
   const { tenant } = useAuth();
@@ -295,170 +326,212 @@ export function ExchangesPage() {
   }
 
   return (
-    <div className="lg-exchange-page">
-      <header className="lg-exchange-hero">
-        <div>
-          <h1>Exchange 映射</h1>
-          <p>当上游不是 OpenAI 或 Claude 标准协议时，用一条 Exchange 把目标地址、转换方式和模型标识连起来。</p>
+    <PageShell>
+      <PageHeader
+        title="Exchange 映射"
+        subtitle="上游不是 OpenAI 或 Claude 标准协议时，用一条 Exchange 把它接进网关。"
+        summary={items ? (
+          <>
+            <span>映射 <strong>{items.length}</strong></span>
+            <span>已启用 <strong>{items.filter((item) => item.enabled).length}</strong></span>
+            <span>缺密钥 <strong>{items.filter((item) => !item.hasKey).length}</strong></span>
+          </>
+        ) : undefined}
+        actions={canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>新建 Exchange</Button> : undefined}
+      />
+
+      <PageBody>
+        {notice ? <InlineAlert tone="info">{notice}</InlineAlert> : null}
+        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {!canWrite ? <ReadOnlyNotice /> : null}
+
+        {savedItem ? (
+          <Card style={{ ...CARD_BODY, borderColor: 'color-mix(in srgb, var(--ok) 45%, var(--border-subtle))', background: 'var(--ok-bg)' }}>
+            <div style={rowStyle}>
+              <CheckCircle2 size={18} style={{ color: 'var(--ok)', flexShrink: 0 }} />
+              <strong style={SECTION_TITLE}>{savedItem.name} 已保存</strong>
+              <span style={HINT_TEXT}>{savedItem.models.length} 条模型映射已读回</span>
+              <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
+                <Link className="lg-text-link" to={`/audits?targetType=llmgw_model_exchange&search=${encodeURIComponent(savedItem.id)}`}>打开本次审计 <ArrowRight size={13} /></Link>
+                <Link className="lg-text-link" to="/pools">去模型池 <ArrowRight size={13} /></Link>
+              </div>
+            </div>
+          </Card>
+        ) : null}
+
+        {/* 创建与编辑一律内联展开：本路由被漂移检测监测，禁止抽屉与对话框。 */}
+        {formMode && meta ? (
+          <ExchangeForm
+            mode={formMode}
+            form={form}
+            meta={meta}
+            busy={formMode === 'create'
+              ? busyId === 'create-exchange'
+              : editingId !== null && busyId === editingId}
+            onChange={updateForm}
+            onUpdateModel={updateModel}
+            onSave={() => void saveExchange()}
+            onCancel={closeForm}
+          />
+        ) : null}
+
+        <div style={toolbarStyle}>
+          <label style={checkStyle}>
+            <input type="checkbox" checked={enabledOnly} onChange={(event) => setEnabledOnly(event.target.checked)} /> 仅显示启用项
+          </label>
+          {canWrite ? (
+            <details style={{ ...INSET_BLOCK, marginLeft: 'auto' }}>
+              <summary style={summaryStyle}>批量维护通讯密钥</summary>
+              <div style={{ display: 'flex', alignItems: 'center', flexWrap: 'wrap', gap: GAP.normal, marginTop: GAP.normal }}>
+                <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(event) => setBulkKeyValue(event.target.value)} placeholder="新的通讯密钥" style={{ ...FIELD_INPUT, maxWidth: 220 }} />
+                <label style={checkStyle}><input type="checkbox" checked={bulkOnlyMissing} onChange={(event) => setBulkOnlyMissing(event.target.checked)} /> 只补缺失</label>
+                <label style={checkStyle}><input type="checkbox" checked={bulkConfirm} onChange={(event) => setBulkConfirm(event.target.checked)} /> 确认当前筛选范围</label>
+                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-exchange-api-key'} onClick={() => void applyBulkApiKey()}>{busyId === 'bulk-exchange-api-key' ? '处理中' : '批量轮换'}</Button>
+              </div>
+            </details>
+          ) : null}
         </div>
-        {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>新建 Exchange</Button> : null}
-      </header>
 
-      {notice ? <div className="lg-inline-alert" role="status">{notice}</div> : null}
-      {error ? <div className="lg-inline-alert">{error}</div> : null}
-      {!canWrite ? <ReadOnlyNotice /> : null}
-
-      {savedItem ? (
-        <section className="lg-exchange-success" aria-label="Exchange 保存结果">
-          <CheckCircle2 size={19} />
-          <div><strong>{savedItem.name} 已保存</strong><p>{savedItem.models.length} 条模型映射已从服务端读回。下一步可加入模型池，或打开审计核对本次变化。</p></div>
-          <div className="lg-exchange-success-actions">
-            <Link to={`/audits?targetType=llmgw_model_exchange&search=${encodeURIComponent(savedItem.id)}`}>打开本次审计 <ArrowRight size={13} /></Link>
-            <Link to="/pools">去模型池 <ArrowRight size={13} /></Link>
-          </div>
-        </section>
-      ) : null}
-
-      {formMode && meta ? (
-        <ExchangeForm
-          mode={formMode}
-          form={form}
-          meta={meta}
-          busy={formMode === 'create'
-            ? busyId === 'create-exchange'
-            : editingId !== null && busyId === editingId}
-          onChange={updateForm}
-          onUpdateModel={updateModel}
-          onSave={() => void saveExchange()}
-          onCancel={closeForm}
-        />
-      ) : null}
-
-      <div className="lg-exchange-toolbar">
-        <label><input type="checkbox" checked={enabledOnly} onChange={(event) => setEnabledOnly(event.target.checked)} /> 仅显示启用项</label>
-        <span>{items ? `${items.length} 个 Exchange` : '正在读取'}</span>
-      </div>
-
-      {canWrite ? (
-        <details className="lg-exchange-bulk">
-          <summary>批量维护通讯密钥</summary>
-          <div>
-            <input type="password" autoComplete="new-password" value={bulkKeyValue} onChange={(event) => setBulkKeyValue(event.target.value)} placeholder="新的通讯密钥" />
-            <label><input type="checkbox" checked={bulkOnlyMissing} onChange={(event) => setBulkOnlyMissing(event.target.checked)} /> 只补缺失</label>
-            <label><input type="checkbox" checked={bulkConfirm} onChange={(event) => setBulkConfirm(event.target.checked)} /> 确认当前筛选范围</label>
-            <Button size="sm" variant="ghost" disabled={busyId === 'bulk-exchange-api-key'} onClick={() => void applyBulkApiKey()}>{busyId === 'bulk-exchange-api-key' ? '处理中' : '批量轮换'}</Button>
-          </div>
-        </details>
-      ) : null}
-
-      {!items || !meta ? (error ? (
-        <section className="lg-exchange-empty">
-          <Route size={24} />
-          <div><strong>Exchange 暂时无法读取</strong><p>上方保留了服务端返回的原因。重新加载不会创建配置，也不会调用上游。</p></div>
-          <Button variant="ghost" onClick={() => window.location.reload()}>重新加载</Button>
-        </section>
-      ) : <SectionLoader text="正在加载 Exchange…" />) : items.length === 0 ? (
-        <section className="lg-exchange-empty">
-          <Route size={24} />
-          <div><strong>还没有 Exchange 映射</strong><p>先创建第一条映射。保存只建立配置和审计，不会自动测试上游，也不会产生模型调用费用。</p></div>
-          {/* 三步引导只在零数据时出现：有配置的人不需要每次进页面都被教一遍。 */}
-          <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
-            <li><strong>创建映射</strong><p>填写上游地址、模型标识和通讯密钥。</p></li>
-            <li><strong>加入模型池</strong><p>把已启用模型加入对应用途的模型池。</p></li>
-            <li><strong>用 requestId 验证</strong><p>从 Quickstart 安全测试，再到审计定位变更。</p></li>
-          </ol>
-          {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
-        </section>
-      ) : (
-        <div className="lg-exchange-list">
-          {items.map((item) => {
-            const enabled = boolChip(item.enabled, '已启用', '已停用');
-            const key = boolChip(item.hasKey, '密钥已配置', '密钥缺失');
-            return (
-              <article className="lg-exchange-card" key={item.id}>
-                <div className="lg-exchange-card-head">
-                  <div><strong>{item.name || item.id}</strong><code>{item.id}</code></div>
-                  <span><Chip label={enabled.label} color={enabled.color} bg={enabled.bg} /><Chip label={key.label} color={key.color} bg={key.bg} /></span>
-                </div>
-                <div className="lg-exchange-route">
-                  <span>{item.transformerType || 'passthrough'}</span>
-                  <ArrowRight size={14} />
-                  <code title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>
-                  <EntityPreviewDrawer
-                    buttonLabel="查看路由"
-                    kicker="Exchange 路由预览"
-                    title={item.name || item.id}
-                    icon={<Route size={20} />}
-                    initiallyOpen={item.id === focusedExchangeId}
-                    summary="从当前卡片直接查看 adapter 如何把 Gateway 请求转换并发往上游。这里只展示配置与请求边界，不会试连目标地址，也不会读取通讯密钥。"
-                    status={[
-                      { label: item.enabled ? '已启用' : '已停用', tone: item.enabled ? 'good' : 'warning' },
-                      { label: item.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: item.hasKey ? 'good' : 'warning' },
-                      { label: `版本 ${item.version}` },
-                    ]}
-                    sections={[
-                      {
-                        title: 'adapter 与目标接口',
-                        description: meta.transformerTypes.find((option) => option.value === item.transformerType)?.description || '当前 adapter 没有额外说明。',
-                        fields: [
-                          { label: '上游接口类型', value: meta.transformerTypes.find((option) => option.value === item.transformerType)?.label || item.transformerType || 'passthrough' },
-                          { label: '目标地址', value: <code>{item.targetUrl || '未配置'}</code>, hint: item.targetUrl?.includes('{model}') ? '运行时会把 {model} 替换为当前模型标识。' : '请求按此完整地址发送。' },
-                          { label: '认证方式', value: meta.authSchemes.find((option) => option.value === item.targetAuthScheme)?.label || item.targetAuthScheme || 'Bearer' },
-                          { label: '配置来源', value: item.authority === 'llm_gateway' ? '当前租户 Gateway 配置' : '旧 MAP 配置，需先导入' },
-                        ],
-                      },
-                      {
-                        title: '模型映射',
-                        description: '上游模型标识先映射为明确用途，再决定能加入哪一类模型池。',
-                        fields: item.models.map((model) => ({
-                          label: model.displayName || model.modelId,
-                          value: <><code>{model.modelId}</code> · {meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} · {model.enabled ? '已启用' : '已停用'}</>,
-                        })),
-                      },
-                      {
-                        title: '验证方式',
-                        fields: [
-                          { label: '保存配置', value: '只写配置和审计，不访问上游' },
-                          { label: '安全验证', value: '使用 Quickstart dry-run 取得 requestId' },
-                          { label: '真实验证', value: '在明确批准后按协议单次调用，避免批量付费测试' },
-                        ],
-                      },
-                    ]}
-                  />
-                </div>
-                <div className="lg-exchange-models">
-                  {item.models.length ? item.models.map((model) => (
-                    <div key={`${item.id}:${model.modelId}`}>
-                      <strong>{model.displayName || model.modelId}</strong>
-                      <span>{model.modelId}</span>
-                      <Chip label={meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+        {!items || !meta ? (error ? (
+          <Card style={CARD_BODY}>
+            <div style={emptyStyle}>
+              <Route size={24} />
+              <strong style={SECTION_TITLE}>Exchange 暂时无法读取</strong>
+              <Prose>重新加载不会创建配置，也不会调用上游。</Prose>
+              <Button variant="ghost" onClick={() => window.location.reload()}>重新加载</Button>
+            </div>
+          </Card>
+        ) : <SectionLoader text="正在加载 Exchange…" />) : items.length === 0 ? (
+          <Card style={CARD_BODY}>
+            {/* 出口二：空状态。三步引导只在零数据时出现——有配置的人不需要每次进页面都被教一遍。 */}
+            <div style={emptyStyle}>
+              <Route size={24} />
+              <strong style={SECTION_TITLE}>还没有 Exchange 映射</strong>
+              <Prose>保存只建立配置和审计，不会调用上游，也不产生费用。</Prose>
+              <ol className="lg-exchange-steps" aria-label="Exchange 三步工作流">
+                <li><strong>创建映射</strong><p style={BODY_TEXT}>填写上游地址、模型标识和通讯密钥。</p></li>
+                <li><strong>加入模型池</strong><p style={BODY_TEXT}>把已启用模型加入对应用途的模型池。</p></li>
+                <li><strong>用 requestId 验证</strong><p style={BODY_TEXT}>从 Quickstart 安全测试，再到审计定位变更。</p></li>
+              </ol>
+              {canWrite ? <Button variant="primary" size="sm" onClick={openCreate}>创建第一条映射</Button> : null}
+            </div>
+          </Card>
+        ) : (
+          <div style={listStyle}>
+            {items.map((item) => {
+              const enabled = boolChip(item.enabled, '已启用', '已停用');
+              const key = boolChip(item.hasKey, '密钥已配置', '密钥缺失');
+              return (
+                <Card key={item.id} style={CARD_BODY}>
+                  <div style={rowStyle}>
+                    <div style={{ display: 'flex', flexDirection: 'column', gap: 3, minWidth: 0 }}>
+                      <strong style={SECTION_TITLE}>{item.name || item.id}</strong>
+                      <code style={MONO_META}>{item.id}</code>
                     </div>
-                  )) : <p>这条旧配置没有结构化模型映射，请编辑后保存。</p>}
-                </div>
-                <div className="lg-exchange-card-footer">
-                  <span>{item.authority === 'llm_gateway' ? '当前租户平台配置' : '旧 MAP 配置待导入'} · 认证 {item.targetAuthScheme || 'Bearer'} · 版本 {item.version}</span>
-                  {canWrite ? (
-                    <div>
-                      {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
-                      {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
-                      {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
-                    </div>
-                  ) : <span>只读</span>}
-                </div>
-                {keyEditId === item.id ? (
-                  <div className="lg-exchange-key-editor">
-                    <input type="password" autoComplete="new-password" value={keyValue} onChange={(event) => setKeyValue(event.target.value)} placeholder="输入新的通讯密钥" />
-                    <span>保存后只返回“已配置”，页面不会读回密钥内容。</span>
-                    <Button size="sm" variant="primary" disabled={busyId === item.id} onClick={() => void saveApiKey(item)}>保存密钥</Button>
-                    <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(null); setKeyValue(''); }}>取消</Button>
+                    <span style={{ display: 'flex', flexWrap: 'wrap', gap: GAP.tight, marginLeft: 'auto' }}>
+                      <Chip label={enabled.label} color={enabled.color} bg={enabled.bg} />
+                      <Chip label={key.label} color={key.color} bg={key.bg} />
+                    </span>
                   </div>
-                ) : null}
-              </article>
-            );
-          })}
-        </div>
-      )}
-    </div>
+
+                  <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.section }}>
+                    <span style={HINT_TEXT}>{item.transformerType || 'passthrough'}</span>
+                    <ArrowRight size={14} style={{ color: 'var(--text-muted)', flexShrink: 0 }} />
+                    <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }} title={item.targetUrl}>{item.targetUrl || '未配置目标地址'}</code>
+                    <span style={{ marginLeft: 'auto' }}>
+                      <EntityPreviewDrawer
+                        buttonLabel="查看路由"
+                        kicker="Exchange 路由预览"
+                        title={item.name || item.id}
+                        icon={<Route size={20} />}
+                        initiallyOpen={item.id === focusedExchangeId}
+                        summary="从当前卡片直接查看 adapter 如何把 Gateway 请求转换并发往上游。这里只展示配置与请求边界，不会试连目标地址，也不会读取通讯密钥。"
+                        status={[
+                          { label: item.enabled ? '已启用' : '已停用', tone: item.enabled ? 'good' : 'warning' },
+                          { label: item.hasKey ? '通讯密钥已配置' : '通讯密钥缺失', tone: item.hasKey ? 'good' : 'warning' },
+                          { label: `版本 ${item.version}` },
+                        ]}
+                        sections={[
+                          {
+                            title: 'adapter 与目标接口',
+                            description: meta.transformerTypes.find((option) => option.value === item.transformerType)?.description || '当前 adapter 没有额外说明。',
+                            fields: [
+                              { label: '上游接口类型', value: meta.transformerTypes.find((option) => option.value === item.transformerType)?.label || item.transformerType || 'passthrough' },
+                              { label: '目标地址', value: <code>{item.targetUrl || '未配置'}</code>, hint: item.targetUrl?.includes('{model}') ? '运行时会把 {model} 替换为当前模型标识。' : '请求按此完整地址发送。' },
+                              { label: '认证方式', value: meta.authSchemes.find((option) => option.value === item.targetAuthScheme)?.label || item.targetAuthScheme || 'Bearer' },
+                              { label: '配置来源', value: item.authority === 'llm_gateway' ? '当前租户 Gateway 配置' : '旧 MAP 配置，需先导入' },
+                            ],
+                          },
+                          {
+                            title: '模型映射',
+                            description: '上游模型标识先映射为明确用途，再决定能加入哪一类模型池。',
+                            fields: item.models.map((model) => ({
+                              label: model.displayName || model.modelId,
+                              value: <><code>{model.modelId}</code> · {meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} · {model.enabled ? '已启用' : '已停用'}</>,
+                            })),
+                          },
+                          {
+                            title: '验证方式',
+                            fields: [
+                              { label: '保存配置', value: '只写配置和审计，不访问上游' },
+                              { label: '安全验证', value: '使用 Quickstart dry-run 取得 requestId' },
+                              { label: '真实验证', value: '在明确批准后按协议单次调用，避免批量付费测试' },
+                            ],
+                          },
+                        ]}
+                      />
+                    </span>
+                  </div>
+
+                  <div style={{ display: 'grid', gap: GAP.tight, marginTop: GAP.normal }}>
+                    {item.models.length ? item.models.map((model) => (
+                      <div key={`${item.id}:${model.modelId}`} style={{ ...INSET_BLOCK, ...rowStyle }}>
+                        <strong style={BODY_TEXT}>{model.displayName || model.modelId}</strong>
+                        <code style={{ ...MONO_META, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>{model.modelId}</code>
+                        <span style={{ marginLeft: 'auto' }}>
+                          <Chip label={meta.modelTypes.find((option) => option.value === model.modelType)?.label || model.modelType} color="var(--text-secondary)" bg="var(--bg-elevated)" />
+                        </span>
+                      </div>
+                    )) : <span style={{ ...HINT_TEXT, color: 'var(--warn)' }}>这条旧配置没有结构化模型映射，请编辑后保存。</span>}
+                  </div>
+
+                  <div style={{ ...rowStyle, marginTop: GAP.section, paddingTop: INSET_PADDING, borderTop: '1px solid var(--border-subtle)' }}>
+                    <span style={HINT_TEXT}>{item.authority === 'llm_gateway' ? '当前租户平台配置' : '旧 MAP 配置待导入'} · 认证 {item.targetAuthScheme || 'Bearer'} · 版本 {item.version}</span>
+                    {canWrite ? (
+                      <div style={{ ...CARD_ACTIONS, marginLeft: 'auto', justifyContent: 'flex-end' }}>
+                        {item.authority === 'llm_gateway' ? <Button size="sm" variant="ghost" onClick={() => openEdit(item)}><Pencil size={13} /> 编辑映射</Button> : <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void claimExchange(item)}>导入旧配置</Button>}
+                        {item.authority === 'llm_gateway' && keyEditId !== item.id ? <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(item.id); setKeyValue(''); }}><KeyRound size={13} /> 更新密钥</Button> : null}
+                        {item.authority === 'llm_gateway' && item.hasKey ? <Button size="sm" variant="ghost" disabled={busyId === item.id} onClick={() => void clearApiKey(item)}>清除密钥</Button> : null}
+                      </div>
+                    ) : <span style={{ ...HINT_TEXT, marginLeft: 'auto' }}>只读</span>}
+                  </div>
+
+                  {keyEditId === item.id ? (
+                    <div style={{ ...INSET_BLOCK, ...rowStyle, marginTop: GAP.normal, border: '1px solid var(--accent)', background: 'var(--accent-soft)' }}>
+                      <input type="password" autoComplete="new-password" value={keyValue} onChange={(event) => setKeyValue(event.target.value)} placeholder="输入新的通讯密钥" style={{ ...FIELD_INPUT, maxWidth: 220 }} />
+                      <span style={HINT_TEXT}>保存后只返回“已配置”，页面不会读回密钥内容。</span>
+                      <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
+                        <Button size="sm" variant="primary" disabled={busyId === item.id} onClick={() => void saveApiKey(item)}>保存密钥</Button>
+                        <Button size="sm" variant="ghost" onClick={() => { setKeyEditId(null); setKeyValue(''); }}>取消</Button>
+                      </div>
+                    </div>
+                  ) : null}
+                </Card>
+              );
+            })}
+          </div>
+        )}
+
+        <DetailsBlock title="工作原理：Exchange 把非标准上游接成可调度的模型">
+          <Prose>
+            一条 Exchange 记录目标地址、adapter 与认证方式，再把上游模型标识映射成明确用途，
+            之后就能像平台模型一样加入模型池。租户由服务端会话解析，通讯密钥只写不读，
+            保存只写配置与审计，不会替你调用上游产生费用。
+          </Prose>
+          <TutorialLink chapter="chapter-19">查看教程：第 19 章 Exchange 映射</TutorialLink>
+        </DetailsBlock>
+      </PageBody>
+    </PageShell>
   );
 }
 
@@ -493,46 +566,169 @@ function ExchangeForm({ mode, form, meta, busy, onChange, onUpdateModel, onSave,
   };
 
   return (
-    <section className="lg-exchange-form" aria-labelledby="exchange-form-title">
-      <div className="lg-exchange-form-head">
-        <div><div className="lg-card-kicker">{mode === 'create' ? '第一步' : '修改现有配置'}</div><h2 id="exchange-form-title">{mode === 'create' ? '创建 Exchange 映射' : '编辑 Exchange 映射'}</h2><p>基本信息保存后立即从服务端读回；页面不接收 tenantId，也不会在保存时调用上游。</p></div>
-        <Button size="sm" variant="ghost" onClick={onCancel}>关闭</Button>
-      </div>
-      <div className="lg-exchange-form-grid">
-        <label>Exchange 名称<input value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="例如：我的 Gemini 原生接口" /></label>
-        <label>上游接口类型<select value={form.transformerType} onChange={(event) => changeTransformer(event.target.value)}>{transformerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{meta.transformerTypes.find((option) => option.value === form.transformerType)?.description}。选择类型后会自动推荐认证方式。只有豆包流式语音识别可使用公网 WSS；其他类型必须使用 HTTP/HTTPS。运行时会固定已验证公网 IP 并校验证书主机名。</small></label>
-        <label>认证方式<select value={form.targetAuthScheme} onChange={(event) => onChange({ ...form, targetAuthScheme: event.target.value })}>{meta.authSchemes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select><small>{meta.authSchemes.find((option) => option.value === form.targetAuthScheme)?.description}</small></label>
-        <label className="is-wide">目标地址<input value={form.targetUrl} onChange={(event) => onChange({ ...form, targetUrl: event.target.value })} placeholder={targetPlaceholder} /><small>请填写上游真实接口地址；需要动态模型名时使用 {'{model}'}。通讯密钥必须放在密钥字段，不要放进 URL。</small></label>
-        {mode === 'create' ? <label className="is-wide">通讯密钥<input type="password" autoComplete="new-password" value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder="创建时必填" /><small>密钥加密保存，不进入响应和操作审计。</small></label> : null}
+    <Card style={{ ...CARD_BODY, borderColor: 'var(--accent)' }}>
+      <div style={rowStyle}>
+        <h2 id="exchange-form-title" style={SECTION_TITLE}>{mode === 'create' ? '创建 Exchange 映射' : '编辑 Exchange 映射'}</h2>
+        <span style={HINT_TEXT}>保存后立即从服务端读回，保存本身不调用上游。</span>
+        <div style={{ marginLeft: 'auto' }}><Button size="sm" variant="ghost" onClick={onCancel}>关闭</Button></div>
       </div>
 
-      <div className="lg-exchange-model-editor">
-        <div><strong>模型映射</strong><p>至少一条。模型用途决定它可以加入哪一种默认池。</p></div>
+      {/* 表单栅格走 PageShell 的 FormGrid（列宽 260~320 固定），
+          只覆盖 align-items：字段带 <small> 提示，底对齐会把标签抬歪。 */}
+      <FormGrid style={{ alignItems: 'start', marginTop: GAP.section }}>
+        <label style={FIELD_LABEL}>
+          <span>Exchange 名称</span>
+          <input value={form.name} onChange={(event) => onChange({ ...form, name: event.target.value })} placeholder="例如：我的 Gemini 原生接口" style={FIELD_INPUT} />
+        </label>
+        <label style={FIELD_LABEL}>
+          <span>上游接口类型<TargetTypeHelp /></span>
+          <select value={form.transformerType} onChange={(event) => changeTransformer(event.target.value)} style={FIELD_INPUT}>
+            {transformerOptions.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <small style={HINT_TEXT}>{meta.transformerTypes.find((option) => option.value === form.transformerType)?.description}</small>
+        </label>
+        <label style={FIELD_LABEL}>
+          <span>认证方式</span>
+          <select value={form.targetAuthScheme} onChange={(event) => onChange({ ...form, targetAuthScheme: event.target.value })} style={FIELD_INPUT}>
+            {meta.authSchemes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+          </select>
+          <small style={HINT_TEXT}>{meta.authSchemes.find((option) => option.value === form.targetAuthScheme)?.description}</small>
+        </label>
+        <label style={{ ...FIELD_LABEL, gridColumn: '1 / -1', maxWidth: 660 }}>
+          <span>
+            目标地址
+            <HelpPopover label="目标地址">
+              请填写上游真实接口地址；需要动态模型名时使用 <code>{'{model}'}</code>。通讯密钥必须放在密钥字段，不要放进 URL。
+            </HelpPopover>
+          </span>
+          <input value={form.targetUrl} onChange={(event) => onChange({ ...form, targetUrl: event.target.value })} placeholder={targetPlaceholder} style={FIELD_INPUT} />
+        </label>
+        {mode === 'create' ? (
+          <label style={{ ...FIELD_LABEL, gridColumn: '1 / -1', maxWidth: 660 }}>
+            <span>
+              通讯密钥
+              <HelpPopover label="通讯密钥">密钥加密保存，不进入响应和操作审计；保存后只返回“已配置”，不会再读回明文。</HelpPopover>
+            </span>
+            <input type="password" autoComplete="new-password" value={form.apiKey} onChange={(event) => onChange({ ...form, apiKey: event.target.value })} placeholder="创建时必填" style={FIELD_INPUT} />
+          </label>
+        ) : null}
+      </FormGrid>
+
+      <div style={{ ...INSET_BLOCK, display: 'flex', flexDirection: 'column', gap: GAP.normal, marginTop: GAP.section }}>
+        <div style={rowStyle}>
+          <strong style={SECTION_TITLE}>模型映射</strong>
+          <HelpPopover label="模型映射">至少一条。模型用途决定它可以加入哪一种默认池，也决定 Gateway 调度时把它当成什么模型使用。</HelpPopover>
+        </div>
         {form.models.map((model, index) => (
-          <div className="lg-exchange-model-row" key={`model-row-${index}`}>
-            <label>上游模型标识<input value={model.modelId} onChange={(event) => onUpdateModel(index, { modelId: event.target.value })} placeholder="例如 gemini-2.5-flash" /></label>
-            <label>显示名称<input value={model.displayName || ''} onChange={(event) => onUpdateModel(index, { displayName: event.target.value })} placeholder="可选" /></label>
-            <label>模型用途<select value={model.modelType} onChange={(event) => onUpdateModel(index, { modelType: event.target.value })}>{meta.modelTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}</select></label>
-            <label className="lg-exchange-enabled"><input type="checkbox" checked={model.enabled} onChange={(event) => onUpdateModel(index, { enabled: event.target.checked })} /> 启用这条映射</label>
+          <div style={modelRowStyle} key={`model-row-${index}`}>
+            <label style={modelFieldStyle(180)}>
+              <span>上游模型标识</span>
+              <input value={model.modelId} onChange={(event) => onUpdateModel(index, { modelId: event.target.value })} placeholder="例如 gemini-2.5-flash" style={FIELD_INPUT} />
+            </label>
+            <label style={modelFieldStyle(150)}>
+              <span>显示名称</span>
+              <input value={model.displayName || ''} onChange={(event) => onUpdateModel(index, { displayName: event.target.value })} placeholder="可选" style={FIELD_INPUT} />
+            </label>
+            <label style={modelFieldStyle(130)}>
+              <span>模型用途</span>
+              <select value={model.modelType} onChange={(event) => onUpdateModel(index, { modelType: event.target.value })} style={FIELD_INPUT}>
+                {meta.modelTypes.map((option) => <option key={option.value} value={option.value}>{option.label}</option>)}
+              </select>
+            </label>
+            <label style={checkStyle}>
+              <input type="checkbox" checked={model.enabled} onChange={(event) => onUpdateModel(index, { enabled: event.target.checked })} /> 启用这条映射
+            </label>
             {form.models.length > 1 ? <Button size="sm" variant="ghost" onClick={() => onChange({ ...form, models: form.models.filter((_, modelIndex) => modelIndex !== index) })}><Trash2 size={13} /> 移除</Button> : null}
           </div>
         ))}
-        <Button size="sm" variant="ghost" onClick={() => onChange({ ...form, models: [...form.models, emptyModel()] })}><Plus size={13} /> 添加模型映射</Button>
+        <div style={CARD_ACTIONS}>
+          <Button size="sm" variant="ghost" onClick={() => onChange({ ...form, models: [...form.models, emptyModel()] })}><Plus size={13} /> 添加模型映射</Button>
+        </div>
       </div>
 
-      <details className="lg-exchange-advanced">
-        <summary>高级设置</summary>
-        <div>
-          <label className="is-wide">说明<textarea value={form.description} onChange={(event) => onChange({ ...form, description: event.target.value })} placeholder="说明这条 Exchange 在系统里承担什么作用" /></label>
-          <label className="lg-exchange-enabled"><input type="checkbox" checked={form.enabled} onChange={(event) => onChange({ ...form, enabled: event.target.checked })} /> 创建后立即启用</label>
+      <details style={{ ...INSET_BLOCK, marginTop: GAP.section }}>
+        <summary style={summaryStyle}>高级设置</summary>
+        <div style={{ display: 'grid', gap: GAP.normal, marginTop: GAP.normal, maxWidth: 660 }}>
+          <label style={FIELD_LABEL}>
+            <span>说明</span>
+            <textarea value={form.description} onChange={(event) => onChange({ ...form, description: event.target.value })} placeholder="说明这条 Exchange 在系统里承担什么作用" style={{ ...FIELD_INPUT, height: 76, padding: 10, resize: 'vertical' }} />
+          </label>
+          <label style={checkStyle}>
+            <input type="checkbox" checked={form.enabled} onChange={(event) => onChange({ ...form, enabled: event.target.checked })} /> 创建后立即启用
+          </label>
         </div>
       </details>
 
-      <div className="lg-exchange-form-actions">
-        <span>{mode === 'edit' ? `正在编辑版本 ${form.version}，旧版本提交会被服务端拒绝。` : '保存只创建配置，不会自动产生上游请求。'}</span>
-        <Button variant="ghost" onClick={onCancel}>取消</Button>
-        <Button variant="primary" disabled={busy} onClick={onSave}>{busy ? '保存中' : mode === 'create' ? '创建并读回' : '保存并读回'}</Button>
+      <div style={{ ...rowStyle, marginTop: GAP.section, paddingTop: GAP.section, borderTop: '1px solid var(--border-subtle)' }}>
+        <span style={HINT_TEXT}>{mode === 'edit' ? `正在编辑版本 ${form.version}，旧版本提交会被服务端拒绝。` : '保存只创建配置，不会自动产生上游请求。'}</span>
+        <div style={{ ...CARD_ACTIONS, marginLeft: 'auto' }}>
+          <Button variant="ghost" size="sm" onClick={onCancel}>取消</Button>
+          <Button variant="primary" size="sm" disabled={busy} onClick={onSave}>{busy ? '保存中' : mode === 'create' ? '创建并读回' : '保存并读回'}</Button>
+        </div>
       </div>
-    </section>
+    </Card>
   );
 }
+
+/** 卡片内的一行：图标 / 标题 / 元信息 / 右侧操作，全站同一种排法。 */
+const rowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  flexWrap: 'wrap',
+  minWidth: 0,
+};
+
+const listStyle: React.CSSProperties = {
+  display: 'grid',
+  gridTemplateColumns: 'repeat(auto-fit, minmax(min(100%, 540px), 1fr))',
+  gap: GAP.section,
+};
+
+const toolbarStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'flex-start',
+  gap: GAP.section,
+  flexWrap: 'wrap',
+};
+
+// 空状态：外层 Card 已经带 CARD_BODY(14)，这里不再叠第二层内边距
+// ——「卡片内边距只许 14 或 10」，多拍一个数就会给漂移检测多一种规格。
+const emptyStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  alignItems: 'flex-start',
+  gap: GAP.section,
+  maxWidth: 'var(--measure)',
+  color: 'var(--text-muted)',
+};
+
+const checkStyle: React.CSSProperties = {
+  display: 'inline-flex',
+  alignItems: 'center',
+  gap: GAP.tight,
+  color: 'var(--text-secondary)',
+  fontSize: 'var(--fs-body)',
+};
+
+const summaryStyle: React.CSSProperties = {
+  color: 'var(--text-secondary)',
+  cursor: 'pointer',
+  fontSize: 'var(--fs-secondary)',
+  fontWeight: 600,
+};
+
+// 模型映射一行：原来是五列 grid，靠 theme.css 的 @media(max-width:760px) 塌成一列。
+// 迁到内联样式后**内联优先级高于媒体查询**，那条兜底就失效了——
+// 所以这里改成 flex 换行，窄屏靠 flex-basis 自己折行，不再依赖任何断点。
+const modelRowStyle: React.CSSProperties = {
+  display: 'flex',
+  flexWrap: 'wrap',
+  alignItems: 'flex-end',
+  gap: GAP.normal,
+  paddingTop: GAP.normal,
+  borderTop: '1px solid var(--border-subtle)',
+};
+
+/** 模型行里的字段：窄屏折行，宽屏按权重分配。 */
+const modelFieldStyle = (basis: number): React.CSSProperties => ({ ...FIELD_LABEL, flex: `1 1 ${basis}px` });

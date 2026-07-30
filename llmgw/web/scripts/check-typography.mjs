@@ -89,6 +89,73 @@ for (const full of walk(SRC)) {
   });
 }
 
+// 规则三：小字号不许承载成句解释。
+// 判据是「caption/micro 档 + 正文行高」同时出现在同一个声明块里——
+// 角标、chip、指标 caption 从不设正文行高，成段的解释一定会设。
+// 组织页改版前有 10 处用 11px 排整句话（roleCardStyle 1.45 / boundaryNoteStyle 1.55 /
+// GovernanceLink 的 detail 1.55 / errorHintStyle 1.5），Exchange 则是在 CSS 里
+// 把分区段落钉成 12px —— 这一条精准命中它们，同时几乎不会误伤真正的角标。
+// 存量很大（2026-07-29 首次扫出 38 处），一次性清完会把无关工作全挡住，
+// 所以按**棘轮**执行：记录每个文件的当前处数，只许减不许增；未登记的文件默认 0。
+// 迁移完一个文件就把它的条目删掉（降到 0）。与 prd-admin 的 themeHardcodeRatchet 同一套路。
+// 组织页已按 v1.2 迁移完毕，故不在表内——它再出现一处就会红。
+const SMALL_PROSE_BASELINE = {
+  'theme.css': 27,
+  'components/EntityPreviewDrawer.tsx': 4,
+  'pages/ChangePasswordPage.tsx': 1,
+};
+
+const SMALL_STEP = /--fs-(caption|micro)/;
+const BODY_LINE_HEIGHT = /line-?[hH]eight:\s*['"`]?(\d+(?:\.\d+)?)/;
+
+/** 从任意位置向前找最近的 `{`，再按花括号配平取出整块。 */
+function enclosingBlock(lines, index) {
+  let start = index;
+  while (start >= 0 && !lines[start].includes('{')) start -= 1;
+  if (start < 0) return lines[index];
+  return declarationBlock(lines, start);
+}
+
+const smallProseHits = {};
+
+for (const full of walk(SRC)) {
+  const rel = path.relative(SRC, full);
+  if (!/\.(tsx?|css)$/.test(rel) || rel === 'lib/typography.ts') continue;
+  const lines = fs.readFileSync(full, 'utf8').split('\n');
+  const flagged = new Set();
+
+  lines.forEach((line, i) => {
+    if (!SMALL_STEP.test(line)) return;
+    const block = enclosingBlock(lines, i);
+    const lh = BODY_LINE_HEIGHT.exec(block);
+    if (!lh || Number(lh[1]) < 1.45) return;
+    // 同一个块只报一次，避免一个块里两条声明刷出两行。
+    const key = block.slice(0, 60);
+    if (flagged.has(key)) return;
+    flagged.add(key);
+    if (EXCEPTIONS.some((e) => rel.endsWith(e.file) && block.includes(e.match))) return;
+    (smallProseHits[rel] ??= []).push(`${rel}:${i + 1}  ${SMALL_STEP.exec(line)[0]} 档配了正文行高 ${lh[1]}`);
+  });
+}
+
+for (const [rel, hits] of Object.entries(smallProseHits)) {
+  const allowed = SMALL_PROSE_BASELINE[rel] ?? 0;
+  if (hits.length <= allowed) continue;
+  violations.push(
+    `${rel}  小字号承载正文 ${hits.length} 处，超出棘轮基线 ${allowed} 处\n`
+    + hits.slice(0, 5).map((hit) => `      · ${hit}`).join('\n')
+    + '\n      ← 成句解释一律 --fs-body；要么改档位，要么把这段话收进 HelpPopover / DetailsBlock',
+  );
+}
+
+// 棘轮只减不增：清干净了就要求把基线一起降下来，否则欠账表会越留越假。
+for (const [rel, allowed] of Object.entries(SMALL_PROSE_BASELINE)) {
+  const actual = smallProseHits[rel]?.length ?? 0;
+  if (actual < allowed) {
+    violations.push(`${rel}  小字号承载正文已降到 ${actual} 处  ← 请把 check-typography.mjs 的 SMALL_PROSE_BASELINE 从 ${allowed} 改为 ${actual}（清零则删除该条目）`);
+  }
+}
+
 if (violations.length) {
   console.error('字体阶梯守卫未通过：\n');
   for (const v of violations) console.error('  ' + v);

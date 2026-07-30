@@ -20,6 +20,17 @@ import type { BuildProfile, EnvKeyProvenance, EnvSource } from '../types.js';
 import { resolveEnvTemplates, ENV_TEMPLATE_RE, envTemplateDefault } from './compose-parser.js';
 import { applyPerBranchDbIsolation, slugifyBranchForDb } from './db-scope-isolation.js';
 
+/**
+ * 平台注入的已发布入口表。
+ *
+ * `reservedKeys` 与 `env` 分开传是刻意的:表为空时 `env` 里没有对应 key,
+ * 但那些 key 仍然**归平台所有**,必须先清掉项目/profile 留下的值。
+ */
+export interface PublishedEntrypointsEnv {
+  reservedKeys: readonly string[];
+  env: Record<string, string>;
+}
+
 /** 一层 env 来源。合并顺序 = 数组顺序,靠后覆盖靠前(last-writer-wins)。 */
 export interface EnvLayer {
   source: EnvSource;
@@ -106,13 +117,21 @@ function trackSet(
  * @param opts.jwtIssuer  Jwt__Issuer 兜底值(config.jwt.issuer)
  * @param opts.injectBullmqPrefix  BULLMQ_PREFIX 分支前缀兜底开关(默认开;
  *                        CDS_BULLMQ_PREFIX_INJECTION=0 时调用方传 false 关闭)
+ * @param opts.publishedEntrypoints 已发布入口表。`reservedKeys` 是平台独占的 key 清单
+ *                        (先清后写,项目不得在这些 key 上留值),`env` 是本次真实存在的入口。
+ *                        纯函数不读 state,由调用方算好传入;检查器端点必须传同值,
+ *                        否则「检查器看到的」≠「部署实际注入的」
  */
 export function resolveProfileRuntimeEnvWithProvenance(
   entry: EnvResolveBranchContext,
   profile: Pick<BuildProfile, 'dockerImage' | 'dbScope'>,
   customEnvLayers: EnvLayer[],
   profileLayers: EnvLayer[],
-  opts: { jwtIssuer: string; injectBullmqPrefix?: boolean },
+  opts: {
+    jwtIssuer: string;
+    injectBullmqPrefix?: boolean;
+    publishedEntrypoints?: PublishedEntrypointsEnv;
+  },
 ): EnvResolveResult {
   const tracked = new Map<string, TrackedEntry>();
 
@@ -169,6 +188,25 @@ export function resolveProfileRuntimeEnvWithProvenance(
   // 任何显式定义优先;放在 profile 层之后正是为此。逃生阀见 opts.injectBullmqPrefix。
   if (opts.injectBullmqPrefix !== false && entry.branch && !tracked.get('BULLMQ_PREFIX')?.value) {
     trackSet(tracked, 'BULLMQ_PREFIX', slugifyBranchForDb(entry.branch), 'platform-injected', 'bullmq-branch-prefix');
+  }
+
+  // 4.6 已发布入口表(强制覆盖,平台事实)。
+  // 应用侧要拼「兄弟服务的公网地址」(如 MAP 跳模型网关控制台)时,唯一合法来源是这里 ——
+  // 禁止应用自己按 hostname 推算(根 CLAUDE.md 规则 #11)。表由 CDS 按真实发布判据算出:
+  // 没发布的命名子域表里就没有这一项,应用据此显示「本环境未发布该入口」,
+  // 而不是拼一个不存在的域名。
+  //
+  // 先**清空**保留 key 再写实际存在的那些(Codex P2):只做覆盖是不够的 —— 表为空时
+  // publishedEntrypointsEnv 不产出 CDS_SERVICE_URLS,那条 key 上项目/profile 的值就
+  // 原样留下了,项目于是能在 CDS 明确「没有这条路由」的情况下伪造一个网关地址,
+  // 与「平台事实」的承诺正好相反。保留 key 的清单由调用方给(reservedKeys),
+  // 免得这里再抄一份 key 名(env-provenance 不能反向 import preview-entrypoints:
+  // 那条链上有 container.ts,会成环)。
+  if (opts.publishedEntrypoints) {
+    for (const key of opts.publishedEntrypoints.reservedKeys) tracked.delete(key);
+    for (const [k, v] of Object.entries(opts.publishedEntrypoints.env)) {
+      trackSet(tracked, k, v, 'platform-injected', 'published-entrypoints');
+    }
   }
 
   // 5. 平台版本元数据(强制覆盖)
