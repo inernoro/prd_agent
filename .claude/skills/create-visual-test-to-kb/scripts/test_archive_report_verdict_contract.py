@@ -50,6 +50,30 @@ class DailyVerdictContractTests(unittest.TestCase):
                 {"smoke", "archive"},
             ),
             (
+                "CDS smoke 和验收报告归档失败但构建已修复",
+                {"smoke", "archive"},
+            ),
+            (
+                "CDS smoke 失败但构建和验收报告归档已修复",
+                {"smoke"},
+            ),
+            (
+                "CDS smoke 已修复但构建和验收报告归档失败",
+                {"build", "archive"},
+            ),
+            (
+                "CDS smoke 已修复但失败的构建和验收报告归档",
+                {"build", "archive"},
+            ),
+            (
+                "CDS smoke 失败但已修复的构建和验收报告归档",
+                {"smoke"},
+            ),
+            (
+                "CDS smoke 和归档失败但 smoke 和构建已修复",
+                {"archive"},
+            ),
+            (
                 "失败的 CDS smoke 与验收报告归档",
                 {"smoke", "archive"},
             ),
@@ -415,6 +439,23 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_resolved_separate_subject_group_does_not_hide_parallel_failures(self):
+        fact = "CDS smoke 和验收报告归档失败但构建已修复"
+        for nature in ("硬门禁失败", "验收链路失败"):
+            with self.subTest(nature=nature):
+                body = report_body(nature).replace("当前部署 SHA 已前进", fact)
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+        body = report_body("覆盖不足").replace("当前部署 SHA 已前进", fact)
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        error_text = "\n".join(errors)
+        self.assertIn("硬门禁", error_text)
+        self.assertIn("验收链路", error_text)
+        self.assertIn("必须使用 fail", error_text)
 
     def test_partially_resolved_status_does_not_hide_current_failure(self):
         for conclusion in (

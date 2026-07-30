@@ -659,29 +659,69 @@ def _subject_occurrences(text):
     return occurrences
 
 
-def _nearest_event_subjects(event, occurrences):
-    """Bind a status event to the nearest explicitly named subject."""
+def _event_anchor_occurrences(event, occurrences, clause):
+    """Bind a status to the preceding subject, except for prefix-status wording."""
     if not occurrences:
         return set()
-    event_center = (event.start() + event.end()) / 2
-    distances = [
-        (abs(((start + end) / 2) - event_center), name)
-        for start, end, name in occurrences
-    ]
-    nearest_distance = min(distance for distance, _ in distances)
-    return {name for distance, name in distances if distance == nearest_distance}
+    left = [occurrence for occurrence in occurrences if occurrence[1] <= event.start()]
+    right = [occurrence for occurrence in occurrences if occurrence[0] >= event.end()]
+    if right:
+        first_right_start = min(start for start, _, _ in right)
+        right_gap = clause[event.end() : first_right_start]
+        prefix_status = bool(
+            re.fullmatch(
+                r"\s*的\s*(?:CDS\s*)?(?:验收报告\s*)?",
+                right_gap,
+                re.I,
+            )
+        )
+        if not left or prefix_status:
+            return {
+                occurrence
+                for occurrence in right
+                if occurrence[0] == first_right_start
+            }
+    last_left_end = max(end for _, end, _ in left)
+    return {
+        occurrence
+        for occurrence in left
+        if occurrence[1] == last_left_end
+    }
+
+
+def _coordinated_subject_groups(occurrences, clause):
+    """Group only adjacent subjects joined by an explicit coordination marker."""
+    ordered = sorted(occurrences)
+    groups = []
+    for occurrence in ordered:
+        if not groups:
+            groups.append([occurrence])
+            continue
+        previous = groups[-1][-1]
+        gap = clause[previous[1] : occurrence[0]]
+        if re.fullmatch(
+            r"\s*(?:以及|并且|和|与|及|、|/|并|且)"
+            r"\s*(?:CDS\s*)?(?:验收报告\s*)?",
+            gap,
+            re.I,
+        ):
+            groups[-1].append(occurrence)
+        else:
+            groups.append([occurrence])
+    return groups
 
 
 def _event_subjects(event, occurrences, clause):
-    """Apply a shared status to explicitly coordinated subjects."""
-    if len(occurrences) > 1:
-        first_start = min(start for start, _, _ in occurrences)
-        last_end = max(end for _, end, _ in occurrences)
-        subject_span = clause[first_start:last_end]
-        event_outside_span = event.end() <= first_start or event.start() >= last_end
-        if event_outside_span and re.search(r"和|与|及|以及|、|/|均|都", subject_span):
-            return {name for _, _, name in occurrences}
-    return _nearest_event_subjects(event, occurrences)
+    """Apply a status only to its nearest explicitly coordinated subject group."""
+    anchor_occurrences = _event_anchor_occurrences(event, occurrences, clause)
+    if not anchor_occurrences:
+        return set()
+    groups = _coordinated_subject_groups(occurrences, clause)
+    subjects = set()
+    for group in groups:
+        if any(occurrence in anchor_occurrences for occurrence in group):
+            subjects.update(name for _, _, name in group)
+    return subjects
 
 
 def _apply_subject_state(states, subjects, state):
@@ -706,7 +746,8 @@ def _closure_changes_subject(clause, event, previous_event_end):
         r"CDS|的|但|但是|不过|且|并|并且|而|后|前|先前|此前|一度|曾"
         r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
         r"|该异常|此异常|本根因|该根因|根因"
-        r"|重试|复测|验证|再次|重新|二者|全部|均|都",
+        r"|重试|复测|验证|再次|重新|二者|全部|均|都"
+        r"|和|与|以及|及|、|并且|并|且|验收报告",
         " ",
         scope,
         flags=re.I,
