@@ -44,6 +44,7 @@ public static class OfficialMarketplaceSkillInjector
         return new
         {
             Id = OfficialFindMapSkillsId,
+            slug = OfficialSkillTemplates.FindMapSkillsKey,
             Title = "findmapskills · 海鲜市场操作技能",
             version = OfficialSkillTemplates.FindMapSkillsVersion,
             Description = $"官方内置 · v{OfficialSkillTemplates.FindMapSkillsVersion} · AI 装上这一个就能搜索/下载/上传/订阅海鲜市场",
@@ -142,6 +143,7 @@ public static class OfficialMarketplaceSkillInjector
         return new
         {
             Id = OfficialIdFor(e.Key),
+            slug = e.Key,
             Title = e.Title,
             version = e.Version,
             Description = string.IsNullOrWhiteSpace(e.Version)
@@ -184,6 +186,7 @@ public static class OfficialMarketplaceSkillInjector
         return new
         {
             Id = OfficialIdFor(b.Key),
+            slug = b.Key,
             Title = b.Title,
             version = b.Version,
             Description = string.IsNullOrWhiteSpace(b.Version)
