@@ -48,6 +48,8 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("核心流程尚未通过", {"core-case"}),
             ("CDS smoke 当前失败", {"smoke"}),
             ("CDS smoke 测试失败", {"smoke"}),
+            ("CDS smoke 移动端失败", {"smoke"}),
+            ("CDS smoke（移动端）失败", {"smoke"}),
             ("服务尚未就绪", {"service-ready"}),
             ("CDS 服务还没就绪", {"service-ready"}),
             ("CDS 服务还没有就绪", {"service-ready"}),
@@ -683,6 +685,28 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("硬门禁失败事实" in error for error in errors))
 
+    def test_postfixed_gate_instances_keep_independent_states(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke（移动端）失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | CDS smoke（后端）已通过 | 后端复测完成 | "
+            "仅证明后端 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_same_postfixed_gate_instance_can_close_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke（移动端）失败"
+        )
+        body = body.rstrip() + (
+            "\n| 验收冻结 SHA | CDS smoke（移动端）已通过 | 移动端复测完成 | "
+            "已证明同一实例 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
     def test_subjectless_later_row_does_not_close_prior_failure(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke 先前失败"
@@ -895,6 +919,31 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_quantified_core_failure_participates_in_verdict_gate(self):
+        for fact in (
+            "核心用例未全部通过",
+            "核心流程未全部完成",
+            "核心用例尚未完全通过",
+            "核心流程未能全量完成",
+        ):
+            with self.subTest(location="产品质量", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("核心用例失败事实" in error for error in errors))
+
+            with self.subTest(location="根因链条", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("核心用例失败事实" in error for error in errors))
 
     def test_resolved_or_negated_product_quality_core_failure_does_not_force_fail(self):
         for fact in (

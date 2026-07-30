@@ -614,15 +614,16 @@ _FAILURE_ACTION_PATTERN = (
 _ONGOING_FAILURE_PREFIX_PATTERN = (
     r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
 )
+_FAILURE_QUANTIFIER_PATTERN = r"(?:(?:全部|完全|全量|全数|全都|悉数)\s*)?"
 _FAILURE_FACT_PATTERN = re.compile(
     rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
-    rf"\s*(?:正常\s*)?{_FAILURE_ACTION_PATTERN}"
+    rf"\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
     r"|失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
-    rf"|未能(?:正常)?{_FAILURE_ACTION_PATTERN}"
+    rf"|未能\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
     r"|阻断|不可用|不可交付"
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
-    rf"|无法(?:正常)?{_FAILURE_ACTION_PATTERN}",
+    rf"|无法\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}",
     re.I,
 )
 _DIAGNOSTIC_ACTION_PATTERN = (
@@ -705,12 +706,30 @@ def _subject_occurrences(text, instance_aware=False):
 
     scoped_occurrences = []
     previous_end = 0
-    for start, end, name in occurrences:
+    raw_text = text or ""
+    for index, (start, end, name) in enumerate(occurrences):
         prefix = (text or "")[previous_end:start]
-        identities = tuple(
-            match.group(0).lower()
-            for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(prefix)
+        next_subject_start = (
+            occurrences[index + 1][0]
+            if index + 1 < len(occurrences)
+            else len(raw_text)
         )
+        suffix = raw_text[end:next_subject_start]
+        suffix_events = [
+            match
+            for pattern in (_FAILURE_FACT_PATTERN, _RESOLVED_FACT_PATTERN)
+            for match in pattern.finditer(suffix)
+        ]
+        qualifier = suffix[
+            : min((match.start() for match in suffix_events), default=len(suffix))
+        ]
+        raw_identities = [
+            match.group(0).lower()
+            for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(
+                f"{prefix} {qualifier}"
+            )
+        ]
+        identities = tuple(dict.fromkeys(raw_identities))
         scoped_occurrences.append(
             (start, end, (name, identities or ("__unspecified__",)))
         )
@@ -749,6 +768,8 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
             }
     last_left_end = max(end for _, end, _ in left)
     left_gap = clause[last_left_end : event.start()]
+    left_gap = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", left_gap)
+    left_gap = re.sub(r"[()（）\[\]【】]", " ", left_gap)
     if previous_event_end > last_left_end or not re.fullmatch(
         rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
         rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
@@ -828,6 +849,8 @@ def _closure_changes_subject(clause, event, previous_event_end):
                     scope = scope[: -len(subject_prefix)]
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", scope)
+    scope = re.sub(r"[()（）\[\]【】]", " ", scope)
     scope = re.sub(
         r"CDS|的|但是|不过|然而|但|并且|且|并|而|后|前|先前|此前|一度|曾"
         r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
@@ -855,6 +878,8 @@ def _failure_is_negated(clause, event, previous_event_end):
         return True
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
+    scope = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", scope)
+    scope = re.sub(r"[()（）\[\]【】]", " ", scope)
     scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
     if re.search(
         r"(?:并未|并非|并不是|不是|不算|未曾|从未|无|未|没)"
