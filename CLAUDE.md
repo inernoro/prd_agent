@@ -418,6 +418,7 @@ python3 .claude/skills/cds/cli/cdscli.py --human preview-url
 | **tutorial-daily-maintain** | `/tutorial-daily-maintain` | 定时(建议每日) → 扫 git 增量映射受影响页面教程 → 锚点漂移检测(P0-P2) → 起草「本周有更新」提醒(advanced/`*-update-*`) → 教程健康报告发布到独立验收知识库。首版只产草稿+告警，不自动改 seed |
 | **entropy-cleanup** | `/entropy` | 无需输入 → 扫描 doc/ 命名、index.yml、guide.list、技能表、changelog 碎片、codebase-snapshot 五维一致性，输出欠款清单并自动补齐 |
 | **laowang** | `老王`、`/laowang` | 用户卡住/任务太难/争执不下时触发 → 用米多解决问题五步法（直面问题 → 抓主要矛盾 → 责任到人 → 备齐资源 → 做好才算做）强制拆解。风格直率，副作用：50% 概率追加一项延伸任务 |
+| **phase0-guard** | `/phase0` | 新项目底座阶段触发 → 防止产品定位未定清楚就编数据库实体/业务 API/调度器，固化面向老板与产品经理的六段式回复、术语翻译和文档读者分层 |
 
 ### 专项修复技能
 
