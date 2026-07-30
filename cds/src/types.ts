@@ -2636,8 +2636,20 @@ export interface SelfUpdateRecord {
    *  success entry 的此字段。比 durationMs 更接近用户体感等待时长。
    *  2026-05-07 timing 审视新增 (report.cds.self-update-timing-audit)。 */
   totalElapsedMs?: number;
-  /** 失败/中止时的简短原因(已截断,前端不展开) */
+  /** 失败/中止时的简短原因(已截断,前端不展开)。
+   *  2026-07-30 起这里存的是**中文归因**(diagnosis.cause)而不是外部工具的英文原文；
+   *  英文原文放 failure.raw。 */
   error?: string;
+  /** 失败归因(2026-07-30)。用户反馈「更新总是报错还是英文错」——根因是 git/pnpm/tsc/esbuild
+   *  的原始英文 stderr 被当成主文案直接抛给用户。现在统一由
+   *  services/self-update-failure-diagnosis.ts 收敛成「中文主要原因 + 恢复动作」，
+   *  英文原文降级到 raw 由前端折叠展示。历史记录也一并保存，便于事后复盘。 */
+  failure?: {
+    stage: string;
+    cause: string;
+    nextAction: string;
+    raw: string;
+  };
   /** 触发用户,用于审计;manual 时 = cookie 里 username,自动触发时为 'system' */
   actor?: string;
   requestId?: string;

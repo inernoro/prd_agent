@@ -374,9 +374,24 @@ export function GlobalUpdateBadge({
               if (eventName === 'error') {
                 let msg = '未知错误';
                 let activeSelfUpdate: SelfStatusLite['activeSelfUpdate'] | undefined;
+                // 2026-07-30:后端现在把失败收敛成 cause + nextAction，raw 是工具英文原文。
+                // 弹窗只放这两段中文；英文原文进 console 供排查，不糊到用户脸上。
+                let cause = '';
+                let nextAction = '';
+                let raw = '';
                 try {
-                  const data = JSON.parse(dataRaw) as { message?: string; error?: string; activeSelfUpdate?: SelfStatusLite['activeSelfUpdate'] };
+                  const data = JSON.parse(dataRaw) as {
+                    message?: string;
+                    error?: string;
+                    cause?: string;
+                    nextAction?: string;
+                    raw?: string;
+                    activeSelfUpdate?: SelfStatusLite['activeSelfUpdate'];
+                  };
                   msg = data.message || data.error || msg;
+                  cause = data.cause || '';
+                  nextAction = data.nextAction || '';
+                  raw = data.raw || '';
                   activeSelfUpdate = data.activeSelfUpdate;
                 } catch { /* keep default */ }
                 if (activeSelfUpdate && !activeSelfUpdate.interrupted) {
@@ -384,8 +399,12 @@ export function GlobalUpdateBadge({
                   ctrl.abort();
                   return;
                 }
+                if (raw) console.warn('[self-update] 原始输出:', raw);
+                const body = cause
+                  ? `更新失败：${cause}${nextAction ? `\n\n下一步：${nextAction}` : ''}`
+                  : `更新失败: ${msg}`;
                 // eslint-disable-next-line no-alert
-                alert(`更新失败: ${msg}`);
+                alert(`${body}\n\n完整日志见「CDS 系统设置 → 更新与重启 → 更新历史」。`);
                 ctrl.abort();
                 return;
               }

@@ -78,7 +78,17 @@ interface SelfUpdateRecord {
   durationMs?: number;
   /** 2026-05-07 真实总耗时(含 daemon 重启 + SSE 重连)。 */
   totalElapsedMs?: number;
+  /** 失败简述。2026-07-30 起是中文归因(failure.cause)，不再是工具的英文原文。 */
   error?: string;
+  /** 失败归因(2026-07-30)。用户反馈「更新总是报错还是英文错」——以前这里直接展示
+   *  git/pnpm/tsc 的英文 stderr。现在后端统一归因，前端把 cause + nextAction 当主文案，
+   *  英文原文 raw 收进折叠区。旧记录没有这个字段，回退到 error。 */
+  failure?: {
+    stage: string;
+    cause: string;
+    nextAction: string;
+    raw: string;
+  };
   actor?: string;
   /** 用户反馈 2026-05-06 — 让用户看到走了哪种更新模式。
    *  hot-reload = 跳过 validate(节省 50s)+ systemd 软重启,~15-25s。
@@ -267,6 +277,24 @@ function formatElapsed(ms: number): string {
   return `${m}m${s.toString().padStart(2, '0')}s`;
 }
 
+/**
+ * 从 SSE error payload 取结构化失败归因（2026-07-30 起后端统一下发）。
+ *
+ * 老后端只有 message（里面嵌着英文原文），此时返回 undefined，
+ * 调用方回退到原有的单串标题显示，不会白屏。
+ */
+function extractFailure(data: unknown): SelfUpdateRecord['failure'] | undefined {
+  if (typeof data !== 'object' || data === null) return undefined;
+  const obj = data as Record<string, unknown>;
+  if (typeof obj.cause !== 'string' || !obj.cause) return undefined;
+  return {
+    stage: typeof obj.stage === 'string' ? obj.stage : 'unknown',
+    cause: obj.cause,
+    nextAction: typeof obj.nextAction === 'string' ? obj.nextAction : '',
+    raw: typeof obj.raw === 'string' ? obj.raw : '',
+  };
+}
+
 function eventTitle(event: string, data: unknown): string {
   if (typeof data === 'object' && data !== null) {
     const obj = data as Record<string, unknown>;
@@ -441,6 +469,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   const suppressFocusOpenRef = useRef(false);
   const [runState, setRunState] = useState<UpdateRunState>('idle');
   const [runTitle, setRunTitle] = useState('');
+  // 2026-07-30:本次运行的失败归因(cause/nextAction/raw)。以前失败只在标题里
+  // 显示一串「中文壳 + 英文原文」,用户第一眼撞见英文。现在标题只放 cause,
+  // 下一步和英文原文交给 SelfUpdateFailureCard 分层展示。
+  const [runFailure, setRunFailure] = useState<SelfUpdateRecord['failure'] | undefined>(undefined);
   const [runLog, setRunLog] = useState<string[]>([]);
   // 2026-05-04 v7(用户:'添加前端计时器,我倒要看看重启了多长时间')
   // runStartedAt:点更新时记 ms 时间戳;runEndedAt:done/error/reload 时记停。
@@ -738,6 +770,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     setRunEndedAt(null);
     setRunState('running');
     setRunTitle(`${label} 已启动`);
+    setRunFailure(undefined);
     setRunLog([]);
     let sawDone = false;
     let sawNoOp = false;
@@ -757,7 +790,10 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
-          setRunTitle(title);
+          const failure = extractFailure(data);
+          setRunFailure(failure);
+          // 标题只放一句中文原因；下一步与英文原文进失败卡，不挤在标题里。
+          setRunTitle(failure?.cause || title);
           setRunEndedAt(Date.now());
         } else if (event === 'done') {
           sawDone = true;
@@ -1126,6 +1162,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
           >
               {runState === 'running' ? (
                 <SelfUpdateLiveProgress elapsedMs={liveElapsedMs} currentStep={activeSelfUpdate?.step} records={selfHistoryRecords} />
+              ) : null}
+              {runState === 'error' && runFailure ? (
+                <div className="px-4 pt-3">
+                  <SelfUpdateFailureCard failure={runFailure} />
+                </div>
               ) : null}
               <div className="flex justify-end px-4 py-3">
                 <Button type="button" variant="outline" size="sm" onClick={() => void copyRunLog()} disabled={runLog.length === 0}>
@@ -1768,10 +1809,8 @@ function SelfUpdateHistoryList({ historyState, onManualRefresh }: {
               </div>
             </div>
             {selected.timings ? <SelfUpdateStageBar timings={selected.timings} totalMs={selected.durationMs} /> : null}
-            {selected.error ? (
-              <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
-                {selected.error}
-              </div>
+            {selected.failure || selected.error ? (
+              <SelfUpdateFailureCard failure={selected.failure} fallbackError={selected.error} />
             ) : null}
             <div>
               <div className="mb-1.5 flex items-center justify-between gap-2">
@@ -1805,6 +1844,55 @@ function SelfUpdateDetailMetric({ label, value, mono = false }: { label: string;
     <div className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2">
       <div className="text-[11px] text-muted-foreground">{label}</div>
       <div className={`mt-1 truncate text-sm font-medium ${mono ? 'font-mono' : ''}`} title={value}>{value}</div>
+    </div>
+  );
+}
+
+/**
+ * 更新失败的展示卡（2026-07-30）。
+ *
+ * 用户原话：「为什么 cds 普通更新总是有问题报错，还是英文错」。以前这里直接把
+ * git/pnpm/tsc 的英文 stderr 铺在红框里，用户第一眼撞见的就是英文。
+ * 现在的层级是：中文主要原因（最大）→ 下一步做什么 → 英文原文（默认折叠）。
+ *
+ * 旧记录没有 failure 字段，回退到 error 单串显示，不会因为字段缺失变成空白。
+ */
+function SelfUpdateFailureCard({
+  failure,
+  fallbackError,
+}: {
+  failure?: SelfUpdateRecord['failure'];
+  fallbackError?: string;
+}): JSX.Element {
+  if (!failure) {
+    return (
+      <div className="rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2 text-xs text-destructive">
+        {fallbackError}
+      </div>
+    );
+  }
+  return (
+    <div className="space-y-2 rounded-md border border-destructive/40 bg-destructive/10 px-3 py-2.5">
+      <div className="text-sm font-medium leading-relaxed text-destructive">{failure.cause}</div>
+      {failure.nextAction ? (
+        <div className="rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 text-xs leading-relaxed text-foreground">
+          <span className="font-medium text-muted-foreground">下一步：</span>
+          {failure.nextAction}
+        </div>
+      ) : null}
+      {failure.raw ? (
+        <details className="group">
+          <summary className="cursor-pointer select-none text-[11px] text-muted-foreground hover:text-foreground">
+            原始输出（工具原文，通常是英文）
+          </summary>
+          <pre
+            className="mt-1.5 max-h-[240px] overflow-auto whitespace-pre-wrap break-all rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-2.5 py-2 font-mono text-[11px] leading-5 text-muted-foreground"
+            style={{ overscrollBehavior: 'contain' }}
+          >
+            {failure.raw}
+          </pre>
+        </details>
+      ) : null}
     </div>
   );
 }
