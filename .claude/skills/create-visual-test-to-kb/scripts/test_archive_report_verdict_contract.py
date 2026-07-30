@@ -610,6 +610,48 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
 
+    def test_later_root_cause_row_updates_same_subject_state(self):
+        cases = (
+            ("CDS smoke 先前失败", "CDS smoke 现已通过"),
+            ("验收报告归档失败", "验收报告归档现已成功"),
+            ("核心用例执行失败", "核心用例现已通过"),
+        )
+        for failure, closure in cases:
+            with self.subTest(failure=failure, closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", failure
+                )
+                body = body.rstrip() + (
+                    "\n| 后续复测 | "
+                    f"{closure} | 同一主体已复测 | 关闭旧失败证据 | 已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+    def test_later_root_cause_row_can_reopen_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 现已通过"
+        )
+        body = body.rstrip() + (
+            "\n| 后续复测 | CDS smoke 再次失败 | 环境回退 | "
+            "当前证据证明失败 | 未关闭 | 继续修复 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_subjectless_later_row_does_not_close_prior_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        )
+        body = body.rstrip() + (
+            "\n| 其他复测 | 现已通过 | 未注明复测主体 | "
+            "不能关联旧失败 | 无法确认 | 补充主体后复测 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
     def test_parallel_failure_subjects_support_each_fail_nature(self):
         for nature in ("硬门禁失败", "验收链路失败"):
             with self.subTest(nature=nature):

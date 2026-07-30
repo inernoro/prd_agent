@@ -900,9 +900,9 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     )
 
 
-def _current_failure_subjects(text):
-    """Resolve subject status events in order within one root-cause cell."""
-    states = {}
+def _failure_subject_states(text, initial_states=None):
+    """Apply ordered status events while keeping context local to this row."""
+    states = dict(initial_states or {})
     context_subjects = set()
     for index, clause in enumerate(_split_fact_clauses(text)):
         if index % 2:
@@ -959,25 +959,13 @@ def _current_failure_subjects(text):
             previous_event_end = event.end()
         if explicit_subjects or events:
             context_subjects = clause_context_subjects
+    return states
+
+
+def _current_failure_subjects(text):
+    """Return subjects whose final state is failed within one fact row."""
+    states = _failure_subject_states(text)
     return {subject for subject, state in states.items() if state == "failed"}
-
-
-def _has_resolved_failure_status(text):
-    """Return whether the entire root-cause conclusion closes the row."""
-    raw = (text or "").strip()
-    return bool(
-        re.fullmatch(
-            r"(?:(?:本|该)(?:项|问题|根因))?"
-            r"(?:(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭|解决|正常)"
-            r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭|解决|正常)"
-            r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭|解决|正常)"
-            r"|恢复正常|已通过复测|复测已通过|验证已通过|已验证通过)"
-            r"(?:并(?:已)?(?:通过复测|验证通过)|，?无遗留阻断)?"
-            r"[。.]?",
-            raw,
-            re.I,
-        )
-    )
 
 
 def _normalize_evidence_usage_gap_clauses(text):
@@ -1110,20 +1098,20 @@ def _daily_fact_signals(values, body):
         )
     )
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    root_fact_rows = []
+    current_failure_states = {}
     for row in root_cause_rows:
-        conclusion_cell = row[4] if len(row) > 4 else ""
-        if not _has_resolved_failure_status(conclusion_cell):
-            root_fact_rows.append(row[:5])
-    current_failure_subjects = set()
-    for row_cells in root_fact_rows:
         normalized_row = "；".join(
             _normalize_evidence_usage_gap_clauses(cell)
-            for cell in row_cells
+            for cell in row[:5]
         )
-        current_failure_subjects.update(
-            _current_failure_subjects(normalized_row)
+        current_failure_states = _failure_subject_states(
+            normalized_row, current_failure_states
         )
+    current_failure_subjects = {
+        subject
+        for subject, state in current_failure_states.items()
+        if state == "failed"
+    }
     chain_failure = bool(
         current_failure_subjects
         & {
