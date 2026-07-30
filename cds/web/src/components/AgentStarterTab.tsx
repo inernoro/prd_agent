@@ -33,17 +33,29 @@ interface StarterSkill {
   name: string
   description: string
   roles: AgentRoleId[]
+  recommendedRoles: AgentRoleId[]
+  groupKey: string
+  groupLabel: string
 }
 
 const STEPS = ['经验', '角色', '技能', '交付', '开始'] as const
 
 const FALLBACK_SKILLS: StarterSkill[] = [
-  { key: 'skill-validation', name: '需求澄清', description: '发现模糊、遗漏和不可验收的需求。', roles: ['pm', 'owner', 'domain-expert'] },
-  { key: 'plan-first', name: '先出方案', description: '动手前先说明路径、影响和取舍。', roles: ['pm', 'owner', 'dev'] },
-  { key: 'acceptance-checklist', name: '验收清单', description: '把结果变成可以逐项确认的步骤。', roles: ['pm', 'domain-expert', 'qa'] },
-  { key: 'risk-matrix', name: '风险矩阵', description: '提前识别业务、体验和上线风险。', roles: ['owner', 'domain-expert', 'qa'] },
-  { key: 'flow-trace', name: '流程追踪', description: '用大白话解释功能从页面到数据的过程。', roles: ['pm', 'dev', 'qa'] },
-  { key: 'preview-url', name: '真实预览地址', description: '部署后读取 CDS 返回的真实访问地址。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'] },
+  { key: 'skill-validation', name: '需求澄清', description: '发现模糊、遗漏和不可验收的需求。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'plan-first', name: '先出方案', description: '动手前先说明路径、影响和取舍。', roles: ['pm', 'owner', 'domain-expert', 'dev'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'risk-matrix', name: '风险矩阵', description: '提前识别业务、体验和上线风险。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'phase0-guard', name: '开工前置检查', description: '确认现状、边界和验证目标后再开始修改。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'preview-url', name: '真实预览地址', description: '部署后读取 CDS 返回的真实访问地址。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], groupKey: 'foundation', groupLabel: '基础方法' },
+  { key: 'product-document-generator', name: '产品文档生成', description: '生成结构化产品文档。', roles: ['pm', 'owner', 'domain-expert', 'dev'], recommendedRoles: ['pm', 'owner', 'domain-expert'], groupKey: 'product', groupLabel: '产品与需求' },
+  { key: 'flow-trace', name: '业务流程追踪', description: '同时用业务语言和技术路径讲清完整流程。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['domain-expert'], groupKey: 'product', groupLabel: '产品与需求' },
+  { key: 'human-verify', name: '对抗式人工验收', description: '从反向、边界和真实用户场景挑战结果。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['dev', 'qa'], groupKey: 'delivery', groupLabel: '研发交付' },
+  { key: 'code-hygiene', name: '代码卫生审计', description: '识别死代码、兼容垫片和隐性技术债。', roles: ['dev', 'qa'], recommendedRoles: ['dev'], groupKey: 'delivery', groupLabel: '研发交付' },
+  { key: 'create-skill-file', name: '创建新技能', description: '把团队方法沉淀成可复用技能。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: [], groupKey: 'delivery', groupLabel: '研发交付' },
+  { key: 'find-skills', name: '查找更多技能', description: '从本地和已连接的市场发现能力。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: [], groupKey: 'delivery', groupLabel: '研发交付' },
+  { key: 'acceptance-test-design', name: '验收测试设计', description: '把需求转成正向、负向和边界场景。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['qa'], groupKey: 'quality', groupLabel: '测试验收' },
+  { key: 'acceptance-checklist', name: '验收清单', description: '把结果变成可以逐项确认的步骤。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['pm', 'owner', 'domain-expert', 'qa'], groupKey: 'quality', groupLabel: '测试验收' },
+  { key: 'acceptance-scenario-orchestrator', name: '复杂验收编排', description: '组织多阶段目标和证据。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: ['qa'], groupKey: 'quality', groupLabel: '测试验收' },
+  { key: 'create-visual-test-to-kb', name: '视觉验收归档', description: '用浏览器取证并归档验收报告。', roles: ['pm', 'owner', 'domain-expert', 'dev', 'qa'], recommendedRoles: [], groupKey: 'quality', groupLabel: '测试验收' },
 ]
 
 const roleIcons: Record<AgentRoleId, typeof BriefcaseBusiness> = {
@@ -63,6 +75,8 @@ function normalizeSkills(payload: unknown): StarterSkill[] {
   for (const bundle of bundles) {
     const skills = Array.isArray(bundle?.skills) ? bundle.skills : []
     const bundleRoles = Array.isArray(bundle?.roles) ? bundle.roles : []
+    const groupKey = typeof bundle?.key === 'string' ? bundle.key : 'other'
+    const groupLabel = typeof bundle?.label === 'string' ? bundle.label : '更多技能'
     for (const skill of skills) {
       const key = typeof skill === 'string' ? skill : skill?.key ?? skill?.id
       if (!key || results.some((item) => item.key === key)) continue
@@ -71,6 +85,9 @@ function normalizeSkills(payload: unknown): StarterSkill[] {
         name: typeof skill === 'string' ? skill : skill?.name ?? skill?.label ?? key,
         description: typeof skill === 'string' ? '为当前角色补充一项可执行能力。' : skill?.description ?? '为当前角色补充一项可执行能力。',
         roles: (Array.isArray(skill?.roles) ? skill.roles : bundleRoles) as AgentRoleId[],
+        recommendedRoles: (Array.isArray(skill?.recommendedFor) ? skill.recommendedFor : skill?.roles ?? bundleRoles) as AgentRoleId[],
+        groupKey,
+        groupLabel,
       })
     }
   }
@@ -94,6 +111,8 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   const [roleId, setRoleId] = useState<AgentRoleId>('pm')
   const [skills, setSkills] = useState<StarterSkill[]>(FALLBACK_SKILLS)
   const [selectedSkills, setSelectedSkills] = useState<string[]>([])
+  const [showSkillLibrary, setShowSkillLibrary] = useState(false)
+  const [activeSkillGroup, setActiveSkillGroup] = useState('foundation')
   const [includeCds, setIncludeCds] = useState(true)
   const [copied, setCopied] = useState(false)
 
@@ -112,9 +131,20 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
   }, [])
 
   const recommendedSkills = useMemo(() => {
-    const matched = skills.filter((skill) => skill.roles.length === 0 || skill.roles.includes(roleId))
-    return (matched.length > 0 ? matched : FALLBACK_SKILLS.filter((skill) => skill.roles.includes(roleId))).slice(0, 6)
+    const matched = skills.filter((skill) => skill.recommendedRoles.includes(roleId))
+    return (matched.length > 0 ? matched : FALLBACK_SKILLS.filter((skill) => skill.recommendedRoles.includes(roleId))).slice(0, 6)
   }, [roleId, skills])
+
+  const availableSkills = useMemo(
+    () => skills.filter((skill) => skill.roles.length === 0 || skill.roles.includes(roleId)),
+    [roleId, skills],
+  )
+  const skillGroups = useMemo(() => {
+    const groups = new Map<string, string>()
+    for (const skill of availableSkills) groups.set(skill.groupKey, skill.groupLabel)
+    return [...groups].map(([key, label]) => ({ key, label }))
+  }, [availableSkills])
+  const activeGroupSkills = availableSkills.filter((skill) => skill.groupKey === activeSkillGroup)
 
   useEffect(() => {
     setSelectedSkills(recommendedSkills.map((skill) => skill.key))
@@ -224,9 +254,29 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
 
             {step === 2 && (
               <>
-                <StepHeading number="03" title="带上哪些工作方法？" description="已经按你的角色选好。点一下可以取消，稍后也能去海鲜市场增加。" />
-                <div className="mt-5 grid flex-1 grid-cols-2 gap-3 lg:grid-cols-3">
-                  {recommendedSkills.map((skill) => {
+                <StepHeading
+                  number="03"
+                  title={showSkillLibrary ? '再加一些工作方法' : '带上哪些工作方法？'}
+                  description={showSkillLibrary ? '每次只看一类，选完返回推荐页，不需要一次读完所有技能。' : '已经按你的角色选好。可以取消，也可以按类别增加更多技能。'}
+                />
+                {showSkillLibrary && (
+                  <div className="mt-4 flex flex-wrap gap-2" role="tablist" aria-label="技能分类">
+                    {skillGroups.map((group) => (
+                      <button
+                        key={group.key}
+                        type="button"
+                        role="tab"
+                        aria-selected={activeSkillGroup === group.key}
+                        onClick={() => setActiveSkillGroup(group.key)}
+                        className={`rounded-full px-4 py-2 text-xs font-bold transition-colors ${activeSkillGroup === group.key ? 'bg-stone-950 text-white' : 'border border-stone-300 bg-white text-stone-700 hover:border-stone-500'}`}
+                      >
+                        {group.label}
+                      </button>
+                    ))}
+                  </div>
+                )}
+                <div className="mt-4 grid min-h-0 flex-1 grid-cols-2 gap-3 overflow-y-auto pr-1 lg:grid-cols-3">
+                  {(showSkillLibrary ? activeGroupSkills : recommendedSkills).map((skill) => {
                     const selected = selectedSkills.includes(skill.key)
                     return (
                       <button
@@ -248,8 +298,22 @@ export function AgentStarterTab({ cdsPrompt }: AgentStarterTabProps) {
                   })}
                 </div>
                 <div className="mt-4 flex items-center justify-between border-t border-stone-200 pt-4">
-                  <span className="text-sm font-medium text-stone-700">已选择 {selectedSkills.length} 项</span>
-                  <PrimaryNext onClick={() => advance(3)}>确认这些技能</PrimaryNext>
+                  <div className="flex items-center gap-3">
+                    <span className="text-sm font-medium text-stone-700">已选择 {selectedSkills.length} 项</span>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        if (!showSkillLibrary && !skillGroups.some((group) => group.key === activeSkillGroup)) {
+                          setActiveSkillGroup(skillGroups[0]?.key ?? 'foundation')
+                        }
+                        setShowSkillLibrary((value) => !value)
+                      }}
+                      className="rounded-lg border border-stone-300 bg-white px-3 py-2 text-sm font-bold text-stone-800 hover:border-stone-500"
+                    >
+                      {showSkillLibrary ? '返回角色推荐' : `选择更多技能（共 ${availableSkills.length} 项）`}
+                    </button>
+                  </div>
+                  {!showSkillLibrary && <PrimaryNext onClick={() => advance(3)}>确认这些技能</PrimaryNext>}
                 </div>
               </>
             )}

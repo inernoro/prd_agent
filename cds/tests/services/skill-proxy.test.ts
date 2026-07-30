@@ -13,6 +13,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
 import {
   SkillProxy,
@@ -194,9 +195,42 @@ describe('SkillProxy', () => {
     });
 
     expect(await proxy.fetchBundles()).toEqual(STARTER_SKILL_BUNDLES);
-    expect(STARTER_SKILL_BUNDLES.bundles[0].skills.map((skill) => skill.key)).toEqual([
-      'skill-validation', 'plan-first', 'risk-matrix', 'preview-url',
+    const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    expect(STARTER_SKILL_BUNDLES.bundles.map((bundle) => bundle.key)).toEqual([
+      'foundation', 'product', 'delivery', 'quality',
     ]);
+    expect(catalogSkills.length).toBeGreaterThanOrEqual(18);
+    expect(new Set(catalogSkills.map((skill) => skill.key)).size).toBe(catalogSkills.length);
+    expect(catalogSkills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
+      'phase0-guard',
+      'product-document-generator',
+      'human-verify',
+      'code-hygiene',
+      'create-skill-file',
+      'acceptance-test-design',
+      'create-visual-test-to-kb',
+      'preview-url',
+    ]));
+    expect(calls).toBe(0);
+  });
+
+  it('目录中的每个技能都能从仓库本地打包，不把不存在的卡片交给用户', async () => {
+    const repositorySkillRoot = fileURLToPath(new URL('../../../.claude/skills', import.meta.url));
+    let calls = 0;
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      localSkillRoots: [repositorySkillRoot],
+      fetchImpl: async () => { calls += 1; return new Response(null, { status: 404 }); },
+    });
+
+    const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    for (const skill of catalogSkills) {
+      expect(fs.existsSync(path.join(repositorySkillRoot, skill.key, 'SKILL.md')), skill.key).toBe(true);
+      const result = await proxy.fetchSkill(skill.key);
+      expect(result.source, skill.key).toBe('local');
+      expect(result.body.subarray(0, 4), skill.key).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    }
     expect(calls).toBe(0);
   });
 
