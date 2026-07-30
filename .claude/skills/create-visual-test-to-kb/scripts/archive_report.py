@@ -624,6 +624,13 @@ _ONGOING_FAILURE_PREFIX_PATTERN = (
     r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
 )
 _FAILURE_QUANTIFIER_PATTERN = r"(?:(?:全部|完全|全量|全数|全都|悉数)\s*)?"
+_RAW_FAILURE_STATUS_PATTERN = (
+    r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
+    r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
+    r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
+    r"|(?:status|状态)\s*[:：=]\s*"
+    r"(?:missing|error|failed|failure|stopped)\b)"
+)
 _FAILURE_FACT_PATTERN = re.compile(
     rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
     rf"\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
@@ -633,6 +640,7 @@ _FAILURE_FACT_PATTERN = re.compile(
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
     r"|(?:未能|无法)\s*执行"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
+    rf"|{_RAW_FAILURE_STATUS_PATTERN}"
     rf"|{_PENDING_DELIVERY_PATTERN}"
     rf"|无法\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}",
     re.I,

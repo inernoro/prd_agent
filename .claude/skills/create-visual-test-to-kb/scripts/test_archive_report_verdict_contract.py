@@ -607,6 +607,50 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_raw_cds_failure_statuses_participate_in_hard_gate(self):
+        for fact in (
+            "CDS smoke 非 0",
+            "CDS smoke exit code 1",
+            "CDS smoke 退出码=2",
+            "CDS smoke 返回 5xx",
+            "CDS smoke HTTP 4xx",
+            "CDS ready status=missing",
+            "CDS ready status=error",
+            "CDS ready status=stopped",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+    def test_successful_raw_cds_statuses_do_not_open_hard_gate(self):
+        for fact in (
+            "CDS smoke exit code 0",
+            "CDS smoke 退出码=0",
+            "CDS smoke 返回 2xx",
+            "CDS ready status=ready",
+            "CDS ready status=running",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
             for fact in (
