@@ -95,7 +95,10 @@ def latest_daily_entry(base, H, store_id, kind, before_date=""):
     """
     best, page = None, 1
     while True:
-        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100"])
+        # all=true 必须带：后端 ListEntries 默认 all=false，只返回**根级**条目
+        # （按 ParentId 过滤）。一旦有人把日报整理进文件夹，水位线就会看不见它，
+        # 退回更旧的水位线或 today 模式，重新制造漏报/重复覆盖。
+        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100&all=true"])
         if not res.get("success"):
             raise RuntimeError("列出条目失败，无法读取水位线")
         data = res.get("data") or {}
@@ -125,12 +128,45 @@ def git(*args):
     return r.returncode, r.stdout.strip(), r.stderr.strip()
 
 
-def sha_exists(sha):
-    if not sha:
+def sha_usable(sha, head):
+    """水位线可用 = 对象在本地存在 **且** 是 head 的祖先。
+
+    只查 cat-file 不够：main 被 force push 后，旧水位线对象往往**仍留在本地**
+    （reflog、上一次 fetch 的悬挂对象），cat-file 会成功，但它已经不在 head 的
+    历史里了。此时 `old..head` 的语义是「head 可达而 old 不可达的全部提交」——
+    等于把整段新历史算进本期窗口，可能把大半个 main 重新报道一遍。
+    祖先校验不通过时应当降级到 coverTo 时间戳，而不是硬用这个 SHA。
+    """
+    if not sha or not head:
         return False
     # ^{commit} 确保它真是个 commit 对象且在本地可达（浅克隆截断后会失败）
     code, _, _ = git("cat-file", "-e", f"{sha}^{{commit}}")
+    if code != 0:
+        return False
+    code, _, _ = git("merge-base", "--is-ancestor", sha, head)
     return code == 0
+
+
+def head_for_target(branch, target_date):
+    """把窗口右端收敛到 target_date 当天（含）的最后一个主干提交。
+
+    补历史 / 重跑过去某天时，右端**不能**用当前分支 tip：否则窗口会变成
+    「上期水位线 → 现在」，把目标日之后的提交publish 到目标日那篇报告里，
+    并且配合 --replace-same-date 会覆盖掉原本正确的那篇。
+
+    按 `%cd --date=short` 的日期文本比较，与技能其余部分同口径（不做时区换算）。
+    git log 是倒序，第一个 <= target_date 的即当天最后一个主干提交。
+    """
+    if not target_date:
+        return ""
+    code, out, _ = git("log", "--first-parent", branch, "--format=%cd%x09%H", "--date=short")
+    if code != 0:
+        return ""
+    for line in out.splitlines():
+        d, _, sha = line.partition("\t")
+        if d <= target_date:
+            return sha
+    return ""
 
 
 def main():
@@ -152,6 +188,13 @@ def main():
     if code != 0:
         raise RuntimeError(f"解析主干 {branch} 失败——请先 git fetch origin")
 
+    # 窗口右端按目标日收敛（补历史/重跑必需；当期运行时通常就等于 tip）。
+    # 取不到（目标日早于全部历史）就退回 tip，由后续祖先校验兜住。
+    bounded = head_for_target(branch, a.target_date)
+    if bounded and bounded != head:
+        log(f"[水位线] 窗口右端按 target-date={a.target_date} 收敛到 {bounded[:12]}（tip 为 {head[:12]}）")
+        head = bounded
+
     out = {"mode": "today", "baseSha": "", "sinceIso": "", "headSha": head,
            "branch": branch, "revRange": "", "spanDays": 1, "prevDate": "", "gap": False}
 
@@ -172,15 +215,17 @@ def main():
         cover_to = (md.get("coverTo") or "").strip()
         log(f"[水位线] 上一期：dailyDate={prev_date} lastCommit={last_sha[:12] or '(无)'} coverTo={cover_to or '(无)'}")
 
-        if sha_exists(last_sha):
+        if sha_usable(last_sha, head):
             out["mode"] = "sha"; out["baseSha"] = last_sha
             out["revRange"] = f"{last_sha}..{head}"
         elif cover_to:
-            # 上期没记 SHA（老版本发布的条目），或 SHA 已不可达 → 退到时间戳
+            # 上期没记 SHA（老版本条目）、SHA 已不可达、或 SHA 不是本次 head 的祖先
+            # （force push 后旧对象残留 / 补历史时右端早于水位线）→ 退到时间戳
             out["mode"] = "since"; out["sinceIso"] = cover_to
             out["revRange"] = head
             if last_sha:
-                log(f"[水位线] lastCommit {last_sha[:12]} 在本地不可达（force push/浅克隆？）→ 降级用 coverTo 时间戳")
+                log(f"[水位线] lastCommit {last_sha[:12]} 不可用（不可达，或非 {head[:12]} 的祖先）"
+                    " → 降级用 coverTo 时间戳")
             else:
                 log("[水位线] 上期未记 lastCommit（旧版条目）→ 降级用 coverTo 时间戳")
         else:

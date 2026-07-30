@@ -102,7 +102,9 @@ def list_entries_by_date(base, H, store_id, kind, daily_date):
         return []
     found, page = [], 1
     while True:
-        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100"])
+        # all=true 必须带：后端 ListEntries 默认只返回根级条目，
+        # 日报若被整理进文件夹就查不到，--replace-same-date 会漏删并留下重复条目。
+        res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100&all=true"])
         if not res.get("success"):
             # 列不出来就别删——宁可留重复条目，也不能因为读失败而误删别的东西
             raise RuntimeError("列出条目失败，无法安全执行 --replace-same-date")
@@ -656,8 +658,15 @@ def main():
         if state is True:
             for sid in stale_ids:
                 try:
-                    curl(H + ["-X", "DELETE", f"{base}/entries/{sid}"], retries=2)
-                    print(f"  已删同日旧条目 {sid}（被本期替换）")
+                    # 必须查 success：curl() 只在**解析不出 JSON** 时才抛，
+                    # 后端返回 {"success":false,...}（权限/500 等）会被正常解析并返回，
+                    # 不查就会打印「已删」而条目其实还在——静默架空 --replace-same-date。
+                    r = curl(H + ["-X", "DELETE", f"{base}/entries/{sid}"], retries=2)
+                    if r.get("success"):
+                        print(f"  已删同日旧条目 {sid}（被本期替换）")
+                    else:
+                        err = json.dumps(r.get("error"), ensure_ascii=False)[:100] if r.get("error") else "未知错误"
+                        print(f"  [告警] 同日旧条目 {sid} 删除被拒（{err}），库里会有两篇同日日报，请手动清理")
                 except Exception as de:
                     print(f"  [告警] 同日旧条目 {sid} 删除失败，库里会有两篇同日日报，请手动清理：{str(de)[:80]}")
         else:

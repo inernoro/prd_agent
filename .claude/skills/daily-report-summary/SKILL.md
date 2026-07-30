@@ -59,8 +59,8 @@ description: 从 git 历史生成「今日大事早知道」开发日报，并�
 
 | mode | 触发条件 | 窗口 |
 |------|----------|------|
-| `sha` | 上期 `lastCommit` 在本地 git 可达（正常路径） | `git log <lastCommit>..HEAD` |
-| `since` | SHA 不可达（force push / 浅克隆截断）或上期只记了 `coverTo` | `git log --since=<coverTo>` |
+| `sha` | 上期 `lastCommit` 在本地可达**且是本期右端的祖先**（正常路径） | `git log <lastCommit>..<headSha>` |
+| `since` | SHA 不可达（浅克隆截断）、**非本期右端的祖先**（main 被 force push 后旧对象常残留在本地，`cat-file` 仍会成功）、或上期只记了 `coverTo` | `git log <headSha> --since=<coverTo>` |
 | `today` | 库里没有历史日报（首次运行），或上期是本机制上线前发布的老条目 | 退化为当日，与旧行为一致 |
 
 ```bash
@@ -81,7 +81,8 @@ HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)[
 case "$MODE" in
   sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
   since) SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
-         git log --first-parent "$DEFAULT_BRANCH" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+         # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
+         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
   today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
            | awk -F '\t' -v d="$TODAY" '$1==d' ;;
 esac
@@ -195,7 +196,8 @@ RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["re
 case "$MODE" in
   sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
   since) SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
-         git log --first-parent "$DEFAULT_BRANCH" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+         # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
+         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
   today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
            | awk -F '\t' -v d="$TODAY" '$1==d' ;;
 esac > /tmp/win_fp.tsv
