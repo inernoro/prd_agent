@@ -1,5 +1,5 @@
 import { useEffect, useState } from 'react';
-import { Check, CloudUpload, FileText, Loader2 } from 'lucide-react';
+import { Check, CloudUpload, FileText, Clock3 } from 'lucide-react';
 import { getFileTypeConfig } from '@/lib/fileTypeRegistry';
 import type { FilePreviewKind } from '@/lib/fileTypeRegistry';
 import { AudioWavePlayer } from '@/components/doc-browser/AudioWavePlayer';
@@ -8,6 +8,7 @@ import type { DocBrowserEntry, EntryPreview } from '@/components/doc-browser/Doc
 import { extractTranscriptSummary } from '@/components/doc-browser/transcriptSegments';
 import { MarkdownViewer } from './MarkdownViewer';
 import { listTranscribeStyles } from '@/services';
+import { MapSpinner } from '@/components/ui/VideoLoader';
 
 // ── 文件预览组件（按 fileTypeRegistry.preview 字段路由到不同渲染器） ──
 
@@ -21,10 +22,12 @@ function RecordingArchiveProgress({
   hasPlayback,
   hasTranscript,
   startedAt,
+  waitingForRetry,
 }: {
   hasPlayback: boolean;
   hasTranscript: boolean;
   startedAt?: string;
+  waitingForRetry: boolean;
 }) {
   const startedMs = startedAt ? new Date(startedAt).getTime() : Date.now();
   const [elapsed, setElapsed] = useState(() => (
@@ -38,7 +41,9 @@ function RecordingArchiveProgress({
 
   const stages = [
     { label: '录音已保存', state: 'done' as const, icon: Check },
-    { label: '保存云端副本', state: 'active' as const, icon: CloudUpload },
+    waitingForRetry
+      ? { label: '等待自动重试', state: 'waiting' as const, icon: Clock3 }
+      : { label: '保存云端副本', state: 'active' as const, icon: CloudUpload },
     { label: '本页自动更新', state: 'pending' as const, icon: FileText },
   ];
 
@@ -59,9 +64,13 @@ function RecordingArchiveProgress({
           <CloudUpload size={18} />
         </span>
         <div className="min-w-0 flex-1">
-          <p className="text-[13px] font-semibold text-token-primary">正在保存云端副本</p>
+          <p className="text-[13px] font-semibold text-token-primary">
+            {waitingForRetry ? '云端服务暂时不可用，已排队重试' : '正在保存云端副本'}
+          </p>
           <p className="mt-1 text-[11px] leading-relaxed text-token-secondary">
-            后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写。
+            {waitingForRetry
+              ? '录音和原文已经可用，不需要停在本页等待。系统会在后台自动重试云端副本。'
+              : '后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写。'}
           </p>
           <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
             {hasPlayback
@@ -77,10 +86,12 @@ function RecordingArchiveProgress({
         className="mt-3 h-1.5 overflow-hidden rounded-full"
         role="progressbar"
         aria-label="保存云端副本"
-        aria-valuetext={`已后台处理 ${formatBackgroundDuration(elapsed)}`}
+        aria-valuetext={waitingForRetry
+          ? `等待云端服务恢复，已等待 ${formatBackgroundDuration(elapsed)}`
+          : `已后台处理 ${formatBackgroundDuration(elapsed)}`}
         style={{ background: 'rgba(59,130,246,0.10)' }}>
         <span
-          className="block h-full w-2/5 animate-pulse rounded-full motion-reduce:animate-none"
+          className={`block h-full w-2/5 rounded-full ${waitingForRetry ? '' : 'animate-pulse motion-reduce:animate-none'}`}
           style={{ background: 'linear-gradient(90deg, rgba(59,130,246,0.45), rgba(129,140,248,0.95))' }}
         />
       </div>
@@ -100,7 +111,7 @@ function RecordingArchiveProgress({
                 border: '1px solid var(--border-faint)',
               }}>
               {state === 'active'
-                ? <Loader2 size={13} className="animate-spin motion-reduce:animate-none" />
+                ? <MapSpinner size={13} color="rgba(96,165,250,0.98)" />
                 : <Icon size={13} />}
             </span>
             <span className="mt-1.5 text-[10px] leading-4 text-token-muted">{label}</span>
@@ -109,7 +120,8 @@ function RecordingArchiveProgress({
       </div>
 
       <p className="mt-3 text-center text-[10px] tabular-nums text-token-muted">
-        预计几分钟内完成，可以离开本页 · 已处理 {formatBackgroundDuration(elapsed)}
+        {waitingForRetry ? '可以离开本页，恢复后会自动更新' : '完成后本页自动更新，可以离开本页'}
+        {' · '}{waitingForRetry ? '已等待' : '已处理'} {formatBackgroundDuration(elapsed)}
       </p>
     </section>
   );
@@ -200,6 +212,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
   const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
   const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
+  const archiveWaitingForRetry = entry.metadata?.audioArchiveNeedsRetry === 'true';
   if (isAudio && fileUrl) {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
@@ -210,6 +223,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
             hasPlayback
             hasTranscript={Boolean(effectiveTranscript)}
             startedAt={entry.createdAt}
+            waitingForRetry={archiveWaitingForRetry}
           />
         )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
@@ -235,6 +249,7 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
           hasPlayback={false}
           hasTranscript={Boolean(liveTranscript)}
           startedAt={entry.createdAt}
+          waitingForRetry={archiveWaitingForRetry}
         />
         {liveTranscript ? (
           <section
@@ -545,6 +560,7 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
 
   return (
     <div className="flex w-full flex-col items-center gap-4">
+      {summary && (
       <div className="flex min-h-11 w-full max-w-[760px] items-center gap-1 rounded-[11px] p-1" style={{ background: 'var(--bg-nested)' }}>
         <button
           type="button"
@@ -553,16 +569,15 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
           style={tab === 'raw' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
           原文
         </button>
-        {summary && (
-          <button
-            type="button"
-            onClick={() => setTab('organized')}
-            className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
-            style={tab === 'organized' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
-            {styleLabel}
-          </button>
-        )}
+        <button
+          type="button"
+          onClick={() => setTab('organized')}
+          className="min-h-11 flex-1 rounded-[8px] px-3 text-[12px] font-semibold"
+          style={tab === 'organized' ? { background: 'var(--bg-elevated)', color: 'var(--text-primary)' } : { color: 'var(--text-muted)' }}>
+          {styleLabel}
+        </button>
       </div>
+      )}
       {tab === 'organized' && summary ? (
         <>
           <AudioWavePlayer src={src} />

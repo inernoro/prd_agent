@@ -57,9 +57,9 @@ function json(route: Route, data: unknown) {
 async function installRecordingBrowserFakes(page: Page) {
   await page.addInitScript(({ transcript }) => {
     const acceptanceWindow = window as typeof window & {
-      __recordingAcceptance: { replaceStateCalls: number };
+      __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
     };
-    acceptanceWindow.__recordingAcceptance = { replaceStateCalls: 0 };
+    acceptanceWindow.__recordingAcceptance = { replaceStateCalls: 0, contentLoaderAppearances: 0 };
     const originalReplaceState = history.replaceState.bind(history);
     history.replaceState = (...args: Parameters<History['replaceState']>) => {
       acceptanceWindow.__recordingAcceptance.replaceStateCalls += 1;
@@ -205,14 +205,18 @@ async function installApiFixture(page: Page, requests: string[]) {
   let recordingCompleted = false;
   let recordingCompletedAt = 0;
   let uploadedBytes = 0;
-  const archiveReady = () => recordingCompletedAt > 0 && Date.now() - recordingCompletedAt >= 1_500;
+  const completionAge = () => recordingCompletedAt > 0 ? Date.now() - recordingCompletedAt : 0;
+  const transcriptReady = () => completionAge() >= 1_200;
+  const archiveReady = () => completionAge() >= 4_000;
   const currentEntry = () => archiveReady()
     ? {
         ...pendingEntry,
         metadata: { ...pendingEntry.metadata, audioArchiveStatus: 'completed' },
         updatedAt: '2026-07-31T03:46:00.000Z',
       }
-    : pendingEntry;
+    : transcriptReady()
+      ? { ...pendingEntry, updatedAt: '2026-07-31T03:45:30.000Z' }
+      : pendingEntry;
   await page.route('**/api/**', async (route) => {
     const request = route.request();
     const url = new URL(request.url());
@@ -312,6 +316,9 @@ async function installApiFixture(page: Page, requests: string[]) {
         entryId: recordingCompleted ? ENTRY_ID : null,
         archiveStatus: 'pending',
         archiveAttempts: 1,
+        archiveError: recordingCompleted && !archiveReady()
+          ? '对象存储暂时不可用，已进入后台归档队列'
+          : null,
         liveTranscriptStatus: 'completed',
         liveTranscript: LONG_TRANSCRIPT,
         expiresAt: '2026-08-01T03:45:00.000Z',
@@ -385,7 +392,7 @@ test.describe('录音连续性发布门禁', () => {
 
     await installRecordingBrowserFakes(page);
     await installApiFixture(page, apiRequests);
-    await page.goto('/document-store?quickRecord=1', { waitUntil: 'domcontentloaded' });
+    await page.goto('/', { waitUntil: 'domcontentloaded' });
 
     const mobileProfile = await page.evaluate(() => ({
       width: window.innerWidth,
@@ -393,6 +400,14 @@ test.describe('录音连续性发布门禁', () => {
     }));
     expect(mobileProfile.width).toBeLessThanOrEqual(480);
     expect(mobileProfile.touchPoints).toBeGreaterThan(0);
+
+    await page.getByRole('button', { name: '快速创建' }).click();
+    const quickRecordAction = page.getByRole('button', { name: /快速录音/ });
+    await expect(quickRecordAction).toBeVisible();
+    await expect(quickRecordAction).toBeInViewport();
+    await expect(quickRecordAction).toContainText('结束后直接查看播放与原文');
+    await attachViewport(page, testInfo, '00-quick-create-recording-entry');
+    await quickRecordAction.click();
 
     const recordingTitle = page.getByText('快捷录音').first();
     try {
@@ -451,7 +466,7 @@ test.describe('录音连续性发布门禁', () => {
     const backgroundProgress = page.getByTestId('recording-background-progress');
     await expect(backgroundProgress).toBeVisible();
     await expect(backgroundProgress).toContainText('后台只负责保存正式音频并确认原文可恢复，不会自动总结或改写');
-    await expect(backgroundProgress).toContainText('预计几分钟内完成，可以离开本页');
+    await expect(backgroundProgress).toContainText('完成后本页自动更新，可以离开本页');
     await backgroundProgress.scrollIntoViewIfNeeded();
     await attachViewport(page, testInfo, '03-background-progress');
     const playToggle = page.getByTestId('audio-play-toggle');
@@ -461,6 +476,19 @@ test.describe('录音连续性发布门禁', () => {
     await playToggle.click();
     await expect(playToggle).toHaveAttribute('title', '暂停');
     await expect(page.getByText('暂无可预览的内容')).toHaveCount(0);
+    await page.evaluate(() => {
+      const acceptanceWindow = window as typeof window & {
+        __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
+      };
+      let loaderVisible = document.body.innerText.includes('加载文档内容');
+      new MutationObserver(() => {
+        const nextVisible = document.body.innerText.includes('加载文档内容');
+        if (nextVisible && !loaderVisible) {
+          acceptanceWindow.__recordingAcceptance.contentLoaderAppearances += 1;
+        }
+        loaderVisible = nextVisible;
+      }).observe(document.body, { childList: true, subtree: true, characterData: true });
+    });
     const transcriptLines = page.locator('button[title="点击跳到这一句"]');
     await expect(transcriptLines).toHaveCount(18);
     const lastTranscriptLine = transcriptLines.nth(17);
@@ -475,6 +503,22 @@ test.describe('录音连续性发布门禁', () => {
     await attachViewport(page, testInfo, '04-recording-local-playback');
     await backlinksHint.scrollIntoViewIfNeeded();
     await attachViewport(page, testInfo, '05-transcript-footer-separated');
+
+    await expect(backgroundProgress).toContainText('云端服务暂时不可用，已排队重试');
+    await expect(backgroundProgress).toContainText('不需要停在本页等待');
+    await backgroundProgress.scrollIntoViewIfNeeded();
+    await attachViewport(page, testInfo, '05b-cloud-retry-is-non-blocking');
+    const beforeManualReload = await page.evaluate(() => {
+      const acceptanceWindow = window as typeof window & {
+        __recordingAcceptance: { replaceStateCalls: number; contentLoaderAppearances: number };
+      };
+      return {
+        navigationEntries: performance.getEntriesByType('navigation').length,
+        contentLoaderAppearances: acceptanceWindow.__recordingAcceptance.contentLoaderAppearances,
+      };
+    });
+    expect(beforeManualReload.navigationEntries).toBe(1);
+    expect(beforeManualReload.contentLoaderAppearances).toBe(0);
 
     await expect(backgroundProgress).toHaveCount(0, { timeout: 8_000 });
     await expect(page.getByText('云端副本已保存', { exact: true })).toBeVisible();

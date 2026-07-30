@@ -13,6 +13,7 @@ import {
   Bug,
   FileBarChart,
   Presentation,
+  Mic,
   ChevronRight,
   X,
   type LucideIcon,
@@ -30,6 +31,14 @@ interface CreateAction {
 
 /** 最近热门：平台当前主推的创作方式（带「热门」标签的大行卡） */
 const HOT_ACTIONS: CreateAction[] = [
+  {
+    key: 'quick-record',
+    label: '快速录音',
+    desc: '立即录音，结束后直接查看播放与原文',
+    icon: Mic,
+    path: '/document-store?quickRecord=1',
+    color: '#60A5FA',
+  },
   {
     key: 'kb-article',
     label: '知识库文章',
