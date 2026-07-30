@@ -89,6 +89,12 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 失败但问题已修复", set()),
             ("CDS smoke 不通过", {"smoke"}),
             ("构建异常", {"build"}),
+            ("CDS smoke 执行失败", {"smoke"}),
+            ("构建任务失败", {"build"}),
+            ("验收报告归档操作执行失败", {"archive"}),
+            ("CDS smoke 未能通过", {"smoke"}),
+            ("构建未能完成", {"build"}),
+            ("验收报告归档未能成功", {"archive"}),
             ("CDS smoke 先前失败，问题已解决", set()),
             ("CDS smoke 先前失败，现已正常", set()),
             ("CDS smoke 已通过；复测仍未通过", {"smoke"}),
@@ -97,6 +103,7 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 已通过；截图上传失败", set()),
             ("CDS smoke 已通过但移动端验收未完成", set()),
             ("CDS smoke 已通过但截图上传失败", set()),
+            ("CDS smoke 上传失败", set()),
             ("CDS smoke 已通过但复测仍未通过", {"smoke"}),
             ("CDS smoke 已通过；截图上传失败；复测仍未通过", set()),
             ("CDS smoke 已通过；已修复的截图上传仍失败", set()),
@@ -129,6 +136,7 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("构建错误数为 0", set()),
             ("CDS smoke 未出现错误", set()),
             ("CDS smoke 并非不通过", set()),
+            ("CDS smoke 并非未能通过", set()),
             ("构建未出现异常", set()),
             ("构建异常数为 0", set()),
             ("验收报告归档失败；现已修复", set()),
@@ -282,7 +290,15 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertEqual([], errors)
 
     def test_hard_gate_failure_accepts_explicit_error_states(self):
-        for fact in ("CDS smoke 超时", "构建报错", "构建中断"):
+        for fact in (
+            "CDS smoke 超时",
+            "构建报错",
+            "构建中断",
+            "CDS smoke 执行失败",
+            "构建任务失败",
+            "CDS smoke 未能通过",
+            "构建未能完成",
+        ):
             with self.subTest(fact=fact):
                 body = report_body("硬门禁失败").replace(
                     "当前部署 SHA 已前进", fact
@@ -317,6 +333,8 @@ class DailyVerdictContractTests(unittest.TestCase):
     def test_acceptance_chain_failure_accepts_unsuccessful_states(self):
         for fact in (
             "验收报告归档未成功",
+            "验收报告归档操作执行失败",
+            "验收报告归档未能成功",
             "报告发布未完成",
             "验收报告归档返回 500",
             "Slack 通知漏发",
@@ -398,6 +416,7 @@ class DailyVerdictContractTests(unittest.TestCase):
             "构建错误数为 0",
             "CDS smoke 未出现错误",
             "CDS smoke 并非不通过",
+            "CDS smoke 并非未能通过",
             "构建未出现异常",
             "构建异常数为 0",
         ):
@@ -431,6 +450,12 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 超时", "硬门禁失败事实"),
             ("CDS smoke 不通过", "硬门禁失败事实"),
             ("构建异常", "硬门禁失败事实"),
+            ("CDS smoke 执行失败", "硬门禁失败事实"),
+            ("构建任务失败", "硬门禁失败事实"),
+            ("CDS smoke 未能通过", "硬门禁失败事实"),
+            ("构建未能完成", "硬门禁失败事实"),
+            ("验收报告归档操作执行失败", "验收链路失败事实"),
+            ("验收报告归档未能成功", "验收链路失败事实"),
             ("验收报告归档返回 500", "验收链路失败事实"),
         ):
             with self.subTest(fact=fact):

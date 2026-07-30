@@ -609,6 +609,7 @@ def _strip_severity_count_claims(text):
 
 _FAILURE_FACT_PATTERN = re.compile(
     r"失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
+    r"|未能(?:正常)?(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接)"
     r"|阻断|不可用|不可交付|无法完成"
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
@@ -685,7 +686,8 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
     left_gap = clause[last_left_end : event.start()]
     if previous_event_end > last_left_end or not re.fullmatch(
         r"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
-        r"再次|重新|均|都)\s*)*",
+        r"再次|重新|均|都|执行|运行|任务|操作|流程|作业|步骤|环节|过程|"
+        r"用例|测试|检查|验证|检测|校验|结果|状态)\s*)*",
         left_gap,
         re.I,
     ):
