@@ -17,6 +17,13 @@ import { apiRequest, ApiError, apiUrl } from '@/lib/api';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 import { useNowTick } from '@/hooks/useNowTick';
 import { CodePill, ErrorBlock, LoadingBlock, Section } from '../components';
+import {
+  buildForceSyncBody,
+  defaultTransitionReason,
+  forceSyncBlockedReason,
+  type ForceSyncTransitionBody,
+  type SelfUpdateIntent,
+} from '@/lib/selfUpdateTransition';
 
 interface BranchMeta {
   name: string;
@@ -449,6 +456,11 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     : 0;
   // 2026-05-04 新增:CDS 自更新可见性面板状态(用户:"我不清楚是否有自动更新")
   const [selfStatus, setSelfStatus] = useState<SelfStatusState>({ status: 'loading' });
+  // 强制更新的版本切换声明。后端对非快进切换要求 intent + 原因，所以这两件事
+  // 必须在同一个对话框里问清楚（不许猜，见 lib/selfUpdateTransition.ts 顶部）。
+  const [forceIntent, setForceIntent] = useState<SelfUpdateIntent>('release');
+  const [forceReason, setForceReason] = useState('');
+  const [forceReasonTouched, setForceReasonTouched] = useState(false);
   // 2026-05-28 删除 historyOpen — 列表常驻显示在面板下方,不再走 Dialog
 
   // 2026-05-06 用户反馈"中间没更新左下角在动" — server-authority 同步:
@@ -457,6 +469,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   // 因为 activeSelfUpdate 真存在时不会回退到 idle。
   const activeSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.activeSelfUpdate : null;
   const lastSelfUpdate = selfStatus.status === 'ok' ? selfStatus.data.lastSelfUpdate : null;
+
+  // 强制更新的三件套。expectedFromSha 必须来自**刚读到的** self-status ——
+  // 它就是那道「别拿过期状态覆盖生产」的锁，不能用缓存或让用户手填。
+  const forceHeadSha = selfStatus.status === 'ok' ? selfStatus.data.headSha || '' : '';
+  // 用户没动过输入框就跟着 intent / 分支走，动过之后就是他的内容，不再被覆盖。
+  const forceReasonValue = forceReasonTouched
+    ? forceReason
+    : defaultTransitionReason(forceIntent, selectedBranch);
+  const forceBlockedReason = forceSyncBlockedReason(forceHeadSha, forceReasonValue);
 
   // 进度条专用 elapsed:必须与 step 同源(都来自后端 activeSelfUpdate)。
   // runStartedAt 是点按钮那一刻的客户端时间,从本 tab 触发时不会回填后端
@@ -709,7 +730,7 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
   async function runSelfUpdate(
     endpoint: '/api/self-update' | '/api/self-force-sync',
     label: string,
-    opts: { force?: boolean } = {},
+    opts: { force?: boolean; transition?: ForceSyncTransitionBody } = {},
   ): Promise<void> {
     if (runState === 'running') return;
 
@@ -725,7 +746,15 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
     try {
       // 2026-05-08:force=true 让后端跳过 no-op fast-path,即使 HEAD 没变也走完整
       // 流程。"强制更新"按钮带这个 flag,这样测试人员可以反复点同一 commit。
-      await postSse(endpoint, { branch: selectedBranch || undefined, force: opts.force }, (event, data) => {
+      //
+      // 2026-07-30:强制更新还必须带上版本切换声明（transitionIntent /
+      // expectedFromSha / transitionReason）。缺了它，后端的非快进闸门会回
+      // 「必须显式声明 release 或 rollback」—— 而用户刚刚点的按钮就叫「强制更新」。
+      // 见 lib/selfUpdateTransition.ts。
+      const requestBody = opts.transition
+        ? opts.transition
+        : { branch: selectedBranch || undefined, force: opts.force };
+      await postSse(endpoint, requestBody, (event, data) => {
         const title = eventTitle(event, data);
         if (event === 'error') {
           setRunState('error');
@@ -1012,10 +1041,62 @@ export function MaintenanceTab({ onToast }: { onToast: (message: string) => void
                   />
                   <ConfirmAction
                     title="强制更新"
-                    description={`会 git fetch 后 hard reset 到 origin/${selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。即使 HEAD 没变也会走完整流程(force=true,跳过 no-op 短路),便于测试人员重复触发同一版本验证更新链路。`}
+                    description={
+                      <div className="grid gap-2">
+                        <div>
+                          会 git fetch 后 hard reset 到 origin/{selectedBranch || '当前分支'},丢弃本地未推送的提交,并重新编译重启 CDS。
+                          即使 HEAD 没变也会走完整流程,便于重复触发同一版本验证更新链路。
+                        </div>
+                        <div className="text-[11px] text-muted-foreground">
+                          当前 {forceHeadSha ? forceHeadSha.slice(0, 7) : '未知'} → origin/{selectedBranch || '当前分支'}
+                        </div>
+                        {/* 目标不包含当前提交时后端要求声明这是发布还是回滚。
+                            前端算不出「包不包含」（self-status 的 ahead 数是拿当前分支比的，
+                            不是目标分支），所以直接问人，而不是猜一个自信的错答案。 */}
+                        <div className="grid gap-1">
+                          <span className="text-[11px] text-muted-foreground">这次切换属于</span>
+                          <div className="flex gap-1">
+                            {(['release', 'rollback'] as const).map((value) => (
+                              <button
+                                key={value}
+                                type="button"
+                                onClick={() => setForceIntent(value)}
+                                className={`flex-1 rounded-md border px-2 py-1 text-xs ${
+                                  forceIntent === value
+                                    ? 'border-primary/45 bg-primary/10 text-primary'
+                                    : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 text-muted-foreground'
+                                }`}
+                              >
+                                {value === 'release' ? '发布新版本' : '回滚旧版本'}
+                              </button>
+                            ))}
+                          </div>
+                        </div>
+                        <div className="grid gap-1">
+                          <span className="text-[11px] text-muted-foreground">原因（会记进自更新历史）</span>
+                          <input
+                            value={forceReasonValue}
+                            onChange={(event) => { setForceReason(event.target.value); setForceReasonTouched(true); }}
+                            className="rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-2 py-1 text-xs"
+                          />
+                          {forceBlockedReason ? (
+                            <span className="text-[11px] text-amber-600 dark:text-amber-400">{forceBlockedReason}</span>
+                          ) : null}
+                        </div>
+                      </div>
+                    }
                     confirmLabel="强制更新"
+                    disabled={Boolean(forceBlockedReason)}
                     pending={runState === 'running'}
-                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', { force: true })}
+                    onConfirm={() => runSelfUpdate('/api/self-force-sync', '强制更新', {
+                      force: true,
+                      transition: buildForceSyncBody({
+                        headSha: forceHeadSha,
+                        targetBranch: selectedBranch,
+                        intent: forceIntent,
+                        reason: forceReasonValue,
+                      }),
+                    })}
                     trigger={
                       <Button type="button" variant="outline" disabled={runState === 'running'}>
                         <AlertTriangle />

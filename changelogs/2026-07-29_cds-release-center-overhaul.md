@@ -66,3 +66,6 @@
 | fix | cds | 分支来源首次定时发布不再必然失败：历史无发布记录时按 multi 模式现推预览地址，port/simple 如实留空交预检判定 |
 | fix | cds | 晋升候选带可执行判定：来源版本已不是分支 tip 时按钮置灰并说明原因，不再让用户点了才吃版本钳制拒绝 |
 | fix | cds | 忽略通知按 id + 作用域联合查找：此前先取第一条同 id 再校验作用域，跨项目同名 id 会让项目方关不掉自己的通知 |
+| fix | cds | 强制更新按钮补上版本切换声明（transitionIntent / expectedFromSha / transitionReason）：此前只发 branch+force，非快进切换必然被后端回「必须显式声明 release 或 rollback」，而用户刚点的按钮就叫强制更新 |
+| fix | cds | 强制更新对话框可选「发布新版本 / 回滚旧版本」并填原因（预填可编辑），原因不合法时禁用确认；expectedFromSha 取自 self-status 当前 sha |
+| fix | cds | 非快进切换的拒绝文案改为指明去哪里声明、API 缺哪三个字段 |

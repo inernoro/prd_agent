@@ -67,7 +67,13 @@ export function evaluateSelfUpdateTransition(
     return {
       allowed: false,
       code: 'non_fast_forward_update_requires_intent',
-      message: '目标版本不包含当前 CDS 提交；必须显式声明 release 或 rollback。',
+      // 文案要说清「去哪儿声明」。只写「必须显式声明」的话，从 UI 点「强制更新」
+      // 过来的人会觉得自己刚刚已经声明过了——2026-07-30 用户原话「我都这么明显了好吧」。
+      // 前端漏传字段是根因（已修），这句话是第二道保险：万一还有别的调用方漏传，
+      // 至少告诉他缺哪三个字段。
+      message: '目标版本不包含当前 CDS 提交（非快进切换）。'
+        + '请在「CDS 系统设置 → 更新与重启 → 强制更新」里选择「发布新版本」或「回滚旧版本」并填写原因；'
+        + 'API 调用需同时提供 transitionIntent、expectedFromSha、transitionReason。',
     };
   }
   if (rawIntent !== 'release' && rawIntent !== 'rollback') {
