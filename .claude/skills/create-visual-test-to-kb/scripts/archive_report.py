@@ -632,6 +632,13 @@ _RAW_FAILURE_STATUS_PATTERN = (
     r"|(?:status|状态)\s*[:：=]\s*"
     r"(?:missing|error|failed|failure|stopped)\b)"
 )
+_RAW_RESOLVED_STATUS_PATTERN = (
+    r"(?:\b(?:passed|succeeded)\b"
+    r"|(?:status|状态)\s*[:：=]\s*"
+    r"(?:passed|succeeded|success|successful|ready|running|healthy|completed|ok)\b"
+    r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
+    r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
+)
 _FAILURE_FACT_PATTERN = re.compile(
     rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
     rf"\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
@@ -661,7 +668,8 @@ _RESOLVED_STATUS_PREFIX_PATTERN = (
 _RESOLVED_FACT_PATTERN = re.compile(
     rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*"
     rf"(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
-    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))",
+    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
+    rf"|{_RAW_RESOLVED_STATUS_PATTERN}",
     re.I,
 )
 _FAILURE_SUBJECT_PATTERNS = (
@@ -671,7 +679,11 @@ _FAILURE_SUBJECT_PATTERNS = (
     ),
     (
         "ready",
-        re.compile(r"ready(?:\s*(?:检查|门禁|状态|check|gate|status))?", re.I),
+        re.compile(
+            r"(?<![A-Za-z0-9_])ready(?![A-Za-z0-9_])"
+            r"(?:\s*(?:检查|门禁|状态|check|gate|status))?",
+            re.I,
+        ),
     ),
     (
         "smoke",
@@ -821,7 +833,7 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
         rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
         rf"运行|任务|操作|流程|作业|步骤|环节|过程|用例|测试|检查|验证|"
         rf"检测|校验|判定|被判定|显示|表明|呈现|处于|问题|故障|异常|"
-        rf"缺陷|结果|状态|为|是|"
+        rf"缺陷|结果|状态|为|是|already|currently|previously|still|"
         rf"[:：=]|[-=]>|→|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
         left_gap,
         re.I,

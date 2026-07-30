@@ -136,6 +136,7 @@ class DailyVerdictContractTests(unittest.TestCase):
             ),
             ("CDS smoke 结果：失败", {"smoke"}),
             ("验收报告归档结果为失败", {"archive"}),
+            ("验收报告归档 already failed", {"archive"}),
             ("构建状态=异常", {"build"}),
             ("CDS smoke 结果显示为失败", {"smoke"}),
             ("构建被判定为异常", {"build"}),
@@ -659,6 +660,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "conditional", body
                 )
                 self.assertEqual([], errors)
+
+    def test_english_success_results_close_prior_raw_failure(self):
+        for closure in (
+            "CDS smoke passed",
+            "CDS smoke status=passed",
+            "CDS smoke succeeded",
+            "CDS smoke exit code 0",
+            "CDS smoke HTTP 2xx",
+            "CDS smoke status=healthy",
+        ):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke failed"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一门禁已复测 | 关闭旧失败证据 | "
+                    "已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+    def test_already_failed_binds_to_archive_instead_of_ready(self):
+        fact = "验收报告归档 already failed"
+        self.assertEqual({"archive"}, archive_report._current_failure_subjects(fact))
+
+        body = report_body("验收链路失败").replace(
+            "当前部署 SHA 已前进", fact
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+        body = report_body("覆盖不足").replace("当前部署 SHA 已前进", fact)
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        self.assertTrue(any("验收链路失败事实" in error for error in errors))
+        self.assertFalse(any("硬门禁失败事实" in error for error in errors))
 
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
