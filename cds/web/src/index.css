@@ -5198,15 +5198,15 @@
   animation: cds-agent-starter-copy-halo 1.8s ease-in-out infinite;
 }
 
-body:has([data-agent-starter='true']) {
+body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) {
   overflow: hidden;
 }
 
-body:has([data-agent-starter='true']) button.fixed {
+body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) button.fixed {
   visibility: hidden;
 }
 
-body:has([data-agent-starter='true']) .cds-agent-access-floating {
+body:has([role='dialog'][data-state='open'] [data-agent-starter='true']) .cds-agent-access-floating {
   display: none !important;
 }
 
@@ -5231,8 +5231,10 @@ body:has([data-agent-starter='true']) .cds-agent-access-floating {
 
   [role='dialog']:has([data-agent-starter='true']) > div:first-child {
     display: flex !important;
+    flex: 1 1 auto !important;
     flex-direction: column !important;
     gap: 0 !important;
+    min-height: 0 !important;
     overflow: clip !important;
     padding: 0 !important;
   }
