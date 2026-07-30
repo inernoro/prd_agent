@@ -567,19 +567,67 @@ def _strip_zero_coverage_gap_phrases(text):
     return ZERO_COVERAGE_GAP_PAT.sub(" ", text or "")
 
 
+def _severity_counts_from_text(text):
+    """Parse P0-P3 counts without losing non-zero values later in a vector."""
+    raw = text or ""
+    labels = r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3"
+    vector = re.search(
+        labels
+        + r"\s*[:：=]\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)\s*/\s*(\d+)",
+        raw,
+        re.I,
+    )
+    if vector:
+        return {f"P{index}": int(value) for index, value in enumerate(vector.groups())}
+
+    uniform = re.search(labels + r"\s*均?为\s*(\d+)", raw, re.I)
+    if uniform:
+        value = int(uniform.group(1))
+        return {f"P{index}": value for index in range(4)}
+
+    individual = {
+        severity.upper(): int(value)
+        for severity, value in re.findall(r"\b(P[0-3])\s*[:：=]\s*(\d+)\b", raw, re.I)
+    }
+    return individual or None
+
+
+def _strip_severity_count_claims(text):
+    """Remove parsed P0-P3 count declarations before free-text severity checks."""
+    raw = text or ""
+    labels = r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3"
+    raw = re.sub(
+        labels
+        + r"\s*[:：=]\s*\d+\s*/\s*\d+\s*/\s*\d+\s*/\s*\d+",
+        " ",
+        raw,
+        flags=re.I,
+    )
+    raw = re.sub(labels + r"\s*均?为\s*\d+", " ", raw, flags=re.I)
+    return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
+
+
 def _daily_fact_signals(values, body):
     """Extract the product and coverage facts used to justify a daily Verdict."""
     product_quality = values.get("产品质量", "").strip()
     completeness = values.get("验收完整性", "").strip()
 
+    severity_counts = _severity_counts_from_text(product_quality)
     zero_defects = bool(
-        re.search(
+        (
+            severity_counts is not None
+            and len(severity_counts) == 4
+            and sum(severity_counts.values()) == 0
+        )
+        or (
+            severity_counts is None
+            and re.search(
             r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
             r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
-            r"|P0\s*/\s*P1\s*/\s*P2\s*/\s*P3[^。；;|\n]{0,12}(?:均?为|[:：=])?\s*0"
             r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
             product_quality,
             re.I,
+            )
         )
     )
 
@@ -590,14 +638,7 @@ def _daily_fact_signals(values, body):
         product_quality,
         flags=re.I,
     )
-    positive_product = re.sub(
-        r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3[^。；;|\n]{0,12}"
-        r"(?:均?为|[:：=])?\s*0(?:\s*/\s*0\s*/\s*0\s*/\s*0)?",
-        " ",
-        positive_product,
-        flags=re.I,
-    )
-    positive_product = re.sub(r"\bP[0-2]\s*[:：=]\s*0\b", " ", positive_product, flags=re.I)
+    positive_product = _strip_severity_count_claims(positive_product)
 
     defect_headers, defect_rows = _section_table(body, "缺陷清单")
     severity_index = next(
@@ -612,25 +653,69 @@ def _daily_fact_signals(values, body):
         severity_index >= 0
         and any(
             severity_index < len(row)
-            and bool(re.search(r"\bP[0-2]\b", row[severity_index], re.I))
+            and bool(re.search(r"\bP[01]\b", row[severity_index], re.I))
             for row in defect_rows
         )
     )
+    nonblocking_defect_rows = (
+        severity_index >= 0
+        and any(
+            severity_index < len(row)
+            and bool(re.search(r"\bP[23]\b", row[severity_index], re.I))
+            for row in defect_rows
+        )
+    )
+    blocking_count = bool(
+        severity_counts
+        and (severity_counts.get("P0", 0) > 0 or severity_counts.get("P1", 0) > 0)
+    )
+    nonblocking_count = bool(
+        severity_counts
+        and (severity_counts.get("P2", 0) > 0 or severity_counts.get("P3", 0) > 0)
+    )
     blocking_product_failure = bool(
-        blocking_defect_rows
+        blocking_count
+        or blocking_defect_rows
         or re.search(
-            r"(?:发现|确认|存在|出现|有)\s*(?:\d+\s*个?\s*)?"
-            r"(?:P[0-2]\s*)?(?:产品)?缺陷"
-            r"|\bP[0-2]\b"
+            r"\bP[01]\b"
             r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
             re.I,
         )
     )
+    nonblocking_product_risk = bool(
+        nonblocking_count
+        or nonblocking_defect_rows
+        or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
+    )
+    product_risk = blocking_product_failure or nonblocking_product_risk
     core_failure = bool(
         re.search(
             r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
+            re.I,
+        )
+    )
+    root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
+    root_fact_cells = []
+    for row in root_cause_rows:
+        root_fact_cells.extend(row[:4])
+    root_facts = "；".join(root_fact_cells)
+    chain_failure = bool(
+        re.search(
+            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
+            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)",
+            root_facts,
+            re.I,
+        )
+    )
+    hard_gate_failure = bool(
+        re.search(
+            r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
+            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用)"
+            r"|(?:失败|未通过)[^。；;|\n]{0,20}"
+            r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
+            root_facts,
             re.I,
         )
     )
@@ -649,7 +734,11 @@ def _daily_fact_signals(values, body):
     return {
         "zero_defects": zero_defects,
         "blocking_product_failure": blocking_product_failure,
+        "nonblocking_product_risk": nonblocking_product_risk,
+        "product_risk": product_risk,
         "core_failure": core_failure,
+        "chain_failure": chain_failure,
+        "hard_gate_failure": hard_gate_failure,
         "coverage_gap_count": coverage_gap_count,
         "incomplete": incomplete,
         "claims_complete": claims_complete,
@@ -699,28 +788,35 @@ def _daily_conclusion_contract_errors(verdict, body):
         )
 
     facts = _daily_fact_signals(values, body)
-    if facts["zero_defects"] and facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P2 产品失败事实")
+    if facts["zero_defects"] and facts["product_risk"]:
+        errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P3 缺陷事实")
     if facts["claims_complete"] and facts["coverage_gap_count"] > 0:
         errors.append(
             f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
         )
     if nature == "产品失败" and not facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 判定性质为产品失败，但产品质量和缺陷清单没有 P0-P2 产品失败事实")
+        errors.append("[事实一致性] 判定性质为产品失败，但产品质量和缺陷清单没有 P0/P1 产品失败事实")
     if nature == "核心用例失败" and not facts["core_failure"]:
         errors.append("[事实一致性] 判定性质为核心用例失败，但产品质量没有核心用例/流程失败事实")
+    if nature == "验收链路失败" and not facts["chain_failure"]:
+        errors.append("[事实一致性] 判定性质为验收链路失败，但根因链没有归档、打开验证或通知链路失败事实")
+    if nature == "硬门禁失败" and not facts["hard_gate_failure"]:
+        errors.append("[事实一致性] 判定性质为硬门禁失败，但根因链没有 ready、smoke、构建或强制测试失败事实")
     if nature == "覆盖不足" and not facts["incomplete"]:
         errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
-    if verdict == "pass" and (facts["incomplete"] or facts["blocking_product_failure"]):
-        errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P2 产品失败事实不一致")
+    if verdict == "pass" and (facts["incomplete"] or facts["product_risk"]):
+        errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P3 缺陷事实不一致")
     if verdict == "conditional" and facts["blocking_product_failure"]:
-        errors.append("[事实一致性] 已有 P0-P2 产品失败事实时不能使用 conditional，必须使用 fail")
+        errors.append("[事实一致性] 已有 P0/P1 产品失败事实时不能使用 conditional，必须使用 fail")
     coverage_only = (
         facts["zero_defects"]
         and facts["incomplete"]
-        and not facts["blocking_product_failure"]
+        and not facts["product_risk"]
+        and not facts["core_failure"]
+        and not facts["chain_failure"]
+        and not facts["hard_gate_failure"]
     )
-    if verdict == "fail" and nature in {"产品失败", "核心用例失败"} and coverage_only:
+    if verdict == "fail" and coverage_only:
         errors.append(
             "[Verdict 语义] 已报事实仅支持覆盖不足且未发现产品失败，必须使用 conditional"
         )
