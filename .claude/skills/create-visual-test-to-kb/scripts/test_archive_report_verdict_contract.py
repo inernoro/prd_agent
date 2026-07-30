@@ -622,7 +622,7 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "当前部署 SHA 已前进", failure
                 )
                 body = body.rstrip() + (
-                    "\n| 后续复测 | "
+                    "\n| 验收冻结 SHA | "
                     f"{closure} | 同一主体已复测 | 关闭旧失败证据 | 已通过 | 保留记录 |\n"
                 )
                 errors = archive_report._daily_conclusion_contract_errors(
@@ -635,8 +635,20 @@ class DailyVerdictContractTests(unittest.TestCase):
             "当前部署 SHA 已前进", "CDS smoke 现已通过"
         )
         body = body.rstrip() + (
-            "\n| 后续复测 | CDS smoke 再次失败 | 环境回退 | "
+            "\n| 验收冻结 SHA | CDS smoke 再次失败 | 环境回退 | "
             "当前证据证明失败 | 未关闭 | 继续修复 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_different_root_cause_targets_do_not_close_each_other(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 移动端验收 | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 后端验收 | CDS smoke 已通过 | 后端复测完成 | "
+            "仅证明后端 | 已通过 | 保留记录 |\n"
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("硬门禁失败事实" in error for error in errors))
@@ -891,7 +903,7 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "当前部署 SHA 已前进", "服务尚未就绪"
                 )
                 body = body.rstrip() + (
-                    "\n| 服务复测 | "
+                    "\n| 验收冻结 SHA | "
                     f"{closure} | 已完成复测 | 旧失败已关闭 | 已通过 | 保留记录 |\n"
                 )
                 errors = archive_report._daily_conclusion_contract_errors(

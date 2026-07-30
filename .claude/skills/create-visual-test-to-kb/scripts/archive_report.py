@@ -977,6 +977,13 @@ def _current_failure_subjects(text):
     return {subject for subject, state in states.items() if state == "failed"}
 
 
+def _root_cause_state_scope(row, row_index):
+    """Keep same-kind gates independent when root-cause targets differ."""
+    target = row[0] if row else ""
+    normalized = re.sub(r"[`*_\s]+", "", target).lower()
+    return normalized or f"__root_cause_row_{row_index}"
+
+
 def _normalize_evidence_usage_gap_clauses(text):
     """Neutralize evidence-use wording without removing real failures beside it."""
     clauses = _split_fact_clauses(text)
@@ -1107,18 +1114,20 @@ def _daily_fact_signals(values, body):
         )
     )
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    current_failure_states = {}
-    for row in root_cause_rows:
+    failure_states_by_scope = {}
+    for row_index, row in enumerate(root_cause_rows):
+        scope = _root_cause_state_scope(row, row_index)
         normalized_row = "；".join(
             _normalize_evidence_usage_gap_clauses(cell)
             for cell in row[:5]
         )
-        current_failure_states = _failure_subject_states(
-            normalized_row, current_failure_states
+        failure_states_by_scope[scope] = _failure_subject_states(
+            normalized_row, failure_states_by_scope.get(scope)
         )
     current_failure_subjects = {
         subject
-        for subject, state in current_failure_states.items()
+        for states in failure_states_by_scope.values()
+        for subject, state in states.items()
         if state == "failed"
     }
     chain_failure = bool(
