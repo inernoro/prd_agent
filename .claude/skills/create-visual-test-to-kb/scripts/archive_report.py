@@ -1069,7 +1069,7 @@ def _daily_fact_signals(values, body):
     for row in root_cause_rows:
         conclusion_cell = row[4] if len(row) > 4 else ""
         if not _has_resolved_failure_status(conclusion_cell):
-            root_fact_rows.append(row[:4])
+            root_fact_rows.append(row[:5])
     current_failure_subjects = set()
     for row_cells in root_fact_rows:
         normalized_row = "；".join(

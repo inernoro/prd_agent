@@ -518,6 +518,15 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
 
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 失败"
+        ).replace(
+            "| 无法确认 | 创建冻结预览后复测 |",
+            "| CDS smoke 已修复 | 保留历史记录 |",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
     def test_future_closing_action_does_not_resolve_current_failure(self):
         for action in (
             "重试后恢复服务",
@@ -596,6 +605,35 @@ class DailyVerdictContractTests(unittest.TestCase):
                             for error in errors
                         )
                     )
+
+    def test_conclusion_column_participates_in_failure_state(self):
+        cases = (
+            ("CDS smoke 当前失败", "硬门禁失败", "硬门禁"),
+            ("构建报错", "硬门禁失败", "硬门禁"),
+            ("验收报告归档失败", "验收链路失败", "验收链路"),
+        )
+        for fact, fail_nature, label in cases:
+            with self.subTest(fact=fact, verdict="conditional"):
+                body = report_body("覆盖不足").replace(
+                    "| 无法确认 | 创建冻结预览后复测 |",
+                    f"| {fact} | 创建冻结预览后复测 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                error_text = "\n".join(errors)
+                self.assertIn(label, error_text)
+                self.assertIn("必须使用 fail", error_text)
+
+            with self.subTest(fact=fact, verdict="fail"):
+                body = report_body(fail_nature).replace(
+                    "| 无法确认 | 创建冻结预览后复测 |",
+                    f"| {fact} | 创建冻结预览后复测 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "fail", body
+                )
+                self.assertEqual([], errors)
 
     def test_missing_root_cause_chain_is_rejected(self):
         body = report_body("覆盖不足").split("## 根因链条", 1)[0]
