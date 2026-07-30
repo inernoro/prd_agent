@@ -87,6 +87,10 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 先前失败；但是现已通过", set()),
             ("CDS smoke 失败但现在已修复", set()),
             ("CDS smoke 失败但问题已修复", set()),
+            ("CDS smoke 不通过", {"smoke"}),
+            ("构建异常", {"build"}),
+            ("CDS smoke 先前失败，问题已解决", set()),
+            ("CDS smoke 先前失败，现已正常", set()),
             ("CDS smoke 已通过；复测仍未通过", {"smoke"}),
             ("CDS smoke 已通过；移动端验收未完成", set()),
             ("CDS smoke 已通过；移动端验证未通过", set()),
@@ -124,6 +128,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 超时 0 次", set()),
             ("构建错误数为 0", set()),
             ("CDS smoke 未出现错误", set()),
+            ("CDS smoke 并非不通过", set()),
+            ("构建未出现异常", set()),
+            ("构建异常数为 0", set()),
             ("验收报告归档失败；现已修复", set()),
             ("报告无法归档", {"archive"}),
             ("无法完成报告发布", {"report-publish"}),
@@ -390,6 +397,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke 超时 0 次",
             "构建错误数为 0",
             "CDS smoke 未出现错误",
+            "CDS smoke 并非不通过",
+            "构建未出现异常",
+            "构建异常数为 0",
         ):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(
@@ -419,6 +429,8 @@ class DailyVerdictContractTests(unittest.TestCase):
     def test_non_fail_verdict_rejects_explicit_error_states(self):
         for fact, label in (
             ("CDS smoke 超时", "硬门禁失败事实"),
+            ("CDS smoke 不通过", "硬门禁失败事实"),
+            ("构建异常", "硬门禁失败事实"),
             ("验收报告归档返回 500", "验收链路失败事实"),
         ):
             with self.subTest(fact=fact):
@@ -439,6 +451,8 @@ class DailyVerdictContractTests(unittest.TestCase):
                 "验收报告归档失败；现已修复",
                 "先前失败的 CDS smoke 现已通过",
                 "CDS ready 与 smoke 先前失败，现已通过",
+                "CDS smoke 先前失败，问题已解决",
+                "CDS smoke 先前失败，现已正常",
             ):
                 with self.subTest(verdict=verdict, fact=fact):
                     body = report_body(nature).replace(
@@ -509,14 +523,18 @@ class DailyVerdictContractTests(unittest.TestCase):
                 self.assertEqual([], errors)
 
     def test_resolved_root_cause_status_does_not_force_fail(self):
-        body = report_body("覆盖不足").replace(
-            "当前部署 SHA 已前进", "验收报告归档失败"
-        ).replace(
-            "| 无法确认 | 创建冻结预览后复测 |",
-            "| 已修复 | 保留历史记录 |",
-        )
-        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
-        self.assertEqual([], errors)
+        for conclusion in ("已修复", "已解决", "现已正常"):
+            with self.subTest(conclusion=conclusion):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "验收报告归档失败"
+                ).replace(
+                    "| 无法确认 | 创建冻结预览后复测 |",
+                    f"| {conclusion} | 保留历史记录 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
 
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke 失败"
