@@ -33,7 +33,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FindRecoveredRecordingEntry_ShouldRecoverBothArchiveFormsAndRequireOwner()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var completedEntry = new DocumentEntry
         {
@@ -148,7 +147,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StalePendingLeaseCompensation_ShouldDeleteOnlyItsOwnEntryAndCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = new DateTime(2026, 7, 26, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -213,7 +211,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task PendingLeaseFencedUpsert_ShouldRejectOlderWriterAfterNewLeaseWins()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const long oldLeaseVersion = 1;
         const long newLeaseVersion = 2;
@@ -315,7 +312,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureRecordingChunkAsync_ShouldCollapseConcurrentRetriesToOneDocument()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var bytes = new byte[] { 1, 2, 3, 4 };
         var attempts = Enumerable.Range(0, 16)
@@ -338,7 +334,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureRecordingChunkAsync_ShouldRejectDifferentPayloadForSameIndex()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         await DocumentStoreController.EnsureRecordingChunkAsync(
             fixture.Db.DocumentRecordingUploadChunks,
@@ -381,7 +376,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task ArchiveClaim_ShouldOnlyTakeSessionsOwnedByCurrentInstance()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync([
             Session("main-session", "main", DocumentRecordingArchiveStatus.Pending),
@@ -410,7 +404,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task LegacyUnownedArchive_ShouldBeAdoptedByOnlyOneExplicitRequester()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("legacy-unowned", "", DocumentRecordingArchiveStatus.Pending);
         session.Status = DocumentRecordingUploadStatus.Completed;
@@ -441,7 +434,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleArchiveRecovery_ShouldNotReleaseAnotherInstancesLease()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = DateTime.UtcNow;
         var main = Session("main-stale", "main", DocumentRecordingArchiveStatus.Archiving);
@@ -475,7 +467,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionClaim_ShouldIncludeFinalChunkCommittedBeforeClaim()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("complete-after-append", "main", DocumentRecordingArchiveStatus.None);
         session.NextChunkIndex = 1;
@@ -519,7 +510,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionClaim_ShouldBlockAndExcludeAppendThatHasNotCommitted()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("complete-before-append", "main", DocumentRecordingArchiveStatus.None);
         session.NextChunkIndex = 1;
@@ -564,7 +554,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionLease_ShouldPreventOldClaimFromReleasingNewClaim()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = Session("completion-fence", "main", DocumentRecordingArchiveStatus.None);
         session.UpdatedAt = DateTime.UtcNow.AddMinutes(-20);
@@ -607,7 +596,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task CompletionLeaseHeartbeat_ShouldBlockEarlyReclaimAndFenceExpiredOwner()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = DateTime.UtcNow;
         var session = Session("completion-heartbeat", "main", DocumentRecordingArchiveStatus.None);
@@ -665,7 +653,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleCompletedSideEffects_ShouldBeCompensatedOnlyAfterPendingWinnerCommits()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "stale-completed-side-effects";
         var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
@@ -747,7 +734,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task StaleCompletedSideEffects_WithoutCountTokenShouldPreserveOtherEntryCount()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "stale-completed-without-count";
         var completedEntryId = DocumentStoreController.CompletedRecordingEntryId(sessionId);
@@ -797,7 +783,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCount_ShouldApplyExactlyOnceAcrossRetries()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -898,11 +883,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public void NormalArchive_ShouldPersistLateTranscriptFromBothRaceOrderings()
     {
         var source = File.ReadAllText(DocumentStoreControllerPath());
-        source.Split(
-                "PersistCompletedLiveTranscriptAsync(",
-                StringSplitOptions.None)
-            .Length.ShouldBe(4);
-
         var finalizeStart = source.IndexOf(
             "private async Task<bool> FinalizeCompletedRecordingAsync(",
             StringComparison.Ordinal);
@@ -914,19 +894,24 @@ public sealed class DocumentRecordingArchiveWorkerTests
         var terminalWrite = finalizeBlock.IndexOf(
             "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
             StringComparison.Ordinal);
-        var transcriptWrite = finalizeBlock.IndexOf(
+        var transcriptWriteBeforeTerminal = finalizeBlock.IndexOf(
             "await PersistCompletedLiveTranscriptAsync(",
+            StringComparison.Ordinal);
+        var transcriptWriteAfterTerminal = finalizeBlock.IndexOf(
+            "await PersistCompletedLiveTranscriptAsync(",
+            terminalWrite,
             StringComparison.Ordinal);
 
         terminalWrite.ShouldBeGreaterThanOrEqualTo(0);
-        transcriptWrite.ShouldBeGreaterThan(terminalWrite);
+        transcriptWriteBeforeTerminal.ShouldBeGreaterThanOrEqualTo(0);
+        transcriptWriteBeforeTerminal.ShouldBeLessThan(terminalWrite);
+        transcriptWriteAfterTerminal.ShouldBeGreaterThan(terminalWrite);
     }
 
     [Fact]
     public async Task PersistCompletedLiveTranscript_ShouldIndexLateNormalArchiveTranscript()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -971,10 +956,73 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public async Task PersistCompletedLiveTranscript_ShouldNotDowngradeCalibratedContent()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var calibratedAt = new DateTime(2026, 7, 29, 8, 0, 0, DateTimeKind.Utc);
+        var entry = new DocumentEntry
+        {
+            Id = "calibrated-entry-late-live",
+            StoreId = "store-1",
+            Title = "recording.webm",
+            DocumentId = "full-audio-document",
+            Summary = "完整音频校准摘要",
+            ContentIndex = "完整音频校准正文索引",
+            LastChangedAt = calibratedAt,
+            Metadata = new Dictionary<string, string>
+            {
+                ["generated_kind"] = "transcribe",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        // 模拟 /complete 在批量 ASR 写入前读到的旧快照；数据库当前文档已经完成校准。
+        var staleEntrySnapshot = new DocumentEntry
+        {
+            Id = entry.Id,
+            StoreId = entry.StoreId,
+            Title = entry.Title,
+            Summary = "旧实时预览",
+            ContentIndex = "旧实时预览",
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+            },
+        };
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "calibrated-session-late-live",
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Completed,
+            LiveTranscript = "晚到但可能不完整的实时原文",
+            LiveTranscriptProvider = "provider-1",
+            LiveTranscriptModel = "model-1",
+        };
+
+        (await DocumentStoreController.PersistCompletedLiveTranscriptAsync(
+                fixture.Db.DocumentEntries,
+                staleEntrySnapshot,
+                session,
+                CancellationToken.None))
+            .ShouldBeTrue();
+
+        var updated = await fixture.Db.DocumentEntries.Find(e => e.Id == entry.Id).SingleAsync();
+        updated.DocumentId.ShouldBe(entry.DocumentId);
+        updated.Summary.ShouldBe(entry.Summary);
+        updated.ContentIndex.ShouldBe(entry.ContentIndex);
+        updated.Metadata["generated_kind"].ShouldBe("transcribe");
+        updated.Metadata["liveTranscript"].ShouldBe(session.LiveTranscript);
+        updated.Metadata["liveTranscriptStatus"]
+            .ShouldBe(DocumentLiveTranscriptStatus.Completed);
+        updated.Metadata[DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey]
+            .ShouldBe("true");
+        updated.LastChangedAt.ShouldNotBeNull();
+        updated.LastChangedAt.Value.ShouldBeGreaterThan(calibratedAt);
+    }
+
+    [Fact]
     public async Task InterruptedCompletedEntryRecovery_ShouldRestoreMissingCountExactlyOnce()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1021,7 +1069,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCount_ShouldCommuteWithConcurrentNormalAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1055,7 +1102,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCountTokens_ShouldBeTransientAcrossCompletedSessions()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1099,7 +1145,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task RecordingEntryCountToken_ShouldBeRemovedWithDeletedEntry()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1141,7 +1186,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task DocumentCountDeletion_ShouldCommuteWithConcurrentAddition()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1175,7 +1219,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task DocumentCountDeletion_ShouldClampInsteadOfGoingNegative()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var t0 = new DateTime(2026, 7, 24, 0, 0, 0, DateTimeKind.Utc);
         var store = new DocumentStore
@@ -1246,6 +1289,146 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 }));
 
         sessionsDeleted.ShouldBeFalse();
+    }
+
+    [Fact]
+    public async Task ExpiredRecordingCleanupClaim_ShouldBeMutuallyExclusiveWithCompletion()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var completionFirst = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-completion-first",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var cleanupFirst = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-cleanup-first",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var pendingOutbox = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-pending-outbox",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            DeferredTranscriptionRunPending = true,
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var staleCleanupLease = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-stale-cleanup-lease",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Cancelled,
+            CleanupLeaseId = "abandoned-cleanup",
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddMinutes(-11),
+        };
+        var freshCleanupLease = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-fresh-cleanup-lease",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Cancelled,
+            CleanupLeaseId = "active-cleanup",
+            ExpiresAt = now.AddMinutes(-1),
+            UpdatedAt = now.AddMinutes(-9),
+        };
+        var notExpired = new DocumentRecordingUploadSession
+        {
+            Id = "cleanup-race-not-expired",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Uploading,
+            ExpiresAt = now.AddMinutes(1),
+            UpdatedAt = now.AddHours(-1),
+        };
+        var sessions = new[]
+        {
+            completionFirst,
+            cleanupFirst,
+            pendingOutbox,
+            staleCleanupLease,
+            freshCleanupLease,
+            notExpired,
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync(
+            sessions);
+        await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
+            sessions
+                .Select(session => Chunk(session.Id, 0, [1, 2])));
+
+        (await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            completionFirst.Id,
+            completionFirst.UserId,
+            "completion-lease",
+            now,
+            CancellationToken.None)).ShouldNotBeNull();
+
+        var cleanupClaim = await DocumentStoreController.ClaimExpiredRecordingUploadsAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            now,
+            CancellationToken.None);
+        cleanupClaim.LeaseId.ShouldNotBeNullOrWhiteSpace();
+        cleanupClaim.Sessions.Select(session => session.Id)
+            .ShouldBe([cleanupFirst.Id, staleCleanupLease.Id], ignoreOrder: true);
+        (await DocumentStoreController.ClaimExpiredRecordingUploadsAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            now,
+            CancellationToken.None)).Sessions.ShouldBeEmpty();
+
+        (await DocumentStoreController.ClaimRecordingCompletionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            cleanupFirst.Id,
+            cleanupFirst.UserId,
+            "late-completion-lease",
+            now,
+            CancellationToken.None)).ShouldBeNull();
+
+        var claimedIds = cleanupClaim.Sessions.Select(session => session.Id).ToArray();
+        await DocumentStoreController.CleanupExpiredRecordingUploadsAsync(
+            claimedIds,
+            ids => fixture.Db.DocumentRecordingUploadChunks.DeleteManyAsync(
+                chunk => ids.Contains(chunk.SessionId)),
+            ids => fixture.Db.DocumentRecordingUploadSessions.DeleteManyAsync(
+                session => ids.Contains(session.Id)
+                           && session.CleanupLeaseId == cleanupClaim.LeaseId
+                           && session.Status == DocumentRecordingUploadStatus.Cancelled));
+
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == cleanupFirst.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == cleanupFirst.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == staleCleanupLease.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == staleCleanupLease.Id)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == completionFirst.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == completionFirst.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == pendingOutbox.Id)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == pendingOutbox.Id)).ShouldBe(1);
+        foreach (var protectedSession in new[] { freshCleanupLease, notExpired })
+        {
+            (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+                session => session.Id == protectedSession.Id)).ShouldBe(1);
+            (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+                chunk => chunk.SessionId == protectedSession.Id)).ShouldBe(1);
+        }
     }
 
     [Fact]
@@ -1367,7 +1550,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task EnsureDeferredTranscriptionRun_ShouldQueueBeforeArchiveAndRemainIdempotent()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1403,11 +1585,10 @@ public sealed class DocumentRecordingArchiveWorkerTests
     [Theory]
     [InlineData(DocumentStoreRunStatus.Failed)]
     [InlineData(DocumentStoreRunStatus.Cancelled)]
-    public async Task EnsureDeferredTranscriptionRun_ShouldRequeueRetryableTerminalRun(
+    public async Task EnsureDeferredTranscriptionRun_ShouldNotReplayTerminalRunWithoutRetrySchedule(
         string terminalStatus)
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1434,7 +1615,7 @@ public sealed class DocumentRecordingArchiveWorkerTests
             EndedAt = DateTime.UtcNow.AddMinutes(-1),
         });
 
-        var requeued = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
+        var existing = await DocumentRecordingArchiveWorker.EnsureDeferredTranscriptionRunAsync(
             fixture.Db.DocumentStoreAgentRuns,
             session,
             "entry-1",
@@ -1442,24 +1623,276 @@ public sealed class DocumentRecordingArchiveWorkerTests
             entryRequiresDeferredTranscription: true,
             CancellationToken.None);
 
+        existing.ShouldNotBeNull();
+        existing!.Id.ShouldBe(runId);
+        existing.Status.ShouldBe(terminalStatus);
+        existing.Phase.ShouldBe("失败");
+        existing.Progress.ShouldBe(73);
+        existing.ErrorMessage.ShouldBe("服务重启，任务被中断");
+        existing.StartedAt.ShouldNotBeNull();
+        existing.EndedAt.ShouldNotBeNull();
+        existing.OwnerInstanceId.ShouldBe("old-instance");
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
+            run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(DocumentStoreRunStatus.Failed)]
+    [InlineData(DocumentStoreRunStatus.Cancelled)]
+    public async Task TerminalDeferredTranscriptionRun_ShouldClosePendingOutbox(
+        string terminalStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = $"session-terminal-close-{terminalStatus}",
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = "instance-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+            EntryId = "entry-1",
+            DeferredTranscriptionRunPending = true,
+            ExpiresAt = now.AddYears(10),
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = session.EntryId,
+            StoreId = session.StoreId,
+            UserId = session.UserId,
+            OwnerInstanceId = session.OwnerInstanceId,
+            Status = terminalStatus,
+            AutomaticRetryCount = terminalStatus == DocumentStoreRunStatus.Failed
+                ? DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries
+                : 0,
+        });
+
+        var terminalRun = await DocumentRecordingArchiveWorker
+            .EnsureAndAcknowledgeDeferredTranscriptionRunAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentStoreAgentRuns,
+                session,
+                session.EntryId,
+                session.OwnerInstanceId,
+                entryRequiresDeferredTranscription: true,
+                CancellationToken.None);
+
+        terminalRun.ShouldNotBeNull();
+        terminalRun!.Status.ShouldBe(terminalStatus);
+        var closed = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(candidate => candidate.Id == session.Id)
+            .SingleAsync();
+        closed.DeferredTranscriptionRunPending.ShouldBeFalse();
+        closed.ExpiresAt.ShouldBeGreaterThan(now.AddHours(23));
+        closed.ExpiresAt.ShouldBeLessThan(now.AddHours(25));
+    }
+
+    [Theory]
+    [InlineData(true, true)]
+    [InlineData(true, false)]
+    [InlineData(false, true)]
+    [InlineData(false, false)]
+    public async Task ArchiveRetentionRefresh_ShouldFollowCurrentOutboxState(
+        bool currentOutboxPending,
+        bool observedOutboxPending)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = $"archive-retention-{currentOutboxPending}-{observedOutboxPending}",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            EntryId = "entry-1",
+            DeferredTranscriptionRunPending = currentOutboxPending,
+            ExpiresAt = currentOutboxPending
+                ? DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(now)
+                : DocumentRecordingArchiveWorker.CompletedSessionExpiresAt(now),
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        (await DocumentRecordingArchiveWorker.RefreshArchiveRetentionAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            session.Id,
+            observedOutboxPending,
+            now.AddSeconds(1),
+            CancellationToken.None)).ShouldBe(currentOutboxPending == observedOutboxPending);
+
+        var retained = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(candidate => candidate.Id == session.Id)
+            .SingleAsync();
+        retained.DeferredTranscriptionRunPending.ShouldBe(currentOutboxPending);
+        if (currentOutboxPending)
+        {
+            retained.ExpiresAt.ShouldBeGreaterThan(now.AddYears(9));
+        }
+        else
+        {
+            retained.ExpiresAt.ShouldBeGreaterThan(now.AddHours(23));
+            retained.ExpiresAt.ShouldBeLessThan(now.AddHours(25));
+        }
+    }
+
+    [Fact]
+    public async Task ScheduledDeferredRetry_ShouldRequeueOnceAndIncrementPersistentCounter()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId("session-due-retry"),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = "old-instance",
+            Status = DocumentStoreRunStatus.Failed,
+            Phase = "失败",
+            Progress = 73,
+            ErrorMessage = "服务重启，任务被中断",
+            AutomaticRetryCount = 1,
+            AutomaticRetryNextAt = now.AddSeconds(-1),
+            AutomaticRetryReason =
+                DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted,
+            StartedAt = now.AddMinutes(-2),
+            EndedAt = now.AddMinutes(-1),
+        };
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        var requeued = await DocumentRecordingArchiveWorker.TryRequeueDeferredTranscriptionRunAsync(
+            fixture.Db.DocumentStoreAgentRuns,
+            run,
+            "new-instance",
+            now,
+            CancellationToken.None);
+
         requeued.ShouldNotBeNull();
-        requeued!.Id.ShouldBe(runId);
-        requeued.Status.ShouldBe(DocumentStoreRunStatus.Queued);
-        requeued.Phase.ShouldBe("等待完整录音转录");
-        requeued.Progress.ShouldBe(0);
+        requeued!.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        requeued.AutomaticRetryCount.ShouldBe(2);
+        requeued.AutomaticRetryNextAt.ShouldBeNull();
+        requeued.AutomaticRetryReason.ShouldBe(
+            DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted);
         requeued.ErrorMessage.ShouldBeNull();
         requeued.StartedAt.ShouldBeNull();
         requeued.EndedAt.ShouldBeNull();
         requeued.OwnerInstanceId.ShouldBe("new-instance");
-        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(
-            run => run.Id == runId)).ShouldBe(1);
+    }
+
+    [Theory]
+    [InlineData(DocumentStoreRunStatus.Failed, 0, 1)]
+    [InlineData(DocumentStoreRunStatus.Failed, 3, -1)]
+    [InlineData(DocumentStoreRunStatus.Cancelled, 0, -1)]
+    public async Task DeferredRetry_ShouldRespectDueTimeLimitAndCancellation(
+        string status,
+        int retryCount,
+        int nextAttemptMinutes)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var now = DateTime.UtcNow;
+        var run = new DocumentStoreAgentRun
+        {
+            Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(
+                $"session-policy-{status}-{retryCount}-{nextAttemptMinutes}"),
+            Kind = DocumentStoreAgentRunKind.Transcribe,
+            SourceEntryId = "entry-1",
+            StoreId = "store-1",
+            UserId = "user-1",
+            Status = status,
+            AutomaticRetryCount = retryCount,
+            AutomaticRetryNextAt = now.AddMinutes(nextAttemptMinutes),
+            AutomaticRetryReason =
+                DocumentRecordingArchiveWorker.DeferredRetryReasonExecutionFailed,
+        };
+        await fixture.Db.DocumentStoreAgentRuns.InsertOneAsync(run);
+
+        var unchanged = await DocumentRecordingArchiveWorker
+            .TryRequeueDeferredTranscriptionRunAsync(
+                fixture.Db.DocumentStoreAgentRuns,
+                run,
+                "instance-1",
+                now,
+                CancellationToken.None);
+
+        unchanged.ShouldNotBeNull();
+        unchanged!.Status.ShouldBe(status);
+        unchanged.AutomaticRetryCount.ShouldBe(retryCount);
+    }
+
+    [Theory]
+    [InlineData(0, 30)]
+    [InlineData(1, 120)]
+    [InlineData(2, 600)]
+    [InlineData(100, 600)]
+    public void DeferredRetryBackoff_ShouldIncreaseAndRemainBounded(
+        int completedRetries,
+        int expectedSeconds)
+    {
+        DocumentRecordingArchiveWorker
+            .ComputeDeferredTranscriptionRetryBackoff(completedRetries)
+            .ShouldBe(TimeSpan.FromSeconds(expectedSeconds));
+    }
+
+    [Theory]
+    [InlineData("recording-archive-transcribe-session-1", 0, true)]
+    [InlineData("recording-archive-transcribe-session-1", 2, true)]
+    [InlineData("recording-archive-transcribe-session-1", 3, false)]
+    [InlineData("manual-transcribe-run", 0, false)]
+    public void AutomaticRetryBudget_ShouldRequireDeterministicRunBelowLimit(
+        string runId,
+        int retryCount,
+        bool expected)
+    {
+        var run = new DocumentStoreAgentRun
+        {
+            Id = runId,
+            AutomaticRetryCount = retryCount,
+        };
+
+        DocumentRecordingArchiveWorker
+            .HasDeferredTranscriptionAutomaticRetryBudget(run)
+            .ShouldBe(expected);
+    }
+
+    [Fact]
+    public async Task AutomaticRetryBudgetFilter_ShouldTreatLegacyMissingCounterAsZero()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var rawRuns = fixture.Db.Database.GetCollection<BsonDocument>(
+            "document_store_agent_runs");
+        await rawRuns.InsertManyAsync(
+        [
+            new BsonDocument
+            {
+                ["_id"] = "legacy-missing-counter",
+                [nameof(DocumentStoreAgentRun.Status)] = DocumentStoreRunStatus.Running,
+            },
+            new BsonDocument
+            {
+                ["_id"] = "retry-budget-exhausted",
+                [nameof(DocumentStoreAgentRun.Status)] = DocumentStoreRunStatus.Running,
+                [nameof(DocumentStoreAgentRun.AutomaticRetryCount)] =
+                    DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries,
+            },
+        ]);
+
+        var matchingIds = await fixture.Db.DocumentStoreAgentRuns
+            .Find(DocumentRecordingArchiveWorker
+                .BuildDeferredTranscriptionAutomaticRetryBudgetFilter())
+            .Project(run => run.Id)
+            .ToListAsync();
+
+        matchingIds.ShouldBe(["legacy-missing-counter"]);
     }
 
     [Fact]
     public async Task EnsureDeferredTranscriptionRun_ShouldNotRequeueCompletedRun()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var session = new DocumentRecordingUploadSession
         {
@@ -1501,7 +1934,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task PendingRecordingAudio_ShouldLoadCompleteMongoChunksWithoutAssetUrl()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1555,6 +1987,335 @@ public sealed class DocumentRecordingArchiveWorkerTests
     }
 
     [Fact]
+    public void CompletedArchivePath_ShouldQueueFullAudioCalibrationAfterLiveAsrDegrades()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var methodStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            StringComparison.Ordinal);
+        var methodEnd = source.IndexOf(
+            "internal static async Task CompensateStaleCompletedRecordingEntryAsync(",
+            methodStart,
+            StringComparison.Ordinal);
+
+        methodStart.ShouldBeGreaterThanOrEqualTo(0);
+        methodEnd.ShouldBeGreaterThan(methodStart);
+        var method = source[methodStart..methodEnd];
+        var intentIndex = method.IndexOf(
+            ".PersistDeferredTranscriptionIntentAsync(",
+            StringComparison.Ordinal);
+        var terminalIndex = method.IndexOf(
+            "var completed = await _db.DocumentRecordingUploadSessions.UpdateOneAsync(",
+            StringComparison.Ordinal);
+        var queueIndex = method.IndexOf(
+            "await DocumentRecordingArchiveWorker.EnsureAndAcknowledgeDeferredTranscriptionRunAsync(",
+            StringComparison.Ordinal);
+        var rereadIndex = method.IndexOf(
+            "var finalizedEntry = await _db.DocumentEntries",
+            StringComparison.Ordinal);
+
+        intentIndex.ShouldBeGreaterThanOrEqualTo(0);
+        terminalIndex.ShouldBeGreaterThan(intentIndex);
+        rereadIndex.ShouldBeGreaterThan(terminalIndex);
+        queueIndex.ShouldBeGreaterThan(rereadIndex);
+        method.ShouldContain("s => s.DeferredTranscriptionRunPending");
+        method.ShouldContain(
+            "DocumentRecordingArchiveWorker.RequiresDeferredTranscription(finalizedEntry)");
+    }
+
+    [Fact]
+    public void InterruptedCompletedRecovery_ShouldReturnScheduledDeferredRunId()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var recoveryStart = source.IndexOf(
+            "var interruptedCompletedEntry = interruptedEntries.FirstOrDefault(",
+            StringComparison.Ordinal);
+        var nextRecoveryBranch = source.IndexOf(
+            "var interruptedPendingEntry = interruptedEntries.FirstOrDefault(",
+            recoveryStart,
+            StringComparison.Ordinal);
+
+        recoveryStart.ShouldBeGreaterThanOrEqualTo(0);
+        nextRecoveryBranch.ShouldBeGreaterThan(recoveryStart);
+        var completedRecovery = source[recoveryStart..nextRecoveryBranch];
+        completedRecovery.ShouldContain("deferredTranscriptionRunId =");
+        completedRecovery.ShouldContain(
+            "DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(sessionId)");
+    }
+
+    [Fact]
+    public void ArchiveWorker_ShouldRecoverTranscriptionOutboxBeforeStorageArchive()
+    {
+        var source = File.ReadAllText(DocumentRecordingArchiveWorkerPath());
+        var recoverIndex = source.IndexOf(
+            "await RecoverDeferredTranscriptionRunsAsync(",
+            StringComparison.Ordinal);
+        var archiveClaimIndex = source.IndexOf(
+            "await ClaimOwnedArchiveSessionAsync(",
+            recoverIndex,
+            StringComparison.Ordinal);
+
+        recoverIndex.ShouldBeGreaterThanOrEqualTo(0);
+        archiveClaimIndex.ShouldBeGreaterThan(recoverIndex);
+    }
+
+    [Fact]
+    public void RecordingWorkerQueries_ShouldHaveExecutableIndexCatalogCoverage()
+    {
+        var catalog = File.ReadAllText(MongoDbIndexCatalogPath());
+
+        catalog.ShouldContain("idx_recording_sessions_deferred_outbox");
+        catalog.ShouldContain("idx_recording_sessions_archive_claim");
+        catalog.ShouldContain("idx_recording_sessions_archive_expiry");
+        catalog.ShouldContain("idx_recording_sessions_expired_cleanup_claim");
+        catalog.ShouldContain("idx_recording_chunks_session_index");
+    }
+
+    [Fact]
+    public void CompletedFastPaths_ShouldReconstructMissingDeterministicTranscriptionRun()
+    {
+        var source = File.ReadAllText(DocumentStoreControllerPath());
+        var completeStart = source.IndexOf(
+            "public async Task<IActionResult> CompleteRecordingUpload(",
+            StringComparison.Ordinal);
+        var finalizeStart = source.IndexOf(
+            "private async Task<bool> FinalizeCompletedRecordingAsync(",
+            completeStart,
+            StringComparison.Ordinal);
+        var completeBlock = source[completeStart..finalizeStart];
+
+        completeBlock.Split(
+                "EnsureCompletedRecordingTranscriptionRunAsync(",
+                StringSplitOptions.None)
+            .Length.ShouldBe(3);
+        completeBlock.ShouldContain("deferredTranscriptionRunId = deferredRun?.Id");
+    }
+
+    [Theory]
+    [InlineData(DocumentRecordingArchiveStatus.Completed)]
+    [InlineData(DocumentRecordingArchiveStatus.Pending)]
+    public async Task PersistedOutbox_ShouldRecoverInterruptedRunUntilTerminalSuccess(
+        string archiveStatus)
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var entry = new DocumentEntry
+        {
+            Id = "entry-terminal-gap",
+            StoreId = "store-1",
+            Title = "recording.m4a",
+            Metadata = new Dictionary<string, string>
+            {
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRequiredMetadataKey] = "true",
+                [DocumentRecordingArchiveWorker.DeferredTranscriptionRunIdMetadataKey] =
+                    "recording-archive-transcribe-session-terminal-gap",
+            },
+        };
+        await fixture.Db.DocumentEntries.InsertOneAsync(entry);
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-terminal-gap",
+            StoreId = "store-1",
+            UserId = "user-1",
+            OwnerInstanceId = "instance-1",
+            Status = DocumentRecordingUploadStatus.Completed,
+            ArchiveStatus = archiveStatus,
+            LiveTranscriptStatus = DocumentLiveTranscriptStatus.Degraded,
+            EntryId = entry.Id,
+            DeferredTranscriptionRunPending = true,
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "other-instance",
+                CancellationToken.None))
+            .ShouldBe(0);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(0);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+
+        var run = await fixture.Db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id ==
+                "recording-archive-transcribe-session-terminal-gap")
+            .SingleAsync();
+        run.ShouldNotBeNull();
+        run.Id.ShouldBe("recording-archive-transcribe-session-terminal-gap");
+        run.SourceEntryId.ShouldBe(entry.Id);
+        run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        // 模拟任务已被领取后容器退出：Agent Worker 启动兜底会把 Running 标成 Failed。
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Running)
+                .Set(candidate => candidate.OwnerInstanceId, "instance-1")
+                .Set(candidate => candidate.StartedAt, DateTime.UtcNow));
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Failed)
+                .Set(candidate => candidate.ErrorMessage, "服务重启，任务被中断")
+                .Set(candidate => candidate.AutomaticRetryNextAt, DateTime.UtcNow.AddSeconds(-1))
+                .Set(
+                    candidate => candidate.AutomaticRetryReason,
+                    DocumentRecordingArchiveWorker.DeferredRetryReasonRestartInterrupted)
+                .Set(candidate => candidate.EndedAt, DateTime.UtcNow));
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+        run = await fixture.Db.DocumentStoreAgentRuns
+            .Find(candidate => candidate.Id == run.Id)
+            .SingleAsync();
+        run.Status.ShouldBe(DocumentStoreRunStatus.Queued);
+        run.AutomaticRetryCount.ShouldBe(1);
+        run.AutomaticRetryNextAt.ShouldBeNull();
+        run.ErrorMessage.ShouldBeNull();
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        // 只有确定性任务最终 Done 后，outbox 才能确认并停止恢复。
+        await fixture.Db.DocumentStoreAgentRuns.UpdateOneAsync(
+            candidate => candidate.Id == run.Id,
+            Builders<DocumentStoreAgentRun>.Update
+                .Set(candidate => candidate.Status, DocumentStoreRunStatus.Done)
+                .Set(candidate => candidate.OutputEntryId, entry.Id)
+                .Set(candidate => candidate.EndedAt, DateTime.UtcNow));
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions
+                .Find(candidate => candidate.Id == session.Id)
+                .SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeFalse();
+
+        (await DocumentRecordingArchiveWorker.RecoverDeferredTranscriptionRunsAsync(
+                fixture.Db.DocumentRecordingUploadSessions,
+                fixture.Db.DocumentEntries,
+                fixture.Db.DocumentStoreAgentRuns,
+                "instance-1",
+                CancellationToken.None))
+            .ShouldBe(0);
+        (await fixture.Db.DocumentStoreAgentRuns.CountDocumentsAsync(_ => true)).ShouldBe(1);
+    }
+
+    [Fact]
+    public async Task DeferredOutboxAcknowledgement_ShouldRequireMatchingDeterministicRunAndEntry()
+    {
+        await using var fixture = await RecordingMongoFixture.TryCreateAsync();
+        var session = new DocumentRecordingUploadSession
+        {
+            Id = "session-ack",
+            EntryId = "entry-ack",
+            DeferredTranscriptionRunPending = true,
+        };
+        await fixture.Db.DocumentRecordingUploadSessions.InsertOneAsync(session);
+
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            "manual-transcribe-run",
+            session.EntryId,
+            CancellationToken.None)).ShouldBeFalse();
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            "other-entry",
+            CancellationToken.None)).ShouldBeFalse();
+        (await fixture.Db.DocumentRecordingUploadSessions.Find(s => s.Id == session.Id).SingleAsync())
+            .DeferredTranscriptionRunPending.ShouldBeTrue();
+
+        var acknowledgedAfter = DateTime.UtcNow;
+        (await DocumentRecordingArchiveWorker.AcknowledgeDeferredTranscriptionSuccessAsync(
+            fixture.Db.DocumentRecordingUploadSessions,
+            DocumentRecordingArchiveWorker.DeferredTranscriptionRunId(session.Id),
+            session.EntryId,
+            CancellationToken.None)).ShouldBeTrue();
+        var acknowledged = await fixture.Db.DocumentRecordingUploadSessions
+            .Find(s => s.Id == session.Id)
+            .SingleAsync();
+        acknowledged.DeferredTranscriptionRunPending.ShouldBeFalse();
+        acknowledged.ExpiresAt.ShouldBeGreaterThan(acknowledgedAfter.AddHours(23));
+        acknowledged.ExpiresAt.ShouldBeLessThan(acknowledgedAfter.AddHours(25));
+    }
+
+    [Fact]
+    public void AgentWorker_ShouldAcknowledgeDeferredOutboxAfterMarkingRunDone()
+    {
+        var source = File.ReadAllText(DocumentStoreAgentWorkerPath());
+        var doneIndex = source.IndexOf(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Done)",
+            StringComparison.Ordinal);
+        var acknowledgeIndex = source.IndexOf(
+            ".AcknowledgeDeferredTranscriptionSuccessAsync(",
+            doneIndex,
+            StringComparison.Ordinal);
+
+        doneIndex.ShouldBeGreaterThanOrEqualTo(0);
+        acknowledgeIndex.ShouldBeGreaterThan(doneIndex);
+    }
+
+    [Fact]
+    public void AgentWorker_ShouldKeepRecoverableFailuresQueuedUntilRetryBudgetIsExhausted()
+    {
+        var source = File.ReadAllText(DocumentStoreAgentWorkerPath());
+        var catchStart = source.IndexOf(
+            "var willRetry = DocumentRecordingArchiveWorker",
+            StringComparison.Ordinal);
+        var catchEnd = source.IndexOf(
+            "finally\n        {",
+            catchStart,
+            StringComparison.Ordinal);
+
+        catchStart.ShouldBeGreaterThanOrEqualTo(0);
+        catchEnd.ShouldBeGreaterThan(catchStart);
+        var failurePolicy = source[catchStart..catchEnd];
+        failurePolicy.ShouldContain(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Queued)");
+        failurePolicy.ShouldContain(".Inc(r => r.AutomaticRetryCount, 1)");
+        failurePolicy.ShouldContain(".Set(r => r.ErrorMessage, null)");
+        failurePolicy.ShouldContain(".Set(r => r.EndedAt, null)");
+        failurePolicy.ShouldContain("\"phase\", new");
+        failurePolicy.ShouldContain(
+            ".Set(r => r.Status, DocumentStoreRunStatus.Failed)");
+        failurePolicy.IndexOf(
+                ".Set(r => r.Status, DocumentStoreRunStatus.Queued)",
+                StringComparison.Ordinal)
+            .ShouldBeLessThan(failurePolicy.IndexOf(
+                ".Set(r => r.Status, DocumentStoreRunStatus.Failed)",
+                StringComparison.Ordinal));
+        source.ShouldContain(
+            "Builders<DocumentStoreAgentRun>.Filter.Lte(\n                    r => r.AutomaticRetryNextAt,");
+        failurePolicy.ShouldContain("CloseDeferredTranscriptionOutboxAsync(");
+    }
+
+    [Fact]
     public void ArchivedChunks_ShouldRemainAvailableUntilDeferredTranscriptionFinishes()
     {
         DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
@@ -1577,6 +2338,23 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 entryRequiresDeferredTranscription: true,
                 new DocumentStoreAgentRun
                 {
+                    Status = DocumentStoreRunStatus.Cancelled,
+                })
+            .ShouldBeFalse();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun
+                {
+                    Id = DocumentRecordingArchiveWorker.DeferredTranscriptionRunId("terminal"),
+                    Status = DocumentStoreRunStatus.Failed,
+                    AutomaticRetryCount =
+                        DocumentRecordingArchiveWorker.MaxDeferredTranscriptionAutomaticRetries,
+                })
+            .ShouldBeTrue();
+        DocumentRecordingArchiveWorker.ShouldDeleteChunksAfterArchive(
+                entryRequiresDeferredTranscription: true,
+                new DocumentStoreAgentRun
+                {
                     Status = DocumentStoreRunStatus.Running,
                     OutputEntryId = "entry-1",
                 })
@@ -1591,7 +2369,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task SuccessfulTranscriptionCleanup_ShouldWaitForArchiveThenDeleteChunks()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         const string sessionId = "session-transcription-cleanup";
         var session = new DocumentRecordingUploadSession
@@ -1647,7 +2424,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task ExpiredArchiveCleanup_ShouldRunWithoutNewRecordingAndKeepPendingAudio()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var now = DateTime.UtcNow;
         var sessions = new[]
@@ -1676,6 +2452,15 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 ArchiveStatus = DocumentRecordingArchiveStatus.Pending,
                 ExpiresAt = now.AddMinutes(-1),
             },
+            new DocumentRecordingUploadSession
+            {
+                Id = "expired-archived-outbox",
+                StoreId = "store-1",
+                UserId = "user-1",
+                ArchiveStatus = DocumentRecordingArchiveStatus.Completed,
+                DeferredTranscriptionRunPending = true,
+                ExpiresAt = now.AddMinutes(-1),
+            },
         };
         await fixture.Db.DocumentRecordingUploadSessions.InsertManyAsync(sessions);
         await fixture.Db.DocumentRecordingUploadChunks.InsertManyAsync(
@@ -1700,6 +2485,21 @@ public sealed class DocumentRecordingArchiveWorkerTests
             session => session.Id == "expired-pending")).ShouldBe(1);
         (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
             chunk => chunk.SessionId == "expired-pending")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadSessions.CountDocumentsAsync(
+            session => session.Id == "expired-archived-outbox")).ShouldBe(1);
+        (await fixture.Db.DocumentRecordingUploadChunks.CountDocumentsAsync(
+            chunk => chunk.SessionId == "expired-archived-outbox")).ShouldBe(1);
+    }
+
+    [Fact]
+    public void DeferredTranscriptionOutbox_ShouldRetainSessionUntilAcknowledged()
+    {
+        var now = new DateTime(2026, 7, 29, 0, 0, 0, DateTimeKind.Utc);
+
+        DocumentRecordingArchiveWorker.PendingOutboxExpiresAt(now)
+            .ShouldBe(now.AddYears(10));
+        DocumentRecordingArchiveWorker.CompletedSessionExpiresAt(now)
+            .ShouldBe(now.AddDays(1));
     }
 
     [Fact]
@@ -1782,7 +2582,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FinalizeArchivedEntry_ShouldIndexLateLiveTranscriptAndPreserveRunSignal()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1839,7 +2638,6 @@ public sealed class DocumentRecordingArchiveWorkerTests
     public async Task FinalizeArchivedEntry_ShouldPreserveCompletedDeferredTranscriptionContent()
     {
         await using var fixture = await RecordingMongoFixture.TryCreateAsync();
-        if (fixture == null) return;
 
         var entry = new DocumentEntry
         {
@@ -1935,9 +2733,11 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         public MongoDbContext Db { get; }
 
-        public static async Task<RecordingMongoFixture?> TryCreateAsync()
+        public static async Task<RecordingMongoFixture> TryCreateAsync()
         {
-            var configuredConnectionString = Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
+            var configuredConnectionString =
+                Environment.GetEnvironmentVariable("MONGODB_TEST_CONNECTION")
+                ?? Environment.GetEnvironmentVariable("ADMIN_PUSH_TEST_MONGO_URI");
             var connectionString = configuredConnectionString ?? "mongodb://localhost:27018";
             var settings = MongoClientSettings.FromConnectionString(connectionString);
             settings.ServerSelectionTimeout = TimeSpan.FromSeconds(2);
@@ -1947,9 +2747,12 @@ public sealed class DocumentRecordingArchiveWorkerTests
                 await client.GetDatabase("admin").RunCommandAsync<MongoDB.Bson.BsonDocument>(
                     new MongoDB.Bson.BsonDocument("ping", 1));
             }
-            catch when (string.IsNullOrWhiteSpace(configuredConnectionString))
+            catch (Exception ex)
             {
-                return null;
+                throw new InvalidOperationException(
+                    "录音归档测试需要独立 MongoDB。CI 请设置 MONGODB_TEST_CONNECTION；" +
+                    "本地默认使用 mongodb://localhost:27018。禁止在 MongoDB 不可达时静默通过。",
+                    ex);
             }
 
             return new RecordingMongoFixture(
@@ -1981,5 +2784,59 @@ public sealed class DocumentRecordingArchiveWorkerTests
 
         throw new DirectoryNotFoundException(
             "Could not locate DocumentStoreController.cs from test base directory.");
+    }
+
+    private static string DocumentRecordingArchiveWorkerPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(
+                dir.FullName,
+                "prd-api",
+                "src",
+                "PrdAgent.Api",
+                "Services",
+                "DocumentRecordingArchiveWorker.cs");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate DocumentRecordingArchiveWorker.cs from test base directory.");
+    }
+
+    private static string DocumentStoreAgentWorkerPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(
+                dir.FullName,
+                "prd-api",
+                "src",
+                "PrdAgent.Api",
+                "Services",
+                "DocumentStoreAgentWorker.cs");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate DocumentStoreAgentWorker.cs from test base directory.");
+    }
+
+    private static string MongoDbIndexCatalogPath()
+    {
+        var dir = new DirectoryInfo(AppContext.BaseDirectory);
+        while (dir is not null)
+        {
+            var path = Path.Combine(dir.FullName, "scripts", "mongodb-indexes.js");
+            if (File.Exists(path)) return path;
+            dir = dir.Parent;
+        }
+
+        throw new DirectoryNotFoundException(
+            "Could not locate scripts/mongodb-indexes.js from test base directory.");
     }
 }

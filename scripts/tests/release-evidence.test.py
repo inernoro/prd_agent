@@ -20,6 +20,21 @@ with tempfile.TemporaryDirectory() as temporary:
     (web / "dist").symlink_to("current")
     smoke = root / "smoke.json"
     smoke.write_text(json.dumps({"verdict": "pass"}), encoding="utf-8")
+    storage_readiness = root / "asset-storage-readiness.json"
+    storage_readiness.write_text(
+        json.dumps(
+            {
+                "status": "healthy",
+                "provider": "tencentCos",
+                "expectedProvider": "tencentCos",
+                "writeVerified": True,
+                "internalReadVerified": True,
+                "publicReadVerified": True,
+                "cleanupVerified": True,
+            }
+        ),
+        encoding="utf-8",
+    )
     artifact = root / "artifact.zip"
     artifact.write_bytes(b"artifact")
     output = root / "evidence" / "release.json"
@@ -53,6 +68,8 @@ with tempfile.TemporaryDirectory() as temporary:
         str(web / "previous"),
         "--smoke-json",
         str(smoke),
+        "--asset-storage-readiness-json",
+        str(storage_readiness),
     ]
     subprocess.run(command, check=True, capture_output=True, text=True)
     payload = json.loads(output.read_text(encoding="utf-8"))
@@ -62,9 +79,22 @@ with tempfile.TemporaryDirectory() as temporary:
     assert payload["artifact"]["checksumVerified"] is True
     assert payload["staticLayout"]["current"]["symlinkTarget"] == "releases/sha-test"
     assert payload["publicSurface"]["verdict"] == "pass"
+    assert payload["assetStorageReadiness"]["provider"] == "tencentCos"
+    assert payload["assetStorageReadiness"]["cleanupVerified"] is True
 
     duplicate = subprocess.run(command, capture_output=True, text=True)
     assert duplicate.returncode != 0
     assert "cannot be overwritten" in duplicate.stderr
+
+    invalid_readiness = root / "invalid-readiness.json"
+    invalid_readiness.write_text("", encoding="utf-8")
+    invalid_output = root / "evidence" / "invalid-readiness-release.json"
+    invalid_command = command.copy()
+    invalid_command[invalid_command.index(str(output))] = str(invalid_output)
+    invalid_command[invalid_command.index(str(storage_readiness))] = str(invalid_readiness)
+    subprocess.run(invalid_command, check=True, capture_output=True, text=True)
+    invalid_payload = json.loads(invalid_output.read_text(encoding="utf-8"))
+    assert invalid_payload["assetStorageReadiness"]["status"] == "unreadable"
+    assert invalid_payload["assetStorageReadiness"]["error"] == "JSONDecodeError"
 
 print("Release evidence test: PASS")

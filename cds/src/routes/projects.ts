@@ -33,6 +33,7 @@ import { processTeardownTombstones, computeCdsInstanceId } from '../services/orp
 import { dropReplicaDb } from '../services/replica-db-clone.js';
 import { discoverComposeFiles, parseCdsCompose } from '../services/compose-parser.js';
 import { deriveEnvMetaForVars } from '../services/env-classifier.js';
+import { planImportedEnvSeedWrites } from '../services/config-authority.js';
 import { ProjectFilesService, ProjectFileError, type ProjectFilePayload } from '../services/project-files.js';
 import { repoNameFromGitRef } from '../services/preview-slug.js';
 import { isSafeGitRef } from '../services/github-webhook-dispatcher.js';
@@ -1170,14 +1171,12 @@ export function createProjectsRouter(deps: ProjectsRouterDeps): Router {
       });
     }
 
-    // ── Env vars (project-scoped, do not clobber existing keys) ──
+    // ── Env vars (project-scoped; approved provider-contract values are authoritative) ──
     const existingEnv = stateService.getCustomEnv(project.id);
     const appliedEnvKeys: string[] = [];
-    for (const [key, value] of Object.entries(parsed.envVars || {})) {
-      if (!(key in existingEnv)) {
-        stateService.setCustomEnvVar(key, value, project.id);
-        appliedEnvKeys.push(key);
-      }
+    for (const write of planImportedEnvSeedWrites(parsed.envVars || {}, existingEnv)) {
+      stateService.setCustomEnvVar(write.key, write.value, project.id);
+      appliedEnvKeys.push(write.key);
     }
     if (appliedEnvKeys.length > 0) {
       sendEvent('progress', {

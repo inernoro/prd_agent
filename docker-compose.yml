@@ -17,7 +17,7 @@ services:
       - ./deploy/web/dist:/usr/share/nginx/html:ro
     depends_on:
       api:
-        condition: service_started
+        condition: service_healthy
       llmgw-serve:
         condition: service_healthy
       llmgw-serve-b:
@@ -69,9 +69,9 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
-      # 资产存储：tencentCos / cloudflareR2
-      # - 生产建议：对象存储 + 禁用 local，确保”绝不落盘”
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      # 正式环境固定使用 Tencent COS，禁止被通用环境变量切换到其他提供商。
+      - ASSETS_PROVIDER=tencentCos
+      - ASSETS_EXPECTED_PROVIDER=tencentCos
       # Tencent COS（密钥禁止写死到仓库；生产环境建议通过部署系统/Secrets 注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
@@ -79,14 +79,6 @@ services:
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
-      # Cloudflare R2（与 Tencent COS 二选一，由 ASSETS_PROVIDER 决定）
-      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
-      - R2_BUCKET=${R2_BUCKET:-}
-      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
-      - R2_PREFIX=${R2_PREFIX:-}
-      - R2_ENDPOINT=${R2_ENDPOINT:-}
       # Root 破窗账户（可选，生产环境建议不配置或只临时使用）
       - ROOT_ACCESS_USERNAME=${ROOT_ACCESS_USERNAME:-}
       - ROOT_ACCESS_PASSWORD=${ROOT_ACCESS_PASSWORD:-}
@@ -130,6 +122,14 @@ services:
       # 安装：curl -L https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz | tar xJ -C /opt/ffmpeg-static --strip-components=1
       - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
       - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
+    healthcheck:
+      # 容器依赖只判断 API 进程存活，不能让 COS/CDN 故障阻断已有静态页面与无关路由。
+      # 完整对象存储读写由 exec_dep.sh 的独立 /api/health/ready 发布门禁负责。
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 25s
+      retries: 3
+      start_period: 60s
     depends_on:
       - mongodb
       - redis
@@ -157,20 +157,13 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       # 资产存储：日志写入正文/图片到对象存储（与 api 同一套配置）
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - ASSETS_PROVIDER=tencentCos
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
       - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
-      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
-      - R2_BUCKET=${R2_BUCKET:-}
-      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
-      - R2_PREFIX=${R2_PREFIX:-}
-      - R2_ENDPOINT=${R2_ENDPOINT:-}
       - LlmGateway__Readiness__RequireAssetProbe=${LLMGW_READINESS_REQUIRE_ASSET_PROBE:-true}
       - LlmGateway__Readiness__AssetProbeKey=${LLMGW_READINESS_ASSET_PROBE_KEY:-}
       - LlmGateway__Readiness__ProbeTimeoutSeconds=${LLMGW_READINESS_PROBE_TIMEOUT_SECONDS:-10}
@@ -218,20 +211,13 @@ services:
       - LlmGateway__DisableMapConfigFallbackForActiveAppCallers=${LLMGW_DISABLE_MAP_CONFIG_FALLBACK_FOR_ACTIVE_APP_CALLERS:-false}
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:?must set API_KEY_CRYPTO_SECRET in production (platform API key encryption, shared by api and llmgw-serve)}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      - ASSETS_PROVIDER=tencentCos
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
       - TENCENT_COS_SECRET_ID=${TENCENT_COS_SECRET_ID}
       - TENCENT_COS_SECRET_KEY=${TENCENT_COS_SECRET_KEY}
       - TENCENT_COS_PUBLIC_BASE_URL=${TENCENT_COS_PUBLIC_BASE_URL}
       - TENCENT_COS_PREFIX=${TENCENT_COS_PREFIX:-data}
-      - R2_ACCOUNT_ID=${R2_ACCOUNT_ID:-}
-      - R2_ACCESS_KEY_ID=${R2_ACCESS_KEY_ID:-}
-      - R2_SECRET_ACCESS_KEY=${R2_SECRET_ACCESS_KEY:-}
-      - R2_BUCKET=${R2_BUCKET:-}
-      - R2_PUBLIC_BASE_URL=${R2_PUBLIC_BASE_URL:-}
-      - R2_PREFIX=${R2_PREFIX:-}
-      - R2_ENDPOINT=${R2_ENDPOINT:-}
       - LlmGateway__Readiness__RequireAssetProbe=${LLMGW_READINESS_REQUIRE_ASSET_PROBE:-true}
       - LlmGateway__Readiness__AssetProbeKey=${LLMGW_READINESS_ASSET_PROBE_KEY:-}
       - LlmGateway__Readiness__ProbeTimeoutSeconds=${LLMGW_READINESS_PROBE_TIMEOUT_SECONDS:-10}

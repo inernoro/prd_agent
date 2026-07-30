@@ -102,9 +102,11 @@ services:
       - ApiKeyCrypto__Secret=${API_KEY_CRYPTO_SECRET:-YourApiKeyCryptoSecretForLocalDev2026!}
       - ApiKeyCrypto__LegacySecrets=${API_KEY_CRYPTO_LEGACY_SECRETS:-}
       - Session__TimeoutMinutes=30
-      # 资产存储：tencentCos / cloudflareR2
-      # - 强制”绝不落盘”时：选择对象存储 provider
-      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-tencentCos}
+      # 本地开发默认使用临时目录；CDS 独立使用 R2，正式环境独立使用 Tencent COS。
+      - ASSETS_PROVIDER=${ASSETS_PROVIDER:-local}
+      - ASSETS_LOCAL_DIR=${ASSETS_LOCAL_DIR:-/tmp/prdagent-assets}
+      # 必须经过浏览器实际使用的 Web origin，禁止绕过 Nginx 直接探测 API。
+      - AssetStorageReadiness__PublicBaseUrl=${ASSET_STORAGE_READINESS_PUBLIC_BASE_URL:-http://web}
       # Tencent COS（密钥禁止写死到仓库；本机调试请在环境变量中注入）
       - TENCENT_COS_BUCKET=${TENCENT_COS_BUCKET}
       - TENCENT_COS_REGION=${TENCENT_COS_REGION}
@@ -139,6 +141,12 @@ services:
       # ffmpeg 静态编译版（转录工作台 ASR 音频格式转换 + 知识库字幕生成用）
       - ${FFMPEG_PATH:-/opt/ffmpeg-static/ffmpeg}:/usr/local/bin/ffmpeg:ro
       - ${FFPROBE_PATH:-/opt/ffmpeg-static/ffprobe}:/usr/local/bin/ffprobe:ro
+    healthcheck:
+      test: ["CMD", "curl", "--fail", "--silent", "http://localhost:8080/health/ready"]
+      interval: 30s
+      timeout: 25s
+      retries: 3
+      start_period: 60s
     depends_on:
       - mongodb
       - redis
