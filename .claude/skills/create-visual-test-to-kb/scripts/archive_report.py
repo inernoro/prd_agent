@@ -634,12 +634,12 @@ _SUCCESS_DIAGNOSTIC_PATTERN = (
 _DIAGNOSTIC_MODIFIER_PATTERN = (
     rf"(?:已|已经)?{_SUCCESS_DIAGNOSTIC_PATTERN}(?:到了|到|出|了)?"
 )
+_RESOLVED_STATUS_PREFIX_PATTERN = (
+    r"(?:(?:现已|已经|已)|(?:重试后|随后)\s*已|最终(?:已)?)"
+)
 _RESOLVED_FACT_PATTERN = re.compile(
-    rf"(?:现已|已经|已)\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
-    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
-    rf"|(?:重试后|随后)\s*已\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
-    rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
-    rf"|最终(?:已)?\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
+    rf"{_RESOLVED_STATUS_PREFIX_PATTERN}\s*"
+    rf"(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
     rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))",
     re.I,
 )
@@ -654,7 +654,9 @@ _FAILURE_SUBJECT_PATTERNS = (
     (
         "service-ready",
         re.compile(
-            rf"(?:CDS\s*)?服务\s*(?:{_ONGOING_FAILURE_PREFIX_PATTERN}\s*)?"
+            rf"(?:CDS\s*)?服务\s*"
+            rf"(?:(?:{_ONGOING_FAILURE_PREFIX_PATTERN}"
+            rf"|{_RESOLVED_STATUS_PREFIX_PATTERN})\s*)?"
             r"就绪(?:检查|门禁)?",
             re.I,
         ),
@@ -794,6 +796,12 @@ def _closure_changes_subject(clause, event, previous_event_end):
         return True
     if re.search(r"后\s*$", scope):
         return False
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        for match in pattern.finditer(clause):
+            if match.start() < event.start() < match.end():
+                subject_prefix = clause[match.start() : event.start()]
+                if subject_prefix and scope.endswith(subject_prefix):
+                    scope = scope[: -len(subject_prefix)]
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
     scope = re.sub(

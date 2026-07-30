@@ -879,6 +879,26 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+        for closure in (
+            "服务现已就绪",
+            "服务已经就绪",
+            "服务最终已就绪",
+            "服务随后已就绪",
+            "服务重试后已就绪",
+        ):
+            with self.subTest(verdict="conditional", closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "服务尚未就绪"
+                )
+                body = body.rstrip() + (
+                    "\n| 服务复测 | "
+                    f"{closure} | 已完成复测 | 旧失败已关闭 | 已通过 | 保留记录 |\n"
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_not_yet_fixed_participates_in_fail_only_verdicts(self):
         cases = (
             ("构建尚未修复", "硬门禁失败", "硬门禁失败事实"),
