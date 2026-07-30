@@ -126,10 +126,22 @@ export function subdomainWithLegacyAliases(subdomain: string): string[] {
  * ② 探测/压测打自己发布的别名 host 会被自家 SSRF 闸 403 挡掉。
  * 这正是 `.claude/rules/predicate-and-wiring-discipline.md` 形状 3（判据分裂）。
  */
-export function publishedServiceLabels(previewSlug: string, subdomain: string): string[] {
+export function publishedServiceLabels(
+  previewSlug: string,
+  subdomain: string,
+  /**
+   * 已被某个分支保存为子域别名的标签（`savedAliasOwners` 的 keys）。传了就一并滤掉 ——
+   * 发布器不会写这些 host，凡是「要跟发布结果对齐」的消费方都必须跟着滤。
+   *
+   * 唯一不该传的地方是**撞名占位**（`computeBranchPublishedServiceHosts`）：它要的是
+   * 「已声明的拓扑占了哪些 host」，滤掉反而会放行新的重复别名。
+   */
+  aliasOwnedLabels?: ReadonlySet<string>,
+): string[] {
   return subdomainWithLegacyAliases(subdomain)
     .map((name) => namedServiceLabel(previewSlug, name))
-    .filter(isPublishableNamedLabel);
+    .filter(isPublishableNamedLabel)
+    .filter((label) => !aliasOwnedLabels?.has(label));
 }
 
 /**

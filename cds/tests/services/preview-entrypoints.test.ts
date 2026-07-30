@@ -1,3 +1,5 @@
+import fs from 'node:fs';
+import path from 'node:path';
 import { describe, expect, it } from 'vitest';
 import {
   PREVIEW_URL_ENV_KEY,
@@ -388,5 +390,40 @@ describe('savedAliasOwners / 入口表与发布器口径一致（Codex P1）', (
     const table = JSON.parse(env.env[SERVICE_URLS_ENV_KEY]);
     expect(table['llmgw']).toBeUndefined();
     expect(table['llmgw-web']).toBeDefined();
+  });
+});
+
+describe('别名抑制决定的全部消费方都接线了（形状 2 守卫）', () => {
+  // 这条守卫存在的理由：同一个「被已保存别名占走则不算本分支的 host」决定，
+  // 连续四轮 review 每次只被接进一半消费方（发布器 → 入口表 → 面板/API → 白名单）。
+  // 逐个文件断言它确实传了别名集合，漏掉任何一个就红。
+  const read = (rel: string) => fs.readFileSync(path.resolve(process.cwd(), rel), 'utf8');
+
+  it('发布器在 emit 单点查表（规范名与兼容别名两趟都过它）', () => {
+    const src = read('src/services/forwarder-route-publisher.ts');
+    expect(src).toContain('savedAliasOwners(this.opts.state.getAllBranches())');
+    expect(src).toContain('const aliasOwner = aliasOwners.get(namedLabel);');
+  });
+
+  it('面板 / GET /api/branches 的网关入口清单过滤了被占走的 host', () => {
+    const src = read('src/routes/branches.ts');
+    expect(src).toContain('const gwAliasOwned = new Set(savedAliasOwners(stateService.getAllBranches()).keys())');
+    expect(src).toContain('if (gwAliasOwned.has(namedLabel)) continue;');
+  });
+
+  it('两处 SSRF 白名单都传了别名集合（否则允许探测别人的应用）', () => {
+    for (const rel of ['src/services/replica-loadtest.ts', 'src/routes/replica-sets.ts']) {
+      const src = read(rel);
+      expect(src).toContain('savedAliasOwners(');
+      // 参数里含 `String(sub).toLowerCase()`，不能用 [^)]* —— 会被内层括号截断。
+      expect(src).toMatch(/publishedServiceLabels\([\s\S]{0,120}?aliasOwned\)/);
+    }
+  });
+
+  it('撞名占位刻意**不**过滤 —— 它要的是已声明拓扑占了哪些 host', () => {
+    // 反向断言：这一处若也开始过滤，新的重复别名就会被放行（与其余四处相反的语义）。
+    const src = read('src/routes/branches.ts');
+    expect(src).toContain('for (const host of computeBranchPublishedServiceHosts(other, root))');
+    expect(src).toContain('for (const label of publishedServiceLabels(slug, sub))');
   });
 });

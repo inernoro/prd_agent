@@ -464,7 +464,10 @@ export function ModelPoolsPage() {
         )}
       />
       <PageBody>
-      {toast ? (
+      {/* 抽屉打开时这条不渲染：抽屉是 fixed 覆盖层（zIndex 80），页面级反馈会被它整块
+          盖住，用户只看到按钮停止转圈、没有任何解释就重复操作（Codex P2）。
+          抽屉内部渲染同一个 toast，同一时刻只保留一个 role="status" live region。 */}
+      {toast && !drawer ? (
         <div role="status" style={{ flexShrink: 0, ...INSET_BLOCK, border: '1px solid var(--border-subtle)', ...BODY_TEXT }}>{toast}</div>
       ) : null}
       <section style={{ display: 'flex', gap: GAP.normal, alignItems: 'center', justifyContent: 'space-between', flexWrap: 'wrap', ...CARD_BODY, border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)', background: 'var(--bg-surface)' }}>
@@ -522,6 +525,9 @@ export function ModelPoolsPage() {
               <div style={{ flex: 1 }}><h2 style={{ margin: 0, color: 'var(--text-primary)', fontSize: 'var(--fs-metric)' }}>{drawer.kind === 'create' ? '新建模型池' : selectedPool?.name || '模型池详情'}</h2><p style={{ margin: '5px 0 0', ...BODY_TEXT }}>{drawer.kind === 'create' ? '先定义业务类型，再添加实际承接流量的模型。' : poolPurpose(selectedPool)}</p></div>
               <Button size="sm" variant="ghost" onClick={() => setDrawer(null)}>关闭</Button>
             </div>
+            {toast ? (
+              <div role="status" style={{ ...INSET_BLOCK, border: '1px solid var(--border-subtle)', marginBottom: GAP.section, ...BODY_TEXT }}>{toast}</div>
+            ) : null}
             {drawer.kind === 'create' && canWrite ? (
               <PoolCreateBar
                 mode="create"

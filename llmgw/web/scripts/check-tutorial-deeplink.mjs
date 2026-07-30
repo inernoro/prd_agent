@@ -149,6 +149,15 @@ must(
   'UsagePage: 账单导入失败必须渲染在导入抽屉内（抽屉 z-index 1100，页面 alert 看不见）',
 );
 
+// 判据是 aria-modal 而不是 createPortal：ModelPoolsPage 的抽屉是普通 fixed 覆盖层，
+// 上一轮用 createPortal 扫就漏了它（判据太窄 = 扫了个假全量）。
+const pools = strip(read('src/pages/ModelPoolsPage.tsx'));
+must(
+  pools.includes('{toast && !drawer ?') && (pools.match(/role="status"/g) || []).length >= 2,
+  'ModelPoolsPage: 抽屉打开时反馈必须渲染在抽屉内（页面级 toast 被 fixed 覆盖层盖住），'
+  + '且同一时刻只保留一个 live region',
+);
+
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');
   for (const line of failures) console.error(`  - ${line}`);
