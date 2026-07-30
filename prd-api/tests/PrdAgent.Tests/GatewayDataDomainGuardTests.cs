@@ -722,7 +722,7 @@ public class GatewayDataDomainGuardTests
         Assert.Contains("API smoke 通过后继续使用 `preview-url` 与 `acceptance-checklist`", smokeSkill);
         Assert.Contains("实际入口 JS/CSS", hotfixSkill);
         Assert.Contains("previous/回滚验证", acceptanceSkill);
-        Assert.Contains("不能写完成", handoffSkill);
+        Assert.Contains("只有证据支持时才写“已完成”", handoffSkill);
     }
 
     [Fact]
