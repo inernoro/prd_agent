@@ -221,7 +221,8 @@ function collectFiles(skillDir, skillKey) {
 }
 
 function parseFrontmatter(md) {
-  // 取首个 --- ... --- 块里的 name / version / description（description 可能是多行 > 折叠）
+  // 取首个 --- ... --- 块里的 name / version / description（description 可能是多行 > 折叠）。
+  // version 优先兼容历史顶层写法，也支持 skill-creator 合法 schema 的 metadata.version。
   const lines = md.split('\n');
   let i = 0;
   while (i < lines.length && lines[i].trim() === '') i++;
@@ -230,13 +231,21 @@ function parseFrontmatter(md) {
   let name = null;
   let version = null;
   let description = null;
+  let inMetadata = false;
   for (; i < lines.length; i++) {
     const line = lines[i];
     if (line.trim() === '---') break;
+    if (/^metadata:\s*$/.test(line)) {
+      inMetadata = true;
+      continue;
+    }
+    if (/^\S/.test(line)) inMetadata = false;
     const mName = line.match(/^name:\s*(.+?)\s*$/);
     if (mName && !name) { name = mName[1].replace(/^["']|["']$/g, ''); continue; }
     const mVersion = line.match(/^version:\s*(.+?)\s*$/);
     if (mVersion && !version) { version = mVersion[1].replace(/^["']|["']$/g, ''); continue; }
+    const mMetadataVersion = inMetadata ? line.match(/^\s+version:\s*(.+?)\s*$/) : null;
+    if (mMetadataVersion && !version) { version = mMetadataVersion[1].replace(/^["']|["']$/g, ''); continue; }
     const mDesc = line.match(/^description:\s*(.*)$/);
     if (mDesc && description === null) {
       let val = mDesc[1].trim();
