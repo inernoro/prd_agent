@@ -622,17 +622,17 @@ _RESOLVED_FACT_PATTERN = re.compile(
     re.I,
 )
 _FAILURE_SUBJECT_PATTERNS = (
-    ("ready", re.compile(r"ready", re.I)),
-    ("smoke", re.compile(r"smoke|冒烟", re.I)),
-    ("build", re.compile(r"构建|编译", re.I)),
-    ("service-ready", re.compile(r"服务就绪", re.I)),
+    ("ready", re.compile(r"ready(?:\s*(?:检查|门禁|状态))?", re.I)),
+    ("smoke", re.compile(r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁))?", re.I)),
+    ("build", re.compile(r"(?:构建|编译)(?:产物|结果)?", re.I)),
+    ("service-ready", re.compile(r"服务就绪(?:检查|门禁)?", re.I)),
     ("forced-test", re.compile(r"强制测试", re.I)),
     ("acceptance-chain", re.compile(r"验收链路", re.I)),
     ("evidence-chain", re.compile(r"证据链", re.I)),
-    ("archive", re.compile(r"归档", re.I)),
-    ("report-publish", re.compile(r"报告发布", re.I)),
-    ("verify-open", re.compile(r"verify-open|打开验证", re.I)),
-    ("slack", re.compile(r"Slack\s*通知", re.I)),
+    ("archive", re.compile(r"(?:验收报告)?归档(?:流程|任务|操作)?", re.I)),
+    ("report-publish", re.compile(r"报告发布(?:流程|任务|操作)?", re.I)),
+    ("verify-open", re.compile(r"verify-open|打开验证(?:步骤|操作)?", re.I)),
+    ("slack", re.compile(r"Slack\s*通知(?:发送)?", re.I)),
 )
 
 
@@ -659,7 +659,7 @@ def _subject_occurrences(text):
     return occurrences
 
 
-def _event_anchor_occurrences(event, occurrences, clause):
+def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
     """Bind a status to the preceding subject, except for prefix-status wording."""
     if not occurrences:
         return set()
@@ -682,6 +682,14 @@ def _event_anchor_occurrences(event, occurrences, clause):
                 if occurrence[0] == first_right_start
             }
     last_left_end = max(end for _, end, _ in left)
+    left_gap = clause[last_left_end : event.start()]
+    if previous_event_end > last_left_end or not re.fullmatch(
+        r"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
+        r"再次|重新|均|都)\s*)*",
+        left_gap,
+        re.I,
+    ):
+        return set()
     return {
         occurrence
         for occurrence in left
@@ -711,9 +719,11 @@ def _coordinated_subject_groups(occurrences, clause):
     return groups
 
 
-def _event_subjects(event, occurrences, clause):
+def _event_subjects(event, occurrences, clause, previous_event_end):
     """Apply a status only to its nearest explicitly coordinated subject group."""
-    anchor_occurrences = _event_anchor_occurrences(event, occurrences, clause)
+    anchor_occurrences = _event_anchor_occurrences(
+        event, occurrences, clause, previous_event_end
+    )
     if not anchor_occurrences:
         return set()
     groups = _coordinated_subject_groups(occurrences, clause)
@@ -746,7 +756,7 @@ def _closure_changes_subject(clause, event, previous_event_end):
         r"CDS|的|但是|不过|然而|但|并且|且|并|而|后|前|先前|此前|一度|曾"
         r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
         r"|该异常|此异常|本根因|该根因|根因"
-        r"|重试|复测|验证|再次|重新|二者|全部|均|都"
+        r"|重试|复测|验证|再次|重新|二者|全部|均|都|目前|现在|本次|当前"
         r"|和|与|以及|及|、|并且|并|且|验收报告",
         " ",
         scope,
@@ -811,16 +821,16 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", normalized):
         return True
     if re.fullmatch(
-        r"(?:该|本|此|上述)(?:项|问题|事项|异常|故障|根因)"
+        r"(?:(?:该|本|此|上述)?(?:项|问题|事项|异常|故障|根因))"
         r"(?:(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?)?"
-        r"(?:仍|仍然|依然|再次|重新|当前)?",
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
         normalized,
         re.I,
     ):
         return True
     if re.fullmatch(
         r"(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?"
-        r"(?:仍|仍然|依然|再次|重新|当前)?",
+        r"(?:仍|仍然|依然|再次|重新|当前|目前|现在|本次)?",
         normalized,
         re.I,
     ):
@@ -833,7 +843,8 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     ):
         return True
     if re.fullmatch(
-        r"(?:随后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|当前)+",
+        r"(?:随后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|"
+        r"当前|目前|现在|本次)+",
         normalized,
         re.I,
     ):
@@ -863,36 +874,46 @@ def _current_failure_subjects(text):
         ]
         events.sort(key=lambda item: item[0].start())
         previous_event_end = 0
-        context_flags = []
+        clause_context_subjects = set(explicit_subjects or context_subjects)
         for event, state in events:
             inherits_context = _event_inherits_context(
                 clause, event, state, previous_event_end
             )
-            context_flags.append(inherits_context)
+            subjects = _event_subjects(
+                event, occurrences, clause, previous_event_end
+            )
             if state == "failed" and _failure_is_negated(
                 clause, event, previous_event_end
             ):
+                if subjects:
+                    clause_context_subjects = subjects
+                elif not inherits_context:
+                    clause_context_subjects = set()
                 previous_event_end = event.end()
                 continue
             if state == "resolved" and _closure_changes_subject(
                 clause, event, previous_event_end
             ):
+                if subjects:
+                    clause_context_subjects = subjects
+                elif not inherits_context:
+                    clause_context_subjects = set()
                 previous_event_end = event.end()
                 continue
-            subjects = _event_subjects(event, occurrences, clause)
             if (
                 not subjects
-                and context_subjects
+                and clause_context_subjects
                 and inherits_context
             ):
-                subjects = context_subjects
+                subjects = clause_context_subjects
             if subjects:
                 _apply_subject_state(states, subjects, state)
+                clause_context_subjects = subjects
+            elif not inherits_context:
+                clause_context_subjects = set()
             previous_event_end = event.end()
-        if explicit_subjects:
-            context_subjects = explicit_subjects
-        elif events and not all(context_flags):
-            context_subjects = set()
+        if explicit_subjects or events:
+            context_subjects = clause_context_subjects
     return {subject for subject, state in states.items() if state == "failed"}
 
 

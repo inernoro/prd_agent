@@ -45,6 +45,9 @@ class DailyVerdictContractTests(unittest.TestCase):
     def test_failure_state_machine_tracks_subjects_across_word_orders(self):
         cases = (
             ("CDS smoke 当前失败", {"smoke"}),
+            ("CDS smoke 测试失败", {"smoke"}),
+            ("验收报告归档流程失败", {"archive"}),
+            ("Slack 通知发送失败", {"slack"}),
             (
                 "CDS smoke 和验收报告归档失败",
                 {"smoke", "archive"},
@@ -82,10 +85,15 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 先前失败；验证已通过", set()),
             ("CDS ready 和 smoke 失败；二者均已通过", set()),
             ("CDS smoke 先前失败；但是现已通过", set()),
+            ("CDS smoke 失败但现在已修复", set()),
+            ("CDS smoke 失败但问题已修复", set()),
             ("CDS smoke 已通过；复测仍未通过", {"smoke"}),
             ("CDS smoke 已通过；移动端验收未完成", set()),
             ("CDS smoke 已通过；移动端验证未通过", set()),
             ("CDS smoke 已通过；截图上传失败", set()),
+            ("CDS smoke 已通过但移动端验收未完成", set()),
+            ("CDS smoke 已通过但截图上传失败", set()),
+            ("CDS smoke 已通过但复测仍未通过", {"smoke"}),
             ("CDS smoke 已通过；截图上传失败；复测仍未通过", set()),
             ("CDS smoke 已通过；已修复的截图上传仍失败", set()),
             ("CDS smoke 失败；现已修复但移动端验收未完成", set()),
@@ -394,15 +402,19 @@ class DailyVerdictContractTests(unittest.TestCase):
 
     def test_unregistered_failure_subject_does_not_inherit_previous_gate(self):
         for fact in ("移动端验收未完成", "截图上传失败"):
-            with self.subTest(fact=fact):
-                body = report_body("覆盖不足").replace(
-                    "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
-                    f"CDS smoke 已通过 | {fact}",
-                )
-                errors = archive_report._daily_conclusion_contract_errors(
-                    "conditional", body
-                )
-                self.assertEqual([], errors)
+            for replacement in (
+                f"CDS smoke 已通过 | {fact}",
+                f"CDS smoke 已通过但{fact} | 预览跟随最新 HEAD",
+            ):
+                with self.subTest(replacement=replacement):
+                    body = report_body("覆盖不足").replace(
+                        "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+                        replacement,
+                    )
+                    errors = archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    )
+                    self.assertEqual([], errors)
 
     def test_non_fail_verdict_rejects_explicit_error_states(self):
         for fact, label in (
