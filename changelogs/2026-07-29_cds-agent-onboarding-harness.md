@@ -4,3 +4,4 @@
 | fix | cds | 启动技能目录改为 CDS 本地发布契约，并为仓库内技能提供无外部依赖的 ZIP 下载兜底 |
 | fix | cds | Bootstrap 预设移除 MAP 中不存在的 starter 套装 key，改用已验证可下载的独立技能 |
 | fix | cds | 修复 Bootstrap 错误提示中的 shell 变量边界，确保安装失败时正确返回非零退出码 |
+| test | cds | 同步 Agent 接入对话框五个 tab 的源码契约，解除 CI 旧四列断言阻塞 |
