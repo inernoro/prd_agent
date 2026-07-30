@@ -48,6 +48,11 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("核心流程尚未通过", {"core-case"}),
             ("CDS smoke 当前失败", {"smoke"}),
             ("CDS smoke 测试失败", {"smoke"}),
+            ("服务尚未就绪", {"service-ready"}),
+            ("CDS 服务还没就绪", {"service-ready"}),
+            ("CDS 服务还没有就绪", {"service-ready"}),
+            ("服务未就绪", {"service-ready"}),
+            ("CDS 尚未 ready", {"ready"}),
             ("验收报告归档流程失败", {"archive"}),
             ("Slack 通知发送失败", {"slack"}),
             (
@@ -781,6 +786,49 @@ class DailyVerdictContractTests(unittest.TestCase):
             "核心流程未失败",
         ):
             with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+    def test_service_not_ready_participates_in_hard_gate_verdict(self):
+        for fact in (
+            "服务尚未就绪",
+            "CDS 服务还没就绪",
+            "CDS 服务还没有就绪",
+            "服务未就绪",
+            "CDS 尚未 ready",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any(
+                        "硬门禁失败事实" in error and "必须使用 fail" in error
+                        for error in errors
+                    )
+                )
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+        for fact in (
+            "服务尚未就绪，随后已恢复",
+            "服务尚未就绪，现已就绪",
+            "CDS 尚未 ready，现已 ready",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
                 body = report_body("覆盖不足").replace(
                     "当前部署 SHA 已前进", fact
                 )

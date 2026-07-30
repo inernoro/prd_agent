@@ -609,11 +609,14 @@ def _strip_severity_count_claims(text):
 
 _FAILURE_ACTION_PATTERN = (
     r"(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接|恢复|解决|"
-    r"关闭|可用|就绪)"
+    r"关闭|可用|就绪|ready)"
+)
+_ONGOING_FAILURE_PREFIX_PATTERN = (
+    r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
 )
 _FAILURE_FACT_PATTERN = re.compile(
-    r"(?:尚未|尚没|还未|还没|仍未|仍然未|依然未|暂未|暂时未|至今未)"
-    rf"(?:正常)?{_FAILURE_ACTION_PATTERN}"
+    rf"{_ONGOING_FAILURE_PREFIX_PATTERN}"
+    rf"\s*(?:正常\s*)?{_FAILURE_ACTION_PATTERN}"
     r"|失败|不通过|未通过|没通过|未成功|没成功|未完成|没完成"
     rf"|未能(?:正常)?{_FAILURE_ACTION_PATTERN}"
     r"|阻断|不可用|不可交付"
@@ -632,11 +635,11 @@ _DIAGNOSTIC_MODIFIER_PATTERN = (
     rf"(?:已|已经)?{_SUCCESS_DIAGNOSTIC_PATTERN}(?:到了|到|出|了)?"
 )
 _RESOLVED_FACT_PATTERN = re.compile(
-    rf"(?:现已|已经|已)(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"(?:现已|已经|已)\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
     rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
-    rf"|(?:重试后|随后)已(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"|(?:重试后|随后)\s*已\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
     rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))"
-    rf"|最终(?:已)?(?:通过|修复|恢复|可用|关闭|解决|正常"
+    rf"|最终(?:已)?\s*(?:通过|修复|恢复|可用|关闭|解决|正常|就绪|ready"
     rf"|成功(?!\s*(?:地\s*)?{_DIAGNOSTIC_ACTION_PATTERN}))",
     re.I,
 )
@@ -648,7 +651,14 @@ _FAILURE_SUBJECT_PATTERNS = (
     ("ready", re.compile(r"ready(?:\s*(?:检查|门禁|状态))?", re.I)),
     ("smoke", re.compile(r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁))?", re.I)),
     ("build", re.compile(r"(?:构建|编译)(?:产物|结果)?", re.I)),
-    ("service-ready", re.compile(r"服务就绪(?:检查|门禁)?", re.I)),
+    (
+        "service-ready",
+        re.compile(
+            rf"(?:CDS\s*)?服务\s*(?:{_ONGOING_FAILURE_PREFIX_PATTERN}\s*)?"
+            r"就绪(?:检查|门禁)?",
+            re.I,
+        ),
+    ),
     ("forced-test", re.compile(r"强制测试", re.I)),
     ("acceptance-chain", re.compile(r"验收链路", re.I)),
     ("evidence-chain", re.compile(r"证据链", re.I)),
