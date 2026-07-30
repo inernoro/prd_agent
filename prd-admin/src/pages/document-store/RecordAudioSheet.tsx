@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { FileUp, Mic, MicOff, Pause, Play, Square, X } from 'lucide-react';
+import { ChevronDown, ChevronUp, FileUp, Mic, MicOff, Pause, Play, Square, X } from 'lucide-react';
 import { motion } from 'motion/react';
 import { Button } from '@/components/design/Button';
 import { MapSpinner } from '@/components/ui/VideoLoader';
@@ -209,7 +209,9 @@ export function RecordAudioSheet({
   const [protectedBytes, setProtectedBytes] = useState(0);
   const [liveProtection, setLiveProtection] = useState<'pending' | 'active' | 'local'>('pending');
   const [liveTranscript, setLiveTranscript] = useState('');
+  const [liveTranscriptExpanded, setLiveTranscriptExpanded] = useState(false);
   const liveTranscriptValueRef = useRef('');
+  const liveTranscriptScrollRef = useRef<HTMLParagraphElement | null>(null);
   const [liveTranscriptState, setLiveTranscriptState] = useState<LiveTranscriptionState>('connecting');
   const [liveTranscriptMessage, setLiveTranscriptMessage] = useState('正在连接实时转写');
   const [changingDestination, setChangingDestination] = useState(false);
@@ -237,6 +239,12 @@ export function RecordAudioSheet({
   const uploadChunkIndexRef = useRef(0);
   const liveUploadFailedRef = useRef(false);
   const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
+
+  useEffect(() => {
+    const container = liveTranscriptScrollRef.current;
+    if (!container || liveTranscriptExpanded) return;
+    container.scrollTop = container.scrollHeight;
+  }, [liveTranscript, liveTranscriptExpanded]);
   const pendingLivePcmRef = useRef<Int16Array[]>([]);
   const livePcmCompleteRef = useRef(true);
   const liveCaptureRef = useRef<LivePcmCaptureController | null>(null);
@@ -891,9 +899,30 @@ export function RecordAudioSheet({
         }}>
         <div className="flex items-center justify-between gap-3">
           <span className="text-[12px] font-semibold text-token-primary">实时原文</span>
-          <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+          <div className="flex items-center gap-1">
+            <span className="text-[11px] text-token-muted">{liveTranscriptMessage}</span>
+            {liveTranscript.length > 120 && (
+              <button
+                type="button"
+                onClick={() => setLiveTranscriptExpanded(value => !value)}
+                className="flex min-h-11 cursor-pointer items-center gap-1 rounded-[8px] px-2 text-[11px] font-semibold text-token-secondary hover-bg-soft"
+                aria-expanded={liveTranscriptExpanded}
+                aria-controls="recording-live-transcript">
+                {liveTranscriptExpanded ? <ChevronUp size={13} /> : <ChevronDown size={13} />}
+                {liveTranscriptExpanded ? '收起' : '展开'}
+              </button>
+            )}
+          </div>
         </div>
-        <p className="mt-2 min-h-10 whitespace-pre-wrap text-[13px] leading-6 text-token-secondary">
+        <p
+          id="recording-live-transcript"
+          ref={liveTranscriptScrollRef}
+          className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[13px] leading-6 text-token-secondary"
+          style={{
+            maxHeight: liveTranscriptExpanded ? 'min(34dvh, 280px)' : 120,
+            overflowY: 'auto',
+            overscrollBehavior: 'contain',
+          }}>
           {liveTranscript || (
             liveTranscriptState === 'degraded'
               ? '录音仍在本机和服务端持续保存，结束后会自动生成原文。'

@@ -363,6 +363,7 @@ export function TranscribeFlowDrawer({
 
   const running = status === 'uploading' || status === 'running';
   const inPlace = !!entryId && outputEntryId === entryId;
+  const restylingSavedTranscript = running && includeSummary && Boolean(outputEntryId);
   const activeStep = steps.find(step => step.state === 'active');
   const selectedStyle = styles.find(style => style.key === styleKey);
   const meetingContextFields = useMemo(
@@ -414,8 +415,8 @@ export function TranscribeFlowDrawer({
   }, []);
 
   const body = (
-    <div className={running ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
-      {running && (
+    <div className={running && !restylingSavedTranscript ? 'flex min-h-full flex-col justify-center gap-5 py-6' : 'space-y-4 py-4'}>
+      {running && !restylingSavedTranscript && (
         <div className="mx-auto flex w-full max-w-[340px] flex-col items-center text-center" aria-live="polite">
           <motion.div
             className="mb-4 flex h-20 w-20 items-center justify-center rounded-[24px]"
@@ -440,7 +441,15 @@ export function TranscribeFlowDrawer({
       <div
         className={`space-y-2.5 ${running ? 'mx-auto w-full max-w-[340px] rounded-[16px] p-4' : ''}`}
         style={running ? { background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' } : undefined}>
-        {steps.map((s) => (
+        {restylingSavedTranscript ? (
+          <div className="flex items-start gap-2.5" aria-live="polite">
+            <MapSpinner size={14} />
+            <div className="min-w-0">
+              <p className="text-[13px] font-semibold text-token-primary">正在整理已保存的原文</p>
+              <p className="mt-1 text-[11px] leading-relaxed text-token-muted">不会重新上传或转录音频，结果会更新在当前录音中。</p>
+            </div>
+          </div>
+        ) : steps.map((s) => (
           <div key={s.key} className="flex items-center gap-2.5">
             <StepIcon state={s.state} />
             <div className="min-w-0">
@@ -819,8 +828,14 @@ export function TranscribeFlowDrawer({
             {discarding ? <MapSpinner size={12} /> : null} 取消本次录音
           </Button>
         )}
-        <Button variant={status === 'done' ? 'primary' : 'ghost'} size="sm" onClick={onClose}>
-          {running ? '后台运行' : '关闭'}
+        <Button
+          variant={status === 'done' ? 'primary' : 'ghost'}
+          size="sm"
+          onClick={() => {
+            if (status === 'done' && outputEntryId) onOpenEntry?.(outputEntryId);
+            onClose();
+          }}>
+          {running ? '后台运行' : status === 'done' ? '查看录音原文' : '关闭'}
         </Button>
       </div>
     </div>

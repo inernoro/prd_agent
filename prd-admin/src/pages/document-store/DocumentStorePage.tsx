@@ -155,6 +155,7 @@ import type {
   TutorialLinkGraphSnapshot,
 } from '@/services/contracts/documentStore';
 import type { DocBrowserEntry, EntryPreview, DocBrowserSortMode } from '@/components/doc-browser/DocBrowser';
+import { resolveDocBrowserSortMode } from '@/components/doc-browser/docBrowserSort';
 import { ACCEPTANCE_TEMPLATE_KEY } from '@/lib/acceptanceVerdictRegistry';
 import { toast } from '@/lib/toast';
 import { systemDialog } from '@/lib/systemDialog';
@@ -1013,9 +1014,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
   const transcribeRunRef = useRef<string | null>(null);
   const transcribeFlowOpenRef = useRef(false);
   const [bgTranscribeRunIds, setBgTranscribeRunIds] = useState<string[]>([]);
-  const watchBackgroundTranscription = useCallback((runId: string) => {
+  const revealCompletedTranscribeRunsRef = useRef(new Set<string>());
+  const watchBackgroundTranscription = useCallback((runId: string, revealOnComplete = false) => {
     const normalized = runId.trim();
     if (!normalized) return;
+    if (revealOnComplete) revealCompletedTranscribeRunsRef.current.add(normalized);
     transcribeRunRef.current = normalized;
     setBgTranscribeRunIds(current => enqueueBackgroundTranscriptionRun(current, normalized));
   }, []);
@@ -1319,8 +1322,15 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
         if (transcribeRunRef.current === runId) transcribeRunRef.current = null;
         void loadEntries();
         if (st === 'done') {
-          toast.success('录音转录完成', '转录笔记已生成，可在列表中查看');
+          const shouldReveal = revealCompletedTranscribeRunsRef.current.delete(runId);
+          if (shouldReveal && res.data.outputEntryId) {
+            setSelectedEntryId(res.data.outputEntryId);
+            toast.success('录音转录完成', '已打开录音原文');
+          } else {
+            toast.success('录音转录完成', '录音原文已保存');
+          }
         } else if (st === 'failed') {
+          revealCompletedTranscribeRunsRef.current.delete(runId);
           toast.error('录音转录失败', (res.data.errorMessage ?? '').split('\n')[0] || '请重试');
         }
       }
@@ -2079,19 +2089,11 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
               }
             })();
           }}
-          /* 排序：服务端持久化的 store.defaultSortMode 为 SSOT；缺省按模板默认（验收库 created-desc，其余 default）兜底 */
-          sortMode={
-            (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
-              ? store.defaultSortMode
-              : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
-          }
+          /* 排序：持久化偏好为 SSOT；未设置时统一按创建时间倒序，新内容在最前。 */
+          sortMode={resolveDocBrowserSortMode(store.defaultSortMode)}
           sidebarHeader={
             <DocSortControl
-              value={
-                (store.defaultSortMode === 'created-desc' || store.defaultSortMode === 'updated-desc' || store.defaultSortMode === 'default')
-                  ? store.defaultSortMode
-                  : (store.templateKey === ACCEPTANCE_TEMPLATE_KEY ? 'created-desc' : 'default')
-              }
+              value={resolveDocBrowserSortMode(store.defaultSortMode)}
               onChange={handleChangeSort}
             />
           }
@@ -2315,7 +2317,7 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
                     '完整音频正在后台转录，完成后会通知你',
                   );
                 }
-                watchBackgroundTranscription(followUp.runId);
+                watchBackgroundTranscription(followUp.runId, true);
                 return;
               }
               if (followUp.kind === 'wait-for-archive') return;
