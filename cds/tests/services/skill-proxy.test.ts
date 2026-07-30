@@ -13,8 +13,14 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import fs from 'node:fs';
 import os from 'node:os';
 import path from 'node:path';
+import { fileURLToPath } from 'node:url';
 
-import { SkillProxy, SkillProxyError, isSafeSkillKey } from '../../src/services/skill-proxy.js';
+import {
+  SkillProxy,
+  SkillProxyError,
+  STARTER_SKILL_BUNDLES,
+  isSafeSkillKey,
+} from '../../src/services/skill-proxy.js';
 import {
   BOOTSTRAP_PRESETS,
   CdsSkillPackCache,
@@ -155,6 +161,91 @@ describe('SkillProxy', () => {
     expect(got.source).toBe('upstream');
     expect(got.stale).toBe(false);
   });
+
+  it('CDS 本地携带的技能直接打包，不请求 MAP 中不存在的同名技能', async () => {
+    const localRoot = fs.mkdtempSync(path.join(os.tmpdir(), 'local-skills-'));
+    fs.mkdirSync(path.join(localRoot, 'plan-first'), { recursive: true });
+    fs.writeFileSync(path.join(localRoot, 'plan-first', 'SKILL.md'), '# plan-first\n');
+    let calls = 0;
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      localSkillRoots: [localRoot],
+      fetchImpl: async () => { calls += 1; return new Response(null, { status: 404 }); },
+    });
+
+    try {
+      const result = await proxy.fetchSkill('plan-first');
+      expect(result.source).toBe('local');
+      expect(result.stale).toBe(false);
+      expect(result.body.subarray(0, 4)).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+      expect(result.body.toString('utf8')).toContain('plan-first/SKILL.md');
+      expect(calls).toBe(0);
+    } finally {
+      fs.rmSync(localRoot, { recursive: true, force: true });
+    }
+  });
+
+  it('启动套件目录由 CDS 本地发布契约提供，不访问不存在的 MAP bundles 端点', async () => {
+    let calls = 0;
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      fetchImpl: async () => { calls += 1; throw new Error('不应访问上游'); },
+    });
+
+    expect(await proxy.fetchBundles()).toEqual(STARTER_SKILL_BUNDLES);
+    const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    expect(STARTER_SKILL_BUNDLES.bundles.map((bundle) => bundle.key)).toEqual([
+      'foundation', 'product', 'delivery', 'quality',
+    ]);
+    expect(catalogSkills.length).toBeGreaterThanOrEqual(18);
+    expect(new Set(catalogSkills.map((skill) => skill.key)).size).toBe(catalogSkills.length);
+    expect(catalogSkills.map((skill) => skill.key)).toEqual(expect.arrayContaining([
+      'phase0-guard',
+      'product-document-generator',
+      'human-verify',
+      'code-hygiene',
+      'create-skill-file',
+      'acceptance-test-design',
+      'create-visual-test-to-kb',
+      'preview-url',
+    ]));
+    expect(calls).toBe(0);
+  });
+
+  it('目录中的每个技能都能从仓库本地打包，不把不存在的卡片交给用户', async () => {
+    const repositorySkillRoot = fileURLToPath(new URL('../../../.claude/skills', import.meta.url));
+    let calls = 0;
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      localSkillRoots: [repositorySkillRoot],
+      fetchImpl: async () => { calls += 1; return new Response(null, { status: 404 }); },
+    });
+
+    const catalogSkills = STARTER_SKILL_BUNDLES.bundles.flatMap((bundle) => bundle.skills);
+    for (const skill of catalogSkills) {
+      expect(fs.existsSync(path.join(repositorySkillRoot, skill.key, 'SKILL.md')), skill.key).toBe(true);
+      const result = await proxy.fetchSkill(skill.key);
+      expect(result.source, skill.key).toBe('local');
+      expect(result.body.subarray(0, 4), skill.key).toEqual(Buffer.from([0x50, 0x4b, 0x03, 0x04]));
+    }
+    expect(calls).toBe(0);
+  });
+
+  it('本地与 MAP 都不存在的技能返回准确 404，不伪装成上游 502', async () => {
+    const proxy = new SkillProxy({
+      mapBase: 'https://map.example.test',
+      cacheDir,
+      fetchImpl: async () => new Response(null, { status: 404 }),
+    });
+
+    await proxy.fetchSkill('missing-skill').catch((error: SkillProxyError) => {
+      expect(error.status).toBe(404);
+      expect(error.message).toBe('技能不存在');
+    });
+  });
 });
 
 describe('引导脚本', () => {
@@ -166,6 +257,7 @@ describe('引导脚本', () => {
     for (const p of BOOTSTRAP_PRESETS) {
       expect(p.nextStep.trim().length).toBeGreaterThan(0);
       expect(p.key).toMatch(/^[a-z0-9-]+$/);
+      expect(p.marketplaceKeys.every((key) => !key.endsWith('-starter'))).toBe(true);
     }
   });
 
@@ -186,7 +278,8 @@ describe('引导脚本', () => {
   });
 
   it('不含密钥，不改 shell profile / PATH', () => {
-    expect(script).not.toMatch(/sk-[a-zA-Z0-9]/);
+    // 只匹配独立且达到凭据长度的 sk- 前缀，不能把合法技能名 risk-matrix 的 `sk-m` 误报成 Key。
+    expect(script).not.toMatch(/(?:^|[^a-z])sk-[a-zA-Z0-9-]{8,}/);
     expect(script).not.toMatch(/cdsp_|cdsg_/);
     expect(script).not.toContain('.bashrc');
     expect(script).not.toContain('.zshrc');

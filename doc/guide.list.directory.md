@@ -64,6 +64,7 @@
 - [CDS 托管交付契约 · 设计](./design.cds.managed-delivery.md) `design.cds.managed-delivery`
 - [CDS 多项目 · 设计](./design.cds.multi-project.md) `design.cds.multi-project`
 - [CDS 项目接入与配置收敛设计 · 设计](./design.cds.onboarding.md) `design.cds.onboarding`
+- [CDS 角色化 Agent 一键上手范型 · 设计](./design.cds.agent-onboarding-harness.md) `design.cds.agent-onboarding-harness`
 - [CDS 项目初始化（Project Bootstrap） · 设计](./design.cds.project-bootstrap.md) `design.cds.project-bootstrap`
 - [CDS Railway 式部署向导设计 · 设计](./design.cds.railway-onboarding-flow.md) `design.cds.railway-onboarding-flow`
 - [CDS 复制集压测（A/B 负载对比台） · 设计](./design.cds.replica-loadtest.md) `design.cds.replica-loadtest`
@@ -149,6 +150,7 @@
 - [AI 百宝箱 (AI Toolbox) · 指南](./guide.ai-toolbox.ops.md) `guide.ai-toolbox.ops`
 - [AI 竞技场使用 · 指南](./guide.arena.md) `guide.arena`
 - [CDS Agent 管理员 · 指南](./guide.cds.agent.admin.md) `guide.cds.agent.admin`
+- [CDS Agent 上手助手 · 指南](./guide.cds.agent-onboarding-harness.md) `guide.cds.agent-onboarding-harness`
 - [CDS Agent 代码审查上手指南 · 指南](./guide.cds.agent.code-review-quickstart.md) `guide.cds.agent.code-review-quickstart`
 - [CDS Agent 下一代测试与涌现建议 · 指南](./guide.cds.agent.next-agent-testing.md) `guide.cds.agent.next-agent-testing`
 - [CDS Agent 运行手册 · 指南](./guide.cds.agent.runbook.md) `guide.cds.agent.runbook`
