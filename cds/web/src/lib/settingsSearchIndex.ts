@@ -58,7 +58,7 @@ export const SYSTEM_TAB_LABELS: Record<string, string> = {
   scheduler: '调度器',
   cluster: '集群',
   'remote-hosts': '远程主机',
-  connections: '对接 MAP',
+  connections: '外部接入',
   'global-vars': 'CDS 全局变量',
   'loading-pages': '加载页预览',
   snapshots: '配置快照',
@@ -292,14 +292,14 @@ export const SYSTEM_SETTINGS_INDEX: SettingsIndexEntry[] = [
     keywords: ['webhook', 'webhook 日志', 'hook', 'delivery', '派发', '投递', '部署派发'],
   },
 
-  // —— 对接 MAP ——
+  // —— 外部接入 ——
   {
     id: 'sys:connections:map',
-    label: '对接 MAP',
-    hint: '对接 · 配对密钥 / 连接记录管理',
+    label: '外部接入',
+    hint: '接入 · MAP 系统互联 / MAP 缺陷转发 / 连接记录',
     tab: 'connections',
     scope: 'system',
-    keywords: ['对接', '对接 map', 'map', '配对', '连接', 'pairing', '配对密钥', '连接记录'],
+    keywords: ['外部接入', '对接', '对接 map', 'map', '配对', '连接', 'pairing', '配对密钥', '连接记录', '缺陷转发', 'bug report', 'defect'],
   },
 
   // —— CDS 全局变量 ——

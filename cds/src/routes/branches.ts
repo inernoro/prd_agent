@@ -10219,7 +10219,7 @@ export function createBranchRouter(deps: RouterDeps): Router {
   // getMergedEnv() 的结果按来源分类返回,前端可以按「来源 chip」过滤:
   //   - cds-builtin: CDS_HOST / CDS_PROJECT_SLUG 等系统注入,只读不可改
   //   - mirror:      镜像加速变量(NPM_REGISTRY 等),开关在 CDS 系统设置
-  //   - global:      _global scope customEnv,所有项目共享
+  //   - global:      _global scope customEnv,仅项目显式开启 inheritGlobalEnv 时继承
   //   - project:     当前项目的 customEnv,只影响这个项目
   //
   // **敏感值默认 redact**(显示 `••••<最后4位>`),前端单条「显示值」按钮按需
@@ -10259,7 +10259,12 @@ export function createBranchRouter(deps: RouterDeps): Router {
       builtinDerived.CDS_PROJECT_ID = project.id;
       builtinDerived.CDS_PROJECT_SLUG = project.slug;
     }
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    // 与真实部署路径 stateService.getCustomEnv(projectId) 保持一致：_global 默认只
+    // 服务 CDS 控制面，项目只有显式开启 inheritGlobalEnv 才能看到并继承。
+    // 此前本接口无条件读取 _global，导致 mos 这类未继承项目被错误展示为“已生效”。
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global'
       ? {}
       : stateService.getCustomEnvScope(projectId);
@@ -10696,7 +10701,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
     // ── 段A:customEnv 六层(顺序 = 合并顺序,与 getMergedEnv/buildBranchEnvMap 一致)──
     const cdsEnv = stateService.getCdsEnvVars(projectId);
     const mirrorEnv = stateService.getMirrorEnvVars();
-    const rawGlobal = stateService.getCustomEnvScope('_global');
+    const rawGlobal = project?.inheritGlobalEnv === true
+      ? stateService.getCustomEnvScope('_global')
+      : {};
     const rawProjectScoped = projectId === '_global' ? {} : stateService.getCustomEnvScope(projectId);
     const rawBranchScoped = stateService.getCustomEnvScope(entry.id);
     const derivedReserved: Record<string, string> = {};

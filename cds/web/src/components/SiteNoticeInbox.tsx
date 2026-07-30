@@ -1,6 +1,13 @@
-import { useEffect, useMemo, useRef, useState } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, Database, ExternalLink, Settings, TerminalSquare, Trash2, X } from 'lucide-react';
+import { AccessRequestInbox } from '@/components/AccessRequestInbox';
+import { CommitInbox } from '@/components/CommitInbox';
+import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
+import { PendingImportInbox } from '@/components/PendingImportInbox';
 import { apiRequest, ApiError } from '@/lib/api';
+import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
+import { useOverlayDock } from '@/lib/useOverlayDock';
 
 type NoticeTone = 'info' | 'warning' | 'danger';
 
@@ -60,8 +67,46 @@ function noticeProjectLabel(notice: SiteNotice): string {
 }
 
 export function SiteNoticeInbox(): JSX.Element {
+  const host = useOverlayDock('#cds-information-center-host');
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>(() => loadNotices());
   const [open, setOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<FloatingPanelPosition | null>(null);
+  const [sourceCounts, setSourceCounts] = useState({
+    access: 0,
+    commit: 0,
+    import: 0,
+    update: 0,
+  });
+
+  const updateSourceCount = useCallback((source: keyof typeof sourceCounts, count: number): void => {
+    setSourceCounts((current) => current[source] === count ? current : { ...current, [source]: count });
+  }, []);
+  const handleAccessCount = useCallback((count: number) => updateSourceCount('access', count), [updateSourceCount]);
+  const handleCommitCount = useCallback((count: number) => updateSourceCount('commit', count), [updateSourceCount]);
+  const handleImportCount = useCallback((count: number) => updateSourceCount('import', count), [updateSourceCount]);
+  const handleUpdateCount = useCallback((count: number) => updateSourceCount('update', count), [updateSourceCount]);
+
+  const updatePanelPosition = useCallback((): void => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    setPanelPosition(floatingPanelPosition(
+      { left: rect.left, bottom: rect.bottom },
+      { width: window.innerWidth, height: window.innerHeight },
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updatePanelPosition();
+    window.addEventListener('resize', updatePanelPosition);
+    window.addEventListener('scroll', updatePanelPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePanelPosition);
+      window.removeEventListener('scroll', updatePanelPosition, true);
+    };
+  }, [open, updatePanelPosition]);
 
   useEffect(() => {
     const onUpsert = (event: Event): void => {
@@ -87,6 +132,11 @@ export function SiteNoticeInbox(): JSX.Element {
 
   const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
+  const informationCount = unreadCount
+    + sourceCounts.access
+    + sourceCounts.commit
+    + sourceCounts.import
+    + sourceCounts.update;
 
   // 陈旧通知清理(2026-07-21):通知持久化在 localStorage 且携带创建时刻的项目 id,
   // 项目删除/重建后旧通知仍留存,用户点「查看推荐方式」落到 /settings/<旧id> 即 404。
@@ -142,42 +192,65 @@ export function SiteNoticeInbox(): JSX.Element {
     storeNotices(next);
   };
 
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className={`cds-site-notice-trigger inline-flex h-9 w-9 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground transition-colors hover:text-foreground ${unreadCount > 0 ? 'cds-site-notice-trigger--active' : ''}`}
-        aria-label={`站内信${unreadCount ? `，${unreadCount} 条未读` : ''}`}
-        title={`站内信${unreadCount ? ` · ${unreadCount} 条未读` : ''}`}
-        onClick={() => {
-          setOpen((value) => !value);
-          if (!open) markAllRead();
-        }}
-      >
-        <Bell className="h-5 w-5" />
-        {unreadCount > 0 ? (
-          <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
-            {unreadCount}
-          </span>
-        ) : null}
-      </button>
+  if (!host) return <></>;
 
-      {open ? (
-        <div className="absolute right-0 top-full z-[220] mt-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl">
+  return createPortal((
+    <>
+      <div className="relative">
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`cds-site-notice-trigger inline-flex h-9 w-9 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground transition-colors hover:text-foreground ${informationCount > 0 ? 'cds-site-notice-trigger--active' : ''}`}
+          aria-label={`信息中心${informationCount ? `，${informationCount} 条待处理` : ''}`}
+          aria-expanded={open}
+          title={`信息中心${informationCount ? ` · ${informationCount} 条待处理` : ''}`}
+          onClick={() => {
+            const nextOpen = !open;
+            if (nextOpen) {
+              updatePanelPosition();
+              markAllRead();
+            }
+            setOpen(nextOpen);
+          }}
+        >
+          <Bell className="h-5 w-5" />
+          {informationCount > 0 ? (
+            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
+              {informationCount > 99 ? '99+' : informationCount}
+            </span>
+          ) : null}
+        </button>
+      </div>
+
+      {open && panelPosition ? createPortal((
+        <div
+          data-testid="cds-information-center-panel"
+          className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+          style={panelPosition}
+        >
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
-            <div>
-              <div className="text-sm font-semibold">站内信</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">持久化提醒，不再占用页面横幅</div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">信息中心</div>
+              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">系统动态、授权审批与持久化提醒</div>
             </div>
-            <button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭站内信">
+            <button type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭信息中心">
               <X className="h-4 w-4" />
             </button>
           </div>
 
-          {activeNotices.length === 0 ? (
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3">
+            <AccessRequestInbox onCountChange={handleAccessCount} />
+            <PendingImportInbox onCountChange={handleImportCount} />
+            <GlobalUpdateBadge onCountChange={handleUpdateCount} />
+            <CommitInbox onCountChange={handleCommitCount} />
+
+          {activeNotices.length === 0 && informationCount === 0 ? (
             <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
-          ) : (
-            <div className="max-h-[420px] overflow-auto">
+          ) : activeNotices.length > 0 ? (
+            <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+              <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-semibold text-foreground">
+                站内提醒
+              </div>
               {activeNotices.map((notice) => (
                 <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
                   <div className="flex items-start gap-3">
@@ -221,10 +294,11 @@ export function SiteNoticeInbox(): JSX.Element {
                   </div>
                 </div>
               ))}
-            </div>
-          )}
+            </section>
+          ) : null}
+          </div>
         </div>
-      ) : null}
-    </div>
-  );
+      ), document.body) : null}
+    </>
+  ), host);
 }

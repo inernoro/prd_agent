@@ -84,6 +84,23 @@ async function checkLayout(page, label) {
       if (rect.right < 0 || rect.bottom < 0 || rect.left > vw || rect.top > vh) continue;
       const x = Math.min(vw - 1, Math.max(1, rect.left + rect.width / 2));
       const y = Math.min(vh - 1, Math.max(1, rect.top + rect.height / 2));
+      // A target may sit below a scroll viewport (or to the side of a horizontal
+      // scroller) until the user scrolls it into view. elementFromPoint() then
+      // correctly returns the clipping sibling/footer, but that is not an
+      // overlap: the target is not currently exposed at that coordinate.
+      let clippedByAncestor = false;
+      for (let ancestor = el.parentElement; ancestor && ancestor !== document.body; ancestor = ancestor.parentElement) {
+        const ancestorStyle = getComputedStyle(ancestor);
+        const ancestorRect = ancestor.getBoundingClientRect();
+        const clipsX = /auto|scroll|hidden|clip/.test(ancestorStyle.overflowX);
+        const clipsY = /auto|scroll|hidden|clip/.test(ancestorStyle.overflowY);
+        if ((clipsX && (x < ancestorRect.left || x > ancestorRect.right))
+          || (clipsY && (y < ancestorRect.top || y > ancestorRect.bottom))) {
+          clippedByAncestor = true;
+          break;
+        }
+      }
+      if (clippedByAncestor) continue;
       const top = document.elementFromPoint(x, y);
       if (!top) continue;
       if (el === top || el.contains(top) || top.contains(el)) continue;

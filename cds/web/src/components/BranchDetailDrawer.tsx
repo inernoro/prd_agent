@@ -381,8 +381,10 @@ interface ResourceCloneInput {
 // 用户找不全，合并成单个「日志」页签，内部用 pill 切换：
 // 系统日志（生命周期：谁停的/何时/为什么）/ 构建日志 / 容器日志 / Webhook / HTTP。
 type LogsMode = 'system' | 'build' | 'container' | 'webhook' | 'http';
-const DETAIL_LOG_VIEWPORT_CLASS = 'h-[424px] overflow-auto';
-const DETAIL_LOG_EMPTY_CLASS = 'h-[424px] flex items-center px-5 text-sm leading-6 text-muted-foreground';
+// 全屏详情抽屉的日志区由父级 flex 布局分配剩余高度，不写固定像素高度。
+// 这样高屏不会在日志卡下方制造大片空白，矮屏仍由最近内容层滚动。
+const DETAIL_LOG_VIEWPORT_CLASS = 'min-h-0 flex-1 overflow-auto';
+const DETAIL_LOG_EMPTY_CLASS = 'flex min-h-0 flex-1 items-center px-5 text-sm leading-6 text-muted-foreground';
 
 /**
  * 方案 A「六问」分类（2026-07-26 用户拍板，9 页签收敛为 6）：每个页签回答一个问题。
@@ -1954,7 +1956,7 @@ export function BranchDetailDrawer({
         aria-label="关闭分支详情"
       />
       <div
-        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1240px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-branch-detail-drawer cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
         <header className="cds-branch-detail-header flex min-h-14 shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-2">
@@ -2040,7 +2042,7 @@ export function BranchDetailDrawer({
           {loading && !branch ? <BranchDetailLoadingSkeleton className="min-h-full" /> : null}
           {error ? <div className="p-5"><ErrorBlock message={error} /></div> : null}
           {branch ? (
-            <>
+            <div className={activeTab === 'logs' ? 'flex min-h-full flex-col' : undefined}>
               {/* URL 优先用调用方算好的 previewUrl(simple 模式=simplePreviewUrl,
                   set-default 后真正生效的主域名),缺失才回退 branch.previewUrl。
                   原「运行中」卡删除后,这里是唯一 URL 出口,不能再指向 wildcard 地址
@@ -2282,7 +2284,7 @@ export function BranchDetailDrawer({
                 ))}
               </nav>
 
-              <div className="p-5">
+              <div className={activeTab === 'logs' ? 'flex min-h-0 flex-1 flex-col p-5' : 'p-5'}>
                 {activeTab === 'run' ? (
                   <ReplicaSetPanel
                     branchId={branch.id}
@@ -2385,8 +2387,8 @@ export function BranchDetailDrawer({
                 ) : null}
 
                 {activeTab === 'logs' ? (
-                  <section ref={logsSectionRef} className="cds-surface-raised cds-hairline">
-                    <header className="border-b border-[hsl(var(--hairline))] px-4 py-3">
+                  <section ref={logsSectionRef} className="cds-surface-raised cds-hairline flex min-h-0 flex-1 flex-col overflow-hidden">
+                    <header className="shrink-0 border-b border-[hsl(var(--hairline))] px-4 py-3">
                       <div className="flex flex-wrap items-center justify-between gap-3">
                         <div className="inline-flex flex-wrap rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-1">
                           {/* 方案 A：构建日志模式移除（归部署页签内联）——这里只留持续流 */}
@@ -2452,7 +2454,7 @@ export function BranchDetailDrawer({
                         <div className="space-y-2 border-b border-[hsl(var(--hairline))] px-4 py-3">
                           <div className="flex min-w-0 items-center gap-3">
                             <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-muted-foreground">主容器</span>
-                            <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                            <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                               {(services.length > 0 ? services : []).map((svc) => (
                                 <button
                                   key={svc.profileId}
@@ -2475,7 +2477,7 @@ export function BranchDetailDrawer({
                           {memberLogTargets.length > 0 ? (
                             <div className="flex min-w-0 items-center gap-3">
                               <span className="w-14 shrink-0 font-mono text-[10px] uppercase tracking-wide text-indigo-500 dark:text-indigo-400">副本容器</span>
-                              <div className="flex min-w-0 flex-1 gap-2 overflow-x-auto">
+                              <div className="flex min-w-0 flex-1 flex-wrap gap-2">
                                 {memberLogTargets.map(({ key, pid, member: m }) => (
                                   <button
                                     key={key}
@@ -2741,14 +2743,14 @@ export function BranchDetailDrawer({
                   </section>
                 ) : null}
 
-                <div className="mt-5 text-center text-xs text-muted-foreground">
+                <div className="mt-5 shrink-0 text-center text-xs text-muted-foreground">
                   需要修改构建配置 / 环境变量 / 路由？打开
                   <a href={`/settings/${encodeURIComponent(projectId)}`} className="ml-1 text-primary hover:underline">项目设置</a>
                   。需要查看完整日志、Bridge、提交历史？打开
                   <a href={fullPageHref} className="ml-1 text-primary hover:underline">分支详情页</a>
                 </div>
               </div>
-            </>
+            </div>
           ) : null}
         </div>
 
@@ -4545,7 +4547,7 @@ function ResourceWorkbenchModal({
   if (!open) return null;
   return (
     <div className="fixed inset-0 z-[90] bg-black/65 p-0 backdrop-blur-sm sm:p-3 md:p-5" role="dialog" aria-modal="true">
-      <div className="mx-auto flex h-full max-w-[1760px] flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-background shadow-2xl sm:rounded-lg">
+      <div className="flex h-full w-full flex-col overflow-hidden border border-[hsl(var(--hairline))] bg-background shadow-2xl sm:rounded-lg">
         <div className="flex shrink-0 items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-4 py-3">
           <div className="min-w-0">
             <div className="truncate text-sm font-semibold">{title}</div>
@@ -6298,7 +6300,7 @@ function ServiceLogsPanel({
   }
 
   return (
-    <div className="h-[424px] min-w-0 overflow-hidden p-4 pt-3">
+    <div className="min-h-0 min-w-0 flex-1 overflow-hidden p-4 pt-3">
       <div className="flex h-full min-h-0 flex-col rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45">
         <div className="flex min-h-0 flex-1 flex-col px-4 py-3">
           <div className="mb-2 flex shrink-0 items-center justify-between gap-2 text-xs text-muted-foreground">

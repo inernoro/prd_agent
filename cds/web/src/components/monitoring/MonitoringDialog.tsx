@@ -204,7 +204,7 @@ export function MonitoringDialog({
         aria-label="关闭运维面板"
       />
       <div
-        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full max-w-[min(1100px,calc(100vw-32px))] flex-col border-l border-[hsl(var(--hairline))] bg-[hsl(var(--surface-base))] shadow-2xl"
+        className="cds-drawer-anim relative z-10 ml-auto flex h-full w-full flex-col bg-[hsl(var(--surface-base))] shadow-2xl"
         style={{ minHeight: 0 }}
       >
         <header className="flex shrink-0 items-start justify-between gap-3 border-b border-[hsl(var(--hairline))] px-6 py-5">
