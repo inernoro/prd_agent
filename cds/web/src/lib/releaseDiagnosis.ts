@@ -309,3 +309,36 @@ export function describeDryRunResult(
   const detail = result.error?.trim() || failedChecks.join('；');
   return detail ? `试跑未通过：${detail}` : '试跑未通过：发布前检查存在阻塞项';
 }
+
+export interface DiskGuardShortfall {
+  requiredMb: number;
+  availableMb: number;
+  shortfallMb: number;
+  mountPoint: string;
+}
+
+/**
+ * 从失败日志里认出「磁盘护栏」失败并算出差额。
+ *
+ * 判据对齐 scripts/llmgw-disk-space-guard.sh 的输出格式：
+ * `requires at least <N>MB free on <mount>; available=<M>MB`。
+ * 认出来之后 UI 才有资格给出「磁盘诊断」这一步——其他失败给这个按钮只是噪音。
+ */
+export function parseDiskGuardShortfall(
+  logs: ReadonlyArray<ReleaseDiagnosisLogLike>,
+): DiskGuardShortfall | null {
+  for (const log of logs) {
+    const match = /requires at least (\d+)MB free on (\S+); available=(\d+)MB/.exec(log.message);
+    if (!match) continue;
+    const requiredMb = Number(match[1]);
+    const availableMb = Number(match[3]);
+    if (!Number.isFinite(requiredMb) || !Number.isFinite(availableMb)) continue;
+    return {
+      requiredMb,
+      availableMb,
+      shortfallMb: Math.max(0, requiredMb - availableMb),
+      mountPoint: match[2],
+    };
+  }
+  return null;
+}

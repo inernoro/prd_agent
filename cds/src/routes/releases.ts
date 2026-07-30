@@ -446,6 +446,25 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   });
 
   /**
+   * 只读磁盘诊断：发布死在磁盘护栏时，让用户/Agent 直接看到目标机
+   * 「空间被什么吃掉了」（df + docker df + 热点目录 du），不必再猜。
+   * 命令固定且只许读（守卫测试钉死），所以按读操作对待，不走 AI mutation 闸。
+   */
+  router.get('/releases/targets/:id/disk-diagnosis', async (req, res) => {
+    const existing = deps.stateService.getReleaseTarget(req.params.id);
+    if (!existing) {
+      res.status(404).json({ error: 'release target not found' });
+      return;
+    }
+    if (rejectProjectMismatch(req, res, existing.projectId)) return;
+    try {
+      res.json({ output: await service.diskDiagnosis(existing) });
+    } catch (err) {
+      res.status(502).json({ error: (err as Error).message });
+    }
+  });
+
+  /**
    * 回收远端超期产物。这是往生产机器上 rm -rf 的写操作，比任何配置类端点都危险，
    * 所以 rejectUnscopedAiMutation 必须在（无 scope 的 AI key 不许碰）。
    * dryRun 是默认建议路径：先看回收计划，再决定要不要真删。

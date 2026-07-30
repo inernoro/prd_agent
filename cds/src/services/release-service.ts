@@ -1067,6 +1067,17 @@ export class ReleaseService {
    *  - **安全失败**：SSH 不通 / 目录不存在一律收敛成 unknown 并把原因带出来，
    *    绝不抛给调用方——它跑在定时器或 HTTP 请求里，炸出去会拖累别的目标。
    */
+  /**
+   * 只读磁盘诊断：在发布目标主机上跑 df/du/docker df，回答「空间被什么吃掉了」。
+   * 命令内容见 buildDiskDiagnosisCommand（守卫测试钉死它只许读）；
+   * 输出过一遍脱敏（与发布日志同一判据），杜绝 docker 输出里带出凭据。
+   */
+  async diskDiagnosis(target: ReleaseTarget): Promise<string> {
+    if (target.type !== 'ssh' || !target.ssh) throw new Error('MVP 只支持站点发布目标的磁盘诊断');
+    const output = await this.sshExec(target, buildDiskDiagnosisCommand(target.ssh.appPath));
+    return maskSshExecSecrets(output);
+  }
+
   async readRemoteReleaseState(target: ReleaseTarget): Promise<ReleaseRemoteStateResult> {
     const strategy = effectiveReleaseStrategy(target);
     const mode = strategy.mode;
@@ -1795,6 +1806,34 @@ export function shouldUseCustomRollbackCommand(
   rollbackCommand: string | undefined,
 ): rollbackCommand is string {
   return mode === 'existing-script' && Boolean(rollbackCommand?.trim());
+}
+
+/**
+ * 发布目标的只读磁盘诊断命令。
+ *
+ * 背景（2026-07-30）：生产发布连续三次死在发布脚本自己的磁盘护栏
+ * （`requires at least 4096MB free on /`），但 CDS 只有发布通道、没有自由 shell，
+ * 用户和 Agent 都只能对着「差 226MB」干瞪眼，猜空间被什么吃掉了。
+ * 这条命令把「猜」变成「看」：df 总览 + docker 占用 + 已知热点目录逐个 du。
+ *
+ * 安全边界：**只许读**。全部命令是 df / du / docker system df / docker images，
+ * 没有任何删除、修剪、写入动作——清理仍然是人的决定（配套守卫测试扫这条红线）。
+ * 每段都容错（`|| true` 语义），一段失败不吞掉其余结果。
+ */
+export function buildDiskDiagnosisCommand(appPath: string): string {
+  const app = shellQuote(appPath || '.');
+  return [
+    "echo '== df -Pm (appPath 所在文件系统) =='",
+    `df -Pm ${app} 2>/dev/null || df -Pm /`,
+    "echo; echo '== docker system df =='",
+    "docker system df 2>/dev/null || echo 'docker 不可用'",
+    "echo; echo '== docker images 体积排行 (前 40) =='",
+    "docker images --format '{{.Size}}\\t{{.Repository}}:{{.Tag}}\\t{{.CreatedSince}}' 2>/dev/null | head -40 || true",
+    "echo; echo '== 热点目录 du -sm =='",
+    `du -sm ${app}/.llmgw-release-evidence /root/.llmgw-temp-release /root/prd-agent-release-evidence /var/log /var/lib/docker/containers 2>/dev/null | sort -rn || true`,
+    "echo; echo '== 站点目录一级明细 du -m -d1 =='",
+    `du -m -d1 ${app} 2>/dev/null | sort -rn | head -20 || true`,
+  ].join('\n');
 }
 
 export function buildScriptCheckCommand(target: ReleaseTarget, scripts: string[]): string {

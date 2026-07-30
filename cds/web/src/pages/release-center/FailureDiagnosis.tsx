@@ -9,9 +9,11 @@
  * commit 与这次失败的 commit 不同时，才敢说生产还停在原来那一版。
  */
 
-import { AlertTriangle, ChevronDown, RotateCcw, RefreshCw } from 'lucide-react';
+import { useState } from 'react';
+import { AlertTriangle, ChevronDown, HardDrive, Loader2, RotateCcw, RefreshCw } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { diagnoseReleaseFailure, type ReleaseGateCheck } from '@/lib/releaseDiagnosis';
+import { ApiError, apiRequest } from '@/lib/api';
+import { diagnoseReleaseFailure, parseDiskGuardShortfall, type ReleaseGateCheck } from '@/lib/releaseDiagnosis';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { Chip, CodeText, formatClock, formatDateTime, formatDuration } from './shared';
 import type { CenterRow, ReleaseRun } from './types';
@@ -34,6 +36,7 @@ export function FailureDiagnosis({
   onRollback,
 }: FailureDiagnosisProps): JSX.Element {
   const diagnosis = diagnoseReleaseFailure(run.logs || []);
+  const diskShortfall = parseDiskGuardShortfall(run.logs || []);
   const progress = resolveReleaseSteps(run);
   const duration = formatDuration(run.startedAt, run.finishedAt);
   // 生产是否被改动：只在「目标当前成功版本 ≠ 本次失败版本」时才敢下结论。
@@ -72,6 +75,10 @@ export function FailureDiagnosis({
           </div>
         </div>
       </section>
+
+      {diskShortfall && row ? (
+        <DiskDiagnosisCard targetId={row.target.id} shortfall={diskShortfall} />
+      ) : null}
 
       <div className="grid min-w-0 gap-4 xl:grid-cols-[minmax(0,1.3fr)_minmax(0,1fr)]">
         <div className="flex min-w-0 flex-col gap-4">
@@ -217,5 +224,70 @@ function CheckRow({ check }: { check: ReleaseGateCheck }): JSX.Element {
         )}
       </td>
     </tr>
+  );
+}
+
+/**
+ * 磁盘护栏失败专属的下一步：一键只读诊断。
+ *
+ * 背景（2026-07-30）：生产发布三连死在「requires at least 4096MB free on /」，
+ * 但 CDS 没有自由 shell，用户只能对着差额干瞪眼。这张卡把差额算清楚，
+ * 再给一个按钮在目标机上跑 df / docker system df / 热点目录 du（只读，
+ * 见后端 buildDiskDiagnosisCommand），让「清什么」有数据可依。
+ * 清理本身仍然是人的决定——这里绝不提供删除按钮。
+ */
+function DiskDiagnosisCard({ targetId, shortfall }: {
+  targetId: string;
+  shortfall: { requiredMb: number; availableMb: number; shortfallMb: number; mountPoint: string };
+}): JSX.Element {
+  const [output, setOutput] = useState('');
+  const [state, setState] = useState<'idle' | 'running' | 'error'>('idle');
+  const [error, setError] = useState('');
+
+  const runDiagnosis = async (): Promise<void> => {
+    setState('running');
+    setError('');
+    try {
+      const res = await apiRequest<{ output: string }>(
+        `/api/releases/targets/${encodeURIComponent(targetId)}/disk-diagnosis`,
+      );
+      setOutput(res.output || '（无输出）');
+      setState('idle');
+    } catch (err) {
+      setState('error');
+      setError(err instanceof ApiError ? err.message : String(err));
+    }
+  };
+
+  return (
+    <section className="rounded-lg border border-amber-500/35 bg-amber-500/10 p-4">
+      <div className="flex flex-wrap items-center justify-between gap-3">
+        <div className="min-w-0">
+          <div className="flex items-center gap-2 text-sm font-semibold">
+            <HardDrive className="h-4 w-4 shrink-0 text-amber-500" />
+            磁盘空间不足：{shortfall.mountPoint} 还差 {shortfall.shortfallMb}MB
+          </div>
+          <p className="mt-1 text-xs text-muted-foreground">
+            发布脚本要求 {shortfall.requiredMb}MB 空闲，当前只有 {shortfall.availableMb}MB。
+            先跑一次只读诊断看空间被什么吃掉，再登录目标机清理（诊断不会删除任何东西）。
+          </p>
+        </div>
+        <Button size="sm" variant="outline" onClick={() => void runDiagnosis()} disabled={state === 'running'}>
+          {state === 'running' ? <Loader2 className="animate-spin" /> : <HardDrive />}
+          磁盘诊断
+        </Button>
+      </div>
+      {state === 'error' ? (
+        <p className="mt-2 text-xs text-red-500">诊断失败：{error}</p>
+      ) : null}
+      {output ? (
+        <pre
+          className="mt-3 max-h-72 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11px] leading-5"
+          style={{ overscrollBehavior: 'contain' }}
+        >
+          {output}
+        </pre>
+      ) : null}
+    </section>
   );
 }
