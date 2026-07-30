@@ -45,6 +45,14 @@ class DailyVerdictContractTests(unittest.TestCase):
     def test_failure_state_machine_tracks_subjects_across_word_orders(self):
         cases = (
             ("CDS smoke 当前失败", {"smoke"}),
+            (
+                "CDS smoke 和验收报告归档失败",
+                {"smoke", "archive"},
+            ),
+            (
+                "失败的 CDS smoke 与验收报告归档",
+                {"smoke", "archive"},
+            ),
             ("CDS smoke 先前失败，重试后已通过", set()),
             ("先前失败的 CDS smoke 现已通过", set()),
             (
@@ -61,6 +69,11 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 失败但“已修复”并非事实", {"smoke"}),
             ("CDS smoke 失败，该问题现已修复", set()),
             ("CDS smoke 失败，服务恢复后现已通过", set()),
+            ("CDS smoke 并未失败", set()),
+            ("CDS smoke 没有失败", set()),
+            ("CDS smoke 并非不可用", set()),
+            ("没有发现 CDS smoke 失败", set()),
+            ("未检测到 CDS smoke 失败", set()),
             ("验收报告归档失败；现已修复", set()),
             ("报告无法归档", {"archive"}),
             ("无法完成报告发布", {"report-publish"}),
@@ -176,6 +189,18 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
 
+    def test_scoped_zero_defect_claim_does_not_override_nonzero_severity(self):
+        for quality in (
+            "P0: 1，P1: 0，未发现 P2/P3 产品缺陷",
+            "P0: 1，未发现其他产品缺陷",
+        ):
+            with self.subTest(quality=quality):
+                body = report_body("产品失败").replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", quality
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
     def test_hard_gate_failure_requires_hard_gate_fact(self):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("硬门禁失败")
@@ -223,6 +248,15 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_acceptance_chain_failure_accepts_unsuccessful_states(self):
+        for fact in ("验收报告归档未成功", "报告发布未完成"):
+            with self.subTest(fact=fact):
+                body = report_body("验收链路失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
     def test_coverage_uncertainty_is_not_acceptance_chain_failure(self):
         for fact in (
             "无法确认报告归档是否覆盖移动端",
@@ -243,6 +277,7 @@ class DailyVerdictContractTests(unittest.TestCase):
             "当前截图不可用于验证报告发布是否覆盖移动端",
             "现有证据不可用于确认 Slack 通知覆盖全部频道",
             "构建日志不可用于确认移动端覆盖",
+            "构建日志未成功确认移动端覆盖",
         ):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(
@@ -264,6 +299,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         for fact in (
             "构建产物不可用于发布且日志不足以确认移动端覆盖",
             "截图显示构建产物不可用于发布且日志不足以确认移动端覆盖",
+            "截图显示构建未成功且日志不足以确认移动端覆盖",
         ):
             with self.subTest(fact=fact):
                 conditional_body = report_body("覆盖不足").replace(
@@ -275,6 +311,23 @@ class DailyVerdictContractTests(unittest.TestCase):
                 self.assertTrue(
                     any("硬门禁失败事实" in error for error in conditional_errors)
                 )
+
+    def test_negated_failure_does_not_force_fail(self):
+        for fact in (
+            "CDS smoke 并未失败",
+            "CDS smoke 没有失败",
+            "CDS smoke 并非不可用",
+            "没有发现 CDS smoke 失败",
+            "未检测到 CDS smoke 失败",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
 
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
@@ -302,6 +355,25 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
+
+    def test_resolved_state_in_later_root_cause_column_closes_failure(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", "CDS smoke 先前失败"
+        ).replace(
+            "预览跟随最新 HEAD", "CDS smoke 重试后已通过"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
+    def test_parallel_failure_subjects_support_each_fail_nature(self):
+        for nature in ("硬门禁失败", "验收链路失败"):
+            with self.subTest(nature=nature):
+                body = report_body(nature).replace(
+                    "当前部署 SHA 已前进",
+                    "CDS smoke 和验收报告归档失败",
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
 
     def test_partially_resolved_status_does_not_hide_current_failure(self):
         for conclusion in (

@@ -608,7 +608,7 @@ def _strip_severity_count_claims(text):
 
 
 _FAILURE_FACT_PATTERN = re.compile(
-    r"失败|未通过|阻断|不可用|不可交付|无法完成"
+    r"失败|未通过|未成功|未完成|阻断|不可用|不可交付|无法完成"
     r"|无法(?=(?:正常)?(?:执行|送达|归档|发布|打开|访问|连接))",
     re.I,
 )
@@ -652,7 +652,7 @@ def _subject_occurrences(text):
     occurrences = []
     for name, pattern in _FAILURE_SUBJECT_PATTERNS:
         for match in pattern.finditer(text or ""):
-            occurrences.append(((match.start() + match.end()) / 2, name))
+            occurrences.append((match.start(), match.end(), name))
     return occurrences
 
 
@@ -661,9 +661,24 @@ def _nearest_event_subjects(event, occurrences):
     if not occurrences:
         return set()
     event_center = (event.start() + event.end()) / 2
-    distances = [(abs(position - event_center), name) for position, name in occurrences]
+    distances = [
+        (abs(((start + end) / 2) - event_center), name)
+        for start, end, name in occurrences
+    ]
     nearest_distance = min(distance for distance, _ in distances)
     return {name for distance, name in distances if distance == nearest_distance}
+
+
+def _event_subjects(event, occurrences, clause):
+    """Apply a shared status to explicitly coordinated subjects."""
+    if len(occurrences) > 1:
+        first_start = min(start for start, _, _ in occurrences)
+        last_end = max(end for _, end, _ in occurrences)
+        subject_span = clause[first_start:last_end]
+        event_outside_span = event.end() <= first_start or event.start() >= last_end
+        if event_outside_span and re.search(r"和|与|及|以及|、|/|均|都", subject_span):
+            return {name for _, _, name in occurrences}
+    return _nearest_event_subjects(event, occurrences)
 
 
 def _apply_subject_state(states, subjects, state):
@@ -696,6 +711,34 @@ def _closure_changes_subject(clause, event, previous_event_end):
     return bool(re.search(r"[A-Za-z0-9\u4e00-\u9fff]", scope))
 
 
+def _failure_is_negated(clause, event, previous_event_end):
+    """Ignore failure words that the surrounding clause explicitly negates."""
+    prefix = clause[max(previous_event_end, event.start() - 12) : event.start()]
+    scope = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() : event.end() + 12]
+    if re.search(
+        r"(?:并未|没有|并非|并不是|不是|不算|未曾|从未|无)"
+        r"(?:发生|出现|处于|被判定为)?\s*$",
+        prefix,
+        re.I,
+    ):
+        return True
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        scope = pattern.sub(" ", scope)
+    scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
+    if re.search(
+        r"(?:并未|并非|并不是|不是|不算|未曾|从未|无)"
+        r"(?:发生|出现|处于|被判定为)?$"
+        r"|(?:未|没有)(?:发现|观察到|检测到|证据表明)$",
+        scope,
+        re.I,
+    ):
+        return True
+    return bool(
+        re.match(r"\s*(?:并不存在|不成立|并非事实|不属实|为假)", suffix, re.I)
+    )
+
+
 def _current_failure_subjects(text):
     """Resolve subject status events in order within one root-cause cell."""
     states = {}
@@ -705,7 +748,7 @@ def _current_failure_subjects(text):
         if index % 2:
             continue
         occurrences = _subject_occurrences(clause)
-        explicit_subjects = {name for _, name in occurrences}
+        explicit_subjects = {name for _, _, name in occurrences}
         if explicit_subjects:
             for pending_state in pending_states:
                 _apply_subject_state(states, explicit_subjects, pending_state)
@@ -721,12 +764,17 @@ def _current_failure_subjects(text):
         events.sort(key=lambda item: item[0].start())
         previous_event_end = 0
         for event, state in events:
+            if state == "failed" and _failure_is_negated(
+                clause, event, previous_event_end
+            ):
+                previous_event_end = event.end()
+                continue
             if state == "resolved" and _closure_changes_subject(
                 clause, event, previous_event_end
             ):
                 previous_event_end = event.end()
                 continue
-            subjects = _nearest_event_subjects(event, occurrences)
+            subjects = _event_subjects(event, occurrences, clause)
             if not subjects:
                 subjects = context_subjects
             if subjects:
@@ -768,14 +816,29 @@ def _normalize_evidence_usage_gap_clauses(text):
         r"(?=[^。；;，,|\n]{0,20}(?:确认|验证|证明|覆盖|判断|评估))",
         re.I,
     )
+    evidence_status_pattern = re.compile(
+        rf"({evidence_subject})"
+        rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
+        r"(?:未成功|未完成)"
+        r"(?=(?:确认|验证|证明|覆盖|判断|评估))",
+        re.I,
+    )
 
     def neutralize_usage(match):
         if _failure_subjects(match.group(2)):
             return match.group(0)
         return f"{match.group(1)}{match.group(2)}不足以用于"
 
+    def neutralize_evidence_status(match):
+        if _failure_subjects(match.group(2)):
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}不足以"
+
     for index in range(0, len(clauses), 2):
         clauses[index] = usage_pattern.sub(neutralize_usage, clauses[index])
+        clauses[index] = evidence_status_pattern.sub(
+            neutralize_evidence_status, clauses[index]
+        )
     return "".join(clauses)
 
 
@@ -796,7 +859,8 @@ def _daily_fact_signals(values, body):
         or (
             not has_complete_severity_counts
             and re.search(
-                r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
+                r"(?:未发现|没有发现|未检测到|无|不存在)\s*"
+                r"(?:(?:任何|明确|可(?:稳定)?复现(?:的)?|目标日|产品)\s*){0,5}缺陷"
                 r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
                 r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
                 product_quality,
@@ -871,17 +935,19 @@ def _daily_fact_signals(values, body):
         )
     )
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
-    root_fact_cells = []
+    root_fact_rows = []
     for row in root_cause_rows:
         conclusion_cell = row[4] if len(row) > 4 else ""
         if not _has_resolved_failure_status(conclusion_cell):
-            root_fact_cells.extend(row[:4])
+            root_fact_rows.append(row[:4])
     current_failure_subjects = set()
-    for cell in root_fact_cells:
+    for row_cells in root_fact_rows:
+        normalized_row = "；".join(
+            _normalize_evidence_usage_gap_clauses(cell)
+            for cell in row_cells
+        )
         current_failure_subjects.update(
-            _current_failure_subjects(
-                _normalize_evidence_usage_gap_clauses(cell)
-            )
+            _current_failure_subjects(normalized_row)
         )
     chain_failure = bool(
         current_failure_subjects
