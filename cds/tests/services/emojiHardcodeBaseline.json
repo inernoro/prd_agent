@@ -1,0 +1,15 @@
+{
+  "src/config.ts": 2,
+  "src/executor/agent.ts": 2,
+  "src/index.ts": 7,
+  "src/load-env.ts": 2,
+  "src/routes/cluster.ts": 1,
+  "src/services/compose-parser.ts": 2,
+  "src/services/git-fetch-retry.ts": 1,
+  "src/services/github-app-client.ts": 1,
+  "src/services/operator-console.ts": 2,
+  "src/util/node-modules-volume.ts": 1,
+  "src/widget-script.ts": 8,
+  "web/src/components/GlobalUpdateBadge.tsx": 5,
+  "web/src/pages/BranchDetailPage.tsx": 5
+}
