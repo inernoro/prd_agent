@@ -44,6 +44,7 @@ interface VideoProjectStudioProps {
   onAnalyze: (input: VideoProjectInput) => Promise<void>;
   onCreateDirect: (input: VideoProjectInput) => Promise<void>;
   onOpenRun: (runId: string) => void;
+  onOpenDemo: () => void;
 }
 
 const ACCEPT_TEXT = '.md,.markdown,.txt,text/plain,text/markdown';
@@ -132,6 +133,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
   onAnalyze,
   onCreateDirect,
   onOpenRun,
+  onOpenDemo,
 }) => {
   const [creationMode, setCreationMode] = useState<'storyboard' | 'direct'>('storyboard');
   const [title, setTitle] = useState('');
@@ -265,6 +267,7 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
           <button className={activeSection === 'works' ? 'is-active' : ''} aria-current={activeSection === 'works' ? 'location' : undefined} onClick={() => scrollToSection('works')}>作品</button>
         </nav>
         <div className="video-create-nav-actions">
+          <button className="video-create-text-button video-create-demo-button" onClick={onOpenDemo}><CirclePlay size={15} /> 体验 Demo</button>
           <button className="video-create-text-button" onClick={onNewProject}><Plus size={15} /> 新项目</button>
           <button className="video-create-icon-button" onClick={() => void onSave(input)} disabled={busy} title="保存草稿"><Save size={16} /></button>
         </div>
@@ -274,9 +277,16 @@ export const VideoProjectStudio: React.FC<VideoProjectStudioProps> = ({
         <section className="video-create-stage" aria-label="创建视频项目">
           <div className="video-create-hero">
             <div className="video-create-heading">
-              <span><Sparkles size={14} /> 文学视频创作</span>
-              <h1>把故事变成镜头</h1>
+              <span><Sparkles size={14} /> 从创意到成片，全程可见、随时可改</span>
+              <h1>先看见故事，再开始生成</h1>
+              <p>粘贴一段内容，先得到可编辑分镜；确认节奏与画面后，再逐镜生成视频。</p>
             </div>
+
+            <button className="video-create-demo-callout" onClick={onOpenDemo}>
+              <span className="video-create-demo-art"><img src={STUDIO_PREVIEW_IMAGE} alt="雨夜来信体验样片" /></span>
+              <span><small>不消耗额度的交互样片</small><strong>先用 60 秒体验完整创作流程</strong><em>分镜、画面、字幕和时间线都可以操作</em></span>
+              <span>打开 Demo <ArrowUpRight size={16} /></span>
+            </button>
 
             <div className="video-create-mode" aria-label="创作方式">
               <button className={creationMode === 'storyboard' ? 'is-active' : ''} onClick={() => setCreationMode('storyboard')} aria-pressed={creationMode === 'storyboard'}>

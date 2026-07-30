@@ -4,6 +4,7 @@ using System.Net;
 using System.Net.Sockets;
 using System.Text;
 using System.Globalization;
+using MongoDB.Bson;
 using MongoDB.Driver;
 using PrdAgent.Core.Interfaces;
 using PrdAgent.Core.Models;
@@ -24,6 +25,8 @@ namespace PrdAgent.Api.Services;
 /// </summary>
 public class VideoGenRunWorker : BackgroundService
 {
+    private static readonly TimeSpan SceneClaimTimeout = TimeSpan.FromMinutes(2);
+    private static readonly TimeSpan SceneRenderLease = TimeSpan.FromMinutes(2);
     private readonly MongoDbContext _db;
     private readonly IServiceScopeFactory _scopeFactory;
     private readonly IRunEventStore _runStore;
@@ -73,17 +76,24 @@ public class VideoGenRunWorker : BackgroundService
                     continue;
                 }
 
-                // 路径 2: Editing 状态有 scene.Status==Rendering → 调 OpenRouter 单镜生成
-                var sceneRun = await FindEditingRunWithSceneRenderingAsync(stoppingToken);
-                if (sceneRun != null)
+                // 路径 2: 原子领取 Editing 状态下待提交的单镜任务，再调 OpenRouter 生成
+                if (await RecoverStaleSceneClaimAsync(stoppingToken)) continue;
+                if (await RecoverExpiredSceneRenderLeaseAsync(stoppingToken)) continue;
+
+                var sceneClaim = await ClaimEditingSceneRenderAsync(stoppingToken);
+                if (sceneClaim != null)
                 {
                     try
                     {
-                        await ProcessSceneRenderAsync(sceneRun);
+                        await ProcessSceneRenderAsync(
+                            sceneClaim.Run,
+                            sceneClaim.SceneIndex,
+                            sceneClaim.ClaimId,
+                            sceneClaim.ResumeExistingJob);
                     }
                     catch (Exception ex)
                     {
-                        _logger.LogError(ex, "VideoGen 单镜渲染异常: runId={RunId}", sceneRun.Id);
+                        _logger.LogError(ex, "VideoGen 单镜渲染异常: runId={RunId}", sceneClaim.Run.Id);
                     }
                     continue;
                 }
@@ -274,18 +284,12 @@ public class VideoGenRunWorker : BackgroundService
             return;
         }
 
-        // 把 Gateway 解析出来的实际模型 id 回写到 Run
-        if (!string.IsNullOrWhiteSpace(submitResult.ActualModel))
-        {
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set(x => x.DirectVideoModel, submitResult.ActualModel),
-                cancellationToken: CancellationToken.None);
-        }
-
         await _db.VideoGenRuns.UpdateOneAsync(
             x => x.Id == run.Id,
             Builders<VideoGenRun>.Update
+                .Set(x => x.DirectVideoModel, submitResult.ActualModel ?? run.DirectVideoModel)
+                .Set(x => x.DirectDuration, submitResult.ActualDurationSeconds ?? run.DirectDuration)
+                .Set(x => x.TotalDurationSeconds, submitResult.ActualDurationSeconds ?? run.TotalDurationSeconds)
                 .Set(x => x.DirectVideoJobId, submitResult.JobId)
                 .Set(x => x.CurrentPhase, "videogen-polling")
                 .Set(x => x.PhaseProgress, 10),
@@ -315,7 +319,8 @@ public class VideoGenRunWorker : BackgroundService
             OpenRouterVideoStatus status;
             try
             {
-                status = await client.GetStatusAsync(appCallerCode, submitResult.JobId!, CancellationToken.None);
+                status = await client.GetStatusAsync(
+                    appCallerCode, submitResult.JobId!, submitResult.ActualModel, CancellationToken.None);
             }
             catch (Exception ex)
             {
@@ -342,7 +347,8 @@ public class VideoGenRunWorker : BackgroundService
                 string finalUrl;
                 try
                 {
-                    var dl = await client.DownloadVideoBytesAsync(appCallerCode, submitResult.JobId!, 0, CancellationToken.None);
+                    var dl = await client.DownloadVideoBytesAsync(
+                        appCallerCode, submitResult.JobId!, 0, submitResult.ActualModel, CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null || dl.Bytes.Length == 0)
                     {
                         await FailRunAsync(run, "DOWNLOAD_FAILED",
@@ -350,9 +356,10 @@ public class VideoGenRunWorker : BackgroundService
                         return;
                     }
 
+                    var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
                     RegistryAssetStorage.OverrideNextScope("generated");
                     var stored = await _assetStorage.SaveAsync(
-                        dl.Bytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
+                        playbackBytes, dl.ContentType ?? "video/mp4", CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
                     finalUrl = stored.Url;
 
@@ -673,14 +680,164 @@ public class VideoGenRunWorker : BackgroundService
         return result;
     }
 
-    /// <summary>找 Editing 状态有 scene.Status==Rendering 的 run（用户点了"生成视频"）</summary>
-    private async Task<VideoGenRun?> FindEditingRunWithSceneRenderingAsync(CancellationToken ct)
+    internal sealed record ClaimedSceneRender(
+        VideoGenRun Run,
+        int SceneIndex,
+        string ClaimId,
+        bool ResumeExistingJob);
+
+    /// <summary>
+    /// 原子领取一个待提交的单镜任务。Submitting 与 SubmittingClaimed 都是旧 worker 不识别的隔离状态，
+    /// 状态迁移保证共享数据库上的多个 worker 只有一个获胜。
+    /// </summary>
+    internal async Task<ClaimedSceneRender?> ClaimEditingSceneRenderAsync(CancellationToken ct)
     {
         var fb = Builders<VideoGenRun>.Filter;
+        var sceneFilter = Builders<VideoGenScene>.Filter;
+        var now = DateTime.UtcNow;
+        var expiredLease = sceneFilter.Eq(s => s.RenderLeaseExpiresAt, null)
+                           | sceneFilter.Lte(s => s.RenderLeaseExpiresAt, now);
+        var resumableFilter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                              & fb.ElemMatch(x => x.Scenes,
+                                  sceneFilter.In(s => s.Status, [SceneItemStatus.Submitting, SceneItemStatus.Polling])
+                                  & sceneFilter.Regex(s => s.JobId, new BsonRegularExpression("^(?!claim:).+"))
+                                  & expiredLease);
+        var resumable = await _db.VideoGenRuns.Find(resumableFilter).FirstOrDefaultAsync(ct);
+        if (resumable != null)
+        {
+            var resumeIdx = resumable.Scenes.FindIndex(scene =>
+                scene.Status is SceneItemStatus.Submitting or SceneItemStatus.Polling
+                && !string.IsNullOrWhiteSpace(scene.JobId)
+                && !scene.JobId.StartsWith("claim:", StringComparison.Ordinal)
+                && (!scene.RenderLeaseExpiresAt.HasValue || scene.RenderLeaseExpiresAt <= now));
+            if (resumeIdx >= 0)
+            {
+                var jobId = resumable.Scenes[resumeIdx].JobId!;
+                var resumableStatus = resumable.Scenes[resumeIdx].Status;
+                var leaseId = $"lease:{Guid.NewGuid():N}";
+                var exactResumeFilter = fb.Eq(x => x.Id, resumable.Id)
+                                      & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                                      & fb.Eq($"Scenes.{resumeIdx}.Status", resumableStatus)
+                                      & fb.Eq($"Scenes.{resumeIdx}.JobId", jobId)
+                                      & (fb.Eq<DateTime?>($"Scenes.{resumeIdx}.RenderLeaseExpiresAt", null)
+                                         | fb.Lte<DateTime?>($"Scenes.{resumeIdx}.RenderLeaseExpiresAt", now));
+                var resumedRun = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+                    exactResumeFilter,
+                    Builders<VideoGenRun>.Update
+                        .Set($"Scenes.{resumeIdx}.Status", SceneItemStatus.PollingClaimed)
+                        .Set($"Scenes.{resumeIdx}.RenderLeaseId", leaseId)
+                        .Set($"Scenes.{resumeIdx}.RenderLeaseExpiresAt", now + SceneRenderLease),
+                    new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+                    ct);
+                if (resumedRun != null)
+                    return new ClaimedSceneRender(resumedRun, resumeIdx, leaseId, true);
+            }
+        }
+
         var filter = fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
                     & fb.ElemMatch(x => x.Scenes,
-                        Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.Rendering));
-        return await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+                        sceneFilter.Eq(s => s.Status, SceneItemStatus.Submitting)
+                        & sceneFilter.Eq(s => s.JobId, null));
+        var candidate = await _db.VideoGenRuns.Find(filter).FirstOrDefaultAsync(ct);
+        if (candidate == null) return null;
+
+        var sceneIdx = candidate.Scenes.FindIndex(scene =>
+            scene.Status == SceneItemStatus.Submitting && string.IsNullOrWhiteSpace(scene.JobId));
+        if (sceneIdx < 0) return null;
+
+        var claimId = $"claim:{Guid.NewGuid():N}";
+        var exactClaimFilter = fb.Eq(x => x.Id, candidate.Id)
+                               & fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                               & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.Submitting)
+                               & fb.Eq<string?>($"Scenes.{sceneIdx}.JobId", null);
+        var claimedRun = await _db.VideoGenRuns.FindOneAndUpdateAsync(
+            exactClaimFilter,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
+                .Set($"Scenes.{sceneIdx}.JobId", claimId)
+                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", now),
+            new FindOneAndUpdateOptions<VideoGenRun> { ReturnDocument = ReturnDocument.After },
+            ct);
+
+        return claimedRun == null ? null : new ClaimedSceneRender(claimedRun, sceneIdx, claimId, false);
+    }
+
+    internal async Task<bool> RecoverExpiredSceneRenderLeaseAsync(CancellationToken ct)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var now = DateTime.UtcNow;
+        var candidate = await _db.VideoGenRuns.Find(
+                fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                & fb.ElemMatch(x => x.Scenes,
+                    Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.PollingClaimed)
+                    & Builders<VideoGenScene>.Filter.Regex(s => s.JobId, new BsonRegularExpression(".+"))
+                    & Builders<VideoGenScene>.Filter.Lte(s => s.RenderLeaseExpiresAt, now)))
+            .FirstOrDefaultAsync(ct);
+        if (candidate == null) return false;
+
+        var sceneIdx = candidate.Scenes.FindIndex(scene =>
+            scene.Status == SceneItemStatus.PollingClaimed
+            && !string.IsNullOrWhiteSpace(scene.JobId)
+            && scene.RenderLeaseExpiresAt <= now);
+        if (sceneIdx < 0) return false;
+
+        var jobId = candidate.Scenes[sceneIdx].JobId!;
+        var leaseId = candidate.Scenes[sceneIdx].RenderLeaseId;
+        var filter = fb.Eq(x => x.Id, candidate.Id)
+                     & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
+                     & fb.Eq($"Scenes.{sceneIdx}.JobId", jobId)
+                     & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", now);
+        if (!string.IsNullOrWhiteSpace(leaseId))
+            filter &= fb.Eq($"Scenes.{sceneIdx}.RenderLeaseId", leaseId);
+
+        var recovered = await _db.VideoGenRuns.UpdateOneAsync(
+            filter,
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Polling)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
+            cancellationToken: ct);
+        return recovered.ModifiedCount == 1;
+    }
+
+    internal async Task<bool> RecoverStaleSceneClaimAsync(CancellationToken ct)
+    {
+        var fb = Builders<VideoGenRun>.Filter;
+        var threshold = DateTime.UtcNow - SceneClaimTimeout;
+        var candidate = await _db.VideoGenRuns.Find(
+                fb.Eq(x => x.Status, VideoGenRunStatus.Editing)
+                & fb.ElemMatch(x => x.Scenes,
+                    Builders<VideoGenScene>.Filter.Eq(s => s.Status, SceneItemStatus.SubmittingClaimed)
+                    & Builders<VideoGenScene>.Filter.Regex(s => s.JobId, new BsonRegularExpression("^claim:"))
+                    & Builders<VideoGenScene>.Filter.Lte(s => s.SubmissionStartedAt, threshold)))
+            .FirstOrDefaultAsync(ct);
+        if (candidate == null) return false;
+
+        var sceneIdx = candidate.Scenes.FindIndex(scene =>
+            scene.Status == SceneItemStatus.SubmittingClaimed
+            && scene.JobId?.StartsWith("claim:", StringComparison.Ordinal) == true
+            && scene.SubmissionStartedAt <= threshold);
+        if (sceneIdx < 0) return false;
+
+        var claimId = candidate.Scenes[sceneIdx].JobId!;
+        var message = "生成提交进程已中断。为避免重复扣费，系统没有自动重新提交；请确认后手动重试。";
+        var updated = await _db.VideoGenRuns.UpdateOneAsync(
+            fb.Eq(x => x.Id, candidate.Id)
+            & fb.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
+            & fb.Eq($"Scenes.{sceneIdx}.JobId", claimId)
+            & fb.Lte<DateTime?>($"Scenes.{sceneIdx}.SubmissionStartedAt", threshold),
+            Builders<VideoGenRun>.Update
+                .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", message)
+                .Set($"Scenes.{sceneIdx}.JobId", (string?)null)
+                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
+            cancellationToken: ct);
+        if (updated.ModifiedCount != 1) return false;
+        await SyncProjectSceneActivityAsync(candidate.Id);
+        await PublishEventAsync(candidate.Id, "scene.render.error", new { sceneIndex = sceneIdx, message });
+        return true;
     }
 
     /// <summary>找 Editing 状态有 scene.Status==Generating（LLM 重生成 prompt）的 run</summary>
@@ -694,10 +851,12 @@ public class VideoGenRunWorker : BackgroundService
     }
 
     /// <summary>处理单镜渲染：调 OpenRouter，下载 mp4 到 COS，写回 Scene.VideoUrl</summary>
-    private async Task ProcessSceneRenderAsync(VideoGenRun run)
+    internal async Task ProcessSceneRenderAsync(
+        VideoGenRun run,
+        int sceneIdx,
+        string claimId,
+        bool resumeExistingJob)
     {
-        var sceneIdx = run.Scenes.FindIndex(s => s.Status == SceneItemStatus.Rendering);
-        if (sceneIdx < 0) return;
         var scene = run.Scenes[sceneIdx];
 
         // 按 run.AppKey 选 caller：视觉分镜台(visual-agent)创建的 run 归属 visual-agent 视频配额/模型池与日志归因，
@@ -712,30 +871,36 @@ public class VideoGenRunWorker : BackgroundService
         using var scope = _scopeFactory.CreateScope();
         var client = scope.ServiceProvider.GetRequiredService<IOpenRouterVideoClient>();
         var ctxAccessor = scope.ServiceProvider.GetRequiredService<ILLMRequestContextAccessor>();
+        var expectedJobId = resumeExistingJob ? scene.JobId! : claimId;
 
         try
         {
-            var sceneProject = await GetRunProjectAsync(run);
             var sceneModel = scene.Model ?? run.DirectVideoModel;
-            var submitReq = new OpenRouterVideoSubmitRequest
+            var actualModel = sceneModel;
+            var actualDuration = scene.Duration ?? run.DirectDuration;
+            string submittedJobId;
+            if (!resumeExistingJob)
             {
-                AppCallerCode = appCallerCode,
-                Model = sceneModel,
-                Prompt = AppendAssetConstraints(scene.Prompt, sceneProject),
-                FirstFrameImageUrl = scene.FirstFrameUrl,
-                LastFrameImageUrl = scene.LastFrameUrl,
-                ReferenceImageUrls = await SupportsReferenceAssetsAsync(sceneModel)
-                    ? GetReferenceImageUrls(sceneProject)
-                    : [],
-                AspectRatio = scene.AspectRatio ?? run.DirectAspectRatio,
-                Resolution = scene.Resolution ?? run.DirectResolution,
-                DurationSeconds = scene.Duration ?? run.DirectDuration,
-                GenerateAudio = run.GenerateAudio,
-                UserId = run.OwnerAdminId,
-                RequestId = $"{run.Id}_scene_{sceneIdx}",
-            };
+                var sceneProject = await GetRunProjectAsync(run);
+                var submitReq = new OpenRouterVideoSubmitRequest
+                {
+                    AppCallerCode = appCallerCode,
+                    Model = sceneModel,
+                    Prompt = AppendAssetConstraints(scene.Prompt, sceneProject),
+                    FirstFrameImageUrl = scene.FirstFrameUrl,
+                    LastFrameImageUrl = scene.LastFrameUrl,
+                    ReferenceImageUrls = await SupportsReferenceAssetsAsync(sceneModel)
+                        ? GetReferenceImageUrls(sceneProject)
+                        : [],
+                    AspectRatio = scene.AspectRatio ?? run.DirectAspectRatio,
+                    Resolution = scene.Resolution ?? run.DirectResolution,
+                    DurationSeconds = scene.Duration ?? run.DirectDuration,
+                    GenerateAudio = run.GenerateAudio,
+                    UserId = run.OwnerAdminId,
+                    RequestId = $"{run.Id}_scene_{sceneIdx}",
+                };
 
-            using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
+                using var _ = ctxAccessor.BeginScope(new LlmRequestContext(
                 RequestId: $"{run.Id}_scene_{sceneIdx}",
                 GroupId: null,
                 SessionId: run.Id,
@@ -748,67 +913,106 @@ public class VideoGenRunWorker : BackgroundService
                 AppCallerCode: appCallerCode,
                 ForceFullShadowSample: run.ForceFullShadowSample));
 
-            var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
-            if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
-            {
-                await MarkSceneErrorAsync(run.Id, sceneIdx, submitResult.ErrorMessage ?? "OpenRouter 提交失败");
-                return;
-            }
+                var submitResult = await client.SubmitAsync(submitReq, CancellationToken.None);
+                if (!submitResult.Success || string.IsNullOrWhiteSpace(submitResult.JobId))
+                {
+                    await MarkSceneErrorAsync(
+                        run.Id,
+                        sceneIdx,
+                        submitResult.ErrorMessage ?? "OpenRouter 提交失败",
+                        claimId);
+                    return;
+                }
 
-            await _db.VideoGenRuns.UpdateOneAsync(
-                x => x.Id == run.Id,
-                Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId),
-                cancellationToken: CancellationToken.None);
+                var submitted = await _db.VideoGenRuns.UpdateOneAsync(
+                    Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+                    & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.SubmittingClaimed)
+                    & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", claimId),
+                    Builders<VideoGenRun>.Update
+                        .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
+                        .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
+                        .Set($"Scenes.{sceneIdx}.Model", submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel)
+                        .Set($"Scenes.{sceneIdx}.Duration", submitResult.ActualDurationSeconds ?? scene.Duration ?? run.DirectDuration)
+                        .Set($"Scenes.{sceneIdx}.RenderLeaseId", claimId)
+                        .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", DateTime.UtcNow + SceneRenderLease),
+                    cancellationToken: CancellationToken.None);
+                if (submitted.ModifiedCount != 1) return;
+                submittedJobId = submitResult.JobId;
+                actualModel = submitResult.ActualModel ?? sceneModel;
+                actualDuration = submitResult.ActualDurationSeconds ?? actualDuration;
+                expectedJobId = submittedJobId;
+            }
+            else
+            {
+                submittedJobId = scene.JobId!;
+            }
             await UpdateProjectAsync(run, VideoProjectStatus.Rendering);
 
             // 轮询
             const int pollIntervalSec = 6;
             const int maxWaitMinutes = 10;
-            var deadline = DateTime.UtcNow.AddMinutes(maxWaitMinutes);
+            var renderStartedAt = scene.SubmissionStartedAt ?? DateTime.UtcNow;
+            var deadline = renderStartedAt.AddMinutes(maxWaitMinutes);
 
             while (DateTime.UtcNow < deadline)
             {
-                await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
+                if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
-                var status = await client.GetStatusAsync(appCallerCode, submitResult.JobId!, CancellationToken.None);
+                var status = await client.GetStatusAsync(
+                    appCallerCode, submittedJobId, actualModel, CancellationToken.None);
+                if (!await RenewSceneRenderLeaseAsync(run.Id, sceneIdx, submittedJobId, claimId)) return;
 
                 if (status.IsCompleted && !string.IsNullOrWhiteSpace(status.VideoUrl))
                 {
                     // 下载到 COS
-                    var dl = await client.DownloadVideoBytesAsync(appCallerCode, submitResult.JobId!, 0, CancellationToken.None);
+                    var dl = await client.DownloadVideoBytesAsync(
+                        appCallerCode, submittedJobId, 0, actualModel, CancellationToken.None);
                     if (!dl.Success || dl.Bytes == null)
                     {
-                        await MarkSceneErrorAsync(run.Id, sceneIdx, "下载视频失败: " + dl.ErrorMessage);
+                        await MarkSceneErrorAsync(
+                            run.Id,
+                            sceneIdx,
+                            "下载视频失败: " + dl.ErrorMessage,
+                            submittedJobId,
+                            claimId);
                         return;
                     }
+                    var playbackBytes = await VideoFastStartOptimizer.OptimizeAsync(dl.Bytes, _logger);
                     RegistryAssetStorage.OverrideNextScope("generated");
-                    var stored = await _assetStorage.SaveAsync(dl.Bytes, dl.ContentType ?? "video/mp4",
+                    var stored = await _assetStorage.SaveAsync(playbackBytes, dl.ContentType ?? "video/mp4",
                         CancellationToken.None,
                         domain: AppDomainPaths.DomainVideoAgent, type: AppDomainPaths.TypeVideo);
 
                     var version = new VideoGenSceneVersion
                     {
                         VideoUrl = stored.Url,
-                        JobId = submitResult.JobId,
-                        Model = submitResult.ActualModel ?? scene.Model ?? run.DirectVideoModel,
+                        JobId = submittedJobId,
+                        Model = actualModel,
                         Prompt = scene.Prompt,
-                        Duration = scene.Duration ?? run.DirectDuration,
+                        Duration = actualDuration,
                         FirstFrameUrl = scene.FirstFrameUrl,
                         LastFrameUrl = scene.LastFrameUrl,
                         Cost = status.Cost,
                     };
 
-                    await _db.VideoGenRuns.UpdateOneAsync(
-                        x => x.Id == run.Id,
+                    var completed = await _db.VideoGenRuns.UpdateOneAsync(
+                        Builders<VideoGenRun>.Filter.Eq(x => x.Id, run.Id)
+                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
+                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", submittedJobId)
+                        & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", claimId),
                         Builders<VideoGenRun>.Update
                             .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Done)
                             .Set($"Scenes.{sceneIdx}.VideoUrl", stored.Url)
                             .Set($"Scenes.{sceneIdx}.ActiveVersionId", version.Id)
-                            .Set($"Scenes.{sceneIdx}.JobId", submitResult.JobId)
+                            .Set($"Scenes.{sceneIdx}.JobId", submittedJobId)
                             .Set($"Scenes.{sceneIdx}.Model", version.Model)
                             .Set($"Scenes.{sceneIdx}.Cost", status.Cost)
+                            .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
+                            .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
+                            .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null)
                             .Push($"Scenes.{sceneIdx}.Versions", version),
                         cancellationToken: CancellationToken.None);
+                    if (completed.ModifiedCount != 1) return;
 
                     await SyncProjectSceneActivityAsync(run.Id);
 
@@ -823,18 +1027,45 @@ public class VideoGenRunWorker : BackgroundService
                 if (status.IsFailed)
                 {
                     await MarkSceneErrorAsync(run.Id, sceneIdx,
-                        status.ErrorMessage ?? $"OpenRouter 状态 = {status.Status}");
+                        status.ErrorMessage ?? $"OpenRouter 状态 = {status.Status}",
+                        submittedJobId,
+                        claimId);
                     return;
                 }
+
+                await Task.Delay(TimeSpan.FromSeconds(pollIntervalSec), CancellationToken.None);
             }
 
-            await MarkSceneErrorAsync(run.Id, sceneIdx, $"单镜生成超过 {maxWaitMinutes} 分钟未完成");
+            await MarkSceneErrorAsync(
+                run.Id,
+                sceneIdx,
+                $"单镜生成超过 {maxWaitMinutes} 分钟未完成",
+                submittedJobId,
+                claimId);
         }
         catch (Exception ex)
         {
             _logger.LogError(ex, "VideoGen 单镜渲染异常: runId={RunId}, scene={Idx}", run.Id, sceneIdx);
-            await MarkSceneErrorAsync(run.Id, sceneIdx, ex.Message);
+            await MarkSceneErrorAsync(run.Id, sceneIdx, ex.Message, expectedJobId, claimId);
         }
+    }
+
+    private async Task<bool> RenewSceneRenderLeaseAsync(
+        string runId,
+        int sceneIdx,
+        string jobId,
+        string leaseId)
+    {
+        var renewed = await _db.VideoGenRuns.UpdateOneAsync(
+            Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.Status", SceneItemStatus.PollingClaimed)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", jobId)
+            & Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", leaseId),
+            Builders<VideoGenRun>.Update.Set(
+                $"Scenes.{sceneIdx}.RenderLeaseExpiresAt",
+                DateTime.UtcNow + SceneRenderLease),
+            cancellationToken: CancellationToken.None);
+        return renewed.ModifiedCount == 1;
     }
 
     /// <summary>处理单镜重生成 prompt（用户点"重新设计这个分镜"）</summary>
@@ -910,15 +1141,33 @@ public class VideoGenRunWorker : BackgroundService
         await PublishEventAsync(run.Id, "scene.prompt.regenerated", new { sceneIndex = sceneIdx, prompt = newPrompt });
     }
 
-    private async Task MarkSceneErrorAsync(string runId, int sceneIdx, string errorMessage)
+    private async Task MarkSceneErrorAsync(
+        string runId,
+        int sceneIdx,
+        string errorMessage,
+        string? expectedJobId = null,
+        string? expectedLeaseId = null)
     {
         var trimmed = errorMessage.Length > 500 ? errorMessage[..500] + "…" : errorMessage;
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
+        var filter = Builders<VideoGenRun>.Filter.Eq(x => x.Id, runId);
+        if (!string.IsNullOrWhiteSpace(expectedJobId))
+        {
+            filter &= Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.JobId", expectedJobId);
+        }
+        if (!string.IsNullOrWhiteSpace(expectedLeaseId))
+        {
+            filter &= Builders<VideoGenRun>.Filter.Eq($"Scenes.{sceneIdx}.RenderLeaseId", expectedLeaseId);
+        }
+        var updated = await _db.VideoGenRuns.UpdateOneAsync(
+            filter,
             Builders<VideoGenRun>.Update
                 .Set($"Scenes.{sceneIdx}.Status", SceneItemStatus.Error)
-                .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed),
+                .Set($"Scenes.{sceneIdx}.ErrorMessage", trimmed)
+                .Set($"Scenes.{sceneIdx}.SubmissionStartedAt", (DateTime?)null)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseId", (string?)null)
+                .Set($"Scenes.{sceneIdx}.RenderLeaseExpiresAt", (DateTime?)null),
             cancellationToken: CancellationToken.None);
+        if (updated.ModifiedCount != 1) return;
         await SyncProjectSceneActivityAsync(runId);
         await PublishEventAsync(runId, "scene.render.error",
             new { sceneIndex = sceneIdx, message = trimmed });
@@ -927,7 +1176,7 @@ public class VideoGenRunWorker : BackgroundService
     internal static string ResolveProjectStatusForScenes(IReadOnlyCollection<VideoGenScene> scenes)
     {
         var hasActiveScene = scenes.Any(scene =>
-            scene.Status is SceneItemStatus.Rendering or SceneItemStatus.Generating);
+            scene.Status is SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering or SceneItemStatus.Generating);
         return hasActiveScene ? VideoProjectStatus.Rendering : VideoProjectStatus.Editing;
     }
 

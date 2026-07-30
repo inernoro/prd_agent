@@ -4,16 +4,19 @@ import {
   AlertCircle,
   ArrowLeft,
   Check,
+  Clapperboard,
   Columns2,
   ChevronRight,
   Clock3,
   CircleStop,
   Download,
+  FileText,
   Film,
   GripVertical,
   History,
   Image as ImageIcon,
   Layers3,
+  ListChecks,
   Maximize2,
   PanelRightOpen,
   Pause,
@@ -63,6 +66,8 @@ export interface VideoStoryboardEditorProps {
 }
 
 type PreviewMode = 'scene' | 'compare' | 'export';
+type PlayerStatus = 'idle' | 'loading' | 'ready' | 'waiting' | 'playing' | 'error';
+export type StoryboardExperienceState = 'progress' | 'empty-error' | 'editor';
 
 const DURATIONS = [5, 8, 10, 12, 15];
 const ASPECT_RATIOS = ['16:9', '9:16', '1:1', '4:3', '3:4', '21:9', '9:21'];
@@ -71,6 +76,10 @@ const RESOLUTIONS = ['480p', '720p', '1080p'];
 const SCENE_STATUS_REGISTRY: Record<SceneItemStatus, { label: string; color: string }> = {
   Draft: { label: '待生成', color: 'var(--text-muted)' },
   Generating: { label: '改写中', color: '#a78bfa' },
+  Submitting: { label: '生成中', color: '#38bdf8' },
+  SubmittingClaimed: { label: '正在提交', color: '#38bdf8' },
+  Polling: { label: '等待接管', color: '#38bdf8' },
+  PollingClaimed: { label: '生成中', color: '#38bdf8' },
   Rendering: { label: '生成中', color: '#38bdf8' },
   Done: { label: '已就绪', color: '#34d399' },
   Error: { label: '需重试', color: '#fb7185' },
@@ -89,6 +98,76 @@ const PHASE_LABELS: Record<string, string> = {
   completed: '成片已就绪',
 };
 
+export const getStoryboardExperienceState = (
+  run: Pick<VideoGenRun, 'status' | 'currentPhase' | 'scenes'>,
+): StoryboardExperienceState => {
+  if (run.scenes.length > 0) return 'editor';
+  if (['Failed', 'Cancelled', 'Editing', 'Completed'].includes(run.status)) return 'empty-error';
+  if (
+    ['Queued', 'Scripting', 'Rendering'].includes(run.status)
+    || /queue|script|analy|prepare/i.test(run.currentPhase)
+  ) return 'progress';
+  return 'empty-error';
+};
+
+export const formatVideoSceneError = (message?: string): string => {
+  if (!message?.trim()) return '生成服务没有返回失败原因，请重新生成；若再次失败，请检查模型配置。';
+  const durationMatch = message.match(/Duration\s+(\d+)s\s+is not supported.*Supported durations:\s*([\d,\s]+)s/i);
+  if (durationMatch) {
+    return `当前模型不支持 ${durationMatch[1]} 秒视频，仅支持 ${durationMatch[2].trim()} 秒。系统将在重试时自动采用最接近的可用时长。`;
+  }
+  return message.trim();
+};
+
+export const shouldKeepVideoRunPolling = (
+  run: Pick<VideoGenRun, 'status' | 'scenes'>,
+  now: number,
+  keepPollingUntil: number,
+): boolean => {
+  const hasTransientScene = run.scenes.some(
+    (scene) => ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(scene.status),
+  );
+  const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(run.status);
+  return hasTransientScene || hasTransientRun || now < keepPollingUntil;
+};
+
+export const markVideoSceneSubmitting = (run: VideoGenRun, sceneIndex: number): VideoGenRun => ({
+  ...run,
+  scenes: run.scenes.map((scene, index) => index === sceneIndex
+    ? { ...scene, status: 'Submitting', errorMessage: undefined }
+    : scene),
+});
+
+export const playVideoSafely = async (
+  player: Pick<HTMLMediaElement, 'play'>,
+  onFailure?: (message: string) => void,
+): Promise<boolean> => {
+  try {
+    await player.play();
+    return true;
+  } catch (error) {
+    if (error instanceof Error && error.name === 'AbortError') return false;
+    onFailure?.(error instanceof Error ? error.message : '浏览器未能开始播放视频');
+    return false;
+  }
+};
+
+export const calculateVideoRunSpentCost = (scenes: VideoGenRun['scenes']): number => scenes.reduce((sum, scene) => {
+  const recordedVersionCosts = scene.versions
+    .map((version) => version.cost)
+    .filter((cost): cost is number => typeof cost === 'number' && Number.isFinite(cost));
+  return sum + (recordedVersionCosts.length > 0
+    ? recordedVersionCosts.reduce((versionSum, cost) => versionSum + cost, 0)
+    : (scene.cost ?? 0));
+}, 0);
+
+const formatElapsedDuration = (seconds: number) => {
+  const safeSeconds = Math.max(0, Math.floor(seconds));
+  const minutes = Math.floor(safeSeconds / 60);
+  const remainder = safeSeconds % 60;
+  return minutes > 0 ? `${minutes} 分 ${remainder} 秒` : `${remainder} 秒`;
+};
+
 export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ runId, onBack }) => {
   const [run, setRun] = useState<VideoGenRun | null>(null);
   const [models, setModels] = useState<VideoModelOption[]>([]);
@@ -105,10 +184,21 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const [mutating, setMutating] = useState<string | null>(null);
   const [isPlaying, setIsPlaying] = useState(false);
   const [playhead, setPlayhead] = useState(0);
+  const [playerStatus, setPlayerStatus] = useState<PlayerStatus>('idle');
+  const [playerError, setPlayerError] = useState<string | null>(null);
+  const [previewVersionId, setPreviewVersionId] = useState<string | null>(null);
+  const [lastServerSignalAt, setLastServerSignalAt] = useState<number | null>(null);
+  const [liveTransport, setLiveTransport] = useState<'connecting' | 'streaming' | 'polling'>('connecting');
   const pollRef = useRef<ReturnType<typeof setInterval> | null>(null);
+  const keepPollingUntilRef = useRef(0);
   const loadRunRef = useRef<(() => Promise<void>) | null>(null);
   const videoRef = useRef<HTMLVideoElement | null>(null);
   const autoSelectedExportRef = useRef(false);
+
+  const markServerSignal = useCallback((transport?: 'streaming' | 'polling') => {
+    setLastServerSignalAt(Date.now());
+    if (transport) setLiveTransport(transport);
+  }, []);
 
   const stopPolling = useCallback(() => {
     if (!pollRef.current) return;
@@ -118,7 +208,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   const startPolling = useCallback(() => {
     if (pollRef.current) return;
-    pollRef.current = setInterval(() => { void loadRunRef.current?.(); }, 2500);
+    pollRef.current = setInterval(() => { void loadRunRef.current?.(); }, 2000);
   }, []);
 
   const loadRun = useCallback(async () => {
@@ -130,13 +220,11 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
       }
 
       setRun(response.data);
+      markServerSignal();
       setError(null);
       setSelectedSceneIndex((current) => Math.min(current, Math.max(response.data.scenes.length - 1, 0)));
-      const hasTransientScene = response.data.scenes.some(
-        (scene) => scene.status === 'Generating' || scene.status === 'Rendering',
-      );
-      const hasTransientRun = ['Queued', 'Scripting', 'Rendering'].includes(response.data.status);
-      if (!hasTransientScene && !hasTransientRun) stopPolling();
+      if (shouldKeepVideoRunPolling(response.data, Date.now(), keepPollingUntilRef.current)) startPolling();
+      else stopPolling();
 
       if (response.data.status === 'Completed' && response.data.videoAssetUrl) {
         if (!autoSelectedExportRef.current) {
@@ -149,7 +237,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     } catch (requestError) {
       setError(requestError instanceof Error ? requestError.message : '网络错误');
     }
-  }, [runId, stopPolling]);
+  }, [markServerSignal, runId, startPolling, stopPolling]);
 
   useEffect(() => { loadRunRef.current = loadRun; }, [loadRun]);
   useEffect(() => {
@@ -172,18 +260,25 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   useEffect(() => {
     const controller = new AbortController();
+    setLiveTransport('connecting');
     void connectSse({
       url: getVideoGenStreamUrl(runId),
       signal: controller.signal,
-      onEvent: () => { void loadRunRef.current?.(); },
+      onEvent: (event) => {
+        markServerSignal('streaming');
+        if (event.event !== 'heartbeat') void loadRunRef.current?.();
+      },
     }).then((result) => {
-      if (!result.success && !controller.signal.aborted) startPolling();
+      if (!result.success && !controller.signal.aborted) {
+        setLiveTransport('polling');
+        startPolling();
+      }
     });
     return () => controller.abort();
-  }, [runId, startPolling]);
+  }, [markServerSignal, runId, startPolling]);
 
   const selectedScene = run?.scenes[selectedSceneIndex] ?? null;
-  const selectedSceneWorking = selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating';
+  const selectedSceneWorking = Boolean(selectedScene && ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(selectedScene.status));
   const selectedSceneEditable = Boolean(selectedScene)
     && (run?.status === 'Editing' || run?.status === 'Completed')
     && !selectedSceneWorking;
@@ -195,29 +290,56 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     run?.scenes.length && run.scenes.every((scene) => scene.status === 'Done' && scene.videoUrl),
   );
   const totalCost = useMemo(
-    () => run?.scenes.reduce((sum, scene) => sum + (scene.cost ?? 0), 0) ?? 0,
+    () => calculateVideoRunSpentCost(run?.scenes ?? []),
     [run],
   );
   const totalDuration = useMemo(
     () => run?.scenes.reduce((sum, scene) => sum + (scene.duration ?? run.directDuration ?? 5), 0) ?? 0,
     [run],
   );
+  const previewSceneUrl = selectedScene?.versions.find((version) => version.id === previewVersionId)?.videoUrl
+    ?? selectedScene?.videoUrl;
   const previewUrl = previewMode === 'export'
     ? run?.videoAssetUrl
-    : selectedScene?.videoUrl;
+    : previewSceneUrl;
   const compareVersions = selectedScene?.versions.filter((version) => compareVersionIds.includes(version.id)) ?? [];
 
-  useEffect(() => { setCompareVersionIds([]); }, [selectedSceneIndex]);
+  useEffect(() => {
+    setCompareVersionIds([]);
+    setPreviewVersionId(null);
+  }, [selectedSceneIndex]);
+  useEffect(() => {
+    setIsPlaying(false);
+    setPlayhead(0);
+    setPlayerError(null);
+    setPlayerStatus(previewUrl ? 'loading' : 'idle');
+  }, [previewUrl]);
   useEffect(() => { setPromptDraft(selectedScene?.prompt ?? ''); }, [selectedScene?.prompt, selectedSceneIndex]);
   useEffect(() => { setTopicDraft(selectedScene?.topic ?? ''); }, [selectedScene?.topic, selectedSceneIndex]);
 
-  const mutate = useCallback(async (key: string, action: () => Promise<boolean>) => {
+  const mutate = useCallback(async (
+    key: string,
+    action: () => Promise<boolean>,
+    options?: { keepPollingMs?: number; optimisticSceneIndex?: number },
+  ) => {
     if (mutating) return;
     setMutating(key);
+    if (options?.keepPollingMs) {
+      keepPollingUntilRef.current = Date.now() + options.keepPollingMs;
+      startPolling();
+    }
+    if (options?.optimisticSceneIndex != null) {
+      setRun((current) => current
+        ? markVideoSceneSubmitting(current, options.optimisticSceneIndex!)
+        : current);
+    }
     try {
       const success = await action();
       if (success) {
         startPolling();
+        await loadRun();
+      } else if (options?.optimisticSceneIndex != null) {
+        keepPollingUntilRef.current = 0;
         await loadRun();
       }
     } finally {
@@ -256,7 +378,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     }
     toast.success('镜头已进入生成队列');
     return true;
-  }), [mutate, promptDraft, runId, selectedScene, selectedSceneIndex, updateScene]);
+  }, { keepPollingMs: 45_000, optimisticSceneIndex: selectedSceneIndex }), [mutate, promptDraft, runId, selectedScene, selectedSceneIndex, updateScene]);
 
   const regenerateScene = useCallback(() => mutate('regenerate-scene', async () => {
     const response = await regenerateVideoSceneReal(runId, selectedSceneIndex);
@@ -276,7 +398,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     setBatchDialogOpen(false);
     toast.success(`已提交 ${response.data?.count ?? 0} 个镜头`);
     return true;
-  }), [mutate, runId]);
+  }, { keepPollingMs: 45_000 }), [mutate, runId]);
 
   const exportRun = useCallback(() => mutate('export', async () => {
     const response = await exportVideoGenRunReal(runId);
@@ -287,7 +409,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
     setPreviewMode('export');
     toast.success('完整视频已进入导出队列');
     return true;
-  }), [mutate, runId]);
+  }, { keepPollingMs: 45_000 }), [mutate, runId]);
 
   const cancelRun = useCallback(() => mutate('cancel-run', async () => {
     const response = await cancelVideoGenRunReal(runId);
@@ -336,9 +458,23 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
   const togglePlayback = useCallback(() => {
     const player = videoRef.current;
     if (!player || !previewUrl) return;
-    if (player.paused) void player.play();
-    else player.pause();
+    if (player.paused) {
+      setPlayerStatus('loading');
+      void playVideoSafely(player, (message) => {
+        setIsPlaying(false);
+        setPlayerStatus('error');
+        setPlayerError(message);
+      });
+    } else player.pause();
   }, [previewUrl]);
+
+  const retryPlayback = useCallback(() => {
+    const player = videoRef.current;
+    if (!player) return;
+    setPlayerError(null);
+    setPlayerStatus('loading');
+    player.load();
+  }, []);
 
   if (error) {
     return (
@@ -356,14 +492,37 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
   if (!run) return <MapSectionLoader text="正在打开视频项目" />;
 
-  if (run.status === 'Queued' || run.status === 'Scripting') {
+  const experienceState = getStoryboardExperienceState(run);
+
+  if (experienceState === 'progress') {
     return (
-      <div className="video-console-state">
-        <MapSpinner size={34} />
-        <strong>{PHASE_LABELS[run.currentPhase] || '正在创建视频项目'}</strong>
-        <span>文学稿正在转化为可编辑镜头，生成完成后会自动进入制作台。</span>
-        <ProgressBar progress={run.phaseProgress} />
-        {onBack && <Button size="sm" variant="ghost" onClick={onBack}>返回列表</Button>}
+      <StoryboardProgressView
+        run={run}
+        source={project?.sourceMarkdown || run.articleMarkdown || run.directPrompt}
+        lastServerSignalAt={lastServerSignalAt}
+        liveTransport={liveTransport}
+        onBack={onBack}
+        onCancel={cancelRun}
+        cancelling={mutating === 'cancel-run'}
+      />
+    );
+  }
+
+  if (experienceState === 'empty-error') {
+    return (
+      <div className="video-storyboard-empty" role="alert">
+        <div className="video-storyboard-empty__card">
+          <span><AlertCircle size={24} /></span>
+          <div>
+            <small>本次创作没有进入分镜阶段</small>
+            <h2>没有生成可编辑镜头</h2>
+            <p>{run.errorMessage || '系统没有从原稿中得到有效分镜。原稿仍已保存在项目中，可以返回后调整内容再试。'}</p>
+          </div>
+          <div className="video-storyboard-empty__actions">
+            {onBack && <Button variant="primary" onClick={onBack}>返回并调整原稿</Button>}
+            <Button variant="secondary" onClick={() => void loadRun()}>重新检查任务</Button>
+          </div>
+        </div>
       </div>
     );
   }
@@ -379,7 +538,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
           )}
           <div className="min-w-0">
             <div className="video-workbench__title">{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</div>
-            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · ${totalCost.toFixed(3)}</div>
+            <div className="video-workbench__meta">{run.scenes.length} 个镜头 · {totalDuration} 秒 · 已记录成本 ${totalCost.toFixed(3)}</div>
           </div>
         </div>
 
@@ -435,6 +594,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 active={index === selectedSceneIndex && previewMode === 'scene'}
                 onClick={() => {
                   setSelectedSceneIndex(index);
+                  setPreviewVersionId(null);
                   setPreviewMode('scene');
                 }}
               />
@@ -483,22 +643,58 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 </div>
               )
             ) : previewUrl ? (
-              <video
-                key={previewUrl}
-                ref={videoRef}
-                src={previewUrl}
-                aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
-                controls={false}
-                playsInline
-                onPlay={() => setIsPlaying(true)}
-                onPause={() => setIsPlaying(false)}
-                onTimeUpdate={(event) => setPlayhead(event.currentTarget.currentTime)}
-                onEnded={() => setIsPlaying(false)}
-              />
+              <>
+                <video
+                  ref={videoRef}
+                  src={previewUrl}
+                  aria-label={previewMode === 'export' ? '完整成片预览' : `${selectedScene?.topic || '当前镜头'}预览`}
+                  controls
+                  playsInline
+                  preload="metadata"
+                  onLoadStart={() => setPlayerStatus('loading')}
+                  onLoadedMetadata={() => setPlayerStatus('ready')}
+                  onCanPlay={() => setPlayerStatus((status) => status === 'playing' ? status : 'ready')}
+                  onPlay={() => { setIsPlaying(true); setPlayerStatus('playing'); }}
+                  onPlaying={() => setPlayerStatus('playing')}
+                  onWaiting={() => setPlayerStatus('waiting')}
+                  onPause={() => { setIsPlaying(false); setPlayerStatus('ready'); }}
+                  onTimeUpdate={(event) => setPlayhead(event.currentTarget.currentTime)}
+                  onEnded={() => { setIsPlaying(false); setPlayerStatus('ready'); }}
+                  onError={() => {
+                    setIsPlaying(false);
+                    setPlayerStatus('error');
+                    setPlayerError('视频加载失败。可以重试，或在新窗口打开原始视频检查。');
+                  }}
+                />
+                {(playerStatus === 'loading' || playerStatus === 'waiting') && (
+                  <div className="video-console__player-feedback" aria-live="polite">
+                    <MapSpinner size={22} />
+                    <strong>{playerStatus === 'waiting' ? '网络缓冲中' : '正在准备视频预览'}</strong>
+                    <span>播放器保持可操作，加载完成后可直接点击播放。</span>
+                  </div>
+                )}
+                {playerStatus === 'error' && (
+                  <div className="video-console__player-feedback is-error" role="alert">
+                    <AlertCircle size={24} />
+                    <strong>暂时无法播放这个视频</strong>
+                    <span>{playerError}</span>
+                    <div>
+                      <button onClick={retryPlayback}>重试加载</button>
+                      <a href={previewUrl} target="_blank" rel="noreferrer">打开原始视频</a>
+                    </div>
+                  </div>
+                )}
+              </>
             ) : run.status === 'Rendering' && previewMode === 'export' ? (
               <ViewerProgress run={run} />
-            ) : selectedScene?.status === 'Rendering' || selectedScene?.status === 'Generating' ? (
+            ) : selectedSceneWorking && selectedScene ? (
               <ViewerProgress run={run} label={SCENE_STATUS_REGISTRY[selectedScene.status].label} />
+            ) : selectedScene?.status === 'Error' ? (
+              <div className="video-console__viewer-error" role="alert">
+                <AlertCircle size={32} />
+                <strong>这个镜头没有开始生成</strong>
+                <span>{formatVideoSceneError(selectedScene.errorMessage)}</span>
+              </div>
             ) : (
               <div className="video-console__viewer-empty">
                 <WandSparkles size={32} />
@@ -520,6 +716,15 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
 
           {selectedScene && (
             <section className="video-workbench__composer" aria-label="镜头生成">
+              {selectedScene.status === 'Error' && (
+                <div className="video-workbench__scene-error" role="alert">
+                  <AlertCircle size={16} />
+                  <div>
+                    <strong>上次生成失败，描述和参数均已保留</strong>
+                    <span>{formatVideoSceneError(selectedScene.errorMessage)}</span>
+                  </div>
+                </div>
+              )}
               <input
                 className="video-workbench__topic-input"
                 value={topicDraft}
@@ -553,7 +758,7 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
                 </div>
                 <Button variant="primary" onClick={renderScene} disabled={!selectedSceneEditable || Boolean(mutating) || !promptDraft.trim()}>
                   {mutating === 'render-scene' || selectedSceneWorking ? <MapSpinner size={14} /> : <Sparkles size={14} />}
-                  {selectedScene.videoUrl ? '生成新版本' : '生成这个镜头'}
+                  {mutating === 'render-scene' ? '正在提交' : selectedSceneWorking ? '生成中' : selectedScene.videoUrl ? '生成新版本' : '生成这个镜头'}
                 </Button>
               </div>
             </section>
@@ -565,6 +770,11 @@ export const VideoStoryboardEditor: React.FC<VideoStoryboardEditorProps> = ({ ru
               <VersionLibrary
                 scene={selectedScene}
                 mutating={mutating === 'activate-version'}
+                previewingId={previewVersionId ?? selectedScene?.activeVersionId ?? null}
+                onPreview={(version) => {
+                  setPreviewVersionId(version.id);
+                  setPreviewMode('scene');
+                }}
                 onActivate={activateVersion}
                 selectedIds={compareVersionIds}
                 onCompare={toggleCompareVersion}
@@ -625,7 +835,7 @@ const SceneLibraryItem: React.FC<{
   return (
     <button className={`video-console__shot ${active ? 'is-active' : ''}`} onClick={onClick}>
       <div className="video-console__shot-thumb">
-        {scene.videoUrl ? <video src={scene.videoUrl} muted preload="metadata" /> : <Film size={16} />}
+        <Film size={16} />
         <span>{String(index + 1).padStart(2, '0')}</span>
       </div>
       <div className="video-console__shot-copy">
@@ -648,10 +858,12 @@ const EmptyLibrary = () => (
 const VersionLibrary: React.FC<{
   scene: VideoGenScene | null;
   mutating: boolean;
+  previewingId: string | null;
+  onPreview: (version: VideoGenSceneVersion) => void;
   onActivate: (version: VideoGenSceneVersion) => void;
   selectedIds: string[];
   onCompare: (version: VideoGenSceneVersion) => void;
-}> = ({ scene, mutating, onActivate, selectedIds, onCompare }) => {
+}> = ({ scene, mutating, previewingId, onPreview, onActivate, selectedIds, onCompare }) => {
   const versions = scene?.versions ?? [];
   if (versions.length === 0) {
     return (
@@ -665,17 +877,20 @@ const VersionLibrary: React.FC<{
   return <>{[...versions].reverse().map((version, index) => (
     <div
       key={version.id}
-      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''} ${selectedIds.includes(version.id) ? 'is-compare' : ''}`}
+      className={`video-console__version ${scene?.activeVersionId === version.id ? 'is-active' : ''} ${previewingId === version.id ? 'is-previewing' : ''} ${selectedIds.includes(version.id) ? 'is-compare' : ''}`}
     >
-      <button className="video-console__version-select" onClick={() => onCompare(version)} disabled={mutating} title="加入版本比较">
-        <video src={version.videoUrl} muted preload="metadata" />
+      <button className="video-console__version-select" onClick={() => onPreview(version)} disabled={mutating} title="预览这个版本">
+        <span className="video-console__version-thumb"><Play size={18} /></span>
         <div>
           <strong>版本 {versions.length - index}</strong>
           <span>{version.model || '模型池自动选择'}</span>
           <span>{new Date(version.createdAt).toLocaleString('zh-CN')}</span>
         </div>
       </button>
-      <button className="video-console__version-use" onClick={() => onActivate(version)} disabled={mutating} title="采用这个版本">
+      <button className="video-console__version-use" onClick={() => onCompare(version)} disabled={mutating} title="加入版本比较">
+        {selectedIds.includes(version.id) ? <Check size={14} /> : <Columns2 size={13} />}
+      </button>
+      <button className="video-console__version-activate" onClick={() => onActivate(version)} disabled={mutating || scene?.activeVersionId === version.id} title="采用这个版本">
         {scene?.activeVersionId === version.id ? <Check size={14} /> : <Film size={13} />}
       </button>
     </div>
@@ -700,7 +915,7 @@ const Inspector: React.FC<{
     return <aside className="video-console__inspector"><EmptyLibrary /></aside>;
   }
 
-  const working = scene.status === 'Rendering' || scene.status === 'Generating';
+  const working = ['Generating', 'Submitting', 'SubmittingClaimed', 'Polling', 'PollingClaimed', 'Rendering'].includes(scene.status);
   const editable = (run.status === 'Editing' || run.status === 'Completed') && !working;
   const selectedModelId = scene.model ?? run.directVideoModel ?? '';
   const selectedModel = models.find((model) => model.id === selectedModelId);
@@ -829,7 +1044,7 @@ const Timeline: React.FC<{
                 title="拖动排序，或按 Alt 加左右方向键移动"
               >
                 <GripVertical className="video-console__clip-grip" size={12} />
-                {scene.videoUrl ? <video src={scene.videoUrl} muted preload="metadata" /> : <Film size={14} />}
+                <Film size={14} />
                 <div><strong>{scene.topic || `镜头 ${index + 1}`}</strong><span>{clipDuration}s</span></div>
               </button>
             );
@@ -853,6 +1068,99 @@ const ViewerProgress: React.FC<{ run: VideoGenRun; label?: string }> = ({ run, l
     <span>任务在服务器持续执行，离开页面不会中断。</span>
   </div>
 );
+
+const StoryboardProgressView: React.FC<{
+  run: VideoGenRun;
+  source?: string;
+  lastServerSignalAt: number | null;
+  liveTransport: 'connecting' | 'streaming' | 'polling';
+  onBack?: () => void;
+  onCancel: () => void;
+  cancelling: boolean;
+}> = ({ run, source, lastServerSignalAt, liveTransport, onBack, onCancel, cancelling }) => {
+  const [now, setNow] = useState(() => Date.now());
+  useEffect(() => {
+    const timer = window.setInterval(() => setNow(Date.now()), 1000);
+    return () => window.clearInterval(timer);
+  }, []);
+  const progress = Math.max(0, Math.min(run.phaseProgress ?? 0, 96));
+  const sourcePreview = source?.trim() || '原稿已保存，正在准备分析内容。';
+  const activeStep = progress >= 70 ? 2 : progress >= 25 ? 1 : 0;
+  const startedAt = new Date(run.startedAt || run.createdAt).getTime();
+  const elapsedSeconds = Number.isFinite(startedAt) ? Math.max(0, (now - startedAt) / 1000) : 0;
+  const signalAgeSeconds = lastServerSignalAt == null ? null : Math.max(0, Math.floor((now - lastServerSignalAt) / 1000));
+  const serverHealthy = signalAgeSeconds != null && signalAgeSeconds < 6;
+  const liveLabel = liveTransport === 'streaming' ? '实时通道' : liveTransport === 'polling' ? '备用通道' : '正在连接';
+  const waitGuidance = elapsedSeconds >= 120
+    ? '模型响应时间明显偏长。可以停止任务后重试，原稿不会丢失。'
+    : elapsedSeconds >= 45
+      ? '模型仍在分析内容，服务器持续响应中。你可以离开页面，任务不会中断。'
+      : '正在等待模型返回故事结构，页面会持续报告服务器状态。';
+  const steps = [
+    ['理解原稿', '识别人物、场景和情绪转折'],
+    ['规划镜头', '把故事拆成可编辑的镜头节拍'],
+    ['生成分镜', '写入画面描述与默认生成参数'],
+    ['进入制作台', '所有镜头会在同一页继续编辑'],
+  ];
+
+  return (
+    <div className="video-storyboard-progress" aria-live="polite" data-testid="video-storyboard-progress">
+      <header>
+        <div>
+          {onBack && <button onClick={onBack} aria-label="返回作品列表"><ArrowLeft size={18} /></button>}
+          <span><Clapperboard size={18} /></span>
+          <div><strong>{resolveVideoTitle(run.articleTitle, run.createdAt, 56)}</strong><small>创作任务正在后台持续执行</small></div>
+        </div>
+        <Button size="sm" variant="secondary" onClick={onCancel} disabled={cancelling}>
+          {cancelling ? <MapSpinner size={14} /> : <CircleStop size={14} />} 停止任务
+        </Button>
+      </header>
+
+      <main>
+        <section className="video-storyboard-progress__summary">
+          <span className="video-storyboard-progress__badge"><Sparkles size={14} /> 正在把内容变成可编辑分镜</span>
+          <h1>{PHASE_LABELS[run.currentPhase] || '正在分析故事结构'}</h1>
+          <p>不需要守着空白页面。你可以先检查原稿和创作流程，也可以离开页面，任务不会中断。</p>
+          <div className={`video-storyboard-progress__live ${serverHealthy ? 'is-live' : 'is-delayed'}`} role="status" aria-live="polite">
+            <span><i />{serverHealthy ? '服务器持续响应' : liveTransport === 'connecting' ? '正在建立实时连接' : '响应延迟，正在自动重连'}</span>
+            <span>已运行 {formatElapsedDuration(elapsedSeconds)}</span>
+            <span>{liveLabel}{signalAgeSeconds == null ? '' : ` · ${signalAgeSeconds === 0 ? '刚刚响应' : `${signalAgeSeconds} 秒前响应`}`}</span>
+          </div>
+          <p className="video-storyboard-progress__guidance">{waitGuidance}</p>
+          <div className="video-storyboard-progress__meter">
+            <div><span>整体进度</span><strong>{progress}%</strong></div>
+            <ProgressBar progress={progress} />
+          </div>
+          <ol>
+            {steps.map(([title, detail], index) => (
+              <li key={title} className={index < activeStep ? 'is-done' : index === activeStep ? 'is-active' : ''}>
+                <i>{index < activeStep ? <Check size={14} /> : index + 1}</i>
+                <span><strong>{title}</strong><small>{detail}</small></span>
+              </li>
+            ))}
+          </ol>
+        </section>
+
+        <section className="video-storyboard-progress__draft">
+          <div className="video-storyboard-progress__draft-heading">
+            <div><FileText size={17} /><span><strong>创作简报</strong><small>原稿已经安全保存</small></span></div>
+            <span>{sourcePreview.length.toLocaleString('zh-CN')} 字</span>
+          </div>
+          <blockquote>{sourcePreview.slice(0, 420)}{sourcePreview.length > 420 ? '…' : ''}</blockquote>
+          <div className="video-storyboard-progress__preview">
+            <div><img src="/video-studio/story-to-film-stage.jpg" alt="镜头风格参考" /></div>
+            <div>
+              <span><ListChecks size={15} /> 即将得到</span>
+              <strong>可逐镜修改的故事板</strong>
+              <p>每个镜头都包含画面描述、时长、画幅、模型和版本记录，不满意的镜头可以单独重做。</p>
+              <div><span>画面</span><span>旁白</span><span>字幕</span><span>时间线</span></div>
+            </div>
+          </div>
+        </section>
+      </main>
+    </div>
+  );
+};
 
 const ProgressBar: React.FC<{ progress: number }> = ({ progress }) => (
   <div className="video-console__progress"><i style={{ width: `${Math.max(2, Math.min(progress, 100))}%` }} /></div>

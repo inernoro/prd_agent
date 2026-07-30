@@ -27,6 +27,7 @@ const renderStudio = (runs: VideoGenRunListItem[] = [], projects: VideoProject[]
     onAnalyze={vi.fn(async () => undefined)}
     onCreateDirect={vi.fn(async () => undefined)}
     onOpenRun={vi.fn()}
+    onOpenDemo={vi.fn()}
   />,
 );
 
@@ -77,13 +78,14 @@ describe('VideoProjectStudio', () => {
     expect(html).not.toContain('data-theme="light"');
     expect(html).toContain('aria-current="location"');
     expect(html).toContain('aria-label="文学稿内容"');
-    expect(html).toContain('文学视频创作');
-    expect(html).toContain('把故事变成镜头');
+    expect(html).toContain('先看见故事，再开始生成');
+    expect(html).toContain('体验 Demo');
+    expect(html).toContain('先用 60 秒体验完整创作流程');
     expect(html).toContain('故事分镜');
     expect(html).toContain('单镜直出');
     expect(html).toContain('雨夜街巷的电影画面风格预览');
     expect(html).toContain('aria-label="镜头草图"');
-    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(4);
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(5);
     expect(html).toContain('生成故事分镜');
     expect(html).not.toContain('Seedance 1.5 Pro');
     expect(html).not.toContain('视频模型</span>');
@@ -133,13 +135,13 @@ describe('VideoProjectStudio', () => {
     expect(html).toContain('视频已生成');
     expect(html).not.toContain('<video');
     expect(html).not.toContain('https://media.example/video.mp4');
-    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(5);
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(6);
   });
 
   it('renders a built-in visual cover for completed legacy projects without assets', () => {
     const html = renderStudio([], [createProject({ status: 'Completed' })]);
 
     expect(html).toContain('作品已完成');
-    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(5);
+    expect(html.match(/\/video-studio\/story-to-film-stage\.jpg/g)).toHaveLength(6);
   });
 });

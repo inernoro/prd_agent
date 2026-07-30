@@ -54,7 +54,49 @@ public class VideoProjectModelTests
 
         VideoGenRunWorker.ResolveProjectStatusForScenes([
             new VideoGenScene { Status = SceneItemStatus.Done },
+            new VideoGenScene { Status = SceneItemStatus.Submitting },
+        ]).ShouldBe(VideoProjectStatus.Rendering);
+
+        VideoGenRunWorker.ResolveProjectStatusForScenes([
+            new VideoGenScene { Status = SceneItemStatus.Done },
+            new VideoGenScene { Status = SceneItemStatus.PollingClaimed },
+        ]).ShouldBe(VideoProjectStatus.Rendering);
+
+        VideoGenRunWorker.ResolveProjectStatusForScenes([
+            new VideoGenScene { Status = SceneItemStatus.Done },
             new VideoGenScene { Status = SceneItemStatus.Error },
         ]).ShouldBe(VideoProjectStatus.Editing);
+    }
+
+    [Theory]
+    [InlineData("alibaba/wan-2.6", 6, 5)]
+    [InlineData("alibaba/wan-2.6", 8, 10)]
+    [InlineData("seedance-2.0", 14, 15)]
+    [InlineData("seedance-1.5", 7, 8)]
+    public void Duration_ShouldMatchActualVideoModelCapabilities(
+        string modelId,
+        int requested,
+        int expected)
+    {
+        VideoModelCapabilities.NormalizeDuration(modelId, requested).ShouldBe(expected);
+    }
+
+    [Fact]
+    public void FastStartCommand_ShouldRelocateMp4MetadataWithoutReencoding()
+    {
+        var arguments = VideoFastStartOptimizer.BuildArguments("input.mp4", "output.mp4");
+
+        arguments.ShouldContain("copy");
+        arguments.ShouldContain("+faststart");
+        arguments.ShouldNotContain("libx264");
+    }
+
+    [Theory]
+    [InlineData("请填写实际值")]
+    [InlineData("relative/path")]
+    [InlineData("javascript:alert(1)")]
+    public void AvatarBaseUrl_ShouldRejectPlaceholdersAndNonHttpValues(string value)
+    {
+        AvatarUrlBuilder.NormalizePublicBaseUrl(value).ShouldBeNull();
     }
 }
