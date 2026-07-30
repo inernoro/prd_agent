@@ -43,6 +43,7 @@ REPORT_KINDS = (
 )
 
 DAILY_REQUIRED_SECTIONS = (
+    "结论分层",
     "昨日工作总结",
     "改动规模与深度预算",
     "标记法则与验收标准",
@@ -52,6 +53,27 @@ DAILY_REQUIRED_SECTIONS = (
     "重试记录",
     "未发布状态",
 )
+
+DAILY_CONCLUSION_FIELDS = (
+    "产品质量",
+    "验收完整性",
+    "综合结论",
+    "发布建议",
+    "判定性质",
+)
+DAILY_ROOT_CAUSE_FIELDS = (
+    "目标要求",
+    "观察事实",
+    "系统原因",
+    "证据影响",
+    "结论",
+    "关闭动作",
+)
+VERDICT_NATURES = {
+    "pass": {"完整通过"},
+    "conditional": {"覆盖不足", "非阻断风险"},
+    "fail": {"产品失败", "核心用例失败", "验收链路失败", "硬门禁失败"},
+}
 
 
 def curl(args, retries=5):
@@ -514,6 +536,70 @@ def _section_table_rows(markdown, heading):
     ))
     rows = parsed[2:] if has_separator else parsed[1:]
     return [row for row in rows if any(cell.strip() for cell in row)]
+
+
+def _section_text(markdown, heading):
+    """Return the Markdown body of the first exact H2 section."""
+    section = re.search(
+        rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
+        markdown or "",
+        re.M | re.S,
+    )
+    return section.group(1) if section else ""
+
+
+def _daily_conclusion_contract_errors(verdict, body):
+    """Keep product quality, acceptance completeness and delivery judgment distinct.
+
+    A coverage-only gap must not be rendered as a product failure. Requiring a
+    small structured contract makes the report readable to humans and gives the
+    archive gate a deterministic consistency check.
+    """
+    errors = []
+    conclusion_text = _section_text(body, "结论分层")
+    conclusion_rows = _section_table_rows(body, "结论分层")
+    if not conclusion_text or not conclusion_rows:
+        return ["[结论语义] 每日验收缺少实质填写的「结论分层」表"]
+
+    values = {}
+    for row in conclusion_rows:
+        if len(row) >= 2:
+            values[re.sub(r"[`*_\s]", "", row[0])] = row[1].strip()
+
+    for field in DAILY_CONCLUSION_FIELDS:
+        if not values.get(field):
+            errors.append(f"[结论语义] 「结论分层」缺少「{field}」字段或结果")
+
+    nature = re.sub(r"[`*_\s]", "", values.get("判定性质", ""))
+    allowed = VERDICT_NATURES.get(verdict, set())
+    if nature and nature not in allowed:
+        expected = "/".join(sorted(allowed)) or "合法判定性质"
+        errors.append(
+            f"[Verdict 语义] verdict={verdict} 与判定性质「{nature}」不一致；"
+            f"该 Verdict 只允许：{expected}。覆盖不足且无真实失败时必须用 conditional"
+        )
+
+    overall = re.sub(r"[`*_\s（）()]", "", values.get("综合结论", "")).lower()
+    overall_matches = {
+        "pass": overall in {"pass", "通过", "pass通过"},
+        "conditional": overall in {"conditional", "有条件通过", "conditional有条件通过"},
+        "fail": overall in {"fail", "不通过", "fail不通过"},
+    }
+    if overall and not overall_matches.get(verdict, False):
+        errors.append(
+            f"[Verdict 语义] verdict={verdict} 与综合结论「{values.get('综合结论')}」不一致"
+        )
+
+    root_cause_text = _section_text(body, "根因链条")
+    root_cause_rows = _section_table_rows(body, "根因链条")
+    if verdict in {"conditional", "fail"} and (not root_cause_text or not root_cause_rows):
+        errors.append("[根因链] 每日验收缺少实质填写的「根因链条」表")
+    elif root_cause_text or root_cause_rows:
+        missing = [field for field in DAILY_ROOT_CAUSE_FIELDS if field not in root_cause_text]
+        if missing:
+            errors.append("[根因链] 缺少字段：" + "、".join(missing))
+
+    return errors
 
 
 def _coverage_gap_count(markdown):
@@ -2958,6 +3044,7 @@ def validate_inputs(a, body, manifest, cfg=None):
             if section not in body:
                 errs.append(f"[结构] 复杂验收缺「{section}」：必须先完成验收测试设计，再进入视觉截图和归档")
     if daily_acceptance_claim:
+        errs.extend(_daily_conclusion_contract_errors(a.verdict, body))
         for section in DAILY_REQUIRED_SECTIONS:
             if section not in body:
                 errs.append(f"[结构] 每日/昨日报告缺「{section}」：每日自动验收必须能说明范围、标准、未发布状态、截图回读和重试事实")
