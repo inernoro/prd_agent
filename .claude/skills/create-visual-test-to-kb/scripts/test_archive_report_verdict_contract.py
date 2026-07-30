@@ -4,6 +4,7 @@ import unittest
 
 
 SCRIPT = pathlib.Path(__file__).with_name("archive_report.py")
+TEMPLATES = SCRIPT.parent.parent / "templates"
 SPEC = importlib.util.spec_from_file_location("archive_report", SCRIPT)
 archive_report = importlib.util.module_from_spec(SPEC)
 assert SPEC and SPEC.loader
@@ -40,6 +41,24 @@ def report_body(nature: str) -> str:
 
 
 class DailyVerdictContractTests(unittest.TestCase):
+    def test_shipped_templates_have_one_exact_conclusion_section(self):
+        for template_name in ("zz-report.md", "report-template.md"):
+            with self.subTest(template=template_name):
+                body = (TEMPLATES / template_name).read_text(encoding="utf-8")
+                self.assertEqual(1, body.splitlines().count("## 结论分层"))
+                rows = archive_report._section_table_rows(body, "结论分层")
+                fields = {row[0].strip() for row in rows if row}
+                self.assertEqual(set(archive_report.DAILY_CONCLUSION_FIELDS), fields)
+
+    def test_shipped_templates_have_one_exact_root_cause_section(self):
+        for template_name in ("zz-report.md", "report-template.md"):
+            with self.subTest(template=template_name):
+                body = (TEMPLATES / template_name).read_text(encoding="utf-8")
+                self.assertEqual(1, body.splitlines().count("## 根因链条"))
+                rows = archive_report._section_table_rows(body, "根因链条")
+                self.assertEqual(1, len(rows))
+                self.assertEqual(len(archive_report.DAILY_ROOT_CAUSE_FIELDS), len(rows[0]))
+
     def test_coverage_only_fail_is_rejected(self):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("覆盖不足")
