@@ -603,6 +603,38 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
+    def test_repaired_artifact_or_pending_delivery_does_not_close_gate(self):
+        facts = (
+            "CDS smoke 失败；已修复代码仍未部署",
+            "构建失败；已修复补丁等待发布",
+            "CDS smoke 失败；已修复，补丁等待发布",
+            "构建失败；补丁已修复但尚未上线",
+        )
+        for fact in facts:
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+    def test_gate_closes_only_after_explicit_gate_recovery(self):
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进",
+            "CDS smoke 失败；补丁已修复并已部署；CDS smoke 现已通过",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
     def test_resolved_state_in_later_root_cause_column_closes_failure(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进", "CDS smoke 先前失败"

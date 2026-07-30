@@ -609,7 +609,16 @@ def _strip_severity_count_claims(text):
 
 _FAILURE_ACTION_PATTERN = (
     r"(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接|恢复|解决|"
-    r"关闭|修复|正常|可用|就绪|ready)"
+    r"关闭|修复|正常|可用|就绪|部署|上线|生效|合并|ready)"
+)
+_DELIVERY_ACTION_PATTERN = r"(?:部署|发布|上线|生效|合并)"
+_CLOSURE_OBJECT_PATTERN = (
+    r"(?:代码|补丁|配置|脚本|实现|逻辑|版本|提交|分支|镜像|依赖|文档|"
+    r"模板|数据|记录|材料|工单|缺陷)"
+)
+_PENDING_DELIVERY_PATTERN = (
+    rf"(?:(?:(?:仍|尚|还|暂时?)?未|没(?:有)?)\s*{_DELIVERY_ACTION_PATTERN}"
+    rf"|(?:等待|待)\s*{_DELIVERY_ACTION_PATTERN})"
 )
 _ONGOING_FAILURE_PREFIX_PATTERN = (
     r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
@@ -623,6 +632,7 @@ _FAILURE_FACT_PATTERN = re.compile(
     r"|阻断|不可用|不可交付"
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
+    rf"|{_PENDING_DELIVERY_PATTERN}"
     rf"|无法\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}",
     re.I,
 )
@@ -834,10 +844,14 @@ def _apply_subject_state(states, subjects, state):
 def _closure_changes_subject(clause, event, previous_event_end):
     """Reject negated closures and closures retargeted to an unnamed dependency."""
     scope = clause[previous_event_end : event.start()]
-    suffix = clause[event.end() : event.end() + 12]
+    suffix = clause[event.end() : event.end() + 32]
     if re.search(r"并非|并不是|不是|未曾|尚未|没有", scope, re.I):
         return True
     if re.search(r"并非事实|不是事实|不属实|为假", suffix, re.I):
+        return True
+    if re.match(rf"\s*(?:的\s*)?{_CLOSURE_OBJECT_PATTERN}", suffix, re.I):
+        return True
+    if re.search(_PENDING_DELIVERY_PATTERN, suffix, re.I):
         return True
     if re.search(r"后\s*$", scope):
         return False
@@ -921,6 +935,16 @@ def _event_inherits_context(clause, event, state, previous_event_end):
         flags=re.I,
     )
     normalized = re.sub(r"[\s'\"“”‘’]+", "", normalized)
+    if (
+        state == "failed"
+        and re.fullmatch(_PENDING_DELIVERY_PATTERN, event.group(0), re.I)
+        and re.fullmatch(
+            rf"(?:该|本|此|上述)?{_CLOSURE_OBJECT_PATTERN}(?:仍|尚|还|暂时?)?",
+            normalized,
+            re.I,
+        )
+    ):
+        return True
     if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", normalized):
         return True
     if re.fullmatch(
