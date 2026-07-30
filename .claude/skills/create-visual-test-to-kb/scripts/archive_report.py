@@ -672,6 +672,30 @@ def _apply_subject_state(states, subjects, state):
         states[subject] = state
 
 
+def _closure_changes_subject(clause, event, previous_event_end):
+    """Reject negated closures and closures retargeted to an unnamed dependency."""
+    scope = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() : event.end() + 12]
+    if re.search(r"并非|并不是|不是|未曾|尚未|没有", scope, re.I):
+        return True
+    if re.search(r"并非事实|不是事实|不属实|为假", suffix, re.I):
+        return True
+    if re.search(r"后\s*$", scope):
+        return False
+    for _, pattern in _FAILURE_SUBJECT_PATTERNS:
+        scope = pattern.sub(" ", scope)
+    scope = re.sub(
+        r"CDS|的|但|但是|不过|且|并|并且|而|后|前|先前|此前|一度|曾"
+        r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
+        r"|该异常|此异常|本根因|该根因|根因"
+        r"|重试|复测|验证|再次|重新|二者|全部|均|都",
+        " ",
+        scope,
+        flags=re.I,
+    )
+    return bool(re.search(r"[A-Za-z0-9\u4e00-\u9fff]", scope))
+
+
 def _current_failure_subjects(text):
     """Resolve subject status events in order within one root-cause cell."""
     states = {}
@@ -695,7 +719,13 @@ def _current_failure_subjects(text):
             for match in _RESOLVED_FACT_PATTERN.finditer(clause)
         ]
         events.sort(key=lambda item: item[0].start())
+        previous_event_end = 0
         for event, state in events:
+            if state == "resolved" and _closure_changes_subject(
+                clause, event, previous_event_end
+            ):
+                previous_event_end = event.end()
+                continue
             subjects = _nearest_event_subjects(event, occurrences)
             if not subjects:
                 subjects = context_subjects
@@ -703,6 +733,7 @@ def _current_failure_subjects(text):
                 _apply_subject_state(states, subjects, state)
             else:
                 pending_states.append(state)
+            previous_event_end = event.end()
         if explicit_subjects:
             context_subjects = explicit_subjects
     return {subject for subject, state in states.items() if state == "failed"}
