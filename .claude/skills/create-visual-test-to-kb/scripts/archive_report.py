@@ -669,6 +669,14 @@ _FAILURE_SUBJECT_PATTERNS = (
     ("verify-open", re.compile(r"verify-open|打开验证(?:步骤|操作)?", re.I)),
     ("slack", re.compile(r"Slack\s*通知(?:发送)?", re.I)),
 )
+_ROOT_CAUSE_INSTANCE_PATTERN = re.compile(
+    r"移动端|后端|前端|桌面端|管理端|客户端|服务端|网页端"
+    r"|iOS|Android|Windows|macOS|Linux|Chrome|Safari|Firefox|Edge"
+    r"|生产(?:环境)?|预览(?:环境)?|测试(?:环境)?|灰度(?:环境)?"
+    r"|开发(?:环境)?|本地(?:环境)?|主站|控制台|API(?:服务)?|Web(?:端)?"
+    r"|prd-(?:api|admin|desktop|video)|llmgw(?:-[A-Za-z0-9_-]+)?",
+    re.I,
+)
 
 
 def _split_fact_clauses(text):
@@ -685,13 +693,29 @@ def _failure_subjects(text):
     }
 
 
-def _subject_occurrences(text):
+def _subject_occurrences(text, instance_aware=False):
     """Return canonical subject positions for nearest-event binding."""
     occurrences = []
     for name, pattern in _FAILURE_SUBJECT_PATTERNS:
         for match in pattern.finditer(text or ""):
             occurrences.append((match.start(), match.end(), name))
-    return occurrences
+    occurrences.sort()
+    if not instance_aware:
+        return occurrences
+
+    scoped_occurrences = []
+    previous_end = 0
+    for start, end, name in occurrences:
+        prefix = (text or "")[previous_end:start]
+        identities = tuple(
+            match.group(0).lower()
+            for match in _ROOT_CAUSE_INSTANCE_PATTERN.finditer(prefix)
+        )
+        scoped_occurrences.append(
+            (start, end, (name, identities or ("__unspecified__",)))
+        )
+        previous_end = end
+    return scoped_occurrences
 
 
 def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
@@ -909,14 +933,14 @@ def _event_inherits_context(clause, event, state, previous_event_end):
     )
 
 
-def _failure_subject_states(text, initial_states=None):
+def _failure_subject_states(text, initial_states=None, instance_aware=False):
     """Apply ordered status events while keeping context local to this row."""
     states = dict(initial_states or {})
     context_subjects = set()
     for index, clause in enumerate(_split_fact_clauses(text)):
         if index % 2:
             continue
-        occurrences = _subject_occurrences(clause)
+        occurrences = _subject_occurrences(clause, instance_aware=instance_aware)
         explicit_subjects = {name for _, _, name in occurrences}
 
         events = [
@@ -1095,7 +1119,7 @@ def _daily_fact_signals(values, body):
         or blocking_defect_rows
         or re.search(
             r"\bP[01]\b"
-            r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            r"|产品[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
             re.I,
         )
@@ -1105,14 +1129,11 @@ def _daily_fact_signals(values, body):
         or nonblocking_defect_rows
         or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
     )
-    product_risk = blocking_product_failure or nonblocking_product_risk
-    product_core_failure = bool(
-        re.search(
-            r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
-            positive_product,
-            re.I,
-        )
+    product_core_failure = "core-case" in _current_failure_subjects(
+        positive_product
     )
+    blocking_product_failure = blocking_product_failure or product_core_failure
+    product_risk = blocking_product_failure or nonblocking_product_risk
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
     failure_states_by_scope = {}
     for row_index, row in enumerate(root_cause_rows):
@@ -1122,10 +1143,12 @@ def _daily_fact_signals(values, body):
             for cell in row[:5]
         )
         failure_states_by_scope[scope] = _failure_subject_states(
-            normalized_row, failure_states_by_scope.get(scope)
+            normalized_row,
+            failure_states_by_scope.get(scope),
+            instance_aware=True,
         )
     current_failure_subjects = {
-        subject
+        subject[0] if isinstance(subject, tuple) else subject
         for states in failure_states_by_scope.values()
         for subject, state in states.items()
         if state == "failed"
