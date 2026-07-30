@@ -12,8 +12,8 @@
 //      由调用方渲染成「由管理员完成」，而不是显示一个永远完不成的步骤。
 import { useEffect, useState } from 'react';
 import { getOrganization, getServiceKeys } from '@/lib/api';
-import { canAccessPage } from '@/lib/access';
-import type { ConsolePage } from '@/lib/access';
+import { canAccessPage, canUseCapability } from '@/lib/access';
+import type { ConsoleCapability, ConsolePage } from '@/lib/access';
 import { useAuth } from '@/lib/auth';
 
 /** 缓存 TTL：够短，签发密钥后回到概览页最多一分钟就能看到步骤变绿。 */
@@ -204,6 +204,24 @@ const STEP_PAGE: Record<OnboardingStepId, ConsolePage> = {
   request: 'quickstart',
 };
 
+/**
+ * 每一步真正需要的**写**能力。
+ *
+ * 光看「页面到得了」不够：organization 页只要求 logsRead，所以 developer / viewer
+ * 也能打开它，清单于是给出「去完成」链接——可 OrganizationPage 的建团队/加成员
+ * 全部由 organizationWrite 门控，这些人点进去是一个只读页面，没有任何办法完成
+ * 被承诺的动作（Codex P2）。
+ *
+ * `request` 一步没有列写能力：跑一条请求只需要一把已存在的可用密钥，
+ * Quickstart 的自建密钥另有 appCallerWrite + serviceKeyWrite 门控，
+ * 但那是「顺手帮你签一把」，不是这一步的前置。
+ */
+const STEP_WRITE_CAPABILITY: Partial<Record<OnboardingStepId, ConsoleCapability>> = {
+  team: 'organizationWrite',
+  member: 'organizationWrite',
+  key: 'serviceKeyWrite',
+};
+
 const STEP_TO: Record<OnboardingStepId, string> = {
   team: '/organization',
   member: '/organization',
@@ -286,8 +304,14 @@ export function useOnboardingState(): OnboardingState {
     id,
     label: STEP_LABEL[id],
     done: facts[id],
-    // 到不了那个页面就不给 CTA——否则 viewer / billing 点进去只会撞权限墙。
-    actionable: canAccessPage(tenant, STEP_PAGE[id]),
+    // 到得了页面 **且** 有那一步的写权限才给 CTA——否则 viewer / developer 点进去
+    // 是个只读页面，看得见做不了（Codex P2）。没有写权限时由调用方渲染成
+    // 「由管理员完成」，与 readable=false 的呈现一致。
+    actionable: canAccessPage(tenant, STEP_PAGE[id])
+      && (() => {
+        const capability = STEP_WRITE_CAPABILITY[id];
+        return !capability || canUseCapability(tenant?.role, capability);
+      })(),
     readable: readableOf[id],
     to: STEP_TO[id],
   }));

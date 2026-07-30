@@ -120,6 +120,12 @@ must(
   'onboarding: scope 空列表必须判为不可用（serving 的 MatchesAny 要求非空，空 = 拒绝）',
 );
 
+must(
+  onboarding.includes('STEP_WRITE_CAPABILITY') && /team: 'organizationWrite'/.test(onboarding),
+  'onboarding: 「去完成」必须按每步需要的写权限判定 —— organization 页只要 logsRead，'
+  + 'developer / viewer 到得了却做不了，光看页面可达会给出死链',
+);
+
 const theme = read('src/theme.css');
 must(
   shell.includes('lg-help-popover--up') && shell.includes('shouldFlipHelpUp('),
