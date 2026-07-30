@@ -5,6 +5,12 @@ FROM mcr.microsoft.com/dotnet/aspnet:8.0 AS base
 WORKDIR /app
 EXPOSE 80
 
+# OpenRouter 返回的 MP4 常将 moov 索引放在文件尾。API 入库前用 ffmpeg
+# 执行无损 fast-start 重排，保证预览端无需下载完整文件即可显示首帧。
+RUN apt-get update \
+    && apt-get install -y --no-install-recommends ffmpeg \
+    && rm -rf /var/lib/apt/lists/*
+
 FROM mcr.microsoft.com/dotnet/sdk:8.0 AS build
 WORKDIR /src
 COPY ["src/PrdAgent.Api/PrdAgent.Api.csproj", "src/PrdAgent.Api/"]
