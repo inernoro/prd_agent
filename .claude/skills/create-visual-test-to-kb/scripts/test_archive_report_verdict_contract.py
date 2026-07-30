@@ -305,6 +305,14 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
 
+    def test_recommended_known_zero_defect_claim_conflicts_with_p1_fact(self):
+        body = report_body("产品失败").replace(
+            "未发现可复现产品缺陷，缺陷 0 个",
+            "未发现已知缺陷，发现 1 个 P1 登录缺陷",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
+
     def test_partial_severity_counts_preserve_explicit_zero_defect_claim(self):
         body = report_body("非阻断风险").replace(
             "未发现可复现产品缺陷，缺陷 0 个",
