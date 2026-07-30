@@ -88,20 +88,59 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscript
   // contentType audio/* 优先于扩展名路由：录音产出的 .webm 是音频（audio/webm），
   // 不能因扩展名被当成视频渲染成黑盒播放器（2026-07-13 用户截图反馈）。
   const isAudioEntry = (entry.contentType ?? '').toLowerCase().startsWith('audio/');
-  if ((kind === 'audio' || isAudioEntry) && fileUrl) {
+  const isAudio = kind === 'audio' || isAudioEntry;
+  const liveTranscript = entry.metadata?.liveTranscript?.trim() || null;
+  const effectiveTranscript = transcriptNoteMd?.trim() || liveTranscript;
+  const archivePending = entry.metadata?.audioArchiveStatus === 'pending';
+  if (isAudio && fileUrl) {
     // 不再放大图标 + 文件名块（标题已在阅读区头部/列表里，重复且占屏，2026-07-13 用户反馈）；
     // 主视觉直接是声纹播放器（+ 歌词滚轮）
     return (
-      <div className={`flex h-full w-full flex-col items-center gap-5 ${transcriptNoteMd ? 'justify-start py-2' : 'justify-center py-12'}`}>
+      <div className={`flex h-full w-full flex-col items-center gap-5 ${effectiveTranscript ? 'justify-start py-2' : 'justify-center py-12'}`}>
+        {archivePending && (
+          <div
+            className="w-full max-w-[760px] rounded-[12px] px-3 py-2 text-[11px] leading-relaxed"
+            style={{ background: 'var(--semantic-info-soft)', border: '1px solid var(--semantic-info-border)', color: 'var(--text-secondary)' }}>
+            云端归档正在后台继续，本机录音可以立即播放。完成后会在当前页面补齐正式音频和原文。
+          </div>
+        )}
         {/* 已有转录笔记 → 歌词滚轮跟读播放器（当前句居中高亮、点句跳播）；否则纯播放器 */}
-        {transcriptNoteMd ? (
+        {effectiveTranscript ? (
           <AudioDocumentPreview
             src={fileUrl}
-            noteMd={transcriptNoteMd}
+            noteMd={effectiveTranscript}
             styleKey={entry.metadata?.transcribe_style_key}
             onSaveNote={onSaveTranscriptNote}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
+      </div>
+    );
+  }
+
+  // 对象存储暂不可用时，服务端会先创建待归档音频条目。此时不能把它渲染成
+  // “暂无内容”：有实时原文就先展示原文，没有则明确说明后台状态。播放器会在
+  // 本机保险音频或云端地址任一可用后自动出现。
+  if (isAudio && archivePending) {
+    return (
+      <div className="mx-auto flex h-full w-full max-w-[760px] flex-col gap-4 py-4">
+        <section
+          className="rounded-[14px] p-4"
+          style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+          <p className="text-[13px] font-semibold text-token-primary">录音正在安全归档</p>
+          <p className="mt-1 text-[11px] leading-relaxed text-token-muted">
+            音频已经保存，云端恢复后会在本页自动出现播放按钮并继续生成原文，无需重新录音。
+          </p>
+        </section>
+        {liveTranscript ? (
+          <section
+            className="rounded-[14px] p-4"
+            style={{ background: 'var(--bg-nested)', border: '1px solid var(--border-faint)' }}>
+            <p className="mb-3 text-[12px] font-semibold text-token-secondary">实时原文</p>
+            <MarkdownViewer content={liveTranscript} />
+          </section>
+        ) : (
+          <p className="text-center text-[12px] text-token-muted">正在等待完整音频生成原文</p>
+        )}
       </div>
     );
   }
