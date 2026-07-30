@@ -124,6 +124,30 @@ def list_entries_by_date(base, H, store_id, kind, daily_date):
     return found
 
 
+def shared_entry_ids(base, H, store_id):
+    """本库中**已被分享且分享链仍有效**的 entryId 集合。
+
+    删重复条目前必须查它：分享链是钉在 entryId 上的，删掉带链条目会让已经发出去的
+    链接和别人的书签永久变空（后端 DeleteEntry 不会迁移 EntryId）。取不到时返回 None，
+    调用方据此选择"宁可不删"，绝不在信息缺失的情况下做不可逆删除。
+    """
+    try:
+        res = curl(H + [f"{base}/stores/{store_id}/share-links"], retries=2)
+        if not res.get("success"):
+            return None
+        items = ((res.get("data") or {}).get("items")) or []
+        out = set()
+        for l in items:
+            if l.get("isRevoked"):
+                continue
+            eid = l.get("entryId")
+            if eid:
+                out.add(eid)
+        return out
+    except Exception:
+        return None
+
+
 def resolve_daily_date(daily_date, title):
     if (daily_date or "").strip():
         return daily_date.strip()
@@ -714,23 +738,52 @@ def main():
     # 正文已确认落库，这时才把 title / summary / metadata 更新到原地复用的那条上。
     # 顺序不可提前（见上文）：先改元数据后写正文，一旦正文失败就会留下
     #「新水位线 + 旧正文」的错配条目，而错配的水位线会让下一期从错误的位置续采。
-    if state is True:
+    # 水位线是**发布成功的一部分**，不是可选的收尾动作：
+    # 少了它，下一期读不到水位线会退化为当日口径，把「上期水位线 → 今天 00:00」之间
+    # 落地的提交整段漏掉（新建路径尤其致命：条目只有身份字段，连降级依据都没有）。
+    # 所以这里写完必须**读回确认**，确认不了就判定本次发布失败，让人重跑（原地更新是幂等的）。
+    # state is None（校验接口暂时不可达）时同样要写：此时 put_ok 已表明正文写入被接受，
+    # 跳过水位线只会把「无法确认」升级成「确定漏报」。
+    def watermark_persisted():
+        """读回条目 metadata 确认水位线已落库。True/False/None(读不到)。"""
+        if not a.last_commit:
+            return True                      # 没有水位线可写（已在上面告警）
+        try:
+            r = curl(H + [f"{base}/entries/{eid}"], retries=2)
+            if not r.get("success"):
+                return None
+            md = ((r.get("data") or {}).get("metadata")) or {}
+            return md.get("lastCommit") == a.last_commit
+        except Exception:
+            return None
+
+    if state is True or (state is None and put_ok):
         try:
             ok = curl(HJ + ["-X", "PUT", "-d", json.dumps({
                 "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
             }), f"{base}/entries/{eid}"]).get("success")
-            print(f"  {'原地更新' if reuse_eid else '回写'}标题/标签/水位线 ok={ok}")
-            # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
-            # 这里再验一次：若正文已不是本次内容，则库里是「我的水位线 + 别人的正文」，
-            # 下一期会从错误位置续采。无法在无后端原子 upsert 的前提下杜绝，但绝不能静默。
-            if ok and content_state() is not True:
-                print("  [告警] 元数据写入后正文已不是本次内容（疑似并发重跑覆盖）："
-                      "库中可能是「本期水位线 + 他期正文」，请重跑本命令以恢复一致")
-            if not ok:
-                print("  [告警] 元数据更新失败：正文是新的但 metadata.lastCommit 仍是旧值，"
-                      "下一期会从旧水位线续采（会重复报道本期内容），请重跑本命令")
         except Exception as e:
-            print(f"  [告警] 元数据更新异常（同上，下期水位线可能偏旧）：{str(e)[:100]}")
+            ok = False
+            print(f"  元数据更新异常：{str(e)[:100]}")
+        print(f"  {'原地更新' if reuse_eid else '回写'}标题/标签/水位线 ok={ok}")
+        if watermark_persisted() is not True:
+            raise RuntimeError(
+                "水位线未确认落库：正文可能已发布，但 metadata.lastCommit 没写进去。"
+                "就此收工的话，下一期读不到水位线会退化为当日口径、漏掉本期覆盖区间内的提交。"
+                "请重跑本命令（同日重跑是原地更新，幂等安全）。")
+        # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
+        # 若此刻正文**确定**已不是本次内容，库里就是「本期水位线 + 他期正文」——
+        # 下一期会从「本期正文其实没覆盖到」的位置续采，那段提交永久丢失。
+        # 这是确定性的不一致，必须让本次发布失败，而不是发条分享链宣布完成。
+        # （content_state() 返回 None 只是校验不可达，非确定性不一致，降为告警。）
+        recheck = content_state() if reuse_eid else True
+        if recheck is False:
+            raise RuntimeError(
+                "元数据写入后检出正文已不是本次内容（并发重跑覆盖）：库中为「本期水位线 + 他期正文」，"
+                "下一期会从错误位置续采。已中止发布，请重跑本命令恢复一致。")
+        if recheck is None:
+            print("  [告警] 元数据写入后无法复核正文（校验接口不可达），"
+                  "若同时有并发重跑请事后核对正文与水位线是否匹配")
 
     # 同日重复条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
     # state=None（验证接口不可达）时宁可留一条重复，也不能删掉可能是唯一完好的那篇。
@@ -739,6 +792,21 @@ def main():
             # 原地更新路径：待删的只是历史竞态留下的重复条目，全部来自**建前快照**，
             # 都是本次运行之前就存在的。不重新查——否则可能删掉另一个进程刚建的新条目。
             stale_ids = [sid for sid, _ in stale if sid != eid]
+            # 但凡还挂着**有效分享链**的重复条目一律不删：链接钉在 entryId 上，
+            # 删了就让已经发出去的那条链接永久变空，而这不可逆。保留一个重复条目只是
+            # 库里多一篇（可见、可人工清理），两害相权取其轻。
+            shared = shared_entry_ids(base, H, rid)
+            if shared is None:
+                if stale_ids:
+                    print(f"  [告警] 查不到分享链清单，为避免删掉仍被分享的条目，"
+                          f"本次跳过清理 {len(stale_ids)} 条重复条目（可稍后人工处理）")
+                stale_ids = []
+            else:
+                keep = [sid for sid in stale_ids if sid in shared]
+                stale_ids = [sid for sid in stale_ids if sid not in shared]
+                for sid in keep:
+                    print(f"  [告警] 重复条目 {sid} 仍挂着有效分享链，已保留不删"
+                          "（删除会让该链接永久变空）；如确认无人使用可手动删除")
         elif my_created_at:
             # 新建路径（库里原本没有同日条目）：两个进程可能都查到空、各建一条。
             # 删除前重新查一次（能看见对方刚建的），且只删 createdAt **严格早于**自己的
