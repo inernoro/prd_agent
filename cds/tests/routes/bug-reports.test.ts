@@ -50,9 +50,10 @@ function validBody(overrides: Record<string, unknown> = {}): Record<string, unkn
 
 async function request(
   app: express.Express,
-  method: 'GET' | 'POST',
+  method: 'GET' | 'POST' | 'PUT' | 'DELETE',
   url: string,
   body?: unknown,
+  headers: Record<string, string> = {},
 ): Promise<{ status: number; body: any; text: string; contentType: string }> {
   const server = app.listen(0);
   await new Promise((resolve) => server.once('listening', resolve));
@@ -61,7 +62,7 @@ async function request(
   try {
     const res = await fetch(`http://127.0.0.1:${addr.port}${url}`, {
       method,
-      headers: body === undefined ? {} : { 'Content-Type': 'application/json' },
+      headers: body === undefined ? headers : { 'Content-Type': 'application/json', ...headers },
       body: body === undefined ? undefined : JSON.stringify(body),
     });
     const text = await res.text();
@@ -122,6 +123,208 @@ describe('resolveForwardConfig', () => {
       CDS_BUG_REPORT_MAP_TOKEN: 'tok',
       CDS_BUG_REPORT_MAP_ASSIGNEE: 'u1',
     } as NodeJS.ProcessEnv)).toEqual({ baseUrl: 'https://map.example.com', token: 'tok', assigneeUserId: 'u1' });
+  });
+});
+
+describe('CDS 系统设置中的缺陷转发接入', () => {
+  let dataDir: string;
+
+  beforeEach(() => {
+    dataDir = fs.mkdtempSync(path.join(os.tmpdir(), 'cds-bug-integration-'));
+  });
+
+  afterEach(() => {
+    fs.rmSync(dataDir, { recursive: true, force: true });
+  });
+
+  function buildIntegrationApp(options: {
+    environment?: ReturnType<typeof resolveForwardConfig>;
+    suggestedBaseUrl?: string;
+    fetchImpl?: FetchLike;
+    validConnectionToken?: string;
+  } = {}) {
+    let stored: { baseUrl: string; token: string; assigneeUserId?: string; updatedAt?: string } | null = null;
+    const app = express();
+    app.use(express.json());
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dataDir,
+      readStoredForwardConfig: () => stored,
+      readEnvironmentForwardConfig: () => options.environment ?? null,
+      writeStoredForwardConfig: (input) => {
+        stored = { ...input, updatedAt: '2026-07-29T00:00:00.000Z' };
+        return stored;
+      },
+      clearStoredForwardConfig: () => {
+        const existed = stored !== null;
+        stored = null;
+        return existed;
+      },
+      getSuggestedMapBaseUrl: () => options.suggestedBaseUrl ?? null,
+      authenticateMapConnectionToken: (token) => token === options.validConnectionToken
+        ? ({
+            id: 'connection-1',
+            name: 'MAP',
+            partnerKind: 'map',
+            status: 'active',
+            scopes: [],
+            partnerBaseUrl: options.suggestedBaseUrl ?? 'https://map.example.com',
+            createdAt: '2026-07-30T00:00:00.000Z',
+          })
+        : null,
+      isSecretStorageEncrypted: () => true,
+      fetchImpl: options.fetchImpl,
+    }));
+    return app;
+  }
+
+  it('把 MAP 系统互联地址作为建议值，但不把“已配对”误报成“缺陷转发已配置”', async () => {
+    const app = buildIntegrationApp({ suggestedBaseUrl: 'https://map.example.com' });
+    const res = await request(app, 'GET', '/api/cds-system/integrations/bug-report');
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      configured: false,
+      source: 'none',
+      suggestedBaseUrl: 'https://map.example.com',
+      tokenConfigured: false,
+      secretStorage: 'encrypted',
+      authorizationUrl: expect.stringContaining('/infra-services?authorizeCds='),
+    });
+  });
+
+  it('MAP 用长期连接凭据从服务端回授永久缺陷授权，且 Token 永不回显', async () => {
+    const app = buildIntegrationApp({
+      suggestedBaseUrl: 'https://map.example.com',
+      validConnectionToken: 'ct-valid',
+    });
+    const res = await request(
+      app,
+      'POST',
+      '/api/cds-system/integrations/bug-report/authorize',
+      { baseUrl: 'https://map.example.com', token: 'sk-ak-permanent', assigneeUserId: 'user-1' },
+      { Authorization: 'Bearer ct-valid' },
+    );
+
+    expect(res.status).toBe(200);
+    expect(res.body).toMatchObject({
+      configured: true,
+      source: 'system-settings',
+      baseUrl: 'https://map.example.com',
+      tokenConfigured: true,
+      assigneeUserId: 'user-1',
+    });
+    expect(JSON.stringify(res.body)).not.toContain('sk-ak-permanent');
+  });
+
+  it('拒绝无效长期连接凭据和与连接不一致的 MAP 地址', async () => {
+    const app = buildIntegrationApp({
+      suggestedBaseUrl: 'https://map.example.com',
+      validConnectionToken: 'ct-valid',
+    });
+    const unauthorized = await request(
+      app,
+      'POST',
+      '/api/cds-system/integrations/bug-report/authorize',
+      { baseUrl: 'https://map.example.com', token: 'secret' },
+      { Authorization: 'Bearer ct-wrong' },
+    );
+    expect(unauthorized.status).toBe(401);
+
+    const mismatched = await request(
+      app,
+      'POST',
+      '/api/cds-system/integrations/bug-report/authorize',
+      { baseUrl: 'https://other.example.com', token: 'secret' },
+      { Authorization: 'Bearer ct-valid' },
+    );
+    expect(mismatched.status).toBe(403);
+  });
+
+  it('保存、验证、清除走同一套系统接入配置，且 Token 永不回显', async () => {
+    const hits: Array<{ url: string; method?: string; authorization?: string }> = [];
+    const fetchImpl: FetchLike = async (url, init) => {
+      hits.push({ url, method: init?.method, authorization: init?.headers?.Authorization });
+      return { ok: true, status: 200, text: async () => '{"success":true}' };
+    };
+    const app = buildIntegrationApp({ fetchImpl });
+
+    const saved = await request(app, 'PUT', '/api/cds-system/integrations/bug-report', {
+      baseUrl: 'https://map.example.com/',
+      token: 'sk-ak-secret',
+      assigneeUserId: 'user-1',
+    });
+    expect(saved.status).toBe(200);
+    expect(saved.body).toMatchObject({
+      configured: true,
+      source: 'system-settings',
+      baseUrl: 'https://map.example.com',
+      tokenConfigured: true,
+      assigneeUserId: 'user-1',
+    });
+    expect(JSON.stringify(saved.body)).not.toContain('sk-ak-secret');
+
+    const tested = await request(app, 'POST', '/api/cds-system/integrations/bug-report/test');
+    expect(tested.status).toBe(200);
+    expect(tested.body).toEqual({ ok: true, message: 'MAP 缺陷接口连接正常，Token 权限可用' });
+    expect(hits).toEqual([{
+      url: 'https://map.example.com/api/defect-agent/defects?page=1&pageSize=1',
+      method: 'GET',
+      authorization: 'Bearer sk-ak-secret',
+    }]);
+
+    const cleared = await request(app, 'DELETE', '/api/cds-system/integrations/bug-report');
+    expect(cleared.status).toBe(200);
+    expect(cleared.body).toMatchObject({ configured: false, source: 'none', tokenConfigured: false });
+  });
+
+  it('拒绝把 API 路径当作 MAP 站点根地址', async () => {
+    const app = buildIntegrationApp();
+    const res = await request(app, 'PUT', '/api/cds-system/integrations/bug-report', {
+      baseUrl: 'https://map.example.com/api',
+      token: 'sk-ak-secret',
+    });
+    expect(res.status).toBe(400);
+    expect(res.body.error).toContain('站点根地址');
+  });
+
+  it('未保存系统配置时继续兼容环境变量，并明确标识来源', async () => {
+    const app = buildIntegrationApp({
+      environment: { baseUrl: 'https://legacy-map.example.com', token: 'legacy-token' },
+    });
+    const res = await request(app, 'GET', '/api/cds-system/integrations/bug-report');
+    expect(res.body).toMatchObject({
+      configured: true,
+      source: 'environment',
+      baseUrl: 'https://legacy-map.example.com',
+      tokenConfigured: true,
+    });
+    expect(JSON.stringify(res.body)).not.toContain('legacy-token');
+  });
+
+  it('项目级 Key 不能读取或修改 CDS 系统级外部接入', async () => {
+    const app = express();
+    app.use(express.json());
+    app.use((req, _res, next) => {
+      (req as express.Request & { cdsProjectKey?: { projectId: string } }).cdsProjectKey = { projectId: 'project-a' };
+      next();
+    });
+    app.use('/api', createBugReportsRouter({
+      getDataDir: () => dataDir,
+      writeStoredForwardConfig: () => undefined,
+      clearStoredForwardConfig: () => false,
+    }));
+
+    for (const [method, body] of [
+      ['GET', undefined],
+      ['PUT', { baseUrl: 'https://map.example.com', token: 'secret' }],
+      ['POST', undefined],
+      ['DELETE', undefined],
+    ] as const) {
+      const suffix = method === 'POST' ? '/test' : '';
+      const res = await request(app, method, `/api/cds-system/integrations/bug-report${suffix}`, body);
+      expect(res.status).toBe(403);
+      expect(res.body.error).toContain('系统级配置');
+    }
   });
 });
 

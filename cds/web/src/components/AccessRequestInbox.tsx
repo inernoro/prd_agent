@@ -37,7 +37,11 @@ interface AccessRequestsResponse {
   pendingCount?: number;
 }
 
-export function AccessRequestInbox(): JSX.Element | null {
+export function AccessRequestInbox({
+  onCountChange,
+}: {
+  onCountChange?: (count: number) => void;
+} = {}): JSX.Element | null {
   const events = useCdsEvents();
   const [pending, setPending] = useState<AccessRequest[]>([]);
   const [open, setOpen] = useState(false);
@@ -82,6 +86,10 @@ export function AccessRequestInbox(): JSX.Element | null {
   }, [busy]);
 
   const count = pending.length;
+  useEffect(() => {
+    onCountChange?.(count);
+  }, [count, onCountChange]);
+
   if (count === 0) return null;
   const primary = pending[0];
   const primaryBusy = busy === primary.id;

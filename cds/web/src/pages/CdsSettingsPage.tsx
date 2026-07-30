@@ -116,6 +116,7 @@ const tabGroups: TabGroup[] = [
       { value: 'github', label: 'GitHub 集成', icon: Github },
       { value: 'github-whitelist', label: 'GitHub 白名单', icon: ShieldCheck },
       { value: 'webhook-log', label: 'Webhook 日志', icon: Activity },
+      { value: 'connections', label: '外部接入', icon: Plug },
     ],
   },
   {
@@ -125,7 +126,6 @@ const tabGroups: TabGroup[] = [
       { value: 'scheduler', label: '调度器', icon: Timer },
       { value: 'cluster', label: '集群', icon: Boxes },
       { value: 'remote-hosts', label: '远程主机', icon: ServerCog },
-      { value: 'connections', label: '对接 MAP', icon: Plug },
       { value: 'global-vars', label: 'CDS 全局变量', icon: TerminalSquare },
       { value: 'loading-pages', label: '加载页预览', icon: Monitor },
       { value: 'snapshots', label: '配置快照', icon: Save },

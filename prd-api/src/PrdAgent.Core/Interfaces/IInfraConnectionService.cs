@@ -95,6 +95,7 @@ public static class InfraConnectionErrorCodes
     public const string PairingTokenNotFound = "pairing_token_not_found";
     public const string ConnectionDuplicate = "connection_duplicate";
     public const string CdsUnreachable = "cds_unreachable";
+    public const string BugReportAuthorizationFailed = "bug_report_authorization_failed";
     public const string AcceptResponseInvalid = "accept_response_invalid";
     public const string ConnectionNotFound = "connection_not_found";
     public const string TokenUnprotectFailed = "token_unprotect_failed";

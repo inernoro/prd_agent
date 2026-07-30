@@ -93,7 +93,8 @@ requireContains('branchList', 'border-emerald-500/25 bg-emerald-500/[0.055]', 'r
 // panel redesign. The exact implementation can evolve, but removing these
 // signals means the user loses the large workbench / data visibility loop.
 requireContains('drawer', 'function ResourceWorkbenchModal', 'resource workbench modal exists');
-requireContains('drawer', 'max-w-[1760px]', 'resource workbench has large operation canvas');
+requireContains('drawer', 'className="flex h-full w-full flex-col overflow-hidden', 'resource workbench fills the available operation canvas');
+requireNotContains('drawer', 'max-w-[1760px]', 'resource workbench has no artificial desktop width cap');
 requireContains('drawer', "language: 'sql' | 'json' | 'mongo'", 'code editor keeps sql/json/mongo highlighting');
 requireContains('drawer', 'function chooseMongoDatabase', 'Mongo default database selector exists');
 requireContains('drawer', 'configuredDatabaseNotice', 'Mongo configured/default database feedback exists');

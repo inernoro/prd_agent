@@ -935,6 +935,24 @@ describe('Branch Routes', () => {
     });
 
     describe('GET /api/branches/:id/effective-config(波2 配置检查器)', () => {
+      it('未显式继承时不把 CDS 全局变量伪装成项目生效配置，开启后才加入溯源', async () => {
+        seedBranch('b1');
+        stateService.setCustomEnvVar('GLOBAL_CONTROL_ONLY', 'global-value', '_global');
+
+        const isolated = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(isolated.status).toBe(200);
+        expect((isolated.body as any).envLayers.some((layer: any) => (
+          layer.source === 'global' && layer.keys.includes('GLOBAL_CONTROL_ONLY')
+        ))).toBe(false);
+
+        stateService.updateProject('default', { inheritGlobalEnv: true });
+        const inherited = await request(server, 'GET', '/api/branches/b1/effective-config');
+        expect(inherited.status).toBe(200);
+        expect((inherited.body as any).envLayers.some((layer: any) => (
+          layer.source === 'global' && layer.keys.includes('GLOBAL_CONTROL_ONLY')
+        ))).toBe(true);
+      });
+
       it('返回逐 key 溯源:extra-service/branch-override 打标 + 密钥脱敏 + plan 形状', async () => {
         stateService.addBuildProfile({ id: 'api', name: 'API', dockerImage: 'img', workDir: 'api', command: 'run', containerPort: 8080, projectId: 'default', env: { FROM_PROFILE: 'p' } });
         seedBranch('b1');
@@ -4249,6 +4267,35 @@ describe('Branch Routes', () => {
   });
 
   describe('GET /api/branches/:id/effective-env', () => {
+    it('全局变量只有在项目显式开启继承后才显示为生效', async () => {
+      const now = new Date().toISOString();
+      stateService.addBranch({
+        id: 'env-global-scope',
+        projectId: 'default',
+        branch: 'env/global-scope',
+        worktreePath: path.join(tmpDir, 'worktrees', 'env-global-scope'),
+        services: {},
+        status: 'idle',
+        createdAt: now,
+      });
+      stateService.setCustomEnvVar('LLMGW_SCOPE_GUARD', 'must-not-leak', '_global');
+
+      const isolated = await request(server, 'GET', '/api/branches/env-global-scope/effective-env');
+      expect(isolated.status).toBe(200);
+      expect((isolated.body as any).variables.some((item: any) => item.key === 'LLMGW_SCOPE_GUARD')).toBe(false);
+      expect((isolated.body as any).bySource.global).toBe(0);
+
+      stateService.updateProject('default', { inheritGlobalEnv: true });
+      const inherited = await request(server, 'GET', '/api/branches/env-global-scope/effective-env');
+      expect(inherited.status).toBe(200);
+      expect((inherited.body as any).variables).toContainEqual(expect.objectContaining({
+        key: 'LLMGW_SCOPE_GUARD',
+        value: 'must-not-leak',
+        source: 'global',
+      }));
+      expect((inherited.body as any).bySource.global).toBe(1);
+    });
+
     it('shows branch-scoped env overrides above project env', async () => {
       const now = new Date().toISOString();
       stateService.addBranch({

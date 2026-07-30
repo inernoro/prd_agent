@@ -135,7 +135,11 @@ function storeNotices(notices: CommitNotice[]): void {
   }
 }
 
-export function CommitInbox(): JSX.Element | null {
+export function CommitInbox({
+  onCountChange,
+}: {
+  onCountChange?: (count: number) => void;
+} = {}): JSX.Element | null {
   const [notices, setNotices] = useState<CommitNotice[]>(() => loadStoredNotices());
   const [open, setOpen] = useState(false);
   const [connected, setConnected] = useState(false);
@@ -190,6 +194,10 @@ export function CommitInbox(): JSX.Element | null {
 
   const latest = notices[0];
   const unreadCount = notices.length;
+  useEffect(() => {
+    onCountChange?.(unreadCount);
+  }, [onCountChange, unreadCount]);
+
   const latestTime = latest ? `${formatRelative(latest.receivedAt)} · ${formatExactTime(latest.receivedAt)}` : '';
   const title = useMemo(() => {
     if (!latest) return connected ? '提交通知信箱 · 等待推送' : '提交通知信箱 · 连接中';
@@ -211,11 +219,8 @@ export function CommitInbox(): JSX.Element | null {
 
   return (
     <div
-      // 不自己定位：本组件是 .cds-bottom-left-dock 的一员，让开常驻 rail、两侧
-      // 留白、窄屏折行全由 .cds-bottom-docks 负责（index.css）。此前直接写
-      // `fixed bottom-4 left-4` 会盖住 rail 上的导航图标。
-      className={`w-[min(var(--commit-inbox-w),100%)] select-none transition-[width] duration-200`}
-      style={{ ['--commit-inbox-w' as string]: open ? '520px' : '390px' }}
+      // 不自己定位：GitHub push 只作为信息中心里的一个消息源展示。
+      className="w-full select-none"
     >
       <div className="overflow-hidden rounded-md border border-sky-500/30 bg-[hsl(var(--surface-raised))] shadow-2xl">
         <button

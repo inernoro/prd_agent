@@ -3,6 +3,7 @@ import { useNavigate } from 'react-router-dom';
 import { AlertTriangle, ArrowUpCircle, CheckCircle2, Pin, PinOff, RefreshCw, Sparkles, X } from 'lucide-react';
 import { CdsLogoLoader } from '@/components/brand/CdsMetallicLogo';
 import { apiUrl } from '@/lib/api';
+import { reconnectRemainingSeconds } from '@/lib/cdsReconnectPolicy';
 import { useCdsEvents, type SelfStatusSnapshot } from '@/hooks/useCdsEvents';
 import {
   activeUpdateStaleSeconds,
@@ -69,13 +70,18 @@ type BadgeState =
   | { kind: 'activeUpdating'; sinceMs: number; lastTickMs?: number; trigger?: string; step?: string; title?: string }
   | { kind: 'activeUpdateStalled'; sinceMs: number; lastTickMs: number; trigger?: string; step?: string; title?: string }
   | { kind: 'restarting'; sinceMs: number }
+  | { kind: 'unreachable'; sinceMs: number; nextReconnectAt?: string | null; lastError?: string | null }
   | { kind: 'bundleStale'; backendSha: string; bundleSha: string };
 
 const DISMISS_KEY = 'cds:global-update-badge:dismissed-until';
 // 2026-05-28 后:SSE 失败回退、重试、阈值都由 useCdsEvents 单例统一处理,
 // 本组件不再独立维护;原 FALLBACK_POLL_INTERVAL_MS / SSE_FAIL_THRESHOLD_* 常量已删除。
 
-export function GlobalUpdateBadge(): JSX.Element | null {
+export function GlobalUpdateBadge({
+  onCountChange,
+}: {
+  onCountChange?: (count: number) => void;
+} = {}): JSX.Element | null {
   const navigate = useNavigate();
   const [state, setState] = useState<BadgeState>({ kind: 'idle' });
   // 2026-05-06 用户反馈"我要的是常开":徽章默认就展开显示完整状态,鼠标移开
@@ -248,14 +254,32 @@ export function GlobalUpdateBadge(): JSX.Element | null {
   // 维护 snapshot / connection state / refreshing / updating;本组件只负责把
   // snapshot 映射成 BadgeState,大幅简化 SSE / 重试 / 降级逻辑。
   useEffect(() => {
-    if (events.snapshot) {
+    if (events.snapshot && events.effectiveConnection !== 'disconnected' && events.effectiveConnection !== 'error') {
       applyPayload(events.snapshot as SelfStatusSnapshot & SelfStatusLite, 'update');
     }
-    // useCdsEvents 的 disconnected 状态 ⇒ 显示 restarting(原逻辑兜底)
-    if (events.effectiveConnection === 'disconnected') {
-      setState({ kind: 'restarting', sinceMs: Date.now() });
+    // 普通 SSE 断线不能冒充“CDS 正在重启”。只有 self-update 明确发出的 done
+    // 才进入 restarting；未知原因断线统一显示不可达，并保留首次断线时刻。
+    if (events.effectiveConnection === 'disconnected' || events.effectiveConnection === 'error') {
+      setState((current) => {
+        if (current.kind === 'restarting') return current;
+        return {
+          kind: 'unreachable',
+          sinceMs: current.kind === 'unreachable'
+            ? current.sinceMs
+            : Date.parse(events.disconnectedAt || '') || Date.now(),
+          nextReconnectAt: events.nextReconnectAt,
+          lastError: events.lastError,
+        };
+      });
     }
-  }, [events.snapshot, events.effectiveConnection, applyPayload]);
+  }, [
+    events.snapshot,
+    events.effectiveConnection,
+    events.disconnectedAt,
+    events.nextReconnectAt,
+    events.lastError,
+    applyPayload,
+  ]);
 
   const stalledRefreshKeyRef = useRef('');
   useEffect(() => {
@@ -266,12 +290,12 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     void triggerManualRefresh();
   }, [state, triggerManualRefresh]);
 
-  // restarting / activeUpdating 状态下 1s 定时刷新让计时秒数跳动。
+  // restarting / activeUpdating / unreachable 状态下 1s 定时刷新计时与重试倒计时。
   // elapsed 在 visualForState 里 render 时计算一次,组件本身不会因时间流逝
   // 自动 re-render — 这里 1s 一次轻量 setState 强制重渲染。
   const [, forceTick] = useState(0);
   useEffect(() => {
-    if (state.kind !== 'restarting' && state.kind !== 'activeUpdating') return;
+    if (state.kind !== 'restarting' && state.kind !== 'activeUpdating' && state.kind !== 'unreachable') return;
     const t = window.setInterval(() => {
       forceTick((n) => n + 1);
       setState((current) => {
@@ -295,10 +319,8 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     return () => window.clearInterval(t);
   }, [state.kind]);
 
-  // 旧的 probe-recovered 轮询(每 2-3s 调一次 /api/self-status 反证恢复)已删除。
-  // 2026-05-28: useCdsEvents 的 SSE 通道断了浏览器内置重连;恢复后 self.status
-  // 事件会立刻把 snapshot 推过来,本组件 useEffect 监听 events.snapshot 自动更新。
-  // 不再需要前端主动短周期探测。
+  // 自动恢复统一由 useCdsEvents 维护：前三次快速重试，之后每分钟持续探测；
+  // online 与标签页重新可见时立即重连，不再把恢复责任交给用户点击。
 
   // 立即更新(2026-05-04 UX 优化):updateAvailable 状态下角标 hover 直接给
   // "立即更新"按钮,POST /api/self-update 后 Badge 切到 restarting 状态。
@@ -436,6 +458,9 @@ export function GlobalUpdateBadge(): JSX.Element | null {
       }));
     };
   }, [visible]);
+  useEffect(() => {
+    onCountChange?.(visible ? 1 : 0);
+  }, [onCountChange, visible]);
 
   if (!visible) return null;
 
@@ -444,33 +469,13 @@ export function GlobalUpdateBadge(): JSX.Element | null {
     onNavigate: navigate,
   });
 
-  // 2026-05-07 wave 3.2:重启 overlay — restarting 状态超过 5s 时显示全屏
-  // 半透明 backdrop,让用户更明确感知"等几秒"。<5s 时只 banner,避免抖动。
-  // 点 backdrop 直接调 retry,跟 banner 主体行为一致。
-  const restartingElapsed = state.kind === 'restarting' ? Math.floor((Date.now() - state.sinceMs) / 1000) : 0;
-  const showOverlay = state.kind === 'restarting' && restartingElapsed >= 5;
-
   return (
-    <>
-      {showOverlay ? (
-        <div
-          className="fixed inset-0 z-[150] flex flex-col items-center justify-center bg-black/40 backdrop-blur-sm cursor-pointer"
-          onClick={() => { void triggerManualRefresh(); }}
-          role="button"
-          aria-label="点击立即重试"
-          title="点击立即重试 self-status"
-        >
-          <CdsLogoLoader size="xl" className="text-white" />
-          <div className="mt-4 text-base font-semibold text-white">CDS 重启中 · {restartingElapsed}s</div>
-          <div className="mt-1 text-xs text-white/70">点击立即重试 / 等待自动恢复</div>
-        </div>
-      ) : null}
     <div
-      className="max-w-full select-none"
+      className="w-full max-w-full select-none"
       style={{ pointerEvents: 'auto' }}
     >
       <div
-        className={`flex w-max min-w-0 items-stretch gap-0 overflow-hidden rounded-full border shadow-2xl transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''} ${expanded ? '' : 'h-9'}`}
+        className={`flex w-full min-w-0 items-stretch gap-0 overflow-hidden rounded-md border shadow-sm transition-all duration-200 ${visual.borderClass} ${visual.bgClass} ${pinned ? 'ring-2 ring-amber-400/40' : ''} ${expanded ? '' : 'h-9'}`}
         onMouseEnter={handleEnter}
         onMouseLeave={handleLeave}
       >
@@ -551,7 +556,6 @@ export function GlobalUpdateBadge(): JSX.Element | null {
         ) : null}
       </div>
     </div>
-    </>
   );
 }
 
@@ -635,15 +639,25 @@ function visualForState(
       const elapsed = Math.floor((Date.now() - state.sinceMs) / 1000);
       return {
         icon: <CdsLogoLoader size="sm" />,
-        label: `CDS 不可达 ${elapsed}s · 可能正在重启…`,
-        title: 'self-status 流断开。点击主动重试一次(SSE 也在自动 3 秒一次重连)。',
+        label: `CDS 正在重启 ${elapsed}s · 自动恢复中`,
+        title: 'CDS 已明确发起自更新重启。恢复探针会持续工作，点击可立即重试。',
         bgClass: 'bg-blue-50 dark:bg-blue-950/30',
         borderClass: 'border-blue-500/40',
         textClass: 'text-blue-700 dark:text-blue-300',
-        // 2026-05-07 用户反馈"banner 308s 一直在,daemon 已活但状态卡住":
-        // 点击主体 → 主动 fetch /api/self-status,成功就 reset 到 idle。
-        // 解决 SSE fallback polling 卡死时,用户看到其他 API 正常但 banner
-        // 不消除的死循环。
+        onClick: opts.onRetry,
+      };
+    }
+    case 'unreachable': {
+      const elapsed = Math.max(0, Math.floor((Date.now() - state.sinceMs) / 1000));
+      const retryIn = reconnectRemainingSeconds(state.nextReconnectAt);
+      const retryText = retryIn === null ? '持续自动重连' : `${retryIn}s 后自动重试`;
+      return {
+        icon: <AlertTriangle className="h-4 w-4" />,
+        label: `CDS 服务不可达 ${elapsed}s · ${retryText}`,
+        title: `无法确认是重启、网络还是服务退出。系统会持续重连，点击可立即重试${state.lastError ? `。最近错误：${state.lastError}` : ''}`,
+        bgClass: 'bg-red-50 dark:bg-red-950/30',
+        borderClass: 'border-red-500/40',
+        textClass: 'text-red-700 dark:text-red-300',
         onClick: opts.onRetry,
       };
     }

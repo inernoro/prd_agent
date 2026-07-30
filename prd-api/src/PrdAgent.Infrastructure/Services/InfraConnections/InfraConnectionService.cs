@@ -22,8 +22,9 @@ namespace PrdAgent.Infrastructure.Services.InfraConnections;
 /// MAP 端基础设施连接服务实现。
 ///
 /// 安全模型（spec.cds.map-pairing-protocol §5）：
-/// - 剪贴板密文只含 pairingToken（10 分钟一次性），不含 longToken
-/// - longToken 通过 accept 响应派发，IDataProtector 加密落库
+/// - 浏览器跳转只携带来源地址和一次性授权状态，不携带长期凭据
+/// - longToken 通过服务端 token 响应派发，IDataProtector 加密落库
+/// - MAP 同步为 CDS 签发永久、最小权限的 defect-agent Key，明文只在服务端回授一次
 /// - 解密失败只返回 null；连接 status 由显式探活更新，避免后台读取产生状态副作用
 /// </summary>
 public class InfraConnectionService : IInfraConnectionService
@@ -31,6 +32,7 @@ public class InfraConnectionService : IInfraConnectionService
     public const string HttpClientName = "infra-connection-handshake";
     private const string ProtectorPurpose = "InfraConnection.LongToken.v1";
     private const string ClipboardPrefixV1 = "cds-connect:v1:";
+    private const string DefectAgentScope = "defect-agent:use";
     private static readonly DateTime LifetimeLongTokenExpiresAt = new(2099, 12, 31, 23, 59, 59, DateTimeKind.Utc);
     private static readonly string[] SupportedVersionPrefixes = { ClipboardPrefixV1 };
 
@@ -45,6 +47,7 @@ public class InfraConnectionService : IInfraConnectionService
     private readonly IHttpClientFactory _httpClientFactory;
     private readonly IHttpContextAccessor _httpContextAccessor;
     private readonly IConfiguration _configuration;
+    private readonly IAgentApiKeyService _agentApiKeyService;
     private readonly ILogger<InfraConnectionService> _logger;
 
     public InfraConnectionService(
@@ -53,6 +56,7 @@ public class InfraConnectionService : IInfraConnectionService
         IHttpClientFactory httpClientFactory,
         IHttpContextAccessor httpContextAccessor,
         IConfiguration configuration,
+        IAgentApiKeyService agentApiKeyService,
         ILogger<InfraConnectionService> logger)
     {
         _db = db;
@@ -60,6 +64,7 @@ public class InfraConnectionService : IInfraConnectionService
         _httpClientFactory = httpClientFactory;
         _httpContextAccessor = httpContextAccessor;
         _configuration = configuration;
+        _agentApiKeyService = agentApiKeyService;
         _logger = logger;
     }
 
@@ -231,13 +236,8 @@ public class InfraConnectionService : IInfraConnectionService
                 && c.PartnerBaseUrl == NormalizeBaseUrl(payload.CdsBaseUrl)
                 && c.Status == "active")
             .FirstOrDefaultAsync(ct);
-        if (duplicateByUrl != null && await IsConnectionUsableAsync(duplicateByUrl, ct))
-        {
-            throw new InfraConnectionException(
-                InfraConnectionErrorCodes.ConnectionDuplicate,
-                $"已有同一 CDS（{duplicateByUrl.PartnerName}）连接，请先删除旧连接",
-                StatusCodes.Status409Conflict);
-        }
+        // 跳转授权允许直接覆盖同一 CDS 的旧连接。只有新凭据和缺陷授权全部成功后，
+        // 才撤销旧记录，避免“必须先手工删除再授权”的额外步骤。
 
         var tokenResp = await CallCdsTokenAsync(
             payload.CdsBaseUrl,
@@ -257,15 +257,30 @@ public class InfraConnectionService : IInfraConnectionService
         var dup = await _db.InfraConnections
             .Find(c => c.Partner == "cds" && c.PartnerId == partnerId && c.Status == "active")
             .FirstOrDefaultAsync(ct);
-        if (dup != null && await IsConnectionUsableAsync(dup, ct))
+        var now = DateTime.UtcNow;
+        var (mapAgentKey, mapAgentToken) = await _agentApiKeyService.CreateAsync(
+            userId,
+            $"CDS 缺陷转发 · {partnerName}",
+            "CDS 跳转授权自动创建；永久有效，删除基础设施连接时撤销",
+            new[] { DefectAgentScope },
+            ttlDays: 0,
+            ct);
+        try
         {
-            throw new InfraConnectionException(
-                InfraConnectionErrorCodes.ConnectionDuplicate,
-                $"已有同一 CDS（{dup.PartnerName}）连接，请先删除旧连接",
-                StatusCodes.Status409Conflict);
+            await CallCdsBugReportAuthorizationAsync(
+                payload.CdsBaseUrl,
+                tokenResp.CdsLongToken,
+                mapBaseUrl,
+                mapAgentToken,
+                userId,
+                ct);
+        }
+        catch
+        {
+            await _agentApiKeyService.RevokeAsync(mapAgentKey.Id, ct);
+            throw;
         }
 
-        var now = DateTime.UtcNow;
         var entity = new InfraConnection
         {
             Id = Guid.NewGuid().ToString("N"),
@@ -274,6 +289,7 @@ public class InfraConnectionService : IInfraConnectionService
             PartnerId = partnerId,
             PartnerBaseUrl = NormalizeBaseUrl(payload.CdsBaseUrl),
             LongTokenEncrypted = _protector.Protect(tokenResp.CdsLongToken),
+            MapAgentApiKeyId = mapAgentKey.Id,
             LongTokenExpiresAt = tokenResp.CdsLongTokenExpiresAt ?? LifetimeLongTokenExpiresAt,
             ProjectId = tokenResp.ProjectId ?? string.Empty,
             InstanceDiscoveryUrl = tokenResp.InstanceDiscoveryUrl ?? string.Empty,
@@ -287,7 +303,42 @@ public class InfraConnectionService : IInfraConnectionService
             LastProbeError = null,
         };
 
-        await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
+        try
+        {
+            await _db.InfraConnections.InsertOneAsync(entity, cancellationToken: ct);
+        }
+        catch
+        {
+            await _agentApiKeyService.RevokeAsync(mapAgentKey.Id, ct);
+            throw;
+        }
+        var replacedConnections = new[] { duplicateByUrl, dup }
+            .Where(item => item != null)
+            .Cast<InfraConnection>()
+            .GroupBy(item => item.Id)
+            .Select(group => group.First())
+            .ToList();
+        foreach (var replaced in replacedConnections)
+        {
+            try
+            {
+                if (!string.IsNullOrWhiteSpace(replaced.MapAgentApiKeyId))
+                {
+                    await _agentApiKeyService.RevokeAsync(replaced.MapAgentApiKeyId, ct);
+                }
+                await _db.InfraConnections.UpdateOneAsync(
+                    item => item.Id == replaced.Id,
+                    Builders<InfraConnection>.Update
+                        .Set(item => item.Status, "revoked")
+                        .Set(item => item.UpdatedAt, now)
+                        .Set(item => item.LastProbeError, "已由新的 MAP 跳转授权替换"),
+                    cancellationToken: ct);
+            }
+            catch (Exception ex)
+            {
+                _logger.LogWarning(ex, "InfraConnection replacement cleanup failed oldId={OldId} newId={NewId}", replaced.Id, entity.Id);
+            }
+        }
         _logger.LogInformation(
             "InfraConnection authorized id={Id} partner={Partner} partnerId={PartnerId} project={Project}",
             entity.Id, entity.Partner, entity.PartnerId, entity.ProjectId);
@@ -351,6 +402,12 @@ public class InfraConnectionService : IInfraConnectionService
 
     public async Task<bool> DeleteAsync(string id, CancellationToken ct)
     {
+        var connection = await _db.InfraConnections.Find(c => c.Id == id).FirstOrDefaultAsync(ct);
+        if (connection == null) return false;
+        if (!string.IsNullOrWhiteSpace(connection.MapAgentApiKeyId))
+        {
+            await _agentApiKeyService.RevokeAsync(connection.MapAgentApiKeyId, ct);
+        }
         var result = await _db.InfraConnections.DeleteOneAsync(c => c.Id == id, ct);
         return result.DeletedCount > 0;
     }
@@ -778,6 +835,57 @@ public class InfraConnectionService : IInfraConnectionService
         }
 
         return parsed;
+    }
+
+    private async Task CallCdsBugReportAuthorizationAsync(
+        string cdsBaseUrl,
+        string cdsLongToken,
+        string mapBaseUrl,
+        string mapAgentToken,
+        string assigneeUserId,
+        CancellationToken ct)
+    {
+        var client = _httpClientFactory.CreateClient(HttpClientName);
+        client.Timeout = TimeSpan.FromSeconds(10);
+        using var req = new HttpRequestMessage(
+            HttpMethod.Post,
+            JoinUrl(cdsBaseUrl, "/api/cds-system/integrations/bug-report/authorize"));
+        req.Headers.Authorization = new AuthenticationHeaderValue("Bearer", cdsLongToken);
+        req.Content = JsonContent.Create(new
+        {
+            baseUrl = mapBaseUrl,
+            token = mapAgentToken,
+            assigneeUserId
+        }, options: JsonOpts);
+
+        HttpResponseMessage resp;
+        try
+        {
+            resp = await client.SendAsync(req, ct);
+        }
+        catch (TaskCanceledException ex) when (!ct.IsCancellationRequested)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.BugReportAuthorizationFailed,
+                $"CDS 缺陷转发授权超时：{ex.Message}",
+                StatusCodes.Status502BadGateway);
+        }
+        catch (HttpRequestException ex)
+        {
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.BugReportAuthorizationFailed,
+                $"CDS 缺陷转发授权失败：{ex.Message}",
+                StatusCodes.Status502BadGateway);
+        }
+
+        if (!resp.IsSuccessStatusCode)
+        {
+            var responseBody = await SafeReadAsStringAsync(resp.Content, ct);
+            throw new InfraConnectionException(
+                InfraConnectionErrorCodes.BugReportAuthorizationFailed,
+                $"CDS 未接受 MAP 缺陷转发授权（HTTP {(int)resp.StatusCode}）：{responseBody}",
+                StatusCodes.Status502BadGateway);
+        }
     }
 
     private static (string code, string message) MapAcceptError(HttpStatusCode status, string body)
