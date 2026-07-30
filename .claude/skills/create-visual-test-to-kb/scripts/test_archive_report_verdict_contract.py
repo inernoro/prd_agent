@@ -78,6 +78,18 @@ class DailyVerdictContractTests(unittest.TestCase):
                 {"smoke", "archive"},
             ),
             ("CDS smoke 先前失败，重试后已通过", set()),
+            ("CDS smoke 先前失败；现已通过", set()),
+            ("CDS smoke 先前失败；验证已通过", set()),
+            ("CDS ready 和 smoke 失败；二者均已通过", set()),
+            ("CDS smoke 先前失败；但是现已通过", set()),
+            ("CDS smoke 已通过；复测仍未通过", {"smoke"}),
+            ("CDS smoke 已通过；移动端验收未完成", set()),
+            ("CDS smoke 已通过；移动端验证未通过", set()),
+            ("CDS smoke 已通过；截图上传失败", set()),
+            ("CDS smoke 已通过；截图上传失败；复测仍未通过", set()),
+            ("CDS smoke 已通过；已修复的截图上传仍失败", set()),
+            ("CDS smoke 失败；现已修复但移动端验收未完成", set()),
+            ("截图上传失败；CDS smoke", set()),
             ("先前失败的 CDS smoke 现已通过", set()),
             (
                 "CDS smoke 先前失败，已修复，完成部署后，复测仍未通过",
@@ -374,6 +386,18 @@ class DailyVerdictContractTests(unittest.TestCase):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(
                     "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
+    def test_unregistered_failure_subject_does_not_inherit_previous_gate(self):
+        for fact in ("移动端验收未完成", "截图上传失败"):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+                    f"CDS smoke 已通过 | {fact}",
                 )
                 errors = archive_report._daily_conclusion_contract_errors(
                     "conditional", body

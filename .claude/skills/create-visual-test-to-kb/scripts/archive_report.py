@@ -743,7 +743,7 @@ def _closure_changes_subject(clause, event, previous_event_end):
     for _, pattern in _FAILURE_SUBJECT_PATTERNS:
         scope = pattern.sub(" ", scope)
     scope = re.sub(
-        r"CDS|的|但|但是|不过|且|并|并且|而|后|前|先前|此前|一度|曾"
+        r"CDS|的|但是|不过|然而|但|并且|且|并|而|后|前|先前|此前|一度|曾"
         r"|问题|故障|异常|事项|缺陷|本项|该项|该问题|此问题|上述问题"
         r"|该异常|此异常|本根因|该根因|根因"
         r"|重试|复测|验证|再次|重新|二者|全部|均|都"
@@ -791,20 +791,68 @@ def _failure_is_negated(clause, event, previous_event_end):
     )
 
 
+def _event_inherits_context(clause, event, state, previous_event_end):
+    """Allow omitted subjects only for explicit same-subject continuation wording."""
+    prefix = clause[previous_event_end : event.start()]
+    suffix = clause[event.end() :]
+    if re.match(r"\s*的", suffix) and not re.match(
+        r"\s*的\s*(?:该|本|此|上述)(?:项|问题|事项|异常|故障|根因)",
+        suffix,
+        re.I,
+    ):
+        return False
+    normalized = re.sub(
+        r"^\s*(?:(?:但是|不过|然而|并且|但|而|并|且)\s*)*",
+        "",
+        prefix,
+        flags=re.I,
+    )
+    normalized = re.sub(r"[\s'\"“”‘’]+", "", normalized)
+    if not re.search(r"[A-Za-z0-9\u4e00-\u9fff]", normalized):
+        return True
+    if re.fullmatch(
+        r"(?:该|本|此|上述)(?:项|问题|事项|异常|故障|根因)"
+        r"(?:(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?)?"
+        r"(?:仍|仍然|依然|再次|重新|当前)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:再次|重新)?(?:重试|复测|验证)(?:结果)?(?:后)?"
+        r"(?:仍|仍然|依然|再次|重新|当前)?",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:二者|两者|全部)?(?:均|都)(?:仍|仍然|依然|再次|重新|当前)?"
+        r"|(?:二者|两者|全部)",
+        normalized,
+        re.I,
+    ):
+        return True
+    if re.fullmatch(
+        r"(?:随后|最终|再次|重新|依然|仍然|仍|又|此前|先前|一度|曾|当前)+",
+        normalized,
+        re.I,
+    ):
+        return True
+    return bool(
+        state == "resolved"
+        and re.search(r"后$", normalized, re.I)
+    )
+
+
 def _current_failure_subjects(text):
     """Resolve subject status events in order within one root-cause cell."""
     states = {}
     context_subjects = set()
-    pending_states = []
     for index, clause in enumerate(_split_fact_clauses(text)):
         if index % 2:
             continue
         occurrences = _subject_occurrences(clause)
         explicit_subjects = {name for _, _, name in occurrences}
-        if explicit_subjects:
-            for pending_state in pending_states:
-                _apply_subject_state(states, explicit_subjects, pending_state)
-            pending_states = []
 
         events = [
             (match, "failed")
@@ -815,7 +863,12 @@ def _current_failure_subjects(text):
         ]
         events.sort(key=lambda item: item[0].start())
         previous_event_end = 0
+        context_flags = []
         for event, state in events:
+            inherits_context = _event_inherits_context(
+                clause, event, state, previous_event_end
+            )
+            context_flags.append(inherits_context)
             if state == "failed" and _failure_is_negated(
                 clause, event, previous_event_end
             ):
@@ -827,15 +880,19 @@ def _current_failure_subjects(text):
                 previous_event_end = event.end()
                 continue
             subjects = _event_subjects(event, occurrences, clause)
-            if not subjects:
+            if (
+                not subjects
+                and context_subjects
+                and inherits_context
+            ):
                 subjects = context_subjects
             if subjects:
                 _apply_subject_state(states, subjects, state)
-            else:
-                pending_states.append(state)
             previous_event_end = event.end()
         if explicit_subjects:
             context_subjects = explicit_subjects
+        elif events and not all(context_flags):
+            context_subjects = set()
     return {subject for subject, state in states.items() if state == "failed"}
 
 
