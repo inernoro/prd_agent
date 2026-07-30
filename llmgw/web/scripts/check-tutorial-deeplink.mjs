@@ -154,6 +154,12 @@ must(
   'onboarding: identity 必须进两个 effect 的依赖数组 —— 只进缓存键不够，换账号时 effect 不重跑',
 );
 
+must(
+  /location\.pathname\.replace\(\/\\\/\+\$\/, ''\) === '\/learn'/.test(shell),
+  'PageShell: 在 /learn 上不得渲染指向 /learn 的回落链接 —— 点了什么都不会发生，'
+  + '而该页的详细解释已收进深链教程，用户会断在死链上',
+);
+
 const theme = read('src/theme.css');
 must(
   shell.includes('lg-help-popover--up') && shell.includes('shouldFlipHelpUp('),

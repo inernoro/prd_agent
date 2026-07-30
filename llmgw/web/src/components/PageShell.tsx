@@ -19,7 +19,7 @@ import type { CSSProperties, ReactNode } from 'react';
 import { Link, useLocation } from 'react-router-dom';
 import { useAuth } from '@/lib/auth';
 import { canOpenTutorials, resolveTutorialHref, usePlatformMapHome } from '@/lib/mapNavigation';
-import { BODY_TEXT } from '@/lib/typography';
+import { BODY_TEXT, HINT_TEXT } from '@/lib/typography';
 
 const cx = (...parts: (string | undefined | false)[]) => parts.filter(Boolean).join(' ');
 
@@ -186,6 +186,12 @@ export function TutorialLink({ chapter, children = '查看教程' }: { chapter?:
   // 回落到站内学习中心时必须走 router Link：同源部署下 basename 是 `/llmgw`，
   // 裸 <a href="/learn"> 会跳到 MAP 应用的 /learn 而不是控制台的（Codex P2）。
   if (!canOpenTutorials(user, tenant)) {
+    // 已经站在 /learn 上时**不能**再渲染指向 /learn 的链接：点了什么都不会发生，
+    // 而这一页的详细解释在 v1.2 迁移里已经收进深链教程，用户就此断在死链上（Codex P2）。
+    // 死链和空白都比一句实话差 —— 直接说清为什么拿不到，以及需要什么身份。
+    if (location.pathname.replace(/\/+$/, '') === '/learn') {
+      return <span style={HINT_TEXT}>完整教程需 MAP 管理员身份</span>;
+    }
     return (
       <Link className="lg-tutorial-link" to="/learn" style={BODY_TEXT}>
         {children}
