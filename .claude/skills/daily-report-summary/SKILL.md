@@ -174,7 +174,18 @@ TODAY=${1:-$(date +%Y-%m-%d)}
 DEFAULT_BRANCH=$(git symbolic-ref --quiet --short refs/remotes/origin/HEAD 2>/dev/null)
 DEFAULT_BRANCH=${DEFAULT_BRANCH:-origin/main}
 git fetch origin --quiet
-git rev-parse --is-shallow-repository | grep -q true && git fetch origin --unshallow --quiet 2>/dev/null
+# 浅克隆必须**真的**补全：失败不能吞。浅克隆下 merge 的父提交不可达（.git/shallow 的
+# graft 会让边界提交看起来根本没有父），Phase 2 的穿透判据会把每个 merge 误判成「直接提交」，
+# 于是只统计到一行 merge 标题、PR 里的真实提交全部丢失——而 Phase 5 照样把水位线推到 HEAD，
+# 那些提交**永久**不会再被任何一期采到。这正是本 PR 要根治的漏报，必须当场中止。
+if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+  git fetch origin --unshallow --quiet || git fetch origin --deepen=2000 --quiet || true
+  if [ "$(git rev-parse --is-shallow-repository)" = true ]; then
+    echo "[致命] 仓库仍是浅克隆，merge 无法穿透：统计会静默丢失 PR 内提交，而水位线仍会前进。" >&2
+    echo "       请先手动跑通 git fetch origin --unshallow 再生成日报。" >&2
+    exit 3
+  fi
+fi
 
 WIN=$(python3 .claude/skills/daily-report-summary/reference/coverage_window.py \
         --base https://main-prd-agent.miduo.org --impersonate inernoro --target-date "$TODAY")
@@ -224,7 +235,16 @@ cat /tmp/win_fp.tsv
 #   + (b) 每个 merge 内部穿透出来的真实提交。产出 /tmp/today_real.tsv：<author>\t<subject>
 : > /tmp/today_real.tsv
 while IFS=$'\t' read -r d sha an s; do
-  if git rev-parse -q --verify "$sha^2" >/dev/null 2>&1; then      # 是 merge：穿透读 PR 内提交
+  # 是不是 merge 必须看**提交对象本身**的 parent 行数（git cat-file -p），不能用
+  # `rev-parse ^2 是否可解` 来推断：浅克隆的 .git/shallow graft 会让边界提交
+  # 「看起来没有父」，于是 merge 被误判成直接提交、PR 内提交全部丢失且不报错。
+  # 实测：浅克隆下同一个 merge，cat-file 显示 2 个 parent，而 rev-list --parents 显示 0 个。
+  nparent=$(git cat-file -p "$sha" | grep -c '^parent')
+  if [ "$nparent" -ge 2 ]; then                                    # 是 merge
+    if ! git rev-parse -q --verify "$sha^2" >/dev/null 2>&1; then  # 但父不可达 → 不能静默降级
+      echo "[致命] merge $sha 的父提交不可达（浅克隆/部分克隆未补全），穿透会静默丢失该 PR 的全部提交" >&2
+      exit 3
+    fi
     git log "$sha^1..$sha^2" --no-merges --format="%an%x09%s" >> /tmp/today_real.tsv
   else                                                             # 直接提交：自己算一条
     printf '%s\t%s\n' "$an" "$s" >> /tmp/today_real.tsv

@@ -571,14 +571,25 @@ def main():
     daily_date = resolve_daily_date(a.daily_date, a.title)
     kind = a.kind or "daily-report"
 
-    # --replace-same-date：**先**记下同日旧条目，等新条目确认落库后再删。
-    # 顺序不能反——先删后建的话，中途失败会把当天日报整个删没。
-    # 两个变量必须无条件初始化：未开开关时下游仍会引用它们。
+    # --replace-same-date：**优先原地更新已有条目，而不是「建新 + 删旧」**。
+    # 为什么：分享链是**钉在 entryId 上**的（后端 ListShareEntries 按 link.EntryId 过滤）。
+    # 建新删旧会让当天已经发出去的分享链、别人的书签全部失效——重跑一次就断一次。
+    # 保留 entryId 则连分享链都不用换：CreateShareLink 的 reuseFilter 也按 entryId 匹配，
+    # 会直接复用同一个 token 返回（见 DocumentStoreController 的 reuseFilter）。
+    # 附带好处：原地更新没有「建新」这一步，两个并发进程只会先后写同一条，
+    # 不会各建一条留下重复，也不可能互删成零条。
+    # 多于一条（历史竞态留下的重复）时：取**最早**那条作为保留对象（它最可能是分享链
+    # 指向的那条），其余的在正文确认落库后删除。
     stale, stale_ids, my_created_at = [], [], ""
+    reuse_eid = ""
     if a.replace_same_date:
         stale = list_entries_by_date(base, H, rid, kind, daily_date)
         if stale:
-            print(f"  同日({daily_date})已有 {len(stale)} 条旧条目，将在新条目校验落库后删除")
+            # createdAt 升序取最早；缺 createdAt 的排最后，避免它抢占保留位
+            reuse_eid = sorted(stale, key=lambda x: (x[1] == "", x[1]))[0][0]
+            others = [sid for sid, _ in stale if sid != reuse_eid]
+            print(f"  同日({daily_date})已有 {len(stale)} 条条目 → 原地更新 {reuse_eid}（保住已发出的分享链）"
+                  + (f"，另 {len(others)} 条重复将在正文落库后删除" if others else ""))
 
     meta = {"kind": kind, "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
@@ -595,18 +606,25 @@ def main():
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
-        created = curl(HJ + ["-X", "POST", "-d", json.dumps({
-            "title": a.title, "summary": a.title if is_html else f"# {a.title}",
-            "sourceType": "reference", "contentType": content_type,
-            "tags": tags, "metadata": meta,
-        }), f"{base}/stores/{rid}/entries"])["data"]
-        eid = created["id"]
-        my_created_at = created.get("createdAt") or ""
+        if reuse_eid:
+            # 原地更新：**先不动 title/metadata**，等正文确认落库后再改（见下方）。
+            # 顺序颠倒的话，正文 PUT 失败会留下「新标题 + 旧正文 + 新水位线」的错配条目，
+            # 而水位线错配会让下一期从错误的位置续采。
+            eid = reuse_eid
+        else:
+            created = curl(HJ + ["-X", "POST", "-d", json.dumps({
+                "title": a.title, "summary": a.title if is_html else f"# {a.title}",
+                "sourceType": "reference", "contentType": content_type,
+                "tags": tags, "metadata": meta,
+            }), f"{base}/stores/{rid}/entries"])["data"]
+            eid = created["id"]
+            my_created_at = created.get("createdAt") or ""
     except Exception as e:
         print(f"  建条目失败：{str(e)[:120]}")
         rollback_store_if_new()
         raise
-    print(f"  条目 id={eid} title={a.title} dailyDate={daily_date} shots={len(manifest)}")
+    print(f"  条目 id={eid}{'（原地更新）' if reuse_eid else ''} title={a.title} "
+          f"dailyDate={daily_date} shots={len(manifest)}")
 
     # write content + verify hasContent（空壳兜底）
     # content_state(): True=确认有正文 / False=确认为空 / None=验证不可达(524等，不能下结论)
@@ -639,12 +657,18 @@ def main():
     if state is True:
         print(f"  正文已校验落库 hasContent=true（put_ok={put_ok}）")
     elif state is False:
-        # 重试后仍确认为空壳 → 清理，不留断头报告
-        try:
-            curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
-            print(f"  正文确认为空，已删空壳条目 {eid}")
-        except Exception:
-            print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
+        # 重试后仍确认为空壳 → 清理，不留断头报告。
+        # **但原地更新的条目绝不能删**：它是本来就存在的那篇，删了会连同已发出去的
+        # 分享链一起永久失效；正文写空是可重跑修复的，删条目不可逆。
+        if reuse_eid:
+            print(f"  [告警] 原地更新的条目 {eid} 正文写入未生效(hasContent=false)，"
+                  "已保留该条目与其分享链不删，请稍后重跑覆盖")
+        else:
+            try:
+                curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
+                print(f"  正文确认为空，已删空壳条目 {eid}")
+            except Exception:
+                print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
         rollback_store_if_new()
         raise RuntimeError("正文写入未生效(hasContent=false)，请稍后重跑")
     elif put_ok:
@@ -656,25 +680,37 @@ def main():
             f"正文写入结果未确认（PUT 未返回成功且验证接口不可达）。已保留条目 {eid} 避免误删，"
             "请稍后登录该库人工确认/重写，勿盲目重跑造成重复。")
 
-    # 同日旧条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
+    # 正文已确认落库，这时才把 title / summary / metadata 更新到原地复用的那条上。
+    # 顺序不可提前（见上文）：先改元数据后写正文，一旦正文失败就会留下
+    #「新水位线 + 旧正文」的错配条目，而错配的水位线会让下一期从错误的位置续采。
+    if reuse_eid and state is True:
+        try:
+            ok = curl(HJ + ["-X", "PUT", "-d", json.dumps({
+                "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
+            }), f"{base}/entries/{eid}"]).get("success")
+            print(f"  原地更新标题/标签/水位线 ok={ok}")
+            if not ok:
+                print("  [告警] 元数据更新失败：正文是新的但 metadata.lastCommit 仍是旧值，"
+                      "下一期会从旧水位线续采（会重复报道本期内容），请重跑本命令")
+        except Exception as e:
+            print(f"  [告警] 元数据更新异常（同上，下期水位线可能偏旧）：{str(e)[:100]}")
+
+    # 同日重复条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
     # state=None（验证接口不可达）时宁可留一条重复，也不能删掉可能是唯一完好的那篇。
-    if a.replace_same_date:
-        # 并发替换的竞态（定时任务与手动重跑撞在一起）：两个进程可能各自在建条目**之前**
-        # 拍到同一份旧 id 快照，各自建好新条目后只删共有的旧 id，于是两篇新报告都留下来。
-        # 修法：删除前**重新查一次**，并且只删 createdAt **严格早于**自己的那些。
-        #   - 重新查 → 能看见对方刚建的条目，后建者会把先建者删掉（last-writer-wins）
-        #   - 只删更早的 → 打破互删对称性，两个进程绝不会把彼此都删掉而留下零条
-        # 拿不到自己的 createdAt 时退回建前快照（保守：可能留重复，但绝不会删光）。
-        if state is True:
-            if my_created_at:
-                fresh = list_entries_by_date(base, H, rid, kind, daily_date)
-                stale_ids = [sid for sid, cat in fresh
-                             if sid != eid and cat and cat < my_created_at]
-            else:
-                print("  [告警] 新条目未返回 createdAt，退回建前快照删除（并发重跑时可能留下重复条目）")
-                stale_ids = [sid for sid, _ in stale if sid != eid]
-        else:
+    if a.replace_same_date and state is True:
+        if reuse_eid:
+            # 原地更新路径：待删的只是历史竞态留下的重复条目，全部来自**建前快照**，
+            # 都是本次运行之前就存在的。不重新查——否则可能删掉另一个进程刚建的新条目。
             stale_ids = [sid for sid, _ in stale if sid != eid]
+        elif my_created_at:
+            # 新建路径（库里原本没有同日条目）：两个进程可能都查到空、各建一条。
+            # 删除前重新查一次（能看见对方刚建的），且只删 createdAt **严格早于**自己的
+            # ——打破互删对称性，两个进程绝不会把彼此都删掉而留下零条。
+            fresh = list_entries_by_date(base, H, rid, kind, daily_date)
+            stale_ids = [sid for sid, cat in fresh
+                         if sid != eid and cat and cat < my_created_at]
+        else:
+            print("  [告警] 新条目未返回 createdAt，跳过清理（并发重跑时可能留下重复条目）")
 
     if stale_ids:
         if state is True:
