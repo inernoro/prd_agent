@@ -205,21 +205,23 @@ const STEP_PAGE: Record<OnboardingStepId, ConsolePage> = {
 };
 
 /**
- * 每一步真正需要的**写**能力。
+ * 每一步真正需要的**写**能力（全部满足才给 CTA）。
  *
- * 光看「页面到得了」不够：organization 页只要求 logsRead，所以 developer / viewer
- * 也能打开它，清单于是给出「去完成」链接——可 OrganizationPage 的建团队/加成员
- * 全部由 organizationWrite 门控，这些人点进去是一个只读页面，没有任何办法完成
- * 被承诺的动作（Codex P2）。
+ * 光看「页面到得了」不够：organization 与 quickstart 两个页面都只要求 logsRead，
+ * developer / viewer 都能打开，清单于是给出「去完成」链接——可页面里的动作另有门控，
+ * 点进去是个只读页面，没有任何办法完成被承诺的动作（Codex P2）。
  *
- * `request` 一步没有列写能力：跑一条请求只需要一把已存在的可用密钥，
- * Quickstart 的自建密钥另有 appCallerWrite + serviceKeyWrite 门控，
- * 但那是「顺手帮你签一把」，不是这一步的前置。
+ * `request` 要求 appCallerWrite + serviceKeyWrite：上一轮我判断「跑一条请求只需要
+ * 一把已存在的密钥」，但 QuickstartPage 的测试按钮整个包在
+ * `canCreateAccess = appCallerWrite && serviceKeyWrite` 里 —— 不满足时按钮压根不渲染，
+ * 页面自己写着「请联系 Owner、Admin 或 Developer 完成签发与测试」。判据必须照抄它，
+ * 不能照抄我对流程的想象。
  */
-const STEP_WRITE_CAPABILITY: Partial<Record<OnboardingStepId, ConsoleCapability>> = {
-  team: 'organizationWrite',
-  member: 'organizationWrite',
-  key: 'serviceKeyWrite',
+const STEP_WRITE_CAPABILITIES: Partial<Record<OnboardingStepId, readonly ConsoleCapability[]>> = {
+  team: ['organizationWrite'],
+  member: ['organizationWrite'],
+  key: ['serviceKeyWrite'],
+  request: ['appCallerWrite', 'serviceKeyWrite'],
 };
 
 const STEP_TO: Record<OnboardingStepId, string> = {
@@ -307,11 +309,12 @@ export function useOnboardingState(): OnboardingState {
     // 到得了页面 **且** 有那一步的写权限才给 CTA——否则 viewer / developer 点进去
     // 是个只读页面，看得见做不了（Codex P2）。没有写权限时由调用方渲染成
     // 「由管理员完成」，与 readable=false 的呈现一致。
+    // 三个条件同时成立才给 CTA：页面到得了、有这一步全部写能力、并且**读得到**这一步
+    // 的判定源。读不到时 done 恒为 false，若还给「去完成」就是让人去点一个自己也不知道
+    // 做完没有的动作（Codex P2）。
     actionable: canAccessPage(tenant, STEP_PAGE[id])
-      && (() => {
-        const capability = STEP_WRITE_CAPABILITY[id];
-        return !capability || canUseCapability(tenant?.role, capability);
-      })(),
+      && readableOf[id]
+      && (STEP_WRITE_CAPABILITIES[id] ?? []).every((capability) => canUseCapability(tenant?.role, capability)),
     readable: readableOf[id],
     to: STEP_TO[id],
   }));

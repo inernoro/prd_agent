@@ -121,9 +121,20 @@ must(
 );
 
 must(
-  onboarding.includes('STEP_WRITE_CAPABILITY') && /team: 'organizationWrite'/.test(onboarding),
+  onboarding.includes('STEP_WRITE_CAPABILITIES') && /team: \['organizationWrite'\]/.test(onboarding),
   'onboarding: 「去完成」必须按每步需要的写权限判定 —— organization 页只要 logsRead，'
   + 'developer / viewer 到得了却做不了，光看页面可达会给出死链',
+);
+must(
+  /request: \['appCallerWrite', 'serviceKeyWrite'\]/.test(onboarding),
+  'onboarding: 「跑通首条请求」要照抄 Quickstart 的 canCreateAccess（appCallerWrite + serviceKeyWrite）'
+  + ' —— 不满足时测试按钮压根不渲染，给 CTA 就是死链',
+);
+must(
+  // 必须锚在 actionable 的表达式上：窗口放宽到 200 字符会把下面那行 `readable: readableOf[id],`
+  // 一起吃进来，于是删掉 actionable 里的那一项也不会变红（不会因正确原因失败的守卫）。
+  onboarding.includes('&& readableOf[id]'),
+  'onboarding: 读不到判定源的步骤不得标成 actionable（done 恒 false，给 CTA 等于让人点一个不知道做完没有的动作）',
 );
 
 const theme = read('src/theme.css');

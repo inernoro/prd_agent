@@ -54,7 +54,11 @@ export function LogicalModelsPage() {
   const [models, setModels] = useState<ModelItem[]>([]);
   const [exchanges, setExchanges] = useState<ExchangeItem[]>([]);
   const [error, setError] = useState<string | null>(null);
-  const [notice, setNotice] = useState<string | null>(null);
+  // 带 tone 的提示：此前是裸字符串 + 固定 tone="ok"，10 个写入点里有 6 个是失败路径，
+  // 于是「更新路由策略失败」会渲染成一条绿色成功条 —— 运维会以为改动生效了（Codex P2）。
+  const [notice, setNotice] = useState<{ tone: 'ok' | 'error'; text: string } | null>(null);
+  const okNotice = (text: string) => setNotice({ tone: 'ok', text });
+  const failNotice = (text: string) => setNotice({ tone: 'error', text });
   const [createOpen, setCreateOpen] = useState(false);
   const [offeringFor, setOfferingFor] = useState<string | null>(null);
   const [editingOfferingId, setEditingOfferingId] = useState<string | null>(null);
@@ -101,16 +105,16 @@ export function LogicalModelsPage() {
     };
     const res = await createLogicalModel(request);
     setBusy(null);
-    if (!res.success) { setNotice(res.error?.message || '创建失败'); return; }
+    if (!res.success) { failNotice(res.error?.message || '创建失败'); return; }
     setItems((prev) => [...(prev || []), res.data]);
     setDraft({ publicId: '', name: '', modelType: 'generation', capabilities: ['image_generation'], allowedAppCallerCodes: [], routingStrategy: 'priority', displayOrder: 100 });
     setCreateOpen(false);
-    setNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
+    okNotice(`逻辑模型「${res.data.name}」已创建，请继续添加至少一个上游 Offering`);
   }
 
   async function submitOffering(event: React.FormEvent, logical: LogicalModelItem) {
     event.preventDefault();
-    if (!offeringDraft.targetId) { setNotice('请选择上游目标'); return; }
+    if (!offeringDraft.targetId) { failNotice('请选择上游目标'); return; }
     setBusy(`offering:${logical.id}`);
     const res = editingOfferingId
       ? await updateModelOffering(logical.id, editingOfferingId, {
@@ -120,23 +124,23 @@ export function LogicalModelsPage() {
         })
       : await createModelOffering(logical.id, offeringDraft);
     setBusy(null);
-    if (!res.success) { setNotice(res.error?.message || '添加 Offering 失败'); return; }
+    if (!res.success) { failNotice(res.error?.message || '添加 Offering 失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === logical.id
       ? { ...x, offerings: editingOfferingId ? x.offerings.map((o) => o.id === editingOfferingId ? res.data : o) : [...x.offerings, res.data] }
       : x) || null);
     setOfferingFor(null);
     setEditingOfferingId(null);
     setOfferingDraft({ targetKind: 'model', targetId: '', priority: 100, weight: 100 });
-    setNotice(editingOfferingId ? `已更新「${logical.name}」的上游 ${res.data.targetName}` : `已为「${logical.name}」添加上游 ${res.data.targetName}`);
+    okNotice(editingOfferingId ? `已更新「${logical.name}」的上游 ${res.data.targetName}` : `已为「${logical.name}」添加上游 ${res.data.targetName}`);
   }
 
   async function changeStrategy(item: LogicalModelItem, routingStrategy: 'priority' | 'weighted') {
     setBusy(`strategy:${item.id}`);
     const res = await updateLogicalModel(item.id, { routingStrategy });
     setBusy(null);
-    if (!res.success) { setNotice(res.error?.message || '更新路由策略失败'); return; }
+    if (!res.success) { failNotice(res.error?.message || '更新路由策略失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === item.id ? res.data : x) || null);
-    setNotice(`「${item.name}」已切换为${routingStrategy === 'weighted' ? '权重负载均衡' : '优先级与故障切换'}`);
+    okNotice(`「${item.name}」已切换为${routingStrategy === 'weighted' ? '权重负载均衡' : '优先级与故障切换'}`);
   }
 
   function openNewOffering(logicalId: string) {
@@ -166,7 +170,7 @@ export function LogicalModelsPage() {
     setBusy(item.id);
     const res = await setLogicalModelEnabled(item.id, !item.enabled);
     setBusy(null);
-    if (!res.success) { setNotice(res.error?.message || '操作失败'); return; }
+    if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === item.id ? { ...x, enabled: res.data.enabled } : x) || null);
   }
 
@@ -174,7 +178,7 @@ export function LogicalModelsPage() {
     setBusy(offeringId);
     const res = await setModelOfferingEnabled(logical.id, offeringId, !enabled);
     setBusy(null);
-    if (!res.success) { setNotice(res.error?.message || '操作失败'); return; }
+    if (!res.success) { failNotice(res.error?.message || '操作失败'); return; }
     setItems((prev) => prev?.map((x) => x.id === logical.id
       ? { ...x, offerings: x.offerings.map((o) => o.id === offeringId ? res.data : o) }
       : x) || null);
@@ -201,7 +205,7 @@ export function LogicalModelsPage() {
 
       <PageBody>
         {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
-        {notice ? <InlineAlert tone="ok">{notice}</InlineAlert> : null}
+        {notice ? <InlineAlert tone={notice.tone}>{notice.text}</InlineAlert> : null}
         {!canWrite ? <ReadOnlyNotice /> : null}
 
         {createOpen && canWrite ? (
