@@ -87,3 +87,6 @@
 | fix | llmgw | 新人清单的「去完成」按每步需要的写权限判定：组织页只要求 logsRead，developer/viewer 到得了页面但建团队/加成员全被 organizationWrite 门控，此前只看页面可达会给这些人一个点进去什么也做不了的链接，现在渲染「由管理员完成」 |
 | fix | llmgw | 逻辑模型页的失败提示不再渲染成绿色成功条：10 个提示写入点里有 6 个是失败路径，却共用固定 tone="ok"，「更新路由策略失败」看起来像改动已生效 |
 | fix | llmgw | 「跑通首条请求」的 CTA 补齐 Quickstart 的真实门控（appCallerWrite + serviceKeyWrite）：不满足时测试按钮压根不渲染，此前给 viewer 一个点进去没有按钮的死链；同时读不到判定源的步骤不再标成可操作 |
+| fix | cds | 命名 host 的占位判定改按完整 host 且纳入自定义域名：自定义域名存的是整条 host 不是标签，一条恰好等于 `<slug>-llmgw.<root>` 的自定义域名在更早处已发出路由，命名服务再发同一 host 就是两个上游 |
+| feat | cds | 入口表新增 CDS_CONSOLE_URL：由平台按 profile 语义判定并下发控制台入口。改名后与改名前的存量项目在表里 key 集合完全相同（llmgw + llmgw-web）而语义相反，消费方按名字猜必然有一半项目挑错 |
+| fix | prd-api | 网关控制台基址优先读平台下发的 CDS_CONSOLE_URL：此前按子域名字先试 llmgw 再退 llmgw-web，在「llmgw 是后端 API」的存量项目上会把管理员的 SSO 票据送到只返回健康 JSON 的服务 |
