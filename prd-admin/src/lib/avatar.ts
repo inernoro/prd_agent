@@ -64,7 +64,25 @@ function joinUrl(base: string, path: string) {
  * 前端不硬编码任何域名，域名迁移只需改后端环境变量。
  */
 export function getAvatarBaseUrl(): string {
-  return useAuthStore.getState().cdnBaseUrl ?? '';
+  return normalizePublicAssetBaseUrl(useAuthStore.getState().cdnBaseUrl);
+}
+
+export function normalizePublicAssetBaseUrl(value?: string | null): string {
+  const raw = (value ?? '').trim().replace(/\/+$/, '');
+  if (!raw) return '';
+  try {
+    const url = new URL(raw);
+    return url.protocol === 'http:' || url.protocol === 'https:' ? raw : '';
+  } catch {
+    return '';
+  }
+}
+
+function normalizeRenderableAssetUrl(value?: string | null): string {
+  const raw = (value ?? '').trim();
+  if (!raw) return '';
+  if (raw.startsWith('/')) return raw;
+  return normalizePublicAssetBaseUrl(raw);
 }
 
 export function resolveAvatarUrl(args: {
@@ -76,12 +94,13 @@ export function resolveAvatarUrl(args: {
   avatarUrl?: string | null;
 }): string {
   // 1. 优先使用服务端下发的完整 URL（如果有）
-  const directUrl = (args.avatarUrl ?? '').trim();
+  const directUrl = normalizeRenderableAssetUrl(args.avatarUrl);
   if (directUrl) return directUrl;
 
   // 头像 URL = TENCENT_COS_PUBLIC_BASE_URL + /icon/backups/head + /{file}
   // 不把域名/路径写入数据库；数据库只存 fileName。
   const cosBase = getAvatarBaseUrl();
+  if (!cosBase) return DEFAULT_AVATAR_FALLBACK;
   const base = joinUrl(cosBase, AVATAR_PATH_PREFIX);
   const fileRaw = (args.avatarFileName ?? '').trim();
   if (fileRaw) return joinUrl(base, fileRaw.toLowerCase());
@@ -111,8 +130,8 @@ export function resolveAvatarUrl(args: {
 
 export function resolveNoHeadAvatarUrl(): string {
   const cosBase = getAvatarBaseUrl();
+  if (!cosBase) return DEFAULT_AVATAR_FALLBACK;
   const base = joinUrl(cosBase, AVATAR_PATH_PREFIX);
   return joinUrl(base, DEFAULT_NOHEAD_FILE);
 }
-
 
