@@ -384,6 +384,7 @@ export class ReleaseService {
   private readonly heartbeatIntervalMs: number;
   private readonly sshExecutor: ReleaseSshExecutor;
   private readonly inFlight = new Map<string, ReleaseExecutionHandle>();
+  private readonly runStartedHooks: Array<(run: ReleaseRun) => void> = [];
 
   constructor(private readonly stateService: StateService, options: ReleaseServiceOptions = {}) {
     this.now = options.now || (() => new Date());
@@ -392,6 +393,31 @@ export class ReleaseService {
       ?? RELEASE_EXEC_TIMEOUT_MS;
     this.heartbeatIntervalMs = resolvePositiveMs(options.heartbeatIntervalMs) ?? RELEASE_HEARTBEAT_INTERVAL_MS;
     this.sshExecutor = options.sshExecutor || defaultReleaseSshExecutor;
+  }
+
+  /**
+   * 「一次发布刚落库」的回调。
+   *
+   * 存在的理由：commit 元信息（时间 / 说明 / 作者）此前只在 HTTP 路由里记，
+   * 于是定时发布的成功记录**从不进** ReleaseCommitClock —— DORA 的变更前置时间
+   * 只统计到人手点的那些发布，自动发布越多，指标越偏，而且没有任何东西会报错
+   * （Codex review P2，2026-07-29）。挂在服务层，路由与调度器共用同一实例即同时覆盖。
+   *
+   * 回调必须是旁路语义：任何异常都被吞掉，绝不让一个统计动作把「发布已经启动」
+   * 这个既成事实变成异常。
+   */
+  onRunStarted(hook: (run: ReleaseRun) => void): void {
+    this.runStartedHooks.push(hook);
+  }
+
+  private notifyRunStarted(run: ReleaseRun): void {
+    for (const hook of this.runStartedHooks) {
+      try {
+        hook(run);
+      } catch {
+        /* 旁路，不影响发布 */
+      }
+    }
   }
 
   /**
@@ -829,6 +855,7 @@ export class ReleaseService {
     // run 一入库（queued）就带完整步骤表，UI 立刻能画出「共 M 步」而不是等第一条日志。
     run.progress = buildReleaseRunProgress(preflight.plan, execution.command);
     this.stateService.addReleaseRun(run);
+    this.notifyRunStarted(run);
     this.emitLog(releaseId, 'info', 'release queued', 'queued');
     // 把「放行依据是哪一份结论、是复用还是现跑」写进日志：出事时这是第一现场。
     if (preflight.preflightId) {
@@ -900,6 +927,7 @@ export class ReleaseService {
     const useCustomRollback = shouldUseCustomRollbackCommand(rollbackExecution.mode, target.ssh.rollbackCommand);
     run.progress = buildRollbackRunProgress(current.planId, rollbackExecution.command, useCustomRollback);
     const persisted = this.stateService.addReleaseRun(run);
+    this.notifyRunStarted(persisted);
     const strategy = useCustomRollback ? 'rollbackCommand' : '重新发布历史版本';
     // 回滚 run **一落库就是 rollback_running**，不经过 patchStatus，所以整条回滚
     // 在 cds-events-bus 上一个 start 事件都没有 —— 观测方看到的第一条生命周期事件

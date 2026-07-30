@@ -200,3 +200,60 @@ describe('标已读 / 忽略', () => {
     expect(ledger.getByDedupeKey('b')?.dismissedAt).toBeUndefined();
   });
 });
+
+/**
+ * 忽略通知必须按 (id, 作用域) 联合查找。
+ *
+ * record.id 由调用方控制，两个项目完全可能各有一条同 id 的通知。原实现是
+ * 「先取第一条同 id 的、再校验 projectId」：项目 A 忽略自己那条会先取到 B 那条、
+ * 校验不过返回 404 —— 它明明有这条通知却关不掉（Codex review P2，2026-07-29）。
+ */
+describe('dismiss 按 id + 作用域联合查找', () => {
+  function seedTwoProjects(): NoticeLedgerService {
+    const ledger = new NoticeLedgerService({ storePath: '' });
+    // 刻意让 B 先入库：账本是「新的在前」，A 后写会排在前面，
+    // 所以必须让 A 排在后面才能真正暴露「取第一条」的 bug。
+    for (const projectId of ['proj-a', 'proj-b']) {
+      ledger.upsert({
+        id: 'release-failed',
+        dedupeKey: `api:${projectId}:release-failed`,
+        level: 'danger',
+        title: `${projectId} 的发布失败`,
+        body: '',
+        source: 'release',
+        projectId,
+      });
+    }
+    return ledger;
+  }
+
+  it('项目级调用方能忽略自己那条（哪怕别的项目有同 id）', () => {
+    const ledger = seedTwoProjects();
+    expect(ledger.dismiss('release-failed', 'proj-a')).toBe(true);
+    const a = ledger.list({ projectId: 'proj-a' });
+    // 已忽略的不再出现在列表里。
+    expect(a).toHaveLength(0);
+  });
+
+  it('忽略的是自己那条，不会顺手把别的项目那条关掉', () => {
+    const ledger = seedTwoProjects();
+    ledger.dismiss('release-failed', 'proj-a');
+    expect(ledger.list({ projectId: 'proj-b' })).toHaveLength(1);
+  });
+
+  it('两个项目各自都能忽略自己那条', () => {
+    const ledger = seedTwoProjects();
+    expect(ledger.dismiss('release-failed', 'proj-a')).toBe(true);
+    expect(ledger.dismiss('release-failed', 'proj-b')).toBe(true);
+  });
+
+  it('不属于本作用域的 id 仍然 404', () => {
+    const ledger = seedTwoProjects();
+    expect(ledger.dismiss('release-failed', 'proj-c')).toBe(false);
+  });
+
+  it('无作用域（全局运维）按 id 忽略，行为不变', () => {
+    const ledger = seedTwoProjects();
+    expect(ledger.dismiss('release-failed', null)).toBe(true);
+  });
+});

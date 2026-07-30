@@ -3,6 +3,7 @@ import fs from 'node:fs';
 import path from 'node:path';
 import type { StateService } from './state.js';
 import type {
+  BranchEntry,
   CdsConfig,
   IShellExecutor,
   ReleaseRun,
@@ -14,6 +15,7 @@ import type {
   ScheduledJobTarget,
 } from '../types.js';
 import type { CdsEventType } from './cds-events-bus.js';
+import { buildPreviewUrlForProject } from './comment-template.js';
 import { isReleaseRunTerminal, isSuccessfulReleaseRun } from './release-retention.js';
 import type { ReleasePreflightResult, ReleaseStartInput, ReleaseTargetBusyState } from './release-service.js';
 
@@ -22,7 +24,8 @@ import type { ReleasePreflightResult, ReleaseStartInput, ReleaseTargetBusyState 
  *
  * 刻意只留这几个方法：调度器不许自己判「目标忙不忙」（那是 isTargetBusy 的独占职责），
  * 也不许自己 new 一个 ReleaseService —— 每多一个实例就多一张互不可见的 inFlight 表，
- * settling 判定会当场失明（既有 debt #6 已经有两张，绝不能长出第三张）。
+ * settling 判定会当场失明。debt #6 记录的「路由侧自建了第二个」已于 2026-07-29 收敛，
+ * 全进程只剩 server.ts 那一个实例，守卫见 release-service-single-instance.test.ts。
  */
 export interface ScheduledJobReleasePort {
   isTargetBusy(targetId: string): ReleaseTargetBusyState;
@@ -35,7 +38,8 @@ export interface ScheduledJobReleasePort {
 export interface ScheduledJobServiceDeps {
   stateService: StateService;
   shell: IShellExecutor;
-  config: Pick<CdsConfig, 'masterPort' | 'repoRoot'> & Partial<Pick<CdsConfig, 'dockerNetwork'>>;
+  config: Pick<CdsConfig, 'masterPort' | 'repoRoot'>
+    & Partial<Pick<CdsConfig, 'dockerNetwork' | 'previewDomain' | 'rootDomains'>>;
   /**
    * **必填**，不许写成可选。写成可选的话「忘记接线」照样编译通过，release 动作
    * 静默退化成一种永远失败的动作类型 —— 这正是本仓库反复栽的「链路只建到一半」。
@@ -698,20 +702,40 @@ export class ScheduledJobService {
     if (!branch) return { error: `来源分支不存在：${target.source.branchId}` };
     // 分支来源刻意**不**传 expectedCommitSha：它的语义就是「发这个分支的最新版」。
     const candidateCommitSha = branch.pinnedCommit || branch.githubCommitSha || '';
-    const previewUrl = this.deps.stateService
+    const historyPreviewUrl = this.deps.stateService
       .getReleaseRuns({ branchId: branch.id })
       .map((run) => run.artifact?.previewUrl || '')
       .find((url) => url.trim().length > 0) || '';
-    // previewUrl 推导不出来时**不在这里报错**：往下交给发布前检查，让用户看到的是
+    // 历史记录不能是唯一来源：分支**第一次**被定时发布时必然没有历史，
+    // 而空预览地址会被预检判成阻塞项 —— 于是这条规则的试跑和首次真跑都必然失败，
+    // 非得有人先手动发一次不可（Codex review P2，2026-07-29）。现推一次兜底。
+    const previewUrl = historyPreviewUrl || this.derivePreviewUrl(branch);
+    // 仍然推不出来时**不在这里报错**：往下交给发布前检查，让用户看到的是
     // 「可发布产物：缺少预览地址」这条标准结论，而不是调度器自己发明的一句错误。
-    // 试运行的价值恰恰在于把这类缺项以预检清单的形式摆出来。
-    const previewHint = previewUrl ? '' : ' 该分支尚无历史发布记录，预览地址待发布前检查确认。';
+    const previewHint = previewUrl ? '' : ' 该分支尚无历史发布记录且预览地址推导不出，待发布前检查确认。';
     return {
       branchId: branch.id,
       previewUrl,
       candidateCommitSha,
       summary: `发布来源：分支 ${branch.branch}${candidateCommitSha ? `（commit ${candidateCommitSha}）` : ''}。${previewHint}`,
     };
+  }
+
+  /**
+   * 分支预览地址的现推兜底（仅 multi 模式）。
+   *
+   * 只覆盖 multi：`simple` 走的是主域名 + cookie 切换、`port` 是运行期分配的端口，
+   * 两者都不是「按分支算得出来」的（port 尤其：套 multi 公式会得到一个语法合法、
+   * 却没有任何东西监听的子域，还能骗过预检的非空判定）。推不出来就如实返回空串，
+   * 由预检给出标准结论——与前端 resolvePreviewUrl 同一条纪律。
+   */
+  private derivePreviewUrl(branch: BranchEntry): string {
+    const mode = this.deps.stateService.getPreviewModeFor(branch.projectId);
+    if (mode !== 'multi') return '';
+    const host = this.deps.config.previewDomain || this.deps.config.rootDomains?.[0];
+    if (!host) return '';
+    const project = branch.projectId ? this.deps.stateService.getProject(branch.projectId) : undefined;
+    return buildPreviewUrlForProject(host, branch.branch, project, branch.projectId).url || '';
   }
 
   /** 轮询到终态；到 deadline 仍未终态返回 undefined（超时，不取消）。 */

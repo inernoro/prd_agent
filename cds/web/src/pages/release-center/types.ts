@@ -134,6 +134,12 @@ export interface ReleasePromotionCandidate {
   aheadCount: number | null;
   fromHealthStatus: string;
   fromReleasedAt: string;
+  /**
+   * 现在点下去能不能真的发出去。false = 来源那一版已经不是它所在分支的 tip，
+   * 而发布恒按分支当前版本构建 + 版本钳制，必然被拒。旧后端不下发时按 true 处理。
+   */
+  executable?: boolean;
+  blockedReason?: string;
 }
 
 export interface CenterRow {

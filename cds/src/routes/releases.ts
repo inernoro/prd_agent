@@ -40,11 +40,23 @@ export interface ReleasesRouterDeps {
    * 也只是「历史空着」，不影响发布本身。
    */
   config?: Pick<CdsConfig, 'worktreeBase'> & Partial<Pick<CdsConfig, 'repoRoot'>>;
+  /**
+   * 发布服务实例。**生产必须传**，且必须与注入定时调度器的是同一个。
+   *
+   * 「目标忙不忙」的判据一半在共享 state（终态 run），另一半只在实例内存里
+   * （inFlight：已终态但健康探测仍在收尾的那段 settling）。两个实例各有各的
+   * inFlight，于是路由侧正在收尾的发布对调度器不可见 —— isTargetBusy 与
+   * startRelease 的双重闸门同时放行，旧发布的收尾逻辑会覆盖掉新发布的结果
+   * （Codex review P1，2026-07-29）。
+   *
+   * 只在单测 / 嵌入式用法里省略，此时自建一个实例即可（进程内只有它一个消费者）。
+   */
+  releaseService?: ReleaseService;
 }
 
 export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
   const router = Router();
-  const service = new ReleaseService(deps.stateService);
+  const service = deps.releaseService ?? new ReleaseService(deps.stateService);
   // 没有 repoRoot（单测 / 嵌入式用法）就只在内存里跑，绝不回落到 process.cwd()：
   // 那是别人的目录，往里写审计流水会让每次跑测试都在开发者仓库里留一份垃圾。
   // 生产走 server.ts 传进来的完整 CdsConfig，repoRoot 必然有值。
@@ -88,6 +100,11 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
       commitClock.remember(run.projectId, run.commitSha, branch?.worktreePath, projectRepoRoot(run.projectId));
     } catch { /* 统计旁路，不影响发布 */ }
   };
+
+  // 挂到服务层而不是逐个路由处理器里调：定时发布不经过本路由，只在 handler 里记的话
+  // 自动发布的 commit 永远进不了台账，DORA 只统计人手点的那些（Codex review P2）。
+  // 路由与调度器共用同一个 ReleaseService 实例，所以挂一次两边都覆盖。
+  service.onRunStarted(rememberCommitTime);
 
   router.post('/releases/projects/:projectId/discover', (req, res) => {
     const projectId = req.params.projectId;
@@ -548,7 +565,6 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
           ? { expectedCommitSha: body.expectedCommitSha.trim() }
           : {}),
       });
-      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -599,9 +615,6 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         if (rejectProjectMismatch(req, res, targetRun.projectId)) return;
       }
       const run = await service.startRollback(req.params.id, resolveActorFromRequest(req), targetReleaseId);
-      // 回滚也要记台账：回滚 run 用的是被回滚到那一版的 commit，如果那次发布
-      // 当时没记上（存量 run），不补这一笔它在时间线上就永远只有一串 sha。
-      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -623,7 +636,6 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
         previewUrl: source.artifact?.previewUrl || '',
         operator: resolveActorFromRequest(req),
       });
-      rememberCommitTime(run);
       res.status(202).json({ run, streamUrl: `/api/releases/runs/${run.releaseId}/stream` });
     } catch (err) {
       res.status(409).json({ error: (err as Error).message });
@@ -798,8 +810,17 @@ export function createReleasesRouter(deps: ReleasesRouterDeps): Router {
     // ahead 必须由后端直算（rev-list A..B），禁止前端拿两个 behindCount 相减——
     // 相减只在严格线性历史下成立，一旦分叉就给出一个无声的错数。
     // 没有更新的一版时整个字段缺省，前端据此隐藏提升按钮。
+    // 「来源那一版还是不是它所在分支的 tip」。不是的话提升点下去必然被版本钳制拒绝，
+    // 前端据此把按钮置灰并说明原因，而不是让用户点了才知道。
+    const resolveBranchTip = (releaseId: string): string | undefined => {
+      const sourceRun = deps.stateService.getReleaseRun(releaseId);
+      if (!sourceRun) return undefined;
+      const branch = deps.stateService.getBranch(sourceRun.branchId);
+      if (!branch) return undefined;
+      return branch.pinnedCommit || branch.githubCommitSha || undefined;
+    };
     const rowsWithPromotion = rows.map((row) => {
-      const promotion = resolvePromotionCandidate(row, rows, commitRail);
+      const promotion = resolvePromotionCandidate(row, rows, commitRail, resolveBranchTip);
       return promotion ? { ...row, promotion } : row;
     });
     // DORA 四项的传输面。少了这一行，聚合照常能算、前端却恒为 undefined，
@@ -852,6 +873,21 @@ export interface ReleasePromotionCandidate {
   aheadCount: number | null;
   fromHealthStatus: string;
   fromReleasedAt: string;
+  /**
+   * 这次提升现在能不能真的执行。
+   *
+   * startRelease 恒按分支**当前** commit 建 artifact，再拿 expectedCommitSha 做
+   * fail-closed 钳制（见 ReleaseStartInput.expectedCommitSha）。所以只有当来源环境
+   * 跑的那一版仍然是该分支的 tip 时，「原样提升」才可能成功；分支一旦前进，
+   * 按钮照常亮着、点下去必然报「分支已前进…已拒绝发布」。
+   *
+   * 与其让用户点了才知道，不如提前说清楚（Codex review P1，2026-07-29）。
+   * 钳制本身是对的，不能为了让按钮可用就把它拿掉——那会把一次「提升已验证版本」
+   * 变成一次静默发布未验证版本。
+   */
+  executable: boolean;
+  /** executable=false 时的人话原因。 */
+  blockedReason?: string;
 }
 
 /** center 行里 promotion 判定用得到的那几个字段。刻意窄，不把整行形状焊死。 */
@@ -916,6 +952,11 @@ export function resolvePromotionCandidate(
   row: PromotionRowLike,
   rows: ReadonlyArray<PromotionRowLike>,
   rail: ReleaseCommitRailReader,
+  /**
+   * 「这个 releaseId 用的分支，现在的 tip 是哪个 commit」。缺省视为可执行
+   * （单测 / 老调用方零回归），生产由路由注入。
+   */
+  resolveBranchTip?: (releaseId: string) => string | undefined,
 ): ReleasePromotionCandidate | undefined {
   const myEnvironment = normalizeReleaseEnvironment(row.target.environment);
   const candidates = rows
@@ -949,6 +990,10 @@ export function resolvePromotionCandidate(
       // 建议用户把生产切过去，是本页面里后果最重的一个动作。
       if (behindCount === null || behindCount > 0) continue;
     }
+    const tip = resolveBranchTip?.(other.currentVersion);
+    // tip 取不到（分支已回收 / 未注入解析器）时按可执行处理：这里的职责是
+    // 「已知不可执行时提前说」，不是替发布链路再判一次；真判定仍在 startRelease。
+    const executable = !tip || tip === other.currentCommit;
     return {
       fromTargetId: other.target.id,
       fromTargetName: other.target.name,
@@ -958,6 +1003,11 @@ export function resolvePromotionCandidate(
       aheadCount,
       fromHealthStatus: other.healthStatus,
       fromReleasedAt: other.lastReleasedAt || '',
+      executable,
+      ...(executable ? {} : {
+        blockedReason: `该分支已前进到 ${(tip || '').slice(0, 7)}，无法再原样提升 ${other.currentCommit.slice(0, 7)}`
+          + '（发布恒按分支当前版本构建，版本钳制会拒绝不一致的发布）。',
+      }),
     };
   }
   return undefined;

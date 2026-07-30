@@ -1654,10 +1654,18 @@ export function createServer(deps: ServerDeps): express.Express {
   const scheduledJobService = new ScheduledJobService({
     stateService: deps.stateService,
     shell: deps.shell,
-    config: { masterPort: deps.config.masterPort, repoRoot: deps.config.repoRoot, dockerNetwork: deps.config.dockerNetwork },
-    // 必须注入**上面那个** releaseService 实例，绝不能在调度器里 new 第三个：
-    // inFlight 表是实例私有的，多一个实例就多一张互不可见的表，settling 判定当场失明
-    // （路由侧已经自建了第二个，见 debt #6）。
+    config: {
+      masterPort: deps.config.masterPort,
+      repoRoot: deps.config.repoRoot,
+      dockerNetwork: deps.config.dockerNetwork,
+      // 首次定时发布时分支还没有历史发布记录，预览地址只能现推。
+      previewDomain: deps.config.previewDomain,
+      rootDomains: deps.config.rootDomains,
+    },
+    // 必须注入**上面那个** releaseService 实例，绝不能再 new 一个：
+    // inFlight 表是实例私有的，多一个实例就多一张互不可见的表，settling 判定当场失明。
+    // 路由侧曾经自建过第二个（debt #6），2026-07-29 已改为共用本实例 —— 这条不变式
+    // 现在由 tests/services/release-service-single-instance.test.ts 守住。
     release: releaseService,
     // 治理事件（待人工确认 / 自动停用）走同一条总线 → 站内信账本，
     // 不另造通知路径（否则会长出「定时发布一套、发布一套」两条分发逻辑）。
@@ -4068,6 +4076,9 @@ export function createServer(deps: ServerDeps): express.Express {
   app.use('/api', createReleasesRouter({
     stateService: deps.stateService,
     config: deps.config,
+    // 与定时调度器共用同一个实例：settling 期的在途句柄只存在于实例内存里，
+    // 分两个实例等于两侧互相看不见对方的在途发布。见 ReleasesRouterDeps.releaseService。
+    releaseService,
   }));
   // CDS 配对连接（系统级），见 routes/cds-system-connections.ts。
   app.use('/api', createCdsSystemConnectionsRouter({

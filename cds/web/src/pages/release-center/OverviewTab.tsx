@@ -80,8 +80,18 @@ export function OverviewTab({
                 ? ` 比这里新 ${row.promotion.aheadCount} 个提交，可以原样发过来`
                 : ' 可以原样发过来（这里还没有发布过版本，无从比较提交数）'}
             </div>
+            {/* 已知发不出去时先说清楚，别等用户点了才吃一句「已拒绝发布」。 */}
+            {row.promotion.executable === false && row.promotion.blockedReason ? (
+              <div className="mt-1 text-xs text-amber-700 dark:text-amber-300">
+                {row.promotion.blockedReason}
+              </div>
+            ) : null}
           </div>
-          <Button onClick={onPromote} disabled={promoting}>
+          <Button
+            onClick={onPromote}
+            disabled={promoting || row.promotion.executable === false}
+            title={row.promotion.executable === false ? row.promotion.blockedReason : undefined}
+          >
             {promoting ? <Loader2 className="animate-spin" /> : <ArrowUpRight />}
             把 {row.promotion.fromTargetName} 这一版发到{row.target.name}
           </Button>

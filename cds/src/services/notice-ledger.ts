@@ -297,9 +297,14 @@ export class NoticeLedgerService {
 
   dismiss(id: string, projectId?: string | null): boolean {
     const nowIso = new Date(this.now()).toISOString();
-    const target = this.notices.find((item) => item.id === id);
+    // 必须把作用域一起纳入查找条件，不能「先取第一条同 id 的、再校验 projectId」：
+    // record.id 由调用方控制，两个项目完全可能各有一条同 id 的通知。先取第一条的话，
+    // 项目 A 忽略自己的通知会取到 B 那条、校验不过返回 404 —— 它明明有这条通知却关不掉
+    // （Codex review P2，2026-07-29）。
+    const target = projectId
+      ? this.notices.find((item) => item.id === id && item.projectId === projectId)
+      : this.notices.find((item) => item.id === id);
     if (!target) return false;
-    if (projectId && target.projectId !== projectId) return false;
     target.readAt = target.readAt || nowIso;
     target.dismissedAt = nowIso;
     this.persist();
