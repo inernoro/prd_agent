@@ -60,8 +60,13 @@ description: 从 git 历史生成「今日大事早知道」开发日报，并�
 | mode | 触发条件 | 窗口 |
 |------|----------|------|
 | `sha` | 上期 `lastCommit` 在本地可达**且是本期右端的祖先**（正常路径） | `git log <lastCommit>..<headSha>` |
-| `since` | SHA 不可达（浅克隆截断）、**非本期右端的祖先**（main 被 force push 后旧对象常残留在本地，`cat-file` 仍会成功）、或上期只记了 `coverTo` | `git log <headSha> --since=<coverTo>` 再剔除 `excludeSha`（--since 是闭区间，须还原左开） |
-| `today` | 库里没有历史日报（首次运行），或上期是本机制上线前发布的老条目 | 退化为当日，与旧行为一致 |
+| `since` | **仅**上期从来没记过 SHA（本机制上线前的老条目）且有 `coverTo` | `git log <headSha> --since=<coverTo>` 再剔除 `excludeSha`（--since 是闭区间，须还原左开） |
+| `today` | 库里没有历史日报（首次运行），或老条目连 `coverTo` 都没有 | 退化为当日，与旧行为一致 |
+
+> **不降级的那种情况**：上期**记了 SHA 却在当前历史里用不上**（`cat-file` 找不到，或它不是本期右端的祖先——
+> main 被 force push 改写后的典型表现），`coverage_window.py` 直接 `exit 3`，**不**退到时间戳。
+> 因为时间戳表达不了「图上哪些点没被覆盖过」：改写后的提交常保留更早的 committer date，
+> 会被 `--since` 整批排除，而水位线照样前进 → 那批改动永久跳过。这种情况必须人工确认。
 
 ```bash
 # 0. 主干：所有 git log 必须带 "$DEFAULT_BRANCH" + --first-parent（见纪律 3），

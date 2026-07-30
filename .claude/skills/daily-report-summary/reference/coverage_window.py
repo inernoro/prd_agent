@@ -15,9 +15,13 @@
   - 天然免疫「同一秒多个提交」的边界重叠
 
 三级兜底（前一级不可用才降级，每级都会在输出里标明 mode）：
-  1. sha      —— 上期 metadata.lastCommit 在本地 git 里存在 → 窗口 = (lastCommit, HEAD]
-  2. since    —— SHA 不存在（force push / 浅克隆截断）→ 用 metadata.coverTo 时间戳
-  3. today    —— 两者都没有（首次运行 / 库是空的）→ 退化为当日，与旧行为一致
+  1. sha      —— 上期 lastCommit 在本地存在**且是本期右端的祖先** → 窗口 = (lastCommit, 右端]
+  2. since    —— 上期**从来没记过 SHA**（本机制上线前的老条目）→ 用 metadata.coverTo 时间戳
+  3. today    —— 连 coverTo 也没有（首次运行 / 库是空的）→ 退化为当日，与旧行为一致
+
+  注意：「记了 SHA 却在当前历史里用不上」（force push 改写）**不降级**，直接 exit 3。
+  时间戳无法表达"图上哪些点没被覆盖过"：改写后的提交可能带更早的 committer date 而被
+  --since 整批排除，水位线却照样前进 → 永久跳过。这种情况必须人工确认。
 
 用法：
   export AI_ACCESS_KEY=...          # 或 DAILY_DOC_STORE_KEY（document-store:read 即可）
@@ -233,9 +237,24 @@ def main():
         if sha_usable(last_sha, head):
             out["mode"] = "sha"; out["baseSha"] = last_sha
             out["revRange"] = f"{last_sha}..{head}"
+        elif last_sha:
+            # **记了 SHA 却用不上** = 当前历史里找不到它：main 被 force push 改写，
+            # 或者这个仓库根本不是上期那条历史（换 remote / 换项目）。
+            # 此时用 coverTo 时间戳兜底**是有损的**：改写后的提交完全可能带着早于 coverTo
+            # 的 committer date（rebase 会保留原始作者/提交时间），--since 会把它们整批
+            # 排除；而只要窗口里还剩一条更晚的提交，Phase 5 就照样把水位线推到 HEAD，
+            # 那些被排除的改动**永久**跨过去。时间戳无法表达"图上哪些点没被覆盖过"，
+            # 所以这里不猜，直接中止交给人处理。
+            # （浅克隆导致的"对象不在本地"已在 Phase 1 的补全硬闸拦下，走不到这里。）
+            log(f"[水位线][错误] 上期 lastCommit {last_sha[:12]} 在当前历史中不可用"
+                "（不可达，或不是本期右端的祖先）——通常意味着主干被 force push 改写过。"
+                " 拒绝退回 coverTo 时间戳兜底：改写后的提交可能带更早的提交时间而被整批漏掉，"
+                " 且水位线仍会前进，导致永久跳过。"
+                " 请人工确认后，用 --branch 指定正确主干重跑，或手工修正上期条目的 metadata.lastCommit。")
+            sys.exit(3)
         elif cover_to:
-            # 上期没记 SHA（老版本条目）、SHA 已不可达、或 SHA 不是本次 head 的祖先
-            # （force push 后旧对象残留 / 补历史时右端早于水位线）→ 退到时间戳
+            # 只剩这一种合法降级：上期**从来没有记过 SHA**（本机制上线前的老条目）。
+            # 这不隐含历史改写，时间戳是当时唯一可得的信息，按它续采是合理的最佳努力。
             out["mode"] = "since"; out["sinceIso"] = cover_to
             out["revRange"] = head
             # git 的 --since 是**闭区间**（实测 git 2.43：把某提交的 %cI 喂回 --since，
@@ -248,11 +267,7 @@ def main():
             if not last_sha:
                 log("[水位线][告警] since 模式但上期未记 lastCommit，无法按 SHA 剔除边界提交，"
                     "窗口左端为闭区间——上期最后一个提交可能被重复统计一次")
-            if last_sha:
-                log(f"[水位线] lastCommit {last_sha[:12]} 不可用（不可达，或非 {head[:12]} 的祖先）"
-                    " → 降级用 coverTo 时间戳")
-            else:
-                log("[水位线] 上期未记 lastCommit（旧版条目）→ 降级用 coverTo 时间戳")
+            log("[水位线] 上期未记 lastCommit（本机制上线前的老条目）→ 降级用 coverTo 时间戳")
         else:
             # 老条目既无 SHA 也无 coverTo：只能退回当日口径，并明确告警——
             # 这正是本次要根治的旧行为，必须让调用方看见它还在生效。

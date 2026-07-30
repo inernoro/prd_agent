@@ -852,21 +852,38 @@ def main():
                 # 拿到过期/缺失的水位线，重新制造重复覆盖或缺口。
                 # 所以保留的同时必须把它同步成与本期一致的正文 + 水位线：谁被读到都一样。
                 # 附带好处：那条分享链打开看到的也是最新内容，而不是停在旧版本。
+                # 同步顺序与主条目同一条不变量：**正文写入并逐字校验通过，才写水位线**。
+                # 两次独立 PUT 无法原子化，但这个顺序让任何中途失败都只能落到安全方向：
+                #   正文失败 -> 不碰元数据，该条目维持「旧正文 + 旧水位线」（自洽，只是陈旧）
+                #   元数据失败 -> 「新正文 + 旧水位线」，水位线偏旧
+                # 两种残留都只会让下期**重复**报道一段（可见可修），绝不会「旧正文 + 新水位线」
+                # 那种导致永久跳过的组合。再叠加水位线查询的选取判据（同日优先 coverTo 更新的
+                # 那条），主条目本来就会赢过这些陈旧副本。
                 for sid in keep:
+                    stage = "正文"
                     synced = False
                     try:
                         c1 = curl(HJ + ["-X", "PUT", "-d", json.dumps({"content": body, "contentType": content_type}),
                                         f"{base}/entries/{sid}/content"]).get("success")
-                        c2 = curl(HJ + ["-X", "PUT", "-d", json.dumps({
-                            "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
-                        }), f"{base}/entries/{sid}"]).get("success")
-                        synced = bool(c1 and c2)
+                        ok_body = False
+                        if c1:
+                            r2 = curl(H + [f"{base}/entries/{sid}/content"], retries=2)
+                            got = ((r2.get("data") or {}).get("content")) if r2.get("success") else None
+                            # 读不到正文时按"未确认"处理，不往下写水位线
+                            ok_body = (got is not None and got.strip() == body.strip())
+                        if ok_body:
+                            stage = "水位线"
+                            synced = bool(curl(HJ + ["-X", "PUT", "-d", json.dumps({
+                                "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
+                            }), f"{base}/entries/{sid}"]).get("success"))
                     except Exception as e:
-                        print(f"  [告警] 同步重复条目 {sid} 异常：{str(e)[:80]}")
-                    print(f"  重复条目 {sid} 仍挂有效分享链 -> 已保留并同步为本期内容 ok={synced}"
-                          if synced else
-                          f"  [告警] 重复条目 {sid} 挂着有效分享链但同步失败：下一期可能读到它的旧水位线，"
-                          "请手动同步或撤销该链接后删除")
+                        print(f"  [告警] 同步重复条目 {sid} 于「{stage}」阶段异常：{str(e)[:80]}")
+                    if synced:
+                        print(f"  重复条目 {sid} 仍挂有效分享链 -> 已保留并同步为本期内容")
+                    else:
+                        print(f"  [告警] 重复条目 {sid}（挂着有效分享链）同步在「{stage}」阶段未完成："
+                              "它保持旧水位线不变，最坏只会让下期重复报道一段（不会跳过）；"
+                              "如需彻底一致请手动同步，或撤销该链接后删除该条目")
         elif my_created_at:
             # 新建路径（库里原本没有同日条目）：两个进程可能都查到空、各建一条。
             # 删除前重新查一次（能看见对方刚建的），且只删 createdAt **严格早于**自己的
