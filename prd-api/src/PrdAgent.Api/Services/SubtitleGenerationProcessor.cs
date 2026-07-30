@@ -507,7 +507,7 @@ public class SubtitleGenerationProcessor
         else
         {
             if (string.IsNullOrWhiteSpace(fileUrl))
-                throw new InvalidOperationException("源文件 URL 不可用（可能未上传到 COS）");
+                throw new InvalidOperationException("源文件 URL 不可用（可能尚未归档到对象存储）");
             await UpdateProgressAsync(db, runStore, run, 20, "下载素材");
             var http = _httpClientFactory.CreateClient("DocStoreAgent");
             http.Timeout = TimeSpan.FromMinutes(5);
