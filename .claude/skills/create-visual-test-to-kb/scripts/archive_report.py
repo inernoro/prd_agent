@@ -618,16 +618,33 @@ _RESOLVED_FACT_PATTERN = re.compile(
     r"|恢复正常",
     re.I,
 )
-_FAILURE_SUBJECT_PATTERN = re.compile(
-    r"ready|smoke|冒烟|构建|编译|服务|强制测试|验收链路|证据链|归档|报告发布"
-    r"|verify-open|打开验证|Slack\s*通知",
-    re.I,
+_FAILURE_SUBJECT_PATTERNS = (
+    ("ready", re.compile(r"ready", re.I)),
+    ("smoke", re.compile(r"smoke|冒烟", re.I)),
+    ("build", re.compile(r"构建|编译", re.I)),
+    ("service", re.compile(r"服务", re.I)),
+    ("forced-test", re.compile(r"强制测试", re.I)),
+    ("acceptance-chain", re.compile(r"验收链路", re.I)),
+    ("evidence-chain", re.compile(r"证据链", re.I)),
+    ("archive", re.compile(r"归档", re.I)),
+    ("report-publish", re.compile(r"报告发布", re.I)),
+    ("verify-open", re.compile(r"verify-open|打开验证", re.I)),
+    ("slack", re.compile(r"Slack\s*通知", re.I)),
 )
 
 
 def _split_fact_clauses(text):
     """Split facts at punctuation without allowing matches to cross subjects."""
     return re.split(r"([。；;，,|\n])", text or "")
+
+
+def _failure_subjects(text):
+    """Return canonical failure subjects mentioned in a fact fragment."""
+    return {
+        name
+        for name, pattern in _FAILURE_SUBJECT_PATTERNS
+        if pattern.search(text or "")
+    }
 
 
 def _clause_is_explicitly_resolved(clause):
@@ -640,19 +657,64 @@ def _clause_is_explicitly_resolved(clause):
         return False
     if _FAILURE_FACT_PATTERN.search(clause, closure.end()):
         return False
-    subject_switch = _FAILURE_SUBJECT_PATTERN.search(
-        clause, failure.end(), closure.start()
-    )
-    return subject_switch is None
+    failure_subjects = _failure_subjects(clause[: failure.end()])
+    closure_subjects = _failure_subjects(clause[failure.end() : closure.start()])
+    return not closure_subjects or closure_subjects == failure_subjects
+
+
+def _adjacent_clause_closes_failure(failure_clause, closure_clause):
+    """Bind a punctuated closure only to the same single failure subject."""
+    failure = _FAILURE_FACT_PATTERN.search(failure_clause or "")
+    closure = _RESOLVED_FACT_PATTERN.search(closure_clause or "")
+    if not failure or not closure:
+        return False
+    if _FAILURE_FACT_PATTERN.search(closure_clause, closure.end()):
+        return False
+    failure_subjects = _failure_subjects(failure_clause[: failure.end()])
+    closure_subjects = _failure_subjects(closure_clause[: closure.start()])
+    if len(failure_subjects) != 1:
+        return False
+    return not closure_subjects or closure_subjects == failure_subjects
+
+
+def _following_clause_reopens_failure(clauses, index, failure_subjects):
+    """Keep the prior failure when the next clause states it is still open."""
+    following_index = index + 2
+    if following_index >= len(clauses):
+        return False
+    following = clauses[following_index]
+    if not _FAILURE_FACT_PATTERN.search(following):
+        return False
+    following_subjects = _failure_subjects(following)
+    return not following_subjects or following_subjects == failure_subjects
 
 
 def _strip_resolved_failure_phrases(text):
-    """Remove only fully resolved failure clauses, never adjacent subjects."""
+    """Remove fully resolved failures while preserving unrelated subjects."""
     clauses = _split_fact_clauses(text)
-    return "".join(
-        " " if index % 2 == 0 and _clause_is_explicitly_resolved(part) else part
-        for index, part in enumerate(clauses)
-    )
+    index = 0
+    while index < len(clauses):
+        if index % 2 or not _FAILURE_FACT_PATTERN.search(clauses[index]):
+            index += 1
+            continue
+        failure = _FAILURE_FACT_PATTERN.search(clauses[index])
+        failure_subjects = _failure_subjects(clauses[index][: failure.end()])
+        if _clause_is_explicitly_resolved(
+            clauses[index]
+        ) and not _following_clause_reopens_failure(
+            clauses, index, failure_subjects
+        ):
+            clauses[index] = " "
+        elif index + 2 < len(clauses) and _adjacent_clause_closes_failure(
+            clauses[index], clauses[index + 2]
+        ) and not _following_clause_reopens_failure(
+            clauses, index + 2, failure_subjects
+        ):
+            clauses[index] = " "
+            clauses[index + 2] = " "
+            index += 2
+        index += 1
+    return "".join(clauses)
 
 
 def _has_resolved_failure_status(text):
@@ -676,16 +738,22 @@ def _has_resolved_failure_status(text):
 def _normalize_evidence_usage_gap_clauses(text):
     """Neutralize evidence-use wording without removing real failures beside it."""
     clauses = _split_fact_clauses(text)
+    evidence_subject = r"截图|证据|日志|记录|样本|材料"
+    usage_pattern = re.compile(
+        rf"({evidence_subject})"
+        rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
+        r"(不可用于|无法用于|不能用于)"
+        r"(?=[^。；;，,|\n]{0,20}(?:确认|验证|证明|覆盖|判断|评估))",
+        re.I,
+    )
+
+    def neutralize_usage(match):
+        if _failure_subjects(match.group(2)):
+            return match.group(0)
+        return f"{match.group(1)}{match.group(2)}不足以用于"
+
     for index in range(0, len(clauses), 2):
-        clause = clauses[index]
-        if (
-            re.search(r"截图|证据|日志|记录|样本|材料", clause, re.I)
-            and re.search(r"不可用于|无法用于|不能用于|不足以", clause, re.I)
-            and re.search(r"确认|验证|证明|覆盖|判断|评估", clause, re.I)
-        ):
-            clauses[index] = re.sub(
-                r"不可用于|无法用于|不能用于", "不足以用于", clause, flags=re.I
-            )
+        clauses[index] = usage_pattern.sub(neutralize_usage, clauses[index])
     return "".join(clauses)
 
 
@@ -786,8 +854,11 @@ def _daily_fact_signals(values, body):
         conclusion_cell = row[4] if len(row) > 4 else ""
         if not _has_resolved_failure_status(conclusion_cell):
             root_fact_cells.extend(row[:4])
-    root_facts = _normalize_evidence_usage_gap_clauses(
-        _strip_resolved_failure_phrases("；".join(root_fact_cells))
+    root_facts = "；".join(
+        _normalize_evidence_usage_gap_clauses(
+            _strip_resolved_failure_phrases(cell)
+        )
+        for cell in root_fact_cells
     )
     chain_failure = bool(
         re.search(

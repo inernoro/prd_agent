@@ -231,11 +231,28 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
+        for fact in (
+            "构建产物不可用于发布且日志不足以确认移动端覆盖",
+            "截图显示构建产物不可用于发布且日志不足以确认移动端覆盖",
+        ):
+            with self.subTest(fact=fact):
+                conditional_body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                conditional_errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", conditional_body
+                )
+                self.assertTrue(
+                    any("硬门禁失败事实" in error for error in conditional_errors)
+                )
+
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
             for fact in (
                 "CDS smoke 先前失败但重试后已通过",
                 "验收报告归档失败已修复",
+                "CDS smoke 先前失败，重试后已通过",
+                "验收报告归档失败；现已修复",
             ):
                 with self.subTest(verdict=verdict, fact=fact):
                     body = report_body(nature).replace(
@@ -303,12 +320,17 @@ class DailyVerdictContractTests(unittest.TestCase):
         self.assertEqual([], errors)
 
     def test_later_failure_in_same_clause_is_not_treated_as_resolved(self):
-        body = report_body("硬门禁失败").replace(
-            "当前部署 SHA 已前进",
+        for fact in (
             "CDS smoke 失败已修复但复测仍未通过",
-        )
-        errors = archive_report._daily_conclusion_contract_errors("fail", body)
-        self.assertEqual([], errors)
+            "CDS smoke 失败已修复，但复测仍未通过",
+            "CDS smoke 先前失败，重试后已通过，但复测仍未通过",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
 
     def test_non_fail_verdicts_reject_fail_only_facts(self):
         cases = (
