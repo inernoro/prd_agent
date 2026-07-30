@@ -1,15 +1,18 @@
 import React, { useCallback, useEffect, useMemo, useState } from 'react';
 import { MapSectionLoader } from '@/components/ui/VideoLoader';
+import { useHistoryBackedView } from '@/hooks/useHistoryBackedView';
 import { toast } from '@/lib/toast';
 import {
   createVideoGenRunReal,
   createVideoProjectReal,
+  getVideoGenRunReal,
   listVideoGenRunsReal,
   listVideoModelsReal,
   listVideoProjectsReal,
   updateVideoProjectReal,
 } from '@/services/real/videoAgent';
 import type {
+  VideoGenMode,
   VideoGenRunListItem,
   VideoProject,
   VideoProjectInput,
@@ -18,8 +21,11 @@ import type {
 import { VideoGenDirectPanel } from './VideoGenDirectPanel';
 import { VideoProjectStudio } from './VideoProjectStudio';
 import { VideoStoryboardEditor } from './VideoStoryboardEditor';
+import { VideoStudioDemo } from './VideoStudioDemo';
 
 const SELECTED_PROJECT_KEY = 'video-agent.selectedProjectId';
+
+export const normalizeVideoRunId = (value: string | null | undefined) => value?.trim() || null;
 
 export const buildDirectVideoRunInput = (project: VideoProject, input: VideoProjectInput) => {
   const prompt = input.sourceMarkdown?.trim() ?? '';
@@ -50,6 +56,8 @@ export const VideoAgentPage: React.FC = () => {
     try { return sessionStorage.getItem(SELECTED_PROJECT_KEY); } catch { return null; }
   });
   const [activeRunId, setActiveRunId] = useState<string | null>(null);
+  const [resolvedRunMode, setResolvedRunMode] = useState<{ id: string; mode: VideoGenMode } | null>(null);
+  const [demoOpen, setDemoOpen] = useState(false);
   const [loading, setLoading] = useState(true);
   const [busy, setBusy] = useState(false);
 
@@ -77,6 +85,17 @@ export const VideoAgentPage: React.FC = () => {
   }, []);
 
   useEffect(() => { void loadWorkspace(); }, [loadWorkspace]);
+  useHistoryBackedView({
+    param: 'run',
+    value: activeRunId,
+    onExit: () => setActiveRunId(null),
+    onRestore: (runId) => {
+      const normalizedRunId = normalizeVideoRunId(runId);
+      if (!normalizedRunId) return false;
+      setActiveRunId(normalizedRunId);
+      return true;
+    },
+  });
   useEffect(() => {
     try {
       if (selectedProjectId) sessionStorage.setItem(SELECTED_PROJECT_KEY, selectedProjectId);
@@ -89,6 +108,29 @@ export const VideoAgentPage: React.FC = () => {
     [projects, selectedProjectId],
   );
   const activeRun = runs.find((run) => run.id === activeRunId);
+  const activeRunMode = activeRun?.mode
+    ?? (resolvedRunMode?.id === activeRunId ? resolvedRunMode.mode : null);
+
+  useEffect(() => {
+    if (!activeRunId || activeRun) return;
+
+    let current = true;
+    void getVideoGenRunReal(activeRunId).then((response) => {
+      if (!current) return;
+      if (response.success) {
+        setResolvedRunMode({ id: response.data.id, mode: response.data.mode });
+        return;
+      }
+      toast.error('无法恢复这个视频项目', response.error?.message ?? '项目不存在或无权访问');
+      setActiveRunId(null);
+    }).catch((error) => {
+      if (!current) return;
+      toast.error('无法恢复这个视频项目', error instanceof Error ? error.message : '网络错误');
+      setActiveRunId(null);
+    });
+
+    return () => { current = false; };
+  }, [activeRun, activeRunId]);
 
   const replaceProject = useCallback((project: VideoProject) => {
     setProjects((current) => [project, ...current.filter((item) => item.id !== project.id)]);
@@ -181,8 +223,15 @@ export const VideoAgentPage: React.FC = () => {
 
   if (loading) return <MapSectionLoader text="正在打开视频制作台" />;
 
+  if (demoOpen) {
+    return <VideoStudioDemo onBack={() => setDemoOpen(false)} />;
+  }
+
   if (activeRunId) {
-    if (activeRun?.mode === 'direct') {
+    if (!activeRunMode) {
+      return <MapSectionLoader text="正在恢复视频项目" />;
+    }
+    if (activeRunMode === 'direct') {
       return (
         <div className="h-full min-h-0 p-3">
           <VideoGenDirectPanel
@@ -222,6 +271,7 @@ export const VideoAgentPage: React.FC = () => {
       onAnalyze={analyzeProject}
       onCreateDirect={createDirectVideo}
       onOpenRun={setActiveRunId}
+      onOpenDemo={() => setDemoOpen(true)}
     />
   );
 };

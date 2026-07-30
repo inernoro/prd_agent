@@ -1,7 +1,8 @@
 ---
 name: create-visual-test-to-kb
-version: 1.0.0
 description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v2）——模拟人类的浏览器取证 + 标准化验收报告 + 归档进 CDS 验收中心并出直达深链。职责分离：验收报告永远按项目归 CDS（平台自带、证据链内置），MAP 等系统通过知识库开放协议从 CDS 拉取展示，技能不再分流到 MAP 知识库。一个技能内含三段：标准/模板、模拟人类浏览器取证（点击导航进入、禁地址栏直达、双主题截图、ZZ 照做风画框标序号 stepClick/stepShot）、报告归档（命名结构固定，**每次归档强制输出可达地址**：CDS 直达深链 /reports，匿名对外用 /r/token）。默认报告走 **ZZ 照做风**（全大标题 + 一句话一步 + 逐步配图 `{{IMG:}}` + 文字在上图在下 + 变化处画框 + 分支顺序讲，同岗位照做必复现）。归档前有**强制准入校验**：目标/档位/Verdict/截图数/证据完整性/报告结构不达标直接拒收（入口准则，杜绝"什么都能进"）。项目无关，改 acceptance.config.json 即可跨仓库复用；无 CDS/离线退化为本地 md+截图。触发词："视觉验收"、"验收"、"视觉测试"、"验收归档"、"归档验收报告"、"create visual test"、"/视觉验收"、"/验收"。
+metadata:
+  version: 1.0.0
 ---
 
 # 验收归档 v2 — 工业级功能验收全流水线
@@ -53,6 +54,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 6. **比例原则**:严格不等于吹毛求疵。测试深度必须由风险、用户影响和证明力决定;低风险、非运行态、观察型问题不得被包装成 P0/P1。报告必须说明为什么当前深度足够,也必须说明继续加测不会改变 Verdict 的边界。
 7. **问题可定位**:凡报告写 P0/P1/P2 视觉问题,读者必须能从图里 3 秒定位。缺陷行要写清`位置 + 阻挡物/异常物 + 被影响对象 + 用户影响`,证据图必须有红/橙框或圈和短标签。只写"遮挡""异常""看这里"不合格。
 8. **移动端是独立硬门禁**:存在用户可见 Web 页面的 L1 至少 1 张、L2 至少 2 张真实触控移动端证据。必须使用独立 `isMobile:true,hasTouch:true` context，从登录或首页点击进入；桌面 context 仅缩窄视口不算。完整规则见 `doc/rule.acceptance.map-enterprise.md` §11.2、`reference/standard-v2.md` §5.0 和 `doc/rule.frontend.mobile-visual-check-matrix.md`。
+9. **结论必须语义分层**:每日/昨日验收首屏必须分别写 `产品质量`、`验收完整性`、`综合结论`、`发布建议`、`判定性质`，并为 conditional/fail 提供 `目标要求 -> 观察事实 -> 系统原因 -> 证据影响 -> 结论 -> 关闭动作` 根因链。缺陷为 0 且唯一问题是覆盖不足、目标版本无法复现或非阻断风险时用 `conditional`，不得用笼统 `fail` 暗示产品失败。
 
 ## 复杂验收前置（每日/PR/commit/未发布分支/缺陷复测/视觉回归/发布前必用）
 
@@ -64,6 +66,7 @@ description: 工业级功能验收/视觉测试全流水线（MAP 验收标准 v
 - 每个测试单元开测前的指差法说明:现在开测哪个 PR/commit、归属于哪个功能模块、页面面包屑是什么、预期看到什么。
 - 不可视觉验收项的替代证据类型,如 API、日志、文件规则或环境状态,并解释为什么没有用户可见页面证据。
 - 未发布分支的 branch/preview URL/commit SHA/容器状态,并明确环境可达不等于功能通过。
+- 结论语义分层和根因链:把产品失败、验收完整性不足、验收链路失败分开；任何目标 SHA 漂移都要说明为什么当前预览不能证明冻结版本。
 
 执行和报告必须能反查测试设计稿与场景编排。任何 PR/commit 未出现在最终结果里,都视为覆盖缺口。
 
@@ -118,6 +121,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 
 - 预览域名和 branch 信息只能来自 `python3 "$SKILLS_ROOT/cds/cli/cdscli.py" --human preview-url` 及 cdscli/API 查询结果;禁止手拼具体域名。
 - 必须检查目标 branch 的部署状态和 smoke 结果。状态为 building、starting、stopped、error、missing,或 smoke 非 0 时,最多每 30 秒重试一次,总等待不超过 15 分钟。
+- 必须比较 `target_sha` 与 CDS 实际部署 `tested_sha`。不一致时优先借用现有 commit-pinned、snapshot 或隔离预览能力复现目标 SHA；能力不存在时把该项标为 `unverifiable`，写清平台能力缺口。当前 HEAD 健康只能证明当前版本，不能回推目标日版本。
 - 15 分钟后仍未 ready,这轮每日验收判链路可运行但产品环境不可验,生成线上失败报告并通知 Slack。不得把登录页、构建中页面、503 页面、CDS shell 截图当作功能证据。
 - 取证过程中遇到 503/502/preview not ready,必须在报告「重试记录」写清每次 URL、HTTP 状态、时间和最终结论。偶发一次后重试通过可以继续,但首试失败不能从报告里抹掉。
 
@@ -152,6 +156,7 @@ curl -sSLo /tmp/acceptance-scenario-orchestrator.zip "$PRD_AGENT_BASE/api/offici
 - 归档后必须跑 `scripts/verify-open.mjs`,默认 3 次重试,同时等待标题、正文和图片。三次都失败时判验收链路失败;若第 2/3 次通过,报告必须记录首试失败和最终通过次数。
 - 如果所有线上归档路径都失败,仍要把本地报告路径写入失败报告摘要,但 Slack 结论必须写「线上归档失败」,不能伪装为已完成。
 - Slack 摘要保持短格式:总 Verdict、线上报告链接、测试 commit、origin/main commit、缺陷数量、未覆盖数量、归档结果、打开验证结果。详细证据放报告,不要塞进 automation prompt。
+- Slack 必须增加一句 Verdict 性质说明。例如：`综合结论 conditional：已测范围未发现缺陷，但目标日冻结版本有 4 项无法确认`。禁止发送 `FAIL + 缺陷 0 + 未覆盖 N` 而不解释失败对象。
 
 ## 证据关联性门禁（2026-06-20 反哺）
 

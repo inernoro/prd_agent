@@ -1,7 +1,8 @@
 ---
 name: acceptance-scenario-orchestrator
-version: 1.0.0
 description: 识别每日验收、PR 验收、commit 验收、未发布分支验收、缺陷复测、视觉回归和发布前验收等场景，并为 create-visual-test-to-kb 生成测试范围、指差法步骤、预期结果、证据链、截图回读和报告结构。Use when the user asks to optimize or run visual acceptance across different scenarios, asks whether yesterday's changes, a PR, a commit range, or an unpublished branch were really accepted, or needs PR/commit results to map to screenshots and MAP knowledge base reports.
+metadata:
+  version: 1.0.0
 ---
 
 # 验收场景编排器
@@ -45,6 +46,7 @@ The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` sect
    - Treat API, log, database, and file evidence as secondary evidence unless the change is truly invisible to users. If no page-level evidence is possible, state why and name the internal evidence that replaces it.
    - For each module, identify the real user page location as a breadcrumb, such as `首页 -> 导航 -> 百宝箱 -> 文件转换`.
    - Include unpublished branches and preview environments when the user asks for "未发布状态", "昨天全部内容", or branch-specific acceptance.
+   - Freeze `target_sha` for every unpublished branch and compare it with the deployed `tested_sha`. When they differ, first seek an existing commit-pinned, snapshot, or isolated preview. If the frozen SHA cannot be reproduced, mark the item `unverifiable`; current-HEAD health is not evidence for the frozen version.
    - Allow preview-environment test data with a clear prefix such as `每日验收-YYYY-MM-DD-...` when the automation policy permits it. Never use production-destructive data paths.
    - Keep `cds` and `CDS Agent` separate. `cds/` platform changes use CDS platform evidence: cdscli/API branch status, deploy/smoke result, preview routing, reports page, scheduler/self-update state, logs, or extra-services state. `CDS Agent` evidence means the prd-admin `/cds-agent` workbench or its runtime/session flow, and can only prove CDS Agent-specific assertions.
    - Mark items as `runtime`, `visual`, `api`, `docs/rules`, or `environment-only`.
@@ -87,6 +89,9 @@ The chain boundary is controlled by `doc/rule.acceptance.map-enterprise.md` sect
 
 6. Write the report contract.
    - Start the rendered report with H1 plus `验收速览卡`; put the final verdict in that card. This is the only meaning of "final verdict at the top".
+   - In the first screen, separate `产品质量`, `验收完整性`, `综合结论`, `发布建议`, and `判定性质`. Do not make one Verdict carry all five meanings.
+   - Require a `根因链条` table for every conditional/fail, SHA drift, environment blocker, or archive failure. Its columns are `目标要求`, `观察事实`, `系统原因`, `证据影响`, `结论`, and `关闭动作`.
+   - Use `conditional` when no product/core/acceptance-chain failure was observed and the only problem is incomplete coverage, an unverifiable frozen SHA, P2/P3, or another non-blocking risk. Use `fail` only for product failure, core-case failure, acceptance-chain failure, or a hard-gate failure, and name which one occurred.
    - After the速览卡, start the body with `昨日工作总结` for daily/yesterday acceptance, or `验收范围摘要` for PR/commit/single-scenario acceptance.
    - Do not add an in-body table of contents. Use a coverage matrix and section headings instead.
    - Include `PR/commit 到结果映射` near the top.
@@ -134,7 +139,12 @@ If multiple scenarios match, choose the narrowest scenario as primary and list t
 |------|----------|----------|----------|----------|----------|----------|----------|
 
 ## 报告契约
-- 顶部结论:
+- 产品质量:
+- 验收完整性:
+- 综合结论:
+- 发布建议:
+- 判定性质:
+- 根因链条:
 - PR/commit 到结果映射:
 - 标记法则与验收标准:
 - 截图回读检查:
