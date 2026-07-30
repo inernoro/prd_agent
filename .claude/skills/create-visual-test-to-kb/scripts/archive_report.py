@@ -677,7 +677,14 @@ _FAILURE_SUBJECT_PATTERNS = (
     ("acceptance-chain", re.compile(r"验收链路", re.I)),
     ("evidence-chain", re.compile(r"证据链", re.I)),
     ("archive", re.compile(r"(?:验收报告)?归档(?:流程|任务|操作)?", re.I)),
-    ("report-publish", re.compile(r"报告发布(?:流程|任务|操作)?", re.I)),
+    (
+        "report-publish",
+        re.compile(
+            rf"(?:验收)?报告\s*(?:{_ONGOING_FAILURE_PREFIX_PATTERN}\s*)?"
+            r"发布(?:流程|任务|操作)?",
+            re.I,
+        ),
+    ),
     ("verify-open", re.compile(r"verify-open|打开验证(?:步骤|操作)?", re.I)),
     ("slack", re.compile(r"Slack\s*通知(?:发送)?", re.I)),
 )
@@ -1093,6 +1100,18 @@ def _current_failure_subjects(text):
 def _root_cause_state_scope(row, row_index):
     """Keep same-kind gates independent when root-cause targets differ."""
     target = row[0] if row else ""
+    gate_subjects = tuple(
+        sorted(
+            {
+                subject
+                for _, _, subject in _subject_occurrences(
+                    target, instance_aware=True
+                )
+            }
+        )
+    )
+    if gate_subjects:
+        return ("__gate_scope__", gate_subjects)
     normalized = re.sub(r"[`*_\s]+", "", target).lower()
     return normalized or f"__root_cause_row_{row_index}"
 

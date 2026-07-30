@@ -585,6 +585,28 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertTrue(any(label in error for error in errors))
 
+    def test_report_publish_failure_word_orders_participate_in_chain_gate(self):
+        for fact in (
+            "报告未发布",
+            "报告尚未发布",
+            "验收报告还没发布",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(any("验收链路失败事实" in error for error in errors))
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("验收链路失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
             for fact in (
@@ -714,6 +736,30 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "conditional", body
                 )
                 self.assertEqual([], errors)
+
+    def test_normalized_gate_target_labels_share_state_scope(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| CDS smoke | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| CDS smoke 门禁 | CDS smoke 现已通过 | 同一门禁已复测 | "
+            "关闭旧失败证据 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertEqual([], errors)
+
+    def test_target_gate_instances_remain_separate_after_normalization(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 移动端 CDS smoke | CDS smoke 失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 后端 CDS smoke 门禁 | CDS smoke 现已通过 | 后端复测完成 | "
+            "仅证明后端 | 已通过 | 保留记录 |\n"
+        )
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("硬门禁失败事实" in error for error in errors))
 
     def test_later_root_cause_row_can_reopen_failure(self):
         body = report_body("覆盖不足").replace(
