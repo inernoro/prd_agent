@@ -19,7 +19,9 @@ describe('分支预览地址 API 契约', () => {
   it('每条命名入口都带平台判定的 isConsole（前端不得自己按子域名字判）', () => {
     // 接线守卫：这个字段一旦消失，BranchDetailDrawer 会静默退回按名字判的兜底，
     // 而那正是 2026-07-29 子域改名当天失效的那套判定（形状 2：链路只建到一半）。
-    expect(source).toContain('isConsole: isGatewayConsoleSubdomain(sub)');
+    // 判据必须与落点同源：只按子域名字判会把「叫 llmgw 的存量 API profile」
+    // 标成控制台（落点已正确落到 /gw/healthz，标签却说是控制台）。
+    expect(source).toContain("isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path)");
     expect(source).toContain('isConsole: boolean');
   });
 

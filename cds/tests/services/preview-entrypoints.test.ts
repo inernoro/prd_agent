@@ -4,7 +4,9 @@ import {
   RESERVED_ENTRYPOINT_ENV_KEYS,
   SERVICE_URLS_ENV_KEY,
   buildPublishedEntrypoints,
+  isGatewayConsoleEntry,
   isGatewayConsoleSubdomain,
+  savedAliasOwners,
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedEntrypointsEnv,
@@ -323,5 +325,68 @@ describe('isGatewayConsoleSubdomain — 控制台判定挂在别名表上（Code
     for (const name of subdomainWithLegacyAliases('llmgw')) {
       expect(isGatewayConsoleSubdomain(name)).toBe(true);
     }
+  });
+});
+
+describe('isGatewayConsoleEntry — 判据与落点同源（Codex P2）', () => {
+  it('声明 / 的控制台 profile 算控制台', () => {
+    expect(isGatewayConsoleEntry('llmgw', '/')).toBe(true);
+    expect(isGatewayConsoleEntry('llmgw-web', '/')).toBe(true);
+    expect(isGatewayConsoleEntry('llmgw')).toBe(true); // 未声明就绪路径 → 名字表兜底给 /
+  });
+
+  it('叫 llmgw 但声明健康端点的存量 API profile 不算控制台', () => {
+    // 落点已按声明正确落到 /gw/healthz，isConsole 若仍为 true，面板会把它排最前
+    // 并标成「网关控制台」，点开是一串 JSON —— 两个判据必须同源。
+    expect(isGatewayConsoleEntry('llmgw', '/gw/healthz')).toBe(false);
+    expect(resolveServiceLandingPath('llmgw', '/gw/healthz')).toBe('/gw/healthz');
+  });
+
+  it('引擎与其它服务一律不是控制台', () => {
+    expect(isGatewayConsoleEntry('llmgw-serve', '/gw/v1/healthz')).toBe(false);
+    expect(isGatewayConsoleEntry('docs', '/')).toBe(false);
+  });
+});
+
+describe('savedAliasOwners / 入口表与发布器口径一致（Codex P1）', () => {
+  it('枚举全部分支的已保存别名，first-wins', () => {
+    const owners = savedAliasOwners([
+      { id: 'b1', subdomainAliases: ['Foo', ' bar '] },
+      { id: 'b2', subdomainAliases: ['foo'] },
+      { id: 'b3' },
+    ]);
+    expect(owners.get('foo')).toBe('b1');
+    expect(owners.get('bar')).toBe('b1');
+    expect(owners.size).toBe(2);
+  });
+
+  it('被别名占走的 host 不进入口表（发布器会跳过它，表不能还声明）', () => {
+    const previewSlug = 'demo-claude-prd-agent';
+    const canonical = namedServiceLabel(previewSlug, 'llmgw');
+    const withAlias = buildPublishedEntrypoints({
+      previewSlug, previewHost: HOST, subdomains: ['llmgw'],
+      aliasOwnedLabels: new Set([canonical]),
+    });
+    // 规范名被占 → 不声明；兼容别名没被占 → 照常声明。
+    expect(withAlias.serviceUrls['llmgw']).toBeUndefined();
+    expect(withAlias.serviceUrls['llmgw-web']).toBe(`https://${namedServiceLabel(previewSlug, 'llmgw-web')}.${HOST}`);
+    // 不传别名集合时行为不变（旧调用方不受影响）。
+    const plain = buildPublishedEntrypoints({ previewSlug, previewHost: HOST, subdomains: ['llmgw'] });
+    expect(plain.serviceUrls['llmgw']).toBe(`https://${canonical}.${HOST}`);
+  });
+
+  it('resolveBranchEntrypointsEnv 会把已保存别名占走的 host 排除掉', () => {
+    const entry = { id: 'b1', projectId: 'p1', branch: 'claude/demo' } as unknown as BranchEntry;
+    const slug = 'demo-claude-prd-agent';
+    const occupied = namedServiceLabel(slug, 'llmgw');
+    const env = resolveBranchEntrypointsEnv(entry, {
+      previewHost: HOST,
+      getProject: () => ({ slug: 'prd-agent' }),
+      getEffectiveProfilesForBranch: () => [{ subdomain: 'llmgw' }],
+      getAllBranches: () => [{ id: 'other', subdomainAliases: [occupied] }],
+    });
+    const table = JSON.parse(env.env[SERVICE_URLS_ENV_KEY]);
+    expect(table['llmgw']).toBeUndefined();
+    expect(table['llmgw-web']).toBeDefined();
   });
 });

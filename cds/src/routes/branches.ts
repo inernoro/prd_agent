@@ -25,7 +25,7 @@ import { isValidExtraProfileId, isValidServiceSubdomain, mergeBranchProfiles } f
 import { resolveProfileRuntimeEnvWithProvenance, type EnvLayer } from '../services/env-provenance.js';
 import {
   branchEntrypointDepsFromState,
-  isGatewayConsoleSubdomain,
+  isGatewayConsoleEntry,
   isPublishableNamedLabel,
   namedServiceLabel,
   publishedServiceLabels,
@@ -15208,7 +15208,9 @@ export function createBranchRouter(deps: RouterDeps): Router {
         url: `https://${namedLabel}.${primaryRoot}${landingPath}`,
         // 「这是不是可登录的控制台」由平台判定后下发。面板此前自己按子域名字判，
         // 改名当天那 4 处判定整块失效（Codex P2）；命名约定的解释权归这一侧。
-        isConsole: isGatewayConsoleSubdomain(sub),
+        // 判据与落点同源：叫 llmgw 但声明了 /gw/healthz 的存量 API profile 不算控制台，
+        // 否则面板把它排最前、标成「网关控制台」，点开是一串 JSON（Codex P2）。
+        isConsole: isGatewayConsoleEntry(sub, profile?.readinessProbe?.path),
       });
     }
     return gatewayUrls;

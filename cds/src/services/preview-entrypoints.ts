@@ -155,6 +155,11 @@ export function buildPublishedEntrypoints(opts: {
   previewSlug?: string;
   previewHost?: string;
   subdomains: readonly string[];
+  /**
+   * 已被某个分支保存为子域别名的标签集合。发布器会跳过这些 host，
+   * 表里也必须跟着不声明，否则消费方拿到一个指向别人应用的地址（Codex P1）。
+   */
+  aliasOwnedLabels?: ReadonlySet<string>;
 }): PublishedEntrypoints {
   const previewSlug = (opts.previewSlug || '').trim();
   const previewHost = (opts.previewHost || '')
@@ -168,6 +173,7 @@ export function buildPublishedEntrypoints(opts: {
     if (serviceUrls[name]) return;
     const label = namedServiceLabel(previewSlug, name);
     if (!isPublishableNamedLabel(label)) return; // 没发布就不声明
+    if (opts.aliasOwnedLabels?.has(label)) return; // 发布器会跳过它，表里也不能声明
     serviceUrls[name] = `https://${label}.${previewHost}`;
   };
   // 表里要**逐条对应发布器实际写出的路由**，历史别名同样在列 —— 否则会出现
@@ -183,6 +189,28 @@ export function buildPublishedEntrypoints(opts: {
 }
 
 /**
+ * 全部分支已保存的子域别名标签 → 拥有它的分支 id。
+ *
+ * 发布器与入口表**必须同用这一份**：发布器跳过被别名占走的命名 host，而入口表若照旧
+ * 声明它，SSO 就会把用户送到别名拥有者的主应用（可能是另一个分支）—— 表与实际发布的
+ * 路由必须逐条一致，这是本模块开头就写着的前提（Codex P1）。
+ *
+ * 判据只有一处，避免两侧各写一遍再漂移（形状 3）。
+ */
+export function savedAliasOwners(
+  branches: ReadonlyArray<{ id: string; subdomainAliases?: string[] }>,
+): Map<string, string> {
+  const owners = new Map<string, string>();
+  for (const b of branches) {
+    for (const alias of b.subdomainAliases ?? []) {
+      const label = (alias || '').trim().toLowerCase();
+      if (label && !owners.has(label)) owners.set(label, b.id);
+    }
+  }
+  return owners;
+}
+
+/**
  * 这个子域是不是模型网关**控制台**（可登录的 web 界面），而不是 API 引擎。
  *
  * 判据挂在别名表上，因此 2026-07-29 的 `llmgw-web` → `llmgw` 改名自动同时认两个名字，
@@ -195,6 +223,19 @@ export function buildPublishedEntrypoints(opts: {
  */
 export function isGatewayConsoleSubdomain(subdomain: string): boolean {
   return subdomainWithLegacyAliases('llmgw').includes((subdomain || '').trim().toLowerCase());
+}
+
+/**
+ * 这条命名入口是不是**可登录的控制台**（而非 API 引擎的健康检查入口）。
+ *
+ * 判据 = 子域是控制台名 **且** 落点是根路径。只看名字不够：存量项目里把 `llmgw`
+ * 当后端 API 用的 profile 会声明 `/gw/healthz`，落点已经按声明正确落到健康端点，
+ * 但面板仍把它排在最前、标成「网关控制台」，点开却是一串 JSON（Codex P2）。
+ * 与 resolveServiceLandingPath 同源，两者不会再各说一套。
+ */
+export function isGatewayConsoleEntry(subdomain: string, readinessPath?: string): boolean {
+  return isGatewayConsoleSubdomain(subdomain)
+    && resolveServiceLandingPath(subdomain, readinessPath) === '/';
 }
 
 /**
@@ -246,6 +287,8 @@ export interface BranchEntrypointDeps {
   previewHost?: string;
   getProject(projectId: string): { slug?: string; name?: string } | undefined;
   getEffectiveProfilesForBranch(entry: BranchEntry): Array<{ subdomain?: string }>;
+  /** 全部分支（用于枚举已保存别名占走的标签）。缺省则不做别名过滤。 */
+  getAllBranches?(): ReadonlyArray<{ id: string; subdomainAliases?: string[] }>;
 }
 
 /**
@@ -275,17 +318,21 @@ export function resolveBranchEntrypointsEnv(
       previewSlug,
       previewHost: deps.previewHost,
       subdomains,
+      aliasOwnedLabels: deps.getAllBranches
+        ? new Set(savedAliasOwners(deps.getAllBranches()).keys())
+        : undefined,
     })),
   };
 }
 
 /** 从 StateService 造 deps —— 唯一一处知道「effective profile 要过 resolveEffectiveProfile」。 */
 export function branchEntrypointDepsFromState(
-  stateService: Pick<StateService, 'getProject' | 'getEffectiveProfilesForBranch'>,
+  stateService: Pick<StateService, 'getProject' | 'getEffectiveProfilesForBranch' | 'getAllBranches'>,
   previewHost?: string,
 ): BranchEntrypointDeps {
   return {
     previewHost,
+    getAllBranches: () => stateService.getAllBranches(),
     getProject: (projectId) => stateService.getProject(projectId),
     getEffectiveProfilesForBranch: (entry) =>
       stateService.getEffectiveProfilesForBranch(entry).map((bp) => resolveEffectiveProfile(bp, entry)),

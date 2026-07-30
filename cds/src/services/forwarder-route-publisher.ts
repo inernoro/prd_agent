@@ -32,7 +32,7 @@ import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
-import { namedServiceLabel, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
+import { namedServiceLabel, publishedServiceLabels, savedAliasOwners, subdomainWithLegacyAliases } from './preview-entrypoints.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -178,13 +178,8 @@ export class ForwarderRoutePublisher {
     // `<slug>-llmgw-web`；② 别名先保存、声明 `llmgw` 的 profile 后来才加。两种都会让
     // forwarder 收到同 host 两条路由，route-resolver 按路由 id 静默选一条，用户可能
     // 被路由到别的分支（Codex P1）。
-    const aliasOwners = new Map<string, string>();
-    for (const b of this.opts.state.getAllBranches()) {
-      for (const alias of b.subdomainAliases ?? []) {
-        const label = (alias || '').trim().toLowerCase();
-        if (label && !aliasOwners.has(label)) aliasOwners.set(label, b.id);
-      }
-    }
+    // 枚举走 preview-entrypoints.savedAliasOwners —— 入口表用同一份，两侧不许各写一遍。
+    const aliasOwners = savedAliasOwners(this.opts.state.getAllBranches());
     // 本轮实际存在的别名冲突。收在这里是为了在末尾把已经消失的冲突从
     // warnedAliasCollisions 里剪掉——否则「改错 → 报警 → 改对 → 再改错」的第二次
     // 就永远静默了（去重不能变成一次性静音）。
