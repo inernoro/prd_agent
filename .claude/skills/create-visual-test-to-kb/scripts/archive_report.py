@@ -509,15 +509,15 @@ def _split_markdown_table_row(row):
     return cells
 
 
-def _section_table_rows(markdown, heading):
-    """Return data rows from the first Markdown table under an H2 section."""
+def _section_table(markdown, heading):
+    """Return the header and data rows from the first table under an exact H2."""
     section = re.search(
         rf"^##\s+{re.escape(heading)}\s*$\n(.*?)(?=^##\s+|\Z)",
         markdown or "",
         re.M | re.S,
     )
     if not section:
-        return []
+        return [], []
 
     table = []
     for line in section.group(1).splitlines():
@@ -527,7 +527,7 @@ def _section_table_rows(markdown, heading):
         elif table:
             break
     if len(table) < 2:
-        return []
+        return [], []
 
     parsed = [_split_markdown_table_row(row) for row in table]
     has_separator = bool(re.match(
@@ -535,7 +535,13 @@ def _section_table_rows(markdown, heading):
         table[1],
     ))
     rows = parsed[2:] if has_separator else parsed[1:]
-    return [row for row in rows if any(cell.strip() for cell in row)]
+    return parsed[0], [row for row in rows if any(cell.strip() for cell in row)]
+
+
+def _section_table_rows(markdown, heading):
+    """Return data rows from the first Markdown table under an exact H2."""
+    _, rows = _section_table(markdown, heading)
+    return rows
 
 
 def _section_text(markdown, heading):
@@ -546,6 +552,108 @@ def _section_text(markdown, heading):
         re.M | re.S,
     )
     return section.group(1) if section else ""
+
+
+ZERO_COVERAGE_GAP_PAT = re.compile(
+    r"(?:(?:0|零)\s*(?:项|个)?\s*(?:无法确认|未覆盖|覆盖缺口|缺口)"
+    r"|(?:无法确认|未覆盖|覆盖缺口|缺口)\s*(?:为|[:：=])?\s*(?:0|零)\s*(?:项|个)?"
+    r"|(?:无|没有)\s*(?:任何)?\s*(?:无法确认|未覆盖|覆盖缺口|缺口))",
+    re.I,
+)
+
+
+def _strip_zero_coverage_gap_phrases(text):
+    """Remove explicit zero/negated gap claims before positive gap detection."""
+    return ZERO_COVERAGE_GAP_PAT.sub(" ", text or "")
+
+
+def _daily_fact_signals(values, body):
+    """Extract the product and coverage facts used to justify a daily Verdict."""
+    product_quality = values.get("产品质量", "").strip()
+    completeness = values.get("验收完整性", "").strip()
+
+    zero_defects = bool(
+        re.search(
+            r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
+            r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
+            r"|P0\s*/\s*P1\s*/\s*P2\s*/\s*P3[^。；;|\n]{0,12}(?:均?为|[:：=])?\s*0"
+            r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
+            product_quality,
+            re.I,
+        )
+    )
+
+    positive_product = re.sub(
+        r"(?:未发现|没有发现|未检测到|无|没有|未出现|不存在)"
+        r"[^。；;，,|\n]{0,32}(?:缺陷|失败|错误|阻断|不通过)",
+        " ",
+        product_quality,
+        flags=re.I,
+    )
+    positive_product = re.sub(
+        r"P0\s*/\s*P1\s*/\s*P2\s*/\s*P3[^。；;|\n]{0,12}"
+        r"(?:均?为|[:：=])?\s*0(?:\s*/\s*0\s*/\s*0\s*/\s*0)?",
+        " ",
+        positive_product,
+        flags=re.I,
+    )
+    positive_product = re.sub(r"\bP[0-2]\s*[:：=]\s*0\b", " ", positive_product, flags=re.I)
+
+    defect_headers, defect_rows = _section_table(body, "缺陷清单")
+    severity_index = next(
+        (
+            index
+            for index, header in enumerate(defect_headers)
+            if re.search(r"严重(?:级|程度)|severity", header, re.I)
+        ),
+        -1,
+    )
+    blocking_defect_rows = (
+        severity_index >= 0
+        and any(
+            severity_index < len(row)
+            and bool(re.search(r"\bP[0-2]\b", row[severity_index], re.I))
+            for row in defect_rows
+        )
+    )
+    blocking_product_failure = bool(
+        blocking_defect_rows
+        or re.search(
+            r"(?:发现|确认|存在|出现|有)\s*(?:\d+\s*个?\s*)?"
+            r"(?:P[0-2]\s*)?(?:产品)?缺陷"
+            r"|\bP[0-2]\b"
+            r"|(?:产品|核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            positive_product,
+            re.I,
+        )
+    )
+    core_failure = bool(
+        re.search(
+            r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
+            positive_product,
+            re.I,
+        )
+    )
+    coverage_gap_count = _coverage_gap_count(body)
+    completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
+    incomplete = bool(
+        coverage_gap_count > 0
+        or re.search(
+            r"不完整|无法确认|未覆盖|覆盖不足|覆盖缺口|\d+\s*项?缺口",
+            completeness_with_zero_gaps_removed,
+            re.I,
+        )
+    )
+    claims_complete = bool(re.search(r"(?:^|[：:；;，,\s])完整(?:$|[；;，,\s])", completeness))
+
+    return {
+        "zero_defects": zero_defects,
+        "blocking_product_failure": blocking_product_failure,
+        "core_failure": core_failure,
+        "coverage_gap_count": coverage_gap_count,
+        "incomplete": incomplete,
+        "claims_complete": claims_complete,
+    }
 
 
 def _daily_conclusion_contract_errors(verdict, body):
@@ -579,7 +687,7 @@ def _daily_conclusion_contract_errors(verdict, body):
             f"该 Verdict 只允许：{expected}。覆盖不足且无真实失败时必须用 conditional"
         )
 
-    overall = re.sub(r"[`*_\s（）()]", "", values.get("综合结论", "")).lower()
+    overall = re.sub(r"[`*_\s（）()/／·-]", "", values.get("综合结论", "")).lower()
     overall_matches = {
         "pass": overall in {"pass", "通过", "pass通过"},
         "conditional": overall in {"conditional", "有条件通过", "conditional有条件通过"},
@@ -590,14 +698,54 @@ def _daily_conclusion_contract_errors(verdict, body):
             f"[Verdict 语义] verdict={verdict} 与综合结论「{values.get('综合结论')}」不一致"
         )
 
+    facts = _daily_fact_signals(values, body)
+    if facts["zero_defects"] and facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 产品质量同时声称缺陷为 0/未发现缺陷，又报告了 P0-P2 产品失败事实")
+    if facts["claims_complete"] and facts["coverage_gap_count"] > 0:
+        errors.append(
+            f"[事实一致性] 验收完整性声称完整，但覆盖缺口表仍有 {facts['coverage_gap_count']} 项"
+        )
+    if nature == "产品失败" and not facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 判定性质为产品失败，但产品质量和缺陷清单没有 P0-P2 产品失败事实")
+    if nature == "核心用例失败" and not facts["core_failure"]:
+        errors.append("[事实一致性] 判定性质为核心用例失败，但产品质量没有核心用例/流程失败事实")
+    if nature == "覆盖不足" and not facts["incomplete"]:
+        errors.append("[事实一致性] 判定性质为覆盖不足，但验收完整性和覆盖缺口没有缺口事实")
+    if verdict == "pass" and (facts["incomplete"] or facts["blocking_product_failure"]):
+        errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P2 产品失败事实不一致")
+    if verdict == "conditional" and facts["blocking_product_failure"]:
+        errors.append("[事实一致性] 已有 P0-P2 产品失败事实时不能使用 conditional，必须使用 fail")
+    coverage_only = (
+        facts["zero_defects"]
+        and facts["incomplete"]
+        and not facts["blocking_product_failure"]
+    )
+    if verdict == "fail" and nature in {"产品失败", "核心用例失败"} and coverage_only:
+        errors.append(
+            "[Verdict 语义] 已报事实仅支持覆盖不足且未发现产品失败，必须使用 conditional"
+        )
+
     root_cause_text = _section_text(body, "根因链条")
-    root_cause_rows = _section_table_rows(body, "根因链条")
+    root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
     if verdict in {"conditional", "fail"} and (not root_cause_text or not root_cause_rows):
         errors.append("[根因链] 每日验收缺少实质填写的「根因链条」表")
     elif root_cause_text or root_cause_rows:
-        missing = [field for field in DAILY_ROOT_CAUSE_FIELDS if field not in root_cause_text]
-        if missing:
-            errors.append("[根因链] 缺少字段：" + "、".join(missing))
+        normalized_headers = [re.sub(r"[`*_\s]", "", cell) for cell in root_cause_headers]
+        if normalized_headers != list(DAILY_ROOT_CAUSE_FIELDS):
+            errors.append(
+                "[根因链] 表头必须严格为：" + "、".join(DAILY_ROOT_CAUSE_FIELDS)
+            )
+        malformed_rows = [
+            index
+            for index, row in enumerate(root_cause_rows, start=1)
+            if len(row) != len(DAILY_ROOT_CAUSE_FIELDS)
+            or any(not cell.strip() for cell in row)
+        ]
+        if malformed_rows:
+            errors.append(
+                "[根因链] 每条数据必须完整填写六列；无效数据行："
+                + "、".join(str(index) for index in malformed_rows)
+            )
 
     return errors
 
@@ -630,12 +778,15 @@ def _coverage_gap_count(markdown):
     if gap_ids:
         return len(gap_ids)
 
-    legacy_lines = {
-        re.sub(r"\s+", " ", line).strip()
-        for line in (markdown or "").splitlines()
-        if re.search(r"未覆盖|not-run|未深测|弱相关|无关", line, re.I)
-        and not re.match(r"^#{1,6}\s", line.strip())
-    }
+    legacy_lines = set()
+    for line in (markdown or "").splitlines():
+        stripped = line.strip()
+        positive_gap_text = _strip_zero_coverage_gap_phrases(stripped)
+        if (
+            not re.match(r"^#{1,6}\s", stripped)
+            and re.search(r"未覆盖|not-run|未深测|弱相关|无关", positive_gap_text, re.I)
+        ):
+            legacy_lines.add(re.sub(r"\s+", " ", stripped))
     return len(legacy_lines)
 
 
