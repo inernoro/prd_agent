@@ -31,6 +31,9 @@ public class InfraConnection
     /// <summary>IDataProtector 加密的长效 token，明文不出库。</summary>
     public string LongTokenEncrypted { get; set; } = string.Empty;
 
+    /// <summary>MAP 为 CDS 自动签发的永久缺陷转发 Key ID；删除连接时同步撤销。</summary>
+    public string MapAgentApiKeyId { get; set; } = string.Empty;
+
     /// <summary>长效 token 过期时间。系统级长期授权使用远未来时间，仅用于 UI 展示。</summary>
     public DateTime LongTokenExpiresAt { get; set; }
 

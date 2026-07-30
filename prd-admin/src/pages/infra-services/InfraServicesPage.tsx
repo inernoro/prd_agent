@@ -1,8 +1,8 @@
 /**
- * 基础设施服务管理（v1：CDS 配对连接已落地）
+ * 基础设施服务管理（CDS 跳转授权已落地）
  *
  * v1 落地能力：
- *   - 通过剪贴板配对密钥连接 CDS（spec.cds.map-pairing-protocol）
+ *   - 通过 CDS 发起的跳转授权自动建立长期连接
  *   - 列出 / 探活 / 删除已建立的 InfraConnection
  *
  * 已落地能力：
@@ -10,7 +10,7 @@
  *   - CDS Agent 会话创建、启动、发送、工具审批、日志、停止
  *   - 实例 / 路由 / 监控 / 配置四个基础设施操作 tab
  */
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { Copy, ExternalLink, Link2, MessageSquare, Play, Plus, RefreshCw, Send, Server, ShieldCheck, Square, Terminal, Trash2 } from 'lucide-react';
 
 import { Dialog } from '@/components/ui/Dialog';
@@ -20,11 +20,8 @@ import {
   deleteInfraConnection,
   completeCdsAuthorization,
   listInfraConnections,
-  parseClipboardPreview,
-  pasteInfraConnection,
   probeInfraConnection,
   startCdsAuthorization,
-  type ClipboardPayloadPreview,
   type InfraConnectionPublicView,
 } from '@/services/real/infraConnections';
 import {
@@ -167,7 +164,6 @@ function parseEventPayload(event: InfraAgentEventView): Record<string, unknown> 
 export default function InfraServicesPage() {
   const [connections, setConnections] = useState<InfraConnectionPublicView[]>([]);
   const [loading, setLoading] = useState(true);
-  const [pasteOpen, setPasteOpen] = useState(false);
   const [busyId, setBusyId] = useState<string | null>(null);
   const [completingAuthorization, setCompletingAuthorization] = useState(false);
   const [agentSessions, setAgentSessions] = useState<InfraAgentSessionView[]>([]);
@@ -274,7 +270,31 @@ export default function InfraServicesPage() {
     const params = new URLSearchParams(window.location.search);
     const code = params.get('cds_code');
     const state = params.get('state');
-    if (!code || !state) return;
+    const authorizeCds = params.get('authorizeCds');
+
+    if (!code || !state) {
+      if (!authorizeCds) return;
+      const startMarker = `start:${authorizeCds}`;
+      if (sessionStorage.getItem('infra.cdsAuthorize.marker') === startMarker) return;
+      sessionStorage.setItem('infra.cdsAuthorize.marker', startMarker);
+      setCompletingAuthorization(true);
+      startCdsAuthorization(authorizeCds, window.location.origin)
+        .then((res) => {
+          if (res.success && res.data?.authorizeUrl) {
+            window.location.assign(res.data.authorizeUrl);
+            return;
+          }
+          sessionStorage.removeItem('infra.cdsAuthorize.marker');
+          toast.error('无法发起 CDS 授权', res.error?.message ?? '请从 CDS 外部接入页重新进入');
+          setCompletingAuthorization(false);
+        })
+        .catch(() => {
+          sessionStorage.removeItem('infra.cdsAuthorize.marker');
+          toast.error('无法发起 CDS 授权', '请从 CDS 外部接入页重新进入');
+          setCompletingAuthorization(false);
+        });
+      return;
+    }
 
     const marker = `${code}:${state}`;
     if (sessionStorage.getItem('infra.cdsAuthorize.marker') === marker) return;
@@ -285,7 +305,7 @@ export default function InfraServicesPage() {
       .then((res) => {
         if (res.success && res.data?.item) {
           onPasted(res.data.item);
-          toast.success('CDS 连接已建立', `${res.data.item.partnerName || res.data.item.partnerId} · ${res.data.item.partnerBaseUrl}`);
+          toast.success('CDS 长期授权已建立', '系统互联与缺陷转发已一并启用，无需复制任何凭据');
           void loadConnections();
         } else {
           toast.error('CDS 授权连接失败', res.error?.message ?? '请重新发起连接');
@@ -295,7 +315,8 @@ export default function InfraServicesPage() {
         setCompletingAuthorization(false);
         params.delete('cds_code');
         params.delete('state');
-        params.delete('cds_base_url');
+          params.delete('cds_base_url');
+          params.delete('authorizeCds');
         const qs = params.toString();
         window.history.replaceState(null, '', `${window.location.pathname}${qs ? `?${qs}` : ''}${window.location.hash}`);
       });
@@ -1009,21 +1030,9 @@ export default function InfraServicesPage() {
           <h1 className="text-xl font-semibold text-token-primary">基础设施服务</h1>
           <p className="text-sm text-token-secondary mt-1.5 max-w-2xl">
             shared 基础设施服务（如 Claude sidecar runtime，自研 sidecar / Anthropic 协议）的连接管理、实例分布、路由策略与业务监控。
-            部署 / 编排能力由 CDS 提供，本页通过 CDS 地址授权建立信任连接，配对密钥作为兜底路径保留。
+            部署 / 编排能力由 CDS 提供。连接由 CDS 外部接入页发起跳转授权，MAP 自动完成长期凭据交换。
           </p>
         </div>
-        <button
-          type="button"
-          onClick={() => setPasteOpen(true)}
-          className="inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium transition-colors"
-          style={{
-            background: 'rgba(99,179,237,0.18)',
-            color: 'var(--semantic-info-text)',
-            border: '1px solid rgba(99,179,237,0.45)',
-          }}
-        >
-          <Plus size={14} /> 连接 CDS
-        </button>
       </header>
 
       <section
@@ -1037,11 +1046,7 @@ export default function InfraServicesPage() {
           <ShieldCheck size={18} style={{ color: 'var(--semantic-success-text)', marginTop: 2 }} />
           <div className="text-sm text-token-primary leading-relaxed">
             <strong className="text-token-primary">v1 已上线：</strong>
-            输入 CDS 地址后跳转授权，授权完成自动回到 MAP 建立连接；无法跳转时仍可使用配对密钥兜底（
-            <code className="mx-1 px-1 py-0.5 rounded bg-token-nested text-token-primary">
-              doc/spec.cds.map-pairing-protocol.md
-            </code>
-            ）。
+            从 CDS 点击授权入口后，MAP 自动完成系统互联与缺陷转发授权。长期凭据永久有效，仅在主动删除连接或凭据失效时终止。
             后续将逐步迁入实例只读列表 / 路由策略 / 业务监控等能力。
           </div>
         </div>
@@ -1120,7 +1125,7 @@ export default function InfraServicesPage() {
             <MapSpinner size={20} />
           </div>
         ) : connections.length === 0 ? (
-          <EmptyState onClickPaste={() => setPasteOpen(true)} />
+          <EmptyState />
         ) : (
           <div className="space-y-4">
             {usableConnections.length > 0 ? (
@@ -1720,20 +1725,11 @@ export default function InfraServicesPage() {
         />
       )}
 
-      <PasteDialog
-        open={pasteOpen}
-        onClose={() => setPasteOpen(false)}
-        onSuccess={(item) => {
-          onPasted(item);
-          setPasteOpen(false);
-          toast.success('CDS 连接已建立', `${item.partnerName || item.partnerId} · ${item.partnerBaseUrl}`);
-        }}
-      />
     </div>
   );
 }
 
-function EmptyState({ onClickPaste }: { onClickPaste: () => void }) {
+function EmptyState() {
   return (
     <div
       className="rounded-lg py-10 px-6 flex flex-col items-center text-center"
@@ -1745,268 +1741,9 @@ function EmptyState({ onClickPaste }: { onClickPaste: () => void }) {
       <Link2 size={28} style={{ color: 'var(--semantic-info-text)' }} />
       <div className="mt-3 text-sm font-semibold text-token-primary">还没有连接</div>
       <div className="mt-1.5 text-xs text-token-secondary max-w-md leading-relaxed">
-        在 CDS「系统设置 → 对接 MAP」生成一条连接密钥，复制到剪贴板，然后回到这里粘贴即可建立连接。
-        密钥有效期 10 分钟，仅含一次性配对凭据。
+        请从 CDS「系统设置 → 接入 → 外部接入」点击“前往 MAP 授权”。MAP 会自动识别来源并完成连接，
+        无需填写地址、复制 Token 或粘贴配对码。
       </div>
-      <button
-        type="button"
-        onClick={onClickPaste}
-        className="mt-4 inline-flex items-center gap-1.5 rounded-lg px-3 py-2 text-sm font-medium"
-        style={{
-          background: 'rgba(99,179,237,0.18)',
-          color: 'var(--semantic-info-text)',
-          border: '1px solid rgba(99,179,237,0.45)',
-        }}
-      >
-        <Plus size={14} /> 连接 CDS
-      </button>
     </div>
-  );
-}
-
-function PasteDialog({
-  open,
-  onClose,
-  onSuccess,
-}: {
-  open: boolean;
-  onClose: () => void;
-  onSuccess: (item: InfraConnectionPublicView) => void;
-}) {
-  const [text, setText] = useState('');
-  const [cdsBaseUrl, setCdsBaseUrl] = useState('');
-  const [submitting, setSubmitting] = useState(false);
-  const [authorizing, setAuthorizing] = useState(false);
-  const [errorMsg, setErrorMsg] = useState<string | null>(null);
-
-  useEffect(() => {
-    if (!open) {
-      setText('');
-      setCdsBaseUrl('');
-      setErrorMsg(null);
-      setSubmitting(false);
-      setAuthorizing(false);
-    }
-  }, [open]);
-
-  const preview = useMemo<ClipboardPayloadPreview | null>(() => parseClipboardPreview(text), [text]);
-  const previewExpired = useMemo(() => {
-    if (!preview?.expiresAt) return false;
-    const t = new Date(preview.expiresAt).getTime();
-    if (Number.isNaN(t)) return false;
-    return t < Date.now();
-  }, [preview]);
-
-  const trimmed = text.trim();
-  const looksLikePrefix = trimmed.startsWith('cds-connect:');
-  const formatHint = !trimmed
-    ? null
-    : !looksLikePrefix
-      ? '不像 CDS 配对密钥（应以 cds-connect:v1: 开头）'
-      : !preview
-        ? '密钥解析失败，请检查复制是否完整'
-        : null;
-
-  async function handleSubmit() {
-    if (!preview) {
-      setErrorMsg(formatHint ?? '密钥格式不对，请重新复制');
-      return;
-    }
-    if (previewExpired) {
-      setErrorMsg('密钥已过期，请回到 CDS 重新生成');
-      return;
-    }
-    setSubmitting(true);
-    setErrorMsg(null);
-    const res = await pasteInfraConnection(trimmed);
-    setSubmitting(false);
-    if (res.success && res.data?.item) {
-      onSuccess(res.data.item);
-    } else {
-      setErrorMsg(res.error?.message ?? '连接失败，请稍后重试');
-    }
-  }
-
-  async function handleAuthorize() {
-    const value = cdsBaseUrl.trim();
-    if (!value) {
-      setErrorMsg('请输入 CDS 地址');
-      return;
-    }
-    setAuthorizing(true);
-    setErrorMsg(null);
-    const res = await startCdsAuthorization(value, window.location.origin);
-    setAuthorizing(false);
-    if (res.success && res.data?.authorizeUrl) {
-      window.location.href = res.data.authorizeUrl;
-    } else {
-      setErrorMsg(res.error?.message ?? '发起 CDS 授权失败，请检查地址');
-    }
-  }
-
-  return (
-    <Dialog
-      open={open}
-      onOpenChange={(v) => {
-        if (!v) onClose();
-      }}
-      maxWidth={620}
-      title="连接 CDS"
-      description="输入 CDS 地址跳转授权；无法跳转时可继续使用配对密钥兜底。"
-      content={
-        <div className="flex flex-col gap-4">
-          <div
-            className="rounded-lg p-3"
-            style={{
-              background: 'rgba(99,179,237,0.06)',
-              border: '1px solid rgba(99,179,237,0.22)',
-            }}
-          >
-            <label className="block text-xs font-medium text-token-secondary mb-1.5">CDS 地址</label>
-            <div className="flex gap-2">
-              <input
-                value={cdsBaseUrl}
-                onChange={(e) => setCdsBaseUrl(e.target.value)}
-                placeholder="https://cds.example.com"
-                autoFocus
-                spellCheck={false}
-                className="flex-1 rounded-lg px-3 py-2 text-sm font-mono focus:outline-none"
-                style={{
-                  background: 'var(--bg-input)',
-                  border: '1px solid var(--border-subtle)',
-                  color: 'var(--text-primary)',
-                }}
-              />
-              <button
-                type="button"
-                onClick={() => void handleAuthorize()}
-                disabled={authorizing}
-                className="inline-flex items-center gap-1.5 rounded-md px-3 py-2 text-sm font-medium"
-                style={{
-                  background: 'rgba(99,179,237,0.22)',
-                  color: 'var(--semantic-info-text)',
-                  border: '1px solid rgba(99,179,237,0.5)',
-                  opacity: authorizing ? 0.6 : 1,
-                }}
-              >
-                {authorizing ? <MapSpinner size={12} /> : <ExternalLink size={12} />}
-                授权
-              </button>
-            </div>
-            <div className="text-[11px] text-token-muted mt-2 leading-relaxed">
-              MAP 会跳转到 CDS 授权页，授权完成后自动回到本页建立连接。
-            </div>
-          </div>
-
-          <div>
-            <label className="block text-xs font-medium text-token-secondary mb-1.5">CDS 配对密钥（兜底）</label>
-            <textarea
-              value={text}
-              onChange={(e) => setText(e.target.value)}
-              placeholder="cds-connect:v1:eyJ2ZXJzaW9uIjox..."
-              spellCheck={false}
-              rows={6}
-              className="w-full rounded-lg px-3 py-2.5 text-sm font-mono leading-relaxed resize-none focus:outline-none"
-              style={{
-                background: 'var(--bg-input)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-              }}
-            />
-            {formatHint && (
-              <div className="text-xs mt-1.5" style={{ color: 'var(--semantic-warning-text)' }}>
-                {formatHint}
-              </div>
-            )}
-          </div>
-
-          {preview && (
-            <div
-              className="rounded-lg p-3 text-sm"
-              style={{
-                background: 'rgba(99,179,237,0.06)',
-                border: '1px solid rgba(99,179,237,0.25)',
-              }}
-            >
-              <div className="text-xs font-medium text-token-secondary mb-1.5">请确认对端 CDS 信息：</div>
-              <div className="text-xs text-token-primary space-y-0.5">
-                <div>
-                  <span className="text-token-secondary">名称：</span>
-                  {preview.cdsName ?? '(未提供)'}
-                </div>
-                <div className="font-mono">
-                  <span className="text-token-secondary">base URL：</span>
-                  {preview.cdsBaseUrl}
-                </div>
-                {preview.cdsId && (
-                  <div className="font-mono text-token-secondary">
-                    <span className="text-token-secondary">cdsId：</span>
-                    {preview.cdsId}
-                  </div>
-                )}
-                {preview.scopes && preview.scopes.length > 0 && (
-                  <div className="text-token-secondary">
-                    <span className="text-token-secondary">scopes：</span>
-                    {preview.scopes.join(', ')}
-                  </div>
-                )}
-                {preview.expiresAt && (
-                  <div className={previewExpired ? 'text-semantic-danger' : 'text-token-secondary'}>
-                    <span className="text-token-secondary">有效期至：</span>
-                    {new Date(preview.expiresAt).toLocaleString()} {previewExpired ? '(已过期)' : ''}
-                  </div>
-                )}
-              </div>
-              <div className="text-[11px] text-token-muted mt-2 leading-relaxed">
-                如果 base URL 不是你预期的 CDS 地址，请关闭弹窗并核对——切勿粘贴来源不明的密钥。
-              </div>
-            </div>
-          )}
-
-          {errorMsg && (
-            <div
-              className="rounded-lg px-3 py-2 text-xs"
-              style={{
-                background: 'rgba(239,68,68,0.08)',
-                border: '1px solid rgba(239,68,68,0.3)',
-                color: 'var(--semantic-danger-text)',
-              }}
-            >
-              {errorMsg}
-            </div>
-          )}
-
-          <div className="flex items-center justify-end gap-2 pt-1">
-            <button
-              type="button"
-              onClick={onClose}
-              disabled={submitting}
-              className="rounded-md px-3 py-1.5 text-sm"
-              style={{
-                background: 'var(--bg-card-hover)',
-                border: '1px solid var(--border-subtle)',
-                color: 'var(--text-primary)',
-              }}
-            >
-              取消
-            </button>
-            <button
-              type="button"
-              onClick={() => void handleSubmit()}
-              disabled={submitting || !preview || previewExpired}
-              className="inline-flex items-center gap-1.5 rounded-md px-3 py-1.5 text-sm font-medium"
-              style={{
-                background: 'rgba(99,179,237,0.22)',
-                color: 'var(--semantic-info-text)',
-                border: '1px solid rgba(99,179,237,0.5)',
-                opacity: submitting || !preview || previewExpired ? 0.6 : 1,
-              }}
-            >
-              {submitting ? <MapSpinner size={12} /> : <Link2 size={12} />} 连接
-            </button>
-          </div>
-        </div>
-      }
-    />
   );
 }

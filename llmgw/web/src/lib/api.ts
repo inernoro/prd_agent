@@ -102,6 +102,7 @@ import type {
   AvailableTenant,
 } from './types';
 import { getDefaultApiBase } from './runtimeBase';
+import { setPlatformMapHome } from './mapNavigation';
 
 const TOKEN_KEY = 'llmgw.token';
 const USER_KEY = 'llmgw.user';
@@ -506,8 +507,21 @@ export function getLogs(params: LogsListParams): Promise<ApiResponse<LogsListDat
   return apiRequest<LogsListData>('/logs', { query: { ...params } });
 }
 
-export function getHealth(): Promise<ApiResponse<{ status: string; commit?: string | null; time?: string | null }>> {
-  return apiRequest<{ status: string; commit?: string | null; time?: string | null }>('/healthz');
+type HealthData = {
+  status: string;
+  commit?: string | null;
+  time?: string | null;
+  /** 平台下发的 MAP 主入口；缺省表示平台没说，前端退回本地推算（见 mapNavigation）。 */
+  mapHomeUrl?: string | null;
+};
+
+export function getHealth(): Promise<ApiResponse<HealthData>> {
+  // 在这里而不是在页面里喂 mapNavigation：健康检查已经是 LoginPage / HomePage 的
+  // 启动动作，顺路把权威地址收下即可，页面一行都不用改（也就不会碰跨模块源码契约）。
+  return apiRequest<HealthData>('/healthz').then((res) => {
+    if (res.success) setPlatformMapHome(res.data?.mapHomeUrl);
+    return res;
+  });
 }
 
 export function getLogsMeta(): Promise<ApiResponse<LogsMeta>> {

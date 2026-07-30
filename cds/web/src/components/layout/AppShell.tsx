@@ -2,13 +2,10 @@ import { createContext, Suspense, useContext, useEffect, useRef, useState } from
 import { createPortal } from 'react-dom';
 import type { ReactNode } from 'react';
 import { Link, Outlet, useLocation } from 'react-router-dom';
-import { Activity, Bot, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
+import { Activity, Bot, Bug, CalendarClock, Check, ClipboardCheck, LayoutGrid, LogOut, Menu, Monitor, Moon, MoreVertical, Rocket, Search, Settings, Sun, UserRound, X } from 'lucide-react';
 import { CommandPalette } from '@/components/CommandPalette';
-import { CommitInbox } from '@/components/CommitInbox';
-import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
+import { OPEN_BUG_REPORT_EVENT } from '@/components/BugReportDialog';
 import { OperatorApprovalModal } from '@/components/OperatorApprovalModal';
-import { PendingImportInbox } from '@/components/PendingImportInbox';
-import { AccessRequestInbox } from '@/components/AccessRequestInbox';
 import { SiteNoticeInbox } from '@/components/SiteNoticeInbox';
 import { CdsGem } from '@/components/brand/CdsGem';
 import {
@@ -343,6 +340,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
         onAgentAccess={() => requestAgentAccess()}
+        onBugReport={() => window.dispatchEvent(new Event(OPEN_BUG_REPORT_EVENT))}
       />
       {/* Mobile slide-in drawer — replaces the rail on phones. */}
       <MobileNavDrawer
@@ -355,6 +353,7 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
         logoutState={logoutState}
         onLogout={() => { void logout(); }}
         onAgentAccess={() => requestAgentAccess()}
+        onBugReport={() => window.dispatchEvent(new Event(OPEN_BUG_REPORT_EVENT))}
       />
       {/* display: contents —— 让页面渲染的 topbar / main 直接成为壳网格的 item,
           topbar 才能横贯全宽(2026-07-05「顶部导航贯穿」,见 index.css .cds-app-shell)。 */}
@@ -379,20 +378,9 @@ function ShellChrome({ active, children }: { active: AppNavKey; children: ReactN
       <CommandPalette open={paletteOpen} onClose={() => setPaletteOpen(false)} />
       {/* 2026-05-28 运维操作审批弹窗,挂全局,任何页面都能弹 */}
       <OperatorApprovalModal />
-      {/* 底部浮层带：左右两个坞的唯一定位者（index.css .cds-bottom-docks）。
-          它统一让开常驻 rail 并在窄视口自动折行，两个坞不会互相重叠、也不会压住
-          导航图标。右下角是唯一的系统提醒区域：需要用户决策的授权在最上方展开，
-          导入审批居中，版本更新与提交缺陷入口固定在底部。 */}
-      <div className="cds-bottom-docks">
-        <div className="cds-bottom-left-dock">
-          <CommitInbox />
-        </div>
-        <div className="cds-global-action-stack">
-          <AccessRequestInbox />
-          <PendingImportInbox />
-          <GlobalUpdateBadge />
-        </div>
-      </div>
+      {/* 信息中心常驻在壳层，状态与 SSE 不随页面切换重建；视觉入口 portal 到
+          当前页面的 TopBar 宿主。授权、导入、更新和 GitHub 提交通知只在这里聚合。 */}
+      <SiteNoticeInbox />
     </div>
     </MobileNavContext.Provider>
   );
@@ -431,6 +419,7 @@ interface RailNavProps {
   logoutState: 'idle' | 'running' | 'error';
   onLogout: () => void;
   onAgentAccess: () => void;
+  onBugReport: () => void;
 }
 
 /*
@@ -445,6 +434,7 @@ function RailNav({
   logoutState,
   onLogout,
   onAgentAccess,
+  onBugReport,
   onNavigate,
 }: RailNavProps & { onNavigate?: () => void }): JSX.Element {
   return (
@@ -520,7 +510,7 @@ function RailNav({
       <div className="cds-rail-footer">
         <button
           type="button"
-          className="cds-rail-item cds-agent-access-entry"
+          className="cds-rail-item cds-rail-action-entry cds-agent-access-entry"
           onClick={() => {
             onAgentAccess();
             onNavigate?.();
@@ -531,6 +521,20 @@ function RailNav({
         >
           <Bot />
           <span>接入 Agent</span>
+        </button>
+        <button
+          type="button"
+          className="cds-rail-item cds-rail-action-entry cds-bug-report-entry"
+          onClick={() => {
+            onBugReport();
+            onNavigate?.();
+          }}
+          aria-label="提交缺陷"
+          title="提交缺陷（Command/Ctrl + B）"
+          data-shell-action="bug-report"
+        >
+          <Bug />
+          <span>提交缺陷</span>
         </button>
         <Link
           to="/cds-settings"
@@ -577,7 +581,7 @@ function UserAccountMenu({
   onLogout,
   onNavigate,
   user,
-}: Omit<RailNavProps, 'active' | 'onAgentAccess'> & { onNavigate?: () => void }): JSX.Element {
+}: Omit<RailNavProps, 'active' | 'onAgentAccess' | 'onBugReport'> & { onNavigate?: () => void }): JSX.Element {
   const { mode, setTheme } = useTheme();
   const [open, setOpen] = useState(false);
   const [position, setPosition] = useState<{ bottom: number; left: number }>({ bottom: 12, left: 80 });
@@ -914,7 +918,7 @@ export function TopBar({ left, center, right, centerWide = false }: TopBarProps)
             : null}
         </div>
       ) : null}
-      <SiteNoticeInbox />
+      <div id="cds-information-center-host" className="relative shrink-0" />
     </header>
   );
 }

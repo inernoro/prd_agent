@@ -570,7 +570,6 @@
     box-shadow:
       0 0 0 1px hsl(var(--primary) / 0.18),
       0 0 20px -10px hsl(var(--primary) / 0.88);
-    animation: cds-site-notice-pulse 1.55s ease-in-out infinite;
   }
 
   /* AI 正在操作的分支卡:标题扫光是唯一主动态。卡片只保留静态边框和
@@ -714,25 +713,13 @@
     }
   }
 
-  @keyframes cds-site-notice-pulse {
-    0%, 100% {
-      transform: scale(1);
-      background-color: hsl(var(--primary) / 0.08);
-    }
-    50% {
-      transform: scale(1.08);
-      background-color: hsl(var(--primary) / 0.18);
-    }
-  }
-
   @media (prefers-reduced-motion: reduce) {
     .cds-ai-preview-beacon,
     .cds-ai-preview-beacon::before,
     .cds-ai-preview-beacon::after,
     .cds-ai-preview-beacon svg,
     .cds-ai-active-rail,
-    .cds-actor-name-glow,
-    .cds-site-notice-trigger--active {
+    .cds-actor-name-glow {
       animation: none;
     }
   }
@@ -800,8 +787,7 @@
     @apply grid h-screen overflow-hidden;
     background-color: hsl(var(--surface-base));
     color: hsl(var(--foreground));
-    /* rail 宽度是 SSOT：任何贴左边的浮层都要用它让开常驻栏，
-       否则会盖住导航图标（本文件 .cds-bottom-left-dock 即消费方）。 */
+    /* rail 宽度是壳层网格的 SSOT，移动端断点会将其归零。 */
     --cds-rail-w: 72px;
     grid-template-columns: var(--cds-rail-w) minmax(0, 1fr);
     grid-template-rows: auto minmax(0, 1fr);
@@ -1207,6 +1193,12 @@
     flex-shrink: 0;
   }
 
+  /* 左侧栏里的全局操作使用 24px SVG，44px 点击区内图标占比清晰可辨。 */
+  .cds-rail-action-entry svg {
+    width: 1.5rem;
+    height: 1.5rem;
+  }
+
   .cds-rail-item:hover {
     background-color: hsl(var(--surface-raised) / 0.7);
     color: hsl(var(--foreground));
@@ -1233,6 +1225,23 @@
   }
 
   .cds-agent-access-entry:focus-visible {
+    outline: 2px solid hsl(var(--primary));
+    outline-offset: 2px;
+  }
+
+  .cds-bug-report-entry {
+    border: 1px solid hsl(var(--hairline)) !important;
+    background-color: hsl(var(--surface-sunken)) !important;
+    color: hsl(var(--foreground)) !important;
+  }
+
+  .cds-bug-report-entry:hover {
+    border-color: hsl(var(--primary) / 0.38) !important;
+    background-color: hsl(var(--surface-raised)) !important;
+    color: hsl(var(--primary)) !important;
+  }
+
+  .cds-bug-report-entry:focus-visible {
     outline: 2px solid hsl(var(--primary));
     outline-offset: 2px;
   }
@@ -2451,68 +2460,6 @@
     }
   }
 
-  /*
-   * 底部浮层带 —— 左右两个坞的唯一定位者（2026-07-28 用户反馈的三处问题同根）。
-   *
-   * 此前左右坞各自 `position: fixed` 贴角，谁都不知道对方和常驻 rail 的存在：
-   *   - 贴 left:1rem 的坞压在 72px 宽 rail 的导航图标上（遮挡一）；
-   *   - 右坞 width 只减 2rem，窄视口下一路铺到最左，更新徽章同样压住 rail（边缘问题）；
-   *   - 两坞在窄视口下横向撞在一起（几何必然，谁后渲染谁盖住谁）。
-   * 现在由本带统一持有「让开 rail + 两侧留白」，两个坞退化成带内的 flex 项：
-   * 宽屏一左一右，窄屏 flex-wrap 自动折行错开，永远不会重叠也不会溢出。
-   */
-  .cds-bottom-docks {
-    position: fixed;
-    left: calc(var(--cds-rail-w, 0px) + 1rem);
-    right: 1rem;
-    bottom: 1rem;
-    z-index: 200;
-    display: flex;
-    max-height: calc(100dvh - 2rem);
-    flex-wrap: wrap;
-    align-items: flex-end;
-    justify-content: space-between;
-    gap: 0.75rem;
-    pointer-events: none;
-    transition: opacity 150ms ease, visibility 150ms ease;
-  }
-
-  /* 右下角坞：站内提醒 / 导入审批 / 更新徽章 / 提交缺陷入口。 */
-  .cds-global-action-stack {
-    display: flex;
-    width: min(420px, 100%);
-    max-height: calc(100dvh - 2rem);
-    flex-direction: column;
-    align-items: stretch;
-    gap: 0.75rem;
-    margin-left: auto;
-    overflow-y: auto;
-    pointer-events: none;
-  }
-
-  /* 左下角坞：CommitInbox 等贴左的常驻浮层。定位由 .cds-bottom-docks 统一负责。 */
-  .cds-bottom-left-dock {
-    display: flex;
-    max-width: 100%;
-    max-height: calc(100dvh - 2rem);
-    flex-direction: column;
-    align-items: flex-start;
-    gap: 0.75rem;
-    pointer-events: none;
-  }
-
-  .cds-global-action-stack > *,
-  .cds-bottom-left-dock > * {
-    max-width: 100%;
-    flex: none;
-    pointer-events: auto;
-  }
-
-  .cds-app-shell[data-nav-open='true'] .cds-bottom-docks {
-    visibility: hidden;
-    opacity: 0;
-    pointer-events: none;
-  }
 
   /*
    * 桌面左栏「icon 菜单」(用户反馈:260px 文字栏太占横向空间)。

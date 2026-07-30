@@ -179,7 +179,7 @@ import { ViewersDrawer } from './ViewersDrawer';
 import { useReprocessRunStore, selectStreamingByEntry } from '@/stores/reprocessRunStore';
 import { parseCdsReportImportDeepLink, withoutCdsReportImportDeepLink } from './cdsReportImportDeepLink';
 import { TutorialLinkGraphDrawer, TutorialLinkedPages } from './TutorialLinkGraphDrawer';
-import { resolveLlmGatewaySsoHref } from '@/lib/llmGatewaySso';
+import { resolveLlmGatewaySso } from '@/lib/llmGatewaySso';
 
 // 上传白名单：文档 + 音频 + 视频 + 图片（音频进库后可转录/生成字幕；后端 InferMime 已支持这些扩展名）。
 // 2026-07-13 用户反馈"上传录音文件上传不了"——旧白名单只有文档类，音频被文件选择器直接过滤。
@@ -1261,11 +1261,13 @@ function StoreDetailView({ storeId, onBack, onOpenLibrary, onOpenLegacySyncPanel
       toast.error('无法打开 LLM Gateway', ticket.error?.message ?? '当前账号没有管理员跳转权限');
       return;
     }
-    const target = resolveLlmGatewaySsoHref(ticket.data.code, window.location, route);
-    if (!target) {
-      toast.error('无法打开 LLM Gateway', '当前环境没有可用的 Gateway 地址');
+    // 落点由服务端按平台已发布入口表下发；前端不再自己按 hostname 拼域名。
+    const resolution = resolveLlmGatewaySso(ticket.data.code, ticket.data.console, route);
+    if (!resolution.ok) {
+      toast.error('无法打开 LLM Gateway', resolution.message);
       return;
     }
+    const target = resolution.href;
     window.location.assign(target);
   }, []);
 
@@ -2808,13 +2810,21 @@ export function DocumentStorePage() {
         navigate({ pathname: location.pathname, search: params.toString() ? `?${params.toString()}` : '', hash: location.hash }, { replace: true });
         return;
       }
-      const firstEntryId = result.data.tutorials[0]?.entryId;
+      // 深链带了 tutorialSourceId 就打开那一章；控制台侧传的是教程 sourceId，
+      // 而 `entry` 是 Mongo 文档 id，必须在这里按 sourceId 换算成 entryId。
+      // 此前无条件取 tutorials[0]，于是标着第 15 / 19 章的链接统统打开第一章（Codex P2）。
+      const wantedSourceId = params.get('tutorialSourceId');
+      const matched = wantedSourceId
+        ? result.data.tutorials.find(item => item.sourceId === wantedSourceId)
+        : undefined;
+      const targetEntryId = matched?.entryId ?? result.data.tutorials[0]?.entryId;
       setSelectedStoreId(result.data.storeId);
-      setPendingEntryId(firstEntryId ?? null);
+      setPendingEntryId(targetEntryId ?? null);
       params.delete('tutorialRoute');
+      params.delete('tutorialSourceId');
       params.set('tutorialLinks', '1');
       params.set('store', result.data.storeId);
-      if (firstEntryId) params.set('entry', firstEntryId);
+      if (targetEntryId) params.set('entry', targetEntryId);
       navigate({ pathname: location.pathname, search: `?${params.toString()}`, hash: location.hash }, { replace: true });
     });
     return () => { alive = false; };
