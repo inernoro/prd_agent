@@ -102,13 +102,6 @@ public class VideoAgentController : ControllerBase
         var isSeedance = key.Contains("seedance");
         var isWan = key.Contains("wan-") || key.Contains("wan2");
         var isVeo = key.Contains("veo-3");
-        var durations = isSeedance20
-            ? new List<int> { 5, 10, 15 }
-            : isSeedance15
-                ? new List<int> { 4, 5, 8, 10, 12 }
-                : isWan
-                    ? new List<int> { 5, 10 }
-                    : new List<int> { 5, 8, 10 };
         return new VideoModelOption
         {
             Id = id,
@@ -120,7 +113,7 @@ public class VideoAgentController : ControllerBase
             SupportsReferenceAssets = isSeedance20,
             AspectRatios = ["16:9", "9:16", "1:1", "4:3", "3:4", "21:9"],
             Resolutions = isSeedance || isWan || isVeo ? ["720p", "1080p"] : ["720p"],
-            Durations = durations,
+            Durations = VideoModelCapabilities.GetSupportedDurations(key).ToList(),
             PricePerCall = pricing?.PricePerCall,
             PriceCurrency = pricing?.PriceCurrency,
         };
@@ -205,7 +198,8 @@ public class VideoAgentController : ControllerBase
     [HttpGet("videogen-direct/status/{jobId}")]
     public async Task<IActionResult> VideoGenDirectStatus(string jobId, CancellationToken ct)
     {
-        var status = await _videoClient.GetStatusAsync(AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, ct);
+        var status = await _videoClient.GetStatusAsync(
+            AppCallerRegistry.VideoAgent.VideoGen.Generate, jobId, expectedModel: null, ct: ct);
         return Ok(ApiResponse<object>.Ok(new { status.Status, status.VideoUrl, status.Cost, status.ErrorMessage, status.IsCompleted, status.IsFailed }));
     }
 
@@ -254,7 +248,7 @@ public class VideoAgentController : ControllerBase
             r.ExportErrorMessage,
             ScenesCount = r.Scenes.Count,
             ScenesReady = r.Scenes.Count(scene => scene.Status == SceneItemStatus.Done && !string.IsNullOrWhiteSpace(scene.VideoUrl)),
-            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Rendering),
+            HasActiveScenes = r.Scenes.Any(scene => scene.Status is SceneItemStatus.Generating or SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering),
         });
 
         return Ok(ApiResponse<object>.Ok(new { total, items = lite }));
@@ -306,7 +300,7 @@ public class VideoAgentController : ControllerBase
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 
-    /// <summary>触发分镜视频渲染（标记 Rendering，由 worker 调 OpenRouter）</summary>
+    /// <summary>触发分镜视频渲染（进入提交队列，由 worker 调 OpenRouter）</summary>
     [HttpPost("runs/{runId}/scenes/{sceneIndex:int}/render")]
     public async Task<IActionResult> RenderScene(string runId, int sceneIndex, CancellationToken ct)
     {
@@ -320,7 +314,7 @@ public class VideoAgentController : ControllerBase
         { return BadRequest(ApiResponse<object>.Fail(ErrorCodes.INVALID_FORMAT, ex.Message)); }
     }
 
-    /// <summary>批量触发未完成分镜渲染，worker 按顺序处理</summary>
+    /// <summary>批量触发未完成分镜渲染，由 worker 原子领取处理</summary>
     [HttpPost("runs/{runId}/scenes/render-batch")]
     public async Task<IActionResult> RenderScenes(
         string runId,
@@ -415,12 +409,16 @@ public class VideoAgentController : ControllerBase
             return;
         }
 
-        // 立即发送 SSE 注释作为心跳，确保连接建立并防止代理超时
-        await Response.WriteAsync(": connected\n\n", cancellationToken);
-        await Response.Body.FlushAsync(cancellationToken);
+        await WriteEventAsync(null, "heartbeat", JsonSerializer.Serialize(new
+        {
+            serverTime = DateTime.UtcNow,
+            status = run.Status,
+            phase = run.CurrentPhase,
+            progress = run.PhaseProgress,
+        }, JsonOptions), cancellationToken);
 
         long lastSeq = afterSeq ?? 0;
-        var lastKeepAliveAt = DateTime.UtcNow;
+        var lastHeartbeatAt = DateTime.UtcNow;
 
         while (!cancellationToken.IsCancellationRequested)
         {
@@ -432,22 +430,25 @@ public class VideoAgentController : ControllerBase
                     await WriteEventAsync(ev.Seq.ToString(), ev.EventName, ev.PayloadJson, cancellationToken);
                     lastSeq = ev.Seq;
                 }
-                lastKeepAliveAt = DateTime.UtcNow;
             }
             else
             {
-                if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 10)
-                {
-                    await Response.WriteAsync(": keepalive\n\n", cancellationToken);
-                    await Response.Body.FlushAsync(cancellationToken);
-                    lastKeepAliveAt = DateTime.UtcNow;
-                }
-
                 run = await _videoGenService.GetRunAsync(runId, adminId, ct: cancellationToken);
                 if (run == null) break;
+                if ((DateTime.UtcNow - lastHeartbeatAt).TotalSeconds >= 2)
+                {
+                    await WriteEventAsync(null, "heartbeat", JsonSerializer.Serialize(new
+                    {
+                        serverTime = DateTime.UtcNow,
+                        status = run.Status,
+                        phase = run.CurrentPhase,
+                        progress = run.PhaseProgress,
+                    }, JsonOptions), cancellationToken);
+                    lastHeartbeatAt = DateTime.UtcNow;
+                }
                 if (run.Status is VideoGenRunStatus.Completed or VideoGenRunStatus.Failed or VideoGenRunStatus.Cancelled)
                 {
-                    if ((DateTime.UtcNow - lastKeepAliveAt).TotalSeconds >= 2) break;
+                    break;
                 }
 
                 await Task.Delay(650, cancellationToken);

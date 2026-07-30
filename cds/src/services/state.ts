@@ -1,7 +1,7 @@
 import path from 'node:path';
 import crypto from 'node:crypto';
 import fs from 'node:fs';
-import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
+import type { CdsState, BranchEntry, BranchTombstone, BuildProfile, BuildProfileOverride, RoutingRule, OperationLog, ContainerLogArchiveEntry, InfraService, ExecutorNode, DataMigration, CdsPeer, Project, AgentKey, GlobalAgentKey, AgentKeyAccess, AccessRequest, CustomEnvStore, ConfigSnapshot, DestructiveOperationLog, RemoteHost, ServiceDeployment, ServiceDeploymentLogEntry, CdsConnection, BugReportForwardingSettings, ReleaseTarget, ReleasePlan, ReleasePreflightRecord, ReleaseRun, ReleaseLogEntry, ResourceExternalAccessPolicy, ResourceCloneTask, AcceptanceReportMeta, ReportFolder, PeerNodeRecord, PeerPairingCode, ScheduledJob, ScheduledJobRun, ScheduledJobAction, DeploymentRun, DeploymentVersion, ContainerTeardownTombstone, DeletedProjectWorktreeTombstone, ReplicaDbSnapshot } from '../types.js';
 import { GLOBAL_ENV_SCOPE } from '../types.js';
 import { mergeBranchProfiles, isValidExtraProfileId } from './branch-extra-services.js';
 import type { StateBackingStore, StateSaveHint } from '../infra/state-store/backing-store.js';
@@ -2443,6 +2443,49 @@ export class StateService {
     }
     if (removed.length > 0) this.save();
     return removed;
+  }
+
+  // ── CDS system integrations ──
+
+  /**
+   * 读取 CDS 系统级 MAP 缺陷转发配置。Token 只在服务端内存中解密，调用方不得
+   * 直接返回给前端。旧状态没有本字段时返回 undefined。
+   */
+  getBugReportForwardingConfig(): (Omit<BugReportForwardingSettings, 'tokenEncrypted'> & { token: string }) | undefined {
+    const stored = this.state.bugReportForwarding;
+    if (!stored) return undefined;
+    const token = unsealToken(stored.tokenEncrypted).trim();
+    if (!stored.baseUrl?.trim() || !token) return undefined;
+    return {
+      baseUrl: stored.baseUrl.trim().replace(/\/+$/, ''),
+      token,
+      assigneeUserId: stored.assigneeUserId?.trim() || undefined,
+      updatedAt: stored.updatedAt,
+    };
+  }
+
+  /** 保存 CDS 系统级 MAP 缺陷转发配置；密钥不进入 customEnv。 */
+  setBugReportForwardingConfig(input: {
+    baseUrl: string;
+    token: string;
+    assigneeUserId?: string;
+  }): BugReportForwardingSettings {
+    const settings: BugReportForwardingSettings = {
+      baseUrl: input.baseUrl.trim().replace(/\/+$/, ''),
+      tokenEncrypted: sealToken(input.token.trim()),
+      assigneeUserId: input.assigneeUserId?.trim() || undefined,
+      updatedAt: new Date().toISOString(),
+    };
+    this.state.bugReportForwarding = settings;
+    this.save(HINT_GLOBAL);
+    return settings;
+  }
+
+  clearBugReportForwardingConfig(): boolean {
+    if (!this.state.bugReportForwarding) return false;
+    delete this.state.bugReportForwarding;
+    this.save(HINT_GLOBAL);
+    return true;
   }
 
   // ── Project-scoped Agent Keys ──

@@ -19,6 +19,7 @@
 
 import { useEffect, useSyncExternalStore } from 'react';
 import { apiUrl } from '@/lib/api';
+import { reconnectDelayMs } from '@/lib/cdsReconnectPolicy';
 
 // 与后端 cds-events-bus.ts 的 CdsEventType 对应
 export type CdsEventType =
@@ -155,6 +156,10 @@ interface StoreState {
   consecutiveErrors: number;
   /** 最近一次错误 */
   lastError: string | null;
+  /** 连续断线首次被确认的时刻；连通后清空。 */
+  disconnectedAt: string | null;
+  /** 下一次后台自动重连时间；用于 UI 如实展示恢复节奏。 */
+  nextReconnectAt: string | null;
 }
 
 const INITIAL_STATE: StoreState = {
@@ -172,6 +177,8 @@ const INITIAL_STATE: StoreState = {
   lastNoticeEvent: null,
   consecutiveErrors: 0,
   lastError: null,
+  disconnectedAt: null,
+  nextReconnectAt: null,
 };
 
 // ── 单例 store ──────────────────────────────────────────────────────
@@ -181,6 +188,7 @@ let eventSource: EventSource | null = null;
 let reconnectTimer: number | null = null;
 let connectAttempt = 0;
 let stopped = false; // 用户调用 stop() 后置 true,不再自动重连
+let recoveryListenersAttached = false;
 
 function emit(): void {
   for (const l of listeners) l();
@@ -197,6 +205,8 @@ function derivedConnection(): ConnectionState {
   if (state.updating) return 'updating';
   if (state.refreshing) return 'refreshing';
   if (state.connection === 'disconnected' || state.connection === 'error') return state.connection;
+  // 重连尝试会临时把基础态设为 connecting，但真正 onopen 前仍属于不可达。
+  if (state.disconnectedAt && state.connection !== 'connected') return 'disconnected';
   // degraded 优先级低于 connecting/error,但高于 connected
   if (state.snapshot?.degraded && state.connection === 'connected') return 'degraded';
   return state.connection;
@@ -222,7 +232,13 @@ function openConnection(): void {
 
   const onOpen = (): void => {
     connectAttempt = 0;
-    setState({ connection: 'connected', consecutiveErrors: 0, lastError: null });
+    setState({
+      connection: 'connected',
+      consecutiveErrors: 0,
+      lastError: null,
+      disconnectedAt: null,
+      nextReconnectAt: null,
+    });
   };
 
   const handleEvent = (type: CdsEventType, raw: MessageEvent): void => {
@@ -460,7 +476,10 @@ function closeConnection(): void {
 function maybeFlagDisconnected(): void {
   // 连续断开 >= 3 次才显示 "CDS 不可达",对应目标文档第 5 节
   if (state.consecutiveErrors >= 3 && state.connection !== 'disconnected') {
-    setState({ connection: 'disconnected' });
+    setState({
+      connection: 'disconnected',
+      disconnectedAt: state.disconnectedAt ?? new Date().toISOString(),
+    });
   }
 }
 
@@ -468,18 +487,36 @@ function scheduleReconnect(): void {
   if (stopped) return;
   if (reconnectTimer != null) return;
   connectAttempt += 1;
-  // 5xx / 网络:指数退避 5s, 10s, 20s,最多 3 次后停。
-  // 比之前的 1/2/4s 更长 — 因为 Cloudflare 偶发 400 + 浏览器内置 ~3s 重试时,
-  // 短退避会让 retry 风暴叠加,DevTools 堆 10+ 红条。给后端足够喘息时间。
-  if (connectAttempt > 3) {
-    setState({ connection: 'disconnected' });
-    return;
-  }
-  const delay = Math.min(20_000, 5_000 * Math.pow(2, connectAttempt - 1));
+  // 前三次 5s/10s/20s 快速恢复，之后每分钟持续探测。过去三次后永久停止，
+  // 导致后端恢复了页面仍卡几个小时，只能靠用户点击；这里改为真正的自动恢复。
+  const delay = reconnectDelayMs(connectAttempt);
+  setState({ nextReconnectAt: new Date(Date.now() + delay).toISOString() });
   reconnectTimer = window.setTimeout(() => {
     reconnectTimer = null;
     openConnection();
   }, delay);
+}
+
+function reconnectNow(): void {
+  if (stopped || eventSource) return;
+  if (reconnectTimer != null) {
+    window.clearTimeout(reconnectTimer);
+    reconnectTimer = null;
+  }
+  connectAttempt = 0;
+  setState({ nextReconnectAt: null });
+  openConnection();
+}
+
+function reconnectWhenVisible(): void {
+  if (document.visibilityState === 'visible') reconnectNow();
+}
+
+function attachRecoveryListeners(): void {
+  if (recoveryListenersAttached || typeof window === 'undefined') return;
+  recoveryListenersAttached = true;
+  window.addEventListener('online', reconnectNow);
+  document.addEventListener('visibilitychange', reconnectWhenVisible);
 }
 
 // ── 公开 API ────────────────────────────────────────────────────────
@@ -489,6 +526,7 @@ function subscribe(listener: () => void): () => void {
   if (listeners.size === 1) {
     stopped = false;
     connectAttempt = 0;
+    attachRecoveryListeners();
     openConnection();
   }
   return () => {
@@ -514,7 +552,7 @@ export async function requestRefresh(trigger: 'manual' | 'webhook' = 'manual'): 
       reconnectTimer = null;
     }
     connectAttempt = 0;
-    setState({ consecutiveErrors: 0, lastError: null });
+    setState({ consecutiveErrors: 0, lastError: null, nextReconnectAt: null });
     closeConnection();
     openConnection();
   }
@@ -566,6 +604,11 @@ export function _resetForTests(): void {
   }
   connectAttempt = 0;
   stopped = false;
+  if (recoveryListenersAttached && typeof window !== 'undefined') {
+    window.removeEventListener('online', reconnectNow);
+    document.removeEventListener('visibilitychange', reconnectWhenVisible);
+    recoveryListenersAttached = false;
+  }
   state = INITIAL_STATE;
   listeners.clear();
 }

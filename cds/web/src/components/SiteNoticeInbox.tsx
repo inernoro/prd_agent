@@ -1,13 +1,19 @@
 /*
- * SiteNoticeInbox — 右上角站内信铃铛。
+ * SiteNoticeInbox — 右上角「信息中心」（合并了两条主线，2026-07-30）：
  *
- * 2026-07-29 起数据源换成**服务端账本**（GET /api/notices）。
- * 此前这份是 localStorage + window CustomEvent 的纯浏览器实现，服务端从没记过一条，
- * 于是发布失败 / 生产掉线在没人开着页面时彻底沉默。localStorage 现在连缓存都不做：
- * 账本是服务端权威，前端不做第二份归并（两份归并必然漂移）。
+ * 1. **服务端账本数据源**（本分支，2026-07-29）：站内提醒来自 GET /api/notices。
+ *    此前是 localStorage + window CustomEvent 的纯浏览器实现，服务端从没记过一条，
+ *    发布失败 / 生产掉线在没人开着页面时彻底沉默。localStorage 现在连缓存都不做：
+ *    账本是服务端权威，前端不做第二份归并（两份归并必然漂移）。
+ * 2. **信息中心外壳**（main c26c017）：铃铛聚合授权审批 / 待定导入 / 系统更新 /
+ *    提交收件四个子收件箱的计数，面板走 overlay dock + 浮动定位。
  *
  * 兼容层保留：BranchListPage 那四处 window.dispatchEvent('cds:notice:upsert')
  * 一行不用改——本组件把它从「写 localStorage」改成「乐观插入 + POST /api/notices」。
+ *
+ * 死链自动清理（main 211242d 的意图，落到新数据源上）：通知引用的项目已删除时
+ * （GET /api/projects/:id 明确 404），改调服务端 dismiss 而不是删本地缓存——
+ * 账本在服务端，本地删了下一次 refresh 又会回来。
  *
  * 两处如实告知（绝不假装通知过谁）：
  *   - 外发未配置时顶部显示「仅记录在 CDS 本地，未外发」；
@@ -15,8 +21,15 @@
  */
 
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react';
+import { createPortal } from 'react-dom';
 import { Bell, Database, ExternalLink, Rocket, Settings, ShieldAlert, TerminalSquare, Trash2, X } from 'lucide-react';
-import { apiRequest } from '@/lib/api';
+import { AccessRequestInbox } from '@/components/AccessRequestInbox';
+import { CommitInbox } from '@/components/CommitInbox';
+import { GlobalUpdateBadge } from '@/components/GlobalUpdateBadge';
+import { PendingImportInbox } from '@/components/PendingImportInbox';
+import { apiRequest, ApiError } from '@/lib/api';
+import { floatingPanelPosition, type FloatingPanelPosition } from '@/lib/floatingPanelPosition';
+import { useOverlayDock } from '@/lib/useOverlayDock';
 import { useCdsEvents } from '@/hooks/useCdsEvents';
 
 type NoticeLevel = 'info' | 'warning' | 'danger';
@@ -88,11 +101,49 @@ function outboundHint(notice: SiteNotice): string | null {
 }
 
 export function SiteNoticeInbox(): JSX.Element {
+  const host = useOverlayDock('#cds-information-center-host');
+  const triggerRef = useRef<HTMLButtonElement>(null);
   const [notices, setNotices] = useState<SiteNotice[]>([]);
   const [outbound, setOutbound] = useState<{ configured: boolean; reason?: string }>({ configured: true });
   const [open, setOpen] = useState(false);
+  const [panelPosition, setPanelPosition] = useState<FloatingPanelPosition | null>(null);
+  const [sourceCounts, setSourceCounts] = useState({
+    access: 0,
+    commit: 0,
+    import: 0,
+    update: 0,
+  });
   const { lastNoticeEvent } = useCdsEvents();
   const noticeEventTs = lastNoticeEvent?.ts ?? null;
+
+  const updateSourceCount = useCallback((source: keyof typeof sourceCounts, count: number): void => {
+    setSourceCounts((current) => current[source] === count ? current : { ...current, [source]: count });
+  }, []);
+  const handleAccessCount = useCallback((count: number) => updateSourceCount('access', count), [updateSourceCount]);
+  const handleCommitCount = useCallback((count: number) => updateSourceCount('commit', count), [updateSourceCount]);
+  const handleImportCount = useCallback((count: number) => updateSourceCount('import', count), [updateSourceCount]);
+  const handleUpdateCount = useCallback((count: number) => updateSourceCount('update', count), [updateSourceCount]);
+
+  const updatePanelPosition = useCallback((): void => {
+    const trigger = triggerRef.current;
+    if (!trigger) return;
+    const rect = trigger.getBoundingClientRect();
+    setPanelPosition(floatingPanelPosition(
+      { left: rect.left, bottom: rect.bottom },
+      { width: window.innerWidth, height: window.innerHeight },
+    ));
+  }, []);
+
+  useEffect(() => {
+    if (!open) return;
+    updatePanelPosition();
+    window.addEventListener('resize', updatePanelPosition);
+    window.addEventListener('scroll', updatePanelPosition, true);
+    return () => {
+      window.removeEventListener('resize', updatePanelPosition);
+      window.removeEventListener('scroll', updatePanelPosition, true);
+    };
+  }, [open, updatePanelPosition]);
 
   const refresh = useCallback(async (): Promise<void> => {
     try {
@@ -168,6 +219,60 @@ export function SiteNoticeInbox(): JSX.Element {
 
   const activeNotices = useMemo(() => notices.filter((item) => !item.dismissedAt), [notices]);
   const unreadCount = activeNotices.filter((item) => !item.readAt).length;
+  const informationCount = unreadCount
+    + sourceCounts.access
+    + sourceCounts.commit
+    + sourceCounts.import
+    + sourceCounts.update;
+
+  const dismissNotice = useCallback((id: string): void => {
+    const now = new Date().toISOString();
+    setNotices((current) => current.map((item) => (
+      item.id === id ? { ...item, readAt: item.readAt || now, dismissedAt: now } : item
+    )));
+    void apiRequest(`/api/notices/${encodeURIComponent(id)}/dismiss`, { method: 'POST' })
+      .catch(() => { void refresh(); });
+  }, [refresh]);
+
+  // 陈旧通知清理（2026-07-21 的意图，迁移到服务端账本）：通知携带创建时刻的项目 id，
+  // 项目删除/重建后旧通知的深链会落到 /settings/<旧id> 404。面板打开时对引用的项目
+  // 逐个探活，确认 404（project_not_found）的通知改调服务端 dismiss——本地删除没用，
+  // 账本在服务端，下一次 refresh 又会回来。网络错误/5xx 不动（可能是瞬时故障，不能误删）。
+  // 每个项目 id 每次会话只探一次。
+  const checkedProjectIdsRef = useRef<Set<string>>(new Set());
+  useEffect(() => {
+    if (!open) return;
+    const idsToCheck = [...new Set(
+      notices
+        .filter((item) => !item.dismissedAt && item.projectId)
+        .map((item) => item.projectId as string),
+    )].filter((id) => !checkedProjectIdsRef.current.has(id));
+    if (idsToCheck.length === 0) return;
+    let cancelled = false;
+    void Promise.all(idsToCheck.map(async (id) => {
+      try {
+        await apiRequest(`/api/projects/${encodeURIComponent(id)}`);
+        checkedProjectIdsRef.current.add(id);
+        return null;
+      } catch (err) {
+        if (err instanceof ApiError && err.status === 404) {
+          checkedProjectIdsRef.current.add(id);
+          return id;
+        }
+        return null; // 瞬时错误不判死，下次打开重探
+      }
+    })).then((results) => {
+      if (cancelled) return;
+      const goneIds = new Set(results.filter((id): id is string => !!id));
+      if (goneIds.size === 0) return;
+      for (const notice of notices) {
+        if (!notice.dismissedAt && notice.projectId && goneIds.has(notice.projectId)) {
+          dismissNotice(notice.id);
+        }
+      }
+    });
+    return () => { cancelled = true; };
+  }, [open, notices, dismissNotice]);
 
   const markAllRead = (): void => {
     const now = new Date().toISOString();
@@ -177,45 +282,49 @@ export function SiteNoticeInbox(): JSX.Element {
       .catch(() => { setNotices(before); });
   };
 
-  const dismissNotice = (id: string): void => {
-    const now = new Date().toISOString();
-    const before = notices;
-    setNotices(notices.map((item) => (item.id === id ? { ...item, readAt: item.readAt || now, dismissedAt: now } : item)));
-    void apiRequest(`/api/notices/${encodeURIComponent(id)}/dismiss`, { method: 'POST' })
-      .catch(() => { setNotices(before); });
-  };
+  if (!host) return <></>;
 
-  return (
-    <div className="relative">
-      <button
-        type="button"
-        className={`cds-site-notice-trigger inline-flex h-9 w-9 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground transition-colors hover:text-foreground ${unreadCount > 0 ? 'cds-site-notice-trigger--active' : ''}`}
-        aria-label={`站内信${unreadCount ? `，${unreadCount} 条未读` : ''}`}
-        title={`站内信${unreadCount ? ` · ${unreadCount} 条未读` : ''}`}
-        onClick={() => {
-          setOpen((value) => !value);
-          if (!open) {
-            void refresh();
-            markAllRead();
-          }
-        }}
-      >
-        <Bell className="h-5 w-5" />
-        {unreadCount > 0 ? (
-          <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
-            {unreadCount}
-          </span>
-        ) : null}
-      </button>
+  return createPortal((
+    <>
+      <div className="relative">
+        <button
+          ref={triggerRef}
+          type="button"
+          className={`cds-site-notice-trigger inline-flex h-9 w-9 items-center justify-center rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] text-muted-foreground transition-colors hover:text-foreground ${informationCount > 0 ? 'cds-site-notice-trigger--active' : ''}`}
+          aria-label={`信息中心${informationCount ? `，${informationCount} 条待处理` : ''}`}
+          aria-expanded={open}
+          title={`信息中心${informationCount ? ` · ${informationCount} 条待处理` : ''}`}
+          onClick={() => {
+            const nextOpen = !open;
+            if (nextOpen) {
+              updatePanelPosition();
+              void refresh();
+              markAllRead();
+            }
+            setOpen(nextOpen);
+          }}
+        >
+          <Bell className="h-5 w-5" />
+          {informationCount > 0 ? (
+            <span className="absolute -right-1 -top-1 min-w-4 rounded-full bg-primary px-1 text-center font-mono text-[10px] leading-4 text-primary-foreground">
+              {informationCount > 99 ? '99+' : informationCount}
+            </span>
+          ) : null}
+        </button>
+      </div>
 
-      {open ? (
-        <div className="absolute right-0 top-full z-[220] mt-2 w-[min(420px,calc(100vw-2rem))] overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl">
+      {open && panelPosition ? createPortal((
+        <div
+          data-testid="cds-information-center-panel"
+          className="fixed z-[220] flex flex-col overflow-hidden rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] shadow-2xl"
+          style={panelPosition}
+        >
           <div className="flex items-center justify-between gap-3 border-b border-[hsl(var(--hairline))] px-3 py-2.5">
-            <div>
-              <div className="text-sm font-semibold">站内信</div>
-              <div className="mt-0.5 text-[11px] text-muted-foreground">由 CDS 服务端记录，关掉页面也不会漏</div>
+            <div className="min-w-0">
+              <div className="text-sm font-semibold">信息中心</div>
+              <div className="mt-0.5 truncate text-[11px] text-muted-foreground">系统动态、授权审批与服务端站内信</div>
             </div>
-            <button type="button" className="rounded p-1 text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭站内信">
+            <button type="button" className="inline-flex h-9 w-9 shrink-0 items-center justify-center rounded-md text-muted-foreground hover:bg-muted/30 hover:text-foreground" onClick={() => setOpen(false)} aria-label="关闭信息中心">
               <X className="h-4 w-4" />
             </button>
           </div>
@@ -226,67 +335,77 @@ export function SiteNoticeInbox(): JSX.Element {
             </div>
           ) : null}
 
-          {activeNotices.length === 0 ? (
-            <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
-          ) : (
-            <div className="max-h-[420px] overflow-auto" style={{ overscrollBehavior: 'contain' }}>
-              {activeNotices.map((notice) => (
-                <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
-                  <div className="flex items-start gap-3">
-                    <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${levelClass(notice.level)}`}>
-                      <NoticeIcon source={notice.source} />
-                    </span>
-                    <div className="min-w-0 flex-1">
-                      <div className="flex items-start gap-2">
-                        <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
-                        {notice.occurrences > 1 ? (
-                          <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
-                            {notice.occurrences} 次
-                          </span>
-                        ) : null}
-                      </div>
-                      {noticeProjectLabel(notice) ? (
-                        <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
-                          <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
-                            <span className="shrink-0">项目</span>
-                            <span className="truncate font-medium text-foreground">{noticeProjectLabel(notice)}</span>
-                          </span>
-                          {notice.projectSlug && notice.projectSlug !== noticeProjectLabel(notice) ? (
-                            <span className="truncate font-mono text-[10px]">{notice.projectSlug}</span>
+          <div className="min-h-0 flex-1 space-y-3 overflow-y-auto p-3" style={{ overscrollBehavior: 'contain' }}>
+            <AccessRequestInbox onCountChange={handleAccessCount} />
+            <PendingImportInbox onCountChange={handleImportCount} />
+            <GlobalUpdateBadge onCountChange={handleUpdateCount} />
+            <CommitInbox onCountChange={handleCommitCount} />
+
+            {activeNotices.length === 0 && informationCount === 0 ? (
+              <div className="px-4 py-8 text-center text-sm text-muted-foreground">暂无提醒</div>
+            ) : activeNotices.length > 0 ? (
+              <section className="overflow-hidden rounded-md border border-[hsl(var(--hairline))]">
+                <div className="border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-3 py-2 text-xs font-semibold text-foreground">
+                  站内提醒（服务端记录，关掉页面也不会漏）
+                </div>
+                {activeNotices.map((notice) => (
+                  <div key={notice.id} className="border-b border-[hsl(var(--hairline))] px-3 py-3 last:border-b-0">
+                    <div className="flex items-start gap-3">
+                      <span className={`mt-0.5 inline-flex h-8 w-8 shrink-0 items-center justify-center rounded-md border ${levelClass(notice.level)}`}>
+                        <NoticeIcon source={notice.source} />
+                      </span>
+                      <div className="min-w-0 flex-1">
+                        <div className="flex items-start gap-2">
+                          <div className="min-w-0 flex-1 text-sm font-semibold leading-5">{notice.title}</div>
+                          {notice.occurrences > 1 ? (
+                            <span className="shrink-0 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5 font-mono text-[10px] leading-4 text-muted-foreground">
+                              {notice.occurrences} 次
+                            </span>
                           ) : null}
                         </div>
-                      ) : null}
-                      <div className="mt-1 text-xs leading-5 text-muted-foreground">{notice.body}</div>
-                      {outboundHint(notice) ? (
-                        <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
-                      ) : null}
-                      <div className="mt-2 flex flex-wrap items-center gap-2">
-                        {notice.href ? (
-                          <a
-                            href={notice.href}
-                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2 text-xs font-medium text-primary hover:bg-primary/15"
-                          >
-                            <ExternalLink className="h-3 w-3" />
-                            {notice.actionLabel || '打开'}
-                          </a>
+                        {noticeProjectLabel(notice) ? (
+                          <div className="mt-1 flex flex-wrap items-center gap-1.5 text-[11px] leading-4 text-muted-foreground">
+                            <span className="inline-flex max-w-full items-center gap-1 rounded border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] px-1.5 py-0.5">
+                              <span className="shrink-0">项目</span>
+                              <span className="truncate font-medium text-foreground">{noticeProjectLabel(notice)}</span>
+                            </span>
+                            {notice.projectSlug && notice.projectSlug !== noticeProjectLabel(notice) ? (
+                              <span className="truncate font-mono text-[10px]">{notice.projectSlug}</span>
+                            ) : null}
+                          </div>
                         ) : null}
-                        <button
-                          type="button"
-                          className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground"
-                          onClick={() => dismissNotice(notice.id)}
-                        >
-                          <Trash2 className="h-3 w-3" />
-                          不再提醒
-                        </button>
+                        <div className="mt-1 text-xs leading-5 text-muted-foreground">{notice.body}</div>
+                        {outboundHint(notice) ? (
+                          <div className="mt-1 text-[11px] leading-4 text-muted-foreground/80">{outboundHint(notice)}</div>
+                        ) : null}
+                        <div className="mt-2 flex flex-wrap items-center gap-2">
+                          {notice.href ? (
+                            <a
+                              href={notice.href}
+                              className="inline-flex h-7 items-center gap-1.5 rounded-md border border-primary/35 bg-primary/10 px-2 text-xs font-medium text-primary hover:bg-primary/15"
+                            >
+                              <ExternalLink className="h-3 w-3" />
+                              {notice.actionLabel || '打开'}
+                            </a>
+                          ) : null}
+                          <button
+                            type="button"
+                            className="inline-flex h-7 items-center gap-1.5 rounded-md border border-[hsl(var(--hairline))] px-2 text-xs text-muted-foreground hover:bg-muted/30 hover:text-foreground"
+                            onClick={() => dismissNotice(notice.id)}
+                          >
+                            <Trash2 className="h-3 w-3" />
+                            不再提醒
+                          </button>
+                        </div>
                       </div>
                     </div>
                   </div>
-                </div>
-              ))}
-            </div>
-          )}
+                ))}
+              </section>
+            ) : null}
+          </div>
         </div>
-      ) : null}
-    </div>
-  );
+      ), document.body) : null}
+    </>
+  ), host);
 }

@@ -78,6 +78,12 @@ const string DefaultAdminPwd = "admin";
 
 var gitCommit = Environment.GetEnvironmentVariable("GIT_COMMIT") ?? "";
 
+// 本分支主入口（= MAP 所在地址），由平台在部署时注入（cds/src/services/preview-entrypoints.ts）。
+// 控制台的「返回 MAP」「教程」深链此前靠 location.hostname 剥子域后缀反推，那是 CDS 之外的
+// 又一份域名实现（根 CLAUDE.md 规则 #11 禁止），子域一改名就整片失效。改由服务端如实下发：
+// 有就用，没有（正式环境 / 非 CDS 托管）就为空，前端退回原来的推算兜底。
+var mapHomeUrl = Environment.GetEnvironmentVariable("CDS_PREVIEW_URL")?.Trim();
+
 // ── Mongo 客户端（单例）──
 var mapMongoClient = new MongoClient(mongoConn);
 var gatewayMongoClient = string.Equals(gatewayMongoConn, mongoConn, StringComparison.Ordinal)
@@ -525,6 +531,8 @@ app.MapGet("/gw/healthz", () => Results.Json(new
     status = "ok",
     commit = gitCommit,
     time = DateTime.UtcNow.ToString("yyyy-MM-ddTHH:mm:ss.fffZ"),
+    // 空/缺省表示「平台没告诉我 MAP 在哪」，前端据此退回本地推算，而不是拿空串去拼地址。
+    mapHomeUrl = string.IsNullOrWhiteSpace(mapHomeUrl) ? null : mapHomeUrl,
 }, jsonOptions)).AllowAnonymous();
 
 app.MapGet("/gw/lifecycle/status", async (HttpContext http) =>

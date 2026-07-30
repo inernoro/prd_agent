@@ -2088,6 +2088,13 @@ export interface CdsState {
    */
   cdsConnections?: Record<string, CdsConnection>;
   /**
+   * CDS 快捷提缺陷向 MAP 转发的系统级配置。
+   *
+   * 这不是项目环境变量：它只供 CDS 控制进程调用 MAP 缺陷 API，绝不能注入
+   * 任意项目容器。Token 通过 sealToken 加密后落库，API 只返回是否已配置。
+   */
+  bugReportForwarding?: BugReportForwardingSettings;
+  /**
    * CDS 自托管验收报告元数据（2026-06-20）。系统级 —— 报告正文（可能是
    * 很大的 HTML / Markdown）落在 `<dataDir>/reports/<id>.<ext>` 磁盘文件上，
    * 不进 state.json；这里只存轻量元数据（标题/格式/大小/归属/时间）。
@@ -2414,6 +2421,18 @@ export interface CdsConnection {
   activatedAt?: string;
   /** 最近一次被 partner 调用 API 的时间（审计用）。 */
   lastUsedAt?: string;
+}
+
+/** CDS 系统级 MAP 缺陷转发配置。 */
+export interface BugReportForwardingSettings {
+  /** MAP 公网基址，不含 /api。 */
+  baseUrl: string;
+  /** MAP Bearer Token 密文；CDS_SECRET_KEY 缺失时兼容保存明文。 */
+  tokenEncrypted: string | SealedSecret;
+  /** 可选的 MAP 默认指派用户 ID。 */
+  assigneeUserId?: string;
+  /** 最近一次从 CDS 系统设置保存的时间。 */
+  updatedAt: string;
 }
 
 /**

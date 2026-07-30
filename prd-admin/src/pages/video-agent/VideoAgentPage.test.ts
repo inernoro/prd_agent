@@ -1,6 +1,6 @@
 import { describe, expect, it } from 'vitest';
 import type { VideoProject, VideoProjectInput } from '@/services/contracts/videoAgent';
-import { buildDirectVideoRunInput } from './VideoAgentPage';
+import { buildDirectVideoRunInput, normalizeVideoRunId } from './VideoAgentPage';
 
 const project: VideoProject = {
   id: 'project-1',
@@ -46,5 +46,16 @@ describe('buildDirectVideoRunInput', () => {
       generateAudio: true,
       directFirstFrameUrl: 'https://example.com/rain.jpg',
     });
+  });
+});
+
+describe('normalizeVideoRunId', () => {
+  it('restores a trimmed run id from a refreshable deep link', () => {
+    expect(normalizeVideoRunId('  run-42  ')).toBe('run-42');
+  });
+
+  it('rejects empty run ids instead of opening a broken editor', () => {
+    expect(normalizeVideoRunId('   ')).toBeNull();
+    expect(normalizeVideoRunId(null)).toBeNull();
   });
 });

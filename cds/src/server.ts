@@ -30,16 +30,18 @@ import { createProjectStorageRouter } from './routes/project-storage.js';
 import { createCacheRouter } from './routes/cache.js';
 import { createScheduledJobsRouter } from './routes/scheduled-jobs.js';
 import { createReportsRouter, createPublicReportShareRouter } from './routes/reports.js';
-import { createBugReportsRouter } from './routes/bug-reports.js';
+import { createBugReportsRouter, resolveForwardConfig } from './routes/bug-reports.js';
 import { createNoticesRouter } from './routes/notices.js';
 import { NoticeLedgerService, startNoticeLedger } from './services/notice-ledger.js';
 import { resolveNoticeOutboundConfig } from './services/notice-outbound-map.js';
+import { isSealingEnabled } from './infra/secret-seal.js';
 import { createPeerSyncRouter, createPeerSyncAdminRouter } from './routes/peer-sync.js';
 import { createSnapshotsRouter } from './routes/snapshots.js';
 import { createRemoteHostsRouter } from './routes/remote-hosts.js';
 import { createReleasesRouter } from './routes/releases.js';
 import { isDrainBlockedPath, selfUpdateDrainBlockReason } from './services/deploy-drain.js';
 import { createCdsSystemConnectionsRouter } from './routes/cds-system-connections.js';
+import { sha256Hex } from './services/connection/pairing-service.js';
 import { createCdsSystemTopologyRouter } from './routes/cds-system-topology.js';
 import { createDockerNetworkHealthRouter } from './routes/docker-network-health.js';
 import { createTopologyAggregator } from './services/topology-aggregator.js';
@@ -769,6 +771,11 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /notices': '记录站内信',
     'POST /notices/read-all': '全部标已读',
     'POST /notices/:id/dismiss': '忽略站内信',
+    'GET /cds-system/integrations/bug-report': '查看缺陷转发接入',
+    'PUT /cds-system/integrations/bug-report': '保存缺陷转发接入',
+    'DELETE /cds-system/integrations/bug-report': '清除缺陷转发接入',
+    'POST /cds-system/integrations/bug-report/authorize': '接收 MAP 缺陷转发授权',
+    'POST /cds-system/integrations/bug-report/test': '测试缺陷转发接入',
     'GET /cds-system/connections': '列出配对连接',
     'GET /cds-system/network-topology': '查询网络拓扑',
     'GET /cds-system/github/webhook-deliveries': '列出 Webhook 日志',
@@ -2379,7 +2386,8 @@ export function createServer(deps: ServerDeps): express.Express {
       if (isPublicAccessRequestRoute(req.method, req.path)) return next();
       if (req.path === '/api/cds-system/connections/authorize'
         || req.path === '/api/cds-system/connections/token'
-        || req.path === '/api/cds-system/connections/accept') return next();
+        || req.path === '/api/cds-system/connections/accept'
+        || (req.method === 'POST' && req.path === '/api/cds-system/integrations/bug-report/authorize')) return next();
       // GitHub webhook is public — it's authenticated by HMAC signature
       // verification inside the handler, not by the cookie/token middleware.
       if (req.method === 'POST' && req.path === '/api/github/webhook') return next();
@@ -2829,6 +2837,13 @@ export function createServer(deps: ServerDeps): express.Express {
       if (
         reqMethod === 'GET' &&
         /^\/api\/projects\/[^/]+\/instances$/.test(reqPath) &&
+        /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
+      ) {
+        return next();
+      }
+      if (
+        reqMethod === 'POST' &&
+        reqPath === '/api/cds-system/integrations/bug-report/authorize' &&
         /^Bearer\s+ct_/i.test(String(req.headers['authorization'] || ''))
       ) {
         return next();
@@ -4001,6 +4016,10 @@ export function createServer(deps: ServerDeps): express.Express {
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+      localSkillRoots: [
+        path.join(deps.config.repoRoot, '.claude', 'skills'),
+        path.join(deps.config.repoRoot, '..', '.claude', 'skills'),
+      ],
     }),
     cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
     repoRoot: deps.config.repoRoot,
@@ -4269,6 +4288,21 @@ export function createServer(deps: ServerDeps): express.Express {
   // 数据目录与验收报告同级（cache 的父目录），未配置转发时退化为本地留存。
   app.use('/api', createBugReportsRouter({
     getDataDir: () => path.dirname(deps.stateService.getCacheBase()),
+    readStoredForwardConfig: () => deps.stateService.getBugReportForwardingConfig(),
+    readEnvironmentForwardConfig: () => resolveForwardConfig(),
+    writeStoredForwardConfig: (input) => {
+      const saved = deps.stateService.setBugReportForwardingConfig(input);
+      return { ...input, updatedAt: saved.updatedAt };
+    },
+    clearStoredForwardConfig: () => deps.stateService.clearBugReportForwardingConfig(),
+    getSuggestedMapBaseUrl: () => deps.stateService.getActiveCdsConnections()
+      .find((connection) => connection.partnerKind === 'map' && connection.partnerBaseUrl)
+      ?.partnerBaseUrl || process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
+    authenticateMapConnectionToken: (rawToken) => {
+      if (!rawToken) return null;
+      return deps.stateService.findActiveCdsConnectionByLongTokenHash(sha256Hex(rawToken)) ?? null;
+    },
+    isSecretStorageEncrypted: () => isSealingEnabled(),
   }));
 
   // 服务端站内信账本读写。挂在全局认证网关之后，与 bug-reports 同款；账本本身与

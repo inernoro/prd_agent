@@ -32,6 +32,7 @@ import type { StateService } from './state.js';
 import type { BranchEntry, BuildProfile } from '../types.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
 import { resolveEffectiveProfile } from './container.js';
+import { namedServiceLabel, occupiedHostOwners, publishedServiceLabels, subdomainWithLegacyAliases } from './preview-entrypoints.js';
 import type { RouteRecord } from '../forwarder/types.js';
 
 /**
@@ -95,6 +96,13 @@ export class ForwarderRoutePublisher {
   private pendingJson: string = '';
   private pendingStableSamples: number = 0;
   private publishCount: number = 0;
+  /**
+   * 已经报过的「历史别名被显式声明占走」冲突（`branchId:label:owner`）。
+   *
+   * buildRoutes 每 2 秒重跑一次，不去重就会把同一条配置错误刷满日志；
+   * 冲突消失后要从这里移除，否则改回来再改错就再也不会提示了。
+   */
+  private warnedAliasCollisions = new Set<string>();
 
   constructor(private opts: ForwarderRoutePublisherOptions) {
     if (!opts.rootDomains?.length) {
@@ -163,6 +171,21 @@ export class ForwarderRoutePublisher {
 
   private buildRoutes(): RouteRecord[] {
     const records: RouteRecord[] = [];
+    // 全部分支已保存的子域别名标签 → 拥有它的分支 id。
+    //
+    // 兼容别名（`llmgw` 展开出的 `llmgw-web`）发布前必须查这张表：保存期的撞名检查
+    // 只拦「新保存的别名」，管不了两种情况——① 本次改名之前就已经存在的别名恰好等于
+    // `<slug>-llmgw-web`；② 别名先保存、声明 `llmgw` 的 profile 后来才加。两种都会让
+    // forwarder 收到同 host 两条路由，route-resolver 按路由 id 静默选一条，用户可能
+    // 被路由到别的分支（Codex P1）。
+    // **按完整 host** 的占位表：别名（按根域展开）+ 完整自定义域名。自定义域名存的是整条
+    // host、不是标签，只按 label 判会漏掉「一条自定义域名恰好等于 <slug>-llmgw.<root>」
+    // —— 那条路由在本函数更早处就已发出，命名服务再发同一 host 就是两个上游（Codex P1）。
+    const occupiedHosts = occupiedHostOwners(this.opts.state.getAllBranches(), this.opts.rootDomains);
+    // 本轮实际存在的别名冲突。收在这里是为了在末尾把已经消失的冲突从
+    // warnedAliasCollisions 里剪掉——否则「改错 → 报警 → 改对 → 再改错」的第二次
+    // 就永远静默了（去重不能变成一次性静音）。
+    const seenAliasCollisions = new Set<string>();
     const projects = this.opts.state.getProjects();
     const projectById = new Map(projects.map((p) => [p.id, p]));
 
@@ -435,40 +458,121 @@ export class ForwarderRoutePublisher {
       // 同一容器(否则两次发布可能因键序不同把同名 subdomain 指向不同端口)。
       const subdomainCandidates = [...routableServices].sort((a, b) => a.profileId.localeCompare(b.profileId));
       const writtenSubdomains = new Set<string>();
+      const claims: Array<{ svc: typeof subdomainCandidates[number]; sub: string }> = [];
       for (const svc of subdomainCandidates) {
         const bp = profileById.get(svc.profileId);
         const sub = bp?.subdomain;
         if (!sub) continue;
         if (writtenSubdomains.has(sub)) continue;
-        // DNS label 上限守卫(Codex P2):命名 host 第一标签 `<previewSlug>-<sub>` 必须 ≤63 octet
-        // (RFC 1035 单 label 上限),否则无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL
-        // 对长分支名**静默失效**。超长则跳过此命名路由并 warn —— 服务仍可经主域名 `<previewSlug>.<root>`
-        // 的 `/gw/v1` 路径访问,不受影响。选 skip 而非截断/哈希:截断会丢唯一性、可能与别的 slug 撞 host。
-        const namedLabel = `${previewSlug}-${sub}`;
-        if (namedLabel.length > 63) {
-          this.opts.logger?.warn?.(
-            `[forwarder-publisher] 跳过命名子域路由 ${namedLabel}.*（第一 DNS 标签 ${namedLabel.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
-          );
-          continue;
-        }
         writtenSubdomains.add(sub);
-        for (const root of this.opts.rootDomains) {
-          // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
-          //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
-          // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
-          pushRoute({
-            _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
-            host: `${previewSlug}-${sub}.${root}`,
-            upstreamHost: '127.0.0.1',
-            upstreamPort: svc.hostPort,
-            branchId: branch.id,
-            branchName: branch.branch,
-            weight: 100,
-            healthState: svc.status === 'running' ? 'running' : 'unknown',
-            // 不写 updatedAt(理由同前:dedup 失效防御)
-          }, svc.profileId);
+        claims.push({ svc, sub });
+        // DNS label 上限守卫(Codex P2):命名 host 第一标签必须 ≤63 octet(RFC 1035),否则
+        // 无法可靠解析,且单标签通配证书 `*.<root>` 不覆盖 → 该命名 URL 对长分支名**静默失效**。
+        // namedServiceLabel 已按段截断 + 摘要压到上限内;仍超限(subdomain 自身过长)的由
+        // publishedServiceLabels 过滤掉,这里对被滤掉的名字 warn —— 服务仍可经主域名的路径访问。
+        const publishable = publishedServiceLabels(previewSlug, sub);
+        for (const dropped of subdomainWithLegacyAliases(sub)) {
+          const label = namedServiceLabel(previewSlug, dropped);
+          if (publishable.includes(label)) continue;
+          this.opts.logger?.warn?.(
+            `[forwarder-publisher] 跳过命名子域路由 ${label}.*（第一 DNS 标签 ${label.length} 字符 > 63 octet 上限，无法解析且通配证书不覆盖）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+          );
         }
       }
+
+      // 规范名 + 历史别名一起发（preview-entrypoints.publishedServiceLabels）：
+      // 子域改名（llmgw-web → llmgw）时别的分支还挂在旧地址上，只发新名会让那些
+      // 链接一起失效。两个 host 指同一个上游，旧链接照常可达。
+      //
+      // **两趟发，且按最终 label 去重**（Codex P1）：去重键此前是原始 subdomain，
+      // 同一分支里若一个 profile 声明 `llmgw`、另一个声明 `llmgw-web`，两者原始名不同、
+      // 都会放行，但前者展开出的别名 host 与后者的规范 host 完全相同 —— forwarder 于是
+      // 拿到两条 host 相同、上游端口不同的路由，按路由 id 定死选一条，另一个服务直接不可达。
+      // 先发全部规范名、再发别名，保证「显式声明」永远压过「兼容别名」。
+      // label → 写它的那个 profileId。用 Map 而不是 Set：只有知道「是谁占的」，
+      // 才能把「另一个 profile 显式声明占走了这个别名」（真冲突，要报）与
+      // 「这个 label 就是本 profile 刚发的规范名」（正常，别报）区分开。
+      const writtenLabels = new Map<string, string>();
+      /**
+       * 写一条命名子域路由。**已保存别名的检查放在这里单点**，规范名与兼容别名两趟
+       * 都必然经过它。
+       *
+       * 上一版只在别名那一趟查 aliasOwners，规范名那一趟无条件写 —— 于是一个早于
+       * 改名就存在的别名 `<slug>-llmgw`（它已经为自己的主应用发了一条路由）会与
+       * 规范服务 host 撞成同 host 两个上游，resolver 按路由 id 静默选一条，用户可能
+       * 打开另一个分支的应用（Codex P1）。同一个判断分两趟各写一遍正是判据分裂的
+       * 温床，故收进 emit。
+       *
+       * 撞上就**跳过并告警**，与本文件既有的「第一标签超 63 octet 则跳过」同一处理：
+       * 命名入口丢掉后服务仍可经主域名的路径访问，而同 host 两条路由是静默错路由。
+       */
+      const emit = (svc: typeof subdomainCandidates[number], namedLabel: string): void => {
+        if (writtenLabels.has(namedLabel)) return;
+        writtenLabels.set(namedLabel, svc.profileId);
+        {
+          for (const root of this.opts.rootDomains) {
+            // 逐根域判占位：别名是标签（每个根域都占），自定义域名只占它自己那一条 host，
+            // 所以判定必须在这一层而不是标签层，否则一条自定义域名会连带掐掉其它根域的路由。
+            const host = `${namedLabel}.${root}`.toLowerCase();
+            const hostOwner = occupiedHosts.get(host);
+            if (hostOwner !== undefined) {
+              const key = `${branch.id}:${host}:occupied:${hostOwner}`;
+              if (!this.warnedAliasCollisions.has(key)) {
+                this.warnedAliasCollisions.add(key);
+                this.opts.logger?.warn?.(
+                  `[forwarder-publisher] 命名子域 host ${host} 已被分支 ${hostOwner} 的子域别名或自定义域名占用，跳过该命名路由（已保存的占位优先）；该服务仍可经主域名 ${previewSlug}.* 的路径访问`,
+                );
+              }
+              seenAliasCollisions.add(key);
+              continue;
+            }
+            // 命名子域也必须走复制集展开（Codex P1）：直接 records.push 会让命名入口
+            //（如 LLM 网关 <slug>-llmgw）永远单发 primary 路由——配置了分流权重的
+            // 生产消费方 100% 流量仍打主容器，实验失真且绕过被动健康摘除。
+            pushRoute({
+              _id: `${branch.id}:${svc.profileId}:subdom:${idx++}`,
+              // 必须用 namedLabel（可能已按 63 上限截断+摘要），不能再拼一遍原始 slug ——
+              // 否则发布的 host 与入口表/白名单算出来的不是同一个。
+              host: `${namedLabel}.${root}`,
+              upstreamHost: '127.0.0.1',
+              upstreamPort: svc.hostPort,
+              branchId: branch.id,
+              branchName: branch.branch,
+              weight: 100,
+              healthState: svc.status === 'running' ? 'running' : 'unknown',
+              // 不写 updatedAt(理由同前:dedup 失效防御)
+            }, svc.profileId);
+          }
+        }
+      };
+      for (const { svc, sub } of claims) {
+        emit(svc, namedServiceLabel(previewSlug, sub));
+      }
+      for (const { svc, sub } of claims) {
+        for (const label of publishedServiceLabels(previewSlug, sub)) {
+          // 已保存别名的检查在 emit 里单点做（规范名那一趟同样要过），这里不再重复。
+          const owner = writtenLabels.get(label);
+          if (owner === undefined) {
+            emit(svc, label); // 别名没人占，静默发出去——这是绝大多数情况
+            continue;
+          }
+          // 本 profile 自己刚在规范名那趟发过这个 label，不是冲突。
+          if (owner === svc.profileId) continue;
+          // 真冲突：另一个 profile 显式声明了这个 host。显式声明优先，别名让路。
+          // 去重上报：buildRoutes 每 2 秒重跑一次，不去重会把同一条配置错误刷满日志。
+          const warnKey = `${branch.id}:${label}:${owner}`;
+          if (!this.warnedAliasCollisions.has(warnKey)) {
+            this.warnedAliasCollisions.add(warnKey);
+            this.opts.logger?.warn?.(
+              `[forwarder-publisher] 命名子域 ${sub} 的历史别名 host ${label}.* 已被同分支 profile ${owner} 的显式声明占用，跳过别名路由（显式声明优先）`,
+            );
+          }
+          seenAliasCollisions.add(warnKey);
+        }
+      }
+    }
+    for (const key of [...this.warnedAliasCollisions]) {
+      if (!seenAliasCollisions.has(key)) this.warnedAliasCollisions.delete(key);
     }
     return records;
   }

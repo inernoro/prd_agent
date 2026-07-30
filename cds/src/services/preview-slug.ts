@@ -47,7 +47,14 @@ export function slugifyForPreview(s: string): string {
     .replace(/^-|-$/g, '');
 }
 
-const DNS_LABEL_MAX_LENGTH = 63;
+/**
+ * RFC 1035 单个 DNS label 的 octet 上限。
+ *
+ * 这个数字此前被 forwarder-route-publisher、branches.ts 的 computeBranchGatewayUrls
+ * 各自写成字面量 63,三处判据分裂(predicate-and-wiring-discipline 形状 3)。
+ * 导出到这里作为唯一来源:凡是判断「这个 host 的第一标签能不能解析」都必须引用它。
+ */
+export const DNS_LABEL_MAX_LENGTH = 63;
 const PREVIEW_SLUG_HASH_LENGTH = 8;
 
 function capPreviewSlug(slug: string): string {

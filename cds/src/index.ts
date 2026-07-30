@@ -14,6 +14,7 @@ import { StateService } from './services/state.js';
 import { branchUsesPrebuiltMode } from './services/deploy-runtime.js';
 import { WorktreeService } from './services/worktree.js';
 import { ContainerService } from './services/container.js';
+import { branchEntrypointDepsFromState, resolveBranchEntrypointsEnv } from './services/preview-entrypoints.js';
 import { ProxyService } from './services/proxy.js';
 import { SchedulerService } from './services/scheduler.js';
 import { JanitorService, defaultDiskUsage } from './services/janitor.js';
@@ -1221,6 +1222,13 @@ const containerService = new ContainerService(shell, config, {
   // 短别名启发式比对(profile.id 形如 `mysql-mdimp`,projectId 是
   // `defd4695ab5f`,slug 才是 `mdimp`)。adapter 把 slug 暴露给容器层。
   getProjectSlug: (projectId) => stateService.getProject(projectId)?.slug,
+  // 2026-07-29：把「本分支实际发布了哪几个公网入口」注入容器 env,取消应用侧
+  // 自己按 hostname 拼兄弟服务域名的权力（根 CLAUDE.md 规则 #11）。previewDomain
+  // 缺失时退到首个 rootDomain,与 /api/branches 下发 previewUrls 的口径一致。
+  getPublishedEntrypointsEnv: (entry) => resolveBranchEntrypointsEnv(
+    entry,
+    branchEntrypointDepsFromState(stateService, config.previewDomain || config.rootDomains?.[0]),
+  ),
 }, activeServerEventLogStore);
 
 // 2026-06-23：项目级资源占用采样（CPU/内存/构建频次）。每 N 秒跑一次

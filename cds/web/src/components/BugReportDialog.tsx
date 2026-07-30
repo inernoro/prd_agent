@@ -1,21 +1,17 @@
 /**
  * 全局快捷提 bug（Ctrl+B / Command+B）。
  *
- * 挂载在 App 根，跨路由常驻，提供三个入口：
+ * 挂载在 App 根，跨路由常驻，提供两个入口：
  *   1. 快捷键 Ctrl+B（Mac 上 Command+B），输入框聚焦时不抢占（见 BugReportCore）；
- *   2. 右下角常驻按钮（带文字标签 + 快捷键提示，不靠用户猜快捷键）；
- *   3. window 事件 OPEN_BUG_REPORT_EVENT，其它组件可携预填打开。
+ *   2. window 事件 OPEN_BUG_REPORT_EVENT，由控制台左侧栏固定入口触发，也允许其它组件携预填打开。
  *
  * 模态三硬约束：createPortal 到 document.body、尺寸走 inline style、
  * 滚动区 minHeight:0 + overflowY:auto + overscrollBehavior:contain。
  * z-index：遮罩 300（portal 顶层）——本弹窗由 App 根 portal 出来，必须盖住
- * 全局悬浮 chrome（站内通知 220 / CommitInbox 190 / 更新徽章 200），
- * 与 ui/dropdown-menu 同属顶层带；常驻入口按钮取 120（全局 chrome 带下沿，
- * 不遮挡其它 chrome）。见 .claude/rules/cds-theme-tokens.md §4。
+ * 信息中心与其它全局 chrome。见 .claude/rules/cds-theme-tokens.md §4。
  */
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { createPortal } from 'react-dom';
-import { useLocation } from 'react-router-dom';
 import { Bug, ImagePlus, Loader2, Paperclip, X } from 'lucide-react';
 
 import { apiRequest } from '@/lib/api';
@@ -33,13 +29,9 @@ import {
   type BugReportSubmitResult,
   type BugSeverity,
 } from '@/components/BugReportCore';
-import { useOverlayDock } from '@/lib/useOverlayDock';
 
 /** 其它组件可派发该事件打开面板（可携带预填描述）。 */
 export const OPEN_BUG_REPORT_EVENT = 'cds:open-bug-report';
-
-/** 未登录 / 过渡类页面不显示常驻入口（提交需要 CDS 登录态）。 */
-const HIDDEN_ENTRY_PATHS = new Set(['/login', '/auth/sso', '/preview-preparing']);
 
 interface PendingAttachment extends BugReportAttachment {
   previewUrl?: string;
@@ -59,11 +51,6 @@ function readAsBase64(file: File): Promise<string> {
 }
 
 export function BugReportDialog(): JSX.Element | null {
-  // 坞解析走共享 hook（lib/useOverlayDock），不在这里内联一份 querySelector——
-  // 两个坞、多个消费方各写一遍必然漂移。
-  const actionStackEl = useOverlayDock('.cds-global-action-stack');
-
-  const location = useLocation();
   const [open, setOpen] = useState(false);
   const [description, setDescription] = useState('');
   const [severity, setSeverity] = useState<BugSeverity>('major');
@@ -246,23 +233,6 @@ export function BugReportDialog(): JSX.Element | null {
     }
   }, [attachments, description, severity]);
 
-  const launcher = HIDDEN_ENTRY_PATHS.has(location.pathname) ? null : (
-    <button
-      type="button"
-      onClick={() => setOpen(true)}
-      title={`提交缺陷（${hint}）`}
-      aria-label={`提交缺陷，快捷键 ${hint}`}
-      // 不再自己 fixed 定位：入口是 .cds-global-action-stack（AppShell 的右下角
-      // 唯一系统提醒区）的一员，由那个坞统一竖向排布。此前自己贴 bottom-4 right-4
-      // 与坞里的更新徽章几何重合、被压住半句（用户 2026-07-28 反馈的遮挡之一）。
-      className="pointer-events-auto inline-flex w-max items-center gap-2 self-end rounded-full border border-border bg-card px-3 py-2 text-xs text-card-foreground shadow-lg transition-colors hover:bg-accent"
-    >
-      <Bug className="size-4" />
-      <span>提交缺陷</span>
-      <span className="rounded bg-muted px-1.5 py-0.5 font-mono text-[10px] text-muted-foreground">{hint}</span>
-    </button>
-  );
-
   const dialog = open ? (
     <div
       className="fixed inset-0 flex items-center justify-center bg-background/70 p-4 backdrop-blur-sm"
@@ -429,17 +399,5 @@ export function BugReportDialog(): JSX.Element | null {
   ) : null;
 
   if (typeof document === 'undefined') return null;
-  // 入口与弹窗挂到**不同**的宿主：
-  //   - 入口 pill 进 .cds-global-action-stack（右下角唯一系统提醒区），由那个坞
-  //     统一竖向排布，天然不会和更新徽章 / 导入审批 / 授权请求互相遮挡；
-  //   - 弹窗仍按模态三硬约束 portal 到 body（坞有 overflow-y:auto，模态挂进去会被裁）。
-  // 坞还没挂上时（登录页等不渲染 AppShell 的路由）入口就不显示——那些页面本来
-  // 也不该有常驻入口。
-  const dock = actionStackEl;
-  return (
-    <>
-      {dock ? createPortal(launcher, dock) : null}
-      {createPortal(dialog, document.body)}
-    </>
-  );
+  return createPortal(dialog, document.body);
 }

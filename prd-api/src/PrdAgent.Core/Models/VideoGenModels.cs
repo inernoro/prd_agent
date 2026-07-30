@@ -11,6 +11,27 @@ public static class VideoProjectStatus
     public const string Completed = "Completed";
 }
 
+public static class VideoModelCapabilities
+{
+    public static IReadOnlyList<int> GetSupportedDurations(string? modelId)
+    {
+        var key = (modelId ?? string.Empty).ToLowerInvariant();
+        if (key.Contains("seedance-2")) return [5, 10, 15];
+        if (key.Contains("seedance-1-5") || key.Contains("seedance-1.5")) return [4, 5, 8, 10, 12];
+        if (key.Contains("wan-") || key.Contains("wan2")) return [5, 10];
+        return [5, 8, 10];
+    }
+
+    public static int? NormalizeDuration(string? modelId, int? requestedDuration)
+    {
+        if (!requestedDuration.HasValue) return null;
+        return GetSupportedDurations(modelId)
+            .OrderBy(duration => Math.Abs(duration - requestedDuration.Value))
+            .ThenBy(duration => duration)
+            .First();
+    }
+}
+
 public static class VideoProjectAssetType
 {
     public const string Character = "character";
@@ -147,6 +168,18 @@ public static class SceneItemStatus
     /// <summary>LLM 重新生成 prompt 中</summary>
     public const string Generating = "Generating";
 
+    /// <summary>视频生成已排队，等待 worker 原子领取</summary>
+    public const string Submitting = "Submitting";
+
+    /// <summary>worker 已原子领取，正在向上游提交</summary>
+    public const string SubmittingClaimed = "SubmittingClaimed";
+
+    /// <summary>已有上游任务，等待 worker 接管轮询</summary>
+    public const string Polling = "Polling";
+
+    /// <summary>worker 已原子领取上游任务，正在轮询或落盘</summary>
+    public const string PollingClaimed = "PollingClaimed";
+
     /// <summary>OpenRouter 视频生成中</summary>
     public const string Rendering = "Rendering";
 
@@ -170,7 +203,7 @@ public class VideoGenScene
     /// <summary>视频生成 prompt（喂给 OpenRouter）</summary>
     public string Prompt { get; set; } = string.Empty;
 
-    /// <summary>分镜状态：Draft / Generating / Rendering / Done / Error</summary>
+    /// <summary>分镜状态：Draft / Generating / Submitting / SubmittingClaimed / Polling / PollingClaimed / Rendering / Done / Error</summary>
     public string Status { get; set; } = SceneItemStatus.Draft;
 
     /// <summary>错误消息（失败时填）</summary>
@@ -193,6 +226,15 @@ public class VideoGenScene
 
     /// <summary>本镜 OpenRouter jobId</summary>
     public string? JobId { get; set; }
+
+    /// <summary>进入提交队列或被 worker 领取的时间，用于识别提交阶段中断。</summary>
+    public DateTime? SubmissionStartedAt { get; set; }
+
+    /// <summary>轮询已有上游任务的分布式租约标识，防止多个 worker 重复落版本。</summary>
+    public string? RenderLeaseId { get; set; }
+
+    /// <summary>轮询租约到期时间；worker 中断后其他实例只接管轮询，不重新提交上游任务。</summary>
+    public DateTime? RenderLeaseExpiresAt { get; set; }
 
     /// <summary>本镜成本（美元）</summary>
     public double? Cost { get; set; }

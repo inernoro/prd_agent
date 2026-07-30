@@ -1,13 +1,36 @@
 // 模型：先完成单个模型的 Provider 绑定、用途和费用口径，再把批量维护收进高级区。
+//
+// 「控制台风格调性 v1.2」迁移要点（详见
+// doc/rule.platform.llm-gateway.console-design-tonality.md 原则 6 / 7）：
+//   - 走 PageShell 骨架、贴边全宽；此前页头自己套了个 maxWidth:760 的盒子，
+//     可读宽度已由 .lg-page-heading p 的 --measure 接管，页面不再各拍一个数。
+//   - 页头原本两段常驻正文（一段讲模型与默认池的关系，一段讲价格口径）。
+//     副标题只留一句，价格口径收进价格字段旁的 HelpPopover——它只在填价格时才需要读。
+//   - 创建表单的三处 `repeat(auto-fit, minmax(N, 1fr))` 换成 FormGrid：
+//     minmax 的第二个值是 1fr，宽屏下输入框会跟着屏幕一起拉长，一个十来个字段的
+//     表单被摊成横贯整屏的长条；FormGrid 固定 260~320 且左对齐。
+//   - 卡片内边距收敛到 CARD_BODY(14) 与 INSET_BLOCK(10) 两种，间距只取 GAP 的
+//     tight/normal/section 三档（原来混着 4/5/7/9/10/12）。
+//   - 成句解释一律 --fs-body（原来价格提示、"模型 key 留空…"用的是 --fs-micro）；
+//     模型上游标识这类元信息走 MONO_META。
+//
+// 本路由被 e2e/llmgw-layout-drift.mjs 监测：创建表单必须是**内联**的扁平 DOM，
+// 不许改成抽屉或对话框——那会让 headingBoxed 之外的规格种类一起跑偏。
+//
+// 跨模块契约：prd-api 的 GatewayDataDomainGuardTests 按字面量断言本文件里
+// Provider 内联预览的按钮文案。改那处措辞会让 CI 的 dotnet test 变红，动手前先读那个测试。
+// （此处刻意不复制该字面量：注释里再抄一份，会让守卫在 UI 文案被删后仍然误判通过。）
 import { useEffect, useMemo, useState } from 'react';
 import { bulkRotateApiKeys, bulkUpdateModelCapabilities, claimModelToGateway, createModel, deleteModelApiKey, getModels, getParameterCapabilitiesMeta, getPlatforms, rotateModelApiKey, setModelEnabled } from '@/lib/api';
 import type { CreateModelRequest, ModelCapability, ModelItem, ParameterCapabilityTemplateItem, PlatformItem } from '@/lib/types';
-import { Button, Chip, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { Button, Card, Chip, InlineAlert, SectionLoader, ReadOnlyNotice } from '@/components/ui';
+import { FormGrid, HelpPopover, PageBody, PageHeader, PageShell } from '@/components/PageShell';
 import { EntityPreviewDrawer } from '@/components/EntityPreviewDrawer';
 import { boolChip } from '@/components/poolsHelpers';
 import { useAuth } from '@/lib/auth';
 import { canUseCapability } from '@/lib/access';
-import { FIELD_INPUT, FIELD_LABEL, HINT_TEXT, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
+import { CARD_BODY, GAP, INSET_PADDING } from '@/lib/surface';
+import { BODY_TEXT, FIELD_INPUT, FIELD_LABEL, HINT_TEXT, MONO_META, TABLE_CELL, TABLE_HEAD_CELL, TOOLBAR_CONTROL } from '@/lib/typography';
 
 export function ModelsPage() {
   const { tenant } = useAuth();
@@ -265,298 +288,337 @@ export function ModelsPage() {
     setCapabilityText((prev) => mergeCapabilityText(prev, templateText));
   }
 
-  if (error) return <Empty text={error} />;
-
   const th = TABLE_HEAD_CELL;
   const td = TABLE_CELL;
 
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', flexDirection: 'column', gap: 12 }}>
-      <header className="lg-page-heading">
-        <div style={{ maxWidth: 760 }}>
-          <h1>模型管理</h1>
-          <p>
-            模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池；没有匹配用途的池保持原样。
-          </p>
-          <div style={{ marginTop: 6, ...HINT_TEXT }}>
-            不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
-          </div>
-        </div>
-        {canWrite && ownedPlatforms.length > 0 ? (
+    <PageShell>
+      <PageHeader
+        title="模型管理"
+        subtitle="模型是 Provider 里可以实际调用的能力。选择用途后，系统只会把它追加到匹配的默认模型池。"
+        actions={canWrite && ownedPlatforms.length > 0 ? (
           <Button variant="primary" size="sm" onClick={() => setShowCreate((value) => !value)}>{showCreate ? '收起配置' : '添加模型'}</Button>
         ) : canWrite ? (
-          <a href="/platforms" style={{ fontSize: 'var(--fs-secondary)', color: 'var(--accent)', textDecoration: 'none' }}>先去添加 Provider</a>
+          <a href="/platforms" style={providerLinkStyle}>先去添加 Provider</a>
         ) : null}
-      </header>
-      {showCreate && canWrite && ownedPlatforms.length > 0 ? (
-        <section style={createCardStyle}>
-          <form onSubmit={submitCreate} style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(210px, 1fr))', gap: 10 }}>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>Provider</span>
-              <select required value={createDraft.platformId} onChange={(e) => setCreateDraft((value) => ({ ...value, platformId: e.target.value }))} style={formInputStyle}>
-                {ownedPlatforms.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
-              </select>
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>显示名称（可选）</span>
-              <input value={createDraft.name} onChange={(e) => setCreateDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程聊天模型" style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>上游模型标识</span>
-              <input required value={createDraft.modelName} onChange={(e) => setCreateDraft((value) => ({ ...value, modelName: e.target.value }))} placeholder="例如：tutorial-chat" style={formInputStyle} />
-            </label>
-            <label style={fieldStyle}>
-              <span style={labelStyle}>调用协议</span>
-              <select value={createDraft.protocol} onChange={(e) => setCreateDraft((value) => ({ ...value, protocol: e.target.value as ModelDraftState['protocol'] }))} style={formInputStyle}>
-                <option value="inherit">继承 Provider</option>
-                <option value="openai">OpenAI</option>
-                <option value="claude">Claude</option>
-              </select>
-            </label>
-            <fieldset style={{ gridColumn: '1 / -1', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)', padding: 10, minWidth: 0 }}>
-              <legend style={{ padding: '0 6px', fontSize: 'var(--fs-micro)', fontWeight: 600, color: 'var(--text-secondary)' }}>模型用途（至少选一项）</legend>
-              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: 7 }}>
-                {MODEL_PURPOSES.map((purpose) => (
-                  <label key={purpose.code} style={{ display: 'flex', gap: 7, alignItems: 'flex-start', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }} title={purpose.description}>
-                    <input type="checkbox" checked={createDraft.capabilities.includes(purpose.code)} onChange={() => toggleCreateCapability(purpose.code)} />
-                    <span><strong style={{ color: 'var(--text-primary)' }}>{purpose.label}</strong><br /><span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>{purpose.description}</span></span>
-                  </label>
-                ))}
-              </div>
-            </fieldset>
-            <details style={{ gridColumn: '1 / -1' }}>
-              <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>可选：价格、模型专属密钥与备注</summary>
-              <div style={{ marginTop: 9, display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(180px, 1fr))', gap: 10 }}>
-                <label style={checkStyle}><input type="checkbox" checked={createDraft.hasPricing} onChange={(e) => setCreateDraft((value) => ({ ...value, hasPricing: e.target.checked }))} />我知道供应方价格</label>
-                {createDraft.hasPricing ? (
-                  <>
-                    <label style={fieldStyle}><span style={labelStyle}>币种</span><select value={createDraft.priceCurrency} onChange={(e) => setCreateDraft((value) => ({ ...value, priceCurrency: e.target.value as 'CNY' | 'USD' }))} style={formInputStyle}><option value="CNY">CNY</option><option value="USD">USD</option></select></label>
-                    <label style={fieldStyle}><span style={labelStyle}>输入每百万 Token</span><input type="number" min={0} step="any" value={createDraft.inputPricePerMillion} onChange={(e) => setCreateDraft((value) => ({ ...value, inputPricePerMillion: e.target.value }))} style={formInputStyle} /></label>
-                    <label style={fieldStyle}><span style={labelStyle}>输出每百万 Token</span><input type="number" min={0} step="any" value={createDraft.outputPricePerMillion} onChange={(e) => setCreateDraft((value) => ({ ...value, outputPricePerMillion: e.target.value }))} style={formInputStyle} /></label>
-                    <label style={fieldStyle}><span style={labelStyle}>每次调用</span><input type="number" min={0} step="any" value={createDraft.pricePerCall} onChange={(e) => setCreateDraft((value) => ({ ...value, pricePerCall: e.target.value }))} style={formInputStyle} /></label>
-                  </>
-                ) : null}
-                <label style={fieldStyle}><span style={labelStyle}>模型专属通讯密钥（可选）</span><input type="password" autoComplete="new-password" value={createDraft.apiKey} onChange={(e) => setCreateDraft((value) => ({ ...value, apiKey: e.target.value }))} placeholder="留空则继承 Provider" style={formInputStyle} /></label>
-                <label style={fieldStyle}><span style={labelStyle}>备注（可选）</span><input value={createDraft.remark} onChange={(e) => setCreateDraft((value) => ({ ...value, remark: e.target.value }))} style={formInputStyle} /></label>
-              </div>
-            </details>
-            <div style={{ gridColumn: '1 / -1', display: 'flex', alignItems: 'center', gap: 10 }}>
-              <Button type="submit" variant="primary" size="sm" disabled={createBusy || createDraft.capabilities.length === 0}>{createBusy ? '保存中…' : '保存并同步默认池'}</Button>
-              <span style={{ fontSize: 'var(--fs-micro)', color: 'var(--text-muted)' }}>模型 key 留空时会安全继承 Provider key。</span>
-            </div>
-          </form>
-        </section>
-      ) : null}
-      {!canWrite ? <ReadOnlyNotice /> : null}
-      <div style={{ flexShrink: 0, display: 'flex', alignItems: 'center', gap: 8, flexWrap: 'wrap' }}>
-        <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>
-          <option value="">全部平台</option>
-          {platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
-        </select>
-        <label style={{ display: 'inline-flex', alignItems: 'center', gap: 6, fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)' }}>
-          <input type="checkbox" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.target.checked)} />
-          仅启用
-        </label>
-        <span style={{ marginLeft: 'auto', fontSize: 'var(--fs-caption)', color: 'var(--text-muted)' }}>{items ? `${items.length} 个模型` : '加载中'}</span>
-      </div>
-      {toast ? (
-        <div style={{ flexShrink: 0, fontSize: 'var(--fs-caption)', color: 'var(--text-secondary)', padding: '6px 10px', background: 'var(--bg-elevated)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius-sm)' }}>{toast}</div>
-      ) : null}
-      {items && items.length > 0 && canWrite ? (
-      <details style={{ flexShrink: 0 }}>
-        <summary style={{ cursor: 'pointer', fontSize: 'var(--fs-secondary)', color: 'var(--text-secondary)', padding: '6px 2px' }}>高级：批量维护已有模型</summary>
-      <div style={{ ...toolbarStyle, marginTop: 6 }}>
-        <span style={toolbarTitleStyle}>批量维护模型密钥</span>
-        <input
-          type="password"
-          autoComplete="new-password"
-          value={bulkKeyValue}
-          onChange={(e) => setBulkKeyValue(e.target.value)}
-          placeholder="新 apiKey"
-          style={inputStyle}
-        />
-        <label style={checkStyle}>
-          <input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />
-          只补缺失
-        </label>
-        <label style={checkStyle}>
-          <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
-          确认应用到当前筛选模型
-        </label>
-        <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
-          {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
-        </Button>
-      </div>
-      <div style={toolbarStyle}>
-        <span style={toolbarTitleStyle}>批量维护模型能力</span>
-        <select
-          value=""
-          onChange={(e) => applyCapabilityTemplate(e.target.value)}
-          style={{ ...selectStyle, width: 180 }}
-          aria-label="参数能力模板"
-          title="按 provider 模板填充字段级参数能力"
-        >
-          <option value="">选择模板</option>
-          {capabilityTemplates.map((template) => (
-            <option key={template.key} value={template.key}>{template.label}</option>
-          ))}
-        </select>
-        <input
-          value={capabilityText}
-          onChange={(e) => setCapabilityText(e.target.value)}
-          placeholder="vision, function_calling=false"
-          style={{ ...inputStyle, flex: '1 1 260px' }}
-        />
-        <label style={checkStyle}>
-          <input type="checkbox" checked={capabilityOnlyMissing} onChange={(e) => setCapabilityOnlyMissing(e.target.checked)} />
-          只补缺失
-        </label>
-        <label style={checkStyle}>
-          <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
-          确认应用到当前筛选模型
-        </label>
-        <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
-          {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
-        </Button>
-      </div>
-      </details>
-      ) : null}
-      {!items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
-        <div className="lg-config-table-shell" style={{ flex: 1, minHeight: 0, overflow: 'auto', overscrollBehavior: 'contain', background: 'var(--bg-surface)', border: '1px solid var(--border-subtle)', borderRadius: 'var(--radius)' }}>
-          <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
-            <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
-              <tr>
-                <th style={th}>模型</th>
-                <th style={th}>平台</th>
-                <th style={th}>协议</th>
-                <th style={th}>能力</th>
-                <th style={th}>价格</th>
-                <th style={th}>配置来源</th>
-                <th style={th}>状态</th>
-                <th style={th}>密钥</th>
-                <th style={th}>操作</th>
-              </tr>
-            </thead>
-            <tbody>
-              {items.map((m) => {
-                const en = boolChip(m.enabled, '启用', '停用');
-                const key = boolChip(m.hasKey, '已配置', '继承平台');
-                const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
-                const provider = m.platformId ? platformById.get(m.platformId) : undefined;
-                return (
-                  <tr key={m.id}>
-                    <td style={td}>
-                      <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 180 }}>
-                        <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
-                        <span style={{ fontFamily: 'var(--font-mono)', color: 'var(--text-muted)', fontSize: 'var(--fs-micro)' }}>{m.modelName || m.id}</span>
-                      </div>
-                    </td>
-                    <td style={td}>
-                      {provider ? (
-                        <div style={{ display: 'flex', flexDirection: 'column', gap: 4, minWidth: 150 }}>
-                          <span>{provider.name}</span>
-                          <EntityPreviewDrawer
-                            buttonLabel="查看 Provider"
-                            kicker="模型关联的 Provider"
-                            title={provider.name}
-                            summary={`模型“${m.name || m.modelName}”会通过这条 Provider 连接访问上游。先在当前页核对协议、地址和密钥状态，不需要跳到 Provider 页面。`}
-                            status={[
-                              { label: provider.enabled ? 'Provider 已启用' : 'Provider 已停用', tone: provider.enabled ? 'good' : 'warning' },
-                              { label: provider.hasKey ? 'Provider 密钥已配置' : 'Provider 密钥缺失', tone: provider.hasKey ? 'good' : 'warning' },
-                              { label: m.hasKey ? '模型使用专属密钥' : '模型继承 Provider 密钥' },
-                            ]}
-                            sections={[
-                              {
-                                title: '上游连接',
-                                fields: [
-                                  { label: 'Provider 类型', value: provider.platformType || '未配置' },
-                                  { label: 'API 地址', value: <code>{provider.apiUrl || '未配置'}</code> },
-                                  { label: '模型上游标识', value: <code>{m.modelName || m.id}</code> },
-                                  { label: '最终协议', value: m.protocol && m.protocol !== 'inherit' ? m.protocol : `继承 ${provider.platformType || 'Provider'}` },
-                                ],
-                              },
-                              {
-                                title: '运行边界',
-                                description: '当前状态只说明配置是否具备调用条件；真实可用性仍由模型池健康和请求记录确认。',
-                                fields: [
-                                  { label: 'Provider 最大并发', value: provider.maxConcurrency ?? '未配置' },
-                                  { label: '模型状态', value: m.enabled ? '已启用' : '已停用' },
-                                  { label: '价格', value: formatModelPrice(m) },
-                                ],
-                              },
-                            ]}
-                          />
-                        </div>
-                      ) : m.platformId ? <code>{m.platformId}</code> : '—'}
-                    </td>
-                    <td style={td}>{m.protocol || '继承平台'}</td>
-                    <td style={td}>
-                      <span style={{ display: 'inline-flex', gap: 5, flexWrap: 'wrap' }}>
-                        {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+      />
+
+      <PageBody>
+        {error ? <InlineAlert tone="error">{error}</InlineAlert> : null}
+        {toast ? <InlineAlert tone="info">{toast}</InlineAlert> : null}
+        {!canWrite ? <ReadOnlyNotice /> : null}
+
+        {showCreate && canWrite && ownedPlatforms.length > 0 ? (
+          <Card style={CARD_BODY}>
+            <form onSubmit={submitCreate} style={createFormStyle}>
+              <FormGrid>
+                <label style={FIELD_LABEL}>
+                  <span>Provider</span>
+                  <select required value={createDraft.platformId} onChange={(e) => setCreateDraft((value) => ({ ...value, platformId: e.target.value }))} style={FIELD_INPUT}>
+                    {ownedPlatforms.map((item) => <option key={item.id} value={item.id}>{item.name}</option>)}
+                  </select>
+                </label>
+                <label style={FIELD_LABEL}>
+                  <span>显示名称（可选）</span>
+                  <input value={createDraft.name} onChange={(e) => setCreateDraft((value) => ({ ...value, name: e.target.value }))} placeholder="例如：教程聊天模型" style={FIELD_INPUT} />
+                </label>
+                <label style={FIELD_LABEL}>
+                  <span>上游模型标识</span>
+                  <input required value={createDraft.modelName} onChange={(e) => setCreateDraft((value) => ({ ...value, modelName: e.target.value }))} placeholder="例如：tutorial-chat" style={FIELD_INPUT} />
+                </label>
+                <label style={FIELD_LABEL}>
+                  <span>调用协议</span>
+                  <select value={createDraft.protocol} onChange={(e) => setCreateDraft((value) => ({ ...value, protocol: e.target.value as ModelDraftState['protocol'] }))} style={FIELD_INPUT}>
+                    <option value="inherit">继承 Provider</option>
+                    <option value="openai">OpenAI</option>
+                    <option value="claude">Claude</option>
+                  </select>
+                </label>
+              </FormGrid>
+
+              <fieldset style={purposeFieldsetStyle}>
+                <legend style={legendStyle}>模型用途（至少选一项）</legend>
+                <FormGrid style={{ alignItems: 'start' }}>
+                  {MODEL_PURPOSES.map((purpose) => (
+                    <label key={purpose.code} style={purposeStyle} title={purpose.description}>
+                      <input type="checkbox" checked={createDraft.capabilities.includes(purpose.code)} onChange={() => toggleCreateCapability(purpose.code)} />
+                      <span>
+                        <strong style={{ color: 'var(--text-primary)' }}>{purpose.label}</strong>
+                        <br />
+                        <span style={HINT_TEXT}>{purpose.description}</span>
                       </span>
-                    </td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatModelPrice(m)}</td>
-                    <td style={td}>
-                      {m.authority === 'llm_gateway' ? (
-                        <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
-                      ) : (
-                        <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
-                      )}
-                    </td>
-                    <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
-                    <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
-                    <td style={{ ...td, whiteSpace: 'nowrap' }}>
-                      {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: 8 }}>
-                        {keyEditId === m.id ? (
-                          <>
-                            <input
-                              type="password"
-                              autoComplete="new-password"
-                              value={keyValue}
-                              onChange={(e) => setKeyValue(e.target.value)}
-                              placeholder="apiKey"
-                              style={inputStyle}
-                            />
-                            <Button size="sm" variant="primary" disabled={busyId === m.id} onClick={() => void saveApiKey(m)}>
-                              保存
-                            </Button>
-                            <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
-                              取消
-                            </Button>
-                          </>
-                        ) : (
-                          <>
-                            {m.authority === 'llm_gateway' ? (
-                              <>
-                                <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(m.id); setKeyValue(''); }}>
-                                  更新密钥
-                                </Button>
-                                {m.hasKey ? (
-                                  <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void clearApiKey(m)}>
-                                    清除密钥
-                                  </Button>
-                                ) : null}
-                              </>
-                            ) : (
-                              <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void claimModel(m)}>
-                                {busyId === m.id ? '处理中…' : '导入到平台'}
-                              </Button>
-                            )}
-                            <Button size="sm" variant={m.enabled ? 'ghost' : 'primary'} disabled={busyId === m.id} onClick={() => void toggle(m)}>
-                              {busyId === m.id ? '处理中…' : m.enabled ? '停用' : '启用'}
-                            </Button>
-                          </>
-                        )}
-                      </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
-                    </td>
-                  </tr>
-                );
-              })}
-            </tbody>
-          </table>
+                    </label>
+                  ))}
+                </FormGrid>
+              </fieldset>
+
+              <details>
+                <summary style={summaryStyle}>可选：价格、模型专属密钥与备注</summary>
+                <FormGrid style={{ marginTop: GAP.normal }}>
+                  {/* 价格口径原本是页头第二段常驻正文。它只在填价格时才需要读，
+                      所以收进这个开关旁的 ?——放在 label 外面，避免点 ? 顺手勾上复选框。 */}
+                  <div style={pricingRowStyle}>
+                    <label style={checkStyle}>
+                      <input type="checkbox" checked={createDraft.hasPricing} onChange={(e) => setCreateDraft((value) => ({ ...value, hasPricing: e.target.checked }))} />
+                      我知道供应方价格
+                    </label>
+                    <HelpPopover label="定价">
+                      不填写价格时费用状态保持“未知”，不会显示成 0；CNY 与 USD 分别保存，不做无汇率相加。
+                    </HelpPopover>
+                  </div>
+                  {createDraft.hasPricing ? (
+                    <>
+                      <label style={FIELD_LABEL}>
+                        <span>币种</span>
+                        <select value={createDraft.priceCurrency} onChange={(e) => setCreateDraft((value) => ({ ...value, priceCurrency: e.target.value as 'CNY' | 'USD' }))} style={FIELD_INPUT}>
+                          <option value="CNY">CNY</option>
+                          <option value="USD">USD</option>
+                        </select>
+                      </label>
+                      <label style={FIELD_LABEL}>
+                        <span>输入每百万 Token</span>
+                        <input type="number" min={0} step="any" value={createDraft.inputPricePerMillion} onChange={(e) => setCreateDraft((value) => ({ ...value, inputPricePerMillion: e.target.value }))} style={FIELD_INPUT} />
+                      </label>
+                      <label style={FIELD_LABEL}>
+                        <span>输出每百万 Token</span>
+                        <input type="number" min={0} step="any" value={createDraft.outputPricePerMillion} onChange={(e) => setCreateDraft((value) => ({ ...value, outputPricePerMillion: e.target.value }))} style={FIELD_INPUT} />
+                      </label>
+                      <label style={FIELD_LABEL}>
+                        <span>每次调用</span>
+                        <input type="number" min={0} step="any" value={createDraft.pricePerCall} onChange={(e) => setCreateDraft((value) => ({ ...value, pricePerCall: e.target.value }))} style={FIELD_INPUT} />
+                      </label>
+                    </>
+                  ) : null}
+                  <label style={FIELD_LABEL}>
+                    <span>模型专属通讯密钥（可选）</span>
+                    <input type="password" autoComplete="new-password" value={createDraft.apiKey} onChange={(e) => setCreateDraft((value) => ({ ...value, apiKey: e.target.value }))} placeholder="留空则继承 Provider" style={FIELD_INPUT} />
+                  </label>
+                  <label style={FIELD_LABEL}>
+                    <span>备注（可选）</span>
+                    <input value={createDraft.remark} onChange={(e) => setCreateDraft((value) => ({ ...value, remark: e.target.value }))} style={FIELD_INPUT} />
+                  </label>
+                </FormGrid>
+              </details>
+
+              <div style={submitRowStyle}>
+                <Button type="submit" variant="primary" size="sm" disabled={createBusy || createDraft.capabilities.length === 0}>{createBusy ? '保存中…' : '保存并同步默认池'}</Button>
+                <span style={BODY_TEXT}>模型 key 留空时会安全继承 Provider key。</span>
+              </div>
+            </form>
+          </Card>
+        ) : null}
+
+        <div style={filterRowStyle}>
+          <select value={platformId} onChange={(e) => setPlatformId(e.target.value)} style={selectStyle}>
+            <option value="">全部平台</option>
+            {platforms.map((p) => <option key={p.id} value={p.id}>{p.name}</option>)}
+          </select>
+          <label style={checkStyle}>
+            <input type="checkbox" checked={enabledOnly} onChange={(e) => setEnabledOnly(e.target.checked)} />
+            仅启用
+          </label>
+          <span style={{ marginLeft: 'auto', ...countStyle }}>{items ? `${items.length} 个模型` : '加载中'}</span>
         </div>
-      )}
-    </div>
+
+        {items && items.length > 0 && canWrite ? (
+          <details style={{ flexShrink: 0 }}>
+            <summary style={summaryStyle}>高级：批量维护已有模型</summary>
+            <div style={bulkStackStyle}>
+              <Card style={toolbarStyle}>
+                <span style={toolbarTitleStyle}>批量维护模型密钥</span>
+                <input
+                  type="password"
+                  autoComplete="new-password"
+                  value={bulkKeyValue}
+                  onChange={(e) => setBulkKeyValue(e.target.value)}
+                  placeholder="新 apiKey"
+                  style={inputStyle}
+                />
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={bulkOnlyMissing} onChange={(e) => setBulkOnlyMissing(e.target.checked)} />
+                  只补缺失
+                </label>
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={bulkConfirm} onChange={(e) => setBulkConfirm(e.target.checked)} />
+                  确认应用到当前筛选模型
+                </label>
+                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-api-key'} onClick={() => void applyBulkApiKey()}>
+                  {busyId === 'bulk-model-api-key' ? '处理中…' : '批量轮换密钥'}
+                </Button>
+              </Card>
+              <Card style={toolbarStyle}>
+                <span style={toolbarTitleStyle}>批量维护模型能力</span>
+                <select
+                  value=""
+                  onChange={(e) => applyCapabilityTemplate(e.target.value)}
+                  style={{ ...selectStyle, width: 180 }}
+                  aria-label="参数能力模板"
+                  title="按 provider 模板填充字段级参数能力"
+                >
+                  <option value="">选择模板</option>
+                  {capabilityTemplates.map((template) => (
+                    <option key={template.key} value={template.key}>{template.label}</option>
+                  ))}
+                </select>
+                <input
+                  value={capabilityText}
+                  onChange={(e) => setCapabilityText(e.target.value)}
+                  placeholder="vision, function_calling=false"
+                  style={{ ...inputStyle, flex: '1 1 260px' }}
+                />
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={capabilityOnlyMissing} onChange={(e) => setCapabilityOnlyMissing(e.target.checked)} />
+                  只补缺失
+                </label>
+                <label style={checkStyle}>
+                  <input type="checkbox" checked={capabilityConfirm} onChange={(e) => setCapabilityConfirm(e.target.checked)} />
+                  确认应用到当前筛选模型
+                </label>
+                <Button size="sm" variant="ghost" disabled={busyId === 'bulk-model-capabilities'} onClick={() => void applyBulkCapabilities()}>
+                  {busyId === 'bulk-model-capabilities' ? '处理中…' : '批量维护能力'}
+                </Button>
+              </Card>
+            </div>
+          </details>
+        ) : null}
+
+        {error ? null : !items ? <SectionLoader text="正在加载模型…" /> : items.length === 0 ? <Empty text={!canWrite ? '当前租户还没有模型。请联系 Owner 或 Admin 添加。' : ownedPlatforms.length === 0 ? '还没有可用 Provider。请先添加 Provider，再回到这里添加模型。' : '还没有模型。选择上方 Provider、上游模型标识和至少一种用途即可保存。'} /> : (
+          <div className="lg-config-table-shell" style={tableShellStyle}>
+            <table className="lg-data-table" style={{ width: '100%', borderCollapse: 'collapse' }}>
+              <thead style={{ position: 'sticky', top: 0, background: 'var(--bg-surface)' }}>
+                <tr>
+                  <th style={th}>模型</th>
+                  <th style={th}>平台</th>
+                  <th style={th}>协议</th>
+                  <th style={th}>能力</th>
+                  <th style={th}>价格</th>
+                  <th style={th}>配置来源</th>
+                  <th style={th}>状态</th>
+                  <th style={th}>密钥</th>
+                  <th style={th}>操作</th>
+                </tr>
+              </thead>
+              <tbody>
+                {items.map((m) => {
+                  const en = boolChip(m.enabled, '启用', '停用');
+                  const key = boolChip(m.hasKey, '已配置', '继承平台');
+                  const caps = m.capabilities.filter((c) => c.value).slice(0, 4);
+                  const provider = m.platformId ? platformById.get(m.platformId) : undefined;
+                  return (
+                    <tr key={m.id}>
+                      <td style={td}>
+                        <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 180 }}>
+                          <span style={{ fontWeight: 600 }}>{m.name || m.modelName}</span>
+                          <span style={MONO_META}>{m.modelName || m.id}</span>
+                        </div>
+                      </td>
+                      <td style={td}>
+                        {provider ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: GAP.tight, minWidth: 150 }}>
+                            <span>{provider.name}</span>
+                            <EntityPreviewDrawer
+                              buttonLabel="查看 Provider"
+                              kicker="模型关联的 Provider"
+                              title={provider.name}
+                              summary={`模型“${m.name || m.modelName}”会通过这条 Provider 连接访问上游。先在当前页核对协议、地址和密钥状态，不需要跳到 Provider 页面。`}
+                              status={[
+                                { label: provider.enabled ? 'Provider 已启用' : 'Provider 已停用', tone: provider.enabled ? 'good' : 'warning' },
+                                { label: provider.hasKey ? 'Provider 密钥已配置' : 'Provider 密钥缺失', tone: provider.hasKey ? 'good' : 'warning' },
+                                { label: m.hasKey ? '模型使用专属密钥' : '模型继承 Provider 密钥' },
+                              ]}
+                              sections={[
+                                {
+                                  title: '上游连接',
+                                  fields: [
+                                    { label: 'Provider 类型', value: provider.platformType || '未配置' },
+                                    { label: 'API 地址', value: <code>{provider.apiUrl || '未配置'}</code> },
+                                    { label: '模型上游标识', value: <code>{m.modelName || m.id}</code> },
+                                    { label: '最终协议', value: m.protocol && m.protocol !== 'inherit' ? m.protocol : `继承 ${provider.platformType || 'Provider'}` },
+                                  ],
+                                },
+                                {
+                                  title: '运行边界',
+                                  description: '当前状态只说明配置是否具备调用条件；真实可用性仍由模型池健康和请求记录确认。',
+                                  fields: [
+                                    { label: 'Provider 最大并发', value: provider.maxConcurrency ?? '未配置' },
+                                    { label: '模型状态', value: m.enabled ? '已启用' : '已停用' },
+                                    { label: '价格', value: formatModelPrice(m) },
+                                  ],
+                                },
+                              ]}
+                            />
+                          </div>
+                        ) : m.platformId ? <code>{m.platformId}</code> : '—'}
+                      </td>
+                      <td style={td}>{m.protocol || '继承平台'}</td>
+                      <td style={td}>
+                        <span style={{ display: 'inline-flex', gap: GAP.tight, flexWrap: 'wrap' }}>
+                          {caps.length ? caps.map((c) => <Chip key={`${m.id}:${c.type}`} label={c.type} color="var(--text-secondary)" bg="var(--bg-elevated)" />) : <span style={{ color: 'var(--text-muted)' }}>—</span>}
+                        </span>
+                      </td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>{formatModelPrice(m)}</td>
+                      <td style={td}>
+                        {m.authority === 'llm_gateway' ? (
+                          <Chip label="平台配置" color="#7aa2ff" bg="rgba(122,162,255,0.14)" title={m.claimedAt ? `导入于 ${m.claimedAt}` : undefined} />
+                        ) : (
+                          <Chip label="待导入" color="var(--text-muted)" bg="var(--bg-elevated)" />
+                        )}
+                      </td>
+                      <td style={td}><Chip label={en.label} color={en.color} bg={en.bg} /></td>
+                      <td style={td}><Chip label={key.label} color={key.color} bg={key.bg} /></td>
+                      <td style={{ ...td, whiteSpace: 'nowrap' }}>
+                        {canWrite ? <span style={{ display: 'inline-flex', alignItems: 'center', gap: GAP.normal }}>
+                          {keyEditId === m.id ? (
+                            <>
+                              <input
+                                type="password"
+                                autoComplete="new-password"
+                                value={keyValue}
+                                onChange={(e) => setKeyValue(e.target.value)}
+                                placeholder="apiKey"
+                                style={inputStyle}
+                              />
+                              <Button size="sm" variant="primary" disabled={busyId === m.id} onClick={() => void saveApiKey(m)}>
+                                保存
+                              </Button>
+                              <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(null); setKeyValue(''); }}>
+                                取消
+                              </Button>
+                            </>
+                          ) : (
+                            <>
+                              {m.authority === 'llm_gateway' ? (
+                                <>
+                                  <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => { setKeyEditId(m.id); setKeyValue(''); }}>
+                                    更新密钥
+                                  </Button>
+                                  {m.hasKey ? (
+                                    <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void clearApiKey(m)}>
+                                      清除密钥
+                                    </Button>
+                                  ) : null}
+                                </>
+                              ) : (
+                                <Button size="sm" variant="ghost" disabled={busyId === m.id} onClick={() => void claimModel(m)}>
+                                  {busyId === m.id ? '处理中…' : '导入到平台'}
+                                </Button>
+                              )}
+                              <Button size="sm" variant={m.enabled ? 'ghost' : 'primary'} disabled={busyId === m.id} onClick={() => void toggle(m)}>
+                                {busyId === m.id ? '处理中…' : m.enabled ? '停用' : '启用'}
+                              </Button>
+                            </>
+                          )}
+                        </span> : <span style={{ color: 'var(--text-muted)' }}>只读</span>}
+                      </td>
+                    </tr>
+                  );
+                })}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </PageBody>
+    </PageShell>
   );
 }
 
@@ -564,16 +626,21 @@ const selectStyle: React.CSSProperties = TOOLBAR_CONTROL;
 
 const inputStyle: React.CSSProperties = { ...TOOLBAR_CONTROL, flex: '1 1 190px' };
 
+/** 批量维护工具条：卡片规格，内边距取 INSET_PADDING(10) 这一档。 */
 const toolbarStyle: React.CSSProperties = {
   flexShrink: 0,
   display: 'flex',
   alignItems: 'center',
-  gap: 8,
+  gap: GAP.normal,
   flexWrap: 'wrap',
-  padding: '8px 10px',
-  background: 'var(--bg-surface)',
-  border: '1px solid var(--border-subtle)',
-  borderRadius: 'var(--radius)',
+  padding: INSET_PADDING,
+};
+
+const bulkStackStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: GAP.normal,
+  marginTop: GAP.tight,
 };
 
 const toolbarTitleStyle: React.CSSProperties = {
@@ -585,29 +652,87 @@ const toolbarTitleStyle: React.CSSProperties = {
 const checkStyle: React.CSSProperties = {
   display: 'inline-flex',
   alignItems: 'center',
-  gap: 6,
+  gap: GAP.tight,
+  fontSize: 'var(--fs-body)',
+  color: 'var(--text-secondary)',
+};
+
+const countStyle: React.CSSProperties = { color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' };
+
+const filterRowStyle: React.CSSProperties = {
+  flexShrink: 0,
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  flexWrap: 'wrap',
+};
+
+const createFormStyle: React.CSSProperties = {
+  display: 'flex',
+  flexDirection: 'column',
+  gap: GAP.section,
+};
+
+/** 用途多选：卡片内的次级块，内边距只允许 INSET_PADDING(10)。 */
+const purposeFieldsetStyle: React.CSSProperties = {
+  margin: 0,
+  minWidth: 0,
+  padding: INSET_PADDING,
+  border: '1px solid var(--border-subtle)',
+  borderRadius: 'var(--radius-sm)',
+};
+
+const legendStyle: React.CSSProperties = {
+  padding: '0 6px',
+  fontSize: 'var(--fs-secondary)',
+  fontWeight: 600,
+  color: 'var(--text-secondary)',
+};
+
+const purposeStyle: React.CSSProperties = {
+  display: 'flex',
+  gap: GAP.tight,
+  alignItems: 'flex-start',
+  fontSize: 'var(--fs-body)',
+  color: 'var(--text-secondary)',
+};
+
+const pricingRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.tight,
+  flexWrap: 'wrap',
+};
+
+const summaryStyle: React.CSSProperties = {
+  cursor: 'pointer',
   fontSize: 'var(--fs-secondary)',
   color: 'var(--text-secondary)',
 };
 
-const createCardStyle: React.CSSProperties = {
-  flexShrink: 0,
-  padding: 14,
+const submitRowStyle: React.CSSProperties = {
+  display: 'flex',
+  alignItems: 'center',
+  gap: GAP.normal,
+  flexWrap: 'wrap',
+};
+
+/** 表格自己滚动 + 表头吸顶：产物要填满 PageBody 剩余高度，不塌成内容高度。 */
+const tableShellStyle: React.CSSProperties = {
+  flex: 1,
+  minHeight: 0,
+  overflow: 'auto',
+  overscrollBehavior: 'contain',
   background: 'var(--bg-surface)',
   border: '1px solid var(--border-subtle)',
   borderRadius: 'var(--radius)',
 };
 
-const fieldStyle: React.CSSProperties = {
-  display: 'flex',
-  flexDirection: 'column',
-  gap: 5,
-  minWidth: 0,
+const providerLinkStyle: React.CSSProperties = {
+  fontSize: 'var(--fs-secondary)',
+  color: 'var(--accent)',
+  textDecoration: 'none',
 };
-
-const labelStyle: React.CSSProperties = FIELD_LABEL;
-
-const formInputStyle: React.CSSProperties = FIELD_INPUT;
 
 type ModelDraftState = {
   platformId: string;
@@ -710,7 +835,7 @@ function mergeCapabilityText(current: string, incoming: string) {
 
 function Empty({ text }: { text: string }) {
   return (
-    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-secondary)' }}>
+    <div style={{ flex: 1, minHeight: 0, display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--text-muted)', fontSize: 'var(--fs-body)' }}>
       {text}
     </div>
   );

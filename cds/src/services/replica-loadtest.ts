@@ -32,6 +32,7 @@ import type { StateService } from './state.js';
 import { resolveEffectiveProfile } from './container.js';
 import { dnsSafeProfile } from './forwarder-route-publisher.js';
 import { buildPreviewUrlForProject } from './comment-template.js';
+import { occupiedHostOwners, publishedServiceLabels } from './preview-entrypoints.js';
 
 /** 压测硬上限。改这里等于改「最多能把宿主压到什么程度」，请连同回归测试一起改。 */
 export const LOADTEST_LIMITS = {
@@ -792,11 +793,23 @@ export class ReplicaLoadTestService {
     const project = this.opts.state.getProjects().find((p) => p.id === branch.projectId);
     const previewSlug = buildPreviewUrlForProject('', branch.branch, project, branch.projectId).previewSlug || '';
     const labels = new Set<string>();
+    // 被别名**或自定义域名**占走的 host 不属于本分支（发布器已跳过），放进白名单等于
+    // 允许这个分支的授权用户让服务端去打别人的应用（Codex P2）。判据与发布器同一份。
+    const occupied = {
+      hosts: occupiedHostOwners(this.opts.state.getAllBranches(), this.opts.rootDomains ?? []),
+      roots: this.opts.rootDomains ?? [],
+    };
     if (previewSlug) {
       labels.add(previewSlug);
       for (const p of this.opts.state.getEffectiveProfilesForBranch(branch)) {
         const sub = resolveEffectiveProfile(p, branch).subdomain;
-        if (sub) labels.add(`${previewSlug}-${String(sub).toLowerCase()}`);
+        // 走发布器同一个枚举口径（含 63 上限截断+摘要**与历史别名**），否则白名单会漏掉
+        // 真实发布的 host —— 压测打自己发布的别名地址会被自家 SSRF 闸 403 挡掉（Codex P2）。
+        if (sub) {
+          for (const label of publishedServiceLabels(previewSlug, String(sub).toLowerCase(), occupied)) {
+            labels.add(label);
+          }
+        }
       }
       for (const [profileId, rs] of Object.entries(branch.replicaSets ?? {})) {
         for (const m of rs.members) {

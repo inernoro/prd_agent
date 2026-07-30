@@ -295,16 +295,50 @@ public class VideoGenService : IVideoGenService
             throw new InvalidOperationException("仅在编辑阶段可生成分镜视频");
         if (sceneIndex < 0 || sceneIndex >= run.Scenes.Count)
             throw new ArgumentOutOfRangeException(nameof(sceneIndex), "分镜序号超出范围");
+        if (run.Scenes[sceneIndex].Status is SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering)
+            return;
+        if (run.Scenes[sceneIndex].Status == SceneItemStatus.Generating)
+            throw new InvalidOperationException("分镜提示词正在改写，请完成后再生成视频");
 
+        await TryQueueSceneRenderAsync(
+            runId,
+            ownerAdminId,
+            sceneIndex,
+            appKey,
+            reopenCompletedRun: run.Status == VideoGenRunStatus.Completed,
+            ct);
+    }
+
+    internal async Task<bool> TryQueueSceneRenderAsync(
+        string runId,
+        string ownerAdminId,
+        int sceneIndex,
+        string? appKey,
+        bool reopenCompletedRun,
+        CancellationToken ct = default)
+    {
         var updates = new List<UpdateDefinition<VideoGenRun>>
         {
-            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Rendering),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.Status", SceneItemStatus.Submitting),
             Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.ErrorMessage", (string?)null),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.JobId", (string?)null),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.SubmissionStartedAt", DateTime.UtcNow),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.RenderLeaseId", (string?)null),
+            Builders<VideoGenRun>.Update.Set($"Scenes.{sceneIndex}.RenderLeaseExpiresAt", (DateTime?)null),
         };
-        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
-        await _db.VideoGenRuns.UpdateOneAsync(x => x.Id == runId,
+        if (reopenCompletedRun) AddReopenEditingUpdates(updates);
+        var fb = Builders<VideoGenRun>.Filter;
+        var filter = fb.Eq(x => x.Id, runId)
+                     & fb.Eq(x => x.OwnerAdminId, ownerAdminId)
+                     & fb.In(x => x.Status, [VideoGenRunStatus.Editing, VideoGenRunStatus.Completed])
+                     & fb.Nin<string>($"Scenes.{sceneIndex}.Status",
+                         [SceneItemStatus.Generating, SceneItemStatus.Submitting, SceneItemStatus.SubmittingClaimed, SceneItemStatus.Polling, SceneItemStatus.PollingClaimed, SceneItemStatus.Rendering]);
+        if (appKey != null) filter &= fb.Eq(x => x.AppKey, appKey);
+        var result = await _db.VideoGenRuns.UpdateOneAsync(
+            filter,
             Builders<VideoGenRun>.Update.Combine(updates),
             cancellationToken: ct);
+        return result.ModifiedCount == 1;
     }
 
     public async Task<int> RenderScenesAsync(
@@ -325,24 +359,25 @@ public class VideoGenService : IVideoGenService
         if (requested?.Any(index => index < 0 || index >= run.Scenes.Count) == true)
             throw new ArgumentOutOfRangeException(nameof(sceneIndexes), "分镜序号超出范围");
 
-        var updates = new List<UpdateDefinition<VideoGenRun>>();
+        var indexesToQueue = new List<int>();
         for (var index = 0; index < run.Scenes.Count; index++)
         {
             var scene = run.Scenes[index];
             if (requested != null && !requested.Contains(index)) continue;
-            if (scene.Status is SceneItemStatus.Done or SceneItemStatus.Rendering or SceneItemStatus.Generating) continue;
-
-            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.Status", SceneItemStatus.Rendering));
-            updates.Add(Builders<VideoGenRun>.Update.Set($"Scenes.{index}.ErrorMessage", (string?)null));
+            if (scene.Status is SceneItemStatus.Done or SceneItemStatus.Submitting or SceneItemStatus.SubmittingClaimed or SceneItemStatus.Polling or SceneItemStatus.PollingClaimed or SceneItemStatus.Rendering or SceneItemStatus.Generating) continue;
+            indexesToQueue.Add(index);
         }
 
-        if (updates.Count == 0) return 0;
-        var count = updates.Count / 2;
-        if (run.Status == VideoGenRunStatus.Completed) AddReopenEditingUpdates(updates);
-        await _db.VideoGenRuns.UpdateOneAsync(
-            x => x.Id == runId,
-            Builders<VideoGenRun>.Update.Combine(updates),
-            cancellationToken: ct);
+        if (indexesToQueue.Count == 0) return 0;
+        var results = await Task.WhenAll(indexesToQueue.Select(index => TryQueueSceneRenderAsync(
+            runId,
+            ownerAdminId,
+            index,
+            appKey,
+            reopenCompletedRun: run.Status == VideoGenRunStatus.Completed,
+            ct)));
+        var count = results.Count(queued => queued);
+        if (count == 0) return 0;
         await PublishEventAsync(runId, "scenes.render.queued", new { count });
         return count;
     }
