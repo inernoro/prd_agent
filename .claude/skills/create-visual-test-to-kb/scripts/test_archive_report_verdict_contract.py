@@ -879,6 +879,49 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+    def test_not_yet_fixed_participates_in_fail_only_verdicts(self):
+        cases = (
+            ("构建尚未修复", "硬门禁失败", "硬门禁失败事实"),
+            ("CDS smoke 仍未修复", "硬门禁失败", "硬门禁失败事实"),
+            (
+                "验收报告归档故障尚未修复",
+                "验收链路失败",
+                "验收链路失败事实",
+            ),
+        )
+        for fact, fail_nature, label in cases:
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertTrue(
+                    any(label in error and "必须使用 fail" in error for error in errors)
+                )
+
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body(fail_nature).replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+        for fact in (
+            "构建尚未修复，现已修复",
+            "CDS smoke 仍未正常，现已正常",
+            "验收报告归档故障尚未修复，随后已修复",
+        ):
+            with self.subTest(verdict="conditional", fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_conclusion_column_participates_in_failure_state(self):
         cases = (
             ("CDS smoke 当前失败", "硬门禁失败", "硬门禁"),

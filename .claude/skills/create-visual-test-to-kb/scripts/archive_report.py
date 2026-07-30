@@ -609,7 +609,7 @@ def _strip_severity_count_claims(text):
 
 _FAILURE_ACTION_PATTERN = (
     r"(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接|恢复|解决|"
-    r"关闭|可用|就绪|ready)"
+    r"关闭|修复|正常|可用|就绪|ready)"
 )
 _ONGOING_FAILURE_PREFIX_PATTERN = (
     r"(?:(?:尚|还|仍然?|依然|暂时?|至今)?(?:未|没(?:有)?))"
@@ -727,7 +727,8 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
         rf"\s*(?:(?:当前|目前|现在|本次|先前|此前|一度|曾|仍然|仍|依然|"
         rf"再次|重新|均|都|同时|全部|一并|共同|二者|两者|已|已经|执行|"
         rf"运行|任务|操作|流程|作业|步骤|环节|过程|用例|测试|检查|验证|"
-        rf"检测|校验|判定|被判定|显示|表明|呈现|处于|结果|状态|为|是|"
+        rf"检测|校验|判定|被判定|显示|表明|呈现|处于|问题|故障|异常|"
+        rf"缺陷|结果|状态|为|是|"
         rf"[:：=]|[-=]>|→|{_DIAGNOSTIC_MODIFIER_PATTERN})\s*)*",
         left_gap,
         re.I,
