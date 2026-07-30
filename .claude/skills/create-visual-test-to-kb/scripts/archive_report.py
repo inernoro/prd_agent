@@ -730,15 +730,15 @@ def _daily_fact_signals(values, body):
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
     root_fact_cells = []
     for row in root_cause_rows:
-        status_cells = "；".join(row[4:])
-        if not _has_resolved_failure_status(status_cells):
+        conclusion_cell = row[4] if len(row) > 4 else ""
+        if not _has_resolved_failure_status(conclusion_cell):
             root_fact_cells.extend(row[:4])
     root_facts = _strip_resolved_failure_phrases("；".join(root_fact_cells))
     chain_failure = bool(
         re.search(
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
             r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)"
-            r"|(?:失败|未通过|不可交付|无法完成|不可用"
+            r"|(?:失败|未通过|不可交付|无法完成"
             r"|无法(?=(?:正常)?(?:完成|执行|送达|归档|发布|打开|访问|连接)))"
             r"[^。；;|\n]{0,28}"
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)",

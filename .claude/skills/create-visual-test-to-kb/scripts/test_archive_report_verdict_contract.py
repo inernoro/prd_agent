@@ -208,6 +208,20 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 self.assertEqual([], errors)
 
+    def test_evidence_unavailable_for_confirmation_is_not_chain_failure(self):
+        for fact in (
+            "当前截图不可用于验证报告发布是否覆盖移动端",
+            "现有证据不可用于确认 Slack 通知覆盖全部频道",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
             for fact in (
@@ -232,6 +246,21 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertEqual([], errors)
+
+    def test_future_closing_action_does_not_resolve_current_failure(self):
+        for action in (
+            "重试后恢复服务",
+            "随后修复构建环境",
+            "最终恢复服务并重试",
+        ):
+            with self.subTest(action=action):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 未通过"
+                ).replace(
+                    "创建冻结预览后复测", action
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
 
     def test_non_fail_verdicts_reject_fail_only_facts(self):
         cases = (
