@@ -608,21 +608,21 @@ def _strip_severity_count_claims(text):
 
 
 _FAILURE_FACT_PATTERN = re.compile(
-    r"失败|未通过|阻断|不可用|不可交付|无法完成",
+    r"失败|未通过|阻断|不可用|不可交付|无法完成"
+    r"|无法(?=(?:正常)?(?:执行|送达|归档|发布|打开|访问|连接))",
     re.I,
 )
 _RESOLVED_FACT_PATTERN = re.compile(
     r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
     r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭)"
-    r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
-    r"|恢复正常",
+    r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭)",
     re.I,
 )
 _FAILURE_SUBJECT_PATTERNS = (
     ("ready", re.compile(r"ready", re.I)),
     ("smoke", re.compile(r"smoke|冒烟", re.I)),
     ("build", re.compile(r"构建|编译", re.I)),
-    ("service", re.compile(r"服务", re.I)),
+    ("service-ready", re.compile(r"服务就绪", re.I)),
     ("forced-test", re.compile(r"强制测试", re.I)),
     ("acceptance-chain", re.compile(r"验收链路", re.I)),
     ("evidence-chain", re.compile(r"证据链", re.I)),
@@ -647,74 +647,65 @@ def _failure_subjects(text):
     }
 
 
-def _clause_is_explicitly_resolved(clause):
-    """Return whether a failure is closed later in the same subject clause."""
-    failure = _FAILURE_FACT_PATTERN.search(clause or "")
-    if not failure:
-        return False
-    closure = _RESOLVED_FACT_PATTERN.search(clause, failure.end())
-    if not closure:
-        return False
-    if _FAILURE_FACT_PATTERN.search(clause, closure.end()):
-        return False
-    failure_subjects = _failure_subjects(clause[: failure.end()])
-    closure_subjects = _failure_subjects(clause[failure.end() : closure.start()])
-    return not closure_subjects or closure_subjects == failure_subjects
+def _subject_occurrences(text):
+    """Return canonical subject positions for nearest-event binding."""
+    occurrences = []
+    for name, pattern in _FAILURE_SUBJECT_PATTERNS:
+        for match in pattern.finditer(text or ""):
+            occurrences.append(((match.start() + match.end()) / 2, name))
+    return occurrences
 
 
-def _adjacent_clause_closes_failure(failure_clause, closure_clause):
-    """Bind a punctuated closure only to the same single failure subject."""
-    failure = _FAILURE_FACT_PATTERN.search(failure_clause or "")
-    closure = _RESOLVED_FACT_PATTERN.search(closure_clause or "")
-    if not failure or not closure:
-        return False
-    if _FAILURE_FACT_PATTERN.search(closure_clause, closure.end()):
-        return False
-    failure_subjects = _failure_subjects(failure_clause[: failure.end()])
-    closure_subjects = _failure_subjects(closure_clause[: closure.start()])
-    if len(failure_subjects) != 1:
-        return False
-    return not closure_subjects or closure_subjects == failure_subjects
+def _nearest_event_subjects(event, occurrences):
+    """Bind a status event to the nearest explicitly named subject."""
+    if not occurrences:
+        return set()
+    event_center = (event.start() + event.end()) / 2
+    distances = [(abs(position - event_center), name) for position, name in occurrences]
+    nearest_distance = min(distance for distance, _ in distances)
+    return {name for distance, name in distances if distance == nearest_distance}
 
 
-def _following_clause_reopens_failure(clauses, index, failure_subjects):
-    """Keep the prior failure when the next clause states it is still open."""
-    following_index = index + 2
-    if following_index >= len(clauses):
-        return False
-    following = clauses[following_index]
-    if not _FAILURE_FACT_PATTERN.search(following):
-        return False
-    following_subjects = _failure_subjects(following)
-    return not following_subjects or following_subjects == failure_subjects
+def _apply_subject_state(states, subjects, state):
+    """Apply an ordered status event to its explicit or carried subjects."""
+    for subject in subjects:
+        states[subject] = state
 
 
-def _strip_resolved_failure_phrases(text):
-    """Remove fully resolved failures while preserving unrelated subjects."""
-    clauses = _split_fact_clauses(text)
-    index = 0
-    while index < len(clauses):
-        if index % 2 or not _FAILURE_FACT_PATTERN.search(clauses[index]):
-            index += 1
+def _current_failure_subjects(text):
+    """Resolve subject status events in order within one root-cause cell."""
+    states = {}
+    context_subjects = set()
+    pending_states = []
+    for index, clause in enumerate(_split_fact_clauses(text)):
+        if index % 2:
             continue
-        failure = _FAILURE_FACT_PATTERN.search(clauses[index])
-        failure_subjects = _failure_subjects(clauses[index][: failure.end()])
-        if _clause_is_explicitly_resolved(
-            clauses[index]
-        ) and not _following_clause_reopens_failure(
-            clauses, index, failure_subjects
-        ):
-            clauses[index] = " "
-        elif index + 2 < len(clauses) and _adjacent_clause_closes_failure(
-            clauses[index], clauses[index + 2]
-        ) and not _following_clause_reopens_failure(
-            clauses, index + 2, failure_subjects
-        ):
-            clauses[index] = " "
-            clauses[index + 2] = " "
-            index += 2
-        index += 1
-    return "".join(clauses)
+        occurrences = _subject_occurrences(clause)
+        explicit_subjects = {name for _, name in occurrences}
+        if explicit_subjects:
+            for pending_state in pending_states:
+                _apply_subject_state(states, explicit_subjects, pending_state)
+            pending_states = []
+
+        events = [
+            (match, "failed")
+            for match in _FAILURE_FACT_PATTERN.finditer(clause)
+        ] + [
+            (match, "resolved")
+            for match in _RESOLVED_FACT_PATTERN.finditer(clause)
+        ]
+        events.sort(key=lambda item: item[0].start())
+        for event, state in events:
+            subjects = _nearest_event_subjects(event, occurrences)
+            if not subjects:
+                subjects = context_subjects
+            if subjects:
+                _apply_subject_state(states, subjects, state)
+            else:
+                pending_states.append(state)
+        if explicit_subjects:
+            context_subjects = explicit_subjects
+    return {subject for subject, state in states.items() if state == "failed"}
 
 
 def _has_resolved_failure_status(text):
@@ -854,33 +845,27 @@ def _daily_fact_signals(values, body):
         conclusion_cell = row[4] if len(row) > 4 else ""
         if not _has_resolved_failure_status(conclusion_cell):
             root_fact_cells.extend(row[:4])
-    root_facts = "；".join(
-        _normalize_evidence_usage_gap_clauses(
-            _strip_resolved_failure_phrases(cell)
+    current_failure_subjects = set()
+    for cell in root_fact_cells:
+        current_failure_subjects.update(
+            _current_failure_subjects(
+                _normalize_evidence_usage_gap_clauses(cell)
+            )
         )
-        for cell in root_fact_cells
-    )
     chain_failure = bool(
-        re.search(
-            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)"
-            r"|(?:失败|未通过|不可交付|无法完成"
-            r"|无法(?=(?:正常)?(?:完成|执行|送达|归档|发布|打开|访问|连接)))"
-            r"[^。；;|\n]{0,28}"
-            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)",
-            root_facts,
-            re.I,
-        )
+        current_failure_subjects
+        & {
+            "acceptance-chain",
+            "evidence-chain",
+            "archive",
+            "report-publish",
+            "verify-open",
+            "slack",
+        }
     )
     hard_gate_failure = bool(
-        re.search(
-            r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用|无法完成)"
-            r"|(?:失败|未通过|阻断|不可用|无法完成)[^。；;|\n]{0,20}"
-            r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
-            root_facts,
-            re.I,
-        )
+        current_failure_subjects
+        & {"ready", "smoke", "build", "service-ready", "forced-test"}
     )
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)

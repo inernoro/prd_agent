@@ -42,6 +42,27 @@ def report_body(nature: str) -> str:
 
 
 class DailyVerdictContractTests(unittest.TestCase):
+    def test_failure_state_machine_tracks_subjects_across_word_orders(self):
+        cases = (
+            ("CDS smoke 当前失败", {"smoke"}),
+            ("CDS smoke 先前失败，重试后已通过", set()),
+            ("先前失败的 CDS smoke 现已通过", set()),
+            (
+                "CDS smoke 先前失败，已修复，完成部署后，复测仍未通过",
+                {"smoke"},
+            ),
+            ("CDS smoke 当前失败，归档已修复", {"smoke"}),
+            ("验收报告归档失败；现已修复", set()),
+            ("报告无法归档", {"archive"}),
+            ("无法完成报告发布", {"report-publish"}),
+        )
+        for fact, expected in cases:
+            with self.subTest(fact=fact):
+                self.assertEqual(
+                    expected,
+                    archive_report._current_failure_subjects(fact),
+                )
+
     def test_shipped_templates_have_one_exact_conclusion_section(self):
         for template_name in ("zz-report.md", "report-template.md"):
             with self.subTest(template=template_name):
@@ -253,6 +274,8 @@ class DailyVerdictContractTests(unittest.TestCase):
                 "验收报告归档失败已修复",
                 "CDS smoke 先前失败，重试后已通过",
                 "验收报告归档失败；现已修复",
+                "先前失败的 CDS smoke 现已通过",
+                "CDS ready 与 smoke 先前失败，现已通过",
             ):
                 with self.subTest(verdict=verdict, fact=fact):
                     body = report_body(nature).replace(
@@ -312,18 +335,23 @@ class DailyVerdictContractTests(unittest.TestCase):
                 self.assertEqual([], errors)
 
     def test_future_recovery_phrase_in_fact_does_not_resolve_failure(self):
-        body = report_body("硬门禁失败").replace(
-            "当前部署 SHA 已前进",
+        for fact in (
             "CDS smoke 当前失败，重试后恢复服务",
-        )
-        errors = archive_report._daily_conclusion_contract_errors("fail", body)
-        self.assertEqual([], errors)
+            "CDS smoke 当前失败，计划恢复正常",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
 
     def test_later_failure_in_same_clause_is_not_treated_as_resolved(self):
         for fact in (
             "CDS smoke 失败已修复但复测仍未通过",
             "CDS smoke 失败已修复，但复测仍未通过",
             "CDS smoke 先前失败，重试后已通过，但复测仍未通过",
+            "CDS smoke 先前失败，已修复，完成部署后，复测仍未通过",
         ):
             with self.subTest(fact=fact):
                 body = report_body("硬门禁失败").replace(
