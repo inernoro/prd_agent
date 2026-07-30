@@ -608,7 +608,10 @@ def _strip_severity_count_claims(text):
 
 
 _FAILURE_FACT_PATTERN = re.compile(
-    r"失败|未通过|未成功|未完成|阻断|不可用|不可交付|无法完成"
+    r"失败|未通过|没通过|未成功|没成功|未完成|没完成"
+    r"|阻断|不可用|不可交付|无法完成"
+    r"|超时|报错|中断|漏发|错误|崩溃|卡死|无响应|不可达|断连|断开"
+    r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
     r"|无法(?=(?:正常)?(?:执行|送达|归档|发布|打开|访问|连接))",
     re.I,
 )
@@ -717,7 +720,7 @@ def _failure_is_negated(clause, event, previous_event_end):
     scope = clause[previous_event_end : event.start()]
     suffix = clause[event.end() : event.end() + 12]
     if re.search(
-        r"(?:并未|没有|并非|并不是|不是|不算|未曾|从未|无)"
+        r"(?:并未|没有|并非|并不是|不是|不算|未曾|从未|无|未|没)"
         r"(?:发生|出现|处于|被判定为)?\s*$",
         prefix,
         re.I,
@@ -727,10 +730,18 @@ def _failure_is_negated(clause, event, previous_event_end):
         scope = pattern.sub(" ", scope)
     scope = re.sub(r"CDS|\s", "", scope, flags=re.I)
     if re.search(
-        r"(?:并未|并非|并不是|不是|不算|未曾|从未|无)"
+        r"(?:并未|并非|并不是|不是|不算|未曾|从未|无|未|没)"
         r"(?:发生|出现|处于|被判定为)?$"
-        r"|(?:未|没有)(?:发现|观察到|检测到|证据表明)$",
+        r"|(?:未|没|没有)(?:发现|观察到|检测到|证据表明)$"
+        r"|0(?:个|次|项)?$",
         scope,
+        re.I,
+    ):
+        return True
+    if re.match(
+        r"\s*(?:数(?:量)?|率|次数)?\s*(?:为|[:：=])?\s*0"
+        r"(?:个|次|项|%|％)?",
+        suffix,
         re.I,
     ):
         return True
@@ -819,7 +830,7 @@ def _normalize_evidence_usage_gap_clauses(text):
     evidence_status_pattern = re.compile(
         rf"({evidence_subject})"
         rf"((?:(?!(?:{evidence_subject}))[^。；;，,|\n]){{0,20}}?)"
-        r"(?:未成功|未完成)"
+        r"(?:未成功|没成功|未完成|没完成)"
         r"(?=(?:确认|验证|证明|覆盖|判断|评估))",
         re.I,
     )
