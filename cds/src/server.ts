@@ -3955,6 +3955,10 @@ export function createServer(deps: ServerDeps): express.Express {
     skillProxy: new SkillProxy({
       mapBase: process.env.CDS_MAP_BASE?.trim() || 'https://map.ebcone.net',
       cacheDir: path.join(deps.config.repoRoot, '.cds', 'skill-cache'),
+      localSkillRoots: [
+        path.join(deps.config.repoRoot, '.claude', 'skills'),
+        path.join(deps.config.repoRoot, '..', '.claude', 'skills'),
+      ],
     }),
     cdsUpstream: process.env.CDS_UPSTREAM?.trim() || 'https://cds.miduo.org',
     repoRoot: deps.config.repoRoot,
