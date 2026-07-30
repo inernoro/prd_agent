@@ -112,6 +112,13 @@ class DailyVerdictContractTests(unittest.TestCase):
                 "CDS smoke 与构建均已失败",
                 {"smoke", "build"},
             ),
+            ("CDS smoke 结果：失败", {"smoke"}),
+            ("验收报告归档结果为失败", {"archive"}),
+            ("构建状态=异常", {"build"}),
+            ("CDS smoke 结果显示为失败", {"smoke"}),
+            ("构建被判定为异常", {"build"}),
+            ("CDS smoke 状态→失败", {"smoke"}),
+            ("CDS smoke 结果：截图上传失败", set()),
             ("CDS smoke 先前失败，问题已解决", set()),
             ("CDS smoke 先前失败，现已正常", set()),
             ("CDS smoke 先前失败，现已成功", set()),
@@ -324,6 +331,10 @@ class DailyVerdictContractTests(unittest.TestCase):
             "CDS smoke 与构建同时失败",
             "CDS smoke、构建全部失败",
             "CDS smoke 与构建均已失败",
+            "CDS smoke 结果：失败",
+            "构建状态=异常",
+            "CDS smoke 结果显示为失败",
+            "构建被判定为异常",
         ):
             with self.subTest(fact=fact):
                 body = report_body("硬门禁失败").replace(
@@ -488,6 +499,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("构建已经成功地定位到报错", "硬门禁失败事实"),
             ("CDS smoke 与构建同时失败", "硬门禁失败事实"),
             ("CDS smoke、构建全部失败", "硬门禁失败事实"),
+            ("CDS smoke 结果：失败", "硬门禁失败事实"),
+            ("构建状态=异常", "硬门禁失败事实"),
+            ("验收报告归档结果为失败", "验收链路失败事实"),
             ("验收报告归档返回 500", "验收链路失败事实"),
         ):
             with self.subTest(fact=fact):
