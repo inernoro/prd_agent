@@ -613,20 +613,22 @@ def _daily_fact_signals(values, body):
     completeness = values.get("验收完整性", "").strip()
 
     severity_counts = _severity_counts_from_text(product_quality)
+    has_complete_severity_counts = bool(
+        severity_counts is not None and len(severity_counts) == 4
+    )
     zero_defects = bool(
         (
-            severity_counts is not None
-            and len(severity_counts) == 4
+            has_complete_severity_counts
             and sum(severity_counts.values()) == 0
         )
         or (
-            severity_counts is None
+            not has_complete_severity_counts
             and re.search(
-            r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
-            r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
-            r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
-            product_quality,
-            re.I,
+                r"(?:未发现|没有发现|未检测到|无|不存在)[^。；;|\n]{0,32}(?:产品)?缺陷"
+                r"|(?:缺陷(?:数(?:量)?)?)[^。；;|\n]{0,12}(?:为|[:：=])\s*0(?:\s*个)?"
+                r"|\b0\s*/\s*0\s*/\s*0\s*/\s*0\b",
+                product_quality,
+                re.I,
             )
         )
     )
@@ -704,7 +706,10 @@ def _daily_fact_signals(values, body):
     chain_failure = bool(
         re.search(
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)",
+            r"[^。；;|\n]{0,28}(?:失败|未通过|不可交付|无法完成|不可用)"
+            r"|(?:失败|未通过|不可交付|无法完成|不可用|无法)"
+            r"[^。；;|\n]{0,28}"
+            r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)",
             root_facts,
             re.I,
         )
@@ -712,8 +717,8 @@ def _daily_fact_signals(values, body):
     hard_gate_failure = bool(
         re.search(
             r"(?:CDS\s*)?(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)"
-            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用)"
-            r"|(?:失败|未通过)[^。；;|\n]{0,20}"
+            r"[^。；;|\n]{0,28}(?:失败|未通过|阻断|不可用|无法完成)"
+            r"|(?:失败|未通过|阻断|不可用|无法完成)[^。；;|\n]{0,20}"
             r"(?:ready|smoke|冒烟|构建|编译|服务就绪|强制测试)",
             root_facts,
             re.I,
@@ -808,6 +813,22 @@ def _daily_conclusion_contract_errors(verdict, body):
         errors.append("[事实一致性] pass 与未覆盖/无法确认或 P0-P3 缺陷事实不一致")
     if verdict == "conditional" and facts["blocking_product_failure"]:
         errors.append("[事实一致性] 已有 P0/P1 产品失败事实时不能使用 conditional，必须使用 fail")
+    if verdict in {"pass", "conditional"}:
+        fail_only_facts = [
+            label
+            for label, present in (
+                ("核心用例", facts["core_failure"]),
+                ("验收链路", facts["chain_failure"]),
+                ("硬门禁", facts["hard_gate_failure"]),
+            )
+            if present
+        ]
+        if fail_only_facts:
+            errors.append(
+                f"[事实一致性] verdict={verdict} 与"
+                + "、".join(fail_only_facts)
+                + "失败事实不一致，必须使用 fail"
+            )
     coverage_only = (
         facts["zero_defects"]
         and facts["incomplete"]

@@ -132,6 +132,20 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
 
+    def test_partial_severity_counts_preserve_explicit_zero_defect_claim(self):
+        body = report_body("非阻断风险").replace(
+            "未发现可复现产品缺陷，缺陷 0 个",
+            "未发现可复现产品缺陷，P0: 0，P1: 0",
+        ) + """
+## 缺陷清单
+
+| ID | 严重级 | 现象 |
+|---|---|---|
+| D-1 | P2 | 非阻断体验问题 |
+"""
+        errors = archive_report._daily_conclusion_contract_errors("conditional", body)
+        self.assertTrue(any("同时声称缺陷为 0" in error for error in errors))
+
     def test_hard_gate_failure_requires_hard_gate_fact(self):
         errors = archive_report._daily_conclusion_contract_errors(
             "fail", report_body("硬门禁失败")
@@ -143,6 +157,14 @@ class DailyVerdictContractTests(unittest.TestCase):
         body = report_body("硬门禁失败").replace(
             "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
             "CDS smoke 未通过 | API 持续返回 500",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+    def test_hard_gate_failure_accepts_failure_before_subject(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+            "无法完成构建 | 编译环境不可用",
         )
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
@@ -160,6 +182,54 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
+
+    def test_acceptance_chain_failure_accepts_failure_before_subject(self):
+        for fact in ("报告无法归档", "无法完成报告发布"):
+            with self.subTest(fact=fact):
+                body = report_body("验收链路失败").replace(
+                    "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+                    f"{fact} | CDS 报告 API 不可用",
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+    def test_non_fail_verdicts_reject_fail_only_facts(self):
+        cases = (
+            (
+                "核心用例",
+                lambda body: body.replace(
+                    "未发现可复现产品缺陷，缺陷 0 个", "核心用例执行失败"
+                ),
+            ),
+            (
+                "验收链路",
+                lambda body: body.replace(
+                    "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+                    "验收报告归档失败 | CDS 报告 API 不可用",
+                ),
+            ),
+            (
+                "硬门禁",
+                lambda body: body.replace(
+                    "当前部署 SHA 已前进 | 预览跟随最新 HEAD",
+                    "CDS smoke 未通过 | API 持续返回 500",
+                ),
+            ),
+        )
+        for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
+            for label, inject_fact in cases:
+                with self.subTest(verdict=verdict, label=label):
+                    errors = archive_report._daily_conclusion_contract_errors(
+                        verdict, inject_fact(report_body(nature))
+                    )
+                    self.assertTrue(
+                        any(
+                            f"verdict={verdict}" in error
+                            and f"{label}失败事实" in error
+                            and "必须使用 fail" in error
+                            for error in errors
+                        )
+                    )
 
     def test_missing_root_cause_chain_is_rejected(self):
         body = report_body("覆盖不足").split("## 根因链条", 1)[0]
