@@ -30,6 +30,8 @@ describe('buildDiskDiagnosisCommand 只许读', () => {
   const command = buildDiskDiagnosisCommand('/root/inernoro/prd_agent');
 
   it('覆盖 df / docker df / 镜像排行 / 热点目录 du', () => {
+    // 首行必须亮明主机身份：曾有用户对着 A 机的诊断去清 B 机的盘。
+    expect(command).toContain('hostname');
     expect(command).toContain('df -Pm');
     expect(command).toContain('docker system df');
     expect(command).toContain('docker images');

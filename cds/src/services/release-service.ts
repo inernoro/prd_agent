@@ -1823,6 +1823,10 @@ export function shouldUseCustomRollbackCommand(
 export function buildDiskDiagnosisCommand(appPath: string): string {
   const app = shellQuote(appPath || '.');
   return [
+    // 第一行先亮明「这是哪台机器」：2026-07-30 用户按诊断结果去清理，
+    // 结果在另一台机器（CDS 预览服务器）上执行了 prune，生产机纹丝不动。
+    // 主机名放在最前，杜绝「看着 A 机的数据、清着 B 机的盘」。
+    "printf '== 主机 =='; printf ' %s (%s)\\n' \"$(hostname 2>/dev/null || uname -n)\" \"$(whoami 2>/dev/null || echo unknown)\"",
     "echo '== df -Pm (appPath 所在文件系统) =='",
     `df -Pm ${app} 2>/dev/null || df -Pm /`,
     "echo; echo '== docker system df =='",
