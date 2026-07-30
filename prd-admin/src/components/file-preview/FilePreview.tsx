@@ -28,13 +28,11 @@ function ensureResponsiveHtml(html: string): string {
   return `<!DOCTYPE html><html><head>${inject}</head><body>${html}</body></html>`;
 }
 
-export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscribe, onSaveTranscriptNote }: {
+export function FilePreview({ entry, preview, transcriptNoteMd, onSaveTranscriptNote }: {
   entry?: DocBrowserEntry;
   preview: EntryPreview | null;
   /** 音频条目：已生成的转录笔记 markdown（有则渲染歌词滚轮跟读播放器） */
   transcriptNoteMd?: string | null;
-  /** 打开既有的「换个整理方式」流程；交互播放器不在前端伪造新摘要。 */
-  onRestyleTranscribe?: () => void;
   /** 保存用户在原文句子上的直接校对。 */
   onSaveTranscriptNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
@@ -101,7 +99,6 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
             src={fileUrl}
             noteMd={transcriptNoteMd}
             styleKey={entry.metadata?.transcribe_style_key}
-            onRestyle={onRestyleTranscribe}
             onSaveNote={onSaveTranscriptNote}
           />
         ) : <AudioWavePlayer src={fileUrl} />}
@@ -384,11 +381,10 @@ export function FilePreview({ entry, preview, transcriptNoteMd, onRestyleTranscr
   );
 }
 
-function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: {
+function AudioDocumentPreview({ src, noteMd, styleKey, onSaveNote }: {
   src: string;
   noteMd: string;
   styleKey?: string;
-  onRestyle?: () => void;
   onSaveNote?: (nextNoteMd: string) => Promise<boolean | void>;
 }) {
   const summary = extractTranscriptSummary(noteMd);
@@ -435,8 +431,6 @@ function AudioDocumentPreview({ src, noteMd, styleKey, onRestyle, onSaveNote }: 
           src={src}
           noteMd={noteMd}
           documentMode
-          styleKey={styleKey}
-          onRestyle={onRestyle}
           onSaveNote={onSaveNote}
         />
       )}
