@@ -224,7 +224,7 @@ export function RecordAudioSheet({
   // 静音守卫：整段峰值电平过低时，完成前先确认（避免上传一段空录音）
   const [confirmSilent, setConfirmSilent] = useState(false);
   const peakLevelRef = useRef(0);
-  // 本机保险箱会话：分片实时落 IndexedDB，上传成功前不删（断网/崩溃可恢复）
+  // 本机保险箱会话：分片实时落 IndexedDB，云端归档可用前不删（断网/崩溃可恢复）
   const vaultIdRef = useRef(`rec-${Date.now()}-${Math.random().toString(36).slice(2, 8)}`);
 
   const streamRef = useRef<MediaStream | null>(null);
@@ -236,6 +236,9 @@ export function RecordAudioSheet({
   const uploadSessionIdRef = useRef<string | null>(null);
   const uploadSessionPromiseRef = useRef<Promise<string | null> | null>(null);
   const uploadQueueRef = useRef<Promise<void>>(Promise.resolve());
+  // IndexedDB 写入也必须串行并在完成录音前收口。否则结果页可能先于最后一个
+  // 分片落盘读取保险箱，表现为同一条录音偶发没有播放按钮。
+  const vaultWriteQueueRef = useRef<Promise<void>>(Promise.resolve());
   const uploadChunkIndexRef = useRef(0);
   const liveUploadFailedRef = useRef(false);
   const liveTranscriptionRef = useRef<LiveTranscriptionSocket | null>(null);
@@ -495,14 +498,21 @@ export function RecordAudioSheet({
           audioBitsPerSecond: 64_000,
         });
         recorderRef.current = rec;
-        void vaultStartSession(vaultIdRef.current, mime || 'audio/webm', storeId);
+        vaultWriteQueueRef.current = vaultStartSession(
+          vaultIdRef.current,
+          mime || 'audio/webm',
+          storeId,
+        ).then(() => undefined);
         void ensureUploadSession();
         rec.ondataavailable = (e) => {
           if (e.data.size > 0) {
             chunksRef.current.push(e.data);
             bytesRef.current += e.data.size;
             // 分片实时落本机保险箱：崩溃/断网/忘关都不丢已录内容
-            void vaultAppendChunk(vaultIdRef.current, e.data);
+            vaultWriteQueueRef.current = vaultWriteQueueRef.current
+              .then(() => vaultAppendChunk(vaultIdRef.current, e.data))
+              .then(() => undefined)
+              .catch(() => undefined);
             queueLiveChunk(e.data);
             // 接近后端 20MB 上限：自动收尾并直接进转录，不让录音白费
             if (bytesRef.current >= MAX_BYTES && rec.state !== 'inactive') {
@@ -528,6 +538,7 @@ export function RecordAudioSheet({
               }
             }
             await uploadQueueRef.current;
+            await vaultWriteQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
             if (sessionId && !liveUploadFailedRef.current) {
               const completionStartedAt = Date.now();
@@ -644,6 +655,7 @@ export function RecordAudioSheet({
             onCompleteRef.current(file, vaultIdRef.current, targetStoreIdRef.current || storeId);
           } else if (finishModeRef.current === 'discard') {
             // 用户主动放弃：保险箱一并清掉，不留恢复弹窗骚扰
+            await vaultWriteQueueRef.current;
             void vaultDeleteSession(vaultIdRef.current);
             await uploadQueueRef.current;
             const sessionId = uploadSessionIdRef.current;
@@ -916,6 +928,7 @@ export function RecordAudioSheet({
         </div>
         <p
           id="recording-live-transcript"
+          data-testid="recording-live-transcript"
           ref={liveTranscriptScrollRef}
           className="mt-2 min-h-10 whitespace-pre-wrap break-words pr-1 text-[13px] leading-6 text-token-secondary"
           style={{
@@ -933,6 +946,7 @@ export function RecordAudioSheet({
 
       {/* 实时电平滚动波形（产物感：屏幕上有持续变化的内容） */}
       <div
+        data-testid="recording-waveform"
         className="w-full rounded-[16px] px-3 py-4"
         style={{ background: 'var(--bg-elevated)', border: '1px solid var(--border-faint)' }}>
         <canvas ref={canvasRef} width={560} height={64} className="w-full" style={{ height: 64 }} />
@@ -968,6 +982,7 @@ export function RecordAudioSheet({
         </button>
         <button
           onClick={requestComplete}
+          data-testid="recording-finish"
           disabled={state === 'requesting' || state === 'finalizing'}
           aria-label="结束录音并转成文字"
           className="flex h-16 w-16 cursor-pointer items-center justify-center rounded-full transition-transform active:scale-95 disabled:opacity-40"
