@@ -1029,6 +1029,23 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_core_failure_is_independent_from_product_defect_risk(self):
+        product_quality = "核心用例执行失败，未发现可复现产品缺陷，缺陷 0 个"
+        body = report_body("核心用例失败").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", product_quality
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+        body = report_body("产品失败").replace(
+            "未发现可复现产品缺陷，缺陷 0 个", product_quality
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertTrue(
+            any("判定性质为产品失败" in error and "没有 P0/P1" in error for error in errors)
+        )
+        self.assertFalse(any("同时声称缺陷为 0" in error for error in errors))
+
     def test_quantified_core_failure_participates_in_verdict_gate(self):
         for fact in (
             "核心用例未全部通过",

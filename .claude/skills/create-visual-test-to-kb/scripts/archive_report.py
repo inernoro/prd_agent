@@ -1221,7 +1221,6 @@ def _daily_fact_signals(values, body):
     product_core_failure = "core-case" in _current_failure_subjects(
         positive_product
     )
-    blocking_product_failure = blocking_product_failure or product_core_failure
     product_risk = blocking_product_failure or nonblocking_product_risk
     root_cause_headers, root_cause_rows = _section_table(body, "根因链条")
     failure_states_by_scope = {}
