@@ -626,14 +626,30 @@ def main():
     print(f"  条目 id={eid}{'（原地更新）' if reuse_eid else ''} title={a.title} "
           f"dailyDate={daily_date} shots={len(manifest)}")
 
-    # write content + verify hasContent（空壳兜底）
-    # content_state(): True=确认有正文 / False=确认为空 / None=验证不可达(524等，不能下结论)
+    # write content + verify（校验的是「**本次**正文是否落库」，不是「有没有正文」）
+    # content_state(): True=确认本次正文已落库 / False=确认不是本次正文 / None=验证不可达
+    #
+    # 为什么不能只看 hasContent：原地更新的条目**本来就有正文**，hasContent 恒为 true，
+    # 于是 PUT 失败/未持久化也会被判成成功，接着水位线被推进到 HEAD，而库里still是旧正文。
+    # 下一期从「其实从未被报道过的位置」继续采 —— 那批提交永久丢失，且没有任何报错。
+    # 这正是本 PR 要根治的形状，只是这次由我自己的原地更新改动引入。
+    # 故改为**比对正文本体**：content 端点实测原样返回正文（30800 字节逐字节相等）。
     def content_state():
         try:
             r = curl(H + [f"{base}/entries/{eid}/content"], retries=2)
             if not r.get("success"):
                 return None
-            return bool((r.get("data") or {}).get("hasContent"))
+            d = r.get("data") or {}
+            got = d.get("content")
+            if got is None:
+                # 老后端可能不回正文：新建路径下 hasContent 仍是有效判据（空 → 非空即证明写入），
+                # 但原地更新路径下它等于没校验，必须明说，不能让人以为验过了。
+                if reuse_eid:
+                    print("  [告警] content 端点未返回正文，原地更新无法确认本次正文是否落库；"
+                          "水位线可能与库中正文不匹配，请核对后重跑")
+                return bool(d.get("hasContent"))
+            # strip 容忍后端对首尾空白的规范化，但仍能区分「新正文」与「旧正文」
+            return got.strip() == body.strip()
         except Exception:
             return None
 
@@ -651,26 +667,27 @@ def main():
     # 先处理"确认为空"：即便 PUT 返回 success，但 GET 明确 hasContent=false（returned-but-not-persisted）
     # 也必须再写一次；仍为空才算失败（Codex：put_ok 单独不足以判定已发布）。
     if state is False:
+        # 不是本次正文（写失败/未持久化/被并发覆盖）→ 再写一次
         put_ok = put_content()
         state = content_state()
 
     if state is True:
-        print(f"  正文已校验落库 hasContent=true（put_ok={put_ok}）")
+        print(f"  正文已逐字校验落库（内容与本次一致，put_ok={put_ok}）")
     elif state is False:
         # 重试后仍确认为空壳 → 清理，不留断头报告。
         # **但原地更新的条目绝不能删**：它是本来就存在的那篇，删了会连同已发出去的
         # 分享链一起永久失效；正文写空是可重跑修复的，删条目不可逆。
         if reuse_eid:
-            print(f"  [告警] 原地更新的条目 {eid} 正文写入未生效(hasContent=false)，"
-                  "已保留该条目与其分享链不删，请稍后重跑覆盖")
+            print(f"  [告警] 原地更新的条目 {eid} 未能确认写入本次正文（库中仍非本次内容），"
+                  "已保留该条目与其分享链不删、且**不推进水位线**，请稍后重跑覆盖")
         else:
             try:
                 curl(H + ["-X", "DELETE", f"{base}/entries/{eid}"], retries=2)
-                print(f"  正文确认为空，已删空壳条目 {eid}")
+                print(f"  正文未落库，已删空壳条目 {eid}")
             except Exception:
-                print(f"  正文确认为空且删除失败；稳定后请手动删条目 {eid}")
+                print(f"  正文未落库且删除失败；稳定后请手动删条目 {eid}")
         rollback_store_if_new()
-        raise RuntimeError("正文写入未生效(hasContent=false)，请稍后重跑")
+        raise RuntimeError("正文写入未确认落库（库中内容与本次正文不一致），请稍后重跑")
     elif put_ok:
         # state=None：验证接口不可达，但 PUT 已返回成功 → 接受，不删（Cursor High：勿误删已落库正文）
         print(f"  正文 PUT 成功，但验证接口暂不可达(state=None)——按已发布处理，不删条目")
@@ -689,6 +706,12 @@ def main():
                 "title": a.title, "tags": tags, "metadata": meta, "contentType": content_type,
             }), f"{base}/entries/{eid}"]).get("success")
             print(f"  原地更新标题/标签/水位线 ok={ok}")
+            # 正文与元数据是两次独立 PUT，中间可能被并发重跑覆盖正文。
+            # 这里再验一次：若正文已不是本次内容，则库里是「我的水位线 + 别人的正文」，
+            # 下一期会从错误位置续采。无法在无后端原子 upsert 的前提下杜绝，但绝不能静默。
+            if ok and content_state() is not True:
+                print("  [告警] 元数据写入后正文已不是本次内容（疑似并发重跑覆盖）："
+                      "库中可能是「本期水位线 + 他期正文」，请重跑本命令以恢复一致")
             if not ok:
                 print("  [告警] 元数据更新失败：正文是新的但 metadata.lastCommit 仍是旧值，"
                       "下一期会从旧水位线续采（会重复报道本期内容），请重跑本命令")
