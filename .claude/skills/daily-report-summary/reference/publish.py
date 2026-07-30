@@ -102,6 +102,8 @@ def list_entries_by_date(base, H, store_id, kind, daily_date):
         return []
     found, page = [], 1
     while True:
+        # 返回 (id, createdAt) 而不只是 id：并发替换时要靠 createdAt 判「谁更早」，
+        # 见调用处的竞态说明。
         # all=true 必须带：后端 ListEntries 默认只返回根级条目，
         # 日报若被整理进文件夹就查不到，--replace-same-date 会漏删并留下重复条目。
         res = curl(H + [f"{base}/stores/{store_id}/entries?page={page}&pageSize=100&all=true"])
@@ -113,7 +115,7 @@ def list_entries_by_date(base, H, store_id, kind, daily_date):
         for it in items:
             md = it.get("metadata") or {}
             if (md.get("kind") or "") == kind and (md.get("dailyDate") or "").strip() == daily_date:
-                found.append(it["id"])
+                found.append((it["id"], it.get("createdAt") or ""))
         if data.get("hasNextPage") is False or len(items) < 100:
             break
         page += 1
@@ -571,11 +573,12 @@ def main():
 
     # --replace-same-date：**先**记下同日旧条目，等新条目确认落库后再删。
     # 顺序不能反——先删后建的话，中途失败会把当天日报整个删没。
-    stale_ids = []
+    # 两个变量必须无条件初始化：未开开关时下游仍会引用它们。
+    stale, stale_ids, my_created_at = [], [], ""
     if a.replace_same_date:
-        stale_ids = list_entries_by_date(base, H, rid, kind, daily_date)
-        if stale_ids:
-            print(f"  同日({daily_date})已有 {len(stale_ids)} 条旧条目，将在新条目校验落库后删除")
+        stale = list_entries_by_date(base, H, rid, kind, daily_date)
+        if stale:
+            print(f"  同日({daily_date})已有 {len(stale)} 条旧条目，将在新条目校验落库后删除")
 
     meta = {"kind": kind, "dailyDate": daily_date,
             "format": "html" if is_html else "md"}
@@ -592,12 +595,13 @@ def main():
     content_type = "text/html" if is_html else "text/markdown"
     tags = [t.strip() for t in (a.tags or "").split(",") if t.strip()] or ["日报", "今日大事"]
     try:
-        eid = curl(HJ + ["-X", "POST", "-d", json.dumps({
+        created = curl(HJ + ["-X", "POST", "-d", json.dumps({
             "title": a.title, "summary": a.title if is_html else f"# {a.title}",
             "sourceType": "reference", "contentType": content_type,
             "tags": tags, "metadata": meta,
-        }), f"{base}/stores/{rid}/entries"])["data"]["id"]
-        stale_ids = [x for x in stale_ids if x != eid]   # 防御：绝不把刚建的这条算进待删
+        }), f"{base}/stores/{rid}/entries"])["data"]
+        eid = created["id"]
+        my_created_at = created.get("createdAt") or ""
     except Exception as e:
         print(f"  建条目失败：{str(e)[:120]}")
         rollback_store_if_new()
@@ -654,6 +658,24 @@ def main():
 
     # 同日旧条目清理：**只在 state 明确为 True（正文确认落库）时才删**。
     # state=None（验证接口不可达）时宁可留一条重复，也不能删掉可能是唯一完好的那篇。
+    if a.replace_same_date:
+        # 并发替换的竞态（定时任务与手动重跑撞在一起）：两个进程可能各自在建条目**之前**
+        # 拍到同一份旧 id 快照，各自建好新条目后只删共有的旧 id，于是两篇新报告都留下来。
+        # 修法：删除前**重新查一次**，并且只删 createdAt **严格早于**自己的那些。
+        #   - 重新查 → 能看见对方刚建的条目，后建者会把先建者删掉（last-writer-wins）
+        #   - 只删更早的 → 打破互删对称性，两个进程绝不会把彼此都删掉而留下零条
+        # 拿不到自己的 createdAt 时退回建前快照（保守：可能留重复，但绝不会删光）。
+        if state is True:
+            if my_created_at:
+                fresh = list_entries_by_date(base, H, rid, kind, daily_date)
+                stale_ids = [sid for sid, cat in fresh
+                             if sid != eid and cat and cat < my_created_at]
+            else:
+                print("  [告警] 新条目未返回 createdAt，退回建前快照删除（并发重跑时可能留下重复条目）")
+                stale_ids = [sid for sid, _ in stale if sid != eid]
+        else:
+            stale_ids = [sid for sid, _ in stale if sid != eid]
+
     if stale_ids:
         if state is True:
             for sid in stale_ids:

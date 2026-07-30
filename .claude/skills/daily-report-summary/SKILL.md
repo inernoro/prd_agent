@@ -60,7 +60,7 @@ description: 从 git 历史生成「今日大事早知道」开发日报，并�
 | mode | 触发条件 | 窗口 |
 |------|----------|------|
 | `sha` | 上期 `lastCommit` 在本地可达**且是本期右端的祖先**（正常路径） | `git log <lastCommit>..<headSha>` |
-| `since` | SHA 不可达（浅克隆截断）、**非本期右端的祖先**（main 被 force push 后旧对象常残留在本地，`cat-file` 仍会成功）、或上期只记了 `coverTo` | `git log <headSha> --since=<coverTo>` |
+| `since` | SHA 不可达（浅克隆截断）、**非本期右端的祖先**（main 被 force push 后旧对象常残留在本地，`cat-file` 仍会成功）、或上期只记了 `coverTo` | `git log <headSha> --since=<coverTo>` 再剔除 `excludeSha`（--since 是闭区间，须还原左开） |
 | `today` | 库里没有历史日报（首次运行），或上期是本机制上线前发布的老条目 | 退化为当日，与旧行为一致 |
 
 ```bash
@@ -187,6 +187,7 @@ MODE=$(echo "$WIN"  | python3 -c 'import json,sys;print(json.load(sys.stdin)["mo
 RANGE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["revRange"])')
 HEAD_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["headSha"])')
 SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["sinceIso"])')
+EXCLUDE_SHA=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin).get("excludeSha",""))')
 # 空值即刻报错，不要留到 git log 才以 exit 128 的形式暴露
 : "${MODE:?窗口解析失败：MODE 为空}" "${HEAD_SHA:?窗口解析失败：headSha 为空}"
 ```
@@ -204,8 +205,12 @@ SINCE=$(echo "$WIN" | python3 -c 'import json,sys;print(json.load(sys.stdin)["si
 #    MODE / RANGE / HEAD_SHA / SINCE 均来自 Phase 1，此处不重新解析（重解就会漏解）。
 case "$MODE" in
   sha)   git log --first-parent "$RANGE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
-  since) # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界
-         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short ;;
+  since) # 右端用 $HEAD_SHA（已按 target-date 收敛），不用分支 tip——补历史时用 tip 会越界。
+         # git 的 --since 是闭区间（实测 git 2.43：喂某提交的 %cI 会把该提交自身返回），
+         # 而 $SINCE 正是上期最后一个提交的 %cI，故必须按 SHA 把它剔掉还原「左开」，
+         # 否则上期末条被重复统计；它若是 merge，Phase 2 还会穿透它把上个 PR 整个重算。
+         git log --first-parent "$HEAD_SHA" --since="$SINCE" --format="%cd%x09%H%x09%an%x09%s" --date=short \
+           | awk -F '\t' -v x="$EXCLUDE_SHA" 'x=="" || $2!=x' ;;
   today) git log --first-parent "$DEFAULT_BRANCH" --format="%cd%x09%H%x09%an%x09%s" --date=short \
            | awk -F '\t' -v d="$TODAY" '$1==d' ;;
 esac > /tmp/win_fp.tsv

@@ -189,13 +189,21 @@ def main():
         raise RuntimeError(f"解析主干 {branch} 失败——请先 git fetch origin")
 
     # 窗口右端按目标日收敛（补历史/重跑必需；当期运行时通常就等于 tip）。
-    # 取不到（目标日早于全部历史）就退回 tip，由后续祖先校验兜住。
     bounded = head_for_target(branch, a.target_date)
+    if a.target_date and not bounded:
+        # 收敛不出右端（多为浅克隆没拉到那么早，--unshallow 又是 best-effort 失败了）时
+        # **必须中止**，不能"退回 tip 继续"：那等于把窗口右端悄悄放大到现在，
+        # 补历史会把目标日之后的提交写进目标日那篇，再叠加 --replace-same-date
+        # 覆盖掉原本正确的报告——正是本 PR 要根治的那类静默退化。
+        log(f"[水位线][错误] 无法把窗口右端收敛到 target-date={a.target_date}："
+            f"{branch} 上没有日期 <= 该日的主干提交（浅克隆未拉全？先跑 git fetch --unshallow）。"
+            " 拒绝退回当前 tip，以免把目标日之后的提交写进该日报告。")
+        sys.exit(3)
     if bounded and bounded != head:
         log(f"[水位线] 窗口右端按 target-date={a.target_date} 收敛到 {bounded[:12]}（tip 为 {head[:12]}）")
         head = bounded
 
-    out = {"mode": "today", "baseSha": "", "sinceIso": "", "headSha": head,
+    out = {"mode": "today", "baseSha": "", "sinceIso": "", "excludeSha": "", "headSha": head,
            "branch": branch, "revRange": "", "spanDays": 1, "prevDate": "", "gap": False}
 
     try:
@@ -223,6 +231,16 @@ def main():
             # （force push 后旧对象残留 / 补历史时右端早于水位线）→ 退到时间戳
             out["mode"] = "since"; out["sinceIso"] = cover_to
             out["revRange"] = head
+            # git 的 --since 是**闭区间**（实测 git 2.43：把某提交的 %cI 喂回 --since，
+            # 该提交自身会被返回）。而 coverTo 恰好是上期最后一个提交的 %cI，
+            # 于是 since 模式的窗口变成左闭 —— 上期最后那个提交会被重复统计一次；
+            # 它若是 merge，Phase 2 还会穿透它、把上一个 PR 的所有提交再算一遍，
+            # 报告数字直接虚高。这里把它的 SHA 透出去，由调用方按 SHA 精确剔除，
+            # 从而还原「左开右闭」语义（不用 +1 秒，避免误伤同一秒内的新提交）。
+            out["excludeSha"] = last_sha
+            if not last_sha:
+                log("[水位线][告警] since 模式但上期未记 lastCommit，无法按 SHA 剔除边界提交，"
+                    "窗口左端为闭区间——上期最后一个提交可能被重复统计一次")
             if last_sha:
                 log(f"[水位线] lastCommit {last_sha[:12]} 不可用（不可达，或非 {head[:12]} 的祖先）"
                     " → 降级用 coverTo 时间戳")
