@@ -608,7 +608,7 @@ def _strip_severity_count_claims(text):
 
 
 _FAILURE_ACTION_PATTERN = (
-    r"(?:通过|完成|成功|执行|送达|归档|发布|打开|访问|连接|恢复|解决|"
+    r"(?:通过|完成|成功|送达|归档|发布|打开|访问|连接|恢复|解决|"
     r"关闭|修复|正常|可用|就绪|部署|上线|生效|合并|ready)"
 )
 _DELIVERY_ACTION_PATTERN = r"(?:部署|发布|上线|生效|合并)"
@@ -631,6 +631,7 @@ _FAILURE_FACT_PATTERN = re.compile(
     rf"|未能\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}"
     r"|阻断|不可用|不可交付"
     r"|超时|报错|中断|漏发|错误|异常|崩溃|卡死|无响应|不可达|断连|断开"
+    r"|(?:未能|无法)\s*执行"
     r"|返回\s*[45]\d{2}|状态码\s*[45]\d{2}|HTTP\s*[45]\d{2}"
     rf"|{_PENDING_DELIVERY_PATTERN}"
     rf"|无法\s*(?:正常\s*)?{_FAILURE_QUANTIFIER_PATTERN}{_FAILURE_ACTION_PATTERN}",
@@ -808,10 +809,12 @@ def _coordinated_subject_groups(occurrences, clause):
             continue
         previous = groups[-1][-1]
         gap = clause[previous[1] : occurrence[0]]
+        normalized_gap = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", gap)
+        normalized_gap = re.sub(r"[()（）\[\]【】]", " ", normalized_gap)
         if re.fullmatch(
             r"\s*(?:以及|并且|和|与|及|、|/|并|且)"
             r"\s*(?:CDS\s*)?(?:验收报告\s*)?",
-            gap,
+            normalized_gap,
             re.I,
         ):
             groups[-1].append(occurrence)

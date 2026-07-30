@@ -102,6 +102,8 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("构建任务失败", {"build"}),
             ("验收报告归档操作执行失败", {"archive"}),
             ("CDS smoke 未能通过", {"smoke"}),
+            ("CDS smoke 无法执行", {"smoke"}),
+            ("核心用例未能执行", {"core-case"}),
             ("构建未能完成", {"build"}),
             ("验收报告归档未能成功", {"archive"}),
             ("构建尚未通过", {"build"}),
@@ -627,6 +629,21 @@ class DailyVerdictContractTests(unittest.TestCase):
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
 
+    def test_not_yet_executed_is_coverage_gap_instead_of_failure(self):
+        for fact in (
+            "CDS smoke 尚未执行",
+            "核心用例尚未执行",
+            "验收报告归档未执行",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
+
     def test_gate_closes_only_after_explicit_gate_recovery(self):
         body = report_body("覆盖不足").replace(
             "当前部署 SHA 已前进",
@@ -759,6 +776,26 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
                 errors = archive_report._daily_conclusion_contract_errors("fail", body)
                 self.assertEqual([], errors)
+
+    def test_parallel_subject_group_allows_instance_qualifiers(self):
+        fact = "移动端 CDS smoke 与后端验收报告归档同时失败"
+        for nature in ("硬门禁失败", "验收链路失败"):
+            with self.subTest(nature=nature):
+                body = report_body(nature).replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+        body = report_body("覆盖不足").replace(
+            "当前部署 SHA 已前进", fact
+        )
+        errors = archive_report._daily_conclusion_contract_errors(
+            "conditional", body
+        )
+        error_text = "\n".join(errors)
+        self.assertIn("硬门禁", error_text)
+        self.assertIn("验收链路", error_text)
 
     def test_resolved_separate_subject_group_does_not_hide_parallel_failures(self):
         fact = "CDS smoke 和验收报告归档失败但构建已修复"
