@@ -34,6 +34,10 @@ export function UsagePage() {
   const [importResult, setImportResult] = useState<CostReconciliationItem | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [showImport, setShowImport] = useState(false);
+  // 抽屉自己的失败信息。页面级 error 渲染在 PageBody 里，会被 z-index 1100 的
+  // 固定抽屉和它的毛玻璃背板整块盖住——导入被拒时用户只看到按钮停止转圈、
+  // 没有任何解释，然后原样再试一次（Codex P2）。
+  const [importError, setImportError] = useState<string | null>(null);
   const [importing, setImporting] = useState(false);
   const [provider, setProvider] = useState('');
   const [externalRecordId, setExternalRecordId] = useState('');
@@ -96,7 +100,7 @@ export function UsagePage() {
 
   const submitActual = async () => {
     setImporting(true);
-    setError(null);
+    setImportError(null);
     const res = await importCostReconciliation({
       provider: provider.trim(),
       externalRecordId: externalRecordId.trim(),
@@ -111,7 +115,8 @@ export function UsagePage() {
     });
     setImporting(false);
     if (!res.success) {
-      setError(res.error.message || '供应商账单导入失败');
+      // 就地报错，不往页面级 error 抛：抽屉还开着，那条 alert 用户看不见。
+      setImportError(res.error.message || '供应商账单导入失败');
       return;
     }
     setImportResult(res.data);
@@ -267,6 +272,7 @@ export function UsagePage() {
               <button type="button" aria-label="关闭" onClick={() => setShowImport(false)}><X size={18} /></button>
             </header>
             <div className="lg-side-drawer-body">
+        {importError ? <InlineAlert tone="error">{importError}</InlineAlert> : null}
         <label style={labelStyle}>
           供应商名称
           <HelpPopover label="匹配方式">

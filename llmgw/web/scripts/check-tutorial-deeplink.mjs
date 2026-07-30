@@ -131,6 +131,24 @@ must(
   'theme.css: 缺少向上展开的样式，翻转类加了也没有效果（形状 2：链路只建到一半）',
 );
 
+// 固定定位抽屉里的失败信息必须留在抽屉内：页面级 alert 渲染在 PageBody，
+// 会被抽屉与毛玻璃背板整块盖住，用户只看到表单停止 busy（Codex P2）。
+const org = strip(read('src/pages/OrganizationPage.tsx'));
+must(
+  // 两个抽屉（成员 / 新建租户）各一处，故是 >= 2 —— 只改一个就红。
+  (org.match(/\{failure \? <InlineAlert/g) || []).length >= 2,
+  'OrganizationPage: 成员抽屉与租户抽屉的失败信息必须各自渲染在抽屉内，不能抛给页面级 alert',
+);
+must(
+  !/onError\(/.test(org),
+  'OrganizationPage: 抽屉不得再把失败经 onError 抛给页面（那条 alert 被抽屉盖住）',
+);
+const usage = strip(read('src/pages/UsagePage.tsx'));
+must(
+  usage.includes('setImportError(') && usage.includes('{importError ? <InlineAlert'),
+  'UsagePage: 账单导入失败必须渲染在导入抽屉内（抽屉 z-index 1100，页面 alert 看不见）',
+);
+
 if (failures.length > 0) {
   console.error('教程深链契约守卫未通过：');
   for (const line of failures) console.error(`  - ${line}`);

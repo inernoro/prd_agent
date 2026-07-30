@@ -261,12 +261,11 @@ export function OrganizationPage() {
           currentRole={currentRole}
           onClose={() => setDrawer(null)}
           onDone={afterMemberChange}
-          onError={setError}
         />
       ) : null}
 
       {tenantDialogOpen ? (
-        <TenantDialog onClose={() => setTenantDialogOpen(false)} onError={setError} />
+        <TenantDialog onClose={() => setTenantDialogOpen(false)} />
       ) : null}
     </PageShell>
   );
@@ -276,7 +275,14 @@ export function OrganizationPage() {
  * 成员抽屉：新增与编辑共用一套表单。
  * 走既有的 .lg-side-drawer-* 结构（与 App 详情抽屉同款），不另造一套浮层。
  */
-function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, onDone, onError }: {
+/**
+ * 抽屉自己持有失败信息（Codex P2）。
+ *
+ * 此前失败一律 `onError` 抛给页面，而页面那条 alert 渲染在 PageBody 里、被固定定位的
+ * 抽屉与毛玻璃背板整块盖住：用户只看到表单停止 busy，没有任何可读的失败原因。
+ * 抽屉 body 里本来就有 InlineAlert 的用法（校验提示），失败信息归到同一处即可。
+ */
+function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, onDone }: {
   mode: 'create' | 'edit';
   member?: MemberItem;
   teams: TeamItem[];
@@ -284,8 +290,8 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
   currentRole: string;
   onClose: () => void;
   onDone: (message: string) => Promise<void>;
-  onError: (message: string | null) => void;
 }) {
+  const [failure, setFailure] = useState<string | null>(null);
   const [username, setUsername] = useState('');
   const [displayName, setDisplayName] = useState('');
   const [memberInitialPassword, setMemberInitialPassword] = useState('');
@@ -309,7 +315,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 
   const submit = async () => {
     setBusy(true);
-    onError(null);
+    setFailure(null);
     if (isCreate) {
       const response = await createMember({
         username: username.trim(),
@@ -319,7 +325,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
         teamIds: memberTeamIds,
       });
       setBusy(false);
-      if (!response.success) { onError(response.error.message); return; }
+      if (!response.success) { setFailure(response.error.message); return; }
       invalidateOnboardingCache();
       await onDone(response.data.idempotentReplay
         ? '该成员已存在，现有成员关系保持不变'
@@ -330,7 +336,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     const request: UpdateMemberRequest = { expectedVersion: member.version, role: memberRole, status, teamIds: memberTeamIds };
     const response = await updateMember(member.id, request);
     setBusy(false);
-    if (!response.success) { onError(response.error.message); return; }
+    if (!response.success) { setFailure(response.error.message); return; }
     // 改成员和建成员是同一份事实的两个方向：新人清单的「拉一个成员」只数 active，
     // 把唯一一个额外成员停用后这一步应当重新亮起。此前只在创建路径失效，
     // 于是 60 秒内回到概览仍认为这一步完成、清单已经消失（Codex P2）。
@@ -342,10 +348,10 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
     if (!member) return;
     if (!window.confirm(`让“${who}”的现有登录立即失效？`)) return;
     setBusy(true);
-    onError(null);
+    setFailure(null);
     const response = await invalidateMemberSessions(member.id);
     setBusy(false);
-    if (!response.success) { onError(response.error.message); return; }
+    if (!response.success) { setFailure(response.error.message); return; }
     await onDone(`成员“${who}”需要重新登录`);
   };
 
@@ -362,6 +368,7 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
         </header>
 
         <div className="lg-side-drawer-body" data-testid={isCreate ? 'member-create' : undefined}>
+          {failure ? <InlineAlert tone="error">{failure}</InlineAlert> : null}
           {isCreate ? (
             <>
               <label style={FIELD_LABEL}>
@@ -441,19 +448,21 @@ function MemberDrawer({ mode, member, teams, tenantSlug, currentRole, onClose, o
 }
 
 /** 新建租户：从页头操作区打开，只有 Owner 能看到（沿用原 canCreateTenant 门控）。 */
-function TenantDialog({ onClose, onError }: { onClose: () => void; onError: (message: string | null) => void }) {
+/** 同 MemberDrawer：失败信息留在抽屉内，页面级 alert 在这里是看不见的（Codex P2）。 */
+function TenantDialog({ onClose }: { onClose: () => void }) {
   const [name, setName] = useState('');
   const [slug, setSlug] = useState('');
   const [busy, setBusy] = useState(false);
+  const [failure, setFailure] = useState<string | null>(null);
 
   const submit = async () => {
     setBusy(true);
-    onError(null);
+    setFailure(null);
     const created = await createTenant({ name: name.trim(), slug: slug.trim().toLowerCase() });
-    if (!created.success) { onError(created.error.message); setBusy(false); return; }
+    if (!created.success) { setFailure(created.error.message); setBusy(false); return; }
     const switched = await switchTenant(created.data.id);
     setBusy(false);
-    if (!switched.success) { onError(switched.error.message); return; }
+    if (!switched.success) { setFailure(switched.error.message); return; }
     setSession(switched.data);
     window.location.reload();
   };
@@ -470,6 +479,7 @@ function TenantDialog({ onClose, onError }: { onClose: () => void; onError: (mes
           <button type="button" aria-label="关闭" onClick={onClose}><X size={18} /></button>
         </header>
         <div className="lg-side-drawer-body">
+          {failure ? <InlineAlert tone="error">{failure}</InlineAlert> : null}
           <Prose>新租户有独立的数据、预算、密钥和审计。创建后你会成为 Owner 并自动切换过去。</Prose>
           <label style={FIELD_LABEL}>
             <span>租户名称</span>
