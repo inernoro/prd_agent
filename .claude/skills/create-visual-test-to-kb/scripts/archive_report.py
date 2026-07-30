@@ -607,35 +607,86 @@ def _strip_severity_count_claims(text):
     return re.sub(r"\bP[0-3]\s*[:：=]\s*\d+\b", " ", raw, flags=re.I)
 
 
-def _strip_resolved_failure_phrases(text):
-    """Remove historical failures that the same clause explicitly closes."""
-    closure = (
-        r"(?:(?:现已|已经|已)(?:通过|修复|恢复|成功|可用)"
-        r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用)"
-        r"|最终(?:已)?(?:通过|成功))"
+_FAILURE_FACT_PATTERN = re.compile(
+    r"失败|未通过|阻断|不可用|不可交付|无法完成",
+    re.I,
+)
+_RESOLVED_FACT_PATTERN = re.compile(
+    r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
+    r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭)"
+    r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
+    r"|恢复正常",
+    re.I,
+)
+_FAILURE_SUBJECT_PATTERN = re.compile(
+    r"ready|smoke|冒烟|构建|编译|服务|强制测试|验收链路|证据链|归档|报告发布"
+    r"|verify-open|打开验证|Slack\s*通知",
+    re.I,
+)
+
+
+def _split_fact_clauses(text):
+    """Split facts at punctuation without allowing matches to cross subjects."""
+    return re.split(r"([。；;，,|\n])", text or "")
+
+
+def _clause_is_explicitly_resolved(clause):
+    """Return whether a failure is closed later in the same subject clause."""
+    failure = _FAILURE_FACT_PATTERN.search(clause or "")
+    if not failure:
+        return False
+    closure = _RESOLVED_FACT_PATTERN.search(clause, failure.end())
+    if not closure:
+        return False
+    if _FAILURE_FACT_PATTERN.search(clause, closure.end()):
+        return False
+    subject_switch = _FAILURE_SUBJECT_PATTERN.search(
+        clause, failure.end(), closure.start()
     )
-    return re.sub(
-        r"(?:失败|未通过|阻断|不可用|不可交付|无法完成)"
-        r"[^。；;|\n]{0,40}"
-        + closure,
-        " ",
-        text or "",
-        flags=re.I,
+    return subject_switch is None
+
+
+def _strip_resolved_failure_phrases(text):
+    """Remove only fully resolved failure clauses, never adjacent subjects."""
+    clauses = _split_fact_clauses(text)
+    return "".join(
+        " " if index % 2 == 0 and _clause_is_explicitly_resolved(part) else part
+        for index, part in enumerate(clauses)
     )
 
 
 def _has_resolved_failure_status(text):
-    """Return whether a root-cause status cell explicitly closes its failure."""
+    """Return whether the entire root-cause conclusion closes the row."""
+    raw = (text or "").strip()
     return bool(
-        re.search(
-            r"(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
+        re.fullmatch(
+            r"(?:(?:本|该)(?:项|问题|根因))?"
+            r"(?:(?:现已|已经|已)(?:通过|修复|恢复|成功|可用|关闭)"
             r"|(?:重试后|随后)已(?:通过|修复|恢复|成功|可用|关闭)"
             r"|最终(?:已)?(?:通过|修复|恢复|成功|可用|关闭)"
-            r"|恢复正常",
-            text or "",
+            r"|恢复正常|已通过复测|复测已通过|验证已通过|已验证通过)"
+            r"(?:并(?:已)?(?:通过复测|验证通过)|，?无遗留阻断)?"
+            r"[。.]?",
+            raw,
             re.I,
         )
     )
+
+
+def _normalize_evidence_usage_gap_clauses(text):
+    """Neutralize evidence-use wording without removing real failures beside it."""
+    clauses = _split_fact_clauses(text)
+    for index in range(0, len(clauses), 2):
+        clause = clauses[index]
+        if (
+            re.search(r"截图|证据|日志|记录|样本|材料", clause, re.I)
+            and re.search(r"不可用于|无法用于|不能用于|不足以", clause, re.I)
+            and re.search(r"确认|验证|证明|覆盖|判断|评估", clause, re.I)
+        ):
+            clauses[index] = re.sub(
+                r"不可用于|无法用于|不能用于", "不足以用于", clause, flags=re.I
+            )
+    return "".join(clauses)
 
 
 def _daily_fact_signals(values, body):
@@ -735,7 +786,9 @@ def _daily_fact_signals(values, body):
         conclusion_cell = row[4] if len(row) > 4 else ""
         if not _has_resolved_failure_status(conclusion_cell):
             root_fact_cells.extend(row[:4])
-    root_facts = _strip_resolved_failure_phrases("；".join(root_fact_cells))
+    root_facts = _normalize_evidence_usage_gap_clauses(
+        _strip_resolved_failure_phrases("；".join(root_fact_cells))
+    )
     chain_failure = bool(
         re.search(
             r"(?:验收链路|证据链|归档|报告发布|verify-open|打开验证|Slack\s*通知)"

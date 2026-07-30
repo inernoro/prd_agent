@@ -212,6 +212,7 @@ class DailyVerdictContractTests(unittest.TestCase):
         for fact in (
             "当前截图不可用于验证报告发布是否覆盖移动端",
             "现有证据不可用于确认 Slack 通知覆盖全部频道",
+            "构建日志不可用于确认移动端覆盖",
         ):
             with self.subTest(fact=fact):
                 body = report_body("覆盖不足").replace(
@@ -221,6 +222,14 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "conditional", body
                 )
                 self.assertEqual([], errors)
+
+    def test_evidence_usage_gap_does_not_hide_real_build_failure(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进",
+            "构建失败且日志不可用于确认移动端覆盖",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
 
     def test_resolved_historical_failures_do_not_force_fail(self):
         for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
@@ -236,6 +245,29 @@ class DailyVerdictContractTests(unittest.TestCase):
                         verdict, body
                     )
                     self.assertEqual([], errors)
+
+    def test_resolved_adjacent_subject_does_not_hide_current_failure(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进",
+            "CDS smoke 当前失败，归档已修复",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+    def test_partially_resolved_status_does_not_hide_current_failure(self):
+        for conclusion in (
+            "部分已修复，仍有阻断",
+            "归档已修复，但 smoke 仍失败",
+        ):
+            with self.subTest(conclusion=conclusion):
+                body = report_body("硬门禁失败").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 未通过"
+                ).replace(
+                    "| 无法确认 | 创建冻结预览后复测 |",
+                    f"| {conclusion} | 继续处理未关闭项 |",
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
 
     def test_resolved_root_cause_status_does_not_force_fail(self):
         body = report_body("覆盖不足").replace(
@@ -266,6 +298,14 @@ class DailyVerdictContractTests(unittest.TestCase):
         body = report_body("硬门禁失败").replace(
             "当前部署 SHA 已前进",
             "CDS smoke 当前失败，重试后恢复服务",
+        )
+        errors = archive_report._daily_conclusion_contract_errors("fail", body)
+        self.assertEqual([], errors)
+
+    def test_later_failure_in_same_clause_is_not_treated_as_resolved(self):
+        body = report_body("硬门禁失败").replace(
+            "当前部署 SHA 已前进",
+            "CDS smoke 失败已修复但复测仍未通过",
         )
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
