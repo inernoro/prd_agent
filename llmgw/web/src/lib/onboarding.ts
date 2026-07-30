@@ -42,9 +42,17 @@ function subscribeInvalidation(listener: () => void): () => void {
   return () => { INVALIDATION_LISTENERS.delete(listener); };
 }
 
-/** 模块级缓存：同一租户 60 秒内只打一次；失败不缓存，避免把一次网络抖动钉死一分钟。 */
-function cached<T>(kind: CacheKind, tenantId: string, load: () => Promise<T>): Promise<T> {
-  const key = `${kind}::${tenantId}`;
+/**
+ * 模块级缓存：同一租户 + 同一登录身份 60 秒内只打一次；失败不缓存，避免把一次
+ * 网络抖动钉死一分钟。
+ *
+ * **键里必须带身份**：`/gw/service-keys` 对 developer 按 CreatedByUserId 过滤
+ * （console-api Program.cs 的 ownScope 分支），只按租户做键的话，同一浏览器里
+ * admin 退出、developer 登入后的 60 秒内会读到 admin 的摘要 —— 接入片段会亮出
+ * 别人的密钥前缀，清单也按别人的事实标成完成（Codex P2）。
+ */
+function cached<T>(kind: CacheKind, tenantId: string, identity: string, load: () => Promise<T>): Promise<T> {
+  const key = `${kind}::${tenantId}::${identity}`;
   const hit = CACHE.get(key);
   const now = Date.now();
   if (hit && now - hit.at < TTL_MS) return hit.promise as Promise<T>;
@@ -66,8 +74,9 @@ export function invalidateOnboardingCache(tenantId?: string) {
   if (!tenantId) {
     CACHE.clear();
   } else {
+    // 键形是 `kind::tenantId::identity`，所以按租户失效要匹配中间那一段。
     for (const key of [...CACHE.keys()]) {
-      if (key.endsWith(`::${tenantId}`)) CACHE.delete(key);
+      if (key.includes(`::${tenantId}::`)) CACHE.delete(key);
     }
   }
   for (const listener of [...INVALIDATION_LISTENERS]) listener();
@@ -95,8 +104,8 @@ export function markRequestCompleted(tenantId?: string): void {
 
 type TeamFacts = { hasTeam: boolean; hasMember: boolean };
 
-function loadTeamFacts(tenantId: string): Promise<TeamFacts> {
-  return cached('organization', tenantId, async () => {
+function loadTeamFacts(tenantId: string, identity: string): Promise<TeamFacts> {
+  return cached('organization', tenantId, identity, async () => {
     const response = await getOrganization();
     // 失败必须抛：resolve 一个「都没有」会被 cached() 当成事实钉死 60 秒，
     // 一次瞬时 500 就会让配置齐全的租户被告知去建团队、拉成员（Codex P2）。
@@ -151,8 +160,8 @@ function allowsInvocation(scopes: string[] | undefined): boolean {
   return values.some((s) => s === '*' || INVOCATION_SCOPES.includes(s.toLowerCase()));
 }
 
-function loadServiceKeyDigest(tenantId: string): Promise<ServiceKeyDigest> {
-  return cached('serviceKeys', tenantId, async () => {
+function loadServiceKeyDigest(tenantId: string, identity: string): Promise<ServiceKeyDigest> {
+  return cached('serviceKeys', tenantId, identity, async () => {
     const response = await getServiceKeys();
     if (!response.success) throw new OnboardingFactsUnavailable('serviceKeys');
     const items = response.data;
@@ -243,8 +252,10 @@ type Facts = Record<OnboardingStepId, boolean>;
 const EMPTY_FACTS: Facts = { team: false, member: false, key: false, request: false };
 
 export function useOnboardingState(): OnboardingState {
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
   const tenantId = tenant?.id ?? '';
+  // 缓存键的身份维度：同浏览器换账号后不能读到上一个人的事实（见 cached 的注释）。
+  const identity = user?.username ?? '';
   // 「读得到组织全貌」而不是「打得开组织页」：/gw/organization 对 owner / admin 之外的
   // 角色会按 caller 的 teamIds 收窄 teams 与 memberships（console-api Program.cs 的
   // canReadEntireOrganization 分支）。拿那份局部视图数成员必然偏小 —— 一个独自待在新建
@@ -271,8 +282,8 @@ export function useOnboardingState(): OnboardingState {
     let cancelled = false;
     setLoading(true);
     void Promise.all([
-      canReadOrganization ? loadTeamFacts(tenantId) : Promise.resolve<TeamFacts>({ hasTeam: false, hasMember: false }),
-      canReadKeys ? loadServiceKeyDigest(tenantId) : Promise.resolve<ServiceKeyDigest>({ total: 0, activePrefix: null, everUsed: false }),
+      canReadOrganization ? loadTeamFacts(tenantId, identity) : Promise.resolve<TeamFacts>({ hasTeam: false, hasMember: false }),
+      canReadKeys ? loadServiceKeyDigest(tenantId, identity) : Promise.resolve<ServiceKeyDigest>({ total: 0, activePrefix: null, everUsed: false }),
     ]).then(([team, keys]) => {
       if (cancelled) return;
       // 只有还能用的密钥才算这一步完成：全被禁用/吊销时清单不该消失，
@@ -298,7 +309,9 @@ export function useOnboardingState(): OnboardingState {
     });
     return () => { cancelled = true; };
     // 三个权限位进依赖：切租户或换角色都会重算；revision 让写操作后立刻重算。
-  }, [tenantId, canReadOrganization, canReadKeys, revision]);
+    // identity 必须进依赖：只把它加进缓存键不够，换账号时 effect 不重跑，
+    // 界面仍显示上一个身份那次的结果（形状 2：链路只建到一半）。
+  }, [tenantId, identity, canReadOrganization, canReadKeys, revision]);
 
   const readableOf: Record<OnboardingStepId, boolean> = {
     team: canReadOrganization,
@@ -336,8 +349,9 @@ export function useOnboardingState(): OnboardingState {
 
 /** 老手轨用：当前租户可展示的那把密钥（只给前缀）。无权限时 canRead=false，组件据此隐身。 */
 export function usePrimaryServiceKey(): { loading: boolean; canRead: boolean; keyPrefix: string | null } {
-  const { tenant } = useAuth();
+  const { tenant, user } = useAuth();
   const tenantId = tenant?.id ?? '';
+  const identity = user?.username ?? '';
   const canRead = canAccessPage(tenant, 'serviceKeys');
   const [keyPrefix, setKeyPrefix] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -352,7 +366,7 @@ export function usePrimaryServiceKey(): { loading: boolean; canRead: boolean; ke
     }
     let cancelled = false;
     setLoading(true);
-    void loadServiceKeyDigest(tenantId).then((digest) => {
+    void loadServiceKeyDigest(tenantId, identity).then((digest) => {
       if (cancelled) return;
       setKeyPrefix(digest.activePrefix);
       setLoading(false);
@@ -362,7 +376,7 @@ export function usePrimaryServiceKey(): { loading: boolean; canRead: boolean; ke
       setLoading(false);
     });
     return () => { cancelled = true; };
-  }, [tenantId, canRead, revision]);
+  }, [tenantId, identity, canRead, revision]);
 
   return { loading, canRead, keyPrefix };
 }

@@ -143,6 +143,17 @@ must(
   + '按 teamIds 收窄，拿局部视图数成员会把已配好的租户判成没拉成员',
 );
 
+must(
+  /const key = `\$\{kind\}::\$\{tenantId\}::\$\{identity\}`/.test(onboarding),
+  'onboarding: 缓存键必须带登录身份 —— /gw/service-keys 对 developer 按 CreatedByUserId 过滤，'
+  + '只按租户做键会让同浏览器换账号后读到上一个人的密钥前缀',
+);
+must(
+  /\}, \[tenantId, identity, canReadOrganization/.test(onboarding)
+  && /\}, \[tenantId, identity, canRead, revision\]/.test(onboarding),
+  'onboarding: identity 必须进两个 effect 的依赖数组 —— 只进缓存键不够，换账号时 effect 不重跑',
+);
+
 const theme = read('src/theme.css');
 must(
   shell.includes('lg-help-popover--up') && shell.includes('shouldFlipHelpUp('),

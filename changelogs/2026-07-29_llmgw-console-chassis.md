@@ -92,3 +92,4 @@
 | fix | prd-api | 网关控制台基址优先读平台下发的 CDS_CONSOLE_URL：此前按子域名字先试 llmgw 再退 llmgw-web，在「llmgw 是后端 API」的存量项目上会把管理员的 SSO 票据送到只返回健康 JSON 的服务 |
 | fix | cds | 占位抑制统一升级为「按完整 host + 含自定义域名」并删掉窄判据 savedAliasOwners：入口表、面板与 GET /api/branches、两处 SSRF 探测白名单此前仍按标签且只看别名，会声明/放行发布器故意跳过的 host |
 | fix | llmgw | 组织事实的可读性改按「能读到全貌」判：/gw/organization 对 owner/admin 之外按 teamIds 收窄，独自在新建团队里的 developer 数不到默认团队的 owner，清单会一直说「拉一个成员」没做完而他既改不了也自证不了 |
+| fix | llmgw | 新人轨缓存键加上登录身份：/gw/service-keys 对 developer 按 CreatedByUserId 过滤，只按租户做键会让同浏览器换账号后的 60 秒内读到上一个人的摘要，接入片段亮出别人的密钥前缀；identity 同时进两个 effect 的依赖，否则换账号不重跑 |
