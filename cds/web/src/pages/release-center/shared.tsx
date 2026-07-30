@@ -6,7 +6,10 @@
  * .claude/rules/cds-theme-tokens.md：白天主题下这些卡片必须照样看得清。
  */
 
-import type { ReactNode } from 'react';
+import { useEffect, useRef, useState } from 'react';
+import type { CSSProperties, ReactNode } from 'react';
+import { ArrowDown } from 'lucide-react';
+import { shouldFollowLog } from '@/lib/releaseDialogAddress';
 
 export type Tone = 'ok' | 'warn' | 'bad' | 'live' | 'muted';
 
@@ -135,4 +138,64 @@ export function formatDuration(startedAt?: string, finishedAt?: string): string 
 export function formatAvailability(value?: number | null): string {
   if (typeof value !== 'number' || !Number.isFinite(value)) return '未监测';
   return `${(value * 100).toFixed(value >= 0.9995 ? 0 : 2)}%`;
+}
+
+/**
+ * 发布日志窗格（发布中弹窗与发布记录弹窗共用一份，判据不分裂）。
+ *
+ * 两条硬性行为，都来自 2026-07-30 用户截图返工：
+ * 1. **自动跟到最新**：新日志到达且用户本就贴在底部时，滚动条自动吸底；
+ *    用户往上翻（离底 >48px，判定见 shouldFollowLog）就暂停跟随，
+ *    右下角出现「回到最新」。不许在用户读旧日志时把他拽走。
+ * 2. **长行折行**：`whitespace-pre-wrap break-all`。git 进度条这类不换行长行
+ *    曾把整个弹窗内容撑宽、右半屏被裁掉（「输入框不见了」「步骤 2/4/6 消失」）。
+ *    日志宁可折行也不许横向撑破布局。
+ */
+export function ReleaseLogPane({ text, className = '', style }: { text: string; className?: string; style?: CSSProperties }): JSX.Element {
+  const paneRef = useRef<HTMLPreElement>(null);
+  const followingRef = useRef(true);
+  const [following, setFollowing] = useState(true);
+
+  const syncFollowing = (next: boolean): void => {
+    followingRef.current = next;
+    setFollowing(next);
+  };
+
+  useEffect(() => {
+    const pane = paneRef.current;
+    if (pane && followingRef.current) pane.scrollTop = pane.scrollHeight;
+  }, [text]);
+
+  const jumpToLatest = (): void => {
+    const pane = paneRef.current;
+    if (pane) pane.scrollTop = pane.scrollHeight;
+    syncFollowing(true);
+  };
+
+  return (
+    <div className={`relative min-h-0 min-w-0 ${className}`} style={style}>
+      <pre
+        ref={paneRef}
+        onScroll={() => {
+          const pane = paneRef.current;
+          if (!pane) return;
+          syncFollowing(shouldFollowLog(pane.scrollTop, pane.scrollHeight, pane.clientHeight));
+        }}
+        className="h-full max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
+        style={{ overscrollBehavior: 'contain' }}
+      >
+        {text || '等待发布日志...'}
+      </pre>
+      {!following ? (
+        <button
+          type="button"
+          onClick={jumpToLatest}
+          className="absolute bottom-3 right-3 inline-flex items-center gap-1 rounded-full border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2.5 py-1 text-xs shadow-sm hover:bg-[hsl(var(--surface-sunken))]"
+        >
+          <ArrowDown className="h-3.5 w-3.5" />
+          回到最新
+        </button>
+      ) : null}
+    </div>
+  );
 }

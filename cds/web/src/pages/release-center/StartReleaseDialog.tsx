@@ -1,9 +1,19 @@
 /**
  * 就地发布：在发布中心里选分支 → 发布前检查 → 开始发布 → 看实时日志。
  *
- * 旧版的「立即发布」是一个跳去 /branch-list 的链接，等于把人从发布中心踢走，
- * 再让他在一堆分支卡里自己找回刚才那个环境。发布是这一页的主动作，
- * 没有理由让它离开当前页面。
+ * 2026-07-30 按用户五张截图整体重做，四条结构性决定：
+ *
+ * 1. **frame 布局，底栏永远可见**。旧版把全部内容塞进弹窗的整体滚动区，
+ *    发布前检查一长（含整段脚本），「开始发布」按钮被推到两屏以外。
+ *    现在是 shrink-0 头部 / flex-1 滚动主体 / shrink-0 底栏，操作不再消失。
+ * 2. **发布中不再渲染表单**。旧版发布开始后仍渲染那排「分支下拉 + Commit +
+ *    预览地址」，长日志把内容撑宽后这些格子被裁掉一半（截图里「输入框不见了」）。
+ *    发布中改为一行静态摘要 chips——反正也不允许改。
+ * 3. **地址两端说清**。「来源」是分支预览产物（CDS API 的 previewUrl/previewUrls，
+ *    SSOT，公式只兜底），「发布到」是目标的上线地址（用户配置过的那一端）。
+ *    旧版只显示一个「预览地址」，用户看到 miduo.org 子域以为发错了地方。
+ * 4. **长文案折叠 + 日志自动跟最新**。判定纯函数在 lib/releaseDialogAddress.ts，
+ *    日志窗格与发布记录弹窗共用 ReleaseLogPane。
  *
  * 提升（promote）复用同一个弹窗：它只是「预先选好分支 + 钉死 commit」的发布，
  * 不引入「发布候选」这样一个中间实体。expectedCommitSha 是那道 fail-closed 钳制——
@@ -11,16 +21,21 @@
  */
 
 import { useCallback, useEffect, useMemo, useState } from 'react';
-import { CheckCircle2, Gauge, Loader2, Rocket, XCircle } from 'lucide-react';
+import { CheckCircle2, ExternalLink, Gauge, Loader2, Rocket, XCircle } from 'lucide-react';
 import { Button } from '@/components/ui/button';
-import { Dialog, DialogContent, DialogHeader, DialogTitle } from '@/components/ui/dialog';
+import { Dialog, DialogBody, DialogContent, DialogTitle } from '@/components/ui/dialog';
 import { ApiError, apiRequest, apiUrl } from '@/lib/api';
 import { resolvePreviewUrl, type PreviewMode, type PreviewUrlConfig } from '@/lib/previewUrl';
+import {
+  collapseCheckMessage,
+  releaseTargetPublicUrl,
+  resolveReleaseSourceUrls,
+} from '@/lib/releaseDialogAddress';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { useNowTick } from '@/hooks/useNowTick';
 import { releaseEtaText } from '@/lib/releaseEta';
 import { dedupeLogs, parseSseJson } from './dialogs';
-import { Chip, CodeText, StatusPill, formatClock } from './shared';
+import { Chip, CodeText, ReleaseLogPane, StatusPill, formatClock } from './shared';
 import type {
   BranchOption,
   CenterRow,
@@ -84,9 +99,6 @@ export function StartReleaseDialog({
   }, [intent, branches]);
 
   const branch = useMemo(() => branches.find((item) => item.id === branchId), [branches, branchId]);
-  // promote 走源 run 的产物地址；普通发布按预览模式推导（推导不出来就交给发布前检查说话）。
-  const derivedPreviewUrl = intent?.previewUrl
-    || (branch ? resolvePreviewUrl(previewMode, branch, previewConfig) : '');
 
   // `port` 模式的入口是运行期分配的端口，公式算不出来（resolvePreviewUrl 会如实给空串）。
   // 现取一次，取不到就保持空串让发布前检查拦下——绝不编一个子域出来充数。
@@ -114,7 +126,14 @@ export function StartReleaseDialog({
     return () => { cancelled = true; };
   }, [previewMode, branchId, intent?.previewUrl]);
 
-  const previewUrl = derivedPreviewUrl || portPreviewUrl;
+  // 来源地址：promote 钉死值 > CDS API 的 previewUrl/previewUrls（SSOT）> 公式/端口兜底。
+  const sourceUrls = resolveReleaseSourceUrls({
+    intentPreviewUrl: intent?.previewUrl,
+    branch,
+    fallbackUrl: (branch ? resolvePreviewUrl(previewMode, branch, previewConfig) : '') || portPreviewUrl,
+  });
+  const previewUrl = sourceUrls[0] || '';
+  const publicUrl = releaseTargetPublicUrl(intent?.row.target);
   const commitSha = intent?.expectedCommitSha || branch?.commitSha || branch?.githubCommitSha || '';
   const subject = commitMeta[commitSha]?.subject || branch?.subject || '';
 
@@ -187,64 +206,102 @@ export function StartReleaseDialog({
   const progress = resolveReleaseSteps(run);
   const blocking = preflight ? preflight.checks.filter((check) => check.status === 'fail' && check.blocking) : [];
   const canStart = Boolean(branchId && preflight && blocking.length === 0 && !starting);
+  const logText = logs.map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.message}`).join('\n');
 
   return (
     <Dialog open={Boolean(intent)} onOpenChange={(open) => { if (!open) onClose(); }}>
-      <DialogContent className="max-w-none" style={{ width: 'min(820px, calc(100vw - 32px))' }}>
-        <DialogHeader>
+      <DialogContent
+        frame
+        className="max-w-none"
+        // 发布中钉死高度：日志窗格要一块稳定的地盘来吸底滚动；
+        // 发布前由内容决定高度（上限 90vh），短内容不硬撑一个空壳。
+        style={{ width: 'min(880px, calc(100vw - 24px))', ...(run ? { height: 'min(680px, 90vh)' } : {}) }}
+      >
+        <div className="flex shrink-0 flex-col gap-1 border-b border-[hsl(var(--hairline))] px-5 py-4">
           <DialogTitle>发布到 {intent?.row.target.name || '环境'}</DialogTitle>
-        </DialogHeader>
+          {intent?.reason ? <p className="text-[12.5px] text-primary">{intent.reason}</p> : null}
+        </div>
         {!intent ? null : (
-          <div className="flex flex-col gap-4">
-            {intent.reason ? (
-              <div className="rounded-md bg-primary/10 px-3 py-2 text-[12.5px] text-primary">{intent.reason}</div>
-            ) : null}
-
-            <section className="grid gap-3 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 p-3 text-sm md:grid-cols-3">
-              <label className="grid gap-1">
-                <span className="text-xs text-muted-foreground">分支</span>
-                {intent.expectedCommitSha ? (
-                  <span className="truncate font-mono text-xs">{branch?.branch || intent.branchId || '-'}</span>
-                ) : branchesLoading ? (
-                  <span className="inline-flex items-center gap-1.5 text-xs text-muted-foreground">
-                    <Loader2 className="h-3.5 w-3.5 animate-spin" />
-                    正在读取分支
-                  </span>
-                ) : (
-                  <select
-                    value={branchId}
-                    onChange={(event) => { setBranchId(event.target.value); setPreflight(null); }}
-                    disabled={Boolean(run)}
-                    className="h-9 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 text-sm outline-none focus:border-primary/60"
-                  >
-                    <option value="">请选择分支</option>
-                    {branches.map((item) => (
-                      <option key={item.id} value={item.id}>{item.branch}</option>
-                    ))}
-                  </select>
-                )}
-              </label>
-              <div className="min-w-0">
-                <div className="text-xs text-muted-foreground">Commit</div>
-                <div className="mt-1 truncate font-mono text-xs">{commitSha ? commitSha.slice(0, 12) : '-'}</div>
-                {subject ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground" title={subject}>{subject}</div> : null}
-              </div>
-              <div className="min-w-0">
-                <div className="text-xs text-muted-foreground">预览地址</div>
-                <div className="mt-1 truncate font-mono text-xs">{previewUrl || '未推导出，发布前检查会给出结论'}</div>
-              </div>
-            </section>
+          <>
+            {/* 上下文条：发布前是表单，发布中是静态摘要（不再渲染没法交互的表单壳）。 */}
+            <div className="shrink-0 border-b border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/35 px-5 py-3">
+              {run ? (
+                <div className="flex min-w-0 flex-wrap items-center gap-x-3 gap-y-1.5 text-xs">
+                  <Chip>{branch?.branch || intent.branchId || '-'}</Chip>
+                  <CodeText className="text-muted-foreground">{commitSha ? commitSha.slice(0, 12) : '-'}</CodeText>
+                  {subject ? <span className="min-w-0 truncate text-muted-foreground" title={subject}>{subject}</span> : null}
+                  {publicUrl ? (
+                    <a href={publicUrl} target="_blank" rel="noreferrer" className="inline-flex min-w-0 items-center gap-1 font-mono text-primary hover:underline">
+                      <span className="truncate">{publicUrl}</span>
+                      <ExternalLink className="h-3 w-3 shrink-0" />
+                    </a>
+                  ) : null}
+                </div>
+              ) : (
+                <div className="grid gap-3 text-sm sm:grid-cols-2">
+                  <label className="grid min-w-0 content-start gap-1">
+                    <span className="text-xs text-muted-foreground">分支</span>
+                    {intent.expectedCommitSha ? (
+                      <span className="truncate font-mono text-xs leading-9">{branch?.branch || intent.branchId || '-'}</span>
+                    ) : branchesLoading ? (
+                      <span className="inline-flex items-center gap-1.5 text-xs leading-9 text-muted-foreground">
+                        <Loader2 className="h-3.5 w-3.5 animate-spin" />
+                        正在读取分支
+                      </span>
+                    ) : (
+                      <select
+                        value={branchId}
+                        onChange={(event) => { setBranchId(event.target.value); setPreflight(null); }}
+                        className="h-9 w-full min-w-0 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-raised))] px-2 text-sm outline-none focus:border-primary/60"
+                      >
+                        <option value="">请选择分支</option>
+                        {branches.map((item) => (
+                          <option key={item.id} value={item.id}>{item.branch}</option>
+                        ))}
+                      </select>
+                    )}
+                  </label>
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">Commit</div>
+                    <div className="mt-1 truncate font-mono text-xs">{commitSha ? commitSha.slice(0, 12) : '-'}</div>
+                    {subject ? <div className="mt-0.5 truncate text-[11.5px] text-muted-foreground" title={subject}>{subject}</div> : null}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">来源（分支预览产物）</div>
+                    {sourceUrls.length > 0 ? sourceUrls.map((url) => (
+                      <a key={url} href={url} target="_blank" rel="noreferrer" className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-primary hover:underline">
+                        <span className="truncate">{url}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    )) : (
+                      <div className="mt-1 text-xs text-muted-foreground">未推导出，发布前检查会给出结论</div>
+                    )}
+                  </div>
+                  <div className="min-w-0">
+                    <div className="text-xs text-muted-foreground">发布到（上线地址）</div>
+                    {publicUrl ? (
+                      <a href={publicUrl} target="_blank" rel="noreferrer" className="mt-1 flex min-w-0 items-center gap-1 font-mono text-xs text-primary hover:underline">
+                        <span className="truncate">{publicUrl}</span>
+                        <ExternalLink className="h-3 w-3 shrink-0" />
+                      </a>
+                    ) : (
+                      <div className="mt-1 text-xs text-muted-foreground">目标未配置上线地址</div>
+                    )}
+                  </div>
+                </div>
+              )}
+            </div>
 
             {run ? (
-              <section className="flex flex-col gap-3">
-                <div className="flex flex-wrap items-center gap-2 text-sm">
+              <div className="flex min-h-0 min-w-0 flex-1 flex-col gap-3 px-5 py-4">
+                <div className="flex shrink-0 flex-wrap items-center gap-2 text-sm">
                   <StatusPill status={run.status} />
                   {etaText ? <span className="text-xs text-primary">{etaText}</span> : null}
                   <CodeText className="text-muted-foreground">{run.releaseId}</CodeText>
                 </div>
-                <div className="grid gap-2 sm:grid-cols-2">
+                <div className="grid shrink-0 gap-2 sm:grid-cols-2">
                   {progress.steps.map((step, index) => (
-                    <div key={step.id} className="flex items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[13px]">
+                    <div key={step.id} className="flex min-w-0 items-center gap-2.5 rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45 px-3 py-2 text-[13px]">
                       {step.state === 'done' ? <CheckCircle2 className="h-4 w-4 shrink-0 text-emerald-500" />
                         : step.state === 'failed' ? <XCircle className="h-4 w-4 shrink-0 text-red-500" />
                           : step.state === 'running' ? <Loader2 className="h-4 w-4 shrink-0 animate-spin text-sky-500" />
@@ -254,15 +311,10 @@ export function StartReleaseDialog({
                     </div>
                   ))}
                 </div>
-                <pre
-                  className="max-h-[34vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 font-mono text-[11.5px] leading-6"
-                  style={{ overscrollBehavior: 'contain' }}
-                >
-                  {logs.map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.message}`).join('\n') || '等待发布日志...'}
-                </pre>
-              </section>
+                <ReleaseLogPane text={logText} className="flex-1" />
+              </div>
             ) : (
-              <section className="flex flex-col gap-3">
+              <DialogBody className="flex flex-col gap-3">
                 <div className="flex flex-wrap items-center justify-between gap-2">
                   <h4 className="text-sm font-semibold">发布前检查</h4>
                   {preflight ? (
@@ -279,24 +331,7 @@ export function StartReleaseDialog({
                 ) : preflight ? (
                   <ul className="flex flex-col gap-1.5">
                     {preflight.checks.map((check) => (
-                      <li
-                        key={check.id}
-                        className={`flex items-start gap-2.5 rounded-md border px-3 py-2 text-[13px] ${
-                          check.status === 'fail'
-                            ? 'border-red-500/35 bg-red-500/10'
-                            : check.status === 'warn'
-                              ? 'border-amber-500/35 bg-amber-500/10'
-                              : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
-                        }`}
-                      >
-                        {check.status === 'pass'
-                          ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
-                          : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-red-500' : 'text-amber-500'}`} />}
-                        <span className="min-w-0">
-                          <span className="font-medium">{check.label}</span>
-                          <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">{check.message}</span>
-                        </span>
-                      </li>
+                      <PreflightCheckItem key={check.id} check={check} />
                     ))}
                   </ul>
                 ) : (
@@ -304,10 +339,10 @@ export function StartReleaseDialog({
                     先跑一次发布前检查，确认这一版能发之后再动手。
                   </p>
                 )}
-              </section>
+              </DialogBody>
             )}
 
-            <div className="flex flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] pt-3">
+            <div className="flex shrink-0 flex-wrap items-center justify-between gap-2 border-t border-[hsl(var(--hairline))] px-5 py-3">
               <span className="text-xs text-muted-foreground">
                 {run
                   ? '关掉这个弹窗不会中断发布，页面会继续跟进到终态。'
@@ -331,9 +366,54 @@ export function StartReleaseDialog({
                 ) : null}
               </div>
             </div>
-          </div>
+          </>
         )}
       </DialogContent>
     </Dialog>
+  );
+}
+
+/**
+ * 单条发布前检查。message 可能是整段生成脚本（几百行）——那是「发布策略完整」
+ * 的判据证据，有用但不该常驻屏幕。折叠判定见 collapseCheckMessage：
+ * 默认只给一行摘要，点「展开完整内容」才铺开，且完整内容在自己的滚动格里消化。
+ */
+function PreflightCheckItem({ check }: { check: ReleasePreflightResult['checks'][number] }): JSX.Element {
+  const [expanded, setExpanded] = useState(false);
+  const collapsed = collapseCheckMessage(check.message);
+  return (
+    <li
+      className={`flex min-w-0 items-start gap-2.5 rounded-md border px-3 py-2 text-[13px] ${
+        check.status === 'fail'
+          ? 'border-red-500/35 bg-red-500/10'
+          : check.status === 'warn'
+            ? 'border-amber-500/35 bg-amber-500/10'
+            : 'border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))]/45'
+      }`}
+    >
+      {check.status === 'pass'
+        ? <CheckCircle2 className="mt-0.5 h-4 w-4 shrink-0 text-emerald-500" />
+        : <XCircle className={`mt-0.5 h-4 w-4 shrink-0 ${check.status === 'fail' ? 'text-red-500' : 'text-amber-500'}`} />}
+      <span className="min-w-0 flex-1">
+        <span className="font-medium">{check.label}</span>
+        <span className="mt-0.5 block break-words text-[12px] text-muted-foreground">{collapsed.summary}</span>
+        {collapsed.detail ? (
+          <>
+            <button
+              type="button"
+              onClick={() => setExpanded((current) => !current)}
+              className="mt-1 text-[12px] text-primary hover:underline"
+            >
+              {expanded ? '收起完整内容' : `展开完整内容（${collapsed.lineCount} 行）`}
+            </button>
+            {expanded ? (
+              <pre className="mt-1.5 max-h-64 max-w-full overflow-y-auto whitespace-pre-wrap break-all rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-2.5 font-mono text-[11px] leading-5" style={{ overscrollBehavior: 'contain' }}>
+                {collapsed.detail}
+              </pre>
+            ) : null}
+          </>
+        ) : null}
+      </span>
+    </li>
   );
 }

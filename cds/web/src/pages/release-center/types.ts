@@ -240,6 +240,10 @@ export interface BranchOption {
   githubCommitSha?: string;
   subject?: string;
   previewSlug?: string;
+  /** CDS 后端算好的主预览地址（SSOT），发布弹窗展示与提交都以它优先。 */
+  previewUrl?: string;
+  /** 同一分支的全部公开入口（主应用 + 网关控制台等），可能多于一个。 */
+  previewUrls?: string[];
   status?: string;
   lastDeployAt?: string;
 }

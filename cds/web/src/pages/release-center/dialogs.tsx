@@ -14,7 +14,7 @@ import { releaseEtaText } from '@/lib/releaseEta';
 import type { ReleaseEtaEstimate } from '@/lib/releaseEta';
 import { resolveReleaseSteps } from '@/lib/releaseSteps';
 import { useNowTick } from '@/hooks/useNowTick';
-import { CodeText, InfoBlock, StatusPill, formatClock, formatDateTime } from './shared';
+import { CodeText, InfoBlock, ReleaseLogPane, StatusPill, formatClock, formatDateTime } from './shared';
 import type { CenterRow, ReleaseLogEntry, ReleaseRun } from './types';
 import { isReleaseTerminal } from './types';
 
@@ -222,14 +222,14 @@ export function ReleaseLogDialog({
             </div>
           ))}
         </div>
-        <pre
-          className="max-h-[42vh] overflow-auto rounded-md border border-[hsl(var(--hairline))] bg-[hsl(var(--surface-sunken))] p-3 text-xs leading-5"
-          style={{ overscrollBehavior: 'contain' }}
-        >
-          {(current?.logs || [])
+        {/* 与发布中弹窗共用同一块日志窗格：自动跟最新 + 长行折行（不许横向撑破弹窗）。 */}
+        <ReleaseLogPane
+          // 布局关键高度走 inline style（frontend-modal.md：arbitrary value 在 v4 下不可靠）。
+          style={{ height: '42vh' }}
+          text={(current?.logs || [])
             .map((log) => `[${formatClock(log.at)}] ${log.level.toUpperCase()} ${log.phase ? `${log.phase}: ` : ''}${log.message}`)
-            .join('\n') || '等待发布日志...'}
-        </pre>
+            .join('\n')}
+        />
         {current && canActOnFailure ? (
           <div className="flex flex-wrap justify-end gap-2 border-t border-[hsl(var(--hairline))] pt-3">
             <Button variant="outline" onClick={() => onRollback(current)} disabled={!canRollback}>
