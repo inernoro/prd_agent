@@ -6,6 +6,7 @@ import { shellQuote } from './sidecar/sidecar-deployer.js';
 import { releaseEvents } from './release-events.js';
 import { classifyDeploymentFailure } from './deployment-failure-classifier.js';
 import { formatSshExecFailure, maskSshExecSecrets } from './ssh-exec-failure.js';
+import { parseDfAvailableMb, parseDiskGuardShortfall } from './release-disk-guard.js';
 import {
   advanceReleaseSteps,
   buildReleaseRunProgress,
@@ -565,6 +566,16 @@ export class ReleaseService {
       : '';
     const deployScripts = extractReleaseScriptPaths(deployCommand);
     const previousRelease = target ? this.stateService.getLatestSuccessfulReleaseRun(target.id) : undefined;
+    // 上次磁盘护栏失败、且之后再没成功过 → 预检要做磁盘复查（见下方 disk 检查）。
+    // 一旦有更新的成功发布，说明磁盘已经过了脚本自己的护栏，这道复查自动消失。
+    const latestFailedRun = target
+      ? this.stateService.getReleaseRuns({ targetId: target.id })
+        .find((run) => run.status === 'failed' || run.status === 'rollback_failed')
+      : undefined;
+    const lastDiskShortfall = latestFailedRun
+      && (!previousRelease || latestFailedRun.startedAt > previousRelease.startedAt)
+      ? parseDiskGuardShortfall((latestFailedRun.logs || []).map((log) => log.message))
+      : null;
     const isFirstManagedRelease = Boolean(
       target?.ssh
       && (isLocalProdReleaseCommand(deployCommand) || strategy.mode !== 'existing-script')
@@ -691,6 +702,37 @@ export class ReleaseService {
             }
           } else if (deployCommand) {
             push({ id: 'scripts', label: '发布脚本可执行', status: 'warn', message: '自定义发布命令未识别到 ./script.sh，已跳过脚本文件检查', blocking: false });
+          }
+
+          // 磁盘复查：只在「最近一次失败就是磁盘护栏、且之后还没成功过」时出现。
+          // 上次的 requiredMb 是**发布脚本自己声明过的**需求（不由 CDS 拍脑袋定阈值），
+          // 复查 df 不够线就拦在「开始发布」之前——2026-07-30 同一磁盘原因连烧四次
+          // run 之后加的闸；同时也是用户「下次可以在 CDS 里警报」的预防面。
+          if (target?.ssh && lastDiskShortfall) {
+            try {
+              const dfOutput = await this.sshExec(
+                target,
+                `df -Pm ${shellQuote(target.ssh.appPath || '.')} 2>/dev/null || df -Pm /`,
+              );
+              const availableMb = parseDfAvailableMb(dfOutput);
+              if (availableMb === null) {
+                push({ id: 'disk', label: '目标磁盘余量', status: 'warn', message: '无法解析 df 输出，跳过磁盘复查（发布脚本自身仍会守护）', blocking: false });
+              } else if (availableMb < lastDiskShortfall.requiredMb) {
+                push({
+                  id: 'disk',
+                  label: '目标磁盘余量',
+                  status: 'fail',
+                  message: `上次发布因磁盘不足失败（脚本要求 ${lastDiskShortfall.requiredMb}MB 空闲），`
+                    + `当前仍只有 ${availableMb}MB，还差 ${lastDiskShortfall.requiredMb - availableMb}MB。`
+                    + '先清理目标机磁盘（失败详情里有只读磁盘诊断），否则这次发布会在同一处失败。',
+                  blocking: true,
+                });
+              } else {
+                push({ id: 'disk', label: '目标磁盘余量', status: 'pass', message: `${availableMb}MB 空闲，已满足上次失败时的 ${lastDiskShortfall.requiredMb}MB 要求`, blocking: false });
+              }
+            } catch (err) {
+              push({ id: 'disk', label: '目标磁盘余量', status: 'warn', message: `磁盘复查未完成: ${(err as Error).message}`, blocking: false });
+            }
           }
         }
       }

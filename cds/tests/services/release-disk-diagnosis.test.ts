@@ -162,3 +162,41 @@ describe('接线守卫：判定真的被路由与页面消费', () => {
     expect(page).toContain('磁盘诊断');
   });
 });
+
+describe('磁盘警报链路（2026-07-30 用户：「下次可以在 CDS 里警报」）', () => {
+  const read = (rel: string): string => fs.readFileSync(path.resolve(here, '../../', rel), 'utf8');
+  const GUARD_LINE = 'ERROR: LLM Gateway production stage http-full requires at least 4096MB free on /; available=3870MB target=.llmgw-release-evidence';
+
+  it('后端与前端解析同一条护栏输出必须得到同一结论（判据不许分裂）', async () => {
+    const backend = await import('../../src/services/release-disk-guard.js');
+    const backendResult = backend.parseDiskGuardShortfall([GUARD_LINE]);
+    const frontendResult = parseDiskGuardShortfall([{ level: 'warn', message: GUARD_LINE }] as never);
+    expect(backendResult).toEqual(frontendResult);
+    expect(backendResult).toEqual({ requiredMb: 4096, availableMb: 3870, shortfallMb: 226, mountPoint: '/' });
+  });
+
+  it('describeDiskShortfall 说清差额与下一步', async () => {
+    const backend = await import('../../src/services/release-disk-guard.js');
+    const text = backend.describeDiskShortfall({ requiredMb: 4096, availableMb: 3870, shortfallMb: 226, mountPoint: '/' });
+    expect(text).toContain('还差 226MB');
+    expect(text).toContain('磁盘诊断');
+  });
+
+  it('parseDfAvailableMb 解析 POSIX df 输出，解析不动返回 null', async () => {
+    const backend = await import('../../src/services/release-disk-guard.js');
+    const df = 'Filesystem     1048576-blocks  Used Available Capacity Mounted on\n/dev/vda1               71615 67769      3847      95% /';
+    expect(backend.parseDfAvailableMb(df)).toBe(3847);
+    expect(backend.parseDfAvailableMb('garbage')).toBeNull();
+    expect(backend.parseDfAvailableMb('')).toBeNull();
+  });
+
+  it('接线守卫：失败事件带人话磁盘结论，预检有磁盘复查', () => {
+    const events = read('src/services/release-events.ts');
+    expect(events).toContain('parseDiskGuardShortfall');
+    expect(events).toContain('describeDiskShortfall');
+    const service = read('src/services/release-service.ts');
+    expect(service).toContain("id: 'disk'");
+    expect(service).toContain('目标磁盘余量');
+    expect(service).toContain('parseDfAvailableMb');
+  });
+});

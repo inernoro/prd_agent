@@ -784,6 +784,7 @@ export function resolveApiLabel(method: string, path: string): string {
     'POST /releases/targets/:id/archive': '归档发布目标并保留审计证据',
     'GET /releases/targets/:id/changes': '查看发布目标变更历史',
     'GET /releases/targets/:id/remote-state': '查看远端发布现场',
+    'GET /releases/targets/:id/disk-diagnosis': '目标磁盘只读诊断',
     'POST /releases/targets/:id/reclaim': '回收远端发布产物',
     'POST /releases/branches/:branchId/preflight': '执行发布前检查',
     'POST /releases/branches/:branchId/runs': '启动分支发布',
