@@ -44,6 +44,8 @@ def report_body(nature: str) -> str:
 class DailyVerdictContractTests(unittest.TestCase):
     def test_failure_state_machine_tracks_subjects_across_word_orders(self):
         cases = (
+            ("核心用例执行失败", {"core-case"}),
+            ("核心流程尚未通过", {"core-case"}),
             ("CDS smoke 当前失败", {"smoke"}),
             ("CDS smoke 测试失败", {"smoke"}),
             ("验收报告归档流程失败", {"archive"}),
@@ -746,6 +748,46 @@ class DailyVerdictContractTests(unittest.TestCase):
                             for error in errors
                         )
                     )
+
+    def test_root_cause_core_failure_participates_in_verdict_gate(self):
+        for verdict, nature in (("pass", "完整通过"), ("conditional", "覆盖不足")):
+            for fact in ("核心用例执行失败", "核心流程尚未通过"):
+                with self.subTest(verdict=verdict, fact=fact):
+                    body = report_body(nature).replace(
+                        "当前部署 SHA 已前进", fact
+                    )
+                    errors = archive_report._daily_conclusion_contract_errors(
+                        verdict, body
+                    )
+                    self.assertTrue(
+                        any(
+                            "核心用例失败事实" in error
+                            and "必须使用 fail" in error
+                            for error in errors
+                        )
+                    )
+
+        for fact in ("核心用例执行失败", "核心流程尚未通过"):
+            with self.subTest(verdict="fail", fact=fact):
+                body = report_body("核心用例失败").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors("fail", body)
+                self.assertEqual([], errors)
+
+    def test_resolved_or_negated_root_cause_core_failure_does_not_force_fail(self):
+        for fact in (
+            "核心用例先前失败，重试后已通过",
+            "核心流程未失败",
+        ):
+            with self.subTest(fact=fact):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                errors = archive_report._daily_conclusion_contract_errors(
+                    "conditional", body
+                )
+                self.assertEqual([], errors)
 
     def test_conclusion_column_participates_in_failure_state(self):
         cases = (

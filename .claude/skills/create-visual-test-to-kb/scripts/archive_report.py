@@ -641,6 +641,10 @@ _RESOLVED_FACT_PATTERN = re.compile(
     re.I,
 )
 _FAILURE_SUBJECT_PATTERNS = (
+    (
+        "core-case",
+        re.compile(r"(?:核心用例|核心流程)(?:执行|测试|验证|检查)?", re.I),
+    ),
     ("ready", re.compile(r"ready(?:\s*(?:检查|门禁|状态))?", re.I)),
     ("smoke", re.compile(r"(?:smoke|冒烟)(?:\s*(?:测试|检查|门禁))?", re.I)),
     ("build", re.compile(r"(?:构建|编译)(?:产物|结果)?", re.I)),
@@ -1088,7 +1092,7 @@ def _daily_fact_signals(values, body):
         or re.search(r"\bP[23]\b|非阻断风险", positive_product, re.I)
     )
     product_risk = blocking_product_failure or nonblocking_product_risk
-    core_failure = bool(
+    product_core_failure = bool(
         re.search(
             r"(?:核心用例|核心流程)[^。；;|\n]{0,20}(?:失败|阻断|不通过)",
             positive_product,
@@ -1125,6 +1129,7 @@ def _daily_fact_signals(values, body):
         current_failure_subjects
         & {"ready", "smoke", "build", "service-ready", "forced-test"}
     )
+    core_failure = product_core_failure or "core-case" in current_failure_subjects
     coverage_gap_count = _coverage_gap_count(body)
     completeness_with_zero_gaps_removed = _strip_zero_coverage_gap_phrases(completeness)
     incomplete = bool(
