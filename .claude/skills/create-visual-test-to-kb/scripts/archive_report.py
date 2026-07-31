@@ -647,7 +647,8 @@ _RAW_RESOLVED_VALUE_PATTERN = (
 )
 _RAW_FAILURE_STATUS_PATTERN = (
     r"(?:(?:非|不为|不等于)\s*0(?![\d.])"
-    r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?[1-9]\d*"
+    r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
+    r"(?:(?:[:：=]|为)\s*)?[1-9]\d*"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?[45][xX]{2}"
     r"|(?-i:\bFAIL\b)"
     r"|(?-i:\bERROR\b)"
@@ -668,7 +669,8 @@ _RAW_RESOLVED_STATUS_PATTERN = (
     rf"{_RAW_RESOLVED_VALUE_PATTERN}\b\"?"
     rf"|\"?(?:stage|阶段)\"?\s*[:：=]\s*\"?"
     rf"(?:{_RAW_RESOLVED_VALUE_PATTERN}|deployed)\b\"?"
-    r"|(?:exit[\s_-]*code|退出码|返回码)\s*(?:[:：=]\s*)?0(?![\d.])"
+    r"|(?:exit[\s_-]*code|退出码|返回码|错误码|错误代码)\s*"
+    r"(?:(?:[:：=]|为)\s*)?0(?![\d.])"
     r"|(?:返回|状态码|HTTP)\s*(?:[:：=]\s*)?2[xX]{2})"
 )
 _FAILURE_FACT_PATTERN = re.compile(
@@ -1079,7 +1081,7 @@ def _failure_is_negated(clause, event, previous_event_end):
     ):
         return True
     if re.match(
-        r"\s*(?:总数|计数|数量|数|率|次数)?\s*"
+        r"\s*(?:总数|计数|数量|数|率|次数|码|代码)?\s*"
         r"(?:(?:共计|合计|总计|共)\s*)?(?:为|是|等于|[:：=])?\s*"
         r"(?:0(?:\.0+)?|零|〇)(?![\d一二三四五六七八九十百千万点.])"
         r"(?:个|次|项|%|％)?",
@@ -1177,6 +1179,7 @@ def _failure_subject_states(
     instance_aware=False,
     default_subjects=None,
     default_subject_exclusion_pattern=None,
+    subject_aliases=None,
 ):
     """Apply ordered status events while keeping context local to this row."""
     states = dict(initial_states or {})
@@ -1205,6 +1208,12 @@ def _failure_subject_states(
             subjects = _event_subjects(
                 event, occurrences, clause, previous_event_end
             )
+            if subjects and subject_aliases:
+                subjects = {
+                    alias
+                    for subject in subjects
+                    for alias in subject_aliases.get(subject, {subject})
+                }
             if state == "failed" and _failure_is_negated(
                 clause, event, previous_event_end
             ):
@@ -1291,11 +1300,7 @@ def _root_cause_state_scope(row, row_index):
             "",
             business_target,
         ).lower()
-        return (
-            "__gate_scope__",
-            gate_subjects,
-            business_target or "__default__",
-        )
+        return ("__gate_scope__", business_target or "__default__")
     normalized = re.sub(r"[`*_\s]+", "", target).lower()
     return normalized or f"__root_cause_row_{row_index}"
 
@@ -1326,6 +1331,24 @@ def _root_cause_row_states(row, initial_states=None):
                 instance_aware=True,
             )
         }
+        observation_aliases = {}
+        for subject in observation_subjects:
+            subject_name, identities = subject
+            if identities != ("__unspecified__",):
+                continue
+            target_matches = {
+                target_subject
+                for target_subject in target_subjects
+                if target_subject[0] == subject_name
+                and target_subject[1] != ("__unspecified__",)
+            }
+            if target_matches:
+                observation_aliases[subject] = target_matches
+        resolved_observation_subjects = {
+            alias
+            for subject in observation_subjects
+            for alias in observation_aliases.get(subject, {subject})
+        }
         states = _failure_subject_states(
             _normalize_evidence_usage_gap_clauses(cells[1]),
             states,
@@ -1334,7 +1357,9 @@ def _root_cause_row_states(row, initial_states=None):
             default_subject_exclusion_pattern=(
                 _ROOT_CAUSE_UNRELATED_FAILURE_OBJECT_PATTERN
             ),
+            subject_aliases=observation_aliases,
         )
+        observation_subjects = resolved_observation_subjects
 
     for cell in cells[2:4]:
         if _failure_subjects(cell):
@@ -1354,10 +1379,9 @@ def _root_cause_row_states(row, initial_states=None):
         )
     )
     generic_failed_conclusion = bool(
-        re.fullmatch(
-            rf"(?:(?:当前|现|仍|仍然|依然)\s*)?"
-            rf"(?:失败|不通过|未通过|异常|错误|阻断|不可用|不可交付)"
-            rf"|{_RAW_FAILURE_STATUS_PATTERN}",
+        _FAILURE_FACT_PATTERN.search(conclusion)
+        and not re.fullmatch(
+            r"(?:(?:当前|仍|尚|暂时?)\s*)?未关闭",
             conclusion,
             re.I,
         )

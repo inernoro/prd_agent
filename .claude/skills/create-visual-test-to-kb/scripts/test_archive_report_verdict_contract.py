@@ -140,6 +140,9 @@ class DailyVerdictContractTests(unittest.TestCase):
             ("CDS smoke 结果：失败", {"smoke"}),
             ("CDS smoke ERROR", {"smoke"}),
             ("CDS smoke result=ERROR", {"smoke"}),
+            ("CDS smoke 错误码为 0", set()),
+            ("CDS smoke 错误代码为 0", set()),
+            ("CDS smoke 错误码为 2", {"smoke"}),
             ("验收报告归档结果为失败", {"archive"}),
             ("验收报告归档 already failed", {"archive"}),
             ("构建状态=异常", {"build"}),
@@ -932,7 +935,14 @@ class DailyVerdictContractTests(unittest.TestCase):
                 )
 
     def test_explicit_failure_conclusion_uses_target_subject(self):
-        for conclusion in ("失败", "未通过", "status=failed"):
+        for conclusion in (
+            "失败",
+            "未通过",
+            "未完成",
+            "超时",
+            "不可达",
+            "status=failed",
+        ):
             with self.subTest(conclusion=conclusion):
                 body = report_body("覆盖不足").replace(
                     "| 验收冻结 SHA | 当前部署 SHA 已前进 | 预览跟随最新 HEAD | "
@@ -955,6 +965,24 @@ class DailyVerdictContractTests(unittest.TestCase):
                     "当前截图不能证明冻结版本 | 无法确认 | 创建冻结预览后复测 |",
                     "| CDS smoke | CDS smoke 先前返回 500，复测返回 200 | "
                     f"服务已恢复 | 复测证据完整 | {conclusion} | 保留记录 |",
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+    def test_zero_error_code_closes_prior_gate_failure(self):
+        for closure in ("CDS smoke 错误码为 0", "CDS smoke 错误代码为 0"):
+            with self.subTest(closure=closure):
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", "CDS smoke 先前失败"
+                )
+                body = body.rstrip() + (
+                    "\n| 验收冻结 SHA | "
+                    f"{closure} | 同一门禁复测完成 | 错误码归零 | "
+                    "通过 | 保留记录 |\n"
                 )
                 self.assertEqual(
                     [],
@@ -1227,6 +1255,21 @@ class DailyVerdictContractTests(unittest.TestCase):
         )
         errors = archive_report._daily_conclusion_contract_errors("conditional", body)
         self.assertTrue(any("硬门禁失败事实" in error for error in errors))
+
+    def test_composite_target_instances_can_close_in_separate_rows(self):
+        body = report_body("覆盖不足").replace(
+            "| 验收冻结 SHA | 当前部署 SHA 已前进 |",
+            "| 移动端/后端 CDS smoke | 移动端和后端 CDS smoke 均失败 |",
+        )
+        body = body.rstrip() + (
+            "\n| 移动端 CDS smoke | 移动端 CDS smoke 现已通过 | "
+            "移动端复测完成 | 已证明移动端 | 通过 | 保留记录 |"
+            "\n| 后端 CDS smoke | 后端 CDS smoke 现已通过 | "
+            "后端复测完成 | 已证明后端 | 通过 | 保留记录 |\n"
+        )
+        self.assertEqual(
+            [], archive_report._daily_conclusion_contract_errors("conditional", body)
+        )
 
     def test_later_root_cause_row_can_reopen_failure(self):
         body = report_body("覆盖不足").replace(
