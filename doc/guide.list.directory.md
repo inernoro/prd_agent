@@ -2,6 +2,12 @@
 
 > **版本**：v2.1 | **日期**：2026-07-18 | **状态**：已落地
 
+**一句话**：全部长期文档的清单，按七个类别排好，用来确认「有没有这么一篇」。
+**谁该读**：已经知道自己要找哪一类文档、想扫一眼有哪些的人。
+**读完能做什么**：找到目标文档的准确文件名。不知道该找哪一类时，先看[百科全书导读](./guide.doc.reading-map.md)。
+
+---
+
 本目录由 `doc/index.yml` 的同一份文件清单生成。文档标题以各文件 H1 为准；新增、重命名或删除文档后必须重新同步两份索引。
 
 ## 使用方式
@@ -181,6 +187,7 @@
 - [CDS Web 迁移运行手册 · 指南](./guide.cds.web-migration-runbook.md) `guide.cds.web-migration-runbook`
 - [缺陷管理 Agent 使用 · 指南](./guide.defect-agent.md) `guide.defect-agent`
 - [基础设施 Sandbox Agent · 指南](./guide.infra-sandbox-agent.md) `guide.infra-sandbox-agent`
+- [百科全书导读 —— 人类怎么读这套文档 · 指南](./guide.doc.reading-map.md) `guide.doc.reading-map`
 - [MAP 平台文档索引 · 指南](./guide.list.directory.md) `guide.list.directory`
 - [文学创作 Agent 使用 · 指南](./guide.literary-agent.md) `guide.literary-agent`
 - [海鲜市场（配置市场）使用 · 指南](./guide.marketplace.md) `guide.marketplace`
@@ -218,6 +225,7 @@
 - [CDS state.json → MongoDB 迁移与回滚 · 规则](./rule.cds.mongo-migration.md) `rule.cds.mongo-migration`
 - [CDS 多项目隔离审计规则 · 规则](./rule.cds.project-isolation-audit.md) `rule.cds.project-isolation-audit`
 - [文档维护与收敛 · 规则](./rule.doc.maintenance.md) `rule.doc.maintenance`
+- [文档说人话标准（导读三行 + 人先于机器） · 规则](./rule.doc.readability.md) `rule.doc.readability`
 - [文档命名规则（doc/） · 规则](./rule.doc.naming.md) `rule.doc.naming`
 - [七类文档内容模板 · 规则](./rule.doc.templates.md) `rule.doc.templates`
 - [默认可编辑原则 · 规则](./rule.frontend.default-editable.md) `rule.frontend.default-editable`
@@ -296,6 +304,7 @@
 - [CDS 绝对可视化一键部署 · 工程债务与待补台账 · 债务台账](./debt.cds.visual-deploy.md) `debt.cds.visual-deploy`
 - [每日小贴士新手引导 · 债务台账](./debt.daily-tips.onboarding.md) `debt.daily-tips.onboarding`
 - [小技巧与首页提醒过时机制 · 债务台账](./debt.daily-tips.md) `debt.daily-tips`
+- [文档可读性 · 债务台账](./debt.doc.readability.md) `debt.doc.readability`
 - [缺陷管理手机截图分享提交 · 债务台账](./debt.defect-agent.mobile-share.md) `debt.defect-agent.mobile-share`
 - [前端 Apple 设计迁移 · 债务台账](./debt.frontend.apple-design-migration.md) `debt.frontend.apple-design-migration`
 - [界面材质系统 · 债务台账](./debt.frontend.material-system.md) `debt.frontend.material-system`

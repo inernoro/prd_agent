@@ -1,0 +1,12 @@
+{
+  "_comment": "doc/ 导读三行欠账棘轮基线。判据见 doc/rule.doc.readability.md。数值只许下降：修好存量就跑 --update-baseline 把它压低；上调必须在 PR 里说明原因，否则一律 reject。",
+  "missing": {
+    "spec": 19,
+    "design": 103,
+    "plan": 23,
+    "rule": 23,
+    "guide": 62,
+    "report": 37,
+    "debt": 73
+  }
+}

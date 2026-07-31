@@ -247,6 +247,11 @@ URL 来源见规则 #11：必须调用 `preview-url` 读取 CDS API 实际入口
 
 **`debt.*` 用于记录工程债务台账**（已知边界、后续可补、TODO 留尾、不确定风险）。任务交付时主动声明的"已知边界"段落必须固化到对应 `debt.{module}.md`，不能只留在 commit message 里 —— 否则下一次 session 没人记得。
 
+**每篇文档必须带「导读三行」**（`**一句话**` / `**谁该读**` / `**读完能做什么**`，写在 H1 与版本行之后），
+让读者十秒决定读不读。判据 SSOT：`doc/rule.doc.readability.md`；读者视角的入口：`doc/guide.doc.reading-map.md`。
+闸门 `python3 scripts/doc-readability-check.py --ratchet`（CI `docs-readability`）——**新文档不带导读三行会把 CI 弄红**。
+存量走棘轮「走到哪修到哪」，改完跑 `--update-baseline` 压低基线。
+
 新增或重命名文档前：
 1. 先读 `doc/rule.doc.naming.md` 确认前缀、头部、状态枚举
 2. 同步更新 `doc/index.yml`（外部同步工具消费）与 `doc/guide.list.directory.md`（人类索引）
