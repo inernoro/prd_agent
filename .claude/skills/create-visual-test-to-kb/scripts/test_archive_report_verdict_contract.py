@@ -363,6 +363,30 @@ class DailyVerdictContractTests(unittest.TestCase):
         errors = archive_report._daily_conclusion_contract_errors("fail", body)
         self.assertEqual([], errors)
 
+    def test_unscoped_prefix_failure_does_not_bind_later_gate(self):
+        for fact in (
+            "截图上传失败导致无法证明 CDS smoke 覆盖",
+            "上传失败的截图不能证明 CDS smoke 结果",
+        ):
+            with self.subTest(fact=fact):
+                self.assertEqual(
+                    set(), archive_report._current_failure_subjects(fact)
+                )
+                body = report_body("覆盖不足").replace(
+                    "当前部署 SHA 已前进", fact
+                )
+                self.assertEqual(
+                    [],
+                    archive_report._daily_conclusion_contract_errors(
+                        "conditional", body
+                    ),
+                )
+
+        self.assertEqual(
+            {"smoke"},
+            archive_report._current_failure_subjects("失败的 CDS smoke"),
+        )
+
     def test_hard_gate_failure_accepts_explicit_error_states(self):
         for fact in (
             "CDS smoke 超时",

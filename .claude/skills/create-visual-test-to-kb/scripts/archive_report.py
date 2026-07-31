@@ -853,12 +853,14 @@ def _event_anchor_occurrences(event, occurrences, clause, previous_event_end):
                 re.I,
             )
         )
-        if not left or prefix_status:
+        if prefix_status:
             return {
                 occurrence
                 for occurrence in right
                 if occurrence[0] == first_right_start
             }
+    if not left:
+        return set()
     last_left_end = max(end for _, end, _ in left)
     left_gap = clause[last_left_end : event.start()]
     left_gap = _ROOT_CAUSE_INSTANCE_PATTERN.sub(" ", left_gap)
