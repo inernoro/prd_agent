@@ -520,8 +520,8 @@ with open(os.path.join(REPO_ROOT, ".github", "workflows", "ci.yml"), encoding="u
 check("--baseline-ref" in ci_src, "CI 真的带上了 --baseline-ref（否则这段等于没接线）")
 check("github.event.before" in ci_src,
       "push 到 main 时基线比的是推送前那个 commit（base_ref 为空时不能比到自己头上）")
-check("cds/src/**" in ci_src and "prd-api/tests/**" in ci_src,
-      "docs filter 覆盖面包屑守卫扫的源码树（只改源码引入死引用也要跑这道闸）")
+check(any(line.strip() == "- '**'" for line in ci_src.splitlines()),
+      "docs filter 覆盖全仓（守卫扫的是全仓 git 跟踪文件，列举根目录必然列漏）")
 
 print()
 
@@ -586,7 +586,11 @@ with open(os.path.join(doc_dir, "guide.list.directory.md"), encoding="utf-8") as
     list_src = fh.read()
 
 index_keys = {m.group(1) for m in re.finditer(r'^\s{2}([a-z][\w.-]+):\s*"', index_src, re.M)}
-list_keys = {m.group(1) for m in re.finditer(r"\]\(\./([\w.-]+)\.md\)", list_src)}
+# 只认目录条目行：`- [标题](./x.md) `key``。正文里顺手带的链接不算「已登记」，
+# 否则一篇只在导语里被提了一嘴、却没进分类清单的文档会被判成已收录。
+CATALOG_ENTRY = re.compile(r"^- \[(?P<title>[^\]]+)\]\(\./(?P<key>[\w.-]+)\.md\)\s+`(?P=key)`\s*$", re.M)
+catalog = {m.group("key"): m.group("title") for m in CATALOG_ENTRY.finditer(list_src)}
+list_keys = set(catalog)
 doc_keys = set(titles)
 # 只比标题会漏掉「压根没登记」的那一类：新文档不进目录时，标题比对因为找不到
 # 链接而静默跳过，两份索引各少一篇而 CI 全绿（形状 1：判据比它该管的范围窄）。
@@ -600,13 +604,13 @@ index_drift = [k for k, t in re.findall(r'^\s{2}([a-z][\w.-]+):\s*"(.*)"\s*$', i
                if k in titles and titles[k] and t != titles[k]]
 check(not index_drift, f"doc/index.yml 的标题与 H1 一致（漂移：{index_drift[:5]}）")
 
-list_drift = [k for k, t in titles.items()
-              if t and f"](./{k}.md)" in list_src and f"[{t}](./{k}.md)" not in list_src]
+list_drift = [k for k, title in titles.items()
+              if title and k in catalog and catalog[k] != title]
 check(not list_drift, f"guide.list.directory.md 的标题与 H1 一致（漂移：{list_drift[:5]}）")
 # 反向用例：换一个不存在的标题，检查必须报漂 —— 否则上面两条等于空跑
-check("[这个标题根本不存在](./rule.doc.readability.md)" not in list_src
-      and f"[{titles['rule.doc.readability']}](./rule.doc.readability.md)" in list_src,
-      "标题比对读的是真正的链接文本（不是恒真断言）")
+check(catalog.get("rule.doc.readability") == titles["rule.doc.readability"],
+      "标题比对读的是目录条目里的真实标题（不是恒真断言）")
+check(len(catalog) > 300, f"目录条目解析到了全部条目（实测 {len(catalog)} 条）")
 
 print()
 
@@ -670,10 +674,13 @@ patterns = _docs_filter_patterns()
 check(len(patterns) >= 5, f"能从 ci.yml 解析出 docs filter（实测 {len(patterns)} 条）")
 uncovered = [p for p in GUARDED_INPUTS if not _covered(p, patterns)]
 check(not uncovered, f"守卫读的文件全部在 docs filter 里（漏网：{uncovered}）")
-# 反向用例：把模板那条 filter 拿掉，覆盖检查必须立刻报缺 —— 否则这段等于空跑
-without = [p for p in patterns if "weekly-update-summary" not in p]
+# 反向用例：把兜底的 '**' 与模板那条 filter 都拿掉，覆盖检查必须立刻报缺 ——
+# 否则「守卫读的文件都被看着」那条断言等于空跑
+without = [p for p in patterns if p != "**" and "weekly-update-summary" not in p]
 check(not _covered(".claude/skills/weekly-update-summary/reference/report-template.md", without),
-      "去掉模板那条 filter 后覆盖检查会报缺（说明这段没有空跑）")
+      "去掉相关 filter 后覆盖检查会报缺（说明这段没有空跑）")
+check(_covered("prd-api/tests/PrdAgent.Tests/SomeGuardTests.cs", patterns),
+      "全仓兜底真的覆盖到任意一棵源码树")
 check(all(os.path.exists(os.path.join(REPO_ROOT, p)) for p in GUARDED_INPUTS),
       "被守文件都真实存在（改名后这里会红，提醒同步 filter）")
 
